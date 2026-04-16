@@ -334,7 +334,7 @@ tr.row-help td{background:#FFFBF2}
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div class="sec-label">チーム管理</div>
-      <button class="btn-primary" onclick="openModal('modal-team')">＋ チーム追加</button>
+      <button class="btn-primary" onclick="openTeamModal()">＋ チーム追加</button>
     </div>
     <div id="teams-list" class="loading">読み込み中...</div>
 
@@ -532,9 +532,7 @@ tr.row-help td{background:#FFFBF2}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">チームコード（A〜Z）</label>
-        <select class="form-select" id="t-code">
-          ${[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c=>`<option value="${c}">${c}</option>`).join('')}
-        </select>
+        <select class="form-select" id="t-code"></select>
       </div>
       <div class="form-group">
         <label class="form-label">チーム種別</label>
@@ -547,6 +545,12 @@ tr.row-help td{background:#FFFBF2}
     <div class="form-group">
       <label class="form-label">チーム名</label>
       <input class="form-input" id="t-name" placeholder="例：サクラチーム">
+    </div>
+    <div class="form-group">
+      <label class="form-label">担当プロデューサー（任意）</label>
+      <select class="form-select" id="t-producer">
+        <option value="">未設定</option>
+      </select>
     </div>
     <div class="form-group">
       <label class="form-label">担当ディレクター（任意）</label>
@@ -872,7 +876,7 @@ async function init() {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
-  await Promise.all([loadClients(), loadProjects(), loadTeams(), loadCreatives()]);
+  await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
   loadDashboard();
 }
 
@@ -1092,12 +1096,7 @@ async function loadTeams() {
     allTeams = await teamsRes.json();
     allSlackWorkspaces = swRes.ok ? await swRes.json() : [];
     renderSlackWorkspaces();
-    const sel = document.getElementById('t-director');
     const mSel = document.getElementById('m-team');
-    if (sel) {
-      const dirs = allMembers.filter(m => ['director','producer_director'].includes(m.role));
-      sel.innerHTML = '<option value="">未設定</option>' + dirs.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
-    }
     if (mSel) {
       mSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
     }
@@ -1111,7 +1110,10 @@ async function loadTeams() {
           <div style="font-size:15px;font-weight:500">${t.team_name}</div>
           <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${t.team_type === 'video' ? '動画チーム' : 'デザインチーム'}</div>
         </div>
-        <div style="font-size:14px;color:var(--text-muted)">${t.director?.full_name ? t.director.full_name + ' D' : 'D未設定'}</div>
+        <div style="font-size:13px;color:var(--text-muted);text-align:right;line-height:1.7">
+          ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
+          <div>${t.director?.full_name ? t.director.full_name + ' D' : 'D未設定'}</div>
+        </div>
         <span class="team-badge">${t.team_code}チーム</span>
       </div>`).join('');
   } catch(e) { allTeams = []; }
@@ -1335,13 +1337,35 @@ async function createCreative() {
   }
 }
 
+function openTeamModal() {
+  // チームコード A〜Z を毎回生成
+  document.getElementById('t-code').innerHTML =
+    [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `<option value="${c}">${c}</option>`).join('');
+
+  // プロデューサー
+  const pSel = document.getElementById('t-producer');
+  const producers = allMembers.filter(m => ['producer','producer_director'].includes(m.role) && m.is_active !== false);
+  pSel.innerHTML = '<option value="">未設定</option>' + producers.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
+
+  // ディレクター
+  const dSel = document.getElementById('t-director');
+  const dirs = allMembers.filter(m => ['director','producer_director'].includes(m.role) && m.is_active !== false);
+  dSel.innerHTML = '<option value="">未設定</option>' + dirs.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
+
+  // フォームリセット
+  document.getElementById('t-name').value = '';
+
+  openModal('modal-team');
+}
+
 async function createTeam() {
   const team_code = document.getElementById('t-code').value;
   const team_name = document.getElementById('t-name').value.trim();
   const team_type = document.getElementById('t-type').value;
   const director_id = document.getElementById('t-director').value || null;
+  const producer_id = document.getElementById('t-producer').value || null;
   if (!team_name) { alert('チーム名は必須です'); return; }
-  const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id}) });
+  const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
   if (res.ok) { closeModal('modal-team'); await loadTeams(); }
   else { const e=await res.json(); alert('エラー: '+e.error); }
 }

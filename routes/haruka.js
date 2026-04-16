@@ -804,7 +804,8 @@ router.get('/teams', async (req, res) => {
     .from('teams')
     .select(`
       *,
-      director:users!teams_director_id_fkey(id, full_name)
+      director:users!teams_director_id_fkey(id, full_name),
+      producer:users!teams_producer_id_fkey(id, full_name)
     `)
     .order('team_code');
   if (error) return res.status(500).json({ error: error.message });
@@ -813,13 +814,13 @@ router.get('/teams', async (req, res) => {
 
 // チーム作成
 router.post('/teams', async (req, res) => {
-  const { team_code, team_name, team_type, director_id } = req.body;
+  const { team_code, team_name, team_type, director_id, producer_id } = req.body;
   if (!team_code || !team_name || !team_type) {
     return res.status(400).json({ error: 'コード・名前・種別は必須です' });
   }
   const { data, error } = await supabase
     .from('teams')
-    .insert({ team_code, team_name, team_type, director_id: director_id || null })
+    .insert({ team_code, team_name, team_type, director_id: director_id || null, producer_id: producer_id || null })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -828,12 +829,13 @@ router.post('/teams', async (req, res) => {
 
 // チーム更新
 router.put('/teams/:id', async (req, res) => {
-  const { team_name, team_type, director_id, is_active } = req.body;
+  const { team_name, team_type, director_id, producer_id, is_active } = req.body;
   const { data, error } = await supabase
     .from('teams')
     .update({
       team_name, team_type,
       director_id: director_id || null,
+      producer_id: producer_id || null,
       is_active,
       updated_at: new Date().toISOString()
     })
