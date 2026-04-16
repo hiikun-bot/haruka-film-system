@@ -2,6 +2,47 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
+const multer = require('multer');
+const { google } = require('googleapis');
+const { Readable } = require('stream');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
+
+// Google Drive サービスアカウント認証
+async function getDriveService() {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY が設定されていません');
+  const credentials = JSON.parse(keyJson);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/drive']
+  });
+  return google.drive({ version: 'v3', auth });
+}
+
+// フォルダを取得または作成
+async function getOrCreateFolder(drive, parentId, name) {
+  const safeName = name.replace(/'/g, "\\'");
+  const res = await drive.files.list({
+    q: `name='${safeName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  if (res.data.files.length > 0) return res.data.files[0].id;
+  const folder = await drive.files.create({
+    requestBody: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+    fields: 'id',
+    supportsAllDrives: true,
+  });
+  return folder.data.id;
+}
+
+// Drive フォルダURLからフォルダIDを抽出
+function extractFolderIdFromUrl(url) {
+  const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
 
 // ==================== クライアント ====================
 
@@ -114,25 +155,29 @@ router.put('/projects/:id', async (req, res) => {
   const {
     name, status, producer_id, director_id,
     sheet_url, drive_folder_url, admin_note, start_date, end_date,
-    chatwork_room_id, slack_workspace_id, slack_channel_id, is_hidden
+    chatwork_room_id, slack_workspace_id, slack_channel_id, is_hidden,
+    sync_products, sync_appeal_axes
   } = req.body;
+  const updateData = {
+    name, status,
+    producer_id: producer_id || null,
+    director_id: director_id || null,
+    sheet_url: sheet_url || null,
+    drive_folder_url: drive_folder_url || null,
+    admin_note: admin_note || null,
+    start_date: start_date || null,
+    end_date: end_date || null,
+    chatwork_room_id: chatwork_room_id || null,
+    slack_workspace_id: slack_workspace_id || null,
+    slack_channel_id: slack_channel_id || null,
+    is_hidden: is_hidden ?? false,
+    updated_at: new Date().toISOString()
+  };
+  if (sync_products !== undefined) updateData.sync_products = sync_products;
+  if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
   const { data, error } = await supabase
     .from('projects')
-    .update({
-      name, status,
-      producer_id: producer_id || null,
-      director_id: director_id || null,
-      sheet_url: sheet_url || null,
-      drive_folder_url: drive_folder_url || null,
-      admin_note: admin_note || null,
-      start_date: start_date || null,
-      end_date: end_date || null,
-      chatwork_room_id: chatwork_room_id || null,
-      slack_workspace_id: slack_workspace_id || null,
-      slack_channel_id: slack_channel_id || null,
-      is_hidden: is_hidden ?? false,
-      updated_at: new Date().toISOString()
-    })
+    .update(updateData)
     .eq('id', req.params.id)
     .select()
     .single();
@@ -279,6 +324,25 @@ router.get('/creatives', async (req, res) => {
   res.json(withBall);
 });
 
+// クリエイティブ単体取得
+router.get('/creatives/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('creatives')
+    .select(`
+      *,
+      projects(id, name, drive_folder_url, clients(id, name, client_code)),
+      project_cycles(id, year, month),
+      creative_assignments(
+        id, role, rank_applied,
+        users(id, full_name, role, team_id)
+      )
+    `)
+    .eq('id', req.params.id)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // クリエイティブ作成
 // 一括登録
 router.post('/creatives/bulk', async (req, res) => {
@@ -379,9 +443,10 @@ router.post('/creatives', async (req, res) => {
 // クリエイティブ更新
 router.put('/creatives/:id', async (req, res) => {
   const {
-    file_name, status, deadline, script_url,
+    file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url,
-    help_flag, note, revision_count
+    help_flag, note, revision_count,
+    director_comment, client_comment
   } = req.body;
   const updateData = {
     updated_at: new Date().toISOString()
@@ -389,6 +454,8 @@ router.put('/creatives/:id', async (req, res) => {
   if (file_name !== undefined) updateData.file_name = file_name;
   if (status !== undefined) updateData.status = status;
   if (deadline !== undefined) updateData.deadline = deadline;
+  if (draft_deadline !== undefined) updateData.draft_deadline = draft_deadline;
+  if (final_deadline !== undefined) updateData.final_deadline = final_deadline;
   if (script_url !== undefined) updateData.script_url = script_url;
   if (frameio_url !== undefined) updateData.frameio_url = frameio_url;
   if (delivery_url !== undefined) updateData.delivery_url = delivery_url;
@@ -396,6 +463,8 @@ router.put('/creatives/:id', async (req, res) => {
   if (help_flag !== undefined) updateData.help_flag = help_flag;
   if (note !== undefined) updateData.note = note;
   if (revision_count !== undefined) updateData.revision_count = revision_count;
+  if (director_comment !== undefined) updateData.director_comment = director_comment;
+  if (client_comment !== undefined) updateData.client_comment = client_comment;
 
   // 納品完了時に支払い可能フラグを自動オン
   if (status === '納品') updateData.is_payable = true;
@@ -408,6 +477,109 @@ router.put('/creatives/:id', async (req, res) => {
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// ==================== クリエイティブファイル ====================
+
+// アップロード済みファイル一覧
+router.get('/creatives/:id/files', async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_files')
+    .select('*')
+    .eq('creative_id', req.params.id)
+    .order('uploaded_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ファイルアップロード（Google Drive）
+router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => {
+  const creativeId = req.params.id;
+  const { width, height, version, generated_name } = req.body;
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: 'ファイルが選択されていません' });
+
+  // クリエイティブ + 案件情報を取得
+  const { data: creative, error: cErr } = await supabase
+    .from('creatives')
+    .select('*, projects(id, name, drive_folder_url, clients(id, name, client_code))')
+    .eq('id', creativeId)
+    .single();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+
+  const project = creative.projects;
+  let driveFileId = null;
+  let driveUrl = null;
+
+  // Google Drive にアップロード（credentials が設定されている場合のみ）
+  if (project?.drive_folder_url && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const drive = await getDriveService();
+      const baseFolderId = extractFolderIdFromUrl(project.drive_folder_url);
+      if (!baseFolderId) throw new Error('Drive フォルダIDを取得できません');
+
+      // サイクル: YYYYMM（当月）
+      const now = new Date();
+      const cycleFolder = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      // 動画か静止画かでフォルダ名を分ける
+      const isVideo = file.mimetype.startsWith('video/');
+      const typeFolder = isVideo ? '動画' : '静止画';
+
+      // ファイル名から作業フォルダ名（サイズ・バージョン・拡張子を除いた部分）を生成
+      // e.g. "001_ARU_UGC001_1080_1920_v1.mp4" → "001_ARU_UGC001"
+      const workFolderName = (generated_name || file.originalname)
+        .replace(/\.[^.]+$/, '')           // 拡張子除去
+        .replace(/_\d+_\d+_v\d+$/, '');    // _W_H_vN 除去
+
+      // フォルダ階層: {base}/{YYYYMM}/{動画|静止画}/{workFolder}/
+      const cycleFolderId = await getOrCreateFolder(drive, baseFolderId, cycleFolder);
+      const typeFolderId  = await getOrCreateFolder(drive, cycleFolderId, typeFolder);
+      const workFolderId  = await getOrCreateFolder(drive, typeFolderId, workFolderName);
+
+      // ファイルをアップロード
+      const stream = new Readable();
+      stream.push(file.buffer);
+      stream.push(null);
+
+      const uploadRes = await drive.files.create({
+        requestBody: {
+          name: generated_name || file.originalname,
+          parents: [workFolderId],
+        },
+        media: { mimeType: file.mimetype, body: stream },
+        fields: 'id, webViewLink',
+        supportsAllDrives: true,
+      });
+
+      driveFileId = uploadRes.data.id;
+      driveUrl    = uploadRes.data.webViewLink;
+    } catch (e) {
+      console.error('Drive upload error:', e.message);
+      // Drive 失敗でも DB 記録は続ける（エラー内容をレスポンスに含める）
+    }
+  }
+
+  // creative_files テーブルに記録
+  const uploadedBy = req.user?.supabase_user_id || null;
+  const { data: fileRecord, error: fErr } = await supabase
+    .from('creative_files')
+    .insert({
+      creative_id: creativeId,
+      original_name: file.originalname,
+      generated_name: generated_name || file.originalname,
+      width: parseInt(width) || null,
+      height: parseInt(height) || null,
+      version: parseInt(version) || 1,
+      drive_file_id: driveFileId,
+      drive_url: driveUrl,
+      uploaded_by: uploadedBy,
+    })
+    .select()
+    .single();
+  if (fErr) return res.status(500).json({ error: fErr.message });
+
+  res.json({ ok: true, file: fileRecord, drive_url: driveUrl });
 });
 
 // 特例請求可能フラグ（管理者のみ）
@@ -951,6 +1123,311 @@ router.put('/slack-workspaces/:id', async (req, res) => {
 // 削除
 router.delete('/slack-workspaces/:id', async (req, res) => {
   const { error } = await supabase.from('slack_workspaces').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ==================== クライアント商材・訴求軸マスター ====================
+
+// クライアント商材一覧
+router.get('/clients/:id/products', async (req, res) => {
+  const { data, error } = await supabase.from('client_products')
+    .select('*').eq('client_id', req.params.id)
+    .order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+// クライアント商材作成
+router.post('/clients/:id/products', async (req, res) => {
+  const { code, name, note, sort_order } = req.body;
+  if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
+  const { data, error } = await supabase.from('client_products')
+    .insert({ client_id: req.params.id, code, name, note: note||null, sort_order: parseInt(sort_order)||0 })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+// クライアント商材更新
+router.put('/clients/:id/products/:pid', async (req, res) => {
+  const { code, name, note, sort_order, is_active } = req.body;
+  const { data, error } = await supabase.from('client_products')
+    .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.pid).eq('client_id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+// クライアント商材削除
+router.delete('/clients/:id/products/:pid', async (req, res) => {
+  const { error } = await supabase.from('client_products').delete().eq('id', req.params.pid);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// クライアント訴求軸一覧
+router.get('/clients/:id/appeal-axes', async (req, res) => {
+  const { data, error } = await supabase.from('client_appeal_axes')
+    .select('*').eq('client_id', req.params.id)
+    .order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+// クライアント訴求軸作成
+router.post('/clients/:id/appeal-axes', async (req, res) => {
+  const { code, name, note, sort_order } = req.body;
+  if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
+  const { data, error } = await supabase.from('client_appeal_axes')
+    .insert({ client_id: req.params.id, code, name, note: note||null, sort_order: parseInt(sort_order)||0 })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+// クライアント訴求軸更新
+router.put('/clients/:id/appeal-axes/:aid', async (req, res) => {
+  const { code, name, note, sort_order, is_active } = req.body;
+  const { data, error } = await supabase.from('client_appeal_axes')
+    .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.aid).eq('client_id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+// クライアント訴求軸削除
+router.delete('/clients/:id/appeal-axes/:aid', async (req, res) => {
+  const { error } = await supabase.from('client_appeal_axes').delete().eq('id', req.params.aid);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ==================== 案件商材・訴求軸（syncスイッチ対応） ====================
+
+// 案件の実効商材（sync=ONならクライアント、OFFなら案件独自）
+router.get('/projects/:id/effective-products', async (req, res) => {
+  const { data: proj } = await supabase.from('projects').select('client_id, sync_products').eq('id', req.params.id).single();
+  if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
+  const table = proj.sync_products !== false ? 'client_products' : 'project_products';
+  const field = proj.sync_products !== false ? 'client_id' : 'project_id';
+  const id    = proj.sync_products !== false ? proj.client_id : req.params.id;
+  const { data, error } = await supabase.from(table).select('*').eq(field, id)
+    .eq('is_active', true).order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 案件の実効訴求軸
+router.get('/projects/:id/effective-appeal-axes', async (req, res) => {
+  const { data: proj } = await supabase.from('projects').select('client_id, sync_appeal_axes').eq('id', req.params.id).single();
+  if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
+  const table = proj.sync_appeal_axes !== false ? 'client_appeal_axes' : 'project_appeal_axes';
+  const field = proj.sync_appeal_axes !== false ? 'client_id' : 'project_id';
+  const id    = proj.sync_appeal_axes !== false ? proj.client_id : req.params.id;
+  const { data, error } = await supabase.from(table).select('*').eq(field, id)
+    .eq('is_active', true).order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 案件商材CRUD（sync=OFF時）
+router.get('/projects/:id/products', async (req, res) => {
+  const { data, error } = await supabase.from('project_products')
+    .select('*').eq('project_id', req.params.id).order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+router.post('/projects/:id/products', async (req, res) => {
+  const { code, name, note, sort_order } = req.body;
+  if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
+  const { data, error } = await supabase.from('project_products')
+    .insert({ project_id: req.params.id, code, name, note: note||null, sort_order: parseInt(sort_order)||0 })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+router.put('/projects/:id/products/:pid', async (req, res) => {
+  const { code, name, note, sort_order, is_active } = req.body;
+  const { data, error } = await supabase.from('project_products')
+    .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.pid).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+router.delete('/projects/:id/products/:pid', async (req, res) => {
+  const { error } = await supabase.from('project_products').delete().eq('id', req.params.pid);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 案件訴求軸CRUD（sync=OFF時）
+router.get('/projects/:id/appeal-axes', async (req, res) => {
+  const { data, error } = await supabase.from('project_appeal_axes')
+    .select('*').eq('project_id', req.params.id).order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+router.post('/projects/:id/appeal-axes', async (req, res) => {
+  const { code, name, note, sort_order } = req.body;
+  if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
+  const { data, error } = await supabase.from('project_appeal_axes')
+    .insert({ project_id: req.params.id, code, name, note: note||null, sort_order: parseInt(sort_order)||0 })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+router.put('/projects/:id/appeal-axes/:aid', async (req, res) => {
+  const { code, name, note, sort_order, is_active } = req.body;
+  const { data, error } = await supabase.from('project_appeal_axes')
+    .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.aid).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+router.delete('/projects/:id/appeal-axes/:aid', async (req, res) => {
+  const { error } = await supabase.from('project_appeal_axes').delete().eq('id', req.params.aid);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// クライアントマスターから案件へコピー（商材）
+router.post('/projects/:id/products/copy-from-client', async (req, res) => {
+  const { data: proj } = await supabase.from('projects').select('client_id').eq('id', req.params.id).single();
+  if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
+  const { data: clientItems } = await supabase.from('client_products')
+    .select('*').eq('client_id', proj.client_id);
+  if (!clientItems?.length) return res.json({ copied: 0 });
+  await supabase.from('project_products').delete().eq('project_id', req.params.id);
+  const inserts = clientItems.map(({ code, name, note, sort_order }) =>
+    ({ project_id: req.params.id, code, name, note, sort_order }));
+  const { error } = await supabase.from('project_products').insert(inserts);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ copied: inserts.length });
+});
+
+// クライアントマスターから案件へコピー（訴求軸）
+router.post('/projects/:id/appeal-axes/copy-from-client', async (req, res) => {
+  const { data: proj } = await supabase.from('projects').select('client_id').eq('id', req.params.id).single();
+  if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
+  const { data: clientItems } = await supabase.from('client_appeal_axes')
+    .select('*').eq('client_id', proj.client_id);
+  if (!clientItems?.length) return res.json({ copied: 0 });
+  await supabase.from('project_appeal_axes').delete().eq('project_id', req.params.id);
+  const inserts = clientItems.map(({ code, name, note, sort_order }) =>
+    ({ project_id: req.params.id, code, name, note, sort_order }));
+  const { error } = await supabase.from('project_appeal_axes').insert(inserts);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ copied: inserts.length });
+});
+
+// ==================== 汎用マスター管理 ====================
+
+// 区分マスター一覧
+router.get('/master/categories', async (_req, res) => {
+  const { data, error } = await supabase
+    .from('master_categories')
+    .select('*')
+    .order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 区分マスター作成
+router.post('/master/categories', async (req, res) => {
+  const { name, code, sort_order } = req.body;
+  if (!name || !code) return res.status(400).json({ error: '名称とコードは必須です' });
+  const { data, error } = await supabase
+    .from('master_categories')
+    .insert({ name, code, sort_order: parseInt(sort_order) || 0 })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 区分マスター更新
+router.put('/master/categories/:id', async (req, res) => {
+  const { name, code, sort_order, is_active } = req.body;
+  const { data, error } = await supabase
+    .from('master_categories')
+    .update({ name, code, sort_order: parseInt(sort_order) || 0, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 区分マスター削除
+router.delete('/master/categories/:id', async (req, res) => {
+  const { error } = await supabase.from('master_categories').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ---- 値マスター ----
+
+// 値一覧（管理用：全件）
+router.get('/master/items', async (req, res) => {
+  const { category_id } = req.query;
+  let query = supabase
+    .from('master_items')
+    .select('*, master_categories(id, name, code)')
+    .order('sort_order').order('created_at');
+  if (category_id) query = query.eq('category_id', category_id);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 値一覧（プルダウン用：有効かつ期限内のみ）
+router.get('/master/items/active', async (req, res) => {
+  const { category_id, category_code } = req.query;
+  const now = new Date().toISOString();
+  let query = supabase
+    .from('master_items')
+    .select('*, master_categories(id, name, code)')
+    .eq('is_active', true)
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
+    .order('sort_order').order('created_at');
+  if (category_id)   query = query.eq('category_id', category_id);
+  if (category_code) query = query.eq('master_categories.code', category_code);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 値作成
+router.post('/master/items', async (req, res) => {
+  const { category_id, code, name, note, sort_order, expires_at } = req.body;
+  if (!category_id || !code || !name)
+    return res.status(400).json({ error: '区分・コード・名称は必須です' });
+  const { data, error } = await supabase
+    .from('master_items')
+    .insert({
+      category_id, code, name,
+      note: note || null,
+      sort_order: parseInt(sort_order) || 0,
+      expires_at: expires_at || null,
+    })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 値更新
+router.put('/master/items/:id', async (req, res) => {
+  const { code, name, note, sort_order, is_active, expires_at } = req.body;
+  const { data, error } = await supabase
+    .from('master_items')
+    .update({
+      code, name,
+      note: note || null,
+      sort_order: parseInt(sort_order) || 0,
+      is_active,
+      expires_at: expires_at || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 値削除
+router.delete('/master/items/:id', async (req, res) => {
+  const { error } = await supabase.from('master_items').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });

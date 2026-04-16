@@ -220,6 +220,7 @@ tr.row-help td{background:#FFFBF2}
     <button class="nav-btn" onclick="showPage('teams',this)">チーム</button>
     <button class="nav-btn" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" onclick="showPage('invoices',this)">請求書</button>
+    <button class="nav-btn" id="nav-master" onclick="showPage('master',this)" style="display:none">マスター</button>
   </div>
   <div class="header-right">
     <!-- ロールプレビュースイッチャー（管理者のみ表示） -->
@@ -785,40 +786,75 @@ tr.row-help td{background:#FFFBF2}
 
 <!-- クライアント追加・編集モーダル -->
 <div class="modal-overlay" id="modal-client">
-  <div class="modal" style="min-height:auto">
+  <div class="modal" style="width:640px;max-width:95vw">
     <div class="modal-title" id="cl-modal-title">クライアント追加<button class="modal-close" onclick="closeModal('modal-client')">×</button></div>
     <input type="hidden" id="cl-id">
-    <div class="form-row">
-      <div class="form-group" style="flex:2">
-        <label class="form-label">クライアント名 <span style="color:#E24B4A">*</span></label>
-        <input class="form-input" id="cl-name" placeholder="例：あるる">
-      </div>
-      <div class="form-group" style="flex:1">
-        <label class="form-label">略称（英3文字） <span style="color:#E24B4A">*</span></label>
-        <input class="form-input" id="cl-code" placeholder="例：ARU" maxlength="3" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
-      </div>
+
+    <!-- タブ -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px">
+      <button id="cl-tab-btn-info"   onclick="switchClientTab('info')"    style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--em-dark);font-weight:500;border-bottom:2px solid var(--em);cursor:pointer">基本情報</button>
+      <button id="cl-tab-btn-products"   onclick="switchClientTab('products')"   style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer">商材</button>
+      <button id="cl-tab-btn-appeal-axes" onclick="switchClientTab('appeal-axes')" style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer">訴求軸</button>
     </div>
-    <div class="form-row">
+
+    <!-- 基本情報タブ -->
+    <div id="cl-tab-info">
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label class="form-label">クライアント名 <span style="color:#E24B4A">*</span></label>
+          <input class="form-input" id="cl-name" placeholder="例：あるる">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label">略称（英3文字） <span style="color:#E24B4A">*</span></label>
+          <input class="form-input" id="cl-code" placeholder="例：ARU" maxlength="3" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">案件登録日（任意）</label>
+          <input class="form-input" type="date" id="cl-sales-start">
+        </div>
+        <div class="form-group">
+          <label class="form-label">ステータス</label>
+          <select class="form-select" id="cl-status">
+            <option value="提案中">提案中</option>
+            <option value="進行中">進行中</option>
+            <option value="クライアント取引終了">クライアント取引終了</option>
+          </select>
+        </div>
+      </div>
       <div class="form-group">
-        <label class="form-label">案件登録日（任意）</label>
-        <input class="form-input" type="date" id="cl-sales-start">
+        <label class="form-label">備考（任意）</label>
+        <input class="form-input" id="cl-note" placeholder="例：洗濯機の分解洗浄会社様">
       </div>
-      <div class="form-group">
-        <label class="form-label">ステータス</label>
-        <select class="form-select" id="cl-status">
-          <option value="提案中">提案中</option>
-          <option value="進行中">進行中</option>
-          <option value="クライアント取引終了">クライアント取引終了</option>
-        </select>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+        <button class="btn" onclick="closeModal('modal-client')">キャンセル</button>
+        <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
       </div>
     </div>
-    <div class="form-group">
-      <label class="form-label">備考（任意）</label>
-      <input class="form-input" id="cl-note" placeholder="例：洗濯機の分解洗浄会社様">
+
+    <!-- 商材タブ -->
+    <div id="cl-tab-products" style="display:none">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">このクライアントで使用する商材を登録します。案件は既定でこの一覧を参照します。</div>
+      <div id="cl-products-list"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--border)">
+        <input class="form-input" id="cl-prod-code" placeholder="コード (例: SV)" style="width:90px">
+        <input class="form-input" id="cl-prod-name" placeholder="名称 (例: VE20)" style="flex:1">
+        <input class="form-input" id="cl-prod-note" placeholder="備考" style="flex:1">
+        <button class="btn-primary" style="white-space:nowrap" onclick="addClientProduct()">追加</button>
+      </div>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn" onclick="closeModal('modal-client')">キャンセル</button>
-      <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
+
+    <!-- 訴求軸タブ -->
+    <div id="cl-tab-appeal-axes" style="display:none">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">このクライアントで使用する訴求軸を登録します。案件は既定でこの一覧を参照します。</div>
+      <div id="cl-axes-list"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--border)">
+        <input class="form-input" id="cl-axis-code" placeholder="コード (例: ap001)" style="width:90px">
+        <input class="form-input" id="cl-axis-name" placeholder="名称 (例: UGC風)" style="flex:1">
+        <input class="form-input" id="cl-axis-note" placeholder="備考" style="flex:1">
+        <button class="btn-primary" style="white-space:nowrap" onclick="addClientAxis()">追加</button>
+      </div>
     </div>
   </div>
 </div>
@@ -992,6 +1028,71 @@ tr.row-help td{background:#FFFBF2}
       <label class="form-label">管理者メモ（任意）</label>
       <textarea class="form-input" id="p-admin-note" rows="2" placeholder="社内向けの備考など" style="resize:vertical"></textarea>
     </div>
+    <!-- 商材・訴求軸 同期スイッチ（編集時のみ表示） -->
+    <div id="p-sync-section" style="display:none;margin:16px 0 8px">
+      <div style="font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.08em;border-bottom:0.5px solid var(--border);padding-bottom:6px;margin-bottom:12px">商材・訴求軸の参照先</div>
+      <!-- 商材スイッチ -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:500">商材</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px" id="p-sync-products-desc">クライアントの商材マスターを参照します</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap">
+          <span style="font-size:12px;color:var(--text-muted)">独自設定</span>
+          <div class="toggle-switch" onclick="toggleProjectSync('products')">
+            <input type="checkbox" id="p-sync-products" style="display:none">
+            <div id="p-sync-products-track" style="width:40px;height:22px;border-radius:11px;background:#ccc;position:relative;transition:background .2s;cursor:pointer">
+              <div id="p-sync-products-thumb" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 4px rgba(0,0,0,0.2)"></div>
+            </div>
+          </div>
+        </label>
+      </div>
+      <!-- 独自商材リスト（独自設定ON時） -->
+      <div id="p-products-override" style="display:none;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;color:var(--text-muted)">案件独自の商材</span>
+          <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-products-list"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border)">
+          <input class="form-input" id="pp-code" placeholder="コード" style="width:80px">
+          <input class="form-input" id="pp-name" placeholder="名称" style="flex:1">
+          <input class="form-input" id="pp-note" placeholder="備考" style="flex:1">
+          <button class="btn-primary" style="white-space:nowrap" onclick="addProjectProduct()">追加</button>
+        </div>
+      </div>
+      <!-- 訴求軸スイッチ -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:500">訴求軸</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px" id="p-sync-axes-desc">クライアントの訴求軸マスターを参照します</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap">
+          <span style="font-size:12px;color:var(--text-muted)">独自設定</span>
+          <div class="toggle-switch" onclick="toggleProjectSync('axes')">
+            <input type="checkbox" id="p-sync-axes" style="display:none">
+            <div id="p-sync-axes-track" style="width:40px;height:22px;border-radius:11px;background:#ccc;position:relative;transition:background .2s;cursor:pointer">
+              <div id="p-sync-axes-thumb" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 4px rgba(0,0,0,0.2)"></div>
+            </div>
+          </div>
+        </label>
+      </div>
+      <!-- 独自訴求軸リスト（独自設定ON時） -->
+      <div id="p-axes-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;color:var(--text-muted)">案件独自の訴求軸</span>
+          <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-axes-list"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border)">
+          <input class="form-input" id="pa-code" placeholder="コード" style="width:80px">
+          <input class="form-input" id="pa-name" placeholder="名称" style="flex:1">
+          <input class="form-input" id="pa-note" placeholder="備考" style="flex:1">
+          <button class="btn-primary" style="white-space:nowrap" onclick="addProjectAxis()">追加</button>
+        </div>
+      </div>
+    </div>
+
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);cursor:pointer">
         <input type="checkbox" id="p-is-hidden" style="width:15px;height:15px">
@@ -1005,13 +1106,121 @@ tr.row-help td{background:#FFFBF2}
   </div>
 </div>
 
+<!-- マスター管理ページ -->
+<div id="page-master" class="page">
+  <div class="toolbar" style="position:sticky;top:80px;z-index:99">
+    <div class="toolbar-row">
+      <span style="font-size:14px;font-weight:600;color:var(--text)">マスター管理</span>
+      <span style="font-size:13px;color:var(--text-muted)">区分を選択して値を管理します</span>
+    </div>
+  </div>
+  <div style="padding:20px">
+    <div id="master-content"><div class="loading">読み込み中...</div></div>
+  </div>
+</div>
+
+<!-- クリエイティブ詳細モーダル -->
+<div class="modal-overlay" id="modal-creative-detail">
+  <div class="modal" style="width:720px;max-width:95vw">
+    <div class="modal-title">
+      クリエイティブ詳細
+      <button class="modal-close" onclick="closeModal('modal-creative-detail')">×</button>
+    </div>
+
+    <!-- 基本情報バナー -->
+    <div style="background:var(--em-pale);border-radius:10px;padding:14px 18px;margin-bottom:20px">
+      <div style="font-size:15px;font-weight:600;color:var(--text);font-family:monospace;margin-bottom:8px" id="cd-filename"></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
+        <span id="cd-status-chip"></span>
+        <span style="color:var(--text-muted)" id="cd-project-name"></span>
+        <span style="color:var(--text-muted)" id="cd-assignee"></span>
+      </div>
+    </div>
+
+    <!-- URL セクション -->
+    <div class="form-row" style="margin-bottom:16px">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">台本URL</label>
+        <div style="display:flex;gap:6px">
+          <input class="form-input" id="cd-script-url" placeholder="https://...">
+          <button class="btn" id="cd-script-open" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 12px">開く</button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Frame.io URL</label>
+        <div style="display:flex;gap:6px">
+          <input class="form-input" id="cd-frameio-url" placeholder="https://...">
+          <button class="btn" onclick="openLink('cd-frameio-url')" style="white-space:nowrap;padding:8px 12px">開く</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- コメントセクション -->
+    <div class="form-row" style="margin-bottom:20px">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">ディレクターコメント</label>
+        <textarea class="form-input" id="cd-director-comment" rows="5" style="resize:vertical" placeholder="ディレクターからのフィードバックを入力..."></textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">クライアントコメント</label>
+        <textarea class="form-input" id="cd-client-comment" rows="5" style="resize:vertical" placeholder="クライアントからのフィードバックを入力..."></textarea>
+      </div>
+    </div>
+
+    <!-- アップロードセクション -->
+    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
+
+      <div id="cd-drive-warning" style="display:none;background:#FFF3F3;border:0.5px solid #F09595;border-radius:8px;padding:10px 12px;font-size:12px;color:#A32D2D;margin-bottom:12px">
+        この案件にGoogleドライブフォルダが設定されていません。案件編集からフォルダURLを設定してください。
+      </div>
+
+      <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:0">
+        ファイルを選択（動画・画像）
+        <input type="file" id="cd-upload-input" style="display:none" accept="video/*,image/*" onchange="handleUploadFileSelect(this)">
+      </label>
+
+      <div id="cd-upload-preview" style="display:none;margin-top:14px">
+        <div style="background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px">
+          <div style="margin-bottom:6px"><span style="color:var(--text-muted)">検出サイズ：</span><span id="cd-detected-size" style="font-weight:500;color:var(--text)"></span></div>
+          <div><span style="color:var(--text-muted)">生成ファイル名：</span><span id="cd-generated-filename" style="font-weight:600;color:var(--em-dark);font-family:monospace;font-size:12px"></span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <label class="form-label" style="margin:0;white-space:nowrap">バージョン</label>
+          <input class="form-input" id="cd-version-num" type="number" min="1" value="1" style="width:72px" oninput="updateGeneratedFilename()">
+          <span style="font-size:12px;color:var(--text-muted)">v1=初稿、v2=1回目修正…</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="btn-primary" onclick="executeUpload()">Googleドライブにアップロード</button>
+          <span id="cd-upload-status" style="font-size:13px"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- アップロード済みファイル一覧 -->
+    <div id="cd-files-section" style="display:none;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">アップロード済みファイル</div>
+      <div id="cd-files-list"></div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
+      <button class="btn-primary" onclick="saveCreativeDetail()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = '/api/haruka';
+// HTML エスケープ（テンプレートリテラル内で使用）
+function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [], allSlackWorkspaces = [];
 let currentClient = 'all', currentView = 'all', searchText = '';
 let selectedCreativeId = null;
+let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
+let uploadFileData = null;          // { file, width, height }
 
 async function init() {
   try {
@@ -1229,6 +1438,10 @@ function openEditClient(id) {
   document.getElementById('cl-sales-start').value = c.sales_start_date ? c.sales_start_date.slice(0,10) : '';
   document.getElementById('cl-status').value = c.status || '提案中';
   document.getElementById('cl-submit-btn').textContent = '保存する';
+  // 商材・訴求軸タブを表示（編集時のみ）
+  document.getElementById('cl-tab-btn-products').style.display = '';
+  document.getElementById('cl-tab-btn-appeal-axes').style.display = '';
+  switchClientTab('info');
   openModal('modal-client');
 }
 
@@ -1241,6 +1454,10 @@ function openNewClientModal() {
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
   document.getElementById('cl-submit-btn').textContent = '追加する';
+  // 新規追加時は商材・訴求軸タブを非表示（クライアント保存後に編集で利用）
+  document.getElementById('cl-tab-btn-products').style.display = 'none';
+  document.getElementById('cl-tab-btn-appeal-axes').style.display = 'none';
+  switchClientTab('info');
   openModal('modal-client');
 }
 
@@ -1268,12 +1485,190 @@ async function submitClient() {
   btn.textContent = origText; btn.disabled = false;
 
   if (res.ok) {
-    closeModal('modal-client');
+    const saved = await res.json();
     await loadProjects();
+    if (!isEdit) {
+      // 新規作成後：IDをセットして商材・訴求軸タブを開放（モーダルは閉じない）
+      document.getElementById('cl-id').value = saved.id;
+      document.getElementById('cl-submit-btn').textContent = '保存する';
+      document.getElementById('cl-tab-btn-products').style.display = '';
+      document.getElementById('cl-tab-btn-appeal-axes').style.display = '';
+    } else {
+      closeModal('modal-client');
+    }
   } else {
     const e = await res.json();
     alert('エラー: ' + e.error);
   }
+}
+
+// ===== クライアントモーダル タブ =====
+let currentClientTab = 'info';
+
+function switchClientTab(tab) {
+  currentClientTab = tab;
+  const tabs = ['info', 'products', 'appeal-axes'];
+  tabs.forEach(t => {
+    const panel = document.getElementById(`cl-tab-${t}`);
+    const btn   = document.getElementById(`cl-tab-btn-${t}`);
+    if (!panel || !btn) return;
+    const active = t === tab;
+    panel.style.display = active ? '' : 'none';
+    btn.style.color        = active ? 'var(--em-dark)' : 'var(--text-muted)';
+    btn.style.fontWeight   = active ? '500' : '';
+    btn.style.borderBottom = active ? '2px solid var(--em)' : '2px solid transparent';
+  });
+  const clientId = document.getElementById('cl-id').value;
+  if (clientId) {
+    if (tab === 'products')    renderClientProducts(clientId);
+    if (tab === 'appeal-axes') renderClientAxes(clientId);
+  }
+}
+
+async function renderClientProducts(clientId) {
+  const el = document.getElementById('cl-products-list');
+  el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">読み込み中...</div>';
+  const res = await fetch(`${API}/clients/${clientId}/products`);
+  if (!res.ok) { el.innerHTML = '<div style="font-size:13px;color:#E24B4A">取得失敗</div>'; return; }
+  const list = await res.json();
+  if (!list.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">商材が登録されていません</div>'; return; }
+  el.innerHTML = list.map(p => `
+    <div id="cprow-${p.id}" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span id="cprow-view-${p.id}" style="flex:1;display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;font-weight:600;color:var(--em-dark);background:var(--em-pale);padding:2px 8px;border-radius:6px;min-width:50px;text-align:center">${esc(p.code)}</span>
+        <span style="font-size:13px">${esc(p.name)}</span>
+        ${p.note ? `<span style="font-size:12px;color:var(--text-muted)">${esc(p.note)}</span>` : ''}
+      </span>
+      <span id="cprow-edit-${p.id}" style="display:none;flex:1;display:none;gap:6px;align-items:center">
+        <input id="cprow-code-${p.id}" class="form-input" value="${esc(p.code)}" style="width:70px">
+        <input id="cprow-name-${p.id}" class="form-input" value="${esc(p.name)}" style="flex:1">
+        <input id="cprow-note-${p.id}" class="form-input" value="${esc(p.note||'')}" style="flex:1" placeholder="備考">
+      </span>
+      <button class="btn-sm" onclick="startEditClientProduct('${p.id}')">編集</button>
+      <button class="btn-sm" id="cprow-save-btn-${p.id}" style="display:none" onclick="saveClientProduct('${clientId}','${p.id}')">保存</button>
+      <button class="btn-sm" style="color:#E24B4A" onclick="deleteClientProduct('${clientId}','${p.id}')">削除</button>
+    </div>`).join('');
+}
+
+function startEditClientProduct(pid) {
+  document.getElementById(`cprow-view-${pid}`).style.display = 'none';
+  const editRow = document.getElementById(`cprow-edit-${pid}`);
+  editRow.style.display = 'flex';
+  document.getElementById(`cprow-save-btn-${pid}`).style.display = '';
+}
+
+async function saveClientProduct(clientId, pid) {
+  const code = document.getElementById(`cprow-code-${pid}`).value.trim();
+  const name = document.getElementById(`cprow-name-${pid}`).value.trim();
+  const note = document.getElementById(`cprow-note-${pid}`).value.trim();
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note || null })
+  });
+  if (res.ok) { renderClientProducts(clientId); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteClientProduct(clientId, pid) {
+  if (!confirm('この商材を削除しますか？')) return;
+  const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, { method: 'DELETE' });
+  if (res.ok) { renderClientProducts(clientId); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function addClientProduct() {
+  const clientId = document.getElementById('cl-id').value;
+  if (!clientId) { alert('先にクライアントを保存してください'); return; }
+  const code = document.getElementById('cl-prod-code').value.trim();
+  const name = document.getElementById('cl-prod-name').value.trim();
+  const note = document.getElementById('cl-prod-note').value.trim();
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/clients/${clientId}/products`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note || null })
+  });
+  if (res.ok) {
+    document.getElementById('cl-prod-code').value = '';
+    document.getElementById('cl-prod-name').value = '';
+    document.getElementById('cl-prod-note').value = '';
+    renderClientProducts(clientId);
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function renderClientAxes(clientId) {
+  const el = document.getElementById('cl-axes-list');
+  el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">読み込み中...</div>';
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`);
+  if (!res.ok) { el.innerHTML = '<div style="font-size:13px;color:#E24B4A">取得失敗</div>'; return; }
+  const list = await res.json();
+  if (!list.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">訴求軸が登録されていません</div>'; return; }
+  el.innerHTML = list.map(a => `
+    <div id="carow-${a.id}" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span id="carow-view-${a.id}" style="flex:1;display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;font-weight:600;color:var(--em-dark);background:var(--em-pale);padding:2px 8px;border-radius:6px;min-width:50px;text-align:center">${esc(a.code)}</span>
+        <span style="font-size:13px">${esc(a.name)}</span>
+        ${a.note ? `<span style="font-size:12px;color:var(--text-muted)">${esc(a.note)}</span>` : ''}
+      </span>
+      <span id="carow-edit-${a.id}" style="display:none;flex:1;gap:6px;align-items:center">
+        <input id="carow-code-${a.id}" class="form-input" value="${esc(a.code)}" style="width:70px">
+        <input id="carow-name-${a.id}" class="form-input" value="${esc(a.name)}" style="flex:1">
+        <input id="carow-note-${a.id}" class="form-input" value="${esc(a.note||'')}" style="flex:1" placeholder="備考">
+      </span>
+      <button class="btn-sm" onclick="startEditClientAxis('${a.id}')">編集</button>
+      <button class="btn-sm" id="carow-save-btn-${a.id}" style="display:none" onclick="saveClientAxis('${clientId}','${a.id}')">保存</button>
+      <button class="btn-sm" style="color:#E24B4A" onclick="deleteClientAxis('${clientId}','${a.id}')">削除</button>
+    </div>`).join('');
+}
+
+function startEditClientAxis(aid) {
+  document.getElementById(`carow-view-${aid}`).style.display = 'none';
+  const editRow = document.getElementById(`carow-edit-${aid}`);
+  editRow.style.display = 'flex';
+  document.getElementById(`carow-save-btn-${aid}`).style.display = '';
+}
+
+async function saveClientAxis(clientId, aid) {
+  const code = document.getElementById(`carow-code-${aid}`).value.trim();
+  const name = document.getElementById(`carow-name-${aid}`).value.trim();
+  const note = document.getElementById(`carow-note-${aid}`).value.trim();
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note || null })
+  });
+  if (res.ok) { renderClientAxes(clientId); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteClientAxis(clientId, aid) {
+  if (!confirm('この訴求軸を削除しますか？')) return;
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, { method: 'DELETE' });
+  if (res.ok) { renderClientAxes(clientId); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function addClientAxis() {
+  const clientId = document.getElementById('cl-id').value;
+  if (!clientId) { alert('先にクライアントを保存してください'); return; }
+  const code = document.getElementById('cl-axis-code').value.trim();
+  const name = document.getElementById('cl-axis-name').value.trim();
+  const note = document.getElementById('cl-axis-note').value.trim();
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note || null })
+  });
+  if (res.ok) {
+    document.getElementById('cl-axis-code').value = '';
+    document.getElementById('cl-axis-name').value = '';
+    document.getElementById('cl-axis-note').value = '';
+    renderClientAxes(clientId);
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
 // チーム
@@ -1417,7 +1812,7 @@ function renderCreatives() {
 
     return `<tr class="${isLate?'row-late':''} ${c.help_flag?'row-help':''}" data-id="${c.id}">
       <td><span class="proj-tag" style="background:var(--em-pale);color:var(--em-dark)" title="${clientName}">${clientName.slice(0,3)}</span></td>
-      <td style="font-size:14px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis">${c.file_name}</td>
+      <td style="font-size:14px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted" onclick="openCreativeDetail('${c.id}')" title="詳細を開く">${c.file_name}</td>
       <td style="font-size:14px;font-weight:500">${editorName}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
@@ -1431,7 +1826,10 @@ function renderCreatives() {
       </td>
       <td>${isLate?'<span class="late-flag">遅れ</span>':''}</td>
       <td><button class="help-flag-btn ${c.help_flag?'on':''}" onclick="toggleHelp('${c.id}',${c.help_flag})">${c.help_flag?'SOS中':'SOS'}</button></td>
-      <td><button class="btn-sm" onclick="openStatusModal('${c.id}','${c.file_name}','${c.status}')">更新</button></td>
+      <td style="white-space:nowrap">
+        <button class="btn-sm" onclick="openCreativeDetail('${c.id}')" style="margin-right:4px">詳細</button>
+        <button class="btn-sm" onclick="openStatusModal('${c.id}','${c.file_name}','${c.status}')">更新</button>
+      </td>
     </tr>`;
 
   }).join('');
@@ -2064,6 +2462,9 @@ function applyRoleBasedUI() {
   // メンバー追加ボタンの表示制御
   const addMemberBtn = document.querySelector('#page-members .btn-primary');
   if (addMemberBtn) addMemberBtn.style.display = isEffectiveAdmin() ? '' : 'none';
+  // マスター管理ナビは管理者のみ
+  const masterNav = document.getElementById('nav-master');
+  if (masterNav) masterNav.style.display = isEffectiveAdmin() ? '' : 'none';
 }
 
 const ROLE_RANK = { admin:6, producer:5, producer_director:4, director:3, designer:2, editor:1 };
@@ -2140,6 +2541,8 @@ function openProjectModal(preClientId) {
   document.getElementById('p-slack-channel-id').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
+  // 新規作成時はsyncセクション非表示（案件保存後に編集で利用）
+  document.getElementById('p-sync-section').style.display = 'none';
   openModal('modal-project');
 }
 
@@ -2184,7 +2587,159 @@ function openEditProject(p) {
   document.getElementById('p-slack-channel-id').value = p.slack_channel_id || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
+
+  // 商材・訴求軸 sync セクション
+  document.getElementById('p-sync-section').style.display = '';
+  // sync_products: true = クライアント参照（トグルOFF）、false = 独自設定（トグルON）
+  const syncProductsOff = p.sync_products === false;
+  const syncAxesOff     = p.sync_axes === false || p.sync_appeal_axes === false;
+  setProjectSyncUI('products', syncProductsOff);
+  setProjectSyncUI('axes', syncAxesOff);
+  if (syncProductsOff) renderProjectProducts(p.id);
+  if (syncAxesOff)     renderProjectAxes(p.id);
+
   openModal('modal-project');
+}
+
+// ===== 案件モーダル 商材・訴求軸 sync =====
+function setProjectSyncUI(type, isOverride) {
+  // isOverride=true → トグルON（独自設定）、false → トグルOFF（クライアント参照）
+  const trackId = `p-sync-${type}-track`;
+  const thumbId = `p-sync-${type}-thumb`;
+  const descId  = `p-sync-${type}-desc`;
+  const overrideId = type === 'products' ? 'p-products-override' : 'p-axes-override';
+  const track = document.getElementById(trackId);
+  const thumb = document.getElementById(thumbId);
+  const desc  = document.getElementById(descId);
+  const overrideEl = document.getElementById(overrideId);
+  if (!track) return;
+  if (isOverride) {
+    track.style.background = 'var(--em)';
+    thumb.style.left = '20px';
+    desc.textContent = '案件独自の設定を使用します';
+    overrideEl.style.display = '';
+  } else {
+    track.style.background = '#ccc';
+    thumb.style.left = '2px';
+    desc.textContent = type === 'products' ? 'クライアントの商材マスターを参照します' : 'クライアントの訴求軸マスターを参照します';
+    overrideEl.style.display = 'none';
+  }
+}
+
+async function toggleProjectSync(type) {
+  const overrideId = type === 'products' ? 'p-products-override' : 'p-axes-override';
+  const currentlyHidden = document.getElementById(overrideId).style.display === 'none';
+  const newIsOverride = currentlyHidden; // 現在非表示 → ONにする
+  setProjectSyncUI(type, newIsOverride);
+  const projectId = document.getElementById('p-id').value;
+  if (projectId && newIsOverride) {
+    if (type === 'products') renderProjectProducts(projectId);
+    else                     renderProjectAxes(projectId);
+  }
+}
+
+async function renderProjectProducts(projectId) {
+  const el = document.getElementById('p-products-list');
+  el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">読み込み中...</div>';
+  const res = await fetch(`${API}/projects/${projectId}/products`);
+  if (!res.ok) { el.innerHTML = ''; return; }
+  const list = await res.json();
+  if (!list.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">登録なし</div>'; return; }
+  el.innerHTML = list.map(p => `
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+      <span style="font-size:11px;font-weight:600;color:var(--em-dark);background:var(--em-pale);padding:1px 7px;border-radius:5px;min-width:44px;text-align:center">${esc(p.code)}</span>
+      <span style="font-size:13px;flex:1">${esc(p.name)}</span>
+      ${p.note ? `<span style="font-size:11px;color:var(--text-muted)">${esc(p.note)}</span>` : ''}
+      <button class="btn-sm" style="color:#E24B4A;padding:2px 8px" onclick="deleteProjectProduct('${projectId}','${p.id}')">削除</button>
+    </div>`).join('');
+}
+
+async function renderProjectAxes(projectId) {
+  const el = document.getElementById('p-axes-list');
+  el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">読み込み中...</div>';
+  const res = await fetch(`${API}/projects/${projectId}/appeal-axes`);
+  if (!res.ok) { el.innerHTML = ''; return; }
+  const list = await res.json();
+  if (!list.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">登録なし</div>'; return; }
+  el.innerHTML = list.map(a => `
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+      <span style="font-size:11px;font-weight:600;color:var(--em-dark);background:var(--em-pale);padding:1px 7px;border-radius:5px;min-width:44px;text-align:center">${esc(a.code)}</span>
+      <span style="font-size:13px;flex:1">${esc(a.name)}</span>
+      ${a.note ? `<span style="font-size:11px;color:var(--text-muted)">${esc(a.note)}</span>` : ''}
+      <button class="btn-sm" style="color:#E24B4A;padding:2px 8px" onclick="deleteProjectAxis('${projectId}','${a.id}')">削除</button>
+    </div>`).join('');
+}
+
+async function addProjectProduct() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) { alert('先に案件を保存してください'); return; }
+  const code = document.getElementById('pp-code').value.trim();
+  const name = document.getElementById('pp-name').value.trim();
+  const note = document.getElementById('pp-note').value.trim();
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/projects/${projectId}/products`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note || null })
+  });
+  if (res.ok) {
+    document.getElementById('pp-code').value = '';
+    document.getElementById('pp-name').value = '';
+    document.getElementById('pp-note').value = '';
+    renderProjectProducts(projectId);
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteProjectProduct(projectId, pid) {
+  if (!confirm('削除しますか？')) return;
+  const res = await fetch(`${API}/projects/${projectId}/products/${pid}`, { method: 'DELETE' });
+  if (res.ok) renderProjectProducts(projectId);
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function addProjectAxis() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) { alert('先に案件を保存してください'); return; }
+  const code = document.getElementById('pa-code').value.trim();
+  const name = document.getElementById('pa-name').value.trim();
+  const note = document.getElementById('pa-note').value.trim();
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/projects/${projectId}/appeal-axes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note || null })
+  });
+  if (res.ok) {
+    document.getElementById('pa-code').value = '';
+    document.getElementById('pa-name').value = '';
+    document.getElementById('pa-note').value = '';
+    renderProjectAxes(projectId);
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteProjectAxis(projectId, aid) {
+  if (!confirm('削除しますか？')) return;
+  const res = await fetch(`${API}/projects/${projectId}/appeal-axes/${aid}`, { method: 'DELETE' });
+  if (res.ok) renderProjectAxes(projectId);
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function copyProductsFromClient() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  if (!confirm('クライアントの商材をこの案件にコピーします。既存の案件独自商材は削除されます。')) return;
+  const res = await fetch(`${API}/projects/${projectId}/products/copy-from-client`, { method: 'POST' });
+  if (res.ok) renderProjectProducts(projectId);
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function copyAxesFromClient() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  if (!confirm('クライアントの訴求軸をこの案件にコピーします。既存の案件独自訴求軸は削除されます。')) return;
+  const res = await fetch(`${API}/projects/${projectId}/appeal-axes/copy-from-client`, { method: 'POST' });
+  if (res.ok) renderProjectAxes(projectId);
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
 async function toggleHideProject(id, current) {
@@ -2212,6 +2767,14 @@ async function submitProject() {
   const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
+  // sync: trueがクライアント参照(デフォルト)、falseが独自設定
+  const syncSection = document.getElementById('p-sync-section');
+  const sync_products = syncSection.style.display !== 'none'
+    ? document.getElementById('p-products-override').style.display === 'none'
+    : true;
+  const sync_appeal_axes = syncSection.style.display !== 'none'
+    ? document.getElementById('p-axes-override').style.display === 'none'
+    : true;
 
   if (!client_id || !name) { alert('クライアントと案件名は必須です'); return; }
 
@@ -2223,7 +2786,7 @@ async function submitProject() {
   const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, chatwork_room_id, slack_workspace_id, slack_channel_id, admin_note, is_hidden })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, chatwork_room_id, slack_workspace_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -2247,6 +2810,7 @@ function showPage(name, btn) {
   if(name==='members') loadMembers();
   if(name==='teams') loadTeams();
   if(name==='invoices') loadInvoices();
+  if(name==='master') loadMasterPage();
 }
 
 // ==================== ダッシュボード ====================
@@ -2718,6 +3282,398 @@ async function onTeamChange(teamId) {
   sel.innerHTML += members.map(m =>
     `<option value="${m.id}">${m.full_name}（${m.rank || '-'}ランク）</option>`
   ).join('');
+}
+
+// ===== 汎用マスター管理 =====
+
+let masterCategories = [];
+let masterItems = [];
+let currentCategoryId = null;
+let masterItemEditingId = null;
+let masterCatEditingId = null;
+
+async function loadMasterPage() {
+  const [catRes, itemRes] = await Promise.all([
+    fetch(`${API}/master/categories`),
+    fetch(`${API}/master/items`),
+  ]);
+  masterCategories = await catRes.json();
+  masterItems      = await itemRes.json();
+  renderMasterPage();
+}
+
+function renderMasterPage() {
+  const content = document.getElementById('master-content');
+  const now = new Date();
+
+  // 左列：区分リスト
+  const catRows = masterCategories.map(cat => {
+    const isSelected = currentCategoryId === cat.id;
+    const count = masterItems.filter(i => i.category_id === cat.id).length;
+    if (masterCatEditingId === cat.id) {
+      return `<div style="padding:10px 14px;background:var(--em-pale);border-bottom:0.5px solid var(--border)">
+        <input class="form-input" id="mce-name" value="${cat.name}" style="margin-bottom:6px">
+        <input class="form-input" id="mce-code" value="${cat.code}" placeholder="英数字コード" style="margin-bottom:6px">
+        <div style="display:flex;gap:6px">
+          <button class="btn-primary" style="font-size:12px;padding:4px 12px" onclick="saveCatEdit('${cat.id}')">保存</button>
+          <button class="btn" style="font-size:12px;padding:4px 10px" onclick="masterCatEditingId=null;renderMasterPage()">取消</button>
+        </div>
+      </div>`;
+    }
+    return `<div onclick="selectMasterCategory('${cat.id}')" style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border-light);${isSelected?'background:var(--em-pale);font-weight:600;color:var(--em-dark)':''}${!cat.is_active?';opacity:0.4':''}">
+      <span style="font-size:14px">${cat.name}</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;background:var(--em-pale);color:var(--em-dark);padding:2px 7px;border-radius:8px">${count}</span>
+        <button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="event.stopPropagation();masterCatEditingId='${cat.id}';renderMasterPage()">編集</button>
+        <button class="btn-sm" style="font-size:11px;padding:2px 8px;color:#A32D2D;border-color:#F09595" onclick="event.stopPropagation();deleteMasterCat('${cat.id}')">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const catAddForm = `<div style="padding:10px 14px;background:var(--surface);border-top:0.5px solid var(--border)">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:500">区分を追加</div>
+    <input class="form-input" id="mca-name" placeholder="区分名" style="margin-bottom:6px">
+    <input class="form-input" id="mca-code" placeholder="コード (英数字)" style="margin-bottom:6px">
+    <button class="btn-primary" style="font-size:12px;padding:5px 14px;width:100%" onclick="addMasterCat()">追加</button>
+  </div>`;
+
+  // 右列：値一覧
+  const filteredItems = currentCategoryId
+    ? masterItems.filter(i => i.category_id === currentCategoryId)
+    : [];
+  const catName = masterCategories.find(c => c.id === currentCategoryId)?.name || '';
+
+  const itemRows = filteredItems.map(item => {
+    const expired  = item.expires_at && new Date(item.expires_at) <= now;
+    const inactive = !item.is_active;
+    const dimmed   = expired || inactive;
+    const expLabel = item.expires_at
+      ? new Date(item.expires_at).toLocaleDateString('ja-JP', {year:'numeric',month:'numeric',day:'numeric'})
+      : '無期限';
+    const expClass = expired ? 'style="color:#E24B4A;font-weight:500"' : 'style="color:var(--text-muted)"';
+
+    if (masterItemEditingId === item.id) {
+      return `<tr style="background:var(--em-pale)">
+        <td><input class="form-input" id="mie-code" value="${item.code}" style="width:90px"></td>
+        <td><input class="form-input" id="mie-name" value="${item.name}" style="width:140px"></td>
+        <td><input class="form-input" id="mie-note" value="${item.note||''}" placeholder="備考" style="width:120px"></td>
+        <td><input class="form-input" id="mie-sort" type="number" value="${item.sort_order}" style="width:55px"></td>
+        <td>
+          <select class="form-select" id="mie-active" style="width:70px">
+            <option value="true"  ${item.is_active?'selected':''}>有効</option>
+            <option value="false" ${!item.is_active?'selected':''}>無効</option>
+          </select>
+        </td>
+        <td><input class="form-input" id="mie-expires" type="date" value="${item.expires_at?item.expires_at.slice(0,10):''}" style="width:130px"></td>
+        <td style="white-space:nowrap">
+          <button class="btn-primary" style="font-size:12px;padding:4px 10px" onclick="saveMasterItemEdit('${item.id}')">保存</button>
+          <button class="btn" style="font-size:12px;padding:4px 8px;margin-left:4px" onclick="masterItemEditingId=null;renderMasterPage()">取消</button>
+        </td>
+      </tr>`;
+    }
+
+    return `<tr style="${dimmed?'opacity:0.45':''}">
+      <td><code style="font-size:12px;background:var(--em-pale);padding:2px 8px;border-radius:5px;color:var(--em-dark)">${item.code}</code></td>
+      <td style="font-size:14px;font-weight:500">${item.name}</td>
+      <td style="font-size:13px;color:var(--text-muted)">${item.note||'-'}</td>
+      <td style="font-size:13px;color:var(--text-muted)">${item.sort_order}</td>
+      <td><span class="status-chip ${item.is_active?'s-teal':'s-gray'}">${item.is_active?'有効':'無効'}</span></td>
+      <td ${expClass}>${expLabel}${expired?' ⚠':''}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-sm" onclick="masterItemEditingId='${item.id}';renderMasterPage()">編集</button>
+        <button class="btn-sm" style="color:#A32D2D;border-color:#F09595;margin-left:4px" onclick="deleteMasterItem('${item.id}')">削除</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const itemAddForm = currentCategoryId ? `<tr style="background:var(--surface)">
+    <td><input class="form-input" id="mia-code" placeholder="コード" style="width:90px"></td>
+    <td><input class="form-input" id="mia-name" placeholder="名称" style="width:140px"></td>
+    <td><input class="form-input" id="mia-note" placeholder="備考" style="width:120px"></td>
+    <td><input class="form-input" id="mia-sort" type="number" value="0" style="width:55px"></td>
+    <td>-</td>
+    <td><input class="form-input" id="mia-expires" type="date" placeholder="有効期限（任意）" style="width:130px"></td>
+    <td><button class="btn-primary" style="font-size:12px;padding:5px 12px" onclick="addMasterItem()">追加</button></td>
+  </tr>` : '';
+
+  const rightPanel = currentCategoryId ? `
+    <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:14px">${catName} <span style="font-size:13px;font-weight:400;color:var(--text-muted)">${filteredItems.length}件</span></div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:var(--em-pale)">
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">コード</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">名称</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">備考</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">順</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">状態</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">有効期限</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);font-weight:500">操作</th>
+        </tr></thead>
+        <tbody>${itemRows}${itemAddForm}</tbody>
+      </table>
+    </div>
+  ` : `<div style="color:var(--text-muted);font-size:14px;padding:40px 0;text-align:center">左の区分を選択してください</div>`;
+
+  content.innerHTML = `
+    <div style="display:grid;grid-template-columns:260px 1fr;gap:16px;align-items:start">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:8px">区分マスター</div>
+        <div class="card" style="padding:0;overflow:hidden">
+          ${catRows}
+          ${catAddForm}
+        </div>
+      </div>
+      <div>${rightPanel}</div>
+    </div>`;
+}
+
+function selectMasterCategory(id) {
+  currentCategoryId = id;
+  masterItemEditingId = null;
+  renderMasterPage();
+}
+
+async function addMasterCat() {
+  const name = document.getElementById('mca-name').value.trim();
+  const code = document.getElementById('mca-code').value.trim();
+  if (!name || !code) { alert('名称とコードは必須です'); return; }
+  const res = await fetch(`${API}/master/categories`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name, code })
+  });
+  if (res.ok) { await loadMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function saveCatEdit(id) {
+  const name = document.getElementById('mce-name').value.trim();
+  const code = document.getElementById('mce-code').value.trim();
+  const res = await fetch(`${API}/master/categories/${id}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name, code, is_active: true })
+  });
+  if (res.ok) { masterCatEditingId = null; await loadMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteMasterCat(id) {
+  if (!confirm('この区分とその値をすべて削除しますか？')) return;
+  const res = await fetch(`${API}/master/categories/${id}`, { method: 'DELETE' });
+  if (res.ok) {
+    if (currentCategoryId === id) currentCategoryId = null;
+    await loadMasterPage();
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function addMasterItem() {
+  if (!currentCategoryId) return;
+  const body = {
+    category_id: currentCategoryId,
+    code:       document.getElementById('mia-code').value.trim(),
+    name:       document.getElementById('mia-name').value.trim(),
+    note:       document.getElementById('mia-note').value.trim() || null,
+    sort_order: parseInt(document.getElementById('mia-sort').value) || 0,
+    expires_at: document.getElementById('mia-expires').value || null,
+  };
+  if (!body.code || !body.name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/master/items`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) { await loadMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function saveMasterItemEdit(id) {
+  const body = {
+    code:       document.getElementById('mie-code').value.trim(),
+    name:       document.getElementById('mie-name').value.trim(),
+    note:       document.getElementById('mie-note').value.trim() || null,
+    sort_order: parseInt(document.getElementById('mie-sort').value) || 0,
+    is_active:  document.getElementById('mie-active').value === 'true',
+    expires_at: document.getElementById('mie-expires').value || null,
+  };
+  const res = await fetch(`${API}/master/items/${id}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) { masterItemEditingId = null; await loadMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteMasterItem(id) {
+  if (!confirm('削除しますか？')) return;
+  const res = await fetch(`${API}/master/items/${id}`, { method: 'DELETE' });
+  if (res.ok) { await loadMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+// ===== クリエイティブ詳細 =====
+
+async function openCreativeDetail(id) {
+  const res = await fetch(`${API}/creatives/${id}`);
+  if (!res.ok) { alert('データの取得に失敗しました'); return; }
+  const c = await res.json();
+  currentCreativeDetail = c;
+
+  // 基本情報
+  document.getElementById('cd-filename').textContent = c.file_name;
+  const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+  document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass(c.status)}">${c.status}</span>`;
+  document.getElementById('cd-project-name').textContent = c.projects?.name || '-';
+  document.getElementById('cd-assignee').textContent = editor?.users?.full_name ? `担当: ${editor.users.full_name}` : '担当者未設定';
+
+  // URL
+  document.getElementById('cd-script-url').value  = c.script_url   || '';
+  document.getElementById('cd-frameio-url').value  = c.frameio_url  || '';
+
+  // コメント
+  document.getElementById('cd-director-comment').value = c.director_comment || '';
+  document.getElementById('cd-client-comment').value   = c.client_comment   || '';
+
+  // アップロードリセット
+  document.getElementById('cd-upload-input').value = '';
+  document.getElementById('cd-upload-preview').style.display = 'none';
+  document.getElementById('cd-upload-status').textContent = '';
+  uploadFileData = null;
+
+  // Drive 未設定の警告
+  const hasDrive = !!(c.projects?.drive_folder_url);
+  document.getElementById('cd-drive-warning').style.display = hasDrive ? 'none' : '';
+
+  // アップロード済みファイル
+  await loadCreativeFiles(id);
+
+  openModal('modal-creative-detail');
+}
+
+async function loadCreativeFiles(creativeId) {
+  const res = await fetch(`${API}/creatives/${creativeId}/files`);
+  if (!res.ok) return;
+  const files = await res.json();
+  const section = document.getElementById('cd-files-section');
+  const list    = document.getElementById('cd-files-list');
+  if (!files.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  list.innerHTML = files.map(f => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;flex-wrap:wrap">
+      <span style="font-family:monospace;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.generated_name}</span>
+      ${f.width && f.height ? `<span style="color:var(--text-muted);white-space:nowrap">${f.width}×${f.height}</span>` : ''}
+      ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:12px;padding:3px 10px;border:0.5px solid var(--em);border-radius:6px;white-space:nowrap">Driveで開く</a>` : '<span style="font-size:12px;color:#B4B2A9">Driveなし</span>'}
+      <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
+    </div>
+  `).join('');
+}
+
+async function handleUploadFileSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const preview = document.getElementById('cd-upload-preview');
+  try {
+    const { width, height } = await detectMediaDimensions(file);
+    uploadFileData = { file, width, height };
+    document.getElementById('cd-detected-size').textContent = `${width} × ${height}`;
+    document.getElementById('cd-version-num').value = 1;
+    preview.style.display = '';
+    updateGeneratedFilename();
+  } catch(e) {
+    alert('サイズを検出できませんでした: ' + e.message);
+    input.value = '';
+  }
+}
+
+function detectMediaDimensions(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    if (file.type.startsWith('video/')) {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve({ width: video.videoWidth, height: video.videoHeight }); };
+      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('動画の読み込みに失敗しました')); };
+      video.src = url;
+    } else if (file.type.startsWith('image/')) {
+      const img = new Image();
+      img.onload  = () => { URL.revokeObjectURL(url); resolve({ width: img.naturalWidth, height: img.naturalHeight }); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像の読み込みに失敗しました')); };
+      img.src = url;
+    } else {
+      URL.revokeObjectURL(url);
+      reject(new Error('対応していないファイル形式です'));
+    }
+  });
+}
+
+function updateGeneratedFilename() {
+  if (!uploadFileData || !currentCreativeDetail) return;
+  const { width, height, file } = uploadFileData;
+  const version  = parseInt(document.getElementById('cd-version-num').value) || 1;
+  const ext      = file.name.split('.').pop().toLowerCase();
+  const baseName = currentCreativeDetail.file_name.replace(/_v\d+$/, '');
+  const generated = `${baseName}_${width}_${height}_v${version}.${ext}`;
+  document.getElementById('cd-generated-filename').textContent = generated;
+}
+
+async function executeUpload() {
+  if (!uploadFileData || !currentCreativeDetail) return;
+  const { file, width, height } = uploadFileData;
+  const version   = parseInt(document.getElementById('cd-version-num').value) || 1;
+  const ext       = file.name.split('.').pop().toLowerCase();
+  const baseName  = currentCreativeDetail.file_name.replace(/_v\d+$/, '');
+  const generated = `${baseName}_${width}_${height}_v${version}.${ext}`;
+  const statusEl  = document.getElementById('cd-upload-status');
+
+  statusEl.textContent = 'アップロード中...';
+  statusEl.style.color = 'var(--em-dark)';
+
+  const formData = new FormData();
+  formData.append('file', file, generated);
+  formData.append('width',          width);
+  formData.append('height',         height);
+  formData.append('version',        version);
+  formData.append('generated_name', generated);
+
+  try {
+    const res  = await fetch(`${API}/creatives/${currentCreativeDetail.id}/upload`, { method: 'POST', body: formData });
+    const data = await res.json();
+    if (res.ok) {
+      statusEl.textContent = data.drive_url ? 'アップロード完了！' : 'DB記録完了（Drive未連携）';
+      statusEl.style.color = 'var(--em-dark)';
+      await loadCreativeFiles(currentCreativeDetail.id);
+      document.getElementById('cd-upload-input').value = '';
+      document.getElementById('cd-upload-preview').style.display = 'none';
+      uploadFileData = null;
+    } else {
+      statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー');
+      statusEl.style.color = '#E24B4A';
+    }
+  } catch(e) {
+    statusEl.textContent = 'ネットワークエラー: ' + e.message;
+    statusEl.style.color = '#E24B4A';
+  }
+}
+
+async function saveCreativeDetail() {
+  if (!currentCreativeDetail) return;
+  const body = {
+    script_url:        document.getElementById('cd-script-url').value.trim()       || null,
+    frameio_url:       document.getElementById('cd-frameio-url').value.trim()      || null,
+    director_comment:  document.getElementById('cd-director-comment').value.trim() || null,
+    client_comment:    document.getElementById('cd-client-comment').value.trim()   || null,
+  };
+  const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) {
+    closeModal('modal-creative-detail');
+    await loadCreatives();
+  } else {
+    const e = await res.json();
+    alert('保存エラー: ' + e.error);
+  }
+}
+
+function openLink(inputId) {
+  const url = document.getElementById(inputId).value.trim();
+  if (url) window.open(url, '_blank', 'noopener');
+  else alert('URLが入力されていません');
 }
 
 init();
