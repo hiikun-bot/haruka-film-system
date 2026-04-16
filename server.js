@@ -871,13 +871,25 @@ app.get('*', (req, res, next) => {
 });
 // ==================== 初期管理者作成 ====================
 async function seedAdminIfNeeded() {
-  const adminEmail = process.env.ADMIN_EMAIL;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminEmail || !adminPassword) return;
-  if (users.byEmail(adminEmail)) return; // すでに存在する場合はスキップ
-  const hash = await bcrypt.hash(adminPassword, 12);
-  users.create({ name: '管理者', email: adminEmail, role: 'admin', passwordHash: hash });
-  console.log(`[SEED] 管理者アカウントを作成しました: ${adminEmail}`);
+  try {
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    console.log(`[SEED] ADMIN_EMAIL=${adminEmail || '未設定'} ADMIN_PASSWORD=${adminPassword ? '設定済み' : '未設定'}`);
+    if (!adminEmail || !adminPassword) {
+      console.log('[SEED] スキップ: 環境変数が未設定');
+      return;
+    }
+    const existing = users.byEmail(adminEmail);
+    if (existing) {
+      console.log(`[SEED] スキップ: ${adminEmail} はすでに登録済み`);
+      return;
+    }
+    const hash = await bcrypt.hash(adminPassword, 12);
+    const created = users.create({ name: '管理者', email: adminEmail, role: 'admin', passwordHash: hash });
+    console.log(`[SEED] 管理者アカウントを作成しました: ${adminEmail} (id=${created?.id})`);
+  } catch(e) {
+    console.error('[SEED] エラー:', e.message);
+  }
 }
 
 // ==================== サーバー起動 ====================
