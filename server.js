@@ -894,14 +894,11 @@ async function seedAdminIfNeeded() {
 
 // ==================== サーバー起動 ====================
 app.listen(PORT, async () => {
-  await seedAdminIfNeeded();
   console.log(`
   ╔═══════════════════════════════════════╗
   ║   VIDEO OPS サーバー起動              ║
   ║   http://localhost:${PORT}              ║
   ╚═══════════════════════════════════════╝
-  
-  Webhook URL: http://localhost:${PORT}/webhook/frameio
-  ※ 外部公開には ngrok などのトンネリングツールが必要です
   `);
+  await seedAdminIfNeeded();
 });
