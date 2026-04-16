@@ -320,13 +320,21 @@ tr.row-help td{background:#FFFBF2}
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <div class="sec-label">クライアント・案件管理</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn" id="toggle-completed-btn" onclick="toggleCompleted()">完了案件を表示</button>
-        <button class="btn" id="toggle-ended-btn" onclick="toggleEndedClients()">案件終了を表示</button>
-        <div id="client-date-filter" style="display:none;align-items:center;gap:6px">
-          <input type="date" id="client-date-from" class="form-input" style="width:140px;padding:6px 10px;font-size:13px" oninput="loadProjects()">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <!-- ステータスフィルター -->
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">表示：</span>
+          <button class="btn" id="toggle-completed-btn" onclick="toggleCompleted()">完了案件</button>
+          <button class="btn" id="toggle-ended-btn" onclick="toggleEndedClients()">案件終了</button>
+        </div>
+        <div style="width:1px;height:24px;background:var(--border)"></div>
+        <!-- 期間フィルター（案件登録日） -->
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">登録日：</span>
+          <input type="date" id="client-date-from" class="form-input" style="width:136px;padding:5px 8px;font-size:13px" oninput="loadProjects()">
           <span style="font-size:13px;color:var(--text-muted)">〜</span>
-          <input type="date" id="client-date-to" class="form-input" style="width:140px;padding:6px 10px;font-size:13px" oninput="loadProjects()">
+          <input type="date" id="client-date-to" class="form-input" style="width:136px;padding:5px 8px;font-size:13px" oninput="loadProjects()">
+          <button class="btn" onclick="clearDateFilter()" style="font-size:12px;padding:5px 10px">クリア</button>
         </div>
         <button class="btn-primary" onclick="openNewClientModal()">＋ クライアント追加</button>
       </div>
@@ -974,8 +982,10 @@ async function loadProjects() {
   const dateFrom = document.getElementById('client-date-from')?.value || '';
   const dateTo = document.getElementById('client-date-to')?.value || '';
   const visibleClients = allClients.filter(c => {
+    // ステータスフィルター（独立）
     if (!showEndedClients && c.status === '案件終了') return false;
-    if (showEndedClients && (dateFrom || dateTo)) {
+    // 期間フィルター（独立・AND条件）
+    if (dateFrom || dateTo) {
       const d = c.sales_start_date ? c.sales_start_date.slice(0, 10) : '';
       if (dateFrom && (!d || d < dateFrom)) return false;
       if (dateTo && (!d || d > dateTo)) return false;
@@ -1670,20 +1680,24 @@ let showEndedClients = false;
 function toggleCompleted() {
   showCompleted = !showCompleted;
   const btn = document.getElementById('toggle-completed-btn');
-  btn.textContent = showCompleted ? '完了案件を非表示' : '完了案件を表示';
   btn.style.background = showCompleted ? 'var(--em-pale)' : '';
   btn.style.color = showCompleted ? 'var(--em-dark)' : '';
+  btn.style.borderColor = showCompleted ? 'var(--em)' : '';
   loadProjects();
 }
 
 function toggleEndedClients() {
   showEndedClients = !showEndedClients;
   const btn = document.getElementById('toggle-ended-btn');
-  const filter = document.getElementById('client-date-filter');
-  btn.textContent = showEndedClients ? '案件終了を非表示' : '案件終了を表示';
   btn.style.background = showEndedClients ? 'var(--em-pale)' : '';
   btn.style.color = showEndedClients ? 'var(--em-dark)' : '';
-  filter.style.display = showEndedClients ? 'flex' : 'none';
+  btn.style.borderColor = showEndedClients ? 'var(--em)' : '';
+  loadProjects();
+}
+
+function clearDateFilter() {
+  document.getElementById('client-date-from').value = '';
+  document.getElementById('client-date-to').value = '';
   loadProjects();
 }
 
