@@ -21,7 +21,8 @@ const multer = require('multer');
 const fs = require('fs');
 const upload = multer({ dest: 'tmp/uploads/', limits: { fileSize: 500 * 1024 * 1024 } });
 if (!fs.existsSync('tmp/uploads')) fs.mkdirSync('tmp/uploads', { recursive: true });
-if (!fs.existsSync('db')) fs.mkdirSync('db', { recursive: true });
+const DATA_DIR = process.env.DATA_DIR || './data';
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -35,7 +36,7 @@ app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentia
 // セッション設定
 // セッション: ログイン状態をサーバー側で管理する仕組み
 app.use(session({
-  store: new SQLiteStore({ db: 'sessions.db', dir: './db' }),
+  store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
   secret: process.env.SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
