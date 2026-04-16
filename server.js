@@ -869,8 +869,20 @@ app.get('*', (req, res, next) => {
     res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
   });
 });
+// ==================== 初期管理者作成 ====================
+async function seedAdminIfNeeded() {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword) return;
+  if (users.byEmail(adminEmail)) return; // すでに存在する場合はスキップ
+  const hash = await bcrypt.hash(adminPassword, 12);
+  users.create({ name: '管理者', email: adminEmail, role: 'admin', passwordHash: hash });
+  console.log(`[SEED] 管理者アカウントを作成しました: ${adminEmail}`);
+}
+
 // ==================== サーバー起動 ====================
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  await seedAdminIfNeeded();
   console.log(`
   ╔═══════════════════════════════════════╗
   ║   VIDEO OPS サーバー起動              ║
