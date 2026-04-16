@@ -1730,36 +1730,60 @@ function effectiveRole() {
 
 // ==================== メンバーCSVインポート/エクスポート ====================
 
-const ROLE_LABELS = { admin:'admin', producer:'producer', producer_director:'producer_director', director:'director', editor:'editor', designer:'designer' };
+const CSV_LEGEND = [
+  '【必須】名前（フルネーム）',
+  '【必須】メールアドレス',
+  '【必須】役割: admin=管理者 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=編集者 / designer=デザイナー',
+  '職種: 動画 / デザイン',
+  'ランク: S / A / B / C',
+  'チームコード: A〜Z（チーム管理で登録したコード）',
+  '生年月日: YYYY-MM-DD形式（例: 1990-01-15）'
+];
+
+function csvFilename(prefix) {
+  const d = new Date();
+  const ymd = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return `${prefix}_${ymd}.csv`;
+}
+
+function buildCSV(headers, legendRow, dataRows) {
+  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+  const lines = [
+    headers.join(','),
+    legendRow.map(esc).join(','),
+    ...dataRows.map(cols => cols.map(esc).join(','))
+  ];
+  return '\uFEFF' + lines.join('\n');
+}
 
 function exportMembersCSV() {
   const headers = ['full_name','email','role','job_type','rank','team_code','birthday'];
-  const rows = allMembers.map(m => {
+  const dataRows = allMembers.map(m => {
     const team = allTeams.find(t => t.id === m.team_id);
     return [
-      m.full_name || '',
-      m.email || '',
-      m.role || '',
-      m.job_type || '',
-      m.rank || '',
+      m.full_name || '', m.email || '', m.role || '',
+      m.job_type || '', m.rank || '',
       team?.team_code || '',
       m.birthday ? m.birthday.slice(0,10) : ''
-    ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+    ];
   });
-  const csv = [headers.join(','), ...rows].join('\n');
-  const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8' });
+  const csv = buildCSV(headers, CSV_LEGEND, dataRows);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `members_${new Date().toISOString().slice(0,10)}.csv`;
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = csvFilename('HARUKAFILM_members');
   a.click();
 }
 
 function downloadImportTemplate() {
-  const csv = 'full_name,email,role,job_type,rank,team_code,birthday\n田中 太郎,tanaka@example.com,editor,動画,A,S,1990-01-15\n鈴木 花子,suzuki@example.com,designer,デザイン,B,,';
-  const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8' });
+  const headers = ['full_name','email','role','job_type','rank','team_code','birthday'];
+  const dataRows = [
+    ['田中 太郎','tanaka@example.com','editor','動画','A','S','1990-01-15'],
+    ['鈴木 花子','suzuki@example.com','designer','デザイン','B','','']
+  ];
+  const csv = buildCSV(headers, CSV_LEGEND, dataRows);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'members_template.csv';
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = csvFilename('HARUKAFILM_members_template');
   a.click();
 }
 
@@ -1780,8 +1804,9 @@ function parseImportCSV(input) {
   reader.onload = e => {
     const text = e.target.result.replace(/^\uFEFF/, '');
     const lines = text.split(/\r?\n/).filter(l => l.trim());
-    if (lines.length < 2) { alert('データが1件もありません'); return; }
+    if (lines.length < 3) { alert('3行目以降にデータがありません'); return; }
 
+    // 1行目: ヘッダー、2行目: 凡例（スキップ）、3行目〜: データ
     const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
     const idx = h => headers.indexOf(h);
 
@@ -1789,7 +1814,7 @@ function parseImportCSV(input) {
     const tbody = document.getElementById('import-preview-tbody');
     tbody.innerHTML = '';
 
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = 2; i < lines.length; i++) {
       const cols = lines[i].match(/("(?:[^"]|"")*"|[^,]*)/g)
         .map(c => c.trim().replace(/^"|"$/g,'').replace(/""/g,'"'));
       const row = {
