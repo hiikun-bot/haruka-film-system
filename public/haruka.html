@@ -934,6 +934,24 @@ tr.row-help td{background:#FFFBF2}
       <label class="form-label">Google Sheet URL（任意）</label>
       <input class="form-input" id="p-sheet-url" placeholder="https://docs.google.com/spreadsheets/...">
     </div>
+    <div class="form-group">
+      <label class="form-label">
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="#4285F4"/><path d="M17 8H7l1.5 9h7L17 8z" fill="white"/><path d="M9 5h6v3H9z" fill="#34A853"/></svg>
+          Googleドライブ 納品フォルダ（任意）
+        </span>
+      </label>
+      <div style="display:flex;gap:6px">
+        <input class="form-input" id="p-drive-url-input" placeholder="フォルダのURLを貼り付け → 自動でフォルダIDを取得" style="flex:1"
+          oninput="parseDriveUrl()">
+        <button type="button" class="btn" onclick="parseDriveUrl()" style="white-space:nowrap">解析</button>
+      </div>
+      <div id="p-drive-folder-result" style="margin-top:6px;font-size:12px;display:none">
+        <span style="color:var(--text-muted)">フォルダID: </span>
+        <span id="p-drive-folder-id-display" style="color:var(--em-dark);font-weight:500;word-break:break-all"></span>
+      </div>
+      <input type="hidden" id="p-drive-folder-url">
+    </div>
     <div style="margin:16px 0 8px;font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.08em;border-bottom:0.5px solid var(--border);padding-bottom:6px">通知連携</div>
     <div class="form-row">
       <div class="form-group">
@@ -2113,6 +2131,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-start-date').value = '';
   document.getElementById('p-end-date').value = '';
   document.getElementById('p-sheet-url').value = '';
+  document.getElementById('p-drive-url-input').value = '';
+  document.getElementById('p-drive-folder-url').value = '';
+  document.getElementById('p-drive-folder-result').style.display = 'none';
   document.getElementById('p-chatwork-room-id').value = '';
   document.getElementById('p-slack-url-input').value = '';
   document.getElementById('p-slack-workspace-id').innerHTML = '<option value="">未選択</option>' + allSlackWorkspaces.map(sw => `<option value="${sw.id}">${sw.name}</option>`).join('');
@@ -2144,6 +2165,18 @@ function openEditProject(p) {
   document.getElementById('p-producer-id').value = p.producer_id || '';
   document.getElementById('p-director-id').value = p.director_id || '';
   document.getElementById('p-sheet-url').value = p.sheet_url || '';
+  const driveUrl = p.drive_folder_url || '';
+  document.getElementById('p-drive-url-input').value = driveUrl;
+  document.getElementById('p-drive-folder-url').value = driveUrl;
+  if (driveUrl) {
+    const dm = driveUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (dm) {
+      document.getElementById('p-drive-folder-id-display').textContent = dm[1];
+      document.getElementById('p-drive-folder-result').style.display = '';
+    }
+  } else {
+    document.getElementById('p-drive-folder-result').style.display = 'none';
+  }
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
   document.getElementById('p-slack-url-input').value = '';
   document.getElementById('p-slack-workspace-id').innerHTML = '<option value="">未選択</option>' + allSlackWorkspaces.map(sw => `<option value="${sw.id}">${sw.name}</option>`).join('');
@@ -2173,6 +2206,7 @@ async function submitProject() {
   const producer_id = document.getElementById('p-producer-id').value || null;
   const director_id = document.getElementById('p-director-id').value || null;
   const sheet_url = document.getElementById('p-sheet-url').value.trim() || null;
+  const drive_folder_url = document.getElementById('p-drive-folder-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
   const slack_workspace_id = document.getElementById('p-slack-workspace-id').value || null;
   const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
@@ -2189,7 +2223,7 @@ async function submitProject() {
   const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, chatwork_room_id, slack_workspace_id, slack_channel_id, admin_note, is_hidden })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, chatwork_room_id, slack_workspace_id, slack_channel_id, admin_note, is_hidden })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -2438,6 +2472,31 @@ async function deleteSlackWorkspace(id, name) {
   const res = await fetch(`${API}/slack-workspaces/${id}`, { method: 'DELETE' });
   if (res.ok) await loadTeams();
   else alert('削除に失敗しました');
+}
+
+// Google Drive URL → フォルダID 自動解析
+function parseDriveUrl() {
+  const url = document.getElementById('p-drive-url-input').value.trim();
+  if (!url) {
+    document.getElementById('p-drive-folder-result').style.display = 'none';
+    document.getElementById('p-drive-folder-url').value = '';
+    return;
+  }
+  // https://drive.google.com/drive/folders/FOLDER_ID
+  // https://drive.google.com/drive/u/0/folders/FOLDER_ID
+  const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (m) {
+    const folderId = m[1];
+    document.getElementById('p-drive-folder-id-display').textContent = folderId;
+    document.getElementById('p-drive-folder-result').style.display = '';
+    document.getElementById('p-drive-folder-result').style.color = '';
+    document.getElementById('p-drive-folder-url').value = url;
+  } else {
+    document.getElementById('p-drive-folder-id-display').textContent = '認識できないURL形式です';
+    document.getElementById('p-drive-folder-result').style.display = '';
+    document.getElementById('p-drive-folder-result').style.color = '#E24B4A';
+    document.getElementById('p-drive-folder-url').value = '';
+  }
 }
 
 // Slack URL → ワークスペースID・チャンネルID 自動解析
