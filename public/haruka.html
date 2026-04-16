@@ -772,6 +772,63 @@ tr.row-help td{background:#FFFBF2}
 </div>
 
 <!-- 案件追加モーダル -->
+<!-- 単価設定モーダル -->
+<div class="modal-overlay" id="modal-rates">
+  <div class="modal" style="max-width:680px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title" id="rates-modal-title">単価設定<button class="modal-close" onclick="closeModal('modal-rates')">×</button></div>
+    <input type="hidden" id="rates-project-id">
+
+    <!-- 動画セクション -->
+    <div style="margin-bottom:20px">
+      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">動画編集者</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="color:var(--text-muted)">
+            <th style="padding:6px 8px;text-align:left;width:60px">ランク</th>
+            <th style="padding:6px 8px;text-align:right">動画編集（円）</th>
+            <th style="padding:6px 8px;text-align:right">台本作成（円）</th>
+            <th style="padding:6px 8px;text-align:right">AI生成（円）</th>
+          </tr>
+        </thead>
+        <tbody id="video-rates-body">
+          <!-- A/B/C rows injected by JS -->
+        </tbody>
+      </table>
+      <div style="margin-top:12px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（動画）</div>
+        <div id="video-extras-list"></div>
+        <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('video')">＋ その他追加</button>
+      </div>
+    </div>
+
+    <!-- デザインセクション -->
+    <div style="margin-bottom:20px">
+      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">デザイナー</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="color:var(--text-muted)">
+            <th style="padding:6px 8px;text-align:left;width:60px">ランク</th>
+            <th style="padding:6px 8px;text-align:right">静止画1枚（円）</th>
+          </tr>
+        </thead>
+        <tbody id="design-rates-body">
+          <!-- A/B/C rows injected by JS -->
+        </tbody>
+      </table>
+      <div style="margin-top:12px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（デザイン）</div>
+        <div id="design-extras-list"></div>
+        <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('design')">＋ その他追加</button>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+      <button class="btn" onclick="closeModal('modal-rates')">キャンセル</button>
+      <button class="btn-primary" onclick="saveRates()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-project">
   <div class="modal">
     <div class="modal-title" id="p-modal-title">新規案件<button class="modal-close" onclick="closeModal('modal-project')">×</button></div>
@@ -1046,6 +1103,7 @@ async function loadProjects() {
             </div>
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
+            ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
             <button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>
             <button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>
           </div>`;
@@ -1616,6 +1674,125 @@ function isSuperAdmin() {
 // プレビュー中を含む「現在の実効ロール」
 function effectiveRole() {
   return previewRole ?? currentUser?.role ?? 'editor';
+}
+
+// 単価閲覧権限（admin/producer/producer_director）
+function canSeeRates() {
+  const role = effectiveRole();
+  return ['admin','producer','producer_director'].includes(role) || isSuperAdmin();
+}
+
+// ==================== 単価設定 ====================
+
+let currentRatesProjectId = null;
+
+async function openRatesModal(projectId, projectName) {
+  currentRatesProjectId = projectId;
+  document.getElementById('rates-modal-title').childNodes[0].textContent = `単価設定 — ${projectName}`;
+  document.getElementById('rates-project-id').value = projectId;
+
+  // テーブル行を生成
+  buildRatesTable('video', ['動画編集', '台本作成', 'AI生成'], ['base_fee','script_fee','ai_fee']);
+  buildRatesTable('design', ['静止画1枚'], ['base_fee']);
+
+  // データ取得
+  const [ratesRes, extrasRes] = await Promise.all([
+    fetch(`${API}/projects/${projectId}/rates`),
+    fetch(`${API}/projects/${projectId}/rate-extras`)
+  ]);
+  const rates = ratesRes.ok ? await ratesRes.json() : [];
+  const extras = extrasRes.ok ? await extrasRes.json() : [];
+
+  // 値をセット
+  rates.forEach(r => {
+    ['base_fee','script_fee','ai_fee'].forEach(field => {
+      const el = document.getElementById(`r-${r.creative_type}-${r.rank}-${field}`);
+      if (el) el.value = r[field] || 0;
+    });
+  });
+
+  // その他をクリアして再描画
+  document.getElementById('video-extras-list').innerHTML = '';
+  document.getElementById('design-extras-list').innerHTML = '';
+  extras.forEach(e => addRateExtraRow(e.creative_type, e.name, e.fee, e.id));
+
+  openModal('modal-rates');
+}
+
+function buildRatesTable(type, labels, fields) {
+  const ranks = ['A','B','C'];
+  const body = document.getElementById(`${type}-rates-body`);
+  body.innerHTML = ranks.map(rank => `
+    <tr style="border-top:1px solid var(--border)">
+      <td style="padding:8px;font-weight:600;color:var(--em-dark)">${rank}</td>
+      ${fields.map((f, i) => `
+        <td style="padding:6px 8px;text-align:right">
+          <input type="number" id="r-${type}-${rank}-${f}" value="0" min="0"
+            style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+        </td>`).join('')}
+    </tr>`).join('');
+}
+
+function addRateExtra(type, name = '', fee = 0, id = null) {
+  addRateExtraRow(type, name, fee, id);
+}
+
+function addRateExtraRow(type, name, fee, id) {
+  const container = document.getElementById(`${type}-extras-list`);
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+  div.dataset.extraid = id || '';
+  div.dataset.type = type;
+  div.innerHTML = `
+    <input type="text" placeholder="名称（例：ナレーション）" value="${name}"
+      style="flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;color:var(--text)">
+    <input type="number" placeholder="単価" value="${fee}" min="0"
+      style="width:100px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+    <span style="font-size:13px;color:var(--text-muted)">円</span>
+    <button class="btn-sm" style="color:#E24B4A" onclick="this.parentElement.remove()">削除</button>`;
+  container.appendChild(div);
+}
+
+async function saveRates() {
+  const projectId = currentRatesProjectId;
+  const ranks = ['A','B','C'];
+
+  // 動画・デザインの単価をupsert
+  const rateRequests = [];
+  ['video','design'].forEach(type => {
+    ranks.forEach(rank => {
+      const base = parseInt(document.getElementById(`r-${type}-${rank}-base_fee`)?.value || 0);
+      const script = parseInt(document.getElementById(`r-${type}-${rank}-script_fee`)?.value || 0);
+      const ai = parseInt(document.getElementById(`r-${type}-${rank}-ai_fee`)?.value || 0);
+      rateRequests.push(fetch(`${API}/projects/${projectId}/rates`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ creative_type: type, rank, base_fee: base, script_fee: script, ai_fee: ai })
+      }));
+    });
+  });
+
+  // その他をバッチ保存
+  const extras = [];
+  ['video','design'].forEach(type => {
+    document.querySelectorAll(`#${type}-extras-list > div`).forEach(div => {
+      const inputs = div.querySelectorAll('input');
+      const name = inputs[0].value.trim();
+      const fee = parseInt(inputs[1].value || 0);
+      if (name) extras.push({ creative_type: type, name, fee });
+    });
+  });
+  rateRequests.push(fetch(`${API}/projects/${projectId}/rate-extras`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ extras })
+  }));
+
+  const results = await Promise.all(rateRequests);
+  const failed = results.filter(r => !r.ok);
+  if (failed.length) { alert('一部の保存に失敗しました'); return; }
+  closeModal('modal-rates');
+  alert('単価を保存しました');
 }
 
 // 実効ロールが管理者相当かどうか

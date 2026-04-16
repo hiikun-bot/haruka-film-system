@@ -208,6 +208,41 @@ router.post('/projects/:id/rates', async (req, res) => {
   res.json(data);
 });
 
+// その他単価一覧
+router.get('/projects/:id/rate-extras', async (req, res) => {
+  const { data, error } = await supabase
+    .from('project_rate_extras')
+    .select('*')
+    .eq('project_id', req.params.id)
+    .order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// その他単価一括保存（全削除→再挿入）
+router.post('/projects/:id/rate-extras', async (req, res) => {
+  const { extras } = req.body;
+  const projectId = req.params.id;
+  const { error: delError } = await supabase
+    .from('project_rate_extras')
+    .delete()
+    .eq('project_id', projectId);
+  if (delError) return res.status(500).json({ error: delError.message });
+  if (!extras || !extras.length) return res.json([]);
+  const rows = extras.map(e => ({
+    project_id: projectId,
+    creative_type: e.creative_type,
+    name: e.name,
+    fee: e.fee || 0
+  }));
+  const { data, error } = await supabase
+    .from('project_rate_extras')
+    .insert(rows)
+    .select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
