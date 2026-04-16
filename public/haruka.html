@@ -732,6 +732,20 @@ tr.row-help td{background:#FFFBF2}
         <input class="form-input" id="cl-code" placeholder="例：ARU" maxlength="3" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
       </div>
     </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">営業開始日（任意）</label>
+        <input class="form-input" type="date" id="cl-sales-start">
+      </div>
+      <div class="form-group">
+        <label class="form-label">ステータス</label>
+        <select class="form-select" id="cl-status">
+          <option value="取引中">取引中</option>
+          <option value="取引停止">取引停止</option>
+          <option value="取引終了">取引終了</option>
+        </select>
+      </div>
+    </div>
     <div class="form-group">
       <label class="form-label">備考（任意）</label>
       <input class="form-input" id="cl-note" placeholder="例：洗濯機の分解洗浄会社様">
@@ -885,6 +899,11 @@ function roleLabel(role) {
   return map[role] || role || '-';
 }
 
+function clientStatusClass(s) {
+  const map = { '取引中': 's-teal', '取引停止': 's-orange', '取引終了': 's-gray' };
+  return map[s] || 's-teal';
+}
+
 function statusClass(s) {
   const map = {'未着手':'s-gray','台本制作':'s-pink','素材・ナレ作成':'s-orange','編集':'s-teal','Dチェック':'s-blue','Dチェック後修正':'s-pink','Pチェック':'s-purple','Pチェック後修正':'s-pink','クライアントチェック中':'s-orange','クライアントチェック後修正':'s-coral','納品':'s-green','進行中':'s-teal','確認待ち':'s-orange','完了':'s-green','保留':'s-gray'};
   return map[s] || 's-gray';
@@ -964,8 +983,8 @@ async function loadProjects() {
       if (s) return `${fmtDate(s)}〜`;
       return `〜${fmtDate(e)}`;
     };
-    const regDate = client.created_at ? (() => {
-      const dt = new Date(client.created_at);
+    const salesDate = client.sales_start_date ? (() => {
+      const dt = new Date(client.sales_start_date);
       return `${dt.getFullYear()}年${dt.getMonth()+1}月${dt.getDate()}日`;
     })() : null;
 
@@ -1007,13 +1026,14 @@ async function loadProjects() {
               <div style="font-size:15px;font-weight:500;color:var(--text)">${client.name}</div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
                 ${client.note ? `<span>${client.note}</span>` : ''}
-                ${regDate ? `<span>登録日 ${regDate}</span>` : ''}
+                ${salesDate ? `<span>営業開始 ${salesDate}</span>` : ''}
               </div>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
+            <span class="status-chip ${clientStatusClass(client.status)}">${client.status || '取引中'}</span>
             <span style="font-size:13px;color:var(--text-muted)">${clientProjects.length}件表示中</span>
-            <button class="btn-sm" onclick="event.stopPropagation();openEditClient('${client.id}','${client.name.replace(/'/g,"\\'")}','${client.client_code||''}','${(client.note||'').replace(/'/g,"\\'")}')">編集</button>
+            <button class="btn-sm" onclick="event.stopPropagation();openEditClient('${client.id}')">編集</button>
             <span class="toggle-arrow" id="arrow-${client.id}">▼</span>
           </div>
         </div>
@@ -1035,12 +1055,16 @@ function toggleClient(id) {
   arrow.style.transform = isOpen ? 'rotate(-90deg)' : '';
 }
 
-function openEditClient(id, name, code, note) {
+function openEditClient(id) {
+  const c = allClients.find(cl => cl.id === id);
+  if (!c) return;
   document.getElementById('cl-modal-title').childNodes[0].textContent = 'クライアント編集';
-  document.getElementById('cl-id').value = id;
-  document.getElementById('cl-name').value = name;
-  document.getElementById('cl-code').value = code;
-  document.getElementById('cl-note').value = note;
+  document.getElementById('cl-id').value = c.id;
+  document.getElementById('cl-name').value = c.name;
+  document.getElementById('cl-code').value = c.client_code || '';
+  document.getElementById('cl-note').value = c.note || '';
+  document.getElementById('cl-sales-start').value = c.sales_start_date ? c.sales_start_date.slice(0,10) : '';
+  document.getElementById('cl-status').value = c.status || '取引中';
   document.getElementById('cl-submit-btn').textContent = '保存する';
   openModal('modal-client');
 }
@@ -1051,6 +1075,8 @@ function openNewClientModal() {
   document.getElementById('cl-name').value = '';
   document.getElementById('cl-code').value = '';
   document.getElementById('cl-note').value = '';
+  document.getElementById('cl-sales-start').value = '';
+  document.getElementById('cl-status').value = '取引中';
   document.getElementById('cl-submit-btn').textContent = '追加する';
   openModal('modal-client');
 }
@@ -1060,6 +1086,8 @@ async function submitClient() {
   const name = document.getElementById('cl-name').value.trim();
   const client_code = document.getElementById('cl-code').value.trim().toUpperCase();
   const note = document.getElementById('cl-note').value.trim();
+  const sales_start_date = document.getElementById('cl-sales-start').value || null;
+  const status = document.getElementById('cl-status').value;
   if (!name) { alert('クライアント名は必須です'); return; }
   if (!client_code) { alert('略称（英3文字）は必須です'); return; }
 
@@ -1071,7 +1099,7 @@ async function submitClient() {
   const res = await fetch(isEdit ? `${API}/clients/${id}` : `${API}/clients`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, client_code, note: note || null })
+    body: JSON.stringify({ name, client_code, note: note || null, sales_start_date, status })
   });
 
   btn.textContent = origText; btn.disabled = false;

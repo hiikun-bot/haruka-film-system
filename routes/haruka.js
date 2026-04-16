@@ -17,12 +17,12 @@ router.get('/clients', async (req, res) => {
 
 // クライアント作成
 router.post('/clients', async (req, res) => {
-  const { name, client_code, note } = req.body;
+  const { name, client_code, note, sales_start_date, status } = req.body;
   if (!name) return res.status(400).json({ error: 'クライアント名は必須です' });
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const { data, error } = await supabase
     .from('clients')
-    .insert({ name, client_code: code, note })
+    .insert({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '取引中' })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -31,11 +31,11 @@ router.post('/clients', async (req, res) => {
 
 // クライアント更新
 router.put('/clients/:id', async (req, res) => {
-  const { name, client_code, note } = req.body;
+  const { name, client_code, note, sales_start_date, status } = req.body;
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const { data, error } = await supabase
     .from('clients')
-    .update({ name, client_code: code, note, updated_at: new Date().toISOString() })
+    .update({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '取引中', updated_at: new Date().toISOString() })
     .eq('id', req.params.id)
     .select()
     .single();
