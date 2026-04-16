@@ -325,7 +325,7 @@ tr.row-help td{background:#FFFBF2}
         <div style="display:flex;gap:6px;align-items:center">
           <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">表示：</span>
           <button class="btn" id="toggle-completed-btn" onclick="toggleCompleted()">完了案件</button>
-          <button class="btn" id="toggle-ended-btn" onclick="toggleEndedClients()">案件終了</button>
+          <button class="btn" id="toggle-ended-btn" onclick="toggleEndedClients()">クライアント取引終了</button>
         </div>
         <div style="width:1px;height:24px;background:var(--border)"></div>
         <!-- 期間フィルター（案件登録日） -->
@@ -756,7 +756,7 @@ tr.row-help td{background:#FFFBF2}
         <select class="form-select" id="cl-status">
           <option value="提案中">提案中</option>
           <option value="進行中">進行中</option>
-          <option value="案件終了">案件終了</option>
+          <option value="クライアント取引終了">クライアント取引終了</option>
         </select>
       </div>
     </div>
@@ -914,7 +914,7 @@ function roleLabel(role) {
 }
 
 function clientStatusClass(s) {
-  const map = { '提案中': 's-orange', '進行中': 's-teal', '案件終了': 's-gray' };
+  const map = { '提案中': 's-orange', '進行中': 's-teal', 'クライアント取引終了': 's-gray' };
   return map[s] || 's-teal';
 }
 
@@ -983,7 +983,7 @@ async function loadProjects() {
   const dateTo = document.getElementById('client-date-to')?.value || '';
   const visibleClients = allClients.filter(c => {
     // ステータスフィルター（独立）
-    if (!showEndedClients && c.status === '案件終了') return false;
+    if (!showEndedClients && c.status === 'クライアント取引終了') return false;
     // 期間フィルター（独立・AND条件）
     if (dateFrom || dateTo) {
       const d = c.sales_start_date ? c.sales_start_date.slice(0, 10) : '';
@@ -995,7 +995,7 @@ async function loadProjects() {
 
   if (!visibleClients.length && allClients.length) {
     list.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:14px">
-      ${showEndedClients ? '期間内のクライアントがありません' : 'クライアントがありません（案件終了を含む場合は「案件終了を表示」をクリック）'}
+      ${showEndedClients ? '期間内のクライアントがありません' : 'クライアントがありません（クライアント取引終了を含む場合は「クライアント取引終了を表示」をクリック）'}
     </div>`;
     return;
   }
