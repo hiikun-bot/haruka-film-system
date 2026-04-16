@@ -1677,21 +1677,22 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 let showCompleted = false;
 let showEndedClients = false;
 
+function setToggleStyle(btn, on) {
+  btn.style.background = on ? 'var(--em)' : '';
+  btn.style.color = on ? '#fff' : '';
+  btn.style.borderColor = on ? 'var(--em)' : '';
+  btn.style.fontWeight = on ? '600' : '';
+}
+
 function toggleCompleted() {
   showCompleted = !showCompleted;
-  const btn = document.getElementById('toggle-completed-btn');
-  btn.style.background = showCompleted ? 'var(--em-pale)' : '';
-  btn.style.color = showCompleted ? 'var(--em-dark)' : '';
-  btn.style.borderColor = showCompleted ? 'var(--em)' : '';
+  setToggleStyle(document.getElementById('toggle-completed-btn'), showCompleted);
   loadProjects();
 }
 
 function toggleEndedClients() {
   showEndedClients = !showEndedClients;
-  const btn = document.getElementById('toggle-ended-btn');
-  btn.style.background = showEndedClients ? 'var(--em-pale)' : '';
-  btn.style.color = showEndedClients ? 'var(--em-dark)' : '';
-  btn.style.borderColor = showEndedClients ? 'var(--em)' : '';
+  setToggleStyle(document.getElementById('toggle-ended-btn'), showEndedClients);
   loadProjects();
 }
 
