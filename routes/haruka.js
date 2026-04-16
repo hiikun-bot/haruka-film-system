@@ -35,7 +35,7 @@ router.put('/clients/:id', async (req, res) => {
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const { data, error } = await supabase
     .from('clients')
-    .update({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '取引中', updated_at: new Date().toISOString() })
+    .update({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', updated_at: new Date().toISOString() })
     .eq('id', req.params.id)
     .select()
     .single();

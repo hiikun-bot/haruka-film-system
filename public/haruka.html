@@ -320,8 +320,14 @@ tr.row-help td{background:#FFFBF2}
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <div class="sec-label">クライアント・案件管理</div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn" id="toggle-completed-btn" onclick="toggleCompleted()">完了案件を表示</button>
+        <button class="btn" id="toggle-ended-btn" onclick="toggleEndedClients()">案件終了を表示</button>
+        <div id="client-date-filter" style="display:none;align-items:center;gap:6px">
+          <input type="date" id="client-date-from" class="form-input" style="width:140px;padding:6px 10px;font-size:13px" oninput="loadProjects()">
+          <span style="font-size:13px;color:var(--text-muted)">〜</span>
+          <input type="date" id="client-date-to" class="form-input" style="width:140px;padding:6px 10px;font-size:13px" oninput="loadProjects()">
+        </div>
         <button class="btn-primary" onclick="openNewClientModal()">＋ クライアント追加</button>
       </div>
     </div>
@@ -734,16 +740,15 @@ tr.row-help td{background:#FFFBF2}
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">営業開始日（任意）</label>
+        <label class="form-label">案件登録日（任意）</label>
         <input class="form-input" type="date" id="cl-sales-start">
       </div>
       <div class="form-group">
         <label class="form-label">ステータス</label>
         <select class="form-select" id="cl-status">
           <option value="提案中">提案中</option>
-          <option value="取引中">取引中</option>
-          <option value="取引停止">取引停止</option>
-          <option value="取引終了">取引終了</option>
+          <option value="進行中">進行中</option>
+          <option value="案件終了">案件終了</option>
         </select>
       </div>
     </div>
@@ -901,7 +906,7 @@ function roleLabel(role) {
 }
 
 function clientStatusClass(s) {
-  const map = { '取引中': 's-teal', '取引停止': 's-orange', '取引終了': 's-gray' };
+  const map = { '提案中': 's-orange', '進行中': 's-teal', '案件終了': 's-gray' };
   return map[s] || 's-teal';
 }
 
@@ -966,7 +971,26 @@ async function loadProjects() {
     return;
   }
 
-  list.innerHTML = allClients.map(client => {
+  const dateFrom = document.getElementById('client-date-from')?.value || '';
+  const dateTo = document.getElementById('client-date-to')?.value || '';
+  const visibleClients = allClients.filter(c => {
+    if (!showEndedClients && c.status === '案件終了') return false;
+    if (showEndedClients && (dateFrom || dateTo)) {
+      const d = c.sales_start_date ? c.sales_start_date.slice(0, 10) : '';
+      if (dateFrom && (!d || d < dateFrom)) return false;
+      if (dateTo && (!d || d > dateTo)) return false;
+    }
+    return true;
+  });
+
+  if (!visibleClients.length && allClients.length) {
+    list.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:14px">
+      ${showEndedClients ? '期間内のクライアントがありません' : 'クライアントがありません（案件終了を含む場合は「案件終了を表示」をクリック）'}
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = visibleClients.map(client => {
     const allClientProjects = allProjects.filter(p => p.client_id === client.id);
     const clientProjects = showCompleted
       ? allClientProjects
@@ -1027,7 +1051,7 @@ async function loadProjects() {
               <div style="font-size:15px;font-weight:500;color:var(--text)">${client.name}</div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
                 ${client.note ? `<span>${client.note}</span>` : ''}
-                ${salesDate ? `<span>営業開始 ${salesDate}</span>` : ''}
+                ${salesDate ? `<span>登録日 ${salesDate}</span>` : ''}
               </div>
             </div>
           </div>
@@ -1641,6 +1665,7 @@ function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 let showCompleted = false;
+let showEndedClients = false;
 
 function toggleCompleted() {
   showCompleted = !showCompleted;
@@ -1648,7 +1673,17 @@ function toggleCompleted() {
   btn.textContent = showCompleted ? '完了案件を非表示' : '完了案件を表示';
   btn.style.background = showCompleted ? 'var(--em-pale)' : '';
   btn.style.color = showCompleted ? 'var(--em-dark)' : '';
-  // 再描画（データ再取得なし）
+  loadProjects();
+}
+
+function toggleEndedClients() {
+  showEndedClients = !showEndedClients;
+  const btn = document.getElementById('toggle-ended-btn');
+  const filter = document.getElementById('client-date-filter');
+  btn.textContent = showEndedClients ? '案件終了を非表示' : '案件終了を表示';
+  btn.style.background = showEndedClients ? 'var(--em-pale)' : '';
+  btn.style.color = showEndedClients ? 'var(--em-dark)' : '';
+  filter.style.display = showEndedClients ? 'flex' : 'none';
   loadProjects();
 }
 
