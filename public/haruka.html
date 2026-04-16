@@ -740,6 +740,7 @@ tr.row-help td{background:#FFFBF2}
       <div class="form-group">
         <label class="form-label">ステータス</label>
         <select class="form-select" id="cl-status">
+          <option value="提案中">提案中</option>
           <option value="取引中">取引中</option>
           <option value="取引停止">取引停止</option>
           <option value="取引終了">取引終了</option>
@@ -1076,7 +1077,7 @@ function openNewClientModal() {
   document.getElementById('cl-code').value = '';
   document.getElementById('cl-note').value = '';
   document.getElementById('cl-sales-start').value = '';
-  document.getElementById('cl-status').value = '取引中';
+  document.getElementById('cl-status').value = '提案中';
   document.getElementById('cl-submit-btn').textContent = '追加する';
   openModal('modal-client');
 }

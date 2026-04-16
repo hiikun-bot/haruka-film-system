@@ -22,7 +22,7 @@ router.post('/clients', async (req, res) => {
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const { data, error } = await supabase
     .from('clients')
-    .insert({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '取引中' })
+    .insert({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中' })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
