@@ -1012,10 +1012,8 @@ tr.row-help td{background:#FFFBF2}
         </div>
         <div class="form-row" style="margin-bottom:0">
           <div>
-            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">ワークスペース</div>
-            <select class="form-select" id="p-slack-workspace-id">
-              <option value="">未選択</option>
-            </select>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">ワークスペースID</div>
+            <input class="form-input" id="p-slack-team-id" placeholder="T○○○○○○（自動入力）" style="font-family:monospace;font-size:13px">
           </div>
           <div>
             <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">チャンネルID</div>
@@ -2537,7 +2535,7 @@ function openProjectModal(preClientId) {
   document.getElementById('p-drive-folder-result').style.display = 'none';
   document.getElementById('p-chatwork-room-id').value = '';
   document.getElementById('p-slack-url-input').value = '';
-  document.getElementById('p-slack-workspace-id').innerHTML = '<option value="">未選択</option>' + allSlackWorkspaces.map(sw => `<option value="${sw.id}">${sw.name}</option>`).join('');
+  document.getElementById('p-slack-team-id').value = '';
   document.getElementById('p-slack-channel-id').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
@@ -2582,8 +2580,7 @@ function openEditProject(p) {
   }
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
   document.getElementById('p-slack-url-input').value = '';
-  document.getElementById('p-slack-workspace-id').innerHTML = '<option value="">未選択</option>' + allSlackWorkspaces.map(sw => `<option value="${sw.id}">${sw.name}</option>`).join('');
-  document.getElementById('p-slack-workspace-id').value = p.slack_workspace_id || '';
+  document.getElementById('p-slack-team-id').value = p.slack_team_id || '';
   document.getElementById('p-slack-channel-id').value = p.slack_channel_id || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
@@ -2763,7 +2760,7 @@ async function submitProject() {
   const sheet_url = document.getElementById('p-sheet-url').value.trim() || null;
   const drive_folder_url = document.getElementById('p-drive-folder-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
-  const slack_workspace_id = document.getElementById('p-slack-workspace-id').value || null;
+  const slack_team_id = document.getElementById('p-slack-team-id').value.trim() || null;
   const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
@@ -2786,7 +2783,7 @@ async function submitProject() {
   const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, chatwork_room_id, slack_workspace_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -3069,18 +3066,8 @@ function parseSlackUrl() {
   // https://app.slack.com/client/T094ST9L5MH/C0ASPJLP66N
   const m = url.match(/slack\.com\/client\/([A-Z0-9]+)\/([A-Z0-9]+)/);
   if (!m) { alert('Slack URLの形式が正しくありません\n例: https://app.slack.com/client/T○○○/C○○○'); return; }
-  const teamId = m[1];
-  const channelId = m[2];
-  // ワークスペースIDに一致するものを選択
-  const ws = allSlackWorkspaces.find(sw => sw.team_id === teamId);
-  const wsSel = document.getElementById('p-slack-workspace-id');
-  if (ws) {
-    wsSel.value = ws.id;
-  } else {
-    alert(`ワークスペースID「${teamId}」は未登録です。\nチームページでワークスペースを先に登録してください。`);
-    wsSel.value = '';
-  }
-  document.getElementById('p-slack-channel-id').value = channelId;
+  document.getElementById('p-slack-team-id').value = m[1];
+  document.getElementById('p-slack-channel-id').value = m[2];
 }
 
 async function loadInvoices() {

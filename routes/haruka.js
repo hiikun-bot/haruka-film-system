@@ -124,7 +124,7 @@ router.post('/projects', async (req, res) => {
   const {
     client_id, name, status, producer_id, director_id,
     sheet_url, drive_folder_url, admin_note, start_date, end_date,
-    chatwork_room_id, slack_workspace_id, slack_channel_id
+    chatwork_room_id, slack_team_id, slack_channel_id
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const { data, error } = await supabase
@@ -140,7 +140,7 @@ router.post('/projects', async (req, res) => {
       start_date: start_date || null,
       end_date: end_date || null,
       chatwork_room_id: chatwork_room_id || null,
-      slack_workspace_id: slack_workspace_id || null,
+      slack_team_id: slack_team_id || null,
       slack_channel_id: slack_channel_id || null,
       is_hidden: false
     })
@@ -155,7 +155,7 @@ router.put('/projects/:id', async (req, res) => {
   const {
     name, status, producer_id, director_id,
     sheet_url, drive_folder_url, admin_note, start_date, end_date,
-    chatwork_room_id, slack_workspace_id, slack_channel_id, is_hidden,
+    chatwork_room_id, slack_team_id, slack_channel_id, is_hidden,
     sync_products, sync_appeal_axes
   } = req.body;
   const updateData = {
@@ -168,7 +168,7 @@ router.put('/projects/:id', async (req, res) => {
     start_date: start_date || null,
     end_date: end_date || null,
     chatwork_room_id: chatwork_room_id || null,
-    slack_workspace_id: slack_workspace_id || null,
+    slack_team_id: slack_team_id || null,
     slack_channel_id: slack_channel_id || null,
     is_hidden: is_hidden ?? false,
     updated_at: new Date().toISOString()
