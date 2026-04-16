@@ -1,0 +1,22 @@
+# 環境変数（絶対にコミットしない）
+.env
+.env.local
+.env.production
+
+# 依存パッケージ
+node_modules/
+
+# SQLiteデータベース（本番はRailway Volumeで管理）
+db/*.db
+db/*.db-shm
+db/*.db-wal
+
+# アップロード一時ファイル
+tmp/
+
+# macOS
+.DS_Store
+
+# ログ
+*.log
+npm-debug.log*

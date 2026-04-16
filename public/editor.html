@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VIDEO OPS — 素材エディター</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#07070f;--surface:#0d0d18;--surface2:#141422;--border:#20203a;
+  --accent:#c8ff47;--accent2:#47b8ff;--accent4:#b847ff;
+  --text:#e0e0f0;--text-muted:#52527a;
+  --success:#47ffaa;--warning:#ffb84a;--danger:#ff4f4f;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--surface)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* TOP BAR */
+.topbar{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;z-index:100}
+.logo-link{font-family:'Bebas Neue',cursive;font-size:18px;letter-spacing:4px;color:var(--accent);text-decoration:none}
+.topbar-title{font-size:13px;color:var(--text-muted);margin-left:4px;flex:1}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:4px;font-size:12px;font-weight:500;cursor:pointer;border:none;font-family:'Noto Sans JP',sans-serif;transition:all .15s}
+.btn-primary{background:var(--accent);color:#07070f}.btn-primary:hover{background:#b0e032}
+.btn-ghost{background:transparent;color:var(--text-muted);border:1px solid var(--border)}.btn-ghost:hover{color:var(--text);border-color:var(--text-muted)}
+.btn-purple{background:var(--accent4);color:#fff}.btn-purple:hover{background:#9a2ee0}
+.btn-danger{background:transparent;color:var(--danger);border:1px solid var(--danger)}.btn-danger:hover{background:rgba(255,79,79,.1)}
+.btn-sm{padding:4px 9px;font-size:11px}
+.btn-icon{padding:5px 7px;font-size:13px}
+
+/* MAIN LAYOUT: 3 columns */
+.editor-body{flex:1;display:flex;overflow:hidden}
+
+/* LEFT: FILE LIST */
+.panel-left{width:260px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.panel-head{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.panel-head-title{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted)}
+
+/* upload zone */
+.upload-zone{margin:10px;border:2px dashed var(--border);border-radius:6px;padding:16px 10px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:rgba(200,255,71,.04)}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-zone-icon{font-size:22px;margin-bottom:6px}
+.upload-zone-text{font-size:11px;color:var(--text-muted);line-height:1.5}
+
+/* project filter */
+.proj-filter{padding:8px 10px;border-bottom:1px solid var(--border)}
+.proj-filter select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px;font-family:'Noto Sans JP',sans-serif}
+.proj-filter select:focus{outline:none;border-color:var(--accent)}
+
+/* file list */
+.file-list{flex:1;overflow-y:auto;padding:6px}
+.file-item{padding:10px 10px;border-radius:5px;cursor:pointer;transition:all .15s;border:1px solid transparent;margin-bottom:4px;position:relative}
+.file-item:hover{background:var(--surface2);border-color:var(--border)}
+.file-item.active{background:rgba(200,255,71,.06);border-color:rgba(200,255,71,.3)}
+.file-item-name{font-size:12px;font-weight:600;margin-bottom:3px;word-break:break-all;line-height:1.3}
+.file-item-meta{font-size:10px;color:var(--text-muted);display:flex;gap:6px;flex-wrap:wrap}
+.file-item-status{font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700}
+.status-pending{background:rgba(255,184,74,.15);color:var(--warning)}
+.status-analyzing{background:rgba(71,184,255,.15);color:var(--accent2)}
+.status-done{background:rgba(71,255,170,.15);color:var(--success)}
+.status-error{background:rgba(255,79,79,.15);color:var(--danger)}
+
+.file-renamed{font-size:9px;color:var(--accent);margin-top:3px;word-break:break-all;line-height:1.3}
+
+/* CENTER: VIDEO + TIMELINE */
+.panel-center{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+
+/* video area */
+.video-wrap{flex:0 0 auto;background:#000;position:relative;display:flex;align-items:center;justify-content:center;min-height:200px}
+.video-wrap video{width:100%;max-height:55vh;display:block}
+.video-empty{text-align:center;color:var(--text-muted);padding:60px 20px}
+.video-empty-icon{font-size:40px;margin-bottom:10px}
+
+/* controls */
+.video-controls{background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:8px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.seek-bar{flex:1;-webkit-appearance:none;height:4px;background:var(--border);border-radius:2px;outline:none;cursor:pointer}
+.seek-bar::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;background:var(--accent);border-radius:50%;cursor:pointer}
+.time-display{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);white-space:nowrap}
+.speed-btn{font-size:11px;padding:3px 7px;border-radius:3px;background:var(--surface2);border:1px solid var(--border);color:var(--text-muted);cursor:pointer;transition:all .15s}
+.speed-btn.active,.speed-btn:hover{background:var(--accent);color:#07070f;border-color:var(--accent)}
+.vol-icon{cursor:pointer;font-size:15px;color:var(--text-muted)}
+
+/* comment timeline */
+.timeline-wrap{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.timeline-header{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.timeline-title{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted)}
+.timeline-actions{display:flex;gap:6px}
+
+/* comment input */
+.comment-input-wrap{padding:10px 14px;border-top:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.comment-row{display:flex;gap:8px;align-items:flex-end}
+.comment-textarea{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text);font-size:12px;font-family:'Noto Sans JP',sans-serif;resize:none;min-height:36px;max-height:80px;line-height:1.5}
+.comment-textarea:focus{outline:none;border-color:var(--accent)}
+.comment-ts-badge{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);background:rgba(200,255,71,.1);border:1px solid rgba(200,255,71,.3);padding:2px 8px;border-radius:3px;cursor:pointer;white-space:nowrap}
+.comment-ts-badge:hover{background:rgba(200,255,71,.2)}
+.author-input{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px;width:110px;font-family:'Noto Sans JP',sans-serif}
+.author-input:focus{outline:none;border-color:var(--accent)}
+
+/* comment list */
+.comment-list{flex:1;overflow-y:auto;padding:8px 14px}
+.c-item{background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:10px;margin-bottom:8px;transition:all .15s;position:relative}
+.c-item:hover{border-color:var(--border)}
+.c-item.pinned{border-color:rgba(200,255,71,.4);background:rgba(200,255,71,.03)}
+.c-item.resolved{opacity:.45}
+.c-item.promoted{border-left:3px solid var(--accent4)}
+.c-header{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+.c-ts{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent2);background:rgba(71,184,255,.12);padding:2px 7px;border-radius:3px;cursor:pointer;flex-shrink:0}
+.c-ts:hover{background:rgba(71,184,255,.25)}
+.c-author{font-size:11px;font-weight:700}
+.c-date{font-size:10px;color:var(--text-muted);margin-left:auto}
+.c-body{font-size:12px;line-height:1.7;word-break:break-word}
+.c-actions{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.c-badge{font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700}
+.c-badge-pin{background:rgba(200,255,71,.15);color:var(--accent)}
+.c-badge-resolved{background:rgba(71,255,170,.15);color:var(--success)}
+.c-badge-promoted{background:rgba(184,71,255,.15);color:var(--accent4)}
+.no-comments{text-align:center;padding:40px 20px;color:var(--text-muted);font-size:12px}
+
+/* RIGHT: REPORT */
+.panel-right{width:300px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.report-body{flex:1;overflow-y:auto;padding:14px}
+.report-empty{text-align:center;padding:40px 16px;color:var(--text-muted);font-size:12px}
+.report-section{margin-bottom:16px}
+.report-label{font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+.report-value{font-size:12px;line-height:1.7;color:var(--text)}
+.report-summary{background:var(--bg);border-radius:4px;padding:10px;font-size:12px;line-height:1.7;border-left:2px solid var(--accent)}
+.rename-box{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;line-height:1.6}
+.rename-orig{color:var(--text-muted);text-decoration:line-through;word-break:break-all}
+.rename-new{color:var(--accent);font-weight:700;word-break:break-all;margin-top:4px}
+.analysis-status-banner{padding:8px 14px;text-align:center;font-size:11px;border-bottom:1px solid var(--border)}
+.analysis-status-banner.analyzing{color:var(--accent2);background:rgba(71,184,255,.07)}
+.analysis-status-banner.done{color:var(--success);background:rgba(71,255,170,.05)}
+.analysis-status-banner.pending{color:var(--text-muted)}
+.analysis-status-banner.error{color:var(--danger)}
+
+/* spinner */
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* toast */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:10px 16px;font-size:12px;z-index:999;opacity:0;transform:translateY(8px);transition:all .2s;pointer-events:none}
+.toast.show{opacity:1;transform:none}
+.toast.success{border-color:var(--success);color:var(--success)}
+.toast.error{border-color:var(--danger);color:var(--danger)}
+
+/* upload progress */
+.upload-progress{display:none;padding:6px 10px;margin:0 10px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--text-muted)}
+.progress-bar-wrap{background:var(--border);border-radius:2px;height:4px;margin-top:5px;overflow:hidden}
+.progress-bar{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+
+/* filter tabs */
+.filter-row{display:flex;gap:4px;padding:8px 14px 4px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.filter-chip{font-size:10px;padding:3px 8px;border-radius:99px;border:1px solid var(--border);color:var(--text-muted);cursor:pointer;transition:all .15s}
+.filter-chip:hover{color:var(--text)}
+.filter-chip.active{background:var(--accent);color:#07070f;border-color:var(--accent)}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <a href="/" class="logo-link">VIDEO OPS</a>
+  <span style="color:var(--border)">|</span>
+  <span class="topbar-title" id="topbar-asset-name">素材エディター</span>
+  <div style="display:flex;gap:8px;margin-left:auto">
+    <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↺ 更新</button>
+    <a href="/" class="btn btn-ghost btn-sm">← 案件管理へ</a>
+  </div>
+</div>
+
+<div class="editor-body">
+
+<!-- ===== LEFT: FILE LIST ===== -->
+<div class="panel-left">
+  <div class="panel-head">
+    <div class="panel-head-title">素材ファイル</div>
+    <span id="file-count" style="font-size:10px;color:var(--text-muted)">0件</span>
+  </div>
+
+  <!-- プロジェクトフィルター -->
+  <div class="proj-filter">
+    <select id="proj-filter" onchange="loadAssets()">
+      <option value="">すべての案件</option>
+    </select>
+  </div>
+
+  <!-- アップロードゾーン -->
+  <div class="upload-zone" id="upload-zone" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+    <input type="file" accept="video/*" multiple onchange="onFileSelected(event)" id="file-input">
+    <div class="upload-zone-icon">📁</div>
+    <div class="upload-zone-text">クリックまたはドラッグ&ドロップ<br>で動画をアップロード</div>
+  </div>
+  <div class="upload-progress" id="upload-progress">
+    <span id="upload-progress-text">アップロード中...</span>
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+  </div>
+
+  <!-- ファイル一覧 -->
+  <div class="file-list" id="file-list">
+    <div style="text-align:center;padding:30px 10px;color:var(--text-muted);font-size:11px">ファイルがありません</div>
+  </div>
+</div>
+
+<!-- ===== CENTER: VIDEO + COMMENTS ===== -->
+<div class="panel-center">
+
+  <!-- 動画プレイヤー -->
+  <div class="video-wrap" id="video-wrap">
+    <div class="video-empty" id="video-empty">
+      <div class="video-empty-icon">▶</div>
+      <div style="font-size:13px;color:var(--text-muted)">左のファイル一覧から素材を選択</div>
+    </div>
+    <video id="main-video" style="display:none" preload="metadata" crossorigin="anonymous"></video>
+  </div>
+
+  <!-- コントロール -->
+  <div class="video-controls" id="video-controls" style="display:none">
+    <button class="btn btn-ghost btn-icon" onclick="togglePlay()" id="play-btn">▶</button>
+    <span class="time-display" id="time-current">0:00</span>
+    <input type="range" class="seek-bar" id="seek-bar" min="0" max="100" value="0" step="0.1" oninput="onSeek()">
+    <span class="time-display" id="time-total">0:00</span>
+    <span class="vol-icon" onclick="toggleMute()" id="vol-icon">🔊</span>
+    <input type="range" style="width:60px;accent-color:var(--accent)" id="vol-bar" min="0" max="1" step="0.05" value="1" oninput="setVolume()">
+    <span style="color:var(--border)">|</span>
+    <span style="font-size:10px;color:var(--text-muted)">速度</span>
+    <button class="speed-btn" onclick="setSpeed(0.5)">0.5x</button>
+    <button class="speed-btn active" onclick="setSpeed(1)" id="speed-1">1x</button>
+    <button class="speed-btn" onclick="setSpeed(1.5)">1.5x</button>
+    <button class="speed-btn" onclick="setSpeed(2)">2x</button>
+    <span style="color:var(--border)">|</span>
+    <button class="btn btn-ghost btn-sm" onclick="captureTimestamp()" title="現在時間をコメントにスタンプ">📌 時間をスタンプ</button>
+  </div>
+
+  <!-- コメントエリア -->
+  <div class="timeline-wrap">
+    <div class="timeline-header">
+      <div class="timeline-title">タイムスタンプコメント</div>
+      <div class="timeline-actions">
+        <div class="filter-chip active" onclick="setCommentFilter('all')" id="cf-all">すべて</div>
+        <div class="filter-chip" onclick="setCommentFilter('pinned')" id="cf-pinned">📌 ピン留め</div>
+        <div class="filter-chip" onclick="setCommentFilter('unresolved')" id="cf-unresolved">未解決</div>
+      </div>
+    </div>
+
+    <div class="comment-list" id="comment-list">
+      <div class="no-comments">動画を選択してコメントを追加</div>
+    </div>
+
+    <!-- コメント入力 -->
+    <div class="comment-input-wrap">
+      <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+        <input type="text" class="author-input" id="c-author" placeholder="あなたの名前">
+        <div class="comment-ts-badge" id="ts-badge" onclick="captureTimestamp()">⏱ 0:00 でスタンプ</div>
+        <button class="btn btn-ghost btn-sm" onclick="clearTimestamp()">× クリア</button>
+      </div>
+      <div class="comment-row">
+        <textarea class="comment-textarea" id="c-body" placeholder="コメントを入力…（Shift+Enterで改行）" onkeydown="onCommentKey(event)" rows="2"></textarea>
+        <button class="btn btn-primary btn-sm" onclick="postComment()">送信</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RIGHT: AI REPORT ===== -->
+<div class="panel-right">
+  <div class="panel-head">
+    <div class="panel-head-title">AI解析レポート</div>
+    <button class="btn btn-purple btn-sm" onclick="reanalyze()" id="reanalyze-btn" style="display:none">再解析</button>
+  </div>
+  <div class="analysis-status-banner pending" id="analysis-banner">素材を選択してください</div>
+  <div class="report-body" id="report-body">
+    <div class="report-empty">
+      <div style="font-size:28px;margin-bottom:8px">🤖</div>
+      動画をアップロードすると<br>AIが自動で内容を解析します
+    </div>
+  </div>
+</div>
+
+</div><!-- editor-body -->
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ==================== STATE ====================
+const API = '';
+let currentAssetId  = null;
+let currentComments = [];
+let commentFilter   = 'all';
+let stampedTime     = null; // スタンプした動画時間（秒）
+let allProjects     = [];
+let pollingTimer    = null;
+
+// ==================== UTILS ====================
+function toast(msg, type='success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + type;
+  setTimeout(() => el.className = 'toast', 2500);
+}
+
+function fmtTime(s) {
+  if (!s && s !== 0) return '—';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2,'0')}`;
+}
+
+async function api(method, path, body) {
+  try {
+    const opt = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opt.body = JSON.stringify(body);
+    const res = await fetch(API + path, opt);
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error||`HTTP ${res.status}`); }
+    return res.json();
+  } catch(e) { toast(e.message, 'error'); throw e; }
+}
+
+// ==================== INIT ====================
+async function init() {
+  // プロジェクト一覧取得
+  try {
+    allProjects = await api('GET', '/api/projects');
+    const sel = document.getElementById('proj-filter');
+    allProjects.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id; o.textContent = p.name;
+      sel.appendChild(o);
+    });
+  } catch(e) {}
+  await loadAssets();
+}
+
+// ==================== FILE LIST ====================
+let allAssets = [];
+
+async function loadAssets() {
+  const projId = document.getElementById('proj-filter').value;
+  const params = projId ? `?projectId=${projId}` : '';
+  try {
+    allAssets = await api('GET', `/api/assets${params}`);
+  } catch(e) { allAssets = []; }
+  renderFileList();
+  document.getElementById('file-count').textContent = allAssets.length + '件';
+}
+
+function renderFileList() {
+  const el = document.getElementById('file-list');
+  if (!allAssets.length) {
+    el.innerHTML = '<div style="text-align:center;padding:30px 10px;color:var(--text-muted);font-size:11px">ファイルがありません</div>';
+    return;
+  }
+  el.innerHTML = allAssets.map(a => {
+    const proj = allProjects.find(p => p.id === a.project_id);
+    return `<div class="file-item ${a.id === currentAssetId ? 'active' : ''}" onclick="selectAsset('${a.id}')">
+      <div class="file-item-name">${a.original_name}</div>
+      ${a.renamed_name ? `<div class="file-renamed">→ ${a.renamed_name}</div>` : ''}
+      <div class="file-item-meta">
+        <span class="file-item-status status-${a.analysis_status}">${statusLabel(a.analysis_status)}</span>
+        ${proj ? `<span>${proj.name}</span>` : ''}
+        ${a.file_size ? `<span>${fmtSize(a.file_size)}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function statusLabel(s) {
+  return { pending:'未解析', analyzing:'解析中', done:'解析済', error:'エラー' }[s] || s;
+}
+
+function fmtSize(bytes) {
+  if (bytes > 1024*1024*1024) return (bytes/1024/1024/1024).toFixed(1)+'GB';
+  if (bytes > 1024*1024)      return (bytes/1024/1024).toFixed(1)+'MB';
+  return (bytes/1024).toFixed(0)+'KB';
+}
+
+async function refreshAll() {
+  await loadAssets();
+  if (currentAssetId) {
+    const a = allAssets.find(x => x.id === currentAssetId);
+    if (a) updateReportPanel(a);
+  }
+}
+
+// ==================== ASSET SELECT ====================
+async function selectAsset(id) {
+  currentAssetId = id;
+  stampedTime = null;
+  updateTsBadge();
+  renderFileList();
+
+  const asset = allAssets.find(a => a.id === id);
+  if (!asset) return;
+
+  document.getElementById('topbar-asset-name').textContent = asset.renamed_name || asset.original_name;
+
+  // 動画プレイヤーにセット
+  // Google Driveのファイルはdirectリンクでは再生できないため、ローカルアップロード後のプレビューは
+  // サーバーから /api/assets/:id/stream で配信するか、ブラウザに直接ファイルを持たせる
+  // ここでは drive_file_id がある場合は埋め込みURLを試みる
+  const video = document.getElementById('main-video');
+  const empty = document.getElementById('video-empty');
+  const controls = document.getElementById('video-controls');
+
+  if (asset.drive_file_id) {
+    // Google Drive 動画の埋め込み再生
+    // drive_file_id から直接再生用URLを生成
+    video.src = `https://drive.google.com/uc?export=download&id=${asset.drive_file_id}`;
+    video.style.display = 'block';
+    empty.style.display = 'none';
+    controls.style.display = 'flex';
+  } else {
+    // ローカルアップロード済みファイルはサーバー側に残っていないので案内表示
+    video.style.display = 'none';
+    empty.style.display = 'block';
+    empty.innerHTML = `<div class="video-empty-icon">📄</div><div style="font-size:12px;color:var(--text-muted)">Google Drive IDが未設定です<br><small>案件登録でドライブリンクを設定するか<br>ローカルファイルを直接開いてください</small></div>`;
+    controls.style.display = 'none';
+  }
+
+  updateReportPanel(asset);
+  await loadComments();
+
+  // 解析中なら自動ポーリング
+  if (asset.analysis_status === 'analyzing' || asset.analysis_status === 'pending') {
+    startPolling(id);
+  }
+}
+
+// ローカルファイルを直接プレイヤーで開く（ファイル選択なし・プレビューのみ）
+function openLocalFile() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'video/*';
+  input.onchange = e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const video = document.getElementById('main-video');
+    video.src = URL.createObjectURL(f);
+    video.style.display = 'block';
+    document.getElementById('video-empty').style.display = 'none';
+    document.getElementById('video-controls').style.display = 'flex';
+    setupVideoEvents();
+    toast('ローカルファイルをプレビュー中（DB未登録）');
+  };
+  input.click();
+}
+
+// ==================== VIDEO PLAYER ====================
+function setupVideoEvents() {
+  const video = document.getElementById('main-video');
+  const seek  = document.getElementById('seek-bar');
+
+  video.ontimeupdate = () => {
+    document.getElementById('time-current').textContent = fmtTime(video.currentTime);
+    seek.value = video.duration ? (video.currentTime / video.duration) * 100 : 0;
+    updateTsBadge();
+  };
+  video.onloadedmetadata = () => {
+    document.getElementById('time-total').textContent = fmtTime(video.duration);
+    seek.max = 100;
+  };
+  video.onplay  = () => document.getElementById('play-btn').textContent = '⏸';
+  video.onpause = () => document.getElementById('play-btn').textContent = '▶';
+  video.onended = () => document.getElementById('play-btn').textContent = '▶';
+}
+
+document.getElementById('main-video').addEventListener('loadedmetadata', () => {
+  const video = document.getElementById('main-video');
+  document.getElementById('time-total').textContent = fmtTime(video.duration);
+});
+document.getElementById('main-video').addEventListener('timeupdate', () => {
+  const video = document.getElementById('main-video');
+  const seek  = document.getElementById('seek-bar');
+  document.getElementById('time-current').textContent = fmtTime(video.currentTime);
+  if (video.duration) seek.value = (video.currentTime / video.duration) * 100;
+  updateTsBadge();
+});
+document.getElementById('main-video').addEventListener('play',  () => document.getElementById('play-btn').textContent = '⏸');
+document.getElementById('main-video').addEventListener('pause', () => document.getElementById('play-btn').textContent = '▶');
+document.getElementById('main-video').addEventListener('ended', () => document.getElementById('play-btn').textContent = '▶');
+
+function togglePlay() {
+  const v = document.getElementById('main-video');
+  v.paused ? v.play() : v.pause();
+}
+
+function onSeek() {
+  const v = document.getElementById('main-video');
+  if (v.duration) v.currentTime = (document.getElementById('seek-bar').value / 100) * v.duration;
+}
+
+function setSpeed(s) {
+  document.getElementById('main-video').playbackRate = s;
+  document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+  if (s === 1) document.getElementById('speed-1').classList.add('active');
+  else document.querySelectorAll('.speed-btn').forEach(b => { if (b.textContent === s + 'x') b.classList.add('active'); });
+}
+
+function toggleMute() {
+  const v = document.getElementById('main-video');
+  v.muted = !v.muted;
+  document.getElementById('vol-icon').textContent = v.muted ? '🔇' : '🔊';
+}
+
+function setVolume() {
+  document.getElementById('main-video').volume = document.getElementById('vol-bar').value;
+}
+
+// タイムスタンプをスタンプ
+function captureTimestamp() {
+  const v = document.getElementById('main-video');
+  stampedTime = v.currentTime || 0;
+  updateTsBadge();
+  toast(`⏱ ${fmtTime(stampedTime)} でスタンプしました`);
+}
+
+function clearTimestamp() {
+  stampedTime = null;
+  updateTsBadge();
+}
+
+function updateTsBadge() {
+  const v = document.getElementById('main-video');
+  const badge = document.getElementById('ts-badge');
+  if (stampedTime !== null) {
+    badge.textContent = `⏱ ${fmtTime(stampedTime)} にスタンプ済`;
+    badge.style.borderColor = 'var(--accent)';
+  } else {
+    const cur = v.currentTime || 0;
+    badge.textContent = `⏱ ${fmtTime(cur)} でスタンプ`;
+    badge.style.borderColor = 'rgba(200,255,71,.3)';
+  }
+}
+
+// ==================== UPLOAD ====================
+function onDragOver(e) { e.preventDefault(); document.getElementById('upload-zone').classList.add('drag'); }
+function onDragLeave()  { document.getElementById('upload-zone').classList.remove('drag'); }
+function onDrop(e)      { e.preventDefault(); document.getElementById('upload-zone').classList.remove('drag'); uploadFiles(e.dataTransfer.files); }
+function onFileSelected(e) { uploadFiles(e.target.files); }
+
+async function uploadFiles(files) {
+  const projId = document.getElementById('proj-filter').value;
+  const progressWrap = document.getElementById('upload-progress');
+  const progressBar  = document.getElementById('progress-bar');
+  const progressText = document.getElementById('upload-progress-text');
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    progressWrap.style.display = 'block';
+    progressText.textContent = `アップロード中: ${file.name} (${i+1}/${files.length})`;
+
+    const form = new FormData();
+    form.append('video', file);
+    if (projId) form.append('projectId', projId);
+
+    try {
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/assets/upload');
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) progressBar.style.width = (e.loaded / e.total * 100) + '%';
+        };
+        xhr.onload = () => {
+          if (xhr.status < 400) { resolve(JSON.parse(xhr.responseText)); }
+          else reject(new Error(`HTTP ${xhr.status}`));
+        };
+        xhr.onerror = () => reject(new Error('ネットワークエラー'));
+        xhr.send(form);
+      });
+      toast(`✅ ${file.name} をアップロードしました`);
+    } catch(e) {
+      toast(`❌ ${file.name}: ${e.message}`, 'error');
+    }
+  }
+
+  progressBar.style.width = '100%';
+  setTimeout(() => { progressWrap.style.display = 'none'; progressBar.style.width = '0%'; }, 1000);
+  document.getElementById('file-input').value = '';
+  await loadAssets();
+
+  // 最新のアセットを自動選択
+  if (allAssets.length > 0) {
+    await selectAsset(allAssets[0].id);
+    startPolling(allAssets[0].id);
+  }
+}
+
+// 解析完了まで自動更新するポーリング
+// ポーリング: 一定間隔でAPIをチェックし続ける処理
+function startPolling(assetId) {
+  if (pollingTimer) clearInterval(pollingTimer);
+  pollingTimer = setInterval(async () => {
+    if (assetId !== currentAssetId) { clearInterval(pollingTimer); return; }
+    await loadAssets();
+    const a = allAssets.find(x => x.id === assetId);
+    if (!a) { clearInterval(pollingTimer); return; }
+    updateReportPanel(a);
+    if (a.analysis_status === 'done' || a.analysis_status === 'error') {
+      clearInterval(pollingTimer);
+      pollingTimer = null;
+      if (a.analysis_status === 'done') toast('🤖 AI解析が完了しました！');
+    }
+  }, 3000);
+}
+
+// ==================== REPORT PANEL ====================
+function updateReportPanel(asset) {
+  const banner = document.getElementById('analysis-banner');
+  const body   = document.getElementById('report-body');
+  const reBtn  = document.getElementById('reanalyze-btn');
+
+  banner.className = `analysis-status-banner ${asset.analysis_status}`;
+  const bannerTexts = {
+    pending:   '解析待機中...',
+    analyzing: '<span class="spinner"></span> AIが動画を解析中...',
+    done:      '✅ AI解析完了',
+    error:     '❌ 解析エラー（再解析してください）',
+  };
+  banner.innerHTML = bannerTexts[asset.analysis_status] || asset.analysis_status;
+  reBtn.style.display = (asset.analysis_status === 'done' || asset.analysis_status === 'error') ? 'inline-flex' : 'none';
+
+  if (asset.analysis_status !== 'done' && asset.analysis_status !== 'error') {
+    body.innerHTML = `<div class="report-empty"><div style="font-size:24px;margin-bottom:8px">⏳</div>${asset.analysis_status === 'analyzing' ? 'AI解析中です。しばらくお待ちください...' : '解析待機中です。'}</div>`;
+    return;
+  }
+
+  // リネーム情報
+  const renameHtml = asset.renamed_name ? `
+    <div class="report-section">
+      <div class="report-label">📝 命名規約リネーム</div>
+      <div class="rename-box">
+        <div class="rename-orig">${asset.original_name}</div>
+        <div class="rename-new">→ ${asset.renamed_name}</div>
+        <div style="font-size:9px;color:var(--text-muted);margin-top:4px">案件名_日付_バージョン_連番</div>
+      </div>
+    </div>` : '';
+
+  // AIレポート（Markdown風をHTMLに変換）
+  const reportHtml = asset.ai_report
+    ? asset.ai_report
+        .replace(/^# (.+)$/mg, '<div style="font-size:15px;font-weight:700;margin-bottom:10px;color:var(--accent)">$1</div>')
+        .replace(/^## (.+)$/mg, '<div class="report-label">$1</div>')
+        .replace(/\n/g, '<br>')
+    : '<div class="report-empty">レポートがありません</div>';
+
+  body.innerHTML = `
+    ${renameHtml}
+    <div class="report-section">
+      <div class="report-label">🤖 AI解析レポート</div>
+      <div style="font-size:12px;line-height:1.8;color:var(--text)">${reportHtml}</div>
+    </div>
+    <div style="margin-top:16px">
+      <button class="btn btn-ghost btn-sm" onclick="downloadReport('${asset.id}')">📄 レポートをコピー</button>
+    </div>
+  `;
+}
+
+async function downloadReport(assetId) {
+  const asset = allAssets.find(a => a.id === assetId);
+  if (!asset?.ai_report) return;
+  await navigator.clipboard.writeText(asset.ai_report).catch(() => {});
+  toast('レポートをクリップボードにコピーしました');
+}
+
+async function reanalyze() {
+  if (!currentAssetId) return;
+  toast('再解析をリクエストしました（現在の実装ではファイルを再アップロードしてください）');
+}
+
+// ==================== COMMENTS ====================
+async function loadComments() {
+  if (!currentAssetId) return;
+  try {
+    currentComments = await api('GET', `/api/assets/${currentAssetId}/comments`);
+  } catch(e) { currentComments = []; }
+  renderComments();
+}
+
+function setCommentFilter(f) {
+  commentFilter = f;
+  ['all','pinned','unresolved'].forEach(id => {
+    document.getElementById('cf-' + id)?.classList.toggle('active', id === f);
+  });
+  renderComments();
+}
+
+function renderComments() {
+  const el = document.getElementById('comment-list');
+  let list = currentComments;
+  if (commentFilter === 'pinned')    list = list.filter(c => c.is_pinned);
+  if (commentFilter === 'unresolved') list = list.filter(c => !c.resolved);
+
+  if (!list.length) {
+    el.innerHTML = `<div class="no-comments">${commentFilter === 'all' ? 'コメントがありません' : '該当するコメントがありません'}</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(c => {
+    const badges = [
+      c.is_pinned ? '<span class="c-badge c-badge-pin">📌 ピン</span>' : '',
+      c.resolved ? '<span class="c-badge c-badge-resolved">✅ 解決済</span>' : '',
+      c.promoted_to_knowledge ? '<span class="c-badge c-badge-promoted">🧠 ナレッジ化</span>' : '',
+    ].filter(Boolean).join('');
+
+    const tsHtml = c.timestamp_seconds != null
+      ? `<span class="c-ts" onclick="seekTo(${c.timestamp_seconds})" title="この時間に移動">⏱ ${fmtTime(c.timestamp_seconds)}</span>` : '';
+
+    return `<div class="c-item ${c.is_pinned?'pinned':''} ${c.resolved?'resolved':''} ${c.promoted_to_knowledge?'promoted':''}">
+      <div class="c-header">
+        ${tsHtml}
+        <span class="c-author">${c.author}</span>
+        ${badges}
+        <span class="c-date">${new Date(c.created_at * 1000).toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+      </div>
+      <div class="c-body">${c.body.replace(/\n/g,'<br>')}</div>
+      <div class="c-actions">
+        ${!c.resolved ? `<button class="btn btn-ghost btn-sm" onclick="resolveComment('${c.id}')">✅ 解決済みにする</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="pinComment('${c.id}', ${!c.is_pinned})">${c.is_pinned?'📌 ピン解除':'📌 ピン留め'}</button>
+        ${!c.promoted_to_knowledge ? `<button class="btn btn-purple btn-sm" onclick="promoteComment('${c.id}')">🧠 ナレッジ化</button>` : ''}
+        <button class="btn btn-danger btn-sm" onclick="deleteComment('${c.id}')">×</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function seekTo(seconds) {
+  const v = document.getElementById('main-video');
+  v.currentTime = seconds;
+  if (v.paused) v.play();
+}
+
+function onCommentKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); postComment(); }
+}
+
+async function postComment() {
+  if (!currentAssetId) { toast('動画を選択してください', 'error'); return; }
+  const body   = document.getElementById('c-body').value.trim();
+  const author = document.getElementById('c-author').value.trim() || '匿名';
+  if (!body) return;
+
+  await api('POST', `/api/assets/${currentAssetId}/comments`, {
+    author, body,
+    timestampSeconds: stampedTime,
+    isPinned: false,
+  });
+  document.getElementById('c-body').value = '';
+  stampedTime = null;
+  updateTsBadge();
+  await loadComments();
+}
+
+async function pinComment(id, pinned) {
+  await api('PATCH', `/api/video-comments/${id}/pin`, { pinned });
+  await loadComments();
+}
+
+async function resolveComment(id) {
+  await api('PATCH', `/api/video-comments/${id}/resolve`, {});
+  await loadComments();
+}
+
+async function promoteComment(id) {
+  toast('🧠 AIでナレッジ化中...');
+  try {
+    const r = await api('POST', `/api/video-comments/${id}/promote`, {});
+    toast('✅ ナレッジベースに追加しました');
+    await loadComments();
+  } catch(e) {}
+}
+
+async function deleteComment(id) {
+  if (!confirm('このコメントを削除しますか？')) return;
+  await api('DELETE', `/api/video-comments/${id}`, null);
+  await loadComments();
+}
+
+// ==================== START ====================
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VIDEO OPS — 招待登録</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#07070f;--surface:#0d0d1a;--surface2:#141422;--border:#1e1e36;
+  --accent:#c8ff47;--accent2:#47b8ff;--accent4:#b847ff;
+  --text:#e0e0f0;--text-muted:#52527a;--danger:#ff4f4f;--success:#47ffaa;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+body::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(184,71,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(184,71,255,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none}
+body::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 60% at 50% 40%,rgba(184,71,255,.06) 0%,transparent 70%);pointer-events:none}
+
+.wrap{position:relative;z-index:1;width:100%;max-width:440px;padding:20px}
+.logo-area{text-align:center;margin-bottom:28px}
+.logo-title{font-family:'Bebas Neue',cursive;font-size:36px;letter-spacing:7px;color:var(--accent);line-height:1}
+.logo-sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);letter-spacing:3px;margin-top:5px}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px}
+
+.invite-header{margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+.invite-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--accent4);font-weight:700;margin-bottom:8px}
+.invite-email{font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px}
+.invite-role{display:inline-block;padding:3px 10px;border-radius:3px;font-size:11px;font-weight:700}
+.role-admin{background:rgba(200,255,71,.15);color:var(--accent)}
+.role-director{background:rgba(71,184,255,.15);color:var(--accent2)}
+.role-editor{background:rgba(184,71,255,.15);color:var(--accent4)}
+.role-client{background:rgba(255,184,74,.15);color:#ffb84a}
+
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:6px}
+.form-control{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:11px 13px;color:var(--text);font-size:14px;font-family:'Noto Sans JP',sans-serif;transition:border-color .15s}
+.form-control:focus{outline:none;border-color:var(--accent4)}
+.form-control::placeholder{color:var(--text-muted)}
+.form-control:disabled{opacity:.5;cursor:not-allowed}
+.form-hint{font-size:11px;color:var(--text-muted);margin-top:4px}
+
+.btn-primary{width:100%;padding:13px;background:var(--accent4);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;font-family:'Noto Sans JP',sans-serif;margin-bottom:12px}
+.btn-primary:hover{background:#9a2ee0;transform:translateY(-1px)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+.divider{display:flex;align-items:center;gap:12px;margin:16px 0}
+.divider-line{flex:1;height:1px;background:var(--border)}
+.divider-text{font-size:11px;color:var(--text-muted)}
+
+.btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 20px;background:#fff;color:#1a1a2e;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;font-family:'Noto Sans JP',sans-serif;text-decoration:none}
+.btn-google:hover{background:#f0f0f0}
+.google-icon{width:18px;height:18px;flex-shrink:0}
+
+.error-msg{background:rgba(255,79,79,.1);border:1px solid rgba(255,79,79,.3);border-radius:6px;padding:10px 13px;font-size:13px;color:var(--danger);margin-bottom:14px;display:none}
+.error-msg.show{display:block}
+.success-msg{background:rgba(71,255,170,.1);border:1px solid rgba(71,255,170,.3);border-radius:6px;padding:10px 13px;font-size:13px;color:var(--success);margin-bottom:14px;display:none}
+.success-msg.show{display:block}
+
+.invalid-wrap{text-align:center;padding:20px}
+.invalid-icon{font-size:40px;margin-bottom:12px}
+.invalid-text{font-size:14px;color:var(--text-muted);line-height:1.7}
+
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="logo-area">
+    <div class="logo-title">VIDEO OPS</div>
+    <div class="logo-sub">TEAM INVITATION</div>
+  </div>
+
+  <div class="card" id="main-card">
+    <!-- JS で内容を差し替え -->
+    <div style="text-align:center;padding:30px;color:var(--text-muted);font-size:13px">招待リンクを確認中...</div>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const token  = params.get('token');
+let inviteData = null;
+
+const roleLabels = { admin:'管理者', director:'ディレクター', editor:'編集者', client:'クライアント' };
+const roleCls    = { admin:'role-admin', director:'role-director', editor:'role-editor', client:'role-client' };
+
+async function init() {
+  if (!token) { showInvalid('招待トークンがありません'); return; }
+
+  try {
+    const res  = await fetch(`/api/invitations/verify/${token}`);
+    const data = await res.json();
+    if (!res.ok) { showInvalid(data.error); return; }
+    inviteData = data;
+    showRegisterForm(data);
+  } catch(e) {
+    showInvalid('ネットワークエラーが発生しました');
+  }
+}
+
+function showInvalid(msg) {
+  document.getElementById('main-card').innerHTML = `
+    <div class="invalid-wrap">
+      <div class="invalid-icon">🔗</div>
+      <div class="invalid-text">${msg}<br><br><a href="/login.html" style="color:var(--accent2)">ログインページへ</a></div>
+    </div>`;
+}
+
+function showRegisterForm(data) {
+  document.getElementById('main-card').innerHTML = `
+    <div class="invite-header">
+      <div class="invite-label">📩 招待が届いています</div>
+      <div class="invite-email">${data.email}</div>
+      <span class="invite-role ${roleCls[data.role]}">${roleLabels[data.role] || data.role}</span>
+      としてチームに参加します
+    </div>
+
+    <div class="error-msg" id="error-msg"></div>
+    <div class="success-msg" id="success-msg"></div>
+
+    <div class="form-group">
+      <label>表示名 *</label>
+      <input type="text" class="form-control" id="reg-name" placeholder="田中 太郎">
+    </div>
+    <div class="form-group">
+      <label>パスワード *</label>
+      <input type="password" class="form-control" id="reg-pass" placeholder="8文字以上">
+      <div class="form-hint">8文字以上で設定してください</div>
+    </div>
+    <div class="form-group">
+      <label>パスワード（確認）</label>
+      <input type="password" class="form-control" id="reg-pass2" placeholder="••••••••" onkeydown="if(event.key==='Enter')register()">
+    </div>
+
+    <button class="btn-primary" onclick="register()" id="reg-btn">アカウントを作成してログイン</button>
+
+    <div class="divider">
+      <div class="divider-line"></div>
+      <div class="divider-text">または</div>
+      <div class="divider-line"></div>
+    </div>
+
+    <a href="/auth/google?invite=${token}" class="btn-google">
+      <svg class="google-icon" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      Googleアカウントで参加
+    </a>
+  `;
+}
+
+async function register() {
+  const name  = document.getElementById('reg-name').value.trim();
+  const pass  = document.getElementById('reg-pass').value;
+  const pass2 = document.getElementById('reg-pass2').value;
+  const btn   = document.getElementById('reg-btn');
+
+  if (!name)             { showErr('表示名を入力してください'); return; }
+  if (pass.length < 8)   { showErr('パスワードは8文字以上必要です'); return; }
+  if (pass !== pass2)    { showErr('パスワードが一致しません'); return; }
+
+  btn.innerHTML = '<span class="spinner"></span>登録中...';
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch('/api/invitations/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, name, password: pass }),
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) { showErr(data.error); return; }
+
+    document.getElementById('success-msg').textContent = `✅ ようこそ、${name}さん！チームに参加しました。`;
+    document.getElementById('success-msg').classList.add('show');
+    setTimeout(() => window.location.href = '/', 1500);
+  } catch(e) {
+    showErr('ネットワークエラーが発生しました');
+  } finally {
+    btn.innerHTML = 'アカウントを作成してログイン';
+    btn.disabled = false;
+  }
+}
+
+function showErr(msg) {
+  const el = document.getElementById('error-msg');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+init();
+</script>
+</body>
+</html>
