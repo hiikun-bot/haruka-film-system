@@ -1731,13 +1731,13 @@ function effectiveRole() {
 // ==================== メンバーCSVインポート/エクスポート ====================
 
 const CSV_LEGEND = [
-  '【必須】名前（フルネーム）',
-  '【必須】メールアドレス',
-  '【必須】役割: admin=管理者 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=編集者 / designer=デザイナー',
-  '職種: 動画 / デザイン',
-  'ランク: S / A / B / C',
-  'チームコード: A〜Z（チーム管理で登録したコード）',
-  '生年月日: YYYY-MM-DD形式（例: 1990-01-15）'
+  '【必須】名前（フルネーム）例: 田中 太郎',
+  '【必須】メールアドレス 例: tanaka@example.com',
+  '【必須】役割を英字で入力 → admin=管理者 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=動画編集者 / designer=デザイナー',
+  '職種を英字で入力 → video=動画 / design=デザイン',
+  'ランクを英字1文字で入力 → S / A / B / C',
+  'チームコード: チーム管理で登録したアルファベット1文字（例: A）',
+  '生年月日をYYYY-MM-DD形式で入力（例: 1990-01-15）※スプレッドシートが自動変換する場合はセルを文字列形式に設定してください'
 ];
 
 function csvFilename(prefix) {
@@ -1817,6 +1817,13 @@ function parseImportCSV(input) {
     for (let i = 2; i < lines.length; i++) {
       const cols = lines[i].match(/("(?:[^"]|"")*"|[^,]*)/g)
         .map(c => c.trim().replace(/^"|"$/g,'').replace(/""/g,'"'));
+      // 誕生日: YYYY/M/D → YYYY-MM-DD に正規化
+      const normBirthday = v => {
+        if (!v) return '';
+        const m = v.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+        if (!m) return v;
+        return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+      };
       const row = {
         full_name: cols[idx('full_name')] || '',
         email: cols[idx('email')] || '',
@@ -1824,7 +1831,7 @@ function parseImportCSV(input) {
         job_type: cols[idx('job_type')] || '',
         rank: cols[idx('rank')] || '',
         team_code: cols[idx('team_code')] || '',
-        birthday: cols[idx('birthday')] || ''
+        birthday: normBirthday(cols[idx('birthday')] || '')
       };
       const valid = row.full_name && row.email && row.role;
       const existing = allMembers.find(m => m.email === row.email);
