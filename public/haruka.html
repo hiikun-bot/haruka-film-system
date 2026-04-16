@@ -369,7 +369,11 @@ tr.row-help td{background:#FFFBF2}
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div class="sec-label">メンバー一覧</div>
-      <button class="btn-primary" onclick="openAddMember()">＋ メンバー追加</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="exportMembersCSV()">CSVエクスポート</button>
+        <button class="btn" onclick="openImportModal()">CSVインポート</button>
+        <button class="btn-primary" onclick="openAddMember()">＋ メンバー追加</button>
+      </div>
     </div>
     <div id="members-list" class="loading">読み込み中...</div>
   </div>
@@ -575,6 +579,54 @@ tr.row-help td{background:#FFFBF2}
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
       <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
       <button class="btn-primary" onclick="createTeam()">追加する</button>
+    </div>
+  </div>
+</div>
+
+<!-- メンバーCSVインポートモーダル -->
+<div class="modal-overlay" id="modal-import">
+  <div class="modal" style="max-width:760px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">メンバー一括インポート<button class="modal-close" onclick="closeModal('modal-import')">×</button></div>
+
+    <div style="background:var(--em-pale);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.8;color:var(--em-dark)">
+      <b>CSVフォーマット（1行目はヘッダー）</b><br>
+      <code style="font-size:12px">full_name, email, role, job_type, rank, team_code, birthday</code><br>
+      role: <code>admin / producer / producer_director / director / editor / designer</code><br>
+      job_type: <code>動画 / デザイン</code>　rank: <code>S / A / B / C</code>　team_code: <code>A〜Z</code>　birthday: <code>YYYY-MM-DD</code>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn" onclick="downloadImportTemplate()">テンプレートをダウンロード</button>
+      <label class="btn-primary" style="cursor:pointer;display:inline-flex;align-items:center">
+        CSVファイルを選択
+        <input type="file" id="import-file-input" accept=".csv" style="display:none" onchange="parseImportCSV(this)">
+      </label>
+    </div>
+
+    <div id="import-preview" style="display:none">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px" id="import-preview-label"></div>
+      <div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px" id="import-preview-table">
+          <thead style="background:var(--em-pale);position:sticky;top:0">
+            <tr>
+              <th style="padding:8px;text-align:left">状態</th>
+              <th style="padding:8px;text-align:left">名前</th>
+              <th style="padding:8px;text-align:left">メール</th>
+              <th style="padding:8px;text-align:left">ロール</th>
+              <th style="padding:8px;text-align:left">職種</th>
+              <th style="padding:8px;text-align:left">ランク</th>
+              <th style="padding:8px;text-align:left">チーム</th>
+              <th style="padding:8px;text-align:left">生年月日</th>
+            </tr>
+          </thead>
+          <tbody id="import-preview-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button class="btn" onclick="closeModal('modal-import')">キャンセル</button>
+      <button class="btn-primary" id="import-execute-btn" onclick="executeImport()" style="display:none">登録する</button>
     </div>
   </div>
 </div>
@@ -1674,6 +1726,135 @@ function isSuperAdmin() {
 // プレビュー中を含む「現在の実効ロール」
 function effectiveRole() {
   return previewRole ?? currentUser?.role ?? 'editor';
+}
+
+// ==================== メンバーCSVインポート/エクスポート ====================
+
+const ROLE_LABELS = { admin:'admin', producer:'producer', producer_director:'producer_director', director:'director', editor:'editor', designer:'designer' };
+
+function exportMembersCSV() {
+  const headers = ['full_name','email','role','job_type','rank','team_code','birthday'];
+  const rows = allMembers.map(m => {
+    const team = allTeams.find(t => t.id === m.team_id);
+    return [
+      m.full_name || '',
+      m.email || '',
+      m.role || '',
+      m.job_type || '',
+      m.rank || '',
+      team?.team_code || '',
+      m.birthday ? m.birthday.slice(0,10) : ''
+    ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+  });
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `members_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+function downloadImportTemplate() {
+  const csv = 'full_name,email,role,job_type,rank,team_code,birthday\n田中 太郎,tanaka@example.com,editor,動画,A,S,1990-01-15\n鈴木 花子,suzuki@example.com,designer,デザイン,B,,';
+  const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'members_template.csv';
+  a.click();
+}
+
+function openImportModal() {
+  document.getElementById('import-preview').style.display = 'none';
+  document.getElementById('import-execute-btn').style.display = 'none';
+  document.getElementById('import-file-input').value = '';
+  document.getElementById('import-preview-tbody').innerHTML = '';
+  openModal('modal-import');
+}
+
+let importRows = [];
+
+function parseImportCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result.replace(/^\uFEFF/, '');
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { alert('データが1件もありません'); return; }
+
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
+    const idx = h => headers.indexOf(h);
+
+    importRows = [];
+    const tbody = document.getElementById('import-preview-tbody');
+    tbody.innerHTML = '';
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].match(/("(?:[^"]|"")*"|[^,]*)/g)
+        .map(c => c.trim().replace(/^"|"$/g,'').replace(/""/g,'"'));
+      const row = {
+        full_name: cols[idx('full_name')] || '',
+        email: cols[idx('email')] || '',
+        role: cols[idx('role')] || 'editor',
+        job_type: cols[idx('job_type')] || '',
+        rank: cols[idx('rank')] || '',
+        team_code: cols[idx('team_code')] || '',
+        birthday: cols[idx('birthday')] || ''
+      };
+      const valid = row.full_name && row.email && row.role;
+      const existing = allMembers.find(m => m.email === row.email);
+      row._status = !valid ? 'error' : existing ? 'skip' : 'new';
+      row._msg = !valid ? '名前・メール・ロール必須' : existing ? '登録済み（スキップ）' : '新規登録';
+      importRows.push(row);
+
+      const statusColor = { new:'#2E7D32', skip:'#888', error:'#E24B4A' };
+      const tr = document.createElement('tr');
+      tr.style.borderTop = '1px solid var(--border)';
+      tr.innerHTML = `
+        <td style="padding:7px 8px;color:${statusColor[row._status]};font-weight:500">${row._msg}</td>
+        <td style="padding:7px 8px">${row.full_name}</td>
+        <td style="padding:7px 8px">${row.email}</td>
+        <td style="padding:7px 8px">${row.role}</td>
+        <td style="padding:7px 8px">${row.job_type}</td>
+        <td style="padding:7px 8px">${row.rank}</td>
+        <td style="padding:7px 8px">${row.team_code}</td>
+        <td style="padding:7px 8px">${row.birthday}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    const newCount = importRows.filter(r => r._status === 'new').length;
+    document.getElementById('import-preview-label').textContent =
+      `${importRows.length}件読み込み — 新規登録: ${newCount}件 / スキップ: ${importRows.filter(r=>r._status==='skip').length}件 / エラー: ${importRows.filter(r=>r._status==='error').length}件`;
+    document.getElementById('import-preview').style.display = '';
+    document.getElementById('import-execute-btn').style.display = newCount ? '' : 'none';
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+async function executeImport() {
+  const toCreate = importRows.filter(r => r._status === 'new');
+  if (!toCreate.length) return;
+
+  const btn = document.getElementById('import-execute-btn');
+  btn.textContent = '登録中...'; btn.disabled = true;
+
+  const res = await fetch(`${API}/members/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ members: toCreate })
+  });
+
+  btn.textContent = '登録する'; btn.disabled = false;
+
+  if (res.ok) {
+    const result = await res.json();
+    closeModal('modal-import');
+    await loadMembers();
+    alert(`${result.created}件を登録しました${result.failed ? `（${result.failed}件失敗）` : ''}`);
+  } else {
+    const e = await res.json();
+    alert('エラー: ' + e.error);
+  }
 }
 
 // 単価閲覧権限（admin/producer/producer_director）

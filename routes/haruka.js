@@ -486,6 +486,33 @@ router.post('/members', async (req, res) => {
   res.json(data);
 });
 
+// メンバー一括登録
+router.post('/members/bulk', async (req, res) => {
+  const { members } = req.body;
+  if (!members?.length) return res.status(400).json({ error: 'データがありません' });
+
+  // チームコード→IDのマップを取得
+  const { data: teams } = await supabase.from('teams').select('id, team_code');
+  const teamMap = {};
+  (teams || []).forEach(t => { teamMap[t.team_code] = t.id; });
+
+  let created = 0, failed = 0;
+  for (const m of members) {
+    const { full_name, email, role, job_type, rank, team_code, birthday } = m;
+    if (!full_name || !email || !role) { failed++; continue; }
+    const { error } = await supabase.from('users').insert({
+      full_name, email, role,
+      job_type: job_type || null,
+      rank: rank || null,
+      team_id: team_code ? (teamMap[team_code] || null) : null,
+      birthday: birthday || null,
+      weekday_hours: [{from:9,to:18}]
+    });
+    if (error) { failed++; } else { created++; }
+  }
+  res.json({ created, failed });
+});
+
 // メンバー更新
 router.put('/members/:id', async (req, res) => {
   const {
