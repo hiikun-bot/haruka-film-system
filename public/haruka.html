@@ -1099,7 +1099,7 @@ function openEditClient(id) {
   document.getElementById('cl-code').value = c.client_code || '';
   document.getElementById('cl-note').value = c.note || '';
   document.getElementById('cl-sales-start').value = c.sales_start_date ? c.sales_start_date.slice(0,10) : '';
-  document.getElementById('cl-status').value = c.status || '取引中';
+  document.getElementById('cl-status').value = c.status || '提案中';
   document.getElementById('cl-submit-btn').textContent = '保存する';
   openModal('modal-client');
 }
