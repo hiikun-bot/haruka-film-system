@@ -4191,9 +4191,9 @@ function renderMasterPage() {
     content.innerHTML = `
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">区分を選択してマスター値を管理します。</div>
 
-      <!-- 区分タイル -->
+      <!-- 区分タイル（商材・訴求軸は専用マスターがあるため除外） -->
       <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:32px">
-        ${masterCategories.map(cat => {
+        ${masterCategories.filter(cat => !['商材', '訴求軸'].includes(cat.name)).map(cat => {
           const count = masterItems.filter(i => i.category_id === cat.id).length;
           return `
           <button onclick="selectMasterCategory('${cat.id}')"
