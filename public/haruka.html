@@ -979,6 +979,55 @@ tr.row-help td{background:#FFFBF2}
   </div>
 </div>
 
+<!-- クライアント報酬設定モーダル -->
+<div class="modal-overlay" id="modal-client-fee">
+  <div class="modal-card" style="max-width:480px">
+    <div class="modal-title">
+      クライアント報酬設定 — <span id="cf-project-name"></span>
+      <button class="modal-close" onclick="closeModal('modal-client-fee')">×</button>
+    </div>
+    <div class="modal-body">
+      <!-- 本数×単価モード -->
+      <div style="margin-bottom:16px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;margin-bottom:12px">
+          <input type="checkbox" id="cf-use-fixed" onchange="toggleClientFeeMode()" style="width:16px;height:16px">
+          案件固定予算を使用する
+        </label>
+      </div>
+
+      <!-- 本数×単価 -->
+      <div id="cf-unit-section">
+        <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:8px">1本あたり単価</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div>
+            <label class="form-label">動画（円）</label>
+            <input class="form-input" type="number" id="cf-video-unit" min="0" placeholder="0">
+          </div>
+          <div>
+            <label class="form-label">デザイン（円）</label>
+            <input class="form-input" type="number" id="cf-design-unit" min="0" placeholder="0">
+          </div>
+        </div>
+      </div>
+
+      <!-- 固定予算 -->
+      <div id="cf-fixed-section" style="display:none">
+        <label class="form-label">案件固定予算（円）</label>
+        <input class="form-input" type="number" id="cf-fixed-budget" min="0" placeholder="0" style="margin-bottom:16px">
+      </div>
+
+      <div>
+        <label class="form-label">備考</label>
+        <input class="form-input" type="text" id="cf-note" placeholder="メモ（任意）">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-client-fee')">キャンセル</button>
+      <button class="btn-primary" onclick="saveClientFee()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-project">
   <div class="modal" style="width:92vw;max-width:1020px;max-height:92vh;overflow-y:auto;padding:0;border-radius:16px">
 
@@ -1516,6 +1565,7 @@ async function loadProjects() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
+            ${['admin','secretary','producer','producer_director'].includes(effectiveRole()) ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
             <button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>
             <button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>
           </div>`;
@@ -3819,6 +3869,52 @@ function openLink(inputId) {
   const url = document.getElementById(inputId).value.trim();
   if (url) window.open(url, '_blank', 'noopener');
   else alert('URLが入力されていません');
+}
+
+// ===== クライアント報酬設定 =====
+let currentClientFeeProjectId = null;
+
+function toggleClientFeeMode() {
+  const useFixed = document.getElementById('cf-use-fixed').checked;
+  document.getElementById('cf-unit-section').style.display = useFixed ? 'none' : '';
+  document.getElementById('cf-fixed-section').style.display = useFixed ? '' : 'none';
+}
+
+async function openClientFeeModal(projectId, projectName) {
+  currentClientFeeProjectId = projectId;
+  document.getElementById('cf-project-name').textContent = projectName;
+
+  // 既存設定を取得
+  const res = await fetch(`${API}/projects/${projectId}/client-fee`);
+  const fee = res.ok ? await res.json() : null;
+
+  document.getElementById('cf-video-unit').value = fee?.video_unit_price || 0;
+  document.getElementById('cf-design-unit').value = fee?.design_unit_price || 0;
+  document.getElementById('cf-fixed-budget').value = fee?.fixed_budget || 0;
+  document.getElementById('cf-use-fixed').checked = fee?.use_fixed_budget || false;
+  document.getElementById('cf-note').value = fee?.note || '';
+  toggleClientFeeMode();
+
+  openModal('modal-client-fee');
+}
+
+async function saveClientFee() {
+  const useFixed = document.getElementById('cf-use-fixed').checked;
+  const body = {
+    video_unit_price: parseInt(document.getElementById('cf-video-unit').value) || 0,
+    design_unit_price: parseInt(document.getElementById('cf-design-unit').value) || 0,
+    fixed_budget: parseInt(document.getElementById('cf-fixed-budget').value) || null,
+    use_fixed_budget: useFixed,
+    note: document.getElementById('cf-note').value.trim() || null
+  };
+  const res = await fetch(`${API}/projects/${currentClientFeeProjectId}/client-fee`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) { alert('保存に失敗しました'); return; }
+  closeModal('modal-client-fee');
+  alert('報酬設定を保存しました');
 }
 
 init();
