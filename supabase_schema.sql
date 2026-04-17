@@ -249,6 +249,21 @@ CREATE TABLE IF NOT EXISTS creative_files (
   uploaded_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ==================== creative_file_comments ====================
+CREATE TABLE IF NOT EXISTS creative_file_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_file_id UUID REFERENCES creative_files(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  comment TEXT NOT NULL,
+  timecode TEXT,
+  is_knowledge BOOLEAN DEFAULT false,
+  category_id UUID REFERENCES master_items(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
+CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
+
 -- ==================== マスターテーブル群 ====================
 
 -- ==================== 汎用マスター ====================

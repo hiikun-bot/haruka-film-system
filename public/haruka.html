@@ -210,6 +210,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .tr-remove:hover{background:#FFF0F0;border-color:#F09595;color:#A32D2D}
 .tr-add-btn{font-size:12px;color:var(--em-dark);background:var(--em-pale);border:0.5px solid var(--em-light);border-radius:7px;padding:4px 10px;cursor:pointer;margin-top:2px}
 .tr-add-btn:hover{background:var(--em-light)}
+
+/* 稼働時間バー ツールチップ */
+.wh-tip-wrap{position:relative;display:inline-block;cursor:default}
+.wh-tip-pop{
+  display:none;position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  background:rgba(20,60,58,0.93);color:#fff;font-size:11px;line-height:1.7;
+  padding:7px 11px;border-radius:8px;white-space:nowrap;z-index:9999;
+  box-shadow:0 4px 16px rgba(0,0,0,0.25);pointer-events:none;
+  border:0.5px solid rgba(255,255,255,0.12);
+}
+.wh-tip-pop::after{
+  content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  border:5px solid transparent;border-top-color:rgba(20,60,58,0.93);
+}
+.wh-tip-wrap:hover .wh-tip-pop{display:block}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -684,6 +699,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
       </div><!-- /2カラムグリッド -->
+      <!-- チーム・担当者（任意） -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px;margin-top:14px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">チーム <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意）</span></label>
+          <select class="form-select" id="bulk-team-id" onchange="updateBulkAssigneeSelect()">
+            <option value="">未設定</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">担当者 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意）</span></label>
+          <select class="form-select" id="bulk-assignee-id">
+            <option value="">未設定</option>
+          </select>
+        </div>
+      </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:10px 0 4px">10 本を一括登録します</div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px;padding-top:14px;border-top:0.5px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px">
@@ -2465,6 +2495,7 @@ function renderMemberList() {
       ${visibleMembers.map((m, i) => {
         const team = allTeams.find(t => t.id === m.team_id);
         const TICK_HOURS = [0,6,12,18,24];
+        const fmtTip = ranges => ranges ? ranges.map(r=>`${r.from}:00〜${r.to}:00`).join('、') : '休み';
         const mkBar = (ranges, color, label) => {
           const W = 160;
           const segs = (ranges||[]).map(r => {
@@ -2475,14 +2506,15 @@ function renderMemberList() {
             const pct = (h/24*100).toFixed(2);
             return `<div style="position:absolute;left:${pct}%;transform:translateX(-50%);font-size:9px;color:#aaa;line-height:1">${h}</div>`;
           }).join('');
+          const tipText = fmtTip(ranges);
           return `
-          <div style="width:${W}px">
+          <div class="wh-tip-wrap" style="width:${W}px">
+            <div class="wh-tip-pop">${label}：${tipText}</div>
             <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;font-weight:500">${label}</div>
             <div style="position:relative;height:10px;background:#e8f5f4;border-radius:4px;margin-bottom:3px">${segs}</div>
             <div style="position:relative;height:10px">${ticks}</div>
           </div>`;
         };
-        const fmtTip = ranges => ranges ? ranges.map(r=>`${r.from}:00〜${r.to}:00`).join(', ') : '休み';
         const rowBg = !m.is_active ? 'background:#FAFAFA' : (i % 2 === 0 ? '' : 'background:#FAFEFE');
         const canEdit = canEditMember(m);
         return `<tr style="${rowBg};border-bottom:0.5px solid var(--border);${!m.is_active?'opacity:0.55':''}${canEdit?';cursor:pointer':''}" ${canEdit ? `onclick="openEditMemberById('${m.id}')"` : ''} onmouseenter="this.style.background='#EEF9F8'" onmouseleave="this.style.background='${!m.is_active?'#FAFAFA':(i%2===0?'':'#FAFEFE')}'">
@@ -2497,8 +2529,8 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
           <td style="padding:8px 12px">
             <div style="display:flex;gap:16px">
-              <div title="平日: ${fmtTip(m.weekday_hours)}">${mkBar(m.weekday_hours,'var(--em)','平日')}</div>
-              <div title="土日祝: ${fmtTip(m.weekend_hours)}">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<div style="font-size:10px;color:var(--text-muted);font-weight:500;margin-bottom:2px">土日祝</div><div style="font-size:11px;color:#bbb;padding-top:4px">休み</div>'}</div>
+              <div>${mkBar(m.weekday_hours,'var(--em)','平日')}</div>
+              <div>${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<div style="font-size:10px;color:var(--text-muted);font-weight:500;margin-bottom:2px">土日祝</div><div style="font-size:11px;color:#bbb;padding-top:4px">休み</div>'}</div>
             </div>
           </td>
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${m.note ? `<span title="${esc(m.note)}">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
@@ -4838,6 +4870,26 @@ function updateAssigneeSelect() {
   }
 }
 
+function updateBulkAssigneeSelect() {
+  const teamId = document.getElementById('bulk-team-id')?.value || '';
+  const creativeType = document.getElementById('bulk-creative-type')?.value || '';
+  const sel = document.getElementById('bulk-assignee-id');
+  if (!sel) return;
+  const isVideo = creativeType.startsWith('video');
+  const isDesign = creativeType.startsWith('design');
+  const videoRoles  = ['producer','producer_director','director','editor'];
+  const designRoles = ['producer','producer_director','director','designer'];
+  const ROLE_LABEL = { producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
+  let candidates = allMembers.filter(m => m.is_active !== false);
+  if (isVideo)       candidates = candidates.filter(m => m.job_type === 'video' && videoRoles.includes(m.role));
+  else if (isDesign) candidates = candidates.filter(m => m.job_type === 'design' && designRoles.includes(m.role));
+  if (teamId) candidates = candidates.filter(m => m.team_id === teamId);
+  sel.innerHTML = '<option value="">未設定</option>' + candidates.map(m => {
+    const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
+    return `<option value="${m.id}">${m.full_name}${label}</option>`;
+  }).join('');
+}
+
 // ===== 汎用マスター管理 =====
 
 let masterCategories = [];
@@ -6151,7 +6203,12 @@ async function loadKnowledgePage() {
   const params = new URLSearchParams();
   if (categoryId) params.set('category_id', categoryId);
   const res = await fetch(`${API}/knowledge?${params}`);
-  if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;padding:20px">取得失敗</div>'; return; }
+  if (!res.ok) {
+    let errMsg = '取得失敗';
+    try { const e = await res.json(); errMsg = e.error || errMsg; } catch {}
+    el.innerHTML = `<div style="color:#E24B4A;padding:20px">取得失敗：${errMsg}</div>`;
+    return;
+  }
   let list = await res.json();
   if (keyword) list = list.filter(c => c.comment?.toLowerCase().includes(keyword) || c.master_items?.name?.toLowerCase().includes(keyword));
 
