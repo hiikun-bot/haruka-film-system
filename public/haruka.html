@@ -1591,110 +1591,111 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- クリエイティブ詳細モーダル -->
 <div class="modal-overlay" id="modal-creative-detail">
-  <div class="modal" style="width:720px;max-width:95vw">
-    <div class="modal-title">
-      クリエイティブ詳細
-      <button class="modal-close" onclick="closeModal('modal-creative-detail')">×</button>
-    </div>
+  <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
 
-    <!-- 基本情報バナー -->
-    <div style="background:var(--em-pale);border-radius:10px;padding:14px 18px;margin-bottom:20px">
-      <div style="font-size:15px;font-weight:600;color:var(--text);font-family:monospace;margin-bottom:8px" id="cd-filename"></div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
-        <span id="cd-status-chip"></span>
-        <span style="color:var(--text-muted)" id="cd-project-name"></span>
-        <span style="color:var(--text-muted)" id="cd-assignee"></span>
+    <!-- ヘッダー（固定） -->
+    <div style="padding:20px 24px 16px;flex-shrink:0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:15px;font-weight:700;color:var(--text)">クリエイティブ詳細</div>
+        <button class="modal-close" onclick="closeModal('modal-creative-detail')">×</button>
       </div>
+      <!-- ステップインジケーター -->
+      <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
     </div>
 
-    <!-- URL セクション -->
-    <div class="form-row" style="margin-bottom:16px">
-      <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">台本URL</label>
-        <div style="display:flex;gap:6px">
-          <input class="form-input" id="cd-script-url" placeholder="https://...">
-          <button class="btn" id="cd-script-open" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 12px">開く</button>
+    <!-- スクロール可能コンテンツ -->
+    <div style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px">
+
+      <!-- 基本情報バナー -->
+      <div style="background:var(--em-pale);border-radius:10px;padding:12px 16px;margin-bottom:18px">
+        <div style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;margin-bottom:6px;word-break:break-all" id="cd-filename"></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
+          <span id="cd-status-chip"></span>
+          <span style="color:var(--text-muted)" id="cd-project-name"></span>
+          <span style="color:var(--text-muted)" id="cd-assignee"></span>
         </div>
       </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">Frame.io URL</label>
-        <div style="display:flex;gap:6px">
-          <input class="form-input" id="cd-frameio-url" placeholder="https://...">
-          <button class="btn" onclick="openLink('cd-frameio-url')" style="white-space:nowrap;padding:8px 12px">開く</button>
+
+      <!-- URL セクション（3カラム） -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:18px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">台本URL</label>
+          <div style="display:flex;gap:5px">
+            <input class="form-input" id="cd-script-url" placeholder="https://..." style="min-width:0;flex:1">
+            <button class="btn" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Frame.io URL</label>
+          <div style="display:flex;gap:5px">
+            <input class="form-input" id="cd-frameio-url" placeholder="https://..." style="min-width:0;flex:1">
+            <button class="btn" onclick="openLink('cd-frameio-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">レギュレーションシート</label>
+          <div id="cd-regulation-cell">
+            <div id="cd-regulation-link" style="display:none;align-items:center;gap:6px">
+              <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/></svg>
+                <span style="font-size:12px;color:var(--em-dark);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">設定済み</span>
+              </div>
+              <a id="cd-regulation-open" href="#" target="_blank" class="btn" style="font-size:12px;padding:8px 10px;text-decoration:none;white-space:nowrap;flex-shrink:0">開く ↗</a>
+            </div>
+            <div id="cd-regulation-none" style="font-size:12px;color:var(--text-muted);padding:9px 0">未設定</div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- コメントセクション -->
-    <div class="form-row" style="margin-bottom:20px">
-      <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">ディレクターコメント</label>
-        <textarea class="form-input" id="cd-director-comment" rows="5" style="resize:vertical" placeholder="ディレクターからのフィードバックを入力..."></textarea>
-      </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">クライアントコメント</label>
-        <textarea class="form-input" id="cd-client-comment" rows="5" style="resize:vertical" placeholder="クライアントからのフィードバックを入力..."></textarea>
-      </div>
-    </div>
-
-    <!-- アップロードセクション -->
-    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
-      <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
-
-      <div id="cd-drive-warning" style="display:none;background:#FFF3F3;border:0.5px solid #F09595;border-radius:8px;padding:10px 12px;font-size:12px;color:#A32D2D;margin-bottom:12px">
-        この案件にGoogleドライブフォルダが設定されていません。案件編集からフォルダURLを設定してください。
+      <!-- コメントセクション（ステータス依存ラベル） -->
+      <div class="form-group" style="margin-bottom:18px">
+        <label class="form-label" id="cd-comment-label">コメント</label>
+        <textarea class="form-input" id="cd-comment-field" rows="4" style="resize:vertical" placeholder="コメントを入力..."></textarea>
       </div>
 
-      <div id="cd-regulation-link" style="display:none;background:#F0FBF9;border:1px solid var(--em-pale);border-radius:8px;padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:12px">
-        <div style="display:flex;align-items:center;gap:7px">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/><path d="M16 13H8m8 4H8m2-8H8" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
-          <span style="font-size:12px;font-weight:600;color:var(--em-dark)">レギュレーションシートが設定されています</span>
+      <!-- アップロードセクション -->
+      <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
+
+        <div id="cd-drive-warning" style="display:none;background:#FFF3F3;border:0.5px solid #F09595;border-radius:8px;padding:10px 12px;font-size:12px;color:#A32D2D;margin-bottom:12px">
+          この案件にGoogleドライブフォルダが設定されていません。案件編集からフォルダURLを設定してください。
         </div>
-        <a id="cd-regulation-open" href="#" target="_blank" class="btn" style="font-size:12px;padding:5px 12px;text-decoration:none;white-space:nowrap">開いて確認 ↗</a>
-      </div>
 
-      <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:0">
-        ファイルを選択（動画・画像）
-        <input type="file" id="cd-upload-input" style="display:none" accept="video/*,image/*" onchange="handleUploadFileSelect(this)">
-      </label>
+        <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:0">
+          ファイルを選択（動画・画像）
+          <input type="file" id="cd-upload-input" style="display:none" accept="video/*,image/*" onchange="handleUploadFileSelect(this)">
+        </label>
 
-      <div id="cd-upload-preview" style="display:none;margin-top:14px">
-        <div style="background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px">
-          <div style="margin-bottom:6px"><span style="color:var(--text-muted)">検出サイズ：</span><span id="cd-detected-size" style="font-weight:500;color:var(--text)"></span></div>
-          <div><span style="color:var(--text-muted)">生成ファイル名：</span><span id="cd-generated-filename" style="font-weight:600;color:var(--em-dark);font-family:monospace;font-size:12px"></span></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <label class="form-label" style="margin:0;white-space:nowrap">バージョン</label>
-          <input class="form-input" id="cd-version-num" type="number" min="1" value="1" style="width:72px" oninput="updateGeneratedFilename()">
-          <span style="font-size:12px;color:var(--text-muted)">v1=初稿、v2=1回目修正…</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <button class="btn-primary" onclick="executeUpload()">Googleドライブにアップロード</button>
-          <span id="cd-upload-status" style="font-size:13px"></span>
+        <div id="cd-upload-preview" style="display:none;margin-top:14px">
+          <div style="background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px">
+            <div style="margin-bottom:6px"><span style="color:var(--text-muted)">検出サイズ：</span><span id="cd-detected-size" style="font-weight:500;color:var(--text)"></span></div>
+            <div><span style="color:var(--text-muted)">生成ファイル名：</span><span id="cd-generated-filename" style="font-weight:600;color:var(--em-dark);font-family:monospace;font-size:12px"></span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <label class="form-label" style="margin:0;white-space:nowrap">バージョン</label>
+            <input class="form-input" id="cd-version-num" type="number" min="1" value="1" style="width:72px" oninput="updateGeneratedFilename()">
+            <span style="font-size:12px;color:var(--text-muted)">v1=初稿、v2=1回目修正…</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="btn-primary" onclick="executeUpload()">Googleドライブにアップロード</button>
+            <span id="cd-upload-status" style="font-size:13px"></span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- アップロード済みファイル一覧 -->
-    <div id="cd-files-section" style="display:none;margin-bottom:16px">
-      <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">アップロード済みファイル</div>
-      <div id="cd-files-list"></div>
-    </div>
-
-    <!-- バージョン履歴セクション -->
-    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em">バージョン履歴</div>
-        <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="saveVersionHistory()">このバージョンの指摘を保存</button>
+      <!-- アップロード済みファイル一覧 -->
+      <div id="cd-files-section" style="display:none;margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">アップロード済みファイル</div>
+        <div id="cd-files-list"></div>
       </div>
-      <div id="cd-version-history-list">
-        <div style="font-size:13px;color:var(--text-muted);text-align:center;padding:12px 0">履歴を読み込み中...</div>
-      </div>
+
     </div>
 
-    <div style="display:flex;justify-content:flex-end;gap:10px">
+    <!-- フッター（固定） -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
       <button class="btn-primary" onclick="saveCreativeDetail()">保存する</button>
+      <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none;background:linear-gradient(135deg,#3ECFCA,#2BB8B4)">次のステップへ →</button>
     </div>
   </div>
 </div>
@@ -5480,12 +5481,15 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-assignee').textContent = editor?.users?.full_name ? `担当: ${editor.users.full_name}` : '担当者未設定';
 
   // URL
-  document.getElementById('cd-script-url').value  = c.script_url   || '';
-  document.getElementById('cd-frameio-url').value  = c.frameio_url  || '';
+  document.getElementById('cd-script-url').value = c.script_url  || '';
+  document.getElementById('cd-frameio-url').value = c.frameio_url || '';
 
-  // コメント
-  document.getElementById('cd-director-comment').value = c.director_comment || '';
-  document.getElementById('cd-client-comment').value   = c.client_comment   || '';
+  // コメント（ステータス依存ラベル）
+  document.getElementById('cd-comment-field').value = c.director_comment || '';
+  updateCreativeCommentLabel(c.status);
+
+  // ステップインジケーター
+  updateCreativeStepIndicator(c.status);
 
   // アップロードリセット
   document.getElementById('cd-upload-input').value = '';
@@ -5499,21 +5503,105 @@ async function openCreativeDetail(id) {
 
   // レギュレーションシートリンク
   const regulationUrl = c.projects?.regulation_url;
-  const regBlock = document.getElementById('cd-regulation-link');
+  const regLink = document.getElementById('cd-regulation-link');
+  const regNone = document.getElementById('cd-regulation-none');
   if (regulationUrl) {
     document.getElementById('cd-regulation-open').href = regulationUrl;
-    regBlock.style.display = 'flex';
+    regLink.style.display = 'flex';
+    regNone.style.display = 'none';
   } else {
-    regBlock.style.display = 'none';
+    regLink.style.display = 'none';
+    regNone.style.display = '';
   }
 
   // アップロード済みファイル
   await loadCreativeFiles(id);
 
-  // バージョン履歴
-  await loadVersionHistory(id);
-
   openModal('modal-creative-detail');
+}
+
+function updateCreativeStepIndicator(status) {
+  const STEPS = [
+    { label: '未着手',    statuses: ['未着手'] },
+    { label: '制作中',    statuses: ['台本制作', '素材・ナレ作成', '編集'] },
+    { label: 'Dチェック', statuses: ['Dチェック', 'Dチェック後修正'] },
+    { label: 'Pチェック', statuses: ['Pチェック', 'Pチェック後修正'] },
+    { label: 'CL確認',   statuses: ['クライアントチェック中', 'クライアントチェック後修正'] },
+    { label: '納品',      statuses: ['納品'] },
+  ];
+  const currentIdx = STEPS.findIndex(s => s.statuses.includes(status));
+  const el = document.getElementById('cd-step-indicator');
+  const A = 14; // arrow depth px
+
+  el.style.cssText = 'display:flex;align-items:stretch;width:100%;height:40px';
+  el.innerHTML = STEPS.map((s, i) => {
+    const done   = i < currentIdx;
+    const active = i === currentIdx;
+    const isFirst = i === 0;
+    const isLast  = i === STEPS.length - 1;
+    const zIdx    = STEPS.length - i;
+    const ml      = i > 0 ? `-${A - 2}px` : '0';
+
+    let bg, tc;
+    if (done)        { bg = '#3ECFCA'; tc = '#fff'; }
+    else if (active) { bg = '#1A9E9A'; tc = '#fff'; }
+    else             { bg = '#E8E8E6'; tc = '#7a7a7a'; }
+
+    const clip = isFirst
+      ? `polygon(0 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, 0 100%)`
+      : isLast
+        ? `polygon(${A}px 0, 100% 0, 100% 100%, ${A}px 100%, 0 50%)`
+        : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
+
+    const inner = done
+      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 2px">${s.label}</span>`;
+
+    return `<div style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}">${inner}</div>`;
+  }).join('');
+
+  // 次のステップボタン更新
+  const NEXT = {
+    '未着手': '台本制作', '台本制作': '素材・ナレ作成', '素材・ナレ作成': '編集',
+    '編集': 'Dチェック', 'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
+    'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
+    'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
+  };
+  const nextBtn = document.getElementById('cd-next-step-btn');
+  if (nextBtn) {
+    const next = NEXT[status];
+    if (next) { nextBtn.style.display = ''; nextBtn.textContent = `${next} へ →`; }
+    else        { nextBtn.style.display = 'none'; }
+  }
+}
+
+function updateCreativeCommentLabel(status) {
+  const label = document.getElementById('cd-comment-label');
+  if (!label) return;
+  if (['未着手','台本制作','素材・ナレ作成','編集'].includes(status))
+    label.textContent = 'ディレクターへのコメント';
+  else if (['Dチェック','Dチェック後修正'].includes(status))
+    label.textContent = 'Dチェック修正指摘';
+  else if (['Pチェック','Pチェック後修正'].includes(status))
+    label.textContent = 'Pチェック修正指摘';
+  else if (['クライアントチェック中','クライアントチェック後修正'].includes(status))
+    label.textContent = 'クライアントチェック修正指摘';
+  else
+    label.textContent = 'コメント';
+}
+
+async function advanceCreativeStatus() {
+  if (!currentCreativeDetail) return;
+  const NEXT = {
+    '未着手': '台本制作', '台本制作': '素材・ナレ作成', '素材・ナレ作成': '編集',
+    '編集': 'Dチェック', 'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
+    'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
+    'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
+  };
+  const next = NEXT[currentCreativeDetail.status];
+  if (!next) return;
+  if (!confirm(`ステータスを「${next}」に進めますか？`)) return;
+  await saveCreativeDetail(next);
 }
 
 async function loadCreativeFiles(creativeId) {
@@ -5621,8 +5709,9 @@ async function executeUpload() {
   }
 }
 
-async function loadVersionHistory(creativeId) {
+async function loadVersionHistory_DISABLED(creativeId) {
   const el = document.getElementById('cd-version-history-list');
+  if (!el) return;
   el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);text-align:center;padding:12px 0">読み込み中...</div>';
   try {
     const res = await fetch(`${API}/creative-versions/${creativeId}`);
@@ -5667,7 +5756,7 @@ async function loadVersionHistory(creativeId) {
   }
 }
 
-function toggleVersionHistory(id) {
+function toggleVersionHistory_DISABLED(id) {
   const body   = document.getElementById(`vh-body-${id}`);
   const caret  = document.getElementById(`vh-caret-${id}`);
   const isOpen = body.style.maxHeight !== '0px' && body.style.maxHeight !== '0';
@@ -5682,7 +5771,7 @@ function toggleVersionHistory(id) {
   }
 }
 
-async function saveVersionHistory() {
+async function saveVersionHistory_DISABLED() {
   if (!currentCreativeDetail) return;
   const versionNum       = parseInt(document.getElementById('cd-version-num')?.value) || 1;
   const directorComment  = document.getElementById('cd-director-comment').value.trim() || null;
@@ -5709,14 +5798,14 @@ async function saveVersionHistory() {
   }
 }
 
-async function saveCreativeDetail() {
+async function saveCreativeDetail(overrideStatus) {
   if (!currentCreativeDetail) return;
   const body = {
-    script_url:        document.getElementById('cd-script-url').value.trim()       || null,
-    frameio_url:       document.getElementById('cd-frameio-url').value.trim()      || null,
-    director_comment:  document.getElementById('cd-director-comment').value.trim() || null,
-    client_comment:    document.getElementById('cd-client-comment').value.trim()   || null,
+    script_url:       document.getElementById('cd-script-url').value.trim()    || null,
+    frameio_url:      document.getElementById('cd-frameio-url').value.trim()   || null,
+    director_comment: document.getElementById('cd-comment-field').value.trim() || null,
   };
+  if (overrideStatus) body.status = overrideStatus;
   const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
