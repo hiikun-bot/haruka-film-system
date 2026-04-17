@@ -3129,15 +3129,6 @@ async function renderAdminDash(today) {
     </div>`
   ).join('') || '<div style="font-size:13px;color:var(--text-muted)">データなし</div>';
 
-  const financialHtml = isTopAdmin() ? `
-    <div class="dash-section">
-      <div class="dash-section-title">💰 財務サマリー（管理者専用）</div>
-      <div style="font-size:13px;color:var(--text-muted);padding:8px 0">
-        ※ 今後請求データと連携予定
-      </div>
-    </div>
-  ` : '';
-
   document.getElementById('dash-content').innerHTML = `
     <div class="dash-grid">
       ${financialHtml}
@@ -3149,8 +3140,7 @@ async function renderAdminDash(today) {
         <div class="dash-section-title">📊 案件ステータス</div>
         ${projHtml}
       </div>
-    </div>
-    ${financialHtml}`;
+    </div>`;
 }
 
 function renderDirectorDash(today) {
