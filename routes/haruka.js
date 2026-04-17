@@ -774,7 +774,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note')
+    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours')
     .order('full_name');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
