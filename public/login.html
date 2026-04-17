@@ -22,10 +22,10 @@ body{
   background:url('HARUKAFILM背景.png') center/cover no-repeat;
   z-index:0;
 }
-/* 暗めのオーバーレイ：文字を読みやすく */
+/* 明るめオーバーレイ */
 .bg::after{
   content:'';position:absolute;inset:0;
-  background:linear-gradient(135deg,rgba(5,30,28,0.40) 0%,rgba(8,40,38,0.30) 100%);
+  background:linear-gradient(135deg,rgba(5,30,28,0.12) 0%,rgba(8,40,38,0.08) 100%);
 }
 
 /* ラッパー */
@@ -43,23 +43,25 @@ body{
   font-size:36px;font-weight:800;
   letter-spacing:0.18em;
   color:#fff;
-  text-shadow:0 2px 20px rgba(62,207,202,0.5);
+  text-shadow:0 0 30px rgba(0,240,235,0.9),0 0 60px rgba(0,240,235,0.5);
   line-height:1.1;
 }
-.logo-accent{color:#3ECFCA}
-.logo-sub{
-  font-family:'Montserrat',sans-serif;
-  font-size:10px;font-weight:400;
-  letter-spacing:0.35em;
-  color:rgba(255,255,255,0.55);
-  margin-top:8px;
-  text-transform:uppercase;
-}
+.logo-accent{color:#00F0EB}
 .logo-bar{
-  width:40px;height:2px;
-  background:linear-gradient(90deg,#3ECFCA,rgba(62,207,202,0));
-  margin:12px auto 0;
-  border-radius:2px;
+  width:260px;height:1.5px;
+  background:rgba(0,240,235,0.85);
+  margin:5px auto 8px;
+  border-radius:1px;
+  box-shadow:0 0 8px rgba(0,240,235,0.7);
+}
+.logo-sub{
+  font-family:'Noto Sans JP',sans-serif;
+  font-size:14px;font-weight:400;
+  letter-spacing:0.6em;
+  color:rgba(255,255,255,0.9);
+  margin-top:0;
+  text-shadow:0 0 12px rgba(0,240,235,0.6);
+  white-space:nowrap;
 }
 
 /* カード */
@@ -166,8 +168,8 @@ body{
   <!-- ロゴ -->
   <div class="logo-area">
     <div class="logo-title">HARUKA<span class="logo-accent"> FILM</span></div>
-    <div class="logo-sub">Production Management System</div>
     <div class="logo-bar"></div>
+    <div class="logo-sub">光を当てる、あなたのストーリーに</div>
   </div>
 
   <!-- カード -->
