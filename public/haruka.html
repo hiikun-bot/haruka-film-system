@@ -3057,7 +3057,7 @@ function _dashBadge(diff) {
   return `<span class="dash-due-badge dbadge-ok">あと${diff}日</span>`;
 }
 
-function renderAdminDash(today) {
+async function renderAdminDash(today) {
   const oneWeek = new Date(today.getTime() + 7*24*60*60*1000);
   const active  = allProjects.filter(p => !p.is_hidden && p.status !== '完了');
   const inProg  = allCreatives.filter(c => c.status !== '納品');
@@ -3072,6 +3072,34 @@ function renderAdminDash(today) {
   ].filter(Boolean).map(s =>
     `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${s.cls||''}">${s.val}</div><div class="dash-hero-stat-label">${s.label}</div></div>`
   ).join('');
+
+  // 予実サマリー（admin専用）
+  const revRes = await fetch(`${API}/dashboard/revenue-summary`).catch(() => null);
+  const rev = revRes?.ok ? await revRes.json() : null;
+
+  const financialHtml = isTopAdmin() && rev ? `
+  <div class="dash-section" style="grid-column: 1 / -1">
+    <div class="dash-section-title">💰 ${rev.month} 売上予実（管理者専用）</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px">
+      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:22px;font-weight:700;color:var(--em-dark)">${rev.completedCreatives}<span style="font-size:13px;font-weight:400;color:var(--text-muted)"> / ${rev.totalCreatives}本</span></div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">納品完了 / 今月予定</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:22px;font-weight:700;color:var(--primary)">${rev.actualRevenue.toLocaleString()}<span style="font-size:12px;font-weight:400">円</span></div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">実績売上</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:22px;font-weight:700;color:var(--text-muted)">${rev.plannedRevenue.toLocaleString()}<span style="font-size:12px;font-weight:400">円</span></div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">今月予定売上</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:22px;font-weight:700;color:${rev.actualRevenue >= rev.plannedRevenue ? '#2E7D32' : '#A32D2D'}">${rev.plannedRevenue ? Math.round(rev.actualRevenue / rev.plannedRevenue * 100) : 0}<span style="font-size:13px;font-weight:400">%</span></div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">達成率</div>
+      </div>
+    </div>
+  </div>
+` : '';
 
   // アラート（超過 + 3日以内）
   const alerts = inProg
@@ -3112,6 +3140,7 @@ function renderAdminDash(today) {
 
   document.getElementById('dash-content').innerHTML = `
     <div class="dash-grid">
+      ${financialHtml}
       <div class="dash-section">
         <div class="dash-section-title">🚨 納期アラート（超過・3日以内）</div>
         ${alertHtml}
