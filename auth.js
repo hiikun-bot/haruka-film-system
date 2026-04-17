@@ -1,7 +1,6 @@
 // auth.js — 認証設定（Supabase永続化版）
-const passport       = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const LocalStrategy  = require('passport-local').Strategy;
+const passport      = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
 const bcrypt         = require('bcryptjs');
 const supabase       = require('./supabase');
 
@@ -15,61 +14,6 @@ passport.deserializeUser(async (id, done) => {
     done(null, user || false);
   } catch(e) { done(e); }
 });
-
-// ==================== Google OAuth Strategy ====================
-if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
-  passport.use(new GoogleStrategy({
-    clientID:     process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL:  `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`,
-    scope: ['profile', 'email'],
-  }, async (accessToken, refreshToken, profile, done) => {
-    try {
-      const email     = profile.emails?.[0]?.value;
-      const googleId  = profile.id;
-      const name      = profile.displayName;
-      const avatarUrl = profile.photos?.[0]?.value;
-
-      if (!email) return done(null, false, { message: 'Googleアカウントにメールアドレスがありません' });
-
-      // google_id で検索
-      let { data: user } = await supabase
-        .from('users').select('*').eq('google_id', googleId).maybeSingle();
-
-      if (!user) {
-        // メールアドレスで検索
-        const { data: byEmail } = await supabase
-          .from('users').select('*').eq('email', email).maybeSingle();
-
-        if (byEmail) {
-          // 既存ユーザーにGoogle IDを紐付け
-          await supabase.from('users')
-            .update({ google_id: googleId, avatar_url: avatarUrl })
-            .eq('id', byEmail.id);
-          user = { ...byEmail, google_id: googleId, avatar_url: avatarUrl };
-        } else {
-          // 初回 — 管理者メールのみ自動登録
-          const isAdmin = email === process.env.ADMIN_EMAIL;
-          if (!isAdmin) {
-            return done(null, false, { message: '招待されていないアカウントです。管理者に招待を依頼してください。' });
-          }
-          const { data: newUser, error } = await supabase.from('users').insert({
-            email, full_name: name, role: 'admin',
-            google_id: googleId, avatar_url: avatarUrl, is_active: true
-          }).select().single();
-          if (error) return done(error);
-          user = newUser;
-        }
-      } else {
-        await supabase.from('users')
-          .update({ avatar_url: avatarUrl }).eq('id', user.id);
-      }
-
-      if (!user.is_active) return done(null, false, { message: 'このアカウントは無効化されています' });
-      done(null, user);
-    } catch(e) { done(e); }
-  }));
-}
 
 // ==================== Local Strategy（メール＋パスワード） ====================
 passport.use(new LocalStrategy(

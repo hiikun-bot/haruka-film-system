@@ -240,6 +240,7 @@ tr.row-help td{background:#FFFBF2}
       <div class="user-av" id="user-av">HK</div>
       <span class="user-name" id="user-name">読み込み中</span>
       <span class="user-role" id="user-role">-</span>
+      <button class="rpb-btn" onclick="openChangePasswordModal()" title="パスワード変更" style="font-size:11px;padding:3px 8px">🔑</button>
     </div>
   </div>
 </div>
@@ -717,6 +718,31 @@ tr.row-help td{background:#FFFBF2}
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
       <button class="btn" onclick="closeModal('modal-import')">キャンセル</button>
       <button class="btn-primary" id="import-execute-btn" onclick="executeImport()" style="display:none">登録する</button>
+    </div>
+  </div>
+</div>
+
+<!-- パスワード変更モーダル -->
+<div class="modal-overlay" id="modal-change-password">
+  <div class="modal-card" style="max-width:400px">
+    <div class="modal-title">パスワード変更<button class="modal-close" onclick="closeModal('modal-change-password')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-label">現在のパスワード</label>
+        <input class="form-input" type="password" id="cp-current" placeholder="現在のパスワード">
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-label">新しいパスワード <span style="color:#E24B4A">*</span></label>
+        <input class="form-input" type="password" id="cp-new" placeholder="8文字以上">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">新しいパスワード（確認）</label>
+        <input class="form-input" type="password" id="cp-confirm" placeholder="••••••••">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-change-password')">キャンセル</button>
+      <button class="btn-primary" onclick="submitChangePassword()">変更する</button>
     </div>
   </div>
 </div>
@@ -4561,6 +4587,43 @@ const roleLabelsInvite = {
   admin: '管理者', secretary: '秘書', producer: 'プロデューサー',
   director: 'ディレクター', editor: '編集者', designer: 'デザイナー', client: 'クライアント'
 };
+
+// ===== パスワード変更 =====
+function openChangePasswordModal() {
+  document.getElementById('cp-current').value = '';
+  document.getElementById('cp-new').value = '';
+  document.getElementById('cp-confirm').value = '';
+  openModal('modal-change-password');
+}
+
+async function submitChangePassword() {
+  const cur  = document.getElementById('cp-current').value;
+  const nw   = document.getElementById('cp-new').value;
+  const conf = document.getElementById('cp-confirm').value;
+  if (nw.length < 8)   { alert('新しいパスワードは8文字以上必要です'); return; }
+  if (nw !== conf)     { alert('パスワードが一致しません'); return; }
+  const res = await fetch(`${API}/users/change-password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword: cur, newPassword: nw })
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error); return; }
+  alert('パスワードを変更しました');
+  closeModal('modal-change-password');
+}
+
+// ===== 管理者によるパスワードリセット =====
+async function resetMemberPassword(userId, userName) {
+  const newPass = prompt(`${userName} さんの新しいパスワードを入力してください（8文字以上）:`);
+  if (!newPass) return;
+  if (newPass.length < 8) { alert('8文字以上必要です'); return; }
+  const res = await fetch(`${API}/users/${userId}/reset-password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newPassword: newPass })
+  });
+  if (res.ok) alert(`${userName} さんのパスワードをリセットしました`);
+  else { const d = await res.json(); alert('エラー: ' + d.error); }
+}
 
 async function issueInvite() {
   const email = document.getElementById('inv-email').value.trim();

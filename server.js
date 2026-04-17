@@ -732,15 +732,6 @@ app.delete('/api/video-comments/:id', (req, res) => { videoComments.delete(req.p
 
 // ==================== 認証ルート ====================
 
-// Google OAuth ログイン開始
-app.get('/auth/google', passportInstance.authenticate('google', { scope: ['profile', 'email'] }));
-
-// Google OAuth コールバック
-app.get('/auth/google/callback',
-  passportInstance.authenticate('google', { failureRedirect: '/login.html?error=google' }),
-  (req, res) => res.redirect('/')
-);
-
 // メール＋パスワード ログイン
 app.post('/auth/login', (req, res, next) => {
   passportInstance.authenticate('local', (err, user, info) => {
@@ -867,17 +858,27 @@ app.delete('/api/users/:id', requireAuth, requireLevel('admin'), (req, res) => {
   res.json({ ok: true });
 });
 
-// パスワード変更（本人のみ）
+// パスワード変更（本人のみ・Supabase）
 app.post('/api/users/change-password', requireAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
-  const u = users.byId(req.user.id);
-  if (u.password_hash) {
+  const { data: u } = await supabase.from('users').select('password_hash').eq('id', req.user.id).single();
+  if (u?.password_hash) {
     const ok = await bcrypt.compare(currentPassword, u.password_hash);
     if (!ok) return res.status(400).json({ error: '現在のパスワードが正しくありません' });
   }
   const hash = await bcrypt.hash(newPassword, 12);
-  users.update(req.user.id, { passwordHash: hash });
+  await supabase.from('users').update({ password_hash: hash }).eq('id', req.user.id);
+  res.json({ ok: true });
+});
+
+// 管理者によるパスワードリセット（対象ユーザーのパスワードを初期化）
+app.post('/api/users/:id/reset-password', requireAuth, requireLevel('secretary'), async (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
+  const hash = await bcrypt.hash(newPassword, 12);
+  const { error } = await supabase.from('users').update({ password_hash: hash }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
 
