@@ -835,11 +835,13 @@ tr.row-help td{background:#FFFBF2}
 
         <!-- Chatwork -->
         <div class="form-group">
-          <label class="form-label">Chatwork DM ID</label>
-          <input class="form-input" id="m-chatwork" placeholder="例：123456">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.5">
-            プロフィールURLの末尾の数字<br>
-            例）chatwork.com/…/rid/<code style="background:var(--em-pale);padding:1px 5px;border-radius:4px">123456</code>
+          <label class="form-label">Chatwork DM ID <span style="font-size:10px;font-weight:400;color:var(--text-muted)">（チャットワークの送信先設定）</span></label>
+          <input class="form-input" id="m-chatwork" placeholder="例：6603336">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.7">
+            メッセージ送信時に使用するアカウントIDです。<br>
+            以下のいずれかから確認できます：<br>
+            <span style="display:inline-block;margin-top:2px">① TOメンション：<code style="background:var(--em-pale);padding:1px 5px;border-radius:4px">[To:<strong>6603336</strong>]</code> の数字</span><br>
+            <span style="display:inline-block">② プロフィールURL：<code style="background:var(--em-pale);padding:1px 5px;border-radius:4px">chatwork.com/…/rid/<strong>6603336</strong></code> の末尾</span>
           </div>
         </div>
       </div>
