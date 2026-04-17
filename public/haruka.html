@@ -352,16 +352,6 @@ tr.row-help td{background:#FFFBF2}
       <button class="btn-primary" onclick="openTeamModal()">＋ チーム追加</button>
     </div>
     <div id="teams-list" class="loading">読み込み中...</div>
-
-    <!-- Slack ワークスペース管理 -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:32px 0 16px">
-      <div class="sec-label" style="display:flex;align-items:center;gap:8px">
-        <svg width="16" height="16" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
-        Slack ワークスペース
-      </div>
-      <button class="btn-primary" onclick="openNewSlackWorkspace()">＋ ワークスペース追加</button>
-    </div>
-    <div id="slack-workspaces-list" class="loading">読み込み中...</div>
   </div>
 </div>
 
@@ -755,31 +745,6 @@ tr.row-help td{background:#FFFBF2}
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;border-top:0.5px solid var(--border-light);padding-top:16px">
       <button class="btn" onclick="closeModal('modal-member')">キャンセル</button>
       <button class="btn-primary" id="m-submit-btn" onclick="submitMember()">追加する</button>
-    </div>
-  </div>
-</div>
-
-<!-- Slack ワークスペース追加・編集モーダル -->
-<div class="modal-overlay" id="modal-slack-workspace">
-  <div class="modal" style="min-height:auto">
-    <div class="modal-title" id="sw-modal-title">Slack ワークスペース追加<button class="modal-close" onclick="closeModal('modal-slack-workspace')">×</button></div>
-    <input type="hidden" id="sw-id">
-    <div class="form-group">
-      <label class="form-label">ワークスペース名 <span style="color:#E24B4A">*</span></label>
-      <input class="form-input" id="sw-name" placeholder="例：HARUKA FILM 本体">
-    </div>
-    <div class="form-group">
-      <label class="form-label">ワークスペースID <span style="color:#E24B4A">*</span></label>
-      <input class="form-input" id="sw-team-id" placeholder="例：T094ST9L5MH">
-      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Slack URL の <code style="background:#f0f0f0;padding:1px 5px;border-radius:3px">app.slack.com/client/<b>T○○○</b>/...</code> の部分</div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Bot Token（任意・将来の自動通知用）</label>
-      <input class="form-input" id="sw-bot-token" placeholder="xoxb-..." type="password">
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn" onclick="closeModal('modal-slack-workspace')">キャンセル</button>
-      <button class="btn-primary" id="sw-submit-btn" onclick="submitSlackWorkspace()">追加する</button>
     </div>
   </div>
 </div>
@@ -1338,7 +1303,7 @@ const API = '/api/haruka';
 function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
-let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [], allSlackWorkspaces = [];
+let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
 let currentClient = 'all', currentView = 'all', searchText = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
@@ -1797,14 +1762,9 @@ async function addClientAxis() {
 // チーム
 async function loadTeams() {
   try {
-    const [teamsRes, swRes] = await Promise.all([
-      fetch(`${API}/teams`),
-      fetch(`${API}/slack-workspaces`)
-    ]);
+    const teamsRes = await fetch(`${API}/teams`);
     if (!teamsRes.ok) { allTeams = []; return; }
     allTeams = await teamsRes.json();
-    allSlackWorkspaces = swRes.ok ? await swRes.json() : [];
-    renderSlackWorkspaces();
     const mSel = document.getElementById('m-team');
     if (mSel) {
       mSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
@@ -3088,81 +3048,6 @@ function renderEditorDash(today) {
 
   document.getElementById('dash-content').innerHTML =
     `<div class="dash-section"><div class="dash-section-title">📋 自分の担当（期限順）</div>${cards}</div>`;
-}
-
-// ==================== Slack ワークスペース ====================
-
-function renderSlackWorkspaces() {
-  const list = document.getElementById('slack-workspaces-list');
-  if (!list) return;
-  if (!allSlackWorkspaces.length) {
-    list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">ワークスペースが登録されていません</div>';
-    return;
-  }
-  list.innerHTML = allSlackWorkspaces.map(sw => `
-    <div class="card" style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
-      <div style="width:40px;height:40px;border-radius:8px;background:#4A154B;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-        <svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
-      </div>
-      <div style="flex:1">
-        <div style="font-size:15px;font-weight:500">${sw.name}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;font-family:monospace">${sw.team_id}</div>
-      </div>
-      <button class="btn-sm" onclick="openEditSlackWorkspace(${JSON.stringify(sw).replace(/"/g,'&quot;')})">編集</button>
-      <button class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="deleteSlackWorkspace('${sw.id}','${sw.name.replace(/'/g,"\\'")}')">削除</button>
-    </div>`).join('');
-}
-
-function openNewSlackWorkspace() {
-  document.getElementById('sw-modal-title').childNodes[0].textContent = 'Slack ワークスペース追加';
-  document.getElementById('sw-id').value = '';
-  document.getElementById('sw-name').value = '';
-  document.getElementById('sw-team-id').value = '';
-  document.getElementById('sw-bot-token').value = '';
-  document.getElementById('sw-submit-btn').textContent = '追加する';
-  openModal('modal-slack-workspace');
-}
-
-function openEditSlackWorkspace(sw) {
-  document.getElementById('sw-modal-title').childNodes[0].textContent = 'ワークスペース編集';
-  document.getElementById('sw-id').value = sw.id;
-  document.getElementById('sw-name').value = sw.name;
-  document.getElementById('sw-team-id').value = sw.team_id;
-  document.getElementById('sw-bot-token').value = sw.bot_token || '';
-  document.getElementById('sw-submit-btn').textContent = '保存する';
-  openModal('modal-slack-workspace');
-}
-
-async function submitSlackWorkspace() {
-  const id = document.getElementById('sw-id').value;
-  const name = document.getElementById('sw-name').value.trim();
-  const team_id = document.getElementById('sw-team-id').value.trim();
-  const bot_token = document.getElementById('sw-bot-token').value.trim();
-  if (!name || !team_id) { alert('名前とワークスペースIDは必須です'); return; }
-  const btn = document.getElementById('sw-submit-btn');
-  const origText = btn.textContent;
-  btn.textContent = '処理中...'; btn.disabled = true;
-  const isEdit = !!id;
-  const res = await fetch(isEdit ? `${API}/slack-workspaces/${id}` : `${API}/slack-workspaces`, {
-    method: isEdit ? 'PUT' : 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, team_id, bot_token: bot_token || null })
-  });
-  btn.textContent = origText; btn.disabled = false;
-  if (res.ok) {
-    closeModal('modal-slack-workspace');
-    await loadTeams();
-  } else {
-    const e = await res.json();
-    alert('エラー: ' + e.error);
-  }
-}
-
-async function deleteSlackWorkspace(id, name) {
-  if (!confirm(`「${name}」を削除しますか？`)) return;
-  const res = await fetch(`${API}/slack-workspaces/${id}`, { method: 'DELETE' });
-  if (res.ok) await loadTeams();
-  else alert('削除に失敗しました');
 }
 
 // Google Drive URL → フォルダID 自動解析
