@@ -4829,13 +4829,13 @@ function renderMasterPage() {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
         <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:12px">＋ 区分を追加</div>
         <div style="display:flex;gap:10px;align-items:flex-end">
-          <div style="flex:1">
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">区分名 <span style="color:var(--em-dark)">*</span></label>
-            <input class="form-input" id="mca-name" placeholder="例：媒体" onkeydown="if(event.key==='Enter')document.getElementById('mca-code').focus()">
-          </div>
           <div style="width:140px">
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード <span style="color:var(--em-dark)">*</span></label>
-            <input class="form-input" id="mca-code" placeholder="例：MEDIA" onkeydown="if(event.key==='Enter')addMasterCat()">
+            <input class="form-input" id="mca-code" placeholder="例：MEDIA" onkeydown="if(event.key==='Enter')document.getElementById('mca-name').focus()">
+          </div>
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">区分名 <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mca-name" placeholder="例：媒体" onkeydown="if(event.key==='Enter')addMasterCat()">
           </div>
           <button class="btn-primary" onclick="addMasterCat()" style="padding:8px 20px;white-space:nowrap">追加</button>
         </div>
