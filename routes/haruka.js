@@ -764,7 +764,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours')
+    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note')
     .order('full_name');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -842,7 +842,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     full_name, role, job_type, rank,
     team_id, slack_dm_id, chatwork_dm_id,
     is_active, left_at, left_reason,
-    birthday, weekday_hours, weekend_hours
+    birthday, weekday_hours, weekend_hours, note
   } = req.body;
 
   const updateData = {
@@ -853,6 +853,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     birthday: birthday || null,
     weekday_hours: weekday_hours || null,
     weekend_hours: weekend_hours || null,
+    note: note || null,
     updated_at: new Date().toISOString()
   };
   // ロール変更は admin/secretary のみ
