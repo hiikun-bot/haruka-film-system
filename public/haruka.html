@@ -534,10 +534,11 @@ tr.row-help td{background:#FFFBF2}
   </div>
 </div>
 
-<!-- チーム追加モーダル -->
+<!-- チーム追加・編集モーダル -->
 <div class="modal-overlay" id="modal-team">
   <div class="modal">
-    <div class="modal-title">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
+    <div class="modal-title" id="t-modal-title">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
+    <input type="hidden" id="t-id">
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">チームコード（A〜Z）</label>
@@ -569,7 +570,7 @@ tr.row-help td{background:#FFFBF2}
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
       <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
-      <button class="btn-primary" onclick="createTeam()">追加する</button>
+      <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
     </div>
   </div>
 </div>
@@ -1794,8 +1795,8 @@ async function loadTeams() {
     const list = document.getElementById('teams-list');
     if (!list) return;
     if (!allTeams.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
-    list.innerHTML = allTeams.map(t => `
-      <div class="card" style="display:flex;align-items:center;gap:14px">
+    list.innerHTML = allTeams.map((t, i) => `
+      <div class="card" style="display:flex;align-items:center;gap:14px;cursor:pointer" onclick="openTeamModal(allTeams[${i}])">
         <div style="width:48px;height:48px;border-radius:50%;background:var(--em-pale);border:2px solid var(--em);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--em-dark);flex-shrink:0">${t.team_code}</div>
         <div style="flex:1">
           <div style="font-size:15px;font-weight:500">${t.team_name}</div>
@@ -1819,7 +1820,7 @@ async function loadMembers() {
   const visibleMembers = allMembers.filter(m => canSeeMember(m));
   if (!visibleMembers.length) { list.innerHTML = '<div class="loading">メンバーがいません</div>'; return; }
   list.innerHTML = visibleMembers.map(m => `
-    <div class="member-card" style="${!m.is_active ? 'opacity:0.6' : ''}">
+    <div class="member-card" style="${!m.is_active ? 'opacity:0.6;' : ''}${isEffectiveAdmin() ? 'cursor:pointer' : ''}" ${isEffectiveAdmin() ? `onclick="openEditMemberById('${m.id}')"` : ''}>
         <div class="member-av" style="${!m.is_active ? 'background:#F1EFE8;color:#888' : ''}">${(m.full_name||'?').slice(0,2)}</div>
         <div class="member-info">
         <div class="member-name">${m.full_name}${!m.is_active ? ' <span style="font-size:12px;color:#A32D2D;background:#FCEBEB;padding:2px 8px;border-radius:6px;margin-left:6px">退職済み</span>' : ''}</div>
@@ -1831,8 +1832,7 @@ async function loadMembers() {
             ${m.team_id ? `<span class="team-badge">${allTeams.find(t=>t.id===m.team_id)?.team_code||'?'}チーム</span>` : ''}
         </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
-        ${isEffectiveAdmin() ? `<button class="btn-sm" onclick="openEditMemberById('${m.id}')">編集</button>` : ''}
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end" onclick="event.stopPropagation()">
         ${isEffectiveAdmin() ? (m.is_active
             ? `<button class="btn-danger" onclick="deactivateMember('${m.id}','${m.full_name}')">退職処理</button>`
             : `<button class="btn-sm" onclick="reactivateMember('${m.id}')">復帰させる</button>`
@@ -2031,7 +2031,13 @@ async function createCreative() {
   }
 }
 
-function openTeamModal() {
+function openTeamModal(team) {
+  const isEdit = !!team;
+
+  // モーダルタイトル・ボタンテキスト
+  document.getElementById('t-modal-title').childNodes[0].textContent = isEdit ? 'チーム編集' : 'チーム追加';
+  document.getElementById('t-submit-btn').textContent = isEdit ? '保存する' : '追加する';
+
   // チームコード A〜Z を毎回生成
   document.getElementById('t-code').innerHTML =
     [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `<option value="${c}">${c}</option>`).join('');
@@ -2046,22 +2052,48 @@ function openTeamModal() {
   const dirs = allMembers.filter(m => ['director','producer_director'].includes(m.role) && m.is_active !== false);
   dSel.innerHTML = '<option value="">未設定</option>' + dirs.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
 
-  // フォームリセット
-  document.getElementById('t-name').value = '';
+  if (isEdit) {
+    // 編集モード：既存データをフォームに反映
+    document.getElementById('t-id').value = team.id;
+    document.getElementById('t-code').value = team.team_code;
+    document.getElementById('t-code').disabled = true;
+    document.getElementById('t-name').value = team.team_name || '';
+    document.getElementById('t-type').value = team.team_type || 'video';
+    pSel.value = team.producer_id || '';
+    dSel.value = team.director_id || '';
+  } else {
+    // 追加モード：フォームリセット
+    document.getElementById('t-id').value = '';
+    document.getElementById('t-code').disabled = false;
+    document.getElementById('t-name').value = '';
+    document.getElementById('t-type').value = 'video';
+    pSel.value = '';
+    dSel.value = '';
+  }
 
   openModal('modal-team');
 }
 
-async function createTeam() {
+async function saveTeam() {
+  const id = document.getElementById('t-id').value;
   const team_code = document.getElementById('t-code').value;
   const team_name = document.getElementById('t-name').value.trim();
   const team_type = document.getElementById('t-type').value;
   const director_id = document.getElementById('t-director').value || null;
   const producer_id = document.getElementById('t-producer').value || null;
   if (!team_name) { alert('チーム名は必須です'); return; }
-  const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
-  if (res.ok) { closeModal('modal-team'); await loadTeams(); }
-  else { const e=await res.json(); alert('エラー: '+e.error); }
+
+  if (id) {
+    // 編集（PUT）
+    const res = await fetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id}) });
+    if (res.ok) { closeModal('modal-team'); await loadTeams(); }
+    else { const e=await res.json(); alert('エラー: '+e.error); }
+  } else {
+    // 新規作成（POST）
+    const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
+    if (res.ok) { closeModal('modal-team'); await loadTeams(); }
+    else { const e=await res.json(); alert('エラー: '+e.error); }
+  }
 }
 
 // ---- 稼働時間ヘルパー ----
