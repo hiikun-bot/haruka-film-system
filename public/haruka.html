@@ -337,6 +337,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="bf bf-c on" onclick="toggleBall(this)">クライアント</button>
       </div>
       <span class="count-badge" id="creative-count">0件</span>
+      <span id="creative-delete-bar" style="display:none;align-items:center;gap:8px;margin-left:8px">
+        <span id="creative-selected-count" style="font-size:13px;color:var(--text-muted)">0件選択中</span>
+        <button class="btn-danger" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 12px">削除</button>
+      </span>
       <button class="btn-primary" onclick="openCreateCreative()" style="margin-left:8px">＋ 追加</button>
     </div>
   </div>
@@ -345,6 +349,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <table>
         <thead>
             <tr>
+                <th style="width:36px;text-align:center"><input type="checkbox" id="creative-check-all" onclick="toggleAllCreativeChecks(this)" style="cursor:pointer;width:14px;height:14px"></th>
                 <th>クライアント</th>
                 <th>ファイル名</th>
                 <th>編集者</th>
@@ -2425,6 +2430,7 @@ function renderCreatives() {
     const clientName = c.projects?.clients?.name || '-';
 
     return `<tr class="${isLate?'row-late':''} ${c.help_flag?'row-help':''}" data-id="${c.id}">
+      <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="creative-row-check" data-id="${c.id}" onchange="updateCreativeDeleteBar()" style="cursor:pointer;width:14px;height:14px"></td>
       <td><span class="proj-tag" style="background:var(--em-pale);color:var(--em-dark)" title="${clientName}">${clientName.slice(0,3)}</span></td>
       <td style="font-size:14px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted" onclick="openCreativeDetail('${c.id}')" title="詳細を開く">${c.file_name}</td>
       <td style="font-size:14px;font-weight:500">${editorName}</td>
@@ -5837,6 +5843,48 @@ async function saveCreativeDetail(overrideStatus) {
   } else {
     const e = await res.json();
     alert('保存エラー: ' + e.error);
+  }
+}
+
+// ===== クリエイティブ削除 =====
+function updateCreativeDeleteBar() {
+  const checked = document.querySelectorAll('.creative-row-check:checked');
+  const bar = document.getElementById('creative-delete-bar');
+  const countEl = document.getElementById('creative-selected-count');
+  const allChk = document.getElementById('creative-check-all');
+  const all = document.querySelectorAll('.creative-row-check');
+  if (checked.length > 0) {
+    bar.style.display = 'flex';
+    countEl.textContent = `${checked.length}件選択中`;
+  } else {
+    bar.style.display = 'none';
+  }
+  allChk.indeterminate = checked.length > 0 && checked.length < all.length;
+  allChk.checked = all.length > 0 && checked.length === all.length;
+}
+
+function toggleAllCreativeChecks(master) {
+  document.querySelectorAll('.creative-row-check').forEach(cb => cb.checked = master.checked);
+  updateCreativeDeleteBar();
+}
+
+async function deleteSelectedCreatives() {
+  const checked = document.querySelectorAll('.creative-row-check:checked');
+  if (!checked.length) return;
+  const ids = Array.from(checked).map(cb => cb.dataset.id);
+  if (!confirm(`選択した ${ids.length} 件のクリエイティブを削除しますか？\nこの操作は取り消せません。`)) return;
+  const res = await fetch(`${API}/creatives`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (res.ok) {
+    document.getElementById('creative-check-all').checked = false;
+    document.getElementById('creative-delete-bar').style.display = 'none';
+    await loadCreatives();
+  } else {
+    const e = await res.json();
+    alert('削除エラー: ' + e.error);
   }
 }
 

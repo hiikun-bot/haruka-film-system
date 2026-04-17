@@ -579,6 +579,18 @@ router.put('/creatives/:id', async (req, res) => {
   res.json(data);
 });
 
+// クリエイティブ削除（複数対応）
+router.delete('/creatives', requireAuth, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids は必須です' });
+  // 関連レコードを先に削除
+  await supabase.from('creative_assignments').delete().in('creative_id', ids);
+  await supabase.from('creative_files').delete().in('creative_id', ids);
+  const { error } = await supabase.from('creatives').delete().in('id', ids);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, deleted: ids.length });
+});
+
 // ==================== クリエイティブファイル ====================
 
 // アップロード済みファイル一覧
