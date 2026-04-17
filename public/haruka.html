@@ -410,10 +410,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <div id="page-members" class="page">
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <div class="sec-label">メンバー一覧</div>
         <span id="members-count" style="font-size:12px;color:var(--text-muted);background:var(--em-pale);padding:2px 10px;border-radius:20px"></span>
         <button class="btn" id="btn-show-resigned" onclick="toggleShowResigned()" style="font-size:11px;padding:3px 10px;color:#999;border-color:#ddd">退職者を表示</button>
+        <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
+          <span>並び替え：</span>
+          <button id="sort-btn-default" onclick="setMemberSort('default')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">登録順</button>
+          <button id="sort-btn-role" onclick="setMemberSort('role')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">ロール順</button>
+          <button id="sort-btn-team" onclick="setMemberSort('team')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">チーム順</button>
+        </div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn" onclick="exportMembersCSV()">CSVエクスポート</button>
@@ -2080,6 +2086,21 @@ async function loadTeams() {
 
 // メンバー
 let showResigned = false;
+let memberSortBy = 'default';
+const ROLE_SORT_ORDER = { admin:7, secretary:6, producer:5, producer_director:4, director:3, designer:2, editor:1, client:0 };
+
+function setMemberSort(type) {
+  memberSortBy = type;
+  ['default','role','team'].forEach(t => {
+    const btn = document.getElementById('sort-btn-' + t);
+    if (!btn) return;
+    const active = t === type;
+    btn.style.background = active ? 'var(--em-pale)' : 'transparent';
+    btn.style.borderColor = active ? 'var(--em-dark)' : 'var(--border)';
+    btn.style.color = active ? 'var(--em-dark)' : 'var(--text-muted)';
+  });
+  renderMemberList();
+}
 
 function toggleTeamAccordion(teamId) {
   const acc = document.getElementById('team-acc-' + teamId);
@@ -2112,6 +2133,16 @@ function renderMemberList() {
     const resignedCount = visibleMembers.filter(m => m.is_active === false).length;
     countEl.textContent = resignedCount > 0 ? `在籍 ${activeCount}名 / 退職済 ${resignedCount}名` : `${activeCount}名`;
   }
+  // ソート
+  if (memberSortBy === 'role') {
+    visibleMembers.sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0) || (a.full_name||'').localeCompare(b.full_name||'','ja'));
+  } else if (memberSortBy === 'team') {
+    visibleMembers.sort((a,b) => {
+      const ta = allTeams.find(t=>t.id===a.team_id)?.team_code || 'Z';
+      const tb = allTeams.find(t=>t.id===b.team_id)?.team_code || 'Z';
+      return ta.localeCompare(tb) || (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0);
+    });
+  }
   if (!visibleMembers.length) {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
@@ -2130,7 +2161,7 @@ function renderMemberList() {
         </div>
         </div>
         <div style="display:flex;flex-direction:row;gap:6px;align-items:center;flex-shrink:0" onclick="event.stopPropagation()">
-        ${isEffectiveAdmin() && m.is_active ? `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
+        ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
         ${isTopAdmin() ? (m.is_active
             ? `<button class="btn-danger" style="font-size:11px;padding:3px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
             : `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`

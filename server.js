@@ -872,8 +872,12 @@ app.post('/api/users/change-password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// 管理者によるパスワードリセット（対象ユーザーのパスワードを初期化）
-app.post('/api/users/:id/reset-password', requireAuth, requireLevel('secretary'), async (req, res) => {
+// パスワードリセット（管理者は全員、一般ユーザーは自分のみ）
+app.post('/api/users/:id/reset-password', requireAuth, async (req, res) => {
+  const isSelf = req.user.id === req.params.id;
+  const ROLE_LEVEL = { admin: 6, secretary: 5, producer: 5, producer_director: 4, director: 3, designer: 2, editor: 1 };
+  const isAdmin = (ROLE_LEVEL[req.user.role] || 0) >= 5;
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: '他のユーザーのパスワードを変更する権限がありません' });
   const { newPassword } = req.body;
   if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
   const hash = await bcrypt.hash(newPassword, 12);
