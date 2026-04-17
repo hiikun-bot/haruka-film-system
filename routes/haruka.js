@@ -667,14 +667,12 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
     try {
       const drive = await getDriveService();
 
-      // ルートが環境変数の場合は案件フォルダを自動作成
+      // ルートが環境変数の場合: ルート → クライアント名 → 案件名 を自動作成
       let baseFolderId;
       if (!project?.drive_folder_url && process.env.DRIVE_ROOT_FOLDER_ID) {
-        const clientCode = project?.clients?.client_code || '';
-        const projectFolderName = clientCode
-          ? `${clientCode}_${project.name}`
-          : project.name;
-        baseFolderId = await getOrCreateFolder(drive, rootFolderId, projectFolderName);
+        const clientName = project?.clients?.name || 'その他';
+        const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
+        baseFolderId = await getOrCreateFolder(drive, clientFolderId, project.name);
       } else {
         baseFolderId = rootFolderId;
       }
