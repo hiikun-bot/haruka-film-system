@@ -20,13 +20,13 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .page,.toolbar,.hfs-header,.modal-overlay{position:relative;z-index:1}
 
 /* ヘッダー */
-.hfs-header{background:url('HARUKAFILM背景.png') center/cover no-repeat;height:80px;display:flex;align-items:center;padding:0 28px;position:sticky;top:0;z-index:100;overflow:hidden;gap:0}
-.hfs-header::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,30,28,0.62) 0%,rgba(8,40,38,0.50) 100%);pointer-events:none}
+.hfs-header{background:url('HARUKAFILM背景.png') center/cover no-repeat;height:88px;display:flex;align-items:center;padding:0 28px;position:sticky;top:0;z-index:100;overflow:hidden;gap:0}
+.hfs-header::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,30,28,0.38) 0%,rgba(8,40,38,0.28) 100%);pointer-events:none}
 .hfs-header::after{content:none}
 .logo-area{display:inline-flex;flex-direction:column;justify-content:center;gap:0;z-index:1;flex-shrink:0;padding:4px 0}
-.logo-main{font-family:'Montserrat',sans-serif;font-size:17px;font-weight:900;color:#fff;letter-spacing:0.1em;text-shadow:0 2px 12px rgba(0,0,0,0.35);line-height:1.15;white-space:nowrap}
-.logo-line{height:1.5px;background:rgba(255,255,255,0.75);margin:4px 0 3px;border-radius:2px}
-.logo-sub{font-family:'Noto Sans JP',sans-serif;font-size:9px;font-weight:400;color:rgba(255,255,255,0.82);letter-spacing:0.1em;text-shadow:0 1px 6px rgba(0,0,0,0.35);white-space:nowrap}
+.logo-main{font-family:'Montserrat',sans-serif;font-size:24px;font-weight:900;color:#fff;letter-spacing:0.12em;text-shadow:0 2px 14px rgba(0,0,0,0.30);line-height:1.15;white-space:nowrap}
+.logo-line{height:1.5px;background:rgba(255,255,255,0.80);margin:5px 0 4px;border-radius:2px}
+.logo-sub{font-family:'Noto Sans JP',sans-serif;font-size:10px;font-weight:400;color:rgba(255,255,255,0.88);letter-spacing:0.12em;text-shadow:0 1px 6px rgba(0,0,0,0.25);white-space:nowrap}
 .header-nav{display:flex;gap:2px;z-index:1;flex:1;justify-content:center}
 .nav-btn{font-size:15px;color:rgba(255,255,255,0.88);padding:7px 18px;border-radius:8px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 4px rgba(0,0,0,0.45);white-space:nowrap;transition:font-size .18s ease,background .15s,color .15s}
 .nav-btn.active{background:rgba(255,255,255,0.22);color:#fff;font-weight:600;text-shadow:0 1px 6px rgba(0,0,0,0.5)}
@@ -48,7 +48,7 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .sec-label{font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px}
 
 /* ツールバー */
-.toolbar{background:var(--white);border-bottom:0.5px solid var(--border);padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:sticky;top:80px;z-index:99}
+.toolbar{background:var(--white);border-bottom:0.5px solid var(--border);padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:sticky;top:88px;z-index:99}
 .toolbar-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .filter-tabs{display:flex;gap:4px}
 .ft{font-size:13px;padding:6px 16px;border-radius:8px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap}
@@ -250,7 +250,7 @@ tr.row-help td{background:#FFFBF2}
 </div>
 
 <!-- プレビューモード中バナー -->
-<div id="preview-mode-banner" style="display:none;background:linear-gradient(90deg,#FF6B35,#F7B731);padding:5px 20px;font-size:12px;font-weight:500;color:#fff;letter-spacing:0.05em;position:sticky;top:80px;z-index:97;align-items:center;gap:8px">
+<div id="preview-mode-banner" style="display:none;background:linear-gradient(90deg,#FF6B35,#F7B731);padding:5px 20px;font-size:12px;font-weight:500;color:#fff;letter-spacing:0.05em;position:sticky;top:88px;z-index:97;align-items:center;gap:8px">
   <span>👁</span>
   <span id="preview-mode-label"></span>
   <span style="margin-left:auto;opacity:0.8;font-size:11px">実際の権限には影響しません</span>
@@ -1421,7 +1421,7 @@ tr.row-help td{background:#FFFBF2}
 
 <!-- マスター管理ページ -->
 <div id="page-master" class="page">
-  <div class="toolbar" style="position:sticky;top:80px;z-index:99">
+  <div class="toolbar" style="position:sticky;top:88px;z-index:99">
     <div class="toolbar-row">
       <span style="font-size:14px;font-weight:600;color:var(--text)">マスター管理</span>
     </div>
