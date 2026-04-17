@@ -2421,7 +2421,7 @@ function renderMemberList() {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
   }
-  const showRankCol = isSuperAdmin() || isTopAdmin() || (currentUser?.role === 'producer') || (currentUser?.role === 'producer_director') || (currentUser?.role === 'director');
+  const showRankCol = ['admin','producer','producer_director','director'].includes(effectiveRole());
   list.innerHTML = `
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <colgroup>
