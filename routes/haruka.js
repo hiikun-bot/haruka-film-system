@@ -452,6 +452,40 @@ router.get('/creatives/:id', async (req, res) => {
   res.json(data);
 });
 
+// 一括登録プレビュー（DBには保存しない）
+router.post('/creatives/bulk-preview', async (req, res) => {
+  const { project_id, creative_type, appeal_type_id, count, draft_deadline, final_deadline,
+          product_id, media_code, creative_fmt, creative_size } = req.body;
+  if (!project_id || !creative_type || !appeal_type_id || !count) {
+    return res.status(400).json({ error: '案件・種別・訴求タイプ・本数は必須です' });
+  }
+  const { data: project } = await supabase
+    .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
+  const { data: appealType } = await supabase
+    .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
+  if (!project || !appealType) return res.status(400).json({ error: '案件または訴求タイプが見つかりません' });
+  const clientCode = (project.clients?.client_code ||
+    project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK').toUpperCase().slice(0, 3);
+  const { data: existingCreatives } = await supabase
+    .from('creatives').select('file_name, appeal_type_id').eq('project_id', project_id);
+  const usedSeqs = (existingCreatives || [])
+    .map(c => c.file_name?.slice(0, 3)).filter(s => /^\d{3}$/.test(s)).map(Number);
+  let appealSeq = (existingCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length;
+  const previews = [];
+  let nextSeq = 1;
+  for (let i = 0; i < count; i++) {
+    while (usedSeqs.includes(nextSeq)) nextSeq++;
+    appealSeq++;
+    const seqStr = String(nextSeq).padStart(3, '0');
+    const appealSeqStr = String(appealSeq).padStart(2, '0');
+    const fileName = `${seqStr}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
+    previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
+    usedSeqs.push(nextSeq);
+    nextSeq++;
+  }
+  res.json({ previews });
+});
+
 // クリエイティブ作成
 // 一括登録
 router.post('/creatives/bulk', async (req, res) => {

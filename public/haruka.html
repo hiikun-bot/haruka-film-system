@@ -690,8 +690,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <input type="checkbox" id="bulk-continuous-mode" style="width:16px;height:16px;cursor:pointer">
           <label for="bulk-continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
         </div>
-        <button class="btn-primary" onclick="bulkCreateCreative()">一括登録する</button>
+        <button class="btn-primary" onclick="bulkPreviewCreative()">一括登録する</button>
         <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+      </div>
+    </div>
+
+    <!-- 一括登録 確認ステップ -->
+    <div id="tab-bulk-confirm" style="display:none">
+      <div style="margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:4px">以下のファイルを登録します。内容を確認してOKを押してください。</div>
+        <div id="bulk-confirm-count" style="font-size:12px;color:var(--text-muted)"></div>
+      </div>
+      <div id="bulk-confirm-list" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;font-size:12px">
+        <!-- JS で生成 -->
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;border-top:0.5px solid var(--border-light);padding-top:14px">
+        <button class="btn-primary" id="bulk-confirm-ok-btn" onclick="bulkCreateCreative()">OK・登録する</button>
+        <button class="btn" onclick="bulkConfirmBack()">戻る</button>
       </div>
     </div>
 
@@ -4674,7 +4689,9 @@ function updateBulkPreview() {
   el.textContent = count > 0 ? `${count} 本を一括登録します` : '本数を入力してください';
 }
 
-async function bulkCreateCreative() {
+let _bulkPayload = null;
+
+async function bulkPreviewCreative() {
   const project_id = document.getElementById('bulk-project-id').value;
   const creative_type = document.getElementById('bulk-creative-type').value;
   const appeal_type_id = document.getElementById('bulk-appeal-type').value;
@@ -4682,36 +4699,88 @@ async function bulkCreateCreative() {
   const draft_deadline = document.getElementById('bulk-draft-deadline').value;
   const final_deadline = document.getElementById('bulk-final-deadline').value;
   if (!project_id || !appeal_type_id || !count) { alert('案件・訴求タイプ・本数は必須です'); return; }
-  const btn = event.target;
-  btn.textContent = '登録中...';
-  btn.disabled = true;
   const product_id = document.getElementById('bulk-product-id')?.value || null;
   const media_code = document.getElementById('bulk-media-code')?.value || null;
   const creative_fmt = document.getElementById('bulk-creative-fmt')?.value || null;
   const creative_size = document.getElementById('bulk-creative-size')?.value || null;
 
-  const res = await fetch(`${API}/creatives/bulk`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project_id, creative_type, appeal_type_id, count,
-      draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
-      product_id: product_id || null, media_code: media_code || null,
-      creative_fmt: creative_fmt || null, creative_size: creative_size || null })
+  _bulkPayload = { project_id, creative_type, appeal_type_id, count,
+    draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
+    product_id, media_code, creative_fmt, creative_size };
+
+  const btn = document.querySelector('#tab-bulk .btn-primary');
+  const origText = btn.textContent;
+  btn.textContent = '確認中...'; btn.disabled = true;
+
+  const res = await fetch(`${API}/creatives/bulk-preview`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(_bulkPayload)
   });
-  btn.textContent = '一括登録する';
-  btn.disabled = false;
+  btn.textContent = origText; btn.disabled = false;
+  if (!res.ok) { const e = await res.json(); alert('エラー: ' + e.error); return; }
+  const { previews } = await res.json();
+
+  // 確認リストを描画
+  document.getElementById('bulk-confirm-count').textContent = `${previews.length} 本を登録します`;
+  const fmtDate = d => d ? d.slice(0,10).replace(/-/g,'/') : '—';
+  document.getElementById('bulk-confirm-list').innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="background:var(--surface);position:sticky;top:0">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">#</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">ファイル名</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-muted);font-weight:600">初稿提出日</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-muted);font-weight:600">最終納期</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${previews.map((p,i) => `
+          <tr style="border-top:0.5px solid var(--border);${i%2===1?'background:#FAFEFE':''}">
+            <td style="padding:7px 12px;font-size:12px;color:var(--text-muted)">${i+1}</td>
+            <td style="padding:7px 12px;font-size:12px;font-weight:500;font-family:monospace;color:var(--em-dark)">${p.file_name}</td>
+            <td style="padding:7px 12px;font-size:12px;text-align:center;color:var(--text-muted)">${fmtDate(p.draft_deadline)}</td>
+            <td style="padding:7px 12px;font-size:12px;text-align:center;color:var(--text-muted)">${fmtDate(p.final_deadline)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+  // フォームを隠して確認パネルを表示
+  document.getElementById('tab-bulk').style.display = 'none';
+  document.getElementById('tab-bulk-confirm').style.display = '';
+}
+
+function bulkConfirmBack() {
+  document.getElementById('tab-bulk-confirm').style.display = 'none';
+  document.getElementById('tab-bulk').style.display = '';
+}
+
+async function bulkCreateCreative() {
+  if (!_bulkPayload) return;
+  const btn = document.getElementById('bulk-confirm-ok-btn');
+  btn.textContent = '登録中...'; btn.disabled = true;
+
+  const res = await fetch(`${API}/creatives/bulk`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(_bulkPayload)
+  });
+  btn.textContent = 'OK・登録する'; btn.disabled = false;
   if (res.ok) {
     const data = await res.json();
     await loadCreatives();
+    document.getElementById('tab-bulk-confirm').style.display = 'none';
     const continuous = document.getElementById('bulk-continuous-mode').checked;
     if (!continuous) {
       closeModal('modal-creative');
       alert(`${data.count} 本を一括登録しました`);
     } else {
+      document.getElementById('tab-bulk').style.display = '';
       const el = document.getElementById('bulk-preview');
       el.style.color = 'var(--em-dark)';
       el.textContent = `${data.count} 本を登録しました。続けて登録できます。`;
     }
+  } else {
+    const e = await res.json();
+    alert('登録エラー: ' + e.error);
   }
 }
 
