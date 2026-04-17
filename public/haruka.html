@@ -2480,7 +2480,8 @@ function renderMemberList() {
         ${showRankCol ? '<th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ランク</th>' : ''}
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">チーム</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">名前</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働時間</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（平日）</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（土日祝）</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メモ</th>
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">操作</th>
       </tr>
@@ -2523,12 +2524,8 @@ function renderMemberList() {
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
-          <td style="padding:8px 12px;text-align:center">
-            <div style="display:inline-flex;gap:16px;justify-content:center">
-              <div>${mkBar(m.weekday_hours,'var(--em)','平日')}</div>
-              <div>${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<div style="font-size:10px;color:var(--text-muted);font-weight:500;margin-bottom:2px">土日祝</div><div style="font-size:11px;color:#bbb;padding-top:4px">休み</div>'}</div>
-            </div>
-          </td>
+          <td style="padding:8px 12px;text-align:center">${mkBar(m.weekday_hours,'var(--em)','平日')}</td>
+          <td style="padding:8px 12px;text-align:center">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<span style="font-size:11px;color:#bbb">休み</span>'}</td>
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${m.note ? `<span title="${esc(m.note)}">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
           <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
