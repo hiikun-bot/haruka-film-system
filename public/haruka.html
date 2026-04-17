@@ -1642,6 +1642,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         この案件にGoogleドライブフォルダが設定されていません。案件編集からフォルダURLを設定してください。
       </div>
 
+      <div id="cd-regulation-link" style="display:none;background:#F0FBF9;border:1px solid var(--em-pale);border-radius:8px;padding:10px 14px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:12px">
+        <div style="display:flex;align-items:center;gap:7px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/><path d="M16 13H8m8 4H8m2-8H8" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span style="font-size:12px;font-weight:600;color:var(--em-dark)">レギュレーションシートが設定されています</span>
+        </div>
+        <a id="cd-regulation-open" href="#" target="_blank" class="btn" style="font-size:12px;padding:5px 12px;text-decoration:none;white-space:nowrap">開いて確認 ↗</a>
+      </div>
+
       <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:0">
         ファイルを選択（動画・画像）
         <input type="file" id="cd-upload-input" style="display:none" accept="video/*,image/*" onchange="handleUploadFileSelect(this)">
@@ -5425,6 +5433,16 @@ async function openCreativeDetail(id) {
   // Drive 未設定の警告
   const hasDrive = !!(c.projects?.drive_folder_url);
   document.getElementById('cd-drive-warning').style.display = hasDrive ? 'none' : '';
+
+  // レギュレーションシートリンク
+  const regulationUrl = c.projects?.regulation_url;
+  const regBlock = document.getElementById('cd-regulation-link');
+  if (regulationUrl) {
+    document.getElementById('cd-regulation-open').href = regulationUrl;
+    regBlock.style.display = 'flex';
+  } else {
+    regBlock.style.display = 'none';
+  }
 
   // アップロード済みファイル
   await loadCreativeFiles(id);
