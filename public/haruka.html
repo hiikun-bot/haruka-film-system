@@ -4799,8 +4799,8 @@ function renderMasterPage() {
       if (masterCatEditingId === cat.id) {
         return `
         <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--em-pale);border-radius:8px;border:1.5px solid var(--em)">
-          <input class="form-input" id="mca-name" value="${cat.name}" placeholder="区分名" style="flex:1;font-size:13px">
-          <input class="form-input" id="mca-code" value="${cat.code}" placeholder="コード" style="width:120px;font-size:13px">
+          <input class="form-input" id="mce-name" value="${cat.name}" placeholder="区分名" style="flex:1;font-size:13px">
+          <input class="form-input" id="mce-code" value="${cat.code}" placeholder="コード" style="width:120px;font-size:13px">
           <button class="btn-sm" style="color:var(--em-dark);white-space:nowrap" onclick="saveCatEdit('${cat.id}')">保存</button>
           <button class="btn-sm" style="white-space:nowrap" onclick="masterCatEditingId=null;renderMasterPage()">取消</button>
         </div>`;
@@ -4808,8 +4808,14 @@ function renderMasterPage() {
       const count = masterItems.filter(i => i.category_id === cat.id).length;
       return `
       <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--white);border:0.5px solid var(--border);border-radius:8px">
-        <span style="font-size:12px;font-weight:700;background:var(--em-pale);color:var(--em-dark);padding:3px 10px;border-radius:6px;min-width:60px;text-align:center;letter-spacing:0.04em">${cat.code}</span>
-        <span style="flex:1;font-size:14px;font-weight:500;color:var(--text)">${cat.name}</span>
+        <div style="display:flex;flex-direction:column;gap:2px;min-width:80px">
+          <span style="font-size:9px;color:var(--text-muted);letter-spacing:0.08em">コード</span>
+          <span style="font-size:12px;font-weight:700;background:var(--em-pale);color:var(--em-dark);padding:3px 10px;border-radius:6px;text-align:center;letter-spacing:0.04em">${cat.code}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;flex:1">
+          <span style="font-size:9px;color:var(--text-muted);letter-spacing:0.08em">名称</span>
+          <span style="font-size:14px;font-weight:500;color:var(--text)">${cat.name}</span>
+        </div>
         <span style="font-size:12px;color:var(--text-muted)">${count}件</span>
         <button class="btn-sm" style="font-size:11px;padding:3px 10px" onclick="masterCatEditingId='${cat.id}';renderMasterPage()">編集</button>
         <button class="btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595" onclick="deleteMasterCat('${cat.id}')">削除</button>
