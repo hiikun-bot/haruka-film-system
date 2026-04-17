@@ -5886,12 +5886,13 @@ async function openCreativeDetail(id) {
 
 function updateCreativeStepIndicator(status) {
   const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
+  // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
     { label: '未着手',    statuses: ['未着手'] },
-    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集'] },
-    { label: 'Dチェック', statuses: ['Dチェック', 'Dチェック後修正'] },
-    { label: 'Pチェック', statuses: ['Pチェック', 'Pチェック後修正'] },
-    { label: 'CL確認',   statuses: ['クライアントチェック中', 'クライアントチェック後修正'] },
+    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'] },
+    { label: 'Dチェック', statuses: ['Dチェック'] },
+    { label: 'Pチェック', statuses: ['Pチェック'] },
+    { label: 'CL確認',   statuses: ['クライアントチェック中'] },
     { label: '納品',      statuses: ['納品'] },
   ];
   if (!hasProducer) STEPS = STEPS.filter(s => s.label !== 'Pチェック');
@@ -5927,17 +5928,18 @@ function updateCreativeStepIndicator(status) {
   }).join('');
 
   // 次のステップボタン更新（プロデューサーなし案件はPチェックをスキップ）
+  // 後修正ステータスから「次へ」は同じチェック段階への再提出
   const NEXT = hasProducer ? {
     '未着手': '制作中（初稿提出前）',
     '制作中（初稿提出前）': 'Dチェック',
-    'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
-    'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
-    'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
+    'Dチェック後修正': 'Dチェック',
+    'Pチェック後修正': 'Pチェック',
+    'クライアントチェック後修正': 'クライアントチェック中',
   } : {
     '未着手': '制作中（初稿提出前）',
     '制作中（初稿提出前）': 'Dチェック',
-    'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'クライアントチェック中',
-    'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
+    'Dチェック後修正': 'Dチェック',
+    'クライアントチェック後修正': 'クライアントチェック中',
   };
   const nextBtn     = document.getElementById('cd-next-step-btn');
   const revisionBtn = document.getElementById('cd-revision-btn');
@@ -5968,7 +5970,8 @@ function updateCreativeStepIndicator(status) {
     const next = NEXT[status];
     if (next) {
       nextBtn.style.display = '';
-      nextBtn.textContent = `${next} へ →`;
+      const RESUBMIT = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+      nextBtn.textContent = RESUBMIT.includes(status) ? `${next}へ提出 →` : `${next} へ →`;
       nextBtn.dataset.target = next;
       const amber = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
       nextBtn.style.background = amber.includes(next)
