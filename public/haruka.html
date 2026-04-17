@@ -507,8 +507,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <span id="gi-count" style="font-size:12px;color:var(--text-muted)">（0件）</span>
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
         <button class="btn-primary" id="gi-submit-btn" onclick="generateMyInvoice()" disabled style="opacity:0.5">請求書を作成する</button>
+        <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
       </div>
     </div>
   </div>
@@ -716,8 +716,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </select>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn" onclick="closeModal('modal-status')">キャンセル</button>
       <button class="btn-primary" onclick="updateStatus()">更新する</button>
+      <button class="btn" onclick="closeModal('modal-status')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -757,8 +757,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </select>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
       <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
+      <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -805,8 +805,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
-      <button class="btn" onclick="closeModal('modal-import')">キャンセル</button>
       <button class="btn-primary" id="import-execute-btn" onclick="executeImport()" style="display:none">登録する</button>
+      <button class="btn" onclick="closeModal('modal-import')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -830,8 +830,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-change-password')">キャンセル</button>
       <button class="btn-primary" onclick="submitChangePassword()">変更する</button>
+      <button class="btn" onclick="closeModal('modal-change-password')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -860,8 +860,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-invite')">閉じる</button>
       <button class="btn-primary" id="inv-issue-btn" onclick="issueInvite()">リンクを発行</button>
+      <button class="btn" onclick="closeModal('modal-invite')">閉じる</button>
     </div>
   </div>
 </div>
@@ -994,15 +994,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;border-top:0.5px solid var(--border-light);padding-top:16px">
-      <button class="btn" onclick="closeModal('modal-member')">キャンセル</button>
       <button class="btn-primary" id="m-submit-btn" onclick="submitMember()">追加する</button>
+      <button class="btn" onclick="closeModal('modal-member')">キャンセル</button>
     </div>
   </div>
 </div>
 
 <!-- クライアント追加・編集モーダル -->
 <div class="modal-overlay" id="modal-client">
-  <div class="modal" id="modal-client-inner" style="width:92vw;max-width:1000px;min-height:80vh;max-height:92vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
+  <div class="modal" id="modal-client-inner" style="width:92vw;max-width:1000px;height:82vh;max-height:92vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
 
     <!-- ヘッダー -->
     <div style="padding:18px 28px 0;flex-shrink:0;background:#fff;border-radius:16px 16px 0 0">
@@ -1138,8 +1138,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     <!-- フッター -->
     <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:#fff">
-      <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
       <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
+      <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
     </div>
 
   </div>
@@ -1197,8 +1197,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn" onclick="closeModal('modal-rates')">キャンセル</button>
       <button class="btn-primary" onclick="saveRates()">保存する</button>
+      <button class="btn" onclick="closeModal('modal-rates')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -1246,8 +1246,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-client-fee')">キャンセル</button>
       <button class="btn-primary" onclick="saveClientFee()">保存する</button>
+      <button class="btn" onclick="closeModal('modal-client-fee')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -1559,8 +1559,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         非表示にする
       </label>
       <div style="display:flex;gap:10px">
-        <button class="btn" onclick="closeModal('modal-project')">キャンセル</button>
         <button class="btn-primary" id="p-submit-btn" onclick="submitProject()">追加する</button>
+        <button class="btn" onclick="closeModal('modal-project')">キャンセル</button>
       </div>
     </div>
 
@@ -1707,9 +1707,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     <!-- フッター（固定） -->
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
+      <button class="btn-primary" onclick="saveCreativeDetail()" style="margin-right:auto">下書き保存</button>
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
-      <button class="btn-primary" onclick="saveCreativeDetail()">保存する</button>
-      <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none;background:linear-gradient(135deg,#3ECFCA,#2BB8B4)">次のステップへ →</button>
+      <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none;background:linear-gradient(135deg,#f59e0b,#d97706)">Dチェック →</button>
     </div>
   </div>
 </div>
@@ -2581,9 +2581,12 @@ function openTeamModal(team) {
   document.getElementById('t-modal-title').childNodes[0].textContent = isEdit ? 'チーム編集' : 'チーム追加';
   document.getElementById('t-submit-btn').textContent = isEdit ? '保存する' : '追加する';
 
-  // チームコード A〜Z を毎回生成
+  // チームコード A〜Z（追加モードは未使用コードのみ表示）
+  const usedCodes = new Set(allTeams.map(t => t.team_code));
   document.getElementById('t-code').innerHTML =
-    [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `<option value="${c}">${c}</option>`).join('');
+    [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
+      .filter(c => isEdit || !usedCodes.has(c))
+      .map(c => `<option value="${c}">${c}</option>`).join('');
 
   // プロデューサー
   const pSel = document.getElementById('t-producer');
