@@ -469,7 +469,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- 請求書作成モーダル -->
 <div class="modal-overlay" id="modal-gen-invoice">
-  <div class="modal" style="width:95vw;max-width:1100px;max-height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
+  <div class="modal" style="width:95vw;max-width:1100px;min-height:72vh;max-height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
 
     <!-- ヘッダー -->
     <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:#fff;flex-shrink:0">
@@ -493,8 +493,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
 
     <!-- テーブルエリア -->
-    <div style="flex:1;overflow-y:auto;padding:0">
-      <div id="gi-table-wrap" style="padding:16px 24px">
+    <div style="flex:1;overflow-y:auto;padding:0;min-height:0">
+      <div id="gi-table-wrap" style="padding:16px 24px;min-height:400px">
         <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">年月を選択してください</div>
       </div>
     </div>
@@ -971,7 +971,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
 
         <!-- 土日祝 -->
-        <div>
+        <div style="margin-bottom:16px">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
             <span style="font-size:13px;font-weight:500;color:var(--text)">土日祝</span>
             <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);cursor:pointer">
@@ -983,6 +983,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <button type="button" class="tr-add-btn" onclick="addTimeRange('weekend')">＋ 時間帯を追加</button>
             <div class="time-bar-wrap" id="m-weekend-bar" style="margin-top:8px"></div>
           </div>
+        </div>
+
+        <!-- メモ -->
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">メモ（任意）</label>
+          <textarea class="form-input" id="m-note" rows="5" placeholder="スキル・連絡事項・特記など" style="resize:vertical"></textarea>
         </div>
       </div>
     </div>
@@ -996,7 +1002,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- クライアント追加・編集モーダル -->
 <div class="modal-overlay" id="modal-client">
-  <div class="modal" id="modal-client-inner" style="width:92vw;max-width:1000px;max-height:92vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
+  <div class="modal" id="modal-client-inner" style="width:92vw;max-width:1000px;min-height:80vh;max-height:92vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
 
     <!-- ヘッダー -->
     <div style="padding:18px 28px 0;flex-shrink:0;background:#fff;border-radius:16px 16px 0 0">
@@ -1076,7 +1082,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div id="cl-products-list" style="margin-bottom:12px"></div>
         <div style="padding-top:12px;border-top:1px solid var(--border)">
           <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
-          <div style="display:grid;grid-template-columns:120px 1fr 1fr auto;gap:8px;align-items:end">
+          <div style="display:grid;grid-template-columns:120px 1fr 1fr 140px auto;gap:8px;align-items:end">
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
               <input class="form-input" id="cl-prod-code" placeholder="例: SV" style="font-family:monospace;font-size:13px">
@@ -1088,6 +1094,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
               <input class="form-input" id="cl-prod-note" placeholder="任意">
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">有効期限</div>
+              <input class="form-input" id="cl-prod-expires" type="date" style="font-size:13px">
             </div>
             <button class="btn-primary" style="white-space:nowrap;height:38px" onclick="addClientProduct()">追加</button>
           </div>
@@ -1890,7 +1900,7 @@ async function loadProjects() {
         <div class="client-block-header" onclick="toggleClient('${client.id}')">
           <div style="display:flex;align-items:center;gap:12px">
             <div class="client-icon">${client.client_code || client.name.slice(0,3)}</div>
-            <div>
+            <div style="text-align:left">
               <div style="font-size:18px;font-weight:700;color:var(--text)">${client.name}</div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
                 ${client.note ? `<span>${client.note}</span>` : ''}
@@ -2027,11 +2037,13 @@ async function renderClientProducts(clientId) {
         <span style="font-size:12px;font-weight:600;color:var(--em-dark);background:var(--em-pale);padding:2px 8px;border-radius:6px;min-width:50px;text-align:center">${esc(p.code)}</span>
         <span style="font-size:13px">${esc(p.name)}</span>
         ${p.note ? `<span style="font-size:12px;color:var(--text-muted)">${esc(p.note)}</span>` : ''}
+        ${p.expires_at ? `<span style="font-size:11px;color:var(--text-muted);background:#f0f0f0;padding:1px 6px;border-radius:4px">期限: ${p.expires_at.slice(0,10)}</span>` : ''}
       </span>
       <span id="cprow-edit-${p.id}" style="display:none;flex:1;display:none;gap:6px;align-items:center">
         <input id="cprow-code-${p.id}" class="form-input" value="${esc(p.code)}" style="width:70px">
         <input id="cprow-name-${p.id}" class="form-input" value="${esc(p.name)}" style="flex:1">
         <input id="cprow-note-${p.id}" class="form-input" value="${esc(p.note||'')}" style="flex:1" placeholder="備考">
+        <input id="cprow-expires-${p.id}" class="form-input" type="date" value="${p.expires_at ? p.expires_at.slice(0,10) : ''}" style="width:140px" title="有効期限">
       </span>
       <button class="btn-sm" onclick="startEditClientProduct('${p.id}')">編集</button>
       <button class="btn-sm" id="cprow-save-btn-${p.id}" style="display:none" onclick="saveClientProduct('${clientId}','${p.id}')">保存</button>
@@ -2050,11 +2062,12 @@ async function saveClientProduct(clientId, pid) {
   const code = document.getElementById(`cprow-code-${pid}`).value.trim();
   const name = document.getElementById(`cprow-name-${pid}`).value.trim();
   const note = document.getElementById(`cprow-note-${pid}`).value.trim();
+  const expires_at = document.getElementById(`cprow-expires-${pid}`).value || null;
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note || null })
+    body: JSON.stringify({ code, name, note: note || null, expires_at })
   });
   if (res.ok) { renderClientProducts(clientId); }
   else { const e = await res.json(); alert('エラー: ' + e.error); }
@@ -2073,16 +2086,18 @@ async function addClientProduct() {
   const code = document.getElementById('cl-prod-code').value.trim();
   const name = document.getElementById('cl-prod-name').value.trim();
   const note = document.getElementById('cl-prod-note').value.trim();
+  const expires_at = document.getElementById('cl-prod-expires').value || null;
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/clients/${clientId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note || null })
+    body: JSON.stringify({ code, name, note: note || null, expires_at })
   });
   if (res.ok) {
     document.getElementById('cl-prod-code').value = '';
     document.getElementById('cl-prod-name').value = '';
     document.getElementById('cl-prod-note').value = '';
+    document.getElementById('cl-prod-expires').value = '';
     renderClientProducts(clientId);
   } else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
@@ -2301,6 +2316,7 @@ function renderMemberList() {
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">姓</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">名前</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メールアドレス</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メモ</th>
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">操作</th>
       </tr>
     </thead>
@@ -2324,6 +2340,7 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${lastName}</td>
           <td style="padding:8px 12px;text-align:left;white-space:nowrap">${firstName}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">${m.email||''}</td>
+          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${m.note ? `<span title="${esc(m.note)}">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
           <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
             ${isTopAdmin() ? (m.is_active
@@ -2770,6 +2787,7 @@ function openEditMember(m) {
   document.getElementById('m-weekend-inputs').style.display = weekendOff ? 'none' : '';
   initTimeRanges('weekday', wdRanges);
   initTimeRanges('weekend', weRanges || [{from:10,to:17}]);
+  document.getElementById('m-note').value = m.note || '';
   applyMemberModalAdminFields(m);
   onRoleChange(m.role || 'editor');
   openModal('modal-member');
@@ -2789,8 +2807,9 @@ async function submitMember() {
   const weekday_hours = collectRangesFromContainer(document.getElementById('m-weekday-ranges'));
   const weekendOff = document.getElementById('m-weekend-off').checked;
   const weekend_hours = weekendOff ? null : collectRangesFromContainer(document.getElementById('m-weekend-ranges'));
+  const note = document.getElementById('m-note').value.trim() || null;
   if (!full_name) { alert('名前は必須です'); return; }
-  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours };
+  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note };
   let res;
   if (id) {
     res = await fetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
