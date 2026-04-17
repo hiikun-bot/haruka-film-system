@@ -1194,6 +1194,7 @@ function getBallHolder(status, assignments) {
 
   const ballMap = {
     '未着手': { holder: editorName, type: 'editor' },
+    '制作中（初稿提出前）': { holder: editorName, type: 'editor' },
     '台本制作': { holder: editorName, type: 'editor' },
     '素材・ナレ作成': { holder: editorName, type: 'editor' },
     '編集': { holder: editorName, type: 'editor' },
