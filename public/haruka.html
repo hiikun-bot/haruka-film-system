@@ -2892,7 +2892,7 @@ function canSeeMember(m) {
   if (!currentUser) return true;
   const role = effectiveRole();
   if (!previewRole && isSuperAdmin()) return true; // 本来の管理者・プレビューなし
-  if (role === 'admin') return true;
+  if (role === 'admin' || role === 'secretary') return true;
   if (role === 'producer' || role === 'producer_director') return true;
   if (role === 'director') {
     return ['editor','designer'].includes(m.role) || m.email === currentUser.email || m.id === currentUser.id;
