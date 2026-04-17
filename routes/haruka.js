@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
+const { requireAuth, requireLevel } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 
@@ -720,8 +721,8 @@ router.put('/members/:id', async (req, res) => {
   res.json(data);
 });
 
-// 退職処理（is_activeをfalseにする）
-router.post('/members/:id/deactivate', async (req, res) => {
+// 退職処理（管理者のみ）
+router.post('/members/:id/deactivate', requireAuth, requireLevel('admin'), async (req, res) => {
   const { left_reason } = req.body;
   const { data, error } = await supabase
     .from('users')
@@ -738,8 +739,8 @@ router.post('/members/:id/deactivate', async (req, res) => {
   res.json(data);
 });
 
-// 復帰処理（is_activeをtrueに戻す）
-router.post('/members/:id/reactivate', async (req, res) => {
+// 復帰処理（管理者のみ）
+router.post('/members/:id/reactivate', requireAuth, requireLevel('admin'), async (req, res) => {
   const { data, error } = await supabase
     .from('users')
     .update({
