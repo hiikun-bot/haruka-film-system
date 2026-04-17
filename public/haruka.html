@@ -383,11 +383,64 @@ tr.row-help td{background:#FFFBF2}
 <!-- 請求書 -->
 <div id="page-invoices" class="page">
   <div style="padding:20px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="sec-label">請求書一覧</div>
-      <button class="btn-primary" onclick="openModal('modal-invoice')">＋ 請求書作成</button>
+    <!-- メンバー用: 自分の請求書 -->
+    <div id="inv-my-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div class="sec-label">請求書（マイページ）</div>
+        <button class="btn-primary" onclick="openGenerateInvoiceModal()">＋ 今月の請求書を作成</button>
+      </div>
+      <div id="inv-my-list" class="loading">読み込み中...</div>
     </div>
-    <div id="invoices-list" class="loading">読み込み中...</div>
+
+    <!-- 管理者用: 全員の請求書（adminのみ表示） -->
+    <div id="inv-admin-section" style="display:none;margin-top:32px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="sec-label" style="color:var(--em-dark)">全員の請求書（管理者）</div>
+        <div style="display:flex;gap:8px">
+          <select id="inv-filter-status" class="form-select" style="width:120px" onchange="loadAdminInvoices()">
+            <option value="">全ステータス</option>
+            <option value="submitted">提出済み</option>
+            <option value="approved">承認済み</option>
+            <option value="rejected">差し戻し</option>
+            <option value="draft">下書き</option>
+          </select>
+        </div>
+      </div>
+      <div id="inv-admin-list" class="loading">読み込み中...</div>
+    </div>
+  </div>
+</div>
+
+<!-- 請求書作成モーダル -->
+<div class="modal-overlay" id="modal-gen-invoice">
+  <div class="modal-card" style="max-width:480px">
+    <div class="modal-title">請求書作成<button class="modal-close" onclick="closeModal('modal-gen-invoice')">×</button></div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label class="form-label">年 <span style="color:#E24B4A">*</span></label>
+          <select class="form-select" id="gi-year"></select>
+        </div>
+        <div>
+          <label class="form-label">月 <span style="color:#E24B4A">*</span></label>
+          <select class="form-select" id="gi-month">
+            <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+            <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+            <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+            <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+          </select>
+        </div>
+      </div>
+      <label class="form-label">案件</label>
+      <select class="form-select" id="gi-project" style="margin-bottom:8px">
+        <option value="">案件を選択（任意・未選択=全案件）</option>
+      </select>
+      <div id="gi-preview" style="margin-top:12px;font-size:13px;color:var(--text-muted)">作成ボタンで自動集計します</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
+      <button class="btn-primary" onclick="generateMyInvoice()">作成する</button>
+    </div>
   </div>
 </div>
 
@@ -3201,19 +3254,153 @@ function parseSlackUrl() {
 }
 
 async function loadInvoices() {
-  const res = await fetch(`${API}/invoices`);
-  const invoices = await res.json();
-  const list = document.getElementById('invoices-list');
-  if (!invoices.length) { list.innerHTML='<div class="loading">請求書がありません</div>'; return; }
-  list.innerHTML = invoices.map(inv=>`
-    <div class="card" style="display:flex;align-items:center;gap:14px">
-      <div style="flex:1">
-        <div style="font-size:15px;font-weight:500">${inv.invoice_number}</div>
-        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${inv.projects?.name||''} / ${inv.issuer?.full_name||''}</div>
+  await Promise.all([loadMyInvoices(), isEffectiveAdmin() ? loadAdminInvoices() : Promise.resolve()]);
+  document.getElementById('inv-admin-section').style.display = isEffectiveAdmin() ? '' : 'none';
+}
+
+async function loadMyInvoices() {
+  const uid = currentUser?.supabase_id || currentUser?.id;
+  if (!uid) return;
+  const res = await fetch(`${API}/invoices?issuer_id=${uid}`);
+  const list = res.ok ? await res.json() : [];
+  const el = document.getElementById('inv-my-list');
+  if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">まだ請求書がありません</div>'; return; }
+  el.innerHTML = list.map(inv => {
+    const statusInfo = {
+      draft:     { label:'下書き',   color:'#888',     bg:'#f5f5f5' },
+      submitted: { label:'提出済み', color:'#1565C0',  bg:'#E3F2FD' },
+      approved:  { label:'承認済み', color:'#2E7D32',  bg:'#E8F5E9' },
+      rejected:  { label:'差し戻し', color:'#A32D2D',  bg:'#FFEBEE' },
+    }[inv.status] || { label: inv.status, color:'#888', bg:'#f5f5f5' };
+    return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-weight:600;font-size:15px">${inv.invoice_number}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${inv.year || ''}年${inv.month || ''}月 / ${inv.projects?.name || '全案件'}</div>
+        </div>
+        <div style="text-align:right">
+          <span style="font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:${statusInfo.bg};color:${statusInfo.color}">${statusInfo.label}</span>
+          <div style="font-size:16px;font-weight:700;margin-top:4px">¥${(inv.total_amount||0).toLocaleString()}</div>
+        </div>
       </div>
-      <div style="font-size:16px;font-weight:500">¥${(inv.total_amount||0).toLocaleString()}</div>
-      <span class="status-chip ${inv.status==='issued'?'s-green':'s-gray'}">${inv.status==='issued'?'発行済み':'下書き'}</span>
-    </div>`).join('');
+      ${inv.rejection_reason ? `<div style="margin-top:8px;padding:8px;background:#FFEBEE;border-radius:6px;font-size:12px;color:#A32D2D">差し戻し理由: ${inv.rejection_reason}</div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:12px">
+        ${inv.status === 'draft' ? `<button class="btn-primary btn-sm" onclick="submitInvoice('${inv.id}')">提出する</button>` : ''}
+        ${inv.status === 'rejected' ? `<button class="btn btn-sm" onclick="submitInvoice('${inv.id}')">再提出する</button>` : ''}
+        ${inv.status === 'draft' ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function loadAdminInvoices() {
+  const status = document.getElementById('inv-filter-status')?.value || '';
+  const url = `${API}/invoices${status ? `?status=${status}` : ''}`;
+  const res = await fetch(url);
+  const list = res.ok ? await res.json() : [];
+  const el = document.getElementById('inv-admin-list');
+  if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>'; return; }
+  el.innerHTML = list.map(inv => {
+    const statusInfo = {
+      draft:     { label:'下書き',   color:'#888',     bg:'#f5f5f5' },
+      submitted: { label:'提出済み', color:'#1565C0',  bg:'#E3F2FD' },
+      approved:  { label:'承認済み', color:'#2E7D32',  bg:'#E8F5E9' },
+      rejected:  { label:'差し戻し', color:'#A32D2D',  bg:'#FFEBEE' },
+    }[inv.status] || { label: inv.status, color:'#888', bg:'#f5f5f5' };
+    return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-weight:600;font-size:15px">${inv.invoice_number}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+            ${inv.issuer?.full_name || '-'} / ${inv.year||''}年${inv.month||''}月 / ${inv.projects?.name||'全案件'}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <span style="font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:${statusInfo.bg};color:${statusInfo.color}">${statusInfo.label}</span>
+          <div style="font-size:16px;font-weight:700;margin-top:4px">¥${(inv.total_amount||0).toLocaleString()}</div>
+        </div>
+      </div>
+      ${inv.status === 'submitted' ? `
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn-primary btn-sm" onclick="approveInvoice('${inv.id}')">承認する</button>
+        <button class="btn btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="rejectInvoice('${inv.id}')">差し戻す</button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function openGenerateInvoiceModal() {
+  const now = new Date();
+  const yearSel = document.getElementById('gi-year');
+  yearSel.innerHTML = '';
+  for (let y = now.getFullYear(); y >= now.getFullYear()-2; y--) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y+'年';
+    if (y === now.getFullYear()) o.selected = true;
+    yearSel.appendChild(o);
+  }
+  document.getElementById('gi-month').value = now.getMonth()+1;
+  const projSel = document.getElementById('gi-project');
+  projSel.innerHTML = '<option value="">全案件（自動集計）</option>';
+  allProjects.filter(p=>!p.is_hidden).forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id; o.textContent = p.name;
+    projSel.appendChild(o);
+  });
+  openModal('modal-gen-invoice');
+}
+
+async function generateMyInvoice() {
+  const uid = currentUser?.supabase_id || currentUser?.id;
+  const year = parseInt(document.getElementById('gi-year').value);
+  const month = parseInt(document.getElementById('gi-month').value);
+  const project_id = document.getElementById('gi-project').value || null;
+  if (!uid) { alert('ログイン情報が取得できません'); return; }
+  const res = await fetch(`${API}/invoices/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issuer_id: uid, project_id, year, month })
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || '作成に失敗しました'); return; }
+  closeModal('modal-gen-invoice');
+  alert(`請求書 ${data.invoice_number} を作成しました（¥${(data.total_amount||0).toLocaleString()}）`);
+  await loadMyInvoices();
+}
+
+async function submitInvoice(id) {
+  if (!confirm('提出してよいですか？提出後は管理者の承認が必要です。')) return;
+  const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
+  if (!res.ok) { alert('提出に失敗しました'); return; }
+  await loadMyInvoices();
+}
+
+async function approveInvoice(id) {
+  if (!confirm('この請求書を承認しますか？')) return;
+  const res = await fetch(`${API}/invoices/${id}/approve`, { method: 'POST' });
+  if (!res.ok) { alert('承認に失敗しました'); return; }
+  await loadAdminInvoices();
+}
+
+async function rejectInvoice(id) {
+  const reason = prompt('差し戻し理由を入力してください：');
+  if (reason === null) return;
+  const res = await fetch(`${API}/invoices/${id}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rejection_reason: reason })
+  });
+  if (!res.ok) { alert('差し戻しに失敗しました'); return; }
+  await loadAdminInvoices();
+}
+
+async function deleteInvoice(id) {
+  if (!confirm('この請求書を削除しますか？')) return;
+  const res = await fetch(`${API}/invoices/${id}`, { method: 'DELETE' });
+  if (!res.ok) { alert('削除に失敗しました'); return; }
+  await loadMyInvoices();
 }
 
 async function deactivateMember(id, name) {
