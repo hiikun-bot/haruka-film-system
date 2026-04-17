@@ -1323,6 +1323,35 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- 締め切り設定 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">締め切り設定</span>
+          </div>
+          <input type="hidden" id="p-deadline-unit" value="monthly">
+          <input type="hidden" id="p-deadline-weekday" value="">
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">締め切り単位</label>
+            <div style="display:flex;gap:8px">
+              <button type="button" id="p-unit-monthly" onclick="selectDeadlineUnit('monthly')" style="padding:7px 20px;border-radius:8px;border:1.5px solid var(--em);background:var(--em);color:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">月単位</button>
+              <button type="button" id="p-unit-weekly" onclick="selectDeadlineUnit('weekly')" style="padding:7px 20px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">週単位</button>
+            </div>
+          </div>
+          <div id="p-weekday-row" style="display:none">
+            <label class="form-label" style="margin-bottom:8px">締め切り曜日</label>
+            <div style="display:flex;gap:6px">
+              <button type="button" onclick="selectDeadlineWeekday(0)" id="p-wd-0" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">月</button>
+              <button type="button" onclick="selectDeadlineWeekday(1)" id="p-wd-1" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">火</button>
+              <button type="button" onclick="selectDeadlineWeekday(2)" id="p-wd-2" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">水</button>
+              <button type="button" onclick="selectDeadlineWeekday(3)" id="p-wd-3" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">木</button>
+              <button type="button" onclick="selectDeadlineWeekday(4)" id="p-wd-4" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">金</button>
+              <button type="button" onclick="selectDeadlineWeekday(5)" id="p-wd-5" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">土</button>
+              <button type="button" onclick="selectDeadlineWeekday(6)" id="p-wd-6" style="width:40px;height:40px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">日</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 管理者メモ -->
         <div>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
@@ -3181,6 +3210,8 @@ function openProjectModal(preClientId) {
   document.getElementById('p-slack-channel-id').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
+  selectDeadlineUnit('monthly');
+  document.getElementById('p-deadline-weekday').value = '';
   // 新規作成時はタブ非表示
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
@@ -3230,6 +3261,12 @@ function openEditProject(p) {
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
 
+  // 締め切り設定
+  selectDeadlineUnit(p.deadline_unit || 'monthly');
+  if (p.deadline_weekday !== null && p.deadline_weekday !== undefined) {
+    selectDeadlineWeekday(p.deadline_weekday);
+  }
+
   // 商材・訴求軸 sync セクション
   // sync_products: true = クライアント参照（トグルOFF）、false = 独自設定（トグルON）
   const syncProductsOff = p.sync_products === false;
@@ -3244,6 +3281,32 @@ function openEditProject(p) {
   switchProjectTab('main');
 
   openModal('modal-project');
+}
+
+function selectDeadlineUnit(unit) {
+  document.getElementById('p-deadline-unit').value = unit;
+  const isMonthly = unit === 'monthly';
+  const mBtn = document.getElementById('p-unit-monthly');
+  const wBtn = document.getElementById('p-unit-weekly');
+  mBtn.style.background = isMonthly ? 'var(--em)' : 'transparent';
+  mBtn.style.borderColor = isMonthly ? 'var(--em)' : 'var(--border)';
+  mBtn.style.color = isMonthly ? '#fff' : 'var(--text-muted)';
+  wBtn.style.background = isMonthly ? 'transparent' : 'var(--em)';
+  wBtn.style.borderColor = isMonthly ? 'var(--border)' : 'var(--em)';
+  wBtn.style.color = isMonthly ? 'var(--text-muted)' : '#fff';
+  document.getElementById('p-weekday-row').style.display = isMonthly ? 'none' : '';
+}
+
+function selectDeadlineWeekday(day) {
+  document.getElementById('p-deadline-weekday').value = day;
+  for (let i = 0; i <= 6; i++) {
+    const btn = document.getElementById(`p-wd-${i}`);
+    if (!btn) continue;
+    const active = i === day;
+    btn.style.background = active ? 'var(--em)' : 'transparent';
+    btn.style.borderColor = active ? 'var(--em)' : 'var(--border)';
+    btn.style.color = active ? '#fff' : 'var(--text-muted)';
+  }
 }
 
 function switchProjectTab(tab) {
@@ -3431,6 +3494,9 @@ async function submitProject() {
   const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
+  const deadline_unit = document.getElementById('p-deadline-unit').value || 'monthly';
+  const deadline_weekday_raw = document.getElementById('p-deadline-weekday').value;
+  const deadline_weekday = (deadline_unit === 'weekly' && deadline_weekday_raw !== '') ? parseInt(deadline_weekday_raw) : null;
   // sync: trueがクライアント参照(デフォルト)、falseが独自設定
   const isEditMode = document.getElementById('p-tab-nav').style.display !== 'none';
   const sync_products = isEditMode
@@ -3455,7 +3521,7 @@ async function submitProject() {
   const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
   });
 
   btn.textContent = origText; btn.disabled = false;

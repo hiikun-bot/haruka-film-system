@@ -125,7 +125,8 @@ router.post('/projects', async (req, res) => {
   const {
     client_id, name, status, producer_id, director_id,
     sheet_url, drive_folder_url, regulation_url, admin_note, start_date, end_date,
-    chatwork_room_id, slack_team_id, slack_channel_id
+    chatwork_room_id, slack_team_id, slack_channel_id,
+    deadline_unit, deadline_weekday
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const { data, error } = await supabase
@@ -144,7 +145,9 @@ router.post('/projects', async (req, res) => {
       chatwork_room_id: chatwork_room_id || null,
       slack_team_id: slack_team_id || null,
       slack_channel_id: slack_channel_id || null,
-      is_hidden: false
+      is_hidden: false,
+      deadline_unit: deadline_unit || 'monthly',
+      deadline_weekday: deadline_weekday ?? null
     })
     .select()
     .single();
@@ -158,7 +161,8 @@ router.put('/projects/:id', async (req, res) => {
     name, status, producer_id, director_id,
     sheet_url, drive_folder_url, regulation_url, admin_note, start_date, end_date,
     chatwork_room_id, slack_team_id, slack_channel_id, is_hidden,
-    sync_products, sync_appeal_axes
+    sync_products, sync_appeal_axes,
+    deadline_unit, deadline_weekday
   } = req.body;
   const updateData = {
     name, status,
@@ -174,7 +178,9 @@ router.put('/projects/:id', async (req, res) => {
     slack_team_id: slack_team_id || null,
     slack_channel_id: slack_channel_id || null,
     is_hidden: is_hidden ?? false,
-    updated_at: new Date().toISOString()
+    updated_at: new Date().toISOString(),
+    deadline_unit: deadline_unit || 'monthly',
+    deadline_weekday: deadline_weekday ?? null
   };
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
@@ -602,7 +608,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   // クリエイティブ + 案件情報を取得
   const { data: creative, error: cErr } = await supabase
     .from('creatives')
-    .select('*, projects(id, name, drive_folder_url, clients(id, name, client_code))')
+    .select('*, projects(id, name, drive_folder_url, deadline_unit, deadline_weekday, clients(id, name, client_code))')
     .eq('id', creativeId)
     .single();
   if (cErr) return res.status(500).json({ error: cErr.message });
@@ -618,24 +624,40 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       const baseFolderId = extractFolderIdFromUrl(project.drive_folder_url);
       if (!baseFolderId) throw new Error('Drive フォルダIDを取得できません');
 
-      // サイクル: YYYYMM（当月）
       const now = new Date();
-      const cycleFolder = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
 
       // 動画か静止画かでフォルダ名を分ける
       const isVideo = file.mimetype.startsWith('video/');
       const typeFolder = isVideo ? '動画' : '静止画';
 
       // ファイル名から作業フォルダ名（サイズ・バージョン・拡張子を除いた部分）を生成
-      // e.g. "001_ARU_UGC001_1080_1920_v1.mp4" → "001_ARU_UGC001"
       const workFolderName = (generated_name || file.originalname)
         .replace(/\.[^.]+$/, '')           // 拡張子除去
         .replace(/_\d+_\d+_v\d+$/, '');    // _W_H_vN 除去
 
-      // フォルダ階層: {base}/{YYYYMM}/{動画|静止画}/{workFolder}/
-      const cycleFolderId = await getOrCreateFolder(drive, baseFolderId, cycleFolder);
-      const typeFolderId  = await getOrCreateFolder(drive, cycleFolderId, typeFolder);
-      const workFolderId  = await getOrCreateFolder(drive, typeFolderId, workFolderName);
+      // フォルダ階層の構築（月単位 vs 週単位）
+      const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
+      let typeFolderId;
+      if (project.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
+        // 週単位: {YYYYMM}/W{n}_{MMDD}/{動画|静止画}/{work}/
+        // JSのweekday: 0=日,1=月...6=土 → deadline_weekday: 0=月...6=日
+        const jsTarget = (project.deadline_weekday + 1) % 7;
+        const daysUntil = ((jsTarget - now.getDay()) + 7) % 7 || 7;
+        const deadline = new Date(now);
+        deadline.setDate(deadline.getDate() + daysUntil);
+        const dMonth = deadline.getMonth() + 1;
+        const dDay = deadline.getDate();
+        const firstOfMonth = new Date(deadline.getFullYear(), deadline.getMonth(), 1);
+        const weekNum = Math.ceil((dDay + firstOfMonth.getDay()) / 7);
+        const weekFolderName = `W${weekNum}_${String(dMonth).padStart(2,'0')}${String(dDay).padStart(2,'0')}`;
+        const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
+        typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
+      } else {
+        // 月単位: {YYYYMM}/{動画|静止画}/{work}/
+        typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
+      }
+      const workFolderId = await getOrCreateFolder(drive, typeFolderId, workFolderName);
 
       // ファイルをアップロード
       const stream = new Readable();
@@ -1241,7 +1263,7 @@ router.delete('/projects/:id/appeal-types/:patId', async (req, res) => {
 // ==================== ファイル名自動生成 ====================
 
 router.post('/projects/:id/generate-filename', async (req, res) => {
-  const { appeal_type_id } = req.body;
+  const { appeal_type_id, production_date, product_code, media_code, creative_fmt, creative_size } = req.body;
   if (!appeal_type_id) return res.status(400).json({ error: '訴求タイプは必須です' });
 
   const { data: project, error: pErr } = await supabase
@@ -1262,36 +1284,58 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK')
     .toUpperCase().slice(0, 3);
 
-  // 案件内の使用済みシーケンス番号を取得
+  // 案件内の使用済みシーケンス番号を内部コードから取得
   const { data: allCreatives } = await supabase
     .from('creatives')
-    .select('file_name, appeal_type_id')
+    .select('internal_code, file_name, appeal_type_id')
     .eq('project_id', req.params.id);
 
+  // 内部コード先頭3桁から使用済みseqを収集（なければfile_nameの先頭3桁にフォールバック）
   const usedSeqs = (allCreatives || [])
-    .map(c => c.file_name?.slice(0, 3))
-    .filter(s => /^\d{3}$/.test(s))
-    .map(Number);
+    .map(c => {
+      const src = c.internal_code || c.file_name || '';
+      const m = src.match(/^(\d{3})_/);
+      return m ? Number(m[1]) : null;
+    })
+    .filter(n => n !== null);
 
-  // 次に使える番号を計算（DBのseq_counterではなく実際の使用済み番号から計算）
   let nextSeq = 1;
   while (usedSeqs.includes(nextSeq)) nextSeq++;
 
-  // 訴求タイプの連番（同じ訴求タイプで登録済みのクリエイティブ数から計算）
+  // 訴求タイプの連番
   const nextAppealSeq = (allCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length + 1;
 
-  const seqStr = String(nextSeq).padStart(3, '0');
+  const seqStr3 = String(nextSeq).padStart(3, '0');
+  const seqStr7 = String(nextSeq).padStart(7, '0');
   const appealSeqStr = String(nextAppealSeq).padStart(2, '0');
-  const fileName = `${seqStr}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
 
-  // DBは更新しない
+  // 内部コード（旧命名規約）
+  const internalCode = `${seqStr3}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
+
+  // 制作日: YYMMDD
+  const dateStr = (() => {
+    const d = production_date ? new Date(production_date) : new Date();
+    const yy = String(d.getFullYear()).slice(2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yy}${mm}${dd}`;
+  })();
+
+  // 新ファイル名: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{7桁seq}
+  const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+    .map(p => (p || '').toString().trim())
+    .filter(Boolean);
+  const newFileName = parts.join('_');
+
   res.json({
-    file_name: fileName,
+    file_name: newFileName,
+    internal_code: internalCode,
     seq: nextSeq,
     total: usedSeqs.length,
     appeal_seq: nextAppealSeq,
     client_code: clientCode,
-    appeal_code: appealType.code
+    appeal_code: appealType.code,
+    date_str: dateStr,
   });
 });
 
