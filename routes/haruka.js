@@ -507,41 +507,35 @@ router.post('/creatives', async (req, res) => {
   const {
     project_id, cycle_id, file_name, creative_type,
     draft_deadline, final_deadline, script_url, note, appeal_type_id,
-    product_id, media_code, creative_fmt, creative_size
+    product_id, media_code, creative_fmt, creative_size,
+    assignee_id, internal_code, production_date
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
   }
-  const fileNamePattern = /^\d{3}_/;
-  if (!fileNamePattern.test(file_name)) {
-    return res.status(400).json({ error: 'ファイル名は先頭3桁が数字の連番で始まる必要があります（例：001_ARU_UGC01_v1）' });
-  }
-  const seqNum = file_name.slice(0, 3);
-  const { data: allCreatives } = await supabase
-    .from('creatives').select('file_name').eq('project_id', project_id).order('file_name', { ascending: true });
-  const usedSeqs = (allCreatives || [])
-    .map(c => c.file_name?.slice(0, 3)).filter(s => /^\d{3}$/.test(s)).map(Number);
-  if (usedSeqs.includes(Number(seqNum))) {
-    const existing = allCreatives.find(c => c.file_name?.startsWith(seqNum + '_'));
-    let nextSeq = 1;
-    while (usedSeqs.includes(nextSeq)) nextSeq++;
-    return res.status(400).json({
-      error: `連番「${seqNum}」はすでに使用されています（${existing?.file_name}）`,
-      next_seq: String(nextSeq).padStart(3, '0')
-    });
-  }
   const { data, error } = await supabase.from('creatives').insert({
     project_id, cycle_id, file_name, creative_type,
-    draft_deadline, final_deadline, script_url, note, status: '未着手',
+    draft_deadline: draft_deadline || null,
+    final_deadline: final_deadline || null,
+    script_url: script_url || null,
+    note: note || null,
+    status: '未着手',
+    appeal_type_id: appeal_type_id || null,
     product_id: product_id || null,
     media_code: media_code || null,
     creative_fmt: creative_fmt || null,
     creative_size: creative_size || null,
+    internal_code: internal_code || null,
+    production_date: production_date || null,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
-  if (appeal_type_id) {
-    const { data: proj } = await supabase.from('projects').select('seq_counter').eq('id', project_id).single();
-    await supabase.from('projects').update({ seq_counter: (proj?.seq_counter || 0) + 1 }).eq('id', project_id);
+  // 担当者を creative_assignments に登録
+  if (assignee_id) {
+    await supabase.from('creative_assignments').insert({
+      creative_id: data.id,
+      user_id: assignee_id,
+      role: 'editor',
+    });
   }
   res.json(data);
 });

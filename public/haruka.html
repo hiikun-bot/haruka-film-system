@@ -2516,6 +2516,14 @@ async function createCreative() {
   const creative_fmt = document.getElementById('c-creative-fmt')?.value || null;
   const creative_size = document.getElementById('c-creative-size')?.value || null;
 
+  // 内部コードと制作日を取得（generateFileName で生成済みの場合）
+  const internal_code = document.getElementById('c-internal-code')?.value?.trim() || null;
+  const production_date = new Date().toISOString().slice(0, 10);
+
+  const btn = document.querySelector('#tab-single .btn-primary');
+  const origText = btn?.textContent;
+  if (btn) { btn.textContent = '追加中...'; btn.disabled = true; }
+
   const res = await fetch(`${API}/creatives`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2529,8 +2537,12 @@ async function createCreative() {
       media_code: media_code || null,
       creative_fmt: creative_fmt || null,
       creative_size: creative_size || null,
+      internal_code,
+      production_date,
     })
   });
+
+  if (btn) { btn.textContent = origText; btn.disabled = false; }
 
   if (res.ok) {
     document.getElementById('filename-status').textContent = '';
@@ -2541,11 +2553,13 @@ async function createCreative() {
     if (!continuous) {
       closeModal('modal-creative');
     } else {
-      // 連続モード：ファイル名だけリセットして次の登録へ
       const statusEl = document.getElementById('filename-status');
       statusEl.style.color = 'var(--em-dark)';
       statusEl.textContent = '登録しました。続けて登録できます。';
     }
+  } else {
+    const e = await res.json().catch(() => ({ error: '不明なエラー' }));
+    alert('登録エラー: ' + e.error);
   }
 }
 
