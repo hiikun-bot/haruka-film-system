@@ -361,11 +361,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                 <th>最終納期</th>
                 <th>遅れ</th>
                 <th>SOS</th>
-                <th>操作</th>
             </tr>
         </thead>
         <tbody id="creative-tbody">
-          <tr><td colspan="11" class="loading">読み込み中...</td></tr>
+          <tr><td colspan="12" class="loading">読み込み中...</td></tr>
         </tbody>
       </table>
     </div>
@@ -2358,14 +2357,14 @@ async function loadMembers() {
 // クリエイティブ
 async function loadCreatives() {
   const tbody = document.getElementById('creative-tbody');
-  tbody.innerHTML = '<tr><td colspan="11" class="loading">読み込み中...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
   try {
     const res = await fetch(`${API}/creatives`);
     allCreatives = await res.json();
     renderCreatives();
     renderAlerts();
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
   }
 }
 
@@ -2397,7 +2396,7 @@ function renderCreatives() {
 
   document.getElementById('creative-count').textContent = `${filtered.length}件表示中`;
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     return;
   }
 
@@ -2431,8 +2430,8 @@ function renderCreatives() {
 
     return `<tr class="${isLate?'row-late':''} ${c.help_flag?'row-help':''}" data-id="${c.id}">
       <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="creative-row-check" data-id="${c.id}" onchange="updateCreativeDeleteBar()" style="cursor:pointer;width:14px;height:14px"></td>
-      <td><span class="proj-tag" style="background:var(--em-pale);color:var(--em-dark)" title="${clientName}">${clientName.slice(0,3)}</span></td>
-      <td style="font-size:14px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted" onclick="openCreativeDetail('${c.id}')" title="詳細を開く">${c.file_name}</td>
+      <td style="white-space:nowrap;font-size:13px;font-weight:500;color:var(--text)">${clientName}</td>
+      <td style="font-size:13px;font-weight:500;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;white-space:nowrap" onclick="openCreativeDetail('${c.id}')" title="${c.file_name}">${c.file_name}</td>
       <td style="font-size:14px;font-weight:500">${editorName}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
@@ -2446,10 +2445,6 @@ function renderCreatives() {
       </td>
       <td>${isLate?'<span class="late-flag">遅れ</span>':''}</td>
       <td><button class="help-flag-btn ${c.help_flag?'on':''}" onclick="toggleHelp('${c.id}',${c.help_flag})">${c.help_flag?'SOS中':'SOS'}</button></td>
-      <td style="white-space:nowrap">
-        <button class="btn-sm" onclick="openCreativeDetail('${c.id}')" style="margin-right:4px">詳細</button>
-        <button class="btn-sm" onclick="openStatusModal('${c.id}','${c.file_name}','${c.status}')">更新</button>
-      </td>
     </tr>`;
 
   }).join('');
