@@ -924,32 +924,111 @@ router.get('/invoices', async (req, res) => {
   res.json(data);
 });
 
-// 請求書作成（納品完了クリエイティブから自動生成）
+// 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す
+router.get('/invoices/preview-items', async (req, res) => {
+  const uid = req.user?.id;
+  const year  = parseInt(req.query.year);
+  const month = parseInt(req.query.month);
+  if (!uid || !year || !month) return res.status(400).json({ error: 'パラメータ不足' });
+
+  // 自分がアサインされたクリエイティブを取得（月フィルタなし、全部取得してJS側でフィルタ）
+  const { data: creatives, error: cErr } = await supabase
+    .from('creatives')
+    .select(`
+      id, file_name, status, creative_type, final_deadline, draft_deadline,
+      project_id, is_payable, special_payable, special_payable_reason,
+      projects(id, name, clients(name, client_code)),
+      creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
+    `)
+    .not('creative_assignments', 'is', null);
+  if (cErr) return res.status(500).json({ error: cErr.message });
+
+  // 自分のアサインのみ、かつ当月final_deadlineまたは当月作成
+  const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+  const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
+
+  const myCreatives = (creatives || []).filter(c => {
+    const mine = c.creative_assignments?.some(a => a.user_id === uid);
+    if (!mine) return false;
+    const dl = c.final_deadline || c.draft_deadline || '';
+    return dl >= startDate && dl <= endDate;
+  });
+
+  // 対象案件の単価をまとめて取得
+  const projectIds = [...new Set(myCreatives.map(c => c.project_id))];
+  let ratesMap = {};
+  if (projectIds.length) {
+    const { data: rates } = await supabase
+      .from('project_rates')
+      .select('*')
+      .in('project_id', projectIds);
+    (rates || []).forEach(r => {
+      const key = `${r.project_id}__${r.creative_type}__${r.rank}`;
+      ratesMap[key] = r;
+    });
+  }
+
+  const result = myCreatives.map(c => {
+    const assignment = c.creative_assignments?.find(a => a.user_id === uid);
+    const rateKey = `${c.project_id}__${c.creative_type}__${assignment?.rank_applied}`;
+    const rate = ratesMap[rateKey] || null;
+    return {
+      id: c.id,
+      file_name: c.file_name,
+      status: c.status,
+      creative_type: c.creative_type,
+      final_deadline: c.final_deadline,
+      is_payable: c.is_payable,
+      special_payable: c.special_payable,
+      project_id: c.project_id,
+      project_name: c.projects?.name || '',
+      client_name: c.projects?.clients?.name || '',
+      assignment_role: assignment?.role,
+      rank_applied: assignment?.rank_applied,
+      rate: rate ? {
+        base_fee:   rate.base_fee   || 0,
+        script_fee: rate.script_fee || 0,
+        ai_fee:     rate.ai_fee     || 0,
+        other_fee:  rate.other_fee  || 0,
+      } : null,
+      total: rate ? (rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0) : 0,
+    };
+  });
+
+  res.json(result);
+});
+
+// 請求書作成（選択クリエイティブから生成）
 router.post('/invoices/generate', async (req, res) => {
-  const { issuer_id, project_id, cycle_id } = req.body;
-  if (!issuer_id || !project_id) return res.status(400).json({ error: '発行者・案件は必須です' });
+  const { issuer_id, project_id, cycle_id, selected_creative_ids } = req.body;
+  if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
 
   // 請求可能なクリエイティブを取得
   let query = supabase
     .from('creatives')
-    .select(`
-      *,
-      creative_assignments(user_id, role, rank_applied, users(id, full_name))
-    `)
-    .eq('project_id', project_id)
-    .or('is_payable.eq.true,special_payable.eq.true');
+    .select(`*, creative_assignments(user_id, role, rank_applied, users(id, full_name))`)
+    .not('creative_assignments', 'is', null);
 
+  if (selected_creative_ids && selected_creative_ids.length) {
+    query = query.in('id', selected_creative_ids);
+  } else if (project_id) {
+    query = query.eq('project_id', project_id).or('is_payable.eq.true,special_payable.eq.true');
+  } else {
+    return res.status(400).json({ error: '請求対象クリエイティブを選択してください' });
+  }
   if (cycle_id) query = query.eq('cycle_id', cycle_id);
 
   const { data: creatives, error: cErr } = await query;
   if (cErr) return res.status(500).json({ error: cErr.message });
   if (!creatives.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
 
-  // 単価を取得
-  const { data: rates } = await supabase
+  // 対象案件の単価をまとめて取得
+  const projectIds = [...new Set(creatives.map(c => c.project_id))];
+  const { data: allRates } = await supabase
     .from('project_rates')
     .select('*')
-    .eq('project_id', project_id);
+    .in('project_id', projectIds);
+  const rates = allRates || [];
 
   // 請求書番号を自動採番
   const now = new Date();
@@ -971,7 +1050,7 @@ router.post('/invoices/generate', async (req, res) => {
     if (!assignment) continue;
 
     const rate = rates?.find(
-      r => r.creative_type === creative.creative_type && r.rank === assignment.rank_applied
+      r => r.project_id === creative.project_id && r.creative_type === creative.creative_type && r.rank === assignment.rank_applied
     );
     if (!rate) continue;
 

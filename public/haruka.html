@@ -465,33 +465,47 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- 請求書作成モーダル -->
 <div class="modal-overlay" id="modal-gen-invoice">
-  <div class="modal-card" style="max-width:480px">
-    <div class="modal-title">請求書作成<button class="modal-close" onclick="closeModal('modal-gen-invoice')">×</button></div>
-    <div class="modal-body">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-        <div>
-          <label class="form-label">年 <span style="color:#E24B4A">*</span></label>
-          <select class="form-select" id="gi-year"></select>
+  <div class="modal" style="width:95vw;max-width:1100px;max-height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
+
+    <!-- ヘッダー -->
+    <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:16px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:4px;height:18px;background:var(--em);border-radius:2px"></div>
+          <span style="font-size:15px;font-weight:600">請求書作成</span>
         </div>
-        <div>
-          <label class="form-label">月 <span style="color:#E24B4A">*</span></label>
-          <select class="form-select" id="gi-month">
+        <div style="display:flex;align-items:center;gap:8px">
+          <select class="form-select" id="gi-year" onchange="loadInvoicePreview()" style="width:110px;font-size:13px;padding:6px 10px"></select>
+          <select class="form-select" id="gi-month" onchange="loadInvoicePreview()" style="width:80px;font-size:13px;padding:6px 10px">
             <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
             <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
             <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
             <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
           </select>
+          <span style="font-size:12px;color:var(--text-muted)">の請求対象</span>
         </div>
       </div>
-      <label class="form-label">案件</label>
-      <select class="form-select" id="gi-project" style="margin-bottom:8px">
-        <option value="">案件を選択（任意・未選択=全案件）</option>
-      </select>
-      <div id="gi-preview" style="margin-top:12px;font-size:13px;color:var(--text-muted)">作成ボタンで自動集計します</div>
+      <button class="modal-close" onclick="closeModal('modal-gen-invoice')">×</button>
     </div>
-    <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
-      <button class="btn-primary" onclick="generateMyInvoice()">作成する</button>
+
+    <!-- テーブルエリア -->
+    <div style="flex:1;overflow-y:auto;padding:0">
+      <div id="gi-table-wrap" style="padding:16px 24px">
+        <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">年月を選択してください</div>
+      </div>
+    </div>
+
+    <!-- フッター：合計＋ボタン -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <span style="font-size:13px;color:var(--text-muted)">選択合計</span>
+        <span id="gi-total" style="font-size:22px;font-weight:700;color:var(--em-dark)">¥0</span>
+        <span id="gi-count" style="font-size:12px;color:var(--text-muted)">（0件）</span>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
+        <button class="btn-primary" id="gi-submit-btn" onclick="generateMyInvoice()" disabled style="opacity:0.5">請求書を作成する</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3935,6 +3949,8 @@ async function loadAdminInvoices() {
   }).join('');
 }
 
+let invoicePreviewItems = [];
+
 function openGenerateInvoiceModal() {
   const now = new Date();
   const yearSel = document.getElementById('gi-year');
@@ -3946,27 +3962,123 @@ function openGenerateInvoiceModal() {
     yearSel.appendChild(o);
   }
   document.getElementById('gi-month').value = now.getMonth()+1;
-  const projSel = document.getElementById('gi-project');
-  projSel.innerHTML = '<option value="">全案件（自動集計）</option>';
-  allProjects.filter(p=>!p.is_hidden).forEach(p => {
-    const o = document.createElement('option');
-    o.value = p.id; o.textContent = p.name;
-    projSel.appendChild(o);
-  });
+  invoicePreviewItems = [];
+  document.getElementById('gi-table-wrap').innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">読み込み中...</div>';
   openModal('modal-gen-invoice');
+  loadInvoicePreview();
+}
+
+async function loadInvoicePreview() {
+  const year  = parseInt(document.getElementById('gi-year').value);
+  const month = parseInt(document.getElementById('gi-month').value);
+  const wrap  = document.getElementById('gi-table-wrap');
+  wrap.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">読み込み中...</div>';
+  document.getElementById('gi-submit-btn').disabled = true;
+  document.getElementById('gi-submit-btn').style.opacity = '0.5';
+
+  const res = await fetch(`${API}/invoices/preview-items?year=${year}&month=${month}`);
+  if (!res.ok) { wrap.innerHTML = '<div style="color:#E24B4A;font-size:13px;text-align:center;padding:40px">読み込みに失敗しました</div>'; return; }
+  invoicePreviewItems = await res.json();
+
+  if (!invoicePreviewItems.length) {
+    wrap.innerHTML = `<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">${year}年${month}月に担当したクリエイティブがありません</div>`;
+    updateInvoiceTotal();
+    return;
+  }
+
+  const isEditor = ['editor'].includes(currentUser?.role);
+  const isDesigner = ['designer'].includes(currentUser?.role);
+
+  wrap.innerHTML = `
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead>
+      <tr style="background:var(--surface);border-bottom:1.5px solid var(--border);position:sticky;top:0">
+        <th style="padding:8px 10px;text-align:center;width:36px"><input type="checkbox" id="gi-check-all" onchange="toggleAllInvoiceItems(this.checked)" style="cursor:pointer;width:15px;height:15px"></th>
+        <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">案件</th>
+        <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">ファイル名</th>
+        <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted)">ステータス</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">基本料金</th>
+        ${isEditor ? `
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">台本生成</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">AI</th>` : ''}
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">その他</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark)">小計</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${invoicePreviewItems.map((item, i) => {
+        const isDelivered = item.status === '納品完了';
+        const checked = isDelivered ? 'checked' : '';
+        const statusColor = isDelivered ? '#059669' : '#6B7280';
+        const statusBg    = isDelivered ? '#D1FAE5' : '#F3F4F6';
+        const rowBg = i % 2 === 0 ? '' : 'background:#FAFEFE';
+        const noRate = !item.rate;
+        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)" id="gi-row-${item.id}">
+          <td style="padding:8px 10px;text-align:center">
+            <input type="checkbox" class="gi-item-check" data-id="${item.id}" ${checked} ${noRate?'disabled':''} onchange="updateInvoiceTotal()" style="cursor:${noRate?'not-allowed':'pointer'};width:15px;height:15px;${noRate?'opacity:0.3':''}">
+          </td>
+          <td style="padding:8px 10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${item.project_name}">
+            <div style="font-size:11px;color:var(--text-muted)">${item.client_name}</div>
+            <div style="font-weight:500">${item.project_name}</div>
+          </td>
+          <td style="padding:8px 10px;font-family:monospace;font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.file_name}</td>
+          <td style="padding:8px 10px;text-align:center">
+            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};white-space:nowrap">${item.status||'—'}</span>
+          </td>
+          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.base_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>
+          ${isEditor ? `
+          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.script_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>
+          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.ai_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>` : ''}
+          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.other_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>
+          <td style="padding:8px 10px;text-align:right;font-weight:600;color:${noRate?'#ccc':'var(--em-dark)'}">
+            ${noRate ? '<span style="font-size:10px;color:#F59E0B">単価未設定</span>' : '¥'+item.total.toLocaleString()}
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+
+  updateInvoiceTotal();
+  document.getElementById('gi-submit-btn').disabled = false;
+  document.getElementById('gi-submit-btn').style.opacity = '1';
+}
+
+function toggleAllInvoiceItems(checked) {
+  document.querySelectorAll('.gi-item-check:not(:disabled)').forEach(cb => { cb.checked = checked; });
+  updateInvoiceTotal();
+}
+
+function updateInvoiceTotal() {
+  const checks = document.querySelectorAll('.gi-item-check:checked');
+  let total = 0;
+  checks.forEach(cb => {
+    const item = invoicePreviewItems.find(i => i.id === cb.dataset.id);
+    if (item) total += item.total;
+  });
+  document.getElementById('gi-total').textContent = '¥' + total.toLocaleString();
+  document.getElementById('gi-count').textContent = `（${checks.length}件）`;
+  const btn = document.getElementById('gi-submit-btn');
+  btn.disabled = checks.length === 0;
+  btn.style.opacity = checks.length === 0 ? '0.5' : '1';
 }
 
 async function generateMyInvoice() {
   const uid = currentUser?.supabase_id || currentUser?.id;
-  const year = parseInt(document.getElementById('gi-year').value);
+  const year  = parseInt(document.getElementById('gi-year').value);
   const month = parseInt(document.getElementById('gi-month').value);
-  const project_id = document.getElementById('gi-project').value || null;
   if (!uid) { alert('ログイン情報が取得できません'); return; }
+
+  const selectedIds = [...document.querySelectorAll('.gi-item-check:checked')].map(cb => cb.dataset.id);
+  if (!selectedIds.length) { alert('請求対象を1件以上選択してください'); return; }
+
+  const btn = document.getElementById('gi-submit-btn');
+  btn.textContent = '作成中...'; btn.disabled = true;
   const res = await fetch(`${API}/invoices/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issuer_id: uid, project_id, year, month })
+    body: JSON.stringify({ issuer_id: uid, year, month, selected_creative_ids: selectedIds })
   });
+  btn.textContent = '請求書を作成する'; btn.disabled = false;
   const data = await res.json();
   if (!res.ok) { alert(data.error || '作成に失敗しました'); return; }
   closeModal('modal-gen-invoice');
