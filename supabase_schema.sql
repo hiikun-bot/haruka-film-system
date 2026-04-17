@@ -356,3 +356,13 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_team_id TEXT;
 
 -- projects_status_check 制約が存在する場合は削除（アプリ側でバリデーション済み）
 ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
+
+-- invoices テーブルに承認フロー用カラム追加
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS year INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS month INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_id UUID REFERENCES users(id);
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_by UUID REFERENCES users(id);
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
