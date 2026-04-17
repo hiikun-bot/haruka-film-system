@@ -585,7 +585,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div class="form-group">
         <label class="form-label">ファイル名</label>
         <div style="display:flex;gap:8px">
-          <input class="form-input" id="c-file-name" placeholder="訴求タイプ選択後に自動生成されます">
+          <input class="form-input" id="c-file-name" placeholder="">
           <button class="btn" onclick="generateFileName()" style="white-space:nowrap">再生成</button>
         </div>
         <div id="filename-status" style="margin-top:6px;font-size:13px"></div>
@@ -4277,16 +4277,25 @@ async function generateFileName() {
   const statusEl = document.getElementById('filename-status');
   if (!projectId || !appealTypeId) return;
 
+  // 商材コードを選択肢テキストから取得（"PA001 - 名前" → "PA001"）
+  const prodSel = document.getElementById('c-product-id');
+  const product_code = prodSel?.options[prodSel.selectedIndex]?.text?.split(' - ')[0]?.trim() || null;
+
+  const media_code    = document.getElementById('c-media-code')?.value || null;
+  const creative_fmt  = document.getElementById('c-creative-fmt')?.value || null;
+  const creative_size = document.getElementById('c-creative-size')?.value || null;
+  const production_date = new Date().toISOString().slice(0, 10);
+
   const res = await fetch(`${API}/projects/${projectId}/generate-filename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appeal_type_id: appealTypeId })
+    body: JSON.stringify({ appeal_type_id: appealTypeId, product_code, media_code, creative_fmt, creative_size, production_date })
   });
   if (res.ok) {
     const data = await res.json();
     document.getElementById('c-file-name').value = data.file_name;
     statusEl.style.color = 'var(--em-dark)';
-    statusEl.textContent = `この案件の ${data.seq} 本目です（現在 ${data.total} 本登録済み）`;
+    statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`;
   } else {
     const e = await res.json();
     statusEl.style.color = '#E24B4A';
