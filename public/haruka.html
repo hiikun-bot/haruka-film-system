@@ -2565,6 +2565,10 @@ function isEffectiveAdmin() {
   return isSuperAdmin();
 }
 
+function isTopAdmin() {
+  return effectiveRole() === 'admin';
+}
+
 // ロールプレビュー切り替え
 function setPreviewRole(role) {
   previewRole = role;
@@ -2967,7 +2971,7 @@ function loadDashboard() {
   const role = effectiveRole();
   const today = new Date(); today.setHours(0,0,0,0);
 
-  if (['admin','producer','producer_director'].includes(role)) {
+  if (['admin','secretary','producer','producer_director'].includes(role)) {
     renderAdminDash(today);
   } else if (role === 'director') {
     renderDirectorDash(today);
@@ -3034,6 +3038,15 @@ function renderAdminDash(today) {
     </div>`
   ).join('') || '<div style="font-size:13px;color:var(--text-muted)">データなし</div>';
 
+  const financialHtml = isTopAdmin() ? `
+    <div class="dash-section">
+      <div class="dash-section-title">💰 財務サマリー（管理者専用）</div>
+      <div style="font-size:13px;color:var(--text-muted);padding:8px 0">
+        ※ 今後請求データと連携予定
+      </div>
+    </div>
+  ` : '';
+
   document.getElementById('dash-content').innerHTML = `
     <div class="dash-grid">
       <div class="dash-section">
@@ -3044,7 +3057,8 @@ function renderAdminDash(today) {
         <div class="dash-section-title">📊 案件ステータス</div>
         ${projHtml}
       </div>
-    </div>`;
+    </div>
+    ${financialHtml}`;
 }
 
 function renderDirectorDash(today) {
