@@ -5576,8 +5576,9 @@ function updateCreativeStepIndicator(status) {
   const nextBtn = document.getElementById('cd-next-step-btn');
   if (nextBtn) {
     const next = NEXT[status];
-    if (next) { nextBtn.style.display = ''; nextBtn.textContent = `${next} へ →`; }
-    else        { nextBtn.style.display = 'none'; }
+    const showBtn = next && !['未着手', '制作中（初稿提出前）'].includes(status);
+    if (showBtn) { nextBtn.style.display = ''; nextBtn.textContent = `${next} へ →`; }
+    else          { nextBtn.style.display = 'none'; }
   }
 }
 
