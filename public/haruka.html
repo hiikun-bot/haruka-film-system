@@ -996,141 +996,141 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- クライアント追加・編集モーダル -->
 <div class="modal-overlay" id="modal-client">
-  <div class="modal" id="modal-client-inner" style="width:92vw;max-width:900px;max-height:92vh;overflow-y:auto;padding:0;border-radius:16px;transition:max-width .25s">
+  <div class="modal" id="modal-client-inner" style="width:92vw;max-width:1000px;max-height:92vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
 
     <!-- ヘッダー -->
-    <div style="padding:18px 28px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;z-index:10;border-radius:16px 16px 0 0">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
-        <span id="cl-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">クライアント追加</span>
+    <div style="padding:18px 28px 0;flex-shrink:0;background:#fff;border-radius:16px 16px 0 0">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
+          <span id="cl-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">クライアント追加</span>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-client')">×</button>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-client')">×</button>
+      <!-- タブナビ -->
+      <div style="display:flex;border-bottom:1px solid var(--border)">
+        <button id="cl-tab-btn-basic" onclick="switchClientTab('basic')"
+          style="font-size:13px;padding:10px 24px;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;font-weight:500;color:var(--text-muted)">
+          基本情報
+        </button>
+        <button id="cl-tab-btn-products" onclick="switchClientTab('products')"
+          style="font-size:13px;padding:10px 24px;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;font-weight:500;color:var(--text-muted)">
+          商材
+        </button>
+        <button id="cl-tab-btn-appeal-axes" onclick="switchClientTab('appeal-axes')"
+          style="font-size:13px;padding:10px 24px;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;font-weight:500;color:var(--text-muted)">
+          訴求軸
+        </button>
+      </div>
     </div>
     <input type="hidden" id="cl-id">
 
-    <!-- ボディ：スプリットパネル（新規追加時は左のみ、編集時は左右） -->
-    <div style="display:flex;gap:0">
+    <!-- スクロール可能コンテンツ -->
+    <div style="flex:1;overflow-y:auto;min-height:0">
 
-      <!-- ===== 左パネル：基本情報 ===== -->
-      <div style="flex:0 0 360px;min-width:0;padding:24px 24px 16px;border-right:1px solid var(--border-light)">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-          <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
-          <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">基本情報</span>
-        </div>
-        <div class="form-group">
-          <label class="form-label">クライアント名 <span style="color:#E24B4A">*</span></label>
-          <input class="form-input" id="cl-name" placeholder="例：あるる株式会社">
-        </div>
-        <div class="form-group">
-          <label class="form-label">略称（英3文字） <span style="color:#E24B4A">*</span>
-            <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:4px">ファイル名等に使用</span>
-          </label>
-          <input class="form-input" id="cl-code" placeholder="例：ARU" maxlength="3"
-            style="text-transform:uppercase;font-family:monospace;font-size:18px;font-weight:700;letter-spacing:0.2em;color:var(--em-dark)"
-            oninput="this.value=this.value.toUpperCase()">
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">取引開始日</label>
-            <input class="form-input" type="date" id="cl-sales-start">
+      <!-- 基本情報タブ -->
+      <div id="cl-tab-basic" style="padding:24px 28px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+          <div>
+            <div class="form-group">
+              <label class="form-label">クライアント名 <span style="color:#E24B4A">*</span></label>
+              <input class="form-input" id="cl-name" placeholder="例：あるる株式会社">
+            </div>
+            <div class="form-group">
+              <label class="form-label">略称（英3文字） <span style="color:#E24B4A">*</span>
+                <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:4px">ファイル名等に使用</span>
+              </label>
+              <input class="form-input" id="cl-code" placeholder="例：ARU" maxlength="3"
+                style="text-transform:uppercase;font-family:monospace;font-size:18px;font-weight:700;letter-spacing:0.2em;color:var(--em-dark)"
+                oninput="this.value=this.value.toUpperCase()">
+            </div>
           </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">ステータス</label>
-            <select class="form-select" id="cl-status">
-              <option value="提案中">提案中</option>
-              <option value="進行中">進行中</option>
-              <option value="クライアント取引終了">取引終了</option>
-            </select>
+          <div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">取引開始日</label>
+                <input class="form-input" type="date" id="cl-sales-start">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">ステータス</label>
+                <select class="form-select" id="cl-status">
+                  <option value="提案中">提案中</option>
+                  <option value="進行中">進行中</option>
+                  <option value="クライアント取引終了">取引終了</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">備考（任意）</label>
+              <textarea class="form-input" id="cl-note" rows="4" placeholder="例：洗濯機の分解洗浄会社様" style="resize:vertical"></textarea>
+            </div>
           </div>
-        </div>
-        <div class="form-group" style="margin-top:10px">
-          <label class="form-label">備考（任意）</label>
-          <textarea class="form-input" id="cl-note" rows="3" placeholder="例：洗濯機の分解洗浄会社様" style="resize:vertical"></textarea>
-        </div>
-        <!-- 保存ボタン -->
-        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;padding-top:12px;border-top:0.5px solid var(--border)">
-          <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
-          <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
         </div>
       </div>
 
-      <!-- ===== 右パネル：商材・訴求軸（編集時のみ表示） ===== -->
-      <div id="cl-right-panel" style="flex:1;min-width:0;display:none;flex-direction:column">
-
-        <!-- タブ -->
-        <div style="display:flex;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface)">
-          <button id="cl-tab-btn-products" onclick="switchClientTab('products')"
-            style="font-size:13px;padding:14px 20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;font-weight:500">
-            商材
-          </button>
-          <button id="cl-tab-btn-appeal-axes" onclick="switchClientTab('appeal-axes')"
-            style="font-size:13px;padding:14px 20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;font-weight:500">
-            訴求軸
-          </button>
+      <!-- 商材タブ -->
+      <div id="cl-tab-products" style="display:none;padding:20px 28px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;background:var(--em-pale);padding:8px 12px;border-radius:8px">
+          案件は既定でここに登録した商材を参照します。案件ごとに独自設定への切り替えも可能です。
         </div>
-
-        <!-- 商材タブ -->
-        <div id="cl-tab-products" style="display:none;flex:1;padding:20px;overflow-y:auto;max-height:420px">
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;background:var(--em-pale);padding:8px 12px;border-radius:8px">
-            案件は既定でここに登録した商材を参照します。案件ごとに独自設定への切り替えも可能です。
-          </div>
-          <div id="cl-products-list" style="margin-bottom:12px"></div>
-          <div style="padding-top:12px;border-top:1px solid var(--border)">
-            <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
-            <div style="display:flex;gap:6px;align-items:flex-start">
-              <div style="flex-shrink:0;width:80px">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
-                <input class="form-input" id="cl-prod-code" placeholder="例: SV" style="font-family:monospace;font-size:13px">
-              </div>
-              <div style="flex:1">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
-                <input class="form-input" id="cl-prod-name" placeholder="例: 太陽光パネル">
-              </div>
-              <div style="flex:1">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
-                <input class="form-input" id="cl-prod-note" placeholder="任意">
-              </div>
-              <div style="flex-shrink:0;padding-top:18px">
-                <button class="btn-primary" style="white-space:nowrap" onclick="addClientProduct()">追加</button>
-              </div>
+        <div id="cl-products-list" style="margin-bottom:12px"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:grid;grid-template-columns:120px 1fr 1fr auto;gap:8px;align-items:end">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
+              <input class="form-input" id="cl-prod-code" placeholder="例: SV" style="font-family:monospace;font-size:13px">
             </div>
-          </div>
-        </div>
-
-        <!-- 訴求軸タブ -->
-        <div id="cl-tab-appeal-axes" style="display:none;flex:1;padding:20px;overflow-y:auto;max-height:420px">
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;background:var(--em-pale);padding:8px 12px;border-radius:8px">
-            案件は既定でここに登録した訴求軸を参照します。案件ごとに独自設定への切り替えも可能です。
-          </div>
-          <div id="cl-axes-list" style="margin-bottom:12px"></div>
-          <div style="padding-top:12px;border-top:1px solid var(--border)">
-            <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
-            <div style="display:flex;gap:6px;align-items:flex-start">
-              <div style="flex-shrink:0;width:80px">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
-                <input class="form-input" id="cl-axis-code" placeholder="例: ap001" style="font-family:monospace;font-size:13px">
-              </div>
-              <div style="flex:1">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
-                <input class="form-input" id="cl-axis-name" placeholder="例: UGC風">
-              </div>
-              <div style="flex:1">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
-                <input class="form-input" id="cl-axis-note" placeholder="任意">
-              </div>
-              <div style="flex-shrink:0;width:130px">
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">有効期限日</div>
-                <input class="form-input" type="date" id="cl-axis-expires">
-              </div>
-              <div style="flex-shrink:0;padding-top:18px">
-                <button class="btn-primary" style="white-space:nowrap" onclick="addClientAxis()">追加</button>
-              </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
+              <input class="form-input" id="cl-prod-name" placeholder="例: 太陽光パネル">
             </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
+              <input class="form-input" id="cl-prod-note" placeholder="任意">
+            </div>
+            <button class="btn-primary" style="white-space:nowrap;height:38px" onclick="addClientProduct()">追加</button>
           </div>
         </div>
+      </div>
 
-      </div><!-- /右パネル -->
-    </div><!-- /スプリット -->
+      <!-- 訴求軸タブ -->
+      <div id="cl-tab-appeal-axes" style="display:none;padding:20px 28px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;background:var(--em-pale);padding:8px 12px;border-radius:8px">
+          案件は既定でここに登録した訴求軸を参照します。案件ごとに独自設定への切り替えも可能です。
+        </div>
+        <div id="cl-axes-list" style="margin-bottom:12px"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:grid;grid-template-columns:120px 1fr 1fr 150px auto;gap:8px;align-items:end">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
+              <input class="form-input" id="cl-axis-code" placeholder="例: ap001" style="font-family:monospace;font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
+              <input class="form-input" id="cl-axis-name" placeholder="例: UGC風">
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
+              <input class="form-input" id="cl-axis-note" placeholder="任意">
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">有効期限日</div>
+              <input class="form-input" type="date" id="cl-axis-expires">
+            </div>
+            <button class="btn-primary" style="white-space:nowrap;height:38px" onclick="addClientAxis()">追加</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /スクロール -->
+
+    <!-- フッター -->
+    <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:#fff">
+      <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
+      <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
+    </div>
 
   </div>
 </div>
@@ -1934,11 +1934,7 @@ function openEditClient(id) {
   document.getElementById('cl-sales-start').value = c.sales_start_date ? c.sales_start_date.slice(0,10) : '';
   document.getElementById('cl-status').value = c.status || '提案中';
   document.getElementById('cl-submit-btn').textContent = '保存する';
-  // 右パネル（商材・訴求軸）を表示してモーダル幅を広げる
-  const rightPanel = document.getElementById('cl-right-panel');
-  rightPanel.style.display = 'flex';
-  document.getElementById('modal-client-inner').style.maxWidth = '900px';
-  switchClientTab('products');
+  switchClientTab('basic');
   openModal('modal-client');
 }
 
@@ -1951,9 +1947,7 @@ function openNewClientModal() {
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
   document.getElementById('cl-submit-btn').textContent = '追加する';
-  // 新規追加時は右パネルを非表示（保存後に表示）
-  document.getElementById('cl-right-panel').style.display = 'none';
-  document.getElementById('modal-client-inner').style.maxWidth = '480px';
+  switchClientTab('basic');
   openModal('modal-client');
 }
 
@@ -1987,8 +1981,6 @@ async function submitClient() {
       // 新規作成後：IDをセットして右パネル（商材・訴求軸）を開放
       document.getElementById('cl-id').value = saved.id;
       document.getElementById('cl-submit-btn').textContent = '保存する';
-      document.getElementById('cl-right-panel').style.display = 'flex';
-      document.getElementById('modal-client-inner').style.maxWidth = '900px';
       switchClientTab('products');
     } else {
       closeModal('modal-client');
@@ -2000,11 +1992,11 @@ async function submitClient() {
 }
 
 // ===== クライアントモーダル タブ =====
-let currentClientTab = 'info';
+let currentClientTab = 'basic';
 
 function switchClientTab(tab) {
   currentClientTab = tab;
-  const tabs = ['info', 'products', 'appeal-axes'];
+  const tabs = ['basic', 'products', 'appeal-axes'];
   tabs.forEach(t => {
     const panel = document.getElementById(`cl-tab-${t}`);
     const btn   = document.getElementById(`cl-tab-btn-${t}`);
@@ -2012,7 +2004,7 @@ function switchClientTab(tab) {
     const active = t === tab;
     panel.style.display = active ? '' : 'none';
     btn.style.color        = active ? 'var(--em-dark)' : 'var(--text-muted)';
-    btn.style.fontWeight   = active ? '500' : '';
+    btn.style.fontWeight   = active ? '600' : '500';
     btn.style.borderBottom = active ? '2px solid var(--em)' : '2px solid transparent';
   });
   const clientId = document.getElementById('cl-id').value;
