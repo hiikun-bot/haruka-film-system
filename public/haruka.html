@@ -122,9 +122,11 @@ tr.row-help td{background:#FFFBF2}
 /* モーダル */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;align-items:center;justify-content:center;padding:24px 0;overflow-y:auto}
 .modal-overlay.open{display:flex}
-.modal{background:var(--white);border-radius:14px;padding:24px;width:560px;max-width:95vw;max-height:calc(100vh - 48px);overflow-y:auto;border:0.5px solid var(--border);margin:auto}
+.modal,.modal-card{background:var(--white);border-radius:14px;padding:24px;width:560px;max-width:95vw;max-height:calc(100vh - 48px);overflow-y:auto;border:0.5px solid var(--border);margin:auto}
 .modal-title{font-size:16px;font-weight:500;color:var(--text);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
 .modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)}
+.modal-body{padding:4px 0 16px}
+.modal-footer{display:flex;justify-content:flex-end;gap:10px;padding-top:12px;border-top:0.5px solid var(--border)}
 .form-group{margin-bottom:16px}
 .form-label{font-size:13px;color:var(--text-muted);margin-bottom:6px;display:block;font-weight:500}
 .form-input{width:100%;font-size:14px;padding:9px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface);color:var(--text);outline:none}
