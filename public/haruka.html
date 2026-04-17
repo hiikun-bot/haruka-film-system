@@ -4362,6 +4362,11 @@ async function openCreateCreative() {
         if (ct.startsWith('video')) s.value = 'mv';
         else if (ct.startsWith('design')) s.value = 'bn';
       }
+      // クリエイティブサイズは動画系のとき 1080_1920 をデフォルト
+      if (catName === 'クリエイティブサイズ') {
+        const ct = document.getElementById(selId.startsWith('bulk') ? 'bulk-creative-type' : 'c-creative-type')?.value || '';
+        if (ct.startsWith('video')) s.value = '1080_1920';
+      }
     });
   });
 
@@ -4469,10 +4474,14 @@ function onTeamChange(teamId) {
 function autoSetCreativeFmt(prefix) {
   const ct = document.getElementById(`${prefix}-creative-type`)?.value || '';
   const fmtSel = document.getElementById(`${prefix}-creative-fmt`);
+  const sizeSel = document.getElementById(`${prefix}-creative-size`);
   if (!fmtSel) return;
-  if (ct.startsWith('video')) fmtSel.value = 'mv';
-  // デザイン系はバナーをデフォルトに
-  else if (ct.startsWith('design')) fmtSel.value = 'bn';
+  if (ct.startsWith('video')) {
+    fmtSel.value = 'mv';
+    if (sizeSel) sizeSel.value = '1080_1920';
+  } else if (ct.startsWith('design')) {
+    fmtSel.value = 'bn';
+  }
 }
 
 function updateAssigneeSelect() {
