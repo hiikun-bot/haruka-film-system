@@ -2808,7 +2808,7 @@ function applyRoleBasedUI() {
   const addMemberBtn = document.querySelector('#page-members .btn-primary');
   if (addMemberBtn) addMemberBtn.style.display = isEffectiveAdmin() ? '' : 'none';
   const inviteBtn = document.getElementById('btn-invite');
-  if (inviteBtn) inviteBtn.style.display = isTopAdmin() ? '' : 'none';
+  if (inviteBtn) inviteBtn.style.display = isEffectiveAdmin() ? '' : 'none';
   // マスター管理ナビは管理者のみ
   const masterNav = document.getElementById('nav-master');
   if (masterNav) masterNav.style.display = isEffectiveAdmin() ? '' : 'none';

@@ -383,6 +383,20 @@ CREATE TABLE IF NOT EXISTS project_client_fees (
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(project_id)
 );
+-- ==================== invitations ====================
+-- 招待トークン（Supabase永続化。RailwayのSQLiteは再デプロイでリセットされるため移行）
+CREATE TABLE IF NOT EXISTS invitations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token TEXT UNIQUE NOT NULL,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'editor',
+  invited_by_email TEXT,
+  used BOOLEAN DEFAULT false,
+  used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- invoices テーブルに承認フロー用カラム追加
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS year INTEGER;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS month INTEGER;

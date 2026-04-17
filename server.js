@@ -5,6 +5,7 @@
 
 require('dotenv').config();
 const harukaRouter = require('./routes/haruka');
+const supabase = require('./supabase');
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -766,38 +767,46 @@ app.get('/auth/me', (req, res) => {
 // ==================== 招待 API ====================
 // 管理者のみ招待発行可能
 
-app.get('/api/invitations', requireAuth, requireLevel('admin'), (req, res) => {
-  invitations.purgeExpired();
-  res.json(invitations.all());
+// ==================== 招待管理 API（Supabase永続化） ====================
+
+app.get('/api/invitations', requireAuth, requireLevel('secretary'), async (req, res) => {
+  const { data } = await supabase.from('invitations')
+    .select('*').order('created_at', { ascending: false });
+  res.json(data || []);
 });
 
-app.post('/api/invitations', requireAuth, requireLevel('admin'), (req, res) => {
+app.post('/api/invitations', requireAuth, requireLevel('secretary'), async (req, res) => {
   const { email, role } = req.body;
   if (!email) return res.status(400).json({ error: 'メールアドレスは必須です' });
 
-  // 既存ユーザーチェック
-  if (users.byEmail(email)) return res.status(409).json({ error: 'このメールアドレスはすでに登録済みです' });
+  const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+  if (existing) return res.status(409).json({ error: 'このメールアドレスはすでに登録済みです' });
 
-  invitations.purgeExpired();
   const token = uuidv4();
-  const inv   = invitations.create({ token, email, role: role || 'editor', invitedBy: req.user.id });
-  const link  = `${process.env.APP_URL || 'http://localhost:' + PORT}/invite.html?token=${token}`;
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { data: inv, error } = await supabase.from('invitations').insert({
+    token, email, role: role || 'editor',
+    invited_by_email: req.user.email,
+    expires_at: expiresAt
+  }).select().single();
 
+  if (error) return res.status(500).json({ error: error.message });
+  const link = `${process.env.APP_URL || 'http://localhost:' + PORT}/invite.html?token=${token}`;
   res.json({ ...inv, inviteLink: link });
 });
 
-app.delete('/api/invitations/:id', requireAuth, requireLevel('admin'), (req, res) => {
-  invitations.delete(req.params.id);
+app.delete('/api/invitations/:id', requireAuth, requireLevel('admin'), async (req, res) => {
+  await supabase.from('invitations').delete().eq('id', req.params.id);
   res.json({ ok: true });
 });
 
 // 招待トークン検証（招待ページで呼ぶ）
-app.get('/api/invitations/verify/:token', (req, res) => {
-  invitations.purgeExpired();
-  const inv = invitations.byToken(req.params.token);
-  if (!inv || inv.used || inv.expires_at < Math.floor(Date.now()/1000)) {
-    return res.status(410).json({ error: '招待リンクが無効または期限切れです' });
-  }
+app.get('/api/invitations/verify/:token', async (req, res) => {
+  const { data: inv } = await supabase.from('invitations')
+    .select('*').eq('token', req.params.token).maybeSingle();
+  if (!inv) return res.status(410).json({ error: '招待リンクが無効または期限切れです' });
+  if (inv.used) return res.status(410).json({ error: 'この招待リンクはすでに使用されています' });
+  if (new Date(inv.expires_at) < new Date()) return res.status(410).json({ error: '招待リンクの有効期限が切れています（24時間）' });
   res.json({ email: inv.email, role: inv.role });
 });
 
@@ -806,10 +815,30 @@ app.post('/api/invitations/register', async (req, res) => {
   const { token, name, password } = req.body;
   if (!token || !name || !password) return res.status(400).json({ error: '名前・パスワード・トークンは必須です' });
   try {
-    const user = await registerWithInvitation(token, name, password);
-    req.logIn(user, err => {
+    const { data: inv } = await supabase.from('invitations')
+      .select('*').eq('token', token).maybeSingle();
+    if (!inv) throw new Error('招待リンクが無効です');
+    if (inv.used) throw new Error('この招待リンクはすでに使用されています');
+    if (new Date(inv.expires_at) < new Date()) throw new Error('招待リンクの有効期限が切れています（24時間）');
+
+    // SQLite にユーザー作成（セッション認証用）
+    const existing = users.byEmail(inv.email);
+    if (existing) throw new Error('このメールアドレスはすでに登録済みです');
+    const passwordHash = await bcrypt.hash(password, 12);
+    const sqliteUser = users.create({ name, email: inv.email, role: inv.role, passwordHash });
+
+    // Supabase にユーザー作成（アプリデータ用）
+    await supabase.from('users').insert({
+      id: sqliteUser.id, email: inv.email,
+      full_name: name, role: inv.role, is_active: true
+    });
+
+    // 招待を使用済みにする
+    await supabase.from('invitations').update({ used: true, used_at: new Date().toISOString() }).eq('token', token);
+
+    req.logIn(sqliteUser, err => {
       if (err) return res.status(500).json({ error: 'ログインに失敗しました' });
-      res.json({ ok: true, user: safeUser(user) });
+      res.json({ ok: true, user: safeUser(sqliteUser) });
     });
   } catch(e) {
     res.status(400).json({ error: e.message });
