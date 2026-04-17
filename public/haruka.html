@@ -272,33 +272,33 @@ tr.row-help td{background:#FFFBF2}
   <div id="dash-content">
     <!-- グラフエリア（固定） -->
     <div id="dash-charts" style="display:none">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
         <!-- 売上予実 積み上げ棒グラフ -->
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
-          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">💰 売上予実</div>
-          <canvas id="chart-revenue" height="200"></canvas>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">💰 売上予実</div>
+          <canvas id="chart-revenue" height="160"></canvas>
         </div>
         <!-- クリエイティブ ステータス 円グラフ -->
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
-          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">🎬 クリエイティブ ステータス</div>
-          <canvas id="chart-creative-status" height="200"></canvas>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">🎬 クリエイティブ ステータス</div>
+          <canvas id="chart-creative-status" height="160"></canvas>
         </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
         <!-- 案件ステータス 円グラフ -->
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
-          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">📁 案件ステータス</div>
-          <canvas id="chart-project-status" height="200"></canvas>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📁 案件ステータス</div>
+          <canvas id="chart-project-status" height="160"></canvas>
         </div>
         <!-- 月別本数 棒グラフ -->
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
-          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">📈 月別納品本数</div>
-          <canvas id="chart-monthly" height="200"></canvas>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📈 月別納品本数</div>
+          <canvas id="chart-monthly" height="160"></canvas>
         </div>
       </div>
     </div>
     <!-- アラート・テキスト情報エリア -->
     <div id="dash-text-content"></div>
+    <!-- 予実管理テーブル -->
+    <div id="dash-forecast-content"></div>
   </div>
 </div>
 
@@ -3253,6 +3253,66 @@ async function renderAdminDash(today) {
       <div class="dash-section-title">🚨 納期アラート（超過・3日以内）</div>
       ${alertHtml}
     </div>`;
+
+  // ===== 予実管理テーブル（isTopAdmin のみ） =====
+  const forecastEl = document.getElementById('dash-forecast-content');
+  if (forecastEl) {
+    if (isTopAdmin() && filterMonth !== 0) {
+      const fRes = await fetch(`${API}/dashboard/monthly-forecast?year=${filterYear}&month=${filterMonth}`).catch(() => null);
+      const forecast = fRes?.ok ? await fRes.json() : null;
+      if (forecast && forecast.length > 0) {
+        const fmt = n => '¥' + (n || 0).toLocaleString('ja-JP');
+        const achvClass = r => r >= 100 ? 'color:#22c55e;font-weight:700' : r >= 50 ? 'color:#f97316;font-weight:700' : 'color:#ef4444;font-weight:700';
+        const totalPlanned = forecast.reduce((s, r) => s + (r.planned_amount || 0), 0);
+        const totalActual  = forecast.reduce((s, r) => s + (r.actual_amount  || 0), 0);
+        const totalRate    = totalPlanned > 0 ? Math.round(totalActual / totalPlanned * 100) : 0;
+        const rows = forecast.map(r => {
+          const rate = r.planned_amount > 0 ? Math.round(r.actual_amount / r.planned_amount * 100) : 0;
+          return `<tr>
+            <td>${r.client_name || '-'}</td>
+            <td>${r.project_name || '-'}</td>
+            <td>動画${r.planned_video}本 / デザイン${r.planned_design}本</td>
+            <td>動画${r.actual_video}本 / デザイン${r.actual_design}本</td>
+            <td>${fmt(r.planned_amount)}</td>
+            <td>${fmt(r.actual_amount)}</td>
+            <td style="${achvClass(rate)}">${rate}%</td>
+          </tr>`;
+        }).join('');
+        forecastEl.innerHTML = `
+          <h3 style="margin:24px 0 12px">${filterYear}年${filterMonth}月の予実管理</h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>クライアント</th>
+                <th>案件名</th>
+                <th>予定（動画/デザイン）</th>
+                <th>実績（動画/デザイン）</th>
+                <th>予定金額</th>
+                <th>実績金額</th>
+                <th>達成率</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4"><strong>合計</strong></td>
+                <td><strong>${fmt(totalPlanned)}</strong></td>
+                <td><strong>${fmt(totalActual)}</strong></td>
+                <td style="${achvClass(totalRate)}"><strong>${totalRate}%</strong></td>
+              </tr>
+            </tfoot>
+          </table>`;
+      } else if (forecast && forecast.length === 0) {
+        forecastEl.innerHTML = `
+          <h3 style="margin:24px 0 12px">${filterYear}年${filterMonth}月の予実管理</h3>
+          <div style="font-size:13px;color:var(--text-muted);padding:12px 0;text-align:center">該当する案件サイクルがありません</div>`;
+      } else {
+        forecastEl.innerHTML = '';
+      }
+    } else {
+      forecastEl.innerHTML = '';
+    }
+  }
 }
 
 function renderDirectorDash(today) {
