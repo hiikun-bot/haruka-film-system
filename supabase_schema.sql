@@ -369,3 +369,17 @@ CREATE TABLE IF NOT EXISTS creative_version_history (
 
 -- projects にレギュレーションシートURL追加
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS regulation_url TEXT;
+
+-- クライアント報酬設定（案件ごと）
+CREATE TABLE IF NOT EXISTS project_client_fees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  video_unit_price INTEGER DEFAULT 0,   -- 動画1本あたり単価
+  design_unit_price INTEGER DEFAULT 0,  -- デザイン1本あたり単価
+  fixed_budget INTEGER,                 -- 案件固定予算（NULLなら本数×単価で計算）
+  use_fixed_budget BOOLEAN DEFAULT false, -- trueなら固定予算優先
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id)
+);
