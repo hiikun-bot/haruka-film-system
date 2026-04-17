@@ -657,11 +657,27 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   let driveFileId = null;
   let driveUrl = null;
 
+  // Drive ルートフォルダID: 案件の drive_folder_url > 環境変数 DRIVE_ROOT_FOLDER_ID の優先順
+  const rootFolderId = project?.drive_folder_url
+    ? extractFolderIdFromUrl(project.drive_folder_url)
+    : (process.env.DRIVE_ROOT_FOLDER_ID || null);
+
   // Google Drive にアップロード（credentials が設定されている場合のみ）
-  if (project?.drive_folder_url && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+  if (rootFolderId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     try {
       const drive = await getDriveService();
-      const baseFolderId = extractFolderIdFromUrl(project.drive_folder_url);
+
+      // ルートが環境変数の場合は案件フォルダを自動作成
+      let baseFolderId;
+      if (!project?.drive_folder_url && process.env.DRIVE_ROOT_FOLDER_ID) {
+        const clientCode = project?.clients?.client_code || '';
+        const projectFolderName = clientCode
+          ? `${clientCode}_${project.name}`
+          : project.name;
+        baseFolderId = await getOrCreateFolder(drive, rootFolderId, projectFolderName);
+      } else {
+        baseFolderId = rootFolderId;
+      }
       if (!baseFolderId) throw new Error('Drive フォルダIDを取得できません');
 
       const now = new Date();
