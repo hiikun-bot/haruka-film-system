@@ -918,180 +918,241 @@ tr.row-help td{background:#FFFBF2}
 </div>
 
 <div class="modal-overlay" id="modal-project">
-  <div class="modal">
-    <div class="modal-title" id="p-modal-title">新規案件<button class="modal-close" onclick="closeModal('modal-project')">×</button></div>
-    <input type="hidden" id="p-id">
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">クライアント <span style="color:#E24B4A">*</span></label>
-        <select class="form-select" id="p-client-id">
-          <option value="">クライアントを選択</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">ステータス</label>
-        <select class="form-select" id="p-status">
-          <option value="提案中">提案中</option>
-          <option value="進行中">進行中</option>
-          <option value="完了">完了</option>
-          <option value="保留">保留</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">案件名 <span style="color:#E24B4A">*</span></label>
-      <input class="form-input" id="p-name" placeholder="例：ARU公式 SNS動画制作">
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">開始日（任意）</label>
-        <input class="form-input" id="p-start-date" type="date">
-      </div>
-      <div class="form-group">
-        <label class="form-label">終了日（任意）</label>
-        <input class="form-input" id="p-end-date" type="date">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">プロデューサー（任意）</label>
-        <select class="form-select" id="p-producer-id">
-          <option value="">未設定</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">ディレクター（任意）</label>
-        <select class="form-select" id="p-director-id">
-          <option value="">未設定</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Google Sheet URL（任意）</label>
-      <input class="form-input" id="p-sheet-url" placeholder="https://docs.google.com/spreadsheets/...">
-    </div>
-    <div class="form-group">
-      <label class="form-label">
-        <span style="display:inline-flex;align-items:center;gap:6px">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="#4285F4"/><path d="M17 8H7l1.5 9h7L17 8z" fill="white"/><path d="M9 5h6v3H9z" fill="#34A853"/></svg>
-          Googleドライブ 納品フォルダ（任意）
-        </span>
-      </label>
-      <div style="display:flex;gap:6px">
-        <input class="form-input" id="p-drive-url-input" placeholder="フォルダのURLを貼り付け → 自動でフォルダIDを取得" style="flex:1"
-          oninput="parseDriveUrl()">
-        <button type="button" class="btn" onclick="parseDriveUrl()" style="white-space:nowrap">解析</button>
-      </div>
-      <div id="p-drive-folder-result" style="margin-top:6px;font-size:12px;display:none">
-        <span style="color:var(--text-muted)">フォルダID: </span>
-        <span id="p-drive-folder-id-display" style="color:var(--em-dark);font-weight:500;word-break:break-all"></span>
-      </div>
-      <input type="hidden" id="p-drive-folder-url">
-    </div>
-    <div style="margin:16px 0 8px;font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.08em;border-bottom:0.5px solid var(--border);padding-bottom:6px">通知連携</div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">
-          <span style="display:inline-flex;align-items:center;gap:5px">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="#00B900"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M12 6C8.69 6 6 8.24 6 11c0 1.73 1.04 3.26 2.62 4.21-.1.38-.37 1.37-.42 1.58-.07.27.1.27.21.2.09-.06 1.42-.94 2-.33.49.05.99.08 1.5.08 3.31 0 6-2.24 6-5s-2.69-5-6-5z" fill="white"/></svg>
-            Chatwork ルームID（任意）
-          </span>
-        </label>
-        <input class="form-input" id="p-chatwork-room-id" placeholder="例：123456789">
-      </div>
-      <div class="form-group">
-        <label class="form-label">
-          <span style="display:inline-flex;align-items:center;gap:5px">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="#4A154B"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
-            Slack
-          </span>
-        </label>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input class="form-input" id="p-slack-url-input" placeholder="Slack URL を貼り付け → 自動入力" style="flex:1">
-          <button class="btn" onclick="parseSlackUrl()" style="white-space:nowrap">解析</button>
-        </div>
-        <div class="form-row" style="margin-bottom:0">
-          <div>
-            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">ワークスペースID</div>
-            <input class="form-input" id="p-slack-team-id" placeholder="T○○○○○○（自動入力）" style="font-family:monospace;font-size:13px">
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">チャンネルID</div>
-            <input class="form-input" id="p-slack-channel-id" placeholder="C01234ABCDE">
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">管理者メモ（任意）</label>
-      <textarea class="form-input" id="p-admin-note" rows="2" placeholder="社内向けの備考など" style="resize:vertical"></textarea>
-    </div>
-    <!-- 商材・訴求軸 同期スイッチ（編集時のみ表示） -->
-    <div id="p-sync-section" style="display:none;margin:16px 0 8px">
-      <div style="font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.08em;border-bottom:0.5px solid var(--border);padding-bottom:6px;margin-bottom:12px">商材・訴求軸の参照先</div>
-      <!-- 商材スイッチ -->
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:500">商材</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px" id="p-sync-products-desc">クライアントの商材マスターを参照します</div>
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap">
-          <span style="font-size:12px;color:var(--text-muted)">独自設定</span>
-          <div class="toggle-switch" onclick="toggleProjectSync('products')">
-            <input type="checkbox" id="p-sync-products" style="display:none">
-            <div id="p-sync-products-track" style="width:40px;height:22px;border-radius:11px;background:#ccc;position:relative;transition:background .2s;cursor:pointer">
-              <div id="p-sync-products-thumb" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 4px rgba(0,0,0,0.2)"></div>
-            </div>
-          </div>
-        </label>
-      </div>
-      <!-- 独自商材リスト（独自設定ON時） -->
-      <div id="p-products-override" style="display:none;margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="font-size:12px;color:var(--text-muted)">案件独自の商材</span>
-          <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
-        </div>
-        <div id="p-products-list"></div>
-        <div style="display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border)">
-          <input class="form-input" id="pp-code" placeholder="コード" style="width:80px">
-          <input class="form-input" id="pp-name" placeholder="名称" style="flex:1">
-          <input class="form-input" id="pp-note" placeholder="備考" style="flex:1">
-          <button class="btn-primary" style="white-space:nowrap" onclick="addProjectProduct()">追加</button>
-        </div>
-      </div>
-      <!-- 訴求軸スイッチ -->
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px">
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:500">訴求軸</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px" id="p-sync-axes-desc">クライアントの訴求軸マスターを参照します</div>
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap">
-          <span style="font-size:12px;color:var(--text-muted)">独自設定</span>
-          <div class="toggle-switch" onclick="toggleProjectSync('axes')">
-            <input type="checkbox" id="p-sync-axes" style="display:none">
-            <div id="p-sync-axes-track" style="width:40px;height:22px;border-radius:11px;background:#ccc;position:relative;transition:background .2s;cursor:pointer">
-              <div id="p-sync-axes-thumb" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 4px rgba(0,0,0,0.2)"></div>
-            </div>
-          </div>
-        </label>
-      </div>
-      <!-- 独自訴求軸リスト（独自設定ON時） -->
-      <div id="p-axes-override" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="font-size:12px;color:var(--text-muted)">案件独自の訴求軸</span>
-          <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
-        </div>
-        <div id="p-axes-list"></div>
-        <div style="display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border)">
-          <input class="form-input" id="pa-code" placeholder="コード" style="width:80px">
-          <input class="form-input" id="pa-name" placeholder="名称" style="flex:1">
-          <input class="form-input" id="pa-note" placeholder="備考" style="flex:1">
-          <button class="btn-primary" style="white-space:nowrap" onclick="addProjectAxis()">追加</button>
-        </div>
-      </div>
-    </div>
+  <div class="modal" style="width:92vw;max-width:1020px;max-height:92vh;overflow-y:auto;padding:0;border-radius:16px">
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+    <!-- ヘッダー -->
+    <div style="padding:18px 28px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;z-index:10;border-radius:16px 16px 0 0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
+        <span id="p-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">新規案件</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project')">×</button>
+    </div>
+    <input type="hidden" id="p-id">
+
+    <!-- ボディ：2カラムグリッド -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;padding:24px 28px;column-gap:32px;row-gap:0">
+
+      <!-- ====== 左カラム ====== -->
+      <div style="display:flex;flex-direction:column;gap:22px">
+
+        <!-- 基本情報 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">基本情報</span>
+          </div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="flex:2;margin-bottom:0">
+              <label class="form-label">クライアント <span style="color:#E24B4A">*</span></label>
+              <select class="form-select" id="p-client-id">
+                <option value="">クライアントを選択</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">ステータス</label>
+              <select class="form-select" id="p-status">
+                <option value="提案中">提案中</option>
+                <option value="進行中">進行中</option>
+                <option value="完了">完了</option>
+                <option value="保留">保留</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">案件名 <span style="color:#E24B4A">*</span></label>
+            <input class="form-input" id="p-name" placeholder="例：ARU公式 SNS動画制作">
+          </div>
+        </div>
+
+        <!-- 期間・担当者 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">期間・担当者</span>
+          </div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">開始日</label>
+              <input class="form-input" id="p-start-date" type="date">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">終了日</label>
+              <input class="form-input" id="p-end-date" type="date">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">プロデューサー</label>
+              <select class="form-select" id="p-producer-id">
+                <option value="">未設定</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">ディレクター</label>
+              <select class="form-select" id="p-director-id">
+                <option value="">未設定</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 管理者メモ -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">管理者メモ</span>
+          </div>
+          <textarea class="form-input" id="p-admin-note" rows="3" placeholder="社内向けの備考など" style="resize:vertical;margin-bottom:0"></textarea>
+        </div>
+
+      </div><!-- /左カラム -->
+
+      <!-- ====== 右カラム ====== -->
+      <div style="display:flex;flex-direction:column;gap:22px">
+
+        <!-- リソース -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#4285F4;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#2a5fc7;letter-spacing:0.12em;text-transform:uppercase">リソース</span>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label" style="display:flex;align-items:center;gap:5px">
+              <svg width="13" height="13" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z" fill="#5f6368"/></svg>
+              Google Sheet URL <span style="color:var(--text-muted);font-weight:400">（任意）</span>
+            </label>
+            <input class="form-input" id="p-sheet-url" placeholder="https://docs.google.com/spreadsheets/...">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label" style="display:flex;align-items:center;gap:5px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="#4285F4"/><path d="M17 8H7l1.5 9h7L17 8z" fill="white"/><path d="M9 5h6v3H9z" fill="#34A853"/></svg>
+              Google Drive 納品フォルダ <span style="color:#E24B4A">*</span>
+            </label>
+            <div style="display:flex;gap:6px">
+              <input class="form-input" id="p-drive-url-input" placeholder="フォルダのURLを貼り付け → フォルダIDを自動取得" style="flex:1" oninput="parseDriveUrl()">
+              <button type="button" class="btn" onclick="parseDriveUrl()" style="white-space:nowrap">解析</button>
+            </div>
+            <div id="p-drive-folder-result" style="margin-top:6px;font-size:12px;display:none;background:var(--em-pale);padding:6px 10px;border-radius:6px">
+              <span style="color:var(--text-muted)">フォルダID: </span>
+              <span id="p-drive-folder-id-display" style="color:var(--em-dark);font-weight:600;word-break:break-all"></span>
+            </div>
+            <input type="hidden" id="p-drive-folder-url">
+          </div>
+        </div>
+
+        <!-- 通知連携 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#6C63FF;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#4527A0;letter-spacing:0.12em;text-transform:uppercase">通知連携</span>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" style="display:flex;align-items:center;gap:5px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="#00B900"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M12 6C8.69 6 6 8.24 6 11c0 1.73 1.04 3.26 2.62 4.21-.1.38-.37 1.37-.42 1.58-.07.27.1.27.21.2.09-.06 1.42-.94 2-.33.49.05.99.08 1.5.08 3.31 0 6-2.24 6-5s-2.69-5-6-5z" fill="white"/></svg>
+                Chatwork ルームID
+              </label>
+              <input class="form-input" id="p-chatwork-room-id" placeholder="例：123456789">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" style="display:flex;align-items:center;gap:5px">
+                <svg width="13" height="13" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
+                Slack チャンネル
+              </label>
+              <div style="display:flex;gap:6px;margin-bottom:6px">
+                <input class="form-input" id="p-slack-url-input" placeholder="Slack URL を貼り付け → 自動入力" style="flex:1;font-size:12px">
+                <button class="btn" onclick="parseSlackUrl()" style="white-space:nowrap">解析</button>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">ワークスペースID</div>
+                  <input class="form-input" id="p-slack-team-id" placeholder="T○○○（自動）" style="font-family:monospace;font-size:12px">
+                </div>
+                <div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">チャンネルID</div>
+                  <input class="form-input" id="p-slack-channel-id" placeholder="C01234ABCDE" style="font-family:monospace;font-size:12px">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 商材・訴求軸（編集時のみ） -->
+        <div id="p-sync-section" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材・訴求軸</span>
+          </div>
+          <!-- 商材スイッチ -->
+          <div style="background:var(--surface);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div>
+                <div style="font-size:13px;font-weight:500">商材</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="p-sync-products-desc">クライアントマスターを参照</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+                <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+                <div onclick="toggleProjectSync('products')" style="cursor:pointer">
+                  <input type="checkbox" id="p-sync-products" style="display:none">
+                  <div id="p-sync-products-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                    <div id="p-sync-products-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="p-products-override" style="display:none;margin-top:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="font-size:11px;color:var(--text-muted)">案件独自の商材</span>
+                <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
+              </div>
+              <div id="p-products-list"></div>
+              <div style="display:flex;gap:5px;margin-top:6px">
+                <input class="form-input" id="pp-code" placeholder="コード" style="width:72px;font-size:12px">
+                <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
+                <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
+                <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectProduct()">追加</button>
+              </div>
+            </div>
+          </div>
+          <!-- 訴求軸スイッチ -->
+          <div style="background:var(--surface);border-radius:8px;padding:10px 12px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div>
+                <div style="font-size:13px;font-weight:500">訴求軸</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="p-sync-axes-desc">クライアントマスターを参照</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+                <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+                <div onclick="toggleProjectSync('axes')" style="cursor:pointer">
+                  <input type="checkbox" id="p-sync-axes" style="display:none">
+                  <div id="p-sync-axes-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                    <div id="p-sync-axes-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="p-axes-override" style="display:none;margin-top:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="font-size:11px;color:var(--text-muted)">案件独自の訴求軸</span>
+                <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
+              </div>
+              <div id="p-axes-list"></div>
+              <div style="display:flex;gap:5px;margin-top:6px">
+                <input class="form-input" id="pa-code" placeholder="コード" style="width:72px;font-size:12px">
+                <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
+                <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
+                <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectAxis()">追加</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /右カラム -->
+    </div><!-- /グリッド -->
+
+    <!-- フッター -->
+    <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;bottom:0;background:#fff;border-radius:0 0 16px 16px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);cursor:pointer">
         <input type="checkbox" id="p-is-hidden" style="width:15px;height:15px">
         非表示にする
@@ -1101,6 +1162,7 @@ tr.row-help td{background:#FFFBF2}
         <button class="btn-primary" id="p-submit-btn" onclick="submitProject()">追加する</button>
       </div>
     </div>
+
   </div>
 </div>
 
@@ -2511,7 +2573,7 @@ function clearDateFilter() {
 }
 
 function openProjectModal(preClientId) {
-  document.getElementById('p-modal-title').childNodes[0].textContent = '新規案件';
+  document.getElementById('p-modal-title').textContent = '新規案件';
   document.getElementById('p-id').value = '';
   document.getElementById('p-submit-btn').textContent = '追加する';
 
@@ -2545,7 +2607,7 @@ function openProjectModal(preClientId) {
 }
 
 function openEditProject(p) {
-  document.getElementById('p-modal-title').childNodes[0].textContent = '案件編集';
+  document.getElementById('p-modal-title').textContent = '案件編集';
   document.getElementById('p-id').value = p.id;
   document.getElementById('p-submit-btn').textContent = '保存する';
 
@@ -2774,6 +2836,11 @@ async function submitProject() {
     : true;
 
   if (!client_id || !name) { alert('クライアントと案件名は必須です'); return; }
+  if (!drive_folder_url) {
+    document.getElementById('p-drive-url-input').focus();
+    alert('Google Drive 納品フォルダのURLは必須です\nフォルダのURLを貼り付けて「解析」ボタンを押してください');
+    return;
+  }
 
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
