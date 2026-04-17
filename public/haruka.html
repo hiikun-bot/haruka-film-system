@@ -2298,14 +2298,14 @@ function renderMemberList() {
     </colgroup>
     <thead>
       <tr style="background:var(--surface);border-bottom:1.5px solid var(--border)">
-        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em"></th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ロール</th>
-        ${showRankCol ? '<th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ランク</th>' : ''}
-        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">チーム</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em"></th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ロール</th>
+        ${showRankCol ? '<th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ランク</th>' : ''}
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">チーム</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">姓</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">名前</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メールアドレス</th>
-        <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">操作</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">操作</th>
       </tr>
     </thead>
     <tbody>
@@ -2317,18 +2317,18 @@ function renderMemberList() {
         const rowBg = !m.is_active ? 'background:#FAFAFA' : (i % 2 === 0 ? '' : 'background:#FAFEFE');
         const canEdit = canEditMember(m);
         return `<tr style="${rowBg};border-bottom:0.5px solid var(--border);${!m.is_active?'opacity:0.55':''}${canEdit?';cursor:pointer':''}" ${canEdit ? `onclick="openEditMemberById('${m.id}')"` : ''} onmouseenter="this.style.background='#EEF9F8'" onmouseleave="this.style.background='${!m.is_active?'#FAFAFA':(i%2===0?'':'#FAFEFE')}'">
-          <td style="padding:8px 12px">
-            <div style="width:28px;height:28px;border-radius:50%;background:${!m.is_active?'#e0e0e0':'var(--em-pale)'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${!m.is_active?'#999':'var(--em-dark)'}">
+          <td style="padding:8px 12px;text-align:center">
+            <div style="width:28px;height:28px;border-radius:50%;background:${!m.is_active?'#e0e0e0':'var(--em-pale)'};display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${!m.is_active?'#999':'var(--em-dark)'}">
               ${(m.full_name||'?').slice(0,1)}
             </div>
           </td>
-          <td style="padding:8px 12px"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
-          ${showRankCol ? `<td style="padding:8px 12px">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
-          <td style="padding:8px 12px">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
-          <td style="padding:8px 12px;font-weight:500;white-space:nowrap">${lastName}</td>
-          <td style="padding:8px 12px;white-space:nowrap">${firstName}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
-          <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">${m.email||''}</td>
-          <td style="padding:8px 12px;text-align:right;white-space:nowrap" onclick="event.stopPropagation()">
+          <td style="padding:8px 12px;text-align:center"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
+          ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
+          <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
+          <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${lastName}</td>
+          <td style="padding:8px 12px;text-align:left;white-space:nowrap">${firstName}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
+          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">${m.email||''}</td>
+          <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
             ${isTopAdmin() ? (m.is_active
               ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
