@@ -4613,9 +4613,13 @@ async function openCreateCreative() {
     });
   });
 
-  // 選択中の案件で訴求タイプと担当者を初期ロード
+  // 選択中の案件で訴求タイプと担当者を初期ロード（個別・一括両方）
   const initialProject = document.getElementById('c-project-id').value;
-  await onProjectChange(initialProject);
+  const initialBulkProject = document.getElementById('bulk-project-id').value;
+  await Promise.all([
+    onProjectChange(initialProject),
+    onBulkProjectChange(initialBulkProject),
+  ]);
   updateAssigneeSelect();
 
   switchCreativeTab('single');
