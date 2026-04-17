@@ -1727,6 +1727,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
 
+      <!-- 納期表示 -->
+      <div id="cd-deadline-bar" style="display:none;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:10px 16px;margin-bottom:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:center"></div>
+
       <!-- URL セクション（3カラム） -->
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:18px">
         <div class="form-group" style="margin-bottom:0">
@@ -5851,6 +5854,27 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass(c.status)}">${c.status}</span>`;
   document.getElementById('cd-project-name').textContent = c.projects?.name || '-';
   document.getElementById('cd-assignee').textContent = editor?.users?.full_name ? `担当: ${editor.users.full_name}` : '担当者未設定';
+
+  // 納期バー
+  (function() {
+    const bar = document.getElementById('cd-deadline-bar');
+    if (!bar) return;
+    const today = new Date(); today.setHours(0,0,0,0);
+    function deadlineItem(label, dateStr) {
+      if (!dateStr) return `<span style="font-size:12px;color:var(--text-muted)">${label}：<span style="color:var(--text-muted)">未設定</span></span>`;
+      const d = new Date(dateStr); d.setHours(0,0,0,0);
+      const diff = Math.round((d - today) / 86400000);
+      const fmt = d.toLocaleDateString('ja-JP', {month:'numeric', day:'numeric'});
+      let badge, color;
+      if (diff < 0)       { badge = `超過 ${Math.abs(diff)}日`; color = '#dc2626'; }
+      else if (diff === 0){ badge = '今日';                       color = '#dc2626'; }
+      else if (diff <= 3) { badge = `あと ${diff}日`;            color = '#d97706'; }
+      else                { badge = `あと ${diff}日`;            color = '#059669'; }
+      return `<span style="font-size:12px;color:var(--text-muted)">${label}：<span style="font-weight:700;color:${color};margin-left:2px">${fmt}</span><span style="font-size:11px;background:${color}1a;color:${color};border-radius:4px;padding:1px 6px;margin-left:5px;font-weight:600">${badge}</span></span>`;
+    }
+    bar.style.display = 'flex';
+    bar.innerHTML = deadlineItem('初稿締切', c.draft_deadline) + '<span style="color:var(--border)">|</span>' + deadlineItem('最終納品', c.final_deadline);
+  })();
 
   // URL
   document.getElementById('cd-script-url').value = c.script_url  || '';
