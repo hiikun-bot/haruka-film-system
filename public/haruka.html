@@ -405,7 +405,10 @@ tr.row-help td{background:#FFFBF2}
 <div id="page-members" class="page">
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="sec-label">メンバー一覧</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="sec-label">メンバー一覧</div>
+        <button class="btn" id="btn-show-resigned" onclick="toggleShowResigned()" style="font-size:11px;padding:3px 10px;color:#999;border-color:#ddd">退職者を表示</button>
+      </div>
       <div style="display:flex;gap:8px">
         <button class="btn" onclick="exportMembersCSV()">CSVエクスポート</button>
         <button class="btn" onclick="openImportModal()">CSVインポート</button>
@@ -2039,13 +2042,28 @@ async function loadTeams() {
 }
 
 // メンバー
-async function loadMembers() {
-  const res = await fetch(`${API}/members`);
-  allMembers = await res.json();
+let showResigned = false;
+
+function toggleShowResigned() {
+  showResigned = !showResigned;
+  const btn = document.getElementById('btn-show-resigned');
+  if (btn) {
+    btn.textContent = showResigned ? '退職者を非表示' : '退職者を表示';
+    btn.style.color = showResigned ? 'var(--em-dark)' : '#999';
+    btn.style.borderColor = showResigned ? 'var(--em-dark)' : '#ddd';
+  }
+  renderMemberList();
+}
+
+function renderMemberList() {
   const list = document.getElementById('members-list');
   if (!list) return;
-  const visibleMembers = allMembers.filter(m => canSeeMember(m));
-  if (!visibleMembers.length) { list.innerHTML = '<div class="loading">メンバーがいません</div>'; return; }
+  let visibleMembers = allMembers.filter(m => canSeeMember(m));
+  if (!showResigned) visibleMembers = visibleMembers.filter(m => m.is_active !== false);
+  if (!visibleMembers.length) {
+    list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
+    return;
+  }
   list.innerHTML = visibleMembers.map(m => `
     <div class="member-card" style="${!m.is_active ? 'opacity:0.6;' : ''}${canEditMember(m) ? 'cursor:pointer' : ''}" ${canEditMember(m) ? `onclick="openEditMemberById('${m.id}')"` : ''}>
         <div class="member-av" style="${!m.is_active ? 'background:#F1EFE8;color:#888' : ''}">${(m.full_name||'?').slice(0,2)}</div>
@@ -2066,6 +2084,14 @@ async function loadMembers() {
         ) : ''}
         </div>
     </div>`).join('');
+}
+
+async function loadMembers() {
+  const res = await fetch(`${API}/members`);
+  allMembers = await res.json();
+  const list = document.getElementById('members-list');
+  if (!list) return;
+  renderMemberList();
 }
 
 // クリエイティブ
