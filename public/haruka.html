@@ -4259,6 +4259,8 @@ async function openCreateCreative() {
       s.innerHTML = '<option value="">（任意）</option>' + items.map(i =>
         `<option value="${i.code}">${i.code} - ${i.name}</option>`
       ).join('');
+      // 媒体はFBをデフォルト選択
+      if (catName === '媒体') s.value = 'FB';
     });
   });
 
