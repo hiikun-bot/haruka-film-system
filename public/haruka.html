@@ -154,12 +154,12 @@ tr.row-help td{background:#FFFBF2}
 .loading{text-align:center;padding:60px;color:var(--text-muted);font-size:15px}
 
 /* メンバーカード */
-.member-card{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:16px}
-.member-av{width:44px;height:44px;border-radius:50%;background:var(--em-pale);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:var(--em-dark);flex-shrink:0}
-.member-info{flex:1}
-.member-name{font-size:15px;font-weight:500;color:var(--text)}
-.member-email{font-size:12px;color:var(--text-muted);margin-top:2px}
-.member-tags{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.member-card{background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:8px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px}
+.member-av{width:34px;height:34px;border-radius:50%;background:var(--em-pale);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:var(--em-dark);flex-shrink:0}
+.member-info{flex:1;min-width:0}
+.member-name{font-size:13px;font-weight:500;color:var(--text)}
+.member-email{font-size:11px;color:var(--text-muted);margin-top:1px}
+.member-tags{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
 
 /* ダッシュボード */
 .dash-hero{background:linear-gradient(135deg,#1a8c88 0%,#2BB8B4 50%,#3ECFCA 100%);border-radius:16px;padding:28px 32px;margin-bottom:24px;color:#fff;display:flex;align-items:center;justify-content:space-between;position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(62,207,202,0.25)}
@@ -410,6 +410,7 @@ tr.row-help td{background:#FFFBF2}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:12px">
         <div class="sec-label">メンバー一覧</div>
+        <span id="members-count" style="font-size:12px;color:var(--text-muted);background:var(--em-pale);padding:2px 10px;border-radius:20px"></span>
         <button class="btn" id="btn-show-resigned" onclick="toggleShowResigned()" style="font-size:11px;padding:3px 10px;color:#999;border-color:#ddd">退職者を表示</button>
       </div>
       <div style="display:flex;gap:8px">
@@ -2034,24 +2035,54 @@ async function loadTeams() {
     const list = document.getElementById('teams-list');
     if (!list) return;
     if (!allTeams.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
-    list.innerHTML = allTeams.map((t, i) => `
-      <div class="card" style="display:flex;align-items:center;gap:14px;cursor:pointer" onclick="openTeamModal(allTeams[${i}])">
-        <div style="width:48px;height:48px;border-radius:50%;background:var(--em-pale);border:2px solid var(--em);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--em-dark);flex-shrink:0">${t.team_code}</div>
-        <div style="flex:1">
-          <div style="font-size:15px;font-weight:500">${t.team_name}</div>
-          <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${t.team_type === 'video' ? '動画チーム' : 'デザインチーム'}</div>
+    const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
+    list.innerHTML = allTeams.map((t, i) => {
+      const teamMembers = allMembers.filter(m => m.team_id === t.id && m.is_active !== false);
+      const memberCount = teamMembers.length;
+      const memberChips = teamMembers.map(m =>
+        `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--em-pale);border-radius:20px;padding:4px 10px 4px 4px;font-size:12px;color:var(--em-dark)">
+          <div style="width:22px;height:22px;border-radius:50%;background:var(--em);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0">${(m.full_name||'?').slice(0,1)}</div>
+          <span style="color:var(--text);font-weight:500">${m.full_name}</span>
+          <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
+        </div>`
+      ).join('');
+      return `
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;user-select:none" onclick="toggleTeamAccordion('${t.id}')">
+          <div style="width:44px;height:44px;border-radius:50%;background:var(--em-pale);border:2px solid var(--em);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--em-dark);flex-shrink:0">${t.team_code}</div>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600">${t.team_name}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${t.team_type === 'video' ? '動画チーム' : 'デザインチーム'} · ${memberCount}名</div>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);text-align:right;line-height:1.8;margin-right:8px">
+            ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
+            <div>${t.director?.full_name ? 'D: '+t.director.full_name : 'D未設定'}</div>
+          </div>
+          <button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${i}])">編集</button>
+          <span id="team-chevron-${t.id}" style="font-size:12px;color:var(--text-muted);margin-left:4px;flex-shrink:0">▼</span>
         </div>
-        <div style="font-size:13px;color:var(--text-muted);text-align:right;line-height:1.7">
-          ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
-          <div>${t.director?.full_name ? t.director.full_name + ' D' : 'D未設定'}</div>
+        <div id="team-acc-${t.id}" style="display:none;border-top:1px solid var(--border);padding:12px 16px;background:#FAFEFE">
+          ${memberCount === 0
+            ? '<span style="font-size:12px;color:var(--text-muted)">メンバー未設定</span>'
+            : `<div style="display:flex;flex-wrap:wrap;gap:8px">${memberChips}</div>`
+          }
         </div>
-        <span class="team-badge">${t.team_code}チーム</span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch(e) { allTeams = []; }
 }
 
 // メンバー
 let showResigned = false;
+
+function toggleTeamAccordion(teamId) {
+  const acc = document.getElementById('team-acc-' + teamId);
+  const chv = document.getElementById('team-chevron-' + teamId);
+  if (!acc) return;
+  const open = acc.style.display === 'none';
+  acc.style.display = open ? '' : 'none';
+  if (chv) chv.textContent = open ? '▲' : '▼';
+}
 
 function toggleShowResigned() {
   showResigned = !showResigned;
@@ -2069,6 +2100,12 @@ function renderMemberList() {
   if (!list) return;
   let visibleMembers = allMembers.filter(m => canSeeMember(m));
   if (!showResigned) visibleMembers = visibleMembers.filter(m => m.is_active !== false);
+  const countEl = document.getElementById('members-count');
+  if (countEl) {
+    const activeCount = visibleMembers.filter(m => m.is_active !== false).length;
+    const resignedCount = visibleMembers.filter(m => m.is_active === false).length;
+    countEl.textContent = resignedCount > 0 ? `在籍 ${activeCount}名 / 退職済 ${resignedCount}名` : `${activeCount}名`;
+  }
   if (!visibleMembers.length) {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
@@ -2086,13 +2123,13 @@ function renderMemberList() {
             ${m.team_id ? `<span class="team-badge">${allTeams.find(t=>t.id===m.team_id)?.team_code||'?'}チーム</span>` : ''}
         </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end" onclick="event.stopPropagation()">
-        ${isEffectiveAdmin() && m.is_active ? `<button class="btn-sm" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW リセット</button>` : ''}
+        <div style="display:flex;flex-direction:row;gap:6px;align-items:center;flex-shrink:0" onclick="event.stopPropagation()">
+        ${isEffectiveAdmin() && m.is_active ? `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
         ${isTopAdmin() ? (m.is_active
-            ? `<button class="btn-danger" onclick="deactivateMember('${m.id}','${m.full_name}')">退職処理</button>`
-            : `<button class="btn-sm" onclick="reactivateMember('${m.id}')">復帰させる</button>`
+            ? `<button class="btn-danger" style="font-size:11px;padding:3px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
+            : `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
         ) : ''}
-        ${isSuperAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">完全削除</button>` : ''}
+        ${isSuperAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:3px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
         </div>
     </div>`).join('');
 }
