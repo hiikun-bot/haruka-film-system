@@ -5528,7 +5528,7 @@ async function openCreativeDetail(id) {
 function updateCreativeStepIndicator(status) {
   const STEPS = [
     { label: '未着手',    statuses: ['未着手'] },
-    { label: '制作中',    statuses: ['台本制作', '素材・ナレ作成', '編集'] },
+    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集'] },
     { label: 'Dチェック', statuses: ['Dチェック', 'Dチェック後修正'] },
     { label: 'Pチェック', statuses: ['Pチェック', 'Pチェック後修正'] },
     { label: 'CL確認',   statuses: ['クライアントチェック中', 'クライアントチェック後修正'] },
@@ -5567,8 +5567,9 @@ function updateCreativeStepIndicator(status) {
 
   // 次のステップボタン更新
   const NEXT = {
-    '未着手': '台本制作', '台本制作': '素材・ナレ作成', '素材・ナレ作成': '編集',
-    '編集': 'Dチェック', 'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
+    '未着手': '制作中（初稿提出前）',
+    '制作中（初稿提出前）': 'Dチェック',
+    'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
     'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
     'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
   };
@@ -5583,7 +5584,7 @@ function updateCreativeStepIndicator(status) {
 function updateCreativeCommentLabel(status) {
   const label = document.getElementById('cd-comment-label');
   if (!label) return;
-  if (['未着手','台本制作','素材・ナレ作成','編集'].includes(status))
+  if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status))
     label.textContent = 'ディレクターへのコメント';
   else if (['Dチェック','Dチェック後修正'].includes(status))
     label.textContent = 'Dチェック修正指摘';
@@ -5598,8 +5599,9 @@ function updateCreativeCommentLabel(status) {
 async function advanceCreativeStatus() {
   if (!currentCreativeDetail) return;
   const NEXT = {
-    '未着手': '台本制作', '台本制作': '素材・ナレ作成', '素材・ナレ作成': '編集',
-    '編集': 'Dチェック', 'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
+    '未着手': '制作中（初稿提出前）',
+    '制作中（初稿提出前）': 'Dチェック',
+    'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
     'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
     'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
   };
@@ -5704,6 +5706,20 @@ async function executeUpload() {
       document.getElementById('cd-upload-input').value = '';
       document.getElementById('cd-upload-preview').style.display = 'none';
       uploadFileData = null;
+      // 制作中（初稿提出前）→ Dチェック へ自動遷移
+      if (currentCreativeDetail.status === '制作中（初稿提出前）') {
+        const upd = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+          method: 'PUT', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ status: 'Dチェック' })
+        });
+        if (upd.ok) {
+          currentCreativeDetail.status = 'Dチェック';
+          updateCreativeStepIndicator('Dチェック');
+          updateCreativeCommentLabel('Dチェック');
+          document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
+          statusEl.textContent += '　→ Dチェックに移行しました';
+        }
+      }
     } else {
       statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー');
       statusEl.style.color = '#E24B4A';

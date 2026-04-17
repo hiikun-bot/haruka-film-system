@@ -519,7 +519,7 @@ router.post('/creatives', async (req, res) => {
     final_deadline: final_deadline || null,
     script_url: script_url || null,
     note: note || null,
-    status: '未着手',
+    status: assignee_id ? '制作中（初稿提出前）' : '未着手',
     appeal_type_id: appeal_type_id || null,
     product_id: product_id || null,
     media_code: media_code || null,
