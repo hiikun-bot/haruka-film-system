@@ -439,7 +439,7 @@ router.get('/creatives/:id', async (req, res) => {
     .from('creatives')
     .select(`
       *,
-      projects(id, name, drive_folder_url, producer_id, director_id, clients(id, name, client_code)),
+      projects(id, name, producer_id, director_id, clients(id, name, client_code)),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
@@ -648,7 +648,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   // クリエイティブ + 案件情報を取得
   const { data: creative, error: cErr } = await supabase
     .from('creatives')
-    .select('*, projects(id, name, drive_folder_url, deadline_unit, deadline_weekday, clients(id, name, client_code))')
+    .select('*, projects(id, name, deadline_unit, deadline_weekday, clients(id, name, client_code))')
     .eq('id', creativeId)
     .single();
   if (cErr) return res.status(500).json({ error: cErr.message });
@@ -657,25 +657,18 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   let driveFileId = null;
   let driveUrl = null;
 
-  // Drive ルートフォルダID: 案件の drive_folder_url > 環境変数 DRIVE_ROOT_FOLDER_ID の優先順
-  const rootFolderId = project?.drive_folder_url
-    ? extractFolderIdFromUrl(project.drive_folder_url)
-    : (process.env.DRIVE_ROOT_FOLDER_ID || null);
+  // Drive ルートフォルダID: system_settings テーブル → env var の優先順
+  const rootFolderId = await getDriveRootFolderId();
 
   // Google Drive にアップロード（credentials が設定されている場合のみ）
   if (rootFolderId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     try {
       const drive = await getDriveService();
 
-      // ルートが環境変数の場合: ルート → クライアント名 → 案件名 を自動作成
-      let baseFolderId;
-      if (!project?.drive_folder_url && process.env.DRIVE_ROOT_FOLDER_ID) {
-        const clientName = project?.clients?.name || 'その他';
-        const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
-        baseFolderId = await getOrCreateFolder(drive, clientFolderId, project.name);
-      } else {
-        baseFolderId = rootFolderId;
-      }
+      // ルート → クライアント名 → 案件名 を自動作成
+      const clientName = project?.clients?.name || 'その他';
+      const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
+      const baseFolderId = await getOrCreateFolder(drive, clientFolderId, project.name);
       if (!baseFolderId) throw new Error('Drive フォルダIDを取得できません');
 
       const now = new Date();
@@ -1702,6 +1695,38 @@ router.post('/projects/:id/appeal-axes/copy-from-client', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json({ copied: inserts.length });
 });
+
+// ==================== システム設定 ====================
+
+const SUPER_ADMIN_EMAILS = ['hiikun.ascs@gmail.com', 'satoru.takahashi@haruka-film.com'];
+
+// システム設定取得（認証済みなら誰でも読める）
+router.get('/system-settings', requireAuth, async (_req, res) => {
+  const { data, error } = await supabase.from('system_settings').select('key, value');
+  if (error) return res.status(500).json({ error: error.message });
+  const settings = {};
+  (data || []).forEach(r => { settings[r.key] = r.value; });
+  res.json(settings);
+});
+
+// システム設定更新（スーパーアドミンのみ）
+router.put('/system-settings', requireAuth, async (req, res) => {
+  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) {
+    return res.status(403).json({ error: 'システム設定の変更は最高管理者のみ可能です' });
+  }
+  const { key, value } = req.body;
+  if (!key) return res.status(400).json({ error: 'keyは必須です' });
+  const { error } = await supabase.from('system_settings')
+    .upsert({ key, value: value || null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// システム設定からDriveルートフォルダIDを取得するヘルパー
+async function getDriveRootFolderId() {
+  const { data } = await supabase.from('system_settings').select('value').eq('key', 'drive_root_folder_id').single();
+  return data?.value || process.env.DRIVE_ROOT_FOLDER_ID || null;
+}
 
 // ==================== 汎用マスター管理 ====================
 

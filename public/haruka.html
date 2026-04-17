@@ -1487,21 +1487,6 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </label>
             <input class="form-input" id="p-sheet-url" placeholder="https://docs.google.com/spreadsheets/...">
           </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label" style="display:flex;align-items:center;gap:5px">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="#4285F4"/><path d="M17 8H7l1.5 9h7L17 8z" fill="white"/><path d="M9 5h6v3H9z" fill="#34A853"/></svg>
-              Google Drive 納品フォルダ <span style="color:#E24B4A">*</span>
-            </label>
-            <div style="display:flex;gap:6px">
-              <input class="form-input" id="p-drive-url-input" placeholder="フォルダのURLを貼り付け → フォルダIDを自動取得" style="flex:1" oninput="parseDriveUrl()">
-              <button type="button" class="btn" onclick="parseDriveUrl()" style="white-space:nowrap">解析</button>
-            </div>
-            <div id="p-drive-folder-result" style="margin-top:6px;font-size:12px;display:none;background:var(--em-pale);padding:6px 10px;border-radius:6px">
-              <span style="color:var(--text-muted)">フォルダID: </span>
-              <span id="p-drive-folder-id-display" style="color:var(--em-dark);font-weight:600;word-break:break-all"></span>
-            </div>
-            <input type="hidden" id="p-drive-folder-url">
-          </div>
           <div class="form-group" style="margin-bottom:0;margin-top:10px">
             <label class="form-label" style="display:flex;align-items:center;gap:5px">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/><path d="M16 13H8m8 4H8m2-8H8" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -1682,6 +1667,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           訴求軸マスター
         </div>
+        <div id="mnav-sysconfig" class="master-nav-item" onclick="selectMasterNav('sysconfig')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
+          ⚙️ システム設定
+        </div>
       </div>
     </div>
     <!-- 右コンテンツ -->
@@ -1780,7 +1769,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
 
         <div id="cd-drive-warning" style="display:none;background:#FFF3F3;border:0.5px solid #F09595;border-radius:8px;padding:10px 12px;font-size:12px;color:#A32D2D;margin-bottom:12px">
-          この案件にGoogleドライブフォルダが設定されていません。案件編集からフォルダURLを設定してください。
+          Drive連携が未設定です。マスター管理 → システム設定 から Google Drive ルートフォルダ URL を設定してください。
         </div>
 
         <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:0">
@@ -1890,6 +1879,7 @@ function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
+let _systemDriveConfigured = false;
 let currentClient = 'all', currentView = 'all', searchText = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
@@ -1913,6 +1903,10 @@ async function init() {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
+  // システム設定（Drive連携状態）を取得
+  fetch(`${API}/system-settings`).then(r => r.ok ? r.json() : {}).then(s => {
+    _systemDriveConfigured = !!(s.drive_root_folder_id);
+  }).catch(() => {});
   await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
   loadDashboard();
 }
@@ -3468,9 +3462,6 @@ function openProjectModal(preClientId) {
   document.getElementById('p-end-date').value = '';
   document.getElementById('p-sheet-url').value = '';
   document.getElementById('p-regulation-url').value = '';
-  document.getElementById('p-drive-url-input').value = '';
-  document.getElementById('p-drive-folder-url').value = '';
-  document.getElementById('p-drive-folder-result').style.display = 'none';
   document.getElementById('p-chatwork-room-id').value = '';
   document.getElementById('p-slack-url-input').value = '';
   document.getElementById('p-slack-team-id').value = '';
@@ -3509,18 +3500,6 @@ function openEditProject(p) {
   document.getElementById('p-director-id').value = p.director_id || '';
   document.getElementById('p-sheet-url').value = p.sheet_url || '';
   document.getElementById('p-regulation-url').value = p.regulation_url || '';
-  const driveUrl = p.drive_folder_url || '';
-  document.getElementById('p-drive-url-input').value = driveUrl;
-  document.getElementById('p-drive-folder-url').value = driveUrl;
-  if (driveUrl) {
-    const dm = driveUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-    if (dm) {
-      document.getElementById('p-drive-folder-id-display').textContent = dm[1];
-      document.getElementById('p-drive-folder-result').style.display = '';
-    }
-  } else {
-    document.getElementById('p-drive-folder-result').style.display = 'none';
-  }
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
   document.getElementById('p-slack-url-input').value = '';
   document.getElementById('p-slack-team-id').value = p.slack_team_id || '';
@@ -3755,7 +3734,6 @@ async function submitProject() {
   const director_id = document.getElementById('p-director-id').value || null;
   const sheet_url = document.getElementById('p-sheet-url').value.trim() || null;
   const regulation_url = document.getElementById('p-regulation-url').value.trim() || null;
-  const drive_folder_url = document.getElementById('p-drive-folder-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
   const slack_team_id = document.getElementById('p-slack-team-id').value.trim() || null;
   const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
@@ -3774,11 +3752,6 @@ async function submitProject() {
     : true;
 
   if (!client_id || !name) { alert('クライアントと案件名は必須です'); return; }
-  if (!drive_folder_url) {
-    document.getElementById('p-drive-url-input').focus();
-    alert('Google Drive 納品フォルダのURLは必須です\nフォルダのURLを貼り付けて「解析」ボタンを押してください');
-    return;
-  }
 
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
@@ -3788,7 +3761,7 @@ async function submitProject() {
   const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -4170,30 +4143,6 @@ function renderEditorDash(today) {
     `<div class="dash-section"><div class="dash-section-title">📋 自分の担当（期限順）</div>${cards}</div>`;
 }
 
-// Google Drive URL → フォルダID 自動解析
-function parseDriveUrl() {
-  const url = document.getElementById('p-drive-url-input').value.trim();
-  if (!url) {
-    document.getElementById('p-drive-folder-result').style.display = 'none';
-    document.getElementById('p-drive-folder-url').value = '';
-    return;
-  }
-  // https://drive.google.com/drive/folders/FOLDER_ID
-  // https://drive.google.com/drive/u/0/folders/FOLDER_ID
-  const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-  if (m) {
-    const folderId = m[1];
-    document.getElementById('p-drive-folder-id-display').textContent = folderId;
-    document.getElementById('p-drive-folder-result').style.display = '';
-    document.getElementById('p-drive-folder-result').style.color = '';
-    document.getElementById('p-drive-folder-url').value = url;
-  } else {
-    document.getElementById('p-drive-folder-id-display').textContent = '認識できないURL形式です';
-    document.getElementById('p-drive-folder-result').style.display = '';
-    document.getElementById('p-drive-folder-result').style.color = '#E24B4A';
-    document.getElementById('p-drive-folder-url').value = '';
-  }
-}
 
 // Slack URL → ワークスペースID・チャンネルID 自動解析
 function parseSlackUrl() {
@@ -4909,7 +4858,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes'].forEach(t => {
+  ['generic','general','products','appeal_axes','sysconfig'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -4927,10 +4876,16 @@ function selectMasterNav(type) {
     renderProductsMasterPage();
   } else if (type === 'appeal_axes') {
     renderAppealAxesMasterPage();
+  } else if (type === 'sysconfig') {
+    renderSysconfigPage();
   }
 }
 
 async function loadMasterPage() {
+  // スーパーアドミンのみシステム設定タブを表示
+  const sysconfigNav = document.getElementById('mnav-sysconfig');
+  if (sysconfigNav) sysconfigNav.style.display = isSuperAdmin() ? '' : 'none';
+
   const [catRes, itemRes] = await Promise.all([
     fetch(`${API}/master/categories`),
     fetch(`${API}/master/items`),
@@ -4938,6 +4893,91 @@ async function loadMasterPage() {
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
   selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
+}
+
+// ==================== システム設定 ====================
+
+async function renderSysconfigPage() {
+  if (!isSuperAdmin()) {
+    document.getElementById('master-content').innerHTML = '<div style="color:#E24B4A;padding:20px">アクセス権限がありません</div>';
+    return;
+  }
+  const el = document.getElementById('master-content');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+
+  const res = await fetch(`${API}/system-settings`);
+  const settings = res.ok ? await res.json() : {};
+
+  el.innerHTML = `
+    <div style="max-width:600px">
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">⚙️ システム設定</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:24px">最高管理者のみ変更できます</div>
+
+      <!-- Google Drive 設定 -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">Google Drive 連携</div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">ルートフォルダ URL</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="sys-drive-url" placeholder="https://drive.google.com/drive/folders/..." style="flex:1"
+              value="${esc(settings.drive_root_folder_id ? 'https://drive.google.com/drive/folders/' + settings.drive_root_folder_id : '')}"
+              oninput="parseSysDriveUrl()">
+            <button class="btn" onclick="saveSysDrive()">保存</button>
+          </div>
+          <div id="sys-drive-result" style="margin-top:6px;font-size:12px;display:${settings.drive_root_folder_id ? '' : 'none'};background:var(--em-pale);padding:6px 10px;border-radius:6px">
+            <span style="color:var(--text-muted)">フォルダID: </span>
+            <span id="sys-drive-id-display" style="color:var(--em-dark);font-weight:600;word-break:break-all">${esc(settings.drive_root_folder_id || '')}</span>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
+          設定したフォルダの配下に<br>
+          <span style="font-family:monospace;font-size:11px">クライアント名 / 案件名 / YYYYMM / 静止画・動画 / ...</span><br>
+          の順でフォルダが自動作成されてファイルが保存されます。
+        </div>
+      </div>
+
+      <div id="sys-save-msg" style="display:none;font-size:13px;color:var(--em-dark);padding:8px 0"></div>
+    </div>
+  `;
+}
+
+function parseSysDriveUrl() {
+  const url = document.getElementById('sys-drive-url').value.trim();
+  const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  const resultEl = document.getElementById('sys-drive-result');
+  const idEl = document.getElementById('sys-drive-id-display');
+  if (m) {
+    idEl.textContent = m[1];
+    resultEl.style.display = '';
+    resultEl.style.color = '';
+  } else if (url) {
+    idEl.textContent = '認識できないURL形式です';
+    resultEl.style.display = '';
+    resultEl.style.color = '#E24B4A';
+  } else {
+    resultEl.style.display = 'none';
+  }
+}
+
+async function saveSysDrive() {
+  const url = document.getElementById('sys-drive-url').value.trim();
+  const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (url && !m) { alert('Drive URLの形式が正しくありません'); return; }
+  const folderId = m ? m[1] : '';
+  const res = await fetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'drive_root_folder_id', value: folderId || null }),
+  });
+  const msgEl = document.getElementById('sys-save-msg');
+  if (res.ok) {
+    msgEl.textContent = '✓ 保存しました';
+    msgEl.style.display = '';
+    setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
+  } else {
+    const e = await res.json();
+    alert('エラー: ' + e.error);
+  }
 }
 
 function renderMasterPage() {
@@ -5828,9 +5868,8 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-upload-status').textContent = '';
   uploadFileData = null;
 
-  // Drive 未設定の警告
-  const hasDrive = !!(c.projects?.drive_folder_url);
-  document.getElementById('cd-drive-warning').style.display = hasDrive ? 'none' : '';
+  // Drive 未設定の警告（システム設定のルートフォルダIDで判定）
+  document.getElementById('cd-drive-warning').style.display = _systemDriveConfigured ? 'none' : '';
 
   // レギュレーションシートリンク
   const regulationUrl = c.projects?.regulation_url;

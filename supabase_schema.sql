@@ -264,6 +264,13 @@ CREATE TABLE IF NOT EXISTS creative_file_comments (
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
 
+-- ==================== システム設定 ====================
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ==================== マスターテーブル群 ====================
 
 -- ==================== 汎用マスター ====================
