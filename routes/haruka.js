@@ -451,7 +451,8 @@ router.get('/creatives/:id', async (req, res) => {
 router.post('/creatives/bulk', async (req, res) => {
   const {
     project_id, creative_type, appeal_type_id,
-    count, draft_deadline, final_deadline, note
+    count, draft_deadline, final_deadline, note,
+    product_id, media_code, creative_fmt, creative_size
   } = req.body;
   if (!project_id || !creative_type || !appeal_type_id || !count) {
     return res.status(400).json({ error: '案件・種別・訴求タイプ・本数は必須です' });
@@ -483,7 +484,9 @@ router.post('/creatives/bulk', async (req, res) => {
     const fileName = `${seqStr}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
     inserts.push({ project_id, file_name: fileName, creative_type, appeal_type_id,
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
-      note: note || null, status: '未着手' });
+      note: note || null, status: '未着手',
+      product_id: product_id || null, media_code: media_code || null,
+      creative_fmt: creative_fmt || null, creative_size: creative_size || null });
     usedSeqs.push(nextSeq);
     nextSeq++;
   }
@@ -497,7 +500,8 @@ router.post('/creatives/bulk', async (req, res) => {
 router.post('/creatives', async (req, res) => {
   const {
     project_id, cycle_id, file_name, creative_type,
-    draft_deadline, final_deadline, script_url, note, appeal_type_id
+    draft_deadline, final_deadline, script_url, note, appeal_type_id,
+    product_id, media_code, creative_fmt, creative_size
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
@@ -522,7 +526,11 @@ router.post('/creatives', async (req, res) => {
   }
   const { data, error } = await supabase.from('creatives').insert({
     project_id, cycle_id, file_name, creative_type,
-    draft_deadline, final_deadline, script_url, note, status: '未着手'
+    draft_deadline, final_deadline, script_url, note, status: '未着手',
+    product_id: product_id || null,
+    media_code: media_code || null,
+    creative_fmt: creative_fmt || null,
+    creative_size: creative_size || null,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   if (appeal_type_id) {

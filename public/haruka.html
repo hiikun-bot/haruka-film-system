@@ -523,6 +523,32 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </select>
       </div>
       <div class="form-group">
+        <label class="form-label">商材</label>
+        <select class="form-select" id="c-product-id">
+          <option value="">案件を先に選択してください</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">媒体</label>
+          <select class="form-select" id="c-media-code">
+            <option value="">（任意）</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">クリエイティブFMT</label>
+          <select class="form-select" id="c-creative-fmt">
+            <option value="">（任意）</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">クリエイティブサイズ</label>
+        <select class="form-select" id="c-creative-size">
+          <option value="">（任意）</option>
+        </select>
+      </div>
+      <div class="form-group">
         <label class="form-label">訴求タイプ</label>
         <select class="form-select" id="c-appeal-type" onchange="autoGenerateFileName()">
           <option value="">案件を先に選択してください</option>
@@ -594,6 +620,32 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <option value="">案件を先に選択してください</option>
           </select>
         </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">商材</label>
+        <select class="form-select" id="bulk-product-id">
+          <option value="">案件を先に選択してください</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">媒体</label>
+          <select class="form-select" id="bulk-media-code">
+            <option value="">（任意）</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">クリエイティブFMT</label>
+          <select class="form-select" id="bulk-creative-fmt">
+            <option value="">（任意）</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">クリエイティブサイズ</label>
+        <select class="form-select" id="bulk-creative-size">
+          <option value="">（任意）</option>
+        </select>
       </div>
       <div class="form-group">
         <label class="form-label">登録本数</label>
@@ -1035,7 +1087,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <div style="display:flex;gap:6px;align-items:flex-start">
               <div style="flex-shrink:0;width:80px">
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
-                <input class="form-input" id="cl-axis-code" placeholder="例: ap01" style="font-family:monospace;font-size:13px">
+                <input class="form-input" id="cl-axis-code" placeholder="例: ap001" style="font-family:monospace;font-size:13px">
               </div>
               <div style="flex:1">
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
@@ -1182,6 +1234,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <input type="hidden" id="p-id">
 
+    <!-- タブナビ（編集時のみ） -->
+    <div id="p-tab-nav" style="display:none;padding:0 28px;border-bottom:1px solid var(--border)">
+      <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
+      <button id="p-tab-btn-sync" onclick="switchProjectTab('sync')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">商材・訴求軸</button>
+    </div>
+
+    <!-- パネル：基本情報 -->
+    <div id="p-tab-panel-main">
     <!-- ボディ：2カラムグリッド -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;padding:24px 28px;column-gap:32px;row-gap:0">
 
@@ -1340,17 +1400,24 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
-        <!-- 商材・訴求軸（編集時のみ） -->
-        <div id="p-sync-section" style="display:none">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+      </div><!-- /右カラム -->
+    </div><!-- /グリッド -->
+    </div><!-- /p-tab-panel-main -->
+
+    <!-- パネル：商材・訴求軸（編集時のみ） -->
+    <div id="p-tab-panel-sync" style="display:none;padding:24px 28px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px">
+
+        <!-- 商材カラム -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
             <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材・訴求軸</span>
+            <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材</span>
           </div>
-          <!-- 商材スイッチ -->
-          <div style="background:var(--surface);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+          <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:12px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <div>
-                <div style="font-size:13px;font-weight:500">商材</div>
+                <div style="font-size:13px;font-weight:500">クライアントの商材マスターを参照します</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="p-sync-products-desc">クライアントマスターを参照</div>
               </div>
               <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
@@ -1363,25 +1430,32 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                 </div>
               </div>
             </div>
-            <div id="p-products-override" style="display:none;margin-top:10px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                <span style="font-size:11px;color:var(--text-muted)">案件独自の商材</span>
-                <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
-              </div>
-              <div id="p-products-list"></div>
-              <div style="display:flex;gap:5px;margin-top:6px">
-                <input class="form-input" id="pp-code" placeholder="コード" style="width:72px;font-size:12px">
-                <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
-                <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
-                <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectProduct()">追加</button>
-              </div>
+          </div>
+          <div id="p-products-override" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の商材</span>
+              <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
+            </div>
+            <div id="p-products-list" style="margin-bottom:8px;max-height:280px;overflow-y:auto"></div>
+            <div style="display:flex;gap:5px">
+              <input class="form-input" id="pp-code" placeholder="コード" style="width:80px;font-size:12px">
+              <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
+              <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
+              <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectProduct()">追加</button>
             </div>
           </div>
-          <!-- 訴求軸スイッチ -->
-          <div style="background:var(--surface);border-radius:8px;padding:10px 12px">
+        </div>
+
+        <!-- 訴求軸カラム -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">訴求軸</span>
+          </div>
+          <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:12px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <div>
-                <div style="font-size:13px;font-weight:500">訴求軸</div>
+                <div style="font-size:13px;font-weight:500">クライアントの訴求軸マスターを参照します</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="p-sync-axes-desc">クライアントマスターを参照</div>
               </div>
               <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
@@ -1394,24 +1468,24 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                 </div>
               </div>
             </div>
-            <div id="p-axes-override" style="display:none;margin-top:10px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                <span style="font-size:11px;color:var(--text-muted)">案件独自の訴求軸</span>
-                <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
-              </div>
-              <div id="p-axes-list"></div>
-              <div style="display:flex;gap:5px;margin-top:6px">
-                <input class="form-input" id="pa-code" placeholder="コード" style="width:72px;font-size:12px">
-                <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
-                <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
-                <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectAxis()">追加</button>
-              </div>
+          </div>
+          <div id="p-axes-override" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の訴求軸</span>
+              <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
+            </div>
+            <div id="p-axes-list" style="margin-bottom:8px;max-height:280px;overflow-y:auto"></div>
+            <div style="display:flex;gap:5px">
+              <input class="form-input" id="pa-code" placeholder="コード" style="width:80px;font-size:12px">
+              <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
+              <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
+              <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectAxis()">追加</button>
             </div>
           </div>
         </div>
 
-      </div><!-- /右カラム -->
-    </div><!-- /グリッド -->
+      </div>
+    </div><!-- /p-tab-panel-sync -->
 
     <!-- フッター -->
     <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;bottom:0;background:#fff;border-radius:0 0 16px 16px">
@@ -2049,15 +2123,17 @@ async function loadTeams() {
     if (!allTeams.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
     const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
     list.innerHTML = allTeams.map((t, i) => {
-      const teamMembers = allMembers.filter(m => m.team_id === t.id && m.is_active !== false);
+      const teamMembers = allMembers.filter(m => m.team_id === t.id && m.is_active !== false)
+        .sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0));
       const memberCount = teamMembers.length;
-      const memberChips = teamMembers.map(m =>
-        `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--em-pale);border-radius:20px;padding:4px 10px 4px 4px;font-size:12px;color:var(--em-dark)">
+      const memberChips = teamMembers.map(m => {
+        const canEdit = canEditMember(m);
+        return `<div onclick="${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:6px;background:var(--em-pale);border-radius:20px;padding:4px 10px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
           <div style="width:22px;height:22px;border-radius:50%;background:var(--em);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0">${(m.full_name||'?').slice(0,1)}</div>
           <span style="color:var(--text);font-weight:500">${m.full_name}</span>
           <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
-        </div>`
-      ).join('');
+        </div>`;
+      }).join('');
       return `
       <div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;user-select:none" onclick="toggleTeamAccordion('${t.id}')">
@@ -2147,33 +2223,63 @@ function renderMemberList() {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
   }
-  list.innerHTML = visibleMembers.map(m => `
-    <div class="member-card" style="${!m.is_active ? 'opacity:0.6;' : ''}${canEditMember(m) ? 'cursor:pointer' : ''}" ${canEditMember(m) ? `onclick="openEditMemberById('${m.id}')"` : ''}>
-        <div class="member-av" style="${!m.is_active ? 'background:#F1EFE8;color:#888' : ''}">${(m.full_name||'?').slice(0,2)}</div>
-        <!-- 区分・チーム -->
-        <div style="display:flex;gap:4px;align-items:center;min-width:160px;flex-shrink:0;flex-wrap:wrap">
-          <span class="status-chip s-teal">${roleLabel(m.role)}</span>
-          ${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}">${m.rank}ランク</span>` : ''}
-          ${m.team_id ? `<span class="team-badge">${allTeams.find(t=>t.id===m.team_id)?.team_code||'?'}チーム</span>` : '<span style="font-size:11px;color:var(--text-muted)">未所属</span>'}
-        </div>
-        <!-- 名前・メール 横並び -->
-        <div style="flex:1;min-width:0;display:flex;align-items:center;gap:16px">
-          <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">
-            ${m.full_name}${!m.is_active ? ' <span style="font-size:11px;color:#A32D2D;background:#FCEBEB;padding:1px 6px;border-radius:5px">退職済み</span>' : ''}
-          </div>
-          <div style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.email||''}</div>
-        </div>
-        ${m.left_at ? `<div style="font-size:11px;color:#A32D2D;white-space:nowrap;flex-shrink:0">退職：${new Date(m.left_at).toLocaleDateString('ja-JP')}</div>` : ''}
-        <!-- ボタン -->
-        <div style="display:flex;flex-direction:row;gap:6px;align-items:center;flex-shrink:0" onclick="event.stopPropagation()">
-        ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
-        ${isTopAdmin() ? (m.is_active
-            ? `<button class="btn-danger" style="font-size:11px;padding:3px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
-            : `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
-        ) : ''}
-        ${isSuperAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:3px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
-        </div>
-    </div>`).join('');
+  const showRankCol = isSuperAdmin() || isTopAdmin() || (currentUser?.role === 'producer') || (currentUser?.role === 'producer_director') || (currentUser?.role === 'director');
+  list.innerHTML = `
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <colgroup>
+      <col style="width:36px">
+      <col style="width:96px">
+      ${showRankCol ? '<col style="width:72px">' : ''}
+      <col style="width:88px">
+      <col style="width:120px">
+      <col style="width:220px">
+      <col>
+      <col style="width:160px">
+    </colgroup>
+    <thead>
+      <tr style="background:var(--surface);border-bottom:1.5px solid var(--border)">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em"></th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ロール</th>
+        ${showRankCol ? '<th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ランク</th>' : ''}
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">チーム</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">姓</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">名前</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メールアドレス</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${visibleMembers.map((m, i) => {
+        const team = allTeams.find(t => t.id === m.team_id);
+        const nameParts = (m.full_name || '').split(/\s+/);
+        const lastName  = nameParts[0] || '';
+        const firstName = nameParts.slice(1).join(' ');
+        const rowBg = !m.is_active ? 'background:#FAFAFA' : (i % 2 === 0 ? '' : 'background:#FAFEFE');
+        const canEdit = canEditMember(m);
+        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border);${!m.is_active?'opacity:0.55':''}${canEdit?';cursor:pointer':''}" ${canEdit ? `onclick="openEditMemberById('${m.id}')"` : ''} onmouseenter="this.style.background='#EEF9F8'" onmouseleave="this.style.background='${!m.is_active?'#FAFAFA':(i%2===0?'':'#FAFEFE')}'">
+          <td style="padding:8px 12px">
+            <div style="width:28px;height:28px;border-radius:50%;background:${!m.is_active?'#e0e0e0':'var(--em-pale)'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${!m.is_active?'#999':'var(--em-dark)'}">
+              ${(m.full_name||'?').slice(0,1)}
+            </div>
+          </td>
+          <td style="padding:8px 12px"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
+          ${showRankCol ? `<td style="padding:8px 12px">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
+          <td style="padding:8px 12px">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
+          <td style="padding:8px 12px;font-weight:500;white-space:nowrap">${lastName}</td>
+          <td style="padding:8px 12px;white-space:nowrap">${firstName}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
+          <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">${m.email||''}</td>
+          <td style="padding:8px 12px;text-align:right;white-space:nowrap" onclick="event.stopPropagation()">
+            ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
+            ${isTopAdmin() ? (m.is_active
+              ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
+              : `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
+            ) : ''}
+            ${isSuperAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
 }
 
 async function loadMembers() {
@@ -2345,6 +2451,11 @@ async function createCreative() {
   if (!project_id || !file_name) { alert('案件とファイル名は必須です'); return; }
   if (!assignee_id) { alert('担当者を選択してください'); return; }
 
+  const product_id = document.getElementById('c-product-id')?.value || null;
+  const media_code = document.getElementById('c-media-code')?.value || null;
+  const creative_fmt = document.getElementById('c-creative-fmt')?.value || null;
+  const creative_size = document.getElementById('c-creative-size')?.value || null;
+
   const res = await fetch(`${API}/creatives`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2353,7 +2464,11 @@ async function createCreative() {
       appeal_type_id: appeal_type_id || null,
       assignee_id: assignee_id || null,
       draft_deadline: draft_deadline || null,
-      final_deadline: final_deadline || null
+      final_deadline: final_deadline || null,
+      product_id: product_id || null,
+      media_code: media_code || null,
+      creative_fmt: creative_fmt || null,
+      creative_size: creative_size || null,
     })
   });
 
@@ -3052,8 +3167,10 @@ function openProjectModal(preClientId) {
   document.getElementById('p-slack-channel-id').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
-  // 新規作成時はsyncセクション非表示（案件保存後に編集で利用）
-  document.getElementById('p-sync-section').style.display = 'none';
+  // 新規作成時はタブ非表示
+  document.getElementById('p-tab-nav').style.display = 'none';
+  document.getElementById('p-tab-panel-main').style.display = '';
+  document.getElementById('p-tab-panel-sync').style.display = 'none';
   openModal('modal-project');
 }
 
@@ -3100,7 +3217,6 @@ function openEditProject(p) {
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
 
   // 商材・訴求軸 sync セクション
-  document.getElementById('p-sync-section').style.display = '';
   // sync_products: true = クライアント参照（トグルOFF）、false = 独自設定（トグルON）
   const syncProductsOff = p.sync_products === false;
   const syncAxesOff     = p.sync_axes === false || p.sync_appeal_axes === false;
@@ -3109,7 +3225,29 @@ function openEditProject(p) {
   if (syncProductsOff) renderProjectProducts(p.id);
   if (syncAxesOff)     renderProjectAxes(p.id);
 
+  // 編集時はタブを表示し、基本情報タブをデフォルト表示
+  document.getElementById('p-tab-nav').style.display = '';
+  switchProjectTab('main');
+
   openModal('modal-project');
+}
+
+function switchProjectTab(tab) {
+  const isMain = tab === 'main';
+  document.getElementById('p-tab-panel-main').style.display = isMain ? '' : 'none';
+  document.getElementById('p-tab-panel-sync').style.display = isMain ? 'none' : '';
+  const btnMain = document.getElementById('p-tab-btn-main');
+  const btnSync = document.getElementById('p-tab-btn-sync');
+  if (btnMain) {
+    btnMain.style.borderBottomColor = isMain ? 'var(--em)' : 'transparent';
+    btnMain.style.color = isMain ? 'var(--em-dark)' : 'var(--text-muted)';
+    btnMain.style.fontWeight = isMain ? '600' : '500';
+  }
+  if (btnSync) {
+    btnSync.style.borderBottomColor = isMain ? 'transparent' : 'var(--em)';
+    btnSync.style.color = isMain ? 'var(--text-muted)' : 'var(--em-dark)';
+    btnSync.style.fontWeight = isMain ? '500' : '600';
+  }
 }
 
 // ===== 案件モーダル 商材・訴求軸 sync =====
@@ -3280,11 +3418,11 @@ async function submitProject() {
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
   // sync: trueがクライアント参照(デフォルト)、falseが独自設定
-  const syncSection = document.getElementById('p-sync-section');
-  const sync_products = syncSection.style.display !== 'none'
+  const isEditMode = document.getElementById('p-tab-nav').style.display !== 'none';
+  const sync_products = isEditMode
     ? document.getElementById('p-products-override').style.display === 'none'
     : true;
-  const sync_appeal_axes = syncSection.style.display !== 'none'
+  const sync_appeal_axes = isEditMode
     ? document.getElementById('p-axes-override').style.display === 'none'
     : true;
 
@@ -3902,20 +4040,36 @@ async function reactivateMember(id) {
 // 案件選択時に訴求タイプを読み込む
 async function onProjectChange(projectId) {
   const sel = document.getElementById('c-appeal-type');
+  const prodSel = document.getElementById('c-product-id');
   sel.innerHTML = '<option value="">読み込み中...</option>';
+  if (prodSel) prodSel.innerHTML = '<option value="">読み込み中...</option>';
+
   if (!projectId) {
     sel.innerHTML = '<option value="">案件を先に選択してください</option>';
+    if (prodSel) prodSel.innerHTML = '<option value="">案件を先に選択してください</option>';
     return;
   }
-  const res = await fetch(`${API}/projects/${projectId}/effective-appeal-axes`);
-  const axes = await res.json();
+
+  const [axesRes, prodRes] = await Promise.all([
+    fetch(`${API}/projects/${projectId}/effective-appeal-axes`),
+    fetch(`${API}/projects/${projectId}/effective-products`),
+  ]);
+
+  const axes = axesRes.ok ? await axesRes.json() : [];
   if (!axes.length) {
     sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>';
-    return;
+  } else {
+    sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
+      `<option value="${a.id}">${a.code} - ${a.name}</option>`
+    ).join('');
   }
-  sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
-    `<option value="${a.id}">${a.code} - ${a.name}</option>`
-  ).join('');
+
+  const products = prodRes.ok ? await prodRes.json() : [];
+  if (prodSel) {
+    prodSel.innerHTML = '<option value="">（任意）</option>' + products.map(p =>
+      `<option value="${p.id}">${p.code} - ${p.name}</option>`
+    ).join('');
+  }
 }
 
 async function autoGenerateFileName() {
@@ -3973,6 +4127,29 @@ async function openCreateCreative() {
       allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
   }
 
+  // マスターデータが未ロードなら取得
+  if (!masterCategories.length || !masterItems.length) {
+    const [catR, itemR] = await Promise.all([
+      fetch(`${API}/master/categories`),
+      fetch(`${API}/master/items`),
+    ]);
+    if (catR.ok) masterCategories = await catR.json();
+    if (itemR.ok) masterItems = await itemR.json();
+  }
+  // 媒体 / FMT / サイズ セレクトを初期化
+  ['媒体', 'クリエイティブFMT', 'クリエイティブサイズ'].forEach(catName => {
+    const cat = masterCategories.find(c => c.name === catName);
+    const items = cat ? masterItems.filter(i => i.category_id === cat.id && i.is_active !== false) : [];
+    const idMap = { '媒体': ['c-media-code','bulk-media-code'], 'クリエイティブFMT': ['c-creative-fmt','bulk-creative-fmt'], 'クリエイティブサイズ': ['c-creative-size','bulk-creative-size'] };
+    idMap[catName].forEach(selId => {
+      const s = document.getElementById(selId);
+      if (!s) return;
+      s.innerHTML = '<option value="">（任意）</option>' + items.map(i =>
+        `<option value="${i.code}">${i.code} - ${i.name}</option>`
+      ).join('');
+    });
+  });
+
   // 選択中の案件で訴求タイプと担当者を初期ロード
   const initialProject = document.getElementById('c-project-id').value;
   await onProjectChange(initialProject);
@@ -3996,14 +4173,28 @@ function switchCreativeTab(tab) {
 
 async function onBulkProjectChange(projectId) {
   const sel = document.getElementById('bulk-appeal-type');
+  const prodSel = document.getElementById('bulk-product-id');
   sel.innerHTML = '<option value="">読み込み中...</option>';
-  if (!projectId) { sel.innerHTML = '<option value="">案件を先に選択してください</option>'; return; }
-  const res = await fetch(`${API}/projects/${projectId}/effective-appeal-axes`);
-  const axes = await res.json();
-  if (!axes.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; return; }
-  sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
+  if (!projectId) {
+    sel.innerHTML = '<option value="">案件を先に選択してください</option>';
+    if (prodSel) prodSel.innerHTML = '<option value="">案件を先に選択してください</option>';
+    return;
+  }
+  const [axesRes, prodRes] = await Promise.all([
+    fetch(`${API}/projects/${projectId}/effective-appeal-axes`),
+    fetch(`${API}/projects/${projectId}/effective-products`),
+  ]);
+  const axes = axesRes.ok ? await axesRes.json() : [];
+  if (!axes.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; }
+  else { sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
     `<option value="${a.id}">${a.code} - ${a.name}</option>`
-  ).join('');
+  ).join(''); }
+  const products = prodRes.ok ? await prodRes.json() : [];
+  if (prodSel) {
+    prodSel.innerHTML = '<option value="">（任意）</option>' + products.map(p =>
+      `<option value="${p.id}">${p.code} - ${p.name}</option>`
+    ).join('');
+  }
   updateBulkPreview();
 }
 
@@ -4026,11 +4217,18 @@ async function bulkCreateCreative() {
   const btn = event.target;
   btn.textContent = '登録中...';
   btn.disabled = true;
+  const product_id = document.getElementById('bulk-product-id')?.value || null;
+  const media_code = document.getElementById('bulk-media-code')?.value || null;
+  const creative_fmt = document.getElementById('bulk-creative-fmt')?.value || null;
+  const creative_size = document.getElementById('bulk-creative-size')?.value || null;
+
   const res = await fetch(`${API}/creatives/bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project_id, creative_type, appeal_type_id, count,
-      draft_deadline: draft_deadline || null, final_deadline: final_deadline || null })
+      draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
+      product_id: product_id || null, media_code: media_code || null,
+      creative_fmt: creative_fmt || null, creative_size: creative_size || null })
   });
   btn.textContent = '一括登録する';
   btn.disabled = false;
@@ -4335,7 +4533,26 @@ function renderGeneralMasterPage() {
     // ===== 区分タイル選択画面 =====
     const usableCats = masterCategories.filter(cat => !['商材', '訴求軸'].includes(cat.name));
     content.innerHTML = `
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">区分を選択してマスター値を管理します。</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">区分を選択してマスター値を管理します。区分ごとに コード・名称・備考・有効期限を登録できます。</div>
+
+      <!-- 区分追加フォーム -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:10px">＋ 区分を新規追加</div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">区分名 <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="gen-cat-name" placeholder="例：媒体" onkeydown="if(event.key==='Enter')document.getElementById('gen-cat-code').focus()">
+          </div>
+          <div style="width:140px">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="gen-cat-code" placeholder="例：MEDIA" onkeydown="if(event.key==='Enter')addGeneralCategory()">
+          </div>
+          <button class="btn-primary" onclick="addGeneralCategory()" style="padding:8px 20px;white-space:nowrap">追加</button>
+        </div>
+        <span id="gen-cat-status" style="font-size:12px;margin-top:6px;display:block;min-height:18px"></span>
+      </div>
+
+      <!-- 区分タイル -->
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         ${usableCats.map(cat => {
           const count = masterItems.filter(i => i.category_id === cat.id).length;
@@ -4350,9 +4567,27 @@ function renderGeneralMasterPage() {
             <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:4px">${count}件登録済み</div>
           </button>`;
         }).join('')}
-        ${usableCats.length === 0 ? '<div style="padding:40px;color:var(--text-muted);font-size:13px">区分マスターに区分を追加してください</div>' : ''}
+        ${usableCats.length === 0 ? '<div style="padding:40px;color:var(--text-muted);font-size:13px">上のフォームから区分を追加してください</div>' : ''}
       </div>`;
   }
+}
+
+async function addGeneralCategory() {
+  const name = document.getElementById('gen-cat-name').value.trim();
+  const code = document.getElementById('gen-cat-code').value.trim();
+  const status = document.getElementById('gen-cat-status');
+  if (!name || !code) { if (status) status.textContent = '区分名とコードは必須です'; return; }
+  const res = await fetch(`${API}/master/categories`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name, code })
+  });
+  if (res.ok) {
+    masterCategories = await (await fetch(`${API}/master/categories`)).json();
+    document.getElementById('gen-cat-name').value = '';
+    document.getElementById('gen-cat-code').value = '';
+    if (status) status.textContent = '追加しました';
+    renderGeneralMasterPage();
+  } else { const e = await res.json(); if (status) status.textContent = 'エラー: ' + e.error; }
 }
 
 async function addGeneralItem(categoryId) {
@@ -4413,28 +4648,38 @@ function selectMasterCategory(id) {
 // 商材マスター（クライアント別）
 let productsCurrentClientId = null;
 
+let showArchivedClientsInMaster = false;
+
 async function renderProductsMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
-  const clients = allClients.filter(c => c.status !== 'クライアント取引終了');
-  if (!clients.length) {
+  const archivedStatus = 'クライアント取引終了';
+  const activeClients   = allClients.filter(c => c.status !== archivedStatus);
+  const archivedClients = allClients.filter(c => c.status === archivedStatus);
+  const clients = showArchivedClientsInMaster ? allClients : activeClients;
+  if (!allClients.length) {
     content.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center">クライアントがありません</div>';
     return;
   }
   content.innerHTML = `
     <div id="product-client-select-view">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">クライアントを選択して商材を管理します。</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <span style="font-size:13px;color:var(--text-muted)">クライアントを選択して商材を管理します。</span>
+        ${archivedClients.length ? `<button onclick="showArchivedClientsInMaster=!showArchivedClientsInMaster;renderProductsMasterPage()" style="font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:${showArchivedClientsInMaster?'var(--em-pale)':'transparent'};color:${showArchivedClientsInMaster?'var(--em-dark)':'var(--text-muted)'};cursor:pointer">${showArchivedClientsInMaster?'取引終了を非表示':'取引終了を表示'}</button>` : ''}
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
-        ${clients.map(c => `
+        ${clients.map(c => {
+          const archived = c.status === archivedStatus;
+          return `
           <button onclick="openClientProductsDetail('${c.id}','${c.name.replace(/'/g,"\\'")}')"
-            style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
-                   font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;
-                   min-width:160px;text-align:center;transition:all .15s;line-height:1.4"
+            style="padding:18px 28px;background:var(--surface);border:1.5px solid ${archived?'#ddd':'var(--border)'};border-radius:12px;
+                   font-size:15px;font-weight:600;color:${archived?'var(--text-muted)':'var(--text-main)'};cursor:pointer;
+                   min-width:160px;text-align:center;transition:all .15s;line-height:1.4;${archived?'opacity:0.6':''}"
             onmouseover="this.style.borderColor='var(--em-dark)';this.style.background='var(--em-pale)'"
-            onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--surface)'">
-            ${c.name}
-          </button>
-        `).join('')}
+            onmouseout="this.style.borderColor='${archived?'#ddd':'var(--border)'}';this.style.background='var(--surface)'">
+            ${c.name}${archived?'<div style="font-size:10px;font-weight:400;color:#aaa;margin-top:2px">取引終了</div>':''}
+          </button>`;
+        }).join('')}
       </div>
     </div>
 
@@ -4629,31 +4874,40 @@ function deleteClientProduct(clientId, productId) {
 // 訴求軸マスター（クライアント別）
 let appealAxesCurrentClientId = null;
 
+let showArchivedClientsInAxesMaster = false;
+
 async function renderAppealAxesMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
+  const archivedStatus = 'クライアント取引終了';
+  const activeClients   = allClients.filter(c => c.status !== archivedStatus);
+  const archivedClients = allClients.filter(c => c.status === archivedStatus);
+  const clients = showArchivedClientsInAxesMaster ? allClients : activeClients;
 
-  const clients = allClients.filter(c => c.status !== 'クライアント取引終了');
-
-  if (!clients.length) {
+  if (!allClients.length) {
     content.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center">クライアントがありません</div>';
     return;
   }
 
   content.innerHTML = `
     <div id="appeal-client-select-view">
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">クライアントを選択して訴求軸を管理します。</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <span style="font-size:13px;color:var(--text-muted)">クライアントを選択して訴求軸を管理します。</span>
+        ${archivedClients.length ? `<button onclick="showArchivedClientsInAxesMaster=!showArchivedClientsInAxesMaster;renderAppealAxesMasterPage()" style="font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:${showArchivedClientsInAxesMaster?'var(--em-pale)':'transparent'};color:${showArchivedClientsInAxesMaster?'var(--em-dark)':'var(--text-muted)'};cursor:pointer">${showArchivedClientsInAxesMaster?'取引終了を非表示':'取引終了を表示'}</button>` : ''}
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
-        ${clients.map(c => `
+        ${clients.map(c => {
+          const archived = c.status === archivedStatus;
+          return `
           <button onclick="openClientAppealAxesDetail('${c.id}','${c.name.replace(/'/g,"\\'")}')"
-            style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
-                   font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;
-                   min-width:160px;text-align:center;transition:all .15s;line-height:1.4"
+            style="padding:18px 28px;background:var(--surface);border:1.5px solid ${archived?'#ddd':'var(--border)'};border-radius:12px;
+                   font-size:15px;font-weight:600;color:${archived?'var(--text-muted)':'var(--text-main)'};cursor:pointer;
+                   min-width:160px;text-align:center;transition:all .15s;line-height:1.4;${archived?'opacity:0.6':''}"
             onmouseover="this.style.borderColor='var(--em-dark)';this.style.background='var(--em-pale)'"
-            onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--surface)'">
-            ${c.name}
-          </button>
-        `).join('')}
+            onmouseout="this.style.borderColor='${archived?'#ddd':'var(--border)'}';this.style.background='var(--surface)'">
+            ${c.name}${archived?'<div style="font-size:10px;font-weight:400;color:#aaa;margin-top:2px">取引終了</div>':''}
+          </button>`;
+        }).join('')}
       </div>
     </div>
 
