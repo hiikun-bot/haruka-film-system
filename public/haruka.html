@@ -502,7 +502,7 @@ tr.row-help td{background:#FFFBF2}
       </div>
       <div class="form-group">
         <label class="form-label">動画種別</label>
-        <select class="form-select" id="c-creative-type">
+        <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect()">
           <option value="video_short">ショート動画</option>
           <option value="design_thumbnail">サムネイル</option>
           <option value="design_banner">バナー</option>
@@ -3954,14 +3954,40 @@ async function bulkCreateCreative() {
   }
 }
 
-async function onTeamChange(teamId) {
+function onTeamChange(teamId) {
+  updateAssigneeSelect();
+}
+
+function updateAssigneeSelect() {
   const sel = document.getElementById('c-assignee-id');
+  const creativeType = document.getElementById('c-creative-type')?.value || '';
+  const teamId = document.getElementById('c-team-id')?.value || '';
+
+  const isVideo = creativeType.startsWith('video');
+  const isDesign = creativeType.startsWith('design');
+
+  const videoRoles  = ['producer','producer_director','director','editor'];
+  const designRoles = ['producer','producer_director','director','designer'];
+
+  const ROLE_LABEL = {
+    producer:'プロデューサー', producer_director:'PD',
+    director:'ディレクター', editor:'編集者', designer:'デザイナー',
+  };
+
+  let candidates = allMembers.filter(m => m.is_active !== false);
+
+  if (isVideo)        candidates = candidates.filter(m => m.job_type === 'video' && videoRoles.includes(m.role));
+  else if (isDesign)  candidates = candidates.filter(m => m.job_type === 'design' && designRoles.includes(m.role));
+
+  if (teamId) candidates = candidates.filter(m => m.team_id === teamId);
+
+  const prev = sel.value;
   sel.innerHTML = '<option value="">担当者を選択（任意）</option>';
-  if (!teamId) return;
-  const members = allMembers.filter(m => m.team_id === teamId);
-  sel.innerHTML += members.map(m =>
-    `<option value="${m.id}">${m.full_name}（${m.rank || '-'}ランク）</option>`
-  ).join('');
+  sel.innerHTML += candidates.map(m => {
+    const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
+    return `<option value="${m.id}">${m.full_name}${label}</option>`;
+  }).join('');
+  if (prev) sel.value = prev;
 }
 
 // ===== 汎用マスター管理 =====
@@ -4221,51 +4247,171 @@ function deleteClientProduct(clientId, productId) {
 }
 
 // 訴求軸マスター（クライアント別）
+let appealAxesCurrentClientId = null;
+
 async function renderAppealAxesMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
 
-  const clientsWithAxes = allClients.filter(c => c.status !== 'クライアント取引終了');
+  const clients = allClients.filter(c => c.status !== 'クライアント取引終了');
 
-  if (!clientsWithAxes.length) {
+  if (!clients.length) {
     content.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center">クライアントがありません</div>';
     return;
   }
 
   content.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
-      クライアントごとの訴求軸マスターを管理します。案件編集画面からも登録できます。
+    <div id="appeal-client-select-view">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">クライアントを選択して訴求軸を管理します。</div>
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        ${clients.map(c => `
+          <button onclick="openClientAppealAxesDetail('${c.id}',${JSON.stringify(c.name)})"
+            style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
+                   font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;
+                   min-width:160px;text-align:center;transition:all .15s;line-height:1.4"
+            onmouseover="this.style.borderColor='var(--em-dark)';this.style.background='var(--em-pale)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--surface)'">
+            ${c.name}
+          </button>
+        `).join('')}
+      </div>
     </div>
-    <div>
-      ${clientsWithAxes.map(c => `
-        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:12px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center">
-            <span>${c.name}</span>
-            <button class="btn-sm" onclick="openClientAppealAxisModal('${c.id}','${c.name.replace(/'/g,"\\'")}')">＋ 訴求軸追加</button>
+
+    <div id="appeal-axes-detail-view" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <button class="btn-sm" onclick="backToClientSelect()">← 戻る</button>
+        <span id="appeal-detail-client-name" style="font-size:17px;font-weight:700;color:var(--text-main)"></span>
+        <span style="font-size:12px;color:var(--text-muted)">の訴求軸マスター</span>
+      </div>
+
+      <!-- 追加フォーム -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 訴求軸を追加</div>
+        <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px;gap:10px;align-items:end">
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
+            <input class="form-input" id="axis-new-code" placeholder="A001">
           </div>
-          <div id="axes-list-${c.id}" style="padding:8px 16px">
-            <div class="loading" style="padding:8px 0;font-size:13px">読み込み中...</div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">訴求軸名称 *</label>
+            <input class="form-input" id="axis-new-name" placeholder="訴求軸の名称">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">備考</label>
+            <input class="form-input" id="axis-new-note" placeholder="任意">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限日</label>
+            <input class="form-input" type="date" id="axis-new-expires">
           </div>
         </div>
-      `).join('')}
-    </div>`;
+        <button class="btn" onclick="addClientAppealAxis()" style="margin-top:12px">追加する</button>
+        <span id="axis-add-status" style="font-size:12px;margin-left:10px"></span>
+      </div>
 
-  for (const c of clientsWithAxes) {
-    loadClientAppealAxes(c.id);
-  }
+      <!-- 一覧 -->
+      <div id="axes-detail-list" style="min-height:60px">
+        <div class="loading" style="font-size:13px">読み込み中...</div>
+      </div>
+    </div>`;
+}
+
+async function openClientAppealAxesDetail(clientId, clientName) {
+  appealAxesCurrentClientId = clientId;
+  document.getElementById('appeal-client-select-view').style.display = 'none';
+  const detailView = document.getElementById('appeal-axes-detail-view');
+  detailView.style.display = '';
+  document.getElementById('appeal-detail-client-name').textContent = clientName;
+  document.getElementById('axis-new-code').value = '';
+  document.getElementById('axis-new-name').value = '';
+  document.getElementById('axis-new-note').value = '';
+  document.getElementById('axis-new-expires').value = '';
+  document.getElementById('axis-add-status').textContent = '';
+  await loadClientAppealAxes(clientId);
+}
+
+function backToClientSelect() {
+  appealAxesCurrentClientId = null;
+  document.getElementById('appeal-client-select-view').style.display = '';
+  document.getElementById('appeal-axes-detail-view').style.display = 'none';
 }
 
 async function loadClientAppealAxes(clientId) {
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes`);
   const items = res.ok ? await res.json() : [];
-  const el = document.getElementById(`axes-list-${clientId}`);
+
+  // クライアント画面内（旧モーダル用）
+  const oldEl = document.getElementById(`axes-list-${clientId}`);
+  if (oldEl) {
+    if (!items.length) { oldEl.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">訴求軸が登録されていません</div>'; }
+    else oldEl.innerHTML = items.map(p => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <span><span style="color:var(--text-muted);font-size:11px;margin-right:8px">${p.code}</span>${p.name}</span>
+        <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientAppealAxis('${clientId}','${p.id}')">削除</button>
+      </div>`).join('');
+  }
+
+  // マスター管理詳細画面
+  const el = document.getElementById('axes-detail-list');
   if (!el) return;
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">訴求軸が登録されていません</div>'; return; }
-  el.innerHTML = items.map(p => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
-      <span><span style="color:var(--text-muted);font-size:11px;margin-right:8px">${p.code}</span>${p.name}</span>
-      <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientAppealAxis('${clientId}','${p.id}')">削除</button>
-    </div>`).join('');
+  if (!items.length) {
+    el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:16px 0">訴求軸が登録されていません</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:120px">コード</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:120px">有効期限</th>
+          <th style="padding:8px 12px;width:60px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(p => {
+          const expiry = p.expires_at ? p.expires_at.slice(0,10) : '—';
+          const expired = p.expires_at && p.expires_at < new Date().toISOString().slice(0,10);
+          return `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:10px 12px;font-weight:600;color:var(--em-dark)">${p.code}</td>
+            <td style="padding:10px 12px">${p.name}</td>
+            <td style="padding:10px 12px;color:var(--text-muted)">${p.note || '—'}</td>
+            <td style="padding:10px 12px;color:${expired ? '#A32D2D' : 'var(--text-muted)'}">${expiry}${expired ? ' ⚠️' : ''}</td>
+            <td style="padding:10px 12px">
+              <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientAppealAxis('${clientId}','${p.id}')">削除</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function addClientAppealAxis() {
+  const clientId = appealAxesCurrentClientId;
+  if (!clientId) return;
+  const code = document.getElementById('axis-new-code').value.trim();
+  const name = document.getElementById('axis-new-name').value.trim();
+  const note = document.getElementById('axis-new-note').value.trim();
+  const expires_at = document.getElementById('axis-new-expires').value || null;
+  const status = document.getElementById('axis-add-status');
+  if (!code || !name) { status.style.color = '#A32D2D'; status.textContent = 'コードと名称は必須です'; return; }
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note||null, expires_at })
+  });
+  if (res.ok) {
+    status.style.color = 'var(--em-dark)'; status.textContent = '追加しました';
+    document.getElementById('axis-new-code').value = '';
+    document.getElementById('axis-new-name').value = '';
+    document.getElementById('axis-new-note').value = '';
+    document.getElementById('axis-new-expires').value = '';
+    await loadClientAppealAxes(clientId);
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } else {
+    const d = await res.json(); status.style.color = '#A32D2D'; status.textContent = d.error || '追加に失敗しました';
+  }
 }
 
 function openClientAppealAxisModal(clientId, clientName) {
