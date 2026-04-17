@@ -2449,13 +2449,23 @@ function renderMemberList() {
     <tbody>
       ${visibleMembers.map((m, i) => {
         const team = allTeams.find(t => t.id === m.team_id);
-        const mkBar = (ranges, color) => {
-          if (!ranges || !ranges.length) return '<div style="width:120px;height:6px;background:#eee;border-radius:3px;position:relative"></div>';
-          const segs = ranges.map(r => {
-            const l = (r.from/24*100).toFixed(1), w = ((r.to-r.from)/24*100).toFixed(1);
+        const TICK_HOURS = [0,6,12,18,24];
+        const mkBar = (ranges, color, label) => {
+          const W = 160;
+          const segs = (ranges||[]).map(r => {
+            const l = (r.from/24*100).toFixed(2), w = ((r.to-r.from)/24*100).toFixed(2);
             return `<div style="position:absolute;left:${l}%;width:${w}%;height:100%;background:${color};border-radius:3px"></div>`;
           }).join('');
-          return `<div style="width:120px;height:6px;background:#e8f5f4;border-radius:3px;position:relative">${segs}</div>`;
+          const ticks = TICK_HOURS.map(h => {
+            const pct = (h/24*100).toFixed(2);
+            return `<div style="position:absolute;left:${pct}%;transform:translateX(-50%);font-size:9px;color:#aaa;line-height:1">${h}</div>`;
+          }).join('');
+          return `
+          <div style="width:${W}px">
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;font-weight:500">${label}</div>
+            <div style="position:relative;height:10px;background:#e8f5f4;border-radius:4px;margin-bottom:3px">${segs}</div>
+            <div style="position:relative;height:10px">${ticks}</div>
+          </div>`;
         };
         const fmtTip = ranges => ranges ? ranges.map(r=>`${r.from}:00〜${r.to}:00`).join(', ') : '休み';
         const rowBg = !m.is_active ? 'background:#FAFAFA' : (i % 2 === 0 ? '' : 'background:#FAFEFE');
@@ -2471,15 +2481,9 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
           <td style="padding:8px 12px">
-            <div style="display:flex;flex-direction:column;gap:4px">
-              <div style="display:flex;align-items:center;gap:6px" title="平日: ${fmtTip(m.weekday_hours)}">
-                <span style="font-size:10px;color:var(--text-muted);width:12px;flex-shrink:0">平</span>
-                ${mkBar(m.weekday_hours,'var(--em)')}
-              </div>
-              <div style="display:flex;align-items:center;gap:6px" title="土日祝: ${fmtTip(m.weekend_hours)}">
-                <span style="font-size:10px;color:var(--text-muted);width:12px;flex-shrink:0">休</span>
-                ${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1') : '<span style="font-size:10px;color:#bbb">休み</span>'}
-              </div>
+            <div style="display:flex;gap:16px">
+              <div title="平日: ${fmtTip(m.weekday_hours)}">${mkBar(m.weekday_hours,'var(--em)','平日')}</div>
+              <div title="土日祝: ${fmtTip(m.weekend_hours)}">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<div style="font-size:10px;color:var(--text-muted);font-weight:500;margin-bottom:2px">土日祝</div><div style="font-size:11px;color:#bbb;padding-top:4px">休み</div>'}</div>
             </div>
           </td>
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${m.note ? `<span title="${esc(m.note)}">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
