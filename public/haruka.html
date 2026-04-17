@@ -1251,11 +1251,30 @@ tr.row-help td{background:#FFFBF2}
   <div class="toolbar" style="position:sticky;top:80px;z-index:99">
     <div class="toolbar-row">
       <span style="font-size:14px;font-weight:600;color:var(--text)">マスター管理</span>
-      <span style="font-size:13px;color:var(--text-muted)">区分を選択して値を管理します</span>
     </div>
   </div>
-  <div style="padding:20px">
-    <div id="master-content"><div class="loading">読み込み中...</div></div>
+  <div style="display:flex;min-height:calc(100vh - 130px)">
+    <!-- 左サイドバー -->
+    <div style="width:200px;min-width:200px;border-right:1px solid var(--border);padding:16px 0;background:var(--surface)">
+      <div id="master-nav">
+        <div class="master-nav-item active" onclick="selectMasterNav('generic')" id="mnav-generic"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;color:var(--em-dark);background:var(--em-pale);border-left:3px solid var(--em-dark)">
+          区分マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('products')" id="mnav-products"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          商材マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('appeal_axes')" id="mnav-appeal_axes"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          訴求軸マスター
+        </div>
+      </div>
+    </div>
+    <!-- 右コンテンツ -->
+    <div style="flex:1;padding:20px;overflow:auto">
+      <div id="master-content"><div class="loading">読み込み中...</div></div>
+    </div>
   </div>
 </div>
 
@@ -3537,14 +3556,38 @@ let currentCategoryId = null;
 let masterItemEditingId = null;
 let masterCatEditingId = null;
 
+let currentMasterNav = 'generic';
+
+function selectMasterNav(type) {
+  currentMasterNav = type;
+  // サイドバーのアクティブ状態更新
+  ['generic','products','appeal_axes'].forEach(t => {
+    const el = document.getElementById(`mnav-${t}`);
+    if (!el) return;
+    const isActive = t === type;
+    el.style.color = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
+    el.style.background = isActive ? 'var(--em-pale)' : 'transparent';
+    el.style.borderLeft = isActive ? '3px solid var(--em-dark)' : '3px solid transparent';
+    el.style.fontWeight = isActive ? '500' : '400';
+  });
+  // コンテンツ切り替え
+  if (type === 'generic') {
+    renderMasterPage();
+  } else if (type === 'products') {
+    renderProductsMasterPage();
+  } else if (type === 'appeal_axes') {
+    renderAppealAxesMasterPage();
+  }
+}
+
 async function loadMasterPage() {
   const [catRes, itemRes] = await Promise.all([
     fetch(`${API}/master/categories`),
     fetch(`${API}/master/items`),
   ]);
-  masterCategories = await catRes.json();
-  masterItems      = await itemRes.json();
-  renderMasterPage();
+  masterCategories = catRes.ok ? await catRes.json() : [];
+  masterItems      = itemRes.ok ? await itemRes.json() : [];
+  selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
 }
 
 function renderMasterPage() {
@@ -3691,6 +3734,140 @@ function selectMasterCategory(id) {
   currentCategoryId = id;
   masterItemEditingId = null;
   renderMasterPage();
+}
+
+// 商材マスター（クライアント別）
+async function renderProductsMasterPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+
+  // クライアント一覧から商材マスターを表示
+  const clientsWithProducts = allClients.filter(c => c.status !== 'クライアント取引終了');
+
+  if (!clientsWithProducts.length) {
+    content.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center">クライアントがありません</div>';
+    return;
+  }
+
+  content.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+      クライアントごとの商材マスターを管理します。案件編集画面からも登録できます。
+    </div>
+    <div id="products-master-list">
+      ${clientsWithProducts.map(c => `
+        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:12px;overflow:hidden">
+          <div style="padding:12px 16px;background:var(--surface);font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center">
+            <span>${c.name}</span>
+            <button class="btn-sm" onclick="openClientProductModal('${c.id}','${c.name.replace(/'/g,"\\'")}')">＋ 商材追加</button>
+          </div>
+          <div id="products-list-${c.id}" style="padding:8px 16px">
+            <div class="loading" style="padding:8px 0;font-size:13px">読み込み中...</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+
+  // 各クライアントの商材を取得
+  for (const c of clientsWithProducts) {
+    loadClientProducts(c.id);
+  }
+}
+
+async function loadClientProducts(clientId) {
+  const res = await fetch(`${API}/clients/${clientId}/products`);
+  const items = res.ok ? await res.json() : [];
+  const el = document.getElementById(`products-list-${clientId}`);
+  if (!el) return;
+  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">商材が登録されていません</div>'; return; }
+  el.innerHTML = items.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <span><span style="color:var(--text-muted);font-size:11px;margin-right:8px">${p.code}</span>${p.name}</span>
+      <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientProduct('${clientId}','${p.id}')">削除</button>
+    </div>`).join('');
+}
+
+function openClientProductModal(clientId, clientName) {
+  const name = prompt(`【${clientName}】\n商材名を入力してください：`);
+  if (!name) return;
+  const code = prompt('コードを入力してください（例：P001）：');
+  if (!code) return;
+  fetch(`${API}/clients/${clientId}/products`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim(), code: code.trim() })
+  }).then(r => { if (r.ok) loadClientProducts(clientId); else alert('追加に失敗しました'); });
+}
+
+function deleteClientProduct(clientId, productId) {
+  if (!confirm('削除しますか？')) return;
+  fetch(`${API}/clients/${clientId}/products/${productId}`, { method: 'DELETE' })
+    .then(r => { if (r.ok) loadClientProducts(clientId); });
+}
+
+// 訴求軸マスター（クライアント別）
+async function renderAppealAxesMasterPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+
+  const clientsWithAxes = allClients.filter(c => c.status !== 'クライアント取引終了');
+
+  if (!clientsWithAxes.length) {
+    content.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center">クライアントがありません</div>';
+    return;
+  }
+
+  content.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+      クライアントごとの訴求軸マスターを管理します。案件編集画面からも登録できます。
+    </div>
+    <div>
+      ${clientsWithAxes.map(c => `
+        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:12px;overflow:hidden">
+          <div style="padding:12px 16px;background:var(--surface);font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center">
+            <span>${c.name}</span>
+            <button class="btn-sm" onclick="openClientAppealAxisModal('${c.id}','${c.name.replace(/'/g,"\\'")}')">＋ 訴求軸追加</button>
+          </div>
+          <div id="axes-list-${c.id}" style="padding:8px 16px">
+            <div class="loading" style="padding:8px 0;font-size:13px">読み込み中...</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+
+  for (const c of clientsWithAxes) {
+    loadClientAppealAxes(c.id);
+  }
+}
+
+async function loadClientAppealAxes(clientId) {
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`);
+  const items = res.ok ? await res.json() : [];
+  const el = document.getElementById(`axes-list-${clientId}`);
+  if (!el) return;
+  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">訴求軸が登録されていません</div>'; return; }
+  el.innerHTML = items.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <span><span style="color:var(--text-muted);font-size:11px;margin-right:8px">${p.code}</span>${p.name}</span>
+      <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientAppealAxis('${clientId}','${p.id}')">削除</button>
+    </div>`).join('');
+}
+
+function openClientAppealAxisModal(clientId, clientName) {
+  const name = prompt(`【${clientName}】\n訴求軸名を入力してください：`);
+  if (!name) return;
+  const code = prompt('コードを入力してください（例：A001）：');
+  if (!code) return;
+  fetch(`${API}/clients/${clientId}/appeal-axes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim(), code: code.trim() })
+  }).then(r => { if (r.ok) loadClientAppealAxes(clientId); else alert('追加に失敗しました'); });
+}
+
+function deleteClientAppealAxis(clientId, axisId) {
+  if (!confirm('削除しますか？')) return;
+  fetch(`${API}/clients/${clientId}/appeal-axes/${axisId}`, { method: 'DELETE' })
+    .then(r => { if (r.ok) loadClientAppealAxes(clientId); });
 }
 
 async function addMasterCat() {
