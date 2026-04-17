@@ -585,9 +585,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
-            <div style="display:flex;gap:8px">
-              <input class="form-input" id="c-file-name" placeholder="訴求タイプ選択後に自動生成されます" style="font-family:monospace;font-size:13px">
-              <button class="btn" onclick="generateFileName()" style="white-space:nowrap">再生成</button>
+            <div style="display:flex;gap:6px">
+              <input class="form-input" id="c-file-name" placeholder="訴求タイプ選択後に自動生成されます" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
+              <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
             </div>
             <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:3px">形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可</div>
