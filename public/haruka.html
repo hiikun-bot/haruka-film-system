@@ -598,7 +598,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
         <div class="form-group">
           <label class="form-label">最終納期</label>
-          <input class="form-input" id="c-final-deadline" type="date">
+          <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
         </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
@@ -673,7 +673,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
         <div class="form-group">
           <label class="form-label">最終納期</label>
-          <input class="form-input" id="bulk-final-deadline" type="date">
+          <input class="form-input" id="bulk-final-deadline" type="date" onchange="clampDraftToFinal('bulk-draft-deadline','bulk-final-deadline')">
         </div>
       </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:8px 0">10 本を一括登録します</div>
@@ -4309,15 +4309,32 @@ function getLastDayOfMonth() {
   return lastDay.toISOString().slice(0, 10);
 }
 
+function clampDraftToFinal(draftId, finalId) {
+  const draftEl = document.getElementById(draftId);
+  const finalEl = document.getElementById(finalId);
+  if (!draftEl || !finalEl || !finalEl.value) return;
+  if (draftEl.value > finalEl.value) draftEl.value = finalEl.value;
+}
+
+function getDefaultDraftDeadline(finalDeadline) {
+  const now = new Date();
+  const plusWeek = new Date(now);
+  plusWeek.setDate(plusWeek.getDate() + 7);
+  const plusWeekStr = plusWeek.toISOString().slice(0, 10);
+  // 今日+1週間が最終納期を超える場合は最終納期に合わせる
+  return finalDeadline && plusWeekStr > finalDeadline ? finalDeadline : plusWeekStr;
+}
+
 async function openCreateCreative() {
   const lastDay = getLastDayOfMonth();
+  const draftDay = getDefaultDraftDeadline(lastDay);
 
   // 個別登録の日付初期値
-  document.getElementById('c-draft-deadline').value = lastDay;
+  document.getElementById('c-draft-deadline').value = draftDay;
   document.getElementById('c-final-deadline').value = lastDay;
 
   // 一括登録の日付初期値
-  document.getElementById('bulk-draft-deadline').value = lastDay;
+  document.getElementById('bulk-draft-deadline').value = draftDay;
   document.getElementById('bulk-final-deadline').value = lastDay;
 
   // チームセレクトを初期化
