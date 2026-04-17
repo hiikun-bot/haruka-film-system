@@ -1036,6 +1036,10 @@ tr.row-help td{background:#FFFBF2}
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
                 <input class="form-input" id="cl-axis-note" placeholder="任意">
               </div>
+              <div style="flex-shrink:0;width:130px">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">有効期限日</div>
+                <input class="form-input" type="date" id="cl-axis-expires">
+              </div>
               <div style="flex-shrink:0;padding-top:18px">
                 <button class="btn-primary" style="white-space:nowrap" onclick="addClientAxis()">追加</button>
               </div>
@@ -1954,10 +1958,11 @@ async function renderClientAxes(clientId) {
         <span style="font-size:13px">${esc(a.name)}</span>
         ${a.note ? `<span style="font-size:12px;color:var(--text-muted)">${esc(a.note)}</span>` : ''}
       </span>
-      <span id="carow-edit-${a.id}" style="display:none;flex:1;gap:6px;align-items:center">
+      <span id="carow-edit-${a.id}" style="display:none;flex:1;gap:6px;align-items:center;flex-wrap:wrap">
         <input id="carow-code-${a.id}" class="form-input" value="${esc(a.code)}" style="width:70px">
         <input id="carow-name-${a.id}" class="form-input" value="${esc(a.name)}" style="flex:1">
         <input id="carow-note-${a.id}" class="form-input" value="${esc(a.note||'')}" style="flex:1" placeholder="備考">
+        <input id="carow-exp-${a.id}" class="form-input" type="date" value="${a.expires_at ? a.expires_at.slice(0,10) : ''}" style="width:140px" title="有効期限日">
       </span>
       <button class="btn-sm" onclick="startEditClientAxis('${a.id}')">編集</button>
       <button class="btn-sm" id="carow-save-btn-${a.id}" style="display:none" onclick="saveClientAxis('${clientId}','${a.id}')">保存</button>
@@ -1973,14 +1978,15 @@ function startEditClientAxis(aid) {
 }
 
 async function saveClientAxis(clientId, aid) {
-  const code = document.getElementById(`carow-code-${aid}`).value.trim();
-  const name = document.getElementById(`carow-name-${aid}`).value.trim();
-  const note = document.getElementById(`carow-note-${aid}`).value.trim();
+  const code     = document.getElementById(`carow-code-${aid}`).value.trim();
+  const name     = document.getElementById(`carow-name-${aid}`).value.trim();
+  const note     = document.getElementById(`carow-note-${aid}`).value.trim();
+  const expires_at = document.getElementById(`carow-exp-${aid}`)?.value || null;
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note || null })
+    body: JSON.stringify({ code, name, note: note || null, expires_at: expires_at || null })
   });
   if (res.ok) { renderClientAxes(clientId); }
   else { const e = await res.json(); alert('エラー: ' + e.error); }
@@ -1999,16 +2005,18 @@ async function addClientAxis() {
   const code = document.getElementById('cl-axis-code').value.trim();
   const name = document.getElementById('cl-axis-name').value.trim();
   const note = document.getElementById('cl-axis-note').value.trim();
+  const expires_at = document.getElementById('cl-axis-expires')?.value || null;
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note || null })
+    body: JSON.stringify({ code, name, note: note || null, expires_at: expires_at || null })
   });
   if (res.ok) {
     document.getElementById('cl-axis-code').value = '';
     document.getElementById('cl-axis-name').value = '';
     document.getElementById('cl-axis-note').value = '';
+    if (document.getElementById('cl-axis-expires')) document.getElementById('cl-axis-expires').value = '';
     renderClientAxes(clientId);
   } else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
@@ -4182,53 +4190,202 @@ function selectMasterCategory(id) {
 }
 
 // 商材マスター（クライアント別）
+let productsCurrentClientId = null;
+
 async function renderProductsMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
-
-  // クライアント一覧から商材マスターを表示
-  const clientsWithProducts = allClients.filter(c => c.status !== 'クライアント取引終了');
-
-  if (!clientsWithProducts.length) {
+  const clients = allClients.filter(c => c.status !== 'クライアント取引終了');
+  if (!clients.length) {
     content.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center">クライアントがありません</div>';
     return;
   }
-
   content.innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
-      クライアントごとの商材マスターを管理します。案件編集画面からも登録できます。
+    <div id="product-client-select-view">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">クライアントを選択して商材を管理します。</div>
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        ${clients.map(c => `
+          <button onclick="openClientProductsDetail('${c.id}',${JSON.stringify(c.name)})"
+            style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
+                   font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;
+                   min-width:160px;text-align:center;transition:all .15s;line-height:1.4"
+            onmouseover="this.style.borderColor='var(--em-dark)';this.style.background='var(--em-pale)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--surface)'">
+            ${c.name}
+          </button>
+        `).join('')}
+      </div>
     </div>
-    <div id="products-master-list">
-      ${clientsWithProducts.map(c => `
-        <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:12px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center">
-            <span>${c.name}</span>
-            <button class="btn-sm" onclick="openClientProductModal('${c.id}','${c.name.replace(/'/g,"\\'")}')">＋ 商材追加</button>
+
+    <div id="product-detail-view" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <button class="btn-sm" onclick="backToClientSelectProducts()">← 戻る</button>
+        <span id="product-detail-client-name" style="font-size:17px;font-weight:700;color:var(--text-main)"></span>
+        <span style="font-size:12px;color:var(--text-muted)">の商材マスター</span>
+      </div>
+
+      <!-- 追加フォーム -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 商材を追加</div>
+        <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px;gap:10px;align-items:end">
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
+            <input class="form-input" id="prod-new-code" placeholder="P001">
           </div>
-          <div id="products-list-${c.id}" style="padding:8px 16px">
-            <div class="loading" style="padding:8px 0;font-size:13px">読み込み中...</div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">商材名称 *</label>
+            <input class="form-input" id="prod-new-name" placeholder="商材の名称">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">備考</label>
+            <input class="form-input" id="prod-new-note" placeholder="任意">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限日</label>
+            <input class="form-input" type="date" id="prod-new-expires">
           </div>
         </div>
-      `).join('')}
-    </div>`;
+        <button class="btn" onclick="addClientProductNew()" style="margin-top:12px">追加する</button>
+        <span id="prod-add-status" style="font-size:12px;margin-left:10px"></span>
+      </div>
 
-  // 各クライアントの商材を取得
-  for (const c of clientsWithProducts) {
-    loadClientProducts(c.id);
-  }
+      <!-- 一覧 -->
+      <div id="products-detail-list" style="min-height:60px">
+        <div class="loading" style="font-size:13px">読み込み中...</div>
+      </div>
+    </div>`;
+}
+
+async function openClientProductsDetail(clientId, clientName) {
+  productsCurrentClientId = clientId;
+  document.getElementById('product-client-select-view').style.display = 'none';
+  document.getElementById('product-detail-view').style.display = '';
+  document.getElementById('product-detail-client-name').textContent = clientName;
+  ['prod-new-code','prod-new-name','prod-new-note'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('prod-new-expires').value = '';
+  document.getElementById('prod-add-status').textContent = '';
+  await loadClientProducts(clientId);
+}
+
+function backToClientSelectProducts() {
+  productsCurrentClientId = null;
+  document.getElementById('product-client-select-view').style.display = '';
+  document.getElementById('product-detail-view').style.display = 'none';
 }
 
 async function loadClientProducts(clientId) {
   const res = await fetch(`${API}/clients/${clientId}/products`);
   const items = res.ok ? await res.json() : [];
-  const el = document.getElementById(`products-list-${clientId}`);
+
+  // クライアントモーダル内（旧タブ用）
+  const oldEl = document.getElementById(`products-list-${clientId}`);
+  if (oldEl) {
+    oldEl.innerHTML = !items.length
+      ? '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">商材が登録されていません</div>'
+      : items.map(p => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+            <span><span style="color:var(--text-muted);font-size:11px;margin-right:8px">${p.code}</span>${p.name}</span>
+            <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientProduct('${clientId}','${p.id}')">削除</button>
+          </div>`).join('');
+  }
+
+  // マスター管理詳細画面
+  const el = document.getElementById('products-detail-list');
   if (!el) return;
-  if (!items.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">商材が登録されていません</div>'; return; }
-  el.innerHTML = items.map(p => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
-      <span><span style="color:var(--text-muted);font-size:11px;margin-right:8px">${p.code}</span>${p.name}</span>
-      <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientProduct('${clientId}','${p.id}')">削除</button>
-    </div>`).join('');
+  if (!items.length) {
+    el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:16px 0">商材が登録されていません</div>';
+    return;
+  }
+  const today = new Date().toISOString().slice(0,10);
+  el.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:130px">有効期限</th>
+          <th style="padding:8px 12px;width:110px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(p => {
+          const expiry = p.expires_at ? p.expires_at.slice(0,10) : '';
+          const expired = expiry && expiry < today;
+          return `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 12px">
+              <span id="pdv-code-${p.id}" style="font-weight:600;color:var(--em-dark)">${p.code}</span>
+              <input id="pdi-code-${p.id}" class="form-input" value="${p.code}" style="display:none;width:90px;font-size:12px">
+            </td>
+            <td style="padding:8px 12px">
+              <span id="pdv-name-${p.id}">${p.name}</span>
+              <input id="pdi-name-${p.id}" class="form-input" value="${p.name}" style="display:none;width:100%">
+            </td>
+            <td style="padding:8px 12px;color:var(--text-muted)">
+              <span id="pdv-note-${p.id}">${p.note || '—'}</span>
+              <input id="pdi-note-${p.id}" class="form-input" value="${p.note||''}" placeholder="備考" style="display:none;width:100%">
+            </td>
+            <td style="padding:8px 12px;color:${expired ? '#A32D2D' : 'var(--text-muted)'}">
+              <span id="pdv-exp-${p.id}">${expiry || '—'}${expired ? ' ⚠️' : ''}</span>
+              <input id="pdi-exp-${p.id}" class="form-input" type="date" value="${expiry}" style="display:none;width:130px">
+            </td>
+            <td style="padding:8px 12px;display:flex;gap:4px">
+              <button id="pdbtn-edit-${p.id}" class="btn-sm" onclick="startEditProduct('${clientId}','${p.id}')">編集</button>
+              <button id="pdbtn-save-${p.id}" class="btn-sm" style="display:none;color:var(--em-dark)" onclick="saveProduct('${clientId}','${p.id}')">保存</button>
+              <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientProduct('${clientId}','${p.id}')">削除</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function startEditProduct(clientId, id) {
+  ['code','name','note','exp'].forEach(f => {
+    document.getElementById(`pdv-${f}-${id}`).style.display = 'none';
+    document.getElementById(`pdi-${f}-${id}`).style.display = '';
+  });
+  document.getElementById(`pdbtn-edit-${id}`).style.display = 'none';
+  document.getElementById(`pdbtn-save-${id}`).style.display = '';
+}
+
+async function saveProduct(clientId, id) {
+  const code     = document.getElementById(`pdi-code-${id}`).value.trim();
+  const name     = document.getElementById(`pdi-name-${id}`).value.trim();
+  const note     = document.getElementById(`pdi-note-${id}`).value.trim();
+  const expires_at = document.getElementById(`pdi-exp-${id}`).value || null;
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/clients/${clientId}/products/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note||null, expires_at })
+  });
+  if (res.ok) { await loadClientProducts(clientId); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function addClientProductNew() {
+  const clientId = productsCurrentClientId;
+  if (!clientId) return;
+  const code = document.getElementById('prod-new-code').value.trim();
+  const name = document.getElementById('prod-new-name').value.trim();
+  const note = document.getElementById('prod-new-note').value.trim();
+  const expires_at = document.getElementById('prod-new-expires').value || null;
+  const status = document.getElementById('prod-add-status');
+  if (!code || !name) { status.style.color = '#A32D2D'; status.textContent = 'コードと名称は必須です'; return; }
+  const res = await fetch(`${API}/clients/${clientId}/products`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note||null, expires_at })
+  });
+  if (res.ok) {
+    status.style.color = 'var(--em-dark)'; status.textContent = '追加しました';
+    ['prod-new-code','prod-new-name','prod-new-note'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('prod-new-expires').value = '';
+    await loadClientProducts(clientId);
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } else {
+    const d = await res.json(); status.style.color = '#A32D2D'; status.textContent = d.error || '追加に失敗しました';
+  }
 }
 
 function openClientProductModal(clientId, clientName) {
@@ -4237,8 +4394,7 @@ function openClientProductModal(clientId, clientName) {
   const code = prompt('コードを入力してください（例：P001）：');
   if (!code) return;
   fetch(`${API}/clients/${clientId}/products`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name.trim(), code: code.trim() })
   }).then(r => { if (r.ok) loadClientProducts(clientId); else alert('追加に失敗しました'); });
 }
@@ -4361,28 +4517,43 @@ async function loadClientAppealAxes(clientId) {
     el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:16px 0">訴求軸が登録されていません</div>';
     return;
   }
+  const today = new Date().toISOString().slice(0,10);
   el.innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="border-bottom:2px solid var(--border);text-align:left">
-          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:120px">コード</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
-          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:120px">有効期限</th>
-          <th style="padding:8px 12px;width:60px"></th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:130px">有効期限</th>
+          <th style="padding:8px 12px;width:110px"></th>
         </tr>
       </thead>
       <tbody>
         ${items.map(p => {
-          const expiry = p.expires_at ? p.expires_at.slice(0,10) : '—';
-          const expired = p.expires_at && p.expires_at < new Date().toISOString().slice(0,10);
+          const expiry = p.expires_at ? p.expires_at.slice(0,10) : '';
+          const expired = expiry && expiry < today;
           return `
-          <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:10px 12px;font-weight:600;color:var(--em-dark)">${p.code}</td>
-            <td style="padding:10px 12px">${p.name}</td>
-            <td style="padding:10px 12px;color:var(--text-muted)">${p.note || '—'}</td>
-            <td style="padding:10px 12px;color:${expired ? '#A32D2D' : 'var(--text-muted)'}">${expiry}${expired ? ' ⚠️' : ''}</td>
-            <td style="padding:10px 12px">
+          <tr id="axrow-${p.id}" style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 12px">
+              <span id="axv-code-${p.id}" style="font-weight:600;color:var(--em-dark)">${p.code}</span>
+              <input id="axi-code-${p.id}" class="form-input" value="${p.code}" style="display:none;width:90px;font-size:12px">
+            </td>
+            <td style="padding:8px 12px">
+              <span id="axv-name-${p.id}">${p.name}</span>
+              <input id="axi-name-${p.id}" class="form-input" value="${p.name}" style="display:none;width:100%">
+            </td>
+            <td style="padding:8px 12px;color:var(--text-muted)">
+              <span id="axv-note-${p.id}">${p.note || '—'}</span>
+              <input id="axi-note-${p.id}" class="form-input" value="${p.note||''}" placeholder="備考" style="display:none;width:100%">
+            </td>
+            <td style="padding:8px 12px;color:${expired ? '#A32D2D' : 'var(--text-muted)'}">
+              <span id="axv-exp-${p.id}">${expiry || '—'}${expired ? ' ⚠️' : ''}</span>
+              <input id="axi-exp-${p.id}" class="form-input" type="date" value="${expiry}" style="display:none;width:130px">
+            </td>
+            <td style="padding:8px 12px;display:flex;gap:4px">
+              <button id="axbtn-edit-${p.id}" class="btn-sm" onclick="startEditAppealAxis('${clientId}','${p.id}')">編集</button>
+              <button id="axbtn-save-${p.id}" class="btn-sm" style="display:none;color:var(--em-dark)" onclick="saveAppealAxis('${clientId}','${p.id}')">保存</button>
               <button class="btn-sm" style="color:#A32D2D" onclick="deleteClientAppealAxis('${clientId}','${p.id}')">削除</button>
             </td>
           </tr>`;
@@ -4415,6 +4586,29 @@ async function addClientAppealAxis() {
   } else {
     const d = await res.json(); status.style.color = '#A32D2D'; status.textContent = d.error || '追加に失敗しました';
   }
+}
+
+function startEditAppealAxis(clientId, id) {
+  ['code','name','note','exp'].forEach(f => {
+    document.getElementById(`axv-${f}-${id}`).style.display = 'none';
+    document.getElementById(`axi-${f}-${id}`).style.display = '';
+  });
+  document.getElementById(`axbtn-edit-${id}`).style.display = 'none';
+  document.getElementById(`axbtn-save-${id}`).style.display = '';
+}
+
+async function saveAppealAxis(clientId, id) {
+  const code     = document.getElementById(`axi-code-${id}`).value.trim();
+  const name     = document.getElementById(`axi-name-${id}`).value.trim();
+  const note     = document.getElementById(`axi-note-${id}`).value.trim();
+  const expires_at = document.getElementById(`axi-exp-${id}`).value || null;
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, note: note||null, expires_at })
+  });
+  if (res.ok) { await loadClientAppealAxes(clientId); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
 function openClientAppealAxisModal(clientId, clientName) {

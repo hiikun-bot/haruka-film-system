@@ -1327,19 +1327,19 @@ router.get('/clients/:id/products', async (req, res) => {
 });
 // クライアント商材作成
 router.post('/clients/:id/products', async (req, res) => {
-  const { code, name, note, sort_order } = req.body;
+  const { code, name, note, expires_at, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('client_products')
-    .insert({ client_id: req.params.id, code, name, note: note||null, sort_order: parseInt(sort_order)||0 })
+    .insert({ client_id: req.params.id, code, name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0 })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 // クライアント商材更新
 router.put('/clients/:id/products/:pid', async (req, res) => {
-  const { code, name, note, sort_order, is_active } = req.body;
+  const { code, name, note, expires_at, sort_order, is_active } = req.body;
   const { data, error } = await supabase.from('client_products')
-    .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
+    .update({ code, name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
     .eq('id', req.params.pid).eq('client_id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
