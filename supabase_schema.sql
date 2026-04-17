@@ -383,6 +383,12 @@ CREATE TABLE IF NOT EXISTS project_client_fees (
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(project_id)
 );
+-- ==================== 認証用カラム追加（Supabase認証移行） ====================
+-- パスワード認証・Google OAuth をSupabaseで完結させる
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
 -- ==================== invitations ====================
 -- 招待トークン（Supabase永続化。RailwayのSQLiteは再デプロイでリセットされるため移行）
 CREATE TABLE IF NOT EXISTS invitations (

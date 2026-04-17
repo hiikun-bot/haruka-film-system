@@ -13,7 +13,7 @@ const axios = require('axios');
 const path = require('path');
 
 const { members, projects, projectMemos, editorRanks, projectRates, deliveries, comments, knowledge, invoices, assets, videoComments, users, invitations, uid } = require('./db/db');
-const { passport: passportInstance, requireAuth, requireLevel, registerWithInvitation, ROLES } = require('./auth');
+const { passport: passportInstance, requireAuth, requireLevel, ROLES } = require('./auth');
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -822,24 +822,24 @@ app.post('/api/invitations/register', async (req, res) => {
     if (inv.used) throw new Error('この招待リンクはすでに使用されています');
     if (new Date(inv.expires_at) < new Date()) throw new Error('招待リンクの有効期限が切れています（24時間）');
 
-    // SQLite にユーザー作成（セッション認証用）
-    const existing = users.byEmail(inv.email);
+    // Supabase に既存ユーザーがいないか確認
+    const { data: existing } = await supabase.from('users').select('id').eq('email', inv.email).maybeSingle();
     if (existing) throw new Error('このメールアドレスはすでに登録済みです');
-    const passwordHash = await bcrypt.hash(password, 12);
-    const sqliteUser = users.create({ name, email: inv.email, role: inv.role, passwordHash });
 
-    // Supabase にユーザー作成（アプリデータ用 / IDはSupabaseのUUIDを自動生成）
-    const { error: sbErr } = await supabase.from('users').insert({
-      email: inv.email, full_name: name, role: inv.role, is_active: true
-    });
-    if (sbErr) console.error('[invite register] Supabase user insert error:', sbErr.message);
+    // パスワードハッシュ化してSupabaseに登録（SQLite不要）
+    const passwordHash = await bcrypt.hash(password, 12);
+    const { data: newUser, error: sbErr } = await supabase.from('users').insert({
+      email: inv.email, full_name: name, role: inv.role,
+      is_active: true, password_hash: passwordHash
+    }).select().single();
+    if (sbErr) throw new Error('アカウントの作成に失敗しました: ' + sbErr.message);
 
     // 招待を使用済みにする
     await supabase.from('invitations').update({ used: true, used_at: new Date().toISOString() }).eq('token', token);
 
-    req.logIn(sqliteUser, err => {
+    req.logIn(newUser, err => {
       if (err) return res.status(500).json({ error: 'ログインに失敗しました' });
-      res.json({ ok: true, user: safeUser(sqliteUser) });
+      res.json({ ok: true, user: safeUser(newUser) });
     });
   } catch(e) {
     res.status(400).json({ error: e.message });
@@ -888,7 +888,9 @@ app.post('/api/users/change-password', requireAuth, async (req, res) => {
 // セーフユーザー: パスワードハッシュなど機密情報を除いたユーザーオブジェクト
 function safeUser(u) {
   if (!u) return null;
-  const { password_hash, ...safe } = u;
+  const { password_hash, google_id, ...safe } = u;
+  // フロントエンドが参照する name フィールドを補完
+  if (!safe.name && safe.full_name) safe.name = safe.full_name;
   return safe;
 }
 
