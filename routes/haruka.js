@@ -124,7 +124,7 @@ router.get('/projects/:id', async (req, res) => {
 router.post('/projects', async (req, res) => {
   const {
     client_id, name, status, producer_id, director_id,
-    sheet_url, drive_folder_url, regulation_url, admin_note, start_date, end_date,
+    sheet_url, regulation_url, admin_note, start_date, end_date,
     chatwork_room_id, slack_team_id, slack_channel_id,
     deadline_unit, deadline_weekday
   } = req.body;
@@ -137,7 +137,6 @@ router.post('/projects', async (req, res) => {
       producer_id: producer_id || null,
       director_id: director_id || null,
       sheet_url: sheet_url || null,
-      drive_folder_url: drive_folder_url || null,
       regulation_url: regulation_url || null,
       admin_note: admin_note || null,
       start_date: start_date || null,
@@ -159,7 +158,7 @@ router.post('/projects', async (req, res) => {
 router.put('/projects/:id', async (req, res) => {
   const {
     name, status, producer_id, director_id,
-    sheet_url, drive_folder_url, regulation_url, admin_note, start_date, end_date,
+    sheet_url, regulation_url, admin_note, start_date, end_date,
     chatwork_room_id, slack_team_id, slack_channel_id, is_hidden,
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday
@@ -169,7 +168,6 @@ router.put('/projects/:id', async (req, res) => {
     producer_id: producer_id || null,
     director_id: director_id || null,
     sheet_url: sheet_url || null,
-    drive_folder_url: drive_folder_url || null,
     regulation_url: regulation_url || null,
     admin_note: admin_note || null,
     start_date: start_date || null,

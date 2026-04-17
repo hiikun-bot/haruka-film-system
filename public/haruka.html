@@ -1768,9 +1768,6 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
         <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
 
-        <div id="cd-drive-warning" style="display:none;background:#FFF3F3;border:0.5px solid #F09595;border-radius:8px;padding:10px 12px;font-size:12px;color:#A32D2D;margin-bottom:12px">
-          Drive連携が未設定です。マスター管理 → システム設定 から Google Drive ルートフォルダ URL を設定してください。
-        </div>
 
         <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:0">
           ファイルを選択（動画・画像）
@@ -1879,7 +1876,6 @@ function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
-let _systemDriveConfigured = false;
 let currentClient = 'all', currentView = 'all', searchText = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
@@ -1903,10 +1899,6 @@ async function init() {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
-  // システム設定（Drive連携状態）を取得
-  fetch(`${API}/system-settings`).then(r => r.ok ? r.json() : {}).then(s => {
-    _systemDriveConfigured = !!(s.drive_root_folder_id);
-  }).catch(() => {});
   await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
   loadDashboard();
 }
@@ -5864,9 +5856,6 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-upload-preview').style.display = 'none';
   document.getElementById('cd-upload-status').textContent = '';
   uploadFileData = null;
-
-  // Drive 未設定の警告（システム設定のルートフォルダIDで判定）
-  document.getElementById('cd-drive-warning').style.display = _systemDriveConfigured ? 'none' : '';
 
   // レギュレーションシートリンク
   const regulationUrl = c.projects?.regulation_url;
