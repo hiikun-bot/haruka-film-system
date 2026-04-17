@@ -292,6 +292,102 @@ router.post('/projects/:id/rate-extras', async (req, res) => {
   res.json(data);
 });
 
+// クライアント報酬設定 取得
+router.get('/projects/:id/client-fee', async (req, res) => {
+  const { data, error } = await supabase
+    .from('project_client_fees')
+    .select('*')
+    .eq('project_id', req.params.id)
+    .single();
+  if (error && error.code !== 'PGRST116') return res.status(500).json({ error: error.message });
+  res.json(data || null);
+});
+
+// クライアント報酬設定 保存（upsert）
+router.post('/projects/:id/client-fee', async (req, res) => {
+  const { video_unit_price, design_unit_price, fixed_budget, use_fixed_budget, note } = req.body;
+  const { data, error } = await supabase
+    .from('project_client_fees')
+    .upsert({
+      project_id: req.params.id,
+      video_unit_price: video_unit_price || 0,
+      design_unit_price: design_unit_price || 0,
+      fixed_budget: fixed_budget || null,
+      use_fixed_budget: use_fixed_budget || false,
+      note: note || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'project_id' })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ダッシュボード用：今月の案件売上サマリー
+router.get('/dashboard/revenue-summary', async (req, res) => {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+
+  // 今月納期のクリエイティブを取得
+  const { data: creatives, error: cErr } = await supabase
+    .from('creatives')
+    .select('id, project_id, status, creative_type, final_deadline')
+    .gte('final_deadline', startOfMonth)
+    .lte('final_deadline', endOfMonth);
+  if (cErr) return res.status(500).json({ error: cErr.message });
+
+  // クライアント報酬設定を取得
+  const projectIds = [...new Set((creatives || []).map(c => c.project_id))];
+  let fees = [];
+  if (projectIds.length) {
+    const { data: feeData } = await supabase
+      .from('project_client_fees')
+      .select('*')
+      .in('project_id', projectIds);
+    fees = feeData || [];
+  }
+
+  // 集計
+  const feeMap = {};
+  fees.forEach(f => { feeMap[f.project_id] = f; });
+
+  let plannedRevenue = 0;
+  let actualRevenue = 0;
+  let totalCreatives = 0;
+  let completedCreatives = 0;
+
+  (creatives || []).forEach(c => {
+    const fee = feeMap[c.project_id];
+    if (!fee) return;
+    const unitPrice = c.creative_type === 'design' ? fee.design_unit_price : fee.video_unit_price;
+    const price = fee.use_fixed_budget ? 0 : (unitPrice || 0); // 固定予算は別途集計
+    totalCreatives++;
+    plannedRevenue += price;
+    if (c.status === '納品') {
+      completedCreatives++;
+      actualRevenue += price;
+    }
+  });
+
+  // 固定予算案件の集計（重複カウント防止）
+  const fixedProjects = fees.filter(f => f.use_fixed_budget && f.fixed_budget);
+  fixedProjects.forEach(f => {
+    plannedRevenue += f.fixed_budget;
+    const projectCreatives = (creatives || []).filter(c => c.project_id === f.project_id);
+    const allDone = projectCreatives.length > 0 && projectCreatives.every(c => c.status === '納品');
+    if (allDone) actualRevenue += f.fixed_budget;
+  });
+
+  res.json({
+    totalCreatives,
+    completedCreatives,
+    plannedRevenue,
+    actualRevenue,
+    month: `${now.getFullYear()}年${now.getMonth() + 1}月`
+  });
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
