@@ -130,7 +130,9 @@ tr.row-help td{background:#FFFBF2}
 .form-label{font-size:13px;color:var(--text-muted);margin-bottom:6px;display:block;font-weight:500}
 .form-input{width:100%;font-size:14px;padding:9px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface);color:var(--text);outline:none}
 .form-input:focus{border-color:var(--em)}
+.form-input::placeholder{color:#bfc8cc}
 .form-select{width:100%;font-size:14px;padding:9px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text);outline:none}
+input::placeholder,textarea::placeholder{color:#bfc8cc}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .btn{font-size:13px;padding:8px 18px;border-radius:8px;border:0.5px solid var(--border);background:transparent;color:var(--em-dark);cursor:pointer}
 .btn-primary{background:var(--em);color:#fff;border:none;font-size:14px;padding:9px 22px;border-radius:8px;cursor:pointer;font-weight:500}
@@ -4632,7 +4634,7 @@ async function renderAppealAxesMasterPage() {
         <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px;gap:10px;align-items:end">
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
-            <input class="form-input" id="axis-new-code" placeholder="A001">
+            <input class="form-input" id="axis-new-code" placeholder="ap001">
           </div>
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">訴求軸名称 *</label>
@@ -4797,7 +4799,7 @@ async function saveAppealAxis(clientId, id) {
 function openClientAppealAxisModal(clientId, clientName) {
   const name = prompt(`【${clientName}】\n訴求軸名を入力してください：`);
   if (!name) return;
-  const code = prompt('コードを入力してください（例：A001）：');
+  const code = prompt('コードを入力してください（例：ap001）：');
   if (!code) return;
   fetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST',
