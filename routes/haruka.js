@@ -1569,6 +1569,70 @@ router.delete('/master/items/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== ダッシュボード 予実管理 ====================
+
+// 今月の予実サマリー
+router.get('/dashboard/monthly-forecast', async (req, res) => {
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
+
+  const { data: cycles, error: cyclesError } = await supabase
+    .from('project_cycles')
+    .select(`
+      *,
+      projects (id, name, client_id, clients(name)),
+      project_client_fees (video_unit_price, design_unit_price, fixed_budget, use_fixed_budget)
+    `)
+    .eq('year', year)
+    .eq('month', month);
+
+  if (cyclesError) return res.status(500).json({ error: cyclesError.message });
+
+  const result = await Promise.all((cycles || []).map(async cycle => {
+    const { data: creatives } = await supabase
+      .from('creatives')
+      .select('id, creative_type')
+      .eq('cycle_id', cycle.id);
+
+    const videoCount = (creatives || []).filter(c =>
+      c.creative_type && (c.creative_type.includes('動画') || c.creative_type.toLowerCase().includes('video'))
+    ).length;
+    const designCount = (creatives || []).filter(c =>
+      c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))
+    ).length;
+
+    const fee = cycle.project_client_fees;
+    const videoUnitPrice = fee?.video_unit_price || 0;
+    const designUnitPrice = fee?.design_unit_price || 0;
+
+    let planned;
+    if (fee?.use_fixed_budget && fee?.fixed_budget) {
+      planned = fee.fixed_budget;
+    } else {
+      planned = (cycle.planned_video_count || 0) * videoUnitPrice
+              + (cycle.planned_design_count || 0) * designUnitPrice;
+    }
+
+    const actual = videoCount * videoUnitPrice + designCount * designUnitPrice;
+
+    return {
+      project_id: cycle.project_id,
+      project_name: cycle.projects?.name,
+      client_name: cycle.projects?.clients?.name,
+      planned_video: cycle.planned_video_count || 0,
+      planned_design: cycle.planned_design_count || 0,
+      actual_video: videoCount,
+      actual_design: designCount,
+      planned_amount: planned,
+      actual_amount: actual,
+      video_unit_price: videoUnitPrice,
+      design_unit_price: designUnitPrice,
+    };
+  }));
+
+  res.json(result);
+});
+
 // ==================== クリエイティブ バージョン履歴 ====================
 
 // バージョン履歴一覧取得
