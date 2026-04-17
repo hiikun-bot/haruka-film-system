@@ -5768,15 +5768,26 @@ async function loadCreativeFiles(creativeId) {
   list.innerHTML = files.map(f => {
     const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
     const canPreview = !!driveFileId;
+    const checkBtnStyle = canPreview
+      ? `background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;box-shadow:0 3px 12px rgba(62,207,202,0.45);`
+      : `background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);`;
+    const checkBtnClick = canPreview
+      ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}')`
+      : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}')`;
+    const checkBtnLabel = canPreview ? '▶ チェックする' : '💬 コメントする';
     return `
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px">
-      <span style="font-family:monospace;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
-      ${f.width && f.height ? `<span style="color:var(--text-muted);white-space:nowrap;font-size:12px">${f.width}×${f.height}</span>` : ''}
-      <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
-      ${canPreview
-        ? `<button onclick="openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}')" style="background:var(--em);color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600">▶ 確認</button>`
-        : `<button onclick="openFilePreview(null,'${esc(f.generated_name)}','','${f.id}')" style="background:var(--surface);color:var(--text-muted);border:0.5px solid var(--border);border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap">💬 コメント</button>`}
-      ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:3px 8px;border:0.5px solid var(--em);border-radius:6px;white-space:nowrap">↗ Drive</a>` : ''}
+    <div style="background:var(--white);border:0.5px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:0.5px solid var(--border)">
+        <span style="font-family:monospace;font-size:12px;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
+        ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
+        <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
+        ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
+      </div>
+      <div style="padding:10px 14px;background:${canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
+        <button onclick="${checkBtnClick}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+          ${checkBtnLabel}
+        </button>
+      </div>
     </div>`;
   }).join('');
 }
