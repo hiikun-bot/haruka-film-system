@@ -1101,6 +1101,16 @@ tr.row-help td{background:#FFFBF2}
             </div>
             <input type="hidden" id="p-drive-folder-url">
           </div>
+          <div class="form-group" style="margin-bottom:0;margin-top:10px">
+            <label class="form-label" style="display:flex;align-items:center;gap:5px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/><path d="M16 13H8m8 4H8m2-8H8" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+              レギュレーションシート <span style="color:var(--text-muted);font-weight:400">（任意）</span>
+            </label>
+            <div style="display:flex;gap:6px">
+              <input class="form-input" id="p-regulation-url" type="url" placeholder="Google ドキュメント / ドライブの URL" style="flex:1">
+              <button type="button" class="btn" onclick="(()=>{const u=document.getElementById('p-regulation-url').value.trim();if(u)window.open(u,'_blank');})()" style="white-space:nowrap">開く</button>
+            </div>
+          </div>
         </div>
 
         <!-- 通知連携 -->
@@ -1503,6 +1513,7 @@ async function loadProjects() {
               </div>
             </div>
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
+            ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
             <button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>
@@ -2655,6 +2666,7 @@ function openProjectModal(preClientId) {
   document.getElementById('p-start-date').value = '';
   document.getElementById('p-end-date').value = '';
   document.getElementById('p-sheet-url').value = '';
+  document.getElementById('p-regulation-url').value = '';
   document.getElementById('p-drive-url-input').value = '';
   document.getElementById('p-drive-folder-url').value = '';
   document.getElementById('p-drive-folder-result').style.display = 'none';
@@ -2691,6 +2703,7 @@ function openEditProject(p) {
   document.getElementById('p-producer-id').value = p.producer_id || '';
   document.getElementById('p-director-id').value = p.director_id || '';
   document.getElementById('p-sheet-url').value = p.sheet_url || '';
+  document.getElementById('p-regulation-url').value = p.regulation_url || '';
   const driveUrl = p.drive_folder_url || '';
   document.getElementById('p-drive-url-input').value = driveUrl;
   document.getElementById('p-drive-folder-url').value = driveUrl;
@@ -2883,6 +2896,7 @@ async function submitProject() {
   const producer_id = document.getElementById('p-producer-id').value || null;
   const director_id = document.getElementById('p-director-id').value || null;
   const sheet_url = document.getElementById('p-sheet-url').value.trim() || null;
+  const regulation_url = document.getElementById('p-regulation-url').value.trim() || null;
   const drive_folder_url = document.getElementById('p-drive-folder-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
   const slack_team_id = document.getElementById('p-slack-team-id').value.trim() || null;
@@ -2913,7 +2927,7 @@ async function submitProject() {
   const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, drive_folder_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes })
   });
 
   btn.textContent = origText; btn.disabled = false;

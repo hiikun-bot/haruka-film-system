@@ -356,3 +356,6 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_team_id TEXT;
 
 -- projects_status_check 制約が存在する場合は削除（アプリ側でバリデーション済み）
 ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
+
+-- projects にレギュレーションシートURL追加
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS regulation_url TEXT;
