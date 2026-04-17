@@ -228,6 +228,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-btn" onclick="showPage('teams',this)">チーム</button>
     <button class="nav-btn" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" onclick="showPage('invoices',this)">請求書</button>
+    <button class="nav-btn" onclick="showPage('knowledge',this)">ナレッジ</button>
     <button class="nav-btn" id="nav-master" onclick="showPage('master',this)" style="display:none">マスター</button>
   </div>
   <div class="header-right">
@@ -1603,6 +1604,26 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ナレッジページ -->
+<div id="page-knowledge" class="page">
+  <div class="toolbar" style="position:sticky;top:88px;z-index:99">
+    <div class="toolbar-row" style="flex-wrap:wrap;gap:10px">
+      <span style="font-size:14px;font-weight:600;color:var(--text)">📚 ナレッジ</span>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select class="form-select" id="kn-filter-category" onchange="loadKnowledgePage()" style="width:180px;font-size:13px">
+          <option value="">すべてのカテゴリー</option>
+        </select>
+        <input class="form-input" id="kn-filter-text" placeholder="キーワード検索..." oninput="loadKnowledgePage()" style="width:200px;font-size:13px">
+      </div>
+    </div>
+  </div>
+  <div style="padding:20px 24px">
+    <div id="kn-list" style="max-width:900px;margin:0 auto">
+      <div class="loading">読み込み中...</div>
+    </div>
+  </div>
+</div>
+
 <!-- クリエイティブ詳細モーダル -->
 <div class="modal-overlay" id="modal-creative-detail">
   <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
@@ -1754,6 +1775,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
         <!-- コメント入力 -->
         <div id="fp-comment-input-area" style="padding:12px;border-top:1px solid var(--border);flex-shrink:0">
+          <select id="fp-comment-category" class="form-select" style="width:100%;font-size:12px;margin-bottom:6px">
+            <option value="">カテゴリーを選択（任意）</option>
+          </select>
           <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border);border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='var(--em)'" onblur="this.style.borderColor='var(--border)'"></textarea>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px">
             <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);cursor:pointer;flex-shrink:0">
@@ -3648,6 +3672,7 @@ function showPage(name, btn) {
   if(name==='teams') loadTeams();
   if(name==='invoices') loadInvoices();
   if(name==='master') loadMasterPage();
+  if(name==='knowledge') initKnowledgePage();
 }
 
 // ==================== ダッシュボード ====================
@@ -5755,6 +5780,15 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
     player.innerHTML = `<div style="color:#888;font-size:13px;text-align:center"><div style="font-size:32px;margin-bottom:8px">📎</div>Drive連携が未設定のためプレビューできません</div>`;
   }
 
+  // カテゴリー選択肢を最新化（未ロードなら取得）
+  if (!knowledgeCategories.length) {
+    fetch(`${API}/master/items/active?category_code=COMMENT_CAT`).then(r => r.json()).then(items => {
+      knowledgeCategories = items || [];
+      const fpSel = document.getElementById('fp-comment-category');
+      fpSel.innerHTML = '<option value="">カテゴリーを選択（任意）</option>' +
+        knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    }).catch(() => {});
+  }
   switchPreviewTab('review');
   if (currentPreviewFileId) loadFileComments(currentPreviewFileId);
   openModal('modal-file-preview');
@@ -5818,12 +5852,13 @@ async function submitFileComment() {
   const text = document.getElementById('fp-comment-text').value.trim();
   if (!text) return;
   const isKnowledge = document.getElementById('fp-is-knowledge').checked;
+  const categoryId  = document.getElementById('fp-comment-category').value || null;
   const btn = document.querySelector('#fp-comment-input-area button');
   btn.disabled = true; btn.textContent = '送信中...';
   const res = await fetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge }),
+    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId }),
   });
   btn.disabled = false; btn.textContent = '送信';
   if (res.ok) {
@@ -5849,16 +5884,63 @@ async function loadKnowledge() {
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">ナレッジがまだありません</div>'; return; }
-  el.innerHTML = list.map(c => `
-    <div style="margin-bottom:12px;padding:10px 12px;background:#fffbeb;border-radius:8px;border:0.5px solid #fcd34d">
+  el.innerHTML = renderKnowledgeCards(list, true);
+}
+
+function renderKnowledgeCards(list, compact) {
+  return list.map(c => {
+    const cat = c.master_items;
+    return `
+    <div style="margin-bottom:${compact?'10':'14'}px;padding:${compact?'10 12':'14 16'}px;background:#fffbeb;border-radius:${compact?8:10}px;border:0.5px solid #fcd34d">
+      ${cat ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 7px;border-radius:10px;font-weight:600;display:inline-block;margin-bottom:4px">${esc(cat.name)}</span>` : ''}
       <div style="font-size:10px;color:#92400e;margin-bottom:4px;font-weight:500">${esc(c.creative_files?.creatives?.projects?.name || '')} / ${esc(c.creative_files?.generated_name || '')}</div>
-      <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all;margin-bottom:4px">${esc(c.comment)}</div>
+      <div style="font-size:${compact?13:14}px;line-height:1.7;white-space:pre-wrap;word-break:break-all;margin-bottom:4px">${esc(c.comment)}</div>
       <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
         <span>${esc(c.users?.full_name || '')}</span>
         <span>${new Date(c.created_at).toLocaleDateString('ja-JP')}</span>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
+}
+
+// ==================== ナレッジページ ====================
+
+let knowledgeCategories = [];
+
+async function initKnowledgePage() {
+  // カテゴリー一覧を汎用マスターから取得（COMMENT_CATコードのもの）
+  const res = await fetch(`${API}/master/items/active?category_code=COMMENT_CAT`);
+  if (res.ok) {
+    knowledgeCategories = await res.json();
+    const sel = document.getElementById('kn-filter-category');
+    sel.innerHTML = '<option value="">すべてのカテゴリー</option>' +
+      knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    // コメント入力フォームのカテゴリーも更新
+    const fpSel = document.getElementById('fp-comment-category');
+    fpSel.innerHTML = '<option value="">カテゴリーを選択（任意）</option>' +
+      knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }
+  loadKnowledgePage();
+}
+
+async function loadKnowledgePage() {
+  const el = document.getElementById('kn-list');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  const categoryId = document.getElementById('kn-filter-category').value;
+  const keyword    = document.getElementById('kn-filter-text').value.trim().toLowerCase();
+
+  const params = new URLSearchParams();
+  if (categoryId) params.set('category_id', categoryId);
+  const res = await fetch(`${API}/knowledge?${params}`);
+  if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;padding:20px">取得失敗</div>'; return; }
+  let list = await res.json();
+  if (keyword) list = list.filter(c => c.comment?.toLowerCase().includes(keyword) || c.master_items?.name?.toLowerCase().includes(keyword));
+
+  if (!list.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">ナレッジがまだありません</div>';
+    return;
+  }
+  el.innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${list.length}件</div>` + renderKnowledgeCards(list, false);
 }
 
 async function handleUploadFileSelect(input) {

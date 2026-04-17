@@ -1860,7 +1860,7 @@ router.post('/creative-versions', async (req, res) => {
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role)')
+    .select('*, users(full_name, role), master_items(id, name, code)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
@@ -1869,7 +1869,7 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 
 // コメント追加
 router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { comment, timecode, is_knowledge } = req.body;
+  const { comment, timecode, is_knowledge, category_id } = req.body;
   if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
   const { data, error } = await supabase
     .from('creative_file_comments')
@@ -1879,8 +1879,9 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       comment: comment.trim(),
       timecode: timecode || null,
       is_knowledge: !!is_knowledge,
+      category_id: category_id || null,
     })
-    .select('*, users(full_name, role)')
+    .select('*, users(full_name, role), master_items(id, name, code)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -1899,13 +1900,16 @@ router.delete('/creative-file-comments/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ナレッジ一覧（is_knowledge=true のコメント全件）
+// ナレッジ一覧（is_knowledge=true、カテゴリーフィルター対応）
 router.get('/knowledge', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
+  const { category_id } = req.query;
+  let query = supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role), creative_files(generated_name, creative_id, creatives(file_name, projects(name, clients(name))))')
+    .select('*, users(full_name, role), master_items(id, name, code), creative_files(id, generated_name, creative_id, creatives(file_name, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
+  if (category_id) query = query.eq('category_id', category_id);
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
