@@ -513,7 +513,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- クリエイティブ追加モーダル -->
 <div class="modal-overlay" id="modal-creative">
   <div class="modal" style="width:600px">
-    <div class="modal-title">クリエイティブ追加<button class="modal-close" onclick="closeModal('modal-creative')">×</button></div>
+    <div class="modal-title">クリエイティブ追加<button class="modal-close" onclick="cancelCreativeModal()">×</button></div>
 
     <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:0.5px solid var(--border);padding-bottom:0">
       <button id="tab-single-btn" onclick="switchCreativeTab('single')" style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--em-dark);font-weight:500;border-bottom:2px solid var(--em);cursor:pointer">個別登録</button>
@@ -601,13 +601,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
         </div>
       </div>
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-        <button class="btn" onclick="closeModal('modal-creative')">キャンセル</button>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
-            <label for="continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
+          <label for="continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
         </div>
         <button class="btn-primary" onclick="createCreative()">追加する</button>
+        <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
       </div>
     </div>
 
@@ -677,13 +677,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:8px 0">10 本を一括登録します</div>
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-        <button class="btn" onclick="closeModal('modal-creative')">キャンセル</button>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <input type="checkbox" id="bulk-continuous-mode" style="width:16px;height:16px;cursor:pointer">
-            <label for="bulk-continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="bulk-continuous-mode" style="width:16px;height:16px;cursor:pointer">
+          <label for="bulk-continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
         </div>
         <button class="btn-primary" onclick="bulkCreateCreative()">一括登録する</button>
+        <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
       </div>
     </div>
 
@@ -4307,6 +4307,16 @@ function getLastDayOfMonth() {
   const now = new Date();
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   return lastDay.toISOString().slice(0, 10);
+}
+
+function cancelCreativeModal() {
+  const hasInput = [
+    document.getElementById('c-file-name')?.value,
+    document.getElementById('c-appeal-type')?.value,
+    document.getElementById('bulk-appeal-type')?.value,
+  ].some(v => v && v.trim());
+  if (hasInput && !confirm('入力中の内容があります。キャンセルしますか？')) return;
+  closeModal('modal-creative');
 }
 
 function clampDraftToFinal(draftId, finalId) {
