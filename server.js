@@ -828,11 +828,11 @@ app.post('/api/invitations/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const sqliteUser = users.create({ name, email: inv.email, role: inv.role, passwordHash });
 
-    // Supabase にユーザー作成（アプリデータ用）
-    await supabase.from('users').insert({
-      id: sqliteUser.id, email: inv.email,
-      full_name: name, role: inv.role, is_active: true
+    // Supabase にユーザー作成（アプリデータ用 / IDはSupabaseのUUIDを自動生成）
+    const { error: sbErr } = await supabase.from('users').insert({
+      email: inv.email, full_name: name, role: inv.role, is_active: true
     });
+    if (sbErr) console.error('[invite register] Supabase user insert error:', sbErr.message);
 
     // 招待を使用済みにする
     await supabase.from('invitations').update({ used: true, used_at: new Date().toISOString() }).eq('token', token);
