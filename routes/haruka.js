@@ -843,6 +843,8 @@ router.delete('/members/:id', requireAuth, requireLevel('admin'), async (req, re
 
   try {
     // FK参照を先にnull化
+    await supabase.from('teams').update({ director_id: null }).eq('director_id', targetId);
+    await supabase.from('teams').update({ producer_id: null }).eq('producer_id', targetId);
     await supabase.from('projects').update({ producer_id: null }).eq('producer_id', targetId);
     await supabase.from('projects').update({ director_id: null }).eq('director_id', targetId);
     await supabase.from('creatives').update({ special_payable_by: null }).eq('special_payable_by', targetId);
