@@ -512,7 +512,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- クリエイティブ追加モーダル -->
 <div class="modal-overlay" id="modal-creative">
-  <div class="modal" style="width:600px">
+  <div class="modal" style="width:92vw;max-width:960px">
     <div class="modal-title">クリエイティブ追加<button class="modal-close" onclick="cancelCreativeModal()">×</button></div>
 
     <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:0.5px solid var(--border);padding-bottom:0">
@@ -522,86 +522,91 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     <!-- 個別登録タブ（デフォルト） -->
     <div id="tab-single">
-      <div class="form-group">
-        <label class="form-label">案件</label>
-        <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">動画種別</label>
-        <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c')">
-          <option value="video_short">ショート動画</option>
-          <option value="design_thumbnail">サムネイル</option>
-          <option value="design_banner">バナー</option>
-          <option value="design_post">投稿画像</option>
-          <option value="design_story">ストーリーズ</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">商材</label>
-        <select class="form-select" id="c-product-id">
-          <option value="">案件を先に選択してください</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">媒体</label>
-          <select class="form-select" id="c-media-code">
-            <option value="">（任意）</option>
-          </select>
+      <!-- 2カラムグリッド -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
+
+        <!-- 左カラム -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">案件</label>
+            <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">動画種別</label>
+            <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c')">
+              <option value="video_short">ショート動画</option>
+              <option value="design_thumbnail">サムネイル</option>
+              <option value="design_banner">バナー</option>
+              <option value="design_post">投稿画像</option>
+              <option value="design_story">ストーリーズ</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">商材</label>
+            <select class="form-select" id="c-product-id">
+              <option value="">案件を先に選択してください</option>
+            </select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">媒体</label>
+              <select class="form-select" id="c-media-code"><option value="">（任意）</option></select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">クリエイティブFMT</label>
+              <select class="form-select" id="c-creative-fmt"><option value="">（任意）</option></select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">クリエイティブサイズ</label>
+            <select class="form-select" id="c-creative-size"><option value="">（任意）</option></select>
+          </div>
         </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">クリエイティブFMT</label>
-          <select class="form-select" id="c-creative-fmt">
-            <option value="">（任意）</option>
-          </select>
+
+        <!-- 右カラム -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">訴求タイプ</label>
+            <select class="form-select" id="c-appeal-type" onchange="autoGenerateFileName()">
+              <option value="">案件を先に選択してください</option>
+            </select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">チーム</label>
+              <select class="form-select" id="c-team-id" onchange="onTeamChange(this.value)">
+                <option value="">チームを選択（任意）</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">担当者 <span style="color:#E24B4A">*</span></label>
+              <select class="form-select" id="c-assignee-id"><option value="">担当者を選択</option></select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
+            <div style="display:flex;gap:8px">
+              <input class="form-input" id="c-file-name" placeholder="訴求タイプ選択後に自動生成されます" style="font-family:monospace;font-size:13px">
+              <button class="btn" onclick="generateFileName()" style="white-space:nowrap">再生成</button>
+            </div>
+            <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:3px">形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">初稿提出日</label>
+              <input class="form-input" id="c-draft-deadline" type="date">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">最終納期</label>
+              <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">クリエイティブサイズ</label>
-        <select class="form-select" id="c-creative-size">
-          <option value="">（任意）</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">訴求タイプ</label>
-        <select class="form-select" id="c-appeal-type" onchange="autoGenerateFileName()">
-          <option value="">案件を先に選択してください</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">チーム</label>
-          <select class="form-select" id="c-team-id" onchange="onTeamChange(this.value)">
-            <option value="">チームを選択（任意）</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">担当者 <span style="color:#E24B4A">*</span></label>
-          <select class="form-select" id="c-assignee-id">
-            <option value="">担当者を選択</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
-        <div style="display:flex;gap:8px">
-          <input class="form-input" id="c-file-name" placeholder="訴求タイプ選択後に自動生成されます" style="font-family:monospace;font-size:13px">
-          <button class="btn" onclick="generateFileName()" style="white-space:nowrap">再生成</button>
-        </div>
-        <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:3px">形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可</div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">初稿提出日</label>
-          <input class="form-input" id="c-draft-deadline" type="date">
-        </div>
-        <div class="form-group">
-          <label class="form-label">最終納期</label>
-          <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
-        </div>
-      </div>
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px">
+
+      </div><!-- /2カラムグリッド -->
+
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:0.5px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
           <label for="continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
@@ -613,71 +618,69 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     <!-- 一括登録タブ -->
     <div id="tab-bulk" style="display:none">
+      <!-- 案件（全幅） -->
       <div class="form-group">
         <label class="form-label">案件</label>
         <select class="form-select" id="bulk-project-id" onchange="onBulkProjectChange(this.value)"></select>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">動画種別</label>
-          <select class="form-select" id="bulk-creative-type">
-            <option value="video_short">ショート動画</option>
-            <option value="design_thumbnail">サムネイル</option>
-            <option value="design_banner">バナー</option>
-            <option value="design_post">投稿画像</option>
-            <option value="design_story">ストーリーズ</option>
-          </select>
+      <!-- 2カラムグリッド -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
+        <!-- 左カラム -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">動画種別</label>
+            <select class="form-select" id="bulk-creative-type" onchange="autoSetCreativeFmt('bulk')">
+              <option value="video_short">ショート動画</option>
+              <option value="design_thumbnail">サムネイル</option>
+              <option value="design_banner">バナー</option>
+              <option value="design_post">投稿画像</option>
+              <option value="design_story">ストーリーズ</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">商材</label>
+            <select class="form-select" id="bulk-product-id"><option value="">案件を先に選択してください</option></select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">媒体</label>
+              <select class="form-select" id="bulk-media-code"><option value="">（任意）</option></select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">クリエイティブFMT</label>
+              <select class="form-select" id="bulk-creative-fmt"><option value="">（任意）</option></select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">クリエイティブサイズ</label>
+            <select class="form-select" id="bulk-creative-size"><option value="">（任意）</option></select>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">訴求タイプ</label>
-          <select class="form-select" id="bulk-appeal-type">
-            <option value="">案件を先に選択してください</option>
-          </select>
+        <!-- 右カラム -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">訴求タイプ</label>
+            <select class="form-select" id="bulk-appeal-type"><option value="">案件を先に選択してください</option></select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">登録本数</label>
+            <input class="form-input" id="bulk-count" type="number" min="1" max="100" value="10" oninput="updateBulkPreview()">
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">最大100本まで一括登録できます</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">初稿提出日</label>
+              <input class="form-input" id="bulk-draft-deadline" type="date">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">最終納期</label>
+              <input class="form-input" id="bulk-final-deadline" type="date" onchange="clampDraftToFinal('bulk-draft-deadline','bulk-final-deadline')">
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">商材</label>
-        <select class="form-select" id="bulk-product-id">
-          <option value="">案件を先に選択してください</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">媒体</label>
-          <select class="form-select" id="bulk-media-code">
-            <option value="">（任意）</option>
-          </select>
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">クリエイティブFMT</label>
-          <select class="form-select" id="bulk-creative-fmt">
-            <option value="">（任意）</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">クリエイティブサイズ</label>
-        <select class="form-select" id="bulk-creative-size">
-          <option value="">（任意）</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">登録本数</label>
-        <input class="form-input" id="bulk-count" type="number" min="1" max="100" value="10" oninput="updateBulkPreview()">
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">最大100本まで一括登録できます</div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">初稿提出日</label>
-          <input class="form-input" id="bulk-draft-deadline" type="date">
-        </div>
-        <div class="form-group">
-          <label class="form-label">最終納期</label>
-          <input class="form-input" id="bulk-final-deadline" type="date" onchange="clampDraftToFinal('bulk-draft-deadline','bulk-final-deadline')">
-        </div>
-      </div>
-      <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:8px 0">10 本を一括登録します</div>
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px">
+      </div><!-- /2カラムグリッド -->
+      <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:10px 0 4px">10 本を一括登録します</div>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px;padding-top:14px;border-top:0.5px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" id="bulk-continuous-mode" style="width:16px;height:16px;cursor:pointer">
           <label for="bulk-continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
