@@ -4205,7 +4205,7 @@ async function renderProductsMasterPage() {
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">クライアントを選択して商材を管理します。</div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         ${clients.map(c => `
-          <button onclick="openClientProductsDetail('${c.id}',${JSON.stringify(c.name)})"
+          <button onclick="openClientProductsDetail('${c.id}','${c.name.replace(/'/g,"\\'")}')"
             style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
                    font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;
                    min-width:160px;text-align:center;transition:all .15s;line-height:1.4"
@@ -4424,7 +4424,7 @@ async function renderAppealAxesMasterPage() {
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">クライアントを選択して訴求軸を管理します。</div>
       <div style="display:flex;flex-wrap:wrap;gap:12px">
         ${clients.map(c => `
-          <button onclick="openClientAppealAxesDetail('${c.id}',${JSON.stringify(c.name)})"
+          <button onclick="openClientAppealAxesDetail('${c.id}','${c.name.replace(/'/g,"\\'")}')"
             style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
                    font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;
                    min-width:160px;text-align:center;transition:all .15s;line-height:1.4"
