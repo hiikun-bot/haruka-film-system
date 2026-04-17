@@ -1787,7 +1787,13 @@ router.get('/master/items', async (req, res) => {
 
 // 値一覧（プルダウン用：有効かつ期限内のみ）
 router.get('/master/items/active', async (req, res) => {
-  const { category_id, category_code } = req.query;
+  let { category_id, category_code } = req.query;
+  // category_code が指定された場合は先に category_id を解決
+  if (!category_id && category_code) {
+    const { data: cat } = await supabase.from('master_categories').select('id').eq('code', category_code).single();
+    if (cat) category_id = cat.id;
+    else return res.json([]); // 該当カテゴリーなし
+  }
   const now = new Date().toISOString();
   let query = supabase
     .from('master_items')
@@ -1795,8 +1801,7 @@ router.get('/master/items/active', async (req, res) => {
     .eq('is_active', true)
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order('sort_order').order('created_at');
-  if (category_id)   query = query.eq('category_id', category_id);
-  if (category_code) query = query.eq('master_categories.code', category_code);
+  if (category_id) query = query.eq('category_id', category_id);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
