@@ -13,7 +13,7 @@ body{
   min-height:100vh;
   display:flex;align-items:center;justify-content:center;
   position:relative;overflow:hidden;
-  background:#0a2e2d;
+  background:#00c8c4;
 }
 
 /* 背景画像 */
@@ -22,10 +22,11 @@ body{
   background:url('HARUKAFILM背景.png') center/cover no-repeat;
   z-index:0;
 }
-/* 明るめオーバーレイ */
+/* 蛍光ティールのカラーウォッシュ */
 .bg::after{
   content:'';position:absolute;inset:0;
-  background:linear-gradient(135deg,rgba(5,30,28,0.12) 0%,rgba(8,40,38,0.08) 100%);
+  background:linear-gradient(135deg,rgba(0,190,185,0.40) 0%,rgba(0,160,155,0.30) 100%);
+  mix-blend-mode:screen;
 }
 
 /* ラッパー */
@@ -40,27 +41,26 @@ body{
 .logo-area{text-align:center}
 .logo-title{
   font-family:'Montserrat',sans-serif;
-  font-size:36px;font-weight:800;
+  font-size:38px;font-weight:800;
   letter-spacing:0.18em;
   color:#fff;
-  text-shadow:0 0 30px rgba(0,240,235,0.9),0 0 60px rgba(0,240,235,0.5);
+  text-shadow:0 0 20px #fff,0 0 40px rgba(80,255,250,0.9),0 0 80px rgba(0,255,248,0.5);
   line-height:1.1;
 }
-.logo-accent{color:#00F0EB}
+.logo-accent{color:#7FFCF8;text-shadow:0 0 16px #7FFCF8,0 0 32px rgba(0,255,248,0.8)}
 .logo-bar{
-  width:260px;height:1.5px;
-  background:rgba(0,240,235,0.85);
-  margin:5px auto 8px;
+  width:260px;height:2px;
+  background:linear-gradient(90deg,transparent,#7FFCF8,transparent);
+  margin:4px auto 10px;
   border-radius:1px;
-  box-shadow:0 0 8px rgba(0,240,235,0.7);
+  box-shadow:0 0 10px #7FFCF8,0 0 20px rgba(0,255,248,0.5);
 }
 .logo-sub{
   font-family:'Noto Sans JP',sans-serif;
   font-size:14px;font-weight:400;
   letter-spacing:0.6em;
-  color:rgba(255,255,255,0.9);
-  margin-top:0;
-  text-shadow:0 0 12px rgba(0,240,235,0.6);
+  color:#fff;
+  text-shadow:0 0 10px rgba(120,255,250,0.8);
   white-space:nowrap;
 }
 
