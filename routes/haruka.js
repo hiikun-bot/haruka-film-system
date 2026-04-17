@@ -1432,4 +1432,29 @@ router.delete('/master/items/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== クリエイティブ バージョン履歴 ====================
+
+// バージョン履歴一覧取得
+router.get('/creative-versions/:creativeId', async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_version_history')
+    .select('*')
+    .eq('creative_id', req.params.creativeId)
+    .order('version_num', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// バージョン履歴保存
+router.post('/creative-versions', async (req, res) => {
+  const { creative_id, version_num, director_comment, client_comment } = req.body;
+  if (!creative_id || !version_num) return res.status(400).json({ error: 'creative_id と version_num は必須です' });
+  const { data, error } = await supabase
+    .from('creative_version_history')
+    .insert({ creative_id, version_num: parseInt(version_num), director_comment: director_comment || null, client_comment: client_comment || null })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 module.exports = router;
