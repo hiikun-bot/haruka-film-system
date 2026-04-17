@@ -774,7 +774,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note')
+    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
     .order('full_name');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -852,7 +852,9 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     full_name, role, job_type, rank,
     team_id, slack_dm_id, chatwork_dm_id,
     is_active, left_at, left_reason,
-    birthday, weekday_hours, weekend_hours, note
+    birthday, weekday_hours, weekend_hours, note,
+    bank_name, bank_code, branch_name, branch_code,
+    account_type, account_number, account_holder_kana
   } = req.body;
 
   const updateData = {
@@ -864,6 +866,13 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     weekday_hours: weekday_hours || null,
     weekend_hours: weekend_hours || null,
     note: note || null,
+    bank_name: bank_name || null,
+    bank_code: bank_code || null,
+    branch_name: branch_name || null,
+    branch_code: branch_code || null,
+    account_type: account_type || null,
+    account_number: account_number || null,
+    account_holder_kana: account_holder_kana || null,
     updated_at: new Date().toISOString()
   };
   // ロール変更は admin/secretary のみ

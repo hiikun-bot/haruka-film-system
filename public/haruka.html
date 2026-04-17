@@ -987,9 +987,51 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
 
         <!-- メモ -->
-        <div class="form-group" style="margin-bottom:0">
+        <div class="form-group">
           <label class="form-label">メモ（任意）</label>
-          <textarea class="form-input" id="m-note" rows="5" placeholder="スキル・連絡事項・特記など" style="resize:vertical"></textarea>
+          <textarea class="form-input" id="m-note" rows="3" placeholder="スキル・連絡事項・特記など" style="resize:vertical"></textarea>
+        </div>
+
+        <!-- 振込先口座情報 -->
+        <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:12px">振込先口座情報</div>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px">
+            <div>
+              <label class="form-label" style="font-size:11px">銀行名</label>
+              <input class="form-input" id="m-bank-name" placeholder="例：楽天銀行">
+            </div>
+            <div style="width:100px">
+              <label class="form-label" style="font-size:11px">銀行コード</label>
+              <input class="form-input" id="m-bank-code" placeholder="例：0036" maxlength="4">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px">
+            <div>
+              <label class="form-label" style="font-size:11px">支店名</label>
+              <input class="form-input" id="m-branch-name" placeholder="例：ワルツ支店">
+            </div>
+            <div style="width:100px">
+              <label class="form-label" style="font-size:11px">支店コード</label>
+              <input class="form-input" id="m-branch-code" placeholder="例：204" maxlength="3">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <label class="form-label" style="font-size:11px">口座種別</label>
+              <select class="form-select" id="m-account-type">
+                <option value="普通">普通預金</option>
+                <option value="当座">当座預金</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:11px">口座番号</label>
+              <input class="form-input" id="m-account-number" placeholder="例：3XXXXXX" maxlength="10">
+            </div>
+          </div>
+          <div>
+            <label class="form-label" style="font-size:11px">口座名義（カナ）</label>
+            <input class="form-input" id="m-account-holder" placeholder="例：タカハシ サトル">
+          </div>
         </div>
       </div>
     </div>
@@ -2845,6 +2887,13 @@ function openAddMember() {
   document.getElementById('m-weekend-inputs').style.display = '';
   initTimeRanges('weekday', [{from:9,to:18}]);
   initTimeRanges('weekend', [{from:10,to:17}]);
+  document.getElementById('m-bank-name').value = '';
+  document.getElementById('m-bank-code').value = '';
+  document.getElementById('m-branch-name').value = '';
+  document.getElementById('m-branch-code').value = '';
+  document.getElementById('m-account-type').value = '普通';
+  document.getElementById('m-account-number').value = '';
+  document.getElementById('m-account-holder').value = '';
   applyMemberModalAdminFields(null);
   onRoleChange('editor');
   openModal('modal-member');
@@ -2880,6 +2929,13 @@ function openEditMember(m) {
   initTimeRanges('weekday', wdRanges);
   initTimeRanges('weekend', weRanges || [{from:10,to:17}]);
   document.getElementById('m-note').value = m.note || '';
+  document.getElementById('m-bank-name').value = m.bank_name || '';
+  document.getElementById('m-bank-code').value = m.bank_code || '';
+  document.getElementById('m-branch-name').value = m.branch_name || '';
+  document.getElementById('m-branch-code').value = m.branch_code || '';
+  document.getElementById('m-account-type').value = m.account_type || '普通';
+  document.getElementById('m-account-number').value = m.account_number || '';
+  document.getElementById('m-account-holder').value = m.account_holder_kana || '';
   applyMemberModalAdminFields(m);
   onRoleChange(m.role || 'editor');
   openModal('modal-member');
@@ -2900,8 +2956,15 @@ async function submitMember() {
   const weekendOff = document.getElementById('m-weekend-off').checked;
   const weekend_hours = weekendOff ? null : collectRangesFromContainer(document.getElementById('m-weekend-ranges'));
   const note = document.getElementById('m-note').value.trim() || null;
+  const bank_name = document.getElementById('m-bank-name').value.trim() || null;
+  const bank_code = document.getElementById('m-bank-code').value.trim() || null;
+  const branch_name = document.getElementById('m-branch-name').value.trim() || null;
+  const branch_code = document.getElementById('m-branch-code').value.trim() || null;
+  const account_type = document.getElementById('m-account-type').value || null;
+  const account_number = document.getElementById('m-account-number').value.trim() || null;
+  const account_holder_kana = document.getElementById('m-account-holder').value.trim() || null;
   if (!full_name) { alert('名前は必須です'); return; }
-  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note };
+  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana };
   let res;
   if (id) {
     res = await fetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
