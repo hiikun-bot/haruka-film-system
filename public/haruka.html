@@ -5591,9 +5591,24 @@ function updateCreativeStepIndicator(status) {
   const nextBtn = document.getElementById('cd-next-step-btn');
   if (nextBtn) {
     const next = NEXT[status];
-    const showBtn = next && !['未着手', '制作中（初稿提出前）'].includes(status);
-    if (showBtn) { nextBtn.style.display = ''; nextBtn.textContent = `${next} へ →`; }
-    else          { nextBtn.style.display = 'none'; }
+    if (next) {
+      nextBtn.style.display = '';
+      nextBtn.textContent = `${next} へ →`;
+      // ステータスに応じてボタン色を変化
+      const colorMap = {
+        'Dチェック': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
+        'Dチェック後修正': 'linear-gradient(135deg,#f59e0b,#d97706)',
+        'Pチェック': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
+        'Pチェック後修正': 'linear-gradient(135deg,#f59e0b,#d97706)',
+        'クライアントチェック中': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
+        'クライアントチェック後修正': 'linear-gradient(135deg,#f59e0b,#d97706)',
+        '納品': 'linear-gradient(135deg,#10b981,#059669)',
+        '制作中（初稿提出前）': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
+      };
+      nextBtn.style.background = colorMap[next] || 'linear-gradient(135deg,#3ECFCA,#2BB8B4)';
+    } else {
+      nextBtn.style.display = 'none';
+    }
   }
 }
 
