@@ -208,6 +208,7 @@ tr.row-help td{background:#FFFBF2}
 .tr-add-btn{font-size:12px;color:var(--em-dark);background:var(--em-pale);border:0.5px solid var(--em-light);border-radius:7px;padding:4px 10px;cursor:pointer;margin-top:2px}
 .tr-add-btn:hover{background:var(--em-light)}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -257,7 +258,48 @@ tr.row-help td{background:#FFFBF2}
     </div>
     <div class="dash-hero-stats" id="dash-hero-stats"></div>
   </div>
-  <div id="dash-content"><div class="loading" style="padding:40px;text-align:center">読み込み中...</div></div>
+  <!-- 年月フィルター（adminのみ） -->
+  <div id="dash-filter" style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+    <select id="dash-filter-year" class="form-select" style="width:100px" onchange="onDashFilterChange()"></select>
+    <select id="dash-filter-month" class="form-select" style="width:80px" onchange="onDashFilterChange()">
+      <option value="0">全月</option>
+      <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+      <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+      <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+      <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+    </select>
+  </div>
+  <div id="dash-content">
+    <!-- グラフエリア（固定） -->
+    <div id="dash-charts" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <!-- 売上予実 積み上げ棒グラフ -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">💰 売上予実</div>
+          <canvas id="chart-revenue" height="200"></canvas>
+        </div>
+        <!-- クリエイティブ ステータス 円グラフ -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">🎬 クリエイティブ ステータス</div>
+          <canvas id="chart-creative-status" height="200"></canvas>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <!-- 案件ステータス 円グラフ -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">📁 案件ステータス</div>
+          <canvas id="chart-project-status" height="200"></canvas>
+        </div>
+        <!-- 月別本数 棒グラフ -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:12px">📈 月別納品本数</div>
+          <canvas id="chart-monthly" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+    <!-- アラート・テキスト情報エリア -->
+    <div id="dash-text-content"></div>
+  </div>
 </div>
 
 <!-- クリエイティブ -->
@@ -2967,6 +3009,7 @@ function loadDashboard() {
   document.getElementById('dash-date-str').textContent =
     new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
 
+  initDashFilter(); // 追加
   const role = effectiveRole();
   const today = new Date(); today.setHours(0,0,0,0);
 
@@ -2977,6 +3020,12 @@ function loadDashboard() {
   } else {
     renderEditorDash(today);
   }
+}
+
+// チャートインスタンス管理
+const _charts = {};
+function _destroyChart(id) {
+  if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
 }
 
 function _dashDiff(dateStr, today) {
@@ -2993,51 +3042,178 @@ function _dashBadge(diff) {
   return `<span class="dash-due-badge dbadge-ok">あと${diff}日</span>`;
 }
 
+// 年月フィルター初期化
+function initDashFilter() {
+  const yearSel = document.getElementById('dash-filter-year');
+  if (!yearSel) return;
+  const now = new Date();
+  yearSel.innerHTML = '';
+  for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) {
+    const opt = document.createElement('option');
+    opt.value = y;
+    opt.textContent = y + '年';
+    if (y === now.getFullYear()) opt.selected = true;
+    yearSel.appendChild(opt);
+  }
+  // 当月を選択
+  document.getElementById('dash-filter-month').value = now.getMonth() + 1;
+}
+
+function onDashFilterChange() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  renderAdminDash(today);
+}
+
 async function renderAdminDash(today) {
-  const oneWeek = new Date(today.getTime() + 7*24*60*60*1000);
-  const active  = allProjects.filter(p => !p.is_hidden && p.status !== '完了');
-  const inProg  = allCreatives.filter(c => c.status !== '納品');
-  const weekly  = inProg.filter(c => { const d=_dashDiff(c.final_deadline,today); return d!==null&&d>=0&&d<=7; });
-  const sos     = allCreatives.filter(c => c.help_flag);
+  const yearSel = document.getElementById('dash-filter-year');
+  const monthSel = document.getElementById('dash-filter-month');
+  const filterYear = yearSel ? parseInt(yearSel.value) : today.getFullYear();
+  const filterMonth = monthSel ? parseInt(monthSel.value) : today.getMonth() + 1; // 0=全月
+
+  // フィルター対象のクリエイティブ
+  const filteredCreatives = allCreatives.filter(c => {
+    if (!c.final_deadline) return false;
+    const d = new Date(c.final_deadline);
+    if (d.getFullYear() !== filterYear) return false;
+    if (filterMonth !== 0 && d.getMonth() + 1 !== filterMonth) return false;
+    return true;
+  });
+
+  const filteredProjects = allProjects.filter(p => {
+    if (p.is_hidden) return false;
+    if (!filterMonth) return true; // 全月なら全案件
+    // 案件の期間がフィルター年月に重なるかチェック
+    return true; // 簡略化：全案件表示
+  });
+
+  // ヒーロー統計
+  const active = allProjects.filter(p => !p.is_hidden && p.status !== '完了');
+  const inProg = allCreatives.filter(c => c.status !== '納品');
+  const weekly = inProg.filter(c => { const d=_dashDiff(c.final_deadline,today); return d!==null&&d>=0&&d<=7; });
+  const sos = allCreatives.filter(c => c.help_flag);
 
   document.getElementById('dash-hero-stats').innerHTML = [
     {val:active.length, label:'進行中案件'},
-    {val:inProg.length, label:'クリエイティブ'},
-    {val:weekly.length, label:'今週期限'},
+    {val:filteredCreatives.length, label: filterMonth ? `${filterMonth}月 本数` : `${filterYear}年 本数`},
+    {val:filteredCreatives.filter(c=>c.status==='納品').length, label:'納品済'},
     sos.length ? {val:sos.length, label:'SOS中', cls:'sos'} : null
   ].filter(Boolean).map(s =>
     `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${s.cls||''}">${s.val}</div><div class="dash-hero-stat-label">${s.label}</div></div>`
   ).join('');
 
-  // 予実サマリー（admin専用）
-  const revRes = await fetch(`${API}/dashboard/revenue-summary`).catch(() => null);
-  const rev = revRes?.ok ? await revRes.json() : null;
+  // グラフエリア表示
+  document.getElementById('dash-charts').style.display = '';
 
-  const financialHtml = isTopAdmin() && rev ? `
-  <div class="dash-section" style="grid-column: 1 / -1">
-    <div class="dash-section-title">💰 ${rev.month} 売上予実（管理者専用）</div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px">
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:22px;font-weight:700;color:var(--em-dark)">${rev.completedCreatives}<span style="font-size:13px;font-weight:400;color:var(--text-muted)"> / ${rev.totalCreatives}本</span></div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">納品完了 / 今月予定</div>
-      </div>
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:22px;font-weight:700;color:var(--primary)">${rev.actualRevenue.toLocaleString()}<span style="font-size:12px;font-weight:400">円</span></div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">実績売上</div>
-      </div>
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:22px;font-weight:700;color:var(--text-muted)">${rev.plannedRevenue.toLocaleString()}<span style="font-size:12px;font-weight:400">円</span></div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">今月予定売上</div>
-      </div>
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:22px;font-weight:700;color:${rev.actualRevenue >= rev.plannedRevenue ? '#2E7D32' : '#A32D2D'}">${rev.plannedRevenue ? Math.round(rev.actualRevenue / rev.plannedRevenue * 100) : 0}<span style="font-size:13px;font-weight:400">%</span></div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">達成率</div>
-      </div>
-    </div>
-  </div>
-` : '';
+  // ===== Chart 1: 売上予実（isTopAdmin のみ） =====
+  _destroyChart('revenue');
+  if (isTopAdmin()) {
+    const revRes = await fetch(`${API}/dashboard/revenue-summary`).catch(() => null);
+    const rev = revRes?.ok ? await revRes.json() : null;
+    if (rev) {
+      const ctx = document.getElementById('chart-revenue').getContext('2d');
+      _charts['revenue'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['今月'],
+          datasets: [
+            { label: '実績売上', data: [rev.actualRevenue], backgroundColor: '#5C9E8F', borderRadius: 6 },
+            { label: '未達分', data: [Math.max(0, rev.plannedRevenue - rev.actualRevenue)], backgroundColor: '#E8F0EE', borderRadius: 6 }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+          scales: {
+            x: { stacked: true, grid: { display: false } },
+            y: { stacked: true, ticks: { callback: v => (v/10000).toFixed(0)+'万' } }
+          }
+        }
+      });
+    }
+  } else {
+    // 売上非表示の場合はクリエイティブ完了率を代替表示
+    const ctx = document.getElementById('chart-revenue').getContext('2d');
+    const done = filteredCreatives.filter(c => c.status === '納品').length;
+    const notDone = filteredCreatives.length - done;
+    _charts['revenue'] = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['納品済', '未完了'],
+        datasets: [{ data: [done, notDone], backgroundColor: ['#5C9E8F', '#E8F0EE'], borderWidth: 0 }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } }
+    });
+  }
 
-  // アラート（超過 + 3日以内）
+  // ===== Chart 2: クリエイティブ ステータス 円グラフ =====
+  _destroyChart('creative-status');
+  const statusColors = {
+    '未着手':'#B0BEC5','台本制作':'#F48FB1','素材・ナレ作成':'#FFCC80',
+    '編集':'#80DEEA','Dチェック':'#90CAF9','Pチェック':'#CE93D8',
+    'クライアントチェック中':'#FFAB91','納品':'#A5D6A7','保留':'#CFD8DC'
+  };
+  const cStMap = {};
+  filteredCreatives.forEach(c => { cStMap[c.status]=(cStMap[c.status]||0)+1; });
+  if (Object.keys(cStMap).length) {
+    const ctx2 = document.getElementById('chart-creative-status').getContext('2d');
+    _charts['creative-status'] = new Chart(ctx2, {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(cStMap),
+        datasets: [{ data: Object.values(cStMap), backgroundColor: Object.keys(cStMap).map(s=>statusColors[s]||'#CFD8DC'), borderWidth: 0 }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } } }
+    });
+  }
+
+  // ===== Chart 3: 案件ステータス 円グラフ =====
+  _destroyChart('project-status');
+  const pStMap = {};
+  allProjects.filter(p=>!p.is_hidden).forEach(p => { pStMap[p.status]=(pStMap[p.status]||0)+1; });
+  const pColors = ['#5C9E8F','#80DEEA','#FFCC80','#F48FB1','#CE93D8','#90CAF9','#B0BEC5'];
+  if (Object.keys(pStMap).length) {
+    const ctx3 = document.getElementById('chart-project-status').getContext('2d');
+    _charts['project-status'] = new Chart(ctx3, {
+      type: 'pie',
+      data: {
+        labels: Object.keys(pStMap),
+        datasets: [{ data: Object.values(pStMap), backgroundColor: Object.keys(pStMap).map((_,i)=>pColors[i%pColors.length]), borderWidth: 0 }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } } }
+    });
+  }
+
+  // ===== Chart 4: 月別納品本数 棒グラフ =====
+  _destroyChart('monthly');
+  const monthlyMap = {};
+  for (let m = 1; m <= 12; m++) monthlyMap[m] = 0;
+  allCreatives.filter(c => {
+    if (c.status !== '納品' || !c.final_deadline) return false;
+    return new Date(c.final_deadline).getFullYear() === filterYear;
+  }).forEach(c => {
+    const m = new Date(c.final_deadline).getMonth() + 1;
+    monthlyMap[m]++;
+  });
+  const ctx4 = document.getElementById('chart-monthly').getContext('2d');
+  _charts['monthly'] = new Chart(ctx4, {
+    type: 'bar',
+    data: {
+      labels: Object.keys(monthlyMap).map(m => m+'月'),
+      datasets: [{
+        label: '納品本数',
+        data: Object.values(monthlyMap),
+        backgroundColor: Object.keys(monthlyMap).map(m => parseInt(m) === filterMonth ? '#5C9E8F' : '#A5D6A7'),
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { ticks: { stepSize: 1 } } }
+    }
+  });
+
+  // ===== テキストアラート =====
   const alerts = inProg
     .map(c => ({c, diff:_dashDiff(c.final_deadline,today)}))
     .filter(({diff}) => diff !== null && diff <= 3)
@@ -3053,29 +3229,10 @@ async function renderAdminDash(today) {
         </div>`).join('')
     : `<div style="font-size:13px;color:var(--text-muted);padding:12px 0;text-align:center">アラートはありません ✓</div>`;
 
-  // 案件ステータス
-  const stMap = {};
-  allProjects.filter(p=>!p.is_hidden).forEach(p => { stMap[p.status]=(stMap[p.status]||0)+1; });
-  const total = Object.values(stMap).reduce((a,b)=>a+b,0)||1;
-  const projHtml = Object.entries(stMap).map(([st,n]) =>
-    `<div class="dash-proj-row">
-      <span style="min-width:72px;font-size:12px">${st}</span>
-      <div class="dash-proj-bar"><div class="dash-proj-fill" style="width:${Math.round(n/total*100)}%"></div></div>
-      <span style="min-width:24px;text-align:right;font-size:12px;color:var(--text-muted)">${n}</span>
-    </div>`
-  ).join('') || '<div style="font-size:13px;color:var(--text-muted)">データなし</div>';
-
-  document.getElementById('dash-content').innerHTML = `
-    <div class="dash-grid">
-      ${financialHtml}
-      <div class="dash-section">
-        <div class="dash-section-title">🚨 納期アラート（超過・3日以内）</div>
-        ${alertHtml}
-      </div>
-      <div class="dash-section">
-        <div class="dash-section-title">📊 案件ステータス</div>
-        ${projHtml}
-      </div>
+  document.getElementById('dash-text-content').innerHTML = `
+    <div class="dash-section">
+      <div class="dash-section-title">🚨 納期アラート（超過・3日以内）</div>
+      ${alertHtml}
     </div>`;
 }
 
