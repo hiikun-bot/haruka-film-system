@@ -1752,12 +1752,20 @@ router.post('/master/categories', async (req, res) => {
   res.json(data);
 });
 
+// システム保護コード（削除・コード変更禁止）
+const PROTECTED_CATEGORY_CODES = ['COMMENT_CAT', 'media', 'creative_formats', 'sizes', 'products', 'appeal_axes'];
+
 // 区分マスター更新
 router.put('/master/categories/:id', async (req, res) => {
   const { name, code, sort_order, is_active } = req.body;
+  // 保護カテゴリーはコード変更を禁止
+  const { data: existing } = await supabase.from('master_categories').select('code').eq('id', req.params.id).single();
+  if (existing && PROTECTED_CATEGORY_CODES.includes(existing.code) && code !== existing.code) {
+    return res.status(403).json({ error: 'システム区分のコードは変更できません' });
+  }
   const { data, error } = await supabase
     .from('master_categories')
-    .update({ name, code, sort_order: parseInt(sort_order) || 0, is_active, updated_at: new Date().toISOString() })
+    .update({ name, code: existing && PROTECTED_CATEGORY_CODES.includes(existing.code) ? existing.code : code, sort_order: parseInt(sort_order) || 0, is_active, updated_at: new Date().toISOString() })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -1765,6 +1773,10 @@ router.put('/master/categories/:id', async (req, res) => {
 
 // 区分マスター削除
 router.delete('/master/categories/:id', async (req, res) => {
+  const { data: existing } = await supabase.from('master_categories').select('code').eq('id', req.params.id).single();
+  if (existing && PROTECTED_CATEGORY_CODES.includes(existing.code)) {
+    return res.status(403).json({ error: 'このシステム区分は削除できません' });
+  }
   const { error } = await supabase.from('master_categories').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -1943,15 +1955,25 @@ router.post('/creative-versions', async (req, res) => {
 // ファイルコメント（レビュー・ナレッジ）
 // ============================================================
 
+// category_id → master_items 情報を別クエリで補完するヘルパー
+async function enrichCommentCategories(comments) {
+  const ids = [...new Set((comments || []).map(c => c.category_id).filter(Boolean))];
+  if (!ids.length) return comments;
+  const { data: items } = await supabase.from('master_items').select('id, name, code').in('id', ids);
+  const map = {};
+  (items || []).forEach(i => { map[i.id] = i; });
+  return comments.map(c => ({ ...c, master_items: c.category_id ? (map[c.category_id] || null) : null }));
+}
+
 // ファイルのコメント一覧
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role), master_items(id, name, code)')
+    .select('*, users(full_name, role)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json(await enrichCommentCategories(data));
 });
 
 // コメント追加
@@ -1968,10 +1990,11 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       is_knowledge: !!is_knowledge,
       category_id: category_id || null,
     })
-    .select('*, users(full_name, role), master_items(id, name, code)')
+    .select('*, users(full_name, role)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  const [enriched] = await enrichCommentCategories([data]);
+  res.json(enriched);
 });
 
 // コメント削除（自分のコメントのみ / admin は全件）
@@ -1992,13 +2015,13 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   const { category_id } = req.query;
   let query = supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role), master_items(id, name, code), creative_files(id, generated_name, creative_id, creatives(file_name, projects(name, clients(name))))')
+    .select('*, users(full_name, role), creative_files(id, generated_name, creative_id, creatives(file_name, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
   if (category_id) query = query.eq('category_id', category_id);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json(await enrichCommentCategories(data));
 });
 
 module.exports = router;
