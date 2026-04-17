@@ -1456,9 +1456,12 @@ router.post('/clients/:id/products', async (req, res) => {
   const { code, name, note, expires_at, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('client_products')
-    .insert({ client_id: req.params.id, code, name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active: true })
+    .insert({ client_id: req.params.id, code: code.toUpperCase(), name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active: true })
     .select().single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    if (error.code === '23505') return res.status(400).json({ error: `コード「${code.toUpperCase()}」の商材は既に登録されています` });
+    return res.status(500).json({ error: error.message });
+  }
   res.json(data);
 });
 // クライアント商材更新
@@ -1490,9 +1493,12 @@ router.post('/clients/:id/appeal-axes', async (req, res) => {
   const { code, name, note, expires_at, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('client_appeal_axes')
-    .insert({ client_id: req.params.id, code, name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active: true })
+    .insert({ client_id: req.params.id, code: code.toLowerCase(), name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active: true })
     .select().single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    if (error.code === '23505') return res.status(400).json({ error: `コード「${code.toLowerCase()}」の訴求軸は既に登録されています` });
+    return res.status(500).json({ error: error.message });
+  }
   res.json(data);
 });
 // クライアント訴求軸更新
