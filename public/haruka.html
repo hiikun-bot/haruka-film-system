@@ -2081,6 +2081,7 @@ function renderMemberList() {
             ? `<button class="btn-danger" onclick="deactivateMember('${m.id}','${m.full_name}')">退職処理</button>`
             : `<button class="btn-sm" onclick="reactivateMember('${m.id}')">復帰させる</button>`
         ) : ''}
+        ${isSuperAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">完全削除</button>` : ''}
         </div>
     </div>`).join('');
 }
@@ -4632,6 +4633,20 @@ const roleLabelsInvite = {
   admin: '管理者', secretary: '秘書', producer: 'プロデューサー',
   director: 'ディレクター', editor: '編集者', designer: 'デザイナー', client: 'クライアント'
 };
+
+// ===== メンバー完全削除（superadmin のみ） =====
+async function deleteMemberPermanently(id, name) {
+  if (!confirm(`⚠️ 警告\n\n「${name}」のすべてのデータをデータベースから完全に削除します。\nこの操作は取り消せません。\n\n本当に削除しますか？`)) return;
+  if (!confirm(`最終確認：「${name}」を完全削除してよいですか？`)) return;
+  const res = await fetch(`${API}/members/${id}`, { method: 'DELETE' });
+  if (res.ok) {
+    alert(`${name} を完全削除しました`);
+    await loadMembers();
+  } else {
+    const d = await res.json();
+    alert('削除に失敗しました: ' + d.error);
+  }
+}
 
 // ===== ログアウト =====
 async function logout() {

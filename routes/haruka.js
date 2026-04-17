@@ -843,6 +843,31 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   res.json(data);
 });
 
+// メンバー完全削除（admin のみ・自分自身は不可）
+router.delete('/members/:id', requireAuth, requireLevel('admin'), async (req, res) => {
+  const targetId = req.params.id;
+  if (targetId === req.user.id) return res.status(400).json({ error: '自分自身は削除できません' });
+
+  try {
+    // FK参照を先にnull化
+    await supabase.from('projects').update({ producer_id: null }).eq('producer_id', targetId);
+    await supabase.from('projects').update({ director_id: null }).eq('director_id', targetId);
+    await supabase.from('creatives').update({ special_payable_by: null }).eq('special_payable_by', targetId);
+    await supabase.from('invoices').update({ issuer_id: null }).eq('issuer_id', targetId);
+    await supabase.from('invoices').update({ recipient_id: null }).eq('recipient_id', targetId);
+    await supabase.from('invoices').update({ approved_by: null }).eq('approved_by', targetId);
+    await supabase.from('creative_files').update({ uploaded_by: null }).eq('uploaded_by', targetId);
+    // 担当クリエイティブのアサインを削除
+    await supabase.from('creative_assignments').delete().eq('user_id', targetId);
+    // ユーザー削除
+    const { error } = await supabase.from('users').delete().eq('id', targetId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 退職処理（管理者のみ）
 router.post('/members/:id/deactivate', requireAuth, requireLevel('admin'), async (req, res) => {
   const { left_reason } = req.body;
