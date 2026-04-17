@@ -241,6 +241,7 @@ tr.row-help td{background:#FFFBF2}
       <span class="user-name" id="user-name">読み込み中</span>
       <span class="user-role" id="user-role">-</span>
       <button class="rpb-btn" onclick="openChangePasswordModal()" title="パスワード変更" style="font-size:11px;padding:3px 8px">🔑</button>
+      <button class="rpb-btn" onclick="logout()" title="ログアウト" style="font-size:11px;padding:3px 8px;color:#E24B4A;border-color:rgba(226,75,74,0.3)">ログアウト</button>
     </div>
   </div>
 </div>
@@ -2046,7 +2047,7 @@ async function loadMembers() {
   const visibleMembers = allMembers.filter(m => canSeeMember(m));
   if (!visibleMembers.length) { list.innerHTML = '<div class="loading">メンバーがいません</div>'; return; }
   list.innerHTML = visibleMembers.map(m => `
-    <div class="member-card" style="${!m.is_active ? 'opacity:0.6;' : ''}${isEffectiveAdmin() ? 'cursor:pointer' : ''}" ${isEffectiveAdmin() ? `onclick="openEditMemberById('${m.id}')"` : ''}>
+    <div class="member-card" style="${!m.is_active ? 'opacity:0.6;' : ''}${canEditMember(m) ? 'cursor:pointer' : ''}" ${canEditMember(m) ? `onclick="openEditMemberById('${m.id}')"` : ''}>
         <div class="member-av" style="${!m.is_active ? 'background:#F1EFE8;color:#888' : ''}">${(m.full_name||'?').slice(0,2)}</div>
         <div class="member-info">
         <div class="member-name">${m.full_name}${!m.is_active ? ' <span style="font-size:12px;color:#A32D2D;background:#FCEBEB;padding:2px 8px;border-radius:6px;margin-left:6px">退職済み</span>' : ''}</div>
@@ -2391,10 +2392,29 @@ function toggleWeekendOff(off) {
   document.getElementById('m-weekend-inputs').style.display = off ? 'none' : '';
 }
 
-function applyMemberModalAdminFields() {
+// 編集権限判定（誰が誰を編集できるか）
+function canEditMember(m) {
+  if (!currentUser) return false;
+  const role = effectiveRole();
+  if (isEffectiveAdmin()) return true;
+  if (!m.is_active) return false;
+  const myRank = ROLE_RANK[role] || 0;
+  const theirRank = ROLE_RANK[m.role] || 0;
+  if (role === 'producer' || role === 'producer_director') {
+    return m.id === currentUser.id || theirRank < myRank;
+  }
+  // director / editor / designer: 自分のみ
+  return m.id === currentUser.id;
+}
+
+function applyMemberModalAdminFields(m) {
   const isAdm = isEffectiveAdmin();
+  const role = effectiveRole();
+  // ロール変更は admin/secretary のみ
   document.getElementById('m-role-row').style.display = isAdm ? '' : 'none';
-  document.getElementById('m-rank-group').style.display = isAdm ? '' : 'none';
+  // ランクは admin/secretary/producer が見える。editor/designer は自分のランクも非表示
+  const showRank = isAdm || role === 'producer' || role === 'producer_director';
+  document.getElementById('m-rank-group').style.display = showRank ? '' : 'none';
 }
 
 function openAddMember() {
@@ -2417,7 +2437,7 @@ function openAddMember() {
   document.getElementById('m-weekend-inputs').style.display = '';
   initTimeRanges('weekday', [{from:9,to:18}]);
   initTimeRanges('weekend', [{from:10,to:17}]);
-  applyMemberModalAdminFields();
+  applyMemberModalAdminFields(null);
   onRoleChange('editor');
   openModal('modal-member');
 }
@@ -2451,7 +2471,7 @@ function openEditMember(m) {
   document.getElementById('m-weekend-inputs').style.display = weekendOff ? 'none' : '';
   initTimeRanges('weekday', wdRanges);
   initTimeRanges('weekend', weRanges || [{from:10,to:17}]);
-  applyMemberModalAdminFields();
+  applyMemberModalAdminFields(m);
   onRoleChange(m.role || 'editor');
   openModal('modal-member');
 }
@@ -4587,6 +4607,13 @@ const roleLabelsInvite = {
   admin: '管理者', secretary: '秘書', producer: 'プロデューサー',
   director: 'ディレクター', editor: '編集者', designer: 'デザイナー', client: 'クライアント'
 };
+
+// ===== ログアウト =====
+async function logout() {
+  if (!confirm('ログアウトしますか？')) return;
+  await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+  window.location.href = '/login.html';
+}
 
 // ===== パスワード変更 =====
 function openChangePasswordModal() {

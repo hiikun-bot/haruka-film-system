@@ -787,32 +787,58 @@ router.post('/members/bulk', async (req, res) => {
 });
 
 // メンバー更新
-router.put('/members/:id', async (req, res) => {
+const MEMBER_ROLE_RANK = { admin:6, secretary:5, producer:5, producer_director:4, director:3, designer:2, editor:1 };
+router.put('/members/:id', requireAuth, async (req, res) => {
+  const requester = req.user;
+  const requesterRole = requester.role;
+  const requesterLevel = MEMBER_ROLE_RANK[requesterRole] || 0;
+
+  // 対象メンバーを取得して権限チェック
+  const { data: target } = await supabase.from('users').select('id,role').eq('id', req.params.id).maybeSingle();
+  if (!target) return res.status(404).json({ error: 'メンバーが見つかりません' });
+
+  const targetLevel = MEMBER_ROLE_RANK[target.role] || 0;
+  const isAdmin = requesterRole === 'admin' || requesterRole === 'secretary';
+  const isSelf = requester.id === target.id;
+
+  // 権限チェック: admin/secretary は全員編集可。producer は自分+下位ランク。director/editor/designer は自分のみ
+  if (!isAdmin) {
+    const canEdit = (requesterRole === 'producer' || requesterRole === 'producer_director')
+      ? (isSelf || targetLevel < requesterLevel)
+      : isSelf;
+    if (!canEdit) return res.status(403).json({ error: '権限が不足しています' });
+  }
+
   const {
     full_name, role, job_type, rank,
     team_id, slack_dm_id, chatwork_dm_id,
     is_active, left_at, left_reason,
     birthday, weekday_hours, weekend_hours
   } = req.body;
-  const { data, error } = await supabase
-    .from('users')
-    .update({
-      full_name, role, job_type,
-      rank: rank || null,
-      team_id: team_id || null,
-      slack_dm_id: slack_dm_id || null,
-      chatwork_dm_id: chatwork_dm_id || null,
-      is_active,
-      left_at: left_at || null,
-      left_reason: left_reason || null,
-      birthday: birthday || null,
-      weekday_hours: weekday_hours || null,
-      weekend_hours: weekend_hours || null,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', req.params.id)
-    .select()
-    .single();
+
+  const updateData = {
+    full_name, job_type,
+    team_id: team_id || null,
+    slack_dm_id: slack_dm_id || null,
+    chatwork_dm_id: chatwork_dm_id || null,
+    birthday: birthday || null,
+    weekday_hours: weekday_hours || null,
+    weekend_hours: weekend_hours || null,
+    updated_at: new Date().toISOString()
+  };
+  // ロール変更は admin/secretary のみ
+  if (isAdmin) {
+    updateData.role = role;
+    updateData.is_active = is_active;
+    updateData.left_at = left_at || null;
+    updateData.left_reason = left_reason || null;
+  }
+  // ランク変更は admin/secretary/producer のみ
+  if (isAdmin || requesterRole === 'producer' || requesterRole === 'producer_director') {
+    updateData.rank = rank || null;
+  }
+
+  const { data, error } = await supabase.from('users').update(updateData).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
