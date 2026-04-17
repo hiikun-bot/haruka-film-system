@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(kill 4921)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'fix: チームモーダルのコード選択・プロデューサー追加を確実に動作するよう修正 *)",
+      "Bash(git push *)",
+      "Bash(git commit -m 'feat: クライアントに営業開始日・ステータス追加、案件ステータス表示改善 *)",
+      "Bash(git commit -m 'fix: クライアントステータスに提案中を先頭追加・デフォルト変更 *)",
+      "Bash(git commit -m 'feat: クライアントステータス整理・案件終了の非表示・期間フィルター追加 *)",
+      "Bash(git commit -m 'ui: ステータスフィルターと期間フィルターを分離・AND検索に変更 *)",
+      "Bash(git commit -m 'fix: クライアント編集時のステータスfallbackを提案中に修正 *)"
+    ]
+  }
+}

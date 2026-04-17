@@ -363,6 +363,7 @@ tr.row-help td{background:#FFFBF2}
       <div style="display:flex;gap:8px">
         <button class="btn" onclick="exportMembersCSV()">CSVエクスポート</button>
         <button class="btn" onclick="openImportModal()">CSVインポート</button>
+        <button class="btn" onclick="openInviteModal()" id="btn-invite" style="display:none">＋ 招待リンク発行</button>
         <button class="btn-primary" onclick="openAddMember()">＋ メンバー追加</button>
       </div>
     </div>
@@ -619,6 +620,37 @@ tr.row-help td{background:#FFFBF2}
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
       <button class="btn" onclick="closeModal('modal-import')">キャンセル</button>
       <button class="btn-primary" id="import-execute-btn" onclick="executeImport()" style="display:none">登録する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 招待リンク発行モーダル -->
+<div class="modal-overlay" id="modal-invite">
+  <div class="modal-card" style="max-width:440px">
+    <div class="modal-title">招待リンク発行<button class="modal-close" onclick="closeModal('modal-invite')">×</button></div>
+    <div class="modal-body">
+      <label class="form-label">招待先メールアドレス <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" type="email" id="inv-email" placeholder="例：member@example.com" style="margin-bottom:12px">
+      <label class="form-label">権限</label>
+      <select class="form-select" id="inv-role" style="margin-bottom:16px">
+        <option value="secretary">秘書</option>
+        <option value="producer">プロデューサー</option>
+        <option value="director">ディレクター</option>
+        <option value="editor" selected>編集者</option>
+        <option value="designer">デザイナー</option>
+      </select>
+      <div id="invite-link-result" style="display:none">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">招待リンク（24時間有効）</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="form-input" type="text" id="invite-link-input" readonly style="font-size:11px;font-family:monospace;flex:1">
+          <button class="btn" onclick="copyInviteLink()">コピー</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:6px">このリンクを招待したい方に直接共有してください</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-invite')">閉じる</button>
+      <button class="btn-primary" id="inv-issue-btn" onclick="issueInvite()">リンクを発行</button>
     </div>
   </div>
 </div>
@@ -2628,10 +2660,6 @@ function isTopAdmin() {
   return effectiveRole() === 'admin';
 }
 
-function isTopAdmin() {
-  return effectiveRole() === 'admin';
-}
-
 // ロールプレビュー切り替え
 function setPreviewRole(role) {
   previewRole = role;
@@ -2660,9 +2688,11 @@ function setPreviewRole(role) {
 function applyRoleBasedUI() {
   const showRank = ['admin','producer','producer_director','director'].includes(effectiveRole());
   document.querySelectorAll('.rank-col').forEach(el => el.style.display = showRank ? '' : 'none');
-  // メンバー追加ボタンの表示制御
+  // メンバー追加・招待ボタンの表示制御
   const addMemberBtn = document.querySelector('#page-members .btn-primary');
   if (addMemberBtn) addMemberBtn.style.display = isEffectiveAdmin() ? '' : 'none';
+  const inviteBtn = document.getElementById('btn-invite');
+  if (inviteBtn) inviteBtn.style.display = isTopAdmin() ? '' : 'none';
   // マスター管理ナビは管理者のみ
   const masterNav = document.getElementById('nav-master');
   if (masterNav) masterNav.style.display = isEffectiveAdmin() ? '' : 'none';
@@ -3932,6 +3962,36 @@ function openLink(inputId) {
   const url = document.getElementById(inputId).value.trim();
   if (url) window.open(url, '_blank', 'noopener');
   else alert('URLが入力されていません');
+}
+
+// ===== 招待リンク発行 =====
+function openInviteModal() {
+  document.getElementById('inv-email').value = '';
+  document.getElementById('inv-role').value = 'editor';
+  document.getElementById('invite-link-result').style.display = 'none';
+  document.getElementById('inv-issue-btn').style.display = '';
+  openModal('modal-invite');
+}
+
+async function issueInvite() {
+  const email = document.getElementById('inv-email').value.trim();
+  const role  = document.getElementById('inv-role').value;
+  if (!email) { alert('メールアドレスを入力してください'); return; }
+  const res = await fetch('/api/invitations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, role })
+  });
+  if (!res.ok) { alert('発行に失敗しました'); return; }
+  const data = await res.json();
+  document.getElementById('invite-link-input').value = data.inviteLink;
+  document.getElementById('invite-link-result').style.display = '';
+  document.getElementById('inv-issue-btn').style.display = 'none';
+}
+
+function copyInviteLink() {
+  const val = document.getElementById('invite-link-input').value;
+  navigator.clipboard.writeText(val).then(() => alert('リンクをコピーしました'));
 }
 
 // ===== クライアント報酬設定 =====
