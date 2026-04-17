@@ -2150,16 +2150,21 @@ function renderMemberList() {
   list.innerHTML = visibleMembers.map(m => `
     <div class="member-card" style="${!m.is_active ? 'opacity:0.6;' : ''}${canEditMember(m) ? 'cursor:pointer' : ''}" ${canEditMember(m) ? `onclick="openEditMemberById('${m.id}')"` : ''}>
         <div class="member-av" style="${!m.is_active ? 'background:#F1EFE8;color:#888' : ''}">${(m.full_name||'?').slice(0,2)}</div>
-        <div class="member-info">
-        <div class="member-name">${m.full_name}${!m.is_active ? ' <span style="font-size:12px;color:#A32D2D;background:#FCEBEB;padding:2px 8px;border-radius:6px;margin-left:6px">退職済み</span>' : ''}</div>
-        <div class="member-email">${m.email||''}</div>
-        ${m.left_at ? `<div style="font-size:12px;color:#A32D2D;margin-top:4px">退職日：${new Date(m.left_at).toLocaleDateString('ja-JP')}${m.left_reason ? ' / '+m.left_reason : ''}</div>` : ''}
-        <div class="member-tags">
-            <span class="status-chip s-teal">${roleLabel(m.role)}</span>
-            ${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}">${m.rank}ランク</span>` : ''}
-            ${m.team_id ? `<span class="team-badge">${allTeams.find(t=>t.id===m.team_id)?.team_code||'?'}チーム</span>` : ''}
+        <!-- 区分・チーム -->
+        <div style="display:flex;gap:4px;align-items:center;min-width:160px;flex-shrink:0;flex-wrap:wrap">
+          <span class="status-chip s-teal">${roleLabel(m.role)}</span>
+          ${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}">${m.rank}ランク</span>` : ''}
+          ${m.team_id ? `<span class="team-badge">${allTeams.find(t=>t.id===m.team_id)?.team_code||'?'}チーム</span>` : '<span style="font-size:11px;color:var(--text-muted)">未所属</span>'}
         </div>
+        <!-- 名前・メール 横並び -->
+        <div style="flex:1;min-width:0;display:flex;align-items:center;gap:16px">
+          <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">
+            ${m.full_name}${!m.is_active ? ' <span style="font-size:11px;color:#A32D2D;background:#FCEBEB;padding:1px 6px;border-radius:5px">退職済み</span>' : ''}
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.email||''}</div>
         </div>
+        ${m.left_at ? `<div style="font-size:11px;color:#A32D2D;white-space:nowrap;flex-shrink:0">退職：${new Date(m.left_at).toLocaleDateString('ja-JP')}</div>` : ''}
+        <!-- ボタン -->
         <div style="display:flex;flex-direction:row;gap:6px;align-items:center;flex-shrink:0" onclick="event.stopPropagation()">
         ${m.is_active && (isEffectiveAdmin() || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:3px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
         ${isTopAdmin() ? (m.is_active
