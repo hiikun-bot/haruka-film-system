@@ -144,14 +144,15 @@ function requireRole(...roles) {
 
 // 権限定数
 const ROLES = {
-  ADMIN:    'admin',
-  DIRECTOR: 'director',
-  EDITOR:   'editor',
-  CLIENT:   'client',
+  ADMIN:     'admin',
+  SECRETARY: 'secretary',
+  DIRECTOR:  'director',
+  EDITOR:    'editor',
+  CLIENT:    'client',
 };
 
 // 各ロールがアクセスできる最低権限（以上のロールすべて許可）
-const ROLE_LEVEL = { admin: 4, director: 3, editor: 2, client: 1 };
+const ROLE_LEVEL = { admin: 5, secretary: 4, director: 3, editor: 2, client: 1 };
 
 function requireLevel(minRole) {
   return (req, res, next) => {

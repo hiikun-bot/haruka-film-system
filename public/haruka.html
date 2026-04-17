@@ -655,6 +655,7 @@ tr.row-help td{background:#FFFBF2}
                 <option value="producer_director">P兼D</option>
                 <option value="producer">プロデューサー</option>
                 <option value="admin">管理者</option>
+                <option value="secretary">秘書</option>
               </select>
             </div>
             <div class="form-group">
@@ -1354,7 +1355,7 @@ async function init() {
 }
 
 function roleLabel(role) {
-  const map = {admin:'管理者',producer:'プロデューサー',producer_director:'P兼D',director:'ディレクター',editor:'編集者',designer:'デザイナー'};
+  const map = {admin:'管理者',secretary:'秘書',producer:'プロデューサー',producer_director:'P兼D',director:'ディレクター',editor:'編集者',designer:'デザイナー'};
   return map[role] || role || '-';
 }
 
@@ -1833,7 +1834,7 @@ async function loadMembers() {
         </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end" onclick="event.stopPropagation()">
-        ${isEffectiveAdmin() ? (m.is_active
+        ${isTopAdmin() ? (m.is_active
             ? `<button class="btn-danger" onclick="deactivateMember('${m.id}','${m.full_name}')">退職処理</button>`
             : `<button class="btn-sm" onclick="reactivateMember('${m.id}')">復帰させる</button>`
         ) : ''}
@@ -2286,7 +2287,7 @@ function effectiveRole() {
 const CSV_LEGEND = [
   '【必須】名前（フルネーム）例: 田中 太郎',
   '【必須】メールアドレス 例: tanaka@example.com',
-  '【必須】役割を英字で入力 → admin=管理者 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=動画編集者 / designer=デザイナー',
+  '【必須】役割を英字で入力 → admin=管理者 / secretary=秘書 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=動画編集者 / designer=デザイナー',
   '職種を英字で入力 → video=動画 / design=デザイン',
   'ランクを英字1文字で入力 → S / A / B / C',
   'チームコード: チーム管理で登録したアルファベット1文字（例: A）',
@@ -2566,10 +2567,15 @@ async function saveRates() {
   alert('単価を保存しました');
 }
 
-// 実効ロールが管理者相当かどうか
+// 実効ロールが管理者相当かどうか（admin / secretary を含む）
 function isEffectiveAdmin() {
-  if (previewRole) return previewRole === 'admin';
-  return isSuperAdmin();
+  const r = effectiveRole();
+  return r === 'admin' || r === 'secretary';
+}
+
+// 最上位権限（admin のみ）の判定
+function isTopAdmin() {
+  return effectiveRole() === 'admin';
 }
 
 // ロールプレビュー切り替え
@@ -2974,7 +2980,7 @@ function loadDashboard() {
   const role = effectiveRole();
   const today = new Date(); today.setHours(0,0,0,0);
 
-  if (['admin','producer','producer_director'].includes(role)) {
+  if (['admin','secretary','producer','producer_director'].includes(role)) {
     renderAdminDash(today);
   } else if (role === 'director') {
     renderDirectorDash(today);
