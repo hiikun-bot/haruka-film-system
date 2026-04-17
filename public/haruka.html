@@ -1714,21 +1714,57 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
-<!-- ファイルプレビューモーダル -->
+<!-- ファイルプレビューモーダル（レビュー＋コメント） -->
 <div class="modal-overlay" id="modal-file-preview" style="z-index:1100">
-  <div class="modal" style="width:92vw;max-width:1000px;height:88vh;max-height:88vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
-    <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff">
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:4px;height:18px;background:var(--em);border-radius:2px"></div>
-        <span id="fp-filename" style="font-size:13px;font-weight:600;font-family:monospace;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70vw"></span>
+  <div class="modal" style="width:96vw;max-width:1400px;height:90vh;max-height:90vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
+
+    <!-- ヘッダー -->
+    <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <div style="width:4px;height:18px;background:var(--em);border-radius:2px;flex-shrink:0"></div>
+        <span id="fp-filename" style="font-size:12px;font-weight:600;font-family:monospace;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:12px;color:var(--em-dark);text-decoration:none;padding:4px 12px;border:0.5px solid var(--em);border-radius:6px;display:none">Driveで開く ↗</a>
-        <button class="modal-close" onclick="closeModal('modal-file-preview')">×</button>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:12px;color:var(--em-dark);text-decoration:none;padding:4px 12px;border:0.5px solid var(--em);border-radius:6px;display:none">↗ Drive</a>
+        <button class="modal-close" onclick="closeFilePreview()">×</button>
       </div>
     </div>
-    <div id="fp-body" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#111;overflow:hidden">
-      <div style="color:#666;font-size:13px">読み込み中...</div>
+
+    <!-- ボディ：左プレイヤー＋右コメント -->
+    <div style="flex:1;min-height:0;display:flex;overflow:hidden">
+
+      <!-- 左：プレイヤー -->
+      <div id="fp-player" style="flex:1;min-width:0;background:#111;display:flex;align-items:center;justify-content:center;overflow:hidden">
+        <div style="color:#666;font-size:13px">読み込み中...</div>
+      </div>
+
+      <!-- 右：コメントパネル -->
+      <div style="width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid var(--border);background:#fff">
+
+        <!-- タブ：レビューコメント / ナレッジ -->
+        <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0">
+          <button id="fp-tab-review" onclick="switchPreviewTab('review')" style="flex:1;padding:10px;font-size:12px;font-weight:600;background:none;border:none;cursor:pointer;border-bottom:2px solid var(--em);color:var(--em-dark)">レビューコメント</button>
+          <button id="fp-tab-knowledge" onclick="switchPreviewTab('knowledge')" style="flex:1;padding:10px;font-size:12px;font-weight:500;background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-muted)">📚 ナレッジ</button>
+        </div>
+
+        <!-- コメント一覧 -->
+        <div id="fp-comments-list" style="flex:1;overflow-y:auto;padding:12px;min-height:0">
+          <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">コメントを読み込み中...</div>
+        </div>
+
+        <!-- コメント入力 -->
+        <div id="fp-comment-input-area" style="padding:12px;border-top:1px solid var(--border);flex-shrink:0">
+          <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border);border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='var(--em)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px">
+            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);cursor:pointer;flex-shrink:0">
+              <input type="checkbox" id="fp-is-knowledge" style="cursor:pointer">
+              📚 ナレッジとして保存
+            </label>
+            <button onclick="submitFileComment()" style="background:var(--em);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">送信</button>
+          </div>
+        </div>
+
+      </div>
     </div>
   </div>
 </div>
@@ -5694,24 +5730,135 @@ async function loadCreativeFiles(creativeId) {
       ${f.width && f.height ? `<span style="color:var(--text-muted);white-space:nowrap;font-size:12px">${f.width}×${f.height}</span>` : ''}
       <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
       ${canPreview
-        ? `<button onclick="openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}')" style="background:var(--em);color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600">▶ 確認</button>`
-        : `<span style="font-size:11px;color:#B4B2A9;white-space:nowrap">Driveなし</span>`}
+        ? `<button onclick="openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}')" style="background:var(--em);color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600">▶ 確認</button>`
+        : `<button onclick="openFilePreview(null,'${esc(f.generated_name)}','','${f.id}')" style="background:var(--surface);color:var(--text-muted);border:0.5px solid var(--border);border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap">💬 コメント</button>`}
       ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:3px 8px;border:0.5px solid var(--em);border-radius:6px;white-space:nowrap">↗ Drive</a>` : ''}
     </div>`;
   }).join('');
 }
 
-function openFilePreview(driveFileId, filename, driveUrl) {
+let currentPreviewFileId = null;
+
+function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
+  currentPreviewFileId = fileRecordId || null;
   document.getElementById('fp-filename').textContent = filename;
   const link = document.getElementById('fp-drive-link');
   if (driveUrl) { link.href = driveUrl; link.style.display = ''; }
   else { link.style.display = 'none'; }
 
-  const body = document.getElementById('fp-body');
-  // Google Drive embed URL で動画/画像を表示
-  const embedUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
-  body.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+  // プレイヤー
+  const player = document.getElementById('fp-player');
+  if (driveFileId) {
+    const embedUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
+    player.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+  } else {
+    player.innerHTML = `<div style="color:#888;font-size:13px;text-align:center"><div style="font-size:32px;margin-bottom:8px">📎</div>Drive連携が未設定のためプレビューできません</div>`;
+  }
+
+  switchPreviewTab('review');
+  if (currentPreviewFileId) loadFileComments(currentPreviewFileId);
   openModal('modal-file-preview');
+}
+
+function closeFilePreview() {
+  // iframeを破棄して動画を停止
+  document.getElementById('fp-player').innerHTML = '';
+  closeModal('modal-file-preview');
+}
+
+function switchPreviewTab(tab) {
+  const isReview = tab === 'review';
+  document.getElementById('fp-tab-review').style.borderBottomColor    = isReview ? 'var(--em)' : 'transparent';
+  document.getElementById('fp-tab-review').style.color                 = isReview ? 'var(--em-dark)' : 'var(--text-muted)';
+  document.getElementById('fp-tab-review').style.fontWeight            = isReview ? '600' : '500';
+  document.getElementById('fp-tab-knowledge').style.borderBottomColor = !isReview ? 'var(--em)' : 'transparent';
+  document.getElementById('fp-tab-knowledge').style.color              = !isReview ? 'var(--em-dark)' : 'var(--text-muted)';
+  document.getElementById('fp-tab-knowledge').style.fontWeight         = !isReview ? '600' : '500';
+  document.getElementById('fp-comment-input-area').style.display       = isReview ? '' : 'none';
+
+  if (isReview && currentPreviewFileId) loadFileComments(currentPreviewFileId);
+  else loadKnowledge();
+}
+
+async function loadFileComments(fileId) {
+  const el = document.getElementById('fp-comments-list');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
+  const res = await fetch(`${API}/creative-files/${fileId}/comments`);
+  if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
+  const list = await res.json();
+  renderComments(list);
+}
+
+function renderComments(list) {
+  const el = document.getElementById('fp-comments-list');
+  if (!list.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">まだコメントがありません</div>';
+    return;
+  }
+  el.innerHTML = list.map(c => `
+    <div style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
+          ${c.is_knowledge ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:10px;color:var(--text-muted)">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+          ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1" title="削除">✕</button>` : ''}
+        </div>
+      </div>
+      <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
+    </div>
+  `).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function submitFileComment() {
+  if (!currentPreviewFileId) return;
+  const text = document.getElementById('fp-comment-text').value.trim();
+  if (!text) return;
+  const isKnowledge = document.getElementById('fp-is-knowledge').checked;
+  const btn = document.querySelector('#fp-comment-input-area button');
+  btn.disabled = true; btn.textContent = '送信中...';
+  const res = await fetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge }),
+  });
+  btn.disabled = false; btn.textContent = '送信';
+  if (res.ok) {
+    document.getElementById('fp-comment-text').value = '';
+    document.getElementById('fp-is-knowledge').checked = false;
+    await loadFileComments(currentPreviewFileId);
+  } else {
+    const e = await res.json(); alert('エラー: ' + e.error);
+  }
+}
+
+async function deleteFileComment(id) {
+  if (!confirm('このコメントを削除しますか？')) return;
+  const res = await fetch(`${API}/creative-file-comments/${id}`, { method: 'DELETE' });
+  if (res.ok) await loadFileComments(currentPreviewFileId);
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function loadKnowledge() {
+  const el = document.getElementById('fp-comments-list');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
+  const res = await fetch(`${API}/knowledge`);
+  if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
+  const list = await res.json();
+  if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">ナレッジがまだありません</div>'; return; }
+  el.innerHTML = list.map(c => `
+    <div style="margin-bottom:12px;padding:10px 12px;background:#fffbeb;border-radius:8px;border:0.5px solid #fcd34d">
+      <div style="font-size:10px;color:#92400e;margin-bottom:4px;font-weight:500">${esc(c.creative_files?.creatives?.projects?.name || '')} / ${esc(c.creative_files?.generated_name || '')}</div>
+      <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all;margin-bottom:4px">${esc(c.comment)}</div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
+        <span>${esc(c.users?.full_name || '')}</span>
+        <span>${new Date(c.created_at).toLocaleDateString('ja-JP')}</span>
+      </div>
+    </div>
+  `).join('');
 }
 
 async function handleUploadFileSelect(input) {

@@ -682,6 +682,16 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
 
       driveFileId = uploadRes.data.id;
       driveUrl    = uploadRes.data.webViewLink;
+      // iframe埋め込み用に「リンクを知っている全員が閲覧可能」に設定
+      try {
+        await drive.permissions.create({
+          fileId: driveFileId,
+          supportsAllDrives: true,
+          requestBody: { role: 'reader', type: 'anyone' },
+        });
+      } catch (permErr) {
+        console.error('Drive permission error:', permErr.message);
+      }
     } catch (e) {
       console.error('Drive upload error:', e.message);
       // Drive 失敗でも DB 記録は続ける（エラー内容をレスポンスに含める）
@@ -1838,6 +1848,64 @@ router.post('/creative-versions', async (req, res) => {
     .from('creative_version_history')
     .insert({ creative_id, version_num: parseInt(version_num), director_comment: director_comment || null, client_comment: client_comment || null })
     .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ============================================================
+// ファイルコメント（レビュー・ナレッジ）
+// ============================================================
+
+// ファイルのコメント一覧
+router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_file_comments')
+    .select('*, users(full_name, role)')
+    .eq('creative_file_id', req.params.fid)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// コメント追加
+router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
+  const { comment, timecode, is_knowledge } = req.body;
+  if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
+  const { data, error } = await supabase
+    .from('creative_file_comments')
+    .insert({
+      creative_file_id: req.params.fid,
+      user_id: req.user?.supabase_user_id || null,
+      comment: comment.trim(),
+      timecode: timecode || null,
+      is_knowledge: !!is_knowledge,
+    })
+    .select('*, users(full_name, role)')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// コメント削除（自分のコメントのみ / admin は全件）
+router.delete('/creative-file-comments/:id', requireAuth, async (req, res) => {
+  const userId = req.user?.supabase_user_id;
+  const { data: comment } = await supabase.from('creative_file_comments').select('user_id').eq('id', req.params.id).single();
+  if (!comment) return res.status(404).json({ error: '見つかりません' });
+  const userRow = await supabase.from('users').select('role').eq('id', userId).single();
+  const isAdmin = ['admin', 'secretary'].includes(userRow.data?.role);
+  if (comment.user_id !== userId && !isAdmin) return res.status(403).json({ error: '権限がありません' });
+  const { error } = await supabase.from('creative_file_comments').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ナレッジ一覧（is_knowledge=true のコメント全件）
+router.get('/knowledge', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_file_comments')
+    .select('*, users(full_name, role), creative_files(generated_name, creative_id, creatives(file_name, projects(name, clients(name))))')
+    .eq('is_knowledge', true)
+    .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
