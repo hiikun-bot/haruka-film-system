@@ -356,3 +356,13 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_team_id TEXT;
 
 -- projects_status_check 制約が存在する場合は削除（アプリ側でバリデーション済み）
 ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
+
+-- クリエイティブ バージョン履歴
+CREATE TABLE IF NOT EXISTS creative_version_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  version_num INTEGER NOT NULL,
+  director_comment TEXT,
+  client_comment TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);

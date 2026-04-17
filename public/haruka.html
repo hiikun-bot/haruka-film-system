@@ -1325,6 +1325,17 @@ tr.row-help td{background:#FFFBF2}
       <div id="cd-files-list"></div>
     </div>
 
+    <!-- バージョン履歴セクション -->
+    <div style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em">バージョン履歴</div>
+        <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="saveVersionHistory()">このバージョンの指摘を保存</button>
+      </div>
+      <div id="cd-version-history-list">
+        <div style="font-size:13px;color:var(--text-muted);text-align:center;padding:12px 0">履歴を読み込み中...</div>
+      </div>
+    </div>
+
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
       <button class="btn-primary" onclick="saveCreativeDetail()">保存する</button>
@@ -3659,6 +3670,9 @@ async function openCreativeDetail(id) {
   // アップロード済みファイル
   await loadCreativeFiles(id);
 
+  // バージョン履歴
+  await loadVersionHistory(id);
+
   openModal('modal-creative-detail');
 }
 
@@ -3764,6 +3778,94 @@ async function executeUpload() {
   } catch(e) {
     statusEl.textContent = 'ネットワークエラー: ' + e.message;
     statusEl.style.color = '#E24B4A';
+  }
+}
+
+async function loadVersionHistory(creativeId) {
+  const el = document.getElementById('cd-version-history-list');
+  el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);text-align:center;padding:12px 0">読み込み中...</div>';
+  try {
+    const res = await fetch(`${API}/creative-versions/${creativeId}`);
+    if (!res.ok) throw new Error('取得失敗');
+    const list = await res.json();
+    if (!list.length) {
+      el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);text-align:center;padding:12px 0">まだ履歴がありません</div>';
+      return;
+    }
+    el.innerHTML = list.map((h, i) => {
+      const dateStr = new Date(h.created_at).toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+      const headerId = `vh-header-${h.id}`;
+      const bodyId   = `vh-body-${h.id}`;
+      return `
+      <div style="border:0.5px solid var(--border);border-radius:8px;margin-bottom:6px;overflow:hidden;background:var(--white)">
+        <div id="${headerId}" onclick="toggleVersionHistory('${h.id}')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;user-select:none;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+            <span style="font-size:13px;font-weight:600;color:var(--em-dark);white-space:nowrap">v${h.version_num} の指摘</span>
+            <span style="font-size:11px;color:var(--text-muted);white-space:nowrap">${dateStr}</span>
+            ${h.director_comment ? '<span style="font-size:11px;background:var(--em-pale);color:var(--em-dark);border-radius:4px;padding:1px 7px;white-space:nowrap">Dir</span>' : ''}
+            ${h.client_comment   ? '<span style="font-size:11px;background:#EDF6FF;color:#2563EB;border-radius:4px;padding:1px 7px;white-space:nowrap">Client</span>' : ''}
+          </div>
+          <span id="vh-caret-${h.id}" style="font-size:12px;color:var(--text-muted);transition:transform 0.2s">${i === 0 ? '▲' : '▼'}</span>
+        </div>
+        <div id="${bodyId}" style="padding:${i === 0 ? '0 14px 12px' : '0'};max-height:${i === 0 ? '600px' : '0'};overflow:hidden;transition:max-height 0.25s ease,padding 0.25s ease">
+          ${h.director_comment ? `
+          <div style="margin-bottom:8px">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:4px">ディレクターコメント</div>
+            <div style="font-size:13px;color:var(--text);white-space:pre-wrap;background:var(--surface);border-radius:6px;padding:8px 10px;line-height:1.6">${esc(h.director_comment)}</div>
+          </div>` : ''}
+          ${h.client_comment ? `
+          <div>
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:4px">クライアントコメント</div>
+            <div style="font-size:13px;color:var(--text);white-space:pre-wrap;background:#EDF6FF;border-radius:6px;padding:8px 10px;line-height:1.6">${esc(h.client_comment)}</div>
+          </div>` : ''}
+          ${!h.director_comment && !h.client_comment ? '<div style="font-size:13px;color:var(--text-muted)">コメントなし</div>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="font-size:13px;color:#E24B4A;text-align:center;padding:12px 0">履歴の取得に失敗しました</div>';
+  }
+}
+
+function toggleVersionHistory(id) {
+  const body   = document.getElementById(`vh-body-${id}`);
+  const caret  = document.getElementById(`vh-caret-${id}`);
+  const isOpen = body.style.maxHeight !== '0px' && body.style.maxHeight !== '0';
+  if (isOpen) {
+    body.style.maxHeight = '0';
+    body.style.padding   = '0 14px';
+    caret.textContent    = '▼';
+  } else {
+    body.style.maxHeight = '600px';
+    body.style.padding   = '0 14px 12px';
+    caret.textContent    = '▲';
+  }
+}
+
+async function saveVersionHistory() {
+  if (!currentCreativeDetail) return;
+  const versionNum       = parseInt(document.getElementById('cd-version-num')?.value) || 1;
+  const directorComment  = document.getElementById('cd-director-comment').value.trim() || null;
+  const clientComment    = document.getElementById('cd-client-comment').value.trim()   || null;
+  if (!directorComment && !clientComment) {
+    alert('ディレクターコメントまたはクライアントコメントを入力してください');
+    return;
+  }
+  const res = await fetch(`${API}/creative-versions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      creative_id:      currentCreativeDetail.id,
+      version_num:      versionNum,
+      director_comment: directorComment,
+      client_comment:   clientComment,
+    }),
+  });
+  if (res.ok) {
+    await loadVersionHistory(currentCreativeDetail.id);
+  } else {
+    const e = await res.json();
+    alert('保存エラー: ' + e.error);
   }
 }
 
