@@ -1764,6 +1764,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <textarea class="form-input" id="cd-comment-field" rows="4" style="resize:vertical" placeholder="コメントを入力..."></textarea>
       </div>
 
+      <!-- 編集者の返信コメント（後修正ステータスのみ） -->
+      <div class="form-group" id="cd-editor-reply-group" style="display:none;margin-bottom:18px">
+        <label class="form-label" id="cd-editor-reply-label">Dへの連絡・確認事項</label>
+        <textarea class="form-input" id="cd-editor-reply" rows="4" style="resize:vertical" placeholder="修正内容や確認事項をディレクターに伝えてください..."></textarea>
+      </div>
+
       <!-- ディレクターからの指示（チェック段階のみ） -->
       <div class="form-group" id="cd-director-note-group" style="display:none;margin-bottom:18px">
         <label class="form-label" id="cd-director-note-label" style="color:var(--em-dark)">ディレクターからの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span></label>
@@ -5854,6 +5860,8 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-comment-field').value = c.director_comment || '';
   const _noteEl = document.getElementById('cd-director-note');
   if (_noteEl) _noteEl.value = '';
+  const _replyEl = document.getElementById('cd-editor-reply');
+  if (_replyEl) _replyEl.value = '';
   updateCreativeCommentLabel(c.status);
 
   // ステップインジケーター
@@ -5989,45 +5997,60 @@ function updateCreativeCommentLabel(status) {
   const field   = document.getElementById('cd-comment-field');
   if (!label || !field) return;
 
-  // チェック段階（承認者が見る段階）は編集者コメントを読み取り専用で表示
-  const CHECK_READONLY = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const isReadonly = CHECK_READONLY.includes(status);
+  // チェック段階（承認者が見る）または後修正（編集者が修正指摘を参照）は読み取り専用
+  const CHECK_READONLY   = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const isCheckStage   = CHECK_READONLY.includes(status);
+  const isRevision     = REVISION_STATUSES.includes(status);
+  const isReadonly     = isCheckStage || isRevision;
 
   field.readOnly = isReadonly;
-  field.rows = isReadonly ? 8 : 4;
+  field.rows = isCheckStage ? 8 : isRevision ? 5 : 4;
   field.style.background    = isReadonly ? 'var(--surface)' : '';
   field.style.color         = isReadonly ? 'var(--text-muted)' : '';
   field.style.cursor        = isReadonly ? 'default' : '';
   field.style.borderColor   = isReadonly ? 'var(--border)' : '';
 
-  if (isReadonly) {
+  if (isCheckStage) {
     label.innerHTML = '編集者からのコメント <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>';
+  } else if (isRevision) {
+    const checkMap = { 'Dチェック後修正': 'Dチェック', 'Pチェック後修正': 'Pチェック', 'クライアントチェック後修正': 'CLチェック' };
+    label.innerHTML = `${checkMap[status]}　修正指摘内容 <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>`;
   } else if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
     label.innerHTML = 'ディレクターへのコメント';
-  } else if (['Dチェック後修正'].includes(status)) {
-    label.innerHTML = 'Dチェック修正指摘';
-  } else if (['Pチェック後修正'].includes(status)) {
-    label.innerHTML = 'Pチェック修正指摘';
-  } else if (['クライアントチェック後修正'].includes(status)) {
-    label.innerHTML = 'クライアントチェック修正指摘';
   } else {
     label.innerHTML = 'コメント';
   }
 
-  // チェック段階: アップロードセクション非表示 + ディレクターコメント欄表示
-  const uploadSection = document.getElementById('cd-upload-section');
-  const noteGroup     = document.getElementById('cd-director-note-group');
-  const noteLabel     = document.getElementById('cd-director-note-label');
-  if (isReadonly) {
-    if (uploadSection) uploadSection.style.display = 'none';
-    if (noteGroup) noteGroup.style.display = '';
+  const uploadSection   = document.getElementById('cd-upload-section');
+  const noteGroup       = document.getElementById('cd-director-note-group');
+  const noteLabel       = document.getElementById('cd-director-note-label');
+  const editorRplyGroup = document.getElementById('cd-editor-reply-group');
+  const editorRplyLabel = document.getElementById('cd-editor-reply-label');
+
+  if (isCheckStage) {
+    // チェック段階: アップロード非表示、ディレクターコメント欄表示
+    if (uploadSection)   uploadSection.style.display   = 'none';
+    if (noteGroup)       noteGroup.style.display       = '';
+    if (editorRplyGroup) editorRplyGroup.style.display = 'none';
     if (noteLabel) {
       const stageMap = { 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
       noteLabel.innerHTML = `${stageMap[status] || ''}　ディレクターからの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>`;
     }
+  } else if (isRevision) {
+    // 後修正: 修正指摘は読み取り専用、編集者返信欄を表示
+    if (uploadSection)   uploadSection.style.display   = '';
+    if (noteGroup)       noteGroup.style.display       = 'none';
+    if (editorRplyGroup) editorRplyGroup.style.display = '';
+    if (editorRplyLabel) {
+      const dirMap = { 'Dチェック後修正': 'D', 'Pチェック後修正': 'P', 'クライアントチェック後修正': 'CL' };
+      editorRplyLabel.textContent = `${dirMap[status] || 'D'}への連絡・確認事項`;
+    }
   } else {
-    if (uploadSection) uploadSection.style.display = '';
-    if (noteGroup) noteGroup.style.display = 'none';
+    // 通常制作中
+    if (uploadSection)   uploadSection.style.display   = '';
+    if (noteGroup)       noteGroup.style.display       = 'none';
+    if (editorRplyGroup) editorRplyGroup.style.display = 'none';
   }
 }
 
@@ -6087,6 +6110,11 @@ async function loadCreativeFiles(creativeId) {
   const list    = document.getElementById('cd-files-list');
   if (!files.length) { section.style.display = 'none'; return; }
   section.style.display = '';
+
+  // 後修正ステータスでは編集者がアップロードのみ行う画面なのでチェック/コメントボタン不要
+  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const hideCheckBtn = REVISION_STATUSES.includes(currentCreativeDetail?.status);
+
   list.innerHTML = files.map(f => {
     const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
     const canPreview = !!driveFileId;
@@ -6099,17 +6127,18 @@ async function loadCreativeFiles(creativeId) {
     const checkBtnLabel = canPreview ? '▶ チェックする' : '💬 コメントする';
     return `
     <div style="background:var(--white);border:0.5px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:0.5px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;${hideCheckBtn ? '' : 'border-bottom:0.5px solid var(--border)'}">
         <span style="font-family:monospace;font-size:12px;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
         ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
         <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
         ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
       </div>
+      ${hideCheckBtn ? '' : `
       <div style="padding:10px 14px;background:${canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
         <button onclick="${checkBtnClick}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
           ${checkBtnLabel}
         </button>
-      </div>
+      </div>`}
     </div>`;
   }).join('');
 }
@@ -6492,11 +6521,14 @@ async function saveVersionHistory_DISABLED() {
 
 async function saveCreativeDetail(overrideStatus) {
   if (!currentCreativeDetail) return;
-  const noteValue = document.getElementById('cd-director-note')?.value.trim() || null;
+  const noteValue        = document.getElementById('cd-director-note')?.value.trim()  || null;
+  const editorReplyValue = document.getElementById('cd-editor-reply')?.value.trim()   || null;
+  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const isRevision = REVISION_STATUSES.includes(currentCreativeDetail.status);
   const body = {
-    script_url:       document.getElementById('cd-script-url').value.trim()    || null,
-    frameio_url:      document.getElementById('cd-frameio-url').value.trim()   || null,
-    director_comment: noteValue ?? (document.getElementById('cd-comment-field').value.trim() || null),
+    script_url:       document.getElementById('cd-script-url').value.trim()  || null,
+    frameio_url:      document.getElementById('cd-frameio-url').value.trim() || null,
+    director_comment: noteValue ?? (isRevision ? editorReplyValue : null) ?? (document.getElementById('cd-comment-field').value.trim() || null),
   };
   if (overrideStatus) body.status = overrideStatus;
   const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
