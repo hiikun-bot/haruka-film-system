@@ -4568,7 +4568,12 @@ function updateAssigneeSelect() {
     const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
     return `<option value="${m.id}">${m.full_name}${label}</option>`;
   }).join('');
-  if (prev) sel.value = prev;
+  if (prev) {
+    sel.value = prev;
+  } else if (currentUser) {
+    const selfInList = candidates.find(m => m.id === currentUser.id);
+    if (selfInList) sel.value = currentUser.id;
+  }
 }
 
 // ===== 汎用マスター管理 =====
