@@ -2076,6 +2076,7 @@ function renderMemberList() {
         </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end" onclick="event.stopPropagation()">
+        ${isEffectiveAdmin() && m.is_active ? `<button class="btn-sm" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW リセット</button>` : ''}
         ${isTopAdmin() ? (m.is_active
             ? `<button class="btn-danger" onclick="deactivateMember('${m.id}','${m.full_name}')">退職処理</button>`
             : `<button class="btn-sm" onclick="reactivateMember('${m.id}')">復帰させる</button>`
