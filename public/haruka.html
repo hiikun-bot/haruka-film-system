@@ -279,7 +279,7 @@ tr.row-help td{background:#FFFBF2}
   <div id="dash-content">
     <!-- グラフエリア（固定） -->
     <div id="dash-charts" style="display:none">
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
         <!-- 売上予実 積み上げ棒グラフ -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
           <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">💰 売上予実</div>
@@ -1434,6 +1434,10 @@ tr.row-help td{background:#FFFBF2}
         <div class="master-nav-item active" onclick="selectMasterNav('generic')" id="mnav-generic"
           style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;color:var(--em-dark);background:var(--em-pale);border-left:3px solid var(--em-dark)">
           区分マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('general')" id="mnav-general"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          汎用マスター
         </div>
         <div class="master-nav-item" onclick="selectMasterNav('products')" id="mnav-products"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
@@ -4050,13 +4054,17 @@ let masterItems = [];
 let currentCategoryId = null;
 let masterItemEditingId = null;
 let masterCatEditingId = null;
+let generalCategoryId = null;
+let generalItemEditingId = null;
 
 let currentMasterNav = 'generic';
 
 function selectMasterNav(type) {
   currentMasterNav = type;
+  if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
+  if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','products','appeal_axes'].forEach(t => {
+  ['generic','general','products','appeal_axes'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -4068,6 +4076,8 @@ function selectMasterNav(type) {
   // コンテンツ切り替え
   if (type === 'generic') {
     renderMasterPage();
+  } else if (type === 'general') {
+    renderGeneralMasterPage();
   } else if (type === 'products') {
     renderProductsMasterPage();
   } else if (type === 'appeal_axes') {
@@ -4094,145 +4104,265 @@ function renderMasterPage() {
     const cat = masterCategories.find(c => c.id === currentCategoryId);
     const items = masterItems.filter(i => i.category_id === currentCategoryId);
 
-    const itemRows = items.map(item => {
-      const expiry  = item.expires_at ? item.expires_at.slice(0,10) : '';
-      const expired = expiry && expiry < now;
-      const dimmed  = expired || !item.is_active;
-      const expLabel = expiry || '無期限';
-
+    const itemRows = items.map((item, idx) => {
       if (masterItemEditingId === item.id) {
-        return `<tr style="background:var(--em-pale)">
-          <td style="padding:8px 10px"><input class="form-input" id="mie-code" value="${item.code}" style="width:100px"></td>
-          <td style="padding:8px 10px"><input class="form-input" id="mie-name" value="${item.name}" style="width:100%"></td>
-          <td style="padding:8px 10px"><input class="form-input" id="mie-note" value="${item.note||''}" placeholder="備考" style="width:100%"></td>
-          <td style="padding:8px 10px"><input class="form-input" id="mie-expires" type="date" value="${expiry}" style="width:140px"></td>
-          <td style="padding:8px 10px">
-            <select class="form-select" id="mie-active" style="width:75px">
-              <option value="true"  ${item.is_active?'selected':''}>有効</option>
-              <option value="false" ${!item.is_active?'selected':''}>無効</option>
-            </select>
-          </td>
-          <td style="padding:8px 10px;white-space:nowrap">
-            <input id="mie-sort" type="hidden" value="${item.sort_order}">
-            <button class="btn-sm" style="color:var(--em-dark)" onclick="saveMasterItemEdit('${item.id}')">保存</button>
-            <button class="btn-sm" style="margin-left:4px" onclick="masterItemEditingId=null;renderMasterPage()">取消</button>
-          </td>
-        </tr>`;
+        return `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--em-pale);border-radius:8px;border:1.5px solid var(--em)">
+          <input class="form-input" id="mie-code" value="${item.code}" placeholder="コード" style="width:110px;font-size:13px">
+          <input class="form-input" id="mie-name" value="${item.name}" placeholder="名称" style="flex:1;font-size:13px">
+          <input id="mie-sort" type="hidden" value="${item.sort_order}">
+          <input id="mie-note" type="hidden" value="${item.note||''}">
+          <input id="mie-expires" type="hidden" value="">
+          <input id="mie-active" type="hidden" value="true">
+          <button class="btn-sm" style="color:var(--em-dark);white-space:nowrap" onclick="saveMasterItemEdit('${item.id}')">保存</button>
+          <button class="btn-sm" style="white-space:nowrap" onclick="masterItemEditingId=null;renderMasterPage()">取消</button>
+        </div>`;
       }
-      return `<tr style="${dimmed?'opacity:0.45':''}border-bottom:1px solid var(--border)">
-        <td style="padding:10px 12px"><code style="font-size:12px;background:var(--em-pale);padding:2px 8px;border-radius:5px;color:var(--em-dark)">${item.code}</code></td>
-        <td style="padding:10px 12px;font-size:14px;font-weight:500">${item.name}</td>
-        <td style="padding:10px 12px;font-size:13px;color:var(--text-muted)">${item.note||'—'}</td>
-        <td style="padding:10px 12px;font-size:13px;color:${expired?'#E24B4A':'var(--text-muted)'}">${expLabel}${expired?' ⚠️':''}</td>
-        <td style="padding:10px 12px"><span class="status-chip ${item.is_active?'s-teal':'s-gray'}">${item.is_active?'有効':'無効'}</span></td>
-        <td style="padding:10px 12px;white-space:nowrap">
-          <button class="btn-sm" onclick="masterItemEditingId='${item.id}';renderMasterPage()">編集</button>
-          <button class="btn-sm" style="color:#A32D2D;border-color:#F09595;margin-left:4px" onclick="deleteMasterItem('${item.id}')">削除</button>
-        </td>
-      </tr>`;
+      return `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;${!item.is_active?'opacity:0.45':''}">
+        <span style="font-size:12px;font-weight:700;background:var(--em-pale);color:var(--em-dark);padding:3px 10px;border-radius:6px;min-width:60px;text-align:center;letter-spacing:0.04em">${item.code}</span>
+        <span style="flex:1;font-size:14px;font-weight:500;color:var(--text)">${item.name}</span>
+        <button class="btn-sm" style="font-size:11px;padding:3px 10px" onclick="masterItemEditingId='${item.id}';renderMasterPage()">編集</button>
+        <button class="btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595" onclick="deleteMasterItem('${item.id}')">削除</button>
+      </div>`;
     }).join('');
 
     content.innerHTML = `
+      <!-- ヘッダー -->
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
         <button class="btn-sm" onclick="currentCategoryId=null;masterItemEditingId=null;renderMasterPage()">← 戻る</button>
         <span style="font-size:17px;font-weight:700;color:var(--text-main)">${cat?.name || ''}</span>
-        <span style="font-size:12px;color:var(--text-muted)">区分マスター</span>
+        <span style="font-size:12px;color:var(--text-muted);background:var(--em-pale);padding:2px 10px;border-radius:20px">${items.length}件</span>
         <button class="btn-sm" style="margin-left:auto" onclick="masterCatEditingId='${currentCategoryId}';currentCategoryId=null;renderMasterPage()">区分名を編集</button>
         <button class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="deleteMasterCat('${currentCategoryId}')">区分を削除</button>
       </div>
 
-      <!-- 追加フォーム -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
-        <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 値を追加</div>
-        <div style="display:grid;grid-template-columns:120px 1fr 1fr 160px;gap:10px;align-items:end">
+      <!-- 追加フォーム（上段） -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:12px">＋ 追加</div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
           <div>
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
-            <input class="form-input" id="mia-code" placeholder="TYPE_A">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mia-code" placeholder="例：FB" style="width:120px"
+              onkeydown="if(event.key==='Enter')document.getElementById('mia-name').focus()">
           </div>
-          <div>
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">名称 *</label>
-            <input class="form-input" id="mia-name" placeholder="値の名称">
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">名称 <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mia-name" placeholder="例：Meta"
+              onkeydown="if(event.key==='Enter')addMasterItem()">
           </div>
+          <button class="btn-primary" onclick="addMasterItem()" style="padding:8px 20px;white-space:nowrap">追加</button>
+        </div>
+        <input id="mia-note" type="hidden" value="">
+        <input id="mia-sort" type="hidden" value="0">
+        <span id="mia-status" style="font-size:12px;color:var(--em-dark);margin-top:6px;display:block;min-height:18px"></span>
+      </div>
+
+      <!-- 一覧（下段） -->
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${items.length ? itemRows : '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">まだ値が登録されていません</div>'}
+      </div>`;
+
+  } else {
+    // ===== 区分マスター：カテゴリー一覧管理のみ =====
+    const editingCat = masterCatEditingId ? masterCategories.find(c => c.id === masterCatEditingId) : null;
+    const visibleCats = masterCategories.filter(cat => !['商材', '訴求軸'].includes(cat.name));
+
+    const catRows = visibleCats.map(cat => {
+      if (masterCatEditingId === cat.id) {
+        return `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--em-pale);border-radius:8px;border:1.5px solid var(--em)">
+          <input class="form-input" id="mca-name" value="${cat.name}" placeholder="区分名" style="flex:1;font-size:13px">
+          <input class="form-input" id="mca-code" value="${cat.code}" placeholder="コード" style="width:120px;font-size:13px">
+          <button class="btn-sm" style="color:var(--em-dark);white-space:nowrap" onclick="saveCatEdit('${cat.id}')">保存</button>
+          <button class="btn-sm" style="white-space:nowrap" onclick="masterCatEditingId=null;renderMasterPage()">取消</button>
+        </div>`;
+      }
+      const count = masterItems.filter(i => i.category_id === cat.id).length;
+      return `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--white);border:0.5px solid var(--border);border-radius:8px">
+        <span style="font-size:12px;font-weight:700;background:var(--em-pale);color:var(--em-dark);padding:3px 10px;border-radius:6px;min-width:60px;text-align:center;letter-spacing:0.04em">${cat.code}</span>
+        <span style="flex:1;font-size:14px;font-weight:500;color:var(--text)">${cat.name}</span>
+        <span style="font-size:12px;color:var(--text-muted)">${count}件</span>
+        <button class="btn-sm" style="font-size:11px;padding:3px 10px" onclick="masterCatEditingId='${cat.id}';renderMasterPage()">編集</button>
+        <button class="btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595" onclick="deleteMasterCat('${cat.id}')">削除</button>
+      </div>`;
+    }).join('');
+
+    content.innerHTML = `
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">汎用マスターで使う区分（カテゴリー）を管理します。</div>
+
+      <!-- 追加フォーム（上段） -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:12px">＋ 区分を追加</div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">区分名 <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mca-name" placeholder="例：媒体" onkeydown="if(event.key==='Enter')document.getElementById('mca-code').focus()">
+          </div>
+          <div style="width:140px">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mca-code" placeholder="例：MEDIA" onkeydown="if(event.key==='Enter')addMasterCat()">
+          </div>
+          <button class="btn-primary" onclick="addMasterCat()" style="padding:8px 20px;white-space:nowrap">追加</button>
+        </div>
+        <span id="mca-status" style="font-size:12px;margin-top:6px;display:block;min-height:18px"></span>
+      </div>
+
+      <!-- 区分一覧（下段） -->
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${visibleCats.length ? catRows : '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">区分がまだ登録されていません</div>'}
+      </div>`;
+  }
+}
+
+// ===== 汎用マスター =====
+function renderGeneralMasterPage() {
+  const content = document.getElementById('master-content');
+  const now = new Date().toISOString().slice(0,10);
+
+  if (generalCategoryId) {
+    // ===== 詳細画面（選択済み区分のアイテム管理） =====
+    const cat = masterCategories.find(c => c.id === generalCategoryId);
+    const items = masterItems.filter(i => i.category_id === generalCategoryId);
+
+    const itemRows = items.map(item => {
+      const expiry  = item.expires_at ? item.expires_at.slice(0,10) : '';
+      const expired = expiry && expiry < now;
+      const dimmed  = expired || !item.is_active;
+
+      if (generalItemEditingId === item.id) {
+        return `
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--em-pale);border-radius:8px;border:1.5px solid var(--em)">
+          <input class="form-input" id="mie-code" value="${item.code}" placeholder="コード" style="width:110px;font-size:13px">
+          <input class="form-input" id="mie-name" value="${item.name}" placeholder="名称" style="flex:1;font-size:13px">
+          <input class="form-input" id="mie-note" value="${item.note||''}" placeholder="備考" style="flex:1;font-size:13px">
+          <input class="form-input" id="mie-expires" type="date" value="${expiry}" style="width:150px;font-size:13px">
+          <input id="mie-sort" type="hidden" value="${item.sort_order}">
+          <input id="mie-active" type="hidden" value="true">
+          <button class="btn-sm" style="color:var(--em-dark);white-space:nowrap" onclick="saveGeneralItemEdit('${item.id}')">保存</button>
+          <button class="btn-sm" style="white-space:nowrap" onclick="generalItemEditingId=null;renderGeneralMasterPage()">取消</button>
+        </div>`;
+      }
+      return `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;${dimmed?'opacity:0.45':''}">
+        <span style="font-size:12px;font-weight:700;background:var(--em-pale);color:var(--em-dark);padding:3px 10px;border-radius:6px;min-width:60px;text-align:center;letter-spacing:0.04em">${item.code}</span>
+        <span style="flex:1;font-size:14px;font-weight:500;color:var(--text)">${item.name}</span>
+        <span style="font-size:12px;color:var(--text-muted);flex:1">${item.note||'—'}</span>
+        <span style="font-size:12px;color:${expired?'#E24B4A':'var(--text-muted)'};white-space:nowrap">${expiry||'無期限'}${expired?' ⚠️':''}</span>
+        <button class="btn-sm" style="font-size:11px;padding:3px 10px" onclick="generalItemEditingId='${item.id}';renderGeneralMasterPage()">編集</button>
+        <button class="btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595" onclick="deleteGeneralItem('${item.id}')">削除</button>
+      </div>`;
+    }).join('');
+
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <button class="btn-sm" onclick="generalCategoryId=null;generalItemEditingId=null;renderGeneralMasterPage()">← 戻る</button>
+        <span style="font-size:17px;font-weight:700;color:var(--text-main)">${cat?.name || ''}</span>
+        <span style="font-size:12px;color:var(--text-muted);background:var(--em-pale);padding:2px 10px;border-radius:20px">${items.length}件</span>
+      </div>
+
+      <!-- 追加フォーム（上段） -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:12px">＋ 追加</div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
           <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mia-code" placeholder="例：FB" style="width:110px">
+          </div>
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">名称 <span style="color:var(--em-dark)">*</span></label>
+            <input class="form-input" id="mia-name" placeholder="例：Meta">
+          </div>
+          <div style="flex:1">
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">備考</label>
             <input class="form-input" id="mia-note" placeholder="任意">
           </div>
           <div>
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限日</label>
-            <input class="form-input" type="date" id="mia-expires">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限</label>
+            <input class="form-input" type="date" id="mia-expires" style="width:150px">
           </div>
+          <button class="btn-primary" onclick="addGeneralItem('${generalCategoryId}')" style="padding:8px 20px;white-space:nowrap">追加</button>
         </div>
         <input id="mia-sort" type="hidden" value="0">
-        <button class="btn" onclick="addMasterItem()" style="margin-top:12px">追加する</button>
-        <span id="mia-status" style="font-size:12px;margin-left:10px"></span>
+        <span id="mia-status" style="font-size:12px;color:var(--em-dark);margin-top:6px;display:block;min-height:18px"></span>
       </div>
 
-      <!-- 一覧テーブル -->
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="border-bottom:2px solid var(--border);text-align:left">
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:120px">有効期限</th>
-            <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:70px">状態</th>
-            <th style="padding:8px 12px;width:110px"></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${items.length ? itemRows : '<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--text-muted)">まだ値が登録されていません</td></tr>'}
-        </tbody>
-      </table>`;
+      <!-- 一覧（下段） -->
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${items.length ? itemRows : '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">まだ値が登録されていません</div>'}
+      </div>`;
 
   } else {
-    // ===== タイル選択画面 =====
-    const editingCat = masterCatEditingId ? masterCategories.find(c => c.id === masterCatEditingId) : null;
-
+    // ===== 区分タイル選択画面 =====
+    const usableCats = masterCategories.filter(cat => !['商材', '訴求軸'].includes(cat.name));
     content.innerHTML = `
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">区分を選択してマスター値を管理します。</div>
-
-      <!-- 区分タイル（商材・訴求軸は専用マスターがあるため除外） -->
-      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:32px">
-        ${masterCategories.filter(cat => !['商材', '訴求軸'].includes(cat.name)).map(cat => {
+      <div style="display:flex;flex-wrap:wrap;gap:12px">
+        ${usableCats.map(cat => {
           const count = masterItems.filter(i => i.category_id === cat.id).length;
           return `
-          <button onclick="selectMasterCategory('${cat.id}')"
-            style="padding:18px 28px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
-                   font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;min-width:140px;
-                   text-align:center;transition:all .15s;${!cat.is_active?'opacity:0.45;':''}"
+          <button onclick="generalCategoryId='${cat.id}';generalItemEditingId=null;renderGeneralMasterPage()"
+            style="padding:20px 32px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
+                   font-size:15px;font-weight:600;color:var(--text-main);cursor:pointer;min-width:150px;
+                   text-align:center;transition:all .15s;"
             onmouseover="this.style.borderColor='var(--em-dark)';this.style.background='var(--em-pale)'"
             onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--surface)'">
             <div>${cat.name}</div>
             <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:4px">${count}件登録済み</div>
           </button>`;
         }).join('')}
-      </div>
-
-      <!-- 区分追加・編集フォーム -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:480px">
-        <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">
-          ${editingCat ? `「${editingCat.name}」を編集` : '＋ 区分を追加'}
-        </div>
-        <div style="display:flex;gap:10px;align-items:end">
-          <div style="flex:1">
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">区分名 *</label>
-            <input class="form-input" id="mca-name" placeholder="例：媒体" value="${editingCat?.name||''}">
-          </div>
-          <div style="width:140px">
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
-            <input class="form-input" id="mca-code" placeholder="例：MEDIA" value="${editingCat?.code||''}">
-          </div>
-          <div style="display:flex;gap:6px">
-            ${editingCat
-              ? `<button class="btn" onclick="saveCatEdit('${editingCat.id}')">保存</button>
-                 <button class="btn-sm" onclick="masterCatEditingId=null;renderMasterPage()">取消</button>`
-              : `<button class="btn" onclick="addMasterCat()">追加</button>`
-            }
-          </div>
-        </div>
-        <span id="mca-status" style="font-size:12px;margin-top:8px;display:block"></span>
+        ${usableCats.length === 0 ? '<div style="padding:40px;color:var(--text-muted);font-size:13px">区分マスターに区分を追加してください</div>' : ''}
       </div>`;
   }
+}
+
+async function addGeneralItem(categoryId) {
+  const code = document.getElementById('mia-code').value.trim();
+  const name = document.getElementById('mia-name').value.trim();
+  const note = document.getElementById('mia-note').value.trim();
+  const expires_at = document.getElementById('mia-expires').value || null;
+  const status = document.getElementById('mia-status');
+  if (!code || !name) { if (status) status.textContent = 'コードと名称は必須です'; return; }
+  const res = await fetch(`${API}/master/items`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ category_id: categoryId, code, name, note, expires_at, sort_order: 0 })
+  });
+  if (res.ok) {
+    masterItems = await (await fetch(`${API}/master/items`)).json();
+    if (status) status.textContent = '追加しました';
+    document.getElementById('mia-code').value = '';
+    document.getElementById('mia-name').value = '';
+    document.getElementById('mia-note').value = '';
+    document.getElementById('mia-expires').value = '';
+    renderGeneralMasterPage();
+  } else { const e = await res.json(); if (status) status.textContent = 'エラー: ' + e.error; }
+}
+
+async function saveGeneralItemEdit(id) {
+  const code = document.getElementById('mie-code').value.trim();
+  const name = document.getElementById('mie-name').value.trim();
+  const note = document.getElementById('mie-note').value.trim();
+  const expires_at = document.getElementById('mie-expires').value || null;
+  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  const res = await fetch(`${API}/master/items/${id}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ code, name, note, expires_at, is_active: true, sort_order: 0 })
+  });
+  if (res.ok) {
+    masterItems = await (await fetch(`${API}/master/items`)).json();
+    generalItemEditingId = null;
+    renderGeneralMasterPage();
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteGeneralItem(id) {
+  if (!confirm('この値を削除しますか？')) return;
+  const res = await fetch(`${API}/master/items/${id}`, { method: 'DELETE' });
+  if (res.ok) {
+    masterItems = masterItems.filter(i => i.id !== id);
+    renderGeneralMasterPage();
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
 function selectMasterCategory(id) {
