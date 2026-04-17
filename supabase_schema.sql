@@ -366,3 +366,6 @@ CREATE TABLE IF NOT EXISTS creative_version_history (
   client_comment TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- projects にレギュレーションシートURL追加
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS regulation_url TEXT;
