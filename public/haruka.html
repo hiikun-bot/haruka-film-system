@@ -1847,8 +1847,11 @@ function statusClass(s) {
 
 // クライアント
 async function loadClients() {
-  const res = await fetch(`${API}/clients`);
-  allClients = await res.json();
+  try {
+    const res = await fetch(`${API}/clients`);
+    const data = await res.json();
+    allClients = Array.isArray(data) ? data : [];
+  } catch(e) { allClients = []; console.error('[loadClients]', e); }
   const tabs = document.getElementById('client-tabs');
   tabs.innerHTML = '<button class="ct active" onclick="setClient(this,\'all\')">すべて</button>';
   allClients.forEach(c => {
@@ -2438,8 +2441,12 @@ function renderMemberList() {
 }
 
 async function loadMembers() {
-  const res = await fetch(`${API}/members`);
-  allMembers = await res.json();
+  try {
+    const res = await fetch(`${API}/members`);
+    const data = await res.json();
+    allMembers = Array.isArray(data) ? data : [];
+    if (!res.ok) console.error('[loadMembers]', data);
+  } catch(e) { allMembers = []; console.error('[loadMembers]', e); }
   const list = document.getElementById('members-list');
   if (!list) return;
   renderMemberList();
