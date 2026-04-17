@@ -383,3 +383,12 @@ CREATE TABLE IF NOT EXISTS project_client_fees (
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(project_id)
 );
+-- invoices テーブルに承認フロー用カラム追加
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS year INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS month INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_id UUID REFERENCES users(id);
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_by UUID REFERENCES users(id);
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rejection_reason TEXT;

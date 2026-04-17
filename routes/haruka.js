@@ -856,21 +856,15 @@ router.post('/members/:id/reactivate', requireAuth, requireLevel('admin'), async
 
 // 請求書一覧
 router.get('/invoices', async (req, res) => {
-  const { issuer_id } = req.query;
+  const { issuer_id, year, month, status } = req.query;
   let query = supabase
     .from('invoices')
-    .select(`
-      *,
-      projects(id, name, clients(id, name)),
-      issuer:users!invoices_issuer_id_fkey(id, full_name),
-      invoice_items(
-        id, total_amount, is_special, special_reason,
-        creatives(id, file_name, creative_type),
-        invoice_item_details(*)
-      )
-    `)
+    .select(`*, projects(id,name,clients(id,name)), issuer:users!invoices_issuer_id_fkey(id,full_name), recipient:users!invoices_recipient_id_fkey(id,full_name), invoice_items(id,total_amount,is_special,special_reason,creatives(id,file_name,creative_type),invoice_item_details(*))`)
     .order('created_at', { ascending: false });
   if (issuer_id) query = query.eq('issuer_id', issuer_id);
+  if (year) query = query.eq('year', parseInt(year));
+  if (month) query = query.eq('month', parseInt(month));
+  if (status) query = query.eq('status', status);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -954,7 +948,10 @@ router.post('/invoices/generate', async (req, res) => {
       invoice_number: invoiceNumber,
       issuer_id, project_id, cycle_id,
       total_amount: totalAmount,
-      status: 'draft'
+      status: 'draft',
+      year: req.body.year || now.getFullYear(),
+      month: req.body.month || (now.getMonth() + 1),
+      recipient_id: req.body.recipient_id || null,
     })
     .select()
     .single();
@@ -994,6 +991,47 @@ router.post('/invoices/:id/issue', async (req, res) => {
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// 請求書提出（draft → submitted）
+router.post('/invoices/:id/submit', async (req, res) => {
+  const { data, error } = await supabase
+    .from('invoices')
+    .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 請求書承認（submitted → approved）管理者のみ
+router.post('/invoices/:id/approve', requireAuth, requireLevel('admin'), async (req, res) => {
+  const { data, error } = await supabase
+    .from('invoices')
+    .update({ status: 'approved', approved_at: new Date().toISOString(), approved_by: req.user?.supabase_user_id || null, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 請求書差し戻し（submitted → rejected）管理者のみ
+router.post('/invoices/:id/reject', requireAuth, requireLevel('admin'), async (req, res) => {
+  const { rejection_reason } = req.body;
+  const { data, error } = await supabase
+    .from('invoices')
+    .update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: rejection_reason || null, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 請求書削除（draft のみ）
+router.delete('/invoices/:id', async (req, res) => {
+  const { error } = await supabase.from('invoices').delete().eq('id', req.params.id).eq('status', 'draft');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // ==================== ボール保持者判定 ====================
