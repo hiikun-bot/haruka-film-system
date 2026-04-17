@@ -791,7 +791,8 @@ app.post('/api/invitations', requireAuth, requireLevel('secretary'), async (req,
   }).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
-  const link = `${process.env.APP_URL || 'http://localhost:' + PORT}/invite.html?token=${token}`;
+  const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const link = `${baseUrl}/invite.html?token=${token}`;
   res.json({ ...inv, inviteLink: link });
 });
 
