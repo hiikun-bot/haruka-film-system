@@ -1714,6 +1714,25 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ファイルプレビューモーダル -->
+<div class="modal-overlay" id="modal-file-preview" style="z-index:1100">
+  <div class="modal" style="width:92vw;max-width:1000px;height:88vh;max-height:88vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:4px;height:18px;background:var(--em);border-radius:2px"></div>
+        <span id="fp-filename" style="font-size:13px;font-weight:600;font-family:monospace;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70vw"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:12px;color:var(--em-dark);text-decoration:none;padding:4px 12px;border:0.5px solid var(--em);border-radius:6px;display:none">Driveで開く ↗</a>
+        <button class="modal-close" onclick="closeModal('modal-file-preview')">×</button>
+      </div>
+    </div>
+    <div id="fp-body" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#111;overflow:hidden">
+      <div style="color:#666;font-size:13px">読み込み中...</div>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = '/api/haruka';
 // HTML エスケープ（テンプレートリテラル内で使用）
@@ -5666,14 +5685,33 @@ async function loadCreativeFiles(creativeId) {
   const list    = document.getElementById('cd-files-list');
   if (!files.length) { section.style.display = 'none'; return; }
   section.style.display = '';
-  list.innerHTML = files.map(f => `
-    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;flex-wrap:wrap">
-      <span style="font-family:monospace;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.generated_name}</span>
-      ${f.width && f.height ? `<span style="color:var(--text-muted);white-space:nowrap">${f.width}×${f.height}</span>` : ''}
-      ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:12px;padding:3px 10px;border:0.5px solid var(--em);border-radius:6px;white-space:nowrap">Driveで開く</a>` : '<span style="font-size:12px;color:#B4B2A9">Driveなし</span>'}
+  list.innerHTML = files.map(f => {
+    const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
+    const canPreview = !!driveFileId;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px">
+      <span style="font-family:monospace;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
+      ${f.width && f.height ? `<span style="color:var(--text-muted);white-space:nowrap;font-size:12px">${f.width}×${f.height}</span>` : ''}
       <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
-    </div>
-  `).join('');
+      ${canPreview
+        ? `<button onclick="openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}')" style="background:var(--em);color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600">▶ 確認</button>`
+        : `<span style="font-size:11px;color:#B4B2A9;white-space:nowrap">Driveなし</span>`}
+      ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:3px 8px;border:0.5px solid var(--em);border-radius:6px;white-space:nowrap">↗ Drive</a>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function openFilePreview(driveFileId, filename, driveUrl) {
+  document.getElementById('fp-filename').textContent = filename;
+  const link = document.getElementById('fp-drive-link');
+  if (driveUrl) { link.href = driveUrl; link.style.display = ''; }
+  else { link.style.display = 'none'; }
+
+  const body = document.getElementById('fp-body');
+  // Google Drive embed URL で動画/画像を表示
+  const embedUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
+  body.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+  openModal('modal-file-preview');
 }
 
 async function handleUploadFileSelect(input) {
