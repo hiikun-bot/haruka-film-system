@@ -4453,6 +4453,7 @@ function getDefaultDraftDeadline(finalDeadline) {
 }
 
 async function openCreateCreative() {
+  try {
   const lastDay = getLastDayOfMonth();
   const draftDay = getDefaultDraftDeadline(lastDay);
 
@@ -4530,6 +4531,7 @@ async function openCreateCreative() {
 
   switchCreativeTab('single');
   openModal('modal-creative');
+  } catch(e) { console.error('openCreateCreative error:', e); alert('モーダルの起動に失敗しました: ' + e.message); }
 }
 
 function switchCreativeTab(tab) {
