@@ -2527,8 +2527,8 @@ function renderMemberList() {
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
-          <td style="padding:8px 12px">
-            <div style="display:flex;gap:16px">
+          <td style="padding:8px 12px;text-align:center">
+            <div style="display:inline-flex;gap:16px;justify-content:center">
               <div>${mkBar(m.weekday_hours,'var(--em)','平日')}</div>
               <div>${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<div style="font-size:10px;color:var(--text-muted);font-weight:500;margin-bottom:2px">土日祝</div><div style="font-size:11px;color:#bbb;padding-top:4px">休み</div>'}</div>
             </div>
