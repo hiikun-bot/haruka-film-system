@@ -1730,7 +1730,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
       <button class="btn-primary" onclick="saveCreativeDetail()" style="margin-right:auto">下書き保存</button>
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
-      <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none;background:linear-gradient(135deg,#f59e0b,#d97706)">Dチェック →</button>
+      <!-- チェック段階用: 修正依頼 -->
+      <button id="cd-revision-btn" onclick="requestRevision()" style="display:none;background:#fff;color:#d97706;border:1.5px solid #d97706;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">修正依頼</button>
+      <!-- 承認 or 次ステップ -->
+      <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
     </div>
   </div>
 </div>
@@ -5668,24 +5671,42 @@ function updateCreativeStepIndicator(status) {
     'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
     'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
   };
-  const nextBtn = document.getElementById('cd-next-step-btn');
-  if (nextBtn) {
+  const nextBtn     = document.getElementById('cd-next-step-btn');
+  const revisionBtn = document.getElementById('cd-revision-btn');
+  if (!nextBtn) return;
+
+  // チェック段階: 修正依頼 ＋ 承認 の2ボタン
+  const CHECK_STAGES = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const isCheckStage = CHECK_STAGES.includes(status);
+
+  if (isCheckStage) {
+    // 修正依頼ボタン
+    revisionBtn.style.display = '';
+    const revisionLabel = { 'Dチェック': 'Dチェック後修正', 'Pチェック': 'Pチェック後修正', 'クライアントチェック中': 'クライアントチェック後修正' };
+    revisionBtn.dataset.target = revisionLabel[status];
+
+    // 承認ボタン（Pがいるかどうかで行先を変える）
+    nextBtn.style.display = '';
+    const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
+    let approveTarget;
+    if (status === 'Dチェック')           approveTarget = hasProducer ? 'Pチェック' : 'クライアントチェック中';
+    else if (status === 'Pチェック')       approveTarget = 'クライアントチェック中';
+    else                                   approveTarget = '納品';
+    nextBtn.textContent = `承認（${approveTarget}）→`;
+    nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+    nextBtn.dataset.target = approveTarget;
+  } else {
+    revisionBtn.style.display = 'none';
     const next = NEXT[status];
     if (next) {
       nextBtn.style.display = '';
       nextBtn.textContent = `${next} へ →`;
-      // ステータスに応じてボタン色を変化
-      const colorMap = {
-        'Dチェック': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
-        'Dチェック後修正': 'linear-gradient(135deg,#f59e0b,#d97706)',
-        'Pチェック': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
-        'Pチェック後修正': 'linear-gradient(135deg,#f59e0b,#d97706)',
-        'クライアントチェック中': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
-        'クライアントチェック後修正': 'linear-gradient(135deg,#f59e0b,#d97706)',
-        '納品': 'linear-gradient(135deg,#10b981,#059669)',
-        '制作中（初稿提出前）': 'linear-gradient(135deg,#3ECFCA,#2BB8B4)',
-      };
-      nextBtn.style.background = colorMap[next] || 'linear-gradient(135deg,#3ECFCA,#2BB8B4)';
+      nextBtn.dataset.target = next;
+      const amber = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+      nextBtn.style.background = amber.includes(next)
+        ? 'linear-gradient(135deg,#f59e0b,#d97706)'
+        : next === '納品' ? 'linear-gradient(135deg,#10b981,#059669)'
+        : 'linear-gradient(135deg,#3ECFCA,#2BB8B4)';
     } else {
       nextBtn.style.display = 'none';
     }
@@ -5709,15 +5730,8 @@ function updateCreativeCommentLabel(status) {
 
 async function advanceCreativeStatus() {
   if (!currentCreativeDetail) return;
-  const NEXT = {
-    '未着手': '制作中（初稿提出前）',
-    '制作中（初稿提出前）': 'Dチェック',
-    'Dチェック': 'Dチェック後修正', 'Dチェック後修正': 'Pチェック',
-    'Pチェック': 'Pチェック後修正', 'Pチェック後修正': 'クライアントチェック中',
-    'クライアントチェック中': 'クライアントチェック後修正', 'クライアントチェック後修正': '納品',
-  };
-  const next = NEXT[currentCreativeDetail.status];
-  if (!next) return;
+  const target = document.getElementById('cd-next-step-btn')?.dataset?.target;
+  if (!target) return;
 
   // 制作中→Dチェック は納品ファイルのアップロードが必須
   if (currentCreativeDetail.status === '制作中（初稿提出前）') {
@@ -5727,15 +5741,20 @@ async function advanceCreativeStatus() {
       alert('Dチェックに進むには、先に納品ファイルをアップロードしてください。');
       return;
     }
-    // ファイルが選択済みで未アップロードの場合は先にアップロード
-    if (!hasUploaded && uploadFileData) {
-      await executeUpload();
-      return;
-    }
+    if (!hasUploaded && uploadFileData) { await executeUpload(); return; }
   }
 
-  if (!confirm(`ステータスを「${next}」に進めますか？`)) return;
-  await saveCreativeDetail(next);
+  const label = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s)) ? '承認' : '次のステップへ';
+  if (!confirm(`「${target}」に${label === '承認' ? '承認して進め' : '進め'}ますか？`)) return;
+  await saveCreativeDetail(target);
+}
+
+async function requestRevision() {
+  if (!currentCreativeDetail) return;
+  const target = document.getElementById('cd-revision-btn')?.dataset?.target;
+  if (!target) return;
+  if (!confirm(`修正依頼として「${target}」に戻しますか？`)) return;
+  await saveCreativeDetail(target);
 }
 
 async function loadCreativeFiles(creativeId) {

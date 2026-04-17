@@ -439,7 +439,7 @@ router.get('/creatives/:id', async (req, res) => {
     .from('creatives')
     .select(`
       *,
-      projects(id, name, drive_folder_url, clients(id, name, client_code)),
+      projects(id, name, drive_folder_url, producer_id, director_id, clients(id, name, client_code)),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
