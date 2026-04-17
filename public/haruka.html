@@ -5510,7 +5510,11 @@ async function addMasterCat() {
     body: JSON.stringify({ name, code })
   });
   if (res.ok) { await loadMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else {
+    const e = await res.json();
+    const msg = (e.error||'').includes('duplicate') ? `コード「${code}」はすでに使われています。別のコードを入力してください。` : ('エラー: ' + e.error);
+    alert(msg);
+  }
 }
 
 async function saveCatEdit(id) {
