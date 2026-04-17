@@ -21,7 +21,7 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 
 /* ヘッダー */
 .hfs-header{background:url('HARUKAFILM背景.png') center/cover no-repeat;height:88px;display:flex;align-items:center;padding:0 28px;position:sticky;top:0;z-index:100;overflow:hidden;gap:0}
-.hfs-header::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,30,28,0.20) 0%,rgba(8,40,38,0.14) 100%);pointer-events:none}
+.hfs-header::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,30,28,0.06) 0%,rgba(8,40,38,0.04) 100%);pointer-events:none}
 .hfs-header::after{content:none}
 .logo-area{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:0;z-index:1;flex-shrink:0;padding:4px 0}
 .logo-main{font-family:'Montserrat',sans-serif;font-size:24px;font-weight:900;color:#fff;letter-spacing:0.12em;text-shadow:0 2px 14px rgba(0,0,0,0.30);line-height:1.15;white-space:nowrap}
@@ -1740,7 +1740,7 @@ async function loadProjects() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
-            ${['admin','secretary','producer','producer_director'].includes(effectiveRole()) ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
+            ${isSuperAdmin() ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
             <button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>
             <button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>
           </div>`;

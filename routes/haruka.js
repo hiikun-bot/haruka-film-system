@@ -304,8 +304,12 @@ router.get('/projects/:id/client-fee', async (req, res) => {
   res.json(data || null);
 });
 
-// クライアント報酬設定 保存（upsert）
+// クライアント報酬設定 保存（upsert）- スーパーアドミンのみ
 router.post('/projects/:id/client-fee', async (req, res) => {
+  const SUPER_ADMIN_EMAILS = ['hiikun.ascs@gmail.com', 'satoru.takahashi@haruka-film.com'];
+  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) {
+    return res.status(403).json({ error: '報酬設定の変更は最高管理者のみ可能です' });
+  }
   const { video_unit_price, design_unit_price, fixed_budget, use_fixed_budget, note } = req.body;
   const { data, error } = await supabase
     .from('project_client_fees')
