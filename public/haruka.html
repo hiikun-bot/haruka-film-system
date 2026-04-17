@@ -2487,14 +2487,18 @@ async function openRatesModal(projectId, projectName) {
 
 function buildRatesTable(type, labels, fields) {
   const ranks = ['A','B','C'];
-  const defaultFee = { A: 3500, B: 3000, C: 2500 };
+  const defaultFees = {
+    base_fee:   { A: 3500, B: 3000, C: 2500 },
+    script_fee: { A: 1500, B: 1500, C: 1500 },
+    ai_fee:     { A: 0,    B: 0,    C: 0    },
+  };
   const body = document.getElementById(`${type}-rates-body`);
   body.innerHTML = ranks.map(rank => `
     <tr style="border-top:1px solid var(--border)">
       <td style="padding:8px;font-weight:600;color:var(--em-dark)">${rank}</td>
       ${fields.map((f, i) => `
         <td style="padding:6px 8px;text-align:right">
-          <input type="number" id="r-${type}-${rank}-${f}" value="${defaultFee[rank]}" min="0"
+          <input type="number" id="r-${type}-${rank}-${f}" value="${(defaultFees[f] || defaultFees.base_fee)[rank]}" min="0"
             style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
         </td>`).join('')}
     </tr>`).join('');
