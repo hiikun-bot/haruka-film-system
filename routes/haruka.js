@@ -458,20 +458,17 @@ router.post('/creatives/bulk', async (req, res) => {
   const { data: project } = await supabase
     .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
   const { data: appealType } = await supabase
-    .from('appeal_types').select('*').eq('id', appeal_type_id).single();
+    .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
   if (!project || !appealType) {
     return res.status(400).json({ error: '案件または訴求タイプが見つかりません' });
   }
   const clientCode = (project.clients?.client_code ||
     project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK').toUpperCase().slice(0, 3);
   const { data: existingCreatives } = await supabase
-    .from('creatives').select('file_name').eq('project_id', project_id);
+    .from('creatives').select('file_name, appeal_type_id').eq('project_id', project_id);
   const usedSeqs = (existingCreatives || [])
     .map(c => c.file_name?.slice(0, 3)).filter(s => /^\d{3}$/.test(s)).map(Number);
-  const { data: pat } = await supabase
-    .from('project_appeal_types').select('*')
-    .eq('project_id', project_id).eq('appeal_type_id', appeal_type_id).single();
-  let appealSeq = pat?.seq_counter || 0;
+  let appealSeq = (existingCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length;
   const inserts = [];
   let nextSeq = 1;
   for (let i = 0; i < count; i++) {
@@ -480,7 +477,7 @@ router.post('/creatives/bulk', async (req, res) => {
     const seqStr = String(nextSeq).padStart(3, '0');
     const appealSeqStr = String(appealSeq).padStart(2, '0');
     const fileName = `${seqStr}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
-    inserts.push({ project_id, file_name: fileName, creative_type,
+    inserts.push({ project_id, file_name: fileName, creative_type, appeal_type_id,
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
       note: note || null, status: '未着手' });
     usedSeqs.push(nextSeq);
@@ -489,9 +486,6 @@ router.post('/creatives/bulk', async (req, res) => {
   const { data, error } = await supabase.from('creatives').insert(inserts).select();
   if (error) return res.status(500).json({ error: error.message });
   await supabase.from('projects').update({ seq_counter: Math.max(...usedSeqs) }).eq('id', project_id);
-  if (pat) {
-    await supabase.from('project_appeal_types').update({ seq_counter: appealSeq }).eq('id', pat.id);
-  }
   res.json({ ok: true, count: data.length, creatives: data });
 });
 
@@ -530,11 +524,6 @@ router.post('/creatives', async (req, res) => {
   if (appeal_type_id) {
     const { data: proj } = await supabase.from('projects').select('seq_counter').eq('id', project_id).single();
     await supabase.from('projects').update({ seq_counter: (proj?.seq_counter || 0) + 1 }).eq('id', project_id);
-    const { data: pat } = await supabase.from('project_appeal_types').select('*')
-      .eq('project_id', project_id).eq('appeal_type_id', appeal_type_id).single();
-    if (pat) {
-      await supabase.from('project_appeal_types').update({ seq_counter: (pat?.seq_counter || 0) + 1 }).eq('id', pat.id);
-    }
   }
   res.json(data);
 });
@@ -1170,11 +1159,11 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
   if (pErr) return res.status(500).json({ error: pErr.message });
 
   const { data: appealType, error: aErr } = await supabase
-    .from('appeal_types')
+    .from('client_appeal_axes')
     .select('*')
     .eq('id', appeal_type_id)
     .single();
-  if (aErr) return res.status(500).json({ error: aErr.message });
+  if (aErr || !appealType) return res.status(400).json({ error: '訴求タイプが見つかりません' });
 
   const clientCode = (project.clients?.client_code ||
     project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK')
@@ -1183,7 +1172,7 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
   // 案件内の使用済みシーケンス番号を取得
   const { data: allCreatives } = await supabase
     .from('creatives')
-    .select('file_name')
+    .select('file_name, appeal_type_id')
     .eq('project_id', req.params.id);
 
   const usedSeqs = (allCreatives || [])
@@ -1195,15 +1184,8 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
   let nextSeq = 1;
   while (usedSeqs.includes(nextSeq)) nextSeq++;
 
-  // 訴求タイプの連番
-  const { data: pat } = await supabase
-    .from('project_appeal_types')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .eq('appeal_type_id', appeal_type_id)
-    .single();
-
-  const nextAppealSeq = (pat?.seq_counter || 0) + 1;
+  // 訴求タイプの連番（同じ訴求タイプで登録済みのクリエイティブ数から計算）
+  const nextAppealSeq = (allCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length + 1;
 
   const seqStr = String(nextSeq).padStart(3, '0');
   const appealSeqStr = String(nextAppealSeq).padStart(2, '0');

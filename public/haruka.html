@@ -3828,14 +3828,14 @@ async function onProjectChange(projectId) {
     sel.innerHTML = '<option value="">案件を先に選択してください</option>';
     return;
   }
-  const res = await fetch(`${API}/projects/${projectId}/appeal-types`);
-  const types = await res.json();
-  if (!types.length) {
+  const res = await fetch(`${API}/projects/${projectId}/effective-appeal-axes`);
+  const axes = await res.json();
+  if (!axes.length) {
     sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>';
     return;
   }
-  sel.innerHTML = '<option value="">訴求タイプを選択</option>' + types.map(t =>
-    `<option value="${t.appeal_type_id}">${t.appeal_types.code} - ${t.appeal_types.name}</option>`
+  sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
+    `<option value="${a.id}">${a.code} - ${a.name}</option>`
   ).join('');
 }
 
@@ -3919,11 +3919,11 @@ async function onBulkProjectChange(projectId) {
   const sel = document.getElementById('bulk-appeal-type');
   sel.innerHTML = '<option value="">読み込み中...</option>';
   if (!projectId) { sel.innerHTML = '<option value="">案件を先に選択してください</option>'; return; }
-  const res = await fetch(`${API}/projects/${projectId}/appeal-types`);
-  const types = await res.json();
-  if (!types.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; return; }
-  sel.innerHTML = '<option value="">訴求タイプを選択</option>' + types.map(t =>
-    `<option value="${t.appeal_type_id}">${t.appeal_types.code} - ${t.appeal_types.name}</option>`
+  const res = await fetch(`${API}/projects/${projectId}/effective-appeal-axes`);
+  const axes = await res.json();
+  if (!axes.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; return; }
+  sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
+    `<option value="${a.id}">${a.code} - ${a.name}</option>`
   ).join('');
   updateBulkPreview();
 }
