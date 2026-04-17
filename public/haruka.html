@@ -737,12 +737,11 @@ tr.row-help td{background:#FFFBF2}
         <option value="designer">デザイナー</option>
       </select>
       <div id="invite-link-result" style="display:none">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">招待リンク（24時間有効）</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input class="form-input" type="text" id="invite-link-input" readonly style="font-size:11px;font-family:monospace;flex:1">
-          <button class="btn" onclick="copyInviteLink()">コピー</button>
-        </div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:6px">このリンクを招待したい方に直接共有してください</div>
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);margin-bottom:8px">招待メッセージ（24時間有効）</div>
+        <textarea id="invite-msg-input" readonly rows="9"
+          style="width:100%;font-size:12px;line-height:1.7;padding:10px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface);color:var(--text);resize:none;font-family:'Noto Sans JP',sans-serif"></textarea>
+        <button class="btn-primary" onclick="copyInviteMsg()" style="width:100%;margin-top:8px">📋 メッセージをコピー</button>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px">コピー後、Chatwork・LINEなどにそのまま貼り付けてください</div>
       </div>
     </div>
     <div class="modal-footer">
@@ -4558,6 +4557,11 @@ function openInviteModal() {
   openModal('modal-invite');
 }
 
+const roleLabelsInvite = {
+  admin: '管理者', secretary: '秘書', producer: 'プロデューサー',
+  director: 'ディレクター', editor: '編集者', designer: 'デザイナー', client: 'クライアント'
+};
+
 async function issueInvite() {
   const email = document.getElementById('inv-email').value.trim();
   const role  = document.getElementById('inv-role').value;
@@ -4569,14 +4573,34 @@ async function issueInvite() {
   });
   if (!res.ok) { alert('発行に失敗しました'); return; }
   const data = await res.json();
-  document.getElementById('invite-link-input').value = data.inviteLink;
+
+  const roleLabel = roleLabelsInvite[role] || role;
+  const msg = `【HARUKA FILM SYSTEM へのご招待】
+
+この度、チームメンバーとしてご参加いただくことになりました。
+以下のリンクより登録手続きをお願いいたします。
+
+▼ 参加登録URL（24時間以内に登録をお願いします）
+${data.inviteLink}
+
+登録完了後、Googleアカウントまたはパスワードでログインできます。
+権限：${roleLabel}
+
+ご不明な点はお気軽にご連絡ください。
+よろしくお願いいたします。`;
+
+  document.getElementById('invite-msg-input').value = msg;
   document.getElementById('invite-link-result').style.display = '';
   document.getElementById('inv-issue-btn').style.display = 'none';
 }
 
-function copyInviteLink() {
-  const val = document.getElementById('invite-link-input').value;
-  navigator.clipboard.writeText(val).then(() => alert('リンクをコピーしました'));
+function copyInviteMsg() {
+  const val = document.getElementById('invite-msg-input').value;
+  navigator.clipboard.writeText(val).then(() => {
+    const btn = document.querySelector('#invite-link-result .btn-primary');
+    btn.textContent = '✅ コピーしました！';
+    setTimeout(() => { btn.textContent = '📋 メッセージをコピー'; }, 2000);
+  });
 }
 
 // ===== クライアント報酬設定 =====
