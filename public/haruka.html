@@ -5714,18 +5714,33 @@ function updateCreativeStepIndicator(status) {
 }
 
 function updateCreativeCommentLabel(status) {
-  const label = document.getElementById('cd-comment-label');
-  if (!label) return;
-  if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status))
-    label.textContent = 'ディレクターへのコメント';
-  else if (['Dチェック','Dチェック後修正'].includes(status))
-    label.textContent = 'Dチェック修正指摘';
-  else if (['Pチェック','Pチェック後修正'].includes(status))
-    label.textContent = 'Pチェック修正指摘';
-  else if (['クライアントチェック中','クライアントチェック後修正'].includes(status))
-    label.textContent = 'クライアントチェック修正指摘';
-  else
-    label.textContent = 'コメント';
+  const label   = document.getElementById('cd-comment-label');
+  const field   = document.getElementById('cd-comment-field');
+  if (!label || !field) return;
+
+  // チェック段階（承認者が見る段階）は編集者コメントを読み取り専用で表示
+  const CHECK_READONLY = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const isReadonly = CHECK_READONLY.includes(status);
+
+  field.readOnly = isReadonly;
+  field.style.background    = isReadonly ? 'var(--surface)' : '';
+  field.style.color         = isReadonly ? 'var(--text-muted)' : '';
+  field.style.cursor        = isReadonly ? 'default' : '';
+  field.style.borderColor   = isReadonly ? 'var(--border)' : '';
+
+  if (isReadonly) {
+    label.innerHTML = '編集者からのコメント <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>';
+  } else if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
+    label.innerHTML = 'ディレクターへのコメント';
+  } else if (['Dチェック後修正'].includes(status)) {
+    label.innerHTML = 'Dチェック修正指摘';
+  } else if (['Pチェック後修正'].includes(status)) {
+    label.innerHTML = 'Pチェック修正指摘';
+  } else if (['クライアントチェック後修正'].includes(status)) {
+    label.innerHTML = 'クライアントチェック修正指摘';
+  } else {
+    label.innerHTML = 'コメント';
+  }
 }
 
 async function advanceCreativeStatus() {
