@@ -5720,7 +5720,7 @@ function updateGeneratedFilename() {
   const version  = parseInt(document.getElementById('cd-version-num').value) || 1;
   const ext      = file.name.split('.').pop().toLowerCase();
   const baseName = currentCreativeDetail.file_name.replace(/_v\d+$/, '');
-  const generated = `${baseName}_${width}_${height}_v${version}.${ext}`;
+  const generated = `${baseName}_v${version}.${ext}`;
   document.getElementById('cd-generated-filename').textContent = generated;
 }
 
@@ -5730,7 +5730,7 @@ async function executeUpload() {
   const version   = parseInt(document.getElementById('cd-version-num').value) || 1;
   const ext       = file.name.split('.').pop().toLowerCase();
   const baseName  = currentCreativeDetail.file_name.replace(/_v\d+$/, '');
-  const generated = `${baseName}_${width}_${height}_v${version}.${ext}`;
+  const generated = `${baseName}_v${version}.${ext}`;
   const statusEl  = document.getElementById('cd-upload-status');
 
   statusEl.textContent = 'アップロード中...';
