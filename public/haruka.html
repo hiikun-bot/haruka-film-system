@@ -5638,6 +5638,22 @@ async function advanceCreativeStatus() {
   };
   const next = NEXT[currentCreativeDetail.status];
   if (!next) return;
+
+  // 制作中→Dチェック は納品ファイルのアップロードが必須
+  if (currentCreativeDetail.status === '制作中（初稿提出前）') {
+    const filesSection = document.getElementById('cd-files-section');
+    const hasUploaded = filesSection && filesSection.style.display !== 'none';
+    if (!hasUploaded && !uploadFileData) {
+      alert('Dチェックに進むには、先に納品ファイルをアップロードしてください。');
+      return;
+    }
+    // ファイルが選択済みで未アップロードの場合は先にアップロード
+    if (!hasUploaded && uploadFileData) {
+      await executeUpload();
+      return;
+    }
+  }
+
   if (!confirm(`ステータスを「${next}」に進めますか？`)) return;
   await saveCreativeDetail(next);
 }
