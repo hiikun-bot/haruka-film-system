@@ -5120,7 +5120,7 @@ function renderMasterPage() {
         <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--em-pale);border-radius:8px;border:1.5px solid var(--em)">
           <input class="form-input" id="mie-code" value="${item.code}" placeholder="コード" style="width:110px;font-size:13px">
           <input class="form-input" id="mie-name" value="${item.name}" placeholder="名称" style="flex:1;font-size:13px">
-          <input id="mie-sort" type="hidden" value="${item.sort_order}">
+          <input class="form-input" id="mie-sort" type="number" value="${item.sort_order}" min="0" style="width:70px;font-size:13px" title="表示順">
           <input id="mie-note" type="hidden" value="${item.note||''}">
           <input id="mie-expires" type="hidden" value="">
           <input id="mie-active" type="hidden" value="true">
@@ -5132,6 +5132,7 @@ function renderMasterPage() {
       <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--white);border:0.5px solid var(--border);border-radius:8px;${!item.is_active?'opacity:0.45':''}">
         <span style="font-size:12px;font-weight:700;background:var(--em-pale);color:var(--em-dark);padding:3px 10px;border-radius:6px;min-width:60px;text-align:center;letter-spacing:0.04em">${item.code}</span>
         <span style="flex:1;font-size:14px;font-weight:500;color:var(--text)">${item.name}</span>
+        <span style="font-size:12px;color:var(--text-muted);min-width:48px;text-align:right">順: ${item.sort_order}</span>
         <button class="btn-sm" style="font-size:11px;padding:3px 10px" onclick="masterItemEditingId='${item.id}';renderMasterPage()">編集</button>
         <button class="btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595" onclick="deleteMasterItem('${item.id}')">削除</button>
       </div>`;
@@ -5161,10 +5162,13 @@ function renderMasterPage() {
             <input class="form-input" id="mia-name" placeholder="例：Meta"
               onkeydown="if(event.key==='Enter')addMasterItem()">
           </div>
+          <div style="width:70px">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
+            <input class="form-input" id="mia-sort" type="number" value="0" min="0" style="font-size:13px">
+          </div>
           <button class="btn-primary" onclick="addMasterItem()" style="padding:8px 20px;white-space:nowrap">追加</button>
         </div>
         <input id="mia-note" type="hidden" value="">
-        <input id="mia-sort" type="hidden" value="0">
         <span id="mia-status" style="font-size:12px;color:var(--em-dark);margin-top:6px;display:block;min-height:18px"></span>
       </div>
 
@@ -5254,7 +5258,7 @@ function renderGeneralMasterPage() {
           <input class="form-input" id="mie-name" value="${item.name}" placeholder="名称" style="flex:1;font-size:13px">
           <input class="form-input" id="mie-note" value="${item.note||''}" placeholder="備考" style="flex:1;font-size:13px">
           <input class="form-input" id="mie-expires" type="date" value="${expiry}" style="width:150px;font-size:13px">
-          <input id="mie-sort" type="hidden" value="${item.sort_order}">
+          <input class="form-input" id="mie-sort" type="number" value="${item.sort_order}" min="0" style="width:70px;font-size:13px" title="表示順">
           <input id="mie-active" type="hidden" value="true">
           <button class="btn-sm" style="color:var(--em-dark);white-space:nowrap" onclick="saveGeneralItemEdit('${item.id}')">保存</button>
           <button class="btn-sm" style="white-space:nowrap" onclick="generalItemEditingId=null;renderGeneralMasterPage()">取消</button>
@@ -5266,6 +5270,7 @@ function renderGeneralMasterPage() {
         <span style="flex:1;font-size:14px;font-weight:500;color:var(--text)">${item.name}</span>
         <span style="font-size:12px;color:var(--text-muted);flex:1">${item.note||'—'}</span>
         <span style="font-size:12px;color:${expired?'#E24B4A':'var(--text-muted)'};white-space:nowrap">${expiry||'無期限'}${expired?' ⚠️':''}</span>
+        <span style="font-size:12px;color:var(--text-muted);min-width:48px;text-align:right">順: ${item.sort_order}</span>
         <button class="btn-sm" style="font-size:11px;padding:3px 10px" onclick="generalItemEditingId='${item.id}';renderGeneralMasterPage()">編集</button>
         <button class="btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595" onclick="deleteGeneralItem('${item.id}')">削除</button>
       </div>`;
@@ -5298,9 +5303,12 @@ function renderGeneralMasterPage() {
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限</label>
             <input class="form-input" type="date" id="mia-expires" style="width:150px">
           </div>
+          <div style="width:70px">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
+            <input class="form-input" type="number" id="mia-sort" value="0" min="0" style="font-size:13px">
+          </div>
           <button class="btn-primary" onclick="addGeneralItem('${generalCategoryId}')" style="padding:8px 20px;white-space:nowrap">追加</button>
         </div>
-        <input id="mia-sort" type="hidden" value="0">
         <span id="mia-status" style="font-size:12px;color:var(--em-dark);margin-top:6px;display:block;min-height:18px"></span>
       </div>
 
@@ -5379,7 +5387,7 @@ async function addGeneralItem(categoryId) {
   if (!code || !name) { if (status) status.textContent = 'コードと名称は必須です'; return; }
   const res = await fetch(`${API}/master/items`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ category_id: categoryId, code, name, note, expires_at, sort_order: 0 })
+    body: JSON.stringify({ category_id: categoryId, code, name, note, expires_at, sort_order: parseInt(document.getElementById('mia-sort').value) || 0 })
   });
   if (res.ok) {
     masterItems = await (await fetch(`${API}/master/items`)).json();
@@ -5400,7 +5408,7 @@ async function saveGeneralItemEdit(id) {
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/master/items/${id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ code, name, note, expires_at, is_active: true, sort_order: 0 })
+    body: JSON.stringify({ code, name, note, expires_at, is_active: true, sort_order: parseInt(document.getElementById('mie-sort').value) || 0 })
   });
   if (res.ok) {
     masterItems = await (await fetch(`${API}/master/items`)).json();
