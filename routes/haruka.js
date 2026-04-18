@@ -9,6 +9,21 @@ const { Readable } = require('stream');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
+// アップロードログリングバッファ（最新100件）
+const _uploadLogs = [];
+function driveLog(level, msg, extra = {}) {
+  const entry = { ts: new Date().toISOString(), level, msg, ...extra };
+  _uploadLogs.push(entry);
+  if (_uploadLogs.length > 100) _uploadLogs.shift();
+  const tag = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : '✅';
+  console.log(`[DRIVE ${tag}] ${msg}`, Object.keys(extra).length ? JSON.stringify(extra) : '');
+}
+
+// ログ取得エンドポイント
+router.get('/upload-logs', requireAuth, (_req, res) => {
+  res.json({ logs: [..._uploadLogs].reverse() });
+});
+
 // Google Drive サービスアカウント認証
 async function getDriveService() {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -673,22 +688,28 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   const rootFolderId = await getDriveRootFolderId();
 
   // Google Drive にアップロード（credentials が設定されている場合のみ）
+  driveLog('info', 'アップロード開始', { creativeId, file: file?.originalname, size: file?.size, rootFolderId: !!rootFolderId, hasKey: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY });
   if (rootFolderId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     let driveStep = 'init';
     try {
       const drive = await getDriveService();
+      driveLog('info', 'Driveサービス認証OK');
 
       // ルート → クライアント名 → 案件名 を自動作成
       const clientName = (project?.clients?.name || 'その他').replace(/[/\\?%*:|"<>]/g, '_');
       const projectName = (project?.name || '案件未設定').replace(/[/\\?%*:|"<>]/g, '_');
 
       driveStep = 'clientFolder';
+      driveLog('info', `クライアントフォルダ取得/作成: ${clientName}`);
       const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
       if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
+      driveLog('info', `クライアントフォルダOK`, { id: clientFolderId });
 
       driveStep = 'projectFolder';
+      driveLog('info', `案件フォルダ取得/作成: ${projectName}`);
       const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
       if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
+      driveLog('info', `案件フォルダOK`, { id: baseFolderId });
 
       const now = new Date();
       const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -699,6 +720,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
 
       driveStep = 'monthFolder';
       const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
+      driveLog('info', `月フォルダOK: ${yyyymm}`, { id: monthFolderId });
 
       driveStep = 'typeFolder';
       let typeFolderId;
@@ -717,17 +739,20 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       } else {
         typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
       }
+      driveLog('info', `タイプフォルダOK: ${typeFolder}`, { id: typeFolderId });
       // ファイルは typeFolder に直接格納（workFolder は廃止）
 
       // ファイルをアップロード（PassThrough stream で安定化）
       driveStep = 'fileUpload';
+      const uploadFileName = generated_name || file.originalname;
+      driveLog('info', `ファイルアップロード開始: ${uploadFileName}`, { mimeType: file.mimetype, bytes: file.buffer.length });
       const { PassThrough } = require('stream');
       const passThrough = new PassThrough();
       passThrough.end(file.buffer);
 
       const uploadRes = await drive.files.create({
         requestBody: {
-          name: generated_name || file.originalname,
+          name: uploadFileName,
           parents: [typeFolderId],
         },
         media: { mimeType: file.mimetype, body: passThrough },
@@ -737,6 +762,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
 
       driveFileId = uploadRes.data.id;
       driveUrl    = uploadRes.data.webViewLink;
+      driveLog('info', `ファイルアップロード完了！`, { driveFileId, driveUrl });
 
       driveStep = 'permission';
       try {
@@ -745,16 +771,19 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
           supportsAllDrives: true,
           requestBody: { role: 'reader', type: 'anyone' },
         });
+        driveLog('info', '公開権限設定OK');
       } catch (permErr) {
-        console.error('Drive permission error:', permErr.message);
+        driveLog('warn', `権限設定失敗（閲覧には影響なし）: ${permErr.message}`);
       }
     } catch (e) {
-      console.error(`Drive upload error [step=${driveStep}]:`, e.message);
+      driveLog('error', `Drive upload error [step=${driveStep}]: ${e.message}`, { stack: e.stack?.split('\n')[1] });
       driveError = `[${driveStep}] ${e.message}`;
     }
   } else {
     driveError = rootFolderId ? null : 'drive_root_folder_id が未設定です';
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) driveError = 'GOOGLE_SERVICE_ACCOUNT_KEY が未設定です';
+    if (driveError) driveLog('error', driveError);
+    else driveLog('warn', '環境変数未設定のためDriveスキップ');
   }
 
   // creative_files テーブルに記録

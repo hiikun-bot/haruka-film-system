@@ -1875,9 +1875,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <button class="btn" onclick="confirmUploadNo()" style="min-width:80px">いいえ</button>
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <button class="btn-primary" id="cd-manual-upload-btn" onclick="executeUpload()">Googleドライブにアップロード</button>
-            <span id="cd-upload-status" style="font-size:13px"></span>
+            <span id="cd-upload-status" style="font-size:13px;flex:1"></span>
+            <button onclick="showUploadLogs()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap">📋 ログ</button>
+          </div>
+          <!-- アップロードログパネル -->
+          <div id="cd-upload-log-panel" style="display:none;background:#0d1117;border-radius:8px;padding:12px;margin-top:10px;max-height:220px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.7">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="color:#7ee787;font-weight:600">アップロードログ（最新順）</span>
+              <button onclick="document.getElementById('cd-upload-log-panel').style.display='none'" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px;line-height:1">×</button>
+            </div>
+            <div id="cd-upload-log-content" style="color:#c9d1d9"></div>
           </div>
           <!-- Dチェック移行確認バー -->
           <div id="cd-dcheck-confirm" style="display:none;background:#fff8e6;border:1.5px solid #f0b429;border-radius:10px;padding:14px 18px;margin-top:14px">
@@ -6415,6 +6424,28 @@ async function loadFileComments(fileId) {
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
   renderComments(list);
+}
+
+async function showUploadLogs() {
+  const panel = document.getElementById('cd-upload-log-panel');
+  const content = document.getElementById('cd-upload-log-content');
+  if (!panel || !content) return;
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  if (panel.style.display === 'none') return;
+  content.innerHTML = '<span style="color:#8b949e">読み込み中...</span>';
+  try {
+    const res = await fetch(`${API}/upload-logs`, { credentials: 'include' });
+    const { logs } = await res.json();
+    if (!logs || logs.length === 0) { content.innerHTML = '<span style="color:#8b949e">ログなし</span>'; return; }
+    content.innerHTML = logs.map(l => {
+      const color = l.level === 'error' ? '#f85149' : l.level === 'warn' ? '#f0b429' : '#7ee787';
+      const time = l.ts ? new Date(l.ts).toLocaleTimeString('ja-JP') : '';
+      const extra = Object.entries(l).filter(([k]) => !['ts','level','msg'].includes(k)).map(([k,v]) => `<span style="color:#8b949e">${k}=</span><span style="color:#79c0ff">${JSON.stringify(v)}</span>`).join(' ');
+      return `<div style="border-bottom:1px solid #21262d;padding:3px 0"><span style="color:#8b949e">${time}</span> <span style="color:${color};font-weight:600">[${l.level}]</span> ${l.msg}${extra ? ' ' + extra : ''}</div>`;
+    }).join('');
+  } catch(e) {
+    content.innerHTML = `<span style="color:#f85149">取得失敗: ${e.message}</span>`;
+  }
 }
 
 async function runDriveDiagnose() {
