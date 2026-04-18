@@ -6157,16 +6157,15 @@ async function loadCreativeFiles(creativeId) {
         <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
         ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
       </div>
-      ${(hideCheckBtn && !canPreview) ? '' : `
-      <div style="padding:10px 14px;background:${canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
-        ${(hideCheckBtn && canPreview) ? `
-        <button onclick="${checkBtnClick}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
-          ▶ チェックする
+      <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
+        ${hideCheckBtn ? `
+        <button onclick="${checkBtnClick}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+          📋 前回の提出物を確認・Dコメントを見る
         </button>` : `
         <button onclick="${checkBtnClick}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
           ${checkBtnLabel}
         </button>`}
-      </div>`}
+      </div>
     </div>`;
   }).join('');
 }
