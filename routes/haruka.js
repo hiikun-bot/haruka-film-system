@@ -667,6 +667,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   const project = creative.projects;
   let driveFileId = null;
   let driveUrl = null;
+  let driveError = null;
 
   // Drive ルートフォルダID: system_settings テーブル → env var の優先順
   const rootFolderId = await getDriveRootFolderId();
@@ -746,8 +747,11 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       }
     } catch (e) {
       console.error('Drive upload error:', e.message);
-      // Drive 失敗でも DB 記録は続ける（エラー内容をレスポンスに含める）
+      driveError = e.message;
     }
+  } else {
+    driveError = rootFolderId ? null : 'drive_root_folder_id が未設定です';
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) driveError = 'GOOGLE_SERVICE_ACCOUNT_KEY が未設定です';
   }
 
   // creative_files テーブルに記録
@@ -769,7 +773,27 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
     .single();
   if (fErr) return res.status(500).json({ error: fErr.message });
 
-  res.json({ ok: true, file: fileRecord, drive_url: driveUrl });
+  res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });
+});
+
+// Google Drive ファイルストリーミングプロキシ（ネイティブ動画プレビュー用）
+router.get('/files/:fileId/stream', async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    const drive = await getDriveService();
+    const meta = await drive.files.get({ fileId: req.params.fileId, fields: 'mimeType,name', supportsAllDrives: true });
+    const mimeType = meta.data.mimeType || 'video/mp4';
+    const streamRes = await drive.files.get(
+      { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'stream' }
+    );
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    streamRes.data.pipe(res);
+  } catch (e) {
+    console.error('Drive stream error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 特例請求可能フラグ（管理者のみ）

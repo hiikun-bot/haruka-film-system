@@ -1879,6 +1879,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <button class="btn-primary" id="cd-manual-upload-btn" onclick="executeUpload()">Googleドライブにアップロード</button>
             <span id="cd-upload-status" style="font-size:13px"></span>
           </div>
+          <!-- Dチェック移行確認バー -->
+          <div id="cd-dcheck-confirm" style="display:none;background:#fff8e6;border:1.5px solid #f0b429;border-radius:10px;padding:14px 18px;margin-top:14px">
+            <div style="font-size:13px;font-weight:600;color:#8a6500;margin-bottom:10px">Dチェックを行いますか？</div>
+            <div style="display:flex;gap:10px">
+              <button class="btn-primary" onclick="doDCheckTransition()" style="min-width:80px">はい</button>
+              <button class="btn" onclick="document.getElementById('cd-dcheck-confirm').style.display='none'" style="min-width:80px">いいえ</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1945,6 +1953,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <select id="fp-comment-category" class="form-select" style="width:100%;font-size:12px;margin-bottom:6px">
             <option value="">カテゴリーを選択（任意）</option>
           </select>
+          <!-- タイムコードバッジ -->
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span id="fp-timecode-badge" style="display:none;background:var(--em-dark);color:#fff;font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;font-family:monospace;cursor:pointer" onclick="fpClearTimecode()" title="クリックで削除"></span>
+            <span id="fp-timecode-hint" style="font-size:11px;color:var(--text-muted)">動画をクリックするとタイムコードを記録できます</span>
+          </div>
           <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border);border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='var(--em)'" onblur="this.style.borderColor='var(--border)'"></textarea>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px">
             <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);cursor:pointer;flex-shrink:0">
@@ -6329,12 +6342,28 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
 
   // プレイヤー
   const player = document.getElementById('fp-player');
+  const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
+  const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
   if (driveFileId) {
-    const embedUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
-    player.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+    if (isVideo) {
+      // ネイティブ動画プレイヤー（タイムコード取得対応）
+      player.innerHTML = `<video id="fp-video" src="${API}/files/${driveFileId}/stream" controls style="width:100%;height:100%;object-fit:contain;background:#111"></video>`;
+      // 一時停止時にタイムコードを自動記録
+      setTimeout(() => {
+        const v = document.getElementById('fp-video');
+        if (v) v.addEventListener('pause', fpCaptureTimecode);
+      }, 100);
+    } else if (isImage) {
+      player.innerHTML = `<img src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain">`;
+    } else {
+      const embedUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
+      player.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+    }
   } else {
-    player.innerHTML = `<div style="color:#888;font-size:13px;text-align:center"><div style="font-size:32px;margin-bottom:8px">📎</div>Drive連携が未設定のためプレビューできません</div>`;
+    player.innerHTML = `<div style="color:#888;font-size:13px;text-align:center"><div style="font-size:48px;margin-bottom:12px">📎</div><div>Drive連携が未設定のためプレビューできません</div><div style="font-size:11px;color:#666;margin-top:8px">アップロード時にDriveが未設定だったか、Drive設定を確認してください</div></div>`;
   }
+  document.getElementById('fp-timecode-badge').textContent = '';
+  document.getElementById('fp-timecode-badge').style.display = 'none';
 
   // カテゴリー選択肢を最新化（未ロードなら取得）
   if (!knowledgeCategories.length) {
@@ -6379,6 +6408,44 @@ async function loadFileComments(fileId) {
   renderComments(list);
 }
 
+function fpTimecodeStr(secs) {
+  if (!secs && secs !== 0) return '';
+  const s = Math.floor(secs);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  return h > 0
+    ? `${h}:${String(m % 60).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`
+    : `${m}:${String(s % 60).padStart(2,'0')}`;
+}
+
+function fpCaptureTimecode() {
+  const video = document.getElementById('fp-video');
+  if (!video) return;
+  const tc = fpTimecodeStr(video.currentTime);
+  const badge = document.getElementById('fp-timecode-badge');
+  const hint = document.getElementById('fp-timecode-hint');
+  badge.textContent = '⏱ ' + tc;
+  badge.style.display = '';
+  hint.style.display = 'none';
+}
+
+function fpClearTimecode() {
+  const badge = document.getElementById('fp-timecode-badge');
+  const hint = document.getElementById('fp-timecode-hint');
+  badge.textContent = '';
+  badge.style.display = 'none';
+  hint.style.display = '';
+}
+
+function fpSeekTo(tc) {
+  const video = document.getElementById('fp-video');
+  if (!video || !tc) return;
+  const parts = tc.replace('⏱ ','').split(':').map(Number);
+  const secs = parts.length === 3 ? parts[0]*3600+parts[1]*60+parts[2] : parts[0]*60+parts[1];
+  video.currentTime = secs;
+  video.play();
+}
+
 function renderComments(list) {
   const el = document.getElementById('fp-comments-list');
   if (!list.length) {
@@ -6388,7 +6455,8 @@ function renderComments(list) {
   el.innerHTML = list.map(c => `
     <div style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <div style="display:flex;align-items:center;gap:6px">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          ${c.timecode ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:var(--em-dark);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;font-family:monospace;cursor:pointer" title="クリックでシーク">⏱ ${esc(c.timecode)}</span>` : ''}
           <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
           ${c.is_knowledge ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : ''}
         </div>
@@ -6409,17 +6477,20 @@ async function submitFileComment() {
   if (!text) return;
   const isKnowledge = document.getElementById('fp-is-knowledge').checked;
   const categoryId  = document.getElementById('fp-comment-category').value || null;
+  const tcBadge = document.getElementById('fp-timecode-badge');
+  const timecode = tcBadge.style.display !== 'none' ? tcBadge.textContent.replace('⏱ ', '').trim() : null;
   const btn = document.querySelector('#fp-comment-input-area button');
   btn.disabled = true; btn.textContent = '送信中...';
   const res = await fetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId }),
+    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode }),
   });
   btn.disabled = false; btn.textContent = '送信';
   if (res.ok) {
     document.getElementById('fp-comment-text').value = '';
     document.getElementById('fp-is-knowledge').checked = false;
+    fpClearTimecode();
     await loadFileComments(currentPreviewFileId);
   } else {
     const e = await res.json(); alert('エラー: ' + e.error);
@@ -6551,6 +6622,24 @@ function confirmUploadNo() {
   document.getElementById('cd-manual-upload-btn').style.display = '';
 }
 
+async function doDCheckTransition() {
+  document.getElementById('cd-dcheck-confirm').style.display = 'none';
+  const statusEl = document.getElementById('cd-upload-status');
+  const editorComment = document.getElementById('cd-comment-field').value.trim();
+  const payload = { status: 'Dチェック' };
+  if (editorComment) payload.director_comment = editorComment;
+  const upd = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  });
+  if (upd.ok) {
+    currentCreativeDetail.status = 'Dチェック';
+    updateCreativeStepIndicator('Dチェック');
+    updateCreativeCommentLabel('Dチェック');
+    document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
+    if (statusEl) { statusEl.textContent = '→ Dチェックに移行しました'; statusEl.style.color = 'var(--em-dark)'; }
+  }
+}
+
 function detectMediaDimensions(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -6605,24 +6694,23 @@ async function executeUpload() {
     const res  = await fetch(`${API}/creatives/${currentCreativeDetail.id}/upload`, { method: 'POST', body: formData });
     const data = await res.json();
     if (res.ok) {
-      statusEl.textContent = data.drive_url ? 'アップロード完了！' : 'DB記録完了（Drive未連携）';
+      statusEl.textContent = data.drive_url ? 'アップロード完了！' : `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
+      if (!data.drive_url) statusEl.style.color = '#d97706';
       statusEl.style.color = 'var(--em-dark)';
       await loadCreativeFiles(currentCreativeDetail.id);
       document.getElementById('cd-upload-input').value = '';
       document.getElementById('cd-upload-preview').style.display = 'none';
       uploadFileData = null;
-      // 制作中（初稿提出前）→ Dチェック へ自動遷移
+      // 制作中（初稿提出前）→ Dチェック へ移行確認
       if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-        const upd = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
-          method: 'PUT', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ status: 'Dチェック' })
-        });
-        if (upd.ok) {
-          currentCreativeDetail.status = 'Dチェック';
-          updateCreativeStepIndicator('Dチェック');
-          updateCreativeCommentLabel('Dチェック');
-          document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
-          statusEl.textContent += '　→ Dチェックに移行しました';
+        const editorComment = document.getElementById('cd-comment-field').value.trim();
+        if (!editorComment) {
+          statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
+          statusEl.style.color = '#E24B4A';
+        } else {
+          // 確認バーを表示
+          const confirmDCheck = document.getElementById('cd-dcheck-confirm');
+          if (confirmDCheck) confirmDCheck.style.display = '';
         }
       }
     } else {
