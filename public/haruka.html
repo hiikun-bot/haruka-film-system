@@ -1984,6 +1984,7 @@ let currentClient = 'all', currentView = 'all', searchText = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
+let currentUploadedFileCount = 0;   // アップロード済みファイル数（バージョン自動計算用）
 
 async function init() {
   try {
@@ -6291,6 +6292,7 @@ async function loadCreativeFiles(creativeId) {
   const res = await fetch(`${API}/creatives/${creativeId}/files`);
   if (!res.ok) return;
   const files = await res.json();
+  currentUploadedFileCount = files.length; // バージョン自動計算用
   const section = document.getElementById('cd-files-section');
   const list    = document.getElementById('cd-files-list');
   if (!files.length) { section.style.display = 'none'; return; }
@@ -6315,7 +6317,7 @@ async function loadCreativeFiles(creativeId) {
       <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;${hideCheckBtn ? '' : 'border-bottom:0.5px solid var(--border)'}">
         <span style="font-family:monospace;font-size:12px;font-weight:500;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
         ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
-        <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleDateString('ja-JP')}</span>
+        <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
         ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
       </div>
       <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
@@ -6622,7 +6624,7 @@ async function processUploadFile(file, showConfirm = false) {
     const { width, height } = await detectMediaDimensions(file);
     uploadFileData = { file, width, height };
     document.getElementById('cd-detected-size').textContent = `${width} × ${height}`;
-    document.getElementById('cd-version-num').value = 1;
+    document.getElementById('cd-version-num').value = currentUploadedFileCount + 1;
     preview.style.display = '';
     updateGeneratedFilename();
     // ドロップゾーンのテキストをファイル名に更新
