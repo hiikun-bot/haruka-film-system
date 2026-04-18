@@ -697,11 +697,6 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       const isVideo = file.mimetype.startsWith('video/');
       const typeFolder = isVideo ? '動画' : '静止画';
 
-      // ファイル名から作業フォルダ名（サイズ・バージョン・拡張子を除いた部分）を生成
-      const workFolderName = (generated_name || file.originalname)
-        .replace(/\.[^.]+$/, '')
-        .replace(/_\d+_\d+_v\d+$/, '');
-
       driveStep = 'monthFolder';
       const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
 
@@ -722,9 +717,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       } else {
         typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
       }
-
-      driveStep = 'workFolder';
-      const workFolderId = await getOrCreateFolder(drive, typeFolderId, workFolderName);
+      // ファイルは typeFolder に直接格納（workFolder は廃止）
 
       // ファイルをアップロード（PassThrough stream で安定化）
       driveStep = 'fileUpload';
@@ -735,7 +728,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       const uploadRes = await drive.files.create({
         requestBody: {
           name: generated_name || file.originalname,
-          parents: [workFolderId],
+          parents: [typeFolderId],
         },
         media: { mimeType: file.mimetype, body: passThrough },
         fields: 'id, webViewLink',
