@@ -674,14 +674,21 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
 
   // Google Drive にアップロード（credentials が設定されている場合のみ）
   if (rootFolderId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    let driveStep = 'init';
     try {
       const drive = await getDriveService();
 
       // ルート → クライアント名 → 案件名 を自動作成
-      const clientName = project?.clients?.name || 'その他';
+      const clientName = (project?.clients?.name || 'その他').replace(/[/\\?%*:|"<>]/g, '_');
+      const projectName = (project?.name || '案件未設定').replace(/[/\\?%*:|"<>]/g, '_');
+
+      driveStep = 'clientFolder';
       const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
-      const baseFolderId = await getOrCreateFolder(drive, clientFolderId, project.name);
-      if (!baseFolderId) throw new Error('Drive フォルダIDを取得できません');
+      if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
+
+      driveStep = 'projectFolder';
+      const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
+      if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
 
       const now = new Date();
       const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -692,15 +699,15 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
 
       // ファイル名から作業フォルダ名（サイズ・バージョン・拡張子を除いた部分）を生成
       const workFolderName = (generated_name || file.originalname)
-        .replace(/\.[^.]+$/, '')           // 拡張子除去
-        .replace(/_\d+_\d+_v\d+$/, '');    // _W_H_vN 除去
+        .replace(/\.[^.]+$/, '')
+        .replace(/_\d+_\d+_v\d+$/, '');
 
-      // フォルダ階層の構築（月単位 vs 週単位）
+      driveStep = 'monthFolder';
       const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
+
+      driveStep = 'typeFolder';
       let typeFolderId;
       if (project.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
-        // 週単位: {YYYYMM}/W{n}_{MMDD}/{動画|静止画}/{work}/
-        // JSのweekday: 0=日,1=月...6=土 → deadline_weekday: 0=月...6=日
         const jsTarget = (project.deadline_weekday + 1) % 7;
         const daysUntil = ((jsTarget - now.getDay()) + 7) % 7 || 7;
         const deadline = new Date(now);
@@ -713,29 +720,32 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
         const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
         typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
       } else {
-        // 月単位: {YYYYMM}/{動画|静止画}/{work}/
         typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
       }
+
+      driveStep = 'workFolder';
       const workFolderId = await getOrCreateFolder(drive, typeFolderId, workFolderName);
 
-      // ファイルをアップロード
-      const stream = new Readable();
-      stream.push(file.buffer);
-      stream.push(null);
+      // ファイルをアップロード（PassThrough stream で安定化）
+      driveStep = 'fileUpload';
+      const { PassThrough } = require('stream');
+      const passThrough = new PassThrough();
+      passThrough.end(file.buffer);
 
       const uploadRes = await drive.files.create({
         requestBody: {
           name: generated_name || file.originalname,
           parents: [workFolderId],
         },
-        media: { mimeType: file.mimetype, body: stream },
+        media: { mimeType: file.mimetype, body: passThrough },
         fields: 'id, webViewLink',
         supportsAllDrives: true,
       });
 
       driveFileId = uploadRes.data.id;
       driveUrl    = uploadRes.data.webViewLink;
-      // iframe埋め込み用に「リンクを知っている全員が閲覧可能」に設定
+
+      driveStep = 'permission';
       try {
         await drive.permissions.create({
           fileId: driveFileId,
@@ -746,8 +756,8 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
         console.error('Drive permission error:', permErr.message);
       }
     } catch (e) {
-      console.error('Drive upload error:', e.message);
-      driveError = e.message;
+      console.error(`Drive upload error [step=${driveStep}]:`, e.message);
+      driveError = `[${driveStep}] ${e.message}`;
     }
   } else {
     driveError = rootFolderId ? null : 'drive_root_folder_id が未設定です';
