@@ -1971,6 +1971,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <span id="fp-abloop-display" style="color:#52525b;font-size:10px;font-family:monospace;display:none"></span>
             <!-- ミュート -->
             <button id="fp-mute-btn" onclick="fpToggleMute()" style="background:none;border:none;color:#a1a1aa;font-size:14px;cursor:pointer;flex-shrink:0" title="ミュート">🔊</button>
+            <!-- スクリーンショット -->
+            <button onclick="fpTakeScreenshot()" style="background:none;border:none;color:#a1a1aa;cursor:pointer;flex-shrink:0;padding:2px 4px;border-radius:4px;display:flex;align-items:center" title="スクリーンショット（現在フレームを保存）" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a1a1aa'">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
             <!-- ネイティブフルスクリーン -->
             <button onclick="fpNativeFullscreen()" style="background:none;border:none;color:#a1a1aa;font-size:14px;cursor:pointer;flex-shrink:0" title="フルスクリーン">⛶</button>
           </div>
@@ -6583,6 +6587,26 @@ function fpSeekbarInput(el) {
 }
 
 function fpSeekbarChange(el) { fpSeekbarInput(el); }
+
+function fpTakeScreenshot() {
+  const v = document.getElementById('fp-video');
+  if (!v || !v.videoWidth) { alert('動画を再生中のフレームのみキャプチャできます'); return; }
+  const canvas = document.createElement('canvas');
+  canvas.width  = v.videoWidth;
+  canvas.height = v.videoHeight;
+  canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+  const filename = (document.getElementById('fp-filename').textContent || 'screenshot').replace(/\.[^.]+$/, '');
+  const tc = fpTimecodeStr(v.currentTime).replace(/:/g, '-');
+  const a = document.createElement('a');
+  a.download = `${filename}_${tc}.png`;
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+  // フラッシュ演出
+  const flash = document.createElement('div');
+  flash.style.cssText = 'position:absolute;inset:0;background:#fff;opacity:0.6;pointer-events:none;z-index:10;border-radius:12px;transition:opacity 0.3s';
+  document.getElementById('fp-window').appendChild(flash);
+  setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 300); }, 50);
+}
 
 function fpNativeFullscreen() {
   const v = document.getElementById('fp-video');
