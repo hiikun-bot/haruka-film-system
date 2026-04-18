@@ -1044,6 +1044,17 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <textarea class="form-input" id="m-note" rows="3" placeholder="スキル・連絡事項・特記など" style="resize:vertical"></textarea>
         </div>
 
+        <!-- クリエイティブ初期ビュー -->
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">クリエイティブ 初期ビュー</label>
+          <select class="form-select" id="m-creative-default-view">
+            <option value="all">全案件（デフォルト）</option>
+            <option value="mine">自分の案件</option>
+            <option value="ball">自分のボール</option>
+          </select>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クリエイティブ一覧を開いたときの初期表示フィルターです</div>
+        </div>
+
         <!-- 振込先口座情報 -->
         <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
           <div style="font-size:12px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:12px">振込先口座情報</div>
@@ -1953,6 +1964,13 @@ async function init() {
       document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
       document.getElementById('user-role').textContent = roleLabel(currentUser.role);
       document.getElementById('user-av').textContent = (currentUser.name||'U').slice(0,2).toUpperCase();
+      // クリエイティブ初期ビューを適用
+      const savedView = localStorage.getItem('hfs_cv_default_' + currentUser.id);
+      if (savedView && savedView !== 'all') {
+        currentView = savedView;
+        const btn = document.querySelector(`.ft[onclick="setView(this,'${savedView}')"]`);
+        if (btn) { document.querySelectorAll('.ft').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }
+      }
     } else {
       window.location.href = '/login.html';
       return;
@@ -3009,6 +3027,7 @@ function openAddMember() {
   document.getElementById('m-account-type').value = '普通';
   document.getElementById('m-account-number').value = '';
   document.getElementById('m-account-holder').value = '';
+  document.getElementById('m-creative-default-view').value = 'all';
   applyMemberModalAdminFields(null);
   onRoleChange('editor');
   openModal('modal-member');
@@ -3044,6 +3063,7 @@ function openEditMember(m) {
   initTimeRanges('weekday', wdRanges);
   initTimeRanges('weekend', weRanges || [{from:10,to:17}]);
   document.getElementById('m-note').value = m.note || '';
+  document.getElementById('m-creative-default-view').value = localStorage.getItem('hfs_cv_default_' + m.id) || 'all';
   document.getElementById('m-bank-name').value = m.bank_name || '';
   document.getElementById('m-bank-code').value = m.bank_code || '';
   document.getElementById('m-branch-name').value = m.branch_name || '';
@@ -3087,8 +3107,12 @@ async function submitMember() {
     if (!email) { alert('新規追加時はメールアドレスが必須です'); return; }
     res = await fetch(`${API}/members`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload, email}) });
   }
-  if (res.ok) { closeModal('modal-member'); await loadMembers(); }
-  else {
+  if (res.ok) {
+    const cvView = document.getElementById('m-creative-default-view').value;
+    if (id) localStorage.setItem('hfs_cv_default_' + id, cvView);
+    closeModal('modal-member');
+    await loadMembers();
+  } else {
     const e = await res.json();
     const msg = e.error?.includes('users_email_key')
       ? 'このメールアドレスはすでに登録されています。'
