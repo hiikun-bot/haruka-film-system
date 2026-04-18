@@ -1867,8 +1867,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <input class="form-input" id="cd-version-num" type="number" min="1" value="1" style="width:72px" oninput="updateGeneratedFilename()">
             <span style="font-size:12px;color:var(--text-muted)">v1=初稿、v2=1回目修正…</span>
           </div>
+          <!-- ドロップ後確認バー -->
+          <div id="cd-upload-confirm" style="display:none;background:var(--em-pale);border:1.5px solid var(--em-dark);border-radius:10px;padding:14px 18px;margin-bottom:12px">
+            <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">このファイルをアップロードしますか？</div>
+            <div style="display:flex;gap:10px">
+              <button class="btn-primary" onclick="confirmUploadYes()" style="min-width:80px">はい</button>
+              <button class="btn" onclick="confirmUploadNo()" style="min-width:80px">いいえ</button>
+            </div>
+          </div>
           <div style="display:flex;align-items:center;gap:10px">
-            <button class="btn-primary" onclick="executeUpload()">Googleドライブにアップロード</button>
+            <button class="btn-primary" id="cd-manual-upload-btn" onclick="executeUpload()">Googleドライブにアップロード</button>
             <span id="cd-upload-status" style="font-size:13px"></span>
           </div>
         </div>
@@ -6033,6 +6041,8 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-upload-input').value = '';
   document.getElementById('cd-upload-preview').style.display = 'none';
   document.getElementById('cd-upload-status').textContent = '';
+  document.getElementById('cd-upload-confirm').style.display = 'none';
+  document.getElementById('cd-manual-upload-btn').style.display = '';
   uploadFileData = null;
 
   // レギュレーションシートリンク
@@ -6503,11 +6513,13 @@ async function handleUploadFileSelect(input) {
 async function handleUploadFileDrop(event) {
   const file = event.dataTransfer.files[0];
   if (!file) return;
-  await processUploadFile(file);
+  await processUploadFile(file, true);
 }
 
-async function processUploadFile(file) {
+async function processUploadFile(file, showConfirm = false) {
   const preview = document.getElementById('cd-upload-preview');
+  const confirmBar = document.getElementById('cd-upload-confirm');
+  const manualBtn = document.getElementById('cd-manual-upload-btn');
   try {
     const { width, height } = await detectMediaDimensions(file);
     uploadFileData = { file, width, height };
@@ -6518,9 +6530,25 @@ async function processUploadFile(file) {
     // ドロップゾーンのテキストをファイル名に更新
     const zone = document.getElementById('cd-drop-zone');
     if (zone) zone.querySelector('div:nth-child(2)').textContent = file.name;
+    // ドロップ時は確認バーを表示、手動ボタンを隠す
+    if (showConfirm && confirmBar && manualBtn) {
+      confirmBar.style.display = '';
+      manualBtn.style.display = 'none';
+    }
   } catch(e) {
     alert('サイズを検出できませんでした: ' + e.message);
   }
+}
+
+function confirmUploadYes() {
+  document.getElementById('cd-upload-confirm').style.display = 'none';
+  document.getElementById('cd-manual-upload-btn').style.display = '';
+  executeUpload();
+}
+
+function confirmUploadNo() {
+  document.getElementById('cd-upload-confirm').style.display = 'none';
+  document.getElementById('cd-manual-upload-btn').style.display = '';
 }
 
 function detectMediaDimensions(file) {
