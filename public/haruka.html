@@ -6360,7 +6360,14 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
       player.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
     }
   } else {
-    player.innerHTML = `<div style="color:#888;font-size:13px;text-align:center"><div style="font-size:48px;margin-bottom:12px">📎</div><div>Drive連携が未設定のためプレビューできません</div><div style="font-size:11px;color:#666;margin-top:8px">アップロード時にDriveが未設定だったか、Drive設定を確認してください</div></div>`;
+    player.innerHTML = `
+      <div style="color:#888;font-size:13px;text-align:center;padding:20px">
+        <div style="font-size:48px;margin-bottom:12px">📎</div>
+        <div style="margin-bottom:8px">Drive連携が未設定のためプレビューできません</div>
+        <div style="font-size:11px;color:#666;margin-bottom:20px">このファイルはDrive未設定時にアップロードされたか、Drive連携に失敗しています</div>
+        <button onclick="runDriveDiagnose()" style="background:#3ECFCA;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:12px">🔍 Drive接続を診断する</button>
+        <div id="fp-drive-diagnose-result" style="font-size:12px;text-align:left;max-width:400px;margin:0 auto"></div>
+      </div>`;
   }
   document.getElementById('fp-timecode-badge').textContent = '';
   document.getElementById('fp-timecode-badge').style.display = 'none';
@@ -6406,6 +6413,26 @@ async function loadFileComments(fileId) {
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
   renderComments(list);
+}
+
+async function runDriveDiagnose() {
+  const el = document.getElementById('fp-drive-diagnose-result');
+  if (!el) return;
+  el.innerHTML = '<div style="color:#888;padding:8px">診断中...</div>';
+  try {
+    const res = await fetch(`${API}/drive-diagnose`);
+    const data = await res.json();
+    const rows = Object.entries(data.checks || {}).map(([key, v]) => {
+      const icon = v.ok ? '✅' : '❌';
+      return `<div style="padding:6px 10px;margin-bottom:4px;background:${v.ok ? '#f0fdf4' : '#fef2f2'};border-radius:6px;border:0.5px solid ${v.ok ? '#bbf7d0' : '#fecaca'}">
+        ${icon} <strong style="font-size:12px">${{service_account_key:'サービスアカウントキー',root_folder:'ルートフォルダID',drive_api:'Drive API接続'}[key]||key}</strong>
+        <div style="font-size:11px;color:#555;margin-top:2px;word-break:break-all">${v.message}</div>
+      </div>`;
+    }).join('');
+    el.innerHTML = rows || '<div style="color:#888;font-size:12px">診断結果なし</div>';
+  } catch(e) {
+    el.innerHTML = `<div style="color:#E24B4A;font-size:12px">診断エラー: ${e.message}</div>`;
+  }
 }
 
 function fpTimecodeStr(secs) {

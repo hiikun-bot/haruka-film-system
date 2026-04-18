@@ -1770,6 +1770,46 @@ async function getDriveRootFolderId() {
   return data?.value || process.env.DRIVE_ROOT_FOLDER_ID || null;
 }
 
+// Drive接続診断エンドポイント（管理者用）
+router.get('/drive-diagnose', requireAuth, async (_req, res) => {
+  const result = { ok: false, checks: {} };
+
+  // 1. サービスアカウントキー
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) {
+    result.checks.service_account_key = { ok: false, message: 'GOOGLE_SERVICE_ACCOUNT_KEY 環境変数が未設定です' };
+    return res.json(result);
+  }
+  let credentials;
+  try {
+    credentials = JSON.parse(keyJson);
+    result.checks.service_account_key = { ok: true, message: `サービスアカウント: ${credentials.client_email}` };
+  } catch (e) {
+    result.checks.service_account_key = { ok: false, message: `JSON パースエラー: ${e.message}` };
+    return res.json(result);
+  }
+
+  // 2. ルートフォルダID
+  const rootFolderId = await getDriveRootFolderId();
+  if (!rootFolderId) {
+    result.checks.root_folder = { ok: false, message: 'drive_root_folder_id が未設定（システム設定またはDRIVE_ROOT_FOLDER_ID環境変数を確認）' };
+    return res.json(result);
+  }
+  result.checks.root_folder = { ok: true, message: `フォルダID: ${rootFolderId}` };
+
+  // 3. Drive API 接続テスト
+  try {
+    const drive = await getDriveService();
+    const r = await drive.files.get({ fileId: rootFolderId, fields: 'id,name', supportsAllDrives: true });
+    result.checks.drive_api = { ok: true, message: `フォルダ名: ${r.data.name}` };
+    result.ok = true;
+  } catch (e) {
+    result.checks.drive_api = { ok: false, message: `Drive API エラー: ${e.message}` };
+  }
+
+  res.json(result);
+});
+
 // ==================== 汎用マスター管理 ====================
 
 // 区分マスター一覧
