@@ -453,7 +453,7 @@ router.get('/creatives/:id', async (req, res) => {
 // 一括登録プレビュー（DBには保存しない）
 router.post('/creatives/bulk-preview', async (req, res) => {
   const { project_id, creative_type, appeal_type_id, count, draft_deadline, final_deadline,
-          product_id, media_code, creative_fmt, creative_size } = req.body;
+          product_code, media_code, creative_fmt, creative_size } = req.body;
   if (!project_id || !creative_type || !appeal_type_id || !count) {
     return res.status(400).json({ error: '案件・種別・訴求タイプ・本数は必須です' });
   }
@@ -462,21 +462,27 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   const { data: appealType } = await supabase
     .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
   if (!project || !appealType) return res.status(400).json({ error: '案件または訴求タイプが見つかりません' });
-  const clientCode = (project.clients?.client_code ||
-    project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK').toUpperCase().slice(0, 3);
+
   const { data: existingCreatives } = await supabase
-    .from('creatives').select('file_name, appeal_type_id').eq('project_id', project_id);
-  const usedSeqs = (existingCreatives || [])
-    .map(c => c.file_name?.slice(0, 3)).filter(s => /^\d{3}$/.test(s)).map(Number);
-  let appealSeq = (existingCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length;
+    .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
+  const usedSeqs = (existingCreatives || []).map(c => {
+    if (c.internal_code) { const m = c.internal_code.match(/^(\d{3})_/); if (m) return Number(m[1]); }
+    const fn = c.file_name || '';
+    const m7 = fn.match(/_(\d{7})$/); if (m7) return Number(m7[1]);
+    const m3 = fn.match(/^(\d{3})_/); return m3 ? Number(m3[1]) : null;
+  }).filter(n => n !== null);
+
+  const today = new Date();
+  const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+
   const previews = [];
   let nextSeq = 1;
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
-    appealSeq++;
-    const seqStr = String(nextSeq).padStart(3, '0');
-    const appealSeqStr = String(appealSeq).padStart(2, '0');
-    const fileName = `${seqStr}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
+    const seqStr7 = String(nextSeq).padStart(7, '0');
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+      .map(p => (p||'').toString().trim()).filter(Boolean);
+    const fileName = parts.join('_');
     previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
     usedSeqs.push(nextSeq);
     nextSeq++;
@@ -490,7 +496,8 @@ router.post('/creatives/bulk', async (req, res) => {
   const {
     project_id, creative_type, appeal_type_id,
     count, draft_deadline, final_deadline, note,
-    product_id, media_code, creative_fmt, creative_size
+    product_id, product_code, media_code, creative_fmt, creative_size,
+    assignee_id, team_id
   } = req.body;
   if (!project_id || !creative_type || !appeal_type_id || !count) {
     return res.status(400).json({ error: '案件・種別・訴求タイプ・本数は必須です' });
@@ -505,26 +512,32 @@ router.post('/creatives/bulk', async (req, res) => {
   if (!project || !appealType) {
     return res.status(400).json({ error: '案件または訴求タイプが見つかりません' });
   }
-  const clientCode = (project.clients?.client_code ||
-    project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK').toUpperCase().slice(0, 3);
   const { data: existingCreatives } = await supabase
-    .from('creatives').select('file_name, appeal_type_id').eq('project_id', project_id);
-  const usedSeqs = (existingCreatives || [])
-    .map(c => c.file_name?.slice(0, 3)).filter(s => /^\d{3}$/.test(s)).map(Number);
-  let appealSeq = (existingCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length;
+    .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
+  const usedSeqs = (existingCreatives || []).map(c => {
+    if (c.internal_code) { const m = c.internal_code.match(/^(\d{3})_/); if (m) return Number(m[1]); }
+    const fn = c.file_name || '';
+    const m7 = fn.match(/_(\d{7})$/); if (m7) return Number(m7[1]);
+    const m3 = fn.match(/^(\d{3})_/); return m3 ? Number(m3[1]) : null;
+  }).filter(n => n !== null);
+
+  const today = new Date();
+  const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+
   const inserts = [];
   let nextSeq = 1;
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
-    appealSeq++;
-    const seqStr = String(nextSeq).padStart(3, '0');
-    const appealSeqStr = String(appealSeq).padStart(2, '0');
-    const fileName = `${seqStr}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
-    inserts.push({ project_id, file_name: fileName, creative_type, appeal_type_id,
+    const seqStr7 = String(nextSeq).padStart(7, '0');
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+      .map(p => (p||'').toString().trim()).filter(Boolean);
+    const fileName = parts.join('_');
+    const insert = { project_id, file_name: fileName, creative_type, appeal_type_id,
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
       note: note || null, status: '未着手',
       product_id: product_id || null, media_code: media_code || null,
-      creative_fmt: creative_fmt || null, creative_size: creative_size || null });
+      creative_fmt: creative_fmt || null, creative_size: creative_size || null };
+    inserts.push(insert);
     usedSeqs.push(nextSeq);
     nextSeq++;
   }

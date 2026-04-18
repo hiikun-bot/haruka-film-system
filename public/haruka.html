@@ -4748,14 +4748,37 @@ async function bulkPreviewCreative() {
   const draft_deadline = document.getElementById('bulk-draft-deadline').value;
   const final_deadline = document.getElementById('bulk-final-deadline').value;
   if (!project_id || !appeal_type_id || !count) { alert('案件・訴求タイプ・本数は必須です'); return; }
-  const product_id = document.getElementById('bulk-product-id')?.value || null;
-  const media_code = document.getElementById('bulk-media-code')?.value || null;
+
+  // コード - 名称 → 名称のみ抽出
+  const nameOnly = sel => {
+    const t = sel?.options[sel.selectedIndex]?.text || '';
+    const parts = t.split(' - ');
+    return parts.length > 1 ? parts.slice(1).join(' - ').trim() : t.trim();
+  };
+
+  const prodSel      = document.getElementById('bulk-product-id');
+  const product_id   = prodSel?.value || null;
+  const product_code = prodSel?.options[prodSel.selectedIndex]?.text?.split(' - ')[0]?.trim() || null;
+  const media_code   = document.getElementById('bulk-media-code')?.value || null;
   const creative_fmt = document.getElementById('bulk-creative-fmt')?.value || null;
-  const creative_size = document.getElementById('bulk-creative-size')?.value || null;
+  const creative_size= document.getElementById('bulk-creative-size')?.value || null;
+  const assignee_id  = document.getElementById('bulk-assignee-id')?.value || null;
+  const team_id      = document.getElementById('bulk-team-id')?.value || null;
+
+  // 表示用: 名称のみ
+  const creativetypeText = document.getElementById('bulk-creative-type')?.options[document.getElementById('bulk-creative-type').selectedIndex]?.text || '—';
+  const productName   = nameOnly(document.getElementById('bulk-product-id'));
+  const mediaName     = nameOnly(document.getElementById('bulk-media-code'));
+  const fmtName       = nameOnly(document.getElementById('bulk-creative-fmt'));
+  const sizeName      = document.getElementById('bulk-creative-size')?.options[document.getElementById('bulk-creative-size').selectedIndex]?.text || '—';
+  const appealName    = nameOnly(document.getElementById('bulk-appeal-type'));
+  const teamName      = document.getElementById('bulk-team-id')?.options[document.getElementById('bulk-team-id').selectedIndex]?.text || '—';
+  const assigneeName  = document.getElementById('bulk-assignee-id')?.options[document.getElementById('bulk-assignee-id').selectedIndex]?.text || '—';
 
   _bulkPayload = { project_id, creative_type, appeal_type_id, count,
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
-    product_id, media_code, creative_fmt, creative_size };
+    product_id, product_code, media_code, creative_fmt, creative_size,
+    assignee_id, team_id };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
   const origText = btn.textContent;
@@ -4772,28 +4795,32 @@ async function bulkPreviewCreative() {
   // 確認リストを描画
   document.getElementById('bulk-confirm-count').textContent = `${previews.length} 本を登録します`;
   const fmtDate = d => d ? d.slice(0,10).replace(/-/g,'/') : '—';
+  const th = t => `<th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap">${t}</th>`;
+  const td = t => `<td style="padding:6px 10px;font-size:12px;color:var(--text-muted);white-space:nowrap">${t||'—'}</td>`;
   document.getElementById('bulk-confirm-list').innerHTML = `
     <table style="width:100%;border-collapse:collapse">
       <thead>
         <tr style="background:var(--surface);position:sticky;top:0">
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">#</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">ファイル名</th>
-          <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-muted);font-weight:600">初稿提出日</th>
-          <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-muted);font-weight:600">最終納期</th>
+          ${th('#')}${th('ファイル名')}${th('動画種別')}${th('商材')}${th('媒体')}
+          ${th('FMT')}${th('サイズ')}${th('訴求タイプ')}${th('チーム')}${th('担当者')}
+          ${th('初稿提出日')}${th('最終納期')}
         </tr>
       </thead>
       <tbody>
         ${previews.map((p,i) => `
           <tr style="border-top:0.5px solid var(--border);${i%2===1?'background:#FAFEFE':''}">
-            <td style="padding:7px 12px;font-size:12px;color:var(--text-muted)">${i+1}</td>
-            <td style="padding:7px 12px;font-size:12px;font-weight:500;font-family:monospace;color:var(--em-dark)">${p.file_name}</td>
-            <td style="padding:7px 12px;font-size:12px;text-align:center;color:var(--text-muted)">${fmtDate(p.draft_deadline)}</td>
-            <td style="padding:7px 12px;font-size:12px;text-align:center;color:var(--text-muted)">${fmtDate(p.final_deadline)}</td>
+            <td style="padding:6px 10px;font-size:12px;color:var(--text-muted)">${i+1}</td>
+            <td style="padding:6px 10px;font-size:11px;font-weight:500;font-family:monospace;color:var(--em-dark);max-width:200px;overflow:hidden;text-overflow:ellipsis">${p.file_name}</td>
+            ${td(creativetypeText)}${td(productName)}${td(mediaName)}
+            ${td(fmtName)}${td(sizeName)}${td(appealName)}${td(teamName)}${td(assigneeName)}
+            ${td(fmtDate(p.draft_deadline))}${td(fmtDate(p.final_deadline))}
           </tr>`).join('')}
       </tbody>
     </table>`;
 
-  // フォームを隠して確認パネルを表示
+  // タブを隠して確認パネルを表示（個別登録に切り替わらないようにする）
+  document.getElementById('tab-single-btn').style.display = 'none';
+  document.getElementById('tab-bulk-btn').style.display = 'none';
   document.getElementById('tab-bulk').style.display = 'none';
   document.getElementById('tab-bulk-confirm').style.display = '';
 }
@@ -4801,6 +4828,8 @@ async function bulkPreviewCreative() {
 function bulkConfirmBack() {
   document.getElementById('tab-bulk-confirm').style.display = 'none';
   document.getElementById('tab-bulk').style.display = '';
+  document.getElementById('tab-single-btn').style.display = '';
+  document.getElementById('tab-bulk-btn').style.display = '';
 }
 
 async function bulkCreateCreative() {
