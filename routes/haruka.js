@@ -1356,12 +1356,19 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     .select('internal_code, file_name, appeal_type_id')
     .eq('project_id', req.params.id);
 
-  // 内部コード先頭3桁から使用済みseqを収集（なければfile_nameの先頭3桁にフォールバック）
+  // 使用済み連番を収集
+  // 優先順位: internal_code先頭3桁 → 新ファイル名末尾7桁 → 旧ファイル名先頭3桁
   const usedSeqs = (allCreatives || [])
     .map(c => {
-      const src = c.internal_code || c.file_name || '';
-      const m = src.match(/^(\d{3})_/);
-      return m ? Number(m[1]) : null;
+      if (c.internal_code) {
+        const m = c.internal_code.match(/^(\d{3})_/);
+        if (m) return Number(m[1]);
+      }
+      const fn = c.file_name || '';
+      const m7 = fn.match(/_(\d{7})$/);  // 新形式: 末尾7桁
+      if (m7) return Number(m7[1]);
+      const m3 = fn.match(/^(\d{3})_/);  // 旧形式: 先頭3桁
+      return m3 ? Number(m3[1]) : null;
     })
     .filter(n => n !== null);
 
