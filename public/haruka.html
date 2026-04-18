@@ -1377,6 +1377,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div id="p-tab-nav" style="display:none;padding:0 28px;border-bottom:1px solid var(--border);flex-shrink:0">
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
       <button id="p-tab-btn-sync" onclick="switchProjectTab('sync')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">商材・訴求軸</button>
+      <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
     </div>
 
     <!-- タブコンテンツエリア（固定高さ・スクロール） -->
@@ -1643,6 +1644,24 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div><!-- /p-tab-panel-sync -->
 
+    <!-- パネル：案件チェックリスト -->
+    <div id="p-tab-panel-checklist" style="display:none;padding:24px 28px">
+      <div style="max-width:600px">
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">この案件専用のチェック項目を設定します。基本チェックリスト（全案件共通）はマスター管理で設定してください。</p>
+        <!-- 追加フォーム -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:10px">項目追加</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="pcl-new-title" class="form-input" placeholder="チェック項目名 *" style="flex:2;min-width:160px;font-size:13px">
+            <input id="pcl-new-desc"  class="form-input" placeholder="説明（任意）" style="flex:3;min-width:160px;font-size:13px">
+            <button class="btn-primary" style="padding:7px 16px;font-size:13px;white-space:nowrap" onclick="addProjectChecklistItem()">追加</button>
+          </div>
+        </div>
+        <!-- リスト -->
+        <div id="pcl-list"><div style="color:var(--text-muted);font-size:13px">読み込み中...</div></div>
+      </div>
+    </div>
+
     </div><!-- /p-tab-content -->
 
     <!-- フッター -->
@@ -1686,6 +1705,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div class="master-nav-item" onclick="selectMasterNav('appeal_axes')" id="mnav-appeal_axes"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           訴求軸マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('checklist')" id="mnav-checklist"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          ✅ チェックリスト
         </div>
         <div id="mnav-sysconfig" class="master-nav-item" onclick="selectMasterNav('sysconfig')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
@@ -1994,7 +2017,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <!-- タブ -->
         <div style="display:flex;border-bottom:1px solid #2a2a2e;flex-shrink:0">
           <button id="fp-tab-review" onclick="switchPreviewTab('review')" style="flex:1;padding:10px;font-size:12px;font-weight:600;background:none;border:none;cursor:pointer;border-bottom:2px solid #3ECFCA;color:#3ECFCA">レビューコメント</button>
-          <button id="fp-tab-knowledge" onclick="switchPreviewTab('knowledge')" style="flex:1;padding:10px;font-size:12px;font-weight:500;background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;color:#71717a">📚 ナレッジ</button>
+          <button id="fp-tab-checklist" onclick="switchPreviewTab('checklist')" style="flex:1;padding:10px;font-size:12px;font-weight:500;background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;color:#71717a">✅ チェックリスト</button>
         </div>
 
         <!-- コメント一覧 -->
@@ -3758,21 +3781,90 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  const isMain = tab === 'main';
-  document.getElementById('p-tab-panel-main').style.display = isMain ? '' : 'none';
-  document.getElementById('p-tab-panel-sync').style.display = isMain ? 'none' : '';
-  const btnMain = document.getElementById('p-tab-btn-main');
-  const btnSync = document.getElementById('p-tab-btn-sync');
-  if (btnMain) {
-    btnMain.style.borderBottomColor = isMain ? 'var(--em)' : 'transparent';
-    btnMain.style.color = isMain ? 'var(--em-dark)' : 'var(--text-muted)';
-    btnMain.style.fontWeight = isMain ? '600' : '500';
+  const tabs = ['main', 'sync', 'checklist'];
+  tabs.forEach(t => {
+    const panel = document.getElementById(`p-tab-panel-${t}`);
+    const btn   = document.getElementById(`p-tab-btn-${t}`);
+    const isActive = t === tab;
+    if (panel) panel.style.display = isActive ? '' : 'none';
+    if (btn) {
+      btn.style.borderBottomColor = isActive ? 'var(--em)' : 'transparent';
+      btn.style.color      = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
+      btn.style.fontWeight = isActive ? '600' : '500';
+    }
+  });
+  if (tab === 'checklist') loadProjectChecklistItems();
+}
+
+let _pclProjectId = null;
+let _pclItems = [];
+let _pclEditingId = null;
+
+async function loadProjectChecklistItems() {
+  _pclProjectId = document.getElementById('p-id').value;
+  if (!_pclProjectId) return;
+  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items`);
+  _pclItems = res.ok ? await res.json() : [];
+  _renderProjectChecklistItems();
+}
+
+function _renderProjectChecklistItems() {
+  const el = document.getElementById('pcl-list');
+  if (!el) return;
+  if (!_pclItems.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">項目がありません</div>';
+    return;
   }
-  if (btnSync) {
-    btnSync.style.borderBottomColor = isMain ? 'transparent' : 'var(--em)';
-    btnSync.style.color = isMain ? 'var(--text-muted)' : 'var(--em-dark)';
-    btnSync.style.fontWeight = isMain ? '500' : '600';
-  }
+  el.innerHTML = _pclItems.map(item => {
+    if (_pclEditingId === item.id) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+        <input id="pcl-e-title" class="form-input" value="${esc(item.title)}" style="flex:2;font-size:13px">
+        <input id="pcl-e-desc"  class="form-input" value="${esc(item.description||'')}" placeholder="説明（任意）" style="flex:3;font-size:13px">
+        <button class="btn-sm" style="color:var(--em-dark)" onclick="saveProjectChecklistItem('${item.id}')">保存</button>
+        <button class="btn-sm" onclick="_pclEditingId=null;_renderProjectChecklistItems()">取消</button>
+      </div>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+      <span style="font-size:13px;font-weight:500;color:var(--text);flex:2">${esc(item.title)}</span>
+      <span style="font-size:12px;color:var(--text-muted);flex:3">${esc(item.description||'—')}</span>
+      <button class="btn-sm" style="font-size:11px" onclick="_pclEditingId='${item.id}';_renderProjectChecklistItems()">編集</button>
+      <button class="btn-sm" style="font-size:11px;color:#A32D2D;border-color:#F09595" onclick="deleteProjectChecklistItem('${item.id}')">削除</button>
+    </div>`;
+  }).join('');
+}
+
+async function addProjectChecklistItem() {
+  const title = document.getElementById('pcl-new-title').value.trim();
+  const desc  = document.getElementById('pcl-new-desc').value.trim();
+  if (!title) { alert('チェック項目名を入力してください'); return; }
+  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc }),
+  });
+  if (res.ok) {
+    document.getElementById('pcl-new-title').value = '';
+    document.getElementById('pcl-new-desc').value = '';
+    await loadProjectChecklistItems();
+  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function saveProjectChecklistItem(id) {
+  const title = document.getElementById('pcl-e-title').value.trim();
+  const desc  = document.getElementById('pcl-e-desc').value.trim();
+  if (!title) { alert('タイトルは必須です'); return; }
+  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc }),
+  });
+  if (res.ok) { _pclEditingId = null; await loadProjectChecklistItems(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteProjectChecklistItem(id) {
+  if (!confirm('この項目を削除しますか？')) return;
+  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, { method: 'DELETE' });
+  if (res.ok) await loadProjectChecklistItems();
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
 // ===== 案件モーダル 商材・訴求軸 sync =====
@@ -5108,7 +5200,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','sysconfig'].forEach(t => {
+  ['generic','general','products','appeal_axes','checklist','sysconfig'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -5126,6 +5218,8 @@ function selectMasterNav(type) {
     renderProductsMasterPage();
   } else if (type === 'appeal_axes') {
     renderAppealAxesMasterPage();
+  } else if (type === 'checklist') {
+    renderChecklistMasterPage();
   } else if (type === 'sysconfig') {
     renderSysconfigPage();
   }
@@ -5146,6 +5240,102 @@ async function loadMasterPage() {
 }
 
 // ==================== システム設定 ====================
+
+// ==================== チェックリストマスター管理 ====================
+let _clItems = [];
+let _clEditingId = null;
+
+async function renderChecklistMasterPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  const res = await fetch(`${API}/checklist-masters`);
+  _clItems = res.ok ? await res.json() : [];
+  _clEditingId = null;
+  _renderChecklistMasterContent();
+}
+
+function _renderChecklistMasterContent() {
+  const content = document.getElementById('master-content');
+  const rows = _clItems.map(item => {
+    if (_clEditingId === item.id) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border-light)">
+        <input id="cl-e-title" class="form-input" value="${esc(item.title)}" style="flex:2;font-size:13px">
+        <input id="cl-e-desc"  class="form-input" value="${esc(item.description||'')}" placeholder="説明（任意）" style="flex:3;font-size:13px">
+        <input id="cl-e-order" class="form-input" type="number" value="${item.sort_order}" style="width:60px;font-size:13px">
+        <button class="btn-sm" style="color:var(--em-dark)" onclick="saveChecklistMasterEdit('${item.id}')">保存</button>
+        <button class="btn-sm" onclick="_clEditingId=null;_renderChecklistMasterContent()">取消</button>
+      </div>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border-light)">
+      <span style="flex:2;font-size:14px;font-weight:500;color:var(--text)">${esc(item.title)}</span>
+      <span style="flex:3;font-size:13px;color:var(--text-muted)">${esc(item.description||'—')}</span>
+      <span style="font-size:12px;color:var(--text-faint);min-width:40px">順:${item.sort_order}</span>
+      <button class="btn-sm" style="font-size:11px" onclick="_clEditingId='${item.id}';_renderChecklistMasterContent()">編集</button>
+      <button class="btn-sm" style="font-size:11px;color:#A32D2D;border-color:#F09595" onclick="deleteChecklistMaster('${item.id}')">削除</button>
+    </div>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div style="max-width:800px">
+      <div style="margin-bottom:20px">
+        <h3 style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px">✅ 基本チェックリストマスター</h3>
+        <p style="font-size:13px;color:var(--text-muted)">全案件共通のチェック項目を管理します。案件固有の項目は案件編集モーダルの「チェックリスト」タブで設定します。</p>
+      </div>
+
+      <!-- 新規追加フォーム -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);margin-bottom:12px;letter-spacing:0.08em">新規追加</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="cl-new-title" class="form-input" placeholder="チェック項目名 *" style="flex:2;min-width:180px;font-size:13px">
+          <input id="cl-new-desc"  class="form-input" placeholder="説明（任意）" style="flex:3;min-width:200px;font-size:13px">
+          <input id="cl-new-order" class="form-input" type="number" placeholder="順" value="0" style="width:60px;font-size:13px">
+          <button class="btn-primary" style="padding:8px 20px;font-size:13px;white-space:nowrap" onclick="addChecklistMaster()">追加</button>
+        </div>
+      </div>
+
+      <!-- リスト -->
+      <div style="background:var(--white);border:1px solid var(--border);border-radius:12px;padding:0 20px">
+        <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em">
+          <span style="flex:2">チェック項目名</span><span style="flex:3">説明</span><span style="min-width:40px">順序</span><span style="min-width:96px"></span>
+        </div>
+        ${rows || '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">チェック項目がありません</div>'}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:8px">計 ${_clItems.length} 件</div>
+    </div>`;
+}
+
+async function addChecklistMaster() {
+  const title = document.getElementById('cl-new-title').value.trim();
+  const desc  = document.getElementById('cl-new-desc').value.trim();
+  const order = parseInt(document.getElementById('cl-new-order').value) || 0;
+  if (!title) { alert('チェック項目名を入力してください'); return; }
+  const res = await fetch(`${API}/checklist-masters`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc, sort_order: order }),
+  });
+  if (res.ok) { await renderChecklistMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function saveChecklistMasterEdit(id) {
+  const title = document.getElementById('cl-e-title').value.trim();
+  const desc  = document.getElementById('cl-e-desc').value.trim();
+  const order = parseInt(document.getElementById('cl-e-order').value) || 0;
+  if (!title) { alert('タイトルは必須です'); return; }
+  const res = await fetch(`${API}/checklist-masters/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc, sort_order: order }),
+  });
+  if (res.ok) { _clEditingId = null; await renderChecklistMasterPage(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
+
+async function deleteChecklistMaster(id) {
+  if (!confirm('このチェック項目を削除しますか？')) return;
+  const res = await fetch(`${API}/checklist-masters/${id}`, { method: 'DELETE' });
+  if (res.ok) await renderChecklistMasterPage();
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
+}
 
 async function renderSysconfigPage() {
   if (!isSuperAdmin()) {
@@ -6895,16 +7085,99 @@ function fpStartResize(e) {
 }
 
 function switchPreviewTab(tab) {
-  const isReview = tab === 'review';
-  document.getElementById('fp-tab-review').style.borderBottomColor    = isReview ? '#3ECFCA' : 'transparent';
-  document.getElementById('fp-tab-review').style.color                = isReview ? '#3ECFCA' : '#71717a';
-  document.getElementById('fp-tab-review').style.fontWeight           = isReview ? '600' : '500';
-  document.getElementById('fp-tab-knowledge').style.borderBottomColor = !isReview ? '#3ECFCA' : 'transparent';
-  document.getElementById('fp-tab-knowledge').style.color             = !isReview ? '#3ECFCA' : '#71717a';
-  document.getElementById('fp-tab-knowledge').style.fontWeight        = !isReview ? '600' : '500';
-  document.getElementById('fp-comment-input-area').style.display      = isReview ? '' : 'none';
+  const isReview    = tab === 'review';
+  const isChecklist = tab === 'checklist';
+  const styleTab = (id, active) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.borderBottomColor = active ? '#3ECFCA' : 'transparent';
+    el.style.color             = active ? '#3ECFCA' : '#71717a';
+    el.style.fontWeight        = active ? '600' : '500';
+  };
+  styleTab('fp-tab-review',    isReview);
+  styleTab('fp-tab-checklist', isChecklist);
+  document.getElementById('fp-comment-input-area').style.display = isReview ? '' : 'none';
   if (isReview && currentPreviewFileId) loadFileComments(currentPreviewFileId);
-  else loadKnowledge();
+  else if (isChecklist && currentPreviewFileId) fpLoadChecklist(currentPreviewFileId);
+  else { const el = document.getElementById('fp-comments-list'); if (el) el.innerHTML = ''; }
+}
+
+// ==================== チェックリスト（プレビュー） ====================
+
+async function fpLoadChecklist(fileId) {
+  const el = document.getElementById('fp-comments-list');
+  el.innerHTML = '<div style="color:#71717a;font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
+  try {
+    const res = await fetch(`${API}/creative-files/${fileId}/checklist`);
+    if (!res.ok) throw new Error('取得失敗');
+    const data = await res.json();
+    fpRenderChecklist(data, fileId);
+  } catch(e) {
+    el.innerHTML = `<div style="color:#f85149;font-size:12px;text-align:center;padding:20px">${e.message}</div>`;
+  }
+}
+
+function fpRenderChecklist(data, fileId) {
+  const el = document.getElementById('fp-comments-list');
+  const { globals = [], project_items = [] } = data;
+  const allItems = [...globals.map(g => ({...g, _type:'global'})), ...project_items.map(p => ({...p, _type:'project'}))];
+  const total   = allItems.length;
+  const checked = allItems.filter(i => i.result?.is_checked).length;
+  const pct     = total ? Math.round(checked / total * 100) : 0;
+
+  const itemHtml = (item) => {
+    const done = item.result?.is_checked;
+    const who  = item.result?.users?.full_name;
+    return `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;background:${done ? '#052e16' : '#1c1c1f'};border:1px solid ${done ? '#166534' : '#2a2a2e'};margin-bottom:6px;cursor:pointer;transition:background .15s"
+         onclick="fpToggleChecklistItem('${item.id}','${item._type}','${fileId}',this)">
+      <div style="width:18px;height:18px;border-radius:4px;border:2px solid ${done ? '#22c55e' : '#52525b'};background:${done ? '#22c55e' : 'transparent'};flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;transition:all .15s">
+        ${done ? '<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : ''}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:${done ? '#86efac' : '#e4e4e7'};line-height:1.4;${done ? 'text-decoration:line-through;opacity:0.7' : ''}">${esc(item.title)}</div>
+        ${item.description ? `<div style="font-size:11px;color:#52525b;margin-top:2px">${esc(item.description)}</div>` : ''}
+        ${done && who ? `<div style="font-size:10px;color:#22c55e;margin-top:3px">✓ ${esc(who)}</div>` : ''}
+      </div>
+    </div>`;
+  };
+
+  el.innerHTML = `
+    <!-- 進捗バー -->
+    <div style="padding:12px 12px 10px;border-bottom:1px solid #2a2a2e;flex-shrink:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:11px;color:#a1a1aa">進捗</span>
+        <span style="font-size:11px;font-weight:700;color:${pct===100?'#22c55e':'#e4e4e7'}">${checked} / ${total} (${pct}%)</span>
+      </div>
+      <div style="height:4px;background:#2a2a2e;border-radius:2px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${pct===100?'#22c55e':'#3ECFCA'};border-radius:2px;transition:width .3s"></div>
+      </div>
+    </div>
+    <!-- グローバル -->
+    ${globals.length ? `
+    <div style="padding:10px 12px 4px">
+      <div style="font-size:10px;font-weight:700;color:#52525b;letter-spacing:0.1em;margin-bottom:6px">基本チェックリスト</div>
+      ${globals.map(g => itemHtml({...g, _type:'global'})).join('')}
+    </div>` : ''}
+    <!-- 案件固有 -->
+    ${project_items.length ? `
+    <div style="padding:4px 12px 10px">
+      <div style="font-size:10px;font-weight:700;color:#52525b;letter-spacing:0.1em;margin-bottom:6px;margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2e">案件チェックリスト</div>
+      ${project_items.map(p => itemHtml({...p, _type:'project'})).join('')}
+    </div>` : ''}
+    ${!total ? '<div style="color:#52525b;font-size:12px;text-align:center;padding:30px">チェック項目がありません<br><span style="font-size:11px">マスター管理でチェックリストを追加してください</span></div>' : ''}
+  `;
+}
+
+async function fpToggleChecklistItem(itemId, itemType, fileId, rowEl) {
+  try {
+    const res = await fetch(`${API}/creative-files/${fileId}/checklist/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: itemId, item_type: itemType }),
+    });
+    if (res.ok) await fpLoadChecklist(fileId);
+  } catch(e) {}
 }
 
 async function loadFileComments(fileId) {

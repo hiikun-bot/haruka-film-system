@@ -2308,4 +2308,146 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   res.json(await enrichCommentCategories(data));
 });
 
+// ==================== チェックリストマスター ====================
+
+// 基本チェックリスト一覧
+router.get('/checklist-masters', requireAuth, async (req, res) => {
+  const { data, error } = await supabase.from('checklist_masters')
+    .select('*').order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 基本チェックリスト追加
+router.post('/checklist-masters', requireAuth, async (req, res) => {
+  const { title, description, sort_order } = req.body;
+  if (!title) return res.status(400).json({ error: 'タイトルは必須です' });
+  const { data, error } = await supabase.from('checklist_masters')
+    .insert({ title, description, sort_order: sort_order || 0 }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 基本チェックリスト更新
+router.put('/checklist-masters/:id', requireAuth, async (req, res) => {
+  const { title, description, sort_order, is_active } = req.body;
+  const { data, error } = await supabase.from('checklist_masters')
+    .update({ title, description, sort_order, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 基本チェックリスト削除
+router.delete('/checklist-masters/:id', requireAuth, async (req, res) => {
+  const { error } = await supabase.from('checklist_masters').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ==================== 案件チェックリスト ====================
+
+// 案件チェックリスト一覧
+router.get('/projects/:projectId/checklist-items', requireAuth, async (req, res) => {
+  const { data, error } = await supabase.from('project_checklist_items')
+    .select('*').eq('project_id', req.params.projectId).order('sort_order').order('created_at');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 案件チェックリスト追加
+router.post('/projects/:projectId/checklist-items', requireAuth, async (req, res) => {
+  const { title, description, sort_order } = req.body;
+  if (!title) return res.status(400).json({ error: 'タイトルは必須です' });
+  const { data, error } = await supabase.from('project_checklist_items')
+    .insert({ project_id: req.params.projectId, title, description, sort_order: sort_order || 0 }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 案件チェックリスト更新
+router.put('/projects/:projectId/checklist-items/:id', requireAuth, async (req, res) => {
+  const { title, description, sort_order, is_active } = req.body;
+  const { data, error } = await supabase.from('project_checklist_items')
+    .update({ title, description, sort_order, is_active, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id).eq('project_id', req.params.projectId).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 案件チェックリスト削除
+router.delete('/projects/:projectId/checklist-items/:id', requireAuth, async (req, res) => {
+  const { error } = await supabase.from('project_checklist_items')
+    .delete().eq('id', req.params.id).eq('project_id', req.params.projectId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ==================== クリエイティブファイルのチェック結果 ====================
+
+// ファイルのチェックリスト（グローバル+案件固有）＋チェック済み状態を返す
+router.get('/creative-files/:fileId/checklist', requireAuth, async (req, res) => {
+  try {
+    // creative_file → creative → project_id を取得
+    const { data: fileRec } = await supabase.from('creative_files')
+      .select('id, creative_id, creatives(project_id)').eq('id', req.params.fileId).single();
+    const projectId = fileRec?.creatives?.project_id;
+
+    // グローバルチェックリスト
+    const { data: globals } = await supabase.from('checklist_masters')
+      .select('*').eq('is_active', true).order('sort_order').order('created_at');
+
+    // 案件固有チェックリスト
+    const projectItems = projectId
+      ? (await supabase.from('project_checklist_items')
+          .select('*').eq('project_id', projectId).eq('is_active', true).order('sort_order').order('created_at')).data
+      : [];
+
+    // チェック済み状態
+    const { data: results } = await supabase.from('creative_checklist_results')
+      .select('*, users(full_name)').eq('creative_file_id', req.params.fileId);
+
+    const resultMap = {};
+    (results || []).forEach(r => { resultMap[`${r.item_type}:${r.item_id}`] = r; });
+
+    res.json({
+      project_id: projectId,
+      globals: (globals || []).map(g => ({ ...g, result: resultMap[`global:${g.id}`] || null })),
+      project_items: (projectItems || []).map(p => ({ ...p, result: resultMap[`project:${p.id}`] || null })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// チェックアイテムのトグル（チェック/アンチェック）
+router.post('/creative-files/:fileId/checklist/toggle', requireAuth, async (req, res) => {
+  const { item_id, item_type } = req.body; // item_type: 'global' | 'project'
+  if (!item_id || !item_type) return res.status(400).json({ error: 'item_id, item_type は必須' });
+
+  const existing = await supabase.from('creative_checklist_results')
+    .select('id, is_checked').eq('creative_file_id', req.params.fileId)
+    .eq('item_id', item_id).eq('item_type', item_type).maybeSingle();
+
+  const userId = req.user?.id;
+  const now    = new Date().toISOString();
+
+  let result;
+  if (existing.data) {
+    const newChecked = !existing.data.is_checked;
+    const { data, error } = await supabase.from('creative_checklist_results')
+      .update({ is_checked: newChecked, checked_by: newChecked ? userId : null, checked_at: newChecked ? now : null, updated_at: now })
+      .eq('id', existing.data.id).select('*, users(full_name)').single();
+    if (error) return res.status(500).json({ error: error.message });
+    result = data;
+  } else {
+    const { data, error } = await supabase.from('creative_checklist_results')
+      .insert({ creative_file_id: req.params.fileId, item_id, item_type, is_checked: true, checked_by: userId, checked_at: now })
+      .select('*, users(full_name)').single();
+    if (error) return res.status(500).json({ error: error.message });
+    result = data;
+  }
+  res.json(result);
+});
+
 module.exports = router;

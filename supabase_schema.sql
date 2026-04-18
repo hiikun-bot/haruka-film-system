@@ -434,3 +434,45 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved_by UUID REFERENCES users(id);
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+
+-- ==================== チェックリスト ====================
+
+-- 基本チェックリストマスター（全案件共通）
+CREATE TABLE IF NOT EXISTS checklist_masters (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 案件ごとのチェックリスト項目
+CREATE TABLE IF NOT EXISTS project_checklist_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- クリエイティブファイルのチェック結果
+CREATE TABLE IF NOT EXISTS creative_checklist_results (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_file_id UUID NOT NULL REFERENCES creative_files(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL,
+  item_type TEXT NOT NULL CHECK (item_type IN ('global', 'project')),
+  is_checked BOOLEAN DEFAULT false,
+  checked_by UUID REFERENCES users(id),
+  checked_at TIMESTAMPTZ,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(creative_file_id, item_id, item_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ccr_file ON creative_checklist_results(creative_file_id);
