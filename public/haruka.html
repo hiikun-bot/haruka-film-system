@@ -1919,65 +1919,109 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
-<!-- ファイルプレビューモーダル（レビュー＋コメント） -->
-<div class="modal-overlay" id="modal-file-preview" style="z-index:1100">
-  <div class="modal" style="width:96vw;max-width:1400px;height:90vh;max-height:90vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
+<!-- ファイルプレビューモーダル（Frame.io スタイル） -->
+<div id="modal-file-preview" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,0.75)">
+  <div id="fp-window" style="position:absolute;top:4vh;left:4vw;width:92vw;height:92vh;background:#18181b;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 32px 100px rgba(0,0,0,0.85);border:1px solid #2a2a2e">
 
-    <!-- ヘッダー -->
-    <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff">
-      <div style="display:flex;align-items:center;gap:8px;min-width:0">
-        <div style="width:4px;height:18px;background:var(--em);border-radius:2px;flex-shrink:0"></div>
-        <span id="fp-filename" style="font-size:12px;font-weight:600;font-family:monospace;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <!-- ヘッダー（D&Dハンドル） -->
+    <div id="fp-header" style="padding:10px 16px;background:#1e1e22;border-bottom:1px solid #2a2a2e;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;cursor:grab;user-select:none">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+        <div style="width:3px;height:16px;background:#3ECFCA;border-radius:2px;flex-shrink:0"></div>
+        <span id="fp-filename" style="font-size:12px;font-weight:600;font-family:monospace;color:#e4e4e7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-        <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:12px;color:var(--em-dark);text-decoration:none;padding:4px 12px;border:0.5px solid var(--em);border-radius:6px;display:none">↗ Drive</a>
-        <button class="modal-close" onclick="closeFilePreview()">×</button>
+        <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:11px;color:#3ECFCA;text-decoration:none;padding:3px 10px;border:0.5px solid #3ECFCA;border-radius:5px;display:none">↗ Drive</a>
+        <button onclick="closeFilePreview()" style="background:none;border:none;color:#71717a;font-size:22px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#71717a'">×</button>
       </div>
     </div>
 
     <!-- ボディ：左プレイヤー＋右コメント -->
     <div style="flex:1;min-height:0;display:flex;overflow:hidden">
 
-      <!-- 左：プレイヤー -->
-      <div id="fp-player" style="flex:1;min-width:0;background:#111;display:flex;align-items:center;justify-content:center;overflow:hidden">
-        <div style="color:#666;font-size:13px">読み込み中...</div>
+      <!-- 左：プレイヤー＋コントロール -->
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#111">
+
+        <!-- 動画エリア -->
+        <div id="fp-player" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer" onclick="fpClickPlayer(event)">
+          <div style="color:#555;font-size:13px">読み込み中...</div>
+        </div>
+
+        <!-- カスタムコントロールバー -->
+        <div id="fp-controls-bar" style="display:none;background:#1e1e22;border-top:1px solid #2a2a2e;padding:8px 16px;flex-shrink:0">
+          <!-- シークバー -->
+          <div style="margin-bottom:8px">
+            <input type="range" id="fp-seekbar" min="0" max="1000" value="0" step="1"
+              style="width:100%;height:4px;accent-color:#3ECFCA;cursor:pointer;background:transparent"
+              oninput="fpSeekbarInput(this)" onchange="fpSeekbarChange(this)">
+          </div>
+          <!-- コントロール行 -->
+          <div style="display:flex;align-items:center;gap:12px">
+            <button id="fp-play-btn" onclick="fpTogglePlay()" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;width:28px;text-align:center;flex-shrink:0" title="再生/一時停止 (Space)">▶</button>
+            <span id="fp-time-display" style="color:#a1a1aa;font-size:11px;font-family:monospace;white-space:nowrap;flex-shrink:0">0:00 / 0:00</span>
+            <div style="flex:1"></div>
+            <!-- 速度（ホイールで0.1刻み） -->
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0" title="マウスホイールで0.1倍速刻み調整">
+              <span style="color:#52525b;font-size:10px">速度</span>
+              <span id="fp-speed-display" style="background:#2a2a2e;color:#e4e4e7;border:1px solid #3f3f46;border-radius:5px;padding:3px 8px;font-size:11px;min-width:42px;text-align:center;cursor:ns-resize;user-select:none" onwheel="fpWheelSpeed(event)">1.0×</span>
+            </div>
+            <!-- ループ -->
+            <button id="fp-loop-btn" onclick="fpToggleLoop()" style="background:#2a2a2e;border:1px solid #3f3f46;color:#71717a;font-size:11px;border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0" title="ループ再生">🔁 ループ</button>
+            <!-- 区間ループ -->
+            <button id="fp-abloop-btn" onclick="fpToggleABLoop()" style="background:#2a2a2e;border:1px solid #3f3f46;color:#71717a;font-size:11px;border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0" title="A-Bループ（現在位置をA→Bに設定）">A-B</button>
+            <span id="fp-abloop-display" style="color:#52525b;font-size:10px;font-family:monospace;display:none"></span>
+            <!-- ミュート -->
+            <button id="fp-mute-btn" onclick="fpToggleMute()" style="background:none;border:none;color:#a1a1aa;font-size:14px;cursor:pointer;flex-shrink:0" title="ミュート">🔊</button>
+            <!-- ネイティブフルスクリーン -->
+            <button onclick="fpNativeFullscreen()" style="background:none;border:none;color:#a1a1aa;font-size:14px;cursor:pointer;flex-shrink:0" title="フルスクリーン">⛶</button>
+          </div>
+        </div>
       </div>
 
       <!-- 右：コメントパネル -->
-      <div style="width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid var(--border);background:#fff">
+      <div style="width:320px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid #2a2a2e;background:#18181b">
 
-        <!-- タブ：レビューコメント / ナレッジ -->
-        <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0">
-          <button id="fp-tab-review" onclick="switchPreviewTab('review')" style="flex:1;padding:10px;font-size:12px;font-weight:600;background:none;border:none;cursor:pointer;border-bottom:2px solid var(--em);color:var(--em-dark)">レビューコメント</button>
-          <button id="fp-tab-knowledge" onclick="switchPreviewTab('knowledge')" style="flex:1;padding:10px;font-size:12px;font-weight:500;background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-muted)">📚 ナレッジ</button>
+        <!-- タブ -->
+        <div style="display:flex;border-bottom:1px solid #2a2a2e;flex-shrink:0">
+          <button id="fp-tab-review" onclick="switchPreviewTab('review')" style="flex:1;padding:10px;font-size:12px;font-weight:600;background:none;border:none;cursor:pointer;border-bottom:2px solid #3ECFCA;color:#3ECFCA">レビューコメント</button>
+          <button id="fp-tab-knowledge" onclick="switchPreviewTab('knowledge')" style="flex:1;padding:10px;font-size:12px;font-weight:500;background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;color:#71717a">📚 ナレッジ</button>
         </div>
 
         <!-- コメント一覧 -->
         <div id="fp-comments-list" style="flex:1;overflow-y:auto;padding:12px;min-height:0">
-          <div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">コメントを読み込み中...</div>
+          <div style="color:#71717a;font-size:12px;text-align:center;padding:20px">コメントを読み込み中...</div>
         </div>
 
         <!-- コメント入力 -->
-        <div id="fp-comment-input-area" style="padding:12px;border-top:1px solid var(--border);flex-shrink:0">
-          <select id="fp-comment-category" class="form-select" style="width:100%;font-size:12px;margin-bottom:6px">
+        <div id="fp-comment-input-area" style="padding:12px;border-top:1px solid #2a2a2e;flex-shrink:0;background:#1e1e22">
+          <select id="fp-comment-category" style="width:100%;font-size:12px;margin-bottom:6px;background:#2a2a2e;color:#e4e4e7;border:1px solid #3f3f46;border-radius:6px;padding:6px 8px">
             <option value="">カテゴリーを選択（任意）</option>
           </select>
           <!-- タイムコードバッジ -->
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-            <span id="fp-timecode-badge" style="display:none;background:var(--em-dark);color:#fff;font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;font-family:monospace;cursor:pointer" onclick="fpClearTimecode()" title="クリックで削除"></span>
-            <span id="fp-timecode-hint" style="font-size:11px;color:var(--text-muted)">動画をクリックするとタイムコードを記録できます</span>
+            <span id="fp-timecode-badge" style="display:none;background:#3ECFCA;color:#000;font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;font-family:monospace;cursor:pointer" onclick="fpClearTimecode()" title="クリックで削除"></span>
+            <span id="fp-timecode-hint" style="font-size:11px;color:#52525b">一時停止でタイムコードを記録</span>
           </div>
-          <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border);border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box" onfocus="this.style.borderColor='var(--em)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+          <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid #3f3f46;border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box;background:#2a2a2e;color:#e4e4e7" onfocus="this.style.borderColor='#3ECFCA'" onblur="this.style.borderColor='#3f3f46'"></textarea>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px">
-            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);cursor:pointer;flex-shrink:0">
-              <input type="checkbox" id="fp-is-knowledge" style="cursor:pointer">
-              📚 ナレッジとして保存
+            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#71717a;cursor:pointer;flex-shrink:0">
+              <input type="checkbox" id="fp-is-knowledge" style="cursor:pointer;accent-color:#3ECFCA">
+              📚 ナレッジ
             </label>
-            <button onclick="submitFileComment()" style="background:var(--em);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">送信</button>
+            <button onclick="submitFileComment()" style="background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;border-radius:8px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">送信</button>
           </div>
         </div>
 
+        <!-- Drive診断（Drive未連携時） -->
+        <div id="fp-drive-diagnose-area" style="display:none;padding:12px;border-top:1px solid #2a2a2e">
+          <button onclick="runDriveDiagnose()" style="background:#2a2a2e;color:#3ECFCA;border:1px solid #3ECFCA;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;width:100%">🔍 Drive接続を診断する</button>
+          <div id="fp-drive-diagnose-result" style="font-size:11px;margin-top:8px;color:#a1a1aa"></div>
+        </div>
       </div>
+    </div>
+
+    <!-- リサイズハンドル（右下） -->
+    <div id="fp-resize-handle" onmousedown="fpStartResize(event)" style="position:absolute;bottom:0;right:0;width:18px;height:18px;cursor:se-resize;opacity:0.5;display:flex;align-items:flex-end;justify-content:flex-end;padding:3px">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="#71717a"><path d="M9 1L1 9M9 5L5 9M9 9"/><line x1="9" y1="1" x2="1" y2="9" stroke="#71717a" stroke-width="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="#71717a" stroke-width="1.5"/></svg>
     </div>
   </div>
 </div>
@@ -6344,6 +6388,8 @@ async function loadCreativeFiles(creativeId) {
 
 let currentPreviewFileId = null;
 
+// ========== Frame.io スタイル プレビュー ==========
+
 function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
   currentPreviewFileId = fileRecordId || null;
   document.getElementById('fp-filename').textContent = filename;
@@ -6351,68 +6397,257 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
   if (driveUrl) { link.href = driveUrl; link.style.display = ''; }
   else { link.style.display = 'none'; }
 
-  // プレイヤー
   const player = document.getElementById('fp-player');
+  const ctrlBar = document.getElementById('fp-controls-bar');
+  const diagnoseArea = document.getElementById('fp-drive-diagnose-area');
+  diagnoseArea.style.display = 'none';
+
   const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
+
   if (driveFileId) {
     if (isVideo) {
-      // ネイティブ動画プレイヤー（タイムコード取得対応）
-      player.innerHTML = `<video id="fp-video" src="${API}/files/${driveFileId}/stream" controls style="width:100%;height:100%;object-fit:contain;background:#111"></video>`;
-      // 一時停止時にタイムコードを自動記録
+      player.innerHTML = `<video id="fp-video" src="${API}/files/${driveFileId}/stream" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
+      ctrlBar.style.display = '';
       setTimeout(() => {
         const v = document.getElementById('fp-video');
-        if (v) v.addEventListener('pause', fpCaptureTimecode);
+        if (!v) return;
+        v.addEventListener('pause',    fpCaptureTimecode);
+        v.addEventListener('play',     () => document.getElementById('fp-play-btn').textContent = '⏸');
+        v.addEventListener('pause',    () => document.getElementById('fp-play-btn').textContent = '▶');
+        v.addEventListener('ended',    () => document.getElementById('fp-play-btn').textContent = '▶');
+        v.addEventListener('timeupdate', fpUpdateSeekbar);
+        v.addEventListener('loadedmetadata', fpUpdateSeekbar);
       }, 100);
     } else if (isImage) {
+      ctrlBar.style.display = 'none';
       player.innerHTML = `<img src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain">`;
     } else {
-      const embedUrl = `https://drive.google.com/file/d/${driveFileId}/preview`;
-      player.innerHTML = `<iframe src="${embedUrl}" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+      ctrlBar.style.display = 'none';
+      player.innerHTML = `<iframe src="https://drive.google.com/file/d/${driveFileId}/preview" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
     }
   } else {
+    ctrlBar.style.display = 'none';
+    diagnoseArea.style.display = '';
     player.innerHTML = `
-      <div style="color:#888;font-size:13px;text-align:center;padding:20px">
-        <div style="font-size:48px;margin-bottom:12px">📎</div>
-        <div style="margin-bottom:8px">Drive連携が未設定のためプレビューできません</div>
-        <div style="font-size:11px;color:#666;margin-bottom:20px">このファイルはDrive未設定時にアップロードされたか、Drive連携に失敗しています</div>
-        <button onclick="runDriveDiagnose()" style="background:#3ECFCA;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:12px">🔍 Drive接続を診断する</button>
-        <div id="fp-drive-diagnose-result" style="font-size:12px;text-align:left;max-width:400px;margin:0 auto"></div>
+      <div style="color:#71717a;font-size:13px;text-align:center;padding:40px">
+        <div style="font-size:48px;margin-bottom:16px">📎</div>
+        <div style="margin-bottom:8px;color:#a1a1aa">Drive連携が未設定のためプレビューできません</div>
+        <div style="font-size:11px;color:#52525b">Drive連携に失敗しているか、Drive未設定時にアップロードされたファイルです</div>
       </div>`;
   }
-  document.getElementById('fp-timecode-badge').textContent = '';
-  document.getElementById('fp-timecode-badge').style.display = 'none';
 
-  // カテゴリー選択肢を最新化（未ロードなら取得）
+  fpClearTimecode();
   if (!knowledgeCategories.length) {
     fetch(`${API}/master/items/active?category_code=COMMENT_CAT`).then(r => r.json()).then(items => {
       knowledgeCategories = items || [];
       const fpSel = document.getElementById('fp-comment-category');
-      fpSel.innerHTML = '<option value="">カテゴリーを選択（任意）</option>' +
+      if (fpSel) fpSel.innerHTML = '<option value="">カテゴリーを選択（任意）</option>' +
         knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     }).catch(() => {});
   }
   switchPreviewTab('review');
   if (currentPreviewFileId) loadFileComments(currentPreviewFileId);
-  openModal('modal-file-preview');
+
+  // モーダル表示（カスタム表示）
+  document.getElementById('modal-file-preview').style.display = '';
+  document.body.style.overflow = 'hidden';
+  // スペースキーで再生/停止
+  document.addEventListener('keydown', fpKeyHandler);
 }
 
 function closeFilePreview() {
-  // iframeを破棄して動画を停止
   document.getElementById('fp-player').innerHTML = '';
-  closeModal('modal-file-preview');
+  document.getElementById('fp-controls-bar').style.display = 'none';
+  document.getElementById('modal-file-preview').style.display = 'none';
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', fpKeyHandler);
+  // A-Bループ・状態リセット
+  if (_fpABInterval) { clearInterval(_fpABInterval); _fpABInterval = null; }
+  _fpABState = 0; _fpAB = { a: null, b: null }; _fpSpeed = 1.0; _fpLoopEnabled = false;
+}
+
+function fpKeyHandler(e) {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); fpTogglePlay(); }
+}
+
+function fpClickPlayer(e) {
+  // コントロール内クリックは無視
+  if (e.target.closest('#fp-controls-bar')) return;
+  fpTogglePlay();
+}
+
+function fpTogglePlay() {
+  const v = document.getElementById('fp-video');
+  if (!v) return;
+  v.paused ? v.play() : v.pause();
+}
+
+function fpToggleMute() {
+  const v = document.getElementById('fp-video');
+  const btn = document.getElementById('fp-mute-btn');
+  if (!v) return;
+  v.muted = !v.muted;
+  btn.textContent = v.muted ? '🔇' : '🔊';
+}
+
+let _fpSpeed = 1.0;
+let _fpLoopEnabled = false;
+let _fpABState = 0; // 0=off 1=Aset 2=ABset
+let _fpAB = { a: null, b: null };
+let _fpABInterval = null;
+
+function fpChangeSpeed(val) {
+  const v = document.getElementById('fp-video');
+  _fpSpeed = Math.round(parseFloat(val) * 10) / 10;
+  _fpSpeed = Math.max(0.1, Math.min(4.0, _fpSpeed));
+  if (v) v.playbackRate = _fpSpeed;
+  const disp = document.getElementById('fp-speed-display');
+  if (disp) disp.textContent = _fpSpeed.toFixed(1) + '×';
+}
+
+function fpWheelSpeed(e) {
+  e.preventDefault();
+  const delta = e.deltaY < 0 ? 0.1 : -0.1;
+  fpChangeSpeed(_fpSpeed + delta);
+}
+
+function fpToggleLoop() {
+  const v = document.getElementById('fp-video');
+  const btn = document.getElementById('fp-loop-btn');
+  _fpLoopEnabled = !_fpLoopEnabled;
+  if (v) v.loop = _fpLoopEnabled;
+  btn.style.color = _fpLoopEnabled ? '#3ECFCA' : '#71717a';
+  btn.style.borderColor = _fpLoopEnabled ? '#3ECFCA' : '#3f3f46';
+}
+
+function fpToggleABLoop() {
+  const v = document.getElementById('fp-video');
+  const btn = document.getElementById('fp-abloop-btn');
+  const disp = document.getElementById('fp-abloop-display');
+  if (!v) return;
+
+  if (_fpABState === 0) {
+    // A点セット
+    _fpAB.a = v.currentTime;
+    _fpAB.b = null;
+    _fpABState = 1;
+    btn.textContent = 'A-B: B点を設定';
+    btn.style.color = '#f0b429';
+    btn.style.borderColor = '#f0b429';
+    disp.style.display = '';
+    disp.textContent = `A:${fpTimecodeStr(_fpAB.a)}`;
+  } else if (_fpABState === 1) {
+    // B点セット
+    _fpAB.b = v.currentTime;
+    if (_fpAB.b <= _fpAB.a) { alert('B点はA点より後に設定してください'); return; }
+    _fpABState = 2;
+    btn.textContent = 'A-B: 解除';
+    btn.style.color = '#3ECFCA';
+    btn.style.borderColor = '#3ECFCA';
+    disp.textContent = `A:${fpTimecodeStr(_fpAB.a)} → B:${fpTimecodeStr(_fpAB.b)}`;
+    // A-Bループ開始
+    _fpABInterval = setInterval(() => {
+      const vid = document.getElementById('fp-video');
+      if (!vid || _fpABState !== 2) return;
+      if (vid.currentTime >= _fpAB.b) { vid.currentTime = _fpAB.a; }
+    }, 100);
+    v.currentTime = _fpAB.a;
+    v.play();
+  } else {
+    // リセット
+    _fpABState = 0;
+    _fpAB = { a: null, b: null };
+    if (_fpABInterval) { clearInterval(_fpABInterval); _fpABInterval = null; }
+    btn.textContent = 'A-B';
+    btn.style.color = '#71717a';
+    btn.style.borderColor = '#3f3f46';
+    disp.style.display = 'none';
+  }
+}
+
+function fpUpdateSeekbar() {
+  const v = document.getElementById('fp-video');
+  if (!v || !v.duration) return;
+  const pct = (v.currentTime / v.duration) * 1000;
+  document.getElementById('fp-seekbar').value = pct;
+  document.getElementById('fp-time-display').textContent =
+    fpTimecodeStr(v.currentTime) + ' / ' + fpTimecodeStr(v.duration);
+}
+
+function fpSeekbarInput(el) {
+  const v = document.getElementById('fp-video');
+  if (!v || !v.duration) return;
+  v.currentTime = (el.value / 1000) * v.duration;
+}
+
+function fpSeekbarChange(el) { fpSeekbarInput(el); }
+
+function fpNativeFullscreen() {
+  const v = document.getElementById('fp-video');
+  if (!v) return;
+  if (v.requestFullscreen) v.requestFullscreen();
+  else if (v.webkitRequestFullscreen) v.webkitRequestFullscreen();
+}
+
+// ドラッグ移動
+(function() {
+  let dragging = false, ox = 0, oy = 0;
+  document.addEventListener('mousedown', e => {
+    const header = document.getElementById('fp-header');
+    if (!header || !header.contains(e.target)) return;
+    dragging = true;
+    const win = document.getElementById('fp-window');
+    const rect = win.getBoundingClientRect();
+    ox = e.clientX - rect.left;
+    oy = e.clientY - rect.top;
+    header.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const win = document.getElementById('fp-window');
+    win.style.left = Math.max(0, e.clientX - ox) + 'px';
+    win.style.top  = Math.max(0, e.clientY - oy) + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    const header = document.getElementById('fp-header');
+    if (header) header.style.cursor = 'grab';
+  });
+})();
+
+// リサイズ
+function fpStartResize(e) {
+  e.preventDefault();
+  const win = document.getElementById('fp-window');
+  const startX = e.clientX, startY = e.clientY;
+  const startW = win.offsetWidth, startH = win.offsetHeight;
+  function onMove(ev) {
+    const newW = Math.max(600, startW + ev.clientX - startX);
+    const newH = Math.max(400, startH + ev.clientY - startY);
+    win.style.width  = newW + 'px';
+    win.style.height = newH + 'px';
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 function switchPreviewTab(tab) {
   const isReview = tab === 'review';
-  document.getElementById('fp-tab-review').style.borderBottomColor    = isReview ? 'var(--em)' : 'transparent';
-  document.getElementById('fp-tab-review').style.color                 = isReview ? 'var(--em-dark)' : 'var(--text-muted)';
-  document.getElementById('fp-tab-review').style.fontWeight            = isReview ? '600' : '500';
-  document.getElementById('fp-tab-knowledge').style.borderBottomColor = !isReview ? 'var(--em)' : 'transparent';
-  document.getElementById('fp-tab-knowledge').style.color              = !isReview ? 'var(--em-dark)' : 'var(--text-muted)';
-  document.getElementById('fp-tab-knowledge').style.fontWeight         = !isReview ? '600' : '500';
-  document.getElementById('fp-comment-input-area').style.display       = isReview ? '' : 'none';
-
+  document.getElementById('fp-tab-review').style.borderBottomColor    = isReview ? '#3ECFCA' : 'transparent';
+  document.getElementById('fp-tab-review').style.color                = isReview ? '#3ECFCA' : '#71717a';
+  document.getElementById('fp-tab-review').style.fontWeight           = isReview ? '600' : '500';
+  document.getElementById('fp-tab-knowledge').style.borderBottomColor = !isReview ? '#3ECFCA' : 'transparent';
+  document.getElementById('fp-tab-knowledge').style.color             = !isReview ? '#3ECFCA' : '#71717a';
+  document.getElementById('fp-tab-knowledge').style.fontWeight        = !isReview ? '600' : '500';
+  document.getElementById('fp-comment-input-area').style.display      = isReview ? '' : 'none';
   if (isReview && currentPreviewFileId) loadFileComments(currentPreviewFileId);
   else loadKnowledge();
 }
