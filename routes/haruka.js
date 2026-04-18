@@ -779,23 +779,60 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });
 });
 
-// Google Drive ファイルストリーミングプロキシ（ネイティブ動画プレビュー用）
+// Google Drive ファイルストリーミングプロキシ（Range リクエスト対応・動画シーク可能）
 router.get('/files/:fileId/stream', async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
     const drive = await getDriveService();
-    const meta = await drive.files.get({ fileId: req.params.fileId, fields: 'mimeType,name', supportsAllDrives: true });
+
+    // メタ情報（mimeType, サイズ）を取得
+    const meta = await drive.files.get({
+      fileId: req.params.fileId,
+      fields: 'mimeType,size',
+      supportsAllDrives: true,
+    });
     const mimeType = meta.data.mimeType || 'video/mp4';
-    const streamRes = await drive.files.get(
-      { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
-      { responseType: 'stream' }
-    );
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    streamRes.data.pipe(res);
+    const fileSize = parseInt(meta.data.size || '0', 10);
+
+    const rangeHeader = req.headers.range;
+
+    if (rangeHeader && fileSize > 0) {
+      // Range リクエスト → 206 Partial Content
+      const [startStr, endStr] = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(startStr, 10);
+      const end   = endStr ? parseInt(endStr, 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+
+      res.writeHead(206, {
+        'Content-Range':  `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges':  'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type':   mimeType,
+        'Cache-Control':  'private, max-age=3600',
+      });
+
+      const streamRes = await drive.files.get(
+        { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+        { responseType: 'stream', headers: { Range: `bytes=${start}-${end}` } }
+      );
+      streamRes.data.pipe(res);
+    } else {
+      // 通常リクエスト → 200 OK
+      res.writeHead(200, {
+        'Content-Type':   mimeType,
+        'Accept-Ranges':  'bytes',
+        ...(fileSize > 0 ? { 'Content-Length': fileSize } : {}),
+        'Cache-Control':  'private, max-age=3600',
+      });
+      const streamRes = await drive.files.get(
+        { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+        { responseType: 'stream' }
+      );
+      streamRes.data.pipe(res);
+    }
   } catch (e) {
     console.error('Drive stream error:', e.message);
-    res.status(500).json({ error: e.message });
+    if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
 

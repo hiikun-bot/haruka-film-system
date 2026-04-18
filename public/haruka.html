@@ -6723,9 +6723,13 @@ async function executeUpload() {
     const res  = await fetch(`${API}/creatives/${currentCreativeDetail.id}/upload`, { method: 'POST', body: formData });
     const data = await res.json();
     if (res.ok) {
-      statusEl.textContent = data.drive_url ? 'アップロード完了！' : `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
-      if (!data.drive_url) statusEl.style.color = '#d97706';
-      statusEl.style.color = 'var(--em-dark)';
+      if (data.drive_url) {
+        statusEl.textContent = 'アップロード完了！';
+        statusEl.style.color = 'var(--em-dark)';
+      } else {
+        statusEl.textContent = `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
+        statusEl.style.color = '#d97706';
+      }
       await loadCreativeFiles(currentCreativeDetail.id);
       document.getElementById('cd-upload-input').value = '';
       document.getElementById('cd-upload-preview').style.display = 'none';
