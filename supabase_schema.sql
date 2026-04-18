@@ -476,3 +476,7 @@ CREATE TABLE IF NOT EXISTS creative_checklist_results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ccr_file ON creative_checklist_results(creative_file_id);
+
+-- ==================== Premiere Pro UXP 連携 ====================
+-- creative_files に Premiere Pro プロジェクトID（documentID）を紐づけ
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS premiere_project_id TEXT;

@@ -1953,6 +1953,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <span id="fp-filename" style="font-size:12px;font-weight:600;font-family:monospace;color:#e4e4e7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <button id="fp-premiere-btn" onclick="fpDownloadMarkers()" style="display:none;font-size:11px;color:#c084fc;background:none;border:0.5px solid #c084fc;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit" title="タイムコード付きコメントをPremiereマーカーとして書き出す" onmouseover="this.style.background='rgba(192,132,252,0.12)'" onmouseout="this.style.background='none'">▶ Premiere</button>
         <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:11px;color:#3ECFCA;text-decoration:none;padding:3px 10px;border:0.5px solid #3ECFCA;border-radius:5px;display:none">↗ Drive</a>
         <button onclick="closeFilePreview()" style="background:none;border:none;color:#71717a;font-size:22px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#71717a'">×</button>
       </div>
@@ -6636,6 +6637,8 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
   const link = document.getElementById('fp-drive-link');
   if (driveUrl) { link.href = driveUrl; link.style.display = ''; }
   else { link.style.display = 'none'; }
+  const premBtn = document.getElementById('fp-premiere-btn');
+  if (premBtn) premBtn.style.display = fileRecordId ? '' : 'none';
 
   const player = document.getElementById('fp-player');
   const ctrlBar = document.getElementById('fp-controls-bar');
@@ -6895,6 +6898,29 @@ function fpRenderLikeMarkers(likes) {
     dot.onclick = () => fpPlayClip(parseFloat(sec));
     container.appendChild(dot);
   });
+}
+
+async function fpDownloadMarkers() {
+  const fileId = currentPreviewFileId;
+  if (!fileId) return;
+  const btn = document.getElementById('fp-premiere-btn');
+  const orig = btn.textContent;
+  btn.textContent = '生成中...'; btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/creative-files/${fileId}/markers.jsx`, { credentials: 'include' });
+    if (!res.ok) { alert('マーカーの生成に失敗しました'); return; }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `haruka_markers_${fileId.slice(0,8)}.jsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('ネットワークエラーが発生しました');
+  } finally {
+    btn.textContent = orig; btn.disabled = false;
+  }
 }
 
 async function fpAddLike() {

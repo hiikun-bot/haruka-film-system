@@ -2308,6 +2308,100 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   res.json(await enrichCommentCategories(data));
 });
 
+// ==================== Premiere Pro マーカー出力 ====================
+// タイムコード文字列（HH:MM:SS:FF or MM:SS or HH:MM:SS）を秒数に変換
+function _tcToSeconds(tc) {
+  if (!tc) return null;
+  const parts = String(tc).split(':').map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 4) return parts[0]*3600 + parts[1]*60 + parts[2] + parts[3]/30;
+  if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+  if (parts.length === 2) return parts[0]*60 + parts[1];
+  return null;
+}
+
+router.get('/creative-files/:fid/markers.jsx', requireAuth, async (req, res) => {
+  const { data: comments, error } = await supabase
+    .from('creative_file_comments')
+    .select('comment, timecode, users(full_name)')
+    .eq('creative_file_id', req.params.fid)
+    .not('timecode', 'is', null)
+    .order('created_at', { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const markers = (comments || [])
+    .map(c => ({ sec: _tcToSeconds(c.timecode), name: c.timecode, comment: `${c.users?.full_name || '不明'}: ${c.comment}` }))
+    .filter(m => m.sec !== null);
+
+  const lines = markers.map(m =>
+    `  { tc: ${m.sec.toFixed(4)}, name: ${JSON.stringify(m.name)}, comment: ${JSON.stringify(m.comment)}, color: 1 }`
+  ).join(',\n');
+
+  const jsx = `// HARUKA FILM SYSTEM — Premiere Pro マーカー挿入スクリプト
+// 生成日時: ${new Date().toISOString()}
+// ファイルID: ${req.params.fid}
+// ※ Premiere Pro で File > Scripts > Run Script File から実行してください
+
+var seq = app.project.activeSequence;
+if (!seq) { alert("アクティブなシーケンスがありません"); exit(); }
+
+var markers = [
+${lines}
+];
+
+var added = 0;
+for (var i = 0; i < markers.length; i++) {
+  var m = markers[i];
+  var mk = seq.markers.createMarker(m.tc);
+  mk.name = m.name;
+  mk.comments = m.comment;
+  mk.colorByIndex = m.color;
+  added++;
+}
+alert("マーカーを " + added + " 件追加しました");
+`;
+
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="haruka_markers_${req.params.fid.slice(0,8)}.jsx"`);
+  res.send(jsx);
+});
+
+// Premiere紐づけ登録
+router.post('/creative-files/:fid/link-premiere', requireAuth, async (req, res) => {
+  const { premiere_project_id } = req.body;
+  if (!premiere_project_id) return res.status(400).json({ error: 'premiere_project_id is required' });
+  const { error } = await supabase
+    .from('creative_files')
+    .update({ premiere_project_id })
+    .eq('id', req.params.fid);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Premiere用マーカーJSON（UXPパネルから呼ばれる）
+router.get('/creative-files/:fid/markers', requireAuth, async (req, res) => {
+  const { data: comments, error } = await supabase
+    .from('creative_file_comments')
+    .select('comment, timecode, users(full_name)')
+    .eq('creative_file_id', req.params.fid)
+    .not('timecode', 'is', null)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  const markers = (comments || [])
+    .map(c => {
+      const timeSec = _tcToSeconds(c.timecode);
+      if (timeSec === null) return null;
+      return {
+        timeSec,
+        name: c.timecode,
+        comment: `${c.users?.full_name || '不明'}: ${c.comment}`,
+      };
+    })
+    .filter(Boolean);
+  res.json({ markers });
+});
+
 // ==================== チェックリストマスター ====================
 
 // 基本チェックリスト一覧
