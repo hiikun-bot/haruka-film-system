@@ -6534,7 +6534,12 @@ function fpChangeSpeed(val) {
   _fpSpeed = Math.max(0.1, Math.min(4.0, _fpSpeed));
   if (v) v.playbackRate = _fpSpeed;
   const disp = document.getElementById('fp-speed-display');
-  if (disp) disp.textContent = _fpSpeed.toFixed(1) + '×';
+  if (!disp) return;
+  disp.textContent = _fpSpeed.toFixed(1) + '×';
+  const isNormal = _fpSpeed === 1.0;
+  disp.style.color       = isNormal ? '#e4e4e7' : '#fbbf24';
+  disp.style.borderColor = isNormal ? '#3f3f46' : '#92400e';
+  disp.style.background  = isNormal ? '#2a2a2e' : '#1c0f00';
 }
 
 function fpWheelSpeed(e) {
