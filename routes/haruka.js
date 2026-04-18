@@ -7,6 +7,14 @@ const { requireAuth, requireLevel } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 
+// FFmpeg（画質変換用）
+let ffmpegPath, ffmpeg;
+try {
+  ffmpegPath = require('ffmpeg-static');
+  ffmpeg     = require('fluent-ffmpeg');
+  ffmpeg.setFfmpegPath(ffmpegPath);
+} catch(e) { /* ffmpeg-static 未インストール時はスキップ */ }
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 // アップロードログリングバッファ（最新100件）
@@ -861,6 +869,49 @@ router.get('/files/:fileId/stream', async (req, res) => {
     }
   } catch (e) {
     console.error('Drive stream error:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// 画質変換ストリーミング（FFmpeg経由）
+// GET /files/:fileId/stream/transcode?height=720
+router.get('/files/:fileId/stream/transcode', async (req, res) => {
+  if (!ffmpeg)           return res.status(503).json({ error: 'FFmpeg未インストール' });
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+
+  const height = parseInt(req.query.height) || 720;
+  const validHeights = [360, 540, 720, 1080];
+  const targetH = validHeights.includes(height) ? height : 720;
+
+  try {
+    const drive = await getDriveService();
+    const meta  = await drive.files.get(
+      { fileId: req.params.fileId, fields: 'mimeType,size', supportsAllDrives: true }
+    );
+    const mimeType = meta.data.mimeType || 'video/mp4';
+    if (!mimeType.startsWith('video/')) return res.status(400).json({ error: '動画ファイルのみ対応' });
+
+    const driveStream = await drive.files.get(
+      { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'stream' }
+    );
+
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Quality', `${targetH}p`);
+
+    ffmpeg(driveStream.data)
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .size(`?x${targetH}`)
+      .outputOptions(['-preset ultrafast', '-crf 28', '-movflags frag_keyframe+empty_moov', '-f mp4'])
+      .on('error', (err) => {
+        console.error('FFmpeg transcode error:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+      })
+      .pipe(res, { end: true });
+  } catch (e) {
+    console.error('Drive transcode stream error:', e.message);
     if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
@@ -1838,6 +1889,88 @@ async function getDriveRootFolderId() {
   const { data } = await supabase.from('system_settings').select('value').eq('key', 'drive_root_folder_id').single();
   return data?.value || process.env.DRIVE_ROOT_FOLDER_ID || null;
 }
+
+// ==================== いいね ====================
+
+// ファイルのいいね一覧取得
+router.get('/creative-files/:id/likes', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_file_likes')
+    .select('id, timecode_sec, created_at, users(id, full_name)')
+    .eq('creative_file_id', req.params.id)
+    .order('timecode_sec');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// いいね追加
+router.post('/creative-files/:id/likes', requireAuth, async (req, res) => {
+  const { timecode_sec } = req.body;
+  const user = req.user;
+  const tc = Math.round(parseFloat(timecode_sec) * 100) / 100;
+  const { data, error } = await supabase
+    .from('creative_file_likes')
+    .upsert({ creative_file_id: req.params.id, user_id: user.id, timecode_sec: tc }, { onConflict: 'creative_file_id,user_id,timecode_sec' })
+    .select('id, timecode_sec')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// いいね削除
+router.delete('/creative-files/:fileId/likes/:likeId', requireAuth, async (req, res) => {
+  const { error } = await supabase
+    .from('creative_file_likes')
+    .delete()
+    .eq('id', req.params.likeId)
+    .eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// いいねランキング（タイムコード別集計）
+router.get('/likes/ranking', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_file_likes')
+    .select('timecode_sec, creative_file_id, creative_files(id, generated_name, creative_id, creatives(file_name))')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (error) return res.status(500).json({ error: error.message });
+
+  // timecode_sec + creative_file_id 単位で集計
+  const map = {};
+  for (const row of data) {
+    const key = `${row.creative_file_id}__${row.timecode_sec}`;
+    if (!map[key]) map[key] = {
+      creative_file_id: row.creative_file_id,
+      timecode_sec: row.timecode_sec,
+      file_name: row.creative_files?.generated_name || '不明',
+      creative_name: row.creative_files?.creatives?.file_name || '',
+      count: 0
+    };
+    map[key].count++;
+  }
+  const ranking = Object.values(map).sort((a, b) => b.count - a.count).slice(0, 20);
+  res.json(ranking);
+});
+
+// ユーザー別いいね数ランキング
+router.get('/likes/ranking/users', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_file_likes')
+    .select('user_id, users(id, full_name)')
+    .limit(1000);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const map = {};
+  for (const row of data) {
+    const uid = row.user_id;
+    if (!map[uid]) map[uid] = { user_id: uid, full_name: row.users?.full_name || '不明', count: 0 };
+    map[uid].count++;
+  }
+  const ranking = Object.values(map).sort((a, b) => b.count - a.count).slice(0, 10);
+  res.json(ranking);
+});
 
 // Drive接続診断エンドポイント（管理者用）
 router.get('/drive-diagnose', requireAuth, async (_req, res) => {

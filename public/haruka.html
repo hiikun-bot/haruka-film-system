@@ -1980,6 +1980,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <button onclick="fpTakeScreenshot()" style="background:none;border:none;color:#a1a1aa;cursor:pointer;flex-shrink:0;padding:2px 4px;border-radius:4px;display:flex;align-items:center" title="スクリーンショット（現在フレームを保存）" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a1a1aa'">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
             </button>
+            <!-- 画質選択 -->
+            <button id="fp-quality-btn" onclick="fpToggleQualityMenu(event)" style="background:#2a2a2e;border:1px solid #3f3f46;color:#a1a1aa;font-size:10px;font-weight:700;border-radius:4px;padding:3px 6px;cursor:pointer;flex-shrink:0;letter-spacing:0.05em" title="画質を変更">HD</button>
             <!-- ネイティブフルスクリーン -->
             <button onclick="fpNativeFullscreen()" style="background:none;border:none;color:#a1a1aa;font-size:14px;cursor:pointer;flex-shrink:0" title="フルスクリーン">⛶</button>
           </div>
@@ -2039,6 +2041,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div onclick="fpSpeedSet(1.5)"  style="padding:6px 14px;font-size:12px;color:#e4e4e7;cursor:pointer;transition:background .1s" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">1.5×</div>
       <div onclick="fpSpeedSet(2.0)"  style="padding:6px 14px;font-size:12px;color:#e4e4e7;cursor:pointer;transition:background .1s" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">2.0×</div>
       <div onclick="fpSpeedSet(3.0)"  style="padding:6px 14px;font-size:12px;color:#e4e4e7;cursor:pointer;transition:background .1s" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">3.0×</div>
+    </div>
+
+    <!-- 画質選択メニュー -->
+    <div id="fp-quality-menu" style="display:none;position:fixed;background:#1e1e22;border:1px solid #3f3f46;border-radius:10px;z-index:10010;padding:6px 0;min-width:160px;box-shadow:0 8px 32px rgba(0,0,0,0.6)">
+      <div style="font-size:10px;color:#52525b;padding:6px 16px 4px;letter-spacing:0.08em;border-bottom:1px solid #2a2a2e;margin-bottom:4px">画質</div>
+      <div class="fp-q-item" onclick="fpSetQuality('original',1080,'HD')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:13px;color:#e4e4e7;cursor:pointer" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">
+        <span>1080p <sup style="font-size:9px;color:#71717a">HD</sup></span><span id="fp-q-check-original" style="color:#3ECFCA;font-size:12px">✓</span>
+      </div>
+      <div class="fp-q-item" onclick="fpSetQuality('720',720,'HD')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:13px;color:#e4e4e7;cursor:pointer" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">
+        <span>720p <sup style="font-size:9px;color:#71717a">HD</sup></span><span id="fp-q-check-720" style="color:#3ECFCA;font-size:12px;display:none">✓</span>
+      </div>
+      <div class="fp-q-item" onclick="fpSetQuality('540',540,'SD')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:13px;color:#e4e4e7;cursor:pointer" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">
+        <span>540p <sup style="font-size:9px;color:#71717a">SD</sup></span><span id="fp-q-check-540" style="color:#3ECFCA;font-size:12px;display:none">✓</span>
+      </div>
+      <div class="fp-q-item" onclick="fpSetQuality('360',360,'SD')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:13px;color:#e4e4e7;cursor:pointer" onmouseover="this.style.background='#2a2a2e'" onmouseout="this.style.background=''">
+        <span>360p <sup style="font-size:9px;color:#71717a">SD</sup></span><span id="fp-q-check-360" style="color:#3ECFCA;font-size:12px;display:none">✓</span>
+      </div>
     </div>
 
     <!-- リサイズハンドル（右下） -->
@@ -6413,7 +6432,16 @@ let currentPreviewFileId = null;
 // ========== Frame.io スタイル プレビュー ==========
 
 function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
-  currentPreviewFileId = fileRecordId || null;
+  currentPreviewFileId   = fileRecordId || null;
+  _fpCurrentDriveFileId  = driveFileId  || null;
+  _fpCurrentQuality      = 'original';
+  // 画質バッジをリセット
+  const qBtn = document.getElementById('fp-quality-btn');
+  if (qBtn) { qBtn.textContent = 'HD'; qBtn.style.color = '#a1a1aa'; qBtn.style.borderColor = '#3f3f46'; }
+  ['original','720','540','360'].forEach(k => {
+    const el = document.getElementById(`fp-q-check-${k}`);
+    if (el) el.style.display = k === 'original' ? '' : 'none';
+  });
   document.getElementById('fp-filename').textContent = filename;
   const link = document.getElementById('fp-drive-link');
   if (driveUrl) { link.href = driveUrl; link.style.display = ''; }
@@ -6573,6 +6601,69 @@ function fpSpeedSet(val) {
   fpChangeSpeed(val);
   const menu = document.getElementById('fp-speed-menu');
   if (menu) menu.style.display = 'none';
+}
+
+// ==================== 画質選択 ====================
+let _fpCurrentQuality = 'original';
+let _fpCurrentDriveFileId = null;
+
+function fpToggleQualityMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('fp-quality-menu');
+  if (!menu) return;
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+  const btn = document.getElementById('fp-quality-btn');
+  const rect = btn.getBoundingClientRect();
+  menu.style.left = rect.left + 'px';
+  menu.style.top  = (rect.top - menu.offsetHeight - 8) + 'px';
+  menu.style.display = '';
+  // 表示後に位置を再計算（offsetHeight が出てから）
+  requestAnimationFrame(() => {
+    menu.style.top = (rect.top - menu.offsetHeight - 8) + 'px';
+  });
+  setTimeout(() => {
+    document.addEventListener('click', function _close() {
+      menu.style.display = 'none';
+      document.removeEventListener('click', _close);
+    });
+  }, 0);
+}
+
+function fpSetQuality(key, height, tier) {
+  document.getElementById('fp-quality-menu').style.display = 'none';
+  if (key === _fpCurrentQuality) return;
+
+  const video = document.getElementById('fp-video');
+  if (!video) return;
+  const savedTime = video.currentTime;
+
+  _fpCurrentQuality = key;
+
+  // チェックマーク更新
+  ['original','720','540','360'].forEach(k => {
+    const el = document.getElementById(`fp-q-check-${k}`);
+    if (el) el.style.display = k === key ? '' : 'none';
+  });
+
+  // HDバッジ更新
+  const btn = document.getElementById('fp-quality-btn');
+  if (btn) {
+    btn.textContent = key === 'original' ? 'HD' : `${height}p`;
+    btn.style.color       = key === 'original' ? '#a1a1aa' : '#fbbf24';
+    btn.style.borderColor = key === 'original' ? '#3f3f46'  : '#92400e';
+  }
+
+  // ストリームURL切り替え
+  let src;
+  if (key === 'original') {
+    src = `${API}/files/${_fpCurrentDriveFileId}/stream`;
+  } else {
+    src = `${API}/files/${_fpCurrentDriveFileId}/stream/transcode?height=${height}`;
+  }
+  video.src = src;
+  video.load();
+  video.currentTime = savedTime;
+  video.play().catch(() => {});
 }
 
 // ==================== いいね ====================
