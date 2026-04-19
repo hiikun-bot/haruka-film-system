@@ -262,26 +262,82 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .wh-tip-wrap:hover .wh-tip-pop{display:block}
 #cd-drop-zone.drag-over{border-color:var(--em-dark);background:var(--em-pale)!important;}
 #cd-drop-zone.drag-over div{color:var(--em-dark)!important;}
+
+/* ハンバーガーボタン */
+.ham-btn{display:none;flex-direction:column;justify-content:center;gap:5px;background:transparent;border:none;cursor:pointer;padding:8px;z-index:1;flex-shrink:0}
+.ham-btn span{display:block;width:22px;height:2px;background:#fff;border-radius:2px;transition:all .25s}
+
+/* ナビドロワー */
+.nav-drawer{position:fixed;inset:0;z-index:300;pointer-events:none}
+.nav-drawer.open{pointer-events:all}
+.nav-drawer-overlay{position:absolute;inset:0;background:rgba(0,0,0,0);transition:background .25s}
+.nav-drawer.open .nav-drawer-overlay{background:rgba(0,0,0,0.45)}
+.nav-drawer-panel{position:absolute;top:0;left:-260px;width:260px;height:100%;background:var(--white);display:flex;flex-direction:column;transition:left .25s;box-shadow:4px 0 24px rgba(0,0,0,0.18);overflow-y:auto}
+.nav-drawer.open .nav-drawer-panel{left:0}
+.nav-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:linear-gradient(135deg,#1a8c88,#3ECFCA);color:#fff}
+.nav-drawer-title{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:900;letter-spacing:0.1em}
+.nav-drawer-x{background:transparent;border:none;color:#fff;font-size:22px;cursor:pointer;padding:0 4px;line-height:1}
+.nav-drawer-btn{display:flex;align-items:center;width:100%;text-align:left;padding:14px 22px;font-size:15px;color:var(--text);background:transparent;border:none;border-bottom:1px solid var(--border-light);cursor:pointer;font-family:'Noto Sans JP',sans-serif;font-weight:500;gap:10px}
+.nav-drawer-btn.active{color:var(--em-dark);background:var(--em-pale);font-weight:600;border-left:3px solid var(--em-dark)}
+.nav-drawer-btn:hover{background:var(--em-pale)}
+.nav-drawer-footer{margin-top:auto;padding:16px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);line-height:1.7}
+
+/* 今日の納期 */
+.today-dl-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:0.5px solid var(--border-light);cursor:pointer}
+.today-dl-row:last-child{border-bottom:none}
+.today-dl-row:hover{opacity:.8}
+
+/* モバイル */
+@media(max-width:768px){
+  .ham-btn{display:flex}
+  .header-nav{display:none}
+  .hfs-header{height:60px;padding:0 14px}
+  .logo-main{font-size:18px;letter-spacing:0.08em}
+  .logo-sub,.logo-line{display:none}
+  .user-name,.user-role{display:none}
+  #role-preview-switcher{display:none !important}
+  #preview-mode-banner{top:60px}
+  .page{padding:12px}
+  /* ダッシュボード */
+  .dash-hero{flex-direction:column;gap:14px;padding:20px 16px;align-items:flex-start;border-radius:12px;margin-bottom:16px}
+  .dash-greeting{font-size:18px}
+  .dash-date-str{font-size:12px}
+  .dash-hero-stats{gap:20px;flex-wrap:wrap}
+  .dash-hero-stat-val{font-size:26px}
+  #dash-filter{display:none !important}
+  #dash-charts{display:none !important}
+  /* 納期カード */
+  .deadline-card{padding:12px 14px;gap:12px;border-radius:10px}
+  .deadline-num{font-size:30px;min-width:48px}
+  .deadline-name{font-size:13px}
+  .deadline-meta{font-size:11px}
+  /* セクション */
+  .dash-section{padding:14px}
+  .dash-section-title{font-size:11px}
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
 <div class="hfs-header">
+  <button class="ham-btn" onclick="openNavDrawer()" aria-label="メニューを開く">
+    <span></span><span></span><span></span>
+  </button>
   <div class="logo-area">
     <div class="logo-main" id="ws-logo-main">HARUKA FILM</div>
     <div class="logo-line"></div>
     <div class="logo-sub" id="ws-logo-sub">光を当てる、あなたのストーリーに</div>
   </div>
   <div class="header-nav">
-    <button class="nav-btn active" onclick="showPage('dashboard',this)">ホーム</button>
-    <button class="nav-btn" onclick="showPage('creatives',this)">クリエイティブ</button>
-    <button class="nav-btn" onclick="showPage('projects',this)">案件</button>
-    <button class="nav-btn" onclick="showPage('teams',this)">チーム</button>
-    <button class="nav-btn" onclick="showPage('members',this)">メンバー</button>
-    <button class="nav-btn" onclick="showPage('invoices',this)">請求書</button>
-    <button class="nav-btn" onclick="showPage('knowledge',this)">ナレッジ</button>
-    <button class="nav-btn" id="nav-master" onclick="showPage('master',this)" style="display:none">マスター</button>
+    <button class="nav-btn active" data-page="dashboard" onclick="showPage('dashboard',this)">ホーム</button>
+    <button class="nav-btn" data-page="creatives" onclick="showPage('creatives',this)">クリエイティブ</button>
+    <button class="nav-btn" data-page="projects" onclick="showPage('projects',this)">案件</button>
+    <button class="nav-btn" data-page="teams" onclick="showPage('teams',this)">チーム</button>
+    <button class="nav-btn" data-page="members" onclick="showPage('members',this)">メンバー</button>
+    <button class="nav-btn" data-page="invoices" onclick="showPage('invoices',this)">請求書</button>
+    <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">ナレッジ</button>
+    <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
   </div>
   <div class="header-right">
     <!-- ロールプレビュースイッチャー（管理者のみ表示） -->
@@ -304,6 +360,26 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ナビゲーションドロワー（モバイル） -->
+<div id="nav-drawer" class="nav-drawer">
+  <div class="nav-drawer-overlay" onclick="closeNavDrawer()"></div>
+  <div class="nav-drawer-panel">
+    <div class="nav-drawer-head">
+      <span class="nav-drawer-title">HARUKA FILM</span>
+      <button class="nav-drawer-x" onclick="closeNavDrawer()">✕</button>
+    </div>
+    <button class="nav-drawer-btn active" data-page="dashboard" onclick="showPage('dashboard',this)">🏠 ホーム</button>
+    <button class="nav-drawer-btn" data-page="creatives" onclick="showPage('creatives',this)">🎬 クリエイティブ</button>
+    <button class="nav-drawer-btn" data-page="projects" onclick="showPage('projects',this)">📁 案件</button>
+    <button class="nav-drawer-btn" data-page="teams" onclick="showPage('teams',this)">👥 チーム</button>
+    <button class="nav-drawer-btn" data-page="members" onclick="showPage('members',this)">👤 メンバー</button>
+    <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
+    <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 ナレッジ</button>
+    <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
+    <div class="nav-drawer-footer" id="nav-drawer-user"></div>
+  </div>
+</div>
+
 <!-- プレビューモード中バナー -->
 <div id="preview-mode-banner" style="display:none;background:linear-gradient(90deg,#FF6B35,#F7B731);padding:5px 20px;font-size:12px;font-weight:500;color:#fff;letter-spacing:0.05em;position:sticky;top:88px;z-index:97;align-items:center;gap:8px">
   <span>👁</span>
@@ -320,6 +396,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <div class="dash-hero-stats" id="dash-hero-stats"></div>
   </div>
+  <!-- 今日の納期（全ロール共通） -->
+  <div id="dash-today" style="margin-bottom:14px"></div>
   <!-- 年月フィルター（adminのみ） -->
   <div id="dash-filter" style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
     <select id="dash-filter-year" class="form-select" style="width:100px" onchange="onDashFilterChange()"></select>
@@ -3900,9 +3978,16 @@ function applyRoleBasedUI() {
   if (addMemberBtn) addMemberBtn.style.display = isEffectiveAdmin() ? '' : 'none';
   const inviteBtn = document.getElementById('btn-invite');
   if (inviteBtn) inviteBtn.style.display = isEffectiveAdmin() ? '' : 'none';
-  // マスター管理ナビは管理者のみ
+  // マスター管理ナビは管理者のみ（ヘッダー・ドロワー両方）
   const masterNav = document.getElementById('nav-master');
   if (masterNav) masterNav.style.display = isEffectiveAdmin() ? '' : 'none';
+  const drawerMaster = document.getElementById('nav-drawer-master');
+  if (drawerMaster) drawerMaster.style.display = isEffectiveAdmin() ? '' : 'none';
+  // ドロワーのユーザー情報
+  const drawerUser = document.getElementById('nav-drawer-user');
+  if (drawerUser && currentUser) {
+    drawerUser.innerHTML = `<strong>${currentUser.name || currentUser.email}</strong><br>${roleLabel(effectiveRole())}`;
+  }
 }
 
 const ROLE_RANK = { admin:6, producer:5, producer_director:4, director:3, designer:2, editor:1 };
@@ -4356,8 +4441,10 @@ async function submitProject() {
 function showPage(name, btn) {
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  if(btn) btn.classList.add('active');
+  document.querySelectorAll('.nav-btn,.nav-drawer-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll(`.nav-btn[data-page="${name}"],.nav-drawer-btn[data-page="${name}"]`).forEach(b=>b.classList.add('active'));
+  if(btn && !btn.dataset.page) btn.classList.add('active'); // 後方互換
+  closeNavDrawer();
   if(name==='dashboard') loadDashboard();
   if(name==='projects') loadProjects();
   if(name==='members') loadMembers();
@@ -4365,6 +4452,15 @@ function showPage(name, btn) {
   if(name==='invoices') loadInvoices();
   if(name==='master') loadMasterPage();
   if(name==='knowledge') initKnowledgePage();
+}
+
+function openNavDrawer() {
+  document.getElementById('nav-drawer').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeNavDrawer() {
+  document.getElementById('nav-drawer').classList.remove('open');
+  document.body.style.overflow = '';
 }
 
 // ==================== ダッシュボード ====================
@@ -4381,6 +4477,9 @@ function loadDashboard() {
   const role = effectiveRole();
   const today = new Date(); today.setHours(0,0,0,0);
 
+  // 全ロール共通: 今日の納期セクション
+  renderTodayDeadlines(today);
+
   if (['admin','secretary','producer','producer_director'].includes(role)) {
     renderAdminDash(today);
   } else if (role === 'director') {
@@ -4388,6 +4487,41 @@ function loadDashboard() {
   } else {
     renderEditorDash(today);
   }
+}
+
+function renderTodayDeadlines(today) {
+  const el = document.getElementById('dash-today');
+  if (!el) return;
+  const todayStr = today.toISOString().slice(0, 10);
+  const role = effectiveRole();
+  const isManager = ['admin','secretary','producer','producer_director','director'].includes(role);
+
+  const todayAll = allCreatives.filter(c => c.final_deadline === todayStr && c.status !== '納品');
+  const myToday  = todayAll.filter(c => c.creative_assignments?.some(a => a.users?.id === currentUser?.id));
+  const items    = isManager ? todayAll : myToday;
+
+  if (!items.length) {
+    el.innerHTML = `<div class="dash-section" style="border-left:4px solid var(--em-dark)">
+      <div class="dash-section-title">📅 今日の納期</div>
+      <div style="text-align:center;font-size:13px;color:var(--text-muted);padding:8px 0">今日納期のクリエイティブはありません ✓</div>
+    </div>`;
+    return;
+  }
+
+  const rows = items.map(c => {
+    const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const name = editor?.users?.full_name || '';
+    return `<div class="today-dl-row" onclick="openCreativeDetail('${c.id}')">
+      <span style="flex:1;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.file_name}</span>
+      ${isManager && name ? `<span style="font-size:11px;color:var(--text-muted);white-space:nowrap">${name}</span>` : ''}
+      <span class="status-chip ${statusClass(c.status)}" style="font-size:11px;flex-shrink:0">${c.status}</span>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="dash-section" style="border-left:4px solid #E24B4A">
+    <div class="dash-section-title" style="color:#E24B4A">📅 今日の納期（${items.length}件）</div>
+    ${rows}
+  </div>`;
 }
 
 // チャートインスタンス管理
