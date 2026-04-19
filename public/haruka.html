@@ -293,24 +293,61 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .nav-drawer-btn.active{color:var(--em-dark);background:var(--em-pale);font-weight:600;border-left:3px solid var(--em-dark)}
 .nav-drawer-btn:hover{background:var(--em-pale)}
 .nav-drawer-footer{margin-top:auto;padding:16px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);line-height:1.7}
+.nav-drawer-account{margin-top:10px;border-top:1px solid var(--border)}
+.nav-drawer-account-btn{font-size:14px}
+.nav-drawer-logout{color:#E24B4A}
+.nav-drawer-logout:hover{background:#FFF0F0}
 
 /* 今日の納期 */
 .today-dl-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:0.5px solid var(--border-light);cursor:pointer}
 .today-dl-row:last-child{border-bottom:none}
 .today-dl-row:hover{opacity:.8}
 
-/* モバイル */
+/* ================================================================
+   モバイル対応 (max-width:768px) - スマホ専用UIレイヤー
+   ※ PC版には一切影響しない。JS/HTML は触らず CSS のみで上書き
+   ================================================================ */
 @media(max-width:768px){
+  /* --- ヘッダー / ナビ --- */
   .ham-btn{display:flex}
   .header-nav{display:none}
   .hfs-header{height:60px;padding:0 14px}
   .logo-main{font-size:18px;letter-spacing:0.08em}
   .logo-sub,.logo-line{display:none}
   .user-name,.user-role{display:none}
+  .header-right{gap:6px}
+  .header-user{gap:4px}
+  .user-av{width:30px;height:30px;font-size:11px}
+  /* スマホではヘッダーの🔑・ログアウトを隠し、ドロワー内のアカウントセクションに集約 */
+  .header-user .rpb-btn{display:none !important}
   #role-preview-switcher{display:none !important}
-  #preview-mode-banner{top:60px}
-  .page{padding:12px}
-  /* ダッシュボード */
+  #preview-mode-banner{top:60px;padding:5px 12px;font-size:11px}
+  .nav-drawer-panel{width:82vw;max-width:300px;left:-82vw}
+
+  /* --- ページ全体 --- */
+  .page{padding:10px}
+  .page > div[style*="padding:20px"]{padding:12px !important}
+  .page > div[style*="padding:20px 24px"]{padding:12px !important}
+  /* ページ内のヘッダー行 (sec-label + ボタン群) をスタック */
+  .page > div > div[style*="justify-content:space-between"]{flex-wrap:wrap !important;gap:10px !important}
+  .sec-label{font-size:11px}
+
+  /* --- ツールバー --- */
+  .toolbar{top:60px;padding:10px 12px;gap:8px}
+  .toolbar[style*="top:88px"]{top:60px !important}
+  .toolbar-row{gap:6px}
+  .filter-tabs,.client-tabs,.ball-filter{flex-wrap:wrap;gap:4px}
+  .ft,.ct{font-size:12px;padding:5px 12px}
+  .bf{font-size:11px;padding:4px 10px}
+  .search-box{width:100%;font-size:14px;padding:8px 12px}
+  .count-badge{margin-left:0;font-size:12px}
+
+  /* --- カード / ダッシュボード --- */
+  .card{padding:12px 14px;margin-bottom:10px;border-radius:10px}
+  .summary-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .stat-card{padding:10px 12px}
+  .stat-val{font-size:20px}
+  .dash-grid,.dash-grid-3{grid-template-columns:1fr !important;gap:12px}
   .dash-hero{flex-direction:column;gap:14px;padding:20px 16px;align-items:flex-start;border-radius:12px;margin-bottom:16px}
   .dash-greeting{font-size:18px}
   .dash-date-str{font-size:12px}
@@ -326,6 +363,101 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   /* セクション */
   .dash-section{padding:14px}
   .dash-section-title{font-size:11px}
+
+  /* --- テーブル --- */
+  table{font-size:13px}
+  th{padding:8px 10px;font-size:11px}
+  td{padding:8px 10px}
+
+  /* --- バッジ / チップ類 --- */
+  .proj-tag,.status-chip,.rank-chip{font-size:11px;padding:2px 8px}
+  .team-badge{font-size:11px;padding:2px 8px}
+
+  /* --- クライアントブロック / プロジェクト --- */
+  .client-block-header{padding:12px 14px}
+  .client-icon{width:34px;height:34px;font-size:12px}
+  .project-row{padding:10px 12px;gap:8px;flex-wrap:wrap}
+
+  /* --- メンバーカード --- */
+  .member-card{padding:8px 10px;gap:10px}
+
+  /* --- モーダル --- */
+  .modal-overlay{padding:0}
+  .modal,.modal-card{
+    width:100% !important;max-width:100vw !important;
+    max-height:100vh;min-height:100vh;
+    border-radius:0;padding:16px;margin:0
+  }
+  /* 大型モーダル(請求書・クリエイティブ等)も全画面化 */
+  .modal-overlay .modal[style*="width:95vw"],
+  .modal-overlay .modal[style*="width:96vw"],
+  .modal-overlay .modal[style*="width:860px"],
+  .modal-overlay .modal[style*="width:560px"]{
+    width:100% !important;max-width:100vw !important;
+    height:100vh !important;max-height:100vh !important;min-height:100vh !important;
+    border-radius:0 !important
+  }
+  .modal-title{font-size:15px;margin-bottom:14px}
+  .modal-footer{flex-wrap:wrap;gap:8px}
+  .modal-footer .btn,.modal-footer .btn-primary{flex:1;min-width:120px;text-align:center}
+  /* モーダル内の2カラムgridを1カラムに */
+  .modal-overlay div[style*="grid-template-columns:1fr 1fr"],
+  .modal-overlay div[style*="grid-template-columns: 1fr 1fr"]{
+    grid-template-columns:1fr !important;gap:10px !important
+  }
+  .modal-overlay div[style*="grid-template-columns:repeat(4"],
+  .modal-overlay div[style*="grid-template-columns:repeat(3"]{
+    grid-template-columns:1fr 1fr !important
+  }
+  /* モーダル内のインラインpadding調整 */
+  .modal-overlay div[style*="padding:20px 24px"]{padding:14px 16px !important}
+  .modal-overlay div[style*="padding:16px 24px"]{padding:12px 16px !important}
+  .modal-overlay div[style*="padding:14px 24px"]{padding:10px 14px !important}
+
+  /* --- フォーム / 入力 (タッチ最適化) --- */
+  .form-row{grid-template-columns:1fr !important}
+  .form-input,.form-select{font-size:16px;padding:11px 12px}
+  .form-label{font-size:12px}
+  /* ボタンのタップターゲット確保 */
+  .btn,.btn-primary,.btn-sm,.btn-danger{min-height:40px;padding:10px 16px;font-size:14px}
+  .rpb-btn{min-height:32px}
+
+  /* --- マスター (サイドバー→上部横並び) --- */
+  #page-master > div[style*="min-height"]{flex-direction:column !important;min-height:auto !important}
+  #page-master > div > div[style*="width:200px"]{
+    width:100% !important;min-width:0 !important;
+    border-right:none !important;border-bottom:1px solid var(--border);
+    padding:6px 0 !important;overflow-x:auto;white-space:nowrap
+  }
+  #master-nav{display:flex;flex-wrap:nowrap;overflow-x:auto}
+  .master-nav-item{flex-shrink:0;border-left:none !important;border-bottom:3px solid transparent}
+  .master-nav-item.active,
+  .master-nav-item[style*="border-left:3px solid var(--em-dark)"]{
+    border-left:none !important;border-bottom:3px solid var(--em-dark) !important
+  }
+
+  /* --- ナレッジ --- */
+  #page-knowledge .toolbar-row{flex-direction:column;align-items:stretch}
+  #page-knowledge .form-select,
+  #page-knowledge .form-input{width:100% !important}
+
+  /* --- 日付フィルタ等の入力欄幅 --- */
+  .form-input[type="date"]{width:auto !important;min-width:0}
+
+  /* --- 横スクロール時のヒント (table-wrap のグラデは既存) --- */
+  .table-wrap{-webkit-overflow-scrolling:touch}
+}
+
+/* スマホ縦向き (<=420px) - さらに詰める */
+@media(max-width:420px){
+  .hfs-header{padding:0 10px}
+  .logo-main{font-size:16px}
+  .page{padding:8px}
+  .summary-grid{grid-template-columns:1fr 1fr;gap:6px}
+  .dash-greeting{font-size:16px}
+  .dash-hero{padding:16px 14px}
+  .header-right .rpb-btn{font-size:9px !important;padding:2px 5px !important}
+  .user-av{width:26px;height:26px;font-size:10px}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -388,6 +520,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 ナレッジ</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
+    <div class="nav-drawer-account">
+      <button class="nav-drawer-btn nav-drawer-account-btn" onclick="closeNavDrawer();openChangePasswordModal()">🔑 パスワード変更</button>
+      <button class="nav-drawer-btn nav-drawer-account-btn nav-drawer-logout" onclick="logout()">🚪 ログアウト</button>
+    </div>
     <div class="nav-drawer-footer" id="nav-drawer-user"></div>
   </div>
 </div>
