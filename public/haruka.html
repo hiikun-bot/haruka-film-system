@@ -2031,7 +2031,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <!-- タイムコードバッジ（カテゴリの上） -->
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
             <span id="fp-timecode-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" onclick="fpClearTimecode()" title="クリックで削除"></span>
-            <span id="fp-timecode-hint" style="font-size:11px;color:#52525b">一時停止でタイムコードを記録</span>
+            <span id="fp-timecode-hint" style="font-size:11px;color:#52525b">送信時に現在位置を自動記録</span>
           </div>
           <select id="fp-comment-category" style="width:100%;font-size:12px;margin-bottom:6px;background:#2a2a2e;color:#e4e4e7;border:1px solid #3f3f46;border-radius:6px;padding:6px 8px">
             <option value="">カテゴリーを選択（必須）</option>
@@ -7343,7 +7343,11 @@ async function submitFileComment() {
     return;
   }
   const tcBadge = document.getElementById('fp-timecode-badge');
-  const timecode = tcBadge.style.display !== 'none' ? tcBadge.textContent.trim() : null;
+  let timecode = tcBadge.style.display !== 'none' ? tcBadge.textContent.trim() : null;
+  if (!timecode) {
+    const video = document.getElementById('fp-video');
+    if (video && !isNaN(video.currentTime)) timecode = fpTimecodeStr(video.currentTime);
+  }
   const btn = document.querySelector('#fp-comment-input-area button');
   btn.disabled = true; btn.textContent = '送信中...';
   const res = await fetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
