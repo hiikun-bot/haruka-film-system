@@ -3110,12 +3110,12 @@ function openTeamModal(team) {
 
   // プロデューサー
   const pSel = document.getElementById('t-producer');
-  const producers = allMembers.filter(m => ['producer','producer_director'].includes(m.role) && m.is_active !== false);
+  const producers = allMembers.filter(m => ['admin','producer','producer_director'].includes(m.role) && m.is_active !== false);
   pSel.innerHTML = '<option value="">未設定</option>' + producers.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
 
   // ディレクター
   const dSel = document.getElementById('t-director');
-  const dirs = allMembers.filter(m => ['director','producer_director'].includes(m.role) && m.is_active !== false);
+  const dirs = allMembers.filter(m => ['admin','director','producer_director'].includes(m.role) && m.is_active !== false);
   dSel.innerHTML = '<option value="">未設定</option>' + dirs.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
 
   if (isEdit) {
