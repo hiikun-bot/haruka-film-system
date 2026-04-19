@@ -7286,7 +7286,10 @@ function closeFilePreview() {
 }
 
 function fpKeyHandler(e) {
-  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+    if (e.code === 'Escape') { e.target.blur(); e.preventDefault(); }
+    return;
+  }
   if (e.code === 'Space') { e.preventDefault(); fpTogglePlay(); }
   if (e.code === 'Escape') { closeFilePreview(); }
 }
