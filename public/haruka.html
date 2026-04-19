@@ -570,7 +570,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- クリエイティブ追加モーダル -->
 <div class="modal-overlay" id="modal-creative">
-  <div class="modal" style="width:92vw;max-width:960px;height:88vh;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;box-sizing:border-box">
+  <div class="modal" style="width:96vw;max-width:1400px;height:88vh;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;box-sizing:border-box">
     <!-- ヘッダー固定 -->
     <div style="padding:20px 24px 0;flex-shrink:0">
       <div class="modal-title" style="margin-bottom:16px">クリエイティブ追加<button class="modal-close" onclick="cancelCreativeModal()">×</button></div>
@@ -5427,7 +5427,7 @@ function updateAssigneeSelect() {
   if (isVideo)        candidates = candidates.filter(m => m.job_type === 'video' && videoRoles.includes(m.role));
   else if (isDesign)  candidates = candidates.filter(m => m.job_type === 'design' && designRoles.includes(m.role));
 
-  if (teamId) candidates = candidates.filter(m => m.team_id === teamId);
+  if (teamId) candidates = candidates.filter(m => m.team_id === teamId || m.role === 'admin');
 
   const prev = sel.value;
   sel.innerHTML = '<option value="">担当者を選択</option>';
@@ -5456,7 +5456,7 @@ function updateBulkAssigneeSelect() {
   let candidates = allMembers.filter(m => m.is_active !== false);
   if (isVideo)       candidates = candidates.filter(m => m.job_type === 'video' && videoRoles.includes(m.role));
   else if (isDesign) candidates = candidates.filter(m => m.job_type === 'design' && designRoles.includes(m.role));
-  if (teamId) candidates = candidates.filter(m => m.team_id === teamId);
+  if (teamId) candidates = candidates.filter(m => m.team_id === teamId || m.role === 'admin');
   sel.innerHTML = '<option value="">未設定</option>' + candidates.map(m => {
     const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
     return `<option value="${m.id}">${m.full_name}${label}</option>`;
@@ -6591,9 +6591,8 @@ function cdRefreshCommentLabel() {
 function cdUpdateAssigneeSelect() {
   const teamId = document.getElementById('cd-team-id').value;
   const sel = document.getElementById('cd-assignee-id');
-  const members = teamId
-    ? allMembers.filter(m => m.team_id === teamId && m.is_active !== false)
-    : allMembers.filter(m => m.is_active !== false);
+  const members = allMembers.filter(m => m.is_active !== false &&
+    (!teamId || m.team_id === teamId || m.role === 'admin'));
   sel.innerHTML = '<option value="">（未設定）</option>' +
     members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
 }
@@ -8257,9 +8256,8 @@ let _editingCreativeId = null;
 function ceUpdateAssigneeSelect() {
   const teamId = document.getElementById('ce-team-id').value;
   const sel = document.getElementById('ce-assignee-id');
-  const members = teamId
-    ? allMembers.filter(m => m.team_id === teamId && m.is_active !== false)
-    : allMembers.filter(m => m.is_active !== false);
+  const members = allMembers.filter(m => m.is_active !== false &&
+    (!teamId || m.team_id === teamId || m.role === 'admin'));
   sel.innerHTML = '<option value="">（未設定）</option>' +
     members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
 }
@@ -8343,6 +8341,13 @@ async function openCreativeEdit(id) {
 
 async function saveCreativeEdit() {
   if (!_editingCreativeId) return;
+  const assigneeId = document.getElementById('ce-assignee-id').value || null;
+  let status = document.getElementById('ce-status').value;
+  // 未着手 + 担当者あり → 制作中（初稿提出前）に自動移行
+  if (status === '未着手' && assigneeId) {
+    status = '制作中（初稿提出前）';
+    document.getElementById('ce-status').value = status;
+  }
   const body = {
     creative_type:   document.getElementById('ce-creative-type').value,
     product_id:      document.getElementById('ce-product-id').value      || null,
@@ -8350,10 +8355,10 @@ async function saveCreativeEdit() {
     creative_fmt:    document.getElementById('ce-creative-fmt').value    || null,
     creative_size:   document.getElementById('ce-creative-size').value   || null,
     appeal_type_id:  document.getElementById('ce-appeal-type').value     || null,
-    assignee_id:     document.getElementById('ce-assignee-id').value     || null,
+    assignee_id:     assigneeId,
     draft_deadline:  document.getElementById('ce-draft-deadline').value  || null,
     final_deadline:  document.getElementById('ce-final-deadline').value  || null,
-    status:          document.getElementById('ce-status').value,
+    status,
     note:            document.getElementById('ce-note').value.trim()     || null,
   };
   const res = await fetch(`${API}/creatives/${_editingCreativeId}`, {
