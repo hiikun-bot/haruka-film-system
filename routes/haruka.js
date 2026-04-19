@@ -450,7 +450,7 @@ router.get('/creatives', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role)
+        users(id, full_name, role, rank, team_id)
       )
     `)
     .order('final_deadline', { ascending: true, nullsFirst: false });
