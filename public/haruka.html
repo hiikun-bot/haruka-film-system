@@ -87,7 +87,12 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .stat-sub{font-size:12px;color:var(--text-muted);margin-top:4px}
 
 /* テーブル */
-.table-wrap{overflow-x:auto}
+.table-wrap{overflow-x:auto;position:relative}
+.table-wrap::after{content:'';position:sticky;right:0;top:0;display:block;width:48px;height:100%;background:linear-gradient(to right,transparent,rgba(245,252,252,0.95));pointer-events:none;float:right;margin-left:-48px;z-index:2;transition:opacity .2s}
+.table-wrap.scrolled-end::after{opacity:0}
+@media(max-width:768px){
+  .table-wrap::after{width:36px;margin-left:-36px}
+}
 table{width:100%;border-collapse:collapse;font-size:14px}
 thead tr{background:var(--em-pale)}
 th{padding:10px 14px;text-align:left;font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.05em;white-space:nowrap;border-bottom:0.5px solid var(--border)}
@@ -3051,6 +3056,18 @@ async function loadCreatives() {
   }
 }
 
+function initTableScrollHint() {
+  const wrap = document.querySelector('.table-wrap');
+  if (!wrap) return;
+  const check = () => {
+    const atEnd = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 4;
+    wrap.classList.toggle('scrolled-end', atEnd);
+  };
+  wrap.removeEventListener('scroll', check);
+  wrap.addEventListener('scroll', check, { passive: true });
+  check();
+}
+
 function renderCreatives() {
   const tbody = document.getElementById('creative-tbody');
   const showRank = ['admin','producer','producer_director','director'].includes(effectiveRole());
@@ -3134,6 +3151,7 @@ function renderCreatives() {
     </tr>`;
 
   }).join('');
+  initTableScrollHint();
 }
 
 function renderAlerts() {
