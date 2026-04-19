@@ -158,6 +158,18 @@ body{
 /* スピナー */
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* モバイル (max-width:480px) */
+@media(max-width:480px){
+  .login-wrap{padding:16px;gap:22px}
+  .logo-title{font-size:28px;letter-spacing:0.14em}
+  .logo-bar{width:80vw;max-width:220px}
+  .logo-sub{font-size:11px;letter-spacing:0.4em}
+  .card{padding:24px 20px;border-radius:16px}
+  .form-control{font-size:16px;padding:12px 14px}
+  .btn-primary,.btn-google{padding:14px;font-size:14px}
+  .divider{margin:18px 0}
+}
 </style>
 </head>
 <body>
