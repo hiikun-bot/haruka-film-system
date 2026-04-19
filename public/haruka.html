@@ -2028,15 +2028,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
         <!-- コメント入力 -->
         <div id="fp-comment-input-area" style="padding:12px;border-top:1px solid #2a2a2e;flex-shrink:0;background:#1e1e22">
-          <!-- タイムコードバッジ（カテゴリの上） -->
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-            <span id="fp-timecode-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" onclick="fpClearTimecode()" title="クリックで削除"></span>
-            <span id="fp-timecode-hint" style="font-size:11px;color:#52525b">送信時に現在位置を自動記録</span>
+          <!-- タイムコードバッジ（Frame.io スタイル） -->
+          <div id="fp-tc-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:22px">
+            <span id="fp-timecode-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:13px;font-weight:700;padding:3px 12px;border-radius:6px;font-family:monospace;cursor:pointer;letter-spacing:0.06em;border:1px solid #92400e" onclick="fpClearTimecode()" title="クリックで削除">00:00:00:00</span>
+            <span id="fp-timecode-hint" style="font-size:11px;color:#3f3f46">— 一時停止でタイムコードを記録 —</span>
           </div>
           <select id="fp-comment-category" style="width:100%;font-size:12px;margin-bottom:6px;background:#2a2a2e;color:#e4e4e7;border:1px solid #3f3f46;border-radius:6px;padding:6px 8px">
             <option value="">カテゴリーを選択（必須）</option>
           </select>
-          <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid #3f3f46;border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box;background:#2a2a2e;color:#e4e4e7" onfocus="this.style.borderColor='#3ECFCA'" onblur="this.style.borderColor='#3f3f46'"></textarea>
+          <textarea id="fp-comment-text" rows="3" placeholder="レビューコメントを入力..." style="width:100%;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid #3f3f46;border-radius:8px;padding:8px 10px;resize:none;outline:none;box-sizing:border-box;background:#2a2a2e;color:#e4e4e7;transition:border-color .15s" onfocus="this.style.borderColor='#3ECFCA'" onblur="this.style.borderColor='#3f3f46'"></textarea>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px">
             <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#71717a;cursor:pointer;flex-shrink:0">
               <input type="checkbox" id="fp-is-knowledge" style="cursor:pointer;accent-color:#3ECFCA">
@@ -7276,19 +7276,32 @@ function fpCaptureTimecode() {
   if (!video) return;
   const tc = fpTimecodeStr(video.currentTime);
   const badge = document.getElementById('fp-timecode-badge');
-  const hint = document.getElementById('fp-timecode-hint');
-  badge.textContent = tc;
-  badge.dataset.secs = video.currentTime;
-  badge.style.display = '';
-  hint.style.display = 'none';
+  const hint  = document.getElementById('fp-timecode-hint');
+  badge.textContent    = tc;
+  badge.dataset.secs   = video.currentTime;
+  badge.style.display  = '';
+  hint.style.display   = 'none';
+  // 入力欄をハイライト＆フォーカス（Frame.io スタイル）
+  const ta = document.getElementById('fp-comment-text');
+  if (ta) {
+    ta.style.borderColor = '#fbbf24';
+    ta.focus();
+    ta.addEventListener('blur', function _once() {
+      if (!document.getElementById('fp-timecode-badge').style.display || document.getElementById('fp-timecode-badge').style.display === 'none') return;
+      ta.style.borderColor = '#3f3f46';
+      ta.removeEventListener('blur', _once);
+    });
+  }
 }
 
 function fpClearTimecode() {
   const badge = document.getElementById('fp-timecode-badge');
-  const hint = document.getElementById('fp-timecode-hint');
-  badge.textContent = '';
+  const hint  = document.getElementById('fp-timecode-hint');
+  badge.textContent   = '';
   badge.style.display = 'none';
-  hint.style.display = '';
+  hint.style.display  = '';
+  const ta = document.getElementById('fp-comment-text');
+  if (ta) ta.style.borderColor = '#3f3f46';
 }
 
 function fpSeekTo(tc) {
