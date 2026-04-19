@@ -807,8 +807,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <input type="hidden" id="t-id">
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">チームコード（A〜Z）</label>
-        <select class="form-select" id="t-code"></select>
+        <label class="form-label">チームコード <span style="font-size:11px;color:var(--text-muted);font-weight:400">（A〜Z または自由入力）</span></label>
+        <input class="form-input" id="t-code" list="t-code-list" placeholder="例: A, WC, ワコール" maxlength="10" style="text-transform:uppercase">
+        <datalist id="t-code-list"></datalist>
       </div>
       <div class="form-group">
         <label class="form-label">チーム種別</label>
@@ -3097,12 +3098,15 @@ function openTeamModal(team) {
   document.getElementById('t-modal-title').childNodes[0].textContent = isEdit ? 'チーム編集' : 'チーム追加';
   document.getElementById('t-submit-btn').textContent = isEdit ? '保存する' : '追加する';
 
-  // チームコード A〜Z（追加モードは未使用コードのみ表示）
+  // チームコード：A〜Zをサジェスト候補として表示（自由入力も可）
   const usedCodes = new Set(allTeams.map(t => t.team_code));
-  document.getElementById('t-code').innerHTML =
+  const codeInput = document.getElementById('t-code');
+  document.getElementById('t-code-list').innerHTML =
     [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
       .filter(c => isEdit || !usedCodes.has(c))
-      .map(c => `<option value="${c}">${c}</option>`).join('');
+      .map(c => `<option value="${c}">`).join('');
+  codeInput.disabled = false;
+  codeInput.readOnly = false;
 
   // プロデューサー
   const pSel = document.getElementById('t-producer');
@@ -3118,7 +3122,6 @@ function openTeamModal(team) {
     // 編集モード：既存データをフォームに反映
     document.getElementById('t-id').value = team.id;
     document.getElementById('t-code').value = team.team_code;
-    document.getElementById('t-code').disabled = true;
     document.getElementById('t-name').value = team.team_name || '';
     document.getElementById('t-type').value = team.team_type || 'video';
     pSel.value = team.producer_id || '';
@@ -3126,7 +3129,7 @@ function openTeamModal(team) {
   } else {
     // 追加モード：フォームリセット
     document.getElementById('t-id').value = '';
-    document.getElementById('t-code').disabled = false;
+    document.getElementById('t-code').value = '';
     document.getElementById('t-name').value = '';
     document.getElementById('t-type').value = 'video';
     pSel.value = '';
