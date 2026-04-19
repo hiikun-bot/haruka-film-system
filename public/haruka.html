@@ -1977,7 +1977,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <input type="range" id="fp-seekbar" min="0" max="1000" value="0" step="1"
               style="width:100%;height:4px;accent-color:#3ECFCA;cursor:pointer;background:transparent;position:relative;z-index:2"
               oninput="fpSeekbarInput(this)" onchange="fpSeekbarChange(this)">
-            <div id="fp-like-markers" style="position:absolute;top:50%;left:0;right:0;height:0;pointer-events:none;z-index:1"></div>
+            <div id="fp-comment-markers" style="position:absolute;top:50%;left:0;right:0;height:0;pointer-events:none;z-index:1"></div>
+            <div id="fp-like-markers"    style="position:absolute;top:50%;left:0;right:0;height:0;pointer-events:none;z-index:2"></div>
           </div>
           <!-- コントロール行 -->
           <div style="display:flex;align-items:center;gap:12px">
@@ -6900,6 +6901,42 @@ function fpRenderLikeMarkers(likes) {
   });
 }
 
+function fpRenderCommentMarkers(comments) {
+  const container = document.getElementById('fp-comment-markers');
+  const video     = document.getElementById('fp-video');
+  if (!container) return;
+  if (!video || !video.duration) {
+    video && video.addEventListener('loadedmetadata', () => fpRenderCommentMarkers(comments), { once: true });
+    return;
+  }
+  container.innerHTML = '';
+  // タイムコードを持つコメントのみ、秒単位でグルーピング
+  const byTime = {};
+  comments.forEach(c => {
+    if (!c.timecode) return;
+    const parts = c.timecode.split(':').map(Number);
+    let sec = 0;
+    if (parts.length === 4) sec = parts[0]*3600 + parts[1]*60 + parts[2] + parts[3]/30;
+    else if (parts.length === 3) sec = parts[0]*3600 + parts[1]*60 + parts[2];
+    else sec = parts[0]*60 + parts[1];
+    const key = Math.round(sec * 10) / 10;
+    if (!byTime[key]) byTime[key] = [];
+    byTime[key].push(c);
+  });
+  Object.entries(byTime).forEach(([sec, list]) => {
+    const pct  = (parseFloat(sec) / video.duration) * 100;
+    const dot  = document.createElement('div');
+    const names = list.map(c => c.users?.full_name || '不明').join(', ');
+    const preview = list[0].comment.slice(0, 30) + (list[0].comment.length > 30 ? '…' : '');
+    dot.style.cssText = `position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:#f87171;cursor:pointer;border:1.5px solid #fff;opacity:0.9;transition:opacity .15s,transform .15s;pointer-events:auto`;
+    dot.title = `💬 ${names}: ${preview} @ ${c.timecode}`;
+    dot.onmouseover = () => { dot.style.opacity = '1'; dot.style.transform = 'translate(-50%,-50%) scale(1.4)'; };
+    dot.onmouseout  = () => { dot.style.opacity = '0.9'; dot.style.transform = 'translate(-50%,-50%)'; };
+    dot.onclick = (e) => { e.stopPropagation(); fpSeekTo(list[0].timecode); };
+    container.appendChild(dot);
+  });
+}
+
 async function fpDownloadMarkers() {
   const fileId = currentPreviewFileId;
   if (!fileId) return;
@@ -7213,6 +7250,7 @@ async function loadFileComments(fileId) {
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
   renderComments(list);
+  fpRenderCommentMarkers(list);
 }
 
 async function showUploadLogs() {
