@@ -374,9 +374,27 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .team-badge{font-size:11px;padding:2px 8px}
 
   /* --- クライアントブロック / プロジェクト --- */
-  .client-block-header{padding:12px 14px}
-  .client-icon{width:34px;height:34px;font-size:12px}
-  .project-row{padding:10px 12px;gap:8px;flex-wrap:wrap}
+  /* クライアントブロックヘッダ: 左(アイコン+名前) と 右(ステータス+件数+編集+▼) を縦積み */
+  .client-block-header{padding:12px 14px;flex-wrap:wrap;gap:10px;align-items:flex-start}
+  .client-block-header > div:first-child{flex:1 1 100%;min-width:0}
+  .client-block-header > div:first-child > div:last-child{min-width:0;flex:1}
+  /* クライアント名の大きな文字が縦1文字折返しされる事象の対策 */
+  .client-block-header > div:first-child > div:last-child > div:first-child{
+    font-size:16px !important;word-break:break-word;overflow-wrap:anywhere
+  }
+  .client-block-header > div:last-child{
+    flex:1 1 100%;justify-content:flex-start;flex-wrap:wrap;font-size:12px
+  }
+  .client-block-header > div:last-child > span{white-space:nowrap;flex-shrink:0}
+  .client-icon{width:34px;height:34px;font-size:12px;flex-shrink:0}
+
+  /* プロジェクト行: 名前を100%幅にしてボタン類を下段に回す */
+  .project-row{padding:10px 12px;gap:6px 8px;flex-wrap:wrap}
+  .project-row > div:first-child{flex:1 1 100%;min-width:0;word-break:break-word}
+  .project-row > a.btn-sm,
+  .project-row > button.btn-sm,
+  .project-row > span.status-chip,
+  .project-row > span.proj-tag{flex-shrink:0}
 
   /* --- メンバーカード --- */
   .member-card{padding:8px 10px;gap:10px}
