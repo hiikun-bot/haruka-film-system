@@ -6588,12 +6588,28 @@ async function loadCreativeFiles(creativeId) {
   const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const hideCheckBtn = REVISION_STATUSES.includes(currentCreativeDetail?.status);
 
-  list.innerHTML = files.map((f, i) => {
+  // CLステータスかどうか（CL確認 / クライアントチェック後修正）
+  const CL_STATUSES = ['CL確認', 'クライアントチェック後修正'];
+  const isCLMode = CL_STATUSES.includes(currentCreativeDetail?.status);
+
+  // CLモードで2件以上 → 最新2件のみ表示、ラベルを「今回」「前回」にする
+  const displayFiles = (isCLMode && files.length > 1) ? files.slice(0, 2) : files;
+
+  list.innerHTML = displayFiles.map((f, i) => {
     const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
     const canPreview  = !!driveFileId;
-    const verNum      = f.version || (files.length - i);
-    const verLabel    = `バージョン ${verNum}`;
-    const isLatest    = i === 0;
+
+    // ラベル決定
+    let verLabel, isLatest;
+    if (isCLMode && files.length > 1) {
+      verLabel = i === 0 ? '今回' : '前回';
+      isLatest = i === 0;
+    } else {
+      const verNum = f.version || (files.length - i);
+      verLabel = `バージョン ${verNum}`;
+      isLatest = i === 0;
+    }
+
     const checkBtnStyle = canPreview
       ? `background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;box-shadow:0 3px 12px rgba(62,207,202,0.45);`
       : `background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);`;
@@ -6604,7 +6620,7 @@ async function loadCreativeFiles(creativeId) {
     return `
     <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border)">
-        <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}${isLatest ? ' <span style="font-size:10px;background:var(--em);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px">最新</span>' : ''}</span>
+        <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}</span>
         <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
         ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
         <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
