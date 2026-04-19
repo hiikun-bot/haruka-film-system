@@ -6644,15 +6644,12 @@ function updateCreativeCommentLabel(status) {
       const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'editor');
       editorName = editorAssign?.users?.full_name || '';
       const editorTeamId = editorAssign?.users?.team_id;
-      const editorUserId = editorAssign?.users?.id;
       if (editorTeamId) {
-        const dir = allMembers.find(m =>
-          m.team_id === editorTeamId &&
-          m.id !== editorUserId &&
-          ['director','producer_director'].includes(m.role) &&
-          m.is_active !== false
-        );
-        directorName = dir?.full_name || '';
+        const team = allTeams.find(t => t.id === editorTeamId);
+        if (team?.director_id) {
+          const dir = allMembers.find(m => m.id === team.director_id);
+          directorName = dir?.full_name || '';
+        }
       }
     }
     const fromPart = editorName ? `<span style="font-weight:700;color:var(--text)">${editorName}</span> → ` : '';
