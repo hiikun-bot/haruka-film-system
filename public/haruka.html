@@ -7884,22 +7884,103 @@ async function saveVersionHistory_DISABLED() {
 // ===== クリエイティブ修正（一覧からの簡易編集） =====
 let _editingCreativeId = null;
 
+function ceUpdateAssigneeSelect() {
+  const teamId = document.getElementById('ce-team-id').value;
+  const sel = document.getElementById('ce-assignee-id');
+  const members = teamId
+    ? allMembers.filter(m => m.team_id === teamId && m.is_active !== false)
+    : allMembers.filter(m => m.is_active !== false);
+  sel.innerHTML = '<option value="">（未設定）</option>' +
+    members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+}
+
 async function openCreativeEdit(id) {
   const res = await fetch(`${API}/creatives/${id}`);
   if (!res.ok) return;
   const c = await res.json();
   _editingCreativeId = id;
-  document.getElementById('ce-filename').textContent   = c.file_name;
-  document.getElementById('ce-draft-deadline').value  = c.draft_deadline  || '';
-  document.getElementById('ce-final-deadline').value  = c.final_deadline  || '';
-  document.getElementById('ce-status').value          = c.status          || '未着手';
-  document.getElementById('ce-note').value            = c.note            || '';
+
+  // ファイル名
+  document.getElementById('ce-filename').textContent = c.file_name;
+
+  // 動画種別
+  document.getElementById('ce-creative-type').value = c.creative_type || 'video_short';
+
+  // 媒体 / FMT / サイズ をマスターから組み立て
+  const FALLBACK = {
+    '媒体': [{code:'FB',name:'Meta'},{code:'TT',name:'TikTok'},{code:'YS',name:'Y検索'},{code:'YD',name:'YDN'},{code:'GS',name:'G検索'},{code:'LP',name:'LAP'},{code:'SN',name:'SmartNews'},{code:'GG',name:'GDN'}],
+    'クリエイティブFMT': [{code:'mv',name:'動画'},{code:'bn',name:'バナー'},{code:'cs',name:'カルーセル'},{code:'rsa',name:'検索'},{code:'sl',name:'サイトリンク'}],
+    'クリエイティブサイズ': [{code:'1080_1080',name:'1080×1080'},{code:'1080_1920',name:'1080×1920'},{code:'1200_628',name:'1200×628'},{code:'960_1200',name:'960×1200'}],
+  };
+  const catItems = (name) => {
+    const cat = masterCategories.find(x => x.name === name);
+    const items = cat ? masterItems.filter(i => i.category_id === cat.id && i.is_active !== false) : [];
+    return items.length ? items : FALLBACK[name];
+  };
+  document.getElementById('ce-media-code').innerHTML = '<option value="">（任意）</option>' +
+    catItems('媒体').map(i => `<option value="${i.code}">${i.code} - ${i.name}</option>`).join('');
+  document.getElementById('ce-creative-fmt').innerHTML = '<option value="">（任意）</option>' +
+    catItems('クリエイティブFMT').map(i => `<option value="${i.code}">${i.code} - ${i.name}</option>`).join('');
+  document.getElementById('ce-creative-size').innerHTML = '<option value="">（任意）</option>' +
+    catItems('クリエイティブサイズ').map(i => `<option value="${i.code}">${i.name}</option>`).join('');
+  document.getElementById('ce-media-code').value   = c.media_code    || '';
+  document.getElementById('ce-creative-fmt').value = c.creative_fmt  || '';
+  document.getElementById('ce-creative-size').value = c.creative_size || '';
+
+  // 商材・訴求タイプ（案件に紐づく）
+  const prodSel = document.getElementById('ce-product-id');
+  const appealSel = document.getElementById('ce-appeal-type');
+  prodSel.innerHTML = '<option value="">（未設定）</option>';
+  appealSel.innerHTML = '<option value="">（未設定）</option>';
+  if (c.project_id) {
+    const [axesRes, prodRes] = await Promise.all([
+      fetch(`${API}/projects/${c.project_id}/effective-appeal-axes`),
+      fetch(`${API}/projects/${c.project_id}/effective-products`),
+    ]);
+    if (axesRes.ok) {
+      const axes = await axesRes.json();
+      appealSel.innerHTML = '<option value="">（未設定）</option>' +
+        axes.map(a => `<option value="${a.id}">${a.code} - ${a.name}</option>`).join('');
+    }
+    if (prodRes.ok) {
+      const products = await prodRes.json();
+      prodSel.innerHTML = '<option value="">（未設定）</option>' +
+        products.map(p => `<option value="${p.id}">${p.code} - ${p.name}</option>`).join('');
+    }
+  }
+  prodSel.value   = c.product_id      || '';
+  appealSel.value = c.appeal_type_id  || '';
+
+  // チーム / 担当者
+  const teamSel = document.getElementById('ce-team-id');
+  teamSel.innerHTML = '<option value="">（未設定）</option>' +
+    allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+  const currentAssignee = (c.creative_assignments || []).find(a => a.role === 'editor');
+  const currentAssigneeUser = currentAssignee?.users;
+  const currentTeamId = currentAssigneeUser?.team_id || '';
+  teamSel.value = currentTeamId;
+  ceUpdateAssigneeSelect();
+  document.getElementById('ce-assignee-id').value = currentAssigneeUser?.id || '';
+
+  // 日付 / ステータス / メモ
+  document.getElementById('ce-draft-deadline').value = c.draft_deadline || '';
+  document.getElementById('ce-final-deadline').value = c.final_deadline || '';
+  document.getElementById('ce-status').value         = c.status         || '未着手';
+  document.getElementById('ce-note').value           = c.note           || '';
+
   openModal('modal-creative-edit');
 }
 
 async function saveCreativeEdit() {
   if (!_editingCreativeId) return;
   const body = {
+    creative_type:   document.getElementById('ce-creative-type').value,
+    product_id:      document.getElementById('ce-product-id').value      || null,
+    media_code:      document.getElementById('ce-media-code').value      || null,
+    creative_fmt:    document.getElementById('ce-creative-fmt').value    || null,
+    creative_size:   document.getElementById('ce-creative-size').value   || null,
+    appeal_type_id:  document.getElementById('ce-appeal-type').value     || null,
+    assignee_id:     document.getElementById('ce-assignee-id').value     || null,
     draft_deadline:  document.getElementById('ce-draft-deadline').value  || null,
     final_deadline:  document.getElementById('ce-final-deadline').value  || null,
     status:          document.getElementById('ce-status').value,
