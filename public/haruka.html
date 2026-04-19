@@ -2033,6 +2033,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
       <!-- チェック段階用: 修正依頼 -->
       <button id="cd-revision-btn" onclick="requestRevision()" style="display:none;background:#fff;color:#d97706;border:1.5px solid #d97706;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">修正依頼</button>
+      <!-- Dチェック時: Pをスキップして CL直行（Pあり案件のみ） -->
+      <button id="cd-skip-p-btn" onclick="skipToClientCheck()" style="display:none;background:#fff;color:#6366f1;border:1.5px solid #6366f1;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Pスキップ → CL確認</button>
       <!-- 承認 or 次ステップ -->
       <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
     </div>
@@ -6599,6 +6601,7 @@ function updateCreativeStepIndicator(status) {
   };
   const nextBtn     = document.getElementById('cd-next-step-btn');
   const revisionBtn = document.getElementById('cd-revision-btn');
+  const skipPBtn    = document.getElementById('cd-skip-p-btn');
   if (!nextBtn) return;
 
   // チェック段階: 修正依頼 ＋ 承認 の2ボタン
@@ -6621,9 +6624,13 @@ function updateCreativeStepIndicator(status) {
     nextBtn.textContent = `承認（${approveTarget}）→`;
     nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
     nextBtn.dataset.target = approveTarget;
+
+    // Pスキップボタン: Dチェック かつ Pあり 案件のみ表示
+    if (skipPBtn) skipPBtn.style.display = (status === 'Dチェック' && hasProducer) ? '' : 'none';
   } else {
     revisionBtn.style.display = 'none';
     const next = NEXT[status];
+    if (skipPBtn) skipPBtn.style.display = 'none';
     if (next) {
       nextBtn.style.display = '';
       const RESUBMIT = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
@@ -6745,6 +6752,19 @@ function updateCreativeCommentLabel(status) {
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
   }
+}
+
+async function skipToClientCheck() {
+  if (!currentCreativeDetail) return;
+  const noteField = document.getElementById('cd-director-note');
+  const note = noteField?.value.trim();
+  if (!note) {
+    alert('承認コメントを入力してください。Pスキップでも承認コメントは必須です。');
+    noteField?.focus();
+    return;
+  }
+  if (!confirm('Pチェックをスキップして、直接CL確認に進めますか？')) return;
+  await saveCreativeDetail('クライアントチェック中');
 }
 
 async function advanceCreativeStatus() {
