@@ -616,10 +616,12 @@ router.post('/creatives', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録
   if (assignee_id) {
+    const { data: assigneeUser } = await supabase.from('users').select('rank').eq('id', assignee_id).single();
     await supabase.from('creative_assignments').insert({
       creative_id: data.id,
       user_id: assignee_id,
       role: 'editor',
+      rank_applied: assigneeUser?.rank || null,
     });
   }
   res.json(data);
@@ -674,7 +676,13 @@ router.put('/creatives/:id', async (req, res) => {
   if (assignee_id !== undefined) {
     await supabase.from('creative_assignments').delete().eq('creative_id', req.params.id).eq('role', 'editor');
     if (assignee_id) {
-      await supabase.from('creative_assignments').insert({ creative_id: req.params.id, user_id: assignee_id, role: 'editor' });
+      const { data: assigneeUser } = await supabase.from('users').select('rank').eq('id', assignee_id).single();
+      await supabase.from('creative_assignments').insert({
+        creative_id: req.params.id,
+        user_id: assignee_id,
+        role: 'editor',
+        rank_applied: assigneeUser?.rank || null,
+      });
     }
   }
 
@@ -1248,8 +1256,11 @@ router.get('/invoices/preview-items', async (req, res) => {
 
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
-    const rateKey = `${c.project_id}__${c.creative_type}__${assignment?.rank_applied}`;
-    const rate = ratesMap[rateKey] || null;
+    const rankApplied = assignment?.rank_applied;
+    // rank_appliedが一致するレートを優先、なければ同種別・nullランクのレートをフォールバック
+    const rateKey = `${c.project_id}__${c.creative_type}__${rankApplied}`;
+    const fallbackKey = `${c.project_id}__${c.creative_type}__null`;
+    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || null;
     return {
       id: c.id,
       file_name: c.file_name,

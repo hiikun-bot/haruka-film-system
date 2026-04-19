@@ -2448,7 +2448,7 @@ async function loadProjects() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
-            ${isSuperAdmin() ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
+            ${isEffectiveAdmin() ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
             <button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>
             <button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>
           </div>`;
@@ -3726,10 +3726,10 @@ async function executeImport() {
   }
 }
 
-// 単価閲覧権限（admin/producer/producer_director）
+// 単価閲覧権限（admin/producer/producer_director）※プレビューロールを尊重
 function canSeeRates() {
   const role = effectiveRole();
-  return ['admin','producer','producer_director'].includes(role) || isSuperAdmin();
+  return ['admin','producer','producer_director'].includes(role);
 }
 
 // ==================== 単価設定 ====================
