@@ -103,6 +103,12 @@ tr.row-help td{background:#FFFBF2}
 .s-coral{background:#FAECE7;color:#712B13}
 .s-green{background:#E1F5EE;color:#085041}
 
+/* アップロードプログレスバー */
+@keyframes upload-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
 /* 納品バッジ キラキラエフェクト */
 @keyframes delivered-shimmer {
   0%   { background-position: 200% center; }
@@ -842,6 +848,24 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="position:relative;margin-bottom:8px">
           <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px">🔍</span>
           <input class="form-input" id="t-member-search" placeholder="名前で検索..." oninput="filterTeamMembers()" style="padding-left:32px">
+        </div>
+        <!-- ロールフィルター -->
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
+          <button type="button" class="tm-filter-role" data-value="" onclick="setTeamMemberFilter('role','')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">全員</button>
+          <button type="button" class="tm-filter-role" data-value="admin" onclick="setTeamMemberFilter('role','admin')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">管理者</button>
+          <button type="button" class="tm-filter-role" data-value="producer" onclick="setTeamMemberFilter('role','producer')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">P</button>
+          <button type="button" class="tm-filter-role" data-value="producer_director" onclick="setTeamMemberFilter('role','producer_director')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">PD</button>
+          <button type="button" class="tm-filter-role" data-value="director" onclick="setTeamMemberFilter('role','director')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">D</button>
+          <button type="button" class="tm-filter-role" data-value="editor" onclick="setTeamMemberFilter('role','editor')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">編集者</button>
+          <button type="button" class="tm-filter-role" data-value="designer" onclick="setTeamMemberFilter('role','designer')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">デザイナー</button>
+        </div>
+        <!-- ランクフィルター -->
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
+          <button type="button" class="tm-filter-rank" data-value="" onclick="setTeamMemberFilter('rank','')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">全ランク</button>
+          <button type="button" class="tm-filter-rank" data-value="S" onclick="setTeamMemberFilter('rank','S')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">S</button>
+          <button type="button" class="tm-filter-rank" data-value="A" onclick="setTeamMemberFilter('rank','A')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">A</button>
+          <button type="button" class="tm-filter-rank" data-value="B" onclick="setTeamMemberFilter('rank','B')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">B</button>
+          <button type="button" class="tm-filter-rank" data-value="C" onclick="setTeamMemberFilter('rank','C')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">C</button>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--text-muted)">
           <span id="t-member-count"></span>
@@ -2016,6 +2040,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <span id="cd-upload-status" style="font-size:13px;flex:1"></span>
             <button onclick="showUploadLogs()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap">📋 ログ</button>
           </div>
+          <!-- アップロードプログレスバー -->
+          <div id="cd-upload-progress-wrap" style="display:none;margin-top:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+              <span id="cd-upload-progress-label" style="font-size:12px;color:var(--text-muted)">サーバーへ送信中...</span>
+              <span id="cd-upload-progress-pct" style="font-size:12px;font-weight:600;color:var(--em-dark)"></span>
+            </div>
+            <div style="background:var(--border);border-radius:6px;height:8px;overflow:hidden">
+              <div id="cd-upload-progress-bar" style="height:100%;background:var(--primary);border-radius:6px;width:0%;transition:width .3s ease"></div>
+            </div>
+          </div>
           <!-- アップロードログパネル -->
           <div id="cd-upload-log-panel" style="display:none;background:#0d1117;border-radius:8px;padding:12px;margin-top:10px;max-height:220px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.7">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -2716,7 +2750,8 @@ async function loadTeams() {
     if (!allTeams.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
     const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
     list.innerHTML = allTeams.map((t, i) => {
-      const teamMembers = allMembers.filter(m => m.team_id === t.id && m.is_active !== false)
+      const tmIds = new Set((t.team_members || []).map(tm => tm.user_id));
+      const teamMembers = allMembers.filter(m => tmIds.has(m.id) && m.is_active !== false)
         .sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0));
       const memberCount = teamMembers.length;
       const memberChips = teamMembers.map(m => {
@@ -3166,29 +3201,47 @@ function openTeamModal(team) {
     dSel.value = '';
   }
 
-  // メンバーリスト初期化
+  // メンバーリスト初期化（team_membersから既存メンバーIDを取得）
+  _tmFilterRole = ''; _tmFilterRank = '';
   document.getElementById('t-member-search').value = '';
-  buildTeamMemberList(team?.id || null);
+  // フィルターチップをリセット
+  document.querySelectorAll('.tm-filter-role, .tm-filter-rank').forEach(b => {
+    const isAll = b.dataset.value === '';
+    b.style.background = isAll ? 'var(--em-pale)' : 'transparent';
+    b.style.color = isAll ? 'var(--em-dark)' : 'var(--text-muted)';
+    b.style.borderColor = isAll ? 'var(--em-dark)' : 'var(--border)';
+  });
+  const existingMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
+  buildTeamMemberList(existingMemberIds);
 
   openModal('modal-team');
 }
 
-function buildTeamMemberList(teamId) {
+// フィルター状態
+let _tmFilterRole = '', _tmFilterRank = '';
+
+function buildTeamMemberList(memberIdSet) {
   const search = document.getElementById('t-member-search').value.toLowerCase();
   const container = document.getElementById('t-member-list');
   const active = allMembers.filter(m => m.is_active !== false);
-  const filtered = active.filter(m => !search || m.full_name.toLowerCase().includes(search));
+  const filtered = active.filter(m => {
+    if (search && !m.full_name.toLowerCase().includes(search)) return false;
+    if (_tmFilterRole && m.role !== _tmFilterRole) return false;
+    if (_tmFilterRank && m.rank !== _tmFilterRank) return false;
+    return true;
+  });
   const ROLE_SHORT = { admin:'管', producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', secretary:'秘' };
   if (!filtered.length) {
     container.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:13px">該当するメンバーがいません</div>';
   } else {
     container.innerHTML = filtered.map((m, i) => {
-      const inTeam = teamId && m.team_id === teamId;
+      const inTeam = memberIdSet instanceof Set ? memberIdSet.has(m.id) : false;
       const isLast = i === filtered.length - 1;
       return `<label style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;${isLast?'':'border-bottom:1px solid var(--border);'}user-select:none">
         <input type="checkbox" class="t-member-check" value="${m.id}" ${inTeam ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0" onchange="updateTeamMemberCount()">
         <span style="font-size:13px;flex:1">${m.full_name}</span>
         <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:4px">${ROLE_SHORT[m.role] || m.role}</span>
+        ${m.rank ? `<span style="font-size:11px;color:var(--em-dark);font-weight:600;background:var(--em-pale);padding:1px 6px;border-radius:4px">${m.rank}</span>` : ''}
       </label>`;
     }).join('');
   }
@@ -3196,8 +3249,28 @@ function buildTeamMemberList(teamId) {
 }
 
 function filterTeamMembers() {
-  const teamId = document.getElementById('t-id').value || null;
-  buildTeamMemberList(teamId);
+  // 現在チェック済みIDを保持して再描画
+  const checkedIds = new Set(Array.from(document.querySelectorAll('.t-member-check:checked')).map(c => c.value));
+  buildTeamMemberList(checkedIds);
+}
+
+function setTeamMemberFilter(type, value) {
+  if (type === 'role') _tmFilterRole = value;
+  if (type === 'rank') _tmFilterRank = value;
+  // フィルターチップのアクティブ状態更新
+  document.querySelectorAll('.tm-filter-role').forEach(b => {
+    const isActive = b.dataset.value === _tmFilterRole;
+    b.style.background = isActive ? 'var(--em-pale)' : 'transparent';
+    b.style.color = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
+    b.style.borderColor = isActive ? 'var(--em-dark)' : 'var(--border)';
+  });
+  document.querySelectorAll('.tm-filter-rank').forEach(b => {
+    const isActive = b.dataset.value === _tmFilterRank;
+    b.style.background = isActive ? 'var(--em-pale)' : 'transparent';
+    b.style.color = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
+    b.style.borderColor = isActive ? 'var(--em-dark)' : 'var(--border)';
+  });
+  filterTeamMembers();
 }
 
 function updateTeamMemberCount() {
@@ -7981,10 +8054,19 @@ async function executeUpload() {
   const ext       = file.name.split('.').pop().toLowerCase();
   const baseName  = currentCreativeDetail.file_name.replace(/_v\d+$/, '');
   const generated = `${baseName}_v${version}.${ext}`;
-  const statusEl  = document.getElementById('cd-upload-status');
+  const statusEl       = document.getElementById('cd-upload-status');
+  const progressWrap   = document.getElementById('cd-upload-progress-wrap');
+  const progressBar    = document.getElementById('cd-upload-progress-bar');
+  const progressPct    = document.getElementById('cd-upload-progress-pct');
+  const progressLabel  = document.getElementById('cd-upload-progress-label');
+  const uploadBtn      = document.getElementById('cd-manual-upload-btn');
 
-  statusEl.textContent = 'アップロード中...';
-  statusEl.style.color = 'var(--em-dark)';
+  statusEl.textContent = '';
+  uploadBtn.disabled = true;
+  progressWrap.style.display = '';
+  progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%;transition:width .3s ease';
+  progressLabel.textContent = 'サーバーへ送信中...';
+  progressPct.textContent = '0%';
 
   const formData = new FormData();
   formData.append('file', file, generated);
@@ -7993,41 +8075,76 @@ async function executeUpload() {
   formData.append('version',        version);
   formData.append('generated_name', generated);
 
-  try {
-    const res  = await fetch(`${API}/creatives/${currentCreativeDetail.id}/upload`, { method: 'POST', body: formData });
-    const data = await res.json();
-    if (res.ok) {
-      if (data.drive_url) {
-        statusEl.textContent = 'アップロード完了！';
-        statusEl.style.color = 'var(--em-dark)';
-      } else {
-        statusEl.textContent = `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
-        statusEl.style.color = '#d97706';
+  await new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+
+    // フェーズ1: クライアント → サーバー（リアル進捗）
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round(e.loaded / e.total * 100);
+      progressBar.style.width = pct + '%';
+      progressPct.textContent = pct + '%';
+      if (pct >= 100) {
+        // フェーズ2: サーバー → Drive（シマーアニメーション）
+        progressLabel.textContent = 'Driveへ転送中...';
+        progressPct.textContent = '';
+        progressBar.style.cssText = `height:100%;border-radius:6px;width:100%;
+          background:linear-gradient(90deg, var(--primary) 0%, var(--em) 40%, var(--primary) 100%);
+          background-size:200% auto;
+          animation:upload-shimmer 1.4s linear infinite`;
       }
-      await loadCreativeFiles(currentCreativeDetail.id);
-      document.getElementById('cd-upload-input').value = '';
-      document.getElementById('cd-upload-preview').style.display = 'none';
-      uploadFileData = null;
-      // 制作中（初稿提出前）→ Dチェック へ移行確認
-      if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-        const editorComment = document.getElementById('cd-comment-field').value.trim();
-        if (!editorComment) {
-          statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
-          statusEl.style.color = '#E24B4A';
+    };
+
+    xhr.onload = async () => {
+      progressWrap.style.display = 'none';
+      uploadBtn.disabled = false;
+      progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status === 200) {
+          if (data.drive_url) {
+            statusEl.textContent = 'アップロード完了！';
+            statusEl.style.color = 'var(--em-dark)';
+          } else {
+            statusEl.textContent = `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
+            statusEl.style.color = '#d97706';
+          }
+          await loadCreativeFiles(currentCreativeDetail.id);
+          document.getElementById('cd-upload-input').value = '';
+          document.getElementById('cd-upload-preview').style.display = 'none';
+          uploadFileData = null;
+          if (currentCreativeDetail.status === '制作中（初稿提出前）') {
+            const editorComment = document.getElementById('cd-comment-field').value.trim();
+            if (!editorComment) {
+              statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
+              statusEl.style.color = '#E24B4A';
+            } else {
+              const confirmDCheck = document.getElementById('cd-dcheck-confirm');
+              if (confirmDCheck) confirmDCheck.style.display = '';
+            }
+          }
         } else {
-          // 確認バーを表示
-          const confirmDCheck = document.getElementById('cd-dcheck-confirm');
-          if (confirmDCheck) confirmDCheck.style.display = '';
+          statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー');
+          statusEl.style.color = '#E24B4A';
         }
+      } catch(e) {
+        statusEl.textContent = 'レスポンスの解析に失敗しました';
+        statusEl.style.color = '#E24B4A';
       }
-    } else {
-      statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー');
+      resolve();
+    };
+
+    xhr.onerror = () => {
+      progressWrap.style.display = 'none';
+      uploadBtn.disabled = false;
+      statusEl.textContent = 'ネットワークエラー';
       statusEl.style.color = '#E24B4A';
-    }
-  } catch(e) {
-    statusEl.textContent = 'ネットワークエラー: ' + e.message;
-    statusEl.style.color = '#E24B4A';
-  }
+      resolve();
+    };
+
+    xhr.open('POST', `${API}/creatives/${currentCreativeDetail.id}/upload`);
+    xhr.send(formData);
+  });
 }
 
 async function loadVersionHistory_DISABLED(creativeId) {

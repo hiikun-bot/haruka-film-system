@@ -1612,7 +1612,8 @@ router.get('/teams', async (req, res) => {
     .select(`
       *,
       director:users!teams_director_id_fkey(id, full_name),
-      producer:users!teams_producer_id_fkey(id, full_name)
+      producer:users!teams_producer_id_fkey(id, full_name),
+      team_members(user_id)
     `)
     .order('team_code');
   if (error) return res.status(500).json({ error: error.message });
@@ -1651,14 +1652,13 @@ router.put('/teams/:id', async (req, res) => {
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
-  // メンバー所属チーム更新
+  // team_members 中間テーブルで管理（users.team_id は基本チームとして変更しない）
   if (member_ids !== undefined) {
     const teamId = req.params.id;
-    // 既存メンバーを一旦解除
-    await supabase.from('users').update({ team_id: null }).eq('team_id', teamId);
-    // 選択メンバーを割り当て
+    await supabase.from('team_members').delete().eq('team_id', teamId);
     if (member_ids.length > 0) {
-      const { error: e2 } = await supabase.from('users').update({ team_id: teamId }).in('id', member_ids);
+      const inserts = member_ids.map(uid => ({ team_id: teamId, user_id: uid }));
+      const { error: e2 } = await supabase.from('team_members').insert(inserts);
       if (e2) return res.status(500).json({ error: e2.message });
     }
   }
