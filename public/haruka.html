@@ -257,9 +257,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <div class="hfs-header">
   <div class="logo-area">
-    <div class="logo-main">HARUKA FILM</div>
+    <div class="logo-main" id="ws-logo-main">HARUKA FILM</div>
     <div class="logo-line"></div>
-    <div class="logo-sub">光を当てる、あなたのストーリーに</div>
+    <div class="logo-sub" id="ws-logo-sub">光を当てる、あなたのストーリーに</div>
   </div>
   <div class="header-nav">
     <button class="nav-btn active" onclick="showPage('dashboard',this)">ホーム</button>
@@ -2128,7 +2128,23 @@ let currentCreativeDetail = null;  // 詳細モーダルで開いているクリ
 let uploadFileData = null;          // { file, width, height }
 let currentUploadedFileCount = 0;   // アップロード済みファイル数（バージョン自動計算用）
 
+async function loadWorkspaceInfo() {
+  try {
+    const res = await fetch(`${API}/workspace`);
+    if (!res.ok) return;
+    const ws = await res.json();
+    document.title = `${ws.name} SYSTEM`;
+    const logoMain = document.getElementById('ws-logo-main');
+    if (logoMain) logoMain.textContent = ws.name;
+    if (ws.primary_color && ws.primary_color !== '#3ECFCA') {
+      document.documentElement.style.setProperty('--em', ws.primary_color);
+    }
+    window._workspace = ws;
+  } catch(e) { /* デフォルト値のまま */ }
+}
+
 async function init() {
+  loadWorkspaceInfo();
   try {
     const res = await fetch('/auth/me');
     if (res.ok) {

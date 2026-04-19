@@ -27,6 +27,23 @@ function driveLog(level, msg, extra = {}) {
   console.log(`[DRIVE ${tag}] ${msg}`, Object.keys(extra).length ? JSON.stringify(extra) : '');
 }
 
+// ==================== ワークスペース情報 ====================
+router.get('/workspace', (_req, res) => {
+  res.json({
+    workspace_number : parseInt(process.env.WORKSPACE_NUMBER || '1'),
+    name             : process.env.WORKSPACE_NAME  || 'HARUKA FILM',
+    slug             : process.env.WORKSPACE_SLUG  || 'haruka-film',
+    primary_color    : process.env.PRIMARY_COLOR   || '#3ECFCA',
+  });
+});
+
+// ログイン中ユーザー情報
+router.get('/me', (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
+  const { id, email, full_name, role, rank, team_id, avatar_url, workspace_id } = req.user;
+  res.json({ id, email, full_name, role, rank, team_id, avatar_url, workspace_id });
+});
+
 // ログ取得エンドポイント
 router.get('/upload-logs', requireAuth, (_req, res) => {
   res.json({ logs: [..._uploadLogs].reverse() });

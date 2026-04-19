@@ -480,3 +480,89 @@ CREATE INDEX IF NOT EXISTS idx_ccr_file ON creative_checklist_results(creative_f
 -- ==================== Premiere Pro UXP 連携 ====================
 -- creative_files に Premiere Pro プロジェクトID（documentID）を紐づけ
 ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS premiere_project_id TEXT;
+
+-- ====================================================================================
+-- ワークスペース（マルチチーム対応）
+-- 各チームが独自のインフラ（Railway/Supabase/Drive）でデプロイし、
+-- workspace_number で識別する。データは完全に分離される。
+-- ====================================================================================
+
+-- ==================== workspaces ====================
+CREATE TABLE IF NOT EXISTS workspaces (
+  id               UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_number INTEGER UNIQUE NOT NULL,        -- 1, 2, 3 ... 人間が読む番号
+  name             TEXT    NOT NULL,               -- "HARUKA FILM"
+  slug             TEXT    UNIQUE NOT NULL,        -- "haruka-film"（URLや識別子用）
+  owner_email      TEXT,                           -- 契約者・管理者メール
+  is_active        BOOLEAN DEFAULT true,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+
+-- ==================== workspace_configs ====================
+-- ワークスペースごとの機能フラグ・UIカスタマイズ
+CREATE TABLE IF NOT EXISTS workspace_configs (
+  workspace_id          UUID    PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  -- 機能フラグ
+  enable_invoices       BOOLEAN DEFAULT true,   -- 請求機能
+  enable_checklist      BOOLEAN DEFAULT true,   -- チェックリスト
+  enable_premiere       BOOLEAN DEFAULT false,  -- Premiere連携
+  enable_cl_check       BOOLEAN DEFAULT true,   -- CLチェックフロー
+  enable_knowledge      BOOLEAN DEFAULT true,   -- ナレッジ
+  -- UIカスタマイズ
+  primary_color         TEXT    DEFAULT '#3ECFCA',
+  logo_text             TEXT    DEFAULT 'HARUKA FILM',
+  logo_sub_text         TEXT    DEFAULT '光を当てる、あなたのストーリーに',
+  -- 請求設定
+  default_billing_type  TEXT    DEFAULT 'per_video', -- per_video / fixed
+  updated_at            TIMESTAMPTZ DEFAULT now()
+);
+
+-- ==================== client_configs ====================
+-- クライアントごとの個別カスタマイズフラグ
+CREATE TABLE IF NOT EXISTS client_configs (
+  client_id                  UUID    PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+  enable_cl_check            BOOLEAN DEFAULT true,    -- CL確認フローあり/なし
+  billing_type               TEXT    DEFAULT 'per_video',
+  sync_products_default      BOOLEAN DEFAULT true,    -- 商材を案件に自動同期
+  sync_appeal_axes_default   BOOLEAN DEFAULT true,    -- 訴求軸を案件に自動同期
+  note                       TEXT,                    -- 運用メモ
+  updated_at                 TIMESTAMPTZ DEFAULT now()
+);
+
+-- ==================== workspace_id カラム追加 ====================
+ALTER TABLE users             ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+ALTER TABLE clients           ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+ALTER TABLE teams             ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+
+-- ==================== 初期データ：HARUKA FILM をワークスペース#1として登録 ====================
+INSERT INTO workspaces (workspace_number, name, slug, owner_email)
+VALUES (1, 'HARUKA FILM', 'haruka-film', 'hiikun.ascs@gmail.com')
+ON CONFLICT (workspace_number) DO NOTHING;
+
+INSERT INTO workspace_configs (workspace_id)
+SELECT id FROM workspaces WHERE workspace_number = 1
+ON CONFLICT (workspace_id) DO NOTHING;
+
+-- ==================== 既存データをワークスペース#1に移行 ====================
+UPDATE users
+SET workspace_id = (SELECT id FROM workspaces WHERE workspace_number = 1)
+WHERE workspace_id IS NULL;
+
+UPDATE clients
+SET workspace_id = (SELECT id FROM workspaces WHERE workspace_number = 1)
+WHERE workspace_id IS NULL;
+
+UPDATE teams
+SET workspace_id = (SELECT id FROM workspaces WHERE workspace_number = 1)
+WHERE workspace_id IS NULL;
+
+UPDATE master_categories
+SET workspace_id = (SELECT id FROM workspaces WHERE workspace_number = 1)
+WHERE workspace_id IS NULL;
+
+-- client_configs を既存クライアント全件に生成
+INSERT INTO client_configs (client_id)
+SELECT id FROM clients
+ON CONFLICT (client_id) DO NOTHING;
