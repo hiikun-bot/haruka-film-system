@@ -762,7 +762,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:4px">以下のファイルを登録します。内容を確認してOKを押してください。</div>
         <div id="bulk-confirm-count" style="font-size:12px;color:var(--text-muted)"></div>
       </div>
-      <div id="bulk-confirm-list" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;font-size:12px">
+      <div id="bulk-confirm-list" style="max-height:360px;overflow-y:auto;overflow-x:auto;border:1px solid var(--border);border-radius:8px;font-size:12px">
         <!-- JS で生成 -->
       </div>
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;border-top:0.5px solid var(--border-light);padding-top:14px">
@@ -1768,36 +1768,84 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- クリエイティブ修正モーダル -->
 <div class="modal-overlay" id="modal-creative-edit">
-  <div class="modal" style="width:480px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden">
+  <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:15px;font-weight:700;color:var(--text)">クリエイティブ修正</div>
       <button class="modal-close" onclick="closeModal('modal-creative-edit')">×</button>
     </div>
-    <div style="padding:20px 24px">
-      <div style="font-size:12px;font-family:monospace;color:var(--em-dark);font-weight:600;margin-bottom:16px;word-break:break-all" id="ce-filename"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+    <div style="padding:20px 24px;display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <!-- 左カラム -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="font-size:12px;font-family:monospace;color:var(--em-dark);font-weight:600;word-break:break-all" id="ce-filename"></div>
         <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">初稿締切</label>
-          <input class="form-input" type="date" id="ce-draft-deadline">
+          <label class="form-label">動画種別</label>
+          <select class="form-select" id="ce-creative-type">
+            <option value="video_short">ショート動画</option>
+            <option value="design_thumbnail">サムネイル</option>
+            <option value="design_banner">バナー</option>
+            <option value="design_post">投稿画像</option>
+            <option value="design_story">ストーリーズ</option>
+          </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">最終納品日</label>
-          <input class="form-input" type="date" id="ce-final-deadline">
+          <label class="form-label">商材</label>
+          <select class="form-select" id="ce-product-id"><option value="">（未設定）</option></select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">媒体</label>
+            <select class="form-select" id="ce-media-code"><option value="">（任意）</option></select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">FMT</label>
+            <select class="form-select" id="ce-creative-fmt"><option value="">（任意）</option></select>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">サイズ</label>
+          <select class="form-select" id="ce-creative-size"><option value="">（任意）</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">訴求タイプ</label>
+          <select class="form-select" id="ce-appeal-type"><option value="">（未設定）</option></select>
         </div>
       </div>
-      <div class="form-group" style="margin-bottom:14px">
-        <label class="form-label">ステータス</label>
-        <select class="form-select" id="ce-status">
-          <option>未着手</option><option>制作中（初稿提出前）</option><option>台本制作</option><option>素材・ナレ作成</option><option>編集</option>
-          <option>Dチェック</option><option>Dチェック後修正</option>
-          <option>Pチェック</option><option>Pチェック後修正</option>
-          <option>クライアントチェック中</option><option>クライアントチェック後修正</option>
-          <option>納品</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">メモ（管理用）</label>
-        <textarea class="form-input" id="ce-note" rows="3" style="resize:vertical" placeholder="管理用メモ..."></textarea>
+      <!-- 右カラム -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">チーム</label>
+            <select class="form-select" id="ce-team-id" onchange="ceUpdateAssigneeSelect()"><option value="">（未設定）</option></select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">担当者</label>
+            <select class="form-select" id="ce-assignee-id"><option value="">（未設定）</option></select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">初稿締切</label>
+            <input class="form-input" type="date" id="ce-draft-deadline">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">最終納品日</label>
+            <input class="form-input" type="date" id="ce-final-deadline">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">ステータス</label>
+          <select class="form-select" id="ce-status">
+            <option>未着手</option><option>制作中（初稿提出前）</option><option>台本制作</option><option>素材・ナレ作成</option><option>編集</option>
+            <option>Dチェック</option><option>Dチェック後修正</option>
+            <option>Pチェック</option><option>Pチェック後修正</option>
+            <option>クライアントチェック中</option><option>クライアントチェック後修正</option>
+            <option>納品</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">メモ（管理用）</label>
+          <textarea class="form-input" id="ce-note" rows="4" style="resize:vertical" placeholder="管理用メモ..."></textarea>
+        </div>
       </div>
     </div>
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
@@ -1870,7 +1918,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       <!-- コメントセクション（ステータス依存ラベル） -->
       <div class="form-group" style="margin-bottom:18px">
-        <label class="form-label" id="cd-comment-label">コメント</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <label class="form-label" id="cd-comment-label" style="margin-bottom:0">コメント</label>
+          <button id="cd-template-btn" onclick="fillCommentTemplate()" style="font-size:11px;padding:3px 10px;background:#f0fdfb;border:0.5px solid var(--em);border-radius:6px;color:var(--em-dark);cursor:pointer;font-weight:500;white-space:nowrap">テンプレ挿入</button>
+        </div>
         <textarea class="form-input" id="cd-comment-field" rows="4" style="resize:vertical" placeholder="コメントを入力..."></textarea>
       </div>
 
@@ -4905,11 +4956,13 @@ async function openCreateCreative() {
   document.getElementById('bulk-final-deadline').value = lastDay;
 
   // チームセレクトを初期化
+  const teamOptions = '<option value="">未設定</option>' +
+    allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
   const teamSel = document.getElementById('c-team-id');
-  if (teamSel) {
-    teamSel.innerHTML = '<option value="">チームを選択（任意）</option>' +
-      allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
-  }
+  if (teamSel) teamSel.innerHTML = '<option value="">チームを選択（任意）</option>' +
+    allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+  const bulkTeamSel = document.getElementById('bulk-team-id');
+  if (bulkTeamSel) { bulkTeamSel.innerHTML = teamOptions; updateBulkAssigneeSelect(); }
 
   // マスターデータが未ロードなら取得
   if (!masterCategories.length || !masterItems.length) {
@@ -6327,6 +6380,21 @@ async function deleteMasterItem(id) {
 
 // ===== クリエイティブ詳細 =====
 
+function fillCommentTemplate() {
+  const template = `━━━━━━━━━━━━━━━
+内部初稿チェックお願いします！
+━━━━━━━━━━━━━━━
+【コメント】
+訴求軸：
+コンセプト：
+こだわり：
+その他：`;
+  const field = document.getElementById('cd-comment-field');
+  if (!field) return;
+  field.value = template;
+  field.focus();
+}
+
 async function openCreativeDetail(id) {
   const res = await fetch(`${API}/creatives/${id}`);
   if (!res.ok) { alert('データの取得に失敗しました'); return; }
@@ -6522,16 +6590,22 @@ function updateCreativeCommentLabel(status) {
   field.style.cursor        = isReadonly ? 'default' : '';
   field.style.borderColor   = isReadonly ? 'var(--border)' : '';
 
+  const templateBtn = document.getElementById('cd-template-btn');
+
   if (isCheckStage) {
     label.innerHTML = '編集者からのコメント <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>';
   } else if (isRevision) {
     const checkMap = { 'Dチェック後修正': 'Dチェック', 'Pチェック後修正': 'Pチェック', 'クライアントチェック後修正': 'CLチェック' };
     label.innerHTML = `${checkMap[status]}　修正指摘内容 <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>`;
-  } else if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
+  } else if (status === '未着手') {
+    label.innerHTML = 'メモ（管理用）';
+  } else if (['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
     label.innerHTML = 'ディレクターへのコメント';
   } else {
     label.innerHTML = 'コメント';
   }
+
+  if (templateBtn) templateBtn.style.display = (status === '未着手') ? 'none' : '';
 
   const uploadSection   = document.getElementById('cd-upload-section');
   const noteGroup       = document.getElementById('cd-director-note-group');
@@ -6539,7 +6613,19 @@ function updateCreativeCommentLabel(status) {
   const editorRplyGroup = document.getElementById('cd-editor-reply-group');
   const editorRplyLabel = document.getElementById('cd-editor-reply-label');
 
-  if (isCheckStage) {
+  if (status === '未着手') {
+    // 未着手: アップロード非表示、メモのみ表示
+    if (uploadSection)   uploadSection.style.display   = 'none';
+    if (noteGroup)       noteGroup.style.display       = 'none';
+    if (editorRplyGroup) editorRplyGroup.style.display = 'none';
+    field.readOnly = false;
+    field.rows = 3;
+    field.placeholder = 'メモを入力...';
+    field.style.background = '';
+    field.style.color = '';
+    field.style.cursor = '';
+    field.style.borderColor = '';
+  } else if (isCheckStage) {
     // チェック段階: アップロード非表示、ディレクターコメント欄表示
     if (uploadSection)   uploadSection.style.display   = 'none';
     if (noteGroup)       noteGroup.style.display       = '';
