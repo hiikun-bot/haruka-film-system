@@ -477,7 +477,7 @@ router.get('/creatives/:id', async (req, res) => {
     .from('creatives')
     .select(`
       *,
-      projects(id, name, producer_id, director_id, clients(id, name, client_code)),
+      projects(id, name, producer_id, director_id, regulation_url, clients(id, name, client_code)),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
@@ -1257,10 +1257,12 @@ router.get('/invoices/preview-items', async (req, res) => {
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
     const rankApplied = assignment?.rank_applied;
-    // rank_appliedが一致するレートを優先、なければ同種別・nullランクのレートをフォールバック
-    const rateKey = `${c.project_id}__${c.creative_type}__${rankApplied}`;
-    const fallbackKey = `${c.project_id}__${c.creative_type}__null`;
-    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || null;
+    const rateKey      = `${c.project_id}__${c.creative_type}__${rankApplied}`;
+    const fallbackKey  = `${c.project_id}__${c.creative_type}__null`;
+    // creative_typeが一致しない場合に備えて、同プロジェクトの最初のレートもフォールバック
+    const anyKey = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
+    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null);
+    console.log(`[rate-debug] creative=${c.id} type=${c.creative_type} rank=${rankApplied} key=${rateKey} found=${!!rate} ratesMapKeys=${Object.keys(ratesMap).join('|')}`);
     return {
       id: c.id,
       file_name: c.file_name,
