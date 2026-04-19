@@ -6644,8 +6644,14 @@ function updateCreativeCommentLabel(status) {
       const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'editor');
       editorName = editorAssign?.users?.full_name || '';
       const editorTeamId = editorAssign?.users?.team_id;
+      const editorUserId = editorAssign?.users?.id;
       if (editorTeamId) {
-        const dir = allMembers.find(m => m.team_id === editorTeamId && ['director','producer_director'].includes(m.role) && m.is_active !== false);
+        const dir = allMembers.find(m =>
+          m.team_id === editorTeamId &&
+          m.id !== editorUserId &&
+          ['director','producer_director'].includes(m.role) &&
+          m.is_active !== false
+        );
         directorName = dir?.full_name || '';
       }
     }
