@@ -6634,7 +6634,21 @@ function updateCreativeCommentLabel(status) {
   } else if (status === '未着手') {
     label.innerHTML = 'メモ（管理用）';
   } else if (['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
-    label.innerHTML = 'ディレクターへのコメント';
+    // エディター名とディレクター名を動的に取得
+    let editorName = '';
+    let directorName = '';
+    if (currentCreativeDetail) {
+      const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'editor');
+      editorName = editorAssign?.users?.full_name || '';
+      const editorTeamId = editorAssign?.users?.team_id;
+      if (editorTeamId) {
+        const dir = allMembers.find(m => m.team_id === editorTeamId && ['director','producer_director'].includes(m.role) && m.is_active !== false);
+        directorName = dir?.full_name || '';
+      }
+    }
+    const fromPart = editorName ? `<span style="font-weight:700;color:var(--text)">${editorName}</span> → ` : '';
+    const toPart   = directorName ? `ディレクター（<span style="font-weight:700;color:var(--text)">${directorName}</span>）` : 'ディレクター';
+    label.innerHTML = `${fromPart}${toPart}へのコメント`;
   } else {
     label.innerHTML = 'コメント';
   }
