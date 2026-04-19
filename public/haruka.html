@@ -1880,6 +1880,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <span id="cd-status-chip"></span>
           <span style="color:var(--text-muted)" id="cd-project-name"></span>
           <span style="color:var(--text-muted)" id="cd-assignee"></span>
+          <span id="cd-revision-count-badge" style="display:none;font-size:11px;background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 8px;font-weight:600"></span>
         </div>
       </div>
 
@@ -2033,6 +2034,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
       <!-- チェック段階用: 修正依頼 -->
       <button id="cd-revision-btn" onclick="requestRevision()" style="display:none;background:#fff;color:#d97706;border:1.5px solid #d97706;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">修正依頼</button>
+      <!-- 制作中: CL直行（DもPもスキップ） -->
+      <button id="cd-direct-cl-btn" onclick="directToClientCheck()" style="display:none;background:#fff;color:#6366f1;border:1.5px solid #6366f1;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">CL直行 →</button>
       <!-- Dチェック時: Pをスキップして CL直行（Pあり案件のみ） -->
       <button id="cd-skip-p-btn" onclick="skipToClientCheck()" style="display:none;background:#fff;color:#6366f1;border:1.5px solid #6366f1;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Pスキップ → CL確認</button>
       <!-- 承認 or 次ステップ -->
@@ -6466,6 +6469,13 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass(c.status)}">${c.status}</span>`;
   document.getElementById('cd-project-name').textContent = c.projects?.name || '-';
   document.getElementById('cd-assignee').textContent = editor?.users?.full_name ? `担当: ${editor.users.full_name}` : '担当者未設定';
+  // 修正回数バッジ
+  const revBadge = document.getElementById('cd-revision-count-badge');
+  if (revBadge) {
+    const cnt = c.revision_count || 0;
+    if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
+    else revBadge.style.display = 'none';
+  }
 
   // 納期バー
   (function() {
@@ -6599,16 +6609,20 @@ function updateCreativeStepIndicator(status) {
     'Dチェック後修正': 'Dチェック',
     'クライアントチェック後修正': 'クライアントチェック中',
   };
-  const nextBtn     = document.getElementById('cd-next-step-btn');
-  const revisionBtn = document.getElementById('cd-revision-btn');
-  const skipPBtn    = document.getElementById('cd-skip-p-btn');
+  const nextBtn      = document.getElementById('cd-next-step-btn');
+  const revisionBtn  = document.getElementById('cd-revision-btn');
+  const skipPBtn     = document.getElementById('cd-skip-p-btn');
+  const directClBtn  = document.getElementById('cd-direct-cl-btn');
   if (!nextBtn) return;
 
   // チェック段階: 修正依頼 ＋ 承認 の2ボタン
   const CHECK_STAGES = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
   const isCheckStage = CHECK_STAGES.includes(status);
 
+  const PRODUCTION_STAGES = ['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
+
   if (isCheckStage) {
+    if (directClBtn) directClBtn.style.display = 'none';
     // 修正依頼ボタン
     revisionBtn.style.display = '';
     const revisionLabel = { 'Dチェック': 'Dチェック後修正', 'Pチェック': 'Pチェック後修正', 'クライアントチェック中': 'クライアントチェック後修正' };
@@ -6629,8 +6643,10 @@ function updateCreativeStepIndicator(status) {
     if (skipPBtn) skipPBtn.style.display = (status === 'Dチェック' && hasProducer) ? '' : 'none';
   } else {
     revisionBtn.style.display = 'none';
-    const next = NEXT[status];
     if (skipPBtn) skipPBtn.style.display = 'none';
+    const next = NEXT[status];
+    // CL直行ボタン: 制作中ステージのみ表示
+    if (directClBtn) directClBtn.style.display = PRODUCTION_STAGES.includes(status) ? '' : 'none';
     if (next) {
       nextBtn.style.display = '';
       const RESUBMIT = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
@@ -6752,6 +6768,21 @@ function updateCreativeCommentLabel(status) {
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
   }
+}
+
+async function directToClientCheck() {
+  if (!currentCreativeDetail) return;
+  if (!confirm('DチェックとPチェックをスキップして、直接CL確認に進めますか？\nファイルがアップロード済みであることを確認してください。')) return;
+  const body = {
+    status: 'クライアントチェック中',
+    director_comment: document.getElementById('cd-comment-field').value.trim() || null,
+    script_url: document.getElementById('cd-script-url').value.trim() || null,
+  };
+  const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
+  else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
 async function skipToClientCheck() {
@@ -8148,7 +8179,12 @@ async function saveCreativeDetail(overrideStatus) {
     frameio_url:      document.getElementById('cd-frameio-url').value.trim() || null,
     director_comment: noteValue ?? (isRevision ? editorReplyValue : null) ?? (document.getElementById('cd-comment-field').value.trim() || null),
   };
-  if (overrideStatus) body.status = overrideStatus;
+  if (overrideStatus) {
+    body.status = overrideStatus;
+    if (REVISION_STATUSES.includes(overrideStatus)) {
+      body.revision_count = (currentCreativeDetail.revision_count || 0) + 1;
+    }
+  }
   const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
