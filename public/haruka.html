@@ -1910,6 +1910,24 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
 
+      <!-- 担当者セクション（未着手のみ） -->
+      <div id="cd-assignee-section" style="display:none;margin-bottom:18px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">チーム</label>
+            <select class="form-select" id="cd-team-id" onchange="cdUpdateAssigneeSelect()">
+              <option value="">（未設定）</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">担当者 <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">制作中に必須</span></label>
+            <select class="form-select" id="cd-assignee-id">
+              <option value="">（未設定）</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <!-- コメントセクション（ステータス依存ラベル） -->
       <div class="form-group" style="margin-bottom:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -6374,6 +6392,16 @@ async function deleteMasterItem(id) {
 
 // ===== クリエイティブ詳細 =====
 
+function cdUpdateAssigneeSelect() {
+  const teamId = document.getElementById('cd-team-id').value;
+  const sel = document.getElementById('cd-assignee-id');
+  const members = teamId
+    ? allMembers.filter(m => m.team_id === teamId && m.is_active !== false)
+    : allMembers.filter(m => m.is_active !== false);
+  sel.innerHTML = '<option value="">（未設定）</option>' +
+    members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+}
+
 function fillCommentTemplate() {
   const template = `━━━━━━━━━━━━━━━
 内部初稿チェックお願いします！
@@ -6426,6 +6454,18 @@ async function openCreativeDetail(id) {
   // URL
   document.getElementById('cd-script-url').value = c.script_url  || '';
   document.getElementById('cd-frameio-url').value = c.frameio_url || '';
+
+  // 担当者ドロップダウン初期化（未着手用）
+  const cdTeamSel = document.getElementById('cd-team-id');
+  if (cdTeamSel) {
+    cdTeamSel.innerHTML = '<option value="">（未設定）</option>' +
+      allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+    const currentAssignee = (c.creative_assignments || []).find(a => a.role === 'editor');
+    const currentUser = currentAssignee?.users;
+    cdTeamSel.value = currentUser?.team_id || '';
+    cdUpdateAssigneeSelect();
+    document.getElementById('cd-assignee-id').value = currentUser?.id || '';
+  }
 
   // コメント（ステータス依存ラベル）
   document.getElementById('cd-comment-field').value = c.director_comment || '';
@@ -6607,11 +6647,13 @@ function updateCreativeCommentLabel(status) {
   const editorRplyGroup = document.getElementById('cd-editor-reply-group');
   const editorRplyLabel = document.getElementById('cd-editor-reply-label');
 
+  const assigneeSection = document.getElementById('cd-assignee-section');
   if (status === '未着手') {
-    // 未着手: アップロード非表示、メモのみ表示
-    if (uploadSection)   uploadSection.style.display   = 'none';
-    if (noteGroup)       noteGroup.style.display       = 'none';
-    if (editorRplyGroup) editorRplyGroup.style.display = 'none';
+    // 未着手: アップロード非表示、チーム・担当者・メモのみ表示
+    if (uploadSection)    uploadSection.style.display    = 'none';
+    if (noteGroup)        noteGroup.style.display        = 'none';
+    if (editorRplyGroup)  editorRplyGroup.style.display  = 'none';
+    if (assigneeSection)  assigneeSection.style.display  = '';
     field.readOnly = false;
     field.rows = 3;
     field.placeholder = 'メモを入力...';
@@ -6621,6 +6663,7 @@ function updateCreativeCommentLabel(status) {
     field.style.borderColor = '';
   } else if (isCheckStage) {
     // チェック段階: アップロード非表示、ディレクターコメント欄表示
+    if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = 'none';
     if (noteGroup)       noteGroup.style.display       = '';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
@@ -6630,6 +6673,7 @@ function updateCreativeCommentLabel(status) {
     }
   } else if (isRevision) {
     // 後修正: 修正指摘は読み取り専用、編集者返信欄を表示
+    if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = '';
@@ -6639,6 +6683,7 @@ function updateCreativeCommentLabel(status) {
     }
   } else {
     // 通常制作中
+    if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
@@ -6649,6 +6694,29 @@ async function advanceCreativeStatus() {
   if (!currentCreativeDetail) return;
   const target = document.getElementById('cd-next-step-btn')?.dataset?.target;
   if (!target) return;
+
+  // 未着手→制作中 は担当者必須
+  if (currentCreativeDetail.status === '未着手') {
+    const assigneeId = document.getElementById('cd-assignee-id')?.value;
+    if (!assigneeId) {
+      alert('担当者を設定してください。担当者なしで制作中には進めません。');
+      document.getElementById('cd-assignee-id')?.focus();
+      return;
+    }
+    if (!confirm(`「${target}」に進めますか？`)) return;
+    const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: target,
+        assignee_id: assigneeId,
+        director_comment: document.getElementById('cd-comment-field').value.trim() || null,
+      }),
+    });
+    if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
+    else { const e = await res.json(); alert('エラー: ' + e.error); }
+    return;
+  }
 
   // 制作中→Dチェック は納品ファイルのアップロードが必須
   if (currentCreativeDetail.status === '制作中（初稿提出前）') {
