@@ -1777,8 +1777,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ✅ チェックリスト
         </div>
+        <div id="mnav-roles" class="master-nav-item" onclick="selectMasterNav('roles')"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
+          🔐 ロール権限
+        </div>
         <div id="mnav-sysconfig" class="master-nav-item" onclick="selectMasterNav('sysconfig')"
-          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ⚙️ システム設定
         </div>
       </div>
@@ -5480,7 +5484,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','checklist','sysconfig'].forEach(t => {
+  ['generic','general','products','appeal_axes','checklist','roles','sysconfig'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -5500,6 +5504,8 @@ function selectMasterNav(type) {
     renderAppealAxesMasterPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
+  } else if (type === 'roles') {
+    renderRolesPage();
   } else if (type === 'sysconfig') {
     renderSysconfigPage();
   }
@@ -5517,6 +5523,95 @@ async function loadMasterPage() {
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
   selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
+}
+
+// ==================== ロール権限マトリクス ====================
+function renderRolesPage() {
+  const content = document.getElementById('master-content');
+
+  const roles = [
+    { key: 'admin',            label: '管理者',        color: '#C0392B' },
+    { key: 'secretary',        label: '秘書',           color: '#7D3C98' },
+    { key: 'producer',         label: 'プロデューサー', color: '#1A5276' },
+    { key: 'producer_director',label: 'P兼D',           color: '#1A5276' },
+    { key: 'director',         label: 'ディレクター',   color: '#1E8449' },
+    { key: 'editor',           label: '編集者',         color: '#7E5109' },
+    { key: 'designer',         label: 'デザイナー',     color: '#7E5109' },
+  ];
+
+  // [section, label, check fn]
+  const permissions = [
+    // ダッシュボード
+    { section: 'ダッシュボード', label: '売上サマリー閲覧', fn: r => ['admin'].includes(r) },
+    { section: 'ダッシュボード', label: '月次予測閲覧',     fn: r => ['admin'].includes(r) },
+    // 案件
+    { section: '案件管理', label: '案件作成・編集',     fn: r => ['admin','secretary','producer','producer_director'].includes(r) },
+    { section: '案件管理', label: '単価設定閲覧',        fn: r => ['admin','producer','producer_director'].includes(r) },
+    { section: '案件管理', label: '報酬設定閲覧',        fn: r => ['admin','secretary'].includes(r) },
+    // クリエイティブ
+    { section: 'クリエイティブ', label: '全案件のCL閲覧',     fn: r => ['admin','secretary','producer','producer_director'].includes(r) },
+    { section: 'クリエイティブ', label: 'ランク・単価列表示', fn: r => ['admin','producer','producer_director','director'].includes(r) },
+    { section: 'クリエイティブ', label: '一括登録（CSV）',     fn: r => ['admin','secretary','producer','producer_director'].includes(r) },
+    // メンバー
+    { section: 'メンバー管理', label: 'メンバー一覧閲覧',   fn: r => ['admin','secretary','producer','producer_director','director'].includes(r) },
+    { section: 'メンバー管理', label: 'メンバー編集・PW変更', fn: r => ['admin','secretary'].includes(r) },
+    { section: 'メンバー管理', label: 'メンバー無効化',       fn: r => ['admin','secretary'].includes(r) },
+    { section: 'メンバー管理', label: 'メンバー削除（完全）',  fn: r => ['admin'].includes(r) },
+    // チーム
+    { section: 'チーム管理', label: 'チーム作成・編集', fn: r => ['admin','secretary'].includes(r) },
+    { section: 'チーム管理', label: 'メンバー割当',      fn: r => ['admin','secretary'].includes(r) },
+    // 請求
+    { section: '請求管理', label: '自分の請求作成・確認', fn: r => ['admin','secretary','producer','producer_director','director','editor','designer'].includes(r) },
+    { section: '請求管理', label: '全員の請求一覧閲覧',   fn: r => ['admin','secretary'].includes(r) },
+    // マスター
+    { section: 'マスター管理', label: 'マスター管理ページ', fn: r => ['admin','secretary'].includes(r) },
+    { section: 'マスター管理', label: 'システム設定',        fn: r => ['admin'].includes(r) },
+    // システム
+    { section: 'システム', label: 'VIEW AS（ロールプレビュー）', fn: r => ['admin'].includes(r) },
+  ];
+
+  const sections = [...new Set(permissions.map(p => p.section))];
+
+  const O = '✅'; const X = '<span style="color:var(--text-faint)">—</span>';
+
+  const headerCells = roles.map(r =>
+    `<th style="padding:8px 10px;font-size:11px;font-weight:600;white-space:nowrap;color:${r.color};border-bottom:2px solid ${r.color}33;min-width:72px;text-align:center">${r.label}</th>`
+  ).join('');
+
+  let rows = '';
+  let prevSection = '';
+  permissions.forEach(p => {
+    if (p.section !== prevSection) {
+      rows += `<tr><td colspan="${roles.length + 1}" style="padding:14px 12px 4px;font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:.06em;text-transform:uppercase;background:var(--bg)">${p.section}</td></tr>`;
+      prevSection = p.section;
+    }
+    const cells = roles.map(r => {
+      const ok = p.fn(r.key);
+      return `<td style="padding:7px 10px;text-align:center;font-size:13px;border-bottom:1px solid var(--border-light)">${ok ? O : X}</td>`;
+    }).join('');
+    rows += `<tr style="background:var(--surface)">
+      <td style="padding:7px 12px;font-size:13px;color:var(--text);border-bottom:1px solid var(--border-light);white-space:nowrap">${p.label}</td>
+      ${cells}
+    </tr>`;
+  });
+
+  content.innerHTML = `
+    <div style="max-width:900px">
+      <h3 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 4px">ロール権限マトリクス</h3>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 20px">各ロールが持つシステム機能へのアクセス権限一覧</p>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="background:var(--bg)">
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);min-width:160px">機能</th>
+              ${headerCells}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p style="font-size:11px;color:var(--text-faint);margin-top:12px">※ このマトリクスはシステムのロールチェック実装に基づく参照用です。実際の挙動が優先されます。</p>
+    </div>`;
 }
 
 // ==================== システム設定 ====================
