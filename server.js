@@ -54,6 +54,20 @@ app.use(passportInstance.session());
 // Webhookエンドポイントはraw bodyが必要なため、先に定義
 app.use('/webhook/frameio', express.raw({ type: 'application/json' }));
 app.use(express.json());
+
+// last_seen_at 更新ミドルウェア（認証済みAPIリクエストのみ、5分ごと）
+const _lastSeenCache = new Map();
+app.use('/api/', (req, res, next) => {
+  if (!req.isAuthenticated?.() || !req.user?.id) return next();
+  const uid = req.user.id;
+  const now = Date.now();
+  if (!_lastSeenCache.has(uid) || now - _lastSeenCache.get(uid) > 5 * 60 * 1000) {
+    _lastSeenCache.set(uid, now);
+    supabase.from('users').update({ last_seen_at: new Date().toISOString() }).eq('id', uid).then(() => {});
+  }
+  next();
+});
+
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
 
@@ -743,8 +757,13 @@ app.post('/auth/login', (req, res, next) => {
   passportInstance.authenticate('local', (err, user, info) => {
     if (err)    return next(err);
     if (!user)  return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
-    req.logIn(user, err => {
+    req.logIn(user, async err => {
       if (err) return next(err);
+      // ログイン記録
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const ua = req.headers['user-agent'] || '';
+      await supabase.from('user_activity_logs').insert({ user_id: user.id, action: 'login', ip_address: ip, user_agent: ua });
+      await supabase.from('users').update({ login_count: (user.login_count || 0) + 1, last_seen_at: new Date().toISOString() }).eq('id', user.id);
       res.json({ ok: true, user: safeUser(user) });
     });
   })(req, res, next);

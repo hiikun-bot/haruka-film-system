@@ -1918,9 +1918,59 @@ router.post('/projects/:id/appeal-axes/copy-from-client', async (req, res) => {
   res.json({ copied: inserts.length });
 });
 
-// ==================== システム設定 ====================
+// ==================== ユーザー利用状況 ====================
 
 const SUPER_ADMIN_EMAILS = ['hiikun.ascs@gmail.com', 'satoru.takahashi@haruka-film.com'];
+
+router.get('/admin/user-stats', requireAuth, async (req, res) => {
+  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) return res.status(403).json({ error: '権限がありません' });
+
+  // 全ユーザー取得
+  const { data: users } = await supabase
+    .from('users')
+    .select('id, full_name, email, role, rank, is_active, last_seen_at, login_count, created_at')
+    .order('last_seen_at', { ascending: false, nullsFirst: false });
+
+  // 直近30日のログインログ（ユーザーごとの集計）
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: logs } = await supabase
+    .from('user_activity_logs')
+    .select('user_id, action, ip_address, user_agent, created_at')
+    .eq('action', 'login')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false });
+
+  // ユーザーごとの直近30日ログイン回数・最終ログイン
+  const logMap = {};
+  (logs || []).forEach(l => {
+    if (!logMap[l.user_id]) logMap[l.user_id] = { count: 0, last_login: null, last_ua: '', last_ip: '' };
+    logMap[l.user_id].count++;
+    if (!logMap[l.user_id].last_login) {
+      logMap[l.user_id].last_login  = l.created_at;
+      logMap[l.user_id].last_ua     = l.user_agent;
+      logMap[l.user_id].last_ip     = l.ip_address;
+    }
+  });
+
+  const now = Date.now();
+  const result = (users || []).map(u => {
+    const log = logMap[u.id] || {};
+    const lastSeenMs = u.last_seen_at ? new Date(u.last_seen_at).getTime() : null;
+    const isOnline = lastSeenMs && (now - lastSeenMs) < 10 * 60 * 1000; // 10分以内
+    return {
+      ...u,
+      login_count_30d: log.count || 0,
+      last_login:      log.last_login || null,
+      last_ua:         log.last_ua || '',
+      last_ip:         log.last_ip || '',
+      is_online:       !!isOnline,
+    };
+  });
+
+  res.json(result);
+});
+
+// ==================== システム設定 ====================
 
 // システム設定取得（認証済みなら誰でも読める）
 router.get('/system-settings', requireAuth, async (_req, res) => {

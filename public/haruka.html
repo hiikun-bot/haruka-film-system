@@ -2025,6 +2025,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
           🔐 ロール権限
         </div>
+        <div id="mnav-userstats" class="master-nav-item" onclick="selectMasterNav('userstats')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📊 利用状況
+        </div>
         <div id="mnav-sysconfig" class="master-nav-item" onclick="selectMasterNav('sysconfig')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ⚙️ システム設定
@@ -4162,6 +4166,8 @@ function applyRoleBasedUI() {
   if (masterNav) masterNav.style.display = isEffectiveAdmin() ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
   if (drawerMaster) drawerMaster.style.display = isEffectiveAdmin() ? '' : 'none';
+  const userStatsNav = document.getElementById('mnav-userstats');
+  if (userStatsNav) userStatsNav.style.display = isSuperAdmin() ? '' : 'none';
   // ドロワーのユーザー情報
   const drawerUser = document.getElementById('nav-drawer-user');
   if (drawerUser && currentUser) {
@@ -5799,7 +5805,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','checklist','roles','sysconfig'].forEach(t => {
+  ['generic','general','products','appeal_axes','checklist','roles','userstats','sysconfig'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -5821,6 +5827,8 @@ function selectMasterNav(type) {
     renderChecklistMasterPage();
   } else if (type === 'roles') {
     renderRolesPage();
+  } else if (type === 'userstats') {
+    renderUserStatsPage();
   } else if (type === 'sysconfig') {
     renderSysconfigPage();
   }
@@ -5838,6 +5846,76 @@ async function loadMasterPage() {
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
   selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
+}
+
+// ==================== ユーザー利用状況 ====================
+async function renderUserStatsPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+
+  const res = await fetch(`${API}/admin/user-stats`);
+  if (!res.ok) { content.innerHTML = '<div style="color:#E24B4A;padding:20px">アクセス権限がありません</div>'; return; }
+  const users = await res.json();
+
+  const fmtDate = s => s ? new Date(s).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+  const fmtDevice = ua => {
+    if (!ua) return '—';
+    if (/iPhone|iPad/.test(ua)) return '📱 iOS';
+    if (/Android/.test(ua)) return '📱 Android';
+    if (/Mac/.test(ua)) return '💻 Mac';
+    if (/Windows/.test(ua)) return '💻 Windows';
+    return '🌐 その他';
+  };
+
+  const rows = users.map(u => `
+    <tr style="background:var(--surface)">
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;white-space:nowrap">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${u.is_online ? '#22c55e' : '#d1d5db'};flex-shrink:0;display:inline-block"></span>
+          ${esc(u.full_name || u.email)}
+        </div>
+      </td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${esc(u.email)}</td>
+      <td style="padding:8px 12px;text-align:center"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(u.role)}</span></td>
+      <td style="padding:8px 12px;text-align:center;font-size:13px;font-weight:600;color:var(--em-dark)">${u.login_count || 0}</td>
+      <td style="padding:8px 12px;text-align:center;font-size:12px;color:var(--em-dark);font-weight:600">${u.login_count_30d}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap">${fmtDate(u.last_login)}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap">${fmtDate(u.last_seen_at)}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${fmtDevice(u.last_ua)}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${esc(u.last_ip || '—')}</td>
+    </tr>`).join('');
+
+  const onlineCount = users.filter(u => u.is_online).length;
+
+  content.innerHTML = `
+    <div style="max-width:1100px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <h3 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 4px">📊 ユーザー利用状況</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0">現在オンライン: <strong style="color:#22c55e">${onlineCount}人</strong>　全体: ${users.length}人</p>
+        </div>
+        <button class="btn" onclick="renderUserStatsPage()" style="font-size:12px;padding:6px 14px">🔄 更新</button>
+      </div>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="position:sticky;top:0;z-index:2;background:var(--bg)">
+            <tr>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">名前</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">メール</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">ロール</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">総ログイン</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">30日ログイン</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">最終ログイン</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">最終アクティブ</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">デバイス</th>
+              <th style="padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">IPアドレス</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p style="font-size:11px;color:var(--text-faint);margin-top:10px">● 緑 = 10分以内にアクティブ　ログインは今回起動以降から記録されます</p>
+    </div>`;
 }
 
 // ==================== ロール権限マトリクス ====================
