@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 仕様相談・雑談
+    url: https://github.com/hiikun-bot/haruka-film-system/discussions
+    about: 実装前の仕様相談や方針検討はこちら（DiscussionsがONの場合）
