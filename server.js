@@ -60,6 +60,12 @@ app.use('/api/haruka', harukaRouter);
 // login.html・invite.htmlは認証不要でアクセス可能
 app.use('/login.html',  express.static(path.join(__dirname, 'public/login.html')));
 app.use('/invite.html', express.static(path.join(__dirname, 'public/invite.html')));
+// PWA: manifest・service-workerは認証不要
+app.use('/manifest.json',     express.static(path.join(__dirname, 'public/manifest.json')));
+app.use('/service-worker.js', express.static(path.join(__dirname, 'public/service-worker.js')));
+app.use('/icon-192.png',      express.static(path.join(__dirname, 'public/icon-192.png')));
+app.use('/icon-512.png',      express.static(path.join(__dirname, 'public/icon-512.png')));
+app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-180.png')));
 // その他の静的ファイルは認証後のみ
 app.use(express.static(path.join(__dirname, 'public')));
 
