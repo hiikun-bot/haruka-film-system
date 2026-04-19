@@ -1636,7 +1636,7 @@ router.post('/teams', async (req, res) => {
 
 // チーム更新
 router.put('/teams/:id', async (req, res) => {
-  const { team_name, team_type, director_id, producer_id, is_active } = req.body;
+  const { team_name, team_type, director_id, producer_id, is_active, member_ids } = req.body;
   const { data, error } = await supabase
     .from('teams')
     .update({
@@ -1650,6 +1650,19 @@ router.put('/teams/:id', async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // メンバー所属チーム更新
+  if (member_ids !== undefined) {
+    const teamId = req.params.id;
+    // 既存メンバーを一旦解除
+    await supabase.from('users').update({ team_id: null }).eq('team_id', teamId);
+    // 選択メンバーを割り当て
+    if (member_ids.length > 0) {
+      const { error: e2 } = await supabase.from('users').update({ team_id: teamId }).in('id', member_ids);
+      if (e2) return res.status(500).json({ error: e2.message });
+    }
+  }
+
   res.json(data);
 });
 

@@ -802,40 +802,55 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- チーム追加・編集モーダル -->
 <div class="modal-overlay" id="modal-team">
-  <div class="modal">
+  <div class="modal" style="max-width:580px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
     <div class="modal-title" id="t-modal-title">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
-    <input type="hidden" id="t-id">
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">チームコード <span style="font-size:11px;color:var(--text-muted);font-weight:400">（A〜Z または自由入力）</span></label>
-        <input class="form-input" id="t-code" list="t-code-list" placeholder="例: A, WC, ワコール" maxlength="10" style="text-transform:uppercase">
-        <datalist id="t-code-list"></datalist>
+    <div style="overflow-y:auto;flex:1;padding:0 24px 8px">
+      <input type="hidden" id="t-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">チームコード <span style="font-size:11px;color:var(--text-muted);font-weight:400">（A〜Z または自由入力）</span></label>
+          <input class="form-input" id="t-code" list="t-code-list" placeholder="例: A, WC, ワコール" maxlength="10" style="text-transform:uppercase">
+          <datalist id="t-code-list"></datalist>
+        </div>
+        <div class="form-group">
+          <label class="form-label">チーム種別</label>
+          <select class="form-select" id="t-type">
+            <option value="video">動画</option>
+            <option value="design">デザイン</option>
+          </select>
+        </div>
       </div>
       <div class="form-group">
-        <label class="form-label">チーム種別</label>
-        <select class="form-select" id="t-type">
-          <option value="video">動画</option>
-          <option value="design">デザイン</option>
+        <label class="form-label">チーム名</label>
+        <input class="form-input" id="t-name" placeholder="例：サクラチーム">
+      </div>
+      <div class="form-group">
+        <label class="form-label">担当プロデューサー（任意）</label>
+        <select class="form-select" id="t-producer">
+          <option value="">未設定</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="form-label">担当ディレクター（任意）</label>
+        <select class="form-select" id="t-director">
+          <option value="">未設定</option>
+        </select>
+      </div>
+      <!-- メンバー選択 -->
+      <div class="form-group" style="margin-bottom:4px">
+        <label class="form-label" style="margin-bottom:6px">メンバー</label>
+        <div style="position:relative;margin-bottom:8px">
+          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px">🔍</span>
+          <input class="form-input" id="t-member-search" placeholder="名前で検索..." oninput="filterTeamMembers()" style="padding-left:32px">
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--text-muted)">
+          <span id="t-member-count"></span>
+          <button type="button" onclick="toggleAllTeamMembers()" style="background:none;border:none;color:var(--primary);font-size:12px;cursor:pointer;padding:0" id="t-member-toggle-all">すべて選択</button>
+        </div>
+        <div id="t-member-list" style="border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto"></div>
+      </div>
     </div>
-    <div class="form-group">
-      <label class="form-label">チーム名</label>
-      <input class="form-input" id="t-name" placeholder="例：サクラチーム">
-    </div>
-    <div class="form-group">
-      <label class="form-label">担当プロデューサー（任意）</label>
-      <select class="form-select" id="t-producer">
-        <option value="">未設定</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label class="form-label">担当ディレクター（任意）</label>
-      <select class="form-select" id="t-director">
-        <option value="">未設定</option>
-      </select>
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+    <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0">
       <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
       <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
     </div>
@@ -3151,7 +3166,55 @@ function openTeamModal(team) {
     dSel.value = '';
   }
 
+  // メンバーリスト初期化
+  document.getElementById('t-member-search').value = '';
+  buildTeamMemberList(team?.id || null);
+
   openModal('modal-team');
+}
+
+function buildTeamMemberList(teamId) {
+  const search = document.getElementById('t-member-search').value.toLowerCase();
+  const container = document.getElementById('t-member-list');
+  const active = allMembers.filter(m => m.is_active !== false);
+  const filtered = active.filter(m => !search || m.full_name.toLowerCase().includes(search));
+  const ROLE_SHORT = { admin:'管', producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', secretary:'秘' };
+  if (!filtered.length) {
+    container.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:13px">該当するメンバーがいません</div>';
+  } else {
+    container.innerHTML = filtered.map((m, i) => {
+      const inTeam = teamId && m.team_id === teamId;
+      const isLast = i === filtered.length - 1;
+      return `<label style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;${isLast?'':'border-bottom:1px solid var(--border);'}user-select:none">
+        <input type="checkbox" class="t-member-check" value="${m.id}" ${inTeam ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0" onchange="updateTeamMemberCount()">
+        <span style="font-size:13px;flex:1">${m.full_name}</span>
+        <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:4px">${ROLE_SHORT[m.role] || m.role}</span>
+      </label>`;
+    }).join('');
+  }
+  updateTeamMemberCount();
+}
+
+function filterTeamMembers() {
+  const teamId = document.getElementById('t-id').value || null;
+  buildTeamMemberList(teamId);
+}
+
+function updateTeamMemberCount() {
+  const checks = document.querySelectorAll('.t-member-check');
+  const checked = document.querySelectorAll('.t-member-check:checked');
+  const countEl = document.getElementById('t-member-count');
+  const toggleBtn = document.getElementById('t-member-toggle-all');
+  if (countEl) countEl.textContent = `${checked.length} 名選択中 / 全 ${checks.length} 名`;
+  if (toggleBtn) toggleBtn.textContent = checked.length === checks.length ? 'すべて解除' : 'すべて選択';
+}
+
+function toggleAllTeamMembers() {
+  const checks = document.querySelectorAll('.t-member-check');
+  const checked = document.querySelectorAll('.t-member-check:checked');
+  const toCheck = checked.length < checks.length;
+  checks.forEach(c => c.checked = toCheck);
+  updateTeamMemberCount();
 }
 
 async function saveTeam() {
@@ -3161,18 +3224,23 @@ async function saveTeam() {
   const team_type = document.getElementById('t-type').value;
   const director_id = document.getElementById('t-director').value || null;
   const producer_id = document.getElementById('t-producer').value || null;
+  const member_ids = Array.from(document.querySelectorAll('.t-member-check:checked')).map(c => c.value);
   if (!team_name) { alert('チーム名は必須です'); return; }
 
   if (id) {
     // 編集（PUT）
-    const res = await fetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id}) });
-    if (res.ok) { closeModal('modal-team'); await loadTeams(); }
+    const res = await fetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+    if (res.ok) { closeModal('modal-team'); await loadTeams(); await loadMembers(); }
     else { const e=await res.json(); alert('エラー: '+e.error); }
   } else {
-    // 新規作成（POST）
+    // 新規作成（POST）→ 作成後にメンバー割り当て
     const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
-    if (res.ok) { closeModal('modal-team'); await loadTeams(); }
-    else { const e=await res.json(); alert('エラー: '+e.error); }
+    if (!res.ok) { const e=await res.json(); alert('エラー: '+e.error); return; }
+    const newTeam = await res.json();
+    if (member_ids.length > 0) {
+      await fetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+    }
+    closeModal('modal-team'); await loadTeams(); await loadMembers();
   }
 }
 
