@@ -795,7 +795,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   }
 
   // creative_files テーブルに記録
-  const uploadedBy = req.user?.supabase_user_id || null;
+  const uploadedBy = req.user?.id || null;
   const { data: fileRecord, error: fErr } = await supabase
     .from('creative_files')
     .insert({
@@ -1385,7 +1385,7 @@ router.post('/invoices/:id/submit', async (req, res) => {
 router.post('/invoices/:id/approve', requireAuth, requireLevel('admin'), async (req, res) => {
   const { data, error } = await supabase
     .from('invoices')
-    .update({ status: 'approved', approved_at: new Date().toISOString(), approved_by: req.user?.supabase_user_id || null, updated_at: new Date().toISOString() })
+    .update({ status: 'approved', approved_at: new Date().toISOString(), approved_by: req.user?.id || null, updated_at: new Date().toISOString() })
     .eq('id', req.params.id)
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
@@ -2268,7 +2268,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     .from('creative_file_comments')
     .insert({
       creative_file_id: req.params.fid,
-      user_id: req.user?.supabase_user_id || null,
+      user_id: req.user?.id || null,
       comment: comment.trim(),
       timecode: timecode || null,
       is_knowledge: !!is_knowledge,
@@ -2283,7 +2283,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 
 // コメント削除（自分のコメントのみ / admin は全件）
 router.delete('/creative-file-comments/:id', requireAuth, async (req, res) => {
-  const userId = req.user?.supabase_user_id;
+  const userId = req.user?.id;
   const { data: comment } = await supabase.from('creative_file_comments').select('user_id').eq('id', req.params.id).single();
   if (!comment) return res.status(404).json({ error: '見つかりません' });
   const userRow = await supabase.from('users').select('role').eq('id', userId).single();
