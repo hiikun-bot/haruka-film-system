@@ -493,6 +493,50 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
   /* --- 横スクロール時のヒント (table-wrap のグラデは既存) --- */
   .table-wrap{-webkit-overflow-scrolling:touch}
+
+  /* ===== Frame.io 風プレビューモーダルのスマホ最適化 =====
+     #fp-window は PC では 92vw × 92vh のフロートウィンドウ（左動画＋右コメント）
+     スマホでは全画面化して縦積み（上:動画 / 下:タブ+コメント）に変換 */
+
+  /* ウィンドウを全画面化 */
+  #fp-window{
+    top:0 !important;left:0 !important;
+    width:100vw !important;height:100vh !important;
+    border-radius:0 !important;border:none !important
+  }
+  /* ヘッダー */
+  #fp-header{padding:10px 12px !important;cursor:default !important;gap:6px}
+  #fp-filename{font-size:11px !important}
+  #fp-header a,#fp-header button{min-height:36px}
+  #fp-header #fp-premiere-btn,#fp-header #fp-drive-link{font-size:10px !important;padding:3px 8px !important}
+  /* ボディ: 横並び→縦積み（body は fp-window の 2番目の div） */
+  #fp-window > div:nth-of-type(2){flex-direction:column !important}
+  /* 左=プレイヤー領域: 上部の固定高さ */
+  #fp-window > div:nth-of-type(2) > div:nth-of-type(1){flex:0 0 auto !important}
+  #fp-player{max-height:48vh !important;min-height:200px}
+  /* コントロールバー: 縦幅を詰め、横スクロール可に */
+  #fp-controls-bar{padding:6px 10px !important}
+  #fp-controls-bar > div:last-child{gap:6px !important;flex-wrap:wrap}
+  /* スマホでは利用頻度の低いコントロールを省略（PC版は表示のまま） */
+  #fp-loop-btn,#fp-abloop-btn,#fp-abloop-display{display:none !important}
+  #fp-speed-display{font-size:10px !important;min-width:34px !important;padding:2px 6px !important}
+  /* 時間表示はコンパクトに */
+  #fp-time-display{font-size:10px !important}
+  /* 右=コメントパネル: 下段に移動、全幅、残り高さ全部 */
+  #fp-window > div:nth-of-type(2) > div:nth-of-type(2){
+    width:100% !important;flex:1 1 auto !important;min-height:0;
+    border-left:none !important;border-top:1px solid #2a2a2e !important
+  }
+  /* タブ */
+  #fp-tab-review,#fp-tab-checklist{min-height:44px}
+  /* コメント一覧 */
+  #fp-comments-list{padding:10px !important}
+  /* コメント入力（Frame.ioスマホの下部スティッキー感を再現） */
+  #fp-comment-input-area{padding:10px !important}
+  #fp-comment-text{font-size:14px !important;padding:10px !important}
+  #fp-comment-category{font-size:13px !important;padding:8px !important;min-height:40px}
+  #fp-timecode-badge{font-size:12px !important}
+  #fp-comment-input-area button{min-height:40px}
 }
 
 /* スマホ縦向き (<=420px) - さらに詰める */
