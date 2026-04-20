@@ -1254,15 +1254,19 @@ router.get('/invoices/preview-items', async (req, res) => {
     });
   }
 
+  // ユーザーの現在のランクを取得（rank_appliedがNULLの古いデータ用）
+  const { data: currentUser } = await supabase.from('users').select('rank').eq('id', uid).single();
+  const currentRank = currentUser?.rank || null;
+
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
-    const rankApplied = assignment?.rank_applied;
+    const rankApplied = assignment?.rank_applied ?? currentRank; // NULLなら現在のランクで検索
     const rateKey      = `${c.project_id}__${c.creative_type}__${rankApplied}`;
     const fallbackKey  = `${c.project_id}__${c.creative_type}__null`;
-    // creative_typeが一致しない場合に備えて、同プロジェクトの最初のレートもフォールバック
-    const anyKey = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
-    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null);
-    console.log(`[rate-debug] creative=${c.id} type=${c.creative_type} rank=${rankApplied} key=${rateKey} found=${!!rate} ratesMapKeys=${Object.keys(ratesMap).join('|')}`);
+    const anyTypeKey   = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`) && k.endsWith(`__${rankApplied}`));
+    const anyKey       = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
+    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyTypeKey ? ratesMap[anyTypeKey] : null) || (anyKey ? ratesMap[anyKey] : null);
+    console.log(`[rate] ${c.file_name} type=${c.creative_type} rank=${rankApplied} found=${!!rate} keys=${Object.keys(ratesMap).slice(0,3).join('|')}`);
     return {
       id: c.id,
       file_name: c.file_name,
@@ -1275,7 +1279,7 @@ router.get('/invoices/preview-items', async (req, res) => {
       project_name: c.projects?.name || '',
       client_name: c.projects?.clients?.name || '',
       assignment_role: assignment?.role,
-      rank_applied: assignment?.rank_applied,
+      rank_applied: assignment?.rank_applied || currentRank,
       rate: rate ? {
         base_fee:   rate.base_fee   || 0,
         script_fee: rate.script_fee || 0,
