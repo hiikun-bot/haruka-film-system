@@ -1362,6 +1362,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
         account_type, account_number, account_holder_kana,
         phone, postal_code, address
       ),
+      recipient_client:recipient_client_id(id, name, client_code),
       invoice_items(
         id, total_amount, is_special, special_reason,
         creatives(id, file_name, creative_type,
@@ -1378,6 +1379,95 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'アクセス権限がありません' });
   }
   res.json(data);
+});
+
+// ==================== クライアント請求書 ====================
+
+// 納品済みクリエイティブ一覧（クライアント向け請求書作成用）
+router.get('/client-invoice/items', requireAuth, async (req, res) => {
+  const { client_id, year, month } = req.query;
+  if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+
+  const { data: projects } = await supabase.from('projects').select('id').eq('client_id', client_id);
+  if (!projects?.length) return res.json([]);
+  const projectIds = projects.map(p => p.id);
+
+  let query = supabase.from('creatives')
+    .select(`id, file_name, status, client_fee, project_id, updated_at,
+      projects(id, name, clients(id, name, client_code)),
+      creative_assignments(users(id, full_name))`)
+    .in('project_id', projectIds)
+    .eq('status', '納品')
+    .order('updated_at', { ascending: false });
+
+  if (year && month) {
+    const y = parseInt(year), m = parseInt(month);
+    query = query
+      .gte('updated_at', new Date(y, m-1, 1).toISOString())
+      .lt('updated_at', new Date(y, m, 1).toISOString());
+  }
+
+  const { data: creatives, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json((creatives||[]).map(c => ({
+    id: c.id,
+    file_name: c.file_name,
+    client_fee: c.client_fee || 0,
+    project_name: c.projects?.name || '-',
+    client_name: c.projects?.clients?.name || '-',
+    assignees: [...new Set((c.creative_assignments||[]).map(a => a.users?.full_name).filter(Boolean))].join('、') || '-',
+  })));
+});
+
+// クライアント請求書生成
+router.post('/client-invoice/generate', requireAuth, async (req, res) => {
+  const { client_id, year, month, items, notes } = req.body;
+  if (!client_id || !items?.length) return res.status(400).json({ error: 'client_id と items は必須です' });
+
+  const now = new Date();
+  const ym = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
+  const { count } = await supabase.from('invoices').select('*', {count:'exact',head:true}).like('invoice_number', `INV-${ym}-%`);
+  const invoiceNumber = `INV-${ym}-${String((count||0)+1).padStart(3,'0')}`;
+  const totalAmount = items.reduce((s, i) => s + (i.client_fee || 0), 0);
+
+  const { data: projects } = await supabase.from('projects').select('id').eq('client_id', client_id).limit(1);
+  const project_id = projects?.[0]?.id || null;
+
+  const { data: invoice, error: invErr } = await supabase.from('invoices').insert({
+    invoice_number: invoiceNumber,
+    issuer_id: req.user.id,
+    project_id,
+    total_amount: totalAmount,
+    status: 'draft',
+    year: year || now.getFullYear(),
+    month: month || (now.getMonth()+1),
+    invoice_type: 'client',
+    recipient_client_id: client_id,
+    notes: notes || null,
+  }).select().single();
+  if (invErr) return res.status(500).json({ error: invErr.message });
+
+  for (const item of items) {
+    const { data: invItem } = await supabase.from('invoice_items').insert({
+      invoice_id: invoice.id,
+      creative_id: item.creative_id,
+      total_amount: item.client_fee,
+      is_special: false,
+    }).select().single();
+    if (invItem) {
+      await supabase.from('invoice_item_details').insert({
+        invoice_item_id: invItem.id,
+        cost_type: 'base_fee',
+        unit_price: item.client_fee,
+        amount: item.client_fee,
+      });
+    }
+    // 次回の参照用にクリエイティブへ保存
+    await supabase.from('creatives').update({ client_fee: item.client_fee }).eq('id', item.creative_id);
+  }
+
+  res.json(invoice);
 });
 
 // 請求書 備考更新（draft/rejected のみ）

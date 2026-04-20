@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="HARUKA FILM">
-<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="apple-touch-icon" href="/HARUKA%20FILM%20%E3%83%AD%E3%82%B4.png">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
@@ -610,6 +610,55 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- クライアント請求書発行モーダル -->
+<div class="modal-overlay" id="modal-client-invoice-gen">
+  <div class="modal" style="width:95vw;max-width:1100px;min-height:72vh;max-height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
+    <div style="padding:14px 24px 0;flex-shrink:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
+          <span style="font-size:15px;font-weight:600">クライアントへ請求書を発行</span>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-client-invoice-gen')">×</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:12px">
+        <select id="ci-client" class="form-select" onchange="loadClientInvoiceItems()" style="width:200px;font-size:13px;padding:7px 10px">
+          <option value="">▼ クライアントを選択</option>
+        </select>
+        <select class="form-select" id="ci-year" onchange="loadClientInvoiceItems()" style="width:110px;font-size:13px;padding:7px 10px"></select>
+        <select class="form-select" id="ci-month" onchange="loadClientInvoiceItems()" style="width:80px;font-size:13px;padding:7px 10px">
+          <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+          <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+          <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+          <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+        </select>
+        <span style="font-size:12px;color:var(--text-muted)">の納品済みクリエイティブ</span>
+      </div>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:0 0 8px;min-height:0">
+      <div id="ci-table-wrap" style="padding:0 24px">
+        <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:60px">クライアントを選択してください</div>
+      </div>
+    </div>
+    <div style="padding:12px 24px;border-top:1px solid var(--border);background:#fff;flex-shrink:0">
+      <div style="margin-bottom:10px">
+        <input class="form-input" id="ci-notes" placeholder="備考（任意）：支払い期限、振込先、その他連絡事項" style="font-size:13px;padding:8px 12px;width:100%;box-sizing:border-box">
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span style="font-size:13px;color:var(--text-muted)">請求合計</span>
+          <span id="ci-total" style="font-size:22px;font-weight:700;color:var(--em-dark)">¥0</span>
+          <span id="ci-count" style="font-size:12px;color:var(--text-muted)">（0件）</span>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn-primary" id="ci-submit-btn" onclick="generateClientInvoice()" disabled style="opacity:0.5">請求書を発行する</button>
+          <button class="btn" onclick="closeModal('modal-client-invoice-gen')">キャンセル</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="hfs-header">
   <button class="ham-btn" onclick="openNavDrawer()" aria-label="メニューを開く">
     <span></span><span></span><span></span>
@@ -878,7 +927,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div id="inv-admin-section" style="display:none;margin-top:32px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div class="sec-label" style="color:var(--em-dark)">全員の請求書（管理者）</div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-primary" onclick="openClientInvoiceModal()" style="font-size:13px;padding:7px 16px;white-space:nowrap">＋ クライアントへ請求書を発行</button>
           <select id="inv-filter-status" class="form-select" style="width:130px" onchange="loadAdminInvoices()">
             <option value="">全ステータス</option>
             <option value="submitted">提出済み</option>
@@ -5342,11 +5392,15 @@ async function loadAdminInvoices() {
         ? `<span style="color:#E53935;font-weight:600;font-size:12px">⚠ ${nth}/${total}件</span>`
         : `<span style="color:var(--text-muted);font-size:12px">1件</span>`;
       const rowBg = ri % 2 === 0 ? '#fff' : '#F7FFFE';
-      return `<tr style="background:${rowBg};border-bottom:0.5px solid var(--border)">
-        <td style="padding:10px 12px;font-weight:600;font-size:13px;white-space:nowrap">${inv.issuer?.full_name||'-'}</td>
-        <td style="padding:10px 12px;text-align:center">${nthLabel}</td>
+      const isClient = inv.invoice_type === 'client';
+      const issuerCell = isClient
+        ? `<span style="font-size:11px;padding:2px 7px;border-radius:8px;background:#E8F0FE;color:#1A56DB;font-weight:600;margin-right:6px">発行</span>${inv.issuer?.full_name||'-'}`
+        : (inv.issuer?.full_name||'-');
+      return `<tr style="background:${isClient?'#F0F7FF':rowBg};border-bottom:0.5px solid var(--border)">
+        <td style="padding:10px 12px;font-weight:600;font-size:13px;white-space:nowrap">${issuerCell}</td>
+        <td style="padding:10px 12px;text-align:center">${isClient?'<span style="color:#1A56DB;font-size:11px">→クライアント</span>':nthLabel}</td>
         <td style="padding:10px 12px;font-size:12px;color:var(--em-dark);white-space:nowrap;font-weight:600">${inv.invoice_number}</td>
-        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${inv.projects?.name||'全案件'}</td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isClient?(inv.recipient_client?.name||'—'):(inv.projects?.name||'全案件')}</td>
         <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:var(--em-dark);white-space:nowrap">¥${(inv.total_amount||0).toLocaleString()}</td>
         <td style="padding:10px 12px;text-align:center">
           <span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;background:${st.bg};color:${st.color};white-space:nowrap">${st.label}</span>
@@ -5401,6 +5455,129 @@ function switchAdminMonthTab(key) {
   document.querySelectorAll('[data-mtable]').forEach(d => {
     d.style.display = d.dataset.mtable === key ? '' : 'none';
   });
+}
+
+// ==================== クライアント請求書 ====================
+let clientInvoiceItems = [];
+
+function openClientInvoiceModal() {
+  const sel = document.getElementById('ci-client');
+  sel.innerHTML = '<option value="">▼ クライアントを選択</option>' +
+    allClients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const now = new Date();
+  const yearSel = document.getElementById('ci-year');
+  yearSel.innerHTML = '';
+  for (let y = now.getFullYear(); y >= now.getFullYear()-2; y--) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y+'年'; if (y === now.getFullYear()) o.selected = true;
+    yearSel.appendChild(o);
+  }
+  document.getElementById('ci-month').value = now.getMonth()+1;
+  document.getElementById('ci-table-wrap').innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:60px">クライアントを選択してください</div>';
+  document.getElementById('ci-total').textContent = '¥0';
+  document.getElementById('ci-count').textContent = '（0件）';
+  document.getElementById('ci-submit-btn').disabled = true;
+  document.getElementById('ci-submit-btn').style.opacity = '0.5';
+  document.getElementById('ci-notes').value = '';
+  openModal('modal-client-invoice-gen');
+}
+
+async function loadClientInvoiceItems() {
+  const clientId = document.getElementById('ci-client').value;
+  if (!clientId) return;
+  const year = document.getElementById('ci-year').value;
+  const month = document.getElementById('ci-month').value;
+  const wrap = document.getElementById('ci-table-wrap');
+  wrap.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">読み込み中...</div>';
+  const res = await fetch(`${API}/client-invoice/items?client_id=${clientId}&year=${year}&month=${month}`);
+  if (!res.ok) { wrap.innerHTML = '<div style="color:#E24B4A;text-align:center;padding:40px">読み込みに失敗しました</div>'; return; }
+  clientInvoiceItems = await res.json();
+  if (!clientInvoiceItems.length) {
+    wrap.innerHTML = `<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">${year}年${month}月に納品済みのクリエイティブがありません</div>`;
+    updateClientInvoiceTotal(); return;
+  }
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead>
+      <tr style="background:var(--surface);border-bottom:1.5px solid var(--border);position:sticky;top:0">
+        <th style="padding:8px 10px;text-align:center;width:36px"><input type="checkbox" id="ci-check-all" onchange="toggleAllClientItems(this.checked)" style="cursor:pointer;width:15px;height:15px"></th>
+        <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">案件</th>
+        <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">ファイル名</th>
+        <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted)">担当者</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:160px">報酬（税込・円）</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${clientInvoiceItems.map((item, i) => {
+        const hasFee = item.client_fee > 0;
+        const rowBg = i % 2 === 0 ? '' : 'background:#FAFEFE';
+        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)">
+          <td style="padding:8px 10px;text-align:center">
+            <input type="checkbox" class="ci-item-check" data-id="${item.id}" data-idx="${i}" ${hasFee?'checked':''} onchange="updateClientInvoiceTotal()" style="cursor:pointer;width:15px;height:15px">
+          </td>
+          <td style="padding:8px 10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <div style="font-size:11px;color:var(--text-muted)">${esc(item.client_name)}</div>
+            <div style="font-weight:500;font-size:12px">${esc(item.project_name)}</div>
+          </td>
+          <td style="padding:8px 10px;font-family:monospace;font-size:10px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(item.file_name)}">${esc(item.file_name)}</td>
+          <td style="padding:8px 10px;text-align:center;font-size:11px;color:var(--text-muted)">${esc(item.assignees||'-')}</td>
+          <td style="padding:8px 10px;text-align:right">
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
+              <span style="font-size:12px;color:var(--text-muted)">¥</span>
+              <input type="number" id="ci-fee-${i}" value="${item.client_fee||''}" placeholder="0" min="0" step="1000"
+                style="width:110px;text-align:right;font-size:13px;font-weight:600;padding:5px 8px;border:1px solid var(--border);border-radius:6px;color:var(--em-dark)"
+                onchange="updateClientInvoiceTotal()" oninput="updateClientInvoiceTotal()">
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+  updateClientInvoiceTotal();
+}
+
+function toggleAllClientItems(checked) {
+  document.querySelectorAll('.ci-item-check').forEach(cb => { cb.checked = checked; });
+  updateClientInvoiceTotal();
+}
+
+function updateClientInvoiceTotal() {
+  let total = 0, count = 0;
+  document.querySelectorAll('.ci-item-check:checked').forEach(cb => {
+    const idx = parseInt(cb.dataset.idx);
+    const fee = parseInt(document.getElementById('ci-fee-'+idx)?.value||'0')||0;
+    total += fee; count++;
+  });
+  document.getElementById('ci-total').textContent = '¥'+total.toLocaleString();
+  document.getElementById('ci-count').textContent = `（${count}件）`;
+  const btn = document.getElementById('ci-submit-btn');
+  const ok = count > 0 && total > 0;
+  btn.disabled = !ok; btn.style.opacity = ok ? '1' : '0.5';
+}
+
+async function generateClientInvoice() {
+  const clientId = document.getElementById('ci-client').value;
+  const year = parseInt(document.getElementById('ci-year').value);
+  const month = parseInt(document.getElementById('ci-month').value);
+  const notes = document.getElementById('ci-notes').value.trim()||null;
+  const items = [];
+  document.querySelectorAll('.ci-item-check:checked').forEach(cb => {
+    const idx = parseInt(cb.dataset.idx);
+    const fee = parseInt(document.getElementById('ci-fee-'+idx)?.value||'0')||0;
+    if (fee > 0) items.push({ creative_id: cb.dataset.id, client_fee: fee });
+  });
+  if (!items.length) { alert('報酬を入力し、請求対象を選択してください'); return; }
+  const btn = document.getElementById('ci-submit-btn');
+  btn.textContent = '発行中...'; btn.disabled = true;
+  const res = await fetch(`${API}/client-invoice/generate`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ client_id: clientId, year, month, items, notes })
+  });
+  btn.textContent = '請求書を発行する'; btn.disabled = false;
+  const data = await res.json();
+  if (!res.ok) { alert(data.error||'発行に失敗しました'); return; }
+  closeModal('modal-client-invoice-gen');
+  alert(`クライアント請求書 ${data.invoice_number} を発行しました（¥${(data.total_amount||0).toLocaleString()}）`);
+  await loadAdminInvoices();
 }
 
 let invoicePreviewItems = [];
@@ -5641,6 +5818,9 @@ async function printInvoice(id) {
   if (!res.ok) { alert('請求書の取得に失敗しました'); return; }
   const inv = await res.json();
 
+  // クライアント請求書（発行方向が逆）
+  if (inv.invoice_type === 'client') { printClientInvoice(inv); return; }
+
   const issuer  = inv.issuer  || {};
   const project = inv.projects || {};
   const client  = project.clients || {};
@@ -5776,6 +5956,96 @@ function triggerInvoicePrint() {
   }
   window.print();
   setTimeout(() => { document.title = prev; }, 500);
+}
+
+function printClientInvoice(inv) {
+  const recipientClient = inv.recipient_client || {};
+  const issuer = inv.issuer || {};
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  const issueDate = inv.issued_at
+    ? new Date(inv.issued_at).toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'})
+    : now.toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'});
+
+  const total = inv.total_amount || 0;
+  const subtotal = Math.floor(total / 1.1);
+  const tax = total - subtotal;
+
+  const costLabel = { base_fee:'制作費', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
+  const itemRows = (inv.invoice_items || []).map((item, idx) => {
+    const cr = item.creatives || {};
+    const cp = cr.projects || {};
+    const details = (item.invoice_item_details || []).filter(d => d.amount > 0);
+    return details.map((d, di) => `
+      <tr>
+        ${di===0 ? `<td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;text-align:center;font-size:11px;color:#555">${idx+1}</td>
+        <td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
+          <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
+          <div style="font-size:9px;color:#bbb;margin-top:2px;word-break:break-all">${cr.file_name||''}</div>
+        </td>` : ''}
+        <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">${costLabel[d.cost_type]||d.cost_type}</td>
+        <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${(d.unit_price||0).toLocaleString()}</td>
+        <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(d.amount||0).toLocaleString()}</td>
+      </tr>`).join('');
+  }).join('');
+
+  const invoiceHTML = `
+  <div style="font-family:'Noto Sans JP',sans-serif;max-width:740px;margin:0 auto;padding:36px;color:#222;font-size:13px;line-height:1.6;background:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px">
+      <img src="/HARUKA FILMロゴ.png" style="height:44px;object-fit:contain" onerror="this.style.display='none'">
+      <div style="text-align:right">
+        <div style="font-size:22px;font-weight:700;letter-spacing:.12em;color:#222">請 求 書</div>
+        <div style="font-size:11px;color:#666;margin-top:6px">No. <strong>${inv.invoice_number}</strong></div>
+        <div style="font-size:11px;color:#666">発行日：${issueDate}</div>
+        <div style="font-size:11px;color:#666">対象期間：${inv.year||''}年${inv.month||''}月</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;gap:24px">
+      <div style="flex:1">
+        <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求先</div>
+        <div style="font-size:17px;font-weight:700">${recipientClient.name||'-'}</div>
+        <div style="font-size:13px;margin-top:4px;color:#444">ご担当者様</div>
+      </div>
+      <div style="text-align:right;min-width:220px">
+        <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求元</div>
+        <div style="font-size:15px;font-weight:700">HARUKA FILM</div>
+        <div style="font-size:13px;font-weight:600;margin-top:2px">${issuer.full_name||'高橋聖'}</div>
+        ${issuer.email?`<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>`:''}
+        ${issuer.phone?`<div style="font-size:11px;color:#666">TEL：${issuer.phone}</div>`:''}
+        ${(issuer.postal_code||issuer.address)?`<div style="font-size:11px;color:#666;margin-top:4px">${issuer.postal_code?`〒${issuer.postal_code}　`:''}${issuer.address||''}</div>`:''}
+      </div>
+    </div>
+    <div style="background:#f0fafa;border:2px solid #2BB8B4;border-radius:10px;padding:18px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;color:#555">ご請求金額（税込・内税10%）</div>
+      <div style="font-size:30px;font-weight:700;color:#2BB8B4">¥${total.toLocaleString()}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:#2BB8B4;color:#fff">
+        <th style="padding:9px 6px;text-align:center;border:1px solid #2BB8B4;width:36px">No.</th>
+        <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">案件名</th>
+        <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">内容</th>
+        <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">単価</th>
+        <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">金額</th>
+      </tr></thead>
+      <tbody>${itemRows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa;border:1px solid #ddd">明細なし</td></tr>'}</tbody>
+      <tfoot>
+        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">税抜小計</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${subtotal.toLocaleString()}</td></tr>
+        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">消費税（10%）</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${tax.toLocaleString()}</td></tr>
+        <tr><td colspan="4" style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;font-size:13px">合計（税込）</td><td style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;color:#2BB8B4;font-size:13px">¥${total.toLocaleString()}</td></tr>
+      </tfoot>
+    </table>
+    ${inv.notes?`<div style="margin-top:16px;border:1px solid #ddd;border-radius:6px;padding:14px 16px;background:#fafafa">
+      <div style="font-size:10px;color:#999;margin-bottom:8px;font-weight:600">備考</div>
+      <div style="font-size:12px;line-height:1.8;white-space:pre-wrap">${inv.notes}</div></div>`:''}
+    <div style="margin-top:18px;font-size:10px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:12px">
+      ※ お振込み手数料はご負担ください。　※ ご不明な点はご連絡ください。
+    </div>
+  </div>`;
+
+  _printMeta = { num: inv.invoice_number, issuerName: recipientClient.name||'クライアント', year: inv.year||'', month: inv.month||'', todayStr };
+  document.getElementById('print-only').innerHTML = invoiceHTML;
+  document.getElementById('invoice-print-preview').innerHTML = invoiceHTML;
+  openModal('modal-invoice-print');
 }
 
 async function deleteInvoice(id) {

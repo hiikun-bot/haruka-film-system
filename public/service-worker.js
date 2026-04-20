@@ -3,8 +3,7 @@ const CACHE_NAME = 'haruka-film-v1';
 // キャッシュするスタティックリソース（アプリシェル）
 const STATIC_ASSETS = [
   '/haruka.html',
-  '/icon-192.png',
-  '/icon-512.png',
+  '/HARUKA%20FILM%20%E3%83%AD%E3%82%B4.png',
   '/manifest.json',
   'https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
