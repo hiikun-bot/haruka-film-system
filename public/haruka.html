@@ -506,10 +506,17 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .header-right .rpb-btn{font-size:9px !important;padding:2px 5px !important}
   .user-av{width:26px;height:26px;font-size:10px}
 }
+@media print {
+  body > *:not(#print-only) { display: none !important; }
+  #print-only { display: block !important; }
+  @page { margin: 12mm; size: A4; }
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
+
+<div id="print-only" style="display:none"></div>
 
 <div class="hfs-header">
   <button class="ham-btn" onclick="openNavDrawer()" aria-label="メニューを開く">
@@ -5120,6 +5127,7 @@ async function loadMyInvoices() {
         ${inv.status === 'draft' ? `<button class="btn-primary btn-sm" onclick="submitInvoice('${inv.id}')">提出する</button>` : ''}
         ${inv.status === 'rejected' ? `<button class="btn btn-sm" onclick="submitInvoice('${inv.id}')">再提出する</button>` : ''}
         ${inv.status === 'draft' ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
+        <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
       </div>
     </div>`;
   }).join('');
@@ -5158,11 +5166,12 @@ async function loadAdminInvoices() {
           <div style="font-size:16px;font-weight:700;margin-top:4px">¥${(inv.total_amount||0).toLocaleString()}</div>
         </div>
       </div>
-      ${inv.status === 'submitted' ? `
       <div style="display:flex;gap:8px;margin-top:12px">
+        ${inv.status === 'submitted' ? `
         <button class="btn-primary btn-sm" onclick="approveInvoice('${inv.id}')">承認する</button>
-        <button class="btn btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="rejectInvoice('${inv.id}')">差し戻す</button>
-      </div>` : ''}
+        <button class="btn btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="rejectInvoice('${inv.id}')">差し戻す</button>` : ''}
+        <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -5328,6 +5337,115 @@ async function rejectInvoice(id) {
   });
   if (!res.ok) { alert('差し戻しに失敗しました'); return; }
   await loadAdminInvoices();
+}
+
+async function printInvoice(id) {
+  const res = await fetch(`${API}/invoices/${id}`);
+  if (!res.ok) { alert('請求書の取得に失敗しました'); return; }
+  const inv = await res.json();
+
+  const issuer  = inv.issuer  || {};
+  const project = inv.projects || {};
+  const client  = project.clients || {};
+  const subtotal = inv.total_amount || 0;
+  const tax      = Math.floor(subtotal * 0.1);
+  const total    = subtotal + tax;
+
+  const issueDate = inv.issued_at
+    ? new Date(inv.issued_at).toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'})
+    : new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'});
+
+  const costLabel = { base_fee:'動画編集 / 静止画', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
+
+  const itemRows = (inv.invoice_items || []).map((item, idx) => {
+    const cr = item.creatives || {};
+    const cp = cr.projects || project;
+    const cc = (cp.clients || client);
+    const code = cc.client_code || cc.name?.slice(0,4) || 'XX';
+    const seqNo = `${code}-${String(idx+1).padStart(3,'0')}`;
+    const details = (item.invoice_item_details || []).filter(d => d.amount > 0);
+    return details.map((d, di) => `
+      <tr>
+        ${di===0 ? `<td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
+        <td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
+          <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
+          <div style="font-size:10px;color:#888;margin-top:2px">${cc.name||''}</div>
+          <div style="font-size:9px;color:#bbb;margin-top:2px;word-break:break-all">${cr.file_name||''}</div>
+        </td>` : ''}
+        <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">${costLabel[d.cost_type]||d.cost_type}</td>
+        <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${(d.unit_price||0).toLocaleString()}</td>
+        <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(d.amount||0).toLocaleString()}</td>
+      </tr>`).join('');
+  }).join('');
+
+  const bankLines = [
+    issuer.bank_name   ? `${issuer.bank_name}${issuer.bank_code?` (${issuer.bank_code})`:''}` : '',
+    issuer.branch_name ? `${issuer.branch_name}支店${issuer.branch_code?` (${issuer.branch_code})`:''}` : '',
+    (issuer.account_type && issuer.account_number) ? `${issuer.account_type} ${issuer.account_number}` : '',
+    issuer.account_holder_kana ? `口座名義：${issuer.account_holder_kana}` : '',
+  ].filter(Boolean);
+
+  document.getElementById('print-only').innerHTML = `
+  <div style="font-family:'Noto Sans JP',sans-serif;max-width:740px;margin:0 auto;padding:32px;color:#222;font-size:13px;line-height:1.6">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px">
+      <img src="/HARUKAFILMバナー.png" style="height:44px;object-fit:contain">
+      <div style="text-align:right">
+        <div style="font-size:22px;font-weight:700;letter-spacing:.12em;color:#222">請 求 書</div>
+        <div style="font-size:11px;color:#666;margin-top:6px">No. <strong>${inv.invoice_number}</strong></div>
+        <div style="font-size:11px;color:#666">発行日：${issueDate}</div>
+        <div style="font-size:11px;color:#666">対象期間：${inv.year||''}年${inv.month||''}月</div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;gap:24px">
+      <div style="flex:1">
+        <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求先</div>
+        <div style="font-size:17px;font-weight:700">HARUKA FILM</div>
+        <div style="font-size:13px;margin-top:4px;color:#444">高橋聖 様</div>
+      </div>
+      <div style="text-align:right;min-width:200px">
+        <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求者</div>
+        <div style="font-size:15px;font-weight:700">${issuer.full_name||'-'}</div>
+        ${issuer.email?`<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>`:''}
+      </div>
+    </div>
+
+    <div style="background:#f0fafa;border:2px solid #2BB8B4;border-radius:10px;padding:18px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;color:#555">ご請求金額（税込10%）</div>
+      <div style="font-size:30px;font-weight:700;color:#2BB8B4">¥${total.toLocaleString()}</div>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:0;font-size:12px">
+      <thead>
+        <tr style="background:#2BB8B4;color:#fff">
+          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4;width:72px">No.</th>
+          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">案件名</th>
+          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">内容</th>
+          <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">単価</th>
+          <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">金額</th>
+        </tr>
+      </thead>
+      <tbody>${itemRows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa;border:1px solid #ddd">明細なし</td></tr>'}</tbody>
+      <tfoot>
+        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">小計</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${subtotal.toLocaleString()}</td></tr>
+        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">消費税（10%）</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${tax.toLocaleString()}</td></tr>
+        <tr><td colspan="4" style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;font-size:13px">合計（税込）</td><td style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;color:#2BB8B4;font-size:13px">¥${total.toLocaleString()}</td></tr>
+      </tfoot>
+    </table>
+
+    <div style="margin-top:24px;border:1px solid #ddd;border-radius:6px;padding:14px 16px;background:#fafafa">
+      <div style="font-size:10px;color:#999;margin-bottom:8px;font-weight:600;letter-spacing:.08em">振込先</div>
+      ${bankLines.length
+        ? bankLines.map(l=>`<div style="font-size:12px;line-height:1.8">${l}</div>`).join('')
+        : '<div style="font-size:12px;color:#F59E0B">⚠ 振込先が未設定です。メンバー設定から口座情報を登録してください。</div>'}
+    </div>
+
+    <div style="margin-top:20px;font-size:10px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:12px">
+      ※ お振込み手数料はご負担ください。　※ ご不明な点はご連絡ください。
+    </div>
+  </div>`;
+
+  window.print();
 }
 
 async function deleteInvoice(id) {
