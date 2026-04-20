@@ -396,6 +396,35 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .project-row > span.status-chip,
   .project-row > span.proj-tag{flex-shrink:0}
 
+  /* --- チームカード（#teams-list 内のインラインflex構造） --- */
+  /* 親 flex を折返し可能にして縦1文字折返しを防ぐ */
+  #teams-list .card > div:first-child{
+    flex-wrap:wrap !important;gap:8px 10px !important;padding:12px 14px !important
+  }
+  /* アイコン円 */
+  #teams-list .card > div:first-child > div:nth-child(1){
+    width:40px !important;height:40px !important;flex-shrink:0
+  }
+  /* チーム名 + タイプ・人数ブロック */
+  #teams-list .card > div:first-child > div:nth-child(2){
+    flex:1 1 calc(100% - 120px) !important;min-width:0;word-break:break-word
+  }
+  #teams-list .card > div:first-child > div:nth-child(2) > div{
+    white-space:normal !important;word-break:break-word !important
+  }
+  /* P: / D: のブロック → 下段へ、横並びに */
+  #teams-list .card > div:first-child > div:nth-child(3){
+    flex:1 1 100% !important;text-align:left !important;
+    margin-right:0 !important;line-height:1.5 !important;
+    display:flex !important;gap:6px 14px !important;flex-wrap:wrap
+  }
+  #teams-list .card > div:first-child > div:nth-child(3) > div{
+    white-space:nowrap
+  }
+  /* 編集ボタン・▼ は右上に小さく */
+  #teams-list .card > div:first-child > button{flex-shrink:0}
+  #teams-list .card > div:first-child > span[id^="team-chevron-"]{flex-shrink:0}
+
   /* --- メンバーカード --- */
   .member-card{padding:8px 10px;gap:10px}
 
