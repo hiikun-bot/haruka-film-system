@@ -280,24 +280,56 @@ router.get('/projects/:id/rates', async (req, res) => {
   res.json(data);
 });
 
-// 単価設定・更新（upsert）
+// 単価一括保存（delete→insert）
+router.post('/projects/:id/rates/bulk', async (req, res) => {
+  const projectId = req.params.id;
+  const { rates } = req.body;
+  const { error: delError } = await supabase
+    .from('project_rates')
+    .delete()
+    .eq('project_id', projectId);
+  if (delError) return res.status(500).json({ error: delError.message });
+  if (!rates || !rates.length) return res.json([]);
+  const rows = rates.map(r => ({
+    project_id: projectId,
+    creative_type: r.creative_type,
+    rank: r.rank,
+    base_fee: r.base_fee || 0,
+    script_fee: r.script_fee || 0,
+    ai_fee: r.ai_fee || 0,
+    other_fee: 0,
+    updated_at: new Date().toISOString()
+  }));
+  const { data, error } = await supabase
+    .from('project_rates')
+    .insert(rows)
+    .select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 単価設定・更新（個別upsert、後方互換）
 router.post('/projects/:id/rates', async (req, res) => {
   const { creative_type, rank, base_fee, script_fee, ai_fee, other_fee, other_fee_note } = req.body;
   if (!creative_type || !rank) return res.status(400).json({ error: '種別・ランクは必須です' });
-  const { data, error } = await supabase
+  const { data: existing } = await supabase
     .from('project_rates')
-    .upsert({
-      project_id: req.params.id,
-      creative_type, rank,
-      base_fee: base_fee || 0,
-      script_fee: script_fee || 0,
-      ai_fee: ai_fee || 0,
-      other_fee: other_fee || 0,
-      other_fee_note,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'project_id,creative_type,rank' })
-    .select()
-    .single();
+    .select('id')
+    .eq('project_id', req.params.id)
+    .eq('creative_type', creative_type)
+    .eq('rank', rank)
+    .maybeSingle();
+  let query;
+  if (existing) {
+    query = supabase.from('project_rates')
+      .update({ base_fee: base_fee || 0, script_fee: script_fee || 0, ai_fee: ai_fee || 0, other_fee: other_fee || 0, other_fee_note, updated_at: new Date().toISOString() })
+      .eq('id', existing.id).select().single();
+  } else {
+    query = supabase.from('project_rates')
+      .insert({ project_id: req.params.id, creative_type, rank, base_fee: base_fee || 0, script_fee: script_fee || 0, ai_fee: ai_fee || 0, other_fee: other_fee || 0, other_fee_note, updated_at: new Date().toISOString() })
+      .select().single();
+  }
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -1260,13 +1292,17 @@ router.get('/invoices/preview-items', async (req, res) => {
 
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
-    const rankApplied = assignment?.rank_applied ?? currentRank; // NULLなら現在のランクで検索
-    const rateKey      = `${c.project_id}__${c.creative_type}__${rankApplied}`;
-    const fallbackKey  = `${c.project_id}__${c.creative_type}__null`;
-    const anyTypeKey   = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`) && k.endsWith(`__${rankApplied}`));
-    const anyKey       = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
-    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyTypeKey ? ratesMap[anyTypeKey] : null) || (anyKey ? ratesMap[anyKey] : null);
-    console.log(`[rate] ${c.file_name} type=${c.creative_type} rank=${rankApplied} found=${!!rate} keys=${Object.keys(ratesMap).slice(0,3).join('|')}`);
+    const rankApplied = assignment?.rank_applied ?? currentRank;
+    // creative_type (video_short等) をproject_ratesのカテゴリ (video/design) に正規化
+    const baseType = c.creative_type?.startsWith('video') ? 'video'
+                   : c.creative_type?.startsWith('design') ? 'design'
+                   : c.creative_type;
+    const rateKey     = `${c.project_id}__${baseType}__${rankApplied}`;
+    const fallbackKey = `${c.project_id}__${baseType}__null`;
+    const anyKey      = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__${baseType}__`));
+    const anyProjectKey = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
+    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null) || (anyProjectKey ? ratesMap[anyProjectKey] : null);
+    console.log(`[rate] ${c.file_name} type=${c.creative_type}→${baseType} rank=${rankApplied} found=${!!rate}`);
     return {
       id: c.id,
       file_name: c.file_name,
@@ -1344,8 +1380,13 @@ router.post('/invoices/generate', async (req, res) => {
     );
     if (!assignment) continue;
 
+    const baseType = creative.creative_type?.startsWith('video') ? 'video'
+                   : creative.creative_type?.startsWith('design') ? 'design'
+                   : creative.creative_type;
     const rate = rates?.find(
-      r => r.project_id === creative.project_id && r.creative_type === creative.creative_type && r.rank === assignment.rank_applied
+      r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
+    ) || rates?.find(
+      r => r.project_id === creative.project_id && r.creative_type === baseType
     );
     if (!rate) continue;
 

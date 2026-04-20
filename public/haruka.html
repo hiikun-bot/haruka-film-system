@@ -4079,22 +4079,16 @@ async function saveRates() {
   const projectId = currentRatesProjectId;
   const ranks = ['A','B','C'];
 
-  // 動画・デザインの単価をupsert
-  const rateRequests = [];
+  const rates = [];
   ['video','design'].forEach(type => {
     ranks.forEach(rank => {
       const base = parseInt(document.getElementById(`r-${type}-${rank}-base_fee`)?.value || 0);
       const script = parseInt(document.getElementById(`r-${type}-${rank}-script_fee`)?.value || 0);
       const ai = parseInt(document.getElementById(`r-${type}-${rank}-ai_fee`)?.value || 0);
-      rateRequests.push(fetch(`${API}/projects/${projectId}/rates`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ creative_type: type, rank, base_fee: base, script_fee: script, ai_fee: ai })
-      }));
+      rates.push({ creative_type: type, rank, base_fee: base, script_fee: script, ai_fee: ai });
     });
   });
 
-  // その他をバッチ保存
   const extras = [];
   ['video','design'].forEach(type => {
     document.querySelectorAll(`#${type}-extras-list > div`).forEach(div => {
@@ -4104,15 +4098,25 @@ async function saveRates() {
       if (name) extras.push({ creative_type: type, name, fee });
     });
   });
-  rateRequests.push(fetch(`${API}/projects/${projectId}/rate-extras`, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ extras })
-  }));
 
-  const results = await Promise.all(rateRequests);
-  const failed = results.filter(r => !r.ok);
-  if (failed.length) { alert('一部の保存に失敗しました'); return; }
+  const [ratesRes, extrasRes] = await Promise.all([
+    fetch(`${API}/projects/${projectId}/rates/bulk`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ rates })
+    }),
+    fetch(`${API}/projects/${projectId}/rate-extras`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ extras })
+    })
+  ]);
+
+  if (!ratesRes.ok || !extrasRes.ok) {
+    const err = !ratesRes.ok ? await ratesRes.json().catch(()=>({})) : await extrasRes.json().catch(()=>({}));
+    alert('保存に失敗しました: ' + (err.error || '不明なエラー'));
+    return;
+  }
   closeModal('modal-rates');
   alert('単価を保存しました');
 }
