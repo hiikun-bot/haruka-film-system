@@ -562,6 +562,54 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <div id="print-only" style="display:none"></div>
 
+<!-- 請求書印刷プレビューモーダル -->
+<div class="modal-overlay" id="modal-invoice-print">
+  <div style="max-width:820px;width:95vw;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #e0e0e0;background:#fff;flex-shrink:0">
+      <span style="font-size:15px;font-weight:600;color:#222">📄 請求書プレビュー</span>
+      <div style="display:flex;gap:10px">
+        <button class="btn-primary" onclick="triggerInvoicePrint()" style="font-size:13px;padding:8px 20px">🖨 PDFに保存 / 印刷</button>
+        <button class="btn" onclick="closeModal('modal-invoice-print')" style="font-size:13px;padding:8px 16px">✕ 閉じる</button>
+      </div>
+    </div>
+    <div style="overflow-y:auto;flex:1;background:#d8d8d8;padding:28px">
+      <div id="invoice-print-preview" style="box-shadow:0 4px 24px rgba(0,0,0,.18)"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 請求書修正モーダル -->
+<div class="modal-overlay" id="modal-edit-invoice">
+  <div class="modal-card" style="width:480px">
+    <div class="modal-title">請求書を修正<button class="modal-close" onclick="closeModal('modal-edit-invoice')">×</button></div>
+    <input type="hidden" id="ei-invoice-id">
+    <div class="form-group" style="margin-bottom:4px">
+      <label class="form-label">備考（任意）</label>
+      <textarea class="form-input" id="ei-notes" rows="5" placeholder="支払い条件、特記事項、連絡事項など" style="resize:vertical;font-size:14px;line-height:1.7"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button class="btn-primary" onclick="saveInvoiceEdit()">保存する</button>
+      <button class="btn" onclick="closeModal('modal-edit-invoice')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- 重複提出確認モーダル -->
+<div class="modal-overlay" id="modal-submit-duplicate">
+  <div class="modal-card" style="width:500px">
+    <div class="modal-title" style="color:#A32D2D">⚠ 重複提出の確認<button class="modal-close" onclick="closeModal('modal-submit-duplicate')">×</button></div>
+    <div id="dup-warning-msg" style="font-size:13px;color:#666;line-height:1.8;background:#FFF3F3;border:1px solid #F09595;border-radius:8px;padding:12px 14px;margin-bottom:16px"></div>
+    <div class="form-group" style="margin-bottom:4px">
+      <label class="form-label" style="color:#A32D2D">重複理由（必須）<span style="font-size:11px;font-weight:400;color:#999;margin-left:6px">→ 備考欄に自動で記載されます</span></label>
+      <textarea class="form-input" id="dup-reason" rows="4" placeholder="例：前回とは別のクリエイティブです / 修正後の再提出です" style="resize:vertical;font-size:14px;border-color:#F09595"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button class="btn-primary" style="background:#A32D2D;border-color:#A32D2D" onclick="confirmDuplicateSubmit()">理由を入力して提出する</button>
+      <button class="btn" onclick="closeModal('modal-submit-duplicate')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <div class="hfs-header">
   <button class="ham-btn" onclick="openNavDrawer()" aria-label="メニューを開く">
     <span></span><span></span><span></span>
@@ -877,16 +925,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
 
-    <!-- フッター：合計＋ボタン -->
-    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:#fff;flex-shrink:0">
-      <div style="display:flex;align-items:baseline;gap:8px">
-        <span style="font-size:13px;color:var(--text-muted)">選択合計</span>
-        <span id="gi-total" style="font-size:22px;font-weight:700;color:var(--em-dark)">¥0</span>
-        <span id="gi-count" style="font-size:12px;color:var(--text-muted)">（0件）</span>
+    <!-- フッター：合計＋備考＋ボタン -->
+    <div style="padding:12px 24px;border-top:1px solid var(--border);background:#fff;flex-shrink:0">
+      <div style="margin-bottom:10px">
+        <input class="form-input" id="gi-notes" placeholder="備考（任意）：特記事項、連絡事項など" style="font-size:13px;padding:8px 12px;width:100%;box-sizing:border-box">
       </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn-primary" id="gi-submit-btn" onclick="generateMyInvoice()" disabled style="opacity:0.5">請求書を作成する</button>
-        <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span style="font-size:13px;color:var(--text-muted)">選択合計</span>
+          <span id="gi-total" style="font-size:22px;font-weight:700;color:var(--em-dark)">¥0</span>
+          <span id="gi-count" style="font-size:12px;color:var(--text-muted)">（0件）</span>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn-primary" id="gi-submit-btn" onclick="generateMyInvoice()" disabled style="opacity:0.5">請求書を作成する</button>
+          <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1486,6 +1539,22 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div class="form-group" style="margin-bottom:4px">
           <label class="form-label">口座名義（カナ）</label>
           <input class="form-input" id="m-account-holder" placeholder="例：タカハシ サトル" style="font-size:15px;padding:12px 14px">
+        </div>
+        <!-- 請求書用連絡先 -->
+        <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+          <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.08em">請求書用 連絡先・住所</div>
+          <div class="form-group">
+            <label class="form-label">電話番号</label>
+            <input class="form-input" id="m-phone" placeholder="例：090-1234-5678" style="font-size:14px;padding:10px 14px;max-width:240px">
+          </div>
+          <div class="form-group">
+            <label class="form-label">郵便番号</label>
+            <input class="form-input" id="m-postal-code" placeholder="例：123-4567" maxlength="8" style="font-size:14px;padding:10px 14px;max-width:200px">
+          </div>
+          <div class="form-group" style="margin-bottom:4px">
+            <label class="form-label">住所</label>
+            <input class="form-input" id="m-address" placeholder="例：東京都渋谷区〇〇〇1-2-3" style="font-size:14px;padding:10px 14px">
+          </div>
         </div>
       </div>
 
@@ -3760,6 +3829,9 @@ function applyMemberModalAdminFields(m) {
   // ランクは admin/secretary/producer が見える。editor/designer は自分のランクも非表示
   const showRank = isAdm || role === 'producer' || role === 'producer_director';
   document.getElementById('m-rank-group').style.display = showRank ? '' : 'none';
+  // 口座情報タブは admin/secretary のみ表示
+  const bankTabBtn = document.getElementById('m-tab-btn-3');
+  if (bankTabBtn) bankTabBtn.style.display = isAdm ? '' : 'none';
 }
 
 function switchMemberTab(idx) {
@@ -3798,6 +3870,9 @@ function openAddMember() {
   document.getElementById('m-account-type').value = '普通';
   document.getElementById('m-account-number').value = '';
   document.getElementById('m-account-holder').value = '';
+  document.getElementById('m-phone').value = '';
+  document.getElementById('m-postal-code').value = '';
+  document.getElementById('m-address').value = '';
   document.getElementById('m-creative-default-view').value = 'all';
   applyMemberModalAdminFields(null);
   onRoleChange('editor');
@@ -3843,6 +3918,9 @@ function openEditMember(m) {
   document.getElementById('m-account-type').value = m.account_type || '普通';
   document.getElementById('m-account-number').value = m.account_number || '';
   document.getElementById('m-account-holder').value = m.account_holder_kana || '';
+  document.getElementById('m-phone').value = m.phone || '';
+  document.getElementById('m-postal-code').value = m.postal_code || '';
+  document.getElementById('m-address').value = m.address || '';
   applyMemberModalAdminFields(m);
   onRoleChange(m.role || 'editor');
   switchMemberTab(0);
@@ -3871,8 +3949,11 @@ async function submitMember() {
   const account_type = document.getElementById('m-account-type').value || null;
   const account_number = document.getElementById('m-account-number').value.trim() || null;
   const account_holder_kana = document.getElementById('m-account-holder').value.trim() || null;
+  const phone = document.getElementById('m-phone').value.trim() || null;
+  const postal_code = document.getElementById('m-postal-code').value.trim() || null;
+  const address = document.getElementById('m-address').value.trim() || null;
   if (!full_name) { alert('名前は必須です'); return; }
-  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana };
+  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
   let res;
   if (id) {
     res = await fetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
@@ -5170,6 +5251,7 @@ async function loadMyInvoices() {
       <div style="display:flex;gap:8px;margin-top:12px">
         ${inv.status === 'draft' ? `<button class="btn-primary btn-sm" onclick="submitInvoice('${inv.id}')">提出する</button>` : ''}
         ${inv.status === 'rejected' ? `<button class="btn btn-sm" onclick="submitInvoice('${inv.id}')">再提出する</button>` : ''}
+        ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" onclick="editInvoice('${inv.id}')">修正</button>` : ''}
         ${inv.status === 'draft' ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
         <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
       </div>
@@ -5278,12 +5360,12 @@ async function loadInvoicePreview() {
     </thead>
     <tbody>
       ${invoicePreviewItems.map((item, i) => {
-        const isDelivered = item.status === '納品完了';
-        const checked = isDelivered ? 'checked' : '';
+        const noRate = !item.rate;
+        const isDelivered = item.status === '納品';
+        const checked = (isDelivered && !noRate) ? 'checked' : '';
         const statusColor = isDelivered ? '#059669' : '#6B7280';
         const statusBg    = isDelivered ? '#D1FAE5' : '#F3F4F6';
         const rowBg = i % 2 === 0 ? '' : 'background:#FAFEFE';
-        const noRate = !item.rate;
         return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)" id="gi-row-${item.id}">
           <td style="padding:8px 10px;text-align:center">
             <input type="checkbox" class="gi-item-check" data-id="${item.id}" ${checked} ${noRate?'disabled':''} onchange="updateInvoiceTotal()" style="cursor:${noRate?'not-allowed':'pointer'};width:15px;height:15px;${noRate?'opacity:0.3':''}">
@@ -5347,7 +5429,7 @@ async function generateMyInvoice() {
   const res = await fetch(`${API}/invoices/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issuer_id: uid, year, month, selected_creative_ids: selectedIds })
+    body: JSON.stringify({ issuer_id: uid, year, month, selected_creative_ids: selectedIds, notes: document.getElementById('gi-notes').value.trim() || null })
   });
   btn.textContent = '請求書を作成する'; btn.disabled = false;
   const data = await res.json();
@@ -5357,10 +5439,78 @@ async function generateMyInvoice() {
   await loadMyInvoices();
 }
 
+let _pendingSubmitId = null;
+
 async function submitInvoice(id) {
+  const uid = currentUser?.supabase_id || currentUser?.id;
+  const listRes = await fetch(`${API}/invoices?issuer_id=${uid}`);
+  const allInvs = listRes.ok ? await listRes.json() : [];
+  const thisInv = allInvs.find(i => i.id === id);
+
+  if (thisInv) {
+    const dups = allInvs.filter(i =>
+      i.id !== id &&
+      i.year === thisInv.year &&
+      i.month === thisInv.month &&
+      ['submitted','approved'].includes(i.status)
+    );
+    if (dups.length > 0) {
+      _pendingSubmitId = id;
+      const dupNums = dups.map(d => d.invoice_number).join('、');
+      document.getElementById('dup-warning-msg').innerHTML =
+        `<strong>${thisInv.year}年${thisInv.month}月</strong> にすでに <strong>${dups.length}件</strong> の提出済み・承認済み請求書があります。<br><span style="font-size:11px;color:#999">（${dupNums}）</span><br><br>重複して提出する場合は、必ず理由を入力してください。`;
+      document.getElementById('dup-reason').value = '';
+      openModal('modal-submit-duplicate');
+      return;
+    }
+  }
   if (!confirm('提出してよいですか？提出後は管理者の承認が必要です。')) return;
   const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
   if (!res.ok) { alert('提出に失敗しました'); return; }
+  await loadMyInvoices();
+}
+
+async function confirmDuplicateSubmit() {
+  const reason = document.getElementById('dup-reason').value.trim();
+  if (!reason) { alert('重複理由の入力は必須です'); return; }
+  const id = _pendingSubmitId;
+  closeModal('modal-submit-duplicate');
+  // 備考に重複理由を追記
+  const invRes = await fetch(`${API}/invoices/${id}`);
+  if (invRes.ok) {
+    const inv = await invRes.json();
+    const newNotes = inv.notes ? `${inv.notes}\n【重複提出理由】${reason}` : `【重複提出理由】${reason}`;
+    await fetch(`${API}/invoices/${id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ notes: newNotes })
+    });
+  }
+  const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
+  if (!res.ok) { alert('提出に失敗しました'); return; }
+  _pendingSubmitId = null;
+  await loadMyInvoices();
+}
+
+async function editInvoice(id) {
+  const res = await fetch(`${API}/invoices/${id}`);
+  if (!res.ok) { alert('請求書の取得に失敗しました'); return; }
+  const inv = await res.json();
+  document.getElementById('ei-invoice-id').value = id;
+  document.getElementById('ei-notes').value = inv.notes || '';
+  openModal('modal-edit-invoice');
+}
+
+async function saveInvoiceEdit() {
+  const id = document.getElementById('ei-invoice-id').value;
+  const notes = document.getElementById('ei-notes').value.trim() || null;
+  const res = await fetch(`${API}/invoices/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ notes })
+  });
+  if (!res.ok) { alert('保存に失敗しました'); return; }
+  closeModal('modal-edit-invoice');
   await loadMyInvoices();
 }
 
@@ -5383,6 +5533,8 @@ async function rejectInvoice(id) {
   await loadAdminInvoices();
 }
 
+let _printMeta = null;
+
 async function printInvoice(id) {
   const res = await fetch(`${API}/invoices/${id}`);
   if (!res.ok) { alert('請求書の取得に失敗しました'); return; }
@@ -5391,13 +5543,25 @@ async function printInvoice(id) {
   const issuer  = inv.issuer  || {};
   const project = inv.projects || {};
   const client  = project.clients || {};
-  const subtotal = inv.total_amount || 0;
-  const tax      = Math.floor(subtotal * 0.1);
-  const total    = subtotal + tax;
 
+  // 内税計算：total_amount が税込最大金額
+  const total    = inv.total_amount || 0;
+  const subtotal = Math.floor(total / 1.1);
+  const tax      = total - subtotal;
+
+  const now = new Date();
   const issueDate = inv.issued_at
     ? new Date(inv.issued_at).toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'})
-    : new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'});
+    : now.toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'});
+
+  const todayStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  _printMeta = {
+    num: inv.invoice_number,
+    issuerName: issuer.full_name || '不明',
+    year: inv.year || '',
+    month: inv.month || '',
+    todayStr
+  };
 
   const costLabel = { base_fee:'動画編集 / 静止画', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
 
@@ -5429,8 +5593,8 @@ async function printInvoice(id) {
     issuer.account_holder_kana ? `口座名義：${issuer.account_holder_kana}` : '',
   ].filter(Boolean);
 
-  document.getElementById('print-only').innerHTML = `
-  <div style="font-family:'Noto Sans JP',sans-serif;max-width:740px;margin:0 auto;padding:32px;color:#222;font-size:13px;line-height:1.6">
+  const invoiceHTML = `
+  <div style="font-family:'Noto Sans JP',sans-serif;max-width:740px;margin:0 auto;padding:36px;color:#222;font-size:13px;line-height:1.6;background:#fff">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px">
       <img src="/HARUKAFILMバナー.png" style="height:44px;object-fit:contain">
       <div style="text-align:right">
@@ -5447,15 +5611,17 @@ async function printInvoice(id) {
         <div style="font-size:17px;font-weight:700">HARUKA FILM</div>
         <div style="font-size:13px;margin-top:4px;color:#444">高橋聖 様</div>
       </div>
-      <div style="text-align:right;min-width:200px">
+      <div style="text-align:right;min-width:220px">
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求者</div>
         <div style="font-size:15px;font-weight:700">${issuer.full_name||'-'}</div>
-        ${issuer.email?`<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>`:''}
+        ${issuer.email ? `<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>` : ''}
+        ${issuer.phone ? `<div style="font-size:11px;color:#666;margin-top:1px">TEL：${issuer.phone}</div>` : ''}
+        ${(issuer.postal_code || issuer.address) ? `<div style="font-size:11px;color:#666;margin-top:4px">${issuer.postal_code ? `〒${issuer.postal_code}　` : ''}${issuer.address || ''}</div>` : ''}
       </div>
     </div>
 
     <div style="background:#f0fafa;border:2px solid #2BB8B4;border-radius:10px;padding:18px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between">
-      <div style="font-size:12px;color:#555">ご請求金額（税込10%）</div>
+      <div style="font-size:12px;color:#555">ご請求金額（税込・内税10%）</div>
       <div style="font-size:30px;font-weight:700;color:#2BB8B4">¥${total.toLocaleString()}</div>
     </div>
 
@@ -5471,25 +5637,44 @@ async function printInvoice(id) {
       </thead>
       <tbody>${itemRows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa;border:1px solid #ddd">明細なし</td></tr>'}</tbody>
       <tfoot>
-        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">小計</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${subtotal.toLocaleString()}</td></tr>
+        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">税抜小計</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${subtotal.toLocaleString()}</td></tr>
         <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">消費税（10%）</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${tax.toLocaleString()}</td></tr>
         <tr><td colspan="4" style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;font-size:13px">合計（税込）</td><td style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;color:#2BB8B4;font-size:13px">¥${total.toLocaleString()}</td></tr>
       </tfoot>
     </table>
 
-    <div style="margin-top:24px;border:1px solid #ddd;border-radius:6px;padding:14px 16px;background:#fafafa">
+    <div style="margin-top:20px;border:1px solid #ddd;border-radius:6px;padding:14px 16px;background:#fafafa">
       <div style="font-size:10px;color:#999;margin-bottom:8px;font-weight:600;letter-spacing:.08em">振込先</div>
       ${bankLines.length
         ? bankLines.map(l=>`<div style="font-size:12px;line-height:1.8">${l}</div>`).join('')
         : '<div style="font-size:12px;color:#F59E0B">⚠ 振込先が未設定です。メンバー設定から口座情報を登録してください。</div>'}
     </div>
 
-    <div style="margin-top:20px;font-size:10px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:12px">
+    ${inv.notes ? `
+    <div style="margin-top:16px;border:1px solid #ddd;border-radius:6px;padding:14px 16px;background:#fafafa">
+      <div style="font-size:10px;color:#999;margin-bottom:8px;font-weight:600;letter-spacing:.08em">備考</div>
+      <div style="font-size:12px;line-height:1.8;white-space:pre-wrap">${inv.notes}</div>
+    </div>` : ''}
+
+    <div style="margin-top:18px;font-size:10px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:12px">
       ※ お振込み手数料はご負担ください。　※ ご不明な点はご連絡ください。
     </div>
   </div>`;
 
+  document.getElementById('print-only').innerHTML = invoiceHTML;
+  document.getElementById('invoice-print-preview').innerHTML = invoiceHTML;
+  openModal('modal-invoice-print');
+}
+
+function triggerInvoicePrint() {
+  const m = _printMeta;
+  const prev = document.title;
+  if (m) {
+    const name = (m.issuerName).replace(/\s+/g,'');
+    document.title = `請求書_${m.year}年${m.month}月_${m.todayStr}_高橋宛_${name}_${m.num}`;
+  }
   window.print();
+  setTimeout(() => { document.title = prev; }, 500);
 }
 
 async function deleteInvoice(id) {

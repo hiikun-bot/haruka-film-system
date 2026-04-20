@@ -162,8 +162,8 @@ CREATE TABLE IF NOT EXISTS creative_assignments (
 CREATE TABLE IF NOT EXISTS project_rates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
-  creative_type TEXT NOT NULL,
-  rank TEXT NOT NULL,
+  creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+  rank TEXT NOT NULL CHECK (rank IN ('A', 'B', 'C')),
   base_fee INTEGER DEFAULT 0,
   script_fee INTEGER DEFAULT 0,
   ai_fee INTEGER DEFAULT 0,
@@ -228,7 +228,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS drive_folder_url TEXT;
 CREATE TABLE IF NOT EXISTS project_rate_extras (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
-  creative_type TEXT NOT NULL,
+  creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
   name TEXT NOT NULL,
   fee INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now()

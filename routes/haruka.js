@@ -1060,7 +1060,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
     .order('full_name');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -1140,7 +1140,8 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     is_active, left_at, left_reason,
     birthday, weekday_hours, weekend_hours, note,
     bank_name, bank_code, branch_name, branch_code,
-    account_type, account_number, account_holder_kana
+    account_type, account_number, account_holder_kana,
+    phone, postal_code, address
   } = req.body;
 
   const updateData = {
@@ -1159,6 +1160,9 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     account_type: account_type || null,
     account_number: account_number || null,
     account_holder_kana: account_holder_kana || null,
+    phone: phone || null,
+    postal_code: postal_code || null,
+    address: address || null,
     updated_at: new Date().toISOString()
   };
   // ロール変更は admin/secretary のみ
@@ -1355,7 +1359,8 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       issuer:issuer_id(
         id, full_name, email,
         bank_name, bank_code, branch_name, branch_code,
-        account_type, account_number, account_holder_kana
+        account_type, account_number, account_holder_kana,
+        phone, postal_code, address
       ),
       invoice_items(
         id, total_amount, is_special, special_reason,
@@ -1372,6 +1377,20 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
   if (data.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role)) {
     return res.status(403).json({ error: 'アクセス権限がありません' });
   }
+  res.json(data);
+});
+
+// 請求書 備考更新（draft/rejected のみ）
+router.patch('/invoices/:id', requireAuth, async (req, res) => {
+  const { notes } = req.body;
+  const { data: inv, error: fetchErr } = await supabase
+    .from('invoices').select('issuer_id, status').eq('id', req.params.id).single();
+  if (fetchErr || !inv) return res.status(404).json({ error: '請求書が見つかりません' });
+  if (inv.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role))
+    return res.status(403).json({ error: 'アクセス権限がありません' });
+  const { data, error } = await supabase
+    .from('invoices').update({ notes: notes ?? null }).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
@@ -1471,6 +1490,7 @@ router.post('/invoices/generate', async (req, res) => {
       year: req.body.year || now.getFullYear(),
       month: req.body.month || (now.getMonth() + 1),
       recipient_id: req.body.recipient_id || null,
+      notes: req.body.notes || null,
     })
     .select()
     .single();
