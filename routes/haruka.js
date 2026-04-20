@@ -1258,37 +1258,7 @@ router.get('/invoices', async (req, res) => {
   res.json(data);
 });
 
-// 請求書詳細（PDF印刷用）
-router.get('/invoices/:id', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('invoices')
-    .select(`
-      *,
-      projects(id, name, clients(id, name, client_code)),
-      issuer:issuer_id(
-        id, full_name, email,
-        bank_name, bank_code, branch_name, branch_code,
-        account_type, account_number, account_holder_kana
-      ),
-      invoice_items(
-        id, total_amount, is_special, special_reason,
-        creatives(id, file_name, creative_type,
-          projects(id, name, clients(id, name, client_code))
-        ),
-        invoice_item_details(cost_type, unit_price, amount)
-      )
-    `)
-    .eq('id', req.params.id)
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: '請求書が見つかりません' });
-  if (data.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role)) {
-    return res.status(403).json({ error: 'アクセス権限がありません' });
-  }
-  res.json(data);
-});
-
-// 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す
+// 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す（:idより前に定義必須）
 router.get('/invoices/preview-items', async (req, res) => {
   const uid = req.user?.id;
   const year  = parseInt(req.query.year);
@@ -1373,6 +1343,36 @@ router.get('/invoices/preview-items', async (req, res) => {
   });
 
   res.json(result);
+});
+
+// 請求書詳細（PDF印刷用）― preview-items より後に定義
+router.get('/invoices/:id', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select(`
+      *,
+      projects(id, name, clients(id, name, client_code)),
+      issuer:issuer_id(
+        id, full_name, email,
+        bank_name, bank_code, branch_name, branch_code,
+        account_type, account_number, account_holder_kana
+      ),
+      invoice_items(
+        id, total_amount, is_special, special_reason,
+        creatives(id, file_name, creative_type,
+          projects(id, name, clients(id, name, client_code))
+        ),
+        invoice_item_details(cost_type, unit_price, amount)
+      )
+    `)
+    .eq('id', req.params.id)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: '請求書が見つかりません' });
+  if (data.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'アクセス権限がありません' });
+  }
+  res.json(data);
 });
 
 // 請求書作成（選択クリエイティブから生成）
