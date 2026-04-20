@@ -5129,8 +5129,13 @@ async function loadAdminInvoices() {
   const status = document.getElementById('inv-filter-status')?.value || '';
   const url = `${API}/invoices${status ? `?status=${status}` : ''}`;
   const res = await fetch(url);
-  const list = res.ok ? await res.json() : [];
   const el = document.getElementById('inv-admin-list');
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    el.innerHTML = `<div style="color:#E24B4A;padding:20px;text-align:center;font-size:13px">読み込みエラー: ${err.error||res.status}</div>`;
+    return;
+  }
+  const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>'; return; }
   el.innerHTML = list.map(inv => {
     const statusInfo = {

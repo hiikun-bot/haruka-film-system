@@ -1247,7 +1247,7 @@ router.get('/invoices', async (req, res) => {
   const { issuer_id, year, month, status } = req.query;
   let query = supabase
     .from('invoices')
-    .select(`*, projects(id,name,clients(id,name)), issuer:users!invoices_issuer_id_fkey(id,full_name), recipient:users!invoices_recipient_id_fkey(id,full_name), invoice_items(id,total_amount,is_special,special_reason,creatives(id,file_name,creative_type),invoice_item_details(*))`)
+    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,creatives(id,file_name,creative_type),invoice_item_details(*))`)
     .order('created_at', { ascending: false });
   if (issuer_id) query = query.eq('issuer_id', issuer_id);
   if (year) query = query.eq('year', parseInt(year));
