@@ -268,6 +268,16 @@ router.post('/projects/:id/cycles', async (req, res) => {
 
 // ==================== 単価設定 ====================
 
+const RATE_CREATIVE_TYPES = new Set(['video', 'design']);
+const RATE_RANKS = new Set(['A', 'B', 'C']);
+function normalizeRateCreativeType(type) {
+  if (typeof type !== 'string') return '';
+  const normalized = type.trim().toLowerCase();
+  if (normalized.startsWith('video')) return 'video';
+  if (normalized.startsWith('design')) return 'design';
+  return normalized;
+}
+
 // 単価一覧取得
 router.get('/projects/:id/rates', async (req, res) => {
   const { data, error } = await supabase
@@ -280,19 +290,14 @@ router.get('/projects/:id/rates', async (req, res) => {
   res.json(data);
 });
 
-// 単価一括保存（delete→insert）
+// 単価一括保存
 router.post('/projects/:id/rates/bulk', async (req, res) => {
   const projectId = req.params.id;
   const { rates } = req.body;
-  const { error: delError } = await supabase
-    .from('project_rates')
-    .delete()
-    .eq('project_id', projectId);
-  if (delError) return res.status(500).json({ error: delError.message });
   if (!rates || !rates.length) return res.json([]);
   const rows = rates.map(r => ({
     project_id: projectId,
-    creative_type: r.creative_type,
+    creative_type: normalizeRateCreativeType(r.creative_type),
     rank: r.rank,
     base_fee: r.base_fee || 0,
     script_fee: r.script_fee || 0,
@@ -300,9 +305,13 @@ router.post('/projects/:id/rates/bulk', async (req, res) => {
     other_fee: 0,
     updated_at: new Date().toISOString()
   }));
+  const invalid = rows.find(r => !RATE_CREATIVE_TYPES.has(r.creative_type) || !RATE_RANKS.has(r.rank));
+  if (invalid) {
+    return res.status(400).json({ error: '単価種別は video / design、ランクは A / B / C で保存してください' });
+  }
   const { data, error } = await supabase
     .from('project_rates')
-    .insert(rows)
+    .upsert(rows, { onConflict: 'project_id,creative_type,rank' })
     .select();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -310,8 +319,15 @@ router.post('/projects/:id/rates/bulk', async (req, res) => {
 
 // 単価設定・更新（個別upsert、後方互換）
 router.post('/projects/:id/rates', async (req, res) => {
-  const { creative_type, rank, base_fee, script_fee, ai_fee, other_fee, other_fee_note } = req.body;
+  const { rank, base_fee, script_fee, ai_fee, other_fee, other_fee_note } = req.body;
+  const creative_type = normalizeRateCreativeType(req.body.creative_type);
   if (!creative_type || !rank) return res.status(400).json({ error: '種別・ランクは必須です' });
+  if (!RATE_CREATIVE_TYPES.has(creative_type)) {
+    return res.status(400).json({ error: '単価種別は video / design で保存してください' });
+  }
+  if (!RATE_RANKS.has(rank)) {
+    return res.status(400).json({ error: '単価ランクは A / B / C で保存してください' });
+  }
   const { data: existing } = await supabase
     .from('project_rates')
     .select('id')
@@ -1331,7 +1347,8 @@ router.get('/invoices/preview-items', async (req, res) => {
 
 // 請求書作成（選択クリエイティブから生成）
 router.post('/invoices/generate', async (req, res) => {
-  const { issuer_id, project_id, cycle_id, selected_creative_ids } = req.body;
+  const { issuer_id, cycle_id, selected_creative_ids } = req.body;
+  let { project_id } = req.body;
   if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
 
   // 請求可能なクリエイティブを取得
@@ -1352,6 +1369,9 @@ router.post('/invoices/generate', async (req, res) => {
   const { data: creatives, error: cErr } = await query;
   if (cErr) return res.status(500).json({ error: cErr.message });
   if (!creatives.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
+
+  // selected_creative_ids使用時はproject_idを最初のクリエイティブから補完
+  if (!project_id && creatives.length) project_id = creatives[0].project_id;
 
   // 対象案件の単価をまとめて取得
   const projectIds = [...new Set(creatives.map(c => c.project_id))];
