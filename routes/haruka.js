@@ -1566,9 +1566,31 @@ router.post('/invoices/:id/reject', requireAuth, requireLevel('admin'), async (r
   res.json(data);
 });
 
-// 請求書削除（draft のみ）
-router.delete('/invoices/:id', async (req, res) => {
-  const { error } = await supabase.from('invoices').delete().eq('id', req.params.id).eq('status', 'draft');
+// 請求書削除（draft のみ）― 子テーブルを先に削除してFK制約を回避
+router.delete('/invoices/:id', requireAuth, async (req, res) => {
+  const invId = req.params.id;
+
+  // 明細の存在確認 + オーナーチェック
+  const { data: inv } = await supabase.from('invoices').select('issuer_id, status').eq('id', invId).single();
+  if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
+  if (inv.status !== 'draft') return res.status(400).json({ error: '下書き以外は削除できません' });
+  if (inv.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role))
+    return res.status(403).json({ error: 'アクセス権限がありません' });
+
+  // 1. invoice_item_details を削除（invoice_items 経由）
+  const { data: items } = await supabase.from('invoice_items').select('id').eq('invoice_id', invId);
+  if (items?.length) {
+    const itemIds = items.map(i => i.id);
+    const { error: detErr } = await supabase.from('invoice_item_details').delete().in('invoice_item_id', itemIds);
+    if (detErr) return res.status(500).json({ error: detErr.message });
+  }
+
+  // 2. invoice_items を削除
+  const { error: itemErr } = await supabase.from('invoice_items').delete().eq('invoice_id', invId);
+  if (itemErr) return res.status(500).json({ error: itemErr.message });
+
+  // 3. invoice を削除
+  const { error } = await supabase.from('invoices').delete().eq('id', invId);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });

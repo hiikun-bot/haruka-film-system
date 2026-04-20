@@ -879,7 +879,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div class="sec-label" style="color:var(--em-dark)">全員の請求書（管理者）</div>
         <div style="display:flex;gap:8px">
-          <select id="inv-filter-status" class="form-select" style="width:120px" onchange="loadAdminInvoices()">
+          <select id="inv-filter-status" class="form-select" style="width:130px" onchange="loadAdminInvoices()">
             <option value="">全ステータス</option>
             <option value="submitted">提出済み</option>
             <option value="approved">承認済み</option>
@@ -888,7 +888,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </select>
         </div>
       </div>
-      <div id="inv-admin-list" class="loading">読み込み中...</div>
+      <!-- 月タブ -->
+      <div id="inv-admin-month-tabs" style="display:flex;gap:0;flex-wrap:wrap;border-bottom:2px solid var(--border);margin-bottom:0"></div>
+      <!-- テーブルエリア -->
+      <div id="inv-admin-list" style="overflow-x:auto">読み込み中...</div>
     </div>
   </div>
 </div>
@@ -5259,47 +5262,145 @@ async function loadMyInvoices() {
   }).join('');
 }
 
+let _adminInvoiceActiveTab = null;
+
 async function loadAdminInvoices() {
   const status = document.getElementById('inv-filter-status')?.value || '';
   const url = `${API}/invoices${status ? `?status=${status}` : ''}`;
   const res = await fetch(url);
   const el = document.getElementById('inv-admin-list');
+  const tabsEl = document.getElementById('inv-admin-month-tabs');
+
   if (!res.ok) {
     const err = await res.json().catch(()=>({}));
     el.innerHTML = `<div style="color:#E24B4A;padding:20px;text-align:center;font-size:13px">読み込みエラー: ${err.error||res.status}</div>`;
     return;
   }
   const list = await res.json();
-  if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>'; return; }
-  el.innerHTML = list.map(inv => {
-    const statusInfo = {
-      draft:     { label:'下書き',   color:'#888',     bg:'#f5f5f5' },
-      submitted: { label:'提出済み', color:'#1565C0',  bg:'#E3F2FD' },
-      approved:  { label:'承認済み', color:'#2E7D32',  bg:'#E8F5E9' },
-      rejected:  { label:'差し戻し', color:'#A32D2D',  bg:'#FFEBEE' },
-    }[inv.status] || { label: inv.status, color:'#888', bg:'#f5f5f5' };
-    return `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div style="font-weight:600;font-size:15px">${inv.invoice_number}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
-            ${inv.issuer?.full_name || '-'} / ${inv.year||''}年${inv.month||''}月 / ${inv.projects?.name||'全案件'}
-          </div>
-        </div>
-        <div style="text-align:right">
-          <span style="font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:${statusInfo.bg};color:${statusInfo.color}">${statusInfo.label}</span>
-          <div style="font-size:16px;font-weight:700;margin-top:4px">¥${(inv.total_amount||0).toLocaleString()}</div>
-        </div>
+
+  if (!list.length) {
+    if (tabsEl) tabsEl.innerHTML = '';
+    el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>';
+    return;
+  }
+
+  // 年月でグループ化
+  const byMonth = {};
+  list.forEach(inv => {
+    const key = `${inv.year||0}-${String(inv.month||0).padStart(2,'0')}`;
+    if (!byMonth[key]) byMonth[key] = { year: inv.year, month: inv.month, invs: [] };
+    byMonth[key].invs.push(inv);
+  });
+  const monthKeys = Object.keys(byMonth).sort().reverse();
+  const activeKey = (_adminInvoiceActiveTab && byMonth[_adminInvoiceActiveTab]) ? _adminInvoiceActiveTab : monthKeys[0];
+
+  // タブ描画
+  if (tabsEl) {
+    tabsEl.innerHTML = monthKeys.map(key => {
+      const { year, month, invs } = byMonth[key];
+      const submittedCount = invs.filter(i => i.status === 'submitted').length;
+      const badge = submittedCount > 0 ? `<span style="background:#E53935;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:5px">${submittedCount}</span>` : '';
+      const isActive = key === activeKey;
+      return `<button onclick="switchAdminMonthTab('${key}')" data-mtab="${key}"
+        style="padding:8px 18px;border:none;background:transparent;cursor:pointer;font-size:13px;font-weight:${isActive?'600':'400'};
+        color:${isActive?'var(--em-dark)':'var(--text-muted)'};border-bottom:${isActive?'2px solid var(--em-dark)':'2px solid transparent'};
+        margin-bottom:-2px;transition:all .15s;white-space:nowrap">
+        ${year}年${month}月${badge}
+      </button>`;
+    }).join('');
+  }
+
+  // テーブル描画（月ごと）
+  const statusMap = {
+    draft:     { label:'下書き',   color:'#888',    bg:'#f5f5f5' },
+    submitted: { label:'提出済み', color:'#1565C0', bg:'#E3F2FD' },
+    approved:  { label:'承認済み', color:'#2E7D32', bg:'#E8F5E9' },
+    rejected:  { label:'差し戻し', color:'#A32D2D', bg:'#FFEBEE' },
+  };
+
+  el.innerHTML = monthKeys.map(key => {
+    const { year, month, invs } = byMonth[key];
+
+    // 発行者ごとに今月N件目をカウント
+    const sorted = [...invs].sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
+    const issuerSeq = {};
+    sorted.forEach(inv => {
+      const iid = inv.issuer_id || '';
+      issuerSeq[iid] = (issuerSeq[iid] || 0) + 1;
+      inv._nth = issuerSeq[iid];
+    });
+    const issuerTotal = {};
+    Object.entries(issuerSeq).forEach(([k,v]) => issuerTotal[k] = v);
+
+    const rows = sorted.map((inv, ri) => {
+      const st = statusMap[inv.status] || { label: inv.status, color:'#888', bg:'#f5f5f5' };
+      const iid = inv.issuer_id || '';
+      const nth = inv._nth;
+      const total = issuerTotal[iid] || 1;
+      const isDup = total > 1;
+      const nthLabel = isDup
+        ? `<span style="color:#E53935;font-weight:600;font-size:12px">⚠ ${nth}/${total}件</span>`
+        : `<span style="color:var(--text-muted);font-size:12px">1件</span>`;
+      const rowBg = ri % 2 === 0 ? '#fff' : '#F7FFFE';
+      return `<tr style="background:${rowBg};border-bottom:0.5px solid var(--border)">
+        <td style="padding:10px 12px;font-weight:600;font-size:13px;white-space:nowrap">${inv.issuer?.full_name||'-'}</td>
+        <td style="padding:10px 12px;text-align:center">${nthLabel}</td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--em-dark);white-space:nowrap;font-weight:600">${inv.invoice_number}</td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${inv.projects?.name||'全案件'}</td>
+        <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:var(--em-dark);white-space:nowrap">¥${(inv.total_amount||0).toLocaleString()}</td>
+        <td style="padding:10px 12px;text-align:center">
+          <span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;background:${st.bg};color:${st.color};white-space:nowrap">${st.label}</span>
+        </td>
+        <td style="padding:10px 12px;text-align:center;font-size:12px;color:var(--text-muted)">${inv.notes ? `<span title="${esc(inv.notes)}" style="cursor:help;color:var(--em-dark)">📝</span>` : '—'}</td>
+        <td style="padding:10px 12px;white-space:nowrap">
+          ${inv.status === 'submitted' ? `
+            <button class="btn-primary btn-sm" style="font-size:11px;padding:3px 10px" onclick="approveInvoice('${inv.id}')">承認</button>
+            <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595;margin-left:4px" onclick="rejectInvoice('${inv.id}')">差戻</button>
+          ` : ''}
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="printInvoice('${inv.id}')">🖨</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    const totalAmt = sorted.reduce((s,i) => s + (i.total_amount||0), 0);
+    const submittedAmt = sorted.filter(i=>i.status==='submitted').reduce((s,i) => s+(i.total_amount||0), 0);
+
+    return `<div data-mtable="${key}" style="display:${key===activeKey?'':'none'}">
+      <div style="display:flex;gap:20px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted)">
+        <span>合計 <strong style="color:var(--text)">${sorted.length}件</strong></span>
+        <span>請求総額 <strong style="color:var(--em-dark)">¥${totalAmt.toLocaleString()}</strong></span>
+        ${submittedAmt > 0 ? `<span>承認待ち <strong style="color:#1565C0">¥${submittedAmt.toLocaleString()}</strong></span>` : ''}
       </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        ${inv.status === 'submitted' ? `
-        <button class="btn-primary btn-sm" onclick="approveInvoice('${inv.id}')">承認する</button>
-        <button class="btn btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="rejectInvoice('${inv.id}')">差し戻す</button>` : ''}
-        <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
-      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+            <th style="padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark)">請求者</th>
+            <th style="padding:9px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark)">今月N件目</th>
+            <th style="padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark)">請求書番号</th>
+            <th style="padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark)">案件名</th>
+            <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark)">金額（税込）</th>
+            <th style="padding:9px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark)">ステータス</th>
+            <th style="padding:9px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark)">備考</th>
+            <th style="padding:9px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark)">操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
     </div>`;
   }).join('');
+}
+
+function switchAdminMonthTab(key) {
+  _adminInvoiceActiveTab = key;
+  document.querySelectorAll('[data-mtab]').forEach(b => {
+    const active = b.dataset.mtab === key;
+    b.style.fontWeight = active ? '600' : '400';
+    b.style.color = active ? 'var(--em-dark)' : 'var(--text-muted)';
+    b.style.borderBottom = active ? '2px solid var(--em-dark)' : '2px solid transparent';
+  });
+  document.querySelectorAll('[data-mtable]').forEach(d => {
+    d.style.display = d.dataset.mtable === key ? '' : 'none';
+  });
 }
 
 let invoicePreviewItems = [];
