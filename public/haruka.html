@@ -7364,7 +7364,7 @@ function renderGeneralMasterPage() {
           </div>
           <div style="flex:1">
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">名称 <span style="color:var(--em-dark)">*</span></label>
-            <input class="form-input" id="mia-name" placeholder="例：Meta">
+            <input class="form-input" id="mia-name" placeholder="${cat?.code?.startsWith('COMMENT_CAT') ? '例：冒頭フック' : '例：Meta'}">
           </div>
           <div style="flex:1">
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">備考</label>
