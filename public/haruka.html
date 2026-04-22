@@ -867,7 +867,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <input type="date" id="client-date-to" class="form-input" style="width:136px;padding:5px 8px;font-size:13px" oninput="loadProjects()">
           <button class="btn" onclick="clearDateFilter()" style="font-size:12px;padding:5px 10px">クリア</button>
         </div>
-        <button class="btn-primary" onclick="openNewClientModal()">＋ クライアント追加</button>
+        <button id="btn-add-client" class="btn-primary" onclick="openNewClientModal()">＋ クライアント追加</button>
       </div>
     </div>
     <div id="projects-list" class="loading">読み込み中...</div>
@@ -1463,6 +1463,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div class="form-group">
           <label class="form-label">名前 <span style="color:#E24B4A">*</span></label>
           <input class="form-input" id="m-name" placeholder="例：高橋" style="font-size:15px;padding:12px 14px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">ニックネーム <span style="font-size:11px;color:var(--text-muted);font-weight:400">（検索・フィルターで使用可）</span></label>
+          <input class="form-input" id="m-nickname" placeholder="例：たろ、はなちゃん">
         </div>
         <div class="form-group">
           <label class="form-label">メールアドレス <span style="color:#E24B4A">*</span></label>
@@ -2919,8 +2923,8 @@ async function loadProjects() {
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
             ${isEffectiveAdmin() ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
-            <button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>
-            <button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>
+            ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>` : ''}
+            ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
         }).join('')
       : `<div style="padding:12px 20px;font-size:13px;color:var(--text-muted)">案件がありません${!showCompleted && hiddenCount ? `（${hiddenCount}件 非表示中）` : ''}</div>`;
@@ -2941,14 +2945,14 @@ async function loadProjects() {
           <div style="display:flex;align-items:center;gap:10px">
             <span class="status-chip ${clientStatusClass(client.status)}">${client.status || '取引中'}</span>
             <span style="font-size:13px;color:var(--text-muted)">${clientProjects.length}件表示中</span>
-            <button class="btn-sm" onclick="event.stopPropagation();openEditClient('${client.id}')">編集</button>
+            ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditClient('${client.id}')">編集</button>` : ''}
             <span class="toggle-arrow" id="arrow-${client.id}">▼</span>
           </div>
         </div>
         <div class="client-block-body" id="body-${client.id}">
           ${projectRows}
           <div style="padding:12px 20px">
-            <button class="btn-sm" onclick="event.stopPropagation();openProjectModal('${client.id}')">＋ 案件追加</button>
+            ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectModal('${client.id}')">＋ 案件追加</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -4395,6 +4399,8 @@ function applyRoleBasedUI() {
   if (addMemberBtn) addMemberBtn.style.display = isEffectiveAdmin() ? '' : 'none';
   const inviteBtn = document.getElementById('btn-invite');
   if (inviteBtn) inviteBtn.style.display = isEffectiveAdmin() ? '' : 'none';
+  const addClientBtn = document.getElementById('btn-add-client');
+  if (addClientBtn) addClientBtn.style.display = canEditProject() ? '' : 'none';
   // マスター管理ナビは管理者のみ（ヘッダー・ドロワー両方）
   const masterNav = document.getElementById('nav-master');
   if (masterNav) masterNav.style.display = isEffectiveAdmin() ? '' : 'none';
@@ -4414,13 +4420,13 @@ const ROLE_RANK = { admin:6, producer:5, producer_director:4, director:3, design
 function canSeeMember(m) {
   if (!currentUser) return true;
   const role = effectiveRole();
-  if (!previewRole && isSuperAdmin()) return true; // 本来の管理者・プレビューなし
-  if (role === 'admin' || role === 'secretary') return true;
-  if (role === 'producer' || role === 'producer_director') return true;
-  if (role === 'director') {
-    return ['editor','designer'].includes(m.role) || m.email === currentUser.email || m.id === currentUser.id;
-  }
+  if (!previewRole && isSuperAdmin()) return true;
+  if (['admin','secretary','producer','producer_director','director','editor','designer'].includes(role)) return true;
   return m.email === currentUser.email || m.id === currentUser.id;
+}
+
+function canEditProject() {
+  return ['admin','secretary','producer','producer_director','director'].includes(effectiveRole());
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }

@@ -1359,10 +1359,8 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       issuer:issuer_id(
         id, full_name, email,
         bank_name, bank_code, branch_name, branch_code,
-        account_type, account_number, account_holder_kana,
-        phone, postal_code, address
+        account_type, account_number, account_holder_kana
       ),
-      recipient_client:recipient_client_id(id, name, client_code),
       invoice_items(
         id, total_amount, is_special, special_reason,
         creatives(id, file_name, creative_type,
