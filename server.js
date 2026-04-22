@@ -945,14 +945,22 @@ async function seedAdminIfNeeded() {
       console.log('[SEED] スキップ: 環境変数が未設定');
       return;
     }
-    const existing = users.byEmail(adminEmail);
+    // Supabase で既存確認（認証は Supabase users テーブルを使用するため）
+    const { data: existing } = await supabase.from('users').select('id').eq('email', adminEmail).maybeSingle();
     if (existing) {
       console.log(`[SEED] スキップ: ${adminEmail} はすでに登録済み`);
       return;
     }
     const hash = await bcrypt.hash(adminPassword, 12);
-    const created = users.create({ name: '管理者', email: adminEmail, role: 'admin', passwordHash: hash });
-    console.log(`[SEED] 管理者アカウントを作成しました: ${adminEmail} (id=${created?.id})`);
+    const { data: created, error } = await supabase.from('users').insert({
+      full_name: '管理者',
+      email: adminEmail,
+      role: 'admin',
+      password_hash: hash,
+      is_active: true,
+    }).select('id').single();
+    if (error) throw error;
+    console.log(`[SEED] 管理者アカウントを Supabase に作成しました: ${adminEmail} (id=${created?.id})`);
   } catch(e) {
     console.error('[SEED] エラー:', e.message);
   }
