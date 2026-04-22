@@ -1322,11 +1322,27 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div class="modal" style="max-width:760px;width:95vw;max-height:90vh;overflow-y:auto">
     <div class="modal-title">メンバー一括インポート<button class="modal-close" onclick="closeModal('modal-import')">×</button></div>
 
-    <div style="background:var(--em-pale);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.8;color:var(--em-dark)">
-      <b>CSVフォーマット（1行目はヘッダー）</b><br>
-      <code style="font-size:12px">full_name, email, role, job_type, rank, team_code, birthday</code><br>
-      role: <code>admin / producer / producer_director / director / editor / designer</code><br>
-      job_type: <code>動画 / デザイン</code>　rank: <code>S / A / B / C</code>　team_code: <code>A〜Z</code>　birthday: <code>YYYY-MM-DD</code>
+    <div style="background:var(--em-pale);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.9;color:var(--em-dark)">
+      <b>CSVフォーマット</b><br>
+      <span style="font-size:12px;color:var(--text-muted)">1行目：ヘッダー行（固定）　2行目：記入例（削除してOK）　3行目以降：実データ</span><br><br>
+      <table style="border-collapse:collapse;font-size:12px;width:100%">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:4px 10px 4px 0;text-align:left;white-space:nowrap">列名</th>
+            <th style="padding:4px 10px 4px 0;text-align:left;white-space:nowrap">内容</th>
+            <th style="padding:4px 0;text-align:left">選択肢 / 形式</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>full_name</code></td><td style="padding:3px 10px 3px 0">氏名</td><td style="padding:3px 0">例：<code>山田 花子</code></td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>email</code></td><td style="padding:3px 10px 3px 0">メールアドレス</td><td style="padding:3px 0">例：<code>hanako@example.com</code></td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>role</code></td><td style="padding:3px 10px 3px 0">権限・役職</td><td style="padding:3px 0"><code>admin</code>（管理者）/<code>producer</code>（P）/<code>producer_director</code>（PD）/<code>director</code>（D）/<code>editor</code>（編集）/<code>designer</code>（デザイナー）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>job_type</code></td><td style="padding:3px 10px 3px 0">職種</td><td style="padding:3px 0"><code>video</code>（動画）　または　<code>design</code>（デザイン）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>rank</code></td><td style="padding:3px 10px 3px 0">ランク</td><td style="padding:3px 0"><code>S</code>　<code>A</code>　<code>B</code>　<code>C</code>　のいずれか</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>team_code</code></td><td style="padding:3px 10px 3px 0">チームコード</td><td style="padding:3px 0">アルファベット1文字（例：<code>A</code>）　※未所属の場合は空白</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>birthday</code></td><td style="padding:3px 10px 3px 0">生年月日</td><td style="padding:3px 0"><code>YYYY-MM-DD</code> 形式（例：<code>1995-03-21</code>）　※空白可</td></tr>
+        </tbody>
+      </table>
     </div>
 
     <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -4095,8 +4111,8 @@ function exportMembersCSV() {
 function downloadImportTemplate() {
   const headers = ['full_name','email','role','job_type','rank','team_code','birthday'];
   const dataRows = [
-    ['田中 太郎','tanaka@example.com','editor','動画','A','S','1990-01-15'],
-    ['鈴木 花子','suzuki@example.com','designer','デザイン','B','','']
+    ['田中 太郎','tanaka@example.com','editor','video','A','A','1990-01-15'],
+    ['鈴木 花子','suzuki@example.com','designer','design','B','','1995-08-20']
   ];
   const csv = buildCSV(headers, CSV_LEGEND, dataRows);
   const a = document.createElement('a');
