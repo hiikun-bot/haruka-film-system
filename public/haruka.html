@@ -8643,9 +8643,11 @@ async function loadCreativeFiles(creativeId) {
       ? `background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;box-shadow:0 3px 12px rgba(62,207,202,0.45);`
       : `background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);`;
     const _ct = currentCreativeDetail?.creative_type || '';
+    const _assigneeRoleRender = currentCreativeDetail?.creative_assignments
+      ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role || '';
     const checkBtnClick = canPreview
-      ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}','${_ct}')`
-      : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}','${_ct}')`;
+      ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}','${_ct}','${_assigneeRoleRender}')`
+      : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}','${_ct}','${_assigneeRoleRender}')`;
     const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
     return `
     <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
@@ -8673,7 +8675,7 @@ let currentPreviewFileId = null;
 
 // ========== Frame.io スタイル プレビュー ==========
 
-function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creativeType) {
+function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creativeType, assigneeRole) {
   currentPreviewFileId   = fileRecordId || null;
   _fpCurrentDriveFileId  = driveFileId  || null;
   _fpCurrentQuality      = 'original';
@@ -8734,7 +8736,11 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   fpClearTimecode();
   // creative_type に応じて動画/デザインのカテゴリーを読み込む
   const _resolvedCreativeType = creativeType || currentCreativeDetail?.creative_type || '';
-  const isDesignPreview = _resolvedCreativeType.startsWith('design');
+  const _resolvedAssigneeRole = assigneeRole
+    || currentCreativeDetail?.creative_assignments
+        ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role
+    || '';
+  const isDesignPreview = _resolvedCreativeType.startsWith('design') || _resolvedAssigneeRole === 'designer';
   const fpCatCode = isDesignPreview ? 'COMMENT_CAT_DESIGN' : 'COMMENT_CAT_VIDEO';
   const fpCatTab  = isDesignPreview ? 'design' : 'video';
   loadKnowledgeCategories(fpCatTab).then(items => {
