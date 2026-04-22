@@ -2542,6 +2542,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <label class="form-label" id="cd-comment-label" style="margin-bottom:0">コメント</label>
           <button id="cd-template-btn" onclick="fillCommentTemplate()" style="font-size:11px;padding:3px 10px;background:#f0fdfb;border:0.5px solid var(--em);border-radius:6px;color:var(--em-dark);cursor:pointer;font-weight:500;white-space:nowrap">テンプレ挿入</button>
         </div>
+        <div id="cd-comment-from-to" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;padding:5px 10px;background:var(--surface);border-radius:6px;border:0.5px solid var(--border)"></div>
         <textarea class="form-input" id="cd-comment-field" rows="4" style="resize:vertical" placeholder="コメントを入力..."></textarea>
       </div>
 
@@ -8398,6 +8399,8 @@ function updateCreativeCommentLabel(status) {
   const label   = document.getElementById('cd-comment-label');
   const field   = document.getElementById('cd-comment-field');
   if (!label || !field) return;
+  const _fromToEl = document.getElementById('cd-comment-from-to');
+  if (_fromToEl) _fromToEl.style.display = 'none';
 
   // チェック段階（承認者が見る）または後修正（編集者が修正指摘を参照）は読み取り専用
   const CHECK_READONLY   = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
@@ -8420,6 +8423,27 @@ function updateCreativeCommentLabel(status) {
   } else if (isRevision) {
     const checkMap = { 'Dチェック後修正': 'Dチェック', 'Pチェック後修正': 'Pチェック', 'クライアントチェック後修正': 'CLチェック' };
     label.innerHTML = `${checkMap[status]}　修正指摘内容 <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>`;
+    // From/To 表示
+    const fromToEl = document.getElementById('cd-comment-from-to');
+    if (fromToEl && currentCreativeDetail) {
+      const assigns = currentCreativeDetail.creative_assignments || [];
+      const assignee = assigns.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+      const dirAssign = assigns.find(a => a.role === 'director');
+      let fromName = dirAssign?.users?.full_name;
+      if (!fromName && assignee?.users) {
+        const u = assignee.users;
+        fromName = (u.team_id && allTeams?.find(t => t.id === u.team_id)?.director?.full_name)
+          || (allTeams?.find(t => (t.team_members||[]).some(tm => tm.user_id === u.id))?.director?.full_name)
+          || null;
+      }
+      const toName = assignee?.users?.full_name;
+      if (fromName || toName) {
+        fromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || 'ディレクター'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || '担当者'}`;
+        fromToEl.style.display = '';
+      } else {
+        fromToEl.style.display = 'none';
+      }
+    }
   } else if (status === '未着手') {
     label.innerHTML = 'メモ（管理用）';
   } else if (['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
@@ -8493,7 +8517,23 @@ function updateCreativeCommentLabel(status) {
     if (editorRplyGroup) editorRplyGroup.style.display = '';
     if (editorRplyLabel) {
       const dirMap = { 'Dチェック後修正': 'D', 'Pチェック後修正': 'P', 'クライアントチェック後修正': 'CL' };
-      editorRplyLabel.textContent = `${dirMap[status] || 'D'}への連絡・確認事項`;
+      let dirLabel = dirMap[status] || 'D';
+      if (currentCreativeDetail) {
+        const assigns = currentCreativeDetail.creative_assignments || [];
+        const dirAssign = assigns.find(a => a.role === 'director');
+        let dirName = dirAssign?.users?.full_name;
+        if (!dirName) {
+          const assignee = assigns.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+          if (assignee?.users) {
+            const u = assignee.users;
+            dirName = (u.team_id && allTeams?.find(t => t.id === u.team_id)?.director?.full_name)
+              || (allTeams?.find(t => (t.team_members||[]).some(tm => tm.user_id === u.id))?.director?.full_name)
+              || null;
+          }
+        }
+        if (dirName) dirLabel = dirName;
+      }
+      editorRplyLabel.textContent = `${dirLabel} への連絡・確認事項`;
     }
   } else {
     if (checkDirSection)  checkDirSection.style.display  = 'none';
