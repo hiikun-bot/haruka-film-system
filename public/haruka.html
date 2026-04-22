@@ -905,6 +905,17 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- メンバー -->
 <div id="page-members" class="page">
   <div style="padding:20px">
+    <!-- メンバータイプ切り替えタブ -->
+    <div style="display:flex;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin-bottom:20px;max-width:360px">
+      <button id="member-tab-video" onclick="setMemberTab('video')"
+        style="flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)">
+        🎬 動画メンバー
+      </button>
+      <button id="member-tab-design" onclick="setMemberTab('design')"
+        style="flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+        🎨 デザインメンバー
+      </button>
+    </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <div class="sec-label">メンバー一覧</div>
@@ -2765,6 +2776,7 @@ let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
 let currentTeamTab = 'video'; // 'video' | 'design'
+let currentMemberTab = 'video'; // 'video' | 'design'
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
@@ -3250,6 +3262,20 @@ async function addClientAxis() {
   } else { const e = await res.json(); alert('エラー: ' + e.error); }
 }
 
+// メンバータブ
+function setMemberTab(type) {
+  currentMemberTab = type;
+  const vBtn = document.getElementById('member-tab-video');
+  const dBtn = document.getElementById('member-tab-design');
+  if (vBtn && dBtn) {
+    const activeStyle = `background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)`;
+    const inactiveStyle = `background:transparent;color:var(--em-dark)`;
+    vBtn.style.cssText = `flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;${type === 'video' ? activeStyle : inactiveStyle}`;
+    dBtn.style.cssText = `flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;${type === 'design' ? activeStyle : inactiveStyle}`;
+  }
+  renderMemberList();
+}
+
 // チーム
 function setTeamTab(type) {
   currentTeamTab = type;
@@ -3367,6 +3393,12 @@ function renderMemberList() {
   if (!list) return;
   let visibleMembers = allMembers.filter(m => canSeeMember(m));
   if (!showResigned) visibleMembers = visibleMembers.filter(m => m.is_active !== false);
+  // タブによる job_type フィルター（video: video/both/未設定、design: design/both）
+  if (currentMemberTab === 'video') {
+    visibleMembers = visibleMembers.filter(m => !m.job_type || m.job_type === 'video' || m.job_type === 'both');
+  } else {
+    visibleMembers = visibleMembers.filter(m => m.job_type === 'design' || m.job_type === 'both');
+  }
   const countEl = document.getElementById('members-count');
   if (countEl) {
     const activeCount = visibleMembers.filter(m => m.is_active !== false).length;
@@ -3477,7 +3509,10 @@ async function loadMembers() {
   } catch(e) { allMembers = []; console.error('[loadMembers]', e); }
   const list = document.getElementById('members-list');
   if (!list) return;
-  renderMemberList();
+  // 初期タブ: デザイナーはデザイン、それ以外は動画
+  const initTab = (effectiveRole() === 'designer' || currentUser?.job_type === 'design') ? 'design' : 'video';
+  if (currentMemberTab !== initTab) setMemberTab(initTab);
+  else renderMemberList();
 }
 
 // クリエイティブ
