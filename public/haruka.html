@@ -3424,7 +3424,7 @@ function renderMemberList() {
               ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
               : `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
             ) : ''}
-            ${isSuperAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
+            ${isTopAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
           </td>
         </tr>`;
       }).join('')}
