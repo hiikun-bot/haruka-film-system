@@ -3617,6 +3617,13 @@ function renderCreatives() {
     return;
   }
 
+  // チームルックアップ Map を事前生成（O(n*m) → O(n+m)）
+  const teamById = new Map(allTeams.map(t => [t.id, t]));
+  const teamByMember = new Map();
+  allTeams.forEach(t => (t.team_members || []).forEach(tm => {
+    if (!teamByMember.has(tm.user_id)) teamByMember.set(tm.user_id, t);
+  }));
+
   const today = new Date();
   tbody.innerHTML = filtered.map(c => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
@@ -3624,8 +3631,8 @@ function renderCreatives() {
     const rank = editor?.rank_applied || editor?.users?.rank || '-';
     const editorUserId = editor?.users?.id;
     const homeTeamId = editor?.users?.team_id;
-    const team = (homeTeamId ? allTeams.find(t => t.id === homeTeamId) : null)
-      || (editorUserId ? allTeams.find(t => (t.team_members||[]).some(tm => tm.user_id === editorUserId)) : null);
+    const team = (homeTeamId ? teamById.get(homeTeamId) : null)
+      || (editorUserId ? teamByMember.get(editorUserId) : null);
     const ball = c.ball_holder || { holder:'不明', type:'unknown' };
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
     const today = new Date();

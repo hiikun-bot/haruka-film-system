@@ -567,3 +567,14 @@ WHERE workspace_id IS NULL;
 INSERT INTO client_configs (client_id)
 SELECT id FROM clients
 ON CONFLICT (client_id) DO NOTHING;
+
+-- ==================== パフォーマンス用インデックス ====================
+CREATE INDEX IF NOT EXISTS idx_creatives_project_id         ON creatives(project_id);
+CREATE INDEX IF NOT EXISTS idx_creatives_cycle_id           ON creatives(cycle_id);
+CREATE INDEX IF NOT EXISTS idx_creatives_final_deadline     ON creatives(final_deadline);
+CREATE INDEX IF NOT EXISTS idx_creatives_status             ON creatives(status);
+CREATE INDEX IF NOT EXISTS idx_creative_assignments_user_id     ON creative_assignments(user_id);
+CREATE INDEX IF NOT EXISTS idx_creative_assignments_creative_id ON creative_assignments(creative_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_issuer_year_month   ON invoices(issuer_id, year, month);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id     ON invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(creative_id, uploaded_at DESC);

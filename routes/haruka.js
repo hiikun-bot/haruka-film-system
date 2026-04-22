@@ -1461,24 +1461,31 @@ router.post('/client-invoice/generate', requireAuth, async (req, res) => {
   }).select().single();
   if (invErr) return res.status(500).json({ error: invErr.message });
 
-  for (const item of items) {
-    const { data: invItem } = await supabase.from('invoice_items').insert({
+  // invoice_items を一括保存
+  const { data: invItems, error: itemsErr } = await supabase
+    .from('invoice_items')
+    .insert(items.map(item => ({
       invoice_id: invoice.id,
       creative_id: item.creative_id,
       total_amount: item.client_fee,
       is_special: false,
-    }).select().single();
-    if (invItem) {
-      await supabase.from('invoice_item_details').insert({
-        invoice_item_id: invItem.id,
-        cost_type: 'base_fee',
-        unit_price: item.client_fee,
-        amount: item.client_fee,
-      });
-    }
-    // 次回の参照用にクリエイティブへ保存
-    await supabase.from('creatives').update({ client_fee: item.client_fee }).eq('id', item.creative_id);
-  }
+    })))
+    .select('id, creative_id');
+  if (itemsErr) return res.status(500).json({ error: itemsErr.message });
+
+  // invoice_item_details を一括保存
+  const details = (invItems || []).map(invItem => ({
+    invoice_item_id: invItem.id,
+    cost_type: 'base_fee',
+    unit_price: items.find(i => i.creative_id === invItem.creative_id)?.client_fee,
+    amount:     items.find(i => i.creative_id === invItem.creative_id)?.client_fee,
+  }));
+  if (details.length) await supabase.from('invoice_item_details').insert(details);
+
+  // creatives.client_fee を並列更新
+  await Promise.all(items.map(item =>
+    supabase.from('creatives').update({ client_fee: item.client_fee }).eq('id', item.creative_id)
+  ));
 
   res.json(invoice);
 });
@@ -1603,25 +1610,27 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     .single();
   if (iErr) return res.status(500).json({ error: iErr.message });
 
-  // 明細を保存
-  for (const item of items) {
-    const { data: invItem } = await supabase
-      .from('invoice_items')
-      .insert({
-        invoice_id: invoice.id,
-        creative_id: item.creative_id,
-        total_amount: item.total_amount,
-        is_special: item.is_special,
-        special_reason: item.special_reason
-      })
-      .select()
-      .single();
+  // 明細を一括保存（N+1 → 2クエリに削減）
+  const { data: invItems, error: itemsErr } = await supabase
+    .from('invoice_items')
+    .insert(items.map(item => ({
+      invoice_id: invoice.id,
+      creative_id: item.creative_id,
+      total_amount: item.total_amount,
+      is_special: item.is_special,
+      special_reason: item.special_reason,
+    })))
+    .select('id, creative_id');
+  if (itemsErr) return res.status(500).json({ error: itemsErr.message });
 
-    if (item.details.length) {
-      await supabase.from('invoice_item_details').insert(
-        item.details.map(d => ({ ...d, invoice_item_id: invItem.id }))
-      );
-    }
+  // 明細詳細を一括保存
+  const allDetails = (invItems || []).flatMap(invItem => {
+    const orig = items.find(i => i.creative_id === invItem.creative_id);
+    return (orig?.details || []).map(d => ({ ...d, invoice_item_id: invItem.id }));
+  });
+  if (allDetails.length) {
+    const { error: detErr } = await supabase.from('invoice_item_details').insert(allDetails);
+    if (detErr) return res.status(500).json({ error: detErr.message });
   }
 
   res.json({ ok: true, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: items.length });
@@ -2519,16 +2528,23 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
 
   if (cyclesError) return res.status(500).json({ error: cyclesError.message });
 
-  const result = await Promise.all((cycles || []).map(async cycle => {
-    const { data: creatives } = await supabase
-      .from('creatives')
-      .select('id, creative_type')
-      .eq('cycle_id', cycle.id);
+  // N+1解消: cycle_id IN (…) で一括取得してJS側でグループ化
+  const cycleIds = (cycles || []).map(c => c.id);
+  const { data: allCreatives } = cycleIds.length
+    ? await supabase.from('creatives').select('cycle_id, creative_type').in('cycle_id', cycleIds)
+    : { data: [] };
+  const creativesByCycle = {};
+  (allCreatives || []).forEach(c => {
+    if (!creativesByCycle[c.cycle_id]) creativesByCycle[c.cycle_id] = [];
+    creativesByCycle[c.cycle_id].push(c);
+  });
 
-    const videoCount = (creatives || []).filter(c =>
+  const result = (cycles || []).map(cycle => {
+    const creatives = creativesByCycle[cycle.id] || [];
+    const videoCount = creatives.filter(c =>
       c.creative_type && (c.creative_type.includes('動画') || c.creative_type.toLowerCase().includes('video'))
     ).length;
-    const designCount = (creatives || []).filter(c =>
+    const designCount = creatives.filter(c =>
       c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))
     ).length;
 
@@ -2559,7 +2575,7 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
       video_unit_price: videoUnitPrice,
       design_unit_price: designUnitPrice,
     };
-  }));
+  });
 
   res.json(result);
 });
