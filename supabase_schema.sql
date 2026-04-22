@@ -583,6 +583,9 @@ CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(cr
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
 
+-- チェックリストマスターに対象区分を追加（'all'=共通, 'video'=動画のみ, 'design'=デザインのみ）
+ALTER TABLE checklist_masters ADD COLUMN IF NOT EXISTS target_type TEXT DEFAULT 'all';
+
 -- レビューコメント・ナレッジカテゴリーを動画/デザイン別に分割
 -- （既存の COMMENT_CAT は後方互換のため残す）
 INSERT INTO master_categories (name, code, sort_order) VALUES

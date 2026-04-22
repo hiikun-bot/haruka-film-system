@@ -2786,19 +2786,19 @@ router.get('/checklist-masters', requireAuth, async (req, res) => {
 
 // 基本チェックリスト追加
 router.post('/checklist-masters', requireAuth, async (req, res) => {
-  const { title, description, sort_order } = req.body;
+  const { title, description, sort_order, target_type } = req.body;
   if (!title) return res.status(400).json({ error: 'タイトルは必須です' });
   const { data, error } = await supabase.from('checklist_masters')
-    .insert({ title, description, sort_order: sort_order || 0 }).select().single();
+    .insert({ title, description, sort_order: sort_order || 0, target_type: target_type || 'all' }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
 // 基本チェックリスト更新
 router.put('/checklist-masters/:id', requireAuth, async (req, res) => {
-  const { title, description, sort_order, is_active } = req.body;
+  const { title, description, sort_order, is_active, target_type } = req.body;
   const { data, error } = await supabase.from('checklist_masters')
-    .update({ title, description, sort_order, is_active, updated_at: new Date().toISOString() })
+    .update({ title, description, sort_order, is_active, target_type: target_type || 'all', updated_at: new Date().toISOString() })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -2854,14 +2854,23 @@ router.delete('/projects/:projectId/checklist-items/:id', requireAuth, async (re
 // ファイルのチェックリスト（グローバル+案件固有）＋チェック済み状態を返す
 router.get('/creative-files/:fileId/checklist', requireAuth, async (req, res) => {
   try {
-    // creative_file → creative → project_id を取得
+    // creative_file → creative → project_id, creative_type を取得
     const { data: fileRec } = await supabase.from('creative_files')
-      .select('id, creative_id, creatives(project_id)').eq('id', req.params.fileId).single();
-    const projectId = fileRec?.creatives?.project_id;
+      .select('id, creative_id, creatives(project_id, creative_type)').eq('id', req.params.fileId).single();
+    const projectId    = fileRec?.creatives?.project_id;
+    const creativeType = fileRec?.creatives?.creative_type || '';
+    const isDesign     = creativeType.startsWith('design');
 
-    // グローバルチェックリスト
-    const { data: globals } = await supabase.from('checklist_masters')
+    // グローバルチェックリスト（target_typeでフィルタリング）
+    const { data: globalsRaw } = await supabase.from('checklist_masters')
       .select('*').eq('is_active', true).order('sort_order').order('created_at');
+    const globals = (globalsRaw || []).filter(g => {
+      const t = g.target_type || 'all';
+      if (t === 'all') return true;
+      if (t === 'design') return isDesign;
+      if (t === 'video')  return !isDesign;
+      return true;
+    });
 
     // 案件固有チェックリスト
     const projectItems = projectId

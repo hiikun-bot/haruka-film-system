@@ -7075,10 +7075,17 @@ async function renderChecklistMasterPage() {
 function _renderChecklistMasterContent() {
   const content = document.getElementById('master-content');
   const rows = _clItems.map(item => {
+    const ttLabel = { all:'🔁 共通', video:'🎬 動画', design:'🎨 デザイン' }[item.target_type||'all'] || '🔁 共通';
+    const ttColor = { all:'var(--text-muted)', video:'#1565c0', design:'#5E35B1' }[item.target_type||'all'];
     if (_clEditingId === item.id) {
       return `<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border-light)">
         <input id="cl-e-title" class="form-input" value="${esc(item.title)}" style="flex:2;font-size:13px">
         <input id="cl-e-desc"  class="form-input" value="${esc(item.description||'')}" placeholder="説明（任意）" style="flex:3;font-size:13px">
+        <select id="cl-e-type" class="form-input" style="width:110px;font-size:12px">
+          <option value="all"    ${(item.target_type||'all')==='all'    ? 'selected':''}>🔁 共通</option>
+          <option value="video"  ${item.target_type==='video'  ? 'selected':''}>🎬 動画のみ</option>
+          <option value="design" ${item.target_type==='design' ? 'selected':''}>🎨 デザインのみ</option>
+        </select>
         <input id="cl-e-order" class="form-input" type="number" value="${item.sort_order}" style="width:60px;font-size:13px">
         <button class="btn-sm" style="color:var(--em-dark)" onclick="saveChecklistMasterEdit('${item.id}')">保存</button>
         <button class="btn-sm" onclick="_clEditingId=null;_renderChecklistMasterContent()">取消</button>
@@ -7087,6 +7094,7 @@ function _renderChecklistMasterContent() {
     return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border-light)">
       <span style="flex:2;font-size:14px;font-weight:500;color:var(--text)">${esc(item.title)}</span>
       <span style="flex:3;font-size:13px;color:var(--text-muted)">${esc(item.description||'—')}</span>
+      <span style="font-size:11px;font-weight:600;color:${ttColor};white-space:nowrap;min-width:90px">${ttLabel}</span>
       <span style="font-size:12px;color:var(--text-faint);min-width:40px">順:${item.sort_order}</span>
       <button class="btn-sm" style="font-size:11px" onclick="_clEditingId='${item.id}';_renderChecklistMasterContent()">編集</button>
       <button class="btn-sm" style="font-size:11px;color:#A32D2D;border-color:#F09595" onclick="deleteChecklistMaster('${item.id}')">削除</button>
@@ -7106,6 +7114,11 @@ function _renderChecklistMasterContent() {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="cl-new-title" class="form-input" placeholder="チェック項目名 *" style="flex:2;min-width:180px;font-size:13px">
           <input id="cl-new-desc"  class="form-input" placeholder="説明（任意）" style="flex:3;min-width:200px;font-size:13px">
+          <select id="cl-new-type" class="form-input" style="width:120px;font-size:12px">
+            <option value="all">🔁 共通</option>
+            <option value="video">🎬 動画のみ</option>
+            <option value="design">🎨 デザインのみ</option>
+          </select>
           <input id="cl-new-order" class="form-input" type="number" placeholder="順" value="0" style="width:60px;font-size:13px">
           <button class="btn-primary" style="padding:8px 20px;font-size:13px;white-space:nowrap" onclick="addChecklistMaster()">追加</button>
         </div>
@@ -7114,7 +7127,7 @@ function _renderChecklistMasterContent() {
       <!-- リスト -->
       <div style="background:var(--white);border:1px solid var(--border);border-radius:12px;padding:0 20px">
         <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em">
-          <span style="flex:2">チェック項目名</span><span style="flex:3">説明</span><span style="min-width:40px">順序</span><span style="min-width:96px"></span>
+          <span style="flex:2">チェック項目名</span><span style="flex:3">説明</span><span style="min-width:90px">対象</span><span style="min-width:40px">順序</span><span style="min-width:96px"></span>
         </div>
         ${rows || '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">チェック項目がありません</div>'}
       </div>
@@ -7123,26 +7136,28 @@ function _renderChecklistMasterContent() {
 }
 
 async function addChecklistMaster() {
-  const title = document.getElementById('cl-new-title').value.trim();
-  const desc  = document.getElementById('cl-new-desc').value.trim();
-  const order = parseInt(document.getElementById('cl-new-order').value) || 0;
+  const title       = document.getElementById('cl-new-title').value.trim();
+  const desc        = document.getElementById('cl-new-desc').value.trim();
+  const target_type = document.getElementById('cl-new-type').value || 'all';
+  const order       = parseInt(document.getElementById('cl-new-order').value) || 0;
   if (!title) { showToast('チェック項目名を入力してください', 'warn'); return; }
   const res = await fetch(`${API}/checklist-masters`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, description: desc, sort_order: order }),
+    body: JSON.stringify({ title, description: desc, sort_order: order, target_type }),
   });
   if (res.ok) { await renderChecklistMasterPage(); }
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function saveChecklistMasterEdit(id) {
-  const title = document.getElementById('cl-e-title').value.trim();
-  const desc  = document.getElementById('cl-e-desc').value.trim();
-  const order = parseInt(document.getElementById('cl-e-order').value) || 0;
+  const title       = document.getElementById('cl-e-title').value.trim();
+  const desc        = document.getElementById('cl-e-desc').value.trim();
+  const target_type = document.getElementById('cl-e-type').value || 'all';
+  const order       = parseInt(document.getElementById('cl-e-order').value) || 0;
   if (!title) { showToast('タイトルは必須です', 'warn'); return; }
   const res = await fetch(`${API}/checklist-masters/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, description: desc, sort_order: order }),
+    body: JSON.stringify({ title, description: desc, sort_order: order, target_type }),
   });
   if (res.ok) { _clEditingId = null; await renderChecklistMasterPage(); }
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
@@ -8627,9 +8642,10 @@ async function loadCreativeFiles(creativeId) {
     const checkBtnStyle = canPreview
       ? `background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;box-shadow:0 3px 12px rgba(62,207,202,0.45);`
       : `background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);`;
+    const _ct = currentCreativeDetail?.creative_type || '';
     const checkBtnClick = canPreview
-      ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}')`
-      : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}')`;
+      ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}','${_ct}')`
+      : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}','${_ct}')`;
     const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
     return `
     <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
@@ -8657,7 +8673,7 @@ let currentPreviewFileId = null;
 
 // ========== Frame.io スタイル プレビュー ==========
 
-function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
+function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creativeType) {
   currentPreviewFileId   = fileRecordId || null;
   _fpCurrentDriveFileId  = driveFileId  || null;
   _fpCurrentQuality      = 'original';
@@ -8717,7 +8733,8 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
 
   fpClearTimecode();
   // creative_type に応じて動画/デザインのカテゴリーを読み込む
-  const isDesignPreview = currentCreativeDetail?.creative_type?.startsWith('design');
+  const _resolvedCreativeType = creativeType || currentCreativeDetail?.creative_type || '';
+  const isDesignPreview = _resolvedCreativeType.startsWith('design');
   const fpCatCode = isDesignPreview ? 'COMMENT_CAT_DESIGN' : 'COMMENT_CAT_VIDEO';
   const fpCatTab  = isDesignPreview ? 'design' : 'video';
   loadKnowledgeCategories(fpCatTab).then(items => {
