@@ -883,9 +883,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- チーム -->
 <div id="page-teams" class="page">
   <div style="padding:20px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <div class="sec-label">チーム管理</div>
       <button class="btn-primary" onclick="openTeamModal()">＋ チーム追加</button>
+    </div>
+    <!-- チームタイプ切り替えタブ -->
+    <div style="display:flex;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin-bottom:20px;max-width:360px">
+      <button id="team-tab-video" onclick="setTeamTab('video')"
+        style="flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)">
+        🎬 動画チーム
+      </button>
+      <button id="team-tab-design" onclick="setTeamTab('design')"
+        style="flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+        🎨 デザインチーム
+      </button>
     </div>
     <div id="teams-list" class="loading">読み込み中...</div>
   </div>
@@ -2753,6 +2764,7 @@ function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
+let currentTeamTab = 'video'; // 'video' | 'design'
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
@@ -3239,20 +3251,27 @@ async function addClientAxis() {
 }
 
 // チーム
-async function loadTeams() {
-  try {
-    const teamsRes = await fetch(`${API}/teams`);
-    if (!teamsRes.ok) { allTeams = []; return; }
-    allTeams = await teamsRes.json();
-    const mSel = document.getElementById('m-team');
-    if (mSel) {
-      mSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
-    }
-    const list = document.getElementById('teams-list');
-    if (!list) return;
-    if (!allTeams.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
-    const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
-    list.innerHTML = allTeams.map((t, i) => {
+function setTeamTab(type) {
+  currentTeamTab = type;
+  const vBtn = document.getElementById('team-tab-video');
+  const dBtn = document.getElementById('team-tab-design');
+  if (vBtn && dBtn) {
+    const activeStyle = `background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)`;
+    const inactiveStyle = `background:transparent;color:var(--em-dark)`;
+    vBtn.style.cssText = `flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;${type === 'video' ? activeStyle : inactiveStyle}`;
+    dBtn.style.cssText = `flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;${type === 'design' ? activeStyle : inactiveStyle}`;
+  }
+  renderTeamsList();
+}
+
+function renderTeamsList() {
+  const list = document.getElementById('teams-list');
+  if (!list) return;
+  const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
+  const filtered = allTeams.filter(t => (t.team_type || 'video') === currentTeamTab);
+  if (!filtered.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
+  list.innerHTML = filtered.map((t, i) => {
+    const origIdx = allTeams.indexOf(t);
       const tmIds = new Set((t.team_members || []).map(tm => tm.user_id));
       const teamMembers = allMembers.filter(m => tmIds.has(m.id) && m.is_active !== false)
         .sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0));
@@ -3277,7 +3296,7 @@ async function loadTeams() {
             ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
             <div>${t.director?.full_name ? 'D: '+t.director.full_name : 'D未設定'}</div>
           </div>
-          <button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${i}])">編集</button>
+          <button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>
           <span id="team-chevron-${t.id}" style="font-size:12px;color:var(--text-muted);margin-left:4px;flex-shrink:0">▼</span>
         </div>
         <div id="team-acc-${t.id}" style="display:none;border-top:1px solid var(--border);padding:12px 16px;background:#FAFEFE">
@@ -3288,6 +3307,20 @@ async function loadTeams() {
         </div>
       </div>`;
     }).join('');
+}
+
+async function loadTeams() {
+  try {
+    const teamsRes = await fetch(`${API}/teams`);
+    if (!teamsRes.ok) { allTeams = []; return; }
+    allTeams = await teamsRes.json();
+    const mSel = document.getElementById('m-team');
+    if (mSel) {
+      mSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+    }
+    // 初期タブをロールで決定（デザイナーはデザイン、それ以外は動画）
+    currentTeamTab = effectiveRole() === 'designer' ? 'design' : 'video';
+    setTeamTab(currentTeamTab);
   } catch(e) { allTeams = []; }
 }
 
