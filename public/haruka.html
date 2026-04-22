@@ -7495,7 +7495,11 @@ async function renderProductsMasterPage() {
       <!-- 追加フォーム -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
         <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 商材を追加</div>
-        <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px;gap:10px;align-items:end">
+        <div style="display:grid;grid-template-columns:72px 140px 1fr 1fr 160px;gap:10px;align-items:end">
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
+            <input class="form-input" id="prod-new-sort" type="number" min="0" placeholder="0" style="text-align:center">
+          </div>
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
             <input class="form-input" id="prod-new-code" placeholder="P001">
@@ -7569,6 +7573,7 @@ async function loadClientProducts(clientId) {
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:60px;text-align:center">順</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
@@ -7582,6 +7587,10 @@ async function loadClientProducts(clientId) {
           const expired = expiry && expiry < today;
           return `
           <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 12px;text-align:center;color:var(--text-muted)">
+              <span id="pdv-sort-${p.id}" style="font-size:12px">${p.sort_order ?? 0}</span>
+              <input id="pdi-sort-${p.id}" class="form-input" type="number" min="0" value="${p.sort_order ?? 0}" style="display:none;width:52px;font-size:12px;text-align:center">
+            </td>
             <td style="padding:8px 12px">
               <span id="pdv-code-${p.id}" style="font-weight:600;color:var(--em-dark)">${p.code}</span>
               <input id="pdi-code-${p.id}" class="form-input" value="${p.code}" style="display:none;width:90px;font-size:12px">
@@ -7610,7 +7619,7 @@ async function loadClientProducts(clientId) {
 }
 
 function startEditProduct(clientId, id) {
-  ['code','name','note','exp'].forEach(f => {
+  ['sort','code','name','note','exp'].forEach(f => {
     document.getElementById(`pdv-${f}-${id}`).style.display = 'none';
     document.getElementById(`pdi-${f}-${id}`).style.display = '';
   });
@@ -7619,6 +7628,7 @@ function startEditProduct(clientId, id) {
 }
 
 async function saveProduct(clientId, id) {
+  const sort_order = document.getElementById(`pdi-sort-${id}`).value;
   const code     = document.getElementById(`pdi-code-${id}`).value.trim();
   const name     = document.getElementById(`pdi-name-${id}`).value.trim();
   const note     = document.getElementById(`pdi-note-${id}`).value.trim();
@@ -7626,7 +7636,7 @@ async function saveProduct(clientId, id) {
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/clients/${clientId}/products/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note||null, expires_at })
+    body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
   if (res.ok) { await loadClientProducts(clientId); }
   else { const e = await res.json(); alert('エラー: ' + e.error); }
@@ -7635,6 +7645,7 @@ async function saveProduct(clientId, id) {
 async function addClientProductNew() {
   const clientId = productsCurrentClientId;
   if (!clientId) return;
+  const sort_order = document.getElementById('prod-new-sort').value;
   const code = document.getElementById('prod-new-code').value.trim();
   const name = document.getElementById('prod-new-name').value.trim();
   const note = document.getElementById('prod-new-note').value.trim();
@@ -7643,11 +7654,11 @@ async function addClientProductNew() {
   if (!code || !name) { status.style.color = '#A32D2D'; status.textContent = 'コードと名称は必須です'; return; }
   const res = await fetch(`${API}/clients/${clientId}/products`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note||null, expires_at })
+    body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
   if (res.ok) {
     status.style.color = 'var(--em-dark)'; status.textContent = '追加しました';
-    ['prod-new-code','prod-new-name','prod-new-note'].forEach(id => document.getElementById(id).value = '');
+    ['prod-new-sort','prod-new-code','prod-new-name','prod-new-note'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('prod-new-expires').value = '';
     await loadClientProducts(clientId);
     setTimeout(() => { status.textContent = ''; }, 2000);
@@ -7723,7 +7734,11 @@ async function renderAppealAxesMasterPage() {
       <!-- 追加フォーム -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
         <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 訴求軸を追加</div>
-        <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px;gap:10px;align-items:end">
+        <div style="display:grid;grid-template-columns:72px 140px 1fr 1fr 160px;gap:10px;align-items:end">
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
+            <input class="form-input" id="axis-new-sort" type="number" min="0" placeholder="0" style="text-align:center">
+          </div>
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
             <input class="form-input" id="axis-new-code" placeholder="ap001">
@@ -7799,6 +7814,7 @@ async function loadClientAppealAxes(clientId) {
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:60px;text-align:center">順</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
@@ -7812,6 +7828,10 @@ async function loadClientAppealAxes(clientId) {
           const expired = expiry && expiry < today;
           return `
           <tr id="axrow-${p.id}" style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 12px;text-align:center;color:var(--text-muted)">
+              <span id="axv-sort-${p.id}" style="font-size:12px">${p.sort_order ?? 0}</span>
+              <input id="axi-sort-${p.id}" class="form-input" type="number" min="0" value="${p.sort_order ?? 0}" style="display:none;width:52px;font-size:12px;text-align:center">
+            </td>
             <td style="padding:8px 12px">
               <span id="axv-code-${p.id}" style="font-weight:600;color:var(--em-dark)">${p.code}</span>
               <input id="axi-code-${p.id}" class="form-input" value="${p.code}" style="display:none;width:90px;font-size:12px">
@@ -7842,6 +7862,7 @@ async function loadClientAppealAxes(clientId) {
 async function addClientAppealAxis() {
   const clientId = appealAxesCurrentClientId;
   if (!clientId) return;
+  const sort_order = document.getElementById('axis-new-sort').value;
   const code = document.getElementById('axis-new-code').value.trim();
   const name = document.getElementById('axis-new-name').value.trim();
   const note = document.getElementById('axis-new-note').value.trim();
@@ -7850,13 +7871,11 @@ async function addClientAppealAxis() {
   if (!code || !name) { status.style.color = '#A32D2D'; status.textContent = 'コードと名称は必須です'; return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note||null, expires_at })
+    body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
   if (res.ok) {
     status.style.color = 'var(--em-dark)'; status.textContent = '追加しました';
-    document.getElementById('axis-new-code').value = '';
-    document.getElementById('axis-new-name').value = '';
-    document.getElementById('axis-new-note').value = '';
+    ['axis-new-sort','axis-new-code','axis-new-name','axis-new-note'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('axis-new-expires').value = '';
     await loadClientAppealAxes(clientId);
     setTimeout(() => { status.textContent = ''; }, 2000);
@@ -7866,7 +7885,7 @@ async function addClientAppealAxis() {
 }
 
 function startEditAppealAxis(clientId, id) {
-  ['code','name','note','exp'].forEach(f => {
+  ['sort','code','name','note','exp'].forEach(f => {
     document.getElementById(`axv-${f}-${id}`).style.display = 'none';
     document.getElementById(`axi-${f}-${id}`).style.display = '';
   });
@@ -7875,6 +7894,7 @@ function startEditAppealAxis(clientId, id) {
 }
 
 async function saveAppealAxis(clientId, id) {
+  const sort_order = document.getElementById(`axi-sort-${id}`).value;
   const code     = document.getElementById(`axi-code-${id}`).value.trim();
   const name     = document.getElementById(`axi-name-${id}`).value.trim();
   const note     = document.getElementById(`axi-note-${id}`).value.trim();
@@ -7882,7 +7902,7 @@ async function saveAppealAxis(clientId, id) {
   if (!code || !name) { alert('コードと名称は必須です'); return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name, note: note||null, expires_at })
+    body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
   if (res.ok) { await loadClientAppealAxes(clientId); }
   else { const e = await res.json(); alert('エラー: ' + e.error); }
