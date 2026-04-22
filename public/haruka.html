@@ -7230,7 +7230,7 @@ function renderMasterPage() {
           </div>
           <div style="flex:1">
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">名称 <span style="color:var(--em-dark)">*</span></label>
-            <input class="form-input" id="mia-name" placeholder="例：Meta"
+            <input class="form-input" id="mia-name" placeholder="${cat?.code?.startsWith('COMMENT_CAT') ? '例：冒頭フック' : '例：Meta'}"
               onkeydown="if(event.key==='Enter')addMasterItem()">
           </div>
           <div style="width:70px">
@@ -7552,11 +7552,7 @@ async function renderProductsMasterPage() {
       <!-- 追加フォーム -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
         <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 商材を追加</div>
-        <div style="display:grid;grid-template-columns:72px 140px 1fr 1fr 160px;gap:10px;align-items:end">
-          <div>
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
-            <input class="form-input" id="prod-new-sort" type="number" min="0" placeholder="0" style="text-align:center">
-          </div>
+        <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px 72px;gap:10px;align-items:end">
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
             <input class="form-input" id="prod-new-code" placeholder="P001">
@@ -7572,6 +7568,10 @@ async function renderProductsMasterPage() {
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限日</label>
             <input class="form-input" type="date" id="prod-new-expires">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
+            <input class="form-input" id="prod-new-sort" type="number" min="0" placeholder="0" style="text-align:center">
           </div>
         </div>
         <button class="btn" onclick="addClientProductNew()" style="margin-top:12px">追加する</button>
@@ -7630,11 +7630,11 @@ async function loadClientProducts(clientId) {
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="border-bottom:2px solid var(--border);text-align:left">
-          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:60px;text-align:center">順</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:130px">有効期限</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:60px;text-align:center">順</th>
           <th style="padding:8px 12px;width:110px"></th>
         </tr>
       </thead>
@@ -7644,10 +7644,6 @@ async function loadClientProducts(clientId) {
           const expired = expiry && expiry < today;
           return `
           <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:8px 12px;text-align:center;color:var(--text-muted)">
-              <span id="pdv-sort-${p.id}" style="font-size:12px">${p.sort_order ?? 0}</span>
-              <input id="pdi-sort-${p.id}" class="form-input" type="number" min="0" value="${p.sort_order ?? 0}" style="display:none;width:52px;font-size:12px;text-align:center">
-            </td>
             <td style="padding:8px 12px">
               <span id="pdv-code-${p.id}" style="font-weight:600;color:var(--em-dark)">${p.code}</span>
               <input id="pdi-code-${p.id}" class="form-input" value="${p.code}" style="display:none;width:90px;font-size:12px">
@@ -7663,6 +7659,10 @@ async function loadClientProducts(clientId) {
             <td style="padding:8px 12px;color:${expired ? '#A32D2D' : 'var(--text-muted)'}">
               <span id="pdv-exp-${p.id}">${expiry || '—'}${expired ? ' ⚠️' : ''}</span>
               <input id="pdi-exp-${p.id}" class="form-input" type="date" value="${expiry}" style="display:none;width:130px">
+            </td>
+            <td style="padding:8px 12px;text-align:center;color:var(--text-muted)">
+              <span id="pdv-sort-${p.id}" style="font-size:12px">${p.sort_order ?? 0}</span>
+              <input id="pdi-sort-${p.id}" class="form-input" type="number" min="0" value="${p.sort_order ?? 0}" style="display:none;width:52px;font-size:12px;text-align:center">
             </td>
             <td style="padding:8px 12px;display:flex;gap:4px">
               <button id="pdbtn-edit-${p.id}" class="btn-sm" onclick="startEditProduct('${clientId}','${p.id}')">編集</button>
@@ -7791,11 +7791,7 @@ async function renderAppealAxesMasterPage() {
       <!-- 追加フォーム -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
         <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-bottom:14px">＋ 訴求軸を追加</div>
-        <div style="display:grid;grid-template-columns:72px 140px 1fr 1fr 160px;gap:10px;align-items:end">
-          <div>
-            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
-            <input class="form-input" id="axis-new-sort" type="number" min="0" placeholder="0" style="text-align:center">
-          </div>
+        <div style="display:grid;grid-template-columns:140px 1fr 1fr 160px 72px;gap:10px;align-items:end">
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">コード *</label>
             <input class="form-input" id="axis-new-code" placeholder="ap001">
@@ -7811,6 +7807,10 @@ async function renderAppealAxesMasterPage() {
           <div>
             <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">有効期限日</label>
             <input class="form-input" type="date" id="axis-new-expires">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">表示順</label>
+            <input class="form-input" id="axis-new-sort" type="number" min="0" placeholder="0" style="text-align:center">
           </div>
         </div>
         <button class="btn" onclick="addClientAppealAxis()" style="margin-top:12px">追加する</button>
@@ -7871,11 +7871,11 @@ async function loadClientAppealAxes(clientId) {
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="border-bottom:2px solid var(--border);text-align:left">
-          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:60px;text-align:center">順</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:110px">コード</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">名称</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600">備考</th>
           <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:130px">有効期限</th>
+          <th style="padding:8px 12px;color:var(--text-muted);font-weight:600;width:60px;text-align:center">順</th>
           <th style="padding:8px 12px;width:110px"></th>
         </tr>
       </thead>
@@ -7885,10 +7885,6 @@ async function loadClientAppealAxes(clientId) {
           const expired = expiry && expiry < today;
           return `
           <tr id="axrow-${p.id}" style="border-bottom:1px solid var(--border)">
-            <td style="padding:8px 12px;text-align:center;color:var(--text-muted)">
-              <span id="axv-sort-${p.id}" style="font-size:12px">${p.sort_order ?? 0}</span>
-              <input id="axi-sort-${p.id}" class="form-input" type="number" min="0" value="${p.sort_order ?? 0}" style="display:none;width:52px;font-size:12px;text-align:center">
-            </td>
             <td style="padding:8px 12px">
               <span id="axv-code-${p.id}" style="font-weight:600;color:var(--em-dark)">${p.code}</span>
               <input id="axi-code-${p.id}" class="form-input" value="${p.code}" style="display:none;width:90px;font-size:12px">
@@ -7904,6 +7900,10 @@ async function loadClientAppealAxes(clientId) {
             <td style="padding:8px 12px;color:${expired ? '#A32D2D' : 'var(--text-muted)'}">
               <span id="axv-exp-${p.id}">${expiry || '—'}${expired ? ' ⚠️' : ''}</span>
               <input id="axi-exp-${p.id}" class="form-input" type="date" value="${expiry}" style="display:none;width:130px">
+            </td>
+            <td style="padding:8px 12px;text-align:center;color:var(--text-muted)">
+              <span id="axv-sort-${p.id}" style="font-size:12px">${p.sort_order ?? 0}</span>
+              <input id="axi-sort-${p.id}" class="form-input" type="number" min="0" value="${p.sort_order ?? 0}" style="display:none;width:52px;font-size:12px;text-align:center">
             </td>
             <td style="padding:8px 12px;display:flex;gap:4px">
               <button id="axbtn-edit-${p.id}" class="btn-sm" onclick="startEditAppealAxis('${clientId}','${p.id}')">編集</button>
