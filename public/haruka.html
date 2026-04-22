@@ -9792,9 +9792,33 @@ async function openCreativeEdit(id) {
   const teamSel = document.getElementById('ce-team-id');
   teamSel.innerHTML = '<option value="">（未設定）</option>' +
     allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
-  const currentAssignee = (c.creative_assignments || []).find(a => a.role === 'editor');
+  // 担当者を取得（editor / designer / director_as_editor）
+  const currentAssignee = (c.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const currentAssigneeUser = currentAssignee?.users;
-  const currentTeamId = currentAssigneeUser?.team_id || '';
+  // チームID特定: 複数フォールバックで確実に取得
+  let currentTeamId = currentAssigneeUser?.team_id || '';
+  if (!currentTeamId && currentAssigneeUser?.id) {
+    // Fallback 1: allTeams の team_members で逆引き
+    const found1 = allTeams.find(t => (t.team_members || []).some(tm => tm.user_id === currentAssigneeUser.id));
+    if (found1) currentTeamId = found1.id;
+  }
+  if (!currentTeamId && currentAssigneeUser?.id) {
+    // Fallback 2: allMembers の team_id を直接参照
+    const mem = allMembers.find(m => m.id === currentAssigneeUser.id);
+    if (mem?.team_id) currentTeamId = mem.team_id;
+  }
+  if (!currentTeamId) {
+    // Fallback 3: allCreatives キャッシュから同じロジックで取得
+    const cc = allCreatives.find(x => x.id === id);
+    const ca = cc?.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const cu = ca?.users;
+    if (cu?.team_id) {
+      currentTeamId = cu.team_id;
+    } else if (cu?.id) {
+      const found3 = allTeams.find(t => (t.team_members || []).some(tm => tm.user_id === cu.id));
+      if (found3) currentTeamId = found3.id;
+    }
+  }
   teamSel.value = currentTeamId;
   ceUpdateAssigneeSelect();
   document.getElementById('ce-assignee-id').value = currentAssigneeUser?.id || '';
