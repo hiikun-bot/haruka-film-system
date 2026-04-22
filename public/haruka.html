@@ -3594,8 +3594,11 @@ function renderCreatives() {
     if (searchText && !c.file_name.toLowerCase().includes(searchText)) return false;
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
     if (currentAssigneeFilter && !c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
-    // ロール別 creative_type フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
-    const isDesign = c.creative_type?.startsWith('design');
+    // ロール別フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
+    // creative_type OR 担当者ユーザーのroleで判定（video_shortでもデザイナー担当なら「デザイン」扱い）
+    const assigneeForFilter = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const assigneeUserRole = assigneeForFilter?.users?.role;
+    const isDesign = c.creative_type?.startsWith('design') || assigneeUserRole === 'designer';
     if (_role === 'designer' && !isDesign) return false;
     if (_role === 'editor' && isDesign) return false;
     if (currentView === 'mine') {

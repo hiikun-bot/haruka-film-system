@@ -80,7 +80,11 @@ app.use('/service-worker.js', express.static(path.join(__dirname, 'public/servic
 app.use('/icon-192.png',      express.static(path.join(__dirname, 'public/icon-192.png')));
 app.use('/icon-512.png',      express.static(path.join(__dirname, 'public/icon-512.png')));
 app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-180.png')));
-// その他の静的ファイルは認証後のみ
+// haruka.html は認証後のみ配信
+app.get('/haruka.html', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
+});
+// その他の静的ファイル（ロゴ等）
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================== ユーティリティ ====================

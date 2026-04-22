@@ -27,6 +27,13 @@ function driveLog(level, msg, extra = {}) {
   console.log(`[DRIVE ${tag}] ${msg}`, Object.keys(extra).length ? JSON.stringify(extra) : '');
 }
 
+// ==================== 認証ガード ====================
+// /workspace のみ公開（ログインページで使用）、それ以外は全て認証必須
+router.use((req, res, next) => {
+  if (req.path === '/workspace') return next();
+  requireAuth(req, res, next);
+});
+
 // ==================== ワークスペース情報 ====================
 router.get('/workspace', (_req, res) => {
   res.json({
@@ -1491,9 +1498,13 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
 });
 
 // 請求書作成（選択クリエイティブから生成）
-router.post('/invoices/generate', async (req, res) => {
-  const { issuer_id, cycle_id, selected_creative_ids } = req.body;
+router.post('/invoices/generate', requireAuth, async (req, res) => {
+  const { cycle_id, selected_creative_ids } = req.body;
   let { project_id } = req.body;
+  // admin/secretary のみ代理発行可能、それ以外はログインユーザー本人に固定
+  const issuer_id = (['admin', 'secretary'].includes(req.user?.role) && req.body.issuer_id)
+    ? req.body.issuer_id
+    : req.user.id;
   if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
 
   // 請求可能なクリエイティブを取得
@@ -1617,7 +1628,7 @@ router.post('/invoices/generate', async (req, res) => {
 });
 
 // 請求書発行（draft → issued）
-router.post('/invoices/:id/issue', async (req, res) => {
+router.post('/invoices/:id/issue', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'issued', issued_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -1629,7 +1640,7 @@ router.post('/invoices/:id/issue', async (req, res) => {
 });
 
 // 請求書提出（draft → submitted）
-router.post('/invoices/:id/submit', async (req, res) => {
+router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
