@@ -1127,13 +1127,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       </div><!-- /2カラムグリッド -->
 
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:0.5px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
-          <label for="continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:0.5px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:16px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+            <input type="checkbox" id="c-talent-flag" style="width:15px;height:15px;cursor:pointer">
+            <span>🎬 芸能人・インフルエンサー起用</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+            <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
+            <span>連続登録モード</span>
+          </label>
         </div>
-        <button class="btn-primary" onclick="createCreative()">追加する</button>
-        <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn-primary" onclick="createCreative()">追加する</button>
+          <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+        </div>
       </div>
     </div>
 
@@ -2413,9 +2421,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
     </div>
-    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
-      <button class="btn" onclick="closeModal('modal-creative-edit')">キャンセル</button>
-      <button class="btn-primary" onclick="saveCreativeEdit()">保存</button>
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+        <input type="checkbox" id="ce-talent-flag" style="width:15px;height:15px;cursor:pointer">
+        <span>🎬 芸能人・インフルエンサー起用</span>
+      </label>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="closeModal('modal-creative-edit')">キャンセル</button>
+        <button class="btn-primary" onclick="saveCreativeEdit()">保存</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3670,7 +3684,10 @@ function renderCreatives() {
         ${finalDeadline ? `<div class="${finalDueClass}" style="font-size:13px;font-weight:500">${finalDeadline.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}</div><div style="font-size:11px;color:#B4B2A9;margin-top:2px">${finalLabel}</div>` : '<span style="color:#B4B2A9">-</span>'}
       </td>
       <td>${isLate?'<span class="late-flag">遅れ</span>':''}</td>
-      <td><button class="help-flag-btn ${c.help_flag?'on':''}" onclick="toggleHelp('${c.id}',${c.help_flag})">${c.help_flag?'SOS中':'SOS'}</button></td>
+      <td style="white-space:nowrap">
+        <button class="help-flag-btn ${c.help_flag?'on':''}" onclick="toggleHelp('${c.id}',${c.help_flag})">${c.help_flag?'SOS中':'SOS'}</button>
+        ${c.talent_flag?'<span style="margin-left:4px;font-size:11px;padding:3px 7px;border-radius:7px;background:#EEE5FA;border:0.5px solid #B39DDB;color:#5E35B1;font-weight:500">🎬 芸能人</span>':''}
+      </td>
       <td onclick="event.stopPropagation()"><button onclick="openCreativeEdit('${c.id}')" style="font-size:11px;padding:4px 10px;background:#fff;border:0.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--text-muted);white-space:nowrap">修正</button></td>
     </tr>`;
 
@@ -3749,6 +3766,7 @@ async function createCreative() {
   // 内部コードと制作日を取得（generateFileName で生成済みの場合）
   const internal_code = document.getElementById('c-internal-code')?.value?.trim() || null;
   const production_date = new Date().toISOString().slice(0, 10);
+  const talent_flag = document.getElementById('c-talent-flag')?.checked || false;
 
   const btn = document.querySelector('#tab-single .btn-primary');
   const origText = btn?.textContent;
@@ -3769,6 +3787,7 @@ async function createCreative() {
       creative_size: creative_size || null,
       internal_code,
       production_date,
+      talent_flag,
     })
   });
 
@@ -9833,11 +9852,12 @@ async function openCreativeEdit(id) {
   ceUpdateAssigneeSelect();
   document.getElementById('ce-assignee-id').value = currentAssigneeUser?.id || '';
 
-  // 日付 / ステータス / メモ
+  // 日付 / ステータス / メモ / 芸能人フラグ
   document.getElementById('ce-draft-deadline').value = c.draft_deadline || '';
   document.getElementById('ce-final-deadline').value = c.final_deadline || '';
   document.getElementById('ce-status').value         = c.status         || '未着手';
   document.getElementById('ce-note').value           = c.note           || '';
+  document.getElementById('ce-talent-flag').checked  = c.talent_flag    || false;
 
   openModal('modal-creative-edit');
 }
@@ -9863,6 +9883,7 @@ async function saveCreativeEdit() {
     final_deadline:  document.getElementById('ce-final-deadline').value  || null,
     status,
     note:            document.getElementById('ce-note').value.trim()     || null,
+    talent_flag:     document.getElementById('ce-talent-flag').checked,
   };
   const res = await fetch(`${API}/creatives/${_editingCreativeId}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)

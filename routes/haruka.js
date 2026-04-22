@@ -648,7 +648,7 @@ router.post('/creatives', async (req, res) => {
     project_id, cycle_id, file_name, creative_type,
     draft_deadline, final_deadline, script_url, note, appeal_type_id,
     product_id, media_code, creative_fmt, creative_size,
-    assignee_id, internal_code, production_date
+    assignee_id, internal_code, production_date, talent_flag
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
@@ -667,6 +667,7 @@ router.post('/creatives', async (req, res) => {
     creative_size: creative_size || null,
     internal_code: internal_code || null,
     production_date: production_date || null,
+    talent_flag: talent_flag || false,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録
@@ -687,7 +688,7 @@ router.put('/creatives/:id', async (req, res) => {
   const {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url,
-    help_flag, note, revision_count,
+    help_flag, talent_flag, note, revision_count,
     director_comment, client_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id
@@ -705,6 +706,7 @@ router.put('/creatives/:id', async (req, res) => {
   if (delivery_url !== undefined) updateData.delivery_url = delivery_url;
   if (final_delivery_url !== undefined) updateData.final_delivery_url = final_delivery_url;
   if (help_flag !== undefined) updateData.help_flag = help_flag;
+  if (talent_flag !== undefined) updateData.talent_flag = talent_flag;
   if (note !== undefined) updateData.note = note;
   if (revision_count !== undefined) updateData.revision_count = revision_count;
   if (director_comment !== undefined) updateData.director_comment = director_comment;

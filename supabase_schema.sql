@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS creatives (
   delivery_url TEXT,
   final_delivery_url TEXT,
   help_flag BOOLEAN DEFAULT false,
+  talent_flag BOOLEAN DEFAULT false,
   note TEXT,
   revision_count INTEGER DEFAULT 0,
   is_payable BOOLEAN DEFAULT false,
@@ -578,3 +579,6 @@ CREATE INDEX IF NOT EXISTS idx_creative_assignments_creative_id ON creative_assi
 CREATE INDEX IF NOT EXISTS idx_invoices_issuer_year_month   ON invoices(issuer_id, year, month);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id     ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(creative_id, uploaded_at DESC);
+
+-- talent_flag カラム追加（既存DBへのマイグレーション）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
