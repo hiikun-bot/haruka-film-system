@@ -6295,7 +6295,7 @@ async function onProjectChange(projectId) {
     sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>';
   } else {
     sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
-      `<option value="${a.id}">${a.code} - ${a.name}</option>`
+      `<option value="${a.id}">${a.name}</option>`
     ).join('');
   }
 
@@ -6514,7 +6514,7 @@ async function onBulkProjectChange(projectId) {
   const axes = sortByDisplayOrder(axesRes.ok ? await axesRes.json() : []);
   if (!axes.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; }
   else { sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
-    `<option value="${a.id}">${a.code} - ${a.name}</option>`
+    `<option value="${a.id}">${a.name}</option>`
   ).join(''); }
   const products = sortByDisplayOrder(prodRes.ok ? await prodRes.json() : []);
   if (prodSel) {
@@ -9773,7 +9773,7 @@ async function openCreativeEdit(id) {
     if (axesRes.ok) {
       const axes = sortByDisplayOrder(await axesRes.json());
       appealSel.innerHTML = '<option value="">（未設定）</option>' +
-        axes.map(a => `<option value="${a.id}">${a.code} - ${a.name}</option>`).join('');
+        axes.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
     }
     if (prodRes.ok) {
       const products = sortByDisplayOrder(await prodRes.json());
