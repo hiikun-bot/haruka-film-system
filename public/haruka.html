@@ -6693,9 +6693,9 @@ function selectMasterNav(type) {
 }
 
 async function loadMasterPage() {
-  // スーパーアドミンのみシステム設定タブを表示
+  // 管理者のみシステム設定タブを表示（秘書・他ロール非表示）
   const sysconfigNav = document.getElementById('mnav-sysconfig');
-  if (sysconfigNav) sysconfigNav.style.display = isSuperAdmin() ? '' : 'none';
+  if (sysconfigNav) sysconfigNav.style.display = isTopAdmin() ? '' : 'none';
 
   const [catRes, itemRes] = await Promise.all([
     fetch(`${API}/master/categories`),
