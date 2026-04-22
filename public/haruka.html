@@ -1328,29 +1328,34 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="background:var(--em-pale);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.9;color:var(--em-dark)">
       <b>CSVフォーマット</b><br>
       <span style="font-size:12px;color:var(--text-muted)">1行目：ヘッダー行（固定）　2行目：記入例（削除してOK）　3行目以降：実データ</span><br><br>
-      <table style="border-collapse:collapse;font-size:12px;width:100%">
+      <table style="border-collapse:collapse;font-size:12px;width:100%;table-layout:fixed">
+        <colgroup>
+          <col style="width:130px">
+          <col style="width:100px">
+          <col>
+        </colgroup>
         <thead>
           <tr style="border-bottom:1px solid var(--border)">
-            <th style="padding:4px 10px 4px 0;text-align:left;white-space:nowrap">列名</th>
-            <th style="padding:4px 10px 4px 0;text-align:left;white-space:nowrap">内容</th>
+            <th style="padding:4px 10px 4px 0;text-align:left">列名</th>
+            <th style="padding:4px 10px 4px 0;text-align:left">内容</th>
             <th style="padding:4px 0;text-align:left">選択肢 / 形式</th>
           </tr>
         </thead>
         <tbody>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>full_name</code></td><td style="padding:3px 10px 3px 0">氏名</td><td style="padding:3px 0">例：<code>山田 花子</code></td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>email</code></td><td style="padding:3px 10px 3px 0">メールアドレス</td><td style="padding:3px 0">例：<code>hanako@example.com</code></td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>role</code></td><td style="padding:3px 10px 3px 0">権限・役職</td><td style="padding:3px 0"><code>admin</code>（管理者）/<code>producer</code>（P）/<code>producer_director</code>（PD）/<code>director</code>（D）/<code>editor</code>（編集）/<code>designer</code>（デザイナー）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>job_type</code></td><td style="padding:3px 10px 3px 0">職種</td><td style="padding:3px 0"><code>video</code>（動画）　または　<code>design</code>（デザイン）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>rank</code></td><td style="padding:3px 10px 3px 0">ランク</td><td style="padding:3px 0"><code>S</code>　<code>A</code>　<code>B</code>　<code>C</code>　のいずれか（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>team_code</code></td><td style="padding:3px 10px 3px 0">チームコード</td><td style="padding:3px 0">登録済みチームコード（例：<code>A</code>）　※未所属の場合は空白</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>birthday</code></td><td style="padding:3px 10px 3px 0">生年月日</td><td style="padding:3px 0"><code>YYYY-MM-DD</code> 形式（例：<code>1995-03-21</code>）　※空白可</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>nickname</code></td><td style="padding:3px 10px 3px 0">ニックネーム</td><td style="padding:3px 0">検索・フィルターで使用（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>slack_dm_id</code></td><td style="padding:3px 10px 3px 0">Slack DM ID</td><td style="padding:3px 0">Slack連携用（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>chatwork_dm_id</code></td><td style="padding:3px 10px 3px 0">Chatwork DM ID</td><td style="padding:3px 0">Chatwork連携用（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>phone</code></td><td style="padding:3px 10px 3px 0">電話番号</td><td style="padding:3px 0">例：<code>090-1234-5678</code>（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>postal_code</code></td><td style="padding:3px 10px 3px 0">郵便番号</td><td style="padding:3px 0">例：<code>150-0001</code>（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>address</code></td><td style="padding:3px 10px 3px 0">住所</td><td style="padding:3px 0">例：<code>東京都渋谷区...</code>（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>note</code></td><td style="padding:3px 10px 3px 0">メモ</td><td style="padding:3px 0">備考・メモ（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>full_name</code></td><td style="padding:3px 10px 3px 0">氏名</td><td style="padding:3px 0;word-break:break-word">例：<code>山田 花子</code></td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>email</code></td><td style="padding:3px 10px 3px 0">メールアドレス</td><td style="padding:3px 0;word-break:break-word">例：<code>hanako@example.com</code></td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>role</code></td><td style="padding:3px 10px 3px 0">権限・役職</td><td style="padding:3px 0;word-break:break-word"><code>admin</code>（管理者）<br><code>secretary</code>（秘書）<br><code>producer</code>（P）／<code>producer_director</code>（PD）<br><code>director</code>（D）／<code>editor</code>（編集）／<code>designer</code>（デザイナー）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>job_type</code></td><td style="padding:3px 10px 3px 0">職種</td><td style="padding:3px 0;word-break:break-word"><code>video</code>（動画）　<code>design</code>（デザイン）　<code>both</code>（両方）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>rank</code></td><td style="padding:3px 10px 3px 0">ランク</td><td style="padding:3px 0"><code>S</code>　<code>A</code>　<code>B</code>　<code>C</code>　のいずれか（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>team_code</code></td><td style="padding:3px 10px 3px 0">チームコード</td><td style="padding:3px 0">登録済みチームコード（例：<code>A</code>）　※未所属の場合は空白</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>birthday</code></td><td style="padding:3px 10px 3px 0">生年月日</td><td style="padding:3px 0"><code>YYYY-MM-DD</code> 形式（例：<code>1995-03-21</code>）　※空白可</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>nickname</code></td><td style="padding:3px 10px 3px 0">ニックネーム</td><td style="padding:3px 0">検索・フィルターで使用（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>slack_dm_id</code></td><td style="padding:3px 10px 3px 0">Slack DM ID</td><td style="padding:3px 0">Slack連携用（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>chatwork_dm_id</code></td><td style="padding:3px 10px 3px 0">Chatwork DM ID</td><td style="padding:3px 0">Chatwork連携用（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>phone</code></td><td style="padding:3px 10px 3px 0">電話番号</td><td style="padding:3px 0">例：<code>090-1234-5678</code>（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>postal_code</code></td><td style="padding:3px 10px 3px 0">郵便番号</td><td style="padding:3px 0">例：<code>150-0001</code>（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>address</code></td><td style="padding:3px 10px 3px 0">住所</td><td style="padding:3px 0">例：<code>東京都渋谷区...</code>（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>note</code></td><td style="padding:3px 10px 3px 0">メモ</td><td style="padding:3px 0">備考・メモ（空白可）</td></tr>
         </tbody>
       </table>
     </div>
