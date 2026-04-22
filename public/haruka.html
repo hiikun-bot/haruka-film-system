@@ -683,10 +683,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div id="role-preview-switcher" style="display:none;align-items:center;gap:6px">
       <span style="font-size:12px;color:rgba(255,255,255,0.6);letter-spacing:0.05em;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,0.4)">VIEW AS</span>
       <div style="display:flex;gap:3px">
-        <button class="rpb-btn rpb-active" id="rpb-admin"    onclick="setPreviewRole(null)">管理者</button>
-        <button class="rpb-btn"            id="rpb-producer" onclick="setPreviewRole('producer')">P</button>
-        <button class="rpb-btn"            id="rpb-director" onclick="setPreviewRole('director')">D</button>
-        <button class="rpb-btn"            id="rpb-editor"   onclick="setPreviewRole('editor')">編集者</button>
+        <button class="rpb-btn rpb-active" id="rpb-admin"             onclick="setPreviewRole(null)">管理者</button>
+        <button class="rpb-btn"            id="rpb-secretary"         onclick="setPreviewRole('secretary')">秘書</button>
+        <button class="rpb-btn"            id="rpb-producer"          onclick="setPreviewRole('producer')">P</button>
+        <button class="rpb-btn"            id="rpb-producer_director" onclick="setPreviewRole('producer_director')">PD</button>
+        <button class="rpb-btn"            id="rpb-director"          onclick="setPreviewRole('director')">D</button>
+        <button class="rpb-btn"            id="rpb-editor"            onclick="setPreviewRole('editor')">編集者</button>
+        <button class="rpb-btn"            id="rpb-designer"          onclick="setPreviewRole('designer')">デザイナー</button>
       </div>
     </div>
     <div class="header-user">
@@ -4447,7 +4450,7 @@ function isTopAdmin() {
 function setPreviewRole(role) {
   previewRole = role;
   // ボタンのアクティブ状態を更新
-  ['admin','producer','director','editor'].forEach(r => {
+  ['admin','secretary','producer','producer_director','director','editor','designer'].forEach(r => {
     const btn = document.getElementById(`rpb-${r}`);
     if (btn) btn.classList.toggle('rpb-active', r === (role ?? 'admin'));
   });
