@@ -1060,7 +1060,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
+    .select('id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
     .order('full_name');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -1096,7 +1096,8 @@ router.post('/members/bulk', async (req, res) => {
 
   let created = 0, failed = 0;
   for (const m of members) {
-    const { full_name, email, role, job_type, rank, team_code, birthday } = m;
+    const { full_name, email, role, job_type, rank, team_code, birthday,
+            nickname, slack_dm_id, phone, postal_code, address, note } = m;
     if (!full_name || !email || !role) { failed++; continue; }
     const { error } = await supabase.from('users').insert({
       full_name, email, role,
@@ -1104,6 +1105,12 @@ router.post('/members/bulk', async (req, res) => {
       rank: rank || null,
       team_id: team_code ? (teamMap[team_code] || null) : null,
       birthday: birthday || null,
+      nickname: nickname || null,
+      slack_dm_id: slack_dm_id || null,
+      phone: phone || null,
+      postal_code: postal_code || null,
+      address: address || null,
+      note: note || null,
       weekday_hours: [{from:9,to:18}]
     });
     if (error) { failed++; } else { created++; }
@@ -1135,7 +1142,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   }
 
   const {
-    full_name, role, job_type, rank,
+    full_name, nickname, role, job_type, rank,
     team_id, slack_dm_id, chatwork_dm_id,
     is_active, left_at, left_reason,
     birthday, weekday_hours, weekend_hours, note,
@@ -1145,7 +1152,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   } = req.body;
 
   const updateData = {
-    full_name, job_type,
+    full_name, nickname: nickname || null, job_type,
     team_id: team_id || null,
     slack_dm_id: slack_dm_id || null,
     chatwork_dm_id: chatwork_dm_id || null,

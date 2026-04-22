@@ -795,6 +795,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="ct active" onclick="setClient(this,'all')">すべて</button>
       </div>
       <input class="search-box" type="text" placeholder="ファイル名で絞り込み" oninput="filterSearch(this.value)">
+      <select id="cv-assignee-filter" class="form-select" style="font-size:12px;padding:5px 10px;height:32px;min-width:120px;max-width:160px" onchange="setAssigneeFilter(this.value)">
+        <option value="">担当者：全員</option>
+      </select>
     </div>
     <div class="toolbar-row">
       <span style="font-size:13px;color:var(--text-muted);font-weight:500">ビュー：</span>
@@ -1338,9 +1341,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>email</code></td><td style="padding:3px 10px 3px 0">メールアドレス</td><td style="padding:3px 0">例：<code>hanako@example.com</code></td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>role</code></td><td style="padding:3px 10px 3px 0">権限・役職</td><td style="padding:3px 0"><code>admin</code>（管理者）/<code>producer</code>（P）/<code>producer_director</code>（PD）/<code>director</code>（D）/<code>editor</code>（編集）/<code>designer</code>（デザイナー）</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>job_type</code></td><td style="padding:3px 10px 3px 0">職種</td><td style="padding:3px 0"><code>video</code>（動画）　または　<code>design</code>（デザイン）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>rank</code></td><td style="padding:3px 10px 3px 0">ランク</td><td style="padding:3px 0"><code>S</code>　<code>A</code>　<code>B</code>　<code>C</code>　のいずれか</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>team_code</code></td><td style="padding:3px 10px 3px 0">チームコード</td><td style="padding:3px 0">アルファベット1文字（例：<code>A</code>）　※未所属の場合は空白</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>rank</code></td><td style="padding:3px 10px 3px 0">ランク</td><td style="padding:3px 0"><code>S</code>　<code>A</code>　<code>B</code>　<code>C</code>　のいずれか（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>team_code</code></td><td style="padding:3px 10px 3px 0">チームコード</td><td style="padding:3px 0">登録済みチームコード（例：<code>A</code>）　※未所属の場合は空白</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>birthday</code></td><td style="padding:3px 10px 3px 0">生年月日</td><td style="padding:3px 0"><code>YYYY-MM-DD</code> 形式（例：<code>1995-03-21</code>）　※空白可</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>nickname</code></td><td style="padding:3px 10px 3px 0">ニックネーム</td><td style="padding:3px 0">検索・フィルターで使用（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>slack_dm_id</code></td><td style="padding:3px 10px 3px 0">Slack DM ID</td><td style="padding:3px 0">Slack連携用（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>phone</code></td><td style="padding:3px 10px 3px 0">電話番号</td><td style="padding:3px 0">例：<code>090-1234-5678</code>（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>postal_code</code></td><td style="padding:3px 10px 3px 0">郵便番号</td><td style="padding:3px 0">例：<code>150-0001</code>（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>address</code></td><td style="padding:3px 10px 3px 0">住所</td><td style="padding:3px 0">例：<code>東京都渋谷区...</code>（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>note</code></td><td style="padding:3px 10px 3px 0">メモ</td><td style="padding:3px 0">備考・メモ（空白可）</td></tr>
         </tbody>
       </table>
     </div>
@@ -1367,6 +1376,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <th style="padding:8px;text-align:left">ランク</th>
               <th style="padding:8px;text-align:left">チーム</th>
               <th style="padding:8px;text-align:left">生年月日</th>
+              <th style="padding:8px;text-align:left">ニックネーム</th>
+              <th style="padding:8px;text-align:left">Slack</th>
+              <th style="padding:8px;text-align:left">電話</th>
+              <th style="padding:8px;text-align:left">郵便番号</th>
+              <th style="padding:8px;text-align:left">住所</th>
+              <th style="padding:8px;text-align:left">メモ</th>
             </tr>
           </thead>
           <tbody id="import-preview-tbody"></tbody>
@@ -2728,7 +2743,7 @@ function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
-let currentClient = 'all', currentView = 'all', searchText = '';
+let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
@@ -3429,11 +3444,34 @@ async function loadCreatives() {
   try {
     const res = await fetch(`${API}/creatives`);
     allCreatives = await res.json();
+    populateAssigneeFilter();
     renderCreatives();
     renderAlerts();
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
   }
+}
+
+function populateAssigneeFilter() {
+  const sel = document.getElementById('cv-assignee-filter');
+  if (!sel) return;
+  const assigneeIds = new Set();
+  allCreatives.forEach(c => {
+    (c.creative_assignments || []).forEach(a => {
+      if (a.users?.id) assigneeIds.add(a.users.id);
+    });
+  });
+  const assignees = allMembers.filter(m => assigneeIds.has(m.id));
+  assignees.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+  const current = sel.value;
+  sel.innerHTML = '<option value="">担当者：全員</option>' +
+    assignees.map(m => `<option value="${m.id}">${m.nickname ? m.nickname + '（' + m.full_name + '）' : m.full_name}</option>`).join('');
+  sel.value = assigneeIds.has(current) ? current : '';
+}
+
+function setAssigneeFilter(userId) {
+  currentAssigneeFilter = userId;
+  renderCreatives();
 }
 
 function initTableScrollHint() {
@@ -3464,6 +3502,7 @@ function renderCreatives() {
     if (currentClient !== 'all' && c.projects?.clients?.id !== currentClient) return false;
     if (searchText && !c.file_name.toLowerCase().includes(searchText)) return false;
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
+    if (currentAssigneeFilter && !c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
     if (currentView === 'mine') {
       if (!c.creative_assignments?.some(a => a.users?.id === currentUser?.id)) return false;
     }
@@ -3718,7 +3757,7 @@ function buildTeamMemberList(memberIdSet) {
   const container = document.getElementById('t-member-list');
   const active = allMembers.filter(m => m.is_active !== false);
   const filtered = active.filter(m => {
-    if (search && !m.full_name.toLowerCase().includes(search)) return false;
+    if (search && !m.full_name.toLowerCase().includes(search) && !(m.nickname||'').toLowerCase().includes(search)) return false;
     if (_tmFilterRole && m.role !== _tmFilterRole) return false;
     if (_tmFilterRank && m.rank !== _tmFilterRank) return false;
     return true;
@@ -3921,6 +3960,7 @@ function openAddMember() {
   document.getElementById('m-submit-btn').textContent = '追加する';
   document.getElementById('m-id').value = '';
   document.getElementById('m-name').value = '';
+  document.getElementById('m-nickname').value = '';
   document.getElementById('m-email').value = '';
   document.getElementById('m-email').disabled = false;
   document.getElementById('m-role').value = 'editor';
@@ -3963,6 +4003,7 @@ function openEditMember(m) {
   document.getElementById('m-submit-btn').textContent = '保存する';
   document.getElementById('m-id').value = m.id;
   document.getElementById('m-name').value = m.full_name || '';
+  document.getElementById('m-nickname').value = m.nickname || '';
   document.getElementById('m-email').value = m.email || '';
   document.getElementById('m-email').disabled = true;
   document.getElementById('m-role').value = m.role || 'editor';
@@ -4003,6 +4044,7 @@ function openEditMember(m) {
 async function submitMember() {
   const id = document.getElementById('m-id').value;
   const full_name = document.getElementById('m-name').value.trim();
+  const nickname = document.getElementById('m-nickname').value.trim() || null;
   const email = document.getElementById('m-email').value.trim();
   const role = document.getElementById('m-role').value || 'editor';
   const job_type = document.getElementById('m-job-type').value;
@@ -4026,7 +4068,7 @@ async function submitMember() {
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
   if (!full_name) { alert('名前は必須です'); return; }
-  const payload = { full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
+  const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
   let res;
   if (id) {
     res = await fetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
@@ -4072,10 +4114,16 @@ const CSV_LEGEND = [
   '【必須】名前（フルネーム）例: 田中 太郎',
   '【必須】メールアドレス 例: tanaka@example.com',
   '【必須】役割を英字で入力 → admin=管理者 / secretary=秘書 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=動画編集者 / designer=デザイナー',
-  '職種を英字で入力 → video=動画 / design=デザイン',
-  'ランクを英字1文字で入力 → S / A / B / C',
-  'チームコード: チーム管理で登録したアルファベット1文字（例: A）',
-  '生年月日をYYYY-MM-DD形式で入力（例: 1990-01-15）※スプレッドシートが自動変換する場合はセルを文字列形式に設定してください'
+  '職種を英字で入力 → video=動画のみ / design=デザインのみ / both=両方',
+  'ランクを英字1文字で入力 → S / A / B / C（空白可）',
+  'チームコード: チーム管理で登録したコード（例: A）（空白可）',
+  '生年月日をYYYY-MM-DD形式で入力（例: 1990-01-15）（空白可）※スプレッドシートが自動変換する場合はセルを文字列形式に設定してください',
+  'ニックネーム（検索・フィルターで使用可）例: たろ（空白可）',
+  'Slack DM ID（空白可）',
+  '電話番号（空白可）例: 090-1234-5678',
+  '郵便番号（空白可）例: 150-0001',
+  '住所（空白可）例: 東京都渋谷区...',
+  'メモ・備考（空白可）'
 ];
 
 function csvFilename(prefix) {
@@ -4095,14 +4143,20 @@ function buildCSV(headers, legendRow, dataRows) {
 }
 
 function exportMembersCSV() {
-  const headers = ['full_name','email','role','job_type','rank','team_code','birthday'];
+  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','phone','postal_code','address','note'];
   const dataRows = allMembers.map(m => {
     const team = allTeams.find(t => t.id === m.team_id);
     return [
       m.full_name || '', m.email || '', m.role || '',
       m.job_type || '', m.rank || '',
       team?.team_code || '',
-      m.birthday ? m.birthday.slice(0,10) : ''
+      m.birthday ? m.birthday.slice(0,10) : '',
+      m.nickname || '',
+      m.slack_dm_id || '',
+      m.phone || '',
+      m.postal_code || '',
+      m.address || '',
+      m.note || ''
     ];
   });
   const csv = buildCSV(headers, CSV_LEGEND, dataRows);
@@ -4113,10 +4167,10 @@ function exportMembersCSV() {
 }
 
 function downloadImportTemplate() {
-  const headers = ['full_name','email','role','job_type','rank','team_code','birthday'];
+  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','phone','postal_code','address','note'];
   const dataRows = [
-    ['田中 太郎','tanaka@example.com','editor','video','A','A','1990-01-15'],
-    ['鈴木 花子','suzuki@example.com','designer','design','B','','1995-08-20']
+    ['田中 太郎','tanaka@example.com','editor','video','A','A','1990-01-15','たろ','','090-1234-5678','150-0001','東京都渋谷区...',''],
+    ['鈴木 花子','suzuki@example.com','designer','design','B','','1995-08-20','はなちゃん','','','','','']
   ];
   const csv = buildCSV(headers, CSV_LEGEND, dataRows);
   const a = document.createElement('a');
@@ -4169,7 +4223,13 @@ function parseImportCSV(input) {
         job_type: cols[idx('job_type')] || '',
         rank: cols[idx('rank')] || '',
         team_code: cols[idx('team_code')] || '',
-        birthday: normBirthday(cols[idx('birthday')] || '')
+        birthday: normBirthday(cols[idx('birthday')] || ''),
+        nickname: cols[idx('nickname')] || '',
+        slack_dm_id: cols[idx('slack_dm_id')] || '',
+        phone: cols[idx('phone')] || '',
+        postal_code: cols[idx('postal_code')] || '',
+        address: cols[idx('address')] || '',
+        note: cols[idx('note')] || ''
       };
       const valid = row.full_name && row.email && row.role;
       const existing = allMembers.find(m => m.email === row.email);
@@ -4188,7 +4248,13 @@ function parseImportCSV(input) {
         <td style="padding:7px 8px">${row.job_type}</td>
         <td style="padding:7px 8px">${row.rank}</td>
         <td style="padding:7px 8px">${row.team_code}</td>
-        <td style="padding:7px 8px">${row.birthday}</td>`;
+        <td style="padding:7px 8px">${row.birthday}</td>
+        <td style="padding:7px 8px">${row.nickname}</td>
+        <td style="padding:7px 8px">${row.slack_dm_id}</td>
+        <td style="padding:7px 8px">${row.phone}</td>
+        <td style="padding:7px 8px">${row.postal_code}</td>
+        <td style="padding:7px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${row.address}</td>
+        <td style="padding:7px 8px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${row.note}</td>`;
       tbody.appendChild(tr);
     }
 
