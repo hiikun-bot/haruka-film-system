@@ -1346,6 +1346,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>birthday</code></td><td style="padding:3px 10px 3px 0">生年月日</td><td style="padding:3px 0"><code>YYYY-MM-DD</code> 形式（例：<code>1995-03-21</code>）　※空白可</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>nickname</code></td><td style="padding:3px 10px 3px 0">ニックネーム</td><td style="padding:3px 0">検索・フィルターで使用（空白可）</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>slack_dm_id</code></td><td style="padding:3px 10px 3px 0">Slack DM ID</td><td style="padding:3px 0">Slack連携用（空白可）</td></tr>
+          <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>chatwork_dm_id</code></td><td style="padding:3px 10px 3px 0">Chatwork DM ID</td><td style="padding:3px 0">Chatwork連携用（空白可）</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>phone</code></td><td style="padding:3px 10px 3px 0">電話番号</td><td style="padding:3px 0">例：<code>090-1234-5678</code>（空白可）</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>postal_code</code></td><td style="padding:3px 10px 3px 0">郵便番号</td><td style="padding:3px 0">例：<code>150-0001</code>（空白可）</td></tr>
           <tr><td style="padding:3px 10px 3px 0;white-space:nowrap"><code>address</code></td><td style="padding:3px 10px 3px 0">住所</td><td style="padding:3px 0">例：<code>東京都渋谷区...</code>（空白可）</td></tr>
@@ -1378,6 +1379,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <th style="padding:8px;text-align:left">生年月日</th>
               <th style="padding:8px;text-align:left">ニックネーム</th>
               <th style="padding:8px;text-align:left">Slack</th>
+              <th style="padding:8px;text-align:left">CW</th>
               <th style="padding:8px;text-align:left">電話</th>
               <th style="padding:8px;text-align:left">郵便番号</th>
               <th style="padding:8px;text-align:left">住所</th>
@@ -4120,6 +4122,7 @@ const CSV_LEGEND = [
   '生年月日をYYYY-MM-DD形式で入力（例: 1990-01-15）（空白可）※スプレッドシートが自動変換する場合はセルを文字列形式に設定してください',
   'ニックネーム（検索・フィルターで使用可）例: たろ（空白可）',
   'Slack DM ID（空白可）',
+  'Chatwork DM ID（空白可）',
   '電話番号（空白可）例: 090-1234-5678',
   '郵便番号（空白可）例: 150-0001',
   '住所（空白可）例: 東京都渋谷区...',
@@ -4143,7 +4146,7 @@ function buildCSV(headers, legendRow, dataRows) {
 }
 
 function exportMembersCSV() {
-  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','phone','postal_code','address','note'];
+  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','chatwork_dm_id','phone','postal_code','address','note'];
   const dataRows = allMembers.map(m => {
     const team = allTeams.find(t => t.id === m.team_id);
     return [
@@ -4153,6 +4156,7 @@ function exportMembersCSV() {
       m.birthday ? m.birthday.slice(0,10) : '',
       m.nickname || '',
       m.slack_dm_id || '',
+      m.chatwork_dm_id || '',
       m.phone || '',
       m.postal_code || '',
       m.address || '',
@@ -4167,10 +4171,10 @@ function exportMembersCSV() {
 }
 
 function downloadImportTemplate() {
-  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','phone','postal_code','address','note'];
+  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','chatwork_dm_id','phone','postal_code','address','note'];
   const dataRows = [
-    ['田中 太郎','tanaka@example.com','editor','video','A','A','1990-01-15','たろ','','090-1234-5678','150-0001','東京都渋谷区...',''],
-    ['鈴木 花子','suzuki@example.com','designer','design','B','','1995-08-20','はなちゃん','','','','','']
+    ['田中 太郎','tanaka@example.com','editor','video','A','A','1990-01-15','たろ','','','090-1234-5678','150-0001','東京都渋谷区...',''],
+    ['鈴木 花子','suzuki@example.com','designer','design','B','','1995-08-20','はなちゃん','','','','','','']
   ];
   const csv = buildCSV(headers, CSV_LEGEND, dataRows);
   const a = document.createElement('a');
@@ -4226,6 +4230,7 @@ function parseImportCSV(input) {
         birthday: normBirthday(cols[idx('birthday')] || ''),
         nickname: cols[idx('nickname')] || '',
         slack_dm_id: cols[idx('slack_dm_id')] || '',
+        chatwork_dm_id: cols[idx('chatwork_dm_id')] || '',
         phone: cols[idx('phone')] || '',
         postal_code: cols[idx('postal_code')] || '',
         address: cols[idx('address')] || '',
@@ -4251,6 +4256,7 @@ function parseImportCSV(input) {
         <td style="padding:7px 8px">${row.birthday}</td>
         <td style="padding:7px 8px">${row.nickname}</td>
         <td style="padding:7px 8px">${row.slack_dm_id}</td>
+        <td style="padding:7px 8px">${row.chatwork_dm_id}</td>
         <td style="padding:7px 8px">${row.phone}</td>
         <td style="padding:7px 8px">${row.postal_code}</td>
         <td style="padding:7px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${row.address}</td>

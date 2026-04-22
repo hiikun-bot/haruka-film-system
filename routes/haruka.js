@@ -1097,7 +1097,7 @@ router.post('/members/bulk', async (req, res) => {
   let created = 0, failed = 0;
   for (const m of members) {
     const { full_name, email, role, job_type, rank, team_code, birthday,
-            nickname, slack_dm_id, phone, postal_code, address, note } = m;
+            nickname, slack_dm_id, chatwork_dm_id, phone, postal_code, address, note } = m;
     if (!full_name || !email || !role) { failed++; continue; }
     const { error } = await supabase.from('users').insert({
       full_name, email, role,
@@ -1107,6 +1107,7 @@ router.post('/members/bulk', async (req, res) => {
       birthday: birthday || null,
       nickname: nickname || null,
       slack_dm_id: slack_dm_id || null,
+      chatwork_dm_id: chatwork_dm_id || null,
       phone: phone || null,
       postal_code: postal_code || null,
       address: address || null,
