@@ -3508,11 +3508,16 @@ function renderCreatives() {
   });
   activeBalls.push('done');
 
+  const _role = effectiveRole();
   const filtered = allCreatives.filter(c => {
     if (currentClient !== 'all' && c.projects?.clients?.id !== currentClient) return false;
     if (searchText && !c.file_name.toLowerCase().includes(searchText)) return false;
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
     if (currentAssigneeFilter && !c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
+    // ロール別 creative_type フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
+    const isDesign = c.creative_type?.startsWith('design');
+    if (_role === 'designer' && !isDesign) return false;
+    if (_role === 'editor' && isDesign) return false;
     if (currentView === 'mine') {
       if (!c.creative_assignments?.some(a => a.users?.id === currentUser?.id)) return false;
     }
