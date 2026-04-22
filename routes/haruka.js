@@ -514,13 +514,27 @@ router.get('/creatives', async (req, res) => {
   if (cycle_id) query = query.eq('cycle_id', cycle_id);
   if (status) query = query.eq('status', status);
 
-  const { data, error } = await query;
+  const [{ data, error }, { data: teamsRaw }] = await Promise.all([
+    query,
+    supabase.from('teams').select('id, director_id, director:director_id(full_name), team_members(user_id)'),
+  ]);
   if (error) return res.status(500).json({ error: error.message });
+
+  // チーム逆引きMap（ディレクター名解決用）
+  const directorByTeamId  = new Map();
+  const directorByUserId  = new Map();
+  (teamsRaw || []).forEach(t => {
+    const name = t.director?.full_name || '';
+    if (t.director_id) directorByTeamId.set(t.id, name);
+    (t.team_members || []).forEach(tm => {
+      if (tm.user_id && !directorByUserId.has(tm.user_id)) directorByUserId.set(tm.user_id, name);
+    });
+  });
 
   // ボール保持者を付与
   const withBall = data.map(c => ({
     ...c,
-    ball_holder: getBallHolder(c.status, c.creative_assignments)
+    ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId)
   }));
 
   res.json(withBall);
@@ -1715,12 +1729,21 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 // ==================== ボール保持者判定 ====================
 
-function getBallHolder(status, assignments) {
-  const editor = assignments?.find(a => a.role === 'editor' || a.role === 'designer' || a.role === 'director_as_editor');
-  const director = assignments?.find(a => a.role === 'director');
+function getBallHolder(status, assignments, directorByTeamId, directorByUserId) {
+  const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+  const dirAssign = assignments?.find(a => a.role === 'director');
 
   const editorName = editor?.users?.full_name || '編集者';
-  const directorName = director?.users?.full_name || 'ディレクター';
+
+  // ディレクター名：assignment直接 → チームID逆引き → メンバーID逆引き → フォールバック
+  let directorName = dirAssign?.users?.full_name;
+  if (!directorName && editor?.users) {
+    const u = editor.users;
+    directorName = (u.team_id && directorByTeamId?.get(u.team_id))
+      || (u.id && directorByUserId?.get(u.id))
+      || '';
+  }
+  directorName = directorName || 'ディレクター';
 
   const ballMap = {
     '未着手': { holder: editorName, type: 'editor' },
