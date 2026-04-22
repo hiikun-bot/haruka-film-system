@@ -2324,6 +2324,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div class="toolbar" style="position:sticky;top:88px;z-index:99">
     <div class="toolbar-row" style="flex-wrap:wrap;gap:10px">
       <span style="font-size:14px;font-weight:600;color:var(--text)">📚 ナレッジ</span>
+      <!-- 動画/デザインタブ -->
+      <div style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
+        <button id="kn-tab-video" onclick="setKnowledgeTab('video')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🎬 動画</button>
+        <button id="kn-tab-design" onclick="setKnowledgeTab('design')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">🎨 デザイン</button>
+      </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select class="form-select" id="kn-filter-category" onchange="loadKnowledgePage()" style="width:180px;font-size:13px">
           <option value="">すべてのカテゴリー</option>
@@ -8649,14 +8654,16 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId) {
   }
 
   fpClearTimecode();
-  if (!knowledgeCategories.length) {
-    fetch(`${API}/master/items/active?category_code=COMMENT_CAT`).then(r => r.json()).then(items => {
-      knowledgeCategories = items || [];
-      const fpSel = document.getElementById('fp-comment-category');
-      if (fpSel) fpSel.innerHTML = '<option value="">カテゴリーを選択（必須）</option>' +
-        knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-    }).catch(() => {});
-  }
+  // creative_type に応じて動画/デザインのカテゴリーを読み込む
+  const isDesignPreview = currentCreativeDetail?.creative_type?.startsWith('design');
+  const fpCatCode = isDesignPreview ? 'COMMENT_CAT_DESIGN' : 'COMMENT_CAT_VIDEO';
+  const fpCatTab  = isDesignPreview ? 'design' : 'video';
+  loadKnowledgeCategories(fpCatTab).then(items => {
+    knowledgeCategories = items || [];
+    const fpSel = document.getElementById('fp-comment-category');
+    if (fpSel) fpSel.innerHTML = '<option value="">カテゴリーを選択（必須）</option>' +
+      knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  });
   _fpLikes = [];
   fpRenderLikeMarkers([]);
   switchPreviewTab('review');
@@ -9423,18 +9430,40 @@ function renderKnowledgeCards(list, compact) {
 // ==================== ナレッジページ ====================
 
 let knowledgeCategories = [];
+let currentKnowledgeTab = 'video'; // 'video' | 'design'
+// creative_type別カテゴリキャッシュ
+const _knCatCache = { video: null, design: null };
+
+function knCategoryCode(tab) {
+  return tab === 'design' ? 'COMMENT_CAT_DESIGN' : 'COMMENT_CAT_VIDEO';
+}
+
+async function loadKnowledgeCategories(tab) {
+  if (_knCatCache[tab]) return _knCatCache[tab];
+  const res = await fetch(`${API}/master/items/active?category_code=${knCategoryCode(tab)}`);
+  const items = res.ok ? (await res.json()) : [];
+  _knCatCache[tab] = items;
+  return items;
+}
+
+function setKnowledgeTab(tab) {
+  currentKnowledgeTab = tab;
+  ['video','design'].forEach(t => {
+    const btn = document.getElementById(`kn-tab-${t}`);
+    if (!btn) return;
+    const active = t === tab;
+    btn.style.background = active ? 'var(--em)' : 'transparent';
+    btn.style.color = active ? '#fff' : 'var(--em-dark)';
+  });
+  initKnowledgePage();
+}
 
 async function initKnowledgePage() {
-  // カテゴリー一覧を汎用マスターから取得（COMMENT_CATコードのもの）
-  const res = await fetch(`${API}/master/items/active?category_code=COMMENT_CAT`);
-  if (res.ok) {
-    knowledgeCategories = await res.json();
-    const sel = document.getElementById('kn-filter-category');
+  // 現在のタブに応じたカテゴリーを取得
+  knowledgeCategories = await loadKnowledgeCategories(currentKnowledgeTab);
+  const sel = document.getElementById('kn-filter-category');
+  if (sel) {
     sel.innerHTML = '<option value="">すべてのカテゴリー</option>' +
-      knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-    // コメント入力フォームのカテゴリーも更新
-    const fpSel = document.getElementById('fp-comment-category');
-    fpSel.innerHTML = '<option value="">カテゴリーを選択（必須）</option>' +
       knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   }
   loadKnowledgePage();

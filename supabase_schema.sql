@@ -582,3 +582,10 @@ CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(cr
 
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
+
+-- レビューコメント・ナレッジカテゴリーを動画/デザイン別に分割
+-- （既存の COMMENT_CAT は後方互換のため残す）
+INSERT INTO master_categories (name, code, sort_order) VALUES
+  ('レビューカテゴリー（動画）',   'COMMENT_CAT_VIDEO',   10),
+  ('レビューカテゴリー（デザイン）','COMMENT_CAT_DESIGN',  11)
+ON CONFLICT (code) DO NOTHING;
