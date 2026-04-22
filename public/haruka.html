@@ -8060,15 +8060,18 @@ async function deleteMasterItem(id) {
 function cdRefreshCommentLabel() {
   const label = document.getElementById('cd-comment-label');
   if (!label || !currentCreativeDetail) return;
-  const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'editor');
+  const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const editorName = editorAssign?.users?.full_name || '';
   const selId = document.getElementById('cd-check-director-id')?.value;
   let directorName = '';
   if (selId) {
     directorName = allMembers.find(m => m.id === selId)?.full_name || '';
   } else {
-    // チームのデフォルトディレクター
-    const editorTeamId = editorAssign?.users?.team_id;
+    // チームのデフォルトディレクター（users.team_id → team_members フォールバック）
+    const editorUserId = editorAssign?.users?.id;
+    const editorTeamId = editorAssign?.users?.team_id
+      || (editorUserId ? allTeams.find(t => (t.team_members||[]).some(tm => tm.user_id === editorUserId))?.id : null)
+      || (editorUserId ? allMembers.find(m => m.id === editorUserId)?.team_id : null);
     if (editorTeamId) {
       const team = allTeams.find(t => t.id === editorTeamId);
       if (team?.director_id) directorName = allMembers.find(m => m.id === team.director_id)?.full_name || '';
@@ -8348,8 +8351,11 @@ function updateCreativeCommentLabel(status) {
       // チームのデフォルトディレクターを取得
       let defaultDirId = '';
       if (currentCreativeDetail) {
-        const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'editor');
-        const editorTeamId = editorAssign?.users?.team_id;
+        const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
+        const editorUserId = editorAssign?.users?.id;
+        const editorTeamId = editorAssign?.users?.team_id
+          || (editorUserId ? allTeams.find(t => (t.team_members||[]).some(tm => tm.user_id === editorUserId))?.id : null)
+          || (editorUserId ? allMembers.find(m => m.id === editorUserId)?.team_id : null);
         if (editorTeamId) {
           const team = allTeams.find(t => t.id === editorTeamId);
           defaultDirId = team?.director_id || '';
