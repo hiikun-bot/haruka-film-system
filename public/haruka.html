@@ -9721,8 +9721,12 @@ let _editingCreativeId = null;
 function ceUpdateAssigneeSelect() {
   const teamId = document.getElementById('ce-team-id').value;
   const sel = document.getElementById('ce-assignee-id');
-  const members = allMembers.filter(m => m.is_active !== false &&
-    (!teamId || m.team_id === teamId || m.role === 'admin'));
+  let members = allMembers.filter(m => m.is_active !== false);
+  if (teamId) {
+    const team = allTeams.find(t => t.id === teamId);
+    const teamMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
+    members = members.filter(m => teamMemberIds.has(m.id) || m.team_id === teamId);
+  }
   sel.innerHTML = '<option value="">（未設定）</option>' +
     members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
 }
