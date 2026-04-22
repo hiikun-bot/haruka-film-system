@@ -555,10 +555,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   #print-only { display: block !important; }
   @page { margin: 12mm; size: A4; }
 }
+
+/* ===== トースト通知 ===== */
+#toast-container {
+  position: fixed; bottom: 24px; right: 24px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 99999; pointer-events: none;
+}
+#toast-container > * { pointer-events: auto; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(30px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
+<div id="toast-container"></div>
 
 <div id="print-only" style="display:none"></div>
 
@@ -2788,6 +2801,55 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <script>
+// ===== トースト通知 & エラー翻訳 =====
+function showToast(message, type, duration) {
+  type = type || 'info';
+  duration = duration || 4000;
+  const container = document.getElementById('toast-container');
+  if (!container) { console.warn('[toast]', message); return; }
+  const C = {
+    success: { bg:'#e8f5e9', border:'#4caf50', icon:'✓', text:'#2e7d32' },
+    error:   { bg:'#fdecea', border:'#ef5350', icon:'✕', text:'#c62828' },
+    warn:    { bg:'#fff8e1', border:'#fb8c00', icon:'!', text:'#e65100' },
+    info:    { bg:'#e3f2fd', border:'#42a5f5', icon:'i', text:'#1565c0' },
+  };
+  const c = C[type] || C.info;
+  const t = document.createElement('div');
+  t.style.cssText = 'display:flex;align-items:flex-start;gap:10px;background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:8px;padding:12px 16px;box-shadow:0 4px 16px rgba(0,0,0,.18);font-size:13px;color:' + c.text + ';line-height:1.5;max-width:380px;word-break:break-word;animation:toastIn .2s ease;transition:opacity .3s,transform .3s;';
+  const icon = document.createElement('span');
+  icon.style.cssText = 'font-weight:700;font-size:15px;flex-shrink:0;margin-top:1px';
+  icon.textContent = c.icon;
+  const msg = document.createElement('span');
+  msg.style.flex = '1';
+  msg.textContent = message;
+  const btn = document.createElement('button');
+  btn.style.cssText = 'background:none;border:none;cursor:pointer;color:' + c.text + ';font-size:18px;padding:0;line-height:1;flex-shrink:0;opacity:.5;margin-top:-1px';
+  btn.textContent = '×';
+  btn.onclick = function() { t.remove(); };
+  t.appendChild(icon); t.appendChild(msg); t.appendChild(btn);
+  container.appendChild(t);
+  setTimeout(function() {
+    t.style.opacity = '0'; t.style.transform = 'translateX(20px)';
+    setTimeout(function() { t.remove(); }, 300);
+  }, duration);
+}
+
+function translateError(err) {
+  if (!err) return '不明なエラーが発生しました';
+  const msg = String(err);
+  if (msg.includes('duplicate key value') || msg.includes('unique constraint')) return 'このコードまたは値はすでに登録されています';
+  if (msg.includes('violates not-null constraint')) return '必須項目が入力されていません';
+  if (msg.includes('violates foreign key constraint')) return '関連データが存在するため削除できません';
+  if (msg.includes('JWT') || msg.includes('session')) return 'セッションが切れました。再ログインしてください';
+  if (msg.toLowerCase().includes('unauthorized')) return 'アクセス権限がありません';
+  if (msg.toLowerCase().includes('not found')) return 'データが見つかりませんでした';
+  if (msg.includes('permission denied')) return '操作の権限がありません';
+  if (msg.toLowerCase().includes('network') || msg.toLowerCase().includes('fetch')) return 'ネットワークエラーが発生しました';
+  if (msg.toLowerCase().includes('timeout')) return '接続がタイムアウトしました';
+  if (msg.includes('invalid input syntax')) return '入力値の形式が正しくありません';
+  return msg;
+}
+
 const API = '/api/haruka';
 // HTML エスケープ（テンプレートリテラル内で使用）
 function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -3070,8 +3132,8 @@ async function submitClient() {
   const note = document.getElementById('cl-note').value.trim();
   const sales_start_date = document.getElementById('cl-sales-start').value || null;
   const status = document.getElementById('cl-status').value;
-  if (!name) { alert('クライアント名は必須です'); return; }
-  if (!client_code) { alert('略称（英3文字）は必須です'); return; }
+  if (!name) { showToast('クライアント名は必須です', 'warn'); return; }
+  if (!client_code) { showToast('略称（英3文字）は必須です', 'warn'); return; }
 
   const btn = document.getElementById('cl-submit-btn');
   const origText = btn.textContent;
@@ -3099,7 +3161,7 @@ async function submitClient() {
     }
   } else {
     const e = await res.json();
-    alert('エラー: ' + e.error);
+    showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -3165,31 +3227,31 @@ async function saveClientProduct(clientId, pid) {
   const name = document.getElementById(`cprow-name-${pid}`).value.trim();
   const note = document.getElementById(`cprow-note-${pid}`).value.trim();
   const expires_at = document.getElementById(`cprow-expires-${pid}`).value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null, expires_at })
   });
   if (res.ok) { renderClientProducts(clientId); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteClientProduct(clientId, pid) {
   if (!confirm('この商材を削除しますか？')) return;
   const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, { method: 'DELETE' });
   if (res.ok) { renderClientProducts(clientId); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function addClientProduct() {
   const clientId = document.getElementById('cl-id').value;
-  if (!clientId) { alert('先にクライアントを保存してください'); return; }
+  if (!clientId) { showToast('先にクライアントを保存してください', 'warn'); return; }
   const code = document.getElementById('cl-prod-code').value.trim();
   const name = document.getElementById('cl-prod-name').value.trim();
   const note = document.getElementById('cl-prod-note').value.trim();
   const expires_at = document.getElementById('cl-prod-expires').value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/clients/${clientId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3201,7 +3263,7 @@ async function addClientProduct() {
     document.getElementById('cl-prod-note').value = '';
     document.getElementById('cl-prod-expires').value = '';
     renderClientProducts(clientId);
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function renderClientAxes(clientId) {
@@ -3242,31 +3304,31 @@ async function saveClientAxis(clientId, aid) {
   const name     = document.getElementById(`carow-name-${aid}`).value.trim();
   const note     = document.getElementById(`carow-note-${aid}`).value.trim();
   const expires_at = document.getElementById(`carow-exp-${aid}`)?.value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null, expires_at: expires_at || null })
   });
   if (res.ok) { renderClientAxes(clientId); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteClientAxis(clientId, aid) {
   if (!confirm('この訴求軸を削除しますか？')) return;
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, { method: 'DELETE' });
   if (res.ok) { renderClientAxes(clientId); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function addClientAxis() {
   const clientId = document.getElementById('cl-id').value;
-  if (!clientId) { alert('先にクライアントを保存してください'); return; }
+  if (!clientId) { showToast('先にクライアントを保存してください', 'warn'); return; }
   const code = document.getElementById('cl-axis-code').value.trim();
   const name = document.getElementById('cl-axis-name').value.trim();
   const note = document.getElementById('cl-axis-note').value.trim();
   const expires_at = document.getElementById('cl-axis-expires')?.value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3278,7 +3340,7 @@ async function addClientAxis() {
     document.getElementById('cl-axis-note').value = '';
     if (document.getElementById('cl-axis-expires')) document.getElementById('cl-axis-expires').value = '';
     renderClientAxes(clientId);
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 // 表示順ソート: sort_order=0は「未設定」扱いでcode順末尾、1以上は昇順で先頭
@@ -3746,7 +3808,7 @@ async function updateStatus() {
   const status = document.getElementById('status-select').value;
   const res = await fetch(`${API}/creatives/${selectedCreativeId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status}) });
   if (res.ok) { closeModal('modal-status'); await loadCreatives(); }
-  else { const e=await res.json(); alert('エラー: '+e.error); }
+  else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
 }
 
 async function createCreative() {
@@ -3759,9 +3821,9 @@ async function createCreative() {
   const statusEl = document.getElementById('filename-status');
 
   const assignee_id = document.getElementById('c-assignee-id').value;
-  if (!project_id) { alert('案件は必須です'); return; }
-  if (!file_name) { alert('提出用ファイル名は必須です\n訴求タイプを選択すると自動生成されます'); return; }
-  if (!assignee_id) { alert('担当者を選択してください'); return; }
+  if (!project_id) { showToast('案件は必須です', 'warn'); return; }
+  if (!file_name) { showToast('提出用ファイル名は必須です\n訴求タイプを選択すると自動生成されます', 'warn'); return; }
+  if (!assignee_id) { showToast('担当者を選択してください', 'warn'); return; }
 
   const product_id = document.getElementById('c-product-id')?.value || null;
   const media_code = document.getElementById('c-media-code')?.value || null;
@@ -3813,7 +3875,7 @@ async function createCreative() {
     }
   } else {
     const e = await res.json().catch(() => ({ error: '不明なエラー' }));
-    alert('登録エラー: ' + e.error);
+    showToast('登録エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -3959,17 +4021,17 @@ async function saveTeam() {
   const director_id = document.getElementById('t-director').value || null;
   const producer_id = document.getElementById('t-producer').value || null;
   const member_ids = Array.from(document.querySelectorAll('.t-member-check:checked')).map(c => c.value);
-  if (!team_name) { alert('チーム名は必須です'); return; }
+  if (!team_name) { showToast('チーム名は必須です', 'warn'); return; }
 
   if (id) {
     // 編集（PUT）
     const res = await fetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
     if (res.ok) { closeModal('modal-team'); await loadTeams(); await loadMembers(); }
-    else { const e=await res.json(); alert('エラー: '+e.error); }
+    else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
   } else {
     // 新規作成（POST）→ 作成後にメンバー割り当て
     const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
-    if (!res.ok) { const e=await res.json(); alert('エラー: '+e.error); return; }
+    if (!res.ok) { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); return; }
     const newTeam = await res.json();
     if (member_ids.length > 0) {
       await fetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
@@ -4196,13 +4258,13 @@ async function submitMember() {
   const phone = document.getElementById('m-phone').value.trim() || null;
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
-  if (!full_name) { alert('名前は必須です'); return; }
+  if (!full_name) { showToast('名前は必須です', 'warn'); return; }
   const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
   let res;
   if (id) {
     res = await fetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
   } else {
-    if (!email) { alert('新規追加時はメールアドレスが必須です'); return; }
+    if (!email) { showToast('新規追加時はメールアドレスが必須です', 'warn'); return; }
     res = await fetch(`${API}/members`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload, email}) });
   }
   if (res.ok) {
@@ -4215,7 +4277,7 @@ async function submitMember() {
     const msg = e.error?.includes('users_email_key')
       ? 'このメールアドレスはすでに登録されています。'
       : 'エラー: ' + e.error;
-    alert(msg);
+    showToast(msg, 'warn');
   }
 }
 
@@ -4327,7 +4389,7 @@ function parseImportCSV(input) {
   reader.onload = e => {
     const text = e.target.result.replace(/^\uFEFF/, '');
     const lines = text.split(/\r?\n/).filter(l => l.trim());
-    if (lines.length < 3) { alert('3行目以降にデータがありません'); return; }
+    if (lines.length < 3) { showToast('3行目以降にデータがありません', 'warn'); return; }
 
     // 1行目: ヘッダー、2行目: 凡例（スキップ）、3行目〜: データ
     const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
@@ -4419,10 +4481,10 @@ async function executeImport() {
     const result = await res.json();
     closeModal('modal-import');
     await loadMembers();
-    alert(`${result.created}件を登録しました${result.failed ? `（${result.failed}件失敗）` : ''}`);
+    showToast(`${result.created}件を登録しました${result.failed ? `（${result.failed}件失敗）` : ''}`, 'error');
   } else {
     const e = await res.json();
-    alert('エラー: ' + e.error);
+    showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -4547,11 +4609,11 @@ async function saveRates() {
 
   if (!ratesRes.ok || !extrasRes.ok) {
     const err = !ratesRes.ok ? await ratesRes.json().catch(()=>({})) : await extrasRes.json().catch(()=>({}));
-    alert('保存に失敗しました: ' + (err.error || '不明なエラー'));
+    showToast('保存に失敗しました: ' + (err.error || '不明なエラー'), 'error');
     return;
   }
   closeModal('modal-rates');
-  alert('単価を保存しました');
+  showToast('単価を保存しました', 'success');
 }
 
 // 実効ロールが管理者相当かどうか（admin / secretary を含む）
@@ -4829,7 +4891,7 @@ function _renderProjectChecklistItems() {
 async function addProjectChecklistItem() {
   const title = document.getElementById('pcl-new-title').value.trim();
   const desc  = document.getElementById('pcl-new-desc').value.trim();
-  if (!title) { alert('チェック項目名を入力してください'); return; }
+  if (!title) { showToast('チェック項目名を入力してください', 'warn'); return; }
   const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc }),
@@ -4838,26 +4900,26 @@ async function addProjectChecklistItem() {
     document.getElementById('pcl-new-title').value = '';
     document.getElementById('pcl-new-desc').value = '';
     await loadProjectChecklistItems();
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function saveProjectChecklistItem(id) {
   const title = document.getElementById('pcl-e-title').value.trim();
   const desc  = document.getElementById('pcl-e-desc').value.trim();
-  if (!title) { alert('タイトルは必須です'); return; }
+  if (!title) { showToast('タイトルは必須です', 'warn'); return; }
   const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc }),
   });
   if (res.ok) { _pclEditingId = null; await loadProjectChecklistItems(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteProjectChecklistItem(id) {
   if (!confirm('この項目を削除しますか？')) return;
   const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, { method: 'DELETE' });
   if (res.ok) await loadProjectChecklistItems();
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 // ===== 案件モーダル 商材・訴求軸 sync =====
@@ -4931,11 +4993,11 @@ async function renderProjectAxes(projectId) {
 
 async function addProjectProduct() {
   const projectId = document.getElementById('p-id').value;
-  if (!projectId) { alert('先に案件を保存してください'); return; }
+  if (!projectId) { showToast('先に案件を保存してください', 'warn'); return; }
   const code = document.getElementById('pp-code').value.trim();
   const name = document.getElementById('pp-name').value.trim();
   const note = document.getElementById('pp-note').value.trim();
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/projects/${projectId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4946,23 +5008,23 @@ async function addProjectProduct() {
     document.getElementById('pp-name').value = '';
     document.getElementById('pp-note').value = '';
     renderProjectProducts(projectId);
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteProjectProduct(projectId, pid) {
   if (!confirm('削除しますか？')) return;
   const res = await fetch(`${API}/projects/${projectId}/products/${pid}`, { method: 'DELETE' });
   if (res.ok) renderProjectProducts(projectId);
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function addProjectAxis() {
   const projectId = document.getElementById('p-id').value;
-  if (!projectId) { alert('先に案件を保存してください'); return; }
+  if (!projectId) { showToast('先に案件を保存してください', 'warn'); return; }
   const code = document.getElementById('pa-code').value.trim();
   const name = document.getElementById('pa-name').value.trim();
   const note = document.getElementById('pa-note').value.trim();
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/projects/${projectId}/appeal-axes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4973,14 +5035,14 @@ async function addProjectAxis() {
     document.getElementById('pa-name').value = '';
     document.getElementById('pa-note').value = '';
     renderProjectAxes(projectId);
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteProjectAxis(projectId, aid) {
   if (!confirm('削除しますか？')) return;
   const res = await fetch(`${API}/projects/${projectId}/appeal-axes/${aid}`, { method: 'DELETE' });
   if (res.ok) renderProjectAxes(projectId);
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function copyProductsFromClient() {
@@ -4989,7 +5051,7 @@ async function copyProductsFromClient() {
   if (!confirm('クライアントの商材をこの案件にコピーします。既存の案件独自商材は削除されます。')) return;
   const res = await fetch(`${API}/projects/${projectId}/products/copy-from-client`, { method: 'POST' });
   if (res.ok) renderProjectProducts(projectId);
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function copyAxesFromClient() {
@@ -4998,7 +5060,7 @@ async function copyAxesFromClient() {
   if (!confirm('クライアントの訴求軸をこの案件にコピーします。既存の案件独自訴求軸は削除されます。')) return;
   const res = await fetch(`${API}/projects/${projectId}/appeal-axes/copy-from-client`, { method: 'POST' });
   if (res.ok) renderProjectAxes(projectId);
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function toggleHideProject(id, current) {
@@ -5038,7 +5100,7 @@ async function submitProject() {
     ? document.getElementById('p-axes-override').style.display === 'none'
     : true;
 
-  if (!client_id || !name) { alert('クライアントと案件名は必須です'); return; }
+  if (!client_id || !name) { showToast('クライアントと案件名は必須です', 'warn'); return; }
 
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
@@ -5058,7 +5120,7 @@ async function submitProject() {
     await loadProjects();
   } else {
     const e = await res.json();
-    alert('エラー: ' + e.error);
+    showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -5485,7 +5547,7 @@ function parseSlackUrl() {
   const url = document.getElementById('p-slack-url-input').value.trim();
   // https://app.slack.com/client/T094ST9L5MH/C0ASPJLP66N
   const m = url.match(/slack\.com\/client\/([A-Z0-9]+)\/([A-Z0-9]+)/);
-  if (!m) { alert('Slack URLの形式が正しくありません\n例: https://app.slack.com/client/T○○○/C○○○'); return; }
+  if (!m) { showToast('Slack URLの形式が正しくありません\n例: https://app.slack.com/client/T○○○/C○○○', 'warn'); return; }
   document.getElementById('p-slack-team-id').value = m[1];
   document.getElementById('p-slack-channel-id').value = m[2];
 }
@@ -5786,7 +5848,7 @@ async function generateClientInvoice() {
     const fee = parseInt(document.getElementById('ci-fee-'+idx)?.value||'0')||0;
     if (fee > 0) items.push({ creative_id: cb.dataset.id, client_fee: fee });
   });
-  if (!items.length) { alert('報酬を入力し、請求対象を選択してください'); return; }
+  if (!items.length) { showToast('報酬を入力し、請求対象を選択してください', 'warn'); return; }
   const btn = document.getElementById('ci-submit-btn');
   btn.textContent = '発行中...'; btn.disabled = true;
   const res = await fetch(`${API}/client-invoice/generate`, {
@@ -5795,9 +5857,9 @@ async function generateClientInvoice() {
   });
   btn.textContent = '請求書を発行する'; btn.disabled = false;
   const data = await res.json();
-  if (!res.ok) { alert(data.error||'発行に失敗しました'); return; }
+  if (!res.ok) { showToast(data.error||'発行に失敗しました', 'error'); return; }
   closeModal('modal-client-invoice-gen');
-  alert(`クライアント請求書 ${data.invoice_number} を発行しました（¥${(data.total_amount||0).toLocaleString()}）`);
+  showToast(`クライアント請求書 ${data.invoice_number} を発行しました（¥${(data.total_amount||0).toLocaleString()}）`, 'success');
   await loadAdminInvoices();
 }
 
@@ -5918,10 +5980,10 @@ async function generateMyInvoice() {
   const uid = currentUser?.supabase_id || currentUser?.id;
   const year  = parseInt(document.getElementById('gi-year').value);
   const month = parseInt(document.getElementById('gi-month').value);
-  if (!uid) { alert('ログイン情報が取得できません'); return; }
+  if (!uid) { showToast('ログイン情報が取得できません', 'warn'); return; }
 
   const selectedIds = [...document.querySelectorAll('.gi-item-check:checked')].map(cb => cb.dataset.id);
-  if (!selectedIds.length) { alert('請求対象を1件以上選択してください'); return; }
+  if (!selectedIds.length) { showToast('請求対象を1件以上選択してください', 'warn'); return; }
 
   const btn = document.getElementById('gi-submit-btn');
   btn.textContent = '作成中...'; btn.disabled = true;
@@ -5932,9 +5994,9 @@ async function generateMyInvoice() {
   });
   btn.textContent = '請求書を作成する'; btn.disabled = false;
   const data = await res.json();
-  if (!res.ok) { alert(data.error || '作成に失敗しました'); return; }
+  if (!res.ok) { showToast(data.error || '作成に失敗しました', 'error'); return; }
   closeModal('modal-gen-invoice');
-  alert(`請求書 ${data.invoice_number} を作成しました（¥${(data.total_amount||0).toLocaleString()}）`);
+  showToast(`請求書 ${data.invoice_number} を作成しました（¥${(data.total_amount||0).toLocaleString()}）`, 'success');
   await loadMyInvoices();
 }
 
@@ -5965,13 +6027,13 @@ async function submitInvoice(id) {
   }
   if (!confirm('提出してよいですか？提出後は管理者の承認が必要です。')) return;
   const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
-  if (!res.ok) { alert('提出に失敗しました'); return; }
+  if (!res.ok) { showToast('提出に失敗しました', 'error'); return; }
   await loadMyInvoices();
 }
 
 async function confirmDuplicateSubmit() {
   const reason = document.getElementById('dup-reason').value.trim();
-  if (!reason) { alert('重複理由の入力は必須です'); return; }
+  if (!reason) { showToast('重複理由の入力は必須です', 'warn'); return; }
   const id = _pendingSubmitId;
   closeModal('modal-submit-duplicate');
   // 備考に重複理由を追記
@@ -5986,14 +6048,14 @@ async function confirmDuplicateSubmit() {
     });
   }
   const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
-  if (!res.ok) { alert('提出に失敗しました'); return; }
+  if (!res.ok) { showToast('提出に失敗しました', 'error'); return; }
   _pendingSubmitId = null;
   await loadMyInvoices();
 }
 
 async function editInvoice(id) {
   const res = await fetch(`${API}/invoices/${id}`);
-  if (!res.ok) { alert('請求書の取得に失敗しました'); return; }
+  if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
   document.getElementById('ei-invoice-id').value = id;
   document.getElementById('ei-notes').value = inv.notes || '';
@@ -6008,7 +6070,7 @@ async function saveInvoiceEdit() {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ notes })
   });
-  if (!res.ok) { alert('保存に失敗しました'); return; }
+  if (!res.ok) { showToast('保存に失敗しました', 'error'); return; }
   closeModal('modal-edit-invoice');
   await loadMyInvoices();
 }
@@ -6016,7 +6078,7 @@ async function saveInvoiceEdit() {
 async function approveInvoice(id) {
   if (!confirm('この請求書を承認しますか？')) return;
   const res = await fetch(`${API}/invoices/${id}/approve`, { method: 'POST' });
-  if (!res.ok) { alert('承認に失敗しました'); return; }
+  if (!res.ok) { showToast('承認に失敗しました', 'error'); return; }
   await loadAdminInvoices();
 }
 
@@ -6028,7 +6090,7 @@ async function rejectInvoice(id) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rejection_reason: reason })
   });
-  if (!res.ok) { alert('差し戻しに失敗しました'); return; }
+  if (!res.ok) { showToast('差し戻しに失敗しました', 'error'); return; }
   await loadAdminInvoices();
 }
 
@@ -6036,7 +6098,7 @@ let _printMeta = null;
 
 async function printInvoice(id) {
   const res = await fetch(`${API}/invoices/${id}`);
-  if (!res.ok) { alert('請求書の取得に失敗しました'); return; }
+  if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
 
   // クライアント請求書（発行方向が逆）
@@ -6272,7 +6334,7 @@ function printClientInvoice(inv) {
 async function deleteInvoice(id) {
   if (!confirm('この請求書を削除しますか？')) return;
   const res = await fetch(`${API}/invoices/${id}`, { method: 'DELETE' });
-  if (!res.ok) { alert('削除に失敗しました'); return; }
+  if (!res.ok) { showToast('削除に失敗しました', 'error'); return; }
   await loadMyInvoices();
 }
 
@@ -6288,7 +6350,7 @@ async function deactivateMember(id, name) {
     await loadMembers();
   } else {
     const e = await res.json();
-    alert('エラー: ' + e.error);
+    showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -6302,7 +6364,7 @@ async function reactivateMember(id) {
     await loadMembers();
   } else {
     const e = await res.json();
-    alert('エラー: ' + e.error);
+    showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -6517,7 +6579,7 @@ async function openCreateCreative() {
 
   switchCreativeTab('single');
   openModal('modal-creative');
-  } catch(e) { console.error('openCreateCreative error:', e); alert('モーダルの起動に失敗しました: ' + e.message); }
+  } catch(e) { console.error('openCreateCreative error:', e); showToast('モーダルの起動に失敗しました: ' + e.message, 'error'); }
 }
 
 function switchCreativeTab(tab) {
@@ -6576,7 +6638,7 @@ async function bulkPreviewCreative() {
   const count = parseInt(document.getElementById('bulk-count').value);
   const draft_deadline = document.getElementById('bulk-draft-deadline').value;
   const final_deadline = document.getElementById('bulk-final-deadline').value;
-  if (!project_id || !appeal_type_id || !count) { alert('案件・訴求タイプ・本数は必須です'); return; }
+  if (!project_id || !appeal_type_id || !count) { showToast('案件・訴求タイプ・本数は必須です', 'warn'); return; }
 
   // コード - 名称 → 名称のみ抽出
   const nameOnly = sel => {
@@ -6618,7 +6680,7 @@ async function bulkPreviewCreative() {
     body: JSON.stringify(_bulkPayload)
   });
   btn.textContent = origText; btn.disabled = false;
-  if (!res.ok) { const e = await res.json(); alert('エラー: ' + e.error); return; }
+  if (!res.ok) { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); return; }
   const { previews } = await res.json();
 
   // 確認リストを描画
@@ -6678,7 +6740,7 @@ async function bulkCreateCreative() {
     const continuous = document.getElementById('bulk-continuous-mode').checked;
     if (!continuous) {
       closeModal('modal-creative');
-      alert(`${data.count} 本を一括登録しました`);
+      showToast(`${data.count} 本を一括登録しました`, 'success');
     } else {
       document.getElementById('tab-bulk').style.display = '';
       const el = document.getElementById('bulk-preview');
@@ -6687,7 +6749,7 @@ async function bulkCreateCreative() {
     }
   } else {
     const e = await res.json();
-    alert('登録エラー: ' + e.error);
+    showToast('登録エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -7064,33 +7126,33 @@ async function addChecklistMaster() {
   const title = document.getElementById('cl-new-title').value.trim();
   const desc  = document.getElementById('cl-new-desc').value.trim();
   const order = parseInt(document.getElementById('cl-new-order').value) || 0;
-  if (!title) { alert('チェック項目名を入力してください'); return; }
+  if (!title) { showToast('チェック項目名を入力してください', 'warn'); return; }
   const res = await fetch(`${API}/checklist-masters`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc, sort_order: order }),
   });
   if (res.ok) { await renderChecklistMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function saveChecklistMasterEdit(id) {
   const title = document.getElementById('cl-e-title').value.trim();
   const desc  = document.getElementById('cl-e-desc').value.trim();
   const order = parseInt(document.getElementById('cl-e-order').value) || 0;
-  if (!title) { alert('タイトルは必須です'); return; }
+  if (!title) { showToast('タイトルは必須です', 'warn'); return; }
   const res = await fetch(`${API}/checklist-masters/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc, sort_order: order }),
   });
   if (res.ok) { _clEditingId = null; await renderChecklistMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteChecklistMaster(id) {
   if (!confirm('このチェック項目を削除しますか？')) return;
   const res = await fetch(`${API}/checklist-masters/${id}`, { method: 'DELETE' });
   if (res.ok) await renderChecklistMasterPage();
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function renderSysconfigPage() {
@@ -7158,7 +7220,7 @@ function parseSysDriveUrl() {
 async function saveSysDrive() {
   const url = document.getElementById('sys-drive-url').value.trim();
   const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-  if (url && !m) { alert('Drive URLの形式が正しくありません'); return; }
+  if (url && !m) { showToast('Drive URLの形式が正しくありません', 'warn'); return; }
   const folderId = m ? m[1] : '';
   const res = await fetch(`${API}/system-settings`, {
     method: 'PUT',
@@ -7172,7 +7234,7 @@ async function saveSysDrive() {
     setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
   } else {
     const e = await res.json();
-    alert('エラー: ' + e.error);
+    showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -7476,7 +7538,7 @@ async function saveGeneralItemEdit(id) {
   const name = document.getElementById('mie-name').value.trim();
   const note = document.getElementById('mie-note').value.trim();
   const expires_at = document.getElementById('mie-expires').value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/master/items/${id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ code, name, note, expires_at, is_active: true, sort_order: parseInt(document.getElementById('mie-sort').value) || 0 })
@@ -7485,7 +7547,7 @@ async function saveGeneralItemEdit(id) {
     masterItems = await (await fetch(`${API}/master/items`)).json();
     generalItemEditingId = null;
     renderGeneralMasterPage();
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteGeneralItem(id) {
@@ -7494,7 +7556,7 @@ async function deleteGeneralItem(id) {
   if (res.ok) {
     masterItems = masterItems.filter(i => i.id !== id);
     renderGeneralMasterPage();
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 function selectMasterCategory(id) {
@@ -7690,13 +7752,13 @@ async function saveProduct(clientId, id) {
   const name     = document.getElementById(`pdi-name-${id}`).value.trim();
   const note     = document.getElementById(`pdi-note-${id}`).value.trim();
   const expires_at = document.getElementById(`pdi-exp-${id}`).value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/clients/${clientId}/products/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
   if (res.ok) { await loadClientProducts(clientId); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function addClientProductNew() {
@@ -7732,7 +7794,7 @@ function openClientProductModal(clientId, clientName) {
   fetch(`${API}/clients/${clientId}/products`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name.trim(), code: code.trim() })
-  }).then(r => { if (r.ok) loadClientProducts(clientId); else alert('追加に失敗しました'); });
+  }).then(r => { if (r.ok) loadClientProducts(clientId); else showToast('追加に失敗しました', 'error'); });
 }
 
 function deleteClientProduct(clientId, productId) {
@@ -7956,13 +8018,13 @@ async function saveAppealAxis(clientId, id) {
   const name     = document.getElementById(`axi-name-${id}`).value.trim();
   const note     = document.getElementById(`axi-note-${id}`).value.trim();
   const expires_at = document.getElementById(`axi-exp-${id}`).value || null;
-  if (!code || !name) { alert('コードと名称は必須です'); return; }
+  if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
   if (res.ok) { await loadClientAppealAxes(clientId); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 function openClientAppealAxisModal(clientId, clientName) {
@@ -7974,7 +8036,7 @@ function openClientAppealAxisModal(clientId, clientName) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name.trim(), code: code.trim() })
-  }).then(r => { if (r.ok) loadClientAppealAxes(clientId); else alert('追加に失敗しました'); });
+  }).then(r => { if (r.ok) loadClientAppealAxes(clientId); else showToast('追加に失敗しました', 'error'); });
 }
 
 function deleteClientAppealAxis(clientId, axisId) {
@@ -7986,7 +8048,7 @@ function deleteClientAppealAxis(clientId, axisId) {
 async function addMasterCat() {
   const name = document.getElementById('mca-name').value.trim();
   const code = document.getElementById('mca-code').value.trim();
-  if (!name || !code) { alert('名称とコードは必須です'); return; }
+  if (!name || !code) { showToast('名称とコードは必須です', 'warn'); return; }
   const res = await fetch(`${API}/master/categories`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ name, code })
@@ -7995,7 +8057,7 @@ async function addMasterCat() {
   else {
     const e = await res.json();
     const msg = (e.error||'').includes('duplicate') ? `コード「${code}」はすでに使われています。別のコードを入力してください。` : ('エラー: ' + e.error);
-    alert(msg);
+    showToast(msg, 'warn');
   }
 }
 
@@ -8007,7 +8069,7 @@ async function saveCatEdit(id) {
     body: JSON.stringify({ name, code, is_active: true })
   });
   if (res.ok) { masterCatEditingId = null; await loadMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteMasterCat(id) {
@@ -8016,7 +8078,7 @@ async function deleteMasterCat(id) {
   if (res.ok) {
     if (currentCategoryId === id) currentCategoryId = null;
     await loadMasterPage();
-  } else { const e = await res.json(); alert('エラー: ' + e.error); }
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function addMasterItem() {
@@ -8029,12 +8091,12 @@ async function addMasterItem() {
     sort_order: parseInt(document.getElementById('mia-sort').value) || 0,
     expires_at: document.getElementById('mia-expires').value || null,
   };
-  if (!body.code || !body.name) { alert('コードと名称は必須です'); return; }
+  if (!body.code || !body.name) { showToast('コードと名称は必須です', 'warn'); return; }
   const res = await fetch(`${API}/master/items`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) { await loadMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function saveMasterItemEdit(id) {
@@ -8050,14 +8112,14 @@ async function saveMasterItemEdit(id) {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) { masterItemEditingId = null; await loadMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function deleteMasterItem(id) {
   if (!confirm('削除しますか？')) return;
   const res = await fetch(`${API}/master/items/${id}`, { method: 'DELETE' });
   if (res.ok) { await loadMasterPage(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 // ===== クリエイティブ詳細 =====
@@ -8113,7 +8175,7 @@ function fillCommentTemplate() {
 
 async function openCreativeDetail(id) {
   const res = await fetch(`${API}/creatives/${id}`);
-  if (!res.ok) { alert('データの取得に失敗しました'); return; }
+  if (!res.ok) { showToast('データの取得に失敗しました', 'error'); return; }
   const c = await res.json();
   currentCreativeDetail = c;
 
@@ -8439,7 +8501,7 @@ async function directToClientCheck() {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function skipToClientCheck() {
@@ -8447,7 +8509,7 @@ async function skipToClientCheck() {
   const noteField = document.getElementById('cd-director-note');
   const note = noteField?.value.trim();
   if (!note) {
-    alert('承認コメントを入力してください。Pスキップでも承認コメントは必須です。');
+    showToast('承認コメントを入力してください。Pスキップでも承認コメントは必須です。', 'warn');
     noteField?.focus();
     return;
   }
@@ -8464,7 +8526,7 @@ async function advanceCreativeStatus() {
   if (currentCreativeDetail.status === '未着手') {
     const assigneeId = document.getElementById('cd-assignee-id')?.value;
     if (!assigneeId) {
-      alert('担当者を設定してください。担当者なしで制作中には進めません。');
+      showToast('担当者を設定してください。担当者なしで制作中には進めません。', 'warn');
       document.getElementById('cd-assignee-id')?.focus();
       return;
     }
@@ -8479,7 +8541,7 @@ async function advanceCreativeStatus() {
       }),
     });
     if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
-    else { const e = await res.json(); alert('エラー: ' + e.error); }
+    else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
     return;
   }
 
@@ -8488,7 +8550,7 @@ async function advanceCreativeStatus() {
     const filesSection = document.getElementById('cd-files-section');
     const hasUploaded = filesSection && filesSection.style.display !== 'none';
     if (!hasUploaded && !uploadFileData) {
-      alert('Dチェックに進むには、先に納品ファイルをアップロードしてください。');
+      showToast('Dチェックに進むには、先に納品ファイルをアップロードしてください。', 'warn');
       return;
     }
     if (!hasUploaded && uploadFileData) { await executeUpload(); return; }
@@ -8500,7 +8562,7 @@ async function advanceCreativeStatus() {
     const noteField = document.getElementById('cd-director-note');
     const note = noteField?.value.trim();
     if (!note) {
-      alert('承認コメントを入力してください。コメントなしで承認はできません。');
+      showToast('承認コメントを入力してください。コメントなしで承認はできません。', 'warn');
       noteField?.focus();
       return;
     }
@@ -8518,7 +8580,7 @@ async function requestRevision() {
   const noteField = document.getElementById('cd-director-note');
   const note = noteField?.value.trim();
   if (!note) {
-    alert('修正指示を入力してください。編集者に意図が伝わるよう、具体的に記入してください。');
+    showToast('修正指示を入力してください。編集者に意図が伝わるよう、具体的に記入してください。', 'warn');
     noteField?.focus();
     return;
   }
@@ -8922,7 +8984,7 @@ async function fpDownloadMarkers() {
   btn.textContent = '生成中...'; btn.disabled = true;
   try {
     const res = await fetch(`${API}/creative-files/${fileId}/markers.jsx`, { credentials: 'include' });
-    if (!res.ok) { alert('マーカーの生成に失敗しました'); return; }
+    if (!res.ok) { showToast('マーカーの生成に失敗しました', 'error'); return; }
     const blob = await res.blob();
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
@@ -8931,7 +8993,7 @@ async function fpDownloadMarkers() {
     a.click();
     URL.revokeObjectURL(url);
   } catch(e) {
-    alert('ネットワークエラーが発生しました');
+    showToast('ネットワークエラーが発生しました', 'error');
   } finally {
     btn.textContent = orig; btn.disabled = false;
   }
@@ -9006,7 +9068,7 @@ function fpToggleABLoop() {
   } else if (_fpABState === 1) {
     // B点セット
     _fpAB.b = v.currentTime;
-    if (_fpAB.b <= _fpAB.a) { alert('B点はA点より後に設定してください'); return; }
+    if (_fpAB.b <= _fpAB.a) { showToast('B点はA点より後に設定してください', 'warn'); return; }
     _fpABState = 2;
     btn.textContent = 'A-B: 解除';
     btn.style.color = '#3ECFCA';
@@ -9051,7 +9113,7 @@ function fpSeekbarChange(el) { fpSeekbarInput(el); }
 
 function fpTakeScreenshot() {
   const v = document.getElementById('fp-video');
-  if (!v || !v.videoWidth) { alert('動画を再生中のフレームのみキャプチャできます'); return; }
+  if (!v || !v.videoWidth) { showToast('動画を再生中のフレームのみキャプチャできます', 'warn'); return; }
   const canvas = document.createElement('canvas');
   canvas.width  = v.videoWidth;
   canvas.height = v.videoHeight;
@@ -9367,7 +9429,7 @@ async function submitFileComment() {
     const sel = document.getElementById('fp-comment-category');
     sel.style.borderColor = '#f43f5e';
     setTimeout(() => { sel.style.borderColor = '#3f3f46'; }, 2000);
-    alert('カテゴリーを選択してから送信してください');
+    showToast('カテゴリーを選択してから送信してください', 'warn');
     return;
   }
   const tcBadge = document.getElementById('fp-timecode-badge');
@@ -9390,7 +9452,7 @@ async function submitFileComment() {
     fpClearTimecode();
     await loadFileComments(currentPreviewFileId);
   } else {
-    const e = await res.json(); alert('エラー: ' + e.error);
+    const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -9398,7 +9460,7 @@ async function deleteFileComment(id) {
   if (!confirm('このコメントを削除しますか？')) return;
   const res = await fetch(`${API}/creative-file-comments/${id}`, { method: 'DELETE' });
   if (res.ok) await loadFileComments(currentPreviewFileId);
-  else { const e = await res.json(); alert('エラー: ' + e.error); }
+  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function loadKnowledge() {
@@ -9526,7 +9588,7 @@ async function processUploadFile(file, showConfirm = false) {
       manualBtn.style.display = 'none';
     }
   } catch(e) {
-    alert('サイズを検出できませんでした: ' + e.message);
+    showToast('サイズを検出できませんでした: ' + e.message, 'error');
   }
 }
 
@@ -9758,7 +9820,7 @@ async function saveVersionHistory_DISABLED() {
   const directorComment  = document.getElementById('cd-director-comment').value.trim() || null;
   const clientComment    = document.getElementById('cd-client-comment').value.trim()   || null;
   if (!directorComment && !clientComment) {
-    alert('ディレクターコメントまたはクライアントコメントを入力してください');
+    showToast('ディレクターコメントまたはクライアントコメントを入力してください', 'warn');
     return;
   }
   const res = await fetch(`${API}/creative-versions`, {
@@ -9775,7 +9837,7 @@ async function saveVersionHistory_DISABLED() {
     await loadVersionHistory(currentCreativeDetail.id);
   } else {
     const e = await res.json();
-    alert('保存エラー: ' + e.error);
+    showToast('保存エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -9928,7 +9990,7 @@ async function saveCreativeEdit() {
     await loadCreatives();
   } else {
     const e = await res.json();
-    alert('保存エラー: ' + e.error);
+    showToast('保存エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -9957,7 +10019,7 @@ async function saveCreativeDetail(overrideStatus) {
     await loadCreatives();
   } else {
     const e = await res.json();
-    alert('保存エラー: ' + e.error);
+    showToast('保存エラー: ' + translateError(e?.error), 'error');
   }
 }
 
@@ -9999,14 +10061,14 @@ async function deleteSelectedCreatives() {
     await loadCreatives();
   } else {
     const e = await res.json();
-    alert('削除エラー: ' + e.error);
+    showToast('削除エラー: ' + translateError(e?.error), 'error');
   }
 }
 
 function openLink(inputId) {
   const url = document.getElementById(inputId).value.trim();
   if (url) window.open(url, '_blank', 'noopener');
-  else alert('URLが入力されていません');
+  else showToast('URLが入力されていません', 'warn');
 }
 
 // ===== 招待リンク発行 =====
@@ -10029,11 +10091,11 @@ async function deleteMemberPermanently(id, name) {
   if (!confirm(`最終確認：「${name}」を完全削除してよいですか？`)) return;
   const res = await fetch(`${API}/members/${id}`, { method: 'DELETE' });
   if (res.ok) {
-    alert(`${name} を完全削除しました`);
+    showToast(`${name} を完全削除しました`, 'success');
     await loadMembers();
   } else {
     const d = await res.json();
-    alert('削除に失敗しました: ' + d.error);
+    showToast('削除に失敗しました: ' + translateError(d?.error), 'error');
   }
 }
 
@@ -10056,15 +10118,15 @@ async function submitChangePassword() {
   const cur  = document.getElementById('cp-current').value;
   const nw   = document.getElementById('cp-new').value;
   const conf = document.getElementById('cp-confirm').value;
-  if (nw.length < 8)   { alert('新しいパスワードは8文字以上必要です'); return; }
-  if (nw !== conf)     { alert('パスワードが一致しません'); return; }
+  if (nw.length < 8)   { showToast('新しいパスワードは8文字以上必要です', 'warn'); return; }
+  if (nw !== conf)     { showToast('パスワードが一致しません', 'warn'); return; }
   const res = await fetch(`${API}/users/change-password`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ currentPassword: cur, newPassword: nw })
   });
   const data = await res.json();
-  if (!res.ok) { alert(data.error); return; }
-  alert('パスワードを変更しました');
+  if (!res.ok) { showToast(translateError(data?.error), 'error'); return; }
+  showToast('パスワードを変更しました', 'success');
   closeModal('modal-change-password');
 }
 
@@ -10072,19 +10134,19 @@ async function submitChangePassword() {
 async function resetMemberPassword(userId, userName) {
   const newPass = prompt(`${userName} さんの新しいパスワードを入力してください（8文字以上）:`);
   if (!newPass) return;
-  if (newPass.length < 8) { alert('8文字以上必要です'); return; }
+  if (newPass.length < 8) { showToast('8文字以上必要です', 'warn'); return; }
   const res = await fetch(`${API}/users/${userId}/reset-password`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ newPassword: newPass })
   });
-  if (res.ok) alert(`${userName} さんのパスワードをリセットしました`);
-  else { const d = await res.json(); alert('エラー: ' + d.error); }
+  if (res.ok) showToast(`${userName} さんのパスワードをリセットしました`, 'success');
+  else { const d = await res.json(); showToast('エラー: ' + translateError(d?.error), 'error'); }
 }
 
 async function issueInvite() {
   const email = document.getElementById('inv-email').value.trim();
   const role  = document.getElementById('inv-role').value;
-  if (!email) { alert('メールアドレスを入力してください'); return; }
+  if (!email) { showToast('メールアドレスを入力してください', 'warn'); return; }
   const res = await fetch('/api/invitations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -10093,9 +10155,9 @@ async function issueInvite() {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     if (res.status === 409) {
-      alert(`このメールアドレスはすでに登録済みです。\nパスワードを忘れた場合はメンバー一覧からパスワードリセットを行ってください。`);
+      showToast(`このメールアドレスはすでに登録済みです。\nパスワードを忘れた場合はメンバー一覧からパスワードリセットを行ってください。`, 'warn');
     } else {
-      alert('発行に失敗しました: ' + (err.error || res.status));
+      showToast('発行に失敗しました: ' + translateError(err?.error || String(res?.status)), 'error');
     }
     return;
   }
@@ -10171,9 +10233,9 @@ async function saveClientFee() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  if (!res.ok) { alert('保存に失敗しました'); return; }
+  if (!res.ok) { showToast('保存に失敗しました', 'error'); return; }
   closeModal('modal-client-fee');
-  alert('報酬設定を保存しました');
+  showToast('報酬設定を保存しました', 'success');
 }
 
 init();
