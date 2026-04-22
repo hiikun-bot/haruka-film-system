@@ -6680,8 +6680,8 @@ function updateAssigneeSelect() {
 
   let candidates = allMembers.filter(m => m.is_active !== false);
 
-  if (isVideo)        candidates = candidates.filter(m => m.job_type === 'video' && videoRoles.includes(m.role));
-  else if (isDesign)  candidates = candidates.filter(m => m.job_type === 'design' && designRoles.includes(m.role));
+  if (isVideo)        candidates = candidates.filter(m => videoRoles.includes(m.role) && m.job_type !== 'design');
+  else if (isDesign)  candidates = candidates.filter(m => designRoles.includes(m.role) && m.job_type !== 'video');
 
   if (teamId) candidates = candidates.filter(m => m.team_id === teamId || m.role === 'admin');
 
@@ -6710,8 +6710,8 @@ function updateBulkAssigneeSelect() {
   const designRoles = ['producer','producer_director','director','designer'];
   const ROLE_LABEL = { producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
   let candidates = allMembers.filter(m => m.is_active !== false);
-  if (isVideo)       candidates = candidates.filter(m => m.job_type === 'video' && videoRoles.includes(m.role));
-  else if (isDesign) candidates = candidates.filter(m => m.job_type === 'design' && designRoles.includes(m.role));
+  if (isVideo)       candidates = candidates.filter(m => videoRoles.includes(m.role) && m.job_type !== 'design');
+  else if (isDesign) candidates = candidates.filter(m => designRoles.includes(m.role) && m.job_type !== 'video');
   if (teamId) candidates = candidates.filter(m => m.team_id === teamId || m.role === 'admin');
   sel.innerHTML = '<option value="">未設定</option>' + candidates.map(m => {
     const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
