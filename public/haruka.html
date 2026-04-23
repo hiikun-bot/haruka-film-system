@@ -2548,7 +2548,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       <!-- 編集者の返信コメント（後修正ステータスのみ） -->
       <div class="form-group" id="cd-editor-reply-group" style="display:none;margin-bottom:18px">
-        <label class="form-label" id="cd-editor-reply-label">Dへの連絡・確認事項</label>
+        <label class="form-label" id="cd-editor-reply-label">連絡・確認事項</label>
+        <div id="cd-editor-reply-from-to" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;padding:5px 10px;background:var(--surface);border-radius:6px;border:0.5px solid var(--border)"></div>
         <textarea class="form-input" id="cd-editor-reply" rows="4" style="resize:vertical" placeholder="修正内容や確認事項をディレクターに伝えてください..."></textarea>
       </div>
 
@@ -8421,6 +8422,8 @@ function updateCreativeCommentLabel(status) {
   if (!label || !field) return;
   const _fromToEl = document.getElementById('cd-comment-from-to');
   if (_fromToEl) _fromToEl.style.display = 'none';
+  const _replyFromToEl = document.getElementById('cd-editor-reply-from-to');
+  if (_replyFromToEl) _replyFromToEl.style.display = 'none';
 
   // チェック段階（承認者が見る）または後修正（編集者が修正指摘を参照）は読み取り専用
   const CHECK_READONLY   = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
@@ -8536,24 +8539,27 @@ function updateCreativeCommentLabel(status) {
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = '';
     if (editorRplyLabel) {
-      const dirMap = { 'Dチェック後修正': 'D', 'Pチェック後修正': 'P', 'クライアントチェック後修正': 'CL' };
-      let dirLabel = dirMap[status] || 'D';
-      if (currentCreativeDetail) {
-        const assigns = currentCreativeDetail.creative_assignments || [];
-        const dirAssign = assigns.find(a => a.role === 'director');
-        let dirName = dirAssign?.users?.full_name;
-        if (!dirName) {
-          const assignee = assigns.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-          if (assignee?.users) {
-            const u = assignee.users;
-            dirName = (u.team_id && allTeams?.find(t => t.id === u.team_id)?.director?.full_name)
-              || (allTeams?.find(t => (t.team_members||[]).some(tm => tm.user_id === u.id))?.director?.full_name)
-              || null;
-          }
-        }
-        if (dirName) dirLabel = dirName;
+      editorRplyLabel.textContent = '連絡・確認事項';
+    }
+    const replyFromToEl = document.getElementById('cd-editor-reply-from-to');
+    if (replyFromToEl && currentCreativeDetail) {
+      const assigns = currentCreativeDetail.creative_assignments || [];
+      const assignee = assigns.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+      const dirAssign = assigns.find(a => a.role === 'director');
+      let toName = dirAssign?.users?.full_name;
+      if (!toName && assignee?.users) {
+        const u = assignee.users;
+        toName = (u.team_id && allTeams?.find(t => t.id === u.team_id)?.director?.full_name)
+          || (allTeams?.find(t => (t.team_members||[]).some(tm => tm.user_id === u.id))?.director?.full_name)
+          || null;
       }
-      editorRplyLabel.textContent = `${dirLabel} への連絡・確認事項`;
+      const fromName = assignee?.users?.full_name;
+      if (fromName || toName) {
+        replyFromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || '担当者'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || 'ディレクター'}`;
+        replyFromToEl.style.display = '';
+      } else {
+        replyFromToEl.style.display = 'none';
+      }
     }
   } else {
     if (checkDirSection)  checkDirSection.style.display  = 'none';
