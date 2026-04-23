@@ -4401,8 +4401,28 @@ function parseImportCSV(input) {
     tbody.innerHTML = '';
 
     for (let i = 2; i < lines.length; i++) {
-      const cols = lines[i].match(/("(?:[^"]|"")*"|[^,]*)/g)
-        .map(c => c.trim().replace(/^"|"$/g,'').replace(/""/g,'"'));
+      const cols = (() => {
+        const result = [], line = lines[i];
+        let pos = 0;
+        while (pos <= line.length) {
+          if (line[pos] === '"') {
+            let val = ''; pos++;
+            while (pos < line.length) {
+              if (line[pos] === '"' && line[pos+1] === '"') { val += '"'; pos += 2; }
+              else if (line[pos] === '"') { pos++; break; }
+              else val += line[pos++];
+            }
+            result.push(val.trim());
+            if (line[pos] === ',') pos++;
+          } else {
+            const end = line.indexOf(',', pos);
+            if (end === -1) { result.push(line.slice(pos).trim()); break; }
+            result.push(line.slice(pos, end).trim());
+            pos = end + 1;
+          }
+        }
+        return result;
+      })();
       // 誕生日: YYYY/M/D → YYYY-MM-DD に正規化
       const normBirthday = v => {
         if (!v) return '';
