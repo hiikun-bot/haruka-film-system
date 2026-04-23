@@ -2646,6 +2646,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button id="cd-direct-cl-btn" onclick="directToClientCheck()" style="display:none;background:#fff;color:#6366f1;border:1.5px solid #6366f1;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">CL直行 →</button>
       <!-- Dチェック時: Pをスキップして CL直行（Pあり案件のみ） -->
       <button id="cd-skip-p-btn" onclick="skipToClientCheck()" style="display:none;background:#fff;color:#6366f1;border:1.5px solid #6366f1;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Pスキップ → CL確認</button>
+      <!-- CL後修正時: Dチェックに戻す選択肢 -->
+      <button id="cd-back-to-d-btn" onclick="backToDCheck()" style="display:none;background:#fff;color:#0284c7;border:1.5px solid #0284c7;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Dチェックへ戻す</button>
       <!-- 承認 or 次ステップ -->
       <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
     </div>
@@ -8374,6 +8376,8 @@ function updateCreativeStepIndicator(status) {
   const revisionBtn  = document.getElementById('cd-revision-btn');
   const skipPBtn     = document.getElementById('cd-skip-p-btn');
   const directClBtn  = document.getElementById('cd-direct-cl-btn');
+  const backToDBtn   = document.getElementById('cd-back-to-d-btn');
+  if (backToDBtn) backToDBtn.style.display = 'none';
   if (!nextBtn) return;
 
   // チェック段階: 修正依頼 ＋ 承認 の2ボタン
@@ -8420,6 +8424,10 @@ function updateCreativeStepIndicator(status) {
         : 'linear-gradient(135deg,#3ECFCA,#2BB8B4)';
     } else {
       nextBtn.style.display = 'none';
+    }
+    // CL後修正: Dチェックへ戻す選択肢を追加
+    if (backToDBtn && status === 'クライアントチェック後修正') {
+      backToDBtn.style.display = '';
     }
   }
 }
@@ -8673,6 +8681,20 @@ async function advanceCreativeStatus() {
   const label = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s)) ? '承認' : '次のステップへ';
   if (!confirm(`「${target}」に${label === '承認' ? '承認して進め' : '進め'}ますか？`)) return;
   await saveCreativeDetail(target);
+}
+
+async function backToDCheck() {
+  if (!currentCreativeDetail) return;
+  // 後修正ステージと同じく編集者返信コメントを必須化
+  const replyField = document.getElementById('cd-editor-reply');
+  const reply = replyField?.value.trim();
+  if (!reply) {
+    showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
+    replyField?.focus();
+    return;
+  }
+  if (!confirm('CL確認の前に、一度Dチェックに戻しますか？')) return;
+  await saveCreativeDetail('Dチェック');
 }
 
 async function requestRevision() {
