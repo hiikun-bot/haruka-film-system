@@ -8643,6 +8643,18 @@ async function advanceCreativeStatus() {
     }
   }
 
+  // 後修正ステージから再提出: 編集者からの返信コメント必須
+  const REVISION_STAGES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  if (REVISION_STAGES.includes(currentCreativeDetail.status)) {
+    const replyField = document.getElementById('cd-editor-reply');
+    const reply = replyField?.value.trim();
+    if (!reply) {
+      showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
+      replyField?.focus();
+      return;
+    }
+  }
+
   const label = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s)) ? '承認' : '次のステップへ';
   if (!confirm(`「${target}」に${label === '承認' ? '承認して進め' : '進め'}ますか？`)) return;
   await saveCreativeDetail(target);
