@@ -704,7 +704,7 @@ router.put('/creatives/:id', async (req, res) => {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url,
     help_flag, talent_flag, note, revision_count,
-    director_comment, client_comment,
+    director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id
   } = req.body;
@@ -726,6 +726,7 @@ router.put('/creatives/:id', async (req, res) => {
   if (revision_count !== undefined) updateData.revision_count = revision_count;
   if (director_comment !== undefined) updateData.director_comment = director_comment;
   if (client_comment !== undefined) updateData.client_comment = client_comment;
+  if (editor_comment !== undefined) updateData.editor_comment = editor_comment;
   if (creative_type !== undefined) updateData.creative_type = creative_type;
   if (appeal_type_id !== undefined) updateData.appeal_type_id = appeal_type_id || null;
   if (product_id !== undefined) updateData.product_id = product_id || null;

@@ -8268,7 +8268,15 @@ async function openCreativeDetail(id) {
   }
 
   // コメント（ステータス依存ラベル）
-  document.getElementById('cd-comment-field').value = c.director_comment || '';
+  // チェック段階（Dチェック/Pチェック/CL中）: 編集者コメントを表示
+  // 後修正段階: ディレクター/CLの修正指示を表示
+  // その他: 編集者コメントを表示
+  const _CHECK_STATUSES_DISP    = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const _REVISION_STATUSES_DISP = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const _commentDisp = _REVISION_STATUSES_DISP.includes(c.status)
+    ? (c.director_comment || '')
+    : (c.editor_comment || '');
+  document.getElementById('cd-comment-field').value = _commentDisp;
   const _noteEl = document.getElementById('cd-director-note');
   if (_noteEl) _noteEl.value = '';
   const _replyEl = document.getElementById('cd-editor-reply');
@@ -8530,7 +8538,8 @@ function updateCreativeCommentLabel(status) {
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
     if (noteLabel) {
       const stageMap = { 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
-      noteLabel.innerHTML = `${stageMap[status] || ''}　ディレクターからの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>`;
+      const senderMap = { 'Dチェック': 'ディレクター', 'Pチェック': 'プロデューサー', 'クライアントチェック中': 'クライアント' };
+      noteLabel.innerHTML = `${stageMap[status] || ''}　${senderMap[status] || 'ディレクター'}からの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>`;
     }
   } else if (isRevision) {
     if (checkDirSection)  checkDirSection.style.display  = 'none';
@@ -10099,13 +10108,25 @@ async function saveCreativeDetail(overrideStatus) {
   if (!currentCreativeDetail) return;
   const noteValue        = document.getElementById('cd-director-note')?.value.trim()  || null;
   const editorReplyValue = document.getElementById('cd-editor-reply')?.value.trim()   || null;
+  const commentFieldValue = document.getElementById('cd-comment-field').value.trim() || null;
+  const CHECK_STATUSES    = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
   const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const isCheck    = CHECK_STATUSES.includes(currentCreativeDetail.status);
   const isRevision = REVISION_STATUSES.includes(currentCreativeDetail.status);
   const body = {
     script_url:       document.getElementById('cd-script-url').value.trim()  || null,
     frameio_url:      document.getElementById('cd-frameio-url').value.trim() || null,
-    director_comment: noteValue ?? (isRevision ? editorReplyValue : null) ?? (document.getElementById('cd-comment-field').value.trim() || null),
   };
+  if (isCheck) {
+    // ディレクター/CLからの修正指示・承認コメントのみ更新（編集者コメントは保持）
+    body.director_comment = noteValue;
+  } else if (isRevision) {
+    // 編集者/デザイナーの返信のみ更新（ディレクターの指示は保持）
+    body.editor_comment = editorReplyValue;
+  } else {
+    // 制作中・未着手など：cd-comment-field は編集者コメント扱い
+    body.editor_comment = commentFieldValue;
+  }
   if (overrideStatus) {
     body.status = overrideStatus;
     if (REVISION_STATUSES.includes(overrideStatus)) {
