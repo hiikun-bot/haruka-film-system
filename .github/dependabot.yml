@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # npm パッケージの更新
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    labels:
+      - "type:improvement"
+      - "scope:backend"
+    commit-message:
+      prefix: "chore(deps)"
+    # メジャーバージョン更新は要レビュー
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    # セキュリティ更新は別途自動でPR作成される（即時）
+    # https://docs.github.com/en/code-security/dependabot/dependabot-security-updates
+
+  # GitHub Actions の更新
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 3
+    labels:
+      - "type:improvement"
+    commit-message:
+      prefix: "chore(ci)"
