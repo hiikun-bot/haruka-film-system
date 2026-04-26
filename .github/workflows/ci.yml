@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-check:
+    name: 構文チェック
+    runs-on: ubuntu-latest
+    steps:
+      - name: コード取得
+        uses: actions/checkout@v4
+
+      - name: Node.js セットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 依存ライブラリインストール
+        run: npm ci
+
+      - name: サーバー側 JS の構文チェック
+        run: |
+          set -e
+          for f in server.js auth.js sheets.js supabase.js routes/*.js; do
+            if [ -f "$f" ]; then
+              echo "▶ checking $f"
+              node --check "$f"
+            fi
+          done
+
+      - name: フロントエンド JS の構文チェック (HTML 内 inline JS は対象外)
+        run: |
+          set -e
+          for f in public/*.js; do
+            if [ -f "$f" ]; then
+              echo "▶ checking $f"
+              node --check "$f"
+            fi
+          done
+
+  package-audit:
+    name: 脆弱性チェック
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: 高リスク脆弱性検出
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  file-size-check:
+    name: ファイルサイズ警告（負債防止）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 大きすぎるファイルを警告
+        run: |
+          echo "## ファイルサイズチェック（参考情報）" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| ファイル | 行数 | 状態 |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          warn=0
+          for f in public/haruka.html routes/haruka.js server.js public/editor.html; do
+            if [ -f "$f" ]; then
+              lines=$(wc -l < "$f")
+              if [ "$lines" -gt 5000 ]; then
+                echo "| $f | $lines | 🔴 巨大（要分割） |" >> $GITHUB_STEP_SUMMARY
+                warn=1
+              elif [ "$lines" -gt 2000 ]; then
+                echo "| $f | $lines | 🟡 大きい（分割検討） |" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "| $f | $lines | 🟢 OK |" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+          if [ "$warn" = "1" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ 5000行超のファイルがあります。アーキテクチャ負債として分割を検討してください。" >> $GITHUB_STEP_SUMMARY
+          fi
+        # 警告のみ・PRブロックはしない（既存負債があるため）
