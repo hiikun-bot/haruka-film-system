@@ -388,13 +388,45 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .client-block-header > div:last-child > span{white-space:nowrap;flex-shrink:0}
   .client-icon{width:34px;height:34px;font-size:12px;flex-shrink:0}
 
-  /* プロジェクト行: 名前を100%幅にしてボタン類を下段に回す */
-  .project-row{padding:10px 12px;gap:6px 8px;flex-wrap:wrap}
-  .project-row > div:first-child{flex:1 1 100%;min-width:0;word-break:break-word}
+  /* プロジェクト行: 名前を100%幅にしてボタン類を下段に回す
+     インライン style="flex:1" を上書きするため !important 必須 */
+  .project-row{padding:10px 12px !important;gap:8px !important;flex-wrap:wrap !important}
+  .project-row > div:first-child{
+    flex:1 1 100% !important;min-width:0 !important;
+    word-break:break-word;overflow-wrap:anywhere
+  }
+  /* 案件名行（display:flex の中）も折返し可能に */
+  .project-row > div:first-child > div{
+    word-break:break-word;overflow-wrap:anywhere
+  }
+  /* 案件名フォントをスマホ向けに少し大きく見やすく */
+  .project-row > div:first-child > div:first-child{
+    font-size:15px !important;font-weight:600 !important;line-height:1.4
+  }
+  .project-row > div:first-child > div:nth-child(2){
+    font-size:11px !important;line-height:1.5
+  }
+  /* ボタン類は1段下に折り返し、コンパクトに */
   .project-row > a.btn-sm,
-  .project-row > button.btn-sm,
+  .project-row > button.btn-sm{
+    flex-shrink:0;font-size:11px !important;padding:5px 10px !important;min-height:32px
+  }
   .project-row > span.status-chip,
-  .project-row > span.proj-tag{flex-shrink:0}
+  .project-row > span.proj-tag{flex-shrink:0;font-size:11px !important}
+
+  /* --- 案件管理ページのツールバー（フィルタ＋追加ボタン） --- */
+  /* 「表示:」「登録日:」を縦積み・日付欄を全幅に */
+  #page-projects > div > div:first-child{flex-direction:column !important;align-items:stretch !important;gap:10px !important}
+  #page-projects > div > div:first-child > div:nth-child(2){
+    flex-direction:column !important;align-items:stretch !important;gap:8px !important
+  }
+  /* 縦バー区切りはモバイルでは不要 */
+  #page-projects > div > div:first-child > div:nth-child(2) > div[style*="width:1px"]{display:none !important}
+  /* 日付フィルタ入力幅 */
+  #page-projects #client-date-from,
+  #page-projects #client-date-to{flex:1 1 0 !important;min-width:0 !important;width:auto !important}
+  /* + クライアント追加ボタンを全幅で目立たせる */
+  #page-projects #btn-add-client{width:100%;min-height:42px;font-size:14px}
 
   /* --- チームカード（#teams-list 内のインラインflex構造） --- */
   /* 親 flex を折返し可能にして縦1文字折返しを防ぐ */
