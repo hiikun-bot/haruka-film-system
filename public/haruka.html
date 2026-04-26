@@ -516,9 +516,58 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   }
 
   /* --- ナレッジ --- */
-  #page-knowledge .toolbar-row{flex-direction:column;align-items:stretch}
+  #page-knowledge .toolbar-row{flex-direction:column !important;align-items:stretch !important;gap:8px !important}
   #page-knowledge .form-select,
   #page-knowledge .form-input{width:100% !important}
+  /* 動画/デザインタブを左寄せ＆全幅 */
+  #page-knowledge .toolbar-row > div[style*="background:var(--em-pale)"]{align-self:stretch !important;justify-content:center}
+  #page-knowledge > div:nth-child(2){padding:12px !important}
+
+  /* --- メンバーページ --- */
+  /* 動画/デザインタブを全幅化 */
+  #page-members > div > div:first-child{max-width:100% !important;margin-bottom:12px !important}
+  /* 上段: メンバー一覧ラベル + ボタン群 を縦積み */
+  #page-members > div > div:nth-child(2){
+    flex-direction:column !important;align-items:stretch !important;gap:10px !important
+  }
+  /* ラベル＋並び替えボタン群: 折返し */
+  #page-members > div > div:nth-child(2) > div:first-child{flex-wrap:wrap !important;gap:6px !important}
+  /* 右側ボタン群: 横並び→ボタンが折返しで縦並び */
+  #page-members > div > div:nth-child(2) > div:nth-child(2){flex-wrap:wrap !important}
+  #page-members > div > div:nth-child(2) > div:nth-child(2) > button{
+    flex:1 1 calc(50% - 4px) !important;min-height:38px;font-size:12px !important
+  }
+  /* メンバーテーブル: 横スクロール可能に */
+  #members-list{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  #members-list > table{min-width:600px;font-size:12px}
+
+  /* --- 請求書ページ --- */
+  /* マイページ: ヘッダー縦積み */
+  #inv-my-section > div:first-child{
+    flex-direction:column !important;align-items:stretch !important;gap:10px !important
+  }
+  #inv-my-section > div:first-child > button{width:100%;min-height:42px;font-size:14px}
+  /* 管理者: ヘッダー縦積み */
+  #inv-admin-section > div:first-child{
+    flex-direction:column !important;align-items:stretch !important;gap:10px !important
+  }
+  #inv-admin-section > div:first-child > div{
+    flex-direction:column !important;align-items:stretch !important;gap:8px !important
+  }
+  #inv-admin-section > div:first-child button,
+  #inv-admin-section > div:first-child select{width:100% !important;min-height:40px}
+  /* 月タブ: スクロール可 */
+  #inv-admin-month-tabs{flex-wrap:nowrap !important;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  /* 請求書カード: ヘッダー部のステータス+金額ブロックも崩れにくく */
+  #inv-my-list > div > div:first-child{flex-wrap:wrap;gap:8px}
+  /* 請求書カードのアクションボタン: 折返し */
+  #inv-my-list > div > div:last-child{flex-wrap:wrap !important;gap:6px !important}
+  #inv-my-list > div > div:last-child > button{
+    flex:1 1 auto;min-width:100px;min-height:36px;font-size:12px !important
+  }
+  /* 管理者請求書テーブル */
+  #inv-admin-list{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  #inv-admin-list table{min-width:700px;font-size:12px}
 
   /* --- 日付フィルタ等の入力欄幅 --- */
   .form-input[type="date"]{width:auto !important;min-width:0}
