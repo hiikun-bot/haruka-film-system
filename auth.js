@@ -69,6 +69,20 @@ function requireLevel(minRole) {
   };
 }
 
+// 最高管理者（admin かつ SUPER_ADMIN_EMAILS にメール一致）のみ通過
+const SUPER_ADMIN_EMAILS = (process.env.SUPER_ADMIN_EMAILS || 'hiikun.ascs@gmail.com,satoru.takahashi@haruka-film.com')
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+function isSuperAdminUser(user) {
+  if (!user) return false;
+  if (user.role !== 'admin') return false;
+  return SUPER_ADMIN_EMAILS.includes((user.email || '').toLowerCase());
+}
+function requireSuperAdmin(req, res, next) {
+  if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
+  if (!isSuperAdminUser(req.user)) return res.status(403).json({ error: '最高管理者のみ実行できます' });
+  next();
+}
+
 // ==================== DB駆動の権限チェック ====================
 // role_permissions テーブルをキャッシュし、必要に応じて強制リロード
 let _permsCache = null; // Map<"role|key", boolean>
@@ -113,4 +127,4 @@ function requirePermission(key) {
   };
 }
 
-module.exports = { passport, requireAuth, requireRole, requireLevel, requirePermission, userHasPermission, invalidatePermissionsCache, ROLES };
+module.exports = { passport, requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, isSuperAdminUser, invalidatePermissionsCache, ROLES };

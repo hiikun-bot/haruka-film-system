@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireLevel, requirePermission, userHasPermission, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 
@@ -108,7 +108,7 @@ router.get('/clients', async (req, res) => {
 const LINK_FIELDS = ['website_url','twitter_url','instagram_url','facebook_url','youtube_url','tiktok_url','line_url','other_url'];
 
 // クライアント作成
-router.post('/clients', async (req, res) => {
+router.post('/clients', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { name, client_code, note, sales_start_date, status } = req.body;
   if (!name) return res.status(400).json({ error: 'クライアント名は必須です' });
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
@@ -124,7 +124,7 @@ router.post('/clients', async (req, res) => {
 });
 
 // クライアント更新
-router.put('/clients/:id', async (req, res) => {
+router.put('/clients/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { name, client_code, note, sales_start_date, status } = req.body;
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const updateData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', updated_at: new Date().toISOString() };
@@ -175,7 +175,7 @@ router.get('/projects/:id', async (req, res) => {
 });
 
 // 案件作成
-router.post('/projects', async (req, res) => {
+router.post('/projects', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const {
     client_id, name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
@@ -209,7 +209,7 @@ router.post('/projects', async (req, res) => {
 });
 
 // 案件更新
-router.put('/projects/:id', async (req, res) => {
+router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const {
     name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
@@ -261,7 +261,7 @@ router.get('/projects/:id/cycles', async (req, res) => {
 });
 
 // サイクル作成
-router.post('/projects/:id/cycles', async (req, res) => {
+router.post('/projects/:id/cycles', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { year, month, planned_video_count, planned_design_count, deadline, material_received_date } = req.body;
   if (!year || !month) return res.status(400).json({ error: '年・月は必須です' });
   const { data, error } = await supabase
@@ -305,7 +305,7 @@ router.get('/projects/:id/rates', async (req, res) => {
 });
 
 // 単価一括保存
-router.post('/projects/:id/rates/bulk', async (req, res) => {
+router.post('/projects/:id/rates/bulk', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
   const projectId = req.params.id;
   const { rates } = req.body;
   if (!rates || !rates.length) return res.json([]);
@@ -332,7 +332,7 @@ router.post('/projects/:id/rates/bulk', async (req, res) => {
 });
 
 // 単価設定・更新（個別upsert、後方互換）
-router.post('/projects/:id/rates', async (req, res) => {
+router.post('/projects/:id/rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
   const { rank, base_fee, script_fee, ai_fee, other_fee, other_fee_note } = req.body;
   const creative_type = normalizeRateCreativeType(req.body.creative_type);
   if (!creative_type || !rank) return res.status(400).json({ error: '種別・ランクは必須です' });
@@ -1087,18 +1087,29 @@ router.delete('/assignments/:id', async (req, res) => {
 
 // ==================== メンバー ====================
 
-// メンバー一覧
-router.get('/members', async (req, res) => {
-  const { data, error } = await supabase
-    .from('users')
-    .select('id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
-    .order('full_name');
+// メンバー一覧（要 member.list。機微情報は member.edit_password 保有者のみ取得）
+router.get('/members', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const canSeeSensitive = await userHasPermission(req.user.role, 'member.edit_password');
+  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note';
+  const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
+  const cols = canSeeSensitive ? baseCols + sensitiveCols : baseCols;
+  const { data, error } = await supabase.from('users').select(cols).order('full_name');
   if (error) return res.status(500).json({ error: error.message });
+  // 自分自身のレコードには機微情報を必ず含める（プロフィール画面のため）
+  if (!canSeeSensitive && Array.isArray(data)) {
+    const { data: self } = await supabase.from('users')
+      .select('id, birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
+      .eq('id', req.user.id).maybeSingle();
+    if (self) {
+      const idx = data.findIndex(m => m.id === self.id);
+      if (idx >= 0) Object.assign(data[idx], self);
+    }
+  }
   res.json(data);
 });
 
 // メンバー作成
-router.post('/members', async (req, res) => {
+router.post('/members', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
   const { email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id,
           birthday, weekday_hours, weekend_hours } = req.body;
   if (!email || !full_name || !role) return res.status(400).json({ error: 'メール・名前・ロールは必須です' });
@@ -1116,7 +1127,7 @@ router.post('/members', async (req, res) => {
 });
 
 // メンバー一括登録
-router.post('/members/bulk', async (req, res) => {
+router.post('/members/bulk', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
   const { members } = req.body;
   if (!members?.length) return res.status(400).json({ error: 'データがありません' });
 
@@ -1162,10 +1173,10 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   if (!target) return res.status(404).json({ error: 'メンバーが見つかりません' });
 
   const targetLevel = MEMBER_ROLE_RANK[target.role] || 0;
-  const isAdmin = requesterRole === 'admin' || requesterRole === 'secretary';
+  const isAdmin = await userHasPermission(requesterRole, 'member.edit_password');
   const isSelf = requester.id === target.id;
 
-  // 権限チェック: admin/secretary は全員編集可。producer は自分+下位ランク。director/editor/designer は自分のみ
+  // 権限チェック: member.edit_password 保有者は全員編集可。producer は自分+下位ランク。それ以外は自分のみ
   if (!isAdmin) {
     const canEdit = (requesterRole === 'producer' || requesterRole === 'producer_director')
       ? (isSelf || targetLevel < requesterLevel)
@@ -1794,7 +1805,7 @@ router.get('/projects/:id/appeal-types', async (req, res) => {
 });
 
 // 案件に訴求タイプを追加
-router.post('/projects/:id/appeal-types', async (req, res) => {
+router.post('/projects/:id/appeal-types', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { appeal_type_id } = req.body;
   if (!appeal_type_id) return res.status(400).json({ error: '訴求タイプIDは必須です' });
   const { data, error } = await supabase
@@ -1807,7 +1818,7 @@ router.post('/projects/:id/appeal-types', async (req, res) => {
 });
 
 // 案件から訴求タイプを削除
-router.delete('/projects/:id/appeal-types/:patId', async (req, res) => {
+router.delete('/projects/:id/appeal-types/:patId', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { error } = await supabase
     .from('project_appeal_types')
     .delete()
@@ -1920,7 +1931,7 @@ router.get('/teams', async (req, res) => {
 });
 
 // チーム作成
-router.post('/teams', async (req, res) => {
+router.post('/teams', requireAuth, requirePermission('team.manage'), async (req, res) => {
   const { team_code, team_name, team_type, director_id, producer_id } = req.body;
   if (!team_code || !team_name || !team_type) {
     return res.status(400).json({ error: 'コード・名前・種別は必須です' });
@@ -1935,7 +1946,7 @@ router.post('/teams', async (req, res) => {
 });
 
 // チーム更新
-router.put('/teams/:id', async (req, res) => {
+router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (req, res) => {
   const { team_name, team_type, director_id, producer_id, is_active, member_ids } = req.body;
   const { data, error } = await supabase
     .from('teams')
@@ -2021,7 +2032,7 @@ router.get('/clients/:id/products', async (req, res) => {
   res.json(data);
 });
 // クライアント商材作成
-router.post('/clients/:id/products', async (req, res) => {
+router.post('/clients/:id/products', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, expires_at, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('client_products')
@@ -2034,7 +2045,7 @@ router.post('/clients/:id/products', async (req, res) => {
   res.json(data);
 });
 // クライアント商材更新
-router.put('/clients/:id/products/:pid', async (req, res) => {
+router.put('/clients/:id/products/:pid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, expires_at, sort_order, is_active } = req.body;
   const { data, error } = await supabase.from('client_products')
     .update({ code, name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
@@ -2043,7 +2054,7 @@ router.put('/clients/:id/products/:pid', async (req, res) => {
   res.json(data);
 });
 // クライアント商材削除
-router.delete('/clients/:id/products/:pid', async (req, res) => {
+router.delete('/clients/:id/products/:pid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { error } = await supabase.from('client_products').delete().eq('id', req.params.pid);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -2058,7 +2069,7 @@ router.get('/clients/:id/appeal-axes', async (req, res) => {
   res.json(data);
 });
 // クライアント訴求軸作成
-router.post('/clients/:id/appeal-axes', async (req, res) => {
+router.post('/clients/:id/appeal-axes', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, expires_at, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('client_appeal_axes')
@@ -2071,7 +2082,7 @@ router.post('/clients/:id/appeal-axes', async (req, res) => {
   res.json(data);
 });
 // クライアント訴求軸更新
-router.put('/clients/:id/appeal-axes/:aid', async (req, res) => {
+router.put('/clients/:id/appeal-axes/:aid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, expires_at, sort_order, is_active } = req.body;
   const { data, error } = await supabase.from('client_appeal_axes')
     .update({ code, name, note: note||null, expires_at: expires_at||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
@@ -2080,7 +2091,7 @@ router.put('/clients/:id/appeal-axes/:aid', async (req, res) => {
   res.json(data);
 });
 // クライアント訴求軸削除
-router.delete('/clients/:id/appeal-axes/:aid', async (req, res) => {
+router.delete('/clients/:id/appeal-axes/:aid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { error } = await supabase.from('client_appeal_axes').delete().eq('id', req.params.aid);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -2121,7 +2132,7 @@ router.get('/projects/:id/products', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-router.post('/projects/:id/products', async (req, res) => {
+router.post('/projects/:id/products', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('project_products')
@@ -2130,7 +2141,7 @@ router.post('/projects/:id/products', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-router.put('/projects/:id/products/:pid', async (req, res) => {
+router.put('/projects/:id/products/:pid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, sort_order, is_active } = req.body;
   const { data, error } = await supabase.from('project_products')
     .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
@@ -2138,7 +2149,7 @@ router.put('/projects/:id/products/:pid', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-router.delete('/projects/:id/products/:pid', async (req, res) => {
+router.delete('/projects/:id/products/:pid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { error } = await supabase.from('project_products').delete().eq('id', req.params.pid);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -2151,7 +2162,7 @@ router.get('/projects/:id/appeal-axes', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-router.post('/projects/:id/appeal-axes', async (req, res) => {
+router.post('/projects/:id/appeal-axes', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, sort_order } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'コードと名称は必須です' });
   const { data, error } = await supabase.from('project_appeal_axes')
@@ -2160,7 +2171,7 @@ router.post('/projects/:id/appeal-axes', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-router.put('/projects/:id/appeal-axes/:aid', async (req, res) => {
+router.put('/projects/:id/appeal-axes/:aid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { code, name, note, sort_order, is_active } = req.body;
   const { data, error } = await supabase.from('project_appeal_axes')
     .update({ code, name, note: note||null, sort_order: parseInt(sort_order)||0, is_active, updated_at: new Date().toISOString() })
@@ -2168,14 +2179,14 @@ router.put('/projects/:id/appeal-axes/:aid', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
-router.delete('/projects/:id/appeal-axes/:aid', async (req, res) => {
+router.delete('/projects/:id/appeal-axes/:aid', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { error } = await supabase.from('project_appeal_axes').delete().eq('id', req.params.aid);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
 
 // クライアントマスターから案件へコピー（商材）
-router.post('/projects/:id/products/copy-from-client', async (req, res) => {
+router.post('/projects/:id/products/copy-from-client', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { data: proj } = await supabase.from('projects').select('client_id').eq('id', req.params.id).single();
   if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
   const { data: clientItems } = await supabase.from('client_products')
@@ -2190,7 +2201,7 @@ router.post('/projects/:id/products/copy-from-client', async (req, res) => {
 });
 
 // クライアントマスターから案件へコピー（訴求軸）
-router.post('/projects/:id/appeal-axes/copy-from-client', async (req, res) => {
+router.post('/projects/:id/appeal-axes/copy-from-client', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { data: proj } = await supabase.from('projects').select('client_id').eq('id', req.params.id).single();
   if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
   const { data: clientItems } = await supabase.from('client_appeal_axes')
@@ -2421,7 +2432,7 @@ router.get('/master/categories', async (_req, res) => {
 });
 
 // 区分マスター作成
-router.post('/master/categories', async (req, res) => {
+router.post('/master/categories', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { name, code, sort_order } = req.body;
   if (!name || !code) return res.status(400).json({ error: '名称とコードは必須です' });
   const { data, error } = await supabase
@@ -2436,7 +2447,7 @@ router.post('/master/categories', async (req, res) => {
 const PROTECTED_CATEGORY_CODES = ['COMMENT_CAT', 'media', 'creative_formats', 'sizes', 'products', 'appeal_axes'];
 
 // 区分マスター更新
-router.put('/master/categories/:id', async (req, res) => {
+router.put('/master/categories/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { name, code, sort_order, is_active } = req.body;
   // 保護カテゴリーはコード変更を禁止
   const { data: existing } = await supabase.from('master_categories').select('code').eq('id', req.params.id).single();
@@ -2452,7 +2463,7 @@ router.put('/master/categories/:id', async (req, res) => {
 });
 
 // 区分マスター削除
-router.delete('/master/categories/:id', async (req, res) => {
+router.delete('/master/categories/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { data: existing } = await supabase.from('master_categories').select('code').eq('id', req.params.id).single();
   if (existing && PROTECTED_CATEGORY_CODES.includes(existing.code)) {
     return res.status(403).json({ error: 'このシステム区分は削除できません' });
@@ -2500,7 +2511,7 @@ router.get('/master/items/active', async (req, res) => {
 });
 
 // 値作成
-router.post('/master/items', async (req, res) => {
+router.post('/master/items', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { category_id, code, name, note, sort_order, expires_at } = req.body;
   if (!category_id || !code || !name)
     return res.status(400).json({ error: '区分・コード・名称は必須です' });
@@ -2518,7 +2529,7 @@ router.post('/master/items', async (req, res) => {
 });
 
 // 値更新
-router.put('/master/items/:id', async (req, res) => {
+router.put('/master/items/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { code, name, note, sort_order, is_active, expires_at } = req.body;
   const { data, error } = await supabase
     .from('master_items')
@@ -2536,7 +2547,7 @@ router.put('/master/items/:id', async (req, res) => {
 });
 
 // 値削除
-router.delete('/master/items/:id', async (req, res) => {
+router.delete('/master/items/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { error } = await supabase.from('master_items').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -2816,7 +2827,7 @@ router.get('/checklist-masters', requireAuth, async (req, res) => {
 });
 
 // 基本チェックリスト追加
-router.post('/checklist-masters', requireAuth, async (req, res) => {
+router.post('/checklist-masters', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { title, description, sort_order, target_type } = req.body;
   if (!title) return res.status(400).json({ error: 'タイトルは必須です' });
   const { data, error } = await supabase.from('checklist_masters')
@@ -2826,7 +2837,7 @@ router.post('/checklist-masters', requireAuth, async (req, res) => {
 });
 
 // 基本チェックリスト更新
-router.put('/checklist-masters/:id', requireAuth, async (req, res) => {
+router.put('/checklist-masters/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { title, description, sort_order, is_active, target_type } = req.body;
   const { data, error } = await supabase.from('checklist_masters')
     .update({ title, description, sort_order, is_active, target_type: target_type || 'all', updated_at: new Date().toISOString() })
@@ -2836,7 +2847,7 @@ router.put('/checklist-masters/:id', requireAuth, async (req, res) => {
 });
 
 // 基本チェックリスト削除
-router.delete('/checklist-masters/:id', requireAuth, async (req, res) => {
+router.delete('/checklist-masters/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { error } = await supabase.from('checklist_masters').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
@@ -2964,12 +2975,28 @@ router.get('/role-permissions', requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
-// ロール権限保存（管理者のみ）
-router.put('/role-permissions', requireAuth, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: '管理者のみ変更できます' });
+// 有効なロール／権限キーのホワイトリスト
+const VALID_ROLES = new Set(['admin','secretary','producer','producer_director','director','editor','designer']);
+const VALID_PERMISSION_KEYS = new Set([
+  'dashboard.sales_summary','dashboard.monthly_forecast',
+  'project.create_edit','project.unit_price_view','project.fee_view',
+  'creative.all_projects_view','creative.rank_price_column','creative.csv_import',
+  'member.list','member.edit_password','member.deactivate','member.delete',
+  'team.manage','team.assign',
+  'invoice.own','invoice.all_view',
+  'master.page','master.sys_config',
+  'system.view_as',
+]);
+
+// ロール権限保存（最高管理者のみ・ホワイトリスト検証あり）
+router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res) => {
   const { permissions } = req.body; // [{role, permission_key, allowed}, ...]
   if (!Array.isArray(permissions)) return res.status(400).json({ error: 'permissions配列が必要です' });
-  // upsert で一括保存
+  // ホワイトリスト検証
+  for (const p of permissions) {
+    if (!VALID_ROLES.has(p.role)) return res.status(400).json({ error: `不正なロール: ${p.role}` });
+    if (!VALID_PERMISSION_KEYS.has(p.permission_key)) return res.status(400).json({ error: `不正な権限キー: ${p.permission_key}` });
+  }
   const rows = permissions.map(p => ({
     role: p.role, permission_key: p.permission_key, allowed: !!p.allowed, updated_at: new Date().toISOString()
   }));
