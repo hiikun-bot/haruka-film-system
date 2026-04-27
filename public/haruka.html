@@ -9803,17 +9803,20 @@ function fpCaptureTimecode() {
   badge.dataset.secs   = video.currentTime;
   badge.style.display  = '';
   hint.style.display   = 'none';
-  // 入力欄をハイライト＆フォーカス（Frame.io スタイル）
+  // 入力欄をハイライト（境界色のみ）
   const ta = document.getElementById('fp-comment-text');
   if (ta) {
     ta.style.borderColor = '#fbbf24';
-    ta.focus();
     ta.addEventListener('blur', function _once() {
       if (!document.getElementById('fp-timecode-badge').style.display || document.getElementById('fp-timecode-badge').style.display === 'none') return;
       ta.style.borderColor = '#3f3f46';
       ta.removeEventListener('blur', _once);
     });
   }
+  // カテゴリープルダウンを先にフォーカス（スペース停止後にカテゴリー選択 → Tabで入力欄）
+  const cat = document.getElementById('fp-comment-category');
+  if (cat) cat.focus();
+  else if (ta) ta.focus();
 }
 
 function fpClearTimecode() {
