@@ -1862,6 +1862,45 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </div>
           </div>
         </div>
+
+        <!-- HP・SNSリンク -->
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
+          <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em;margin-bottom:14px">🔗 HP・SNSリンク</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">🌐 ホームページ</label>
+              <input class="form-input" id="cl-website" type="url" placeholder="https://...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">𝕏 / Twitter</label>
+              <input class="form-input" id="cl-twitter" type="url" placeholder="https://twitter.com/...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">📷 Instagram</label>
+              <input class="form-input" id="cl-instagram" type="url" placeholder="https://instagram.com/...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">📘 Facebook</label>
+              <input class="form-input" id="cl-facebook" type="url" placeholder="https://facebook.com/...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">▶️ YouTube</label>
+              <input class="form-input" id="cl-youtube" type="url" placeholder="https://youtube.com/...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">🎵 TikTok</label>
+              <input class="form-input" id="cl-tiktok" type="url" placeholder="https://tiktok.com/@...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">💬 LINE</label>
+              <input class="form-input" id="cl-line" type="url" placeholder="https://lin.ee/...">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">📎 その他</label>
+              <input class="form-input" id="cl-other" type="url" placeholder="https://...">
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 商材タブ -->
@@ -3192,6 +3231,14 @@ function openEditClient(id) {
   document.getElementById('cl-note').value = c.note || '';
   document.getElementById('cl-sales-start').value = c.sales_start_date ? c.sales_start_date.slice(0,10) : '';
   document.getElementById('cl-status').value = c.status || '提案中';
+  document.getElementById('cl-website').value   = c.website_url   || '';
+  document.getElementById('cl-twitter').value   = c.twitter_url   || '';
+  document.getElementById('cl-instagram').value = c.instagram_url || '';
+  document.getElementById('cl-facebook').value  = c.facebook_url  || '';
+  document.getElementById('cl-youtube').value   = c.youtube_url   || '';
+  document.getElementById('cl-tiktok').value    = c.tiktok_url    || '';
+  document.getElementById('cl-line').value      = c.line_url      || '';
+  document.getElementById('cl-other').value     = c.other_url     || '';
   document.getElementById('cl-submit-btn').textContent = '保存する';
   switchClientTab('basic');
   openModal('modal-client');
@@ -3205,6 +3252,8 @@ function openNewClientModal() {
   document.getElementById('cl-note').value = '';
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
+  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('cl-submit-btn').textContent = '追加する';
   switchClientTab('basic');
   openModal('modal-client');
@@ -3224,11 +3273,22 @@ async function submitClient() {
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
 
+  const linkVal = id => (document.getElementById(id)?.value.trim() || null);
   const isEdit = !!id;
   const res = await fetch(isEdit ? `${API}/clients/${id}` : `${API}/clients`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, client_code, note: note || null, sales_start_date, status })
+    body: JSON.stringify({
+      name, client_code, note: note || null, sales_start_date, status,
+      website_url:   linkVal('cl-website'),
+      twitter_url:   linkVal('cl-twitter'),
+      instagram_url: linkVal('cl-instagram'),
+      facebook_url:  linkVal('cl-facebook'),
+      youtube_url:   linkVal('cl-youtube'),
+      tiktok_url:    linkVal('cl-tiktok'),
+      line_url:      linkVal('cl-line'),
+      other_url:     linkVal('cl-other'),
+    })
   });
 
   btn.textContent = origText; btn.disabled = false;

@@ -220,6 +220,15 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS editor_comment TEXT;
 -- clients にステータス・営業開始日追加
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS sales_start_date DATE;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS status TEXT DEFAULT '提案中';
+-- HP・SNSリンク
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS website_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS twitter_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS instagram_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS facebook_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS youtube_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS tiktok_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS line_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS other_url TEXT;
 
 -- teams にプロデューサー追加
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS producer_id UUID REFERENCES users(id);

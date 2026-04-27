@@ -105,14 +105,18 @@ router.get('/clients', async (req, res) => {
   res.json(data);
 });
 
+const LINK_FIELDS = ['website_url','twitter_url','instagram_url','facebook_url','youtube_url','tiktok_url','line_url','other_url'];
+
 // クライアント作成
 router.post('/clients', async (req, res) => {
   const { name, client_code, note, sales_start_date, status } = req.body;
   if (!name) return res.status(400).json({ error: 'クライアント名は必須です' });
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
+  const insertData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中' };
+  LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) insertData[f] = req.body[f] || null; });
   const { data, error } = await supabase
     .from('clients')
-    .insert({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中' })
+    .insert(insertData)
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -123,9 +127,11 @@ router.post('/clients', async (req, res) => {
 router.put('/clients/:id', async (req, res) => {
   const { name, client_code, note, sales_start_date, status } = req.body;
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
+  const updateData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', updated_at: new Date().toISOString() };
+  LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) updateData[f] = req.body[f] || null; });
   const { data, error } = await supabase
     .from('clients')
-    .update({ name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', updated_at: new Date().toISOString() })
+    .update(updateData)
     .eq('id', req.params.id)
     .select()
     .single();
