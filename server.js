@@ -150,8 +150,17 @@ app.use('/api/', (req, res, next) => {
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
 
-// login.html・invite.htmlは認証不要でアクセス可能
-app.use('/login.html',  express.static(path.join(__dirname, 'public/login.html')));
+// login.html: 認証済みユーザーは haruka.html へリダイレクト
+app.get('/login.html', (req, res) => {
+  if (req.isAuthenticated?.()) return res.redirect('/haruka.html');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+// ルート: 認証済みなら haruka.html、未認証なら login.html
+app.get('/', (req, res) => {
+  if (req.isAuthenticated?.()) return res.redirect('/haruka.html');
+  res.redirect('/login.html');
+});
+// invite.html は認証不要
 app.use('/invite.html', express.static(path.join(__dirname, 'public/invite.html')));
 // PWA: manifest・service-workerは認証不要
 app.use('/manifest.json',     express.static(path.join(__dirname, 'public/manifest.json')));
