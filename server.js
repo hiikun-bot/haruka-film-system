@@ -74,15 +74,30 @@ function getClientIP(req) {
 }
 
 // 自分のIPを確認するためのデバッグエンドポイント（認証不要）
-app.get('/auth/debug-ip', (req, res) => {
+app.get('/auth/debug-ip', async (req, res) => {
+  const ip = getClientIP(req);
+  const cookieOff = !!(req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie));
+  let user_lookup = null;
+  if (AUTO_LOGIN_EMAIL) {
+    try {
+      const { data: u, error } = await supabase
+        .from('users').select('id, email, role, is_active').eq('email', AUTO_LOGIN_EMAIL).maybeSingle();
+      user_lookup = error ? { error: error.message } : (u ? { found: true, id: u.id, email: u.email, role: u.role, is_active: u.is_active } : { found: false, searched_email: AUTO_LOGIN_EMAIL });
+    } catch(e) { user_lookup = { error: e.message }; }
+  }
   res.json({
-    your_ip:        getClientIP(req),
+    your_ip:        ip,
     raw_x_fwd_for:  req.headers['x-forwarded-for'] || null,
     raw_req_ip:     req.ip,
     raw_remote:     req.connection?.remoteAddress || null,
     auto_login_configured: AUTO_LOGIN_IPS.length > 0 && !!AUTO_LOGIN_EMAIL,
-    your_ip_in_allowlist: AUTO_LOGIN_IPS.includes(getClientIP(req)),
-    auto_login_off_cookie: req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie),
+    auto_login_email_env:  AUTO_LOGIN_EMAIL,
+    auto_login_ips_env:    AUTO_LOGIN_IPS,
+    your_ip_in_allowlist:  AUTO_LOGIN_IPS.includes(ip),
+    auto_login_off_cookie: cookieOff,
+    is_authenticated:      req.isAuthenticated?.() || false,
+    session_user_id:       req.user?.id || null,
+    user_lookup,
   });
 });
 
