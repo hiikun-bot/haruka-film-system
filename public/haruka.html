@@ -9662,9 +9662,19 @@ function fpRenderChecklist(data, fileId) {
   const checked = allItems.filter(i => i.result?.is_checked).length;
   const pct     = total ? Math.round(checked / total * 100) : 0;
 
+  const fmtCheckedAt = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const M = d.getMonth() + 1, D = d.getDate();
+    const h = String(d.getHours()).padStart(2,'0');
+    const m = String(d.getMinutes()).padStart(2,'0');
+    return `${M}/${D} ${h}:${m}`;
+  };
   const itemHtml = (item) => {
     const done = item.result?.is_checked;
     const who  = item.result?.users?.full_name;
+    const at   = fmtCheckedAt(item.result?.checked_at);
     return `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;background:${done ? '#052e16' : '#1c1c1f'};border:1px solid ${done ? '#166534' : '#2a2a2e'};margin-bottom:6px;cursor:pointer;transition:background .15s"
          onclick="fpToggleChecklistItem('${item.id}','${item._type}','${fileId}',this)">
@@ -9674,7 +9684,7 @@ function fpRenderChecklist(data, fileId) {
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;color:${done ? '#86efac' : '#e4e4e7'};line-height:1.4;${done ? 'text-decoration:line-through;opacity:0.7' : ''}">${esc(item.title)}</div>
         ${item.description ? `<div style="font-size:11px;color:#52525b;margin-top:2px">${esc(item.description)}</div>` : ''}
-        ${done && who ? `<div style="font-size:10px;color:#22c55e;margin-top:3px">✓ ${esc(who)}</div>` : ''}
+        ${done && who ? `<div style="font-size:10px;color:#22c55e;margin-top:3px">✓ ${esc(who)}${at ? ` <span style="color:#16a34a;opacity:0.8;margin-left:4px">${at}</span>` : ''}</div>` : ''}
       </div>
     </div>`;
   };
