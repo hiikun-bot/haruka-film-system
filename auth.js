@@ -69,4 +69,48 @@ function requireLevel(minRole) {
   };
 }
 
-module.exports = { passport, requireAuth, requireRole, requireLevel, ROLES };
+// ==================== DB駆動の権限チェック ====================
+// role_permissions テーブルをキャッシュし、必要に応じて強制リロード
+let _permsCache = null; // Map<"role|key", boolean>
+let _permsLoadedAt = 0;
+const PERMS_TTL_MS = 60 * 1000; // 60秒
+
+async function loadPermissions(force = false) {
+  if (!force && _permsCache && Date.now() - _permsLoadedAt < PERMS_TTL_MS) return _permsCache;
+  try {
+    const { data, error } = await supabase
+      .from('role_permissions').select('role, permission_key, allowed');
+    if (error) throw error;
+    const map = new Map();
+    (data || []).forEach(r => map.set(`${r.role}|${r.permission_key}`, !!r.allowed));
+    _permsCache = map;
+    _permsLoadedAt = Date.now();
+  } catch(e) {
+    console.error('[PERMS] load failed:', e.message);
+    if (!_permsCache) _permsCache = new Map();
+  }
+  return _permsCache;
+}
+
+function invalidatePermissionsCache() {
+  _permsLoadedAt = 0;
+}
+
+async function userHasPermission(userRole, key) {
+  if (userRole === 'admin') return true; // ロックアウト防止
+  const perms = await loadPermissions();
+  return !!perms.get(`${userRole}|${key}`);
+}
+
+function requirePermission(key) {
+  return async (req, res, next) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
+    try {
+      const ok = await userHasPermission(req.user.role, key);
+      if (ok) return next();
+      return res.status(403).json({ error: 'この操作の権限がありません' });
+    } catch(e) { return res.status(500).json({ error: e.message }); }
+  };
+}
+
+module.exports = { passport, requireAuth, requireRole, requireLevel, requirePermission, userHasPermission, invalidatePermissionsCache, ROLES };

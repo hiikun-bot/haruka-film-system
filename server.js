@@ -13,7 +13,7 @@ const axios = require('axios');
 const path = require('path');
 
 const { members, projects, projectMemos, editorRanks, projectRates, deliveries, comments, knowledge, invoices, assets, videoComments, users, invitations, uid } = require('./db/db');
-const { passport: passportInstance, requireAuth, requireLevel, ROLES } = require('./auth');
+const { passport: passportInstance, requireAuth, requireLevel, requirePermission, ROLES } = require('./auth');
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -828,13 +828,13 @@ app.get('/auth/me', (req, res) => {
 
 // ==================== 招待管理 API（Supabase永続化） ====================
 
-app.get('/api/invitations', requireAuth, requireLevel('secretary'), async (req, res) => {
+app.get('/api/invitations', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
   const { data } = await supabase.from('invitations')
     .select('*').order('created_at', { ascending: false });
   res.json(data || []);
 });
 
-app.post('/api/invitations', requireAuth, requireLevel('secretary'), async (req, res) => {
+app.post('/api/invitations', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
   const { email, role } = req.body;
   if (!email) return res.status(400).json({ error: 'メールアドレスは必須です' });
 
@@ -855,7 +855,7 @@ app.post('/api/invitations', requireAuth, requireLevel('secretary'), async (req,
   res.json({ ...inv, inviteLink: link });
 });
 
-app.delete('/api/invitations/:id', requireAuth, requireLevel('admin'), async (req, res) => {
+app.delete('/api/invitations/:id', requireAuth, requirePermission('member.delete'), async (req, res) => {
   await supabase.from('invitations').delete().eq('id', req.params.id);
   res.json({ ok: true });
 });
@@ -907,11 +907,11 @@ app.post('/api/invitations/register', async (req, res) => {
 
 // ==================== ユーザー管理 API ====================
 
-app.get('/api/users', requireAuth, requireLevel('admin'), (req, res) => {
+app.get('/api/users', requireAuth, requirePermission('member.list'), (req, res) => {
   res.json(users.all().map(safeUser));
 });
 
-app.put('/api/users/:id', requireAuth, requireLevel('admin'), (req, res) => {
+app.put('/api/users/:id', requireAuth, requirePermission('member.edit_password'), (req, res) => {
   const { name, role, isActive } = req.body;
   // 自分自身の権限を下げることはできない
   if (req.params.id === req.user.id && role && role !== 'admin') {
@@ -920,7 +920,7 @@ app.put('/api/users/:id', requireAuth, requireLevel('admin'), (req, res) => {
   res.json(safeUser(users.update(req.params.id, { name, role, isActive })));
 });
 
-app.delete('/api/users/:id', requireAuth, requireLevel('admin'), (req, res) => {
+app.delete('/api/users/:id', requireAuth, requirePermission('member.delete'), (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).json({ error: '自分自身は削除できません' });
   users.delete(req.params.id);
   res.json({ ok: true });

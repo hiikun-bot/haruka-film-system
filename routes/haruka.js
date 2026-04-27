@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireLevel } = require('../auth');
+const { requireAuth, requireLevel, requirePermission, userHasPermission, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 
@@ -1222,7 +1222,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
 });
 
 // メンバー完全削除（admin のみ・自分自身は不可）
-router.delete('/members/:id', requireAuth, requireLevel('admin'), async (req, res) => {
+router.delete('/members/:id', requireAuth, requirePermission('member.delete'), async (req, res) => {
   const targetId = req.params.id;
   if (targetId === req.user.id) return res.status(400).json({ error: '自分自身は削除できません' });
 
@@ -1249,7 +1249,7 @@ router.delete('/members/:id', requireAuth, requireLevel('admin'), async (req, re
 });
 
 // 退職処理（管理者のみ）
-router.post('/members/:id/deactivate', requireAuth, requireLevel('admin'), async (req, res) => {
+router.post('/members/:id/deactivate', requireAuth, requirePermission('member.deactivate'), async (req, res) => {
   const { left_reason } = req.body;
   const { data, error } = await supabase
     .from('users')
@@ -1267,7 +1267,7 @@ router.post('/members/:id/deactivate', requireAuth, requireLevel('admin'), async
 });
 
 // 復帰処理（管理者のみ）
-router.post('/members/:id/reactivate', requireAuth, requireLevel('admin'), async (req, res) => {
+router.post('/members/:id/reactivate', requireAuth, requirePermission('member.deactivate'), async (req, res) => {
   const { data, error } = await supabase
     .from('users')
     .update({
@@ -2976,15 +2976,15 @@ router.put('/role-permissions', requireAuth, async (req, res) => {
   const { error } = await supabase
     .from('role_permissions').upsert(rows, { onConflict: 'role,permission_key' });
   if (error) return res.status(500).json({ error: error.message });
+  invalidatePermissionsCache(); // 即時反映
   res.json({ ok: true, count: rows.length });
 });
 
-// パスワードリセット（管理者は全員分、一般ユーザーは自分のみ）
+// パスワードリセット（自分自身 or member.edit_password 権限を持つユーザーのみ）
 router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
   const isSelf = req.user.id === req.params.id;
-  const ROLE_LEVEL = { admin: 6, secretary: 5, producer: 5, producer_director: 4, director: 3, designer: 2, editor: 1 };
-  const isAdmin = (ROLE_LEVEL[req.user.role] || 0) >= 5;
-  if (!isSelf && !isAdmin) return res.status(403).json({ error: '他のユーザーのパスワードを変更する権限がありません' });
+  const canEditOthers = await userHasPermission(req.user.role, 'member.edit_password');
+  if (!isSelf && !canEditOthers) return res.status(403).json({ error: '他のユーザーのパスワードを変更する権限がありません' });
   const { newPassword } = req.body;
   if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
   const hash = await bcrypt.hash(newPassword, 12);

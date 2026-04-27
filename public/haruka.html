@@ -979,7 +979,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div style="padding:20px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <div class="sec-label">チーム管理</div>
-      <button class="btn-primary" onclick="openTeamModal()">＋ チーム追加</button>
+      <button class="btn-primary" id="btn-add-team" onclick="openTeamModal()" style="display:none">＋ チーム追加</button>
     </div>
     <!-- チームタイプ切り替えタブ -->
     <div style="display:flex;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin-bottom:20px;max-width:360px">
@@ -1024,7 +1024,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn" onclick="exportMembersCSV()">CSVエクスポート</button>
-        <button class="btn" onclick="openImportModal()">CSVインポート</button>
+        <button class="btn" id="btn-csv-import" onclick="openImportModal()" style="display:none">CSVインポート</button>
         <button class="btn" onclick="openInviteModal()" id="btn-invite" style="display:none">＋ 招待リンク発行</button>
         <button class="btn-primary" onclick="openAddMember()">＋ メンバー追加</button>
       </div>
@@ -3562,7 +3562,7 @@ function renderTeamsList() {
             ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
             <div>${t.director?.full_name ? 'D: '+t.director.full_name : 'D未設定'}</div>
           </div>
-          <button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>
+          ${hasPermission('team.manage') ? `<button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>` : ''}
           <span id="team-chevron-${t.id}" style="font-size:12px;color:var(--text-muted);margin-left:4px;flex-shrink:0">▼</span>
         </div>
         <div id="team-acc-${t.id}" style="display:none;border-top:1px solid var(--border);padding:12px 16px;background:#FAFEFE">
@@ -3728,11 +3728,11 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${m.note ? `<span title="${esc(m.note)}">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
           <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
-            ${isTopAdmin() ? (m.is_active
+            ${hasPermission('member.deactivate') ? (m.is_active
               ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
               : `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
             ) : ''}
-            ${isTopAdmin() && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
+            ${hasPermission('member.delete') && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
           </td>
         </tr>`;
       }).join('')}
@@ -3806,7 +3806,7 @@ function initTableScrollHint() {
 
 function renderCreatives() {
   const tbody = document.getElementById('creative-tbody');
-  const showRank = ['admin','producer','producer_director','director'].includes(effectiveRole());
+  const showRank = hasPermission('creative.rank_price_column');
   const activeBalls = [];
   document.querySelectorAll('.bf.on').forEach(b => {
     if(b.classList.contains('bf-e')) activeBalls.push('editor','all');
@@ -4260,7 +4260,7 @@ function toggleWeekendOff(off) {
 function canEditMember(m) {
   if (!currentUser) return false;
   const role = effectiveRole();
-  if (isEffectiveAdmin()) return true;
+  if (hasPermission('member.edit_password')) return true;
   if (!m.is_active) return false;
   const myRank = ROLE_RANK[role] || 0;
   const theirRank = ROLE_RANK[m.role] || 0;
@@ -4272,9 +4272,9 @@ function canEditMember(m) {
 }
 
 function applyMemberModalAdminFields(m) {
-  const isAdm = isEffectiveAdmin();
+  const isAdm = hasPermission('member.edit_password');
   const role = effectiveRole();
-  // ロール変更は admin/secretary のみ
+  // ロール変更
   document.getElementById('m-role-row').style.display = isAdm ? '' : 'none';
   // ランクは admin/secretary/producer が見える。editor/designer は自分のランクも非表示
   const showRank = isAdm || role === 'producer' || role === 'producer_director';
@@ -4866,6 +4866,10 @@ function applyRoleBasedUI() {
   if (addMemberBtn) addMemberBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
   const inviteBtn = document.getElementById('btn-invite');
   if (inviteBtn) inviteBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
+  const csvImportBtn = document.getElementById('btn-csv-import');
+  if (csvImportBtn) csvImportBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
+  const addTeamBtn = document.getElementById('btn-add-team');
+  if (addTeamBtn) addTeamBtn.style.display = hasPermission('team.manage') ? '' : 'none';
   const addClientBtn = document.getElementById('btn-add-client');
   if (addClientBtn) addClientBtn.style.display = canEditProject() ? '' : 'none';
   // マスター管理ナビ
