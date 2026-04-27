@@ -2393,7 +2393,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           ✅ チェックリスト
         </div>
         <div id="mnav-roles" class="master-nav-item" onclick="selectMasterNav('roles')"
-          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
           🔐 ロール権限
         </div>
         <div id="mnav-userstats" class="master-nav-item" onclick="selectMasterNav('userstats')"
@@ -4774,6 +4774,8 @@ function applyRoleBasedUI() {
   if (drawerMaster) drawerMaster.style.display = isEffectiveAdmin() ? '' : 'none';
   const userStatsNav = document.getElementById('mnav-userstats');
   if (userStatsNav) userStatsNav.style.display = isSuperAdmin() ? '' : 'none';
+  const rolesNav = document.getElementById('mnav-roles');
+  if (rolesNav) rolesNav.style.display = isSuperAdmin() ? '' : 'none';
   // ドロワーのユーザー情報
   const drawerUser = document.getElementById('nav-drawer-user');
   if (drawerUser && currentUser) {
@@ -7199,9 +7201,17 @@ async function renderChecklistMasterPage() {
   _renderChecklistMasterContent();
 }
 
+let _clTab = 'all'; // 'all' | 'video' | 'design'
+
 function _renderChecklistMasterContent() {
   const content = document.getElementById('master-content');
-  const rows = _clItems.map(item => {
+  const counts = {
+    all:    _clItems.filter(i => (i.target_type||'all') === 'all').length,
+    video:  _clItems.filter(i => i.target_type === 'video').length,
+    design: _clItems.filter(i => i.target_type === 'design').length,
+  };
+  const filtered = _clItems.filter(i => (i.target_type||'all') === _clTab);
+  const rows = filtered.map(item => {
     const ttLabel = { all:'🔁 共通', video:'🎬 動画', design:'🎨 デザイン' }[item.target_type||'all'] || '🔁 共通';
     const ttColor = { all:'var(--text-muted)', video:'#1565c0', design:'#5E35B1' }[item.target_type||'all'];
     if (_clEditingId === item.id) {
@@ -7251,6 +7261,18 @@ function _renderChecklistMasterContent() {
         </div>
       </div>
 
+      <!-- タブ -->
+      <div style="display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--border)">
+        ${[
+          { key:'all',    label:'🔁 共通',    color:'var(--em-dark)' },
+          { key:'video',  label:'🎬 動画',    color:'#1565c0' },
+          { key:'design', label:'🎨 デザイン', color:'#5E35B1' },
+        ].map(t => {
+          const active = _clTab === t.key;
+          return `<button onclick="_clTab='${t.key}';_renderChecklistMasterContent()" style="background:${active?'var(--white)':'transparent'};border:1px solid ${active?'var(--border)':'transparent'};border-bottom:${active?'2px solid '+t.color:'2px solid transparent'};padding:8px 16px;font-size:13px;font-weight:${active?'600':'500'};color:${active?t.color:'var(--text-muted)'};cursor:pointer;border-radius:8px 8px 0 0;margin-bottom:-1px">${t.label} <span style="font-size:11px;color:var(--text-faint);margin-left:4px">(${counts[t.key]})</span></button>`;
+        }).join('')}
+      </div>
+
       <!-- リスト -->
       <div style="background:var(--white);border:1px solid var(--border);border-radius:12px;padding:0 20px">
         <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em">
@@ -7258,7 +7280,7 @@ function _renderChecklistMasterContent() {
         </div>
         ${rows || '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">チェック項目がありません</div>'}
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:8px">計 ${_clItems.length} 件</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:8px">表示中 ${filtered.length} 件 / 全 ${_clItems.length} 件</div>
     </div>`;
 }
 
