@@ -48,8 +48,8 @@ app.use(session({
   },
 }));
 
-// 本番（Railway等）はプロキシ経由のため、X-Forwarded-* を信頼
-if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+// プロキシ（Railway/CloudFlare等）経由のため、X-Forwarded-* を信頼
+app.set('trust proxy', 1);
 
 app.use(passportInstance.initialize());
 app.use(passportInstance.session());
@@ -61,29 +61,58 @@ app.use(passportInstance.session());
 // クッキー auto_login_off=1 が立っている場合は自動ログインを抑止（ログアウト直後など）
 const AUTO_LOGIN_IPS = (process.env.AUTO_LOGIN_IPS || '').split(',').map(s => s.trim()).filter(Boolean);
 const AUTO_LOGIN_EMAIL = (process.env.AUTO_LOGIN_EMAIL || '').trim().toLowerCase();
+function normalizeIP(ip) {
+  if (!ip) return '';
+  // IPv6 でラップされた IPv4（::ffff:1.2.3.4）を IPv4 に正規化
+  const m = String(ip).match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  return m ? m[1] : String(ip).trim();
+}
 function getClientIP(req) {
   const fwd = req.headers['x-forwarded-for'];
-  if (fwd) return String(fwd).split(',')[0].trim();
-  return req.ip || req.connection?.remoteAddress || '';
+  if (fwd) return normalizeIP(String(fwd).split(',')[0]);
+  return normalizeIP(req.ip || req.connection?.remoteAddress || '');
 }
+
+// 自分のIPを確認するためのデバッグエンドポイント（認証不要）
+app.get('/auth/debug-ip', (req, res) => {
+  res.json({
+    your_ip:        getClientIP(req),
+    raw_x_fwd_for:  req.headers['x-forwarded-for'] || null,
+    raw_req_ip:     req.ip,
+    raw_remote:     req.connection?.remoteAddress || null,
+    auto_login_configured: AUTO_LOGIN_IPS.length > 0 && !!AUTO_LOGIN_EMAIL,
+    your_ip_in_allowlist: AUTO_LOGIN_IPS.includes(getClientIP(req)),
+    auto_login_off_cookie: req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie),
+  });
+});
+
 app.use(async (req, res, next) => {
   if (!AUTO_LOGIN_IPS.length || !AUTO_LOGIN_EMAIL) return next();
   if (req.isAuthenticated?.()) return next();
-  // ログアウト後の自動再ログイン抑止
   if (req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie)) return next();
-  // 静的アセットや内部APIは対象外
   if (req.path.startsWith('/auth/') || req.path.startsWith('/webhook/') || req.path.startsWith('/api/')) return next();
   const ip = getClientIP(req);
-  if (!AUTO_LOGIN_IPS.includes(ip)) return next();
+  if (!AUTO_LOGIN_IPS.includes(ip)) {
+    if (req.path === '/' || req.path === '/login.html' || req.path === '/haruka.html') {
+      console.log(`[AUTO-LOGIN] skip: IP=${ip} not in allowlist=${AUTO_LOGIN_IPS.join(',')}`);
+    }
+    return next();
+  }
   try {
     const { data: user } = await supabase.from('users').select('*').eq('email', AUTO_LOGIN_EMAIL).maybeSingle();
-    if (!user || !user.is_active) return next();
+    if (!user) { console.log(`[AUTO-LOGIN] skip: user not found for email=${AUTO_LOGIN_EMAIL}`); return next(); }
+    if (!user.is_active) { console.log(`[AUTO-LOGIN] skip: user is_active=false`); return next(); }
     req.login(user, (err) => {
-      if (err) return next();
-      console.log(`[AUTO-LOGIN] ${user.email} from IP ${ip}`);
+      if (err) { console.log(`[AUTO-LOGIN] login error:`, err.message); return next(); }
+      console.log(`[AUTO-LOGIN] success: ${user.email} from IP ${ip}`);
+      // ログイン直後はログイン画面に来た場合 haruka.html へリダイレクト
+      if (req.path === '/login.html' || req.path === '/') return res.redirect('/haruka.html');
       next();
     });
-  } catch(e) { next(); }
+  } catch(e) {
+    console.log(`[AUTO-LOGIN] exception:`, e.message);
+    next();
+  }
 });
 
 // Webhookエンドポイントはraw bodyが必要なため、先に定義
