@@ -48,8 +48,43 @@ app.use(session({
   },
 }));
 
+// 本番（Railway等）はプロキシ経由のため、X-Forwarded-* を信頼
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+
 app.use(passportInstance.initialize());
 app.use(passportInstance.session());
+
+// ==================== IPベース自動ログイン ====================
+// 環境変数:
+//   AUTO_LOGIN_IPS    = 許可IPカンマ区切り（例: "203.0.113.5,198.51.100.7"）
+//   AUTO_LOGIN_EMAIL  = 自動ログイン対象のユーザーメールアドレス
+// クッキー auto_login_off=1 が立っている場合は自動ログインを抑止（ログアウト直後など）
+const AUTO_LOGIN_IPS = (process.env.AUTO_LOGIN_IPS || '').split(',').map(s => s.trim()).filter(Boolean);
+const AUTO_LOGIN_EMAIL = (process.env.AUTO_LOGIN_EMAIL || '').trim().toLowerCase();
+function getClientIP(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) return String(fwd).split(',')[0].trim();
+  return req.ip || req.connection?.remoteAddress || '';
+}
+app.use(async (req, res, next) => {
+  if (!AUTO_LOGIN_IPS.length || !AUTO_LOGIN_EMAIL) return next();
+  if (req.isAuthenticated?.()) return next();
+  // ログアウト後の自動再ログイン抑止
+  if (req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie)) return next();
+  // 静的アセットや内部APIは対象外
+  if (req.path.startsWith('/auth/') || req.path.startsWith('/webhook/') || req.path.startsWith('/api/')) return next();
+  const ip = getClientIP(req);
+  if (!AUTO_LOGIN_IPS.includes(ip)) return next();
+  try {
+    const { data: user } = await supabase.from('users').select('*').eq('email', AUTO_LOGIN_EMAIL).maybeSingle();
+    if (!user || !user.is_active) return next();
+    req.login(user, (err) => {
+      if (err) return next();
+      console.log(`[AUTO-LOGIN] ${user.email} from IP ${ip}`);
+      next();
+    });
+  } catch(e) { next(); }
+});
 
 // Webhookエンドポイントはraw bodyが必要なため、先に定義
 app.use('/webhook/frameio', express.raw({ type: 'application/json' }));
@@ -763,6 +798,8 @@ app.post('/auth/login', (req, res, next) => {
     if (!user)  return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
     req.logIn(user, async err => {
       if (err) return next(err);
+      // 手動ログインしたので自動ログイン抑止クッキーをクリア
+      res.setHeader('Set-Cookie', `auto_login_off=; Max-Age=0; Path=/`);
       // ログイン記録
       const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
       const ua = req.headers['user-agent'] || '';
@@ -775,6 +812,8 @@ app.post('/auth/login', (req, res, next) => {
 
 // ログアウト
 app.post('/auth/logout', (req, res) => {
+  // 自動ログイン抑止（1時間）。再度ログイン画面で手動ログインすると無効化される
+  res.setHeader('Set-Cookie', `auto_login_off=1; Max-Age=3600; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
   req.logout(() => res.json({ ok: true }));
 });
 
