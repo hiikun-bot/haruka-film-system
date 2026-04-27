@@ -9813,10 +9813,15 @@ function fpCaptureTimecode() {
       ta.removeEventListener('blur', _once);
     });
   }
-  // カテゴリープルダウンを先にフォーカス（スペース停止後にカテゴリー選択 → Tabで入力欄）
+  // カテゴリープルダウンを先にフォーカス＋強制展開（スペース停止後すぐにカテゴリー選択可能に）
   const cat = document.getElementById('fp-comment-category');
-  if (cat) cat.focus();
-  else if (ta) ta.focus();
+  if (cat) {
+    cat.focus();
+    // showPicker() は Chrome99+/Safari17+/Firefox113+ で対応。非対応環境では何もしない
+    if (typeof cat.showPicker === 'function') {
+      try { cat.showPicker(); } catch(e) {}
+    }
+  } else if (ta) ta.focus();
 }
 
 function fpClearTimecode() {
