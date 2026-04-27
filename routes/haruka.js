@@ -1087,15 +1087,25 @@ router.delete('/assignments/:id', async (req, res) => {
 
 // ==================== メンバー ====================
 
-// メンバー一覧（要 member.list。機微情報は member.edit_password 保有者のみ取得）
-router.get('/members', requireAuth, requirePermission('member.list'), async (req, res) => {
+// メンバー一覧（権限による段階的開示）
+//   member.list あり → 全員返す（機微情報は member.edit_password 保有者のみ）
+//   member.list なし → 自分1件のみ返す（プロフィール画面のため）
+router.get('/members', requireAuth, async (req, res) => {
+  const canList = await userHasPermission(req.user.role, 'member.list');
   const canSeeSensitive = await userHasPermission(req.user.role, 'member.edit_password');
   const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
+  if (!canList) {
+    // 自分1件のみ（機微情報フル）
+    const { data, error } = await supabase.from('users')
+      .select(baseCols + sensitiveCols).eq('id', req.user.id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data ? [data] : []);
+  }
   const cols = canSeeSensitive ? baseCols + sensitiveCols : baseCols;
   const { data, error } = await supabase.from('users').select(cols).order('full_name');
   if (error) return res.status(500).json({ error: error.message });
-  // 自分自身のレコードには機微情報を必ず含める（プロフィール画面のため）
+  // 自分自身のレコードには機微情報を必ず含める
   if (!canSeeSensitive && Array.isArray(data)) {
     const { data: self } = await supabase.from('users')
       .select('id, birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
@@ -1199,30 +1209,34 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     team_id: team_id || null,
     slack_dm_id: slack_dm_id || null,
     chatwork_dm_id: chatwork_dm_id || null,
-    birthday: birthday || null,
     weekday_hours: weekday_hours || null,
     weekend_hours: weekend_hours || null,
     note: note || null,
-    bank_name: bank_name || null,
-    bank_code: bank_code || null,
-    branch_name: branch_name || null,
-    branch_code: branch_code || null,
-    account_type: account_type || null,
-    account_number: account_number || null,
-    account_holder_kana: account_holder_kana || null,
-    phone: phone || null,
-    postal_code: postal_code || null,
-    address: address || null,
     updated_at: new Date().toISOString()
   };
-  // ロール変更は admin/secretary のみ
+  // 機微フィールド（個人情報・口座）は 本人 or member.edit_password 保有者のみ更新可
+  // → producer/PD が下位メンバーの口座情報を書き換えられないよう分離
+  if (isSelf || isAdmin) {
+    updateData.birthday = birthday || null;
+    updateData.bank_name = bank_name || null;
+    updateData.bank_code = bank_code || null;
+    updateData.branch_name = branch_name || null;
+    updateData.branch_code = branch_code || null;
+    updateData.account_type = account_type || null;
+    updateData.account_number = account_number || null;
+    updateData.account_holder_kana = account_holder_kana || null;
+    updateData.phone = phone || null;
+    updateData.postal_code = postal_code || null;
+    updateData.address = address || null;
+  }
+  // ロール変更・在籍ステータスは member.edit_password のみ
   if (isAdmin) {
     updateData.role = role;
     updateData.is_active = is_active;
     updateData.left_at = left_at || null;
     updateData.left_reason = left_reason || null;
   }
-  // ランク変更は admin/secretary/producer のみ
+  // ランク変更は member.edit_password 保有者または producer/PD
   if (isAdmin || requesterRole === 'producer' || requesterRole === 'producer_director') {
     updateData.rank = rank || null;
   }
