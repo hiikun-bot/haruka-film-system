@@ -2956,6 +2956,29 @@ router.post('/creative-files/:fileId/checklist/toggle', requireAuth, async (req,
   res.json(result);
 });
 
+// ロール権限取得（全ユーザーがアクセス可能。自身のUIのために必要）
+router.get('/role-permissions', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('role_permissions').select('role, permission_key, allowed');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// ロール権限保存（管理者のみ）
+router.put('/role-permissions', requireAuth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: '管理者のみ変更できます' });
+  const { permissions } = req.body; // [{role, permission_key, allowed}, ...]
+  if (!Array.isArray(permissions)) return res.status(400).json({ error: 'permissions配列が必要です' });
+  // upsert で一括保存
+  const rows = permissions.map(p => ({
+    role: p.role, permission_key: p.permission_key, allowed: !!p.allowed, updated_at: new Date().toISOString()
+  }));
+  const { error } = await supabase
+    .from('role_permissions').upsert(rows, { onConflict: 'role,permission_key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, count: rows.length });
+});
+
 // パスワードリセット（管理者は全員分、一般ユーザーは自分のみ）
 router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
   const isSelf = req.user.id === req.params.id;

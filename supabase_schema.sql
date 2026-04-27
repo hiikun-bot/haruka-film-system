@@ -603,3 +603,45 @@ INSERT INTO master_categories (name, code, sort_order) VALUES
   ('レビューカテゴリー（動画）',   'COMMENT_CAT_VIDEO',   10),
   ('レビューカテゴリー（デザイン）','COMMENT_CAT_DESIGN',  11)
 ON CONFLICT (code) DO NOTHING;
+
+-- ==================== ロール権限（DB駆動） ====================
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  role            TEXT NOT NULL,
+  permission_key  TEXT NOT NULL,
+  allowed         BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at      TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(role, permission_key)
+);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role);
+
+-- 初期シード（既存挙動と完全一致）
+INSERT INTO role_permissions (role, permission_key, allowed) VALUES
+  -- ダッシュボード
+  ('admin','dashboard.sales_summary',true),
+  ('admin','dashboard.monthly_forecast',true),
+  -- 案件
+  ('admin','project.create_edit',true),('secretary','project.create_edit',true),('producer','project.create_edit',true),('producer_director','project.create_edit',true),
+  ('admin','project.unit_price_view',true),('producer','project.unit_price_view',true),('producer_director','project.unit_price_view',true),
+  ('admin','project.fee_view',true),('secretary','project.fee_view',true),
+  -- クリエイティブ
+  ('admin','creative.all_projects_view',true),('secretary','creative.all_projects_view',true),('producer','creative.all_projects_view',true),('producer_director','creative.all_projects_view',true),
+  ('admin','creative.rank_price_column',true),('producer','creative.rank_price_column',true),('producer_director','creative.rank_price_column',true),('director','creative.rank_price_column',true),
+  ('admin','creative.csv_import',true),('secretary','creative.csv_import',true),('producer','creative.csv_import',true),('producer_director','creative.csv_import',true),
+  -- メンバー
+  ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),
+  ('admin','member.edit_password',true),('secretary','member.edit_password',true),
+  ('admin','member.deactivate',true),('secretary','member.deactivate',true),
+  ('admin','member.delete',true),
+  -- チーム
+  ('admin','team.manage',true),('secretary','team.manage',true),
+  ('admin','team.assign',true),('secretary','team.assign',true),
+  -- 請求
+  ('admin','invoice.own',true),('secretary','invoice.own',true),('producer','invoice.own',true),('producer_director','invoice.own',true),('director','invoice.own',true),('editor','invoice.own',true),('designer','invoice.own',true),
+  ('admin','invoice.all_view',true),('secretary','invoice.all_view',true),
+  -- マスター
+  ('admin','master.page',true),('secretary','master.page',true),
+  ('admin','master.sys_config',true),
+  -- システム
+  ('admin','system.view_as',true)
+ON CONFLICT (role, permission_key) DO NOTHING;
