@@ -6422,8 +6422,11 @@ async function loadInvoicePreview() {
           <td></td>
           <td style="padding:4px 10px 4px 10px;color:#444">${escapeHtml(b.label)}</td>
           <td colspan="2" style="padding:4px 10px;text-align:right;white-space:nowrap">
-            <input type="number" min="0" step="1" value="${b.unit_price}" class="gi-bd-input" data-id="${item.id}" data-cost-type="${b.cost_type}" oninput="updateInvoiceTotal()" style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;text-align:right;font-size:12px">
+            <input type="number" min="0" step="1" value="${b.unit_price}" class="gi-bd-input" data-id="${item.id}" data-cost-type="${b.cost_type}" data-default="${b.unit_price}" oninput="onInvoiceUnitPriceChange(this)" style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;text-align:right;font-size:12px">
             <span style="font-size:11px;color:var(--text-muted);margin-left:4px">円 / 本</span>
+            <div class="gi-reason-wrap" data-id="${item.id}" data-cost-type="${b.cost_type}" style="display:none;margin-top:6px">
+              <input type="text" class="gi-reason-input" data-id="${item.id}" data-cost-type="${b.cost_type}" maxlength="500" placeholder="単価変更の理由（必須）" oninput="updateInvoiceTotal()" style="width:100%;max-width:320px;padding:4px 8px;border:1px solid #F59E0B;border-radius:4px;font-size:11px;background:#FFFBEB">
+            </div>
           </td>
         </tr>`).join('');
         return headerRow + breakdownRows;
@@ -6432,8 +6435,6 @@ async function loadInvoicePreview() {
   </table>`;
 
   updateInvoiceTotal();
-  document.getElementById('gi-submit-btn').disabled = false;
-  document.getElementById('gi-submit-btn').style.opacity = '1';
 }
 
 function toggleAllInvoiceItems(checked) {
@@ -6448,6 +6449,44 @@ function _giCreativeSubtotal(creativeId) {
     if (Number.isFinite(v) && v >= 0) sub += v;
   });
   return sub;
+}
+
+function _giIsOverridden(input) {
+  const def = parseInt(input.dataset.default, 10);
+  const cur = parseInt(input.value, 10);
+  if (!Number.isFinite(def) || !Number.isFinite(cur)) return false;
+  return def !== cur;
+}
+
+function onInvoiceUnitPriceChange(input) {
+  const cid = input.dataset.id;
+  const ct  = input.dataset.costType;
+  const wrap = document.querySelector(`.gi-reason-wrap[data-id="${cid}"][data-cost-type="${ct}"]`);
+  const reasonInput = document.querySelector(`.gi-reason-input[data-id="${cid}"][data-cost-type="${ct}"]`);
+  if (_giIsOverridden(input)) {
+    if (wrap) wrap.style.display = '';
+    input.style.borderColor = '#F59E0B';
+  } else {
+    if (wrap) wrap.style.display = 'none';
+    if (reasonInput) reasonInput.value = '';
+    input.style.borderColor = 'var(--border)';
+  }
+  updateInvoiceTotal();
+}
+
+function _giHasMissingReasons() {
+  const checks = document.querySelectorAll('.gi-item-check:checked');
+  for (const cb of checks) {
+    const cid = cb.dataset.id;
+    const inputs = document.querySelectorAll(`.gi-bd-input[data-id="${cid}"]`);
+    for (const inp of inputs) {
+      if (!_giIsOverridden(inp)) continue;
+      const reasonInput = document.querySelector(`.gi-reason-input[data-id="${cid}"][data-cost-type="${inp.dataset.costType}"]`);
+      const v = (reasonInput?.value || '').trim();
+      if (!v) return true;
+    }
+  }
+  return false;
 }
 
 function updateInvoiceTotal() {
@@ -6469,8 +6508,11 @@ function updateInvoiceTotal() {
   document.getElementById('gi-total').textContent = '¥' + total.toLocaleString();
   document.getElementById('gi-count').textContent = `（${checks.length}件）`;
   const btn = document.getElementById('gi-submit-btn');
-  btn.disabled = checks.length === 0;
-  btn.style.opacity = checks.length === 0 ? '0.5' : '1';
+  const missingReason = _giHasMissingReasons();
+  const disabled = checks.length === 0 || missingReason;
+  btn.disabled = disabled;
+  btn.style.opacity = disabled ? '0.5' : '1';
+  btn.title = missingReason ? '単価を変更した行は変更理由を入力してください' : '';
 }
 
 async function generateMyInvoice() {
@@ -6483,9 +6525,12 @@ async function generateMyInvoice() {
   if (!checkedBoxes.length) { showToast('請求対象を1件以上選択してください', 'warn'); return; }
 
   // 選択された各 creative の breakdown 入力を読み取り
-  document.querySelectorAll('.gi-bd-input').forEach(inp => { inp.style.borderColor = 'var(--border)'; });
+  document.querySelectorAll('.gi-bd-input').forEach(inp => {
+    inp.style.borderColor = _giIsOverridden(inp) ? '#F59E0B' : 'var(--border)';
+  });
   const selectedItems = [];
   let invalid = false;
+  let missingReason = false;
   for (const cb of checkedBoxes) {
     const cid = cb.dataset.id;
     const inputs = document.querySelectorAll(`.gi-bd-input[data-id="${cid}"]`);
@@ -6498,11 +6543,26 @@ async function generateMyInvoice() {
         invalid = true;
         return;
       }
-      if (v > 0) items.push({ cost_type: inp.dataset.costType, unit_price: v });
+      if (v > 0) {
+        const entry = { cost_type: inp.dataset.costType, unit_price: v };
+        if (_giIsOverridden(inp)) {
+          const reasonInput = document.querySelector(`.gi-reason-input[data-id="${cid}"][data-cost-type="${inp.dataset.costType}"]`);
+          const reason = (reasonInput?.value || '').trim();
+          if (!reason) {
+            if (reasonInput) reasonInput.style.borderColor = '#E24B4A';
+            missingReason = true;
+            return;
+          }
+          if (reasonInput) reasonInput.style.borderColor = '#F59E0B';
+          entry.change_reason = reason;
+        }
+        items.push(entry);
+      }
     });
     if (items.length) selectedItems.push({ creative_id: cid, items });
   }
   if (invalid) { showToast('金額は0以上の整数で入力してください', 'warn'); return; }
+  if (missingReason) { showToast('単価を変更した行は変更理由を入力してください', 'warn'); return; }
   if (!selectedItems.length) { showToast('金額が0より大きい明細が必要です', 'warn'); return; }
 
   const btn = document.getElementById('gi-submit-btn');
