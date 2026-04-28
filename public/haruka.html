@@ -10932,10 +10932,12 @@ function _knRenderCardChunk(list) {
     const project = c.creative_files?.creatives?.projects?.name || '';
     const filename = c.creative_files?.generated_name || '';
     const driveFileId = c.creative_files?.drive_file_id || '';
+    const driveUrl    = c.creative_files?.drive_url || '';
+    const creativeType = c.creative_files?.creatives?.creative_type || '';
     const fileRecordId = c.creative_files?.id || '';
     return `
       <div class="kn-card" data-cat-color="${catColor}" data-id="${esc(c.id)}"
-        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}')">
+        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}')">
         <button class="kn-card-fav ${isFav?'on':''}" title="お気に入り" onclick="knToggleFavorite('${esc(c.id)}', event)">${isFav?'⭐':'☆'}</button>
         <div class="kn-card-head">
           ${isUnread ? '<span class="kn-unread-dot" title="未読"></span>' : ''}
@@ -10969,11 +10971,13 @@ function _knRenderTableChunk(list) {
     const project = c.creative_files?.creatives?.projects?.name || '';
     const filename = c.creative_files?.generated_name || '';
     const driveFileId = c.creative_files?.drive_file_id || '';
+    const driveUrl    = c.creative_files?.drive_url || '';
+    const creativeType = c.creative_files?.creatives?.creative_type || '';
     const fileRecordId = c.creative_files?.id || '';
     const dateStr = new Date(c.created_at).toLocaleDateString('ja-JP');
     return `
       <tr class="${isUnread?'kn-row-unread':''}" data-id="${esc(c.id)}"
-        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}')">
+        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}')">
         <td>${isUnread ? '<span class="kn-unread-dot" title="未読"></span>' : ''}</td>
         <td style="white-space:nowrap">${esc(dateStr)} ${isNew?'<span class="kn-badge-new" style="margin-left:4px">NEW</span>':''}</td>
         <td>${cat ? `<span class="kn-row-cat" data-cat-color="${catColor}">${esc(cat.name)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
@@ -10983,7 +10987,7 @@ function _knRenderTableChunk(list) {
         <td><div class="kn-row-comment">${esc(c.comment || '')}</div></td>
         <td>
           <span class="kn-row-act" onclick="event.stopPropagation()">
-            <button title="プレビュー" onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}')">👁️</button>
+            <button title="プレビュー" onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}')">👁️</button>
             <button class="${isFav?'on':''}" title="お気に入り" onclick="knToggleFavorite('${esc(c.id)}', event)">${isFav?'⭐':'☆'}</button>
           </span>
         </td>
@@ -10992,12 +10996,12 @@ function _knRenderTableChunk(list) {
   tbody.insertAdjacentHTML('beforeend', html);
 }
 
-function knOpenItem(id, driveFileId, filename, fileRecordId) {
+function knOpenItem(id, driveFileId, filename, fileRecordId, driveUrl, creativeType) {
   // 既読マーク
   knMarkRead(id);
   // プレビュー起動（既存ロジック流用）
   if (typeof openFilePreview === 'function' && fileRecordId) {
-    openFilePreview(driveFileId || null, filename, '', fileRecordId, '', '');
+    openFilePreview(driveFileId || null, filename, driveUrl || '', fileRecordId, creativeType || '', '');
   }
   // UIに既読を即時反映
   const card = document.querySelector(`.kn-card[data-id="${CSS.escape(String(id))}"]`);
