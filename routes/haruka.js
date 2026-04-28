@@ -1315,7 +1315,7 @@ router.get('/invoices', async (req, res) => {
   const { issuer_id, year, month, status } = req.query;
   let query = supabase
     .from('invoices')
-    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`)
+    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,original_unit_price,price_change_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`)
     .order('created_at', { ascending: false });
   if (issuer_id) query = query.eq('issuer_id', issuer_id);
   if (year) query = query.eq('year', parseInt(year));
@@ -1443,6 +1443,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       ),
       invoice_items(
         id, total_amount, is_special, special_reason,
+        original_unit_price, price_change_reason,
         label, quantity, unit, unit_price, sort_order,
         cost_type, creative_label, creative_id,
         creatives(id, file_name, creative_type, final_deadline, draft_deadline, updated_at,
@@ -1825,8 +1826,12 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
         unit:           '本',
         unit_price:     b.unit_price,
         total_amount:   b.unit_price,
-        is_special:     isOverridden ? true : (creative.special_payable || false),
-        special_reason: isOverridden ? b.change_reason : (creative.special_payable_reason || null),
+        // 単価変更とspecial_payableは別概念。is_special/special_reasonはcreative由来に戻す
+        is_special:     creative.special_payable || false,
+        special_reason: creative.special_payable_reason || null,
+        // 監査用：変更されていなくてもデフォルト単価を必ず保存
+        original_unit_price: defaultUp,
+        price_change_reason: isOverridden ? b.change_reason : null,
         sort_order:     sortCounter++,
       });
     }
@@ -1862,6 +1867,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       total_amount:  r.total_amount,
       is_special:    r.is_special,
       special_reason:r.special_reason,
+      original_unit_price: r.original_unit_price,
+      price_change_reason: r.price_change_reason,
       label:         r.label,
       quantity:      r.quantity,
       unit:          r.unit,

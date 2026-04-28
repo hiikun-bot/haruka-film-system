@@ -787,3 +787,12 @@ UPDATE invoices inv
 -- グルーピング表示用インデックス
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_creative_sort
   ON invoice_items(invoice_id, creative_id, sort_order);
+
+-- ==================== 請求書明細：単価変更の監査列 ====================
+-- 「いくらから いくらに 上げたのか」を後から再現するため、
+-- 請求書作成時点での project_rates 由来デフォルト単価と、
+-- 変更があった場合の理由を別カラムで保存する。
+-- special_reason は creatives.special_payable_reason 由来のフィールドに戻し、
+-- 単価変更とは別概念として分離する。
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS original_unit_price INTEGER;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS price_change_reason TEXT;
