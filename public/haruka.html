@@ -685,19 +685,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <div style="overflow-y:auto;flex:1;padding-right:4px">
       <div style="margin-bottom:14px">
-        <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:8px">明細</div>
-        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-          <div style="display:grid;grid-template-columns:1fr 70px 70px 100px 110px 36px;gap:0;background:#f7f7f7;padding:8px 10px;font-size:11px;color:var(--text-muted);font-weight:600">
-            <div>品目</div>
-            <div style="text-align:center">数量</div>
-            <div style="text-align:center">単位</div>
-            <div style="text-align:right">単価</div>
-            <div style="text-align:right">金額</div>
-            <div></div>
-          </div>
-          <div id="ei-line-items"></div>
-        </div>
-        <button type="button" class="btn btn-sm" id="ei-add-row" onclick="addInvoiceLineRow()" style="margin-top:8px;font-size:12px">+ 行を追加</button>
+        <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:8px">明細（クリエイティブ単位でグルーピング表示）</div>
+        <div id="ei-line-items" style="display:flex;flex-direction:column;gap:10px"></div>
+        <button type="button" class="btn btn-sm" id="ei-add-row" onclick="addInvoiceLineRow()" style="margin-top:10px;font-size:12px">+ その他明細を追加</button>
       </div>
       <div class="form-group" style="margin-bottom:4px">
         <label class="form-label" style="font-size:12px;color:var(--text-muted);font-weight:600">備考（任意）</label>
@@ -6324,31 +6314,42 @@ async function confirmDuplicateSubmit() {
   await loadMyInvoices();
 }
 
+// コスト種別 → 表示ラベル（フロント・サーバー共通の方針）
+const COST_TYPE_LABELS = {
+  base_fee:   '編集',
+  script_fee: '台本作成',
+  ai_fee:     'AI生成（ナレーション含む）',
+  other_fee:  'その他',
+};
+
+// 納品日（または下書き締切 / 更新日）取得 — グループ見出し用
+function _eiCreativeDate(cr) {
+  if (!cr) return '';
+  const raw = cr.final_deadline || cr.draft_deadline || cr.updated_at || '';
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (isNaN(d)) return '';
+  return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+}
+
 // 旧データ（label等が空）の互換用：invoice_item_details から金額を組み立てる
 function _eiFallbackFromItem(item) {
   const details = (item.invoice_item_details || []).filter(d => (d.amount || 0) > 0);
-  const cr = item.creatives || {};
-  const typeLabel = cr.creative_type?.startsWith('video') ? '動画'
-                  : cr.creative_type?.startsWith('design') ? 'デザイン' : '';
-  const baseLabel = cr.file_name
-    ? `${cr.file_name}${typeLabel ? ` (${typeLabel})` : ''}`
-    : (typeLabel || '明細');
   if (details.length === 0) {
     return [{
-      label: baseLabel,
+      label: '明細',
       quantity: 1,
       unit: '本',
       unit_price: item.total_amount || 0,
+      cost_type: null,
     }];
   }
-  // 旧 cost_type → ラベル
-  const costLabel = { base_fee:'動画編集 / 静止画', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
-  // 各 detail を別行に展開
   return details.map(d => ({
-    label: `${baseLabel} - ${costLabel[d.cost_type] || d.cost_type}`,
+    label: COST_TYPE_LABELS[d.cost_type] || d.cost_type,
     quantity: 1,
     unit: '本',
     unit_price: d.amount || 0,
+    cost_type: d.cost_type,
   }));
 }
 
@@ -6366,7 +6367,7 @@ async function editInvoice(id) {
   document.getElementById('ei-add-row').disabled = !editable;
   document.getElementById('ei-save-btn').disabled = !editable;
 
-  // 明細行を構築
+  // 明細行を構築（新方式：1 invoice_item = 1コスト種別行）
   const items = (inv.invoice_items || []).slice().sort((a, b) => {
     const sa = a.sort_order ?? 0, sb = b.sort_order ?? 0;
     if (sa !== sb) return sa - sb;
@@ -6375,38 +6376,127 @@ async function editInvoice(id) {
 
   const lines = [];
   for (const it of items) {
+    const cr = it.creatives || null;
+    const creativeLabel = it.creative_label || cr?.file_name || '';
+    const creativeDate  = _eiCreativeDate(cr);
     if (it.label) {
       lines.push({
         id: it.id,
+        creative_id: it.creative_id || null,
+        creative_label: creativeLabel,
+        creative_date:  creativeDate,
+        cost_type: it.cost_type || null,
         label: it.label,
         quantity: it.quantity ?? 1,
-        unit: it.unit || '式',
+        unit: it.unit || (it.creative_id ? '本' : '式'),
         unit_price: it.unit_price ?? it.total_amount ?? 0,
       });
     } else {
       // 旧データ互換：詳細から複数行を生成（id は最初の行にだけ振り、それ以外は新規扱い）
       const fb = _eiFallbackFromItem(it);
-      fb.forEach((f, idx) => lines.push({ id: idx === 0 ? it.id : null, ...f }));
+      fb.forEach((f, idx) => lines.push({
+        id: idx === 0 ? it.id : null,
+        creative_id: it.creative_id || null,
+        creative_label: creativeLabel,
+        creative_date:  creativeDate,
+        ...f,
+      }));
     }
   }
 
-  if (!lines.length) lines.push({ id: null, label: '', quantity: 1, unit: '式', unit_price: 0 });
+  if (!lines.length) lines.push({ id: null, creative_id: null, label: '', quantity: 1, unit: '式', unit_price: 0 });
 
   _eiRenderLines(lines, editable);
   _eiRecalcTotal();
   openModal('modal-edit-invoice');
 }
 
+// クリエイティブ単位でグルーピング表示
 function _eiRenderLines(lines, editable) {
   const container = document.getElementById('ei-line-items');
-  container.innerHTML = lines.map((l, i) => _eiRowHTML(l, i, editable)).join('');
+
+  // creative_id ごとにグルーピング（順序維持）
+  const groups = [];        // [{ key, creative_id, creative_label, creative_date, indices: [globalIdx,...] }]
+  const groupMap = new Map();
+  const manualIndices = [];
+  lines.forEach((l, i) => {
+    if (l.creative_id) {
+      const key = l.creative_id;
+      if (!groupMap.has(key)) {
+        const g = {
+          key,
+          creative_id: l.creative_id,
+          creative_label: l.creative_label || '',
+          creative_date:  l.creative_date  || '',
+          indices: [],
+        };
+        groupMap.set(key, g);
+        groups.push(g);
+      }
+      groupMap.get(key).indices.push(i);
+    } else {
+      manualIndices.push(i);
+    }
+  });
+
+  const sectionHeader = (txt) =>
+    `<div style="font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:.04em;margin-top:4px">${txt}</div>`;
+
+  const colHeader = `
+    <div style="display:grid;grid-template-columns:1fr 70px 70px 100px 110px 36px;gap:0;background:#f7f7f7;padding:6px 10px;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border)">
+      <div>品目</div>
+      <div style="text-align:center">数量</div>
+      <div style="text-align:center">単位</div>
+      <div style="text-align:right">単価</div>
+      <div style="text-align:right">金額</div>
+      <div></div>
+    </div>`;
+
+  let html = '';
+
+  // クリエイティブ単位グループ
+  for (const g of groups) {
+    const dateBlock = g.creative_date ? `<span style="color:var(--text-muted);margin-right:10px">${g.creative_date}</span>` : '';
+    html += `
+      <div class="ei-group" data-creative-id="${g.creative_id}"
+           style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div style="background:#f0fafa;padding:8px 12px;font-size:12px;font-weight:600;color:#226;border-bottom:1px solid #d6ecec">
+          ${dateBlock}<span>${g.creative_label || '(無題)'}</span>
+        </div>
+        ${colHeader}
+        ${g.indices.map(i => _eiRowHTML(lines[i], i, editable)).join('')}
+      </div>`;
+  }
+
+  // 手動行（その他の明細）
+  if (manualIndices.length || groups.length === 0) {
+    html += `
+      <div class="ei-group ei-group-manual"
+           style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div style="background:#f7f7f7;padding:8px 12px;font-size:12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border)">
+          その他の明細
+        </div>
+        ${colHeader}
+        ${manualIndices.length
+          ? manualIndices.map(i => _eiRowHTML(lines[i], i, editable)).join('')
+          : '<div style="padding:10px 12px;font-size:12px;color:#aaa">行がありません。下の「+ その他明細を追加」から行を追加できます。</div>'}
+      </div>`;
+  }
+
+  container.innerHTML = html;
 }
 
 function _eiRowHTML(l, i, editable) {
   const dis = editable ? '' : 'disabled';
   const amt = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+  // 元データを各行のdatasetに保持（creative_id, cost_type, creative_label, creative_date）
   return `
-    <div class="ei-row" data-row="${i}" data-id="${l.id || ''}"
+    <div class="ei-row" data-row="${i}"
+         data-id="${l.id || ''}"
+         data-creative-id="${l.creative_id || ''}"
+         data-cost-type="${l.cost_type || ''}"
+         data-creative-label="${(l.creative_label||'').replace(/"/g,'&quot;')}"
+         data-creative-date="${l.creative_date || ''}"
          style="display:grid;grid-template-columns:1fr 70px 70px 100px 110px 36px;gap:6px;padding:8px 10px;border-top:1px solid var(--border);align-items:center">
       <input type="text" class="form-input ei-label" placeholder="品目名" value="${(l.label||'').replace(/"/g,'&quot;')}" ${dis}
              style="font-size:13px;padding:6px 8px" oninput="_eiRecalcTotal()">
@@ -6425,12 +6515,16 @@ function _eiRowHTML(l, i, editable) {
 function _eiCollectLines() {
   const rows = Array.from(document.querySelectorAll('#ei-line-items .ei-row'));
   return rows.map((row, idx) => ({
-    id:        row.dataset.id || null,
-    label:     row.querySelector('.ei-label')?.value || '',
-    quantity:  Number(row.querySelector('.ei-qty')?.value) || 0,
-    unit:      row.querySelector('.ei-unit')?.value || '式',
-    unit_price: Number(row.querySelector('.ei-price')?.value) || 0,
-    sort_order: idx,
+    id:             row.dataset.id || null,
+    creative_id:    row.dataset.creativeId || null,
+    creative_label: row.dataset.creativeLabel || null,
+    creative_date:  row.dataset.creativeDate || null,
+    cost_type:      row.dataset.costType || null,
+    label:          row.querySelector('.ei-label')?.value || '',
+    quantity:       Number(row.querySelector('.ei-qty')?.value) || 0,
+    unit:           row.querySelector('.ei-unit')?.value || '式',
+    unit_price:     Number(row.querySelector('.ei-price')?.value) || 0,
+    sort_order:     idx,
   }));
 }
 
@@ -6452,12 +6546,16 @@ function _eiRecalcTotal() {
 
 function addInvoiceLineRow() {
   const lines = _eiCollectLines();
-  lines.push({ id: null, label: '', quantity: 1, unit: '式', unit_price: 0, sort_order: lines.length });
+  lines.push({
+    id: null, creative_id: null, creative_label: null, creative_date: null,
+    cost_type: null, label: '', quantity: 1, unit: '式', unit_price: 0,
+    sort_order: lines.length
+  });
   _eiRenderLines(lines, true);
   _eiRecalcTotal();
-  // フォーカスを新規行の品目欄に
+  // フォーカスを新規行の品目欄に（manualグループの最後の行）
   setTimeout(() => {
-    const rows = document.querySelectorAll('#ei-line-items .ei-row');
+    const rows = document.querySelectorAll('#ei-line-items .ei-group-manual .ei-row');
     const last = rows[rows.length - 1];
     last?.querySelector('.ei-label')?.focus();
   }, 0);
@@ -6466,7 +6564,9 @@ function addInvoiceLineRow() {
 function _eiRemoveRow(i) {
   const lines = _eiCollectLines();
   lines.splice(i, 1);
-  _eiRenderLines(lines.length ? lines : [{ id: null, label: '', quantity: 1, unit: '式', unit_price: 0 }], true);
+  _eiRenderLines(lines.length ? lines : [{
+    id: null, creative_id: null, label: '', quantity: 1, unit: '式', unit_price: 0
+  }], true);
   _eiRecalcTotal();
 }
 
@@ -6551,8 +6651,6 @@ async function printInvoice(id) {
     todayStr
   };
 
-  const costLabel = { base_fee:'動画編集 / 静止画', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
-
   // sort_order で並べ替え
   const sortedItems = (inv.invoice_items || []).slice().sort((a, b) => {
     const sa = a.sort_order ?? 0, sb = b.sort_order ?? 0;
@@ -6560,61 +6658,88 @@ async function printInvoice(id) {
     return new Date(a.created_at || 0) - new Date(b.created_at || 0);
   });
 
-  const itemRows = sortedItems.map((item, idx) => {
-    const cr = item.creatives || {};
-    const cp = cr.projects || project;
-    const cc = (cp.clients || client);
-    const code = cc.client_code || cc.name?.slice(0,4) || 'XX';
-    const seqNo = `${code}-${String(idx+1).padStart(3,'0')}`;
-
-    // 新方式（label が埋まっている）優先
-    if (item.label) {
-      const qty = Number(item.quantity) || 0;
-      const up  = Number(item.unit_price) || 0;
-      const amt = (item.total_amount != null) ? item.total_amount : Math.round(qty * up);
-      const projectLabel = cp.name
-        ? `<div style="font-weight:600;font-size:12px">${cp.name}</div><div style="font-size:10px;color:#888;margin-top:2px">${cc.name||''}</div>`
-        : '<div style="font-weight:600;font-size:12px;color:#888">-</div>';
-      const qtyUnit = `${qty}${item.unit ? ' ' + item.unit : ''}`;
-      return `
-        <tr>
-          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
-          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">${projectLabel}</td>
-          <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">${item.label}<div style="font-size:10px;color:#888;margin-top:2px">${qtyUnit}</div></td>
-          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${up.toLocaleString()}</td>
-          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(amt||0).toLocaleString()}</td>
-        </tr>`;
+  // クリエイティブ単位グルーピング（creative_id で連続グループ化、null は手動行）
+  const groups = [];
+  const groupMap = new Map();
+  const manualRows = [];
+  for (const it of sortedItems) {
+    if (it.creative_id) {
+      let g = groupMap.get(it.creative_id);
+      if (!g) {
+        g = { creative_id: it.creative_id, items: [], creative: it.creatives || null,
+              creative_label: it.creative_label || it.creatives?.file_name || '' };
+        groupMap.set(it.creative_id, g);
+        groups.push(g);
+      }
+      g.items.push(it);
+    } else {
+      manualRows.push(it);
     }
+  }
 
-    // 旧方式：invoice_item_details ベース（後方互換）
-    const details = (item.invoice_item_details || []).filter(d => d.amount > 0);
-    if (!details.length) {
-      return `
-        <tr>
-          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
-          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
-            <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
-            <div style="font-size:10px;color:#888;margin-top:2px">${cc.name||''}</div>
-            <div style="font-size:9px;color:#bbb;margin-top:2px;word-break:break-all">${cr.file_name||''}</div>
-          </td>
-          <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">明細</td>
-          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${(item.total_amount||0).toLocaleString()}</td>
-          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(item.total_amount||0).toLocaleString()}</td>
-        </tr>`;
-    }
-    return details.map((d, di) => `
+  const fmtDate = (raw) => {
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (isNaN(d)) return '';
+    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+  };
+
+  // 1行レンダリング（グループ内のコスト種別行）
+  const lineRow = (it) => {
+    const qty = Number(it.quantity) || 0;
+    const up  = Number(it.unit_price) || 0;
+    const amt = (it.total_amount != null) ? it.total_amount : Math.round(qty * up);
+    const unit = it.unit || '本';
+    return `
       <tr>
-        ${di===0 ? `<td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
-        <td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
-          <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
-          <div style="font-size:10px;color:#888;margin-top:2px">${cc.name||''}</div>
-          <div style="font-size:9px;color:#bbb;margin-top:2px;word-break:break-all">${cr.file_name||''}</div>
-        </td>` : ''}
-        <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">${costLabel[d.cost_type]||d.cost_type}</td>
-        <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${(d.unit_price||0).toLocaleString()}</td>
-        <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(d.amount||0).toLocaleString()}</td>
-      </tr>`).join('');
-  }).join('');
+        <td style="padding:6px 8px;border:1px solid #eee;font-size:12px;padding-left:24px">${it.label || ''}</td>
+        <td style="padding:6px 8px;border:1px solid #eee;text-align:right;font-size:12px;color:#555">¥${up.toLocaleString()} / ${unit}</td>
+        <td style="padding:6px 8px;border:1px solid #eee;text-align:right;font-size:12px">¥${up.toLocaleString()}</td>
+        <td style="padding:6px 8px;border:1px solid #eee;text-align:right;font-size:12px;font-weight:600">¥${(amt||0).toLocaleString()}</td>
+      </tr>`;
+  };
+
+  // グループヘッダ + 内訳行
+  const groupBlock = (g, idx) => {
+    const cr = g.creative || {};
+    const dateStr = fmtDate(cr.final_deadline || cr.draft_deadline || cr.updated_at);
+    const cp = cr.projects || project;
+    const cc = cp.clients || client;
+    const projTxt = cp?.name ? `<span style="color:#666;font-size:10px;margin-left:8px">${cp.name}${cc?.name?` / ${cc.name}`:''}</span>` : '';
+    return `
+      <tr>
+        <td colspan="4" style="padding:9px 10px;background:#f5fafa;border:1px solid #cfe5e5;font-size:12px">
+          <span style="color:#226;font-weight:700">${dateStr || '-'}</span>
+          <span style="margin-left:14px;font-weight:600">${g.creative_label || '(無題)'}</span>
+          ${projTxt}
+        </td>
+      </tr>
+      ${g.items.map(lineRow).join('')}
+    `;
+  };
+
+  // 手動行（その他）はシンプルに1行ずつ
+  const manualRow = (it) => {
+    const qty = Number(it.quantity) || 0;
+    const up  = Number(it.unit_price) || 0;
+    const amt = (it.total_amount != null) ? it.total_amount : Math.round(qty * up);
+    const unit = it.unit || '式';
+    return `
+      <tr>
+        <td style="padding:8px 8px;border:1px solid #eee;font-size:12px">${it.label || '明細'}</td>
+        <td style="padding:8px 8px;border:1px solid #eee;text-align:right;font-size:12px;color:#555">${qty} ${unit}</td>
+        <td style="padding:8px 8px;border:1px solid #eee;text-align:right;font-size:12px">¥${up.toLocaleString()}</td>
+        <td style="padding:8px 8px;border:1px solid #eee;text-align:right;font-size:12px;font-weight:600">¥${(amt||0).toLocaleString()}</td>
+      </tr>`;
+  };
+
+  const itemRows = [
+    ...groups.map(groupBlock),
+    ...(manualRows.length
+      ? [`<tr><td colspan="4" style="padding:8px 10px;background:#fafafa;border:1px solid #eee;font-size:11px;color:#888;font-weight:600">その他の明細</td></tr>`,
+         ...manualRows.map(manualRow)]
+      : [])
+  ].join('');
 
   const bankLines = [
     issuer.bank_name   ? `${issuer.bank_name}${issuer.bank_code?` (${issuer.bank_code})`:''}` : '',
@@ -6658,18 +6783,17 @@ async function printInvoice(id) {
     <table style="width:100%;border-collapse:collapse;margin-bottom:0;font-size:12px">
       <thead>
         <tr style="background:#2BB8B4;color:#fff">
-          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4;width:72px">No.</th>
-          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">案件名</th>
-          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">内容</th>
-          <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">単価</th>
+          <th style="padding:9px 6px;text-align:left;border:1px solid #2BB8B4">品目（納品日 / クリエイティブ単位でグルーピング）</th>
+          <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:120px">単価</th>
+          <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">小計</th>
           <th style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;width:80px">金額</th>
         </tr>
       </thead>
-      <tbody>${itemRows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa;border:1px solid #ddd">明細なし</td></tr>'}</tbody>
+      <tbody>${itemRows||'<tr><td colspan="4" style="padding:20px;text-align:center;color:#aaa;border:1px solid #ddd">明細なし</td></tr>'}</tbody>
       <tfoot>
-        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">税抜小計</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${subtotal.toLocaleString()}</td></tr>
-        <tr><td colspan="4" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">消費税（10%）</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${tax.toLocaleString()}</td></tr>
-        <tr><td colspan="4" style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;font-size:13px">合計（税込）</td><td style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;color:#2BB8B4;font-size:13px">¥${total.toLocaleString()}</td></tr>
+        <tr><td colspan="3" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">税抜小計</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${subtotal.toLocaleString()}</td></tr>
+        <tr><td colspan="3" style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa;font-size:12px">消費税（10%）</td><td style="padding:7px 6px;text-align:right;border:1px solid #ddd;background:#fafafa">¥${tax.toLocaleString()}</td></tr>
+        <tr><td colspan="3" style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;font-size:13px">合計（税込）</td><td style="padding:9px 6px;text-align:right;border:1px solid #2BB8B4;background:#e6f8f8;font-weight:700;color:#2BB8B4;font-size:13px">¥${total.toLocaleString()}</td></tr>
       </tfoot>
     </table>
 

@@ -689,3 +689,101 @@ UPDATE invoice_items ii
 -- インデックス（invoice_id × sort_order での並び替えを高速化）
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_sort
   ON invoice_items(invoice_id, sort_order);
+
+-- ==================== 請求書明細：コスト種別ごとに細分化（Step 1b） ====================
+-- 1 invoice_item = 1コスト種別行 へ移行
+-- グルーピング表示用に creative_label をキャッシュ
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS cost_type      TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS creative_label TEXT;
+
+-- 既存行に creative_label をバックフィル（クリエイティブ紐付けあり）
+UPDATE invoice_items ii
+   SET creative_label = c.file_name
+  FROM creatives c
+ WHERE ii.creative_id = c.id
+   AND ii.creative_label IS NULL
+   AND c.file_name IS NOT NULL;
+
+-- 既存の親 invoice_items に対応する invoice_item_details の最初の1件を統合
+WITH first_detail AS (
+  SELECT DISTINCT ON (iid.invoice_item_id)
+         iid.invoice_item_id, iid.cost_type, iid.unit_price, iid.amount
+    FROM invoice_item_details iid
+    JOIN invoice_items ii ON ii.id = iid.invoice_item_id
+   WHERE ii.cost_type IS NULL
+     AND COALESCE(iid.amount, 0) > 0
+   ORDER BY iid.invoice_item_id, iid.created_at, iid.id
+)
+UPDATE invoice_items ii
+   SET cost_type    = fd.cost_type,
+       unit_price   = fd.unit_price,
+       total_amount = fd.amount,
+       quantity     = COALESCE(ii.quantity, 1),
+       unit         = COALESCE(ii.unit, '本'),
+       label        = CASE
+                        WHEN ii.label IS NULL OR ii.label = ''
+                          THEN COALESCE(
+                                 CASE fd.cost_type
+                                   WHEN 'base_fee'   THEN '編集'
+                                   WHEN 'script_fee' THEN '台本作成'
+                                   WHEN 'ai_fee'     THEN 'AI生成（ナレーション含む）'
+                                   WHEN 'other_fee'  THEN 'その他'
+                                   ELSE fd.cost_type
+                                 END, '明細')
+                        ELSE ii.label
+                      END
+  FROM first_detail fd
+ WHERE ii.id = fd.invoice_item_id;
+
+-- 残りの details を新しい invoice_items 行として展開
+INSERT INTO invoice_items (
+  invoice_id, creative_id, total_amount, is_special, special_reason,
+  label, quantity, unit, unit_price, sort_order, cost_type, creative_label
+)
+SELECT
+  parent.invoice_id,
+  parent.creative_id,
+  iid.amount,
+  parent.is_special,
+  parent.special_reason,
+  CASE iid.cost_type
+    WHEN 'base_fee'   THEN '編集'
+    WHEN 'script_fee' THEN '台本作成'
+    WHEN 'ai_fee'     THEN 'AI生成（ナレーション含む）'
+    WHEN 'other_fee'  THEN 'その他'
+    ELSE iid.cost_type
+  END,
+  1, '本',
+  iid.unit_price,
+  COALESCE(parent.sort_order, 0)
+    + ROW_NUMBER() OVER (PARTITION BY parent.id ORDER BY iid.created_at, iid.id),
+  iid.cost_type,
+  parent.creative_label
+  FROM invoice_item_details iid
+  JOIN invoice_items parent ON parent.id = iid.invoice_item_id
+ WHERE COALESCE(iid.amount, 0) > 0
+   AND parent.cost_type IS NOT NULL
+   AND parent.cost_type <> iid.cost_type
+   AND NOT EXISTS (
+     SELECT 1 FROM invoice_items existing
+      WHERE existing.invoice_id  = parent.invoice_id
+        AND existing.creative_id IS NOT DISTINCT FROM parent.creative_id
+        AND existing.cost_type   = iid.cost_type
+        AND existing.id          <> parent.id
+   );
+
+-- 影響を受けた請求書の合計を再計算
+UPDATE invoices inv
+   SET total_amount = sub.sum_amt,
+       updated_at   = now()
+  FROM (
+    SELECT invoice_id, SUM(COALESCE(total_amount, 0)) AS sum_amt
+      FROM invoice_items
+     GROUP BY invoice_id
+  ) sub
+ WHERE inv.id = sub.invoice_id
+   AND inv.total_amount IS DISTINCT FROM sub.sum_amt;
+
+-- グルーピング表示用インデックス
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_creative_sort
+  ON invoice_items(invoice_id, creative_id, sort_order);
