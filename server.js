@@ -1046,12 +1046,23 @@ async function seedAdminIfNeeded() {
 }
 
 // ==================== サーバー起動 ====================
-app.listen(PORT, async () => {
-  console.log(`
+// 起動時に supabase_schema.sql を自動適用する
+// SCHEMA_AUTO_SYNC=false で無効化可能
+const runSchemaSync = require('./db/migrate');
+
+(async () => {
+  if (process.env.SCHEMA_AUTO_SYNC !== 'false') {
+    await runSchemaSync();
+  } else {
+    console.log('[schema-sync] SCHEMA_AUTO_SYNC=false により自動同期スキップ');
+  }
+  app.listen(PORT, async () => {
+    console.log(`
   ╔═══════════════════════════════════════╗
   ║   VIDEO OPS サーバー起動              ║
   ║   http://localhost:${PORT}              ║
   ╚═══════════════════════════════════════╝
   `);
-  await seedAdminIfNeeded();
-});
+    await seedAdminIfNeeded();
+  });
+})();
