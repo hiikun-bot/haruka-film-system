@@ -674,19 +674,56 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- 請求書修正モーダル -->
 <div class="modal-overlay" id="modal-edit-invoice">
-  <div class="modal-card" style="width:480px">
-    <div class="modal-title">請求書を修正<button class="modal-close" onclick="closeModal('modal-edit-invoice')">×</button></div>
-    <input type="hidden" id="ei-invoice-id">
-    <div class="form-group" style="margin-bottom:4px">
-      <label class="form-label">備考（任意）</label>
-      <textarea class="form-input" id="ei-notes" rows="5" placeholder="支払い条件、特記事項、連絡事項など" style="resize:vertical;font-size:14px;line-height:1.7"></textarea>
+  <div class="modal-card" style="width:860px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column">
+    <div class="modal-title" style="flex-shrink:0">
+      <span>請求書を修正 <span id="ei-invoice-num" style="font-size:12px;color:var(--text-muted);font-weight:400;margin-left:8px"></span></span>
+      <button class="modal-close" onclick="closeModal('modal-edit-invoice')">×</button>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
-      <button class="btn-primary" onclick="saveInvoiceEdit()">保存する</button>
-      <button class="btn" onclick="closeModal('modal-edit-invoice')">キャンセル</button>
+    <input type="hidden" id="ei-invoice-id">
+    <div id="ei-readonly-notice" style="display:none;background:#FFF3F3;border:1px solid #F09595;color:#A32D2D;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px;flex-shrink:0">
+      ⚠ この請求書は提出済みのため明細を編集できません。
+    </div>
+    <div style="overflow-y:auto;flex:1;padding-right:4px">
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:8px">明細</div>
+        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:1fr 70px 70px 100px 110px 36px;gap:0;background:#f7f7f7;padding:8px 10px;font-size:11px;color:var(--text-muted);font-weight:600">
+            <div>品目</div>
+            <div style="text-align:center">数量</div>
+            <div style="text-align:center">単位</div>
+            <div style="text-align:right">単価</div>
+            <div style="text-align:right">金額</div>
+            <div></div>
+          </div>
+          <div id="ei-line-items"></div>
+        </div>
+        <button type="button" class="btn btn-sm" id="ei-add-row" onclick="addInvoiceLineRow()" style="margin-top:8px;font-size:12px">+ 行を追加</button>
+      </div>
+      <div class="form-group" style="margin-bottom:4px">
+        <label class="form-label" style="font-size:12px;color:var(--text-muted);font-weight:600">備考（任意）</label>
+        <textarea class="form-input" id="ei-notes" rows="3" placeholder="支払い条件、特記事項、連絡事項など" style="resize:vertical;font-size:13px;line-height:1.7"></textarea>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-shrink:0">
+      <div style="font-size:14px">
+        <span style="color:var(--text-muted);margin-right:8px">合計</span>
+        <span id="ei-total" style="font-size:18px;font-weight:700;color:var(--em-dark)">¥0</span>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="closeModal('modal-edit-invoice')">キャンセル</button>
+        <button class="btn-primary" id="ei-save-btn" onclick="saveInvoiceEdit()">保存する</button>
+      </div>
     </div>
   </div>
 </div>
+<datalist id="ei-unit-list">
+  <option value="式"></option>
+  <option value="本"></option>
+  <option value="日"></option>
+  <option value="個"></option>
+  <option value="時間"></option>
+  <option value="月"></option>
+</datalist>
 
 <!-- 重複提出確認モーダル -->
 <div class="modal-overlay" id="modal-submit-duplicate">
@@ -6287,25 +6324,178 @@ async function confirmDuplicateSubmit() {
   await loadMyInvoices();
 }
 
+// 旧データ（label等が空）の互換用：invoice_item_details から金額を組み立てる
+function _eiFallbackFromItem(item) {
+  const details = (item.invoice_item_details || []).filter(d => (d.amount || 0) > 0);
+  const cr = item.creatives || {};
+  const typeLabel = cr.creative_type?.startsWith('video') ? '動画'
+                  : cr.creative_type?.startsWith('design') ? 'デザイン' : '';
+  const baseLabel = cr.file_name
+    ? `${cr.file_name}${typeLabel ? ` (${typeLabel})` : ''}`
+    : (typeLabel || '明細');
+  if (details.length === 0) {
+    return [{
+      label: baseLabel,
+      quantity: 1,
+      unit: '本',
+      unit_price: item.total_amount || 0,
+    }];
+  }
+  // 旧 cost_type → ラベル
+  const costLabel = { base_fee:'動画編集 / 静止画', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
+  // 各 detail を別行に展開
+  return details.map(d => ({
+    label: `${baseLabel} - ${costLabel[d.cost_type] || d.cost_type}`,
+    quantity: 1,
+    unit: '本',
+    unit_price: d.amount || 0,
+  }));
+}
+
 async function editInvoice(id) {
   const res = await fetch(`${API}/invoices/${id}`);
   if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
   document.getElementById('ei-invoice-id').value = id;
+  document.getElementById('ei-invoice-num').textContent = inv.invoice_number || '';
   document.getElementById('ei-notes').value = inv.notes || '';
+
+  // 提出済み以降は明細編集不可（読み取り専用）
+  const editable = ['draft', 'rejected'].includes(inv.status);
+  document.getElementById('ei-readonly-notice').style.display = editable ? 'none' : '';
+  document.getElementById('ei-add-row').disabled = !editable;
+  document.getElementById('ei-save-btn').disabled = !editable;
+
+  // 明細行を構築
+  const items = (inv.invoice_items || []).slice().sort((a, b) => {
+    const sa = a.sort_order ?? 0, sb = b.sort_order ?? 0;
+    if (sa !== sb) return sa - sb;
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  });
+
+  const lines = [];
+  for (const it of items) {
+    if (it.label) {
+      lines.push({
+        id: it.id,
+        label: it.label,
+        quantity: it.quantity ?? 1,
+        unit: it.unit || '式',
+        unit_price: it.unit_price ?? it.total_amount ?? 0,
+      });
+    } else {
+      // 旧データ互換：詳細から複数行を生成（id は最初の行にだけ振り、それ以外は新規扱い）
+      const fb = _eiFallbackFromItem(it);
+      fb.forEach((f, idx) => lines.push({ id: idx === 0 ? it.id : null, ...f }));
+    }
+  }
+
+  if (!lines.length) lines.push({ id: null, label: '', quantity: 1, unit: '式', unit_price: 0 });
+
+  _eiRenderLines(lines, editable);
+  _eiRecalcTotal();
   openModal('modal-edit-invoice');
+}
+
+function _eiRenderLines(lines, editable) {
+  const container = document.getElementById('ei-line-items');
+  container.innerHTML = lines.map((l, i) => _eiRowHTML(l, i, editable)).join('');
+}
+
+function _eiRowHTML(l, i, editable) {
+  const dis = editable ? '' : 'disabled';
+  const amt = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+  return `
+    <div class="ei-row" data-row="${i}" data-id="${l.id || ''}"
+         style="display:grid;grid-template-columns:1fr 70px 70px 100px 110px 36px;gap:6px;padding:8px 10px;border-top:1px solid var(--border);align-items:center">
+      <input type="text" class="form-input ei-label" placeholder="品目名" value="${(l.label||'').replace(/"/g,'&quot;')}" ${dis}
+             style="font-size:13px;padding:6px 8px" oninput="_eiRecalcTotal()">
+      <input type="number" class="form-input ei-qty" min="0" step="0.01" value="${Number(l.quantity)||0}" ${dis}
+             style="font-size:13px;padding:6px 8px;text-align:right" oninput="_eiRowAmount(${i});_eiRecalcTotal()">
+      <input type="text" class="form-input ei-unit" value="${(l.unit||'式').replace(/"/g,'&quot;')}" ${dis}
+             style="font-size:13px;padding:6px 8px;text-align:center" list="ei-unit-list">
+      <input type="number" class="form-input ei-price" min="0" step="1" value="${Number(l.unit_price)||0}" ${dis}
+             style="font-size:13px;padding:6px 8px;text-align:right" oninput="_eiRowAmount(${i});_eiRecalcTotal()">
+      <div class="ei-amount" data-amt-row="${i}" style="font-size:13px;text-align:right;font-weight:600">¥${amt.toLocaleString()}</div>
+      <button type="button" class="btn btn-sm" onclick="_eiRemoveRow(${i})" ${dis}
+              style="font-size:14px;color:#A32D2D;padding:2px 8px" title="行を削除">×</button>
+    </div>`;
+}
+
+function _eiCollectLines() {
+  const rows = Array.from(document.querySelectorAll('#ei-line-items .ei-row'));
+  return rows.map((row, idx) => ({
+    id:        row.dataset.id || null,
+    label:     row.querySelector('.ei-label')?.value || '',
+    quantity:  Number(row.querySelector('.ei-qty')?.value) || 0,
+    unit:      row.querySelector('.ei-unit')?.value || '式',
+    unit_price: Number(row.querySelector('.ei-price')?.value) || 0,
+    sort_order: idx,
+  }));
+}
+
+function _eiRowAmount(i) {
+  const row = document.querySelector(`#ei-line-items .ei-row[data-row="${i}"]`);
+  if (!row) return;
+  const q = Number(row.querySelector('.ei-qty')?.value) || 0;
+  const p = Number(row.querySelector('.ei-price')?.value) || 0;
+  const amt = q * p;
+  const cell = row.querySelector('.ei-amount');
+  if (cell) cell.textContent = '¥' + Math.round(amt).toLocaleString();
+}
+
+function _eiRecalcTotal() {
+  const lines = _eiCollectLines();
+  const total = lines.reduce((s, l) => s + (l.quantity * l.unit_price), 0);
+  document.getElementById('ei-total').textContent = '¥' + Math.round(total).toLocaleString();
+}
+
+function addInvoiceLineRow() {
+  const lines = _eiCollectLines();
+  lines.push({ id: null, label: '', quantity: 1, unit: '式', unit_price: 0, sort_order: lines.length });
+  _eiRenderLines(lines, true);
+  _eiRecalcTotal();
+  // フォーカスを新規行の品目欄に
+  setTimeout(() => {
+    const rows = document.querySelectorAll('#ei-line-items .ei-row');
+    const last = rows[rows.length - 1];
+    last?.querySelector('.ei-label')?.focus();
+  }, 0);
+}
+
+function _eiRemoveRow(i) {
+  const lines = _eiCollectLines();
+  lines.splice(i, 1);
+  _eiRenderLines(lines.length ? lines : [{ id: null, label: '', quantity: 1, unit: '式', unit_price: 0 }], true);
+  _eiRecalcTotal();
 }
 
 async function saveInvoiceEdit() {
   const id = document.getElementById('ei-invoice-id').value;
   const notes = document.getElementById('ei-notes').value.trim() || null;
+  const lines = _eiCollectLines();
+
+  // フロントバリデーション
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.label.trim()) { showToast(`${i+1}行目: 品目を入力してください`, 'error'); return; }
+    if (l.quantity < 0)   { showToast(`${i+1}行目: 数量は0以上にしてください`, 'error'); return; }
+    if (l.unit_price < 0) { showToast(`${i+1}行目: 単価は0以上にしてください`, 'error'); return; }
+  }
+  if (!lines.length && !confirm('明細が0件です。このまま保存しますか？（合計¥0）')) return;
+
   const res = await fetch(`${API}/invoices/${id}`, {
     method: 'PATCH',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ notes })
+    body: JSON.stringify({ notes, line_items: lines })
   });
-  if (!res.ok) { showToast('保存に失敗しました', 'error'); return; }
+  if (!res.ok) {
+    const e = await res.json().catch(()=>({}));
+    showToast('保存に失敗しました' + (e.error ? ': ' + e.error : ''), 'error');
+    return;
+  }
   closeModal('modal-edit-invoice');
+  showToast('保存しました');
   await loadMyInvoices();
 }
 
@@ -6363,13 +6553,55 @@ async function printInvoice(id) {
 
   const costLabel = { base_fee:'動画編集 / 静止画', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
 
-  const itemRows = (inv.invoice_items || []).map((item, idx) => {
+  // sort_order で並べ替え
+  const sortedItems = (inv.invoice_items || []).slice().sort((a, b) => {
+    const sa = a.sort_order ?? 0, sb = b.sort_order ?? 0;
+    if (sa !== sb) return sa - sb;
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  });
+
+  const itemRows = sortedItems.map((item, idx) => {
     const cr = item.creatives || {};
     const cp = cr.projects || project;
     const cc = (cp.clients || client);
     const code = cc.client_code || cc.name?.slice(0,4) || 'XX';
     const seqNo = `${code}-${String(idx+1).padStart(3,'0')}`;
+
+    // 新方式（label が埋まっている）優先
+    if (item.label) {
+      const qty = Number(item.quantity) || 0;
+      const up  = Number(item.unit_price) || 0;
+      const amt = (item.total_amount != null) ? item.total_amount : Math.round(qty * up);
+      const projectLabel = cp.name
+        ? `<div style="font-weight:600;font-size:12px">${cp.name}</div><div style="font-size:10px;color:#888;margin-top:2px">${cc.name||''}</div>`
+        : '<div style="font-weight:600;font-size:12px;color:#888">-</div>';
+      const qtyUnit = `${qty}${item.unit ? ' ' + item.unit : ''}`;
+      return `
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">${projectLabel}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">${item.label}<div style="font-size:10px;color:#888;margin-top:2px">${qtyUnit}</div></td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${up.toLocaleString()}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(amt||0).toLocaleString()}</td>
+        </tr>`;
+    }
+
+    // 旧方式：invoice_item_details ベース（後方互換）
     const details = (item.invoice_item_details || []).filter(d => d.amount > 0);
+    if (!details.length) {
+      return `
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
+            <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
+            <div style="font-size:10px;color:#888;margin-top:2px">${cc.name||''}</div>
+            <div style="font-size:9px;color:#bbb;margin-top:2px;word-break:break-all">${cr.file_name||''}</div>
+          </td>
+          <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">明細</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${(item.total_amount||0).toLocaleString()}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(item.total_amount||0).toLocaleString()}</td>
+        </tr>`;
+    }
     return details.map((d, di) => `
       <tr>
         ${di===0 ? `<td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;white-space:nowrap;color:#555;font-size:11px">${seqNo}</td>
@@ -6489,10 +6721,44 @@ function printClientInvoice(inv) {
   const tax = total - subtotal;
 
   const costLabel = { base_fee:'制作費', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
-  const itemRows = (inv.invoice_items || []).map((item, idx) => {
+  const sortedItems = (inv.invoice_items || []).slice().sort((a, b) => {
+    const sa = a.sort_order ?? 0, sb = b.sort_order ?? 0;
+    if (sa !== sb) return sa - sb;
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  });
+  const itemRows = sortedItems.map((item, idx) => {
     const cr = item.creatives || {};
     const cp = cr.projects || {};
+    if (item.label) {
+      const qty = Number(item.quantity) || 0;
+      const up  = Number(item.unit_price) || 0;
+      const amt = (item.total_amount != null) ? item.total_amount : Math.round(qty * up);
+      const qtyUnit = `${qty}${item.unit ? ' ' + item.unit : ''}`;
+      return `
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;text-align:center;font-size:11px;color:#555">${idx+1}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
+            <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
+          </td>
+          <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">${item.label}<div style="font-size:10px;color:#888;margin-top:2px">${qtyUnit}</div></td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${up.toLocaleString()}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(amt||0).toLocaleString()}</td>
+        </tr>`;
+    }
     const details = (item.invoice_item_details || []).filter(d => d.amount > 0);
+    if (!details.length) {
+      return `
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;text-align:center;font-size:11px;color:#555">${idx+1}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;vertical-align:top">
+            <div style="font-weight:600;font-size:12px">${cp.name||'-'}</div>
+            <div style="font-size:9px;color:#bbb;margin-top:2px;word-break:break-all">${cr.file_name||''}</div>
+          </td>
+          <td style="padding:8px 6px;border:1px solid #ddd;font-size:12px">明細</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px">¥${(item.total_amount||0).toLocaleString()}</td>
+          <td style="padding:8px 6px;border:1px solid #ddd;text-align:right;font-size:12px;font-weight:600">¥${(item.total_amount||0).toLocaleString()}</td>
+        </tr>`;
+    }
     return details.map((d, di) => `
       <tr>
         ${di===0 ? `<td rowspan="${details.length}" style="padding:8px 6px;border:1px solid #ddd;vertical-align:top;text-align:center;font-size:11px;color:#555">${idx+1}</td>
@@ -6569,7 +6835,10 @@ async function deleteInvoice(id) {
   if (!confirm('この請求書を削除しますか？')) return;
   const res = await fetch(`${API}/invoices/${id}`, { method: 'DELETE' });
   if (!res.ok) { showToast('削除に失敗しました', 'error'); return; }
-  await loadMyInvoices();
+  await Promise.all([
+    loadMyInvoices(),
+    hasPermission('invoice.all_view') ? loadAdminInvoices() : Promise.resolve()
+  ]);
 }
 
 async function deactivateMember(id, name) {

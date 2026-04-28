@@ -1315,7 +1315,7 @@ router.get('/invoices', async (req, res) => {
   const { issuer_id, year, month, status } = req.query;
   let query = supabase
     .from('invoices')
-    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,creatives(id,file_name,creative_type),invoice_item_details(*))`)
+    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,label,quantity,unit,unit_price,sort_order,creatives(id,file_name,creative_type),invoice_item_details(*))`)
     .order('created_at', { ascending: false });
   if (issuer_id) query = query.eq('issuer_id', issuer_id);
   if (year) query = query.eq('year', parseInt(year));
@@ -1427,6 +1427,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       ),
       invoice_items(
         id, total_amount, is_special, special_reason,
+        label, quantity, unit, unit_price, sort_order,
         creatives(id, file_name, creative_type,
           projects(id, name, clients(id, name, client_code))
         ),
@@ -1513,11 +1514,16 @@ router.post('/client-invoice/generate', requireAuth, async (req, res) => {
   // invoice_items を一括保存
   const { data: invItems, error: itemsErr } = await supabase
     .from('invoice_items')
-    .insert(items.map(item => ({
+    .insert(items.map((item, idx) => ({
       invoice_id: invoice.id,
       creative_id: item.creative_id,
       total_amount: item.client_fee,
       is_special: false,
+      label: item.file_name || item.label || '明細',
+      quantity: 1,
+      unit: '本',
+      unit_price: item.client_fee || 0,
+      sort_order: idx,
     })))
     .select('id, creative_id');
   if (itemsErr) return res.status(500).json({ error: itemsErr.message });
@@ -1541,16 +1547,98 @@ router.post('/client-invoice/generate', requireAuth, async (req, res) => {
 
 // 請求書 備考更新（draft/rejected のみ）
 router.patch('/invoices/:id', requireAuth, async (req, res) => {
-  const { notes } = req.body;
+  const { notes, line_items } = req.body;
+  const invId = req.params.id;
   const { data: inv, error: fetchErr } = await supabase
-    .from('invoices').select('issuer_id, status').eq('id', req.params.id).single();
+    .from('invoices').select('issuer_id, status').eq('id', invId).single();
   if (fetchErr || !inv) return res.status(404).json({ error: '請求書が見つかりません' });
   if (inv.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role))
     return res.status(403).json({ error: 'アクセス権限がありません' });
-  const { data, error } = await supabase
-    .from('invoices').update({ notes: notes ?? null }).eq('id', req.params.id).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // 明細編集は draft / rejected のみ許可（提出済み以降は不可）
+  if (Array.isArray(line_items)) {
+    if (!['draft', 'rejected'].includes(inv.status)) {
+      return res.status(403).json({ error: '提出済み以降の請求書は明細編集できません' });
+    }
+
+    // バリデーション
+    for (const li of line_items) {
+      if (!li.label || !String(li.label).trim()) {
+        return res.status(400).json({ error: '品目（label）は必須です' });
+      }
+      const q = Number(li.quantity);
+      const up = Number(li.unit_price);
+      if (!Number.isFinite(q) || q < 0) return res.status(400).json({ error: '数量は0以上の数値で入力してください' });
+      if (!Number.isFinite(up) || up < 0) return res.status(400).json({ error: '単価は0以上の数値で入力してください' });
+    }
+
+    // 既存明細を取得（差分計算用）
+    const { data: existing, error: exErr } = await supabase
+      .from('invoice_items').select('id').eq('invoice_id', invId);
+    if (exErr) return res.status(500).json({ error: exErr.message });
+    const existingIds = new Set((existing || []).map(r => r.id));
+    const keepIds = new Set(line_items.filter(li => li.id).map(li => li.id));
+
+    // 削除対象（送られてこなかった既存行）
+    const toDelete = [...existingIds].filter(id => !keepIds.has(id));
+    if (toDelete.length) {
+      // 関連する details を先に削除（FK制約回避）
+      await supabase.from('invoice_item_details').delete().in('invoice_item_id', toDelete);
+      const { error: delErr } = await supabase.from('invoice_items').delete().in('id', toDelete);
+      if (delErr) return res.status(500).json({ error: delErr.message });
+    }
+
+    // 更新 / 新規挿入
+    let totalAmount = 0;
+    for (let i = 0; i < line_items.length; i++) {
+      const li = line_items[i];
+      const quantity   = Number(li.quantity) || 0;
+      const unit_price = Math.round(Number(li.unit_price) || 0);
+      const amount     = Math.round(quantity * unit_price);
+      const sort_order = Number.isFinite(Number(li.sort_order)) ? Number(li.sort_order) : i;
+      totalAmount += amount;
+
+      const row = {
+        invoice_id:   invId,
+        label:        String(li.label).trim(),
+        quantity,
+        unit:         li.unit ? String(li.unit).trim() : '式',
+        unit_price,
+        total_amount: amount,
+        sort_order,
+      };
+
+      if (li.id && existingIds.has(li.id)) {
+        const { error: upErr } = await supabase.from('invoice_items').update(row).eq('id', li.id);
+        if (upErr) return res.status(500).json({ error: upErr.message });
+      } else {
+        const { error: insErr } = await supabase.from('invoice_items').insert(row);
+        if (insErr) return res.status(500).json({ error: insErr.message });
+      }
+    }
+
+    // invoices.total_amount を再計算
+    await supabase.from('invoices').update({
+      total_amount: totalAmount,
+      updated_at: new Date().toISOString(),
+    }).eq('id', invId);
+  }
+
+  // notes 更新（line_items のみ送られてきた場合は notes はそのまま）
+  const updatePayload = {};
+  if (notes !== undefined) updatePayload.notes = notes ?? null;
+  if (Object.keys(updatePayload).length) {
+    updatePayload.updated_at = new Date().toISOString();
+    const { error: nErr } = await supabase
+      .from('invoices').update(updatePayload).eq('id', invId);
+    if (nErr) return res.status(500).json({ error: nErr.message });
+  }
+
+  // 最終結果を返す
+  const { data: result, error: getErr } = await supabase
+    .from('invoices').select('*').eq('id', invId).single();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  res.json(result);
 });
 
 // 請求書作成（選択クリエイティブから生成）
@@ -1626,11 +1714,21 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
                       (rate.ai_fee || 0) + (rate.other_fee || 0);
     totalAmount += itemTotal;
 
+    // label：クリエイティブ名 + 種別
+    const typeLabel = baseType === 'video' ? '動画' : baseType === 'design' ? 'デザイン' : (baseType || '');
+    const label = creative.file_name
+      ? `${creative.file_name}${typeLabel ? ` (${typeLabel})` : ''}`
+      : (typeLabel || '明細');
+
     items.push({
       creative_id: creative.id,
       total_amount: itemTotal,
       is_special: creative.special_payable || false,
       special_reason: creative.special_payable_reason || null,
+      label,
+      quantity: 1,
+      unit: '本',
+      unit_price: itemTotal,
       details: [
         { cost_type: 'base_fee', unit_price: rate.base_fee || 0, amount: rate.base_fee || 0 },
         { cost_type: 'script_fee', unit_price: rate.script_fee || 0, amount: rate.script_fee || 0 },
@@ -1662,12 +1760,17 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   // 明細を一括保存（N+1 → 2クエリに削減）
   const { data: invItems, error: itemsErr } = await supabase
     .from('invoice_items')
-    .insert(items.map(item => ({
+    .insert(items.map((item, idx) => ({
       invoice_id: invoice.id,
       creative_id: item.creative_id,
       total_amount: item.total_amount,
       is_special: item.is_special,
       special_reason: item.special_reason,
+      label: item.label,
+      quantity: item.quantity,
+      unit: item.unit,
+      unit_price: item.unit_price,
+      sort_order: idx,
     })))
     .select('id, creative_id');
   if (itemsErr) return res.status(500).json({ error: itemsErr.message });

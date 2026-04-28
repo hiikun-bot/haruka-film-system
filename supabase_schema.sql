@@ -645,3 +645,47 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   -- システム
   ('admin','system.view_as',true)
 ON CONFLICT (role, permission_key) DO NOTHING;
+
+-- ==================== 請求書明細：自由編集対応（Step 1） ====================
+-- invoice_items に明細行として必要な列を追加（既存の creative_id 紐付け行とも共存）
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS label TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS quantity NUMERIC DEFAULT 1;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT '式';
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS unit_price INTEGER DEFAULT 0;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0;
+
+-- 既存データのバックフィル：
+-- 1) unit_price が 0 のままの行は total_amount をコピー（quantity=1 前提）
+UPDATE invoice_items
+   SET unit_price = COALESCE(total_amount, 0)
+ WHERE (unit_price IS NULL OR unit_price = 0)
+   AND COALESCE(total_amount, 0) > 0;
+
+-- 2) label が NULL の行はクリエイティブ名を埋める（紐付けあり）
+UPDATE invoice_items ii
+   SET label = COALESCE(c.file_name, '明細') ||
+               CASE WHEN c.creative_type IS NOT NULL THEN ' (' || c.creative_type || ')' ELSE '' END
+  FROM creatives c
+ WHERE ii.creative_id = c.id
+   AND ii.label IS NULL;
+
+-- 3) creative 紐付けがない既存行（手動行は今回が初）には汎用ラベル
+UPDATE invoice_items
+   SET label = '明細'
+ WHERE label IS NULL;
+
+-- 4) sort_order を created_at 順で番号付け（同じinvoice内で連番）
+WITH numbered AS (
+  SELECT id,
+         ROW_NUMBER() OVER (PARTITION BY invoice_id ORDER BY created_at, id) - 1 AS rn
+    FROM invoice_items
+   WHERE sort_order IS NULL OR sort_order = 0
+)
+UPDATE invoice_items ii
+   SET sort_order = numbered.rn
+  FROM numbered
+ WHERE ii.id = numbered.id;
+
+-- インデックス（invoice_id × sort_order での並び替えを高速化）
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_sort
+  ON invoice_items(invoice_id, sort_order);
