@@ -6167,6 +6167,7 @@ async function loadAdminInvoices() {
             <button class="btn-primary btn-sm" style="font-size:11px;padding:3px 10px" onclick="approveInvoice('${inv.id}')">承認</button>
             <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595;margin-left:4px" onclick="rejectInvoice('${inv.id}')">差戻</button>
           ` : ''}
+          <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="editInvoice('${inv.id}')" title="明細を表示">明細</button>
           <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="printInvoice('${inv.id}')">🖨</button>
         </td>
       </tr>`;
@@ -6719,6 +6720,8 @@ async function editInvoice(id) {
         quantity: it.quantity ?? 1,
         unit: it.unit || (it.creative_id ? '本' : '式'),
         unit_price: it.unit_price ?? it.total_amount ?? 0,
+        original_unit_price: it.original_unit_price ?? null,
+        price_change_reason: it.price_change_reason ?? null,
       });
     } else {
       // 旧データ互換：詳細から複数行を生成（id は最初の行にだけ振り、それ以外は新規扱い）
@@ -6818,6 +6821,18 @@ function _eiRenderLines(lines, editable) {
 function _eiRowHTML(l, i, editable) {
   const dis = editable ? '' : 'disabled';
   const amt = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+  // 単価変更があった行は「元 ¥X → ¥Y（理由: ◯◯）」をインラインで表示
+  const origUp = (l.original_unit_price != null) ? Number(l.original_unit_price) : null;
+  const curUp  = Number(l.unit_price) || 0;
+  const reason = l.price_change_reason || '';
+  const showChange = reason && origUp != null && origUp !== curUp;
+  const changeBlock = showChange
+    ? `<div style="grid-column:1 / -1;font-size:11px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:4px;padding:4px 8px;margin-top:2px">
+         <span style="font-weight:600">単価変更:</span>
+         元 ¥${origUp.toLocaleString()} → ¥${curUp.toLocaleString()}
+         <span style="color:#78350F;margin-left:6px">（理由: ${esc(reason)}）</span>
+       </div>`
+    : '';
   // 元データを各行のdatasetに保持（creative_id, cost_type, creative_label, creative_date）
   return `
     <div class="ei-row" data-row="${i}"
@@ -6838,6 +6853,7 @@ function _eiRowHTML(l, i, editable) {
       <div class="ei-amount" data-amt-row="${i}" style="font-size:13px;text-align:right;font-weight:600">¥${amt.toLocaleString()}</div>
       <button type="button" class="btn btn-sm" onclick="_eiRemoveRow(${i})" ${dis}
               style="font-size:14px;color:#A32D2D;padding:2px 8px" title="行を削除">×</button>
+      ${changeBlock}
     </div>`;
 }
 
