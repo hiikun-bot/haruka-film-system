@@ -2855,7 +2855,7 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   const { category_id } = req.query;
   let query = supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role), creative_files(id, generated_name, creative_id, creatives(file_name, projects(name, clients(name))))')
+    .select('*, users(full_name, role), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
   if (category_id) query = query.eq('category_id', category_id);
