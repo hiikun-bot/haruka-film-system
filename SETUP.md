@@ -26,12 +26,16 @@
 
 1. https://supabase.com でサインアップ
 2. 「New Project」でプロジェクト作成
-3. `supabase_schema.sql` の内容を全コピー
-4. Supabase の「SQL Editor」に貼り付けて実行
-5. Project Settings → API から以下をメモ：
+3. Project Settings → API から以下をメモ：
    - `Project URL`
    - `anon public` キー
    - `service_role` キー
+4. Project Settings → Database → Connection string から **Transaction pooler** または **Session pooler** のURLをメモ
+   - 例: `postgres://postgres.xxxxxxxx:[PASSWORD]@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres`
+   - `[PASSWORD]` は実際のパスワードに置換しておく
+   - 後述の `DATABASE_URL` に設定すると、初回起動時に `supabase_schema.sql` が自動適用されます
+   - 手動で SQL Editor に貼り付ける作業は **不要** になりました
+   - 自動同期を行わない場合のみ、`supabase_schema.sql` の内容を SQL Editor に貼り付けて実行してください
 
 ---
 
@@ -64,6 +68,7 @@ PRIMARY_COLOR       = #3ECFCA（ブランドカラー）
 SUPABASE_URL        = （Step2のURL）
 SUPABASE_ANON_KEY   = （Step2のanon key）
 SUPABASE_SERVICE_ROLE_KEY = （Step2のservice_role key）
+DATABASE_URL        = （Step2のConnection string / Transaction or Session pooler）
 
 GOOGLE_SERVICE_ACCOUNT_KEY = （Step3のJSONを1行に）
 GOOGLE_DRIVE_ROOT_FOLDER_ID = （Step3のフォルダID）
@@ -71,6 +76,11 @@ GOOGLE_DRIVE_ROOT_FOLDER_ID = （Step3のフォルダID）
 SESSION_SECRET      = （任意のランダム文字列）
 APP_URL             = （RailwayのデプロイURL）
 ```
+
+> **自動スキーマ同期について**
+> `DATABASE_URL` を設定すると、デプロイ・再起動のたびに `supabase_schema.sql` が自動適用されます。
+> スキーマ変更を反映するための手動コピペ作業は不要です（idempotent なので何度実行してもOK）。
+> 自動同期を停止したい場合は `SCHEMA_AUTO_SYNC=false` を環境変数に追加してください。
 
 5. デプロイ完了 → 発行されたURLにアクセス
 
