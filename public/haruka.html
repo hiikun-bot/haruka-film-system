@@ -324,6 +324,161 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .today-dl-row:hover{opacity:.8}
 
 /* ================================================================
+   ナレッジページ - カードグリッド & テーブル
+   ================================================================ */
+.kn-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+  gap:14px;
+  max-width:1400px;
+  margin:0 auto;
+}
+.kn-card{
+  position:relative;
+  background:var(--white);
+  border-radius:12px;
+  border:0.5px solid var(--border);
+  border-left:4px solid var(--em);
+  padding:14px 16px 12px;
+  cursor:pointer;
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-height:170px;
+  overflow:hidden;
+}
+.kn-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 8px 24px rgba(62,207,202,.18), 0 2px 6px rgba(0,0,0,.04);
+}
+.kn-card:hover .kn-card-cta{opacity:1;transform:translateY(0)}
+.kn-card-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.kn-card-cat{
+  font-size:10px;font-weight:700;letter-spacing:.04em;
+  padding:2px 8px;border-radius:10px;
+  background:var(--em-pale);color:var(--em-dark);
+  display:inline-flex;align-items:center;gap:4px;
+}
+.kn-badge-new{
+  font-size:9px;font-weight:800;letter-spacing:.05em;
+  padding:2px 7px;border-radius:8px;
+  background:linear-gradient(135deg,#fde68a,#fcd34d);color:#78350f;
+  box-shadow:0 1px 3px rgba(252,211,77,.5);
+  animation:kn-newPulse 2.4s ease-in-out infinite;
+}
+@keyframes kn-newPulse{
+  0%,100%{box-shadow:0 1px 3px rgba(252,211,77,.5)}
+  50%{box-shadow:0 1px 8px rgba(252,211,77,.85)}
+}
+.kn-unread-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:#3ECFCA;
+  box-shadow:0 0 0 3px rgba(62,207,202,.18);
+  display:inline-block;flex-shrink:0;
+}
+.kn-card-fav{
+  position:absolute;top:10px;right:10px;
+  width:28px;height:28px;border-radius:50%;
+  border:none;background:transparent;cursor:pointer;
+  font-size:16px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  color:#cbd5e1;transition:transform .15s, color .15s, background .15s;
+}
+.kn-card-fav:hover{background:#fff7ed;transform:scale(1.15)}
+.kn-card-fav.on{color:#f59e0b}
+.kn-card-project{
+  font-size:11px;color:var(--em-dark);font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  padding-right:32px;
+}
+.kn-card-filename{
+  font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.kn-card-comment{
+  font-size:13px;line-height:1.55;color:var(--text);
+  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
+  overflow:hidden;flex:1;white-space:pre-wrap;word-break:break-word;
+}
+.kn-card-foot{
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:10px;color:var(--text-muted);margin-top:auto;padding-top:6px;
+  border-top:0.5px dashed var(--border-light);
+}
+.kn-card-author{display:inline-flex;align-items:center;gap:6px}
+.kn-avatar{
+  width:18px;height:18px;border-radius:50%;
+  background:var(--em);color:#fff;
+  font-size:10px;font-weight:700;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.kn-card-cta{
+  position:absolute;bottom:10px;right:10px;
+  font-size:11px;font-weight:700;color:#fff;background:var(--em-dark);
+  padding:5px 10px;border-radius:8px;
+  opacity:0;transform:translateY(4px);transition:opacity .2s, transform .2s;
+  pointer-events:none;
+  box-shadow:0 4px 12px rgba(43,184,180,.4);
+}
+
+/* カテゴリー別アクセントカラー（左ボーダー & バッジ） */
+.kn-card[data-cat-color="hook"]   {border-left-color:#f59e0b}
+.kn-card[data-cat-color="hook"] .kn-card-cat{background:#fef3c7;color:#92400e}
+.kn-card[data-cat-color="story"]  {border-left-color:#3b82f6}
+.kn-card[data-cat-color="story"] .kn-card-cat{background:#dbeafe;color:#1e40af}
+.kn-card[data-cat-color="telop"]  {border-left-color:#10b981}
+.kn-card[data-cat-color="telop"] .kn-card-cat{background:#d1fae5;color:#065f46}
+.kn-card[data-cat-color="tempo"]  {border-left-color:#8b5cf6}
+.kn-card[data-cat-color="tempo"] .kn-card-cat{background:#ede9fe;color:#5b21b6}
+.kn-card[data-cat-color="effect"] {border-left-color:#ef4444}
+.kn-card[data-cat-color="effect"] .kn-card-cat{background:#fee2e2;color:#991b1b}
+.kn-card[data-cat-color="sound"]  {border-left-color:#ec4899}
+.kn-card[data-cat-color="sound"] .kn-card-cat{background:#fce7f3;color:#9f1239}
+.kn-card[data-cat-color="design"] {border-left-color:#06b6d4}
+.kn-card[data-cat-color="design"] .kn-card-cat{background:#cffafe;color:#155e75}
+.kn-card[data-cat-color="other"]  {border-left-color:#94a3b8}
+.kn-card[data-cat-color="other"] .kn-card-cat{background:#f1f5f9;color:#475569}
+
+/* テーブル行 */
+#kn-table td{font-size:13px}
+#kn-table tbody tr{cursor:pointer}
+#kn-table tbody tr.kn-row-unread td:first-child{position:relative}
+.kn-row-cat{
+  font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;
+  background:var(--em-pale);color:var(--em-dark);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px;
+}
+.kn-row-cat[data-cat-color="hook"]   {background:#fef3c7;color:#92400e}
+.kn-row-cat[data-cat-color="story"]  {background:#dbeafe;color:#1e40af}
+.kn-row-cat[data-cat-color="telop"]  {background:#d1fae5;color:#065f46}
+.kn-row-cat[data-cat-color="tempo"]  {background:#ede9fe;color:#5b21b6}
+.kn-row-cat[data-cat-color="effect"] {background:#fee2e2;color:#991b1b}
+.kn-row-cat[data-cat-color="sound"]  {background:#fce7f3;color:#9f1239}
+.kn-row-cat[data-cat-color="design"] {background:#cffafe;color:#155e75}
+.kn-row-cat[data-cat-color="other"]  {background:#f1f5f9;color:#475569}
+.kn-row-comment{
+  max-width:380px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;white-space:normal;line-height:1.5;
+}
+.kn-row-act{display:inline-flex;align-items:center;gap:4px}
+.kn-row-act button{
+  background:transparent;border:none;cursor:pointer;font-size:14px;
+  width:26px;height:26px;border-radius:6px;
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--text-muted);transition:background .12s, color .12s;
+}
+.kn-row-act button:hover{background:var(--em-pale);color:var(--em-dark)}
+.kn-row-act button.on{color:#f59e0b}
+.kn-sort-arr{font-size:9px;color:var(--text-muted);margin-left:2px}
+.kn-empty{
+  text-align:center;padding:60px 20px;color:var(--text-muted);
+  background:var(--surface);border-radius:12px;border:1px dashed var(--border);
+}
+.kn-empty-icon{font-size:42px;margin-bottom:10px;opacity:.5}
+
+/* ================================================================
    モバイル対応 (max-width:768px) - スマホ専用UIレイヤー
    ※ PC版には一切影響しない。JS/HTML は触らず CSS のみで上書き
    ================================================================ */
@@ -539,9 +694,17 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   #page-knowledge .toolbar-row{flex-direction:column !important;align-items:stretch !important;gap:8px !important}
   #page-knowledge .form-select,
   #page-knowledge .form-input{width:100% !important}
-  /* 動画/デザインタブを左寄せ＆全幅 */
+  /* 動画/デザインタブ・表示切替を全幅 */
   #page-knowledge .toolbar-row > div[style*="background:var(--em-pale)"]{align-self:stretch !important;justify-content:center}
   #page-knowledge > div:nth-child(2){padding:12px !important}
+  /* スマホはカード1列 */
+  .kn-grid{grid-template-columns:1fr !important;gap:10px}
+  .kn-card{min-height:auto}
+  .kn-card-comment{-webkit-line-clamp:3}
+  /* 件数バッジは右寄せだとはみ出る */
+  #kn-count-badge{margin-left:0 !important}
+  /* テーブルはスマホでは横スクロール */
+  #kn-table-wrap{font-size:12px}
 
   /* --- メンバーページ --- */
   /* 動画/デザインタブを全幅化 */
@@ -2502,25 +2665,54 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- ナレッジページ -->
 <div id="page-knowledge" class="page">
   <div class="toolbar" style="position:sticky;top:88px;z-index:99">
-    <div class="toolbar-row" style="flex-wrap:wrap;gap:10px">
+    <div class="toolbar-row" style="flex-wrap:wrap;gap:10px;align-items:center">
       <span style="font-size:14px;font-weight:600;color:var(--text)">📚 ナレッジ</span>
       <!-- 動画/デザインタブ -->
       <div style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
         <button id="kn-tab-video" onclick="setKnowledgeTab('video')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🎬 動画</button>
         <button id="kn-tab-design" onclick="setKnowledgeTab('design')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">🎨 デザイン</button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select class="form-select" id="kn-filter-category" onchange="loadKnowledgePage()" style="width:180px;font-size:13px">
-          <option value="">すべてのカテゴリー</option>
-        </select>
-        <input class="form-input" id="kn-filter-text" placeholder="キーワード検索..." oninput="loadKnowledgePage()" style="width:200px;font-size:13px">
+      <!-- 表示モード切替 -->
+      <div id="kn-view-toggle" style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
+        <button id="kn-view-card" onclick="setKnowledgeView('card')" style="padding:5px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🖼️ カード</button>
+        <button id="kn-view-table" onclick="setKnowledgeView('table')" style="padding:5px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">📋 テーブル</button>
       </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select class="form-select" id="kn-filter-category" onchange="loadKnowledgePage()" style="width:200px;font-size:13px">
+          <option value="">すべてのカテゴリー</option>
+          <option value="__new__">✨ NEW のみ（7日以内）</option>
+          <option value="__fav__">⭐ お気に入りのみ</option>
+        </select>
+        <input class="form-input" id="kn-filter-text" placeholder="🔍 コメント・ファイル・投稿者で検索..." oninput="loadKnowledgePageDebounced()" style="width:240px;font-size:13px">
+      </div>
+      <span id="kn-count-badge" class="count-badge" style="margin-left:auto">0 件</span>
     </div>
   </div>
   <div style="padding:20px 24px">
-    <div id="kn-list" style="max-width:900px;margin:0 auto">
-      <div class="loading">読み込み中...</div>
+    <!-- カード表示 -->
+    <div id="kn-grid" class="kn-grid" style="display:none"></div>
+    <!-- テーブル表示 -->
+    <div id="kn-table-wrap" class="table-wrap" style="display:none;background:var(--white);border-radius:12px;border:0.5px solid var(--border);overflow:hidden">
+      <table id="kn-table" style="min-width:900px">
+        <thead>
+          <tr>
+            <th style="cursor:pointer;width:40px"></th>
+            <th onclick="setKnowledgeSort('created_at')" style="cursor:pointer">日付 <span class="kn-sort-arr" data-key="created_at"></span></th>
+            <th onclick="setKnowledgeSort('category')" style="cursor:pointer">カテゴリー <span class="kn-sort-arr" data-key="category"></span></th>
+            <th onclick="setKnowledgeSort('project')" style="cursor:pointer">案件 <span class="kn-sort-arr" data-key="project"></span></th>
+            <th>ファイル</th>
+            <th onclick="setKnowledgeSort('author')" style="cursor:pointer">投稿者 <span class="kn-sort-arr" data-key="author"></span></th>
+            <th>コメント</th>
+            <th style="width:80px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="kn-tbody"></tbody>
+      </table>
     </div>
+    <!-- ロード/空状態 -->
+    <div id="kn-status" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px"></div>
+    <!-- 無限スクロール用 sentinel -->
+    <div id="kn-scroll-sentinel" style="height:1px"></div>
   </div>
 </div>
 
@@ -10466,40 +10658,355 @@ function setKnowledgeTab(tab) {
   initKnowledgePage();
 }
 
+// ---------- 表示モード（カード/テーブル） ----------
+let _knViewMode = (typeof localStorage !== 'undefined' && localStorage.getItem('knViewMode')) || 'card';
+function setKnowledgeView(mode) {
+  _knViewMode = (mode === 'table') ? 'table' : 'card';
+  try { localStorage.setItem('knViewMode', _knViewMode); } catch(e){}
+  ['card','table'].forEach(m => {
+    const btn = document.getElementById(`kn-view-${m}`);
+    if (!btn) return;
+    const active = m === _knViewMode;
+    btn.style.background = active ? 'var(--em)' : 'transparent';
+    btn.style.color = active ? '#fff' : 'var(--em-dark)';
+  });
+  _knRenderCurrent();
+}
+
+// ---------- お気に入り / 既読（localStorage） ----------
+function _knReadFavSet() {
+  try { return new Set(JSON.parse(localStorage.getItem('knFavorites') || '[]')); }
+  catch(e) { return new Set(); }
+}
+function _knSaveFavSet(set) {
+  try { localStorage.setItem('knFavorites', JSON.stringify(Array.from(set))); } catch(e){}
+}
+function knIsFavorite(id) { return _knReadFavSet().has(String(id)); }
+function knToggleFavorite(id, event) {
+  if (event) { event.stopPropagation(); event.preventDefault(); }
+  const set = _knReadFavSet();
+  const key = String(id);
+  if (set.has(key)) set.delete(key); else set.add(key);
+  _knSaveFavSet(set);
+  _knRenderCurrent();
+}
+function _knReadSet() {
+  try { return new Set(JSON.parse(localStorage.getItem('knReadIds') || '[]')); }
+  catch(e) { return new Set(); }
+}
+function _knSaveReadSet(set) {
+  try {
+    // 直近2000件まで保持
+    const arr = Array.from(set).slice(-2000);
+    localStorage.setItem('knReadIds', JSON.stringify(arr));
+  } catch(e){}
+}
+function knIsRead(id) { return _knReadSet().has(String(id)); }
+function knMarkRead(id) {
+  const set = _knReadSet();
+  set.add(String(id));
+  _knSaveReadSet(set);
+}
+
+// ---------- カテゴリーカラー判定 ----------
+function knCategoryColor(name) {
+  if (!name) return 'other';
+  const n = String(name).toLowerCase();
+  if (/(冒頭|フック|hook|オープニング|opening|つかみ)/i.test(n)) return 'hook';
+  if (/(構成|ストーリー|story|シナリオ|台本|流れ)/i.test(n)) return 'story';
+  if (/(テロップ|字幕|telop|caption|文字)/i.test(n)) return 'telop';
+  if (/(テンポ|リズム|tempo|スピード|間|ペース)/i.test(n)) return 'tempo';
+  if (/(エフェクト|effect|演出|モーション|アニメ|トランジ)/i.test(n)) return 'effect';
+  if (/(音|sound|bgm|se|サウンド|ナレ)/i.test(n)) return 'sound';
+  if (/(色|配色|デザイン|design|フォント|レイアウト|構図)/i.test(n)) return 'design';
+  return 'other';
+}
+
+// ---------- NEW判定 ----------
+function knIsNew(createdAt) {
+  if (!createdAt) return false;
+  const t = new Date(createdAt).getTime();
+  if (isNaN(t)) return false;
+  return (Date.now() - t) < 7 * 24 * 60 * 60 * 1000;
+}
+
+// ---------- ソート ----------
+let _knSortKey = 'created_at';
+let _knSortDir = 'desc';
+function setKnowledgeSort(key) {
+  if (_knSortKey === key) {
+    _knSortDir = (_knSortDir === 'asc') ? 'desc' : 'asc';
+  } else {
+    _knSortKey = key;
+    _knSortDir = 'desc';
+  }
+  _knRenderCurrent();
+}
+
+// ---------- データ管理 ----------
+let _knAllData = [];   // APIから取った全件
+let _knFiltered = [];  // フィルタ済み
+let _knRenderedCount = 0;
+const KN_PAGE = 50;
+
+let _knDebounceTimer = null;
+function loadKnowledgePageDebounced() {
+  clearTimeout(_knDebounceTimer);
+  _knDebounceTimer = setTimeout(() => loadKnowledgePage(), 200);
+}
+
 async function initKnowledgePage() {
+  // 表示切替トグルの初期化
+  setKnowledgeView(_knViewMode);
   // 現在のタブに応じたカテゴリーを取得
   knowledgeCategories = await loadKnowledgeCategories(currentKnowledgeTab);
   const sel = document.getElementById('kn-filter-category');
   if (sel) {
     sel.innerHTML = '<option value="">すべてのカテゴリー</option>' +
+      '<option value="__new__">✨ NEW のみ（7日以内）</option>' +
+      '<option value="__fav__">⭐ お気に入りのみ</option>' +
       knowledgeCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   }
+  _knSetupInfiniteScroll();
   loadKnowledgePage();
 }
 
-async function loadKnowledgePage() {
-  const el = document.getElementById('kn-list');
-  el.innerHTML = '<div class="loading">読み込み中...</div>';
-  const categoryId = document.getElementById('kn-filter-category').value;
-  const keyword    = document.getElementById('kn-filter-text').value.trim().toLowerCase();
+let _knObserver = null;
+function _knSetupInfiniteScroll() {
+  const sentinel = document.getElementById('kn-scroll-sentinel');
+  if (!sentinel || _knObserver) return;
+  if (typeof IntersectionObserver === 'undefined') return;
+  _knObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting && _knRenderedCount < _knFiltered.length) {
+        _knAppendNext();
+      }
+    }
+  }, { rootMargin: '300px' });
+  _knObserver.observe(sentinel);
+}
 
+async function loadKnowledgePage() {
+  const grid = document.getElementById('kn-grid');
+  const tbl  = document.getElementById('kn-table-wrap');
+  const tbody = document.getElementById('kn-tbody');
+  const status = document.getElementById('kn-status');
+  if (grid)  grid.innerHTML  = '';
+  if (tbody) tbody.innerHTML = '';
+  if (status){ status.style.display=''; status.textContent='読み込み中...'; }
+  // 表示モードに応じてコンテナ表示
+  if (grid) grid.style.display = (_knViewMode === 'card')  ? 'grid' : 'none';
+  if (tbl)  tbl.style.display  = (_knViewMode === 'table') ? '' : 'none';
+
+  const filterVal = document.getElementById('kn-filter-category').value;
   const params = new URLSearchParams();
-  if (categoryId) params.set('category_id', categoryId);
+  // __new__ / __fav__ は擬似カテゴリのためサーバーには送らない
+  if (filterVal && filterVal !== '__new__' && filterVal !== '__fav__') {
+    params.set('category_id', filterVal);
+  }
   const res = await fetch(`${API}/knowledge?${params}`);
   if (!res.ok) {
     let errMsg = '取得失敗';
     try { const e = await res.json(); errMsg = e.error || errMsg; } catch {}
-    el.innerHTML = `<div style="color:#E24B4A;padding:20px">取得失敗：${errMsg}</div>`;
+    if (status){ status.style.display=''; status.innerHTML = `<div style="color:#E24B4A">取得失敗：${esc(errMsg)}</div>`; }
     return;
   }
-  let list = await res.json();
-  if (keyword) list = list.filter(c => c.comment?.toLowerCase().includes(keyword) || c.master_items?.name?.toLowerCase().includes(keyword));
+  _knAllData = await res.json();
+  _knApplyFilterAndRender();
+}
 
+function _knApplyFilterAndRender() {
+  const filterVal = document.getElementById('kn-filter-category').value;
+  const keyword   = (document.getElementById('kn-filter-text').value || '').trim().toLowerCase();
+  const favSet    = _knReadFavSet();
+
+  let list = _knAllData.slice();
+  // 擬似フィルター
+  if (filterVal === '__new__') list = list.filter(c => knIsNew(c.created_at));
+  else if (filterVal === '__fav__') list = list.filter(c => favSet.has(String(c.id)));
+  // 全文検索: コメント / ファイル名 / 投稿者名 / カテゴリ名 / 案件名
+  if (keyword) {
+    list = list.filter(c => {
+      const blob = [
+        c.comment,
+        c.master_items?.name,
+        c.creative_files?.generated_name,
+        c.users?.full_name,
+        c.creative_files?.creatives?.projects?.name,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(keyword);
+    });
+  }
+  // ソート（テーブルモードのみキー切替可、カードは created_at desc 固定）
+  const dir = _knSortDir === 'asc' ? 1 : -1;
+  const key = (_knViewMode === 'table') ? _knSortKey : 'created_at';
+  const _kdir = (_knViewMode === 'table') ? dir : -1;
+  list.sort((a,b) => {
+    let av, bv;
+    switch(key){
+      case 'category':
+        av = a.master_items?.name || ''; bv = b.master_items?.name || ''; break;
+      case 'project':
+        av = a.creative_files?.creatives?.projects?.name || '';
+        bv = b.creative_files?.creatives?.projects?.name || ''; break;
+      case 'author':
+        av = a.users?.full_name || ''; bv = b.users?.full_name || ''; break;
+      default:
+        av = new Date(a.created_at).getTime() || 0;
+        bv = new Date(b.created_at).getTime() || 0;
+    }
+    if (av < bv) return -1 * _kdir;
+    if (av > bv) return  1 * _kdir;
+    return 0;
+  });
+
+  _knFiltered = list;
+  _knRenderedCount = 0;
+  // 件数バッジ
+  const cb = document.getElementById('kn-count-badge');
+  if (cb) cb.textContent = `${list.length} 件`;
+
+  // ヘッダーのソート矢印更新
+  document.querySelectorAll('.kn-sort-arr').forEach(s => {
+    if (s.dataset.key === _knSortKey) s.textContent = _knSortDir === 'asc' ? '▲' : '▼';
+    else s.textContent = '';
+  });
+
+  // 空状態
+  const grid = document.getElementById('kn-grid');
+  const tbl  = document.getElementById('kn-table-wrap');
+  const status = document.getElementById('kn-status');
   if (!list.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">ナレッジがまだありません</div>';
+    if (grid) grid.style.display='none';
+    if (tbl)  tbl.style.display='none';
+    if (status){
+      status.style.display='';
+      status.innerHTML = `<div class="kn-empty">
+        <div class="kn-empty-icon">📭</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px">該当ナレッジがありません</div>
+        <div style="font-size:12px">フィルターやキーワードを変更してみてください</div>
+      </div>`;
+    }
     return;
   }
-  el.innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${list.length}件</div>` + renderKnowledgeCards(list, false);
+  if (status) status.style.display='none';
+  if (_knViewMode === 'card') {
+    if (grid) grid.style.display='grid';
+    if (tbl)  tbl.style.display='none';
+  } else {
+    if (grid) grid.style.display='none';
+    if (tbl)  tbl.style.display='';
+  }
+  _knAppendNext();
+}
+
+function _knRenderCurrent() {
+  // フィルタはそのまま、表示だけ切替（ソート可変なので再ソート）
+  _knApplyFilterAndRender();
+}
+
+function _knAppendNext() {
+  const start = _knRenderedCount;
+  const end   = Math.min(start + KN_PAGE, _knFiltered.length);
+  const slice = _knFiltered.slice(start, end);
+  if (_knViewMode === 'card') _knRenderCardChunk(slice);
+  else _knRenderTableChunk(slice);
+  _knRenderedCount = end;
+}
+
+function _knRenderCardChunk(list) {
+  const grid = document.getElementById('kn-grid');
+  if (!grid) return;
+  const html = list.map(c => {
+    const cat   = c.master_items;
+    const catColor = knCategoryColor(cat?.name);
+    const isNew = knIsNew(c.created_at);
+    const isUnread = !knIsRead(c.id);
+    const isFav    = knIsFavorite(c.id);
+    const author = c.users?.full_name || '';
+    const initial = author ? author.trim().charAt(0).toUpperCase() : '?';
+    const project = c.creative_files?.creatives?.projects?.name || '';
+    const filename = c.creative_files?.generated_name || '';
+    const driveFileId = c.creative_files?.drive_file_id || '';
+    const fileRecordId = c.creative_files?.id || '';
+    return `
+      <div class="kn-card" data-cat-color="${catColor}" data-id="${esc(c.id)}"
+        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}')">
+        <button class="kn-card-fav ${isFav?'on':''}" title="お気に入り" onclick="knToggleFavorite('${esc(c.id)}', event)">${isFav?'⭐':'☆'}</button>
+        <div class="kn-card-head">
+          ${isUnread ? '<span class="kn-unread-dot" title="未読"></span>' : ''}
+          ${cat ? `<span class="kn-card-cat">${esc(cat.name)}</span>` : ''}
+          ${isNew ? '<span class="kn-badge-new">✨ NEW</span>' : ''}
+        </div>
+        <div class="kn-card-project">${esc(project || '—')}</div>
+        <div class="kn-card-filename">${esc(filename)}</div>
+        <div class="kn-card-comment">${esc(c.comment || '')}</div>
+        <div class="kn-card-foot">
+          <span class="kn-card-author"><span class="kn-avatar">${esc(initial)}</span>${esc(author)}</span>
+          <span>${new Date(c.created_at).toLocaleDateString('ja-JP')}</span>
+        </div>
+        <span class="kn-card-cta">▶ プレビュー</span>
+      </div>`;
+  }).join('');
+  grid.insertAdjacentHTML('beforeend', html);
+}
+
+function _knRenderTableChunk(list) {
+  const tbody = document.getElementById('kn-tbody');
+  if (!tbody) return;
+  const html = list.map(c => {
+    const cat = c.master_items;
+    const catColor = knCategoryColor(cat?.name);
+    const isNew = knIsNew(c.created_at);
+    const isUnread = !knIsRead(c.id);
+    const isFav    = knIsFavorite(c.id);
+    const author = c.users?.full_name || '';
+    const initial = author ? author.trim().charAt(0).toUpperCase() : '?';
+    const project = c.creative_files?.creatives?.projects?.name || '';
+    const filename = c.creative_files?.generated_name || '';
+    const driveFileId = c.creative_files?.drive_file_id || '';
+    const fileRecordId = c.creative_files?.id || '';
+    const dateStr = new Date(c.created_at).toLocaleDateString('ja-JP');
+    return `
+      <tr class="${isUnread?'kn-row-unread':''}" data-id="${esc(c.id)}"
+        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}')">
+        <td>${isUnread ? '<span class="kn-unread-dot" title="未読"></span>' : ''}</td>
+        <td style="white-space:nowrap">${esc(dateStr)} ${isNew?'<span class="kn-badge-new" style="margin-left:4px">NEW</span>':''}</td>
+        <td>${cat ? `<span class="kn-row-cat" data-cat-color="${catColor}">${esc(cat.name)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(project || '—')}</td>
+        <td style="max-width:200px;font-family:ui-monospace,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis">${esc(filename)}</td>
+        <td style="white-space:nowrap"><span class="kn-card-author"><span class="kn-avatar">${esc(initial)}</span>${esc(author)}</span></td>
+        <td><div class="kn-row-comment">${esc(c.comment || '')}</div></td>
+        <td>
+          <span class="kn-row-act" onclick="event.stopPropagation()">
+            <button title="プレビュー" onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}')">👁️</button>
+            <button class="${isFav?'on':''}" title="お気に入り" onclick="knToggleFavorite('${esc(c.id)}', event)">${isFav?'⭐':'☆'}</button>
+          </span>
+        </td>
+      </tr>`;
+  }).join('');
+  tbody.insertAdjacentHTML('beforeend', html);
+}
+
+function knOpenItem(id, driveFileId, filename, fileRecordId) {
+  // 既読マーク
+  knMarkRead(id);
+  // プレビュー起動（既存ロジック流用）
+  if (typeof openFilePreview === 'function' && fileRecordId) {
+    openFilePreview(driveFileId || null, filename, '', fileRecordId, '', '');
+  }
+  // UIに既読を即時反映
+  const card = document.querySelector(`.kn-card[data-id="${CSS.escape(String(id))}"]`);
+  if (card) {
+    const dot = card.querySelector('.kn-unread-dot');
+    if (dot) dot.remove();
+  }
+  const row = document.querySelector(`#kn-tbody tr[data-id="${CSS.escape(String(id))}"]`);
+  if (row) {
+    row.classList.remove('kn-row-unread');
+    const dot = row.querySelector('.kn-unread-dot');
+    if (dot) dot.remove();
+  }
 }
 
 async function handleUploadFileSelect(input) {
