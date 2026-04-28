@@ -127,6 +127,26 @@ tr.row-help td{background:#FFFBF2}
   100% { background-position: -200% center; }
 }
 
+/* プレビュー動画 ローディングオーバーレイ */
+@keyframes fp-spin { to { transform: rotate(360deg); } }
+@keyframes fp-fade-out { to { opacity: 0; } }
+#fp-loading-overlay{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:rgba(0,0,0,0.55);z-index:6;gap:14px;pointer-events:none;
+  transition:opacity .25s ease;
+}
+#fp-loading-overlay.hidden{opacity:0;pointer-events:none}
+.fp-spinner{
+  width:46px;height:46px;border-radius:50%;
+  border:3px solid rgba(168,237,234,0.25);
+  border-top-color:#3ECFCA;
+  animation:fp-spin .9s linear infinite;
+}
+#fp-loading-text{color:#A8EDEA;font-size:12px;font-family:'Noto Sans JP',sans-serif;letter-spacing:0.04em;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
+#fp-loading-progress{width:160px;height:3px;background:rgba(168,237,234,0.18);border-radius:2px;overflow:hidden;display:none}
+#fp-loading-progress > div{height:100%;width:0%;background:linear-gradient(90deg,#3ECFCA,#A8EDEA);border-radius:2px;transition:width .2s ease}
+#fp-loading-slow{color:#fde68a;font-size:11px;display:none}
+
 /* 納品バッジ キラキラエフェクト */
 @keyframes delivered-shimmer {
   0%   { background-position: 200% center; }
@@ -2835,7 +2855,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#111">
 
         <!-- 動画エリア -->
-        <div id="fp-player" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer" onclick="fpClickPlayer(event)">
+        <div id="fp-player" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer;position:relative" onclick="fpClickPlayer(event)">
           <div style="color:#555;font-size:13px">読み込み中...</div>
         </div>
 
@@ -9386,6 +9406,7 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     if (isVideo) {
       player.innerHTML = `<video id="fp-video" src="${API}/files/${driveFileId}/stream" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
       ctrlBar.style.display = '';
+      fpShowLoading('動画を読み込み中...');
       setTimeout(() => {
         const v = document.getElementById('fp-video');
         if (!v) return;
@@ -9395,13 +9416,24 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         v.addEventListener('ended',    () => document.getElementById('fp-play-btn').textContent = '▶');
         v.addEventListener('timeupdate', fpUpdateSeekbar);
         v.addEventListener('loadedmetadata', () => { fpUpdateSeekbar(); fpRenderLikeMarkers(_fpLikes); });
+        // ローディング制御
+        v.addEventListener('loadstart',     () => fpShowLoading('動画を読み込み中...'));
+        v.addEventListener('progress',      () => fpUpdateLoadingProgress(v));
+        v.addEventListener('canplay',       () => fpHideLoading());
+        v.addEventListener('loadeddata',    () => fpHideLoading());
+        v.addEventListener('waiting',       () => fpShowLoading('バッファリング中...'));
+        v.addEventListener('playing',       () => fpHideLoading());
+        v.addEventListener('error',         () => fpShowLoadingError('動画の読み込みに失敗しました'));
+        v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
       }, 100);
     } else if (isImage) {
       ctrlBar.style.display = 'none';
-      player.innerHTML = `<img src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain">`;
+      fpShowLoading('画像を読み込み中...');
+      player.innerHTML = `<img src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain" onload="fpHideLoading()" onerror="fpShowLoadingError('画像の読み込みに失敗しました')">`;
     } else {
       ctrlBar.style.display = 'none';
-      player.innerHTML = `<iframe src="https://drive.google.com/file/d/${driveFileId}/preview" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen></iframe>`;
+      fpShowLoading('プレビューを読み込み中...');
+      player.innerHTML = `<iframe src="https://drive.google.com/file/d/${driveFileId}/preview" style="width:100%;height:100%;border:none" allow="autoplay" allowfullscreen onload="fpHideLoading()"></iframe>`;
     }
   } else {
     ctrlBar.style.display = 'none';
@@ -9446,6 +9478,7 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
 }
 
 function closeFilePreview() {
+  fpHideLoading();
   document.getElementById('fp-player').innerHTML = '';
   document.getElementById('fp-controls-bar').style.display = 'none';
   document.getElementById('modal-file-preview').style.display = 'none';
@@ -9456,6 +9489,73 @@ function closeFilePreview() {
   if (_fpClipInterval) { clearInterval(_fpClipInterval); _fpClipInterval = null; }
   _fpLikes = [];
   _fpABState = 0; _fpAB = { a: null, b: null }; _fpSpeed = 1.0; _fpLoopEnabled = false;
+}
+
+// ===== プレビュー ローディングインジケーター =====
+let _fpLoadingSlowTimer = null;
+function fpEnsureLoadingOverlay() {
+  const player = document.getElementById('fp-player');
+  if (!player) return null;
+  let ov = document.getElementById('fp-loading-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'fp-loading-overlay';
+    ov.innerHTML = `
+      <div class="fp-spinner"></div>
+      <div id="fp-loading-text">読み込み中...</div>
+      <div id="fp-loading-progress"><div></div></div>
+      <div id="fp-loading-slow">読み込みに時間がかかっています...</div>
+    `;
+    player.appendChild(ov);
+  } else if (ov.parentElement !== player) {
+    player.appendChild(ov);
+  }
+  return ov;
+}
+function fpShowLoading(text) {
+  const ov = fpEnsureLoadingOverlay();
+  if (!ov) return;
+  ov.classList.remove('hidden');
+  ov.style.display = '';
+  const t = document.getElementById('fp-loading-text');
+  if (t && text) t.textContent = text;
+  const slow = document.getElementById('fp-loading-slow');
+  if (slow) slow.style.display = 'none';
+  if (_fpLoadingSlowTimer) clearTimeout(_fpLoadingSlowTimer);
+  _fpLoadingSlowTimer = setTimeout(() => {
+    const s = document.getElementById('fp-loading-slow');
+    if (s) s.style.display = '';
+  }, 5000);
+}
+function fpHideLoading() {
+  if (_fpLoadingSlowTimer) { clearTimeout(_fpLoadingSlowTimer); _fpLoadingSlowTimer = null; }
+  const ov = document.getElementById('fp-loading-overlay');
+  if (!ov) return;
+  ov.classList.add('hidden');
+  setTimeout(() => { if (ov && ov.classList.contains('hidden')) ov.style.display = 'none'; }, 280);
+}
+function fpUpdateLoadingProgress(video) {
+  if (!video || !video.buffered || !video.buffered.length || !video.duration || !isFinite(video.duration)) return;
+  const bar = document.getElementById('fp-loading-progress');
+  const fill = bar && bar.firstElementChild;
+  if (!bar || !fill) return;
+  const end = video.buffered.end(video.buffered.length - 1);
+  const pct = Math.max(0, Math.min(100, (end / video.duration) * 100));
+  bar.style.display = '';
+  fill.style.width = pct.toFixed(1) + '%';
+  const t = document.getElementById('fp-loading-text');
+  if (t) t.textContent = `動画を読み込み中... ${Math.round(pct)}%`;
+}
+function fpShowLoadingError(msg) {
+  if (_fpLoadingSlowTimer) { clearTimeout(_fpLoadingSlowTimer); _fpLoadingSlowTimer = null; }
+  const ov = fpEnsureLoadingOverlay();
+  if (!ov) return;
+  ov.classList.remove('hidden');
+  ov.style.display = '';
+  ov.innerHTML = `
+    <div style="font-size:32px;line-height:1">⚠️</div>
+    <div style="color:#fca5a5;font-size:13px;font-weight:500;text-align:center;padding:0 16px">${msg || '読み込みに失敗しました'}</div>
+  `;
 }
 
 function fpKeyHandler(e) {
