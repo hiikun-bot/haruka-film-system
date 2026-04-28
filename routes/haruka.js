@@ -1900,12 +1900,31 @@ router.post('/invoices/:id/issue', requireAuth, async (req, res) => {
 
 // 請求書提出（draft → submitted）
 router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
+  const id = req.params.id;
+  const { data: existing, error: fetchErr } = await supabase
+    .from('invoices')
+    .select('id, status, issuer_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchErr) {
+    console.error('[invoices/submit] fetch error:', fetchErr);
+    return res.status(500).json({ error: `取得失敗: ${fetchErr.message}` });
+  }
+  if (!existing) return res.status(404).json({ error: '請求書が見つかりません' });
+  if (existing.status !== 'draft' && existing.status !== 'rejected') {
+    return res.status(400).json({ error: `この状態では提出できません（現在: ${existing.status}）` });
+  }
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', req.params.id)
-    .select().single();
-  if (error) return res.status(500).json({ error: error.message });
+    .eq('id', id)
+    .select()
+    .maybeSingle();
+  if (error) {
+    console.error('[invoices/submit] update error:', error);
+    return res.status(500).json({ error: `更新失敗: ${error.message}` });
+  }
+  if (!data) return res.status(500).json({ error: '更新後の取得に失敗しました' });
   res.json(data);
 });
 
