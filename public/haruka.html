@@ -6835,7 +6835,10 @@ async function deleteInvoice(id) {
   if (!confirm('この請求書を削除しますか？')) return;
   const res = await fetch(`${API}/invoices/${id}`, { method: 'DELETE' });
   if (!res.ok) { showToast('削除に失敗しました', 'error'); return; }
-  await loadMyInvoices();
+  await Promise.all([
+    loadMyInvoices(),
+    hasPermission('invoice.all_view') ? loadAdminInvoices() : Promise.resolve()
+  ]);
 }
 
 async function deactivateMember(id, name) {
