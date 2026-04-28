@@ -6373,54 +6373,60 @@ async function loadInvoicePreview() {
     return;
   }
 
-  const isEditor = ['editor'].includes(currentUser?.role);
-  const isDesigner = ['designer'].includes(currentUser?.role);
+  const fmtDate = (raw) => {
+    if (!raw) return '—';
+    const d = new Date(raw);
+    if (isNaN(d)) return '—';
+    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+  };
+  const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   wrap.innerHTML = `
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead>
-      <tr style="background:var(--surface);border-bottom:1.5px solid var(--border);position:sticky;top:0">
+      <tr style="background:var(--surface);border-bottom:1.5px solid var(--border);position:sticky;top:0;z-index:1">
         <th style="padding:8px 10px;text-align:center;width:36px"><input type="checkbox" id="gi-check-all" onchange="toggleAllInvoiceItems(this.checked)" style="cursor:pointer;width:15px;height:15px"></th>
-        <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">案件</th>
+        <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);width:96px">納品日</th>
         <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">ファイル名</th>
-        <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted)">ステータス</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">基本料金</th>
-        ${isEditor ? `
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">台本生成</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">AI</th>` : ''}
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--text-muted)">その他</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark)">小計</th>
+        <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);width:80px">ステータス</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:120px">小計</th>
       </tr>
     </thead>
     <tbody>
       ${invoicePreviewItems.map((item, i) => {
-        const noRate = !item.rate;
+        const noBreakdown = !item.breakdown || !item.breakdown.length;
         const isDelivered = item.status === '納品';
-        const checked = (isDelivered && !noRate) ? 'checked' : '';
+        const checked = (isDelivered && !noBreakdown) ? 'checked' : '';
         const statusColor = isDelivered ? '#059669' : '#6B7280';
         const statusBg    = isDelivered ? '#D1FAE5' : '#F3F4F6';
-        const rowBg = i % 2 === 0 ? '' : 'background:#FAFEFE';
-        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)" id="gi-row-${item.id}">
-          <td style="padding:8px 10px;text-align:center">
-            <input type="checkbox" class="gi-item-check" data-id="${item.id}" ${checked} ${noRate?'disabled':''} onchange="updateInvoiceTotal()" style="cursor:${noRate?'not-allowed':'pointer'};width:15px;height:15px;${noRate?'opacity:0.3':''}">
+        const rowBg = i % 2 === 0 ? '#fff' : '#FAFEFE';
+        const deliveryDate = fmtDate(item.final_deadline || item.draft_deadline);
+        const headerRow = `<tr style="background:${rowBg};border-bottom:0.5px solid var(--border)" id="gi-row-${item.id}">
+          <td style="padding:10px 10px;text-align:center;vertical-align:top">
+            <input type="checkbox" class="gi-item-check" data-id="${item.id}" ${checked} ${noBreakdown?'disabled':''} onchange="updateInvoiceTotal()" style="cursor:${noBreakdown?'not-allowed':'pointer'};width:15px;height:15px;${noBreakdown?'opacity:0.3':''}">
           </td>
-          <td style="padding:8px 10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${item.project_name}">
-            <div style="font-size:11px;color:var(--text-muted)">${item.client_name}</div>
-            <div style="font-weight:500">${item.project_name}</div>
+          <td style="padding:10px 10px;text-align:left;vertical-align:top;color:var(--text-muted);font-size:11px;white-space:nowrap">${deliveryDate}</td>
+          <td style="padding:10px 10px;vertical-align:top">
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${escapeHtml(item.client_name)} / ${escapeHtml(item.project_name)}</div>
+            <div style="font-family:monospace;font-size:12px;color:#111;word-break:break-all">${escapeHtml(item.file_name)}</div>
           </td>
-          <td style="padding:8px 10px;font-family:monospace;font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.file_name}</td>
-          <td style="padding:8px 10px;text-align:center">
-            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};white-space:nowrap">${item.status||'—'}</span>
+          <td style="padding:10px 10px;text-align:center;vertical-align:top">
+            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};white-space:nowrap">${escapeHtml(item.status||'—')}</span>
           </td>
-          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.base_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>
-          ${isEditor ? `
-          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.script_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>
-          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.ai_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>` : ''}
-          <td style="padding:8px 10px;text-align:right">${item.rate ? '¥'+item.rate.other_fee.toLocaleString() : '<span style="color:#ccc">—</span>'}</td>
-          <td style="padding:8px 10px;text-align:right;font-weight:600;color:${noRate?'#ccc':'var(--em-dark)'}">
-            ${noRate ? '<span style="font-size:10px;color:#F59E0B">単価未設定</span>' : '¥'+item.total.toLocaleString()}
+          <td style="padding:10px 10px;text-align:right;vertical-align:top;font-weight:600;color:${noBreakdown?'#ccc':'var(--em-dark)'}">
+            ${noBreakdown ? '<span style="font-size:10px;color:#F59E0B">単価未設定</span>' : '<span class="gi-subtotal" data-id="'+item.id+'">¥'+(item.total||0).toLocaleString()+'</span>'}
           </td>
         </tr>`;
+        const breakdownRows = (item.breakdown || []).map(b => `<tr style="background:${rowBg};border-bottom:0.5px dashed var(--border)" data-creative-id="${item.id}">
+          <td></td>
+          <td></td>
+          <td style="padding:4px 10px 4px 10px;color:#444">${escapeHtml(b.label)}</td>
+          <td colspan="2" style="padding:4px 10px;text-align:right;white-space:nowrap">
+            <input type="number" min="0" step="1" value="${b.unit_price}" class="gi-bd-input" data-id="${item.id}" data-cost-type="${b.cost_type}" oninput="updateInvoiceTotal()" style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;text-align:right;font-size:12px">
+            <span style="font-size:11px;color:var(--text-muted);margin-left:4px">円 / 本</span>
+          </td>
+        </tr>`).join('');
+        return headerRow + breakdownRows;
       }).join('')}
     </tbody>
   </table>`;
@@ -6435,13 +6441,31 @@ function toggleAllInvoiceItems(checked) {
   updateInvoiceTotal();
 }
 
+function _giCreativeSubtotal(creativeId) {
+  let sub = 0;
+  document.querySelectorAll(`.gi-bd-input[data-id="${creativeId}"]`).forEach(inp => {
+    const v = parseInt(inp.value, 10);
+    if (Number.isFinite(v) && v >= 0) sub += v;
+  });
+  return sub;
+}
+
 function updateInvoiceTotal() {
+  // 各クリエイティブの小計を更新
+  const allInputs = document.querySelectorAll('.gi-bd-input');
+  const seen = new Set();
+  allInputs.forEach(inp => {
+    const cid = inp.dataset.id;
+    if (seen.has(cid)) return;
+    seen.add(cid);
+    const sub = _giCreativeSubtotal(cid);
+    const el = document.querySelector(`.gi-subtotal[data-id="${cid}"]`);
+    if (el) el.textContent = '¥' + sub.toLocaleString();
+  });
+  // 総計（チェック済のみ）
   const checks = document.querySelectorAll('.gi-item-check:checked');
   let total = 0;
-  checks.forEach(cb => {
-    const item = invoicePreviewItems.find(i => i.id === cb.dataset.id);
-    if (item) total += item.total;
-  });
+  checks.forEach(cb => { total += _giCreativeSubtotal(cb.dataset.id); });
   document.getElementById('gi-total').textContent = '¥' + total.toLocaleString();
   document.getElementById('gi-count').textContent = `（${checks.length}件）`;
   const btn = document.getElementById('gi-submit-btn');
@@ -6455,15 +6479,38 @@ async function generateMyInvoice() {
   const month = parseInt(document.getElementById('gi-month').value);
   if (!uid) { showToast('ログイン情報が取得できません', 'warn'); return; }
 
-  const selectedIds = [...document.querySelectorAll('.gi-item-check:checked')].map(cb => cb.dataset.id);
-  if (!selectedIds.length) { showToast('請求対象を1件以上選択してください', 'warn'); return; }
+  const checkedBoxes = [...document.querySelectorAll('.gi-item-check:checked')];
+  if (!checkedBoxes.length) { showToast('請求対象を1件以上選択してください', 'warn'); return; }
+
+  // 選択された各 creative の breakdown 入力を読み取り
+  document.querySelectorAll('.gi-bd-input').forEach(inp => { inp.style.borderColor = 'var(--border)'; });
+  const selectedItems = [];
+  let invalid = false;
+  for (const cb of checkedBoxes) {
+    const cid = cb.dataset.id;
+    const inputs = document.querySelectorAll(`.gi-bd-input[data-id="${cid}"]`);
+    const items = [];
+    inputs.forEach(inp => {
+      const raw = inp.value.trim();
+      const v = Number(raw);
+      if (raw === '' || !Number.isFinite(v) || !Number.isInteger(v) || v < 0) {
+        inp.style.borderColor = '#E24B4A';
+        invalid = true;
+        return;
+      }
+      if (v > 0) items.push({ cost_type: inp.dataset.costType, unit_price: v });
+    });
+    if (items.length) selectedItems.push({ creative_id: cid, items });
+  }
+  if (invalid) { showToast('金額は0以上の整数で入力してください', 'warn'); return; }
+  if (!selectedItems.length) { showToast('金額が0より大きい明細が必要です', 'warn'); return; }
 
   const btn = document.getElementById('gi-submit-btn');
   btn.textContent = '作成中...'; btn.disabled = true;
   const res = await fetch(`${API}/invoices/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issuer_id: uid, year, month, selected_creative_ids: selectedIds, notes: document.getElementById('gi-notes').value.trim() || null })
+    body: JSON.stringify({ issuer_id: uid, year, month, selected_items: selectedItems, notes: document.getElementById('gi-notes').value.trim() || null })
   });
   btn.textContent = '請求書を作成する'; btn.disabled = false;
   const data = await res.json();

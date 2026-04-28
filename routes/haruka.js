@@ -1374,6 +1374,13 @@ router.get('/invoices/preview-items', async (req, res) => {
   const { data: currentUser } = await supabase.from('users').select('rank').eq('id', uid).single();
   const currentRank = currentUser?.rank || null;
 
+  const PREVIEW_COST_TYPE_LABELS = {
+    base_fee:   '編集',
+    script_fee: '台本作成',
+    ai_fee:     'AI生成（ナレーション含む）',
+    other_fee:  'その他',
+  };
+
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
     const rankApplied = assignment?.rank_applied ?? currentRank;
@@ -1387,12 +1394,25 @@ router.get('/invoices/preview-items', async (req, res) => {
     const anyProjectKey = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
     const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null) || (anyProjectKey ? ratesMap[anyProjectKey] : null);
     console.log(`[rate] ${c.file_name} type=${c.creative_type}→${baseType} rank=${rankApplied} found=${!!rate}`);
+    const rateObj = rate ? {
+      base_fee:   rate.base_fee   || 0,
+      script_fee: rate.script_fee || 0,
+      ai_fee:     rate.ai_fee     || 0,
+      other_fee:  rate.other_fee  || 0,
+    } : null;
+    const breakdown = rateObj ? [
+      { cost_type: 'base_fee',   label: PREVIEW_COST_TYPE_LABELS.base_fee,   unit_price: rateObj.base_fee   },
+      { cost_type: 'script_fee', label: PREVIEW_COST_TYPE_LABELS.script_fee, unit_price: rateObj.script_fee },
+      { cost_type: 'ai_fee',     label: PREVIEW_COST_TYPE_LABELS.ai_fee,     unit_price: rateObj.ai_fee     },
+      { cost_type: 'other_fee',  label: PREVIEW_COST_TYPE_LABELS.other_fee,  unit_price: rateObj.other_fee  },
+    ].filter(b => b.unit_price > 0) : [];
     return {
       id: c.id,
       file_name: c.file_name,
       status: c.status,
       creative_type: c.creative_type,
       final_deadline: c.final_deadline,
+      draft_deadline: c.draft_deadline,
       is_payable: c.is_payable,
       special_payable: c.special_payable,
       project_id: c.project_id,
@@ -1400,13 +1420,9 @@ router.get('/invoices/preview-items', async (req, res) => {
       client_name: c.projects?.clients?.name || '',
       assignment_role: assignment?.role,
       rank_applied: assignment?.rank_applied || currentRank,
-      rate: rate ? {
-        base_fee:   rate.base_fee   || 0,
-        script_fee: rate.script_fee || 0,
-        ai_fee:     rate.ai_fee     || 0,
-        other_fee:  rate.other_fee  || 0,
-      } : null,
-      total: rate ? (rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0) : 0,
+      rate: rateObj,
+      breakdown,
+      total: rateObj ? (rateObj.base_fee||0)+(rateObj.script_fee||0)+(rateObj.ai_fee||0)+(rateObj.other_fee||0) : 0,
     };
   });
 
@@ -1655,7 +1671,7 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
 
 // 請求書作成（選択クリエイティブから生成）
 router.post('/invoices/generate', requireAuth, async (req, res) => {
-  const { cycle_id, selected_creative_ids } = req.body;
+  const { cycle_id, selected_creative_ids, selected_items } = req.body;
   let { project_id } = req.body;
   // admin/secretary のみ代理発行可能、それ以外はログインユーザー本人に固定
   const issuer_id = (['admin', 'secretary'].includes(req.user?.role) && req.body.issuer_id)
@@ -1663,13 +1679,41 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     : req.user.id;
   if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
 
+  // selected_items のバリデーションと正規化
+  const ALLOWED_COST_TYPES = new Set(['base_fee', 'script_fee', 'ai_fee', 'other_fee']);
+  let overrideMap = null;
+  if (Array.isArray(selected_items) && selected_items.length) {
+    overrideMap = new Map();
+    for (const si of selected_items) {
+      if (!si || !si.creative_id || !Array.isArray(si.items)) {
+        return res.status(400).json({ error: 'selected_items の形式が不正です' });
+      }
+      const normalized = [];
+      for (const it of si.items) {
+        if (!it || !ALLOWED_COST_TYPES.has(it.cost_type)) {
+          return res.status(400).json({ error: 'cost_type が不正です' });
+        }
+        const up = Number(it.unit_price);
+        if (!Number.isFinite(up) || !Number.isInteger(up) || up < 0) {
+          return res.status(400).json({ error: '単価は0以上の整数で指定してください' });
+        }
+        if (up > 0) normalized.push({ cost_type: it.cost_type, unit_price: up });
+      }
+      if (normalized.length) overrideMap.set(si.creative_id, normalized);
+    }
+    if (!overrideMap.size) return res.status(400).json({ error: '請求対象がありません' });
+  }
+
   // 請求可能なクリエイティブを取得
   let query = supabase
     .from('creatives')
     .select(`*, creative_assignments(user_id, role, rank_applied, users(id, full_name))`)
     .not('creative_assignments', 'is', null);
 
-  if (selected_creative_ids && selected_creative_ids.length) {
+  const overrideCreativeIds = overrideMap ? [...overrideMap.keys()] : null;
+  if (overrideCreativeIds && overrideCreativeIds.length) {
+    query = query.in('id', overrideCreativeIds);
+  } else if (selected_creative_ids && selected_creative_ids.length) {
     query = query.in('id', selected_creative_ids);
   } else if (project_id) {
     query = query.eq('project_id', project_id).or('is_payable.eq.true,special_payable.eq.true');
@@ -1720,24 +1764,28 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     );
     if (!assignment) continue;
 
-    const baseType = creative.creative_type?.startsWith('video') ? 'video'
-                   : creative.creative_type?.startsWith('design') ? 'design'
-                   : creative.creative_type;
-    const rate = rates?.find(
-      r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
-    ) || rates?.find(
-      r => r.project_id === creative.project_id && r.creative_type === baseType
-    );
-    if (!rate) continue;
-
     const creativeLabel = creative.file_name || '';
+    let breakdown;
 
-    const breakdown = [
-      { cost_type: 'base_fee',   unit_price: rate.base_fee   || 0 },
-      { cost_type: 'script_fee', unit_price: rate.script_fee || 0 },
-      { cost_type: 'ai_fee',     unit_price: rate.ai_fee     || 0 },
-      { cost_type: 'other_fee',  unit_price: rate.other_fee  || 0 },
-    ].filter(b => b.unit_price > 0);
+    if (overrideMap) {
+      breakdown = overrideMap.get(creative.id) || [];
+    } else {
+      const baseType = creative.creative_type?.startsWith('video') ? 'video'
+                     : creative.creative_type?.startsWith('design') ? 'design'
+                     : creative.creative_type;
+      const rate = rates?.find(
+        r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
+      ) || rates?.find(
+        r => r.project_id === creative.project_id && r.creative_type === baseType
+      );
+      if (!rate) continue;
+      breakdown = [
+        { cost_type: 'base_fee',   unit_price: rate.base_fee   || 0 },
+        { cost_type: 'script_fee', unit_price: rate.script_fee || 0 },
+        { cost_type: 'ai_fee',     unit_price: rate.ai_fee     || 0 },
+        { cost_type: 'other_fee',  unit_price: rate.other_fee  || 0 },
+      ].filter(b => b.unit_price > 0);
+    }
 
     if (!breakdown.length) continue;
 
