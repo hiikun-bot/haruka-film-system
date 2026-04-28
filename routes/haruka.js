@@ -1315,7 +1315,7 @@ router.get('/invoices', async (req, res) => {
   const { issuer_id, year, month, status } = req.query;
   let query = supabase
     .from('invoices')
-    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,label,quantity,unit,unit_price,sort_order,creatives(id,file_name,creative_type),invoice_item_details(*))`)
+    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`)
     .order('created_at', { ascending: false });
   if (issuer_id) query = query.eq('issuer_id', issuer_id);
   if (year) query = query.eq('year', parseInt(year));
@@ -1428,7 +1428,8 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       invoice_items(
         id, total_amount, is_special, special_reason,
         label, quantity, unit, unit_price, sort_order,
-        creatives(id, file_name, creative_type,
+        cost_type, creative_label, creative_id,
+        creatives(id, file_name, creative_type, final_deadline, draft_deadline, updated_at,
           projects(id, name, clients(id, name, client_code))
         ),
         invoice_item_details(cost_type, unit_price, amount)
@@ -1517,6 +1518,8 @@ router.post('/client-invoice/generate', requireAuth, async (req, res) => {
     .insert(items.map((item, idx) => ({
       invoice_id: invoice.id,
       creative_id: item.creative_id,
+      creative_label: item.file_name || item.label || null,
+      cost_type: 'base_fee',
       total_amount: item.client_fee,
       is_special: false,
       label: item.file_name || item.label || '明細',
@@ -1607,6 +1610,15 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
         total_amount: amount,
         sort_order,
       };
+      // クリエイティブ紐付け / コスト種別 / 表示用ラベルを保持（送られてきた場合のみ反映）
+      if (li.creative_id !== undefined)    row.creative_id    = li.creative_id || null;
+      if (li.cost_type !== undefined)      row.cost_type      = li.cost_type   || null;
+      if (li.creative_label !== undefined) row.creative_label = li.creative_label || null;
+
+      // creative_id があれば cost_type 必須
+      if (row.creative_id && !row.cost_type) {
+        return res.status(400).json({ error: 'creative紐付け行は cost_type が必須です' });
+      }
 
       if (li.id && existingIds.has(li.id)) {
         const { error: upErr } = await supabase.from('invoice_items').update(row).eq('id', li.id);
@@ -1691,8 +1703,16 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const invoiceNumber = `INV-${ym}-${String((count||0)+1).padStart(3,'0')}`;
 
   // 明細を生成
+  // 新方式: 1 creative = 複数 invoice_items（コスト種別ごと）
+  const COST_TYPE_LABELS = {
+    base_fee:   '編集',
+    script_fee: '台本作成',
+    ai_fee:     'AI生成（ナレーション含む）',
+    other_fee:  'その他',
+  };
   let totalAmount = 0;
-  const items = [];
+  const itemRows = [];   // 実際に invoice_items に INSERT する行
+  let sortCounter = 0;
 
   for (const creative of creatives) {
     const assignment = creative.creative_assignments?.find(
@@ -1710,35 +1730,36 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     );
     if (!rate) continue;
 
-    const itemTotal = (rate.base_fee || 0) + (rate.script_fee || 0) +
-                      (rate.ai_fee || 0) + (rate.other_fee || 0);
-    totalAmount += itemTotal;
+    const creativeLabel = creative.file_name || '';
 
-    // label：クリエイティブ名 + 種別
-    const typeLabel = baseType === 'video' ? '動画' : baseType === 'design' ? 'デザイン' : (baseType || '');
-    const label = creative.file_name
-      ? `${creative.file_name}${typeLabel ? ` (${typeLabel})` : ''}`
-      : (typeLabel || '明細');
+    const breakdown = [
+      { cost_type: 'base_fee',   unit_price: rate.base_fee   || 0 },
+      { cost_type: 'script_fee', unit_price: rate.script_fee || 0 },
+      { cost_type: 'ai_fee',     unit_price: rate.ai_fee     || 0 },
+      { cost_type: 'other_fee',  unit_price: rate.other_fee  || 0 },
+    ].filter(b => b.unit_price > 0);
 
-    items.push({
-      creative_id: creative.id,
-      total_amount: itemTotal,
-      is_special: creative.special_payable || false,
-      special_reason: creative.special_payable_reason || null,
-      label,
-      quantity: 1,
-      unit: '本',
-      unit_price: itemTotal,
-      details: [
-        { cost_type: 'base_fee', unit_price: rate.base_fee || 0, amount: rate.base_fee || 0 },
-        { cost_type: 'script_fee', unit_price: rate.script_fee || 0, amount: rate.script_fee || 0 },
-        { cost_type: 'ai_fee', unit_price: rate.ai_fee || 0, amount: rate.ai_fee || 0 },
-        { cost_type: 'other_fee', unit_price: rate.other_fee || 0, amount: rate.other_fee || 0 },
-      ].filter(d => d.amount > 0)
-    });
+    if (!breakdown.length) continue;
+
+    for (const b of breakdown) {
+      totalAmount += b.unit_price;
+      itemRows.push({
+        creative_id:    creative.id,
+        creative_label: creativeLabel,
+        cost_type:      b.cost_type,
+        label:          COST_TYPE_LABELS[b.cost_type] || b.cost_type,
+        quantity:       1,
+        unit:           '本',
+        unit_price:     b.unit_price,
+        total_amount:   b.unit_price,
+        is_special:     creative.special_payable || false,
+        special_reason: creative.special_payable_reason || null,
+        sort_order:     sortCounter++,
+      });
+    }
   }
 
-  if (!items.length) return res.status(400).json({ error: '該当するアサインが見つかりません' });
+  if (!itemRows.length) return res.status(400).json({ error: '該当するアサインが見つかりません' });
 
   // 請求書を保存
   const { data: invoice, error: iErr } = await supabase
@@ -1757,35 +1778,39 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     .single();
   if (iErr) return res.status(500).json({ error: iErr.message });
 
-  // 明細を一括保存（N+1 → 2クエリに削減）
+  // 明細（コスト種別ごと）を一括保存
   const { data: invItems, error: itemsErr } = await supabase
     .from('invoice_items')
-    .insert(items.map((item, idx) => ({
-      invoice_id: invoice.id,
-      creative_id: item.creative_id,
-      total_amount: item.total_amount,
-      is_special: item.is_special,
-      special_reason: item.special_reason,
-      label: item.label,
-      quantity: item.quantity,
-      unit: item.unit,
-      unit_price: item.unit_price,
-      sort_order: idx,
+    .insert(itemRows.map(r => ({
+      invoice_id:    invoice.id,
+      creative_id:   r.creative_id,
+      creative_label:r.creative_label,
+      cost_type:     r.cost_type,
+      total_amount:  r.total_amount,
+      is_special:    r.is_special,
+      special_reason:r.special_reason,
+      label:         r.label,
+      quantity:      r.quantity,
+      unit:          r.unit,
+      unit_price:    r.unit_price,
+      sort_order:    r.sort_order,
     })))
-    .select('id, creative_id');
+    .select('id, creative_id, cost_type, unit_price');
   if (itemsErr) return res.status(500).json({ error: itemsErr.message });
 
-  // 明細詳細を一括保存
-  const allDetails = (invItems || []).flatMap(invItem => {
-    const orig = items.find(i => i.creative_id === invItem.creative_id);
-    return (orig?.details || []).map(d => ({ ...d, invoice_item_id: invItem.id }));
-  });
+  // 後方互換: invoice_item_details にも対応行を入れる（旧クエリで参照する画面が混在しても破綻しないように）
+  const allDetails = (invItems || []).map(ii => ({
+    invoice_item_id: ii.id,
+    cost_type:  ii.cost_type || 'other_fee',
+    unit_price: ii.unit_price || 0,
+    amount:     ii.unit_price || 0,
+  }));
   if (allDetails.length) {
     const { error: detErr } = await supabase.from('invoice_item_details').insert(allDetails);
     if (detErr) return res.status(500).json({ error: detErr.message });
   }
 
-  res.json({ ok: true, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: items.length });
+  res.json({ ok: true, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length });
 });
 
 // 請求書発行（draft → issued）
