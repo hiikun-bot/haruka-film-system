@@ -10897,6 +10897,10 @@ function _knApplyFilterAndRender() {
     if (grid) grid.style.display='none';
     if (tbl)  tbl.style.display='';
   }
+  // 再描画前に既存の描画結果をクリア（カード/テーブル切替・ソート・フィルターで重複表示されるのを防ぐ）
+  if (grid) grid.innerHTML = '';
+  const tbody = document.getElementById('kn-tbody');
+  if (tbody) tbody.innerHTML = '';
   _knAppendNext();
 }
 
