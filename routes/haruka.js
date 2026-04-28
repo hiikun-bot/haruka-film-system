@@ -1681,6 +1681,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
 
   // selected_items のバリデーションと正規化
   const ALLOWED_COST_TYPES = new Set(['base_fee', 'script_fee', 'ai_fee', 'other_fee']);
+  const CHANGE_REASON_MAX = 500;
   let overrideMap = null;
   if (Array.isArray(selected_items) && selected_items.length) {
     overrideMap = new Map();
@@ -1697,7 +1698,18 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
         if (!Number.isFinite(up) || !Number.isInteger(up) || up < 0) {
           return res.status(400).json({ error: '単価は0以上の整数で指定してください' });
         }
-        if (up > 0) normalized.push({ cost_type: it.cost_type, unit_price: up });
+        let changeReason = null;
+        if (it.change_reason !== undefined && it.change_reason !== null) {
+          if (typeof it.change_reason !== 'string') {
+            return res.status(400).json({ error: '変更理由は文字列で指定してください' });
+          }
+          const trimmed = it.change_reason.trim();
+          if (trimmed.length > CHANGE_REASON_MAX) {
+            return res.status(400).json({ error: `変更理由は${CHANGE_REASON_MAX}文字以内で入力してください` });
+          }
+          if (trimmed.length > 0) changeReason = trimmed;
+        }
+        if (up > 0) normalized.push({ cost_type: it.cost_type, unit_price: up, change_reason: changeReason });
       }
       if (normalized.length) overrideMap.set(si.creative_id, normalized);
     }
@@ -1767,29 +1779,42 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const creativeLabel = creative.file_name || '';
     let breakdown;
 
+    // デフォルト単価（project_rates由来）を算出
+    const baseType = creative.creative_type?.startsWith('video') ? 'video'
+                   : creative.creative_type?.startsWith('design') ? 'design'
+                   : creative.creative_type;
+    const defaultRate = rates?.find(
+      r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
+    ) || rates?.find(
+      r => r.project_id === creative.project_id && r.creative_type === baseType
+    );
+    const defaultUnitPriceMap = {
+      base_fee:   defaultRate?.base_fee   || 0,
+      script_fee: defaultRate?.script_fee || 0,
+      ai_fee:     defaultRate?.ai_fee     || 0,
+      other_fee:  defaultRate?.other_fee  || 0,
+    };
+
     if (overrideMap) {
       breakdown = overrideMap.get(creative.id) || [];
     } else {
-      const baseType = creative.creative_type?.startsWith('video') ? 'video'
-                     : creative.creative_type?.startsWith('design') ? 'design'
-                     : creative.creative_type;
-      const rate = rates?.find(
-        r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
-      ) || rates?.find(
-        r => r.project_id === creative.project_id && r.creative_type === baseType
-      );
-      if (!rate) continue;
+      if (!defaultRate) continue;
       breakdown = [
-        { cost_type: 'base_fee',   unit_price: rate.base_fee   || 0 },
-        { cost_type: 'script_fee', unit_price: rate.script_fee || 0 },
-        { cost_type: 'ai_fee',     unit_price: rate.ai_fee     || 0 },
-        { cost_type: 'other_fee',  unit_price: rate.other_fee  || 0 },
+        { cost_type: 'base_fee',   unit_price: defaultUnitPriceMap.base_fee   },
+        { cost_type: 'script_fee', unit_price: defaultUnitPriceMap.script_fee },
+        { cost_type: 'ai_fee',     unit_price: defaultUnitPriceMap.ai_fee     },
+        { cost_type: 'other_fee',  unit_price: defaultUnitPriceMap.other_fee  },
       ].filter(b => b.unit_price > 0);
     }
 
     if (!breakdown.length) continue;
 
     for (const b of breakdown) {
+      const defaultUp = defaultUnitPriceMap[b.cost_type] || 0;
+      const isOverridden = overrideMap && b.unit_price !== defaultUp;
+      if (isOverridden && (!b.change_reason || !b.change_reason.trim())) {
+        return res.status(400).json({ error: `単価を変更した行は変更理由が必須です（${creativeLabel} / ${COST_TYPE_LABELS[b.cost_type] || b.cost_type}）` });
+      }
       totalAmount += b.unit_price;
       itemRows.push({
         creative_id:    creative.id,
@@ -1800,8 +1825,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
         unit:           '本',
         unit_price:     b.unit_price,
         total_amount:   b.unit_price,
-        is_special:     creative.special_payable || false,
-        special_reason: creative.special_payable_reason || null,
+        is_special:     isOverridden ? true : (creative.special_payable || false),
+        special_reason: isOverridden ? b.change_reason : (creative.special_payable_reason || null),
         sort_order:     sortCounter++,
       });
     }
