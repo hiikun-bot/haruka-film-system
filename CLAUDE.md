@@ -93,6 +93,12 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - **影響範囲（mobile/PC/両方）を必ず記載**
 - 両方に影響する PR は関連chatのレビューを受ける
 
+### 自動マージ（auto-merge ラベル）
+- PR に `auto-merge` ラベルを付与すると、CI 通過後に **自動で squash merge + ブランチ削除** されます（`.github/workflows/auto-merge.yml`）
+- 仕組み: GitHub の Auto-merge 機能（`gh pr merge --squash --auto --delete-branch`）を有効化するだけで、即マージではない（CI が通るまで待つ）
+- ブランチ保護でCI通過必須にしている場合、CIが通った瞬間にマージされる
+- 解除したいときは `auto-merge` ラベルを外す、または `gh pr merge <PR> --disable-auto` で解除
+
 ## マージ手順（旧・参考）
 ```bash
 # 全エージェント完了後、PR経由でマージするのが原則
