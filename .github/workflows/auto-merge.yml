@@ -1,0 +1,52 @@
+name: Auto-merge
+
+on:
+  pull_request:
+    types: [labeled, opened, reopened, synchronize, ready_for_review]
+  check_suite:
+    types: [completed]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    name: auto-mergeラベル付きPRに対して GitHub Auto-merge を有効化
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
+      github.event_name == 'check_suite' ||
+      github.event_name == 'workflow_run'
+    steps:
+      - name: auto-merge ラベルがなければ作成
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create auto-merge \
+            --color 0E8A16 \
+            --description "CIが通り次第自動squash merge" \
+            --repo "$GITHUB_REPOSITORY" \
+            2>/dev/null || true
+
+      - name: PR の auto-merge を有効化
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            echo "PR番号が取得できないためスキップ（check_suite / workflow_run の場合は自動補完なし）"
+            exit 0
+          fi
+          # auto-merge ラベルが付いていれば auto-merge を有効化
+          LABELS=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' || echo "")
+          if echo "$LABELS" | grep -qx "auto-merge"; then
+            echo "auto-merge ラベル検出 → GitHub Auto-merge を有効化"
+            gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --auto --delete-branch || true
+          else
+            echo "auto-merge ラベルなし → スキップ"
+          fi
