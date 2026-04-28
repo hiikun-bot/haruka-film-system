@@ -6607,7 +6607,12 @@ async function submitInvoice(id) {
   }
   if (!confirm('提出してよいですか？提出後は管理者の承認が必要です。')) return;
   const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
-  if (!res.ok) { showToast('提出に失敗しました', 'error'); return; }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { const e = await res.json(); if (e?.error) detail = e.error; } catch {}
+    showToast(`提出に失敗しました: ${detail}`, 'error');
+    return;
+  }
   await loadMyInvoices();
 }
 
@@ -6628,7 +6633,12 @@ async function confirmDuplicateSubmit() {
     });
   }
   const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
-  if (!res.ok) { showToast('提出に失敗しました', 'error'); return; }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { const e = await res.json(); if (e?.error) detail = e.error; } catch {}
+    showToast(`提出に失敗しました: ${detail}`, 'error');
+    return;
+  }
   _pendingSubmitId = null;
   await loadMyInvoices();
 }
