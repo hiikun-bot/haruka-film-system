@@ -499,6 +499,62 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
   });
 });
 
+// ダッシュボード: 誕生日一覧（今日〜30日先）
+router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, full_name, birthday, avatar_url, role')
+    .eq('is_active', true)
+    .not('birthday', 'is', null);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayY = today.getFullYear();
+  const todayM = today.getMonth() + 1;
+  const todayD = today.getDate();
+  const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+  const list = (data || []).map(u => {
+    if (!u.birthday) return null;
+    const bd = String(u.birthday).slice(0, 10).split('-');
+    const birthY = parseInt(bd[0], 10);
+    const month = parseInt(bd[1], 10);
+    const day = parseInt(bd[2], 10);
+    if (!month || !day) return null;
+    // 今年の誕生日。すでに過ぎていたら来年
+    let next = new Date(todayY, month - 1, day);
+    next.setHours(0, 0, 0, 0);
+    let nextYear = todayY;
+    if (next < today) {
+      next = new Date(todayY + 1, month - 1, day);
+      next.setHours(0, 0, 0, 0);
+      nextYear = todayY + 1;
+    }
+    const days_until = Math.round((next - today) / MS_PER_DAY);
+    const is_today = (month === todayM && day === todayD);
+    const age_turning = birthY ? (nextYear - birthY) : null;
+    return {
+      id: u.id,
+      full_name: u.full_name,
+      birthday: u.birthday,
+      month, day,
+      days_until,
+      is_today,
+      avatar_url: u.avatar_url || null,
+      role: u.role,
+      age_turning
+    };
+  }).filter(x => x && x.days_until <= 30);
+
+  list.sort((a, b) => {
+    if (a.is_today !== b.is_today) return a.is_today ? -1 : 1;
+    return a.days_until - b.days_until;
+  });
+
+  res.json(list);
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
@@ -1310,8 +1366,9 @@ router.post('/members/:id/reactivate', requireAuth, requirePermission('member.de
 
 // メンバーアバター登録
 // 方針: クライアント側で 300x300 JPEG にリサイズ済の Base64 を data URL 形式で受け取り
-// users.avatar_url にそのまま保存する。Drive 連携は未設定環境では使えないため、
-// 設定不要で動く Base64 を採用。1ユーザーあたり ~80KB 程度に収まり DB 行肥大化リスクは小さい。
+// users.avatar_url にそのまま保存する。
+// 既存の Drive 連携は Supabase Service Account 設定が前提のため、設定不要・依存なし
+// で動く Base64 採用。1ユーザーあたり最大 ~80KB 程度に収まり、users 行の肥大化リスクは極小。
 router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (req, res) => {
   const targetId = req.params.id;
   const requesterId = req.user.id;
@@ -1328,6 +1385,7 @@ router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (re
     return res.status(400).json({ error: 'ファイルサイズは5MB以下にしてください' });
   }
 
+  // Base64 data URL に変換して保存（クライアント側でリサイズ済み想定）
   const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
   // DB 行の肥大化を避けるため、保存時点で 300KB を超えるものは拒否
   if (dataUrl.length > 300 * 1024) {
