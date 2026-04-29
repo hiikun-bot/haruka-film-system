@@ -925,7 +925,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- 請求書修正モーダル -->
 <div class="modal-overlay" id="modal-edit-invoice">
-  <div class="modal-card" style="width:860px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column">
+  <div class="modal-card" style="width:1180px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title" style="flex-shrink:0">
       <span>請求書を修正 <span id="ei-invoice-num" style="font-size:12px;color:var(--text-muted);font-weight:400;margin-left:8px"></span></span>
       <button class="modal-close" onclick="closeModal('modal-edit-invoice')">×</button>
@@ -7202,11 +7202,13 @@ function _eiRowHTML(l, i, editable) {
   const reasonValue = isOverridden ? prevReason : '';
   const reasonStyle = isOverridden ? '' : 'display:none';
   const reasonBlock = `
-    <div class="ei-reason-wrap" data-row-reason="${i}" style="grid-column:1 / -1;margin-top:4px;${reasonStyle}">
+    <div class="ei-reason-wrap" data-row-reason="${i}" style="grid-column:1 / -1;margin-top:8px;padding:10px 12px;background:#FFFBEB;border:1px solid #F59E0B;border-radius:6px;${reasonStyle}">
+      <label style="display:block;font-size:11px;font-weight:700;color:#92400E;margin-bottom:6px">⚠ 単価変更の理由（必須）</label>
       <input type="text" class="ei-reason-input" data-row-reason="${i}" maxlength="500"
-             placeholder="単価変更の理由（必須）" value="${esc(reasonValue)}" ${dis}
+             placeholder="例：特急対応のため / クライアントとの合意により / 修正回数増加のため など"
+             value="${esc(reasonValue)}" ${dis}
              oninput="_eiUpdateSaveBtn()"
-             style="width:100%;max-width:420px;padding:4px 8px;border:1px solid #F59E0B;border-radius:4px;font-size:11px;background:#FFFBEB">
+             style="width:100%;padding:8px 10px;border:1px solid #F59E0B;border-radius:4px;font-size:13px;background:#fff;box-sizing:border-box">
     </div>`;
   // 元データを各行のdatasetに保持（creative_id, cost_type, creative_label, creative_date, original-unit-price, prev-reason）
   return `
