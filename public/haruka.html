@@ -997,7 +997,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
     <div class="header-user">
-      <div class="user-av" id="user-av">HK</div>
+      <div class="user-av" id="user-av" onclick="openMyProfile()" title="プロフィール編集">HK</div>
       <span class="user-name" id="user-name">読み込み中</span>
       <span class="user-role" id="user-role">-</span>
       <button class="rpb-btn" onclick="openChangePasswordModal()" title="パスワード変更" style="font-size:11px;padding:3px 8px">🔑</button>
@@ -1819,6 +1819,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       <!-- Tab 0: 基本情報 -->
       <div id="m-tab-panel-0" class="m-tab-panel">
+        <!-- アバター設定エリア -->
+        <div class="form-group" style="display:flex;align-items:center;gap:18px;margin-bottom:18px;padding:14px 16px;background:var(--surface);border-radius:10px;border:0.5px solid var(--border)">
+          <div id="m-avatar-preview" class="avatar avatar-xl" style="--avatar-size:96px"></div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px">プロフィールアイコン</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn" id="m-avatar-upload-btn" onclick="document.getElementById('m-avatar-file').click()" style="font-size:12px;padding:6px 12px">📷 アイコンを変更</button>
+              <button type="button" class="btn" id="m-avatar-remove-btn" onclick="removeAvatar()" style="font-size:12px;padding:6px 12px;color:#E24B4A;border-color:#F09595;display:none">削除</button>
+              <span id="m-avatar-status" style="font-size:11px;color:var(--text-muted);align-self:center"></span>
+            </div>
+            <input type="file" id="m-avatar-file" accept="image/*" style="display:none" onchange="handleAvatarSelect(this.files[0])">
+          </div>
+        </div>
         <div class="form-group">
           <label class="form-label">名前 <span style="color:#E24B4A">*</span></label>
           <input class="form-input" id="m-name" placeholder="例：高橋" style="font-size:15px;padding:12px 14px">
@@ -3216,6 +3229,38 @@ function translateError(err) {
 const API = '/api/haruka';
 // HTML エスケープ（テンプレートリテラル内で使用）
 function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ==================== アバター共通ヘルパー ====================
+// user: { full_name, name, avatar_url } など。size: 'xs'|'sm'|'md'|'lg'|'xl' or 数値(px)
+// avatar_url があれば <img>、なければイニシャル円を返す
+function avatarHtml(user, size, opts) {
+  const u = user || {};
+  const name = u.full_name || u.name || u.nickname || '';
+  const initial = (name || '?').trim().charAt(0).toUpperCase();
+  const url = u.avatar_url;
+  const cls = ['avatar'];
+  let style = '';
+  if (typeof size === 'number') {
+    style = `--avatar-size:${size}px`;
+  } else {
+    cls.push('avatar-' + (size || 'sm'));
+  }
+  const extraCls = opts?.className ? ' ' + opts.className : '';
+  const titleAttr = name ? ` title="${esc(name)}"` : '';
+  if (url) {
+    return `<span class="${cls.join(' ')}${extraCls}" style="${style}"${titleAttr}><img src="${esc(url)}" alt="${esc(name)}" loading="lazy" onerror="this.parentNode.innerHTML='${esc(initial)}'"></span>`;
+  }
+  return `<span class="${cls.join(' ')}${extraCls}" style="${style}"${titleAttr}>${esc(initial)}</span>`;
+}
+
+// ユーザー名 + アバターをまとめて返す（横並び、avatar-name のクラスで装飾可）
+function avatarWithName(user, size, opts) {
+  const u = user || {};
+  const name = u.full_name || u.name || u.nickname || '';
+  const nameStyle = opts?.nameStyle || '';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;min-width:0">${avatarHtml(u, size, opts)}<span style="${nameStyle};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></span>`;
+}
+
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
@@ -3251,7 +3296,7 @@ async function init() {
       console.log('[HFS] currentUser:', currentUser.email, '| role:', currentUser.role, '| isSuperAdmin:', isSuperAdmin());
       document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
       document.getElementById('user-role').textContent = roleLabel(currentUser.role);
-      document.getElementById('user-av').textContent = (currentUser.name||'U').slice(0,2).toUpperCase();
+      renderHeaderAvatar();
       // クリエイティブ初期ビューを適用
       const savedView = localStorage.getItem('hfs_cv_default_' + currentUser.id);
       if (savedView && savedView !== 'all') {
@@ -3784,8 +3829,8 @@ function renderTeamsList() {
       const memberChips = teamMembers.map(m => {
         const canEdit = canEditMember(m);
         return `<div onclick="${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:6px;background:var(--em-pale);border-radius:20px;padding:4px 10px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
-          <div style="width:22px;height:22px;border-radius:50%;background:var(--em);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0">${(m.full_name||'?').slice(0,1)}</div>
-          <span style="color:var(--text);font-weight:500">${m.full_name}</span>
+          ${avatarHtml(m, 22)}
+          <span style="color:var(--text);font-weight:500">${esc(m.full_name||'')}</span>
           <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
         </div>`;
       }).join('');
@@ -3954,9 +3999,7 @@ function renderMemberList() {
         const canEdit = canEditMember(m);
         return `<tr style="${rowBg};border-bottom:0.5px solid var(--border);${!m.is_active?'opacity:0.55':''}${canEdit?';cursor:pointer':''}" ${canEdit ? `onclick="openEditMemberById('${m.id}')"` : ''} onmouseenter="this.style.background='#EEF9F8'" onmouseleave="this.style.background='${!m.is_active?'#FAFAFA':(i%2===0?'':'#FAFEFE')}'">
           <td style="padding:8px 12px;text-align:center">
-            <div style="width:28px;height:28px;border-radius:50%;background:${!m.is_active?'#e0e0e0':'var(--em-pale)'};display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${!m.is_active?'#999':'var(--em-dark)'}">
-              ${(m.full_name||'?').slice(0,1)}
-            </div>
+            ${avatarHtml(m, 28, { className: !m.is_active ? 'avatar-inactive' : '' })}
           </td>
           <td style="padding:8px 12px;text-align:center"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
@@ -4125,7 +4168,7 @@ function renderCreatives() {
       <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="creative-row-check" data-id="${c.id}" onchange="updateCreativeDeleteBar()" style="cursor:pointer;width:14px;height:14px"></td>
       <td style="white-space:nowrap;font-size:13px;font-weight:500;color:var(--text)">${clientName}</td>
       <td style="font-size:13px;font-weight:500;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;white-space:nowrap" onclick="openCreativeDetail('${c.id}')" title="${c.file_name}">${c.file_name}</td>
-      <td style="font-size:14px;font-weight:500">${editorName}</td>
+      <td style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 22) : editorName}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
       <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span></td>
@@ -4565,6 +4608,7 @@ function openAddMember() {
   document.getElementById('m-address').value = '';
   document.getElementById('m-creative-default-view').value = 'all';
   applyMemberModalAdminFields(null);
+  setMemberModalAvatar(null, null);
   onRoleChange('editor');
   switchMemberTab(0);
   openModal('modal-member');
@@ -4613,9 +4657,163 @@ function openEditMember(m) {
   document.getElementById('m-postal-code').value = m.postal_code || '';
   document.getElementById('m-address').value = m.address || '';
   applyMemberModalAdminFields(m);
+  setMemberModalAvatar(m.id, m.avatar_url || null);
   onRoleChange(m.role || 'editor');
   switchMemberTab(0);
   openModal('modal-member');
+}
+
+// ==================== アバター（プロフィールアイコン） ====================
+let _avatarTargetId = null;
+
+function setMemberModalAvatar(memberId, avatarUrl) {
+  _avatarTargetId = memberId;
+  const preview = document.getElementById('m-avatar-preview');
+  const removeBtn = document.getElementById('m-avatar-remove-btn');
+  const status = document.getElementById('m-avatar-status');
+  const uploadBtn = document.getElementById('m-avatar-upload-btn');
+  if (!preview) return;
+  const isNew = !memberId;
+  if (avatarUrl) {
+    preview.innerHTML = `<img src="${esc(avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
+  } else {
+    const name = document.getElementById('m-name')?.value || '';
+    const initial = (name || '?').trim().charAt(0).toUpperCase();
+    preview.innerHTML = esc(initial);
+  }
+  if (removeBtn) removeBtn.style.display = avatarUrl ? '' : 'none';
+  if (status) status.textContent = isNew ? '※ 保存後にアイコンを設定できます' : '';
+  if (uploadBtn) uploadBtn.disabled = isNew;
+}
+
+// クライアント側で 300x300 にリサイズ（canvas）→ JPEG 0.85 → POST
+async function handleAvatarSelect(file) {
+  if (!file) return;
+  if (!_avatarTargetId) { showToast('保存後にアイコンを設定してください', 'warn'); return; }
+  if (!file.type.startsWith('image/')) { showToast('画像ファイルを選択してください', 'warn'); return; }
+  if (file.size > 5 * 1024 * 1024) { showToast('5MB以下の画像にしてください', 'warn'); return; }
+  const status = document.getElementById('m-avatar-status');
+  status.textContent = '処理中...';
+  try {
+    const blob = await resizeImageToBlob(file, 300, 300, 0.85);
+    const fd = new FormData();
+    fd.append('file', blob, 'avatar.jpg');
+    status.textContent = 'アップロード中...';
+    const res = await fetch(`${API}/members/${_avatarTargetId}/avatar`, { method: 'POST', body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || 'アップロードに失敗しました');
+    }
+    const data = await res.json();
+    // モーダル内プレビュー更新
+    const preview = document.getElementById('m-avatar-preview');
+    if (preview) preview.innerHTML = `<img src="${esc(data.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
+    document.getElementById('m-avatar-remove-btn').style.display = '';
+    status.textContent = '更新しました';
+    setTimeout(() => { if (status) status.textContent = ''; }, 1500);
+    // 周辺画面を更新
+    await refreshAvatarUsages(_avatarTargetId, data.avatar_url);
+  } catch (e) {
+    status.textContent = '';
+    showToast('エラー: ' + (e.message || 'アップロード失敗'), 'error');
+  } finally {
+    document.getElementById('m-avatar-file').value = '';
+  }
+}
+
+async function removeAvatar() {
+  if (!_avatarTargetId) return;
+  if (!confirm('アイコンを削除しますか？')) return;
+  const status = document.getElementById('m-avatar-status');
+  status.textContent = '削除中...';
+  try {
+    const res = await fetch(`${API}/members/${_avatarTargetId}/avatar`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || '削除に失敗しました');
+    }
+    const preview = document.getElementById('m-avatar-preview');
+    const name = document.getElementById('m-name')?.value || '';
+    const initial = (name || '?').trim().charAt(0).toUpperCase();
+    if (preview) preview.innerHTML = esc(initial);
+    document.getElementById('m-avatar-remove-btn').style.display = 'none';
+    status.textContent = '削除しました';
+    setTimeout(() => { if (status) status.textContent = ''; }, 1500);
+    await refreshAvatarUsages(_avatarTargetId, null);
+  } catch (e) {
+    status.textContent = '';
+    showToast('エラー: ' + (e.message || '削除失敗'), 'error');
+  }
+}
+
+// 画像を canvas で center-crop しつつ指定サイズにリサイズし JPEG Blob を返す
+function resizeImageToBlob(file, targetW, targetH, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const sw = img.width, sh = img.height;
+        const srcRatio = sw / sh;
+        const dstRatio = targetW / targetH;
+        let sx = 0, sy = 0, sWidth = sw, sHeight = sh;
+        if (srcRatio > dstRatio) {
+          sWidth = sh * dstRatio;
+          sx = (sw - sWidth) / 2;
+        } else {
+          sHeight = sw / dstRatio;
+          sy = (sh - sHeight) / 2;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, targetW, targetH);
+        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('画像変換に失敗しました')), 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('画像読み込みに失敗しました'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('ファイル読み込みに失敗しました'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// アバター変更後に画面全体を即時反映
+async function refreshAvatarUsages(memberId, avatarUrl) {
+  // ローカル状態の更新
+  const m = allMembers.find(x => x.id === memberId);
+  if (m) m.avatar_url = avatarUrl;
+  if (currentUser && currentUser.id === memberId) {
+    currentUser.avatar_url = avatarUrl;
+    renderHeaderAvatar();
+  }
+  // 主要なリスト・カードを再描画
+  try { if (typeof renderMemberList === 'function') renderMemberList(); } catch(_) {}
+  try { if (typeof renderCreatives === 'function') renderCreatives(); } catch(_) {}
+  try { if (typeof renderTeams === 'function') renderTeams(); } catch(_) {}
+  try { if (typeof renderDashboard === 'function') renderDashboard(); } catch(_) {}
+}
+
+function renderHeaderAvatar() {
+  const av = document.getElementById('user-av');
+  if (!av || !currentUser) return;
+  const name = currentUser.name || currentUser.full_name || currentUser.email || 'U';
+  if (currentUser.avatar_url) {
+    av.innerHTML = `<img src="${esc(currentUser.avatar_url)}" alt="${esc(name)}">`;
+  } else {
+    av.textContent = (name || 'U').slice(0, 2).toUpperCase();
+  }
+}
+
+// ヘッダーアバタークリック → 自分のメンバー編集モーダルを開く
+function openMyProfile() {
+  if (!currentUser) return;
+  const me = allMembers.find(x => x.id === currentUser.id);
+  if (me) openEditMember(me);
+  else openEditMember({ id: currentUser.id, full_name: currentUser.name, email: currentUser.email, role: currentUser.role, avatar_url: currentUser.avatar_url });
 }
 
 async function submitMember() {
@@ -5123,7 +5321,7 @@ function applyRoleBasedUI() {
   // ドロワーのユーザー情報
   const drawerUser = document.getElementById('nav-drawer-user');
   if (drawerUser && currentUser) {
-    drawerUser.innerHTML = `<strong>${currentUser.name || currentUser.email}</strong><br>${roleLabel(effectiveRole())}`;
+    drawerUser.innerHTML = `<div style="display:flex;align-items:center;gap:10px">${avatarHtml(currentUser, 36)}<div><strong>${esc(currentUser.name || currentUser.email)}</strong><br>${roleLabel(effectiveRole())}</div></div>`;
   }
 }
 
@@ -9264,7 +9462,12 @@ async function openCreativeDetail(id) {
   const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass(c.status)}">${c.status}</span>`;
   document.getElementById('cd-project-name').textContent = c.projects?.name || '-';
-  document.getElementById('cd-assignee').textContent = editor?.users?.full_name ? `担当: ${editor.users.full_name}` : '担当者未設定';
+  const cdAssigneeEl = document.getElementById('cd-assignee');
+  if (editor?.users?.full_name) {
+    cdAssigneeEl.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">担当: ${avatarHtml(editor.users, 20)}<span>${esc(editor.users.full_name)}</span></span>`;
+  } else {
+    cdAssigneeEl.textContent = '担当者未設定';
+  }
   // 修正回数バッジ
   const revBadge = document.getElementById('cd-revision-count-badge');
   if (revBadge) {
@@ -10676,6 +10879,7 @@ function renderComments(list) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           ${c.timecode ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : ''}
+          ${avatarHtml(c.users || { full_name: '不明' }, 20)}
           <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
           ${c.is_knowledge ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : ''}
         </div>
@@ -11062,6 +11266,8 @@ function _knRenderCardChunk(list) {
     const isFav    = knIsFavorite(c.id);
     const author = c.users?.full_name || '';
     const initial = author ? author.trim().charAt(0).toUpperCase() : '?';
+    const avatarUrl = c.users?.avatar_url || '';
+    const avatarInner = avatarUrl ? `<img src="${esc(avatarUrl)}" alt="${esc(author)}" loading="lazy">` : esc(initial);
     const project = c.creative_files?.creatives?.projects?.name || '';
     const filename = c.creative_files?.generated_name || '';
     const driveFileId = c.creative_files?.drive_file_id || '';
@@ -11081,7 +11287,7 @@ function _knRenderCardChunk(list) {
         <div class="kn-card-filename">${esc(filename)}</div>
         <div class="kn-card-comment">${esc(c.comment || '')}</div>
         <div class="kn-card-foot">
-          <span class="kn-card-author"><span class="kn-avatar">${esc(initial)}</span>${esc(author)}</span>
+          <span class="kn-card-author"><span class="kn-avatar">${avatarInner}</span>${esc(author)}</span>
           <span>${new Date(c.created_at).toLocaleDateString('ja-JP')}</span>
         </div>
         <span class="kn-card-cta">▶ プレビュー</span>
@@ -11101,6 +11307,8 @@ function _knRenderTableChunk(list) {
     const isFav    = knIsFavorite(c.id);
     const author = c.users?.full_name || '';
     const initial = author ? author.trim().charAt(0).toUpperCase() : '?';
+    const avatarUrl = c.users?.avatar_url || '';
+    const avatarInner = avatarUrl ? `<img src="${esc(avatarUrl)}" alt="${esc(author)}" loading="lazy">` : esc(initial);
     const project = c.creative_files?.creatives?.projects?.name || '';
     const filename = c.creative_files?.generated_name || '';
     const driveFileId = c.creative_files?.drive_file_id || '';
@@ -11116,7 +11324,7 @@ function _knRenderTableChunk(list) {
         <td>${cat ? `<span class="kn-row-cat" data-cat-color="${catColor}">${esc(cat.name)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(project || '—')}</td>
         <td style="max-width:200px;font-family:ui-monospace,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis">${esc(filename)}</td>
-        <td style="white-space:nowrap"><span class="kn-card-author"><span class="kn-avatar">${esc(initial)}</span>${esc(author)}</span></td>
+        <td style="white-space:nowrap"><span class="kn-card-author"><span class="kn-avatar">${avatarInner}</span>${esc(author)}</span></td>
         <td><div class="kn-row-comment">${esc(c.comment || '')}</div></td>
         <td>
           <span class="kn-row-act" onclick="event.stopPropagation()">

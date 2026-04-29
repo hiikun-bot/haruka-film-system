@@ -512,7 +512,7 @@ router.get('/creatives', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role, rank, team_id)
+        users(id, full_name, role, rank, team_id, avatar_url)
       )
     `)
     .order('final_deadline', { ascending: true, nullsFirst: false });
@@ -557,7 +557,7 @@ router.get('/creatives/:id', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role, team_id)
+        users(id, full_name, role, team_id, avatar_url)
       )
     `)
     .eq('id', req.params.id)
@@ -1093,7 +1093,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', requireAuth, async (req, res) => {
   const canList = await userHasPermission(req.user.role, 'member.list');
   const canSeeSensitive = await userHasPermission(req.user.role, 'member.edit_password');
-  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note';
+  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
   if (!canList) {
     // 自分1件のみ（機微情報フル）
@@ -1306,6 +1306,58 @@ router.post('/members/:id/reactivate', requireAuth, requirePermission('member.de
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// メンバーアバター登録
+// 方針: クライアント側で 300x300 JPEG にリサイズ済の Base64 を data URL 形式で受け取り
+// users.avatar_url にそのまま保存する。Drive 連携は未設定環境では使えないため、
+// 設定不要で動く Base64 を採用。1ユーザーあたり ~80KB 程度に収まり DB 行肥大化リスクは小さい。
+router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (req, res) => {
+  const targetId = req.params.id;
+  const requesterId = req.user.id;
+  const isSelf = requesterId === targetId;
+  const isAdmin = await userHasPermission(req.user.role, 'member.edit_password');
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: '権限がありません' });
+
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: 'ファイルが必要です' });
+  if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+    return res.status(400).json({ error: '画像ファイルを選択してください' });
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: 'ファイルサイズは5MB以下にしてください' });
+  }
+
+  const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  // DB 行の肥大化を避けるため、保存時点で 300KB を超えるものは拒否
+  if (dataUrl.length > 300 * 1024) {
+    return res.status(400).json({ error: '画像サイズが大きすぎます。再度お試しください' });
+  }
+
+  const { data, error } = await supabase
+    .from('users')
+    .update({ avatar_url: dataUrl, updated_at: new Date().toISOString() })
+    .eq('id', targetId)
+    .select('id, avatar_url')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ avatar_url: data.avatar_url });
+});
+
+// メンバーアバター削除
+router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
+  const targetId = req.params.id;
+  const requesterId = req.user.id;
+  const isSelf = requesterId === targetId;
+  const isAdmin = await userHasPermission(req.user.role, 'member.edit_password');
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: '権限がありません' });
+
+  const { error } = await supabase
+    .from('users')
+    .update({ avatar_url: null, updated_at: new Date().toISOString() })
+    .eq('id', targetId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // ==================== 請求書 ====================
@@ -2929,7 +2981,7 @@ async function enrichCommentCategories(comments) {
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role)')
+    .select('*, users(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
@@ -2950,7 +3002,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       is_knowledge: !!is_knowledge,
       category_id: category_id || null,
     })
-    .select('*, users(full_name, role)')
+    .select('*, users(id, full_name, role, avatar_url)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   const [enriched] = await enrichCommentCategories([data]);
@@ -2975,7 +3027,7 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   const { category_id } = req.query;
   let query = supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
+    .select('*, users(id, full_name, role, avatar_url), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
   if (category_id) query = query.eq('category_id', category_id);
