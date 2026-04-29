@@ -4211,7 +4211,9 @@ function renderCreatives() {
     const rank = editor?.rank_applied || editor?.users?.rank || '-';
     const editorUserId = editor?.users?.id;
     const homeTeamId = editor?.users?.team_id;
-    const team = (homeTeamId ? teamById.get(homeTeamId) : null)
+    // チーム表示: creatives.team_id を最優先、無ければ担当者の team_id 派生（後方互換）
+    const team = (c.team_id ? teamById.get(c.team_id) : null)
+      || (homeTeamId ? teamById.get(homeTeamId) : null)
       || (editorUserId ? teamByMember.get(editorUserId) : null);
     const ball = c.ball_holder || { holder:'不明', type:'unknown' };
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
@@ -4328,6 +4330,7 @@ async function createCreative() {
   const media_code = document.getElementById('c-media-code')?.value || null;
   const creative_fmt = document.getElementById('c-creative-fmt')?.value || null;
   const creative_size = document.getElementById('c-creative-size')?.value || null;
+  const team_id = document.getElementById('c-team-id')?.value || null;
 
   // 内部コードと制作日を取得（generateFileName で生成済みの場合）
   const internal_code = document.getElementById('c-internal-code')?.value?.trim() || null;
@@ -4345,6 +4348,7 @@ async function createCreative() {
       project_id, file_name, creative_type,
       appeal_type_id: appeal_type_id || null,
       assignee_id: assignee_id || null,
+      team_id: team_id || null,
       draft_deadline: draft_deadline || null,
       final_deadline: final_deadline || null,
       product_id: product_id || null,
@@ -11877,8 +11881,8 @@ async function openCreativeEdit(id) {
   // 担当者を取得（editor / designer / director_as_editor）
   const currentAssignee = (c.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const currentAssigneeUser = currentAssignee?.users;
-  // チームID特定: 複数フォールバックで確実に取得
-  let currentTeamId = currentAssigneeUser?.team_id || '';
+  // チームID特定: creatives.team_id を最優先、無ければ複数フォールバック
+  let currentTeamId = c.team_id || currentAssigneeUser?.team_id || '';
   if (!currentTeamId && currentAssigneeUser?.id) {
     // Fallback 1: allTeams の team_members で逆引き
     const found1 = allTeams.find(t => (t.team_members || []).some(tm => tm.user_id === currentAssigneeUser.id));
@@ -11931,6 +11935,7 @@ async function saveCreativeEdit() {
     creative_fmt:    document.getElementById('ce-creative-fmt').value    || null,
     creative_size:   document.getElementById('ce-creative-size').value   || null,
     appeal_type_id:  document.getElementById('ce-appeal-type').value     || null,
+    team_id:         document.getElementById('ce-team-id').value         || null,
     assignee_id:     assigneeId,
     draft_deadline:  document.getElementById('ce-draft-deadline').value  || null,
     final_deadline:  document.getElementById('ce-final-deadline').value  || null,

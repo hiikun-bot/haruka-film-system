@@ -566,6 +566,7 @@ router.get('/creatives', async (req, res) => {
       *,
       projects(id, name, clients(id, name)),
       project_cycles(id, year, month),
+      teams(id, team_code, team_name),
       creative_assignments(
         id, role, rank_applied,
         users(id, full_name, role, rank, team_id, avatar_url)
@@ -611,6 +612,7 @@ router.get('/creatives/:id', async (req, res) => {
       *,
       projects(id, name, producer_id, director_id, regulation_url, clients(id, name, client_code)),
       project_cycles(id, year, month),
+      teams(id, team_code, team_name),
       creative_assignments(
         id, role, rank_applied,
         users(id, full_name, role, team_id, avatar_url)
@@ -708,7 +710,8 @@ router.post('/creatives/bulk', async (req, res) => {
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
       note: note || null, status: '未着手',
       product_id: product_id || null, media_code: media_code || null,
-      creative_fmt: creative_fmt || null, creative_size: creative_size || null };
+      creative_fmt: creative_fmt || null, creative_size: creative_size || null,
+      team_id: team_id || null };
     inserts.push(insert);
     usedSeqs.push(nextSeq);
     nextSeq++;
@@ -725,11 +728,19 @@ router.post('/creatives', async (req, res) => {
     project_id, cycle_id, file_name, creative_type,
     draft_deadline, final_deadline, script_url, note, appeal_type_id,
     product_id, media_code, creative_fmt, creative_size,
-    assignee_id, internal_code, production_date, talent_flag
+    assignee_id, internal_code, production_date, talent_flag, team_id
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
   }
+
+  // team_id は明示指定があればそれを採用、なければ assignee の team_id を派生
+  let resolvedTeamId = team_id || null;
+  if (!resolvedTeamId && assignee_id) {
+    const { data: u } = await supabase.from('users').select('team_id').eq('id', assignee_id).single();
+    resolvedTeamId = u?.team_id || null;
+  }
+
   const { data, error } = await supabase.from('creatives').insert({
     project_id, cycle_id, file_name, creative_type,
     draft_deadline: draft_deadline || null,
@@ -745,6 +756,7 @@ router.post('/creatives', async (req, res) => {
     internal_code: internal_code || null,
     production_date: production_date || null,
     talent_flag: talent_flag || false,
+    team_id: resolvedTeamId,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録
@@ -768,7 +780,7 @@ router.put('/creatives/:id', async (req, res) => {
     help_flag, talent_flag, note, revision_count,
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
-    assignee_id
+    assignee_id, team_id
   } = req.body;
   const updateData = {
     updated_at: new Date().toISOString()
@@ -795,6 +807,7 @@ router.put('/creatives/:id', async (req, res) => {
   if (media_code !== undefined) updateData.media_code = media_code || null;
   if (creative_fmt !== undefined) updateData.creative_fmt = creative_fmt || null;
   if (creative_size !== undefined) updateData.creative_size = creative_size || null;
+  if (team_id !== undefined) updateData.team_id = team_id || null;
 
   // 納品完了時に支払い可能フラグを自動オン
   if (status === '納品') updateData.is_payable = true;
