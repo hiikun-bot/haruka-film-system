@@ -1711,6 +1711,7 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
       return res.status(403).json({ error: '提出済み以降の請求書は明細編集できません' });
     }
 
+    const CHANGE_REASON_MAX = 500;
     // バリデーション
     for (const li of line_items) {
       if (!li.label || !String(li.label).trim()) {
@@ -1720,17 +1721,55 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
       const up = Number(li.unit_price);
       if (!Number.isFinite(q) || q < 0) return res.status(400).json({ error: '数量は0以上の数値で入力してください' });
       if (!Number.isFinite(up) || up < 0) return res.status(400).json({ error: '単価は0以上の数値で入力してください' });
+      // change_reason の型・長さチェック（あれば）
+      if (li.change_reason !== undefined && li.change_reason !== null) {
+        if (typeof li.change_reason !== 'string') {
+          return res.status(400).json({ error: '変更理由は文字列で指定してください' });
+        }
+        if (li.change_reason.length > CHANGE_REASON_MAX) {
+          return res.status(400).json({ error: `変更理由は${CHANGE_REASON_MAX}文字以内で入力してください` });
+        }
+      }
     }
 
-    // 既存明細を取得（差分計算用）
-    const { data: existing, error: exErr } = await supabase
-      .from('invoice_items').select('id').eq('invoice_id', invId);
+    // 既存明細を取得（監査列込み。未反映環境ではフォールバック）
+    let existing = null, exErr = null;
+    let auditCols = true;
+    {
+      const r = await supabase.from('invoice_items')
+        .select('id, unit_price, original_unit_price, price_change_reason')
+        .eq('invoice_id', invId);
+      existing = r.data; exErr = r.error;
+      if (exErr && /original_unit_price|price_change_reason/.test(exErr.message || '')) {
+        auditCols = false;
+        const r2 = await supabase.from('invoice_items')
+          .select('id, unit_price').eq('invoice_id', invId);
+        existing = r2.data; exErr = r2.error;
+      }
+    }
     if (exErr) return res.status(500).json({ error: exErr.message });
-    const existingIds = new Set((existing || []).map(r => r.id));
+    const existingMap = new Map((existing || []).map(r => [r.id, r]));
     const keepIds = new Set(line_items.filter(li => li.id).map(li => li.id));
 
+    // 単価変更行の理由必須チェック（既存行のみ。新規行は元単価という概念なし）
+    for (let i = 0; i < line_items.length; i++) {
+      const li = line_items[i];
+      if (!li.id || !existingMap.has(li.id)) continue;
+      const prev = existingMap.get(li.id);
+      const prevOrigUp = (auditCols && prev.original_unit_price != null)
+        ? Number(prev.original_unit_price)
+        : Number(prev.unit_price);
+      const newUp = Math.round(Number(li.unit_price) || 0);
+      if (Number.isFinite(prevOrigUp) && prevOrigUp !== newUp) {
+        const reason = (typeof li.change_reason === 'string') ? li.change_reason.trim() : '';
+        if (!reason) {
+          return res.status(400).json({ error: `${i+1}行目: 単価を変更した行は変更理由が必須です` });
+        }
+      }
+    }
+
     // 削除対象（送られてこなかった既存行）
-    const toDelete = [...existingIds].filter(id => !keepIds.has(id));
+    const toDelete = [...existingMap.keys()].filter(id => !keepIds.has(id));
     if (toDelete.length) {
       // 関連する details を先に削除（FK制約回避）
       await supabase.from('invoice_item_details').delete().in('invoice_item_id', toDelete);
@@ -1767,13 +1806,44 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'creative紐付け行は cost_type が必須です' });
       }
 
-      if (li.id && existingIds.has(li.id)) {
-        const { error: upErr } = await supabase.from('invoice_items').update(row).eq('id', li.id);
-        if (upErr) return res.status(500).json({ error: upErr.message });
-      } else {
-        const { error: insErr } = await supabase.from('invoice_items').insert(row);
-        if (insErr) return res.status(500).json({ error: insErr.message });
+      const isExisting = li.id && existingMap.has(li.id);
+      // 監査列の付与（DBに列がある場合のみ）
+      if (auditCols) {
+        const reason = (typeof li.change_reason === 'string') ? li.change_reason.trim() : '';
+        if (isExisting) {
+          const prev = existingMap.get(li.id);
+          const prevOrigUp = prev.original_unit_price != null
+            ? Number(prev.original_unit_price)
+            : Number(prev.unit_price);
+          // original_unit_price は既存値を維持（無ければ unit_price で初期化）
+          row.original_unit_price = Number.isFinite(prevOrigUp) ? prevOrigUp : unit_price;
+          if (Number.isFinite(prevOrigUp) && prevOrigUp !== unit_price) {
+            // 単価変更あり → 新しい理由で上書き
+            row.price_change_reason = reason || null;
+          } else {
+            // 変更なし → 既存理由をそのまま保持
+            row.price_change_reason = prev.price_change_reason ?? null;
+          }
+        } else {
+          // 新規追加行: original = current, 理由は null
+          row.original_unit_price = unit_price;
+          row.price_change_reason = null;
+        }
       }
+
+      const writeRow = async (payload) => {
+        if (isExisting) {
+          return await supabase.from('invoice_items').update(payload).eq('id', li.id);
+        }
+        return await supabase.from('invoice_items').insert(payload);
+      };
+      let { error: wErr } = await writeRow(row);
+      if (wErr && /original_unit_price|price_change_reason/.test(wErr.message || '')) {
+        // 監査列が未反映の環境向けフォールバック
+        const { original_unit_price: _o, price_change_reason: _r, ...rest } = row;
+        ({ error: wErr } = await writeRow(rest));
+      }
+      if (wErr) return res.status(500).json({ error: wErr.message });
     }
 
     // invoices.total_amount を再計算
