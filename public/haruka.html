@@ -5361,6 +5361,13 @@ function setPreviewRole(role) {
   applyRoleBasedUI();
   if (document.getElementById('page-dashboard')?.classList.contains('active')) loadDashboard();
   if (document.getElementById('page-members')?.classList.contains('active')) loadMembers();
+  if (document.getElementById('page-projects')?.classList.contains('active') && typeof loadProjects === 'function') loadProjects();
+  if (document.getElementById('page-teams')?.classList.contains('active') && typeof loadTeams === 'function') loadTeams();
+  if (document.getElementById('page-invoices')?.classList.contains('active')) {
+    if (typeof loadMyInvoices === 'function') loadMyInvoices();
+    if (typeof loadInvoices === 'function') loadInvoices();
+  }
+  if (document.getElementById('page-knowledge')?.classList.contains('active') && typeof loadKnowledgePage === 'function') loadKnowledgePage();
   renderCreatives();
 }
 
