@@ -499,6 +499,62 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
   });
 });
 
+// ダッシュボード: 誕生日一覧（今日〜30日先）
+router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, full_name, birthday, avatar_url, role')
+    .eq('is_active', true)
+    .not('birthday', 'is', null);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayY = today.getFullYear();
+  const todayM = today.getMonth() + 1;
+  const todayD = today.getDate();
+  const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+  const list = (data || []).map(u => {
+    if (!u.birthday) return null;
+    const bd = String(u.birthday).slice(0, 10).split('-');
+    const birthY = parseInt(bd[0], 10);
+    const month = parseInt(bd[1], 10);
+    const day = parseInt(bd[2], 10);
+    if (!month || !day) return null;
+    // 今年の誕生日。すでに過ぎていたら来年
+    let next = new Date(todayY, month - 1, day);
+    next.setHours(0, 0, 0, 0);
+    let nextYear = todayY;
+    if (next < today) {
+      next = new Date(todayY + 1, month - 1, day);
+      next.setHours(0, 0, 0, 0);
+      nextYear = todayY + 1;
+    }
+    const days_until = Math.round((next - today) / MS_PER_DAY);
+    const is_today = (month === todayM && day === todayD);
+    const age_turning = birthY ? (nextYear - birthY) : null;
+    return {
+      id: u.id,
+      full_name: u.full_name,
+      birthday: u.birthday,
+      month, day,
+      days_until,
+      is_today,
+      avatar_url: u.avatar_url || null,
+      role: u.role,
+      age_turning
+    };
+  }).filter(x => x && x.days_until <= 30);
+
+  list.sort((a, b) => {
+    if (a.is_today !== b.is_today) return a.is_today ? -1 : 1;
+    return a.days_until - b.days_until;
+  });
+
+  res.json(list);
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
@@ -512,7 +568,7 @@ router.get('/creatives', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role, rank, team_id)
+        users(id, full_name, role, rank, team_id, avatar_url)
       )
     `)
     .order('final_deadline', { ascending: true, nullsFirst: false });
@@ -557,7 +613,7 @@ router.get('/creatives/:id', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role, team_id)
+        users(id, full_name, role, team_id, avatar_url)
       )
     `)
     .eq('id', req.params.id)
@@ -1093,7 +1149,7 @@ router.delete('/assignments/:id', async (req, res) => {
 router.get('/members', requireAuth, async (req, res) => {
   const canList = await userHasPermission(req.user.role, 'member.list');
   const canSeeSensitive = await userHasPermission(req.user.role, 'member.edit_password');
-  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note';
+  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
   if (!canList) {
     // 自分1件のみ（機微情報フル）
@@ -1306,6 +1362,60 @@ router.post('/members/:id/reactivate', requireAuth, requirePermission('member.de
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// メンバーアバター登録
+// 方針: クライアント側で 300x300 JPEG にリサイズ済の Base64 を data URL 形式で受け取り
+// users.avatar_url にそのまま保存する。
+// 既存の Drive 連携は Supabase Service Account 設定が前提のため、設定不要・依存なし
+// で動く Base64 採用。1ユーザーあたり最大 ~80KB 程度に収まり、users 行の肥大化リスクは極小。
+router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (req, res) => {
+  const targetId = req.params.id;
+  const requesterId = req.user.id;
+  const isSelf = requesterId === targetId;
+  const isAdmin = await userHasPermission(req.user.role, 'member.edit_password');
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: '権限がありません' });
+
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: 'ファイルが必要です' });
+  if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+    return res.status(400).json({ error: '画像ファイルを選択してください' });
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: 'ファイルサイズは5MB以下にしてください' });
+  }
+
+  // Base64 data URL に変換して保存（クライアント側でリサイズ済み想定）
+  const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  // DB 行の肥大化を避けるため、保存時点で 300KB を超えるものは拒否
+  if (dataUrl.length > 300 * 1024) {
+    return res.status(400).json({ error: '画像サイズが大きすぎます。再度お試しください' });
+  }
+
+  const { data, error } = await supabase
+    .from('users')
+    .update({ avatar_url: dataUrl, updated_at: new Date().toISOString() })
+    .eq('id', targetId)
+    .select('id, avatar_url')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ avatar_url: data.avatar_url });
+});
+
+// メンバーアバター削除
+router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
+  const targetId = req.params.id;
+  const requesterId = req.user.id;
+  const isSelf = requesterId === targetId;
+  const isAdmin = await userHasPermission(req.user.role, 'member.edit_password');
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: '権限がありません' });
+
+  const { error } = await supabase
+    .from('users')
+    .update({ avatar_url: null, updated_at: new Date().toISOString() })
+    .eq('id', targetId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // ==================== 請求書 ====================
@@ -2929,7 +3039,7 @@ async function enrichCommentCategories(comments) {
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role)')
+    .select('*, users(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
@@ -2950,7 +3060,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       is_knowledge: !!is_knowledge,
       category_id: category_id || null,
     })
-    .select('*, users(full_name, role)')
+    .select('*, users(id, full_name, role, avatar_url)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   const [enriched] = await enrichCommentCategories([data]);
@@ -2975,7 +3085,7 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   const { category_id } = req.query;
   let query = supabase
     .from('creative_file_comments')
-    .select('*, users(full_name, role), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
+    .select('*, users(id, full_name, role, avatar_url), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
   if (category_id) query = query.eq('category_id', category_id);
