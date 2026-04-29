@@ -800,3 +800,21 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_creative_sort
 -- 単価変更とは別概念として分離する。
 ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS original_unit_price INTEGER;
 ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS price_change_reason TEXT;
+
+-- ==================== セキュリティ：全 public テーブルで RLS 有効化 ====================
+-- 本アプリは Supabase の service_role キーをサーバー側でのみ使用しており、
+-- クライアントから anon キーで Supabase REST API を叩く構成ではない。
+-- ただし多重防御として、public スキーマの全テーブルで Row Level Security を
+-- 有効化し、ポリシー無し = anon/authenticated 直接アクセスは全拒否とする。
+-- service_role はバイパスするので既存アプリ機能には影響しない。
+DO $rls_enable$
+DECLARE
+  t record;
+BEGIN
+  FOR t IN
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+  END LOOP;
+END
+$rls_enable$;

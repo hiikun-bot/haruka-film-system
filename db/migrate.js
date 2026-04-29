@@ -173,6 +173,23 @@ async function runSchemaSync() {
       catch (err) { console.warn(`[schema-sync] 保険ALTER失敗: ${err.message}`); }
     }
 
+    // 多重防御: public スキーマ全テーブルで RLS を強制有効化（service_role はバイパスするため安全）
+    try {
+      const rlsBlock = `DO $$
+DECLARE
+  t record;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+  END LOOP;
+END
+$$`;
+      await client.query(rlsBlock);
+      console.log('[schema-sync] public スキーマ全テーブルで RLS を有効化');
+    } catch (err) {
+      console.warn(`[schema-sync] RLS 一括有効化失敗: ${err.message}`);
+    }
+
     // PostgRESTのスキーマキャッシュをリロード（DDL反映のため）
     try {
       await client.query("NOTIFY pgrst, 'reload schema'");
