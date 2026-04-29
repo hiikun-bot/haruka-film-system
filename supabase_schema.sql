@@ -598,6 +598,22 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_creatives_team_id ON creatives(team_id);
 
+-- team_id への FK を確実に付与（過去にカラムだけが FK 無しで追加された場合の修復）
+-- これが無いと PostgREST は creatives → teams の埋め込み select を解決できず、
+-- /api/creatives が 500 を返してフロントが allCreatives.forEach is not a function で落ちる
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'creatives_team_id_fkey' AND conrelid = 'public.creatives'::regclass
+  ) THEN
+    ALTER TABLE public.creatives
+      ADD CONSTRAINT creatives_team_id_fkey
+      FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE SET NULL;
+  END IF;
+END
+$$;
+
 -- チェックリストマスターに対象区分を追加（'all'=共通, 'video'=動画のみ, 'design'=デザインのみ）
 ALTER TABLE checklist_masters ADD COLUMN IF NOT EXISTS target_type TEXT DEFAULT 'all';
 

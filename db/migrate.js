@@ -174,6 +174,31 @@ async function runSchemaSync() {
       catch (err) { console.warn(`[schema-sync] 保険ALTER失敗: ${err.message}`); }
     }
 
+    // 保険ALTERでカラムだけが FK 無しで追加された場合に備え、必須の FK 制約を後付けで保証する。
+    // これが無いと PostgREST が creatives → teams の埋め込み select を解決できず、
+    // /api/creatives が 500 を返してフロントが allCreatives.forEach is not a function で落ちる。
+    const criticalConstraints = [
+      {
+        name: 'creatives_team_id_fkey',
+        sql: `DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'creatives_team_id_fkey' AND conrelid = 'public.creatives'::regclass
+  ) THEN
+    ALTER TABLE public.creatives
+      ADD CONSTRAINT creatives_team_id_fkey
+      FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE SET NULL;
+  END IF;
+END
+$$`,
+      },
+    ];
+    for (const c of criticalConstraints) {
+      try { await client.query(c.sql); console.log(`[schema-sync] 保険FK確認成功: ${c.name}`); }
+      catch (err) { console.warn(`[schema-sync] 保険FK確認失敗 (${c.name}): ${err.message}`); }
+    }
+
     // 多重防御: public スキーマ全テーブルで RLS を強制有効化（service_role はバイパスするため安全）
     try {
       const rlsBlock = `DO $$
