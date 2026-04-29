@@ -594,6 +594,10 @@ CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(cr
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
 
+-- creatives にチームを独立保存（担当者の team_id 派生から脱却）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_creatives_team_id ON creatives(team_id);
+
 -- チェックリストマスターに対象区分を追加（'all'=共通, 'video'=動画のみ, 'design'=デザインのみ）
 ALTER TABLE checklist_masters ADD COLUMN IF NOT EXISTS target_type TEXT DEFAULT 'all';
 
