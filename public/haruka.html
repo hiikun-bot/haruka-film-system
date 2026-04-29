@@ -4113,11 +4113,16 @@ async function loadCreatives() {
   tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
   try {
     const res = await fetch(`${API}/creatives`);
-    allCreatives = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data)) {
+      throw new Error((data && data.error) ? data.error : `読み込み失敗 (HTTP ${res.status})`);
+    }
+    allCreatives = data;
     populateAssigneeFilter();
     renderCreatives();
     renderAlerts();
   } catch(e) {
+    allCreatives = [];
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
   }
 }
