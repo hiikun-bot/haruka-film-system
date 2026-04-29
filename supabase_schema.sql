@@ -818,3 +818,10 @@ BEGIN
   END LOOP;
 END
 $rls_enable$;
+
+-- ==================== invoices.status の CHECK 制約を撤廃 ====================
+-- 旧スキーマで draft/issued のみ許可する CHECK 制約があり、submitted への
+-- ステータス遷移が「invoices_status_check」違反で失敗していた。
+-- アプリ側で遷移ロジックをガードしているため CHECK 制約は不要。
+-- (projects_status_check と同じ方針)
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_status_check;
