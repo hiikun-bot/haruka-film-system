@@ -7180,25 +7180,30 @@ function _eiRenderLines(lines, editable) {
 function _eiRowHTML(l, i, editable) {
   const dis = editable ? '' : 'disabled';
   const amt = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
-  // 元単価（DB保存値）。既存行は original_unit_price（無ければ現在 unit_price）をベース、
-  // 新規追加行（id無し）は「元単価」概念なし → null として扱う
   const curUp  = Number(l.unit_price) || 0;
   const isExistingRow = !!l.id;
-  const origUp = isExistingRow
-    ? ((l.original_unit_price != null) ? Number(l.original_unit_price) : curUp)
-    : null;
   const prevReason = l.price_change_reason || '';
-  const isOverridden = origUp != null && origUp !== curUp;
-  // 変更履歴ブロック: 「変更があった」または「理由が DB に保存されている」なら表示
-  // 提出済み等の読み取り専用モードでも管理者が変更理由を確認できるようにする
-  const showHistory = (isOverridden && origUp != null) || prevReason;
-  const historyBlock = showHistory
-    ? `<div class="ei-change-history" style="grid-column:1 / -1;font-size:12px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:8px 12px;margin-top:6px">
+  const hasAuditOrigUp = isExistingRow && l.original_unit_price != null;
+  const isOverridden = hasAuditOrigUp && Number(l.original_unit_price) !== curUp;
+  // 変更履歴ブロック:
+  // - 元単価と現単価が違う or 理由が DB に保存されている → 履歴を表示
+  // - 読み取り専用 + 既存行 + 監査情報がいずれも空 → 「記録なし」を表示（管理者がUI不具合と混同しないため）
+  const showHistory = isOverridden || prevReason;
+  const showNoAudit = !showHistory && !editable && isExistingRow && !hasAuditOrigUp && !prevReason;
+  let historyBlock = '';
+  if (showHistory) {
+    historyBlock = `<div class="ei-change-history" style="grid-column:1 / -1;font-size:12px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:8px 12px;margin-top:6px">
          <div style="font-weight:700;margin-bottom:3px">📝 単価変更履歴</div>
-         ${(isOverridden && origUp != null) ? `<div>元 <span style="text-decoration:line-through;color:#78350F">¥${origUp.toLocaleString()}</span> → <strong>¥${curUp.toLocaleString()}</strong></div>` : ''}
-         ${prevReason ? `<div style="margin-top:3px"><span style="font-weight:600">理由:</span> ${esc(prevReason)}</div>` : ''}
-       </div>`
-    : '';
+         ${isOverridden ? `<div>元 <span style="text-decoration:line-through;color:#78350F">¥${Number(l.original_unit_price).toLocaleString()}</span> → <strong>¥${curUp.toLocaleString()}</strong></div>` : ''}
+         ${prevReason ? `<div style="margin-top:3px"><span style="font-weight:600">理由:</span> ${esc(prevReason)}</div>` : '<div style="margin-top:3px;color:#78350F">理由は記録されていません</div>'}
+       </div>`;
+  } else if (showNoAudit) {
+    historyBlock = `<div class="ei-no-audit" style="grid-column:1 / -1;font-size:11px;color:#71717a;background:#fafafa;border:1px dashed #d4d4d8;border-radius:6px;padding:6px 10px;margin-top:6px">
+         ℹ️ この明細には変更履歴が記録されていません（旧データ、または編集時に理由が記録されなかった項目）
+       </div>`;
+  }
+  // origUp: 既存行で監査列ありなら DB値、既存行で監査列なしなら curUp（変更なし扱い）、新規行は null（理由不要）
+  const origUp = isExistingRow ? (hasAuditOrigUp ? Number(l.original_unit_price) : curUp) : null;
   // 変更理由 input（表示/非表示は isOverridden 次第）
   const reasonValue = isOverridden ? prevReason : '';
   const reasonStyle = isOverridden ? '' : 'display:none';
