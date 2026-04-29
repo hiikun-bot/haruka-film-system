@@ -5977,7 +5977,7 @@ async function loadDashboardBirthdays() {
       <div class="bc-person">
         ${avatarHtml(p, 'bc-avatar')}
         <div class="bc-pname">${esc(p.full_name)}</div>
-        ${p.age_turning ? `<div class="bc-page">${p.age_turning}歳おめでとう！</div>` : ''}
+        <div class="bc-page">おめでとう！</div>
       </div>`).join('');
     const titleNames = todays.length === 1
       ? `${esc(todays[0].full_name)}さん`
@@ -6010,7 +6010,7 @@ async function loadDashboardBirthdays() {
         ${avatarHtml(p, 'bday-avatar')}
         <div style="flex:1;min-width:0">
           <div class="bday-name">${esc(p.full_name)}</div>
-          <div class="bday-meta">${p.month}/${p.day}${p.age_turning ? ` ・ ${p.age_turning}歳に` : ''}</div>
+          <div class="bday-meta">${p.month}/${p.day}</div>
         </div>
         <span class="bday-days${urgent}">${daysLabel}</span>
       </div>`;
