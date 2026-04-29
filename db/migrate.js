@@ -162,6 +162,16 @@ async function runSchemaSync() {
     const elapsed = Date.now() - startTime;
     console.log(`[schema-sync] 完了 OK=${okCount} NG=${errCount} (${elapsed}ms)`);
 
+    // 監査列が確実に存在することを保証（個別ファイル実行が落ちた場合の保険）
+    const criticalAlters = [
+      "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS original_unit_price INTEGER",
+      "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS price_change_reason TEXT",
+    ];
+    for (const stmt of criticalAlters) {
+      try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
+      catch (err) { console.warn(`[schema-sync] 保険ALTER失敗: ${err.message}`); }
+    }
+
     // PostgRESTのスキーマキャッシュをリロード（DDL反映のため）
     try {
       await client.query("NOTIFY pgrst, 'reload schema'");

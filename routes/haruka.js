@@ -1313,15 +1313,21 @@ router.post('/members/:id/reactivate', requireAuth, requirePermission('member.de
 // 請求書一覧
 router.get('/invoices', async (req, res) => {
   const { issuer_id, year, month, status } = req.query;
-  let query = supabase
-    .from('invoices')
-    .select(`*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,original_unit_price,price_change_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`)
-    .order('created_at', { ascending: false });
-  if (issuer_id) query = query.eq('issuer_id', issuer_id);
-  if (year) query = query.eq('year', parseInt(year));
-  if (month) query = query.eq('month', parseInt(month));
-  if (status) query = query.eq('status', status);
-  const { data, error } = await query;
+  const buildQuery = (selectStr) => {
+    let q = supabase.from('invoices').select(selectStr).order('created_at', { ascending: false });
+    if (issuer_id) q = q.eq('issuer_id', issuer_id);
+    if (year)  q = q.eq('year',  parseInt(year));
+    if (month) q = q.eq('month', parseInt(month));
+    if (status) q = q.eq('status', status);
+    return q;
+  };
+  const fullSelect = `*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,original_unit_price,price_change_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
+  const fallbackSelect = `*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
+  let { data, error } = await buildQuery(fullSelect);
+  if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
+    console.warn('[invoices] 監査列未反映のためフォールバック select を使用:', error.message);
+    ({ data, error } = await buildQuery(fallbackSelect));
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -1431,9 +1437,7 @@ router.get('/invoices/preview-items', async (req, res) => {
 
 // 請求書詳細（PDF印刷用）― preview-items より後に定義
 router.get('/invoices/:id', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('invoices')
-    .select(`
+  const buildSelect = (auditCols) => `
       *,
       projects(id, name, clients(id, name, client_code)),
       issuer:issuer_id(
@@ -1443,7 +1447,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       ),
       invoice_items(
         id, total_amount, is_special, special_reason,
-        original_unit_price, price_change_reason,
+        ${auditCols ? 'original_unit_price, price_change_reason,' : ''}
         label, quantity, unit, unit_price, sort_order,
         cost_type, creative_label, creative_id,
         creatives(id, file_name, creative_type, final_deadline, draft_deadline, updated_at,
@@ -1451,9 +1455,12 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
         ),
         invoice_item_details(cost_type, unit_price, amount)
       )
-    `)
-    .eq('id', req.params.id)
-    .single();
+    `;
+  let { data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', req.params.id).single();
+  if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
+    console.warn('[invoices/:id] 監査列未反映のためフォールバック select を使用:', error.message);
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(false)).eq('id', req.params.id).single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: '請求書が見つかりません' });
   if (data.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role)) {
@@ -1857,9 +1864,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   if (iErr) return res.status(500).json({ error: iErr.message });
 
   // 明細（コスト種別ごと）を一括保存
-  const { data: invItems, error: itemsErr } = await supabase
-    .from('invoice_items')
-    .insert(itemRows.map(r => ({
+  const buildItemRow = (r, withAudit) => {
+    const row = {
       invoice_id:    invoice.id,
       creative_id:   r.creative_id,
       creative_label:r.creative_label,
@@ -1867,15 +1873,30 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       total_amount:  r.total_amount,
       is_special:    r.is_special,
       special_reason:r.special_reason,
-      original_unit_price: r.original_unit_price,
-      price_change_reason: r.price_change_reason,
       label:         r.label,
       quantity:      r.quantity,
       unit:          r.unit,
       unit_price:    r.unit_price,
       sort_order:    r.sort_order,
-    })))
-    .select('id, creative_id, cost_type, unit_price');
+    };
+    if (withAudit) {
+      row.original_unit_price = r.original_unit_price;
+      row.price_change_reason = r.price_change_reason;
+    }
+    return row;
+  };
+  let invItems, itemsErr;
+  ({ data: invItems, error: itemsErr } = await supabase
+    .from('invoice_items')
+    .insert(itemRows.map(r => buildItemRow(r, true)))
+    .select('id, creative_id, cost_type, unit_price'));
+  if (itemsErr && /original_unit_price|price_change_reason/.test(itemsErr.message || '')) {
+    console.warn('[invoices/generate] 監査列未反映のためフォールバック insert を使用:', itemsErr.message);
+    ({ data: invItems, error: itemsErr } = await supabase
+      .from('invoice_items')
+      .insert(itemRows.map(r => buildItemRow(r, false)))
+      .select('id, creative_id, cost_type, unit_price'));
+  }
   if (itemsErr) return res.status(500).json({ error: itemsErr.message });
 
   // 後方互換: invoice_item_details にも対応行を入れる（旧クエリで参照する画面が混在しても破綻しないように）
