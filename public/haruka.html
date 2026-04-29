@@ -7051,7 +7051,9 @@ async function editInvoice(id) {
   const editable = ['draft', 'rejected'].includes(inv.status);
   document.getElementById('ei-readonly-notice').style.display = editable ? 'none' : '';
   document.getElementById('ei-add-row').disabled = !editable;
-  document.getElementById('ei-save-btn').disabled = !editable;
+  const saveBtn = document.getElementById('ei-save-btn');
+  saveBtn.disabled = !editable;
+  saveBtn.dataset.readonly = editable ? '0' : '1';
 
   // 明細行を構築（新方式：1 invoice_item = 1コスト種別行）
   const items = (inv.invoice_items || []).slice().sort((a, b) => {
@@ -7172,24 +7174,41 @@ function _eiRenderLines(lines, editable) {
   }
 
   container.innerHTML = html;
+  _eiUpdateSaveBtn();
 }
 
 function _eiRowHTML(l, i, editable) {
   const dis = editable ? '' : 'disabled';
   const amt = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
-  // 単価変更があった行は「元 ¥X → ¥Y（理由: ◯◯）」をインラインで表示
-  const origUp = (l.original_unit_price != null) ? Number(l.original_unit_price) : null;
+  // 元単価（DB保存値）。既存行は original_unit_price（無ければ現在 unit_price）をベース、
+  // 新規追加行（id無し）は「元単価」概念なし → null として扱う
   const curUp  = Number(l.unit_price) || 0;
-  const reason = l.price_change_reason || '';
-  const showChange = reason && origUp != null && origUp !== curUp;
-  const changeBlock = showChange
-    ? `<div style="grid-column:1 / -1;font-size:11px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:4px;padding:4px 8px;margin-top:2px">
+  const isExistingRow = !!l.id;
+  const origUp = isExistingRow
+    ? ((l.original_unit_price != null) ? Number(l.original_unit_price) : curUp)
+    : null;
+  const prevReason = l.price_change_reason || '';
+  const isOverridden = origUp != null && origUp !== curUp;
+  // 既存DBの理由（変更履歴）を表示するブロック（変更状態かつ理由ありで表示）
+  const showHistory = isOverridden && prevReason;
+  const historyBlock = showHistory
+    ? `<div class="ei-change-history" style="grid-column:1 / -1;font-size:11px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:4px;padding:4px 8px;margin-top:2px">
          <span style="font-weight:600">単価変更:</span>
          元 ¥${origUp.toLocaleString()} → ¥${curUp.toLocaleString()}
-         <span style="color:#78350F;margin-left:6px">（理由: ${esc(reason)}）</span>
+         <span style="color:#78350F;margin-left:6px">（保存済の理由: ${esc(prevReason)}）</span>
        </div>`
     : '';
-  // 元データを各行のdatasetに保持（creative_id, cost_type, creative_label, creative_date）
+  // 変更理由 input（表示/非表示は isOverridden 次第）
+  const reasonValue = isOverridden ? prevReason : '';
+  const reasonStyle = isOverridden ? '' : 'display:none';
+  const reasonBlock = `
+    <div class="ei-reason-wrap" data-row-reason="${i}" style="grid-column:1 / -1;margin-top:4px;${reasonStyle}">
+      <input type="text" class="ei-reason-input" data-row-reason="${i}" maxlength="500"
+             placeholder="単価変更の理由（必須）" value="${esc(reasonValue)}" ${dis}
+             oninput="_eiUpdateSaveBtn()"
+             style="width:100%;max-width:420px;padding:4px 8px;border:1px solid #F59E0B;border-radius:4px;font-size:11px;background:#FFFBEB">
+    </div>`;
+  // 元データを各行のdatasetに保持（creative_id, cost_type, creative_label, creative_date, original-unit-price, prev-reason）
   return `
     <div class="ei-row" data-row="${i}"
          data-id="${l.id || ''}"
@@ -7197,6 +7216,8 @@ function _eiRowHTML(l, i, editable) {
          data-cost-type="${l.cost_type || ''}"
          data-creative-label="${(l.creative_label||'').replace(/"/g,'&quot;')}"
          data-creative-date="${l.creative_date || ''}"
+         data-original-unit-price="${origUp != null ? origUp : ''}"
+         data-prev-reason="${esc(prevReason)}"
          style="display:grid;grid-template-columns:1fr 70px 70px 100px 110px 36px;gap:6px;padding:8px 10px;border-top:1px solid var(--border);align-items:center">
       <input type="text" class="form-input ei-label" placeholder="品目名" value="${(l.label||'').replace(/"/g,'&quot;')}" ${dis}
              style="font-size:13px;padding:6px 8px" oninput="_eiRecalcTotal()">
@@ -7205,28 +7226,87 @@ function _eiRowHTML(l, i, editable) {
       <input type="text" class="form-input ei-unit" value="${(l.unit||'式').replace(/"/g,'&quot;')}" ${dis}
              style="font-size:13px;padding:6px 8px;text-align:center" list="ei-unit-list">
       <input type="number" class="form-input ei-price" min="0" step="1" value="${Number(l.unit_price)||0}" ${dis}
-             style="font-size:13px;padding:6px 8px;text-align:right" oninput="_eiRowAmount(${i});_eiRecalcTotal()">
+             style="font-size:13px;padding:6px 8px;text-align:right${isOverridden ? ';border-color:#F59E0B' : ''}"
+             oninput="_eiRowAmount(${i});_eiOnPriceChange(${i});_eiRecalcTotal()">
       <div class="ei-amount" data-amt-row="${i}" style="font-size:13px;text-align:right;font-weight:600">¥${amt.toLocaleString()}</div>
       <button type="button" class="btn btn-sm" onclick="_eiRemoveRow(${i})" ${dis}
               style="font-size:14px;color:#A32D2D;padding:2px 8px" title="行を削除">×</button>
-      ${changeBlock}
+      ${historyBlock}
+      ${reasonBlock}
     </div>`;
+}
+
+// 単価が変わったとき: 元単価との差で理由欄の表示/非表示を切り替え + 保存ボタン更新
+function _eiOnPriceChange(i) {
+  const row = document.querySelector(`#ei-line-items .ei-row[data-row="${i}"]`);
+  if (!row) return;
+  const origRaw = row.dataset.originalUnitPrice;
+  const orig = (origRaw === '' || origRaw == null) ? null : Number(origRaw);
+  const cur  = Number(row.querySelector('.ei-price')?.value) || 0;
+  const priceInput  = row.querySelector('.ei-price');
+  const reasonWrap  = row.querySelector('.ei-reason-wrap');
+  const reasonInput = row.querySelector('.ei-reason-input');
+  const overridden  = orig != null && Number.isFinite(orig) && orig !== cur;
+  if (overridden) {
+    if (reasonWrap) reasonWrap.style.display = '';
+    // 戻ってきたとき / 初回変更時は前回理由でprefill（表示用に）。空のままなら触らない
+    if (reasonInput && !reasonInput.value && row.dataset.prevReason) {
+      reasonInput.value = row.dataset.prevReason;
+    }
+    if (priceInput) priceInput.style.borderColor = '#F59E0B';
+  } else {
+    if (reasonWrap) reasonWrap.style.display = 'none';
+    if (reasonInput) reasonInput.value = '';
+    if (priceInput) priceInput.style.borderColor = '';
+  }
+  _eiUpdateSaveBtn();
+}
+
+// 変更行があって理由が空 → 保存ボタンdisable
+function _eiUpdateSaveBtn() {
+  const btn = document.getElementById('ei-save-btn');
+  if (!btn) return;
+  // 編集不可状態（提出済み等）の場合は触らない
+  if (btn.dataset.readonly === '1') return;
+  const rows = document.querySelectorAll('#ei-line-items .ei-row');
+  let missing = false;
+  for (const row of rows) {
+    const origRaw = row.dataset.originalUnitPrice;
+    if (origRaw === '' || origRaw == null) continue; // 新規行は元単価なし
+    const orig = Number(origRaw);
+    const cur  = Number(row.querySelector('.ei-price')?.value) || 0;
+    if (!Number.isFinite(orig) || orig === cur) continue;
+    const reason = (row.querySelector('.ei-reason-input')?.value || '').trim();
+    if (!reason) { missing = true; break; }
+  }
+  btn.disabled = missing;
+  btn.style.opacity = missing ? '0.5' : '';
+  btn.title = missing ? '単価を変更した行は変更理由を入力してください' : '';
 }
 
 function _eiCollectLines() {
   const rows = Array.from(document.querySelectorAll('#ei-line-items .ei-row'));
-  return rows.map((row, idx) => ({
-    id:             row.dataset.id || null,
-    creative_id:    row.dataset.creativeId || null,
-    creative_label: row.dataset.creativeLabel || null,
-    creative_date:  row.dataset.creativeDate || null,
-    cost_type:      row.dataset.costType || null,
-    label:          row.querySelector('.ei-label')?.value || '',
-    quantity:       Number(row.querySelector('.ei-qty')?.value) || 0,
-    unit:           row.querySelector('.ei-unit')?.value || '式',
-    unit_price:     Number(row.querySelector('.ei-price')?.value) || 0,
-    sort_order:     idx,
-  }));
+  return rows.map((row, idx) => {
+    const origRaw = row.dataset.originalUnitPrice;
+    const orig = (origRaw === '' || origRaw == null) ? null : Number(origRaw);
+    const cur  = Number(row.querySelector('.ei-price')?.value) || 0;
+    const reasonRaw = (row.querySelector('.ei-reason-input')?.value || '').trim();
+    const overridden = orig != null && Number.isFinite(orig) && orig !== cur;
+    return {
+      id:             row.dataset.id || null,
+      creative_id:    row.dataset.creativeId || null,
+      creative_label: row.dataset.creativeLabel || null,
+      creative_date:  row.dataset.creativeDate || null,
+      cost_type:      row.dataset.costType || null,
+      label:          row.querySelector('.ei-label')?.value || '',
+      quantity:       Number(row.querySelector('.ei-qty')?.value) || 0,
+      unit:           row.querySelector('.ei-unit')?.value || '式',
+      unit_price:     cur,
+      original_unit_price: Number.isFinite(orig) ? orig : null,
+      change_reason:  overridden && reasonRaw ? reasonRaw : null,
+      sort_order:     idx,
+    };
+  });
 }
 
 function _eiRowAmount(i) {
@@ -7282,6 +7362,12 @@ async function saveInvoiceEdit() {
     if (!l.label.trim()) { showToast(`${i+1}行目: 品目を入力してください`, 'error'); return; }
     if (l.quantity < 0)   { showToast(`${i+1}行目: 数量は0以上にしてください`, 'error'); return; }
     if (l.unit_price < 0) { showToast(`${i+1}行目: 単価は0以上にしてください`, 'error'); return; }
+    // 単価変更行は理由必須
+    const orig = l.original_unit_price;
+    if (orig != null && Number(orig) !== Number(l.unit_price) && !l.change_reason) {
+      showToast(`${i+1}行目: 単価を変更した行は変更理由を入力してください`, 'warn');
+      return;
+    }
   }
   if (!lines.length && !confirm('明細が0件です。このまま保存しますか？（合計¥0）')) return;
 
