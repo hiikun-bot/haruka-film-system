@@ -5451,7 +5451,7 @@ function openProjectModal(preClientId) {
   if (preClientId) cSel.value = preClientId;
 
   const producers = allMembers.filter(m => m.is_active !== false && ['producer','producer_director','admin'].includes(m.role));
-  const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director'].includes(m.role));
+  const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director','producer','admin'].includes(m.role));
   document.getElementById('p-producer-id').innerHTML = '<option value="">未設定</option>' + producers.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
   document.getElementById('p-director-id').innerHTML = '<option value="">未設定</option>' + directors.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
 
@@ -5487,7 +5487,7 @@ function openEditProject(p) {
   cSel.value = p.client_id;
 
   const producers = allMembers.filter(m => m.is_active !== false && ['producer','producer_director','admin'].includes(m.role));
-  const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director'].includes(m.role));
+  const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director','producer','admin'].includes(m.role));
   document.getElementById('p-producer-id').innerHTML = '<option value="">未設定</option>' + producers.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
   document.getElementById('p-director-id').innerHTML = '<option value="">未設定</option>' + directors.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
 
