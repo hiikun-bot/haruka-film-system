@@ -182,6 +182,12 @@ async function runSchemaSync() {
         name: 'creatives_team_id_fkey',
         sql: `DO $$
 BEGIN
+  -- 既存の孤立 team_id を NULL 化（FK 追加時のバリデーション失敗を防ぐ）
+  UPDATE public.creatives c
+     SET team_id = NULL
+   WHERE c.team_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.teams t WHERE t.id = c.team_id);
+
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'creatives_team_id_fkey' AND conrelid = 'public.creatives'::regclass
