@@ -93,6 +93,21 @@ async function loadUser(userId) {
   return data || null;
 }
 
+// クリエイティブ詳細モーダルを開くディープリンク URL を生成
+// APP_URL が未設定の場合は null を返す（呼び出し側でフォールバック）
+function buildCreativeUrl(creativeId) {
+  const baseUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  if (!baseUrl || !creativeId) return null;
+  return `${baseUrl}/haruka.html?creative=${creativeId}`;
+}
+
+// Slack 用: ファイル名をクリッカブルなリンクに変換
+// Slack の mrkdwn 仕様 `<URL|表示テキスト>` で青いリンクとして表示される
+function slackFileLink(fileName, url) {
+  if (url) return `<${url}|${fileName}>`;
+  return `*${fileName}*`;
+}
+
 // =============== Status transition logic ===============
 
 // 関係者を解決して通知を送る
@@ -126,10 +141,11 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const producer = await loadUser(project?.producer_id);
   const actor    = await loadUser(actorUserId);
 
-  // メッセージビルダ
-  const slackLink = `*${fileName}* のステータス: \`${oldStatus}\` → \`${newStatus}\``;
-  const commentLine = comment ? `\n💬 ${comment}` : '';
-  const cwCommentLine = comment ? `\nコメント: ${comment}` : '';
+  // 通知メッセージにクリエイティブ詳細モーダルへのディープリンクを埋め込む
+  // （URL クリックで該当クリエイティブを直接開ける）
+  const creativeUrl = buildCreativeUrl(detail.id);
+  const slackName = slackFileLink(fileName, creativeUrl);
+  const cwUrlLine = creativeUrl ? `\nURL: ${creativeUrl}` : '';
 
   // 遷移ごとの処理
   // Slack / Chatwork ともに「個人宛通知」として扱うため、
@@ -148,34 +164,32 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
 
   // 1) → Dチェック
   if (newStatus === 'Dチェック') {
-    await sendNotif(director,
-      `📥 *Dチェック依頼*\n${slackLink}${commentLine}`,
-      `[info][title]Dチェック依頼[/title]${fileName}${cwCommentLine}[/info]`);
+    const slackBody = `📥 Dチェック依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
+    const cwBody = `[info][title]📥 Dチェック依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
+    await sendNotif(director, slackBody, cwBody);
   }
   // 2) → Pチェック
   else if (newStatus === 'Pチェック') {
-    await sendNotif(producer,
-      `📥 *Pチェック依頼*\n${slackLink}${commentLine}`,
-      `[info][title]Pチェック依頼[/title]${fileName}${cwCommentLine}[/info]`);
+    const slackBody = `📥 Pチェック依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
+    const cwBody = `[info][title]📥 Pチェック依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
+    await sendNotif(producer, slackBody, cwBody);
   }
   // 3) → Dチェック後修正
   else if (newStatus === 'Dチェック後修正') {
-    for (const ed of editors) {
-      await sendNotif(ed,
-        `🔁 *Dチェック修正依頼*\n${slackLink}${commentLine}`,
-        `[info][title]Dチェック修正依頼[/title]${fileName}${cwCommentLine}[/info]`);
-    }
+    const slackBody = `🔁 Dチェック修正依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
+    const cwBody = `[info][title]🔁 Dチェック修正依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
+    for (const ed of editors) await sendNotif(ed, slackBody, cwBody);
   }
   // 4) → Pチェック後修正
   else if (newStatus === 'Pチェック後修正') {
+    const slackBody = `🔁 Pチェック修正依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
+    const cwBody = `[info][title]🔁 Pチェック修正依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
     const targets = [...editors, director].filter(Boolean);
     const seen = new Set();
     for (const t of targets) {
       if (seen.has(t.id)) continue;
       seen.add(t.id);
-      await sendNotif(t,
-        `🔁 *Pチェック修正依頼*\n${slackLink}${commentLine}`,
-        `[info][title]Pチェック修正依頼[/title]${fileName}${cwCommentLine}[/info]`);
+      await sendNotif(t, slackBody, cwBody);
     }
   }
   // 5) → クライアントチェック中（操作した本人にテンプレ案内）
@@ -184,20 +198,19 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   else if (newStatus === 'クライアントチェック中') {
     if (actor) {
       const slackTpl =
-`✅ *クライアント確認に進めました*: \`${fileName}\`
+`✅ クライアント確認に進めました
+ファイル: ${slackName}
 
-📝 *クライアントへ送るメッセージ案*（コピペして調整してください）:
+📝 クライアントへ送るメッセージ案（コピペして調整してください）:
 
 > 〇〇様、いつもお世話になっております。
 > 「${fileName}」のクライアント確認版を共有いたします。
->
 > https://drive.google.com/...
->
 > ご確認のほどよろしくお願いいたします。
 
-⚠️ 送信前に必ず内容を確認してから送ってください。誤った報告はミスにつながります。`;
+⚠️ 送信前に必ず内容を確認してください。`;
       const cwTpl =
-`[info][title]クライアント確認に進めました[/title]${fileName}
+`[info][title]✅ クライアント確認に進めました[/title]ファイル: ${fileName}${cwUrlLine}
 
 クライアントへ送るメッセージ案:
 〇〇様、いつもお世話になっております。
@@ -209,8 +222,14 @@ https://drive.google.com/...
       await sendNotif(actor, slackTpl, cwTpl);
     }
   }
-  // 「→ 納品」の通知は廃止。納品時は通知を送らない
-  // （別運用 (請求や案件レポート) で十分なため、チャットへのスパム的通知はやめる）。
+  // 6) → 納品（クリエイター向けにお祝いメッセージ）
+  //    PR #67 で削除されていたが、クリエイターは「クライアントOKが出たかどうか」を
+  //    把握する手段がほぼ唯一この通知のため復活。editors のみに送る。
+  else if (newStatus === '納品') {
+    const slackBody = `🎉 クライアントOK！納品完了\nファイル: ${slackName}\nお疲れ様でした！クライアントから承認をいただき納品となりました ☺️✨`;
+    const cwBody = `[info][title]🎉 クライアントOK！納品完了[/title]ファイル: ${fileName}${cwUrlLine}\nお疲れ様でした！\nクライアントから承認をいただき納品となりました ☺️✨[/info]`;
+    for (const ed of editors) await sendNotif(ed, slackBody, cwBody);
+  }
 }
 
 module.exports = {
