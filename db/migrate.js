@@ -169,6 +169,7 @@ async function runSchemaSync() {
       "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS original_unit_price INTEGER",
       "ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS price_change_reason TEXT",
       "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS team_id UUID",
+      "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS memo TEXT",
       "ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_status_check",
       "ALTER TABLE clients ADD COLUMN IF NOT EXISTS persona TEXT",
     ];

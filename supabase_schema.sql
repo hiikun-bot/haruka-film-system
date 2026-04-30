@@ -216,6 +216,8 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS director_comment TEXT;
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS client_comment TEXT;
 -- 編集者/デザイナーのコメント・返信を分離保存（後修正再提出時に director_comment の上書き防止）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS editor_comment TEXT;
+-- クリエイティブのメモ（クライアント要望、参考リンク、撮影メモ等）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS memo TEXT;
 
 -- clients にステータス・営業開始日追加
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS sales_start_date DATE;
