@@ -716,11 +716,12 @@ router.get('/creatives', async (req, res) => {
   // 一覧描画に必要な列のみ。teams は別取得で stitch
   // client_id フィルタを foreignTable 経由で効かせるため projects は inner join
   const projectsRel = client_id ? 'projects!inner' : 'projects';
-  const SELECT_COLS = `
+  // 後から追加された列（schema-sync が失敗していると本番に存在しない可能性がある）
+  const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
+  const buildSelect = (includeOptional) => `
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
-    creative_type, team_id, project_id, updated_at,
-    force_delivered, force_delivered_reason, force_delivered_at,
+    creative_type, team_id, project_id, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
     ${projectsRel}(id, name, client_id, clients(id, name, status)),
     project_cycles(id, year, month),
     creative_assignments(
@@ -729,36 +730,35 @@ router.get('/creatives', async (req, res) => {
     )
   `;
 
-  let query = supabase
-    .from('creatives')
-    .select(SELECT_COLS, { count: 'exact' })
-    .order('final_deadline', { ascending: true, nullsFirst: false });
-
-  if (project_id) query = query.eq('project_id', project_id);
-  if (cycle_id)   query = query.eq('cycle_id', cycle_id);
-  if (status)     query = query.eq('status', status);
-  // include_done が明示的に true でない限り「納品」を除外
-  if (!(include_done === '1' || include_done === 'true')) {
-    query = query.neq('status', '納品');
-  }
-  // クライアント絞り込みは projects.client_id が直接持つので foreignTable 経由 .eq() でOK
-  if (client_id) query = query.eq('projects.client_id', client_id);
-  // ファイル名 / メモを DB 側で部分一致 (担当者名・client名はフロント側で残ったぶんを絞る)
-  if (q && q.trim()) {
-    const term = q.trim().replace(/[,()]/g, ' ');
-    const pat  = `%${term}%`;
-    query = query.or(`file_name.ilike.${pat},memo.ilike.${pat}`);
-  }
-  if (assigneeCreativeIds) query = query.in('id', assigneeCreativeIds);
-
-  // ページング
-  query = query.range(offset, offset + limit - 1);
+  // フィルタ条件を共通化して、optional 込み → 失敗時 optional 抜きで再試行できるようにする
+  const buildAndApply = (includeOptional) => {
+    let q = supabase
+      .from('creatives')
+      .select(buildSelect(includeOptional), { count: 'exact' })
+      .order('final_deadline', { ascending: true, nullsFirst: false });
+    if (project_id) q = q.eq('project_id', project_id);
+    if (cycle_id)   q = q.eq('cycle_id', cycle_id);
+    if (status)     q = q.eq('status', status);
+    if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
+    if (client_id) q = q.eq('projects.client_id', client_id);
+    if (req.query.q && req.query.q.trim()) {
+      const term = req.query.q.trim().replace(/[,()]/g, ' ');
+      const pat  = `%${term}%`;
+      q = q.or(`file_name.ilike.${pat},memo.ilike.${pat}`);
+    }
+    if (assigneeCreativeIds) q = q.in('id', assigneeCreativeIds);
+    q = q.range(offset, offset + limit - 1);
+    return q;
+  };
 
   // teams を別クエリで取得（PostgREST の FK 推論に依存しない: 本番DBに FK が無くても動作させるため）
-  const [{ data, error, count }, { data: teamsRaw }] = await Promise.all([
-    query,
-    supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)'),
-  ]);
+  let { data, error, count } = await buildAndApply(true);
+  // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
+  if (error && /column .+ does not exist/.test(error.message || '')) {
+    console.warn('[creatives] optional列なし → fallback で再取得:', error.message);
+    ({ data, error, count } = await buildAndApply(false));
+  }
+  const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)');
   if (error) return res.status(500).json({ error: error.message });
 
   // チーム逆引きMap（ディレクター名解決用 + teams 埋め込み代替用）
