@@ -3418,6 +3418,22 @@ async function init() {
   applyRoleBasedUI();
   await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
   loadDashboard();
+  applyDeepLinkOnLoad();
+}
+
+// 通知メール/チャットからの ?creative=<id> リンクで該当クリエイティブの詳細モーダルを開く
+async function applyDeepLinkOnLoad() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const creativeId = params.get('creative');
+    if (!creativeId) return;
+    if (typeof openCreativeDetail === 'function') {
+      // データ・DOM 準備のため少し遅延
+      setTimeout(() => {
+        try { openCreativeDetail(creativeId); } catch (e) { console.warn('[deepLink open]', e); }
+      }, 300);
+    }
+  } catch (e) { console.warn('[deepLink]', e); }
 }
 
 function roleLabel(role) {
