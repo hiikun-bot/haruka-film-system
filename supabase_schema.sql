@@ -515,6 +515,19 @@ CREATE INDEX IF NOT EXISTS idx_ccr_file ON creative_checklist_results(creative_f
 -- creative_files に Premiere Pro プロジェクトID（documentID）を紐づけ
 ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS premiere_project_id TEXT;
 
+-- ==================== 動画ストリーミング高速化 ====================
+-- mime_type / file_size: Drive メタ情報をキャッシュし、Range配信ごとの drive.files.get 呼び出しを削減
+-- faststart_*: -c copy -movflags +faststart で再エンコード無しに moov を先頭へ移動した版（画質完全維持）
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS mime_type              TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS file_size              BIGINT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_drive_file_id TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_drive_url     TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_file_size     BIGINT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_status        TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_processed_at  TIMESTAMPTZ;
+-- drive_file_id 経由のキャッシュ参照を高速化
+CREATE INDEX IF NOT EXISTS idx_creative_files_drive_file_id ON creative_files(drive_file_id);
+
 -- ====================================================================================
 -- ワークスペース（マルチチーム対応）
 -- 各チームが独自のインフラ（Railway/Supabase/Drive）でデプロイし、
