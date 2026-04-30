@@ -47,7 +47,9 @@ function requireAuth(req, res, next) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
-    if (!roles.includes(req.user.role)) {
+    // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+    const effectiveRole = getEffectiveRole(req);
+    if (!roles.includes(effectiveRole)) {
       return res.status(403).json({ error: 'この操作の権限がありません' });
     }
     next();
@@ -64,7 +66,9 @@ const ROLE_LEVEL = { admin: 5, secretary: 4, director: 3, editor: 2, client: 1 }
 function requireLevel(minRole) {
   return (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
-    if ((ROLE_LEVEL[req.user.role] || 0) >= (ROLE_LEVEL[minRole] || 99)) return next();
+    // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+    const effectiveRole = getEffectiveRole(req);
+    if ((ROLE_LEVEL[effectiveRole] || 0) >= (ROLE_LEVEL[minRole] || 99)) return next();
     return res.status(403).json({ error: '権限が不足しています' });
   };
 }
@@ -81,6 +85,30 @@ function requireSuperAdmin(req, res, next) {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
   if (!isSuperAdminUser(req.user)) return res.status(403).json({ error: '最高管理者のみ実行できます' });
   next();
+}
+
+// ==================== VIEW AS（X-View-As ヘッダ）解決 ====================
+// 受け取れる preview ロール一覧。ここに無い文字列は無視（実ロールにフォールバック）。
+const VALID_PREVIEW_ROLES = new Set(['admin','secretary','producer','producer_director','director','editor','designer']);
+
+/**
+ * リクエストの "実効ロール" を返す。
+ *
+ * セキュリティ仕様:
+ *   - X-View-As ヘッダはリクエスト元が **最高管理者 (isSuperAdminUser)** の場合に限り尊重する。
+ *   - それ以外（一般ユーザーが偽造）は完全に無視し、実ユーザーのロールを返す。
+ *   - ヘッダ値が VALID_PREVIEW_ROLES に含まれない場合も無視。
+ *
+ * 監査・ログ用途で「実際に誰がリクエストしたか」を残す場合は req.user.id / req.user.email を直接参照すること。
+ * 認可判定（権限チェック・分岐）にはこのヘルパで取得した実効ロールを使う。
+ */
+function getEffectiveRole(req) {
+  if (!req || !req.user) return null;
+  const headerRole = String((req.headers && req.headers['x-view-as']) || '').trim().toLowerCase();
+  if (headerRole && VALID_PREVIEW_ROLES.has(headerRole) && isSuperAdminUser(req.user)) {
+    return headerRole;
+  }
+  return req.user.role;
 }
 
 // ==================== DB駆動の権限チェック ====================
@@ -120,11 +148,13 @@ function requirePermission(key) {
   return async (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
     try {
-      const ok = await userHasPermission(req.user.role, key);
+      // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+      const effectiveRole = getEffectiveRole(req);
+      const ok = await userHasPermission(effectiveRole, key);
       if (ok) return next();
       return res.status(403).json({ error: 'この操作の権限がありません' });
     } catch(e) { return res.status(500).json({ error: e.message }); }
   };
 }
 
-module.exports = { passport, requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, isSuperAdminUser, invalidatePermissionsCache, ROLES };
+module.exports = { passport, requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, isSuperAdminUser, getEffectiveRole, invalidatePermissionsCache, ROLES };

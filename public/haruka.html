@@ -1102,7 +1102,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <div id="preview-mode-banner" style="display:none;background:linear-gradient(90deg,#FF6B35,#F7B731);padding:5px 20px;font-size:12px;font-weight:500;color:#fff;letter-spacing:0.05em;position:sticky;top:88px;z-index:97;align-items:center;gap:8px">
   <span>👁</span>
   <span id="preview-mode-label"></span>
-  <span style="margin-left:auto;opacity:0.8;font-size:11px">実際の権限には影響しません</span>
+  <span style="margin-left:auto;opacity:0.9;font-size:11px">サーバーAPIも含めて検証中（実際の権限変更ではありません）</span>
 </div>
 
 <!-- ダッシュボード -->
@@ -3291,6 +3291,17 @@ function avatarWithName(user, size, opts) {
 
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
+
+// ==================== apiFetch（VIEW AS 対応の fetch ラッパ） ====================
+// previewRole がセットされていれば X-View-As ヘッダを自動付与する。
+// サーバー側 (auth.js#getEffectiveRole) は最高管理者からのリクエストに限りこのヘッダを尊重するため、
+// 一般ユーザーのブラウザから誤って previewRole がセットされていても権限昇格にはならない。
+// API 呼び出しは原則これを使うこと。第1引数は fetch と同じ。
+async function apiFetch(input, init = {}) {
+  const headers = new Headers(init.headers || {});
+  if (previewRole) headers.set('X-View-As', previewRole);
+  return fetch(input, { ...init, headers });
+}
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
 let currentTeamTab = 'video'; // 'video' | 'design'
 let currentMemberTab = 'video'; // 'video' | 'design'
@@ -3302,7 +3313,7 @@ let currentUploadedFileCount = 0;   // アップロード済みファイル数�
 
 async function loadWorkspaceInfo() {
   try {
-    const res = await fetch(`${API}/workspace`);
+    const res = await apiFetch(`${API}/workspace`);
     if (!res.ok) return;
     const ws = await res.json();
     document.title = `${ws.name} SYSTEM`;
@@ -3365,7 +3376,7 @@ function statusClass(s) {
 // クライアント
 async function loadClients() {
   try {
-    const res = await fetch(`${API}/clients`);
+    const res = await apiFetch(`${API}/clients`);
     const data = await res.json();
     allClients = Array.isArray(data) ? data : [];
   } catch(e) { allClients = []; console.error('[loadClients]', e); }
@@ -3384,8 +3395,8 @@ async function loadClients() {
 // 案件（クライアント→案件の階層表示）
 async function loadProjects() {
   const [pRes, cRes] = await Promise.all([
-    fetch(`${API}/projects`),
-    fetch(`${API}/clients`)
+    apiFetch(`${API}/projects`),
+    apiFetch(`${API}/clients`)
   ]);
   allProjects = await pRes.json();
   allClients = await cRes.json();
@@ -3599,7 +3610,7 @@ async function submitClient() {
 
   const linkVal = id => (document.getElementById(id)?.value.trim() || null);
   const isEdit = !!id;
-  const res = await fetch(isEdit ? `${API}/clients/${id}` : `${API}/clients`, {
+  const res = await apiFetch(isEdit ? `${API}/clients/${id}` : `${API}/clients`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -3660,7 +3671,7 @@ function switchClientTab(tab) {
 async function renderClientProducts(clientId) {
   const el = document.getElementById('cl-products-list');
   el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">読み込み中...</div>';
-  const res = await fetch(`${API}/clients/${clientId}/products`);
+  const res = await apiFetch(`${API}/clients/${clientId}/products`);
   if (!res.ok) { el.innerHTML = '<div style="font-size:13px;color:#E24B4A">取得失敗</div>'; return; }
   const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">商材が登録されていません</div>'; return; }
@@ -3697,7 +3708,7 @@ async function saveClientProduct(clientId, pid) {
   const note = document.getElementById(`cprow-note-${pid}`).value.trim();
   const expires_at = document.getElementById(`cprow-expires-${pid}`).value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/products/${pid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null, expires_at })
@@ -3708,7 +3719,7 @@ async function saveClientProduct(clientId, pid) {
 
 async function deleteClientProduct(clientId, pid) {
   if (!confirm('この商材を削除しますか？')) return;
-  const res = await fetch(`${API}/clients/${clientId}/products/${pid}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/clients/${clientId}/products/${pid}`, { method: 'DELETE' });
   if (res.ok) { renderClientProducts(clientId); }
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -3721,7 +3732,7 @@ async function addClientProduct() {
   const note = document.getElementById('cl-prod-note').value.trim();
   const expires_at = document.getElementById('cl-prod-expires').value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/clients/${clientId}/products`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null, expires_at })
@@ -3738,7 +3749,7 @@ async function addClientProduct() {
 async function renderClientAxes(clientId) {
   const el = document.getElementById('cl-axes-list');
   el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">読み込み中...</div>';
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`);
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes`);
   if (!res.ok) { el.innerHTML = '<div style="font-size:13px;color:#E24B4A">取得失敗</div>'; return; }
   const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted)">訴求軸が登録されていません</div>'; return; }
@@ -3774,7 +3785,7 @@ async function saveClientAxis(clientId, aid) {
   const note     = document.getElementById(`carow-note-${aid}`).value.trim();
   const expires_at = document.getElementById(`carow-exp-${aid}`)?.value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null, expires_at: expires_at || null })
@@ -3785,7 +3796,7 @@ async function saveClientAxis(clientId, aid) {
 
 async function deleteClientAxis(clientId, aid) {
   if (!confirm('この訴求軸を削除しますか？')) return;
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes/${aid}`, { method: 'DELETE' });
   if (res.ok) { renderClientAxes(clientId); }
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -3798,7 +3809,7 @@ async function addClientAxis() {
   const note = document.getElementById('cl-axis-note').value.trim();
   const expires_at = document.getElementById('cl-axis-expires')?.value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null, expires_at: expires_at || null })
@@ -3899,7 +3910,7 @@ function renderTeamsList() {
 
 async function loadTeams() {
   try {
-    const teamsRes = await fetch(`${API}/teams`);
+    const teamsRes = await apiFetch(`${API}/teams`);
     if (!teamsRes.ok) { allTeams = []; return; }
     allTeams = await teamsRes.json();
     const mSel = document.getElementById('m-team');
@@ -4062,7 +4073,7 @@ function renderMemberList() {
 
 async function loadMembers() {
   try {
-    const res = await fetch(`${API}/members`);
+    const res = await apiFetch(`${API}/members`);
     const data = await res.json();
     allMembers = Array.isArray(data) ? data : [];
     if (!res.ok) console.error('[loadMembers]', data);
@@ -4080,7 +4091,7 @@ async function loadCreatives() {
   const tbody = document.getElementById('creative-tbody');
   tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
   try {
-    const res = await fetch(`${API}/creatives`);
+    const res = await apiFetch(`${API}/creatives`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !Array.isArray(data)) {
       throw new Error((data && data.error) ? data.error : `読み込み失敗 (HTTP ${res.status})`);
@@ -4266,7 +4277,7 @@ function filterSearch(val) { searchText=val.toLowerCase(); renderCreatives(); }
 function toggleBall(btn) { btn.classList.toggle('on'); renderCreatives(); }
 
 async function toggleHelp(id, current) {
-  await fetch(`${API}/creatives/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({help_flag:!current}) });
+  await apiFetch(`${API}/creatives/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({help_flag:!current}) });
   await loadCreatives();
 }
 
@@ -4280,7 +4291,7 @@ function openStatusModal(id, fileName, status) {
 async function updateStatus() {
   if (!selectedCreativeId) return;
   const status = document.getElementById('status-select').value;
-  const res = await fetch(`${API}/creatives/${selectedCreativeId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status}) });
+  const res = await apiFetch(`${API}/creatives/${selectedCreativeId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status}) });
   if (res.ok) { closeModal('modal-status'); await loadCreatives(); }
   else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
 }
@@ -4314,7 +4325,7 @@ async function createCreative() {
   const origText = btn?.textContent;
   if (btn) { btn.textContent = '追加中...'; btn.disabled = true; }
 
-  const res = await fetch(`${API}/creatives`, {
+  const res = await apiFetch(`${API}/creatives`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -4501,16 +4512,16 @@ async function saveTeam() {
 
   if (id) {
     // 編集（PUT）
-    const res = await fetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+    const res = await apiFetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
     if (res.ok) { closeModal('modal-team'); await loadTeams(); await loadMembers(); }
     else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
   } else {
     // 新規作成（POST）→ 作成後にメンバー割り当て
-    const res = await fetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
+    const res = await apiFetch(`${API}/teams`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id}) });
     if (!res.ok) { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); return; }
     const newTeam = await res.json();
     if (member_ids.length > 0) {
-      await fetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+      await apiFetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
     }
     closeModal('modal-team'); await loadTeams(); await loadMembers();
   }
@@ -4746,7 +4757,7 @@ async function handleAvatarSelect(file) {
     const fd = new FormData();
     fd.append('file', blob, 'avatar.jpg');
     status.textContent = 'アップロード中...';
-    const res = await fetch(`${API}/members/${_avatarTargetId}/avatar`, { method: 'POST', body: fd });
+    const res = await apiFetch(`${API}/members/${_avatarTargetId}/avatar`, { method: 'POST', body: fd });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
       throw new Error(e.error || 'アップロードに失敗しました');
@@ -4774,7 +4785,7 @@ async function removeAvatar() {
   const status = document.getElementById('m-avatar-status');
   status.textContent = '削除中...';
   try {
-    const res = await fetch(`${API}/members/${_avatarTargetId}/avatar`, { method: 'DELETE' });
+    const res = await apiFetch(`${API}/members/${_avatarTargetId}/avatar`, { method: 'DELETE' });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
       throw new Error(e.error || '削除に失敗しました');
@@ -4893,10 +4904,10 @@ async function submitMember() {
   const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
   let res;
   if (id) {
-    res = await fetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    res = await apiFetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
   } else {
     if (!email) { showToast('新規追加時はメールアドレスが必須です', 'warn'); return; }
-    res = await fetch(`${API}/members`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload, email}) });
+    res = await apiFetch(`${API}/members`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload, email}) });
   }
   if (res.ok) {
     const cvView = document.getElementById('m-creative-default-view').value;
@@ -4950,7 +4961,7 @@ async function exportMembersToSheet() {
   if (btn) { btn.disabled = true; btn.textContent = 'スプレッドシート作成中…'; }
   try {
     const type = currentMemberTab === 'design' ? 'design' : 'video';
-    const res = await fetch(`${API}/members/export-sheet?type=${type}`, { method: 'POST' });
+    const res = await apiFetch(`${API}/members/export-sheet?type=${type}`, { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       showToast('エクスポート失敗: ' + translateError(data?.error || 'unknown'), 'error');
@@ -4989,7 +5000,7 @@ async function executeSheetImport() {
   if (result) { result.style.display = 'none'; result.innerHTML = ''; }
 
   try {
-    const res = await fetch(`${API}/members/import-sheet`, {
+    const res = await apiFetch(`${API}/members/import-sheet`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url })
@@ -5044,8 +5055,8 @@ async function openRatesModal(projectId, projectName) {
 
   // データ取得
   const [ratesRes, extrasRes] = await Promise.all([
-    fetch(`${API}/projects/${projectId}/rates`),
-    fetch(`${API}/projects/${projectId}/rate-extras`)
+    apiFetch(`${API}/projects/${projectId}/rates`),
+    apiFetch(`${API}/projects/${projectId}/rate-extras`)
   ]);
   const rates = ratesRes.ok ? await ratesRes.json() : [];
   const extras = extrasRes.ok ? await extrasRes.json() : [];
@@ -5130,12 +5141,12 @@ async function saveRates() {
   });
 
   const [ratesRes, extrasRes] = await Promise.all([
-    fetch(`${API}/projects/${projectId}/rates/bulk`, {
+    apiFetch(`${API}/projects/${projectId}/rates/bulk`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ rates })
     }),
-    fetch(`${API}/projects/${projectId}/rate-extras`, {
+    apiFetch(`${API}/projects/${projectId}/rate-extras`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ extras })
@@ -5179,7 +5190,7 @@ const _ROLE_PERMS_FALLBACK = {
 };
 async function loadRolePermissions() {
   try {
-    const res = await fetch(`${API}/role-permissions`);
+    const res = await apiFetch(`${API}/role-permissions`);
     if (!res.ok) throw new Error('failed');
     const rows = await res.json();
     _rolePermsMap = new Map();
@@ -5205,13 +5216,14 @@ function isTopAdmin() {
 // ============================================================
 // VIEW AS（ロールプレビュー）について
 // ----------------------------
-// この機能は **フロントエンドの表示プレビューのみ** を切り替えます。
-// サーバー側 (routes/haruka.js, auth.js) の権限チェックは常に
-// 実ユーザー (req.user.role) で判定されており、previewRole は届きません。
-// したがって VIEW AS 中であってもAPI上の権限は実ユーザーのままで、
-// 隠し忘れたボタンや直接関数実行を行えば管理操作が通る可能性があります。
-// 「実ロールでこう見える」を厳密に再現したい場合はサーバー側で
-// X-View-As ヘッダなどに対応する必要がありますが、現状未実装です。
+// フロントエンドの表示プレビューに加え、**サーバーAPIにも previewRole を伝播**します。
+// 仕組み:
+//   - apiFetch() ラッパが previewRole を X-View-As ヘッダで送信
+//   - サーバー側 auth.js#getEffectiveRole が **リクエスト元が最高管理者の場合に限り**
+//     ヘッダを尊重して権限判定する
+//   - 一般ユーザーが previewRole を偽造しても無視されるため権限昇格にはならない
+// したがって VIEW AS 中は admin 操作も editor として 403 で弾かれる。
+// 隠し忘れたボタンを誤って押しても安全（むしろ望ましい挙動）。
 // ============================================================
 // ロールプレビュー切り替え
 function setPreviewRole(role) {
@@ -5471,7 +5483,7 @@ let _pclEditingId = null;
 async function loadProjectChecklistItems() {
   _pclProjectId = document.getElementById('p-id').value;
   if (!_pclProjectId) return;
-  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items`);
+  const res = await apiFetch(`${API}/projects/${_pclProjectId}/checklist-items`);
   _pclItems = res.ok ? await res.json() : [];
   _renderProjectChecklistItems();
 }
@@ -5505,7 +5517,7 @@ async function addProjectChecklistItem() {
   const title = document.getElementById('pcl-new-title').value.trim();
   const desc  = document.getElementById('pcl-new-desc').value.trim();
   if (!title) { showToast('チェック項目名を入力してください', 'warn'); return; }
-  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items`, {
+  const res = await apiFetch(`${API}/projects/${_pclProjectId}/checklist-items`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc }),
   });
@@ -5520,7 +5532,7 @@ async function saveProjectChecklistItem(id) {
   const title = document.getElementById('pcl-e-title').value.trim();
   const desc  = document.getElementById('pcl-e-desc').value.trim();
   if (!title) { showToast('タイトルは必須です', 'warn'); return; }
-  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, {
+  const res = await apiFetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc }),
   });
@@ -5530,7 +5542,7 @@ async function saveProjectChecklistItem(id) {
 
 async function deleteProjectChecklistItem(id) {
   if (!confirm('この項目を削除しますか？')) return;
-  const res = await fetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/projects/${_pclProjectId}/checklist-items/${id}`, { method: 'DELETE' });
   if (res.ok) await loadProjectChecklistItems();
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -5575,7 +5587,7 @@ async function toggleProjectSync(type) {
 async function renderProjectProducts(projectId) {
   const el = document.getElementById('p-products-list');
   el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">読み込み中...</div>';
-  const res = await fetch(`${API}/projects/${projectId}/products`);
+  const res = await apiFetch(`${API}/projects/${projectId}/products`);
   if (!res.ok) { el.innerHTML = ''; return; }
   const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">登録なし</div>'; return; }
@@ -5591,7 +5603,7 @@ async function renderProjectProducts(projectId) {
 async function renderProjectAxes(projectId) {
   const el = document.getElementById('p-axes-list');
   el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">読み込み中...</div>';
-  const res = await fetch(`${API}/projects/${projectId}/appeal-axes`);
+  const res = await apiFetch(`${API}/projects/${projectId}/appeal-axes`);
   if (!res.ok) { el.innerHTML = ''; return; }
   const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">登録なし</div>'; return; }
@@ -5611,7 +5623,7 @@ async function addProjectProduct() {
   const name = document.getElementById('pp-name').value.trim();
   const note = document.getElementById('pp-note').value.trim();
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/projects/${projectId}/products`, {
+  const res = await apiFetch(`${API}/projects/${projectId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null })
@@ -5626,7 +5638,7 @@ async function addProjectProduct() {
 
 async function deleteProjectProduct(projectId, pid) {
   if (!confirm('削除しますか？')) return;
-  const res = await fetch(`${API}/projects/${projectId}/products/${pid}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/projects/${projectId}/products/${pid}`, { method: 'DELETE' });
   if (res.ok) renderProjectProducts(projectId);
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -5638,7 +5650,7 @@ async function addProjectAxis() {
   const name = document.getElementById('pa-name').value.trim();
   const note = document.getElementById('pa-note').value.trim();
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/projects/${projectId}/appeal-axes`, {
+  const res = await apiFetch(`${API}/projects/${projectId}/appeal-axes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note || null })
@@ -5653,7 +5665,7 @@ async function addProjectAxis() {
 
 async function deleteProjectAxis(projectId, aid) {
   if (!confirm('削除しますか？')) return;
-  const res = await fetch(`${API}/projects/${projectId}/appeal-axes/${aid}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/projects/${projectId}/appeal-axes/${aid}`, { method: 'DELETE' });
   if (res.ok) renderProjectAxes(projectId);
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -5662,7 +5674,7 @@ async function copyProductsFromClient() {
   const projectId = document.getElementById('p-id').value;
   if (!projectId) return;
   if (!confirm('クライアントの商材をこの案件にコピーします。既存の案件独自商材は削除されます。')) return;
-  const res = await fetch(`${API}/projects/${projectId}/products/copy-from-client`, { method: 'POST' });
+  const res = await apiFetch(`${API}/projects/${projectId}/products/copy-from-client`, { method: 'POST' });
   if (res.ok) renderProjectProducts(projectId);
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -5671,13 +5683,13 @@ async function copyAxesFromClient() {
   const projectId = document.getElementById('p-id').value;
   if (!projectId) return;
   if (!confirm('クライアントの訴求軸をこの案件にコピーします。既存の案件独自訴求軸は削除されます。')) return;
-  const res = await fetch(`${API}/projects/${projectId}/appeal-axes/copy-from-client`, { method: 'POST' });
+  const res = await apiFetch(`${API}/projects/${projectId}/appeal-axes/copy-from-client`, { method: 'POST' });
   if (res.ok) renderProjectAxes(projectId);
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function toggleHideProject(id, current) {
-  await fetch(`${API}/projects/${id}`, {
+  await apiFetch(`${API}/projects/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ is_hidden: !current })
@@ -5720,7 +5732,7 @@ async function submitProject() {
   btn.textContent = '処理中...'; btn.disabled = true;
 
   const isEdit = !!id;
-  const res = await fetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
+  const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
@@ -5840,7 +5852,7 @@ async function loadDashboardBirthdays() {
   if (!el) return;
   let list = [];
   try {
-    const res = await fetch(`${API}/dashboard/birthdays`);
+    const res = await apiFetch(`${API}/dashboard/birthdays`);
     if (!res.ok) { el.innerHTML = ''; return; }
     list = await res.json();
   } catch { el.innerHTML = ''; return; }
@@ -5994,7 +6006,7 @@ async function renderAdminDash(today) {
   // ===== Chart 1: 売上予実（isTopAdmin のみ） =====
   _destroyChart('revenue');
   if (isTopAdmin()) {
-    const revRes = await fetch(`${API}/dashboard/revenue-summary`).catch(() => null);
+    const revRes = await apiFetch(`${API}/dashboard/revenue-summary`).catch(() => null);
     const rev = revRes?.ok ? await revRes.json() : null;
     if (rev) {
       const ctx = document.getElementById('chart-revenue').getContext('2d');
@@ -6139,7 +6151,7 @@ async function renderAdminDash(today) {
   const forecastEl = document.getElementById('dash-forecast-content');
   if (forecastEl) {
     if (isTopAdmin() && filterMonth !== 0) {
-      const fRes = await fetch(`${API}/dashboard/monthly-forecast?year=${filterYear}&month=${filterMonth}`).catch(() => null);
+      const fRes = await apiFetch(`${API}/dashboard/monthly-forecast?year=${filterYear}&month=${filterMonth}`).catch(() => null);
       const forecast = fRes?.ok ? await fRes.json() : null;
       if (forecast && forecast.length > 0) {
         const fmt = n => '¥' + (n || 0).toLocaleString('ja-JP');
@@ -6272,7 +6284,7 @@ async function loadInvoices() {
 async function loadMyInvoices() {
   const uid = currentUser?.supabase_id || currentUser?.id;
   if (!uid) return;
-  const res = await fetch(`${API}/invoices?issuer_id=${uid}`);
+  const res = await apiFetch(`${API}/invoices?issuer_id=${uid}`);
   const list = res.ok ? await res.json() : [];
   const el = document.getElementById('inv-my-list');
   if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">まだ請求書がありません</div>'; return; }
@@ -6312,7 +6324,7 @@ let _adminInvoiceActiveTab = null;
 async function loadAdminInvoices() {
   const status = document.getElementById('inv-filter-status')?.value || '';
   const url = `${API}/invoices${status ? `?status=${status}` : ''}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   const el = document.getElementById('inv-admin-list');
   const tabsEl = document.getElementById('inv-admin-month-tabs');
 
@@ -6485,7 +6497,7 @@ async function loadClientInvoiceItems() {
   const month = document.getElementById('ci-month').value;
   const wrap = document.getElementById('ci-table-wrap');
   wrap.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">読み込み中...</div>';
-  const res = await fetch(`${API}/client-invoice/items?client_id=${clientId}&year=${year}&month=${month}`);
+  const res = await apiFetch(`${API}/client-invoice/items?client_id=${clientId}&year=${year}&month=${month}`);
   if (!res.ok) { wrap.innerHTML = '<div style="color:#E24B4A;text-align:center;padding:40px">読み込みに失敗しました</div>'; return; }
   clientInvoiceItems = await res.json();
   if (!clientInvoiceItems.length) {
@@ -6564,7 +6576,7 @@ async function generateClientInvoice() {
   if (!items.length) { showToast('報酬を入力し、請求対象を選択してください', 'warn'); return; }
   const btn = document.getElementById('ci-submit-btn');
   btn.textContent = '発行中...'; btn.disabled = true;
-  const res = await fetch(`${API}/client-invoice/generate`, {
+  const res = await apiFetch(`${API}/client-invoice/generate`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ client_id: clientId, year, month, items, notes })
   });
@@ -6603,7 +6615,7 @@ async function loadInvoicePreview() {
   document.getElementById('gi-submit-btn').disabled = true;
   document.getElementById('gi-submit-btn').style.opacity = '0.5';
 
-  const res = await fetch(`${API}/invoices/preview-items?year=${year}&month=${month}`);
+  const res = await apiFetch(`${API}/invoices/preview-items?year=${year}&month=${month}`);
   if (!res.ok) { wrap.innerHTML = '<div style="color:#E24B4A;font-size:13px;text-align:center;padding:40px">読み込みに失敗しました</div>'; return; }
   invoicePreviewItems = await res.json();
 
@@ -6807,7 +6819,7 @@ async function generateMyInvoice() {
 
   const btn = document.getElementById('gi-submit-btn');
   btn.textContent = '作成中...'; btn.disabled = true;
-  const res = await fetch(`${API}/invoices/generate`, {
+  const res = await apiFetch(`${API}/invoices/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ issuer_id: uid, year, month, selected_items: selectedItems, notes: document.getElementById('gi-notes').value.trim() || null })
@@ -6824,7 +6836,7 @@ let _pendingSubmitId = null;
 
 async function submitInvoice(id) {
   const uid = currentUser?.supabase_id || currentUser?.id;
-  const listRes = await fetch(`${API}/invoices?issuer_id=${uid}`);
+  const listRes = await apiFetch(`${API}/invoices?issuer_id=${uid}`);
   const allInvs = listRes.ok ? await listRes.json() : [];
   const thisInv = allInvs.find(i => i.id === id);
 
@@ -6846,7 +6858,7 @@ async function submitInvoice(id) {
     }
   }
   if (!confirm('提出してよいですか？提出後は管理者の承認が必要です。')) return;
-  const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
+  const res = await apiFetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try { const e = await res.json(); if (e?.error) detail = e.error; } catch {}
@@ -6862,17 +6874,17 @@ async function confirmDuplicateSubmit() {
   const id = _pendingSubmitId;
   closeModal('modal-submit-duplicate');
   // 備考に重複理由を追記
-  const invRes = await fetch(`${API}/invoices/${id}`);
+  const invRes = await apiFetch(`${API}/invoices/${id}`);
   if (invRes.ok) {
     const inv = await invRes.json();
     const newNotes = inv.notes ? `${inv.notes}\n【重複提出理由】${reason}` : `【重複提出理由】${reason}`;
-    await fetch(`${API}/invoices/${id}`, {
+    await apiFetch(`${API}/invoices/${id}`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ notes: newNotes })
     });
   }
-  const res = await fetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
+  const res = await apiFetch(`${API}/invoices/${id}/submit`, { method: 'POST' });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try { const e = await res.json(); if (e?.error) detail = e.error; } catch {}
@@ -6923,7 +6935,7 @@ function _eiFallbackFromItem(item) {
 }
 
 async function editInvoice(id) {
-  const res = await fetch(`${API}/invoices/${id}`);
+  const res = await apiFetch(`${API}/invoices/${id}`);
   if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
   document.getElementById('ei-invoice-id').value = id;
@@ -7262,7 +7274,7 @@ async function saveInvoiceEdit() {
   }
   if (!lines.length && !confirm('明細が0件です。このまま保存しますか？（合計¥0）')) return;
 
-  const res = await fetch(`${API}/invoices/${id}`, {
+  const res = await apiFetch(`${API}/invoices/${id}`, {
     method: 'PATCH',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ notes, line_items: lines })
@@ -7279,7 +7291,7 @@ async function saveInvoiceEdit() {
 
 async function approveInvoice(id) {
   if (!confirm('この請求書を承認しますか？')) return;
-  const res = await fetch(`${API}/invoices/${id}/approve`, { method: 'POST' });
+  const res = await apiFetch(`${API}/invoices/${id}/approve`, { method: 'POST' });
   if (!res.ok) { showToast('承認に失敗しました', 'error'); return; }
   await loadAdminInvoices();
 }
@@ -7287,7 +7299,7 @@ async function approveInvoice(id) {
 async function rejectInvoice(id) {
   const reason = prompt('差し戻し理由を入力してください：');
   if (reason === null) return;
-  const res = await fetch(`${API}/invoices/${id}/reject`, {
+  const res = await apiFetch(`${API}/invoices/${id}/reject`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rejection_reason: reason })
@@ -7299,7 +7311,7 @@ async function rejectInvoice(id) {
 let _printMeta = null;
 
 async function printInvoice(id) {
-  const res = await fetch(`${API}/invoices/${id}`);
+  const res = await apiFetch(`${API}/invoices/${id}`);
   if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
 
@@ -7635,7 +7647,7 @@ function printClientInvoice(inv) {
 
 async function deleteInvoice(id) {
   if (!confirm('この請求書を削除しますか？')) return;
-  const res = await fetch(`${API}/invoices/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/invoices/${id}`, { method: 'DELETE' });
   if (!res.ok) { showToast('削除に失敗しました', 'error'); return; }
   await Promise.all([
     loadMyInvoices(),
@@ -7646,7 +7658,7 @@ async function deleteInvoice(id) {
 async function deactivateMember(id, name) {
   const reason = prompt(`${name}さんの退職理由を入力してください（任意）`);
   if (reason === null) return;
-  const res = await fetch(`${API}/members/${id}/deactivate`, {
+  const res = await apiFetch(`${API}/members/${id}/deactivate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ left_reason: reason })
@@ -7661,7 +7673,7 @@ async function deactivateMember(id, name) {
 
 async function reactivateMember(id) {
   if (!confirm('このメンバーを復帰させますか？')) return;
-  const res = await fetch(`${API}/members/${id}/reactivate`, {
+  const res = await apiFetch(`${API}/members/${id}/reactivate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }
   });
@@ -7687,8 +7699,8 @@ async function onProjectChange(projectId) {
   }
 
   const [axesRes, prodRes] = await Promise.all([
-    fetch(`${API}/projects/${projectId}/effective-appeal-axes`),
-    fetch(`${API}/projects/${projectId}/effective-products`),
+    apiFetch(`${API}/projects/${projectId}/effective-appeal-axes`),
+    apiFetch(`${API}/projects/${projectId}/effective-products`),
   ]);
 
   const axes = sortByDisplayOrder(axesRes.ok ? await axesRes.json() : []);
@@ -7747,7 +7759,7 @@ async function generateFileName() {
   const creative_size = document.getElementById('c-creative-size')?.value || null;
   const production_date = new Date().toISOString().slice(0, 10);
 
-  const res = await fetch(`${API}/projects/${projectId}/generate-filename`, {
+  const res = await apiFetch(`${API}/projects/${projectId}/generate-filename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ appeal_type_id: appealTypeId, product_code, media_code, creative_fmt, creative_size, production_date })
@@ -7822,8 +7834,8 @@ async function openCreateCreative() {
   // マスターデータが未ロードなら取得
   if (!masterCategories.length || !masterItems.length) {
     const [catR, itemR] = await Promise.all([
-      fetch(`${API}/master/categories`),
-      fetch(`${API}/master/items`),
+      apiFetch(`${API}/master/categories`),
+      apiFetch(`${API}/master/items`),
     ]);
     if (catR.ok) masterCategories = await catR.json();
     if (itemR.ok) masterItems = await itemR.json();
@@ -7909,8 +7921,8 @@ async function onBulkProjectChange(projectId) {
     return;
   }
   const [axesRes, prodRes] = await Promise.all([
-    fetch(`${API}/projects/${projectId}/effective-appeal-axes`),
-    fetch(`${API}/projects/${projectId}/effective-products`),
+    apiFetch(`${API}/projects/${projectId}/effective-appeal-axes`),
+    apiFetch(`${API}/projects/${projectId}/effective-products`),
   ]);
   const axes = sortByDisplayOrder(axesRes.ok ? await axesRes.json() : []);
   if (!axes.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; }
@@ -7980,7 +7992,7 @@ async function bulkPreviewCreative() {
   const origText = btn.textContent;
   btn.textContent = '確認中...'; btn.disabled = true;
 
-  const res = await fetch(`${API}/creatives/bulk-preview`, {
+  const res = await apiFetch(`${API}/creatives/bulk-preview`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(_bulkPayload)
   });
@@ -8033,7 +8045,7 @@ async function bulkCreateCreative() {
   const btn = document.getElementById('bulk-confirm-ok-btn');
   btn.textContent = '登録中...'; btn.disabled = true;
 
-  const res = await fetch(`${API}/creatives/bulk`, {
+  const res = await apiFetch(`${API}/creatives/bulk`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(_bulkPayload)
   });
@@ -8195,8 +8207,8 @@ async function loadMasterPage() {
   if (sysconfigNav) sysconfigNav.style.display = isTopAdmin() ? '' : 'none';
 
   const [catRes, itemRes] = await Promise.all([
-    fetch(`${API}/master/categories`),
-    fetch(`${API}/master/items`),
+    apiFetch(`${API}/master/categories`),
+    apiFetch(`${API}/master/items`),
   ]);
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
@@ -8208,7 +8220,7 @@ async function renderUserStatsPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
 
-  const res = await fetch(`${API}/admin/user-stats`);
+  const res = await apiFetch(`${API}/admin/user-stats`);
   if (!res.ok) { content.innerHTML = '<div style="color:#E24B4A;padding:20px">アクセス権限がありません</div>'; return; }
   const users = await res.json();
 
@@ -8413,7 +8425,7 @@ async function _saveRolePerms() {
     const [role, permission_key] = k.split('|');
     permissions.push({ role, permission_key, allowed });
   });
-  const res = await fetch(`${API}/role-permissions`, {
+  const res = await apiFetch(`${API}/role-permissions`, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ permissions })
   });
@@ -8444,7 +8456,7 @@ let _clEditingId = null;
 async function renderChecklistMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
-  const res = await fetch(`${API}/checklist-masters`);
+  const res = await apiFetch(`${API}/checklist-masters`);
   _clItems = res.ok ? await res.json() : [];
   _clEditingId = null;
   _renderChecklistMasterContent();
@@ -8539,7 +8551,7 @@ async function addChecklistMaster() {
   const target_type = document.getElementById('cl-new-type').value || 'all';
   const order       = parseInt(document.getElementById('cl-new-order').value) || 0;
   if (!title) { showToast('チェック項目名を入力してください', 'warn'); return; }
-  const res = await fetch(`${API}/checklist-masters`, {
+  const res = await apiFetch(`${API}/checklist-masters`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc, sort_order: order, target_type }),
   });
@@ -8553,7 +8565,7 @@ async function saveChecklistMasterEdit(id) {
   const target_type = document.getElementById('cl-e-type').value || 'all';
   const order       = parseInt(document.getElementById('cl-e-order').value) || 0;
   if (!title) { showToast('タイトルは必須です', 'warn'); return; }
-  const res = await fetch(`${API}/checklist-masters/${id}`, {
+  const res = await apiFetch(`${API}/checklist-masters/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, description: desc, sort_order: order, target_type }),
   });
@@ -8563,7 +8575,7 @@ async function saveChecklistMasterEdit(id) {
 
 async function deleteChecklistMaster(id) {
   if (!confirm('このチェック項目を削除しますか？')) return;
-  const res = await fetch(`${API}/checklist-masters/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/checklist-masters/${id}`, { method: 'DELETE' });
   if (res.ok) await renderChecklistMasterPage();
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -8576,7 +8588,7 @@ async function renderSysconfigPage() {
   const el = document.getElementById('master-content');
   el.innerHTML = '<div class="loading">読み込み中...</div>';
 
-  const res = await fetch(`${API}/system-settings`);
+  const res = await apiFetch(`${API}/system-settings`);
   const settings = res.ok ? await res.json() : {};
 
   el.innerHTML = `
@@ -8635,7 +8647,7 @@ async function saveSysDrive() {
   const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
   if (url && !m) { showToast('Drive URLの形式が正しくありません', 'warn'); return; }
   const folderId = m ? m[1] : '';
-  const res = await fetch(`${API}/system-settings`, {
+  const res = await apiFetch(`${API}/system-settings`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key: 'drive_root_folder_id', value: folderId || null }),
@@ -8911,12 +8923,12 @@ async function addGeneralCategory() {
   const code = document.getElementById('gen-cat-code').value.trim();
   const status = document.getElementById('gen-cat-status');
   if (!name || !code) { if (status) status.textContent = '区分名とコードは必須です'; return; }
-  const res = await fetch(`${API}/master/categories`, {
+  const res = await apiFetch(`${API}/master/categories`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ name, code })
   });
   if (res.ok) {
-    masterCategories = await (await fetch(`${API}/master/categories`)).json();
+    masterCategories = await (await apiFetch(`${API}/master/categories`)).json();
     document.getElementById('gen-cat-name').value = '';
     document.getElementById('gen-cat-code').value = '';
     if (status) status.textContent = '追加しました';
@@ -8931,12 +8943,12 @@ async function addGeneralItem(categoryId) {
   const expires_at = document.getElementById('mia-expires').value || null;
   const status = document.getElementById('mia-status');
   if (!code || !name) { if (status) status.textContent = 'コードと名称は必須です'; return; }
-  const res = await fetch(`${API}/master/items`, {
+  const res = await apiFetch(`${API}/master/items`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ category_id: categoryId, code, name, note, expires_at, sort_order: parseInt(document.getElementById('mia-sort').value) || 0 })
   });
   if (res.ok) {
-    masterItems = await (await fetch(`${API}/master/items`)).json();
+    masterItems = await (await apiFetch(`${API}/master/items`)).json();
     if (status) status.textContent = '追加しました';
     document.getElementById('mia-code').value = '';
     document.getElementById('mia-name').value = '';
@@ -8952,12 +8964,12 @@ async function saveGeneralItemEdit(id) {
   const note = document.getElementById('mie-note').value.trim();
   const expires_at = document.getElementById('mie-expires').value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/master/items/${id}`, {
+  const res = await apiFetch(`${API}/master/items/${id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ code, name, note, expires_at, is_active: true, sort_order: parseInt(document.getElementById('mie-sort').value) || 0 })
   });
   if (res.ok) {
-    masterItems = await (await fetch(`${API}/master/items`)).json();
+    masterItems = await (await apiFetch(`${API}/master/items`)).json();
     generalItemEditingId = null;
     renderGeneralMasterPage();
   } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
@@ -8965,7 +8977,7 @@ async function saveGeneralItemEdit(id) {
 
 async function deleteGeneralItem(id) {
   if (!confirm('この値を削除しますか？')) return;
-  const res = await fetch(`${API}/master/items/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/master/items/${id}`, { method: 'DELETE' });
   if (res.ok) {
     masterItems = masterItems.filter(i => i.id !== id);
     renderGeneralMasterPage();
@@ -9078,7 +9090,7 @@ function backToClientSelectProducts() {
 }
 
 async function loadClientProducts(clientId) {
-  const res = await fetch(`${API}/clients/${clientId}/products`);
+  const res = await apiFetch(`${API}/clients/${clientId}/products`);
   const items = res.ok ? await res.json() : [];
 
   // クライアントモーダル内（旧タブ用）
@@ -9166,7 +9178,7 @@ async function saveProduct(clientId, id) {
   const note     = document.getElementById(`pdi-note-${id}`).value.trim();
   const expires_at = document.getElementById(`pdi-exp-${id}`).value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/clients/${clientId}/products/${id}`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/products/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
@@ -9184,7 +9196,7 @@ async function addClientProductNew() {
   const expires_at = document.getElementById('prod-new-expires').value || null;
   const status = document.getElementById('prod-add-status');
   if (!code || !name) { status.style.color = '#A32D2D'; status.textContent = 'コードと名称は必須です'; return; }
-  const res = await fetch(`${API}/clients/${clientId}/products`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/products`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
@@ -9204,7 +9216,7 @@ function openClientProductModal(clientId, clientName) {
   if (!name) return;
   const code = prompt('コードを入力してください（例：P001）：');
   if (!code) return;
-  fetch(`${API}/clients/${clientId}/products`, {
+  apiFetch(`${API}/clients/${clientId}/products`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name.trim(), code: code.trim() })
   }).then(r => { if (r.ok) loadClientProducts(clientId); else showToast('追加に失敗しました', 'error'); });
@@ -9212,7 +9224,7 @@ function openClientProductModal(clientId, clientName) {
 
 function deleteClientProduct(clientId, productId) {
   if (!confirm('削除しますか？')) return;
-  fetch(`${API}/clients/${clientId}/products/${productId}`, { method: 'DELETE' })
+  apiFetch(`${API}/clients/${clientId}/products/${productId}`, { method: 'DELETE' })
     .then(r => { if (r.ok) loadClientProducts(clientId); });
 }
 
@@ -9320,7 +9332,7 @@ function backToClientSelect() {
 }
 
 async function loadClientAppealAxes(clientId) {
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`);
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes`);
   const items = res.ok ? await res.json() : [];
 
   // クライアント画面内（旧モーダル用）
@@ -9401,7 +9413,7 @@ async function addClientAppealAxis() {
   const expires_at = document.getElementById('axis-new-expires').value || null;
   const status = document.getElementById('axis-add-status');
   if (!code || !name) { status.style.color = '#A32D2D'; status.textContent = 'コードと名称は必須です'; return; }
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
@@ -9432,7 +9444,7 @@ async function saveAppealAxis(clientId, id) {
   const note     = document.getElementById(`axi-note-${id}`).value.trim();
   const expires_at = document.getElementById(`axi-exp-${id}`).value || null;
   if (!code || !name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/clients/${clientId}/appeal-axes/${id}`, {
+  const res = await apiFetch(`${API}/clients/${clientId}/appeal-axes/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name, note: note||null, expires_at, sort_order: parseInt(sort_order)||0 })
   });
@@ -9445,7 +9457,7 @@ function openClientAppealAxisModal(clientId, clientName) {
   if (!name) return;
   const code = prompt('コードを入力してください（例：ap001）：');
   if (!code) return;
-  fetch(`${API}/clients/${clientId}/appeal-axes`, {
+  apiFetch(`${API}/clients/${clientId}/appeal-axes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name.trim(), code: code.trim() })
@@ -9454,7 +9466,7 @@ function openClientAppealAxisModal(clientId, clientName) {
 
 function deleteClientAppealAxis(clientId, axisId) {
   if (!confirm('削除しますか？')) return;
-  fetch(`${API}/clients/${clientId}/appeal-axes/${axisId}`, { method: 'DELETE' })
+  apiFetch(`${API}/clients/${clientId}/appeal-axes/${axisId}`, { method: 'DELETE' })
     .then(r => { if (r.ok) loadClientAppealAxes(clientId); });
 }
 
@@ -9462,7 +9474,7 @@ async function addMasterCat() {
   const name = document.getElementById('mca-name').value.trim();
   const code = document.getElementById('mca-code').value.trim();
   if (!name || !code) { showToast('名称とコードは必須です', 'warn'); return; }
-  const res = await fetch(`${API}/master/categories`, {
+  const res = await apiFetch(`${API}/master/categories`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ name, code })
   });
@@ -9477,7 +9489,7 @@ async function addMasterCat() {
 async function saveCatEdit(id) {
   const name = document.getElementById('mce-name').value.trim();
   const code = document.getElementById('mce-code').value.trim();
-  const res = await fetch(`${API}/master/categories/${id}`, {
+  const res = await apiFetch(`${API}/master/categories/${id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ name, code, is_active: true })
   });
@@ -9487,7 +9499,7 @@ async function saveCatEdit(id) {
 
 async function deleteMasterCat(id) {
   if (!confirm('この区分とその値をすべて削除しますか？')) return;
-  const res = await fetch(`${API}/master/categories/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/master/categories/${id}`, { method: 'DELETE' });
   if (res.ok) {
     if (currentCategoryId === id) currentCategoryId = null;
     await loadMasterPage();
@@ -9505,7 +9517,7 @@ async function addMasterItem() {
     expires_at: document.getElementById('mia-expires').value || null,
   };
   if (!body.code || !body.name) { showToast('コードと名称は必須です', 'warn'); return; }
-  const res = await fetch(`${API}/master/items`, {
+  const res = await apiFetch(`${API}/master/items`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) { await loadMasterPage(); }
@@ -9521,7 +9533,7 @@ async function saveMasterItemEdit(id) {
     is_active:  document.getElementById('mie-active').value === 'true',
     expires_at: document.getElementById('mie-expires').value || null,
   };
-  const res = await fetch(`${API}/master/items/${id}`, {
+  const res = await apiFetch(`${API}/master/items/${id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) { masterItemEditingId = null; await loadMasterPage(); }
@@ -9530,7 +9542,7 @@ async function saveMasterItemEdit(id) {
 
 async function deleteMasterItem(id) {
   if (!confirm('削除しますか？')) return;
-  const res = await fetch(`${API}/master/items/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/master/items/${id}`, { method: 'DELETE' });
   if (res.ok) { await loadMasterPage(); }
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -9587,7 +9599,7 @@ function fillCommentTemplate() {
 }
 
 async function openCreativeDetail(id) {
-  const res = await fetch(`${API}/creatives/${id}`);
+  const res = await apiFetch(`${API}/creatives/${id}`);
   if (!res.ok) { showToast('データの取得に失敗しました', 'error'); return; }
   const c = await res.json();
   currentCreativeDetail = c;
@@ -9974,7 +9986,7 @@ async function directToClientCheck() {
     director_comment: document.getElementById('cd-comment-field').value.trim() || null,
     script_url: document.getElementById('cd-script-url').value.trim() || null,
   };
-  const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+  const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
@@ -10008,7 +10020,7 @@ async function advanceCreativeStatus() {
       return;
     }
     if (!confirm(`「${target}」に進めますか？`)) return;
-    const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+    const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -10092,7 +10104,7 @@ async function requestRevision() {
 }
 
 async function loadCreativeFiles(creativeId) {
-  const res = await fetch(`${API}/creatives/${creativeId}/files`);
+  const res = await apiFetch(`${API}/creatives/${creativeId}/files`);
   if (!res.ok) return;
   const files = await res.json();
   currentUploadedFileCount = files.length; // バージョン自動計算用
@@ -10496,7 +10508,7 @@ let _fpLikes = [];
 async function fpLoadLikes(fileId) {
   if (!fileId) return;
   try {
-    const res = await fetch(`${API}/creative-files/${fileId}/likes`);
+    const res = await apiFetch(`${API}/creative-files/${fileId}/likes`);
     if (res.ok) {
       _fpLikes = await res.json();
       fpRenderLikeMarkers(_fpLikes);
@@ -10574,7 +10586,7 @@ async function fpDownloadMarkers() {
   const orig = btn.textContent;
   btn.textContent = '生成中...'; btn.disabled = true;
   try {
-    const res = await fetch(`${API}/creative-files/${fileId}/markers.jsx`, { credentials: 'include' });
+    const res = await apiFetch(`${API}/creative-files/${fileId}/markers.jsx`, { credentials: 'include' });
     if (!res.ok) { showToast('マーカーの生成に失敗しました', 'error'); return; }
     const blob = await res.blob();
     const url  = URL.createObjectURL(blob);
@@ -10597,7 +10609,7 @@ async function fpAddLike() {
   const timecodeSec = video.currentTime;
   const btn = document.getElementById('fp-like-btn');
   try {
-    const res = await fetch(`${API}/creative-files/${fileId}/likes`, {
+    const res = await apiFetch(`${API}/creative-files/${fileId}/likes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ timecode_sec: timecodeSec }),
@@ -10801,7 +10813,7 @@ async function fpLoadChecklist(fileId) {
   const el = document.getElementById('fp-comments-list');
   el.innerHTML = '<div style="color:#71717a;font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
   try {
-    const res = await fetch(`${API}/creative-files/${fileId}/checklist`);
+    const res = await apiFetch(`${API}/creative-files/${fileId}/checklist`);
     if (!res.ok) throw new Error('取得失敗');
     const data = await res.json();
     fpRenderChecklist(data, fileId);
@@ -10874,7 +10886,7 @@ function fpRenderChecklist(data, fileId) {
 
 async function fpToggleChecklistItem(itemId, itemType, fileId, rowEl) {
   try {
-    const res = await fetch(`${API}/creative-files/${fileId}/checklist/toggle`, {
+    const res = await apiFetch(`${API}/creative-files/${fileId}/checklist/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item_id: itemId, item_type: itemType }),
@@ -10886,7 +10898,7 @@ async function fpToggleChecklistItem(itemId, itemType, fileId, rowEl) {
 async function loadFileComments(fileId) {
   const el = document.getElementById('fp-comments-list');
   el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
-  const res = await fetch(`${API}/creative-files/${fileId}/comments`);
+  const res = await apiFetch(`${API}/creative-files/${fileId}/comments`);
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
   renderComments(list);
@@ -10901,7 +10913,7 @@ async function showUploadLogs() {
   if (panel.style.display === 'none') return;
   content.innerHTML = '<span style="color:#8b949e">読み込み中...</span>';
   try {
-    const res = await fetch(`${API}/upload-logs`, { credentials: 'include' });
+    const res = await apiFetch(`${API}/upload-logs`, { credentials: 'include' });
     const { logs } = await res.json();
     if (!logs || logs.length === 0) { content.innerHTML = '<span style="color:#8b949e">ログなし</span>'; return; }
     content.innerHTML = logs.map(l => {
@@ -10920,7 +10932,7 @@ async function runDriveDiagnose() {
   if (!el) return;
   el.innerHTML = '<div style="color:#888;padding:8px">診断中...</div>';
   try {
-    const res = await fetch(`${API}/drive-diagnose`);
+    const res = await apiFetch(`${API}/drive-diagnose`);
     const data = await res.json();
     const rows = Object.entries(data.checks || {}).map(([key, v]) => {
       const icon = v.ok ? '✅' : '❌';
@@ -11050,7 +11062,7 @@ async function submitFileComment() {
   }
   const btn = document.querySelector('#fp-comment-input-area button');
   btn.disabled = true; btn.textContent = '送信中...';
-  const res = await fetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
+  const res = await apiFetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode }),
@@ -11068,7 +11080,7 @@ async function submitFileComment() {
 
 async function deleteFileComment(id) {
   if (!confirm('このコメントを削除しますか？')) return;
-  const res = await fetch(`${API}/creative-file-comments/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/creative-file-comments/${id}`, { method: 'DELETE' });
   if (res.ok) await loadFileComments(currentPreviewFileId);
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
@@ -11076,7 +11088,7 @@ async function deleteFileComment(id) {
 async function loadKnowledge() {
   const el = document.getElementById('fp-comments-list');
   el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
-  const res = await fetch(`${API}/knowledge`);
+  const res = await apiFetch(`${API}/knowledge`);
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
   if (!list.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">ナレッジがまだありません</div>'; return; }
@@ -11112,7 +11124,7 @@ function knCategoryCode(tab) {
 
 async function loadKnowledgeCategories(tab) {
   if (_knCatCache[tab]) return _knCatCache[tab];
-  const res = await fetch(`${API}/master/items/active?category_code=${knCategoryCode(tab)}`);
+  const res = await apiFetch(`${API}/master/items/active?category_code=${knCategoryCode(tab)}`);
   const items = res.ok ? (await res.json()) : [];
   _knCatCache[tab] = items;
   return items;
@@ -11276,7 +11288,7 @@ async function loadKnowledgePage() {
   if (filterVal && filterVal !== '__new__' && filterVal !== '__fav__') {
     params.set('category_id', filterVal);
   }
-  const res = await fetch(`${API}/knowledge?${params}`);
+  const res = await apiFetch(`${API}/knowledge?${params}`);
   if (!res.ok) {
     let errMsg = '取得失敗';
     try { const e = await res.json(); errMsg = e.error || errMsg; } catch {}
@@ -11546,7 +11558,7 @@ async function doDCheckTransition() {
   const editorComment = document.getElementById('cd-comment-field').value.trim();
   const payload = { status: 'Dチェック' };
   if (editorComment) payload.director_comment = editorComment;
-  const upd = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+  const upd = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
   });
   if (upd.ok) {
@@ -11694,7 +11706,7 @@ async function loadVersionHistory_DISABLED(creativeId) {
   if (!el) return;
   el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);text-align:center;padding:12px 0">読み込み中...</div>';
   try {
-    const res = await fetch(`${API}/creative-versions/${creativeId}`);
+    const res = await apiFetch(`${API}/creative-versions/${creativeId}`);
     if (!res.ok) throw new Error('取得失敗');
     const list = await res.json();
     if (!list.length) {
@@ -11760,7 +11772,7 @@ async function saveVersionHistory_DISABLED() {
     showToast('ディレクターコメントまたはクライアントコメントを入力してください', 'warn');
     return;
   }
-  const res = await fetch(`${API}/creative-versions`, {
+  const res = await apiFetch(`${API}/creative-versions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -11795,7 +11807,7 @@ function ceUpdateAssigneeSelect() {
 }
 
 async function openCreativeEdit(id) {
-  const res = await fetch(`${API}/creatives/${id}`);
+  const res = await apiFetch(`${API}/creatives/${id}`);
   if (!res.ok) return;
   const c = await res.json();
   _editingCreativeId = id;
@@ -11834,8 +11846,8 @@ async function openCreativeEdit(id) {
   appealSel.innerHTML = '<option value="">（未設定）</option>';
   if (c.project_id) {
     const [axesRes, prodRes] = await Promise.all([
-      fetch(`${API}/projects/${c.project_id}/effective-appeal-axes`),
-      fetch(`${API}/projects/${c.project_id}/effective-products`),
+      apiFetch(`${API}/projects/${c.project_id}/effective-appeal-axes`),
+      apiFetch(`${API}/projects/${c.project_id}/effective-products`),
     ]);
     if (axesRes.ok) {
       const axes = sortByDisplayOrder(await axesRes.json());
@@ -11920,7 +11932,7 @@ async function saveCreativeEdit() {
     note:            document.getElementById('ce-note').value.trim()     || null,
     talent_flag:     document.getElementById('ce-talent-flag').checked,
   };
-  const res = await fetch(`${API}/creatives/${_editingCreativeId}`, {
+  const res = await apiFetch(`${API}/creatives/${_editingCreativeId}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) {
@@ -11961,7 +11973,7 @@ async function saveCreativeDetail(overrideStatus) {
       body.revision_count = (currentCreativeDetail.revision_count || 0) + 1;
     }
   }
-  const res = await fetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+  const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) {
@@ -12000,7 +12012,7 @@ async function deleteSelectedCreatives() {
   if (!checked.length) return;
   const ids = Array.from(checked).map(cb => cb.dataset.id);
   if (!confirm(`選択した ${ids.length} 件のクリエイティブを削除しますか？\nこの操作は取り消せません。`)) return;
-  const res = await fetch(`${API}/creatives`, {
+  const res = await apiFetch(`${API}/creatives`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
@@ -12039,7 +12051,7 @@ const roleLabelsInvite = {
 async function deleteMemberPermanently(id, name) {
   if (!confirm(`⚠️ 警告\n\n「${name}」のすべてのデータをデータベースから完全に削除します。\nこの操作は取り消せません。\n\n本当に削除しますか？`)) return;
   if (!confirm(`最終確認：「${name}」を完全削除してよいですか？`)) return;
-  const res = await fetch(`${API}/members/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API}/members/${id}`, { method: 'DELETE' });
   if (res.ok) {
     showToast(`${name} を完全削除しました`, 'success');
     await loadMembers();
@@ -12070,7 +12082,7 @@ async function submitChangePassword() {
   const conf = document.getElementById('cp-confirm').value;
   if (nw.length < 8)   { showToast('新しいパスワードは8文字以上必要です', 'warn'); return; }
   if (nw !== conf)     { showToast('パスワードが一致しません', 'warn'); return; }
-  const res = await fetch(`${API}/users/change-password`, {
+  const res = await apiFetch(`${API}/users/change-password`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ currentPassword: cur, newPassword: nw })
   });
@@ -12085,7 +12097,7 @@ async function resetMemberPassword(userId, userName) {
   const newPass = prompt(`${userName} さんの新しいパスワードを入力してください（8文字以上）:`);
   if (!newPass) return;
   if (newPass.length < 8) { showToast('8文字以上必要です', 'warn'); return; }
-  const res = await fetch(`${API}/users/${userId}/reset-password`, {
+  const res = await apiFetch(`${API}/users/${userId}/reset-password`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ newPassword: newPass })
   });
@@ -12097,7 +12109,7 @@ async function issueInvite() {
   const email = document.getElementById('inv-email').value.trim();
   const role  = document.getElementById('inv-role').value;
   if (!email) { showToast('メールアドレスを入力してください', 'warn'); return; }
-  const res = await fetch('/api/invitations', {
+  const res = await apiFetch('/api/invitations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, role })
@@ -12156,7 +12168,7 @@ async function openClientFeeModal(projectId, projectName) {
   document.getElementById('cf-project-name').textContent = projectName;
 
   // 既存設定を取得
-  const res = await fetch(`${API}/projects/${projectId}/client-fee`);
+  const res = await apiFetch(`${API}/projects/${projectId}/client-fee`);
   const fee = res.ok ? await res.json() : null;
 
   document.getElementById('cf-video-unit').value = fee?.video_unit_price || 0;
@@ -12178,7 +12190,7 @@ async function saveClientFee() {
     use_fixed_budget: useFixed,
     note: document.getElementById('cf-note').value.trim() || null
   };
-  const res = await fetch(`${API}/projects/${currentClientFeeProjectId}/client-fee`, {
+  const res = await apiFetch(`${API}/projects/${currentClientFeeProjectId}/client-fee`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
