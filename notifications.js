@@ -132,23 +132,17 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const cwCommentLine = comment ? `\nコメント: ${comment}` : '';
 
   // 遷移ごとの処理
-  // Slack: チャンネル内 <@user_id> メンション付き投稿（旧 DM 方式から変更）
-  //   - DM 方式は受信者の slack_dm_id 設定が必須で、未設定だと通知が完全欠落していた。
-  //   - メンション方式なら ID なしでもチャンネル投稿は届き、ID ありなら赤バッジ通知も飛ぶ。
-  // Chatwork: ルーム内 [To:account_id] メンション付き投稿（PR #65 で既に対応済み）
+  // Slack / Chatwork ともに「個人宛通知」として扱うため、
+  // 対象ユーザーに DM ID が設定されていない場合はその通知をスキップする。
+  // （ID 未設定の人にメンションなし投稿をしても本人は気づかず、
+  //   関係ないチームメンバーに通知が飛ぶだけで意味がないため）
   const sendNotif = async (user, slackBody, cwBody) => {
     if (!user) return;
-    if (channelUrl) {
-      const mention = user.slack_dm_id ? `<@${user.slack_dm_id}> ` : '';
-      await sendSlackChannel(channelUrl, `${mention}${slackBody}`);
+    if (channelUrl && user.slack_dm_id) {
+      await sendSlackChannel(channelUrl, `<@${user.slack_dm_id}> ${slackBody}`);
     }
-    if (roomId) {
-      if (user.chatwork_dm_id) {
-        await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody);
-      } else {
-        // ID 未設定でも投稿は届ける（チームへの情報共有のみ）
-        await sendChatworkRoom(roomId, cwBody);
-      }
+    if (roomId && user.chatwork_dm_id) {
+      await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody);
     }
   };
 
@@ -215,35 +209,8 @@ https://drive.google.com/...
       await sendNotif(actor, slackTpl, cwTpl);
     }
   }
-  // 6) → 納品
-  //    メンバー全員に個別投稿するとチャンネルがスパム的になるため、
-  //    1 投稿に全員メンションを集約する。
-  else if (newStatus === '納品') {
-    const allMembers = [...editors, director, producer].filter(Boolean);
-    const seen = new Set();
-    const uniqueMembers = allMembers.filter(m => {
-      if (seen.has(m.id)) return false;
-      seen.add(m.id);
-      return true;
-    });
-    const slackMentions = uniqueMembers
-      .map(m => m.slack_dm_id ? `<@${m.slack_dm_id}>` : '')
-      .filter(Boolean)
-      .join(' ');
-    const cwMentions = uniqueMembers
-      .map(m => m.chatwork_dm_id ? `[To:${m.chatwork_dm_id}]` : '')
-      .filter(Boolean)
-      .join('\n');
-
-    if (channelUrl) {
-      const slackBody = `🎉 *納品完了*: \`${fileName}\`\nお疲れ様でした！${slackMentions ? '\n' + slackMentions : ''}`;
-      await sendSlackChannel(channelUrl, slackBody);
-    }
-    if (roomId) {
-      const cwBody = `${cwMentions ? cwMentions + '\n' : ''}[info][title]🎉 納品完了[/title]${fileName}\nお疲れ様でした！[/info]`;
-      await sendChatworkRoom(roomId, cwBody);
-    }
-  }
+  // 「→ 納品」の通知は廃止。納品時は通知を送らない
+  // （別運用 (請求や案件レポート) で十分なため、チャットへのスパム的通知はやめる）。
 }
 
 module.exports = {
