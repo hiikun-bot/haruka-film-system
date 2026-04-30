@@ -3162,4 +3162,15 @@ router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== ChatWork 連携 ====================
+// 管理者用の手動疎通テスト。CHATWORK_API_TOKEN 設定後の動作確認に使う。
+//   POST /api/chatwork/test  body: { room_id, message }
+router.post('/chatwork/test', requireAuth, requireSuperAdmin, async (req, res) => {
+  const { room_id, message } = req.body || {};
+  if (!room_id) return res.json({ ok: false, reason: 'no_room_id' });
+  const { postChatworkMessage } = require('../chatwork');
+  const result = await postChatworkMessage(String(room_id), String(message || 'テスト送信'));
+  res.json(result);
+});
+
 module.exports = router;
