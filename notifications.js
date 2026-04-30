@@ -25,8 +25,9 @@ function parseSlackChannelUrl(url) {
 // =============== Slack Bot Token Resolution ===============
 async function getSlackBotToken(teamId) {
   if (!teamId) return null;
-  const { data } = await supabase.from('slack_workspaces')
+  const { data, error } = await supabase.from('slack_workspaces')
     .select('bot_token').eq('team_id', teamId).maybeSingle();
+  if (error) console.warn('[notif] slack_workspaces select failed:', error.message);
   return data?.bot_token || null;
 }
 
@@ -88,8 +89,9 @@ async function sendChatworkMention(roomId, accountId, text) {
 // =============== Helpers ===============
 async function loadUser(userId) {
   if (!userId) return null;
-  const { data } = await supabase.from('users')
+  const { data, error } = await supabase.from('users')
     .select('id, full_name, slack_dm_id, chatwork_dm_id').eq('id', userId).maybeSingle();
+  if (error) console.warn('[notif] users select failed:', error.message);
   return data || null;
 }
 
@@ -117,13 +119,16 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // 関連データ取得（薄く）
   // projects.slack_channel_url / projects.chatwork_room_id が設定されていれば
   // クライアント設定より優先する（案件ごとに通知先を分けたいケース）
-  const { data: detail } = await supabase.from('creatives')
+  const { data: detail, error: detailErr } = await supabase.from('creatives')
     .select(`
       id, file_name, memo,
       project_id,
       projects(id, name, producer_id, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)),
       creative_assignments(role, users(id, full_name, slack_dm_id, chatwork_dm_id))
     `).eq('id', creative.id).maybeSingle();
+  // SELECT が失敗した場合（スキーマ不一致・RLS違反・接続失敗等）は必ずログを出す。
+  // 2026-04-30: projects.slack_channel_url 列欠落で通知が無音失敗していた件への対策。
+  if (detailErr) console.warn('[notif] creatives select failed:', detailErr.message);
   if (!detail) return;
   const project = detail.projects;
   const client  = project?.clients;
