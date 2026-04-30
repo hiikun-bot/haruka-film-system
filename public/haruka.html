@@ -1303,8 +1303,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn" onclick="exportMembersCSV()">CSVエクスポート</button>
-        <button class="btn" id="btn-csv-import" onclick="openImportModal()" style="display:none">CSVインポート</button>
+        <button class="btn" id="btn-csv-export" onclick="exportMembersToSheet()">スプレッドシートへエクスポート</button>
+        <button class="btn" id="btn-csv-import" onclick="openImportModal()" style="display:none">スプレッドシートからインポート</button>
         <button class="btn" onclick="openInviteModal()" id="btn-invite" style="display:none">＋ 招待リンク発行</button>
         <button class="btn-primary" onclick="openAddMember()">＋ メンバー追加</button>
       </div>
@@ -1727,85 +1727,32 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
-<!-- メンバーCSVインポートモーダル -->
+<!-- メンバー スプレッドシート インポートモーダル -->
 <div class="modal-overlay" id="modal-import">
-  <div class="modal" style="max-width:760px;width:95vw;max-height:90vh;overflow-y:auto">
-    <div class="modal-title">メンバー一括インポート<button class="modal-close" onclick="closeModal('modal-import')">×</button></div>
+  <div class="modal" style="max-width:640px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">スプレッドシートからメンバー一括インポート<button class="modal-close" onclick="closeModal('modal-import')">×</button></div>
 
-    <div style="background:var(--em-pale);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.9;color:var(--em-dark)">
-      <b>CSVフォーマット</b><br>
-      <span style="font-size:12px;color:var(--text-muted)">1行目：ヘッダー行（固定）　2行目：記入例（削除してOK）　3行目以降：実データ</span><br><br>
-      <table style="border-collapse:collapse;font-size:12px;width:100%;table-layout:fixed">
-        <colgroup>
-          <col style="width:130px">
-          <col style="width:100px">
-          <col>
-        </colgroup>
-        <thead>
-          <tr style="border-bottom:1px solid var(--border)">
-            <th style="padding:4px 10px 4px 0;text-align:left">列名</th>
-            <th style="padding:4px 10px 4px 0;text-align:left">内容</th>
-            <th style="padding:4px 0;text-align:left">選択肢 / 形式</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>full_name</code></td><td style="padding:3px 10px 3px 0">氏名</td><td style="padding:3px 0;word-break:break-word">例：<code>山田 花子</code></td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>email</code></td><td style="padding:3px 10px 3px 0">メールアドレス</td><td style="padding:3px 0;word-break:break-word">例：<code>hanako@example.com</code></td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>role</code></td><td style="padding:3px 10px 3px 0">権限・役職</td><td style="padding:3px 0;word-break:break-word"><code>admin</code>（管理者）<br><code>secretary</code>（秘書）<br><code>producer</code>（P）／<code>producer_director</code>（PD）<br><code>director</code>（D）／<code>editor</code>（編集）／<code>designer</code>（デザイナー）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>job_type</code></td><td style="padding:3px 10px 3px 0">職種</td><td style="padding:3px 0;word-break:break-word"><code>video</code>（動画）　<code>design</code>（デザイン）　<code>both</code>（両方）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>rank</code></td><td style="padding:3px 10px 3px 0">ランク</td><td style="padding:3px 0"><code>S</code>　<code>A</code>　<code>B</code>　<code>C</code>　のいずれか（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>team_code</code></td><td style="padding:3px 10px 3px 0">チームコード</td><td style="padding:3px 0">登録済みチームコード（例：<code>A</code>）　※未所属の場合は空白</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>birthday</code></td><td style="padding:3px 10px 3px 0">生年月日</td><td style="padding:3px 0"><code>YYYY-MM-DD</code> 形式（例：<code>1995-03-21</code>）　※空白可</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>nickname</code></td><td style="padding:3px 10px 3px 0">ニックネーム</td><td style="padding:3px 0">検索・フィルターで使用（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>slack_dm_id</code></td><td style="padding:3px 10px 3px 0">Slack DM ID</td><td style="padding:3px 0">Slack連携用（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>chatwork_dm_id</code></td><td style="padding:3px 10px 3px 0">Chatwork DM ID</td><td style="padding:3px 0">Chatwork連携用（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>phone</code></td><td style="padding:3px 10px 3px 0">電話番号</td><td style="padding:3px 0">例：<code>090-1234-5678</code>（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>postal_code</code></td><td style="padding:3px 10px 3px 0">郵便番号</td><td style="padding:3px 0">例：<code>150-0001</code>（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>address</code></td><td style="padding:3px 10px 3px 0">住所</td><td style="padding:3px 0">例：<code>東京都渋谷区...</code>（空白可）</td></tr>
-          <tr><td style="padding:3px 10px 3px 0;word-break:break-all"><code>note</code></td><td style="padding:3px 10px 3px 0">メモ</td><td style="padding:3px 0">備考・メモ（空白可）</td></tr>
-        </tbody>
-      </table>
+    <div style="background:var(--em-pale);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.85;color:var(--em-dark)">
+      <b>使い方</b><br>
+      <span style="font-size:12px;color:var(--text-muted)">
+        1. 先に「スプレッドシートへエクスポート」でひな形を作成してください（ヘッダー＋凡例が自動生成されます）。<br>
+        2. そのシートに新規メンバー行を追加し、編集後の URL を下のフォームに貼り付けて「インポート実行」を押します。<br>
+        3. 1行目=ヘッダー、2行目=凡例、3行目以降=実データ。<code>full_name</code> / <code>email</code> / <code>role</code> は必須。<br>
+        4. すでに同じメールのユーザーが存在する場合はスキップされます。<br>
+        ※ シートはサービスアカウントが書き込んだ共有ドライブ内である必要があります（共有ドライブ外のシートは閲覧権限を別途付与してください）。
+      </span>
     </div>
 
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <button class="btn" onclick="downloadImportTemplate()">テンプレートをダウンロード</button>
-      <label class="btn-primary" style="cursor:pointer;display:inline-flex;align-items:center">
-        CSVファイルを選択
-        <input type="file" id="import-file-input" accept=".csv" style="display:none" onchange="parseImportCSV(this)">
-      </label>
+    <div class="form-group" style="margin-bottom:14px">
+      <label class="form-label">スプレッドシートのURL <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" type="url" id="import-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
     </div>
 
-    <div id="import-preview" style="display:none">
-      <div style="font-size:13px;font-weight:500;margin-bottom:8px" id="import-preview-label"></div>
-      <div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
-        <table style="width:100%;border-collapse:collapse;font-size:12px" id="import-preview-table">
-          <thead style="background:var(--em-pale);position:sticky;top:0">
-            <tr>
-              <th style="padding:8px;text-align:left">状態</th>
-              <th style="padding:8px;text-align:left">名前</th>
-              <th style="padding:8px;text-align:left">メール</th>
-              <th style="padding:8px;text-align:left">ロール</th>
-              <th style="padding:8px;text-align:left">職種</th>
-              <th style="padding:8px;text-align:left">ランク</th>
-              <th style="padding:8px;text-align:left">チーム</th>
-              <th style="padding:8px;text-align:left">生年月日</th>
-              <th style="padding:8px;text-align:left">ニックネーム</th>
-              <th style="padding:8px;text-align:left">Slack</th>
-              <th style="padding:8px;text-align:left">CW</th>
-              <th style="padding:8px;text-align:left">電話</th>
-              <th style="padding:8px;text-align:left">郵便番号</th>
-              <th style="padding:8px;text-align:left">住所</th>
-              <th style="padding:8px;text-align:left">メモ</th>
-            </tr>
-          </thead>
-          <tbody id="import-preview-tbody"></tbody>
-        </table>
-      </div>
-    </div>
+    <div id="import-result" style="display:none;font-size:13px;line-height:1.8;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px"></div>
 
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
-      <button class="btn-primary" id="import-execute-btn" onclick="executeImport()" style="display:none">登録する</button>
-      <button class="btn" onclick="closeModal('modal-import')">キャンセル</button>
+      <button class="btn-primary" id="import-execute-btn" onclick="executeSheetImport()">インポート実行</button>
+      <button class="btn" onclick="closeModal('modal-import')">閉じる</button>
     </div>
   </div>
 </div>
@@ -4983,212 +4930,86 @@ function effectiveRole() {
   return previewRole ?? currentUser?.role ?? 'editor';
 }
 
-// ==================== メンバーCSVインポート/エクスポート ====================
+// ==================== メンバー Google スプレッドシート連携 ====================
 
-const CSV_LEGEND = [
-  '【必須】名前（フルネーム）例: 田中 太郎',
-  '【必須】メールアドレス 例: tanaka@example.com',
-  '【必須】役割を英字で入力 → admin=管理者 / secretary=秘書 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=動画編集者 / designer=デザイナー',
-  '職種を英字で入力 → video=動画のみ / design=デザインのみ / both=両方',
-  'ランクを英字1文字で入力 → S / A / B / C（空白可）',
-  'チームコード: チーム管理で登録したコード（例: A）（空白可）',
-  '生年月日をYYYY-MM-DD形式で入力（例: 1990-01-15）（空白可）※スプレッドシートが自動変換する場合はセルを文字列形式に設定してください',
-  'ニックネーム（検索・フィルターで使用可）例: たろ（空白可）',
-  'Slack DM ID（空白可）',
-  'Chatwork DM ID（空白可）',
-  '電話番号（空白可）例: 090-1234-5678',
-  '郵便番号（空白可）例: 150-0001',
-  '住所（空白可）例: 東京都渋谷区...',
-  'メモ・備考（空白可）'
-];
-
-function csvFilename(prefix) {
-  const d = new Date();
-  const ymd = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  return `${prefix}_${ymd}.csv`;
-}
-
-function buildCSV(headers, legendRow, dataRows) {
-  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
-  const lines = [
-    headers.join(','),
-    legendRow.map(esc).join(','),
-    ...dataRows.map(cols => cols.map(esc).join(','))
-  ];
-  return '\uFEFF' + lines.join('\n');
-}
-
-function exportMembersCSV() {
-  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','chatwork_dm_id','phone','postal_code','address','note'];
-  const dataRows = allMembers.map(m => {
-    const team = allTeams.find(t => t.id === m.team_id);
-    return [
-      m.full_name || '', m.email || '', m.role || '',
-      m.job_type || '', m.rank || '',
-      team?.team_code || '',
-      m.birthday ? m.birthday.slice(0,10) : '',
-      m.nickname || '',
-      m.slack_dm_id || '',
-      m.chatwork_dm_id || '',
-      m.phone || '',
-      m.postal_code || '',
-      m.address || '',
-      m.note || ''
-    ];
-  });
-  const csv = buildCSV(headers, CSV_LEGEND, dataRows);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = csvFilename('HARUKAFILM_members');
-  a.click();
-}
-
-function downloadImportTemplate() {
-  const headers = ['full_name','email','role','job_type','rank','team_code','birthday','nickname','slack_dm_id','chatwork_dm_id','phone','postal_code','address','note'];
-  const dataRows = [
-    ['田中 太郎','tanaka@example.com','editor','video','A','A','1990-01-15','たろ','','','090-1234-5678','150-0001','東京都渋谷区...',''],
-    ['鈴木 花子','suzuki@example.com','designer','design','B','','1995-08-20','はなちゃん','','','','','','']
-  ];
-  const csv = buildCSV(headers, CSV_LEGEND, dataRows);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = csvFilename('HARUKAFILM_members_template');
-  a.click();
+// 動画/デザイン タブを反映してサーバーへエクスポート要求
+async function exportMembersToSheet() {
+  const btn = document.getElementById('btn-csv-export');
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'スプレッドシート作成中…'; }
+  try {
+    const type = currentMemberTab === 'design' ? 'design' : 'video';
+    const res = await fetch(`${API}/members/export-sheet?type=${type}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('エクスポート失敗: ' + translateError(data?.error || 'unknown'), 'error');
+      return;
+    }
+    if (data.url) {
+      window.open(data.url, '_blank', 'noopener');
+      showToast(`${data.count || 0}件をスプレッドシートに出力しました`, 'success');
+    } else {
+      showToast('スプレッドシートURLを取得できませんでした', 'error');
+    }
+  } catch (e) {
+    showToast('エクスポート失敗: ' + (e?.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+  }
 }
 
 function openImportModal() {
-  document.getElementById('import-preview').style.display = 'none';
-  document.getElementById('import-execute-btn').style.display = 'none';
-  document.getElementById('import-file-input').value = '';
-  document.getElementById('import-preview-tbody').innerHTML = '';
+  const urlEl = document.getElementById('import-sheet-url');
+  if (urlEl) urlEl.value = '';
+  const result = document.getElementById('import-result');
+  if (result) { result.style.display = 'none'; result.innerHTML = ''; }
+  const btn = document.getElementById('import-execute-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'インポート実行'; }
   openModal('modal-import');
 }
 
-let importRows = [];
-
-function parseImportCSV(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    const text = e.target.result.replace(/^\uFEFF/, '');
-    const lines = text.split(/\r?\n/).filter(l => l.trim());
-    if (lines.length < 3) { showToast('3行目以降にデータがありません', 'warn'); return; }
-
-    // 1行目: ヘッダー、2行目: 凡例（スキップ）、3行目〜: データ
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
-    const idx = h => headers.indexOf(h);
-
-    importRows = [];
-    const tbody = document.getElementById('import-preview-tbody');
-    tbody.innerHTML = '';
-
-    for (let i = 2; i < lines.length; i++) {
-      const cols = (() => {
-        const result = [], line = lines[i];
-        let pos = 0;
-        while (pos <= line.length) {
-          if (line[pos] === '"') {
-            let val = ''; pos++;
-            while (pos < line.length) {
-              if (line[pos] === '"' && line[pos+1] === '"') { val += '"'; pos += 2; }
-              else if (line[pos] === '"') { pos++; break; }
-              else val += line[pos++];
-            }
-            result.push(val.trim());
-            if (line[pos] === ',') pos++;
-          } else {
-            const end = line.indexOf(',', pos);
-            if (end === -1) { result.push(line.slice(pos).trim()); break; }
-            result.push(line.slice(pos, end).trim());
-            pos = end + 1;
-          }
-        }
-        return result;
-      })();
-      // 誕生日: YYYY/M/D → YYYY-MM-DD に正規化
-      const normBirthday = v => {
-        if (!v) return '';
-        const m = v.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-        if (!m) return v;
-        return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-      };
-      const row = {
-        full_name: cols[idx('full_name')] || '',
-        email: cols[idx('email')] || '',
-        role: cols[idx('role')] || 'editor',
-        job_type: cols[idx('job_type')] || '',
-        rank: cols[idx('rank')] || '',
-        team_code: cols[idx('team_code')] || '',
-        birthday: normBirthday(cols[idx('birthday')] || ''),
-        nickname: cols[idx('nickname')] || '',
-        slack_dm_id: cols[idx('slack_dm_id')] || '',
-        chatwork_dm_id: cols[idx('chatwork_dm_id')] || '',
-        phone: cols[idx('phone')] || '',
-        postal_code: cols[idx('postal_code')] || '',
-        address: cols[idx('address')] || '',
-        note: cols[idx('note')] || ''
-      };
-      const valid = row.full_name && row.email && row.role;
-      const existing = allMembers.find(m => m.email === row.email);
-      row._status = !valid ? 'error' : existing ? 'skip' : 'new';
-      row._msg = !valid ? '名前・メール・ロール必須' : existing ? '登録済み（スキップ）' : '新規登録';
-      importRows.push(row);
-
-      const statusColor = { new:'#2E7D32', skip:'#888', error:'#E24B4A' };
-      const tr = document.createElement('tr');
-      tr.style.borderTop = '1px solid var(--border)';
-      tr.innerHTML = `
-        <td style="padding:7px 8px;color:${statusColor[row._status]};font-weight:500">${row._msg}</td>
-        <td style="padding:7px 8px">${row.full_name}</td>
-        <td style="padding:7px 8px">${row.email}</td>
-        <td style="padding:7px 8px">${row.role}</td>
-        <td style="padding:7px 8px">${row.job_type}</td>
-        <td style="padding:7px 8px">${row.rank}</td>
-        <td style="padding:7px 8px">${row.team_code}</td>
-        <td style="padding:7px 8px">${row.birthday}</td>
-        <td style="padding:7px 8px">${row.nickname}</td>
-        <td style="padding:7px 8px">${row.slack_dm_id}</td>
-        <td style="padding:7px 8px">${row.chatwork_dm_id}</td>
-        <td style="padding:7px 8px">${row.phone}</td>
-        <td style="padding:7px 8px">${row.postal_code}</td>
-        <td style="padding:7px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${row.address}</td>
-        <td style="padding:7px 8px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${row.note}</td>`;
-      tbody.appendChild(tr);
-    }
-
-    const newCount = importRows.filter(r => r._status === 'new').length;
-    document.getElementById('import-preview-label').textContent =
-      `${importRows.length}件読み込み — 新規登録: ${newCount}件 / スキップ: ${importRows.filter(r=>r._status==='skip').length}件 / エラー: ${importRows.filter(r=>r._status==='error').length}件`;
-    document.getElementById('import-preview').style.display = '';
-    document.getElementById('import-execute-btn').style.display = newCount ? '' : 'none';
-  };
-  reader.readAsText(file, 'UTF-8');
-}
-
-async function executeImport() {
-  const toCreate = importRows.filter(r => r._status === 'new');
-  if (!toCreate.length) return;
+async function executeSheetImport() {
+  const url = (document.getElementById('import-sheet-url')?.value || '').trim();
+  if (!url) { showToast('スプレッドシートURLを入力してください', 'warn'); return; }
 
   const btn = document.getElementById('import-execute-btn');
-  btn.textContent = '登録中...'; btn.disabled = true;
+  const result = document.getElementById('import-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'インポート中…'; }
+  if (result) { result.style.display = 'none'; result.innerHTML = ''; }
 
-  const res = await fetch(`${API}/members/bulk`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ members: toCreate })
-  });
-
-  btn.textContent = '登録する'; btn.disabled = false;
-
-  if (res.ok) {
-    const result = await res.json();
-    closeModal('modal-import');
+  try {
+    const res = await fetch(`${API}/members/import-sheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data?.error || 'インポートに失敗しました';
+      if (result) {
+        result.style.display = '';
+        result.innerHTML = `<div style="color:#E24B4A;font-weight:600">エラー</div><div style="margin-top:4px">${msg}</div>`;
+      } else {
+        showToast('エラー: ' + msg, 'error');
+      }
+      return;
+    }
+    const { imported = 0, skipped = 0, failed = 0, total = 0, errors = [] } = data;
+    if (result) {
+      const errList = (errors || []).slice(0, 8).map(e => `<li>${e.email || '(不明)'}: ${e.reason || ''}</li>`).join('');
+      result.style.display = '';
+      result.innerHTML = `
+        <div style="font-weight:600;margin-bottom:6px">インポート完了</div>
+        <div>読込: ${total}件 / 新規登録: <b>${imported}</b>件 / スキップ: ${skipped}件 / 失敗: ${failed}件</div>
+        ${errList ? `<div style="margin-top:8px;font-size:12px;color:#B33A3A"><div>失敗詳細:</div><ul style="margin:4px 0 0 18px;padding:0">${errList}</ul></div>` : ''}
+      `;
+    }
+    showToast(`${imported}件を登録しました${failed ? `（${failed}件失敗）` : ''}`, imported ? 'success' : 'warn');
     await loadMembers();
-    showToast(`${result.created}件を登録しました${result.failed ? `（${result.failed}件失敗）` : ''}`, 'error');
-  } else {
-    const e = await res.json();
-    showToast('エラー: ' + translateError(e?.error), 'error');
+  } catch (e) {
+    showToast('インポート失敗: ' + (e?.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'インポート実行'; }
   }
 }
 
