@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const { requireAuth, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
+const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
 
 // FFmpeg（画質変換用）
 let ffmpegPath, ffmpeg;
@@ -1220,21 +1221,24 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
   res.json(data);
 });
 
-// メンバー一括登録
-router.post('/members/bulk', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
-  const { members } = req.body;
-  if (!members?.length) return res.status(400).json({ error: 'データがありません' });
-
+// メンバー一括登録（共通処理）— members 配列を受け取り、{ created, failed, errors } を返却
+async function bulkInsertMembers(members) {
   // チームコード→IDのマップを取得
   const { data: teams } = await supabase.from('teams').select('id, team_code');
   const teamMap = {};
   (teams || []).forEach(t => { teamMap[t.team_code] = t.id; });
 
-  let created = 0, failed = 0;
+  // 既存メールアドレス集合（スプレッドシート→重複検知）
+  const { data: existingUsers } = await supabase.from('users').select('email');
+  const existingEmails = new Set((existingUsers || []).map(u => (u.email || '').toLowerCase()));
+
+  let created = 0, failed = 0, skipped = 0;
+  const errors = [];
   for (const m of members) {
     const { full_name, email, role, job_type, rank, team_code, birthday,
             nickname, slack_dm_id, chatwork_dm_id, phone, postal_code, address, note } = m;
-    if (!full_name || !email || !role) { failed++; continue; }
+    if (!full_name || !email || !role) { failed++; errors.push({ email, reason: '名前・メール・ロール必須' }); continue; }
+    if (existingEmails.has(String(email).toLowerCase())) { skipped++; continue; }
     const { error } = await supabase.from('users').insert({
       full_name, email, role,
       job_type: job_type || null,
@@ -1250,9 +1254,169 @@ router.post('/members/bulk', requireAuth, requirePermission('member.edit_passwor
       note: note || null,
       weekday_hours: [{from:9,to:18}]
     });
-    if (error) { failed++; } else { created++; }
+    if (error) { failed++; errors.push({ email, reason: error.message }); }
+    else { created++; existingEmails.add(String(email).toLowerCase()); }
   }
-  res.json({ created, failed });
+  return { created, failed, skipped, errors };
+}
+
+// メンバー一括登録
+router.post('/members/bulk', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
+  const { members } = req.body;
+  if (!members?.length) return res.status(400).json({ error: 'データがありません' });
+  const result = await bulkInsertMembers(members);
+  res.json(result);
+});
+
+// ===== メンバー一覧 ↔ Google スプレッドシート連携 =====
+const MEMBER_SHEET_HEADERS = [
+  'full_name','email','role','job_type','rank','team_code','birthday','nickname',
+  'slack_dm_id','chatwork_dm_id','phone','postal_code','address','note'
+];
+const MEMBER_SHEET_LEGEND = [
+  '【必須】名前（フルネーム）例: 田中 太郎',
+  '【必須】メールアドレス 例: tanaka@example.com',
+  '【必須】役割を英字で入力 → admin=管理者 / secretary=秘書 / producer=プロデューサー / producer_director=PD兼任 / director=ディレクター / editor=動画編集者 / designer=デザイナー',
+  '職種を英字で入力 → video=動画のみ / design=デザインのみ / both=両方',
+  'ランクを英字1文字で入力 → S / A / B / C（空白可）',
+  'チームコード: チーム管理で登録したコード（例: A）（空白可）',
+  '生年月日をYYYY-MM-DD形式で入力（例: 1990-01-15）（空白可）',
+  'ニックネーム（検索・フィルターで使用可）例: たろ（空白可）',
+  'Slack DM ID（空白可）',
+  'Chatwork DM ID（空白可）',
+  '電話番号（空白可）例: 090-1234-5678',
+  '郵便番号（空白可）例: 150-0001',
+  '住所（空白可）例: 東京都渋谷区...',
+  'メモ・備考（空白可）'
+];
+
+function buildMemberSheetTitle(type) {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const ymd = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
+  const label = type === 'design' ? 'デザイン' : '動画';
+  return `メンバー一覧_${label}_${ymd}`;
+}
+
+function filterMembersByType(members, type) {
+  if (type === 'design') return members.filter(m => m.job_type === 'design' || m.job_type === 'both');
+  // video（既定）: video / both / 未設定
+  return members.filter(m => !m.job_type || m.job_type === 'video' || m.job_type === 'both');
+}
+
+// スプレッドシートへエクスポート
+router.post('/members/export-sheet', requireAuth, async (req, res) => {
+  try {
+    const type = (req.query.type === 'design') ? 'design' : 'video';
+    const { data: members, error: memErr } = await supabase
+      .from('users').select('*').order('created_at', { ascending: true });
+    if (memErr) return res.status(500).json({ error: memErr.message });
+    const { data: teams } = await supabase.from('teams').select('id, team_code');
+    const teamCodeById = {};
+    (teams || []).forEach(t => { teamCodeById[t.id] = t.team_code; });
+
+    const filtered = filterMembersByType(members || [], type);
+    const dataRows = filtered.map(m => [
+      m.full_name || '', m.email || '', m.role || '',
+      m.job_type || '', m.rank || '',
+      teamCodeById[m.team_id] || '',
+      m.birthday ? String(m.birthday).slice(0,10) : '',
+      m.nickname || '',
+      m.slack_dm_id || '',
+      m.chatwork_dm_id || '',
+      m.phone || '',
+      m.postal_code || '',
+      m.address || '',
+      m.note || ''
+    ]);
+    const rows = [MEMBER_SHEET_HEADERS, MEMBER_SHEET_LEGEND, ...dataRows];
+    const title = buildMemberSheetTitle(type);
+    const { url } = await createSheetWithData(title, rows);
+    res.json({ url, title, count: dataRows.length });
+  } catch (e) {
+    console.error('[members/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
+// スプレッドシートからインポート（権限: member.edit_password）
+router.post('/members/import-sheet', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'スプレッドシートURLを指定してください' });
+    const spreadsheetId = extractSpreadsheetId(url);
+    if (!spreadsheetId) return res.status(400).json({ error: 'スプレッドシートURLを認識できません（/spreadsheets/d/... の形式が必要）' });
+
+    let values;
+    try {
+      values = await readSheetData(spreadsheetId);
+    } catch (e) {
+      const msg = String(e.message || e);
+      if (/permission|forbidden|denied/i.test(msg)) {
+        return res.status(403).json({ error: 'シートへのアクセス権限がありません。サービスアカウントに閲覧権限を付与してください。' });
+      }
+      if (/not found/i.test(msg)) {
+        return res.status(404).json({ error: 'スプレッドシートが見つかりません。URLを確認してください。' });
+      }
+      return res.status(500).json({ error: msg });
+    }
+
+    if (!values.length) return res.status(400).json({ error: 'シートが空です' });
+    if (values.length < 3) return res.status(400).json({ error: '3行目以降にデータがありません（1行目=ヘッダー、2行目=凡例、3行目以降=データ）' });
+
+    const headers = (values[0] || []).map(h => String(h || '').trim().toLowerCase());
+    const requiredHeaders = ['full_name','email','role'];
+    const missing = requiredHeaders.filter(h => !headers.includes(h));
+    if (missing.length) return res.status(400).json({ error: `列ヘッダーが不足しています: ${missing.join(', ')}` });
+    const idx = h => headers.indexOf(h);
+    const get = (row, h) => {
+      const i = idx(h);
+      return i >= 0 ? String(row[i] ?? '').trim() : '';
+    };
+    const normBirthday = v => {
+      if (!v) return '';
+      const m = v.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+      if (!m) return v;
+      return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    };
+
+    const members = [];
+    for (let i = 2; i < values.length; i++) {
+      const row = values[i] || [];
+      if (!row.length) continue;
+      const full_name = get(row, 'full_name');
+      const email = get(row, 'email');
+      const role = get(row, 'role');
+      if (!full_name && !email && !role) continue; // 完全空行はスキップ
+      members.push({
+        full_name, email, role: role || 'editor',
+        job_type: get(row, 'job_type'),
+        rank: get(row, 'rank'),
+        team_code: get(row, 'team_code'),
+        birthday: normBirthday(get(row, 'birthday')),
+        nickname: get(row, 'nickname'),
+        slack_dm_id: get(row, 'slack_dm_id'),
+        chatwork_dm_id: get(row, 'chatwork_dm_id'),
+        phone: get(row, 'phone'),
+        postal_code: get(row, 'postal_code'),
+        address: get(row, 'address'),
+        note: get(row, 'note'),
+      });
+    }
+    if (!members.length) return res.status(400).json({ error: 'インポート対象のデータがありません' });
+
+    const result = await bulkInsertMembers(members);
+    res.json({
+      imported: result.created,
+      skipped: result.skipped,
+      failed: result.failed,
+      errors: result.errors,
+      total: members.length,
+    });
+  } catch (e) {
+    console.error('[members/import-sheet]', e);
+    res.status(500).json({ error: e.message || 'インポートに失敗しました' });
+  }
 });
 
 // メンバー更新
