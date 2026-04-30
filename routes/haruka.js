@@ -1314,9 +1314,23 @@ router.get('/creatives/:id/files', async (req, res) => {
 // ファイルアップロード（Google Drive）
 router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => {
   const creativeId = req.params.id;
-  const { width, height, version, generated_name } = req.body;
+  const { width, height, generated_name } = req.body;
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'ファイルが選択されていません' });
+
+  // バージョン採番: フロントから明示的に有効な version が指定されない場合、
+  // 既存 creative_files の MAX(version) + 1 を採番する（既存ファイル削除や手動編集でズレるのを防ぐ）
+  let version = parseInt(req.body.version, 10);
+  if (!version || version < 1) {
+    const { data: maxRow } = await supabase
+      .from('creative_files')
+      .select('version')
+      .eq('creative_id', creativeId)
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    version = (maxRow?.version || 0) + 1;
+  }
 
   // クリエイティブ + 案件情報を取得
   const { data: creative, error: cErr } = await supabase
@@ -1448,7 +1462,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       generated_name: generated_name || file.originalname,
       width: parseInt(width) || null,
       height: parseInt(height) || null,
-      version: parseInt(version) || 1,
+      version: version,
       drive_file_id: driveFileId,
       drive_url: driveUrl,
       uploaded_by: uploadedBy,
