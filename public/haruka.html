@@ -4445,11 +4445,21 @@ function renderCreatives() {
     const draftDiff = draftDeadline ? Math.ceil((draftDeadline - today)/(1000*60*60*24)) : null;
     const finalDiff = finalDeadline ? Math.ceil((finalDeadline - today)/(1000*60*60*24)) : null;
 
-    const draftDueClass = draftDiff === null ? '' : draftDiff < 0 ? 'due-urgent' : draftDiff <= 3 ? 'due-urgent' : draftDiff <= 7 ? 'due-near' : 'due-ok';
-    const finalDueClass = finalDiff === null ? '' : finalDiff < 0 ? 'due-urgent' : finalDiff <= 3 ? 'due-urgent' : finalDiff <= 7 ? 'due-near' : 'due-ok';
+    // 納品済みは作業完了済みなので「超過」「あとN日」等の経過表示はせず、平静の表示にする
+    const isDelivered = c.status === '納品';
+    const draftDueClass = isDelivered
+      ? 'due-ok'
+      : (draftDiff === null ? '' : draftDiff < 0 ? 'due-urgent' : draftDiff <= 3 ? 'due-urgent' : draftDiff <= 7 ? 'due-near' : 'due-ok');
+    const finalDueClass = isDelivered
+      ? 'due-ok'
+      : (finalDiff === null ? '' : finalDiff < 0 ? 'due-urgent' : finalDiff <= 3 ? 'due-urgent' : finalDiff <= 7 ? 'due-near' : 'due-ok');
 
-    const draftLabel = draftDiff === null ? '-' : draftDiff < 0 ? `${Math.abs(draftDiff)}日超過` : draftDiff === 0 ? '今日' : `あと${draftDiff}日`;
-    const finalLabel = finalDiff === null ? '-' : finalDiff < 0 ? `${Math.abs(finalDiff)}日超過` : finalDiff === 0 ? '今日' : `あと${finalDiff}日`;
+    const draftLabel = isDelivered
+      ? '納品済'
+      : (draftDiff === null ? '-' : draftDiff < 0 ? `${Math.abs(draftDiff)}日超過` : draftDiff === 0 ? '今日' : `あと${draftDiff}日`);
+    const finalLabel = isDelivered
+      ? '納品済'
+      : (finalDiff === null ? '-' : finalDiff < 0 ? `${Math.abs(finalDiff)}日超過` : finalDiff === 0 ? '今日' : `あと${finalDiff}日`);
 
     const isLate = (finalDiff !== null && finalDiff < 0 && c.status !== '納品') ||
                 (draftDiff !== null && draftDiff < 0 && c.status !== '納品');
