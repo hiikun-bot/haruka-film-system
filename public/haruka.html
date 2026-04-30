@@ -2120,6 +2120,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- 対応チーム -->
+        <div style="margin-top:20px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">
+              対応チーム
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">複数選択可。先頭が既定チームになります</span>
+            </label>
+            <div id="cl-teams-picker" style="display:flex;flex-wrap:wrap;gap:6px;border:1px solid var(--border);border-radius:8px;padding:8px;min-height:40px;background:#fff"></div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.6">
+              クリエイティブ追加時、選択した案件のクライアントに紐付くチームのうち <b>先頭のチーム</b> が自動セットされます。<br>
+              並び順を変えたい場合は、対象チップを一度外してから再度クリックすると末尾に追加されます。
+            </div>
+          </div>
+        </div>
+
         <!-- HP・SNSリンク -->
         <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em;margin-bottom:14px">🔗 HP・SNSリンク</div>
@@ -3570,6 +3585,50 @@ function toggleClient(id) {
   arrow.style.transform = isOpen ? 'rotate(-90deg)' : '';
 }
 
+// クライアント編集モーダルで選択中のチームID（順序保持）
+let _editingClientTeamIds = [];
+
+function renderClientTeamsPicker() {
+  const wrap = document.getElementById('cl-teams-picker');
+  if (!wrap) return;
+  const selected = Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [];
+  const teams = Array.isArray(allTeams) ? allTeams : [];
+  if (!teams.length) {
+    wrap.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 6px">チームが登録されていません</div>';
+    return;
+  }
+  // 表示順: 選択中（順序保持） → 未選択（team_code順）
+  const selectedOrdered = selected.map(id => teams.find(t => t.id === id)).filter(Boolean);
+  const unselected = teams
+    .filter(t => !selected.includes(t.id))
+    .sort((a,b) => (a.team_code||'').localeCompare(b.team_code||''));
+  const renderChip = (t, isSel, idx) => {
+    const label = `${t.team_code || ''}${t.team_name ? ' / ' + t.team_name : ''}`;
+    const badge = isSel
+      ? `<span style="display:inline-block;font-size:10px;background:rgba(255,255,255,0.25);padding:1px 6px;border-radius:8px;margin-right:6px;font-weight:600">${idx === 0 ? '既定' : (idx + 1)}</span>`
+      : '';
+    const style = isSel
+      ? 'background:var(--em);color:#fff;border-color:var(--em)'
+      : 'background:#fff;color:var(--text);border-color:var(--border)';
+    return `<button type="button" class="btn-sm" style="${style};border:1px solid;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer" onclick="toggleClientTeam('${t.id}')">${badge}${esc(label)}</button>`;
+  };
+  wrap.innerHTML = [
+    ...selectedOrdered.map((t, i) => renderChip(t, true, i)),
+    ...unselected.map(t => renderChip(t, false, -1)),
+  ].join('');
+}
+
+function toggleClientTeam(teamId) {
+  if (!Array.isArray(_editingClientTeamIds)) _editingClientTeamIds = [];
+  const idx = _editingClientTeamIds.indexOf(teamId);
+  if (idx >= 0) {
+    _editingClientTeamIds.splice(idx, 1);
+  } else {
+    _editingClientTeamIds.push(teamId);
+  }
+  renderClientTeamsPicker();
+}
+
 function openEditClient(id) {
   const c = allClients.find(cl => cl.id === id);
   if (!c) return;
@@ -3589,6 +3648,8 @@ function openEditClient(id) {
   document.getElementById('cl-tiktok').value    = c.tiktok_url    || '';
   document.getElementById('cl-line').value      = c.line_url      || '';
   document.getElementById('cl-other').value     = c.other_url     || '';
+  _editingClientTeamIds = Array.isArray(c.team_ids) ? [...c.team_ids] : [];
+  renderClientTeamsPicker();
   document.getElementById('cl-submit-btn').textContent = '保存する';
   switchClientTab('basic');
   openModal('modal-client');
@@ -3605,6 +3666,8 @@ function openNewClientModal() {
   document.getElementById('cl-status').value = '提案中';
   ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  _editingClientTeamIds = [];
+  renderClientTeamsPicker();
   document.getElementById('cl-submit-btn').textContent = '追加する';
   switchClientTab('basic');
   openModal('modal-client');
@@ -3640,6 +3703,7 @@ async function submitClient() {
       tiktok_url:    linkVal('cl-tiktok'),
       line_url:      linkVal('cl-line'),
       other_url:     linkVal('cl-other'),
+      team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });
 
@@ -7740,6 +7804,26 @@ async function onProjectChange(projectId) {
     sel.innerHTML = '<option value="">案件を先に選択してください</option>';
     if (prodSel) prodSel.innerHTML = '<option value="">案件を先に選択してください</option>';
     return;
+  }
+
+  // 案件→クライアント→紐付くチームの先頭 を自動選択（クリエイティブ追加モーダルでチーム未選択時のみ）
+  try {
+    const proj = (allProjects || []).find(p => p.id === projectId);
+    const clientId = proj?.client_id || proj?.clients?.id;
+    const cl = clientId ? (allClients || []).find(c => c.id === clientId) : null;
+    const firstTeamId = cl?.team_ids?.[0];
+    const teamSelect = document.getElementById('c-team-id');
+    if (teamSelect && firstTeamId) {
+      // 既にユーザーが選んでいる場合は上書きしない
+      if (!teamSelect.value) {
+        teamSelect.value = firstTeamId;
+        if (typeof onTeamChange === 'function') {
+          try { onTeamChange(firstTeamId); } catch(_) {}
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[onProjectChange auto team]', e);
   }
 
   const [axesRes, prodRes] = await Promise.all([
