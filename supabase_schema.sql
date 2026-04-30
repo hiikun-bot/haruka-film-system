@@ -601,6 +601,10 @@ CREATE INDEX IF NOT EXISTS idx_creatives_project_id         ON creatives(project
 CREATE INDEX IF NOT EXISTS idx_creatives_cycle_id           ON creatives(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_creatives_final_deadline     ON creatives(final_deadline);
 CREATE INDEX IF NOT EXISTS idx_creatives_status             ON creatives(status);
+-- 一覧 API 高速化（status フィルタ + final_deadline ソート の複合）
+CREATE INDEX IF NOT EXISTS idx_creatives_status_deadline    ON creatives (status, final_deadline NULLS LAST);
+-- 案件ページからの絞り込み（project_id + status）
+CREATE INDEX IF NOT EXISTS idx_creatives_project_status     ON creatives (project_id, status);
 CREATE INDEX IF NOT EXISTS idx_creative_assignments_user_id     ON creative_assignments(user_id);
 CREATE INDEX IF NOT EXISTS idx_creative_assignments_creative_id ON creative_assignments(creative_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_issuer_year_month   ON invoices(issuer_id, year, month);

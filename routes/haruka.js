@@ -599,27 +599,76 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
+// 一覧専用の軽量レスポンス: 必要列のみ select し、limit/offset/各種フィルタを DB 側で適用
+// レスポンス: { data, total, limit, offset }
 router.get('/creatives', async (req, res) => {
-  const { project_id, cycle_id, status, ball_holder } = req.query;
+  const {
+    project_id, cycle_id, status, ball_holder,
+    client_id, assignee_id, q, include_done,
+  } = req.query;
+
+  // ページング (default 50 / max 200)
+  const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 50, 1), 200);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  // assignee_id フィルタは PostgREST の埋め込み JOIN で絞り込めないので、
+  // 先に creative_assignments から該当 creative_id 集合を取得し .in() で絞る
+  let assigneeCreativeIds = null;
+  if (assignee_id) {
+    const { data: caRows, error: caErr } = await supabase
+      .from('creative_assignments')
+      .select('creative_id')
+      .eq('user_id', assignee_id);
+    if (caErr) return res.status(500).json({ error: caErr.message });
+    assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
+    // ヒット 0 件なら以降の本体クエリ自体スキップ
+    if (assigneeCreativeIds.length === 0) {
+      return res.json({ data: [], total: 0, limit, offset });
+    }
+  }
+
+  // 一覧描画に必要な列のみ。teams は別取得で stitch
+  // client_id フィルタを foreignTable 経由で効かせるため projects は inner join
+  const projectsRel = client_id ? 'projects!inner' : 'projects';
+  const SELECT_COLS = `
+    id, file_name, status, draft_deadline, final_deadline,
+    internal_code, help_flag, talent_flag, special_payable_by, memo,
+    creative_type, team_id, project_id, updated_at,
+    ${projectsRel}(id, name, client_id, clients(id, name, status)),
+    project_cycles(id, year, month),
+    creative_assignments(
+      id, role, rank_applied,
+      users(id, full_name, nickname, role, rank, team_id, avatar_url)
+    )
+  `;
+
   let query = supabase
     .from('creatives')
-    .select(`
-      *,
-      projects(id, name, clients(id, name, status)),
-      project_cycles(id, year, month),
-      creative_assignments(
-        id, role, rank_applied,
-        users(id, full_name, nickname, role, rank, team_id, avatar_url)
-      )
-    `)
+    .select(SELECT_COLS, { count: 'exact' })
     .order('final_deadline', { ascending: true, nullsFirst: false });
 
   if (project_id) query = query.eq('project_id', project_id);
-  if (cycle_id) query = query.eq('cycle_id', cycle_id);
-  if (status) query = query.eq('status', status);
+  if (cycle_id)   query = query.eq('cycle_id', cycle_id);
+  if (status)     query = query.eq('status', status);
+  // include_done が明示的に true でない限り「納品」を除外
+  if (!(include_done === '1' || include_done === 'true')) {
+    query = query.neq('status', '納品');
+  }
+  // クライアント絞り込みは projects.client_id が直接持つので foreignTable 経由 .eq() でOK
+  if (client_id) query = query.eq('projects.client_id', client_id);
+  // ファイル名 / メモを DB 側で部分一致 (担当者名・client名はフロント側で残ったぶんを絞る)
+  if (q && q.trim()) {
+    const term = q.trim().replace(/[,()]/g, ' ');
+    const pat  = `%${term}%`;
+    query = query.or(`file_name.ilike.${pat},memo.ilike.${pat}`);
+  }
+  if (assigneeCreativeIds) query = query.in('id', assigneeCreativeIds);
+
+  // ページング
+  query = query.range(offset, offset + limit - 1);
 
   // teams を別クエリで取得（PostgREST の FK 推論に依存しない: 本番DBに FK が無くても動作させるため）
-  const [{ data, error }, { data: teamsRaw }] = await Promise.all([
+  const [{ data, error, count }, { data: teamsRaw }] = await Promise.all([
     query,
     supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)'),
   ]);
@@ -645,7 +694,7 @@ router.get('/creatives', async (req, res) => {
     ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId)
   }));
 
-  res.json(withBall);
+  res.json({ data: withBall, total: count ?? withBall.length, limit, offset });
 });
 
 // クリエイティブ単体取得

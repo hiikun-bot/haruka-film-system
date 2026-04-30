@@ -3354,6 +3354,10 @@ let currentTeamTab = 'video'; // 'video' | 'design'
 let currentMemberTab = 'video'; // 'video' | 'design'
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 let showEndedInCreatives = false;
+// 一覧 API のページング状態
+let creativesPage = { limit: 50, offset: 0, total: 0 };
+let _searchDebounceTimer = null;
+let _creativesLoadSeq = 0;
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
@@ -4226,23 +4230,58 @@ async function loadMembers() {
 }
 
 // クリエイティブ
-async function loadCreatives() {
+// opts.append=true なら「もっと読み込む」用に既存 allCreatives に追記
+async function loadCreatives(opts = {}) {
+  const append = !!opts.append;
   const tbody = document.getElementById('creative-tbody');
-  tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
+  if (!append) {
+    tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
+    creativesPage.offset = 0;
+  }
+  // 同時実行時は最後だけ反映（debounce 中の競合対策）
+  const seq = ++_creativesLoadSeq;
+  // フィルタ state を query params に変換
+  const params = new URLSearchParams();
+  params.set('limit', String(creativesPage.limit));
+  params.set('offset', String(creativesPage.offset));
+  if (currentClient && currentClient !== 'all') params.set('client_id', currentClient);
+  if (currentAssigneeFilter)                    params.set('assignee_id', currentAssigneeFilter);
+  if (searchText)                               params.set('q', searchText);
+  // ダッシュボードや「納品済」表示が壊れないよう、デフォルトで 納品 も含める
+  // （API 既定は exclude だが、本フロントは常に include_done=1 を送る）
+  params.set('include_done', '1');
   try {
-    const res = await apiFetch(`${API}/creatives`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !Array.isArray(data)) {
-      throw new Error((data && data.error) ? data.error : `読み込み失敗 (HTTP ${res.status})`);
+    const res = await apiFetch(`${API}/creatives?${params.toString()}`);
+    const json = await res.json().catch(() => ({}));
+    if (seq !== _creativesLoadSeq) return; // 古いレスポンスは破棄
+    // 新仕様: { data, total, limit, offset }、後方互換: 配列
+    const data  = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : null);
+    const total = Array.isArray(json) ? json.length : (Number.isFinite(json?.total) ? json.total : (data ? data.length : 0));
+    if (!res.ok || data === null) {
+      throw new Error((json && json.error) ? json.error : `読み込み失敗 (HTTP ${res.status})`);
     }
-    allCreatives = data;
+    creativesPage.total = total;
+    if (append) {
+      // 重複防止
+      const seen = new Set(allCreatives.map(c => c.id));
+      data.forEach(c => { if (!seen.has(c.id)) allCreatives.push(c); });
+    } else {
+      allCreatives = data;
+    }
     populateAssigneeFilter();
     renderCreatives();
     renderAlerts();
   } catch(e) {
-    allCreatives = [];
+    if (seq !== _creativesLoadSeq) return;
+    if (!append) allCreatives = [];
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
   }
+}
+
+// 「もっと読み込む」: offset を進めて追記取得
+async function loadMoreCreatives() {
+  creativesPage.offset = (allCreatives?.length || 0);
+  await loadCreatives({ append: true });
 }
 
 function populateAssigneeFilter() {
@@ -4264,7 +4303,9 @@ function populateAssigneeFilter() {
 
 function setAssigneeFilter(userId) {
   currentAssigneeFilter = userId;
-  renderCreatives();
+  // DB 側で絞り込むためオフセットをリセットして再取得
+  creativesPage.offset = 0;
+  loadCreatives();
 }
 
 function initTableScrollHint() {
@@ -4324,9 +4365,14 @@ function renderCreatives() {
     return true;
   });
 
-  document.getElementById('creative-count').textContent = `${filtered.length}件表示中`;
+  // 件数表示: ページング後の総件数(creativesPage.total) があればそちらを参照
+  const totalLabel = (creativesPage.total > 0)
+    ? `${filtered.length} / ${allCreatives.length}件表示中（全${creativesPage.total}件）`
+    : `${filtered.length}件表示中`;
+  document.getElementById('creative-count').textContent = totalLabel;
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
+    renderCreativeLoadMore();
     return;
   }
 
@@ -4395,6 +4441,26 @@ function renderCreatives() {
 
   }).join('');
   initTableScrollHint();
+  renderCreativeLoadMore();
+}
+
+// 「もっと読み込む」フッター行を tbody 末尾に挿入（既存があれば差し替え）
+function renderCreativeLoadMore() {
+  const tbody = document.getElementById('creative-tbody');
+  if (!tbody) return;
+  // 既存の load-more 行を除去
+  tbody.querySelectorAll('tr.creative-loadmore-row').forEach(r => r.remove());
+  const loaded = allCreatives.length;
+  const total  = creativesPage.total || 0;
+  if (total <= loaded) return;
+  const tr = document.createElement('tr');
+  tr.className = 'creative-loadmore-row';
+  tr.innerHTML = `<td colspan="14" style="text-align:center;padding:14px;background:var(--surface)">
+    <button type="button" onclick="loadMoreCreatives()" style="font-size:12px;padding:7px 18px;background:#fff;border:0.5px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text)">
+      次の${creativesPage.limit}件を読み込む（残り ${total - loaded} 件）
+    </button>
+  </td>`;
+  tbody.appendChild(tr);
 }
 
 function renderAlerts() {
@@ -4413,22 +4479,45 @@ function setClient(btn, id) {
   currentClient = id;
   document.querySelectorAll('.ct').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  renderCreatives();
+  // クライアント変更は DB 側で絞り込むため再取得
+  creativesPage.offset = 0;
+  loadCreatives();
 }
 
 function setView(btn, view) {
   currentView = view;
   document.querySelectorAll('.ft').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
+  // mine/ball はクライアント側フィルタなので render のみで OK
   renderCreatives();
 }
 
-function filterSearch(val) { searchText=val.toLowerCase(); renderCreatives(); }
+// 検索入力は debounce: 300ms 静止後にサーバーへ反映
+function filterSearch(val) {
+  searchText = (val || '').toLowerCase();
+  if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+  _searchDebounceTimer = setTimeout(() => {
+    creativesPage.offset = 0;
+    loadCreatives();
+  }, 300);
+}
 function toggleBall(btn) { btn.classList.toggle('on'); renderCreatives(); }
 
 async function toggleHelp(id, current) {
-  await apiFetch(`${API}/creatives/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({help_flag:!current}) });
-  await loadCreatives();
+  // 楽観的にローカルだけ反転して再描画 → 失敗時に revert
+  const c = allCreatives.find(x => x.id === id);
+  const prev = current;
+  if (c) { c.help_flag = !prev; renderCreatives(); }
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ help_flag: !prev })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch(e) {
+    if (c) { c.help_flag = prev; renderCreatives(); }
+    showToast('SOSフラグの更新に失敗しました', 'error');
+  }
 }
 
 function openStatusModal(id, fileName, status) {
@@ -4441,9 +4530,26 @@ function openStatusModal(id, fileName, status) {
 async function updateStatus() {
   if (!selectedCreativeId) return;
   const status = document.getElementById('status-select').value;
+  const c = allCreatives.find(x => x.id === selectedCreativeId);
+  const prev = c?.status;
+  // 楽観的にローカル更新（ボール保持者は status 依存だが概算更新）
+  if (c) { c.status = status; renderCreatives(); }
   const res = await apiFetch(`${API}/creatives/${selectedCreativeId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status}) });
-  if (res.ok) { closeModal('modal-status'); await loadCreatives(); }
-  else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
+  if (res.ok) {
+    closeModal('modal-status');
+    // ball_holder 等の派生情報を反映するため、対象1件だけ取得して差し替え
+    try {
+      const r2 = await apiFetch(`${API}/creatives/${selectedCreativeId}`);
+      if (r2.ok) {
+        const fresh = await r2.json();
+        if (c && fresh) Object.assign(c, fresh);
+        renderCreatives();
+      }
+    } catch(_) { /* 取得失敗は致命的でないので無視 */ }
+  } else {
+    if (c) { c.status = prev; renderCreatives(); }
+    const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error');
+  }
 }
 
 async function createCreative() {
