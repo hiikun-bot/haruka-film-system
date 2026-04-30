@@ -9,11 +9,9 @@
   "orientation": "portrait-primary",
   "lang": "ja",
   "icons": [
-    {
-      "src": "/HARUKA%20FILM%20%E3%83%AD%E3%82%B4.png",
-      "sizes": "any",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
