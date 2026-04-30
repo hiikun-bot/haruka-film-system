@@ -2544,19 +2544,32 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <span style="display:inline-block;width:3px;height:14px;background:#6C63FF;border-radius:2px"></span>
             <span style="font-size:11px;font-weight:700;color:#4527A0;letter-spacing:0.12em;text-transform:uppercase">通知連携</span>
           </div>
+          <div style="background:#F3F1FF;border:1px solid #E0DBFF;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#4527A0;line-height:1.6">
+            <strong>クリエイティブ通知の送信先</strong>として、案件レベルで設定があればクライアント設定より優先されます。<br>
+            空欄ならクライアントの設定にフォールバック。
+          </div>
           <div class="form-row">
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label" style="display:flex;align-items:center;gap:5px">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="#00B900"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M12 6C8.69 6 6 8.24 6 11c0 1.73 1.04 3.26 2.62 4.21-.1.38-.37 1.37-.42 1.58-.07.27.1.27.21.2.09-.06 1.42-.94 2-.33.49.05.99.08 1.5.08 3.31 0 6-2.24 6-5s-2.69-5-6-5z" fill="white"/></svg>
-                Chatwork ルームID
+                Chatwork ルームID <span style="color:var(--text-muted);font-weight:400">（案件用・任意）</span>
               </label>
               <input class="form-input" id="p-chatwork-room-id" placeholder="例：123456789">
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label" style="display:flex;align-items:center;gap:5px">
                 <svg width="13" height="13" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
-                Slack チャンネル
+                Slack チャンネルURL <span style="color:var(--text-muted);font-weight:400">（案件用・任意）</span>
               </label>
+              <input class="form-input" id="p-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
+            </div>
+          </div>
+          <details style="margin-top:14px">
+            <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">詳細設定（旧式の Slack ID 直接指定）</summary>
+            <div style="margin-top:10px">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;line-height:1.6">
+                旧来のチャンネル別Bot連携で利用していた項目です。新規で設定する場合は上の「Slack チャンネルURL」のみで問題ありません。
+              </div>
               <div style="display:flex;gap:6px;margin-bottom:6px">
                 <input class="form-input" id="p-slack-url-input" placeholder="Slack URL を貼り付け → 自動入力" style="flex:1;font-size:12px">
                 <button class="btn" onclick="parseSlackUrl()" style="white-space:nowrap">解析</button>
@@ -2572,7 +2585,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                 </div>
               </div>
             </div>
-          </div>
+          </details>
         </div>
 
       </div><!-- /右カラム -->
@@ -5666,6 +5679,7 @@ function openProjectModal(preClientId) {
   document.getElementById('p-sheet-url').value = '';
   document.getElementById('p-regulation-url').value = '';
   document.getElementById('p-chatwork-room-id').value = '';
+  document.getElementById('p-slack-channel-url').value = '';
   document.getElementById('p-slack-url-input').value = '';
   document.getElementById('p-slack-team-id').value = '';
   document.getElementById('p-slack-channel-id').value = '';
@@ -5704,6 +5718,7 @@ function openEditProject(p) {
   document.getElementById('p-sheet-url').value = p.sheet_url || '';
   document.getElementById('p-regulation-url').value = p.regulation_url || '';
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
+  document.getElementById('p-slack-channel-url').value = p.slack_channel_url || '';
   document.getElementById('p-slack-url-input').value = '';
   document.getElementById('p-slack-team-id').value = p.slack_team_id || '';
   document.getElementById('p-slack-channel-id').value = p.slack_channel_id || '';
@@ -6007,6 +6022,7 @@ async function submitProject() {
   const sheet_url = document.getElementById('p-sheet-url').value.trim() || null;
   const regulation_url = document.getElementById('p-regulation-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
+  const slack_channel_url = document.getElementById('p-slack-channel-url').value.trim() || null;
   const slack_team_id = document.getElementById('p-slack-team-id').value.trim() || null;
   const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
@@ -6033,7 +6049,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
   });
 
   btn.textContent = origText; btn.disabled = false;

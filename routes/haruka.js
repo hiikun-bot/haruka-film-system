@@ -225,6 +225,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     client_id, name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
     chatwork_room_id, slack_team_id, slack_channel_id,
+    slack_channel_url,
     deadline_unit, deadline_weekday
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
@@ -243,6 +244,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
       chatwork_room_id: chatwork_room_id || null,
       slack_team_id: slack_team_id || null,
       slack_channel_id: slack_channel_id || null,
+      slack_channel_url: slack_channel_url || null,
       is_hidden: false,
       deadline_unit: deadline_unit || 'monthly',
       deadline_weekday: deadline_weekday ?? null
@@ -259,6 +261,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
     chatwork_room_id, slack_team_id, slack_channel_id, is_hidden,
+    slack_channel_url,
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday
   } = req.body;
@@ -274,6 +277,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     chatwork_room_id: chatwork_room_id || null,
     slack_team_id: slack_team_id || null,
     slack_channel_id: slack_channel_id || null,
+    slack_channel_url: slack_channel_url || null,
     is_hidden: is_hidden ?? false,
     updated_at: new Date().toISOString(),
     deadline_unit: deadline_unit || 'monthly',
