@@ -198,6 +198,7 @@ async function runSchemaSync() {
         changed_at TIMESTAMPTZ DEFAULT now(),
         deleted_invoice_item_ids JSONB
       )`,
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_birth_year BOOLEAN DEFAULT false",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
