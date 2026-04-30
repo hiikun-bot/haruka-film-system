@@ -86,12 +86,15 @@ async function sendChatworkRoom(roomId, text) {
   }
 }
 
-async function sendChatworkDM(accountId, text) {
-  // Chatwork のDMはルーム同様、自分とユーザーの 1:1 ルーム ID が必要。
-  // account_id を使って `[To:account_id]` 形式でメンション + 自分宛ルームに投稿が一般的だが、
-  // 個人ルーム作成APIもある。本実装では accountId をルームID代用として API に投げる運用。
-  // 失敗したらログのみ。
-  return sendChatworkRoom(accountId, text);
+// ルーム内で特定ユーザーをメンション付きで投稿。
+// roomId は送信先のルーム（プロジェクトの chatwork_room_id 等）。
+// accountId は宛先ユーザーの Chatwork account ID（[To:NNN] 形式）。
+// Chatwork API は「他人のマイチャットへ投稿」をサポートしないため、
+// 旧 sendChatworkDM (accountId を roomId 扱い) は実質動作せず、本方式に置換。
+async function sendChatworkMention(roomId, accountId, text) {
+  if (!roomId || !accountId) return { ok: false, reason: 'missing_room_or_account' };
+  const body = `[To:${accountId}]\n${text}`;
+  return sendChatworkRoom(roomId, body);
 }
 
 // =============== Helpers ===============
@@ -144,7 +147,11 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const sendDM = async (user, slackBody, cwBody) => {
     if (!user) return;
     if (user.slack_dm_id) await sendSlackDM(user.slack_dm_id, channelUrl, slackBody);
-    if (user.chatwork_dm_id) await sendChatworkDM(user.chatwork_dm_id, cwBody);
+    // Chatwork は「ルーム内 [To:account] メンション」方式に変更。
+    // roomId は project / client の chatwork_room_id（フォールバック解決済の `roomId` を再利用）
+    if (user.chatwork_dm_id && roomId) {
+      await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody);
+    }
   };
 
   // 1) → Dチェック
