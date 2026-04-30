@@ -2688,24 +2688,38 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   }
 
   // 請求可能なクリエイティブを取得
-  let query = supabase
-    .from('creatives')
-    .select(`*, creative_assignments(user_id, role, rank_applied, users(id, full_name))`)
-    .not('creative_assignments', 'is', null);
+  // 後から追加された列（schema-sync が失敗していると本番に存在しない可能性がある）
+  // PR #79 と同様に、SELECT 句を「optional 込み → 失敗時 optional 抜きで再試行」できる形にする
+  const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
+  const buildSelect = (includeOptional) => `*${includeOptional ? ', ' + OPTIONAL_COLS.join(', ') : ''}, creative_assignments(user_id, role, rank_applied, users(id, full_name))`;
 
-  const overrideCreativeIds = overrideMap ? [...overrideMap.keys()] : null;
-  if (overrideCreativeIds && overrideCreativeIds.length) {
-    query = query.in('id', overrideCreativeIds);
-  } else if (selected_creative_ids && selected_creative_ids.length) {
-    query = query.in('id', selected_creative_ids);
-  } else if (project_id) {
-    query = query.eq('project_id', project_id).or('is_payable.eq.true,special_payable.eq.true');
-  } else {
+  if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id) {
     return res.status(400).json({ error: '請求対象クリエイティブを選択してください' });
   }
-  if (cycle_id) query = query.eq('cycle_id', cycle_id);
 
-  const { data: creatives, error: cErr } = await query;
+  const overrideCreativeIds = overrideMap ? [...overrideMap.keys()] : null;
+  const buildAndApply = (includeOptional) => {
+    let q = supabase
+      .from('creatives')
+      .select(buildSelect(includeOptional))
+      .not('creative_assignments', 'is', null);
+    if (overrideCreativeIds && overrideCreativeIds.length) {
+      q = q.in('id', overrideCreativeIds);
+    } else if (selected_creative_ids && selected_creative_ids.length) {
+      q = q.in('id', selected_creative_ids);
+    } else if (project_id) {
+      q = q.eq('project_id', project_id).or('is_payable.eq.true,special_payable.eq.true');
+    }
+    if (cycle_id) q = q.eq('cycle_id', cycle_id);
+    return q;
+  };
+
+  let { data: creatives, error: cErr } = await buildAndApply(true);
+  // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
+  if (cErr && /column .+ does not exist/.test(cErr.message || '')) {
+    console.warn('[invoices/generate] optional列なし → fallback で再取得:', cErr.message);
+    ({ data: creatives, error: cErr } = await buildAndApply(false));
+  }
   if (cErr) return res.status(500).json({ error: cErr.message });
   if (!creatives.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
 
