@@ -693,6 +693,111 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
   res.json(list);
 });
 
+// ==================== 分析・集計 ====================
+// 案件 × 担当者ごとのクリエイティブ作成本数（動画 / デザイン）
+// クエリ: ?year=2026&month=4&client_id=...&status=delivered|all
+// 権限: analytics.view（admin/secretary デフォルト）
+router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year  = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です（month は 1-12）' });
+  }
+  const client_id    = req.query.client_id || null;
+  const statusFilter = req.query.status === 'all' ? 'all' : 'delivered';
+
+  // 期間: 当月の 00:00:00 から 翌月 00:00:00 未満
+  const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+  const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+
+  // 集計対象は「いつのクリエイティブか」を、納品なら final_deadline、
+  // 全件なら created_at で判定する（実態に近い）
+  const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
+
+  let query = supabase
+    .from('creatives')
+    .select(`
+      id, file_name, status, creative_type, project_id,
+      final_deadline, created_at,
+      projects!inner(id, name, client_id, clients(id, name)),
+      creative_assignments(role, users(id, full_name, nickname, role))
+    `)
+    .gte(dateColForFilter, startDate.toISOString())
+    .lt(dateColForFilter, endDate.toISOString());
+  if (statusFilter === 'delivered') query = query.eq('status', '納品');
+  if (client_id) query = query.eq('projects.client_id', client_id);
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  // 集計
+  // matrix[projectKey][userId] = { video, design, total }
+  const projectMap = new Map(); // projectId -> { id, name, client_name }
+  const userMap    = new Map(); // userId -> { id, name, role }
+  const cell       = new Map(); // `${pid}|${uid}` -> { video, design }
+
+  for (const c of (data || [])) {
+    const pid = c.project_id;
+    if (!projectMap.has(pid)) {
+      projectMap.set(pid, {
+        id: pid,
+        name: c.projects?.name || '(不明な案件)',
+        client_name: c.projects?.clients?.name || '-',
+      });
+    }
+    const isVideo = c.creative_type?.startsWith('video') || (!c.creative_type?.startsWith('design'));
+    const assignees = (c.creative_assignments || [])
+      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role))
+      .map(a => a.users);
+    if (assignees.length === 0) {
+      // 担当者未設定はそのまま「(担当未設定)」として集計
+      const key = `${pid}|__none__`;
+      const ent = cell.get(key) || { video: 0, design: 0 };
+      if (isVideo) ent.video++; else ent.design++;
+      cell.set(key, ent);
+      if (!userMap.has('__none__')) {
+        userMap.set('__none__', { id: '__none__', name: '(担当未設定)', role: '-' });
+      }
+    } else {
+      // 同一クリエイティブに複数担当者が居る場合、それぞれにカウント
+      for (const u of assignees) {
+        if (!userMap.has(u.id)) {
+          userMap.set(u.id, { id: u.id, name: u.full_name, role: u.role });
+        }
+        const key = `${pid}|${u.id}`;
+        const ent = cell.get(key) || { video: 0, design: 0 };
+        if (isVideo) ent.video++; else ent.design++;
+        cell.set(key, ent);
+      }
+    }
+  }
+
+  // 並び替え: クライアント名 → 案件名
+  const projects = Array.from(projectMap.values())
+    .sort((a, b) => a.client_name.localeCompare(b.client_name, 'ja') || a.name.localeCompare(b.name, 'ja'));
+  // ユーザーは role（編集者/デザイナー）→ 名前
+  const users = Array.from(userMap.values())
+    .sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || '', 'ja'));
+
+  const matrix = projects.map(p => {
+    const row = { project: p, cells: {} };
+    for (const u of users) {
+      row.cells[u.id] = cell.get(`${p.id}|${u.id}`) || { video: 0, design: 0 };
+    }
+    return row;
+  });
+
+  // 合計
+  const total = { video: 0, design: 0 };
+  for (const c of cell.values()) { total.video += c.video; total.design += c.design; }
+
+  res.json({
+    year, month, client_id, status: statusFilter,
+    projects, users, matrix, total,
+    creatives_count: (data || []).length,
+  });
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
@@ -4309,6 +4414,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'invoice.own','invoice.all_view',
   'master.page','master.sys_config',
   'system.view_as',
+  'analytics.view',
 ]);
 
 // ロール権限保存（最高管理者のみ・ホワイトリスト検証あり）

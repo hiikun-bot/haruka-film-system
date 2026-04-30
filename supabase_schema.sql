@@ -734,7 +734,9 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','master.page',true),('secretary','master.page',true),
   ('admin','master.sys_config',true),
   -- システム
-  ('admin','system.view_as',true)
+  ('admin','system.view_as',true),
+  -- 分析・集計（管理者・秘書のみ閲覧）
+  ('admin','analytics.view',true),('secretary','analytics.view',true)
 ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
 -- ==================== 請求書明細：自由編集対応（Step 1） ====================
