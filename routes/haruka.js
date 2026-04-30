@@ -609,7 +609,7 @@ router.get('/creatives', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role, rank, team_id, avatar_url)
+        users(id, full_name, nickname, role, rank, team_id, avatar_url)
       )
     `)
     .order('final_deadline', { ascending: true, nullsFirst: false });
@@ -658,7 +658,7 @@ router.get('/creatives/:id', async (req, res) => {
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, role, team_id, avatar_url)
+        users(id, full_name, nickname, role, team_id, avatar_url)
       )
     `)
     .eq('id', req.params.id)
