@@ -4526,6 +4526,14 @@ function setClient(btn, id) {
   currentClient = id;
   document.querySelectorAll('.ct').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
+  // 「全て」選択時は担当者・ボール保持者フィルタもリセットする
+  if (id === 'all') {
+    currentAssigneeFilter = '';
+    document.querySelectorAll('.bf').forEach(b => b.classList.add('on'));
+  }
+  // どの id でも担当者 select の値を currentAssigneeFilter と同期させる
+  const sel = document.getElementById('cv-assignee-filter');
+  if (sel) sel.value = currentAssigneeFilter || '';
   // クライアント変更は DB 側で絞り込むため再取得
   creativesPage.offset = 0;
   loadCreatives();
