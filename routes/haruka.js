@@ -1091,6 +1091,120 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   res.json(data);
 });
 
+// 管理者によるステータス強制変更（戻し含む）
+//
+// セキュリティ:
+//   - 管理者のみ実行可（VIEW AS の偽装を許さないため effectiveRole で判定）
+//   - 理由必須
+//
+// 統計の整合性ガード:
+//   - 該当 creative が請求書明細に紐づいている場合:
+//     - 提出済 / 承認済 invoice の明細が含まれる → ブロック（売上計上済の本数を後から動かさない）
+//     - 下書き invoice の明細のみ → 削除して invoice 合計を再計算（下書きは集計に出ないので OK）
+//   - 戻し先が「納品」以外なら is_payable=false / force_delivered* を全クリア
+//   - すべての変更を creative_status_audit に記録
+router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
+  const role = getEffectiveRole(req);
+  if (role !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+
+  const { status: newStatus, reason } = req.body || {};
+  const r = String(reason || '').trim();
+  if (!newStatus) return res.status(400).json({ error: 'status は必須です' });
+  if (!r)         return res.status(400).json({ error: '理由は必須です' });
+
+  const { data: creative, error: cErr } = await supabase
+    .from('creatives').select('id, status').eq('id', req.params.id).maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+  if (creative.status === newStatus) {
+    return res.json({ ok: true, no_change: true });
+  }
+
+  // 請求書紐付けチェック
+  const { data: items } = await supabase
+    .from('invoice_items')
+    .select('id, invoice_id, total_amount, invoice:invoices(id, invoice_number, status)')
+    .eq('creative_id', req.params.id);
+
+  const issuedItems = (items || []).filter(i => i.invoice && i.invoice.status !== 'draft');
+  if (issuedItems.length > 0) {
+    const nums = Array.from(new Set(issuedItems.map(i => `${i.invoice.invoice_number}（${i.invoice.status}）`)));
+    return res.status(409).json({
+      error:
+        '提出済/承認済の請求書に明細として登録されているためステータスを変更できません。\n' +
+        '統計の整合性を保つため、先に該当請求書を取り下げる必要があります。\n\n' +
+        '対象請求書: ' + nums.join(', '),
+    });
+  }
+
+  // 下書き明細の削除 + invoice 合計の再計算
+  const draftItems = (items || []).filter(i => i.invoice && i.invoice.status === 'draft');
+  const deletedItemIds = draftItems.map(i => i.id);
+  const affectedInvoiceIds = Array.from(new Set(draftItems.map(i => i.invoice_id)));
+  if (deletedItemIds.length > 0) {
+    await supabase.from('invoice_item_details').delete().in('invoice_item_id', deletedItemIds);
+    const { error: delErr } = await supabase.from('invoice_items').delete().in('id', deletedItemIds);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    for (const invId of affectedInvoiceIds) {
+      const { data: rem } = await supabase
+        .from('invoice_items').select('total_amount').eq('invoice_id', invId);
+      const total = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
+      await supabase.from('invoices')
+        .update({ total_amount: total, updated_at: new Date().toISOString() })
+        .eq('id', invId);
+    }
+  }
+
+  // クリエイティブ更新（戻し時は派生フラグもクリア）
+  const updatePayload = {
+    status: newStatus,
+    updated_at: new Date().toISOString(),
+  };
+  if (newStatus !== '納品') {
+    updatePayload.is_payable = false;
+    updatePayload.force_delivered = false;
+    updatePayload.force_delivered_reason = null;
+    updatePayload.force_delivered_at = null;
+    updatePayload.force_delivered_by = null;
+  }
+  const { data: updated, error: uErr } = await supabase
+    .from('creatives').update(updatePayload).eq('id', req.params.id).select().single();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+
+  // 監査ログ
+  await supabase.from('creative_status_audit').insert({
+    creative_id: req.params.id,
+    from_status: creative.status,
+    to_status: newStatus,
+    reason: r,
+    changed_by: req.user?.id || null,
+    deleted_invoice_item_ids: deletedItemIds.length ? deletedItemIds : null,
+  });
+
+  // 通知（fire-and-forget）
+  try {
+    const notif = require('../notifications');
+    notif.notifyCreativeStatusChange({
+      creative: { id: req.params.id },
+      oldStatus: creative.status,
+      newStatus,
+      comment: `【管理者によるステータス変更】理由: ${r}`,
+      actorUserId: req.user?.id || null,
+    }).catch(e => console.warn('[notif] failed:', e.message));
+  } catch(e) { console.warn('[notif] enqueue failed:', e.message); }
+
+  res.json({
+    ok: true,
+    from: creative.status,
+    to: newStatus,
+    deleted_invoice_items: deletedItemIds.length,
+    affected_invoices: affectedInvoiceIds.length,
+    creative: updated,
+  });
+});
+
 // クリエイティブ削除（複数対応）
 router.delete('/creatives', requireAuth, async (req, res) => {
   const { ids } = req.body;

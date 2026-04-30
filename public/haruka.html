@@ -10279,6 +10279,8 @@ function updateCreativeStepIndicator(status) {
   const A = 14; // arrow depth px
 
   el.style.cssText = 'display:flex;align-items:stretch;width:100%;height:40px';
+  // 管理者だけステッパーのセグメントをクリック可能にする（戻し・前倒し）
+  const adminClickable = isTopAdmin();
   el.innerHTML = STEPS.map((s, i) => {
     const done   = i < currentIdx;
     const active = i === currentIdx;
@@ -10302,7 +10304,13 @@ function updateCreativeStepIndicator(status) {
       ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
       : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 2px">${s.label}</span>`;
 
-    return `<div style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}">${inner}</div>`;
+    // admin かつ「現在以外」のセグメントだけクリック可能（強制ジャンプ用）
+    const canClick = adminClickable && !active;
+    const clickAttr = canClick
+      ? ` onclick="adminJumpStatus('${s.statuses[0]}','${s.label}')" title="管理者: ここまで強制的に戻す/進める（理由必須・統計整合性チェック）" style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx};cursor:pointer"`
+      : ` style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}"`;
+
+    return `<div${clickAttr}>${inner}</div>`;
   }).join('');
 
   // 次のステップボタン更新（プロデューサーなし案件はPチェックをスキップ）
@@ -10534,6 +10542,55 @@ function updateCreativeCommentLabel(status) {
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
+  }
+}
+
+// 管理者によるステータス強制ジャンプ（戻し含む）
+// 統計整合性チェック: 提出済請求書に紐付いていればブロック / 下書き請求書のみなら明細削除
+async function adminJumpStatus(targetStatus, stepLabel) {
+  if (!currentCreativeDetail) return;
+  if (!isTopAdmin()) {
+    showToast('管理者のみ実行できます', 'warn');
+    return;
+  }
+  const cur = currentCreativeDetail.status || '(不明)';
+  if (cur === targetStatus) return;
+
+  const reason = prompt(
+    `クリエイティブのステータスを強制的に変更します。\n\n` +
+    `現在: ${cur}\n` +
+    `変更先: ${stepLabel}（${targetStatus}）\n\n` +
+    `※ 提出済/承認済請求書に紐付いている場合はブロックされます。\n` +
+    `※ 下書き請求書の明細に紐付いている場合は、その明細が自動削除されます。\n\n` +
+    `理由を入力してください（必須・監査ログに残ります）：`
+  );
+  if (reason === null) return;
+  const r = String(reason).trim();
+  if (!r) {
+    showToast('理由は必須です', 'warn');
+    return;
+  }
+
+  const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}/admin-status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: targetStatus, reason: r }),
+  });
+  if (res.ok) {
+    const j = await res.json().catch(() => ({}));
+    let msg = `ステータスを ${cur} → ${targetStatus} に変更しました`;
+    if (j.deleted_invoice_items > 0) msg += `（下書き請求書明細 ${j.deleted_invoice_items} 件を削除）`;
+    showToast(msg, 'success');
+    closeModal('modal-creative-detail');
+    await loadCreatives();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    const raw = String(e?.error || '');
+    if (res.status === 409 && raw.includes('\n')) {
+      alert('ステータスを変更できません\n\n' + raw);
+    } else {
+      showToast('エラー: ' + translateError(raw || '不明'), 'error');
+    }
   }
 }
 

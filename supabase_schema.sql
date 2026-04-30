@@ -423,6 +423,20 @@ CREATE TABLE IF NOT EXISTS creative_version_history (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 管理者によるステータス強制変更の監査ログ
+-- 「誰が・いつ・どの状態 → どの状態に・なぜ・付随削除した下書き明細」を残す
+CREATE TABLE IF NOT EXISTS creative_status_audit (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  from_status TEXT,
+  to_status  TEXT,
+  reason     TEXT NOT NULL,
+  changed_by UUID REFERENCES users(id),
+  changed_at TIMESTAMPTZ DEFAULT now(),
+  deleted_invoice_item_ids JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_creative_status_audit_creative ON creative_status_audit(creative_id, changed_at DESC);
+
 -- projects にレギュレーションシートURL追加
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS regulation_url TEXT;
 

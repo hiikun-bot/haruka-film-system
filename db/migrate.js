@@ -187,6 +187,17 @@ async function runSchemaSync() {
       "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_file_size BIGINT",
       "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_status TEXT",
       "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_processed_at TIMESTAMPTZ",
+      // 管理者によるステータス強制変更の監査ログ
+      `CREATE TABLE IF NOT EXISTS creative_status_audit (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        creative_id UUID NOT NULL,
+        from_status TEXT,
+        to_status TEXT,
+        reason TEXT NOT NULL,
+        changed_by UUID,
+        changed_at TIMESTAMPTZ DEFAULT now(),
+        deleted_invoice_item_ids JSONB
+      )`,
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
