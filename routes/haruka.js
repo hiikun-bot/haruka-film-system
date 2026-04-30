@@ -4077,7 +4077,7 @@ const VALID_ROLES = new Set(['admin','secretary','producer','producer_director',
 const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
   'project.create_edit','project.unit_price_view','project.fee_view',
-  'creative.all_projects_view','creative.rank_price_column','creative.csv_import',
+  'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others',
   'member.list','member.edit_password','member.deactivate','member.delete',
   'team.manage','team.assign',
   'invoice.own','invoice.all_view',
