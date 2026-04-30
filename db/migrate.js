@@ -121,7 +121,9 @@ function splitSqlStatements(sql) {
 async function runSchemaSync() {
   const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
   if (!dbUrl) {
-    console.warn('[schema-sync] DATABASE_URL未設定。スキーマ同期をスキップします');
+    // 目立つように console.error で出す。Railway 等で本番DBに新カラム/FKが反映されない原因No.1。
+    console.error('🚨 [schema-sync] DATABASE_URL/SUPABASE_DB_URL 未設定 — スキーマ同期をスキップします。Railway の環境変数を確認してください');
+    console.error('🚨 [schema-sync] 設定方法: Supabase ダッシュボード → Project Settings → Database → Connection string (URI) を Railway の環境変数 DATABASE_URL にコピー');
     return { skipped: true };
   }
 
