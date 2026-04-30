@@ -172,6 +172,8 @@ async function runSchemaSync() {
       "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS memo TEXT",
       "ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_status_check",
       "ALTER TABLE clients ADD COLUMN IF NOT EXISTS persona TEXT",
+      "ALTER TABLE clients ADD COLUMN IF NOT EXISTS slack_channel_url TEXT",
+      "ALTER TABLE clients ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }

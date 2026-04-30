@@ -246,6 +246,10 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS other_url TEXT;
 -- ペルソナ（ターゲット顧客像：年齢層・性別・ライフスタイル・悩み等の自由記述）
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS persona TEXT;
 
+-- クリエイティブ進捗の自動通知用：クライアントごとの Slack チャンネル / Chatwork ルーム
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS slack_channel_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT;
+
 -- teams にプロデューサー追加
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS producer_id UUID REFERENCES users(id);
 

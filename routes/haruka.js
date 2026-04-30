@@ -137,10 +137,12 @@ async function syncClientTeams(clientId, teamIds) {
 
 // クライアント作成
 router.post('/clients', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
-  const { name, client_code, note, sales_start_date, status, persona } = req.body;
+  const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id } = req.body;
   if (!name) return res.status(400).json({ error: 'クライアント名は必須です' });
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const insertData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', persona: persona || null };
+  if (slack_channel_url !== undefined) insertData.slack_channel_url = slack_channel_url || null;
+  if (chatwork_room_id !== undefined) insertData.chatwork_room_id = chatwork_room_id || null;
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) insertData[f] = req.body[f] || null; });
   const { data, error } = await supabase
     .from('clients')
@@ -156,9 +158,11 @@ router.post('/clients', requireAuth, requirePermission('project.create_edit'), a
 
 // クライアント更新
 router.put('/clients/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
-  const { name, client_code, note, sales_start_date, status, persona } = req.body;
+  const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id } = req.body;
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const updateData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', persona: persona || null, updated_at: new Date().toISOString() };
+  if (slack_channel_url !== undefined) updateData.slack_channel_url = slack_channel_url || null;
+  if (chatwork_room_id !== undefined) updateData.chatwork_room_id = chatwork_room_id || null;
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) updateData[f] = req.body[f] || null; });
   const { data, error } = await supabase
     .from('clients')
@@ -919,6 +923,14 @@ router.put('/creatives/:id', async (req, res) => {
   // 納品完了時に支払い可能フラグを自動オン
   if (status === '納品') updateData.is_payable = true;
 
+  // ステータス変更を検知するため、更新前の値を取得
+  let beforeStatus = null;
+  if (updateData.status !== undefined) {
+    const { data: before } = await supabase
+      .from('creatives').select('status').eq('id', req.params.id).maybeSingle();
+    beforeStatus = before?.status || null;
+  }
+
   const { data, error } = await supabase
     .from('creatives')
     .update(updateData)
@@ -938,6 +950,22 @@ router.put('/creatives/:id', async (req, res) => {
         role: 'editor',
         rank_applied: assigneeUser?.rank || null,
       });
+    }
+  }
+
+  // ステータスが実際に変わったときだけ Slack/Chatwork 通知（fire-and-forget）
+  if (updateData.status !== undefined && beforeStatus !== updateData.status) {
+    try {
+      const notif = require('../notifications');
+      notif.notifyCreativeStatusChange({
+        creative: { id: req.params.id },
+        oldStatus: beforeStatus,
+        newStatus: updateData.status,
+        comment: req.body.review_comment || req.body.director_comment || req.body.client_comment || req.body.editor_comment || null,
+        actorUserId: req.user?.id || null,
+      }).catch(e => console.warn('[notif] failed:', e.message));
+    } catch (e) {
+      console.warn('[notif] enqueue failed:', e.message);
     }
   }
 

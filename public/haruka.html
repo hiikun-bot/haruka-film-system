@@ -2120,6 +2120,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- 通知連携 (Slack / Chatwork) -->
+        <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--em-pale)">
+          <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">📢 進捗通知の連携先（任意）</div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">Slack チャンネル URL</label>
+            <input class="form-input" id="cl-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クリエイティブ納品時にこのチャンネルへ自動投稿されます。</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Chatwork ルーム ID</label>
+            <input class="form-input" id="cl-chatwork-room-id" placeholder="数字のみ 例: 12345678" style="font-size:13px">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Chatwork ルーム URL の末尾の数字。納品時に自動投稿されます。</div>
+          </div>
+        </div>
+
         <!-- 対応チーム -->
         <div style="margin-top:20px">
           <div class="form-group" style="margin-bottom:0">
@@ -3712,6 +3727,8 @@ function openEditClient(id) {
   document.getElementById('cl-tiktok').value    = c.tiktok_url    || '';
   document.getElementById('cl-line').value      = c.line_url      || '';
   document.getElementById('cl-other').value     = c.other_url     || '';
+  document.getElementById('cl-slack-channel-url').value = c.slack_channel_url || '';
+  document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
   switchClientTab('basic');
@@ -3727,7 +3744,7 @@ function openNewClientModal() {
   document.getElementById('cl-persona').value = '';
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
-  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other']
+  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
@@ -3765,6 +3782,8 @@ async function submitClient() {
       tiktok_url:    linkVal('cl-tiktok'),
       line_url:      linkVal('cl-line'),
       other_url:     linkVal('cl-other'),
+      slack_channel_url: linkVal('cl-slack-channel-url'),
+      chatwork_room_id:  linkVal('cl-chatwork-room-id'),
       team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });
