@@ -1172,7 +1172,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="ct active" onclick="setClient(this,'all')">すべて</button>
       </div>
       <button class="ct" id="toggle-ended-creatives" onclick="toggleEndedInCreatives()" title="取引終了クライアントを含めて表示" style="font-size:11px">+終了済</button>
-      <input class="search-box" type="text" placeholder="ファイル名で絞り込み" oninput="filterSearch(this.value)">
+      <input class="search-box" type="text" placeholder="クリエイティブ検索（ファイル名・クライアント・担当者・メモ）" oninput="filterSearch(this.value)">
       <select id="cv-assignee-filter" class="form-select" style="font-size:12px;padding:5px 10px;height:32px;min-width:120px;max-width:160px" onchange="setAssigneeFilter(this.value)">
         <option value="">担当者：全員</option>
       </select>
@@ -1211,6 +1211,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                 <th class="rank-col">ランク</th>
                 <th>チーム</th>
                 <th>ステータス</th>
+                <th>メモ</th>
                 <th>ボール保持者</th>
                 <th>初稿提出日</th>
                 <th>最終納期</th>
@@ -1220,7 +1221,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </tr>
         </thead>
         <tbody id="creative-tbody">
-          <tr><td colspan="12" class="loading">読み込み中...</td></tr>
+          <tr><td colspan="13" class="loading">読み込み中...</td></tr>
         </tbody>
       </table>
     </div>
@@ -1497,6 +1498,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <label class="form-label">最終納期</label>
               <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
             </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">メモ（任意）</label>
+            <textarea class="form-input" id="c-memo" rows="3" style="resize:vertical" placeholder="クライアント要望、参考リンク、撮影メモなど"></textarea>
           </div>
         </div>
 
@@ -2838,6 +2843,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <label class="form-label">メモ（管理用）</label>
           <textarea class="form-input" id="ce-note" rows="4" style="resize:vertical" placeholder="管理用メモ..."></textarea>
         </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">メモ（任意）</label>
+          <textarea class="form-input" id="ce-memo" rows="3" style="resize:vertical" placeholder="クライアント要望、参考リンク、撮影メモなど"></textarea>
+        </div>
       </div>
     </div>
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
@@ -4165,7 +4174,15 @@ function renderCreatives() {
     // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
     if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
     if (currentClient !== 'all' && c.projects?.clients?.id !== currentClient) return false;
-    if (searchText && !c.file_name.toLowerCase().includes(searchText)) return false;
+    if (searchText) {
+      const haystack = [
+        c.file_name,
+        c.projects?.clients?.name,
+        c.memo,
+        ...(c.creative_assignments || []).flatMap(a => [a.users?.full_name, a.users?.nickname]),
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(searchText)) return false;
+    }
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
     if (currentAssigneeFilter && !c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
     // ロール別フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
@@ -4187,7 +4204,7 @@ function renderCreatives() {
 
   document.getElementById('creative-count').textContent = `${filtered.length}件表示中`;
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     return;
   }
 
@@ -4238,6 +4255,7 @@ function renderCreatives() {
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
       <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span></td>
+      <td title="${esc(c.memo || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${esc(c.memo || '—')}</td>
       <td><span class="ball-dot ${dotClass}"></span><span class="ball-name">${ball.holder}</span></td>
       <td>
         ${draftDeadline ? `<div class="${draftDueClass}" style="font-size:13px;font-weight:500">${draftDeadline.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}</div><div style="font-size:11px;color:#B4B2A9;margin-top:2px">${draftLabel}</div>` : '<span style="color:#B4B2A9">-</span>'}
@@ -4330,6 +4348,7 @@ async function createCreative() {
   const internal_code = document.getElementById('c-internal-code')?.value?.trim() || null;
   const production_date = new Date().toISOString().slice(0, 10);
   const talent_flag = document.getElementById('c-talent-flag')?.checked || false;
+  const memo = document.getElementById('c-memo')?.value?.trim() || null;
 
   const btn = document.querySelector('#tab-single .btn-primary');
   const origText = btn?.textContent;
@@ -4352,6 +4371,7 @@ async function createCreative() {
       internal_code,
       production_date,
       talent_flag,
+      memo,
     })
   });
 
@@ -4361,6 +4381,8 @@ async function createCreative() {
     document.getElementById('filename-status').textContent = '';
     document.getElementById('c-file-name').value = '';
     document.getElementById('c-appeal-type').value = '';
+    const cMemoEl = document.getElementById('c-memo');
+    if (cMemoEl) cMemoEl.value = '';
     await loadCreatives();
     const continuous = document.getElementById('continuous-mode').checked;
     if (!continuous) {
@@ -11925,6 +11947,8 @@ async function openCreativeEdit(id) {
   document.getElementById('ce-final-deadline').value = c.final_deadline || '';
   document.getElementById('ce-status').value         = c.status         || '未着手';
   document.getElementById('ce-note').value           = c.note           || '';
+  const ceMemoEl = document.getElementById('ce-memo');
+  if (ceMemoEl) ceMemoEl.value                       = c.memo           || '';
   document.getElementById('ce-talent-flag').checked  = c.talent_flag    || false;
 
   openModal('modal-creative-edit');
@@ -11952,6 +11976,7 @@ async function saveCreativeEdit() {
     final_deadline:  document.getElementById('ce-final-deadline').value  || null,
     status,
     note:            document.getElementById('ce-note').value.trim()     || null,
+    memo:            document.getElementById('ce-memo')?.value?.trim()   || null,
     talent_flag:     document.getElementById('ce-talent-flag').checked,
   };
   const res = await apiFetch(`${API}/creatives/${_editingCreativeId}`, {
