@@ -121,8 +121,9 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // クライアント設定より優先する（案件ごとに通知先を分けたいケース）
   const { data: detail, error: detailErr } = await supabase.from('creatives')
     .select(`
-      id, file_name, memo,
+      id, file_name, memo, team_id,
       project_id,
+      teams(id, director_id, producer_id),
       projects(id, name, producer_id, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)),
       creative_assignments(role, users(id, full_name, slack_dm_id, chatwork_dm_id))
     `).eq('id', creative.id).maybeSingle();
@@ -142,8 +143,12 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const assignees = (detail.creative_assignments || [])
     .map(a => a.users)
     .filter(Boolean);
-  const director = await loadUser(project?.director_id);
-  const producer = await loadUser(project?.producer_id);
+  // 案件レベル優先 → 無ければクリエイティブの team レベルにフォールバック
+  // （ユーザーが teams.director_id だけ設定して projects.director_id を設定し忘れる UX 問題への対策）
+  const directorId = project?.director_id || detail.teams?.director_id || null;
+  const producerId = project?.producer_id || detail.teams?.producer_id || null;
+  const director = await loadUser(directorId);
+  const producer = await loadUser(producerId);
   const actor    = await loadUser(actorUserId);
 
   // 通知メッセージにクリエイティブ詳細モーダルへのディープリンクを埋め込む
