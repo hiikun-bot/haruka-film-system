@@ -565,7 +565,7 @@ router.get('/creatives', async (req, res) => {
     .from('creatives')
     .select(`
       *,
-      projects(id, name, clients(id, name)),
+      projects(id, name, clients(id, name, status)),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
@@ -614,7 +614,7 @@ router.get('/creatives/:id', async (req, res) => {
     .from('creatives')
     .select(`
       *,
-      projects(id, name, producer_id, director_id, regulation_url, clients(id, name, client_code)),
+      projects(id, name, producer_id, director_id, regulation_url, clients(id, name, client_code, status)),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
