@@ -5600,6 +5600,8 @@ function applyRoleBasedUI() {
   if (inviteBtn) inviteBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
   const csvImportBtn = document.getElementById('btn-csv-import');
   if (csvImportBtn) csvImportBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
+  const csvExportBtn = document.getElementById('btn-csv-export');
+  if (csvExportBtn) csvExportBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
   const addTeamBtn = document.getElementById('btn-add-team');
   if (addTeamBtn) addTeamBtn.style.display = hasPermission('team.manage') ? '' : 'none';
   const addClientBtn = document.getElementById('btn-add-client');
