@@ -713,6 +713,27 @@ router.get('/creatives', async (req, res) => {
     }
   }
 
+  // フリーワード検索（q）の事前処理:
+  //  - カッコは「削除」する（スペースに置換すると複数スペースで意図しない ilike パターンになる）
+  //  - 連続スペース→1つに圧縮
+  //  - file_name / memo に加えて、ユーザー名 / ニックネームも検索対象に含める
+  //    （ユーザー名は creative_assignments → users の JOIN 経由で creative_id 集合化）
+  let qPat = '';
+  let userMatchCreativeIds = null;
+  if (req.query.q && req.query.q.trim()) {
+    const qTerm = req.query.q.replace(/[,()]/g, '').replace(/\s+/g, ' ').trim();
+    if (qTerm) {
+      qPat = `%${qTerm}%`;
+      // users.full_name / users.nickname にヒットする creative_assignments を取り、creative_id を集める
+      const { data: assignMatches, error: amErr } = await supabase
+        .from('creative_assignments')
+        .select('creative_id, users!inner(full_name, nickname)')
+        .or(`full_name.ilike.${qPat},nickname.ilike.${qPat}`, { foreignTable: 'users' });
+      if (amErr) return res.status(500).json({ error: amErr.message });
+      userMatchCreativeIds = Array.from(new Set((assignMatches || []).map(a => a.creative_id))).filter(Boolean);
+    }
+  }
+
   // 一覧描画に必要な列のみ。teams は別取得で stitch
   // client_id フィルタを foreignTable 経由で効かせるため projects は inner join
   const projectsRel = client_id ? 'projects!inner' : 'projects';
@@ -741,10 +762,14 @@ router.get('/creatives', async (req, res) => {
     if (status)     q = q.eq('status', status);
     if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
     if (client_id) q = q.eq('projects.client_id', client_id);
-    if (req.query.q && req.query.q.trim()) {
-      const term = req.query.q.trim().replace(/[,()]/g, ' ');
-      const pat  = `%${term}%`;
-      q = q.or(`file_name.ilike.${pat},memo.ilike.${pat}`);
+    if (qPat) {
+      // file_name OR memo OR (users.full_name / nickname にヒットした creative_id 集合) のいずれか
+      const orConds = [`file_name.ilike.${qPat}`, `memo.ilike.${qPat}`];
+      if (userMatchCreativeIds && userMatchCreativeIds.length > 0) {
+        // PostgREST の OR 表現: id.in.(uuid1,uuid2,...)
+        orConds.push(`id.in.(${userMatchCreativeIds.join(',')})`);
+      }
+      q = q.or(orConds.join(','));
     }
     if (assigneeCreativeIds) q = q.in('id', assigneeCreativeIds);
     q = q.range(offset, offset + limit - 1);
