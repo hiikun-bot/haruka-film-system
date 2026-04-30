@@ -57,18 +57,6 @@ async function sendSlackChannel(channelUrl, text) {
   return slackPost(token, parsed.channel_id, text);
 }
 
-async function sendSlackDM(slackUserId, channelUrl, text) {
-  // DM 先 user の Slack ID は workspace ごとに発行される。クライアントの workspace に
-  // 所属する slack_dm_id を使う前提。複数 workspace 環境では workspace 別 ID が必要。
-  // 本実装では、clients.slack_channel_url の workspace に DM するため、その workspace の bot を使う。
-  if (!slackUserId) return { ok: false, reason: 'no_user' };
-  const parsed = parseSlackChannelUrl(channelUrl);
-  if (!parsed) return { ok: false, reason: 'invalid_url' };
-  const token = await getSlackBotToken(parsed.team_id);
-  if (!token) return { ok: false, reason: 'no_workspace_token' };
-  return slackPost(token, slackUserId, text);
-}
-
 // =============== Chatwork API ===============
 async function sendChatworkRoom(roomId, text) {
   const token = process.env.CHATWORK_API_TOKEN;
@@ -144,32 +132,42 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const cwCommentLine = comment ? `\nコメント: ${comment}` : '';
 
   // 遷移ごとの処理
-  const sendDM = async (user, slackBody, cwBody) => {
+  // Slack: チャンネル内 <@user_id> メンション付き投稿（旧 DM 方式から変更）
+  //   - DM 方式は受信者の slack_dm_id 設定が必須で、未設定だと通知が完全欠落していた。
+  //   - メンション方式なら ID なしでもチャンネル投稿は届き、ID ありなら赤バッジ通知も飛ぶ。
+  // Chatwork: ルーム内 [To:account_id] メンション付き投稿（PR #65 で既に対応済み）
+  const sendNotif = async (user, slackBody, cwBody) => {
     if (!user) return;
-    if (user.slack_dm_id) await sendSlackDM(user.slack_dm_id, channelUrl, slackBody);
-    // Chatwork は「ルーム内 [To:account] メンション」方式に変更。
-    // roomId は project / client の chatwork_room_id（フォールバック解決済の `roomId` を再利用）
-    if (user.chatwork_dm_id && roomId) {
-      await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody);
+    if (channelUrl) {
+      const mention = user.slack_dm_id ? `<@${user.slack_dm_id}> ` : '';
+      await sendSlackChannel(channelUrl, `${mention}${slackBody}`);
+    }
+    if (roomId) {
+      if (user.chatwork_dm_id) {
+        await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody);
+      } else {
+        // ID 未設定でも投稿は届ける（チームへの情報共有のみ）
+        await sendChatworkRoom(roomId, cwBody);
+      }
     }
   };
 
   // 1) → Dチェック
   if (newStatus === 'Dチェック') {
-    await sendDM(director,
+    await sendNotif(director,
       `📥 *Dチェック依頼*\n${slackLink}${commentLine}`,
       `[info][title]Dチェック依頼[/title]${fileName}${cwCommentLine}[/info]`);
   }
   // 2) → Pチェック
   else if (newStatus === 'Pチェック') {
-    await sendDM(producer,
+    await sendNotif(producer,
       `📥 *Pチェック依頼*\n${slackLink}${commentLine}`,
       `[info][title]Pチェック依頼[/title]${fileName}${cwCommentLine}[/info]`);
   }
   // 3) → Dチェック後修正
   else if (newStatus === 'Dチェック後修正') {
     for (const ed of editors) {
-      await sendDM(ed,
+      await sendNotif(ed,
         `🔁 *Dチェック修正依頼*\n${slackLink}${commentLine}`,
         `[info][title]Dチェック修正依頼[/title]${fileName}${cwCommentLine}[/info]`);
     }
@@ -181,12 +179,14 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     for (const t of targets) {
       if (seen.has(t.id)) continue;
       seen.add(t.id);
-      await sendDM(t,
+      await sendNotif(t,
         `🔁 *Pチェック修正依頼*\n${slackLink}${commentLine}`,
         `[info][title]Pチェック修正依頼[/title]${fileName}${cwCommentLine}[/info]`);
     }
   }
   // 5) → クライアントチェック中（操作した本人にテンプレ案内）
+  //    メンション方式によりチームにも見える形になるが、ミス防止のため第三者レビュー可能な
+  //    状態は許容する仕様。
   else if (newStatus === 'クライアントチェック中') {
     if (actor) {
       const slackTpl =
@@ -212,24 +212,36 @@ https://drive.google.com/...
 ご確認のほどよろしくお願いいたします。
 
 ※送信前に必ず内容を確認してください。[/info]`;
-      await sendDM(actor, slackTpl, cwTpl);
+      await sendNotif(actor, slackTpl, cwTpl);
     }
   }
   // 6) → 納品
+  //    メンバー全員に個別投稿するとチャンネルがスパム的になるため、
+  //    1 投稿に全員メンションを集約する。
   else if (newStatus === '納品') {
-    const ann = `🎉 *納品完了*: \`${fileName}\``;
-    const annCw = `[info][title]🎉 納品完了[/title]${fileName}[/info]`;
-    if (channelUrl) await sendSlackChannel(channelUrl, ann);
-    if (roomId)    await sendChatworkRoom(roomId, annCw);
-    // チーム全員にもDM
     const allMembers = [...editors, director, producer].filter(Boolean);
     const seen = new Set();
-    for (const m of allMembers) {
-      if (seen.has(m.id)) continue;
+    const uniqueMembers = allMembers.filter(m => {
+      if (seen.has(m.id)) return false;
       seen.add(m.id);
-      await sendDM(m,
-        `🎉 *納品完了*: \`${fileName}\`\nお疲れ様でした！`,
-        `[info][title]🎉 納品完了[/title]${fileName}\nお疲れ様でした！[/info]`);
+      return true;
+    });
+    const slackMentions = uniqueMembers
+      .map(m => m.slack_dm_id ? `<@${m.slack_dm_id}>` : '')
+      .filter(Boolean)
+      .join(' ');
+    const cwMentions = uniqueMembers
+      .map(m => m.chatwork_dm_id ? `[To:${m.chatwork_dm_id}]` : '')
+      .filter(Boolean)
+      .join('\n');
+
+    if (channelUrl) {
+      const slackBody = `🎉 *納品完了*: \`${fileName}\`\nお疲れ様でした！${slackMentions ? '\n' + slackMentions : ''}`;
+      await sendSlackChannel(channelUrl, slackBody);
+    }
+    if (roomId) {
+      const cwBody = `${cwMentions ? cwMentions + '\n' : ''}[info][title]🎉 納品完了[/title]${fileName}\nお疲れ様でした！[/info]`;
+      await sendChatworkRoom(roomId, cwBody);
     }
   }
 }
