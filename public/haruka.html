@@ -2156,6 +2156,17 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- ペルソナ（ターゲット顧客像） -->
+        <div style="margin-top:20px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">
+              ペルソナ（ターゲット顧客像）
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">映像制作で頻繁に参照する重要情報</span>
+            </label>
+            <textarea class="form-input" id="cl-persona" rows="4" placeholder="例：30代女性、共働き、家事の時短に関心" style="resize:vertical;width:100%;box-sizing:border-box"></textarea>
+          </div>
+        </div>
+
         <!-- HP・SNSリンク -->
         <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em;margin-bottom:14px">🔗 HP・SNSリンク</div>
@@ -3560,6 +3571,13 @@ async function loadProjects() {
           </div>
         </div>
         <div class="client-block-body" id="body-${client.id}">
+          ${client.persona ? `
+            <div style="padding:10px 20px 0">
+              <div style="background:var(--em-pale);border-left:3px solid var(--em);border-radius:6px;padding:10px 14px">
+                <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:4px">👤 ペルソナ（ターゲット顧客像）</div>
+                <div style="font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word">${client.persona.replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]))}</div>
+              </div>
+            </div>` : ''}
           ${projectRows}
           <div style="padding:12px 20px">
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectModal('${client.id}')">＋ 案件追加</button>` : ''}
@@ -3585,6 +3603,7 @@ function openEditClient(id) {
   document.getElementById('cl-name').value = c.name;
   document.getElementById('cl-code').value = c.client_code || '';
   document.getElementById('cl-note').value = c.note || '';
+  document.getElementById('cl-persona').value = c.persona || '';
   document.getElementById('cl-sales-start').value = c.sales_start_date ? c.sales_start_date.slice(0,10) : '';
   document.getElementById('cl-status').value = c.status || '提案中';
   document.getElementById('cl-website').value   = c.website_url   || '';
@@ -3606,6 +3625,7 @@ function openNewClientModal() {
   document.getElementById('cl-name').value = '';
   document.getElementById('cl-code').value = '';
   document.getElementById('cl-note').value = '';
+  document.getElementById('cl-persona').value = '';
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
   ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other']
@@ -3620,6 +3640,7 @@ async function submitClient() {
   const name = document.getElementById('cl-name').value.trim();
   const client_code = document.getElementById('cl-code').value.trim().toUpperCase();
   const note = document.getElementById('cl-note').value.trim();
+  const persona = document.getElementById('cl-persona').value.trim();
   const sales_start_date = document.getElementById('cl-sales-start').value || null;
   const status = document.getElementById('cl-status').value;
   if (!name) { showToast('クライアント名は必須です', 'warn'); return; }
@@ -3635,7 +3656,7 @@ async function submitClient() {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      name, client_code, note: note || null, sales_start_date, status,
+      name, client_code, note: note || null, persona: persona || null, sales_start_date, status,
       website_url:   linkVal('cl-website'),
       twitter_url:   linkVal('cl-twitter'),
       instagram_url: linkVal('cl-instagram'),
