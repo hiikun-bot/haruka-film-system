@@ -109,18 +109,21 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   if (!creative || !newStatus || oldStatus === newStatus) return;
 
   // 関連データ取得（薄く）
+  // projects.slack_channel_url / projects.chatwork_room_id が設定されていれば
+  // クライアント設定より優先する（案件ごとに通知先を分けたいケース）
   const { data: detail } = await supabase.from('creatives')
     .select(`
       id, file_name, memo,
       project_id,
-      projects(id, name, producer_id, director_id, clients(id, name, slack_channel_url, chatwork_room_id)),
+      projects(id, name, producer_id, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)),
       creative_assignments(role, users(id, full_name, slack_dm_id, chatwork_dm_id))
     `).eq('id', creative.id).maybeSingle();
   if (!detail) return;
   const project = detail.projects;
   const client  = project?.clients;
-  const channelUrl = client?.slack_channel_url;
-  const roomId    = client?.chatwork_room_id;
+  // 案件レベル優先 → なければクライアント設定にフォールバック
+  const channelUrl = project?.slack_channel_url || client?.slack_channel_url;
+  const roomId    = project?.chatwork_room_id || client?.chatwork_room_id;
   const fileName  = detail.file_name;
 
   // 担当者の解決

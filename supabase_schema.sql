@@ -409,6 +409,12 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS sync_appeal_axes BOOLEAN DEFAULT t
 -- Slackワークスペースを直接テキストIDで持つ（UUID FKの代替）
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_team_id TEXT;
 
+-- 案件ごとの Slack チャンネル URL（チャンネルURL貼付け方式・通知送信用）
+-- projects レベルで設定があれば clients.slack_channel_url より優先される
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_channel_url TEXT;
+-- 既存の projects.chatwork_room_id を通知送信時のオーバーライドとしても利用する
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT;
+
 -- projects_status_check 制約が存在する場合は削除（アプリ側でバリデーション済み）
 ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
 
