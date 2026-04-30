@@ -7997,12 +7997,10 @@ async function onProjectChange(projectId) {
     const firstTeamId = cl?.team_ids?.[0];
     const teamSelect = document.getElementById('c-team-id');
     if (teamSelect && firstTeamId) {
-      // 既にユーザーが選んでいる場合は上書きしない
-      if (!teamSelect.value) {
-        teamSelect.value = firstTeamId;
-        if (typeof onTeamChange === 'function') {
-          try { onTeamChange(firstTeamId); } catch(_) {}
-        }
+      // 案件切替時は常に先頭チームに自動更新（ユーザーが選択し直したい場合は手動で変えられる）
+      teamSelect.value = firstTeamId;
+      if (typeof onTeamChange === 'function') {
+        try { onTeamChange(firstTeamId); } catch(_) {}
       }
     }
   } catch (e) {
