@@ -2515,7 +2515,7 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
   // 明細の存在確認 + オーナーチェック
   const { data: inv } = await supabase.from('invoices').select('issuer_id, status').eq('id', invId).single();
   if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
-  if (inv.status !== 'draft') return res.status(400).json({ error: '下書き以外は削除できません' });
+  if (!['draft','rejected'].includes(inv.status)) return res.status(400).json({ error: '下書き・差し戻し以外は削除できません' });
   if (inv.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role))
     return res.status(403).json({ error: 'アクセス権限がありません' });
 
