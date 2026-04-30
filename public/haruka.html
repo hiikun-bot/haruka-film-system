@@ -1052,6 +1052,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-btn" data-page="members" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" data-page="invoices" onclick="showPage('invoices',this)">請求書</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">ナレッジ</button>
+    <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
   </div>
   <div class="header-right">
@@ -1093,6 +1094,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-drawer-btn" data-page="members" onclick="showPage('members',this)">👤 メンバー</button>
     <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 ナレッジ</button>
+    <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <div class="nav-drawer-account">
       <button class="nav-drawer-btn nav-drawer-account-btn" onclick="closeNavDrawer();openChangePasswordModal()">🔑 パスワード変更</button>
@@ -2693,6 +2695,47 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- 分析ページ（admin / secretary 専用） -->
+<div id="page-analytics" class="page">
+  <div style="padding:20px 24px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--text)">📊 分析 / 集計</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+          案件×担当者ごとのクリエイティブ作成本数を集計します（管理者・秘書のみ閲覧可）。
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象月</div>
+          <input type="month" id="an-month" class="form-input" style="font-size:13px;padding:8px 10px">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">クライアント</div>
+          <select id="an-client" class="form-select" style="font-size:13px;padding:8px 10px;min-width:180px">
+            <option value="">すべて</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象</div>
+          <select id="an-status-filter" class="form-select" style="font-size:13px;padding:8px 10px">
+            <option value="delivered">納品のみ</option>
+            <option value="all">全件（作業中含む）</option>
+          </select>
+        </div>
+        <button class="btn-primary" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
+        <button class="btn" onclick="exportAnalyticsCsv()" style="font-size:13px;padding:8px 16px;height:38px">CSV出力</button>
+      </div>
+    </div>
+
+    <div id="an-summary" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px"></div>
+
+    <div id="an-table-wrap" style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <div id="an-table-content" style="padding:24px;text-align:center;color:var(--text-muted)">「集計」ボタンを押すと結果が表示されます。</div>
+    </div>
   </div>
 </div>
 
@@ -5535,6 +5578,7 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|invoice.own': true, 'producer|invoice.own': true, 'producer_director|invoice.own': true, 'director|invoice.own': true, 'editor|invoice.own': true, 'designer|invoice.own': true,
   'secretary|invoice.all_view': true,
   'secretary|master.page': true,
+  'secretary|analytics.view': true,
 };
 async function loadRolePermissions() {
   try {
@@ -5635,6 +5679,12 @@ function applyRoleBasedUI() {
   if (masterNav) masterNav.style.display = hasPermission('master.page') ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
   if (drawerMaster) drawerMaster.style.display = hasPermission('master.page') ? '' : 'none';
+  // 分析・集計ナビ（admin / secretary のみ）
+  const canAnalytics = hasPermission('analytics.view');
+  const analyticsNav = document.getElementById('nav-analytics');
+  if (analyticsNav) analyticsNav.style.display = canAnalytics ? '' : 'none';
+  const drawerAnalytics = document.getElementById('nav-drawer-analytics');
+  if (drawerAnalytics) drawerAnalytics.style.display = canAnalytics ? '' : 'none';
   // VIEW AS 中は最高管理者専用メニューを隠す（実ユーザーが super admin でも previewRole 設定中は非表示）
   const showSuperAdminOnly = isSuperAdmin() && !previewRole;
   const userStatsNav = document.getElementById('mnav-userstats');
@@ -6126,6 +6176,7 @@ function showPage(name, btn) {
   if(name==='invoices') loadInvoices();
   if(name==='master') loadMasterPage();
   if(name==='knowledge') initKnowledgePage();
+  if(name==='analytics') initAnalyticsPage();
 }
 
 function openNavDrawer() {
@@ -8694,6 +8745,7 @@ const ROLE_PERM_LIST = [
   { section:'マスター管理',   key:'master.page',                 label:'マスター管理ページ' },
   { section:'マスター管理',   key:'master.sys_config',           label:'システム設定' },
   { section:'システム',       key:'system.view_as',              label:'VIEW AS（ロールプレビュー）' },
+  { section:'分析',           key:'analytics.view',              label:'分析・集計ページ閲覧' },
 ];
 
 let _rolesEditMode = false;
@@ -11795,6 +11847,161 @@ function renderKnowledgeCards(list, compact) {
       </div>
     </div>`;
   }).join('');
+}
+
+// ==================== 分析・集計ページ ====================
+let _analyticsLastResult = null;
+
+function initAnalyticsPage() {
+  // 当月をデフォルトセット
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const monthEl = document.getElementById('an-month');
+  if (monthEl && !monthEl.value) monthEl.value = ym;
+  // クライアント select を埋める（既存 allClients を流用）
+  const sel = document.getElementById('an-client');
+  if (sel && sel.options.length <= 1 && Array.isArray(allClients)) {
+    sel.innerHTML = '<option value="">すべて</option>' +
+      allClients.filter(c => c.status !== 'クライアント取引終了')
+        .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }
+}
+
+async function loadAnalytics() {
+  const ym = document.getElementById('an-month').value;
+  if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
+  const [year, month] = ym.split('-');
+  const client_id = document.getElementById('an-client').value || '';
+  const status    = document.getElementById('an-status-filter').value || 'delivered';
+
+  const wrap = document.getElementById('an-table-content');
+  wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">集計中...</div>';
+  document.getElementById('an-summary').innerHTML = '';
+
+  const url = `${API}/analytics/creative-by-assignee?year=${year}&month=${parseInt(month,10)}` +
+              (client_id ? `&client_id=${client_id}` : '') + `&status=${status}`;
+  const res = await apiFetch(url);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#E24B4A">エラー: ${esc(e?.error || res.status)}</div>`;
+    return;
+  }
+  const data = await res.json();
+  _analyticsLastResult = data;
+  renderAnalyticsTable(data);
+}
+
+function renderAnalyticsTable(data) {
+  const sumEl = document.getElementById('an-summary');
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px">
+      <span style="color:var(--text-muted)">期間</span> <strong>${data.year}年${data.month}月</strong>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px">
+      <span style="color:var(--text-muted)">対象</span> <strong>${data.status === 'delivered' ? '納品のみ' : '全件'}</strong>
+    </div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px">
+      <span style="color:var(--text-muted)">動画合計</span> <strong>${data.total.video}本</strong>
+    </div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px">
+      <span style="color:var(--text-muted)">デザイン合計</span> <strong>${data.total.design}枚</strong>
+    </div>
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px">
+      <span style="color:var(--text-muted)">集計件数</span> <strong>${data.creatives_count}件</strong>
+    </div>
+  `;
+
+  const wrap = document.getElementById('an-table-content');
+  if (!data.projects.length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する案件がありません</div>';
+    return;
+  }
+
+  // ヘッダ
+  const userHeaders = data.users.map(u =>
+    `<th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;border-bottom:1.5px solid var(--em);background:var(--em-pale)">${esc(u.name)}<div style="font-size:10px;color:var(--text-muted);font-weight:400">${esc(u.role || '-')}</div></th>`
+  ).join('');
+
+  // 行
+  const rows = data.matrix.map(row => {
+    const cells = data.users.map(u => {
+      const c = row.cells[u.id] || { video: 0, design: 0 };
+      const total = c.video + c.design;
+      const bg = total === 0 ? '' : 'background:var(--em-pale)';
+      const inner = total === 0
+        ? '<span style="color:#cbd5e1">—</span>'
+        : `${c.video > 0 ? `<span style="color:#0369a1">📹${c.video}</span>` : ''}${c.video > 0 && c.design > 0 ? ' ' : ''}${c.design > 0 ? `<span style="color:#b45309">🎨${c.design}</span>` : ''}`;
+      return `<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:500;${bg}">${inner}</td>`;
+    }).join('');
+    // 行の合計
+    const rowTotal = data.users.reduce((acc, u) => {
+      const c = row.cells[u.id] || { video:0, design:0 };
+      acc.video += c.video; acc.design += c.design;
+      return acc;
+    }, { video:0, design:0 });
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap">${esc(row.project.client_name)}</td>
+      <td style="padding:8px 12px;font-size:13px;color:var(--text);white-space:nowrap;font-weight:500">${esc(row.project.name)}</td>
+      ${cells}
+      <td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:700;background:var(--em-pale);white-space:nowrap">📹${rowTotal.video} / 🎨${rowTotal.design}</td>
+    </tr>`;
+  }).join('');
+
+  // 列の合計（最終行）
+  const userTotals = data.users.map(u => {
+    const t = data.matrix.reduce((acc, r) => {
+      const c = r.cells[u.id] || { video:0, design:0 };
+      acc.video += c.video; acc.design += c.design;
+      return acc;
+    }, { video:0, design:0 });
+    return `<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:700;background:var(--em-pale);white-space:nowrap">📹${t.video} / 🎨${t.design}</td>`;
+  }).join('');
+
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:600px">
+    <thead>
+      <tr>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;border-bottom:1.5px solid var(--em);background:var(--em-pale)">クライアント</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;border-bottom:1.5px solid var(--em);background:var(--em-pale)">案件名</th>
+        ${userHeaders}
+        <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;border-bottom:1.5px solid var(--em);background:var(--em-pale)">行計</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr>
+        <td colspan="2" style="padding:10px 12px;text-align:right;font-size:12px;font-weight:700;color:var(--em-dark);background:var(--em-pale);white-space:nowrap;border-top:1.5px solid var(--em)">列計</td>
+        ${userTotals}
+        <td style="padding:10px 10px;text-align:center;font-size:13px;font-weight:700;background:var(--em);color:#fff;border-top:1.5px solid var(--em);white-space:nowrap">📹${data.total.video} / 🎨${data.total.design}</td>
+      </tr>
+    </tbody>
+  </table>`;
+}
+
+function exportAnalyticsCsv() {
+  const data = _analyticsLastResult;
+  if (!data) { showToast('先に「集計」を押してください', 'warn'); return; }
+  const headers = ['クライアント', '案件名', ...data.users.map(u => `${u.name}(動画)`), ...data.users.map(u => `${u.name}(デザイン)`), '行計(動画)', '行計(デザイン)'];
+  const rows = data.matrix.map(row => {
+    const videoCounts = data.users.map(u => (row.cells[u.id]?.video || 0));
+    const designCounts = data.users.map(u => (row.cells[u.id]?.design || 0));
+    const rowVideo = videoCounts.reduce((s,n) => s+n, 0);
+    const rowDesign = designCounts.reduce((s,n) => s+n, 0);
+    return [row.project.client_name, row.project.name, ...videoCounts, ...designCounts, rowVideo, rowDesign];
+  });
+  // CSV エスケープ
+  const escCsv = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers, ...rows].map(r => r.map(escCsv).join(',')).join('\n');
+  // BOM 付き UTF-8 で Excel でも文字化けしない
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `analytics_${data.year}-${String(data.month).padStart(2,'0')}.csv`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
 }
 
 // ==================== ナレッジページ ====================
