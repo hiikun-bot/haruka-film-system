@@ -566,7 +566,6 @@ router.get('/creatives', async (req, res) => {
       *,
       projects(id, name, clients(id, name)),
       project_cycles(id, year, month),
-      teams(id, team_code, team_name),
       creative_assignments(
         id, role, rank_applied,
         users(id, full_name, role, rank, team_id, avatar_url)
@@ -578,26 +577,30 @@ router.get('/creatives', async (req, res) => {
   if (cycle_id) query = query.eq('cycle_id', cycle_id);
   if (status) query = query.eq('status', status);
 
+  // teams を別クエリで取得（PostgREST の FK 推論に依存しない: 本番DBに FK が無くても動作させるため）
   const [{ data, error }, { data: teamsRaw }] = await Promise.all([
     query,
-    supabase.from('teams').select('id, director_id, director:director_id(full_name), team_members(user_id)'),
+    supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)'),
   ]);
   if (error) return res.status(500).json({ error: error.message });
 
-  // チーム逆引きMap（ディレクター名解決用）
+  // チーム逆引きMap（ディレクター名解決用 + teams 埋め込み代替用）
   const directorByTeamId  = new Map();
   const directorByUserId  = new Map();
+  const teamById          = new Map();
   (teamsRaw || []).forEach(t => {
     const name = t.director?.full_name || '';
     if (t.director_id) directorByTeamId.set(t.id, name);
     (t.team_members || []).forEach(tm => {
       if (tm.user_id && !directorByUserId.has(tm.user_id)) directorByUserId.set(tm.user_id, name);
     });
+    teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
   });
 
-  // ボール保持者を付与
-  const withBall = data.map(c => ({
+  // ボール保持者と teams を付与（teams は FK 不要の手動 stitch）
+  const withBall = (data || []).map(c => ({
     ...c,
+    teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
     ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId)
   }));
 
@@ -612,7 +615,6 @@ router.get('/creatives/:id', async (req, res) => {
       *,
       projects(id, name, producer_id, director_id, regulation_url, clients(id, name, client_code)),
       project_cycles(id, year, month),
-      teams(id, team_code, team_name),
       creative_assignments(
         id, role, rank_applied,
         users(id, full_name, role, team_id, avatar_url)
@@ -621,6 +623,19 @@ router.get('/creatives/:id', async (req, res) => {
     .eq('id', req.params.id)
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // teams を別クエリで取得（FK 不要にするため PostgREST の埋め込みは使わない）
+  if (data && data.team_id) {
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('id, team_code, team_name')
+      .eq('id', data.team_id)
+      .maybeSingle();
+    data.teams = teamData || null;
+  } else if (data) {
+    data.teams = null;
+  }
+
   res.json(data);
 });
 
