@@ -2778,6 +2778,53 @@ router.delete('/slack-workspaces/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== 通知デバッグ（最高管理者専用） ====================
+
+// 通知デバッグ用: Chatwork ルームに直接投稿
+router.post('/debug/test-chatwork', requireAuth, requireSuperAdmin, async (req, res) => {
+  const { room_id, message } = req.body;
+  if (!room_id || !message) return res.status(400).json({ error: 'room_id と message は必須です' });
+  const token = process.env.CHATWORK_API_TOKEN;
+  if (!token) return res.status(400).json({ ok: false, error: 'CHATWORK_API_TOKEN 未設定' });
+  try {
+    const axios = require('axios');
+    const r = await axios.post(`https://api.chatwork.com/v2/rooms/${room_id}/messages`,
+      new URLSearchParams({ body: message, self_unread: '0' }),
+      { headers: { 'X-ChatWorkToken': token }, timeout: 10000, validateStatus: () => true }
+    );
+    return res.json({ ok: r.status >= 200 && r.status < 300, status: r.status, response: r.data });
+  } catch (e) {
+    return res.json({ ok: false, error: e.message, code: e.code });
+  }
+});
+
+// 通知デバッグ用: Slack ワークスペースのチャンネルに直接投稿
+router.post('/debug/test-slack', requireAuth, requireSuperAdmin, async (req, res) => {
+  const { channel_url, message, mention_user_id } = req.body;
+  if (!channel_url || !message) return res.status(400).json({ error: 'channel_url と message は必須です' });
+  const m = String(channel_url).match(/\/client\/(T[A-Z0-9]+)\/(C[A-Z0-9]+)/);
+  if (!m) return res.status(400).json({ ok: false, error: 'URL から workspace/channel を抽出できません (期待形式: https://app.slack.com/client/T.../C...)' });
+  const team_id = m[1], channel_id = m[2];
+  const { data, error: wsErr } = await supabase
+    .from('slack_workspaces')
+    .select('bot_token,name')
+    .eq('team_id', team_id)
+    .maybeSingle();
+  if (wsErr) return res.json({ ok: false, error: `slack_workspaces 検索エラー: ${wsErr.message}` });
+  if (!data?.bot_token) return res.json({ ok: false, error: `slack_workspaces に team_id=${team_id} の bot_token が登録されていません` });
+  try {
+    const axios = require('axios');
+    const text = mention_user_id ? `<@${mention_user_id}> ${message}` : message;
+    const r = await axios.post('https://slack.com/api/chat.postMessage',
+      { channel: channel_id, text },
+      { headers: { Authorization: `Bearer ${data.bot_token}`, 'Content-Type': 'application/json' }, timeout: 10000, validateStatus: () => true }
+    );
+    return res.json({ ok: r.data?.ok === true, status: r.status, workspace: data.name, channel: channel_id, response: r.data });
+  } catch (e) {
+    return res.json({ ok: false, error: e.message, code: e.code });
+  }
+});
+
 // ==================== クライアント商材・訴求軸マスター ====================
 
 // クライアント商材一覧
