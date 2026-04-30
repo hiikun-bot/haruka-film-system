@@ -1171,6 +1171,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div class="client-tabs" id="client-tabs">
         <button class="ct active" onclick="setClient(this,'all')">すべて</button>
       </div>
+      <button class="ct" id="toggle-ended-creatives" onclick="toggleEndedInCreatives()" title="取引終了クライアントを含めて表示" style="font-size:11px">+終了済</button>
       <input class="search-box" type="text" placeholder="ファイル名で絞り込み" oninput="filterSearch(this.value)">
       <select id="cv-assignee-filter" class="form-select" style="font-size:12px;padding:5px 10px;height:32px;min-width:120px;max-width:160px" onchange="setAssigneeFilter(this.value)">
         <option value="">担当者：全員</option>
@@ -3306,6 +3307,7 @@ let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMemb
 let currentTeamTab = 'video'; // 'video' | 'design'
 let currentMemberTab = 'video'; // 'video' | 'design'
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
+let showEndedInCreatives = false;
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
@@ -3382,7 +3384,10 @@ async function loadClients() {
   } catch(e) { allClients = []; console.error('[loadClients]', e); }
   const tabs = document.getElementById('client-tabs');
   tabs.innerHTML = '<button class="ct active" onclick="setClient(this,\'all\')">すべて</button>';
-  allClients.forEach(c => {
+  const visibleClients = showEndedInCreatives
+    ? allClients
+    : allClients.filter(c => c.status !== 'クライアント取引終了');
+  visibleClients.forEach(c => {
     const btn = document.createElement('button');
     btn.className = 'ct';
     btn.textContent = c.name.slice(0,3);
@@ -3411,7 +3416,10 @@ async function loadProjects() {
   const tabs = document.getElementById('client-tabs');
   if (tabs) {
     tabs.innerHTML = '<button class="ct active" onclick="setClient(this,\'all\')">すべて</button>';
-    allClients.forEach(c => {
+    const visibleClientsForTabs = showEndedInCreatives
+      ? allClients
+      : allClients.filter(c => c.status !== 'クライアント取引終了');
+    visibleClientsForTabs.forEach(c => {
       const btn = document.createElement('button');
       btn.className = 'ct';
       btn.textContent = c.name.slice(0, 4);
@@ -4154,6 +4162,8 @@ function renderCreatives() {
 
   const _role = effectiveRole();
   const filtered = allCreatives.filter(c => {
+    // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
+    if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
     if (currentClient !== 'all' && c.projects?.clients?.id !== currentClient) return false;
     if (searchText && !c.file_name.toLowerCase().includes(searchText)) return false;
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
@@ -5338,6 +5348,18 @@ function toggleEndedClients() {
   showEndedClients = !showEndedClients;
   setToggleStyle(document.getElementById('toggle-ended-btn'), showEndedClients);
   loadProjects();
+}
+
+function toggleEndedInCreatives() {
+  showEndedInCreatives = !showEndedInCreatives;
+  const btn = document.getElementById('toggle-ended-creatives');
+  if (btn) {
+    btn.classList.toggle('active', showEndedInCreatives);
+    setToggleStyle(btn, showEndedInCreatives);
+  }
+  // クライアントタブと一覧を再描画
+  loadClients();          // タブ再生成
+  renderCreatives();      // 一覧再描画
 }
 
 function clearDateFilter() {
