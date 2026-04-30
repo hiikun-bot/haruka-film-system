@@ -180,6 +180,13 @@ async function runSchemaSync() {
       "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_reason TEXT",
       "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_at TIMESTAMPTZ",
       "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_by UUID",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS mime_type TEXT",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS file_size BIGINT",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_drive_file_id TEXT",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_drive_url TEXT",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_file_size BIGINT",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_status TEXT",
+      "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_processed_at TIMESTAMPTZ",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }

@@ -19,6 +19,88 @@ try {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
+// 動画再生高速化（faststart re-mux）対象判定。
+// MP4/MOV/M4V のみ：moov atom を先頭に移動可能。
+// WebM/MKV/AVI 等は対象外（コンテナ仕様が違う）。
+function shouldFaststart(mimeType, fileName) {
+  if (!ffmpeg) return false;
+  if (!mimeType || !mimeType.startsWith('video/')) return false;
+  return /\.(mp4|mov|m4v)$/i.test(fileName || '');
+}
+
+// 元動画に対して -c copy -movflags +faststart を適用（再エンコード無し・画質完全維持）し、
+// Drive に同フォルダの "<basename>_fast.mp4" としてアップロードして creative_files を更新する。
+// バックグラウンド実行用：Promise を投げっぱなしにし、エラーは driveLog に流す。
+async function processFaststartAsync(opts) {
+  const { creativeFileId, originalBuffer, originalName, parentFolderId, mimeType } = opts;
+  const fs   = require('fs');
+  const os   = require('os');
+  const path = require('path');
+
+  const tmpDir   = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-'));
+  const inputFp  = path.join(tmpDir, originalName.replace(/[^\w.-]/g, '_'));
+  const outName  = originalName.replace(/\.(mp4|mov|m4v)$/i, '_fast.mp4');
+  const outputFp = path.join(tmpDir, outName);
+  const cleanup  = () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(_){} };
+
+  // 失敗ステータスを記録するヘルパ
+  const markFailed = async (msg) => {
+    await supabase.from('creative_files').update({
+      faststart_status: 'failed',
+      faststart_processed_at: new Date().toISOString(),
+    }).eq('id', creativeFileId);
+    driveLog('warn', `faststart失敗: ${msg}`, { creativeFileId });
+  };
+
+  try {
+    fs.writeFileSync(inputFp, originalBuffer);
+
+    await new Promise((resolve, reject) => {
+      ffmpeg(inputFp)
+        .outputOptions(['-c copy', '-movflags +faststart'])
+        .on('end', resolve)
+        .on('error', reject)
+        .save(outputFp);
+    });
+
+    const outBuf  = fs.readFileSync(outputFp);
+    const outSize = outBuf.length;
+
+    // Drive アップロード
+    const drive = await getDriveService();
+    const { PassThrough } = require('stream');
+    const pt = new PassThrough();
+    pt.end(outBuf);
+    const upRes = await drive.files.create({
+      requestBody: { name: outName, parents: [parentFolderId] },
+      media: { mimeType: 'video/mp4', body: pt },
+      fields: 'id, webViewLink',
+      supportsAllDrives: true,
+    });
+    try {
+      await drive.permissions.create({
+        fileId: upRes.data.id,
+        supportsAllDrives: true,
+        requestBody: { role: 'reader', type: 'anyone' },
+      });
+    } catch(_){}
+
+    await supabase.from('creative_files').update({
+      faststart_drive_file_id: upRes.data.id,
+      faststart_drive_url:     upRes.data.webViewLink,
+      faststart_file_size:     outSize,
+      faststart_status:        'done',
+      faststart_processed_at:  new Date().toISOString(),
+    }).eq('id', creativeFileId);
+
+    driveLog('info', `faststart完了`, { creativeFileId, outSize, faststartId: upRes.data.id });
+  } catch (e) {
+    await markFailed(e.message);
+  } finally {
+    cleanup();
+  }
+}
+
 // アップロードログリングバッファ（最新100件）
 const _uploadLogs = [];
 function driveLog(level, msg, extra = {}) {
@@ -1087,6 +1169,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   let driveFileId = null;
   let driveUrl = null;
   let driveError = null;
+  let typeFolderId_ = null; // faststart 後処理で同じフォルダにアップロードするため外側で保持
 
   // Drive ルートフォルダID: system_settings テーブル → env var の優先順
   const rootFolderId = await getDriveRootFolderId();
@@ -1144,6 +1227,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
         typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
       }
       driveLog('info', `タイプフォルダOK: ${typeFolder}`, { id: typeFolderId });
+      typeFolderId_ = typeFolderId; // faststart 後処理で同フォルダにアップロードするため外側に渡す
       // ファイルは typeFolder に直接格納（workFolder は廃止）
 
       // ファイルをアップロード（PassThrough stream で安定化）
@@ -1191,6 +1275,9 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   }
 
   // creative_files テーブルに記録
+  // mime_type / file_size をキャッシュしておくと /files/:fileId/stream で
+  // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる
+  const willFaststart = shouldFaststart(file.mimetype, generated_name || file.originalname);
   const uploadedBy = req.user?.id || null;
   const { data: fileRecord, error: fErr } = await supabase
     .from('creative_files')
@@ -1204,28 +1291,78 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       drive_file_id: driveFileId,
       drive_url: driveUrl,
       uploaded_by: uploadedBy,
+      mime_type: file.mimetype || null,
+      file_size: file.size || file.buffer?.length || null,
+      faststart_status: willFaststart ? 'pending' : 'skipped',
     })
     .select()
     .single();
   if (fErr) return res.status(500).json({ error: fErr.message });
 
   res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });
+
+  // Drive への faststart アップロードはバックグラウンド処理。
+  // res.json() 後に実行することで、ユーザーのアップロード待ち時間を増やさない。
+  // ※ multer のメモリ上の file.buffer はレスポンス後も使えるため、引き渡せる。
+  if (willFaststart && driveFileId && typeFolderId_) {
+    setImmediate(() => {
+      processFaststartAsync({
+        creativeFileId: fileRecord.id,
+        originalBuffer: file.buffer,
+        originalName:   generated_name || file.originalname,
+        parentFolderId: typeFolderId_,
+        mimeType:       file.mimetype,
+      }).catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
+    });
+  }
 });
 
 // Google Drive ファイルストリーミングプロキシ（Range リクエスト対応・動画シーク可能）
+//
+// 高速化:
+//   1. creative_files に mime_type / file_size をキャッシュしている場合、
+//      Range リクエストごとの drive.files.get(fields:mimeType,size) 呼び出しを省略
+//   2. faststart 版（再エンコード無し / -movflags +faststart）が用意されていれば
+//      原本ではなくそちらをサーブする（画質ロスなしで初再生・シーク高速化）
+//   3. ?original=1 を付ければ強制的に原本を返す（検証用）
 router.get('/files/:fileId/stream', async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
+    // creative_files から原本のキャッシュとfaststart情報を取得
+    const { data: cf } = await supabase
+      .from('creative_files')
+      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size')
+      .eq('drive_file_id', req.params.fileId)
+      .maybeSingle();
+
+    const wantsOriginal = req.query.original === '1';
+    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id;
+    const effectiveFileId = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
+    const cachedSize     = useFaststart ? cf.faststart_file_size : cf?.file_size;
+    const cachedMimeType = cf?.mime_type; // -c copy なので原本と同じ
+
     const drive = await getDriveService();
 
-    // メタ情報（mimeType, サイズ）を取得
-    const meta = await drive.files.get({
-      fileId: req.params.fileId,
-      fields: 'mimeType,size',
-      supportsAllDrives: true,
-    });
-    const mimeType = meta.data.mimeType || 'video/mp4';
-    const fileSize = parseInt(meta.data.size || '0', 10);
+    // メタ情報をキャッシュから取得。無ければ Drive に問い合わせて DB に書き戻す。
+    let mimeType = cachedMimeType;
+    let fileSize = (typeof cachedSize === 'number' && cachedSize > 0) ? cachedSize : 0;
+    if (!mimeType || !fileSize) {
+      const meta = await drive.files.get({
+        fileId: effectiveFileId,
+        fields: 'mimeType,size',
+        supportsAllDrives: true,
+      });
+      mimeType = mimeType || meta.data.mimeType || 'video/mp4';
+      fileSize = fileSize || parseInt(meta.data.size || '0', 10);
+      // ベストエフォートで書き戻し（失敗しても配信は継続）
+      if (cf) {
+        const patch = useFaststart
+          ? { faststart_file_size: fileSize }
+          : { mime_type: mimeType, file_size: fileSize };
+        supabase.from('creative_files').update(patch).eq('drive_file_id', req.params.fileId).then(() => {}, () => {});
+      }
+    }
+    if (!mimeType) mimeType = 'video/mp4';
 
     const rangeHeader = req.headers.range;
 
@@ -1245,7 +1382,7 @@ router.get('/files/:fileId/stream', async (req, res) => {
       });
 
       const streamRes = await drive.files.get(
-        { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+        { fileId: effectiveFileId, alt: 'media', supportsAllDrives: true },
         { responseType: 'stream', headers: { Range: `bytes=${start}-${end}` } }
       );
       streamRes.data.pipe(res);
@@ -1258,7 +1395,7 @@ router.get('/files/:fileId/stream', async (req, res) => {
         'Cache-Control':  'private, max-age=3600',
       });
       const streamRes = await drive.files.get(
-        { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+        { fileId: effectiveFileId, alt: 'media', supportsAllDrives: true },
         { responseType: 'stream' }
       );
       streamRes.data.pipe(res);
@@ -1268,6 +1405,91 @@ router.get('/files/:fileId/stream', async (req, res) => {
     if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
+
+// 既存ファイルの faststart 化（バックフィル）
+// 対象: creative_files の動画で faststart_drive_file_id 未設定のもの
+// 管理者のみ実行可。指定 creative_file id 単体 or pending 全件 ?all=1。
+router.post('/creatives/files/:id/faststart', requireAuth, async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+  if (!ffmpeg) return res.status(503).json({ error: 'FFmpeg未インストール' });
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+
+  const targetIds = [];
+  if (req.params.id === 'all') {
+    const limit = Math.min(parseInt(req.query.limit) || 5, 20);
+    const { data: rows } = await supabase
+      .from('creative_files')
+      .select('id, generated_name, mime_type, faststart_status, drive_file_id')
+      .or('faststart_status.is.null,faststart_status.eq.pending,faststart_status.eq.failed')
+      .not('drive_file_id', 'is', null)
+      .limit(limit);
+    (rows || []).forEach(r => {
+      if (shouldFaststart(r.mime_type || 'video/mp4', r.generated_name)) targetIds.push(r.id);
+    });
+  } else {
+    targetIds.push(req.params.id);
+  }
+  if (!targetIds.length) return res.json({ dispatched: 0, message: '対象ファイルがありません' });
+
+  for (const fileId of targetIds) {
+    setImmediate(() => backfillFaststart(fileId).catch(err => {
+      driveLog('error', `backfill 失敗 [${fileId}]: ${err?.message}`);
+    }));
+  }
+  res.json({ dispatched: targetIds.length, ids: targetIds });
+});
+
+// 既存 Drive ファイルから faststart 版を作って Drive にアップロードし、creative_files を更新する。
+async function backfillFaststart(creativeFileId) {
+  const { data: cf, error } = await supabase
+    .from('creative_files')
+    .select('id, drive_file_id, generated_name, mime_type')
+    .eq('id', creativeFileId).maybeSingle();
+  if (error || !cf || !cf.drive_file_id) {
+    driveLog('warn', `backfill: 対象なし [${creativeFileId}]`);
+    return;
+  }
+  // 進行中マーク
+  await supabase.from('creative_files').update({ faststart_status: 'processing' }).eq('id', creativeFileId);
+
+  const drive = await getDriveService();
+
+  // 親フォルダID取得（faststart 版を同フォルダにアップロードするため）
+  const meta = await drive.files.get({
+    fileId: cf.drive_file_id,
+    fields: 'parents,mimeType,size',
+    supportsAllDrives: true,
+  });
+  const parentFolderId = meta.data.parents?.[0];
+  if (!parentFolderId) {
+    await supabase.from('creative_files').update({ faststart_status: 'failed' }).eq('id', creativeFileId);
+    driveLog('warn', `backfill: 親フォルダ不明 [${creativeFileId}]`);
+    return;
+  }
+  const driveMime = meta.data.mimeType || cf.mime_type || 'video/mp4';
+
+  // ファイル本体をメモリにダウンロード
+  const dlRes = await drive.files.get(
+    { fileId: cf.drive_file_id, alt: 'media', supportsAllDrives: true },
+    { responseType: 'arraybuffer' }
+  );
+  const buf = Buffer.from(dlRes.data);
+
+  // mime_type / file_size のキャッシュも一緒に埋める
+  await supabase.from('creative_files').update({
+    mime_type: driveMime,
+    file_size: parseInt(meta.data.size || '0', 10) || buf.length,
+  }).eq('id', creativeFileId);
+
+  // 共通の faststart 処理にバトンタッチ
+  await processFaststartAsync({
+    creativeFileId,
+    originalBuffer: buf,
+    originalName:   cf.generated_name,
+    parentFolderId,
+    mimeType:       driveMime,
+  });
+}
 
 // 画質変換ストリーミング（FFmpeg経由）
 // GET /files/:fileId/stream/transcode?height=720
