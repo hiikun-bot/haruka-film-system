@@ -2971,6 +2971,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <textarea class="form-input" id="cd-comment-field" rows="4" style="resize:vertical" placeholder="コメントを入力..."></textarea>
       </div>
 
+      <!-- メモ（チームメンバーで共有: creatives.memo）。ce-note (note) は管理用メモで別カラム -->
+      <div class="form-group" style="margin-bottom:18px">
+        <label class="form-label" style="display:flex;align-items:center;gap:8px">
+          📝 メモ
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（チームメンバーで共有）</span>
+        </label>
+        <textarea class="form-input" id="cd-memo" rows="2" style="resize:vertical" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:6px">
+          <button class="btn" onclick="saveCreativeDetailMemo()" style="font-size:12px;padding:6px 14px">メモを保存</button>
+        </div>
+      </div>
+
       <!-- 編集者の返信コメント（後修正ステータスのみ） -->
       <div class="form-group" id="cd-editor-reply-group" style="display:none;margin-bottom:18px">
         <label class="form-label" id="cd-editor-reply-label">連絡・確認事項</label>
@@ -9802,6 +9814,9 @@ async function openCreativeDetail(id) {
   if (_noteEl) _noteEl.value = '';
   const _replyEl = document.getElementById('cd-editor-reply');
   if (_replyEl) _replyEl.value = '';
+  // メモ（チーム共有用 creatives.memo）
+  const _memoEl = document.getElementById('cd-memo');
+  if (_memoEl) _memoEl.value = c.memo || '';
   updateCreativeCommentLabel(c.status);
 
   // ステップインジケーター
@@ -12113,6 +12128,32 @@ async function saveCreativeDetail(overrideStatus) {
   } else {
     const e = await res.json();
     showToast('保存エラー: ' + translateError(e?.error), 'error');
+  }
+}
+
+// 詳細モーダル内のメモのみ単独保存（モーダルは閉じない・状態を変えない）
+async function saveCreativeDetailMemo() {
+  const id = currentCreativeDetail?.id;
+  if (!id) return;
+  const memo = document.getElementById('cd-memo')?.value?.trim() || null;
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e?.error || `HTTP ${res.status}`);
+    }
+    // ローカルキャッシュを更新（再ロード不要）
+    if (currentCreativeDetail) currentCreativeDetail.memo = memo;
+    const cached = allCreatives.find(x => x.id === id);
+    if (cached) cached.memo = memo;
+    if (typeof renderCreatives === 'function') renderCreatives();
+    showToast('メモを保存しました', 'success');
+  } catch (err) {
+    showToast('メモの保存に失敗: ' + (err?.message || err), 'error');
   }
 }
 
