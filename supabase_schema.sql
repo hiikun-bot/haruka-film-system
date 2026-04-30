@@ -83,8 +83,6 @@ CREATE TABLE IF NOT EXISTS projects (
   start_date DATE,
   end_date DATE,
   chatwork_room_id TEXT,
-  slack_workspace_id UUID REFERENCES slack_workspaces(id),
-  slack_channel_id TEXT,
   is_hidden BOOLEAN DEFAULT false,
   seq_counter INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -405,9 +403,6 @@ CREATE TABLE IF NOT EXISTS project_appeal_axes (
 -- projectsテーブルにsyncスイッチ追加
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS sync_products BOOLEAN DEFAULT true;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS sync_appeal_axes BOOLEAN DEFAULT true;
-
--- Slackワークスペースを直接テキストIDで持つ（UUID FKの代替）
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_team_id TEXT;
 
 -- 案件ごとの Slack チャンネル URL（チャンネルURL貼付け方式・通知送信用）
 -- projects レベルで設定があれば clients.slack_channel_url より優先される

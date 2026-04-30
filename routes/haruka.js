@@ -224,7 +224,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
   const {
     client_id, name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
-    chatwork_room_id, slack_team_id, slack_channel_id,
+    chatwork_room_id,
     slack_channel_url,
     deadline_unit, deadline_weekday
   } = req.body;
@@ -242,8 +242,6 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
       start_date: start_date || null,
       end_date: end_date || null,
       chatwork_room_id: chatwork_room_id || null,
-      slack_team_id: slack_team_id || null,
-      slack_channel_id: slack_channel_id || null,
       slack_channel_url: slack_channel_url || null,
       is_hidden: false,
       deadline_unit: deadline_unit || 'monthly',
@@ -260,7 +258,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   const {
     name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
-    chatwork_room_id, slack_team_id, slack_channel_id, is_hidden,
+    chatwork_room_id, is_hidden,
     slack_channel_url,
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday
@@ -275,8 +273,6 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     start_date: start_date || null,
     end_date: end_date || null,
     chatwork_room_id: chatwork_room_id || null,
-    slack_team_id: slack_team_id || null,
-    slack_channel_id: slack_channel_id || null,
     slack_channel_url: slack_channel_url || null,
     is_hidden: is_hidden ?? false,
     updated_at: new Date().toISOString(),
