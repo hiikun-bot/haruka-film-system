@@ -2564,28 +2564,6 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <input class="form-input" id="p-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
             </div>
           </div>
-          <details style="margin-top:14px">
-            <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">詳細設定（旧式の Slack ID 直接指定）</summary>
-            <div style="margin-top:10px">
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;line-height:1.6">
-                旧来のチャンネル別Bot連携で利用していた項目です。新規で設定する場合は上の「Slack チャンネルURL」のみで問題ありません。
-              </div>
-              <div style="display:flex;gap:6px;margin-bottom:6px">
-                <input class="form-input" id="p-slack-url-input" placeholder="Slack URL を貼り付け → 自動入力" style="flex:1;font-size:12px">
-                <button class="btn" onclick="parseSlackUrl()" style="white-space:nowrap">解析</button>
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-                <div>
-                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">ワークスペースID</div>
-                  <input class="form-input" id="p-slack-team-id" placeholder="T○○○（自動）" style="font-family:monospace;font-size:12px">
-                </div>
-                <div>
-                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">チャンネルID</div>
-                  <input class="form-input" id="p-slack-channel-id" placeholder="C01234ABCDE" style="font-family:monospace;font-size:12px">
-                </div>
-              </div>
-            </div>
-          </details>
         </div>
 
       </div><!-- /右カラム -->
@@ -3572,7 +3550,7 @@ async function loadProjects() {
           const pd = [p.producer?.full_name ? p.producer.full_name+' P' : null, p.director?.full_name ? p.director.full_name+' D' : null].filter(Boolean).join(' / ');
           const regDt = p.created_at ? (() => { const dt=new Date(p.created_at); return `${dt.getFullYear()}年${dt.getMonth()+1}月${dt.getDate()}日登録`; })() : '';
           const cwIcon = p.chatwork_room_id ? `<span title="Chatwork: ${p.chatwork_room_id}" style="font-size:11px;background:#E8F5E9;color:#2E7D32;padding:2px 7px;border-radius:5px;font-weight:500">CW</span>` : '';
-          const slIcon = p.slack_channel_id ? `<span title="Slack: ${p.slack_channel_id}" style="font-size:11px;background:#EDE7F6;color:#4527A0;padding:2px 7px;border-radius:5px;font-weight:500">SL</span>` : '';
+          const slIcon = p.slack_channel_url ? `<span title="Slack: ${p.slack_channel_url}" style="font-size:11px;background:#EDE7F6;color:#4527A0;padding:2px 7px;border-radius:5px;font-weight:500">SL</span>` : '';
           return `
           <div class="project-row">
             <div style="flex:1;min-width:0">
@@ -5680,9 +5658,6 @@ function openProjectModal(preClientId) {
   document.getElementById('p-regulation-url').value = '';
   document.getElementById('p-chatwork-room-id').value = '';
   document.getElementById('p-slack-channel-url').value = '';
-  document.getElementById('p-slack-url-input').value = '';
-  document.getElementById('p-slack-team-id').value = '';
-  document.getElementById('p-slack-channel-id').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
   selectDeadlineUnit('monthly');
@@ -5719,9 +5694,6 @@ function openEditProject(p) {
   document.getElementById('p-regulation-url').value = p.regulation_url || '';
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
   document.getElementById('p-slack-channel-url').value = p.slack_channel_url || '';
-  document.getElementById('p-slack-url-input').value = '';
-  document.getElementById('p-slack-team-id').value = p.slack_team_id || '';
-  document.getElementById('p-slack-channel-id').value = p.slack_channel_id || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
 
@@ -6023,8 +5995,6 @@ async function submitProject() {
   const regulation_url = document.getElementById('p-regulation-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
   const slack_channel_url = document.getElementById('p-slack-channel-url').value.trim() || null;
-  const slack_team_id = document.getElementById('p-slack-team-id').value.trim() || null;
-  const slack_channel_id = document.getElementById('p-slack-channel-id').value.trim() || null;
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
   const deadline_unit = document.getElementById('p-deadline-unit').value || 'monthly';
@@ -6049,7 +6019,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, slack_team_id, slack_channel_id, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
+    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -6579,16 +6549,6 @@ function renderEditorDash(today) {
     `<div class="dash-section"><div class="dash-section-title">📋 自分の担当（期限順）</div>${cards}</div>`;
 }
 
-
-// Slack URL → ワークスペースID・チャンネルID 自動解析
-function parseSlackUrl() {
-  const url = document.getElementById('p-slack-url-input').value.trim();
-  // https://app.slack.com/client/T094ST9L5MH/C0ASPJLP66N
-  const m = url.match(/slack\.com\/client\/([A-Z0-9]+)\/([A-Z0-9]+)/);
-  if (!m) { showToast('Slack URLの形式が正しくありません\n例: https://app.slack.com/client/T○○○/C○○○', 'warn'); return; }
-  document.getElementById('p-slack-team-id').value = m[1];
-  document.getElementById('p-slack-channel-id').value = m[2];
-}
 
 async function loadInvoices() {
   await Promise.all([loadMyInvoices(), hasPermission('invoice.all_view') ? loadAdminInvoices() : Promise.resolve()]);
