@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, getEffectiveRole, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -1176,8 +1176,10 @@ router.delete('/assignments/:id', async (req, res) => {
 //   member.list あり → 全員返す（機微情報は member.edit_password 保有者のみ）
 //   member.list なし → 自分1件のみ返す（プロフィール画面のため）
 router.get('/members', requireAuth, async (req, res) => {
-  const canList = await userHasPermission(req.user.role, 'member.list');
-  const canSeeSensitive = await userHasPermission(req.user.role, 'member.edit_password');
+  // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+  const effectiveRole = getEffectiveRole(req);
+  const canList = await userHasPermission(effectiveRole, 'member.list');
+  const canSeeSensitive = await userHasPermission(effectiveRole, 'member.edit_password');
   const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
   if (!canList) {
@@ -1565,7 +1567,8 @@ router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (re
   const targetId = req.params.id;
   const requesterId = req.user.id;
   const isSelf = requesterId === targetId;
-  const isAdmin = await userHasPermission(req.user.role, 'member.edit_password');
+  // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+  const isAdmin = await userHasPermission(getEffectiveRole(req), 'member.edit_password');
   if (!isSelf && !isAdmin) return res.status(403).json({ error: '権限がありません' });
 
   const file = req.file;
@@ -1599,7 +1602,8 @@ router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
   const targetId = req.params.id;
   const requesterId = req.user.id;
   const isSelf = requesterId === targetId;
-  const isAdmin = await userHasPermission(req.user.role, 'member.edit_password');
+  // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+  const isAdmin = await userHasPermission(getEffectiveRole(req), 'member.edit_password');
   if (!isSelf && !isAdmin) return res.status(403).json({ error: '権限がありません' });
 
   const { error } = await supabase
@@ -3644,7 +3648,8 @@ router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res)
 // パスワードリセット（自分自身 or member.edit_password 権限を持つユーザーのみ）
 router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
   const isSelf = req.user.id === req.params.id;
-  const canEditOthers = await userHasPermission(req.user.role, 'member.edit_password');
+  // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
+  const canEditOthers = await userHasPermission(getEffectiveRole(req), 'member.edit_password');
   if (!isSelf && !canEditOthers) return res.status(403).json({ error: '他のユーザーのパスワードを変更する権限がありません' });
   const { newPassword } = req.body;
   if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
