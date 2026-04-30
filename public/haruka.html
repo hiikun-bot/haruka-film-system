@@ -3339,7 +3339,7 @@ async function init() {
   } catch(e) { console.error('[HFS] /auth/me error:', e); }
   // ロール権限をDBからロード（hasPermission の準備）
   await loadRolePermissions();
-  if (isSuperAdmin()) {
+  if (canUseViewAs()) {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
@@ -4920,10 +4920,21 @@ function onRoleChange(role) {
 // ==================== ロール可視性 ====================
 const SUPER_ADMIN_EMAILS = ['hiikun.ascs@gmail.com', 'satoru.takahashi@haruka-film.com'];
 
+// サーバー auth.js の isSuperAdminUser と一致させる:
+// admin ロール かつ SUPER_ADMIN_EMAILS のメールに一致する場合のみ true。
+// VIEW AS（previewRole）の影響は受けず、常に実ユーザーで判定する。
 function isSuperAdmin() {
-  // 常に実際のユーザー権限で判定（プレビューに関係なく）
-  return currentUser && (currentUser.role === 'admin' || SUPER_ADMIN_EMAILS.includes(currentUser.email));
+  if (!currentUser) return false;
+  if (currentUser.role !== 'admin') return false;
+  return SUPER_ADMIN_EMAILS.includes((currentUser.email || '').toLowerCase());
 }
+
+// 旧名互換のための明示的エイリアス（呼び出し元の意図を読みやすくする）
+function isActualSuperAdmin() { return isSuperAdmin(); }
+
+// VIEW AS スイッチャー自体の表示可否。previewRole の影響を受けない実ユーザー判定のみ使う。
+// hasPermission() は effectiveRole() に依存するためここでは使わない（プレビュー中にスイッチャーが消えて戻れなくなる）
+function canUseViewAs() { return isSuperAdmin(); }
 
 // プレビュー中を含む「現在の実効ロール」
 function effectiveRole() {
@@ -5191,6 +5202,17 @@ function isTopAdmin() {
   return effectiveRole() === 'admin';
 }
 
+// ============================================================
+// VIEW AS（ロールプレビュー）について
+// ----------------------------
+// この機能は **フロントエンドの表示プレビューのみ** を切り替えます。
+// サーバー側 (routes/haruka.js, auth.js) の権限チェックは常に
+// 実ユーザー (req.user.role) で判定されており、previewRole は届きません。
+// したがって VIEW AS 中であってもAPI上の権限は実ユーザーのままで、
+// 隠し忘れたボタンや直接関数実行を行えば管理操作が通る可能性があります。
+// 「実ロールでこう見える」を厳密に再現したい場合はサーバー側で
+// X-View-As ヘッダなどに対応する必要がありますが、現状未実装です。
+// ============================================================
 // ロールプレビュー切り替え
 function setPreviewRole(role) {
   previewRole = role;
@@ -5219,6 +5241,15 @@ function setPreviewRole(role) {
     if (typeof loadInvoices === 'function') loadInvoices();
   }
   if (document.getElementById('page-knowledge')?.classList.contains('active') && typeof loadKnowledgePage === 'function') loadKnowledgePage();
+  // VIEW AS 切替時は master ページも再描画（最高管理者専用タブが previewRole 切替で見えなくなるべきため）
+  if (document.getElementById('page-master')?.classList.contains('active')) {
+    // 現在開いているマスターサブページを再ロード。サブページごとに renderXxxPage が定義されているのでそれを再呼び出し
+    if (typeof reloadCurrentMasterPage === 'function') {
+      reloadCurrentMasterPage();
+    } else if (typeof loadMasterPage === 'function') {
+      loadMasterPage();
+    }
+  }
   renderCreatives();
 }
 
@@ -5242,10 +5273,15 @@ function applyRoleBasedUI() {
   if (masterNav) masterNav.style.display = hasPermission('master.page') ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
   if (drawerMaster) drawerMaster.style.display = hasPermission('master.page') ? '' : 'none';
+  // VIEW AS 中は最高管理者専用メニューを隠す（実ユーザーが super admin でも previewRole 設定中は非表示）
+  const showSuperAdminOnly = isSuperAdmin() && !previewRole;
   const userStatsNav = document.getElementById('mnav-userstats');
-  if (userStatsNav) userStatsNav.style.display = isSuperAdmin() ? '' : 'none';
+  if (userStatsNav) userStatsNav.style.display = showSuperAdminOnly ? '' : 'none';
   const rolesNav = document.getElementById('mnav-roles');
-  if (rolesNav) rolesNav.style.display = isSuperAdmin() ? '' : 'none';
+  if (rolesNav) rolesNav.style.display = showSuperAdminOnly ? '' : 'none';
+  // master 画面のシステム設定タブも VIEW AS 中は非表示にする（loadMasterPage 側でも isTopAdmin で判定するが、ここでも同期）
+  const sysconfigNav = document.getElementById('mnav-sysconfig');
+  if (sysconfigNav && previewRole) sysconfigNav.style.display = 'none';
   // ドロワーのユーザー情報
   const drawerUser = document.getElementById('nav-drawer-user');
   if (drawerUser && currentUser) {
