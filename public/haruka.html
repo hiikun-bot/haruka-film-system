@@ -12682,15 +12682,26 @@ async function deleteSelectedCreatives() {
   const checked = document.querySelectorAll('.creative-row-check:checked');
   if (!checked.length) return;
   const ids = Array.from(checked).map(cb => cb.dataset.id);
-  if (!confirm(`選択した ${ids.length} 件のクリエイティブを削除しますか？\nこの操作は取り消せません。`)) return;
+  if (!confirm(
+    `選択した ${ids.length} 件のクリエイティブを削除しますか？\n\n` +
+    `※ DB 側のクリエイティブ情報は即削除されます。\n` +
+    `※ Google Drive 上のファイルは「【削除】<元のファイル名>」にリネームされます。\n` +
+    `   後ほど Drive 上で確認して手動で削除してください（誤削除防止）。`
+  )) return;
   const res = await apiFetch(`${API}/creatives`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
   });
   if (res.ok) {
+    const j = await res.json().catch(() => ({}));
     document.getElementById('creative-check-all').checked = false;
     document.getElementById('creative-delete-bar').style.display = 'none';
+    const r = j?.drive_rename || {};
+    let msg = `${j?.deleted || ids.length} 件のクリエイティブを削除しました`;
+    if (r.renamed > 0) msg += `（Driveファイル ${r.renamed} 件を「【削除】」付きにリネーム）`;
+    if (r.failed > 0)  msg += ` / Driveリネーム失敗 ${r.failed} 件`;
+    showToast(msg, 'success');
     await loadCreatives();
   } else {
     const e = await res.json().catch(() => ({}));
