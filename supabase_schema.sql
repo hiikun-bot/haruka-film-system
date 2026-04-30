@@ -591,6 +591,11 @@ CREATE TABLE IF NOT EXISTS client_configs (
   updated_at                 TIMESTAMPTZ DEFAULT now()
 );
 
+-- 誕生日の年（および年齢）を非表示にしたいユーザー向けのフラグ
+-- false（デフォルト）: 通常通り年月日を表示し、年齢も表示してOK
+-- true: 月日のみ表示。年齢計算・表示は行わない
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_birth_year BOOLEAN DEFAULT false;
+
 -- ==================== workspace_id カラム追加 ====================
 ALTER TABLE users             ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
 ALTER TABLE clients           ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;

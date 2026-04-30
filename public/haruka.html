@@ -1914,6 +1914,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div class="form-group" style="margin-bottom:4px">
           <label class="form-label">誕生日</label>
           <input class="form-input" id="m-birthday" type="date" style="font-size:14px;padding:10px 14px">
+          <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--text-muted);cursor:pointer">
+            <input type="checkbox" id="m-hide-birth-year" style="cursor:pointer">
+            年齢・生年月日の年を非表示にする（月日のみ表示）
+          </label>
         </div>
       </div>
 
@@ -5035,6 +5039,7 @@ function openEditMember(m) {
   document.getElementById('m-slack').value = m.slack_dm_id || '';
   document.getElementById('m-chatwork').value = m.chatwork_dm_id || '';
   document.getElementById('m-birthday').value = m.birthday ? m.birthday.slice(0,10) : '';
+  { const cb = document.getElementById('m-hide-birth-year'); if (cb) cb.checked = !!m.hide_birth_year; }
   // 稼働時間（新JSONB形式、旧単一カラムもフォールバック対応）
   const wdRanges = m.weekday_hours || (m.weekday_start != null ? [{from: m.weekday_start, to: m.weekday_end ?? 18}] : [{from:9,to:18}]);
   const weRanges = m.weekend_hours || (m.weekend_start != null ? [{from: m.weekend_start, to: m.weekend_end ?? 17}] : null);
@@ -5227,6 +5232,7 @@ async function submitMember() {
   const slack_dm_id = document.getElementById('m-slack').value.trim();
   const chatwork_dm_id = document.getElementById('m-chatwork').value.trim();
   const birthday = document.getElementById('m-birthday').value || null;
+  const hide_birth_year = !!document.getElementById('m-hide-birth-year')?.checked;
   const weekday_hours = collectRangesFromContainer(document.getElementById('m-weekday-ranges'));
   const weekendOff = document.getElementById('m-weekend-off').checked;
   const weekend_hours = weekendOff ? null : collectRangesFromContainer(document.getElementById('m-weekend-ranges'));
@@ -5242,7 +5248,7 @@ async function submitMember() {
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
   if (!full_name) { showToast('名前は必須です', 'warn'); return; }
-  const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
+  const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, hide_birth_year, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
   let res;
   if (id) {
     res = await apiFetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
@@ -6258,11 +6264,13 @@ async function loadDashboardBirthdays() {
     const cards = shown.map(p => {
       const daysLabel = p.days_until === 1 ? '明日' : `あと${p.days_until}日`;
       const urgent = p.days_until <= 7 ? ' urgent' : '';
+      // 年齢非表示でなく、年齢が分かる場合のみ「N歳になる」を併記
+      const ageLabel = (!p.hide_birth_year && p.age_turning) ? `（${p.age_turning}歳）` : '';
       return `<div class="bday-card">
         ${avatarHtml(p, 'bday-avatar')}
         <div style="flex:1;min-width:0">
           <div class="bday-name">${esc(p.full_name)}</div>
-          <div class="bday-meta">${p.month}/${p.day}</div>
+          <div class="bday-meta">${p.month}/${p.day}${ageLabel}</div>
         </div>
         <span class="bday-days${urgent}">${daysLabel}</span>
       </div>`;

@@ -628,11 +628,19 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
 
 // ダッシュボード: 誕生日一覧（今日〜30日先）
 router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
+  // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行
+  let { data, error } = await supabase
     .from('users')
-    .select('id, full_name, birthday, avatar_url, role')
+    .select('id, full_name, birthday, avatar_url, role, hide_birth_year')
     .eq('is_active', true)
     .not('birthday', 'is', null);
+  if (error && /column .+ does not exist/.test(error.message || '')) {
+    ({ data, error } = await supabase
+      .from('users')
+      .select('id, full_name, birthday, avatar_url, role')
+      .eq('is_active', true)
+      .not('birthday', 'is', null));
+  }
   if (error) return res.status(500).json({ error: error.message });
 
   const today = new Date();
@@ -660,14 +668,17 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
     }
     const days_until = Math.round((next - today) / MS_PER_DAY);
     const is_today = (month === todayM && day === todayD);
-    const age_turning = birthY ? (nextYear - birthY) : null;
+    const hideYear = !!u.hide_birth_year;
+    // 年非表示のユーザーは年・年齢系は返さない（フロントへ漏らさない）
+    const age_turning = (hideYear || !birthY) ? null : (nextYear - birthY);
     return {
       id: u.id,
       full_name: u.full_name,
-      birthday: u.birthday,
+      birthday: hideYear ? null : u.birthday, // 生年月日そのものも年非表示なら返さない
       month, day,
       days_until,
       is_today,
+      hide_birth_year: hideYear,
       avatar_url: u.avatar_url || null,
       role: u.role,
       age_turning
@@ -1792,7 +1803,7 @@ router.get('/members', requireAuth, async (req, res) => {
   const effectiveRole = getEffectiveRole(req);
   const canList = await userHasPermission(effectiveRole, 'member.list');
   const canSeeSensitive = await userHasPermission(effectiveRole, 'member.edit_password');
-  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
+  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url, hide_birth_year';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
   if (!canList) {
     // 自分1件のみ（機微情報フル）
@@ -2060,7 +2071,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     full_name, nickname, role, job_type, rank,
     team_id, slack_dm_id, chatwork_dm_id,
     is_active, left_at, left_reason,
-    birthday, weekday_hours, weekend_hours, note,
+    birthday, hide_birth_year, weekday_hours, weekend_hours, note,
     bank_name, bank_code, branch_name, branch_code,
     account_type, account_number, account_holder_kana,
     phone, postal_code, address
@@ -2080,6 +2091,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   // → producer/PD が下位メンバーの口座情報を書き換えられないよう分離
   if (isSelf || isAdmin) {
     updateData.birthday = birthday || null;
+    if (hide_birth_year !== undefined) updateData.hide_birth_year = !!hide_birth_year;
     updateData.bank_name = bank_name || null;
     updateData.bank_code = bank_code || null;
     updateData.branch_name = branch_name || null;
