@@ -657,7 +657,7 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','creative.rank_price_column',true),('producer','creative.rank_price_column',true),('producer_director','creative.rank_price_column',true),('director','creative.rank_price_column',true),
   ('admin','creative.csv_import',true),('secretary','creative.csv_import',true),('producer','creative.csv_import',true),('producer_director','creative.csv_import',true),
   -- メンバー
-  ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),
+  ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),('editor','member.list',true),('designer','member.list',true),
   ('admin','member.edit_password',true),('secretary','member.edit_password',true),
   ('admin','member.deactivate',true),('secretary','member.deactivate',true),
   ('admin','member.delete',true),
@@ -672,7 +672,7 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','master.sys_config',true),
   -- システム
   ('admin','system.view_as',true)
-ON CONFLICT (role, permission_key) DO NOTHING;
+ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
 -- ==================== 請求書明細：自由編集対応（Step 1） ====================
 -- invoice_items に明細行として必要な列を追加（既存の creative_id 紐付け行とも共存）
