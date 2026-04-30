@@ -2124,13 +2124,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="margin-top:20px">
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">
-              対応チーム
-              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">複数選択可。先頭が既定チームになります</span>
+              対応チーム（複数選択可・先頭が既定）
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">先頭のチームが既定チームになります</span>
             </label>
-            <div id="cl-teams-picker" style="display:flex;flex-wrap:wrap;gap:6px;border:1px solid var(--border);border-radius:8px;padding:8px;min-height:40px;background:#fff"></div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.6">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="position:relative">
+                <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px">🔍</span>
+                <input type="text" id="cl-teams-search" placeholder="チーム名で検索..." class="form-input" style="font-size:13px;padding-left:32px">
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-muted)">
+                <span id="cl-teams-counter">0 件選択中 / 全 0 件</span>
+                <a href="#" id="cl-teams-select-all" style="color:var(--em-dark);font-size:12px;text-decoration:none">すべて選択</a>
+              </div>
+              <div id="cl-teams-list" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px;background:#fff"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6">
               クリエイティブ追加時、選択した案件のクライアントに紐付くチームのうち <b>先頭のチーム</b> が自動セットされます。<br>
-              並び順を変えたい場合は、対象チップを一度外してから再度クリックすると末尾に追加されます。
+              並び順を変えたい場合は、対象を一度外してから再度チェックすると末尾に追加されます。
             </div>
           </div>
         </div>
@@ -3600,34 +3610,72 @@ function toggleClient(id) {
 // クライアント編集モーダルで選択中のチームID（順序保持）
 let _editingClientTeamIds = [];
 
-function renderClientTeamsPicker() {
-  const wrap = document.getElementById('cl-teams-picker');
-  if (!wrap) return;
-  const selected = Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [];
-  const teams = Array.isArray(allTeams) ? allTeams : [];
-  if (!teams.length) {
-    wrap.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 6px">チームが登録されていません</div>';
-    return;
+function renderClientTeamsPicker(selected) {
+  if (Array.isArray(selected)) {
+    _editingClientTeamIds = [...selected];
+  } else if (!Array.isArray(_editingClientTeamIds)) {
+    _editingClientTeamIds = [];
   }
-  // 表示順: 選択中（順序保持） → 未選択（team_code順）
-  const selectedOrdered = selected.map(id => teams.find(t => t.id === id)).filter(Boolean);
-  const unselected = teams
-    .filter(t => !selected.includes(t.id))
-    .sort((a,b) => (a.team_code||'').localeCompare(b.team_code||''));
-  const renderChip = (t, isSel, idx) => {
-    const label = `${t.team_code || ''}${t.team_name ? ' / ' + t.team_name : ''}`;
-    const badge = isSel
-      ? `<span style="display:inline-block;font-size:10px;background:rgba(255,255,255,0.25);padding:1px 6px;border-radius:8px;margin-right:6px;font-weight:600">${idx === 0 ? '既定' : (idx + 1)}</span>`
-      : '';
-    const style = isSel
-      ? 'background:var(--em);color:#fff;border-color:var(--em)'
-      : 'background:#fff;color:var(--text);border-color:var(--border)';
-    return `<button type="button" class="btn-sm" style="${style};border:1px solid;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer" onclick="toggleClientTeam('${t.id}')">${badge}${esc(label)}</button>`;
-  };
-  wrap.innerHTML = [
-    ...selectedOrdered.map((t, i) => renderChip(t, true, i)),
-    ...unselected.map(t => renderChip(t, false, -1)),
-  ].join('');
+  const search = document.getElementById('cl-teams-search');
+  if (search) {
+    if (Array.isArray(selected)) search.value = '';
+    search.oninput = renderClTeamsList;
+  }
+  const selectAll = document.getElementById('cl-teams-select-all');
+  if (selectAll) {
+    selectAll.onclick = (e) => {
+      e.preventDefault();
+      const teams = Array.isArray(allTeams) ? allTeams : [];
+      const allIds = teams.map(t => t.id);
+      const allSelected = allIds.length > 0 && _editingClientTeamIds.length === allIds.length;
+      if (allSelected) {
+        _editingClientTeamIds = [];
+      } else {
+        // 既存選択順を保持しつつ、未選択を末尾に追加
+        const remaining = allIds.filter(id => !_editingClientTeamIds.includes(id));
+        _editingClientTeamIds = [..._editingClientTeamIds, ...remaining];
+      }
+      renderClTeamsList();
+    };
+  }
+  renderClTeamsList();
+}
+
+function renderClTeamsList() {
+  const list = document.getElementById('cl-teams-list');
+  if (!list) return;
+  const teams = Array.isArray(allTeams) ? allTeams : [];
+  const search = (document.getElementById('cl-teams-search')?.value || '').toLowerCase();
+  // 表示順: team_code 昇順
+  const sorted = [...teams].sort((a,b) => (a.team_code||'').localeCompare(b.team_code||''));
+  const filtered = sorted.filter(t => {
+    if (!search) return true;
+    const hay = `${t.team_code || ''} ${t.team_name || ''}`.toLowerCase();
+    return hay.includes(search);
+  });
+  if (!teams.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px">チームが登録されていません</div>';
+  } else if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px">該当なし</div>';
+  } else {
+    list.innerHTML = filtered.map(t => {
+      const checked = _editingClientTeamIds.includes(t.id);
+      const order = _editingClientTeamIds.indexOf(t.id);
+      const badge = checked && order === 0
+        ? '<span style="font-size:10px;background:var(--em);color:#fff;padding:2px 6px;border-radius:8px;margin-left:6px;font-weight:600">既定</span>'
+        : '';
+      const orderText = checked
+        ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">#${order + 1}</span>`
+        : '';
+      const label = `${esc(t.team_code || '')}${t.team_name ? ' / ' + esc(t.team_name) : ''}`;
+      return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:6px" onmouseover="this.style.background='rgba(0,0,0,0.03)'" onmouseout="this.style.background=''">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleClientTeam('${t.id}')" style="width:16px;height:16px;cursor:pointer">
+        <span style="font-size:13px">${label}</span>${badge}${orderText}
+      </label>`;
+    }).join('');
+  }
+  const counter = document.getElementById('cl-teams-counter');
+  if (counter) counter.textContent = `${_editingClientTeamIds.length} 件選択中 / 全 ${teams.length} 件`;
 }
 
 function toggleClientTeam(teamId) {
@@ -3638,7 +3686,7 @@ function toggleClientTeam(teamId) {
   } else {
     _editingClientTeamIds.push(teamId);
   }
-  renderClientTeamsPicker();
+  renderClTeamsList();
 }
 
 function openEditClient(id) {
@@ -3660,8 +3708,7 @@ function openEditClient(id) {
   document.getElementById('cl-tiktok').value    = c.tiktok_url    || '';
   document.getElementById('cl-line').value      = c.line_url      || '';
   document.getElementById('cl-other').value     = c.other_url     || '';
-  _editingClientTeamIds = Array.isArray(c.team_ids) ? [...c.team_ids] : [];
-  renderClientTeamsPicker();
+  renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
   switchClientTab('basic');
   openModal('modal-client');
@@ -3678,8 +3725,7 @@ function openNewClientModal() {
   document.getElementById('cl-status').value = '提案中';
   ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  _editingClientTeamIds = [];
-  renderClientTeamsPicker();
+  renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
   switchClientTab('basic');
   openModal('modal-client');
