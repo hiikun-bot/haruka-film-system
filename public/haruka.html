@@ -2740,6 +2740,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ⚙️ システム設定
         </div>
+        <div id="mnav-slack_workspaces" class="master-nav-item" onclick="selectMasterNav('slack_workspaces')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          🔗 Slackワークスペース
+        </div>
       </div>
     </div>
     <!-- 右コンテンツ -->
@@ -5573,6 +5577,9 @@ function applyRoleBasedUI() {
   // master 画面のシステム設定タブも VIEW AS 中は非表示にする（loadMasterPage 側でも isTopAdmin で判定するが、ここでも同期）
   const sysconfigNav = document.getElementById('mnav-sysconfig');
   if (sysconfigNav && previewRole) sysconfigNav.style.display = 'none';
+  // Slack ワークスペース管理タブも最高管理者専用
+  const slackWsNav = document.getElementById('mnav-slack_workspaces');
+  if (slackWsNav) slackWsNav.style.display = showSuperAdminOnly ? '' : 'none';
   // ドロワーのユーザー情報
   const drawerUser = document.getElementById('nav-drawer-user');
   if (drawerUser && currentUser) {
@@ -8481,7 +8488,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','checklist','roles','userstats','sysconfig'].forEach(t => {
+  ['generic','general','products','appeal_axes','checklist','roles','userstats','sysconfig','slack_workspaces'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -8507,6 +8514,8 @@ function selectMasterNav(type) {
     renderUserStatsPage();
   } else if (type === 'sysconfig') {
     renderSysconfigPage();
+  } else if (type === 'slack_workspaces') {
+    renderSlackWorkspacesPage();
   }
 }
 
@@ -8970,6 +8979,113 @@ async function saveSysDrive() {
     const e = await res.json();
     showToast('エラー: ' + translateError(e?.error), 'error');
   }
+}
+
+// ==================== Slack ワークスペース管理 ====================
+async function renderSlackWorkspacesPage() {
+  const el = document.getElementById('master-content');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  let res;
+  try {
+    res = await apiFetch(`${API}/slack-workspaces`);
+  } catch (e) {
+    el.innerHTML = `<div style="color:#E24B4A;padding:20px">読み込み失敗: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!res.ok) {
+    el.innerHTML = `<div style="color:#E24B4A;padding:20px">読み込み失敗: HTTP ${res.status}</div>`;
+    return;
+  }
+  const list = await res.json();
+
+  el.innerHTML = `
+    <div style="max-width:900px">
+      <div style="font-size:15px;font-weight:600;margin-bottom:4px">🔗 Slack ワークスペース連携</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:20px">
+        各ワークスペースで Slack App を作成し Bot Token を発行 → ここに登録します。クライアント編集画面で Slack チャンネルURLを設定すると、この Token を使って通知が投稿されます。
+      </div>
+
+      <div class="card" style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">新規追加</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;align-items:end">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label" style="font-size:11px">ワークスペース名</label>
+            <input class="form-input" id="sw-new-name" placeholder="HARUKA FILM">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label" style="font-size:11px">Team ID</label>
+            <input class="form-input" id="sw-new-team-id" placeholder="T094ST9L5MH">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label" style="font-size:11px">Bot Token</label>
+            <input class="form-input" id="sw-new-bot-token" placeholder="xoxb-..." type="password">
+          </div>
+          <button class="btn btn-primary" onclick="createSlackWorkspace()">追加</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">登録済み (${list.length}件)</div>
+        ${list.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;padding:12px">未登録</div>' : `
+          <table class="table" style="width:100%">
+            <thead>
+              <tr>
+                <th style="text-align:left">ワークスペース名</th>
+                <th style="text-align:left">Team ID</th>
+                <th style="text-align:left">Bot Token</th>
+                <th style="text-align:right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map(w => `
+                <tr>
+                  <td><input class="form-input" value="${esc(w.name || '')}" id="sw-name-${w.id}" style="font-size:13px"></td>
+                  <td><input class="form-input" value="${esc(w.team_id || '')}" id="sw-team-${w.id}" style="font-size:13px;font-family:monospace"></td>
+                  <td><input class="form-input" value="${esc(w.bot_token || '')}" id="sw-token-${w.id}" type="password" style="font-size:13px;font-family:monospace"></td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <button class="btn btn-sm" onclick="updateSlackWorkspace('${w.id}')" style="margin-right:4px">保存</button>
+                    <button class="btn btn-sm" onclick="deleteSlackWorkspace('${w.id}')" style="color:#E24B4A">削除</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+async function createSlackWorkspace() {
+  const name = document.getElementById('sw-new-name').value.trim();
+  const team_id = document.getElementById('sw-new-team-id').value.trim();
+  const bot_token = document.getElementById('sw-new-bot-token').value.trim();
+  if (!name || !team_id || !bot_token) { alert('全項目入力してください'); return; }
+  const res = await apiFetch(`${API}/slack-workspaces`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, team_id, bot_token }),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); alert('追加失敗: ' + (e.error || res.status)); return; }
+  renderSlackWorkspacesPage();
+}
+
+async function updateSlackWorkspace(id) {
+  const name = document.getElementById(`sw-name-${id}`).value.trim();
+  const team_id = document.getElementById(`sw-team-${id}`).value.trim();
+  const bot_token = document.getElementById(`sw-token-${id}`).value.trim();
+  const res = await apiFetch(`${API}/slack-workspaces/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, team_id, bot_token }),
+  });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); alert('保存失敗: ' + (e.error || res.status)); return; }
+  alert('保存しました');
+}
+
+async function deleteSlackWorkspace(id) {
+  if (!confirm('このワークスペース連携を削除しますか？該当するクライアントの通知が止まります。')) return;
+  const res = await apiFetch(`${API}/slack-workspaces/${id}`, { method: 'DELETE' });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); alert('削除失敗: ' + (e.error || res.status)); return; }
+  renderSlackWorkspacesPage();
 }
 
 function renderMasterPage() {
