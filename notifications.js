@@ -133,8 +133,8 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const fileName  = detail.file_name;
 
   // 担当者の解決
-  const editors  = (detail.creative_assignments || [])
-    .filter(a => a.role === 'editor' || a.role === 'designer' || a.role === 'director_as_editor')
+  // 担当者全員（role に関わらず）。重複排除はしない（後段で seen Set で一括管理）
+  const assignees = (detail.creative_assignments || [])
     .map(a => a.users)
     .filter(Boolean);
   const director = await loadUser(project?.director_id);
@@ -178,13 +178,13 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   else if (newStatus === 'Dチェック後修正') {
     const slackBody = `🔁 Dチェック修正依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
     const cwBody = `[info][title]🔁 Dチェック修正依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
-    for (const ed of editors) await sendNotif(ed, slackBody, cwBody);
+    for (const ed of assignees) await sendNotif(ed, slackBody, cwBody);
   }
   // 4) → Pチェック後修正
   else if (newStatus === 'Pチェック後修正') {
     const slackBody = `🔁 Pチェック修正依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
     const cwBody = `[info][title]🔁 Pチェック修正依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
-    const targets = [...editors, director].filter(Boolean);
+    const targets = [...assignees, director].filter(Boolean);
     const seen = new Set();
     for (const t of targets) {
       if (seen.has(t.id)) continue;
@@ -224,11 +224,11 @@ https://drive.google.com/...
   }
   // 6) → 納品（クリエイター向けにお祝いメッセージ）
   //    PR #67 で削除されていたが、クリエイターは「クライアントOKが出たかどうか」を
-  //    把握する手段がほぼ唯一この通知のため復活。editors のみに送る。
+  //    把握する手段がほぼ唯一この通知のため復活。assignees（担当者全員）に送る。
   else if (newStatus === '納品') {
     const slackBody = `🎉 クライアントOK！納品完了\nファイル: ${slackName}\nお疲れ様でした！クライアントから承認をいただき納品となりました ☺️✨`;
     const cwBody = `[info][title]🎉 クライアントOK！納品完了[/title]ファイル: ${fileName}${cwUrlLine}\nお疲れ様でした！\nクライアントから承認をいただき納品となりました ☺️✨[/info]`;
-    for (const ed of editors) await sendNotif(ed, slackBody, cwBody);
+    for (const ed of assignees) await sendNotif(ed, slackBody, cwBody);
   }
 }
 
