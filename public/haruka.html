@@ -6609,7 +6609,7 @@ async function loadMyInvoices() {
         ${inv.status === 'draft' ? `<button class="btn-primary btn-sm" onclick="submitInvoice('${inv.id}')">提出する</button>` : ''}
         ${inv.status === 'rejected' ? `<button class="btn btn-sm" onclick="submitInvoice('${inv.id}')">再提出する</button>` : ''}
         ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" onclick="editInvoice('${inv.id}')">修正</button>` : ''}
-        ${inv.status === 'draft' ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
+        ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
         <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
       </div>
     </div>`;
