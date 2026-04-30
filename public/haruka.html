@@ -12576,8 +12576,14 @@ async function deleteSelectedCreatives() {
     document.getElementById('creative-delete-bar').style.display = 'none';
     await loadCreatives();
   } else {
-    const e = await res.json();
-    showToast('削除エラー: ' + translateError(e?.error), 'error');
+    const e = await res.json().catch(() => ({}));
+    const raw = String(e?.error || '');
+    // 請求書紐付きで 409 が返ったときは複数行の詳細を alert で表示（toast では読めない）
+    if (res.status === 409 && raw.includes('\n')) {
+      alert('クリエイティブを削除できません\n\n' + raw);
+    } else {
+      showToast('削除エラー: ' + translateError(raw), 'error');
+    }
   }
 }
 

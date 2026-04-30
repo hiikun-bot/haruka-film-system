@@ -976,6 +976,40 @@ router.put('/creatives/:id', async (req, res) => {
 router.delete('/creatives', requireAuth, async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids は必須です' });
+
+  // 請求書明細に紐付いていないか事前チェック（FK 違反を分かりやすいメッセージに変換）
+  const { data: linkedItems, error: linkErr } = await supabase
+    .from('invoice_items')
+    .select('creative_id, invoice:invoices(invoice_number, status), creative:creatives(file_name)')
+    .in('creative_id', ids);
+  if (linkErr) return res.status(500).json({ error: linkErr.message });
+
+  if (linkedItems && linkedItems.length > 0) {
+    // クリエイティブ単位にまとめて、紐付き請求書を列挙
+    const byCreative = new Map();
+    for (const it of linkedItems) {
+      const cid = it.creative_id;
+      if (!byCreative.has(cid)) {
+        byCreative.set(cid, {
+          file_name: it.creative?.file_name || '(不明)',
+          invoices: new Set(),
+        });
+      }
+      const num = it.invoice?.invoice_number || '不明';
+      const st  = it.invoice?.status === 'draft' ? '下書き' : '提出済';
+      byCreative.get(cid).invoices.add(`${num}（${st}）`);
+    }
+    const lines = Array.from(byCreative.values()).map(v =>
+      `・${v.file_name} → ${Array.from(v.invoices).join(' / ')}`
+    );
+    return res.status(409).json({
+      error:
+        '以下のクリエイティブは請求書の明細に登録されているため削除できません。\n' +
+        '先に該当請求書から明細を外す（または下書き請求書を削除する）必要があります。\n\n' +
+        lines.join('\n'),
+    });
+  }
+
   // 関連レコードを先に削除
   await supabase.from('creative_assignments').delete().in('creative_id', ids);
   await supabase.from('creative_files').delete().in('creative_id', ids);
