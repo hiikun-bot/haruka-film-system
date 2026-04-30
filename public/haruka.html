@@ -10433,21 +10433,29 @@ function updateCreativeCommentLabel(status) {
     // From/To 表示
     const fromToEl = document.getElementById('cd-comment-from-to');
     if (fromToEl && currentCreativeDetail) {
-      const assigns = currentCreativeDetail.creative_assignments || [];
-      const assignee = assigns.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-      const dirAssign = assigns.find(a => a.role === 'director');
-      let fromName = dirAssign?.users?.full_name;
-      if (!fromName && assignee?.users) {
-        const u = assignee.users;
-        fromName = (u.team_id && allTeams?.find(t => t.id === u.team_id)?.director?.full_name)
-          || (allTeams?.find(t => (t.team_members||[]).some(tm => tm.user_id === u.id))?.director?.full_name)
-          || null;
-      }
-      const toName = assignee?.users?.full_name;
-      if (fromName || toName) {
-        fromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || 'ディレクター'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || '担当者'}`;
-        fromToEl.style.display = '';
-      } else {
+      try {
+        const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
+        const assignee = (Array.isArray(assigns) ? assigns : []).find(a => a && ['editor','designer','director_as_editor'].includes(a.role)) || null;
+        const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
+        let fromName = (dirAssign && dirAssign.users && dirAssign.users.full_name) || null;
+        if (!fromName && assignee && assignee.users) {
+          const u = assignee.users || {};
+          const teamsArr = Array.isArray(allTeams) ? allTeams : [];
+          const byTeamId = (u.team_id && teamsArr.find(t => t && t.id === u.team_id)) || null;
+          const byMember = teamsArr.find(t => t && Array.isArray(t.team_members) && t.team_members.some(tm => tm && tm.user_id === u.id)) || null;
+          fromName = (byTeamId && byTeamId.director && byTeamId.director.full_name)
+            || (byMember && byMember.director && byMember.director.full_name)
+            || null;
+        }
+        const toName = (assignee && assignee.users && assignee.users.full_name) || null;
+        if (fromName || toName) {
+          fromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || 'ディレクター'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || '担当者'}`;
+          fromToEl.style.display = '';
+        } else {
+          fromToEl.style.display = 'none';
+        }
+      } catch (e) {
+        console.warn('cd-comment-from-to render failed:', e);
         fromToEl.style.display = 'none';
       }
     }
@@ -10528,21 +10536,29 @@ function updateCreativeCommentLabel(status) {
     }
     const replyFromToEl = document.getElementById('cd-editor-reply-from-to');
     if (replyFromToEl && currentCreativeDetail) {
-      const assigns = currentCreativeDetail.creative_assignments || [];
-      const assignee = assigns.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-      const dirAssign = assigns.find(a => a.role === 'director');
-      let toName = dirAssign?.users?.full_name;
-      if (!toName && assignee?.users) {
-        const u = assignee.users;
-        toName = (u.team_id && allTeams?.find(t => t.id === u.team_id)?.director?.full_name)
-          || (allTeams?.find(t => (t.team_members||[]).some(tm => tm.user_id === u.id))?.director?.full_name)
-          || null;
-      }
-      const fromName = assignee?.users?.full_name;
-      if (fromName || toName) {
-        replyFromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || '担当者'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || 'ディレクター'}`;
-        replyFromToEl.style.display = '';
-      } else {
+      try {
+        const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
+        const assignee = (Array.isArray(assigns) ? assigns : []).find(a => a && ['editor','designer','director_as_editor'].includes(a.role)) || null;
+        const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
+        let toName = (dirAssign && dirAssign.users && dirAssign.users.full_name) || null;
+        if (!toName && assignee && assignee.users) {
+          const u = assignee.users || {};
+          const teamsArr = Array.isArray(allTeams) ? allTeams : [];
+          const byTeamId = (u.team_id && teamsArr.find(t => t && t.id === u.team_id)) || null;
+          const byMember = teamsArr.find(t => t && Array.isArray(t.team_members) && t.team_members.some(tm => tm && tm.user_id === u.id)) || null;
+          toName = (byTeamId && byTeamId.director && byTeamId.director.full_name)
+            || (byMember && byMember.director && byMember.director.full_name)
+            || null;
+        }
+        const fromName = (assignee && assignee.users && assignee.users.full_name) || null;
+        if (fromName || toName) {
+          replyFromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || '担当者'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || 'ディレクター'}`;
+          replyFromToEl.style.display = '';
+        } else {
+          replyFromToEl.style.display = 'none';
+        }
+      } catch (e) {
+        console.warn('cd-editor-reply-from-to render failed:', e);
         replyFromToEl.style.display = 'none';
       }
     }
