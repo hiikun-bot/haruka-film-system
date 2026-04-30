@@ -176,6 +176,10 @@ async function runSchemaSync() {
       "ALTER TABLE clients ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT",
       "ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_channel_url TEXT",
       "ALTER TABLE projects ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT",
+      "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered BOOLEAN DEFAULT false",
+      "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_reason TEXT",
+      "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_at TIMESTAMPTZ",
+      "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_by UUID",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }

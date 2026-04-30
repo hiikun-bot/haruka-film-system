@@ -621,6 +621,12 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false
 
 -- creatives にチームを独立保存（担当者の team_id 派生から脱却）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
+
+-- 納品完了モード（途中工程をスキップして直接「納品」にした記録）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered        BOOLEAN DEFAULT false;
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_reason TEXT;
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_at     TIMESTAMPTZ;
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_by     UUID REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS idx_creatives_team_id ON creatives(team_id);
 
 -- team_id への FK を確実に付与（過去にカラムだけが FK 無しで追加された場合の修復）
@@ -679,6 +685,8 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','creative.all_projects_view',true),('secretary','creative.all_projects_view',true),('producer','creative.all_projects_view',true),('producer_director','creative.all_projects_view',true),
   ('admin','creative.rank_price_column',true),('producer','creative.rank_price_column',true),('producer_director','creative.rank_price_column',true),('director','creative.rank_price_column',true),
   ('admin','creative.csv_import',true),('secretary','creative.csv_import',true),('producer','creative.csv_import',true),('producer_director','creative.csv_import',true),
+  -- SOSフラグの他人クリエイティブへの操作権限（編集者/デザイナーは自分の担当のみ可。下位ロールは row レベルで判定）
+  ('admin','creative.sos_others',true),('secretary','creative.sos_others',true),('producer','creative.sos_others',true),('producer_director','creative.sos_others',true),('director','creative.sos_others',true),
   -- メンバー
   ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),('editor','member.list',true),('designer','member.list',true),
   ('admin','member.edit_password',true),('secretary','member.edit_password',true),

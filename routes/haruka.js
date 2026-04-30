@@ -638,6 +638,7 @@ router.get('/creatives', async (req, res) => {
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
     creative_type, team_id, project_id, updated_at,
+    force_delivered, force_delivered_reason, force_delivered_at,
     ${projectsRel}(id, name, client_id, clients(id, name, status)),
     project_cycles(id, year, month),
     creative_assignments(
@@ -883,15 +884,36 @@ router.post('/creatives', async (req, res) => {
 });
 
 // クリエイティブ更新
-router.put('/creatives/:id', async (req, res) => {
+router.put('/creatives/:id', requireAuth, async (req, res) => {
   const {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url,
     help_flag, talent_flag, note, revision_count,
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
-    assignee_id, team_id, memo
+    assignee_id, team_id, memo,
+    force_delivered_reason
   } = req.body;
+
+  // help_flag（SOS）の権限制御:
+  //   creative.sos_others 権限あり → 全クリエイティブに対して可
+  //   なし（editor / designer 等）→ 自分が assignment に入っている場合のみ可
+  if (help_flag !== undefined) {
+    const role = getEffectiveRole(req);
+    const canSosOthers = await userHasPermission(role, 'creative.sos_others');
+    if (!canSosOthers) {
+      const { data: own } = await supabase
+        .from('creative_assignments')
+        .select('id')
+        .eq('creative_id', req.params.id)
+        .eq('user_id', req.user?.id)
+        .limit(1);
+      if (!own || own.length === 0) {
+        return res.status(403).json({ error: '自分が担当しているクリエイティブのみSOSを操作できます' });
+      }
+    }
+  }
+
   const updateData = {
     updated_at: new Date().toISOString()
   };
@@ -919,6 +941,21 @@ router.put('/creatives/:id', async (req, res) => {
   if (creative_size !== undefined) updateData.creative_size = creative_size || null;
   if (team_id !== undefined) updateData.team_id = team_id || null;
   if (memo !== undefined) updateData.memo = (memo && String(memo).trim()) ? memo : null;
+
+  // 納品完了モード（途中工程をスキップして直接「納品」にする）
+  // 必ず理由が必要。クリエイティブファイル未アップロードでも許可。
+  if (force_delivered_reason !== undefined) {
+    const reason = String(force_delivered_reason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ error: '納品完了モードでは理由が必須です' });
+    }
+    updateData.status = '納品';
+    updateData.is_payable = true;
+    updateData.force_delivered = true;
+    updateData.force_delivered_reason = reason;
+    updateData.force_delivered_at = new Date().toISOString();
+    updateData.force_delivered_by = req.user?.id || null;
+  }
 
   // 納品完了時に支払い可能フラグを自動オン
   if (status === '納品') updateData.is_payable = true;

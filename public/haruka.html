@@ -3109,6 +3109,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button id="cd-skip-p-btn" onclick="skipToClientCheck()" style="display:none;background:#fff;color:#6366f1;border:1.5px solid #6366f1;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Pスキップ → CL確認</button>
       <!-- CL後修正時: Dチェックに戻す選択肢 -->
       <button id="cd-back-to-d-btn" onclick="backToDCheck()" style="display:none;background:#fff;color:#0284c7;border:1.5px solid #0284c7;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Dチェックへ戻す</button>
+      <!-- 納品完了モード: 工程をスキップして直接「納品」にする（理由必須・CR未アップロード可） -->
+      <button id="cd-force-deliver-btn" onclick="forceDeliver()" style="display:none;background:#fff;color:#16a34a;border:1.5px solid #16a34a;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">納品完了モード</button>
       <!-- 承認 or 次ステップ -->
       <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
     </div>
@@ -4456,7 +4458,7 @@ function renderCreatives() {
       <td style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : editorName}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
-      <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span></td>
+      <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
       <td title="${esc(c.memo || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${esc(c.memo || '—')}</td>
       <td><span class="ball-dot ${dotClass}"></span><span class="ball-name">${ball.holder}</span></td>
       <td>
@@ -4467,7 +4469,14 @@ function renderCreatives() {
       </td>
       <td>${isLate?'<span class="late-flag">遅れ</span>':''}</td>
       <td style="white-space:nowrap">
-        <button class="help-flag-btn ${c.help_flag?'on':''}" onclick="toggleHelp('${c.id}',${c.help_flag})">${c.help_flag?'SOS中':'SOS'}</button>
+        ${(() => {
+          const canSos = canToggleSos(c);
+          if (canSos) {
+            return `<button class="help-flag-btn ${c.help_flag?'on':''}" onclick="toggleHelp('${c.id}',${c.help_flag})">${c.help_flag?'SOS中':'SOS'}</button>`;
+          }
+          // 権限なし：見た目だけ表示してクリック不可（理由をtitleで明示）
+          return `<button class="help-flag-btn ${c.help_flag?'on':''}" disabled title="自分が担当しているクリエイティブのみSOSを操作できます" style="opacity:.45;cursor:not-allowed">${c.help_flag?'SOS中':'SOS'}</button>`;
+        })()}
         ${c.talent_flag?'<span style="margin-left:4px;font-size:11px;padding:3px 7px;border-radius:7px;background:#EEE5FA;border:0.5px solid #B39DDB;color:#5E35B1;font-weight:500">🎬 芸能人</span>':''}
       </td>
       <td onclick="event.stopPropagation()"><button onclick="openCreativeEdit('${c.id}')" style="font-size:11px;padding:4px 10px;background:#fff;border:0.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--text-muted);white-space:nowrap">修正</button></td>
@@ -4537,9 +4546,22 @@ function filterSearch(val) {
 }
 function toggleBall(btn) { btn.classList.toggle('on'); renderCreatives(); }
 
+// SOS（help_flag）を当該クリエイティブに対して操作できるか
+//   creative.sos_others 権限あり → 全クリエイティブで可
+//   なし → 自分が assignment に入っているクリエイティブのみ可
+function canToggleSos(c) {
+  if (hasPermission('creative.sos_others')) return true;
+  if (!c || !currentUser) return false;
+  return (c.creative_assignments || []).some(a => a?.users?.id === currentUser.id);
+}
+
 async function toggleHelp(id, current) {
-  // 楽観的にローカルだけ反転して再描画 → 失敗時に revert
   const c = allCreatives.find(x => x.id === id);
+  if (!canToggleSos(c)) {
+    showToast('自分が担当しているクリエイティブのみSOSを操作できます', 'warn');
+    return;
+  }
+  // 楽観的にローカルだけ反転して再描画 → 失敗時に revert
   const prev = current;
   if (c) { c.help_flag = !prev; renderCreatives(); }
   try {
@@ -4547,10 +4569,13 @@ async function toggleHelp(id, current) {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ help_flag: !prev })
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e?.error || `HTTP ${res.status}`);
+    }
   } catch(e) {
     if (c) { c.help_flag = prev; renderCreatives(); }
-    showToast('SOSフラグの更新に失敗しました', 'error');
+    showToast('SOSフラグの更新に失敗しました: ' + (e?.message || ''), 'error');
   }
 }
 
@@ -5474,6 +5499,7 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|creative.all_projects_view': true, 'producer|creative.all_projects_view': true, 'producer_director|creative.all_projects_view': true,
   'producer|creative.rank_price_column': true, 'producer_director|creative.rank_price_column': true, 'director|creative.rank_price_column': true,
   'secretary|creative.csv_import': true, 'producer|creative.csv_import': true, 'producer_director|creative.csv_import': true,
+  'secretary|creative.sos_others': true, 'producer|creative.sos_others': true, 'producer_director|creative.sos_others': true, 'director|creative.sos_others': true,
   'secretary|member.list': true, 'producer|member.list': true, 'producer_director|member.list': true, 'director|member.list': true,
   'secretary|member.edit_password': true,
   'secretary|member.deactivate': true,
@@ -8624,6 +8650,7 @@ const ROLE_PERM_LIST = [
   { section:'クリエイティブ', key:'creative.all_projects_view',  label:'全案件のCL閲覧' },
   { section:'クリエイティブ', key:'creative.rank_price_column',  label:'ランク・単価列表示' },
   { section:'クリエイティブ', key:'creative.csv_import',         label:'一括登録（CSV）' },
+  { section:'クリエイティブ', key:'creative.sos_others',         label:'他人のCLにSOSを操作' },
   { section:'メンバー管理',   key:'member.list',                 label:'メンバー一覧閲覧' },
   { section:'メンバー管理',   key:'member.edit_password',        label:'メンバー編集・PW変更' },
   { section:'メンバー管理',   key:'member.deactivate',           label:'メンバー無効化' },
@@ -10293,7 +10320,10 @@ function updateCreativeStepIndicator(status) {
   const skipPBtn     = document.getElementById('cd-skip-p-btn');
   const directClBtn  = document.getElementById('cd-direct-cl-btn');
   const backToDBtn   = document.getElementById('cd-back-to-d-btn');
+  const forceDelBtn  = document.getElementById('cd-force-deliver-btn');
   if (backToDBtn) backToDBtn.style.display = 'none';
+  // 納品完了モード: 既に納品済みの場合は出さない。それ以外は常時出す（途中工程をすべてスキップ）
+  if (forceDelBtn) forceDelBtn.style.display = (status === '納品') ? 'none' : '';
   if (!nextBtn) return;
 
   // チェック段階: 修正依頼 ＋ 承認 の2ボタン
@@ -10500,6 +10530,32 @@ function updateCreativeCommentLabel(status) {
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
+  }
+}
+
+// 納品完了モード: 途中工程をすべてスキップして「納品」状態にする。
+// 理由は必須。クリエイティブファイル（CR）が未アップロードでも実行可。
+async function forceDeliver() {
+  if (!currentCreativeDetail) return;
+  const reason = prompt('納品完了モードに切り替えます。\nこの操作は途中工程（D/P/CL確認）をすべてスキップし、ステータスを「納品」にします。\n\n理由を入力してください（必須）：');
+  if (reason === null) return; // キャンセル
+  const trimmed = String(reason).trim();
+  if (!trimmed) {
+    showToast('理由は必須です', 'warn');
+    return;
+  }
+  const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force_delivered_reason: trimmed }),
+  });
+  if (res.ok) {
+    showToast('納品完了モードで「納品」にしました', 'success');
+    closeModal('modal-creative-detail');
+    await loadCreatives();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + translateError(e?.error || '不明'), 'error');
   }
 }
 
