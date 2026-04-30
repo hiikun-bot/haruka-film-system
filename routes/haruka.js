@@ -103,10 +103,37 @@ router.get('/clients', async (req, res) => {
     .select('*')
     .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // client_teams を別途取得して team_ids として merge
+  const { data: links, error: linksErr } = await supabase
+    .from('client_teams')
+    .select('client_id, team_id, sort_order')
+    .order('sort_order');
+  if (linksErr) console.error('[GET /clients client_teams]', linksErr);
+  const teamsByClient = new Map();
+  (links || []).forEach(l => {
+    if (!teamsByClient.has(l.client_id)) teamsByClient.set(l.client_id, []);
+    teamsByClient.get(l.client_id).push(l.team_id);
+  });
+  const enriched = (data || []).map(c => ({ ...c, team_ids: teamsByClient.get(c.id) || [] }));
+  res.json(enriched);
 });
 
 const LINK_FIELDS = ['website_url','twitter_url','instagram_url','facebook_url','youtube_url','tiktok_url','line_url','other_url'];
+
+// クライアント-チーム紐付けを sync するヘルパ
+async function syncClientTeams(clientId, teamIds) {
+  if (!Array.isArray(teamIds)) return;
+  const { error: delErr } = await supabase.from('client_teams').delete().eq('client_id', clientId);
+  if (delErr) console.error('[syncClientTeams delete]', delErr);
+  if (teamIds.length === 0) return;
+  const rows = teamIds
+    .filter(t => !!t)
+    .map((teamId, idx) => ({ client_id: clientId, team_id: teamId, sort_order: idx }));
+  if (!rows.length) return;
+  const { error } = await supabase.from('client_teams').insert(rows);
+  if (error) console.error('[syncClientTeams insert]', error);
+}
 
 // クライアント作成
 router.post('/clients', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
@@ -121,7 +148,10 @@ router.post('/clients', requireAuth, requirePermission('project.create_edit'), a
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  if (data && req.body.team_ids !== undefined) {
+    await syncClientTeams(data.id, req.body.team_ids);
+  }
+  res.json({ ...data, team_ids: Array.isArray(req.body.team_ids) ? req.body.team_ids : [] });
 });
 
 // クライアント更新
@@ -137,7 +167,17 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  if (req.body.team_ids !== undefined) {
+    await syncClientTeams(req.params.id, req.body.team_ids);
+  }
+  // 最新の team_ids を取得して返却
+  const { data: links } = await supabase
+    .from('client_teams')
+    .select('team_id, sort_order')
+    .eq('client_id', req.params.id)
+    .order('sort_order');
+  const team_ids = (links || []).map(l => l.team_id);
+  res.json({ ...data, team_ids });
 });
 
 // ==================== 案件 ====================
