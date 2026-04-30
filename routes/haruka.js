@@ -1243,12 +1243,59 @@ router.delete('/creatives', requireAuth, async (req, res) => {
     });
   }
 
-  // 関連レコードを先に削除
+  // Drive ファイルは「即削除」せず、「【削除】」プレフィックスを付けてリネームする。
+  // 誤削除を防ぐため、後から手動で Drive 上で確認して整理する運用を想定。
+  // 対象: creative_files.drive_file_id（原本） + faststart_drive_file_id（高速化版）
+  const { data: filesToRename } = await supabase
+    .from('creative_files')
+    .select('id, generated_name, original_name, drive_file_id, faststart_drive_file_id')
+    .in('creative_id', ids);
+
+  const renameResults = { renamed: 0, skipped: 0, failed: 0 };
+  if ((filesToRename || []).length > 0 && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const drive = await getDriveService();
+      const PREFIX = '【削除】';
+      const renameOne = async (driveFileId, baseName) => {
+        if (!driveFileId) return 'skipped';
+        try {
+          // 既に【削除】プレフィックスがあれば二重リネームを避ける
+          const newName = baseName?.startsWith(PREFIX) ? baseName : `${PREFIX}${baseName || '(no-name)'}`;
+          await drive.files.update({
+            fileId: driveFileId,
+            requestBody: { name: newName },
+            supportsAllDrives: true,
+          });
+          driveLog('info', `Driveファイルリネーム: ${newName}`, { driveFileId });
+          return 'renamed';
+        } catch (e) {
+          driveLog('warn', `Driveリネーム失敗（DB側削除は継続）: ${e.message}`, { driveFileId });
+          return 'failed';
+        }
+      };
+      for (const f of filesToRename) {
+        const baseName = f.generated_name || f.original_name;
+        const r1 = await renameOne(f.drive_file_id, baseName);
+        renameResults[r1]++;
+        if (f.faststart_drive_file_id) {
+          // faststart 版は <basename>_fast.mp4 でアップロードされている前提だが、
+          // 取得が手間なのでそのまま baseName_fast.mp4 風で命名（多少不正確でも【削除】識別が目的）
+          const fastName = baseName ? baseName.replace(/\.(mp4|mov|m4v)$/i, '_fast.mp4') : null;
+          const r2 = await renameOne(f.faststart_drive_file_id, fastName);
+          renameResults[r2]++;
+        }
+      }
+    } catch (e) {
+      driveLog('error', `Driveサービス初期化失敗（DB側削除は継続）: ${e.message}`);
+    }
+  }
+
+  // DB 側の関連レコードは即削除（Driveのリネームが失敗していても DB はクリーンに）
   await supabase.from('creative_assignments').delete().in('creative_id', ids);
   await supabase.from('creative_files').delete().in('creative_id', ids);
   const { error } = await supabase.from('creatives').delete().in('id', ids);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true, deleted: ids.length });
+  res.json({ ok: true, deleted: ids.length, drive_rename: renameResults });
 });
 
 // ==================== クリエイティブファイル ====================
