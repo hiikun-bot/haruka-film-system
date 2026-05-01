@@ -236,6 +236,24 @@ $$`,
       catch (err) { console.warn(`[schema-sync] 保険FK確認失敗 (${c.name}): ${err.message}`); }
     }
 
+    // 既定の権限付与（初期セットアップ用 / 既存値は ON CONFLICT で上書きしない）
+    // project.delete / team.delete を秘書・プロデューサー・PD に許可。admin はコード側でバイパスされるため不要。
+    try {
+      await client.query(`
+        INSERT INTO role_permissions (role, permission_key, allowed) VALUES
+          ('secretary', 'project.delete', true),
+          ('producer', 'project.delete', true),
+          ('producer_director', 'project.delete', true),
+          ('secretary', 'team.delete', true),
+          ('producer', 'team.delete', true),
+          ('producer_director', 'team.delete', true)
+        ON CONFLICT (role, permission_key) DO NOTHING
+      `);
+      console.log('[schema-sync] project.delete / team.delete のデフォルト権限を付与');
+    } catch (err) {
+      console.warn(`[schema-sync] デフォルト権限付与失敗: ${err.message}`);
+    }
+
     // 多重防御: public スキーマ全テーブルで RLS を強制有効化（service_role はバイパスするため安全）
     try {
       const rlsBlock = `DO $$
