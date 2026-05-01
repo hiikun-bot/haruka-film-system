@@ -3026,7 +3026,7 @@ function buildBroadcastSlackText(annData, { reissue = false } = {}) {
   if (annData.deadline_at) {
     const d = new Date(annData.deadline_at);
     lines.push('');
-    lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}\``);
+    lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Tokyo' })}\``);
   }
   // 対応内容: code block でステップ列挙
   lines.push('');
