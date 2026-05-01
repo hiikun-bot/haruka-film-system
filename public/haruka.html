@@ -31,26 +31,40 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .page,.toolbar,.hfs-header,.modal-overlay{position:relative;z-index:1}
 
 /* ヘッダー */
-.hfs-header{background:url('HARUKAFILM背景.png') center/cover no-repeat;height:88px;display:flex;align-items:center;padding:0 28px;position:sticky;top:0;z-index:100;overflow:hidden;gap:0}
+.hfs-header{background:url('HARUKAFILM背景.png') center/cover no-repeat;height:60px;display:flex;align-items:center;padding:0 18px;position:sticky;top:0;z-index:100;overflow:visible;gap:0}
 .hfs-header::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,30,28,0.06) 0%,rgba(8,40,38,0.04) 100%);pointer-events:none}
 .hfs-header::after{content:none}
-.logo-area{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:0;z-index:1;flex-shrink:0;padding:4px 0}
-.logo-main{font-family:'Montserrat',sans-serif;font-size:24px;font-weight:900;color:#fff;letter-spacing:0.12em;text-shadow:0 2px 14px rgba(0,0,0,0.30);line-height:1.15;white-space:nowrap}
-.logo-line{width:100%;height:1.5px;background:rgba(255,255,255,0.80);margin:5px 0 4px;border-radius:2px}
-.logo-sub{font-family:'Noto Sans JP',sans-serif;font-size:10px;font-weight:400;color:rgba(255,255,255,0.88);letter-spacing:0.08em;text-shadow:0 1px 6px rgba(0,0,0,0.25);white-space:nowrap}
-.header-nav{display:flex;gap:2px;z-index:1;flex:1;justify-content:center}
-.nav-btn{font-size:15px;color:rgba(255,255,255,0.88);padding:7px 18px;border-radius:8px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 4px rgba(0,0,0,0.45);white-space:nowrap;transition:font-size .18s ease,background .15s,color .15s}
-.nav-btn.active{background:rgba(255,255,255,0.22);color:#fff;font-weight:600;text-shadow:0 1px 6px rgba(0,0,0,0.5)}
-.nav-btn:hover{background:rgba(255,255,255,0.14);color:#fff;font-size:18px}
-.header-right{display:flex;align-items:center;gap:14px;z-index:1;flex-shrink:0}
-.header-user{display:flex;align-items:center;gap:10px}
-.user-av{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.22);border:1.5px solid rgba(255,255,255,0.6);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,0.4);overflow:hidden;cursor:pointer}
+.logo-area{display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:0;z-index:1;flex-shrink:0;padding:0;cursor:default}
+.logo-main{font-family:'Montserrat',sans-serif;font-size:18px;font-weight:900;color:#fff;letter-spacing:0.10em;text-shadow:0 2px 10px rgba(0,0,0,0.30);line-height:1.15;white-space:nowrap}
+.logo-line{display:none}
+.logo-sub{font-family:'Noto Sans JP',sans-serif;font-size:9px;font-weight:400;color:rgba(255,255,255,0.78);letter-spacing:0.06em;text-shadow:0 1px 4px rgba(0,0,0,0.25);white-space:nowrap;line-height:1}
+.header-nav{display:flex;gap:1px;z-index:1;flex:1;justify-content:center;flex-wrap:nowrap}
+.nav-btn{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s}
+.nav-btn.active{background:rgba(255,255,255,0.24);color:#fff;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
+.nav-btn:hover{background:rgba(255,255,255,0.16);color:#fff}
+.header-right{display:flex;align-items:center;gap:8px;z-index:1;flex-shrink:0}
+.header-user{display:flex;align-items:center;gap:8px}
+.user-av{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.55);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.4);overflow:hidden;cursor:pointer;flex-shrink:0}
 .user-av img{width:100%;height:100%;object-fit:cover;display:block}
-.user-name{font-size:14px;color:#fff;font-weight:500;text-shadow:0 1px 5px rgba(0,0,0,0.5)}
-.user-role{font-size:12px;background:rgba(255,255,255,0.2);color:#fff;padding:4px 12px;border-radius:10px;border:0.5px solid rgba(255,255,255,0.4);text-shadow:0 1px 4px rgba(0,0,0,0.4);white-space:nowrap}
-.rpb-btn{font-size:12px;padding:4px 10px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.35);background:transparent;color:rgba(255,255,255,0.7);cursor:pointer;white-space:nowrap;transition:all .15s;text-shadow:0 1px 3px rgba(0,0,0,0.35)}
+.user-name{font-size:12.5px;color:#fff;font-weight:500;text-shadow:0 1px 4px rgba(0,0,0,0.5);max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-role{font-size:10.5px;background:rgba(255,255,255,0.22);color:#fff;padding:2.5px 8px;border-radius:9px;border:0.5px solid rgba(255,255,255,0.4);text-shadow:0 1px 3px rgba(0,0,0,0.4);white-space:nowrap}
+.rpb-btn{font-size:11px;padding:3px 8px;border-radius:5px;border:0.5px solid rgba(255,255,255,0.35);background:transparent;color:rgba(255,255,255,0.75);cursor:pointer;white-space:nowrap;transition:all .15s;text-shadow:0 1px 3px rgba(0,0,0,0.35)}
 .rpb-btn:hover{background:rgba(255,255,255,0.15);color:#fff}
-.rpb-btn.rpb-active{background:rgba(255,255,255,0.9);color:#1a6b68;font-weight:600;border-color:transparent;text-shadow:none}
+.rpb-btn.rpb-active{background:rgba(255,255,255,0.92);color:#1a6b68;font-weight:600;border-color:transparent;text-shadow:none}
+/* VIEW AS をボタン+ポップオーバーに圧縮 */
+.role-preview-wrap{position:relative}
+.role-preview-toggle{font-size:11px;padding:3px 8px;border-radius:5px;border:0.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.10);color:#fff;cursor:pointer;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,0.35);display:flex;align-items:center;gap:5px}
+.role-preview-toggle:hover{background:rgba(255,255,255,0.18)}
+.role-preview-pop{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border-radius:8px;padding:6px;box-shadow:0 12px 36px rgba(0,0,0,0.22);display:none;flex-direction:column;gap:3px;min-width:140px;z-index:200}
+.role-preview-pop.open{display:flex}
+.role-preview-pop .rpb-btn{font-size:12px;padding:5px 10px;color:var(--text);border:0.5px solid var(--border);text-shadow:none;text-align:left}
+.role-preview-pop .rpb-btn:hover{background:var(--em-pale);color:var(--em-dark)}
+.role-preview-pop .rpb-btn.rpb-active{background:var(--em);color:#fff;border-color:transparent}
+/* ヘッダーアイコンボタン（鍵・ログアウト）をアイコンのみに圧縮 */
+.hbtn-icon{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.30);background:transparent;color:rgba(255,255,255,0.85);cursor:pointer;padding:0;text-shadow:0 1px 3px rgba(0,0,0,0.35);transition:all .15s}
+.hbtn-icon:hover{background:rgba(255,255,255,0.16);color:#fff}
+.hbtn-icon.danger{color:rgba(255,180,180,0.95)}
+.hbtn-icon.danger:hover{background:rgba(226,75,74,0.25);color:#fff}
 
 /* ページ */
 .page{display:none;padding:20px}.page.active{display:block}
@@ -559,7 +573,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .header-user{gap:4px}
   .user-av{width:30px;height:30px;font-size:11px}
   /* スマホではヘッダーの🔑・ログアウトを隠し、ドロワー内のアカウントセクションに集約 */
-  .header-user .rpb-btn{display:none !important}
+  .header-user .rpb-btn,
+  .header-user .hbtn-icon{display:none !important}
   #role-preview-switcher{display:none !important}
   #preview-mode-banner{top:60px;padding:5px 12px;font-size:11px}
   .nav-drawer-panel{width:82vw;max-width:300px;left:-82vw}
@@ -1056,15 +1071,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
   </div>
   <div class="header-right">
-    <!-- ロールプレビュースイッチャー（管理者のみ表示） -->
-    <div id="role-preview-switcher" style="display:none;align-items:center;gap:6px">
-      <span style="font-size:12px;color:rgba(255,255,255,0.6);letter-spacing:0.05em;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,0.4)">VIEW AS</span>
-      <div style="display:flex;gap:3px">
+    <!-- ロールプレビュー（管理者のみ）。ヘッダー幅圧迫を避けるためポップオーバーに圧縮 -->
+    <div id="role-preview-switcher" class="role-preview-wrap" style="display:none">
+      <button type="button" class="role-preview-toggle" id="role-preview-toggle" onclick="toggleRolePreviewPop(event)">
+        <span style="font-size:9.5px;letter-spacing:0.05em;opacity:0.85">VIEW AS</span>
+        <span id="role-preview-current">管理者</span>
+        <span style="opacity:0.7">▾</span>
+      </button>
+      <div id="role-preview-pop" class="role-preview-pop">
         <button class="rpb-btn rpb-active" id="rpb-admin"             onclick="setPreviewRole(null)">管理者</button>
         <button class="rpb-btn"            id="rpb-secretary"         onclick="setPreviewRole('secretary')">秘書</button>
-        <button class="rpb-btn"            id="rpb-producer"          onclick="setPreviewRole('producer')">P</button>
-        <button class="rpb-btn"            id="rpb-producer_director" onclick="setPreviewRole('producer_director')">PD</button>
-        <button class="rpb-btn"            id="rpb-director"          onclick="setPreviewRole('director')">D</button>
+        <button class="rpb-btn"            id="rpb-producer"          onclick="setPreviewRole('producer')">プロデューサー</button>
+        <button class="rpb-btn"            id="rpb-producer_director" onclick="setPreviewRole('producer_director')">P兼D</button>
+        <button class="rpb-btn"            id="rpb-director"          onclick="setPreviewRole('director')">ディレクター</button>
         <button class="rpb-btn"            id="rpb-editor"            onclick="setPreviewRole('editor')">編集者</button>
         <button class="rpb-btn"            id="rpb-designer"          onclick="setPreviewRole('designer')">デザイナー</button>
       </div>
@@ -1073,8 +1092,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div class="user-av" id="user-av" onclick="openMyProfile()" title="プロフィール編集">HK</div>
       <span class="user-name" id="user-name">読み込み中</span>
       <span class="user-role" id="user-role">-</span>
-      <button class="rpb-btn" onclick="openChangePasswordModal()" title="パスワード変更" style="font-size:11px;padding:3px 8px">🔑</button>
-      <button class="rpb-btn" onclick="logout()" title="ログアウト" style="font-size:11px;padding:3px 8px;color:#E24B4A;border-color:rgba(226,75,74,0.3)">ログアウト</button>
+      <button class="hbtn-icon" onclick="openChangePasswordModal()" title="パスワード変更">🔑</button>
+      <button class="hbtn-icon danger" onclick="logout()" title="ログアウト">⏻</button>
     </div>
   </div>
 </div>
@@ -5618,6 +5637,21 @@ function isTopAdmin() {
 // 隠し忘れたボタンを誤って押しても安全（むしろ望ましい挙動）。
 // ============================================================
 // ロールプレビュー切り替え
+// VIEW AS ポップオーバーの開閉
+function toggleRolePreviewPop(ev) {
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById('role-preview-pop');
+  if (!pop) return;
+  pop.classList.toggle('open');
+}
+// 外側クリックで閉じる
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('role-preview-switcher');
+  const pop  = document.getElementById('role-preview-pop');
+  if (!wrap || !pop) return;
+  if (!wrap.contains(e.target)) pop.classList.remove('open');
+});
+
 function setPreviewRole(role) {
   previewRole = role;
   // ボタンのアクティブ状態を更新
@@ -5625,6 +5659,12 @@ function setPreviewRole(role) {
     const btn = document.getElementById(`rpb-${r}`);
     if (btn) btn.classList.toggle('rpb-active', r === (role ?? 'admin'));
   });
+  // ヘッダーの「VIEW AS: <現在>」表示を更新
+  const cur = document.getElementById('role-preview-current');
+  if (cur) cur.textContent = roleLabel(role || 'admin') || '管理者';
+  // 操作後はポップオーバーを閉じる
+  const pop = document.getElementById('role-preview-pop');
+  if (pop) pop.classList.remove('open');
   // バナーの表示制御
   const banner = document.getElementById('preview-mode-banner');
   if (role) {
