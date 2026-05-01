@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>HARUKA FILM｜メンバー登録の手順</title>
+<title>HARUKA FILM｜ようこそ！はじめての登録チュートリアル</title>
 <link rel="icon" type="image/png" href="/icon-192.png">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
@@ -12,85 +12,63 @@
   --text:#1a6b68;--text-muted:#5ABDB9;
   --border:#A8EDEA;--border-light:#D4F4F2;
   --surface:#F5FCFC;--white:#fff;
-  --admin:#0891B2;--admin-bg:#CFFAFE;--admin-border:#67E8F9;
-  --invitee:#16A34A;--invitee-bg:#DCFCE7;--invitee-border:#86EFAC;
   --warn:#F59E0B;--warn-bg:#FEF3C7;--warn-border:#FDE68A;
   --danger:#EF4444;--danger-bg:#FEE2E2;--danger-border:#FECACA;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
 }
 html{scroll-behavior:smooth}
-body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:80px}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
 
 /* Hero */
 .hero{background:linear-gradient(135deg,#2BB8B4 0%,#3ECFCA 100%);color:#fff;padding:48px 24px 60px;text-align:center;position:relative;overflow:hidden}
 .hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
-.hero-inner{position:relative;max-width:920px;margin:0 auto}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
 .hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
 .hero-back:hover{background:rgba(255,255,255,0.28)}
 .hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:16px}
 .hero h1{font-size:30px;font-weight:800;letter-spacing:0.04em;margin-bottom:12px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:18px;font-weight:600;margin-top:6px;opacity:0.92}
 .hero p{font-size:14px;opacity:0.95;max-width:640px;margin:0 auto;line-height:1.8}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:16px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+/* Progress bar (sticky) */
+.progress-wrap{position:sticky;top:0;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--border-light);padding:12px 16px}
+.progress-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px}
+.progress-track{flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden;position:relative}
+.progress-fill{position:absolute;top:0;left:0;height:100%;width:0;background:linear-gradient(90deg,var(--em),var(--em-dark));transition:width .3s ease;border-radius:99px}
+.progress-text{font-size:12px;font-weight:700;color:var(--em-dark);white-space:nowrap;letter-spacing:0.04em}
+.progress-dots{display:flex;gap:8px}
+.progress-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:all .3s}
+.progress-dot.done{background:var(--em-dark)}
+.progress-dot.current{background:var(--em);box-shadow:0 0 0 4px var(--em-pale)}
 
 /* Container */
-.container{max-width:920px;margin:0 auto;padding:0 24px}
+.container{max-width:760px;margin:0 auto;padding:0 24px}
 
-/* TOC */
-.toc{margin-top:-32px;position:relative;z-index:2;background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(43,184,180,0.18);padding:24px 28px;border:1px solid var(--border-light)}
-.toc-title{font-size:11px;font-weight:700;letter-spacing:0.16em;color:var(--em-dark);margin-bottom:14px}
-.toc-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
-.toc-item{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text);text-decoration:none;padding:8px 12px;border-radius:8px;transition:background .15s}
-.toc-item:hover{background:var(--em-pale)}
-.toc-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.step-section-num{flex-shrink:0;width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:11px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:2px}
+.step-section h2{font-size:22px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
 
-/* Section */
-section{margin-top:56px;scroll-margin-top:24px}
-.section-num{display:inline-block;font-size:11px;font-weight:700;letter-spacing:0.16em;color:var(--em-dark);background:var(--em-pale);padding:4px 12px;border-radius:20px;margin-bottom:12px}
-.section-num.admin{color:var(--admin);background:var(--admin-bg)}
-.section-num.invitee{color:var(--invitee);background:var(--invitee-bg)}
-h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spacing:0.02em}
-.section-lead{font-size:14px;color:var(--text-muted);margin-bottom:24px;line-height:1.8}
+.step-card{background:#fff;border-radius:14px;padding:24px 26px;border:1px solid var(--border-light);box-shadow:0 2px 12px rgba(43,184,180,0.05)}
+.step-card + .step-card{margin-top:14px}
+.step-card-title{font-size:15px;font-weight:800;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.step-card-title::before{content:"▶";color:var(--em-dark);font-size:11px}
+.step-card p{font-size:13.5px;color:#374151;line-height:1.85}
+.step-card code{background:var(--em-pale);padding:2px 7px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
 
-/* Audience banner */
-.audience{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:0.12em;padding:5px 12px;border-radius:20px;margin-bottom:18px}
-.audience.admin{background:var(--admin-bg);color:var(--admin);border:1px solid var(--admin-border)}
-.audience.invitee{background:var(--invitee-bg);color:var(--invitee);border:1px solid var(--invitee-border)}
+/* Mock screen */
+.mock{margin-top:14px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:14px 18px}
+.mock-label{font-size:10px;font-weight:700;letter-spacing:0.12em;color:var(--em-dark);margin-bottom:8px;text-transform:uppercase}
+.mock-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:9px 12px;font-size:13px;font-family:inherit;color:var(--text);width:100%;margin-bottom:10px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:4px;display:block}
 
-/* Roles overview */
-.role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-.role-card{background:#fff;border-radius:12px;padding:18px;border:1px solid var(--border-light);position:relative}
-.role-card.recommended{border-color:var(--em);box-shadow:0 0 0 3px var(--em-pale)}
-.role-card-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.role-icon{font-size:22px}
-.role-name{font-size:15px;font-weight:800;color:var(--text)}
-.role-code{font-size:10px;font-weight:600;color:var(--text-muted);font-family:ui-monospace,Menlo,monospace;background:var(--surface);padding:2px 6px;border-radius:4px;margin-left:auto}
-.role-desc{font-size:12px;color:#4b5563;line-height:1.7}
-.role-card.recommended::before{content:"おすすめ";position:absolute;top:-9px;right:14px;font-size:10px;font-weight:700;letter-spacing:0.1em;background:var(--em-dark);color:#fff;padding:3px 9px;border-radius:10px}
-
-/* Steps */
-.steps{display:flex;flex-direction:column;gap:18px;margin-top:8px}
-.step{background:#fff;border-radius:14px;padding:22px 24px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.05);position:relative;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start}
-.step-num{flex-shrink:0;width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:17px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(43,184,180,0.3)}
-.step.admin .step-num{background:linear-gradient(135deg,#06B6D4,var(--admin))}
-.step.invitee .step-num{background:linear-gradient(135deg,#22C55E,var(--invitee))}
-.step-body{min-width:0}
-.step-title{font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px}
-.step-desc{font-size:13px;color:#374151;line-height:1.8}
-.step-desc code{background:var(--em-pale);padding:2px 7px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
-.step-screen{margin-top:12px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:14px 18px;font-size:12.5px;color:#4b5563;line-height:1.8}
-.step-screen-label{font-size:10px;font-weight:700;letter-spacing:0.12em;color:var(--em-dark);margin-bottom:6px;text-transform:uppercase}
-.step-input-row{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
-.step-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 12px;font-size:13px;font-family:inherit;color:var(--text);min-width:200px;flex:1}
-.step-btn-mock{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:8px 16px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
-
-/* Tip / Warning callout */
-.callout{margin-top:14px;padding:12px 16px;border-radius:10px;border-left:4px solid;font-size:13px;line-height:1.7}
-.callout.tip{background:var(--em-pale);border-color:var(--em-dark);color:var(--text)}
-.callout.tip strong{color:var(--em-dark)}
-.callout.warn{background:var(--warn-bg);border-color:var(--warn);color:#78350F}
-.callout.warn strong{color:#92400E}
-.callout.danger{background:var(--danger-bg);border-color:var(--danger);color:#991B1B}
-.callout.danger strong{color:var(--danger)}
-
-/* Profile fields table */
+/* Field table */
 .field-table{margin-top:8px;background:#fff;border-radius:12px;overflow:hidden;border:1px solid var(--border-light)}
 .field-table-row{display:grid;grid-template-columns:140px 1fr 80px;gap:14px;align-items:start;padding:12px 16px;border-bottom:1px solid var(--border-light);font-size:13px}
 .field-table-row:last-child{border-bottom:none}
@@ -102,6 +80,47 @@ h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 .field-pill.optional{background:#F3F4F6;color:#6B7280}
 .field-pill.recommended{background:#FEF3C7;color:#92400E}
 
+/* Callout */
+.callout{margin-top:14px;padding:12px 16px;border-radius:10px;border-left:4px solid;font-size:13px;line-height:1.7}
+.callout.tip{background:var(--em-pale);border-color:var(--em-dark);color:var(--text)}
+.callout.tip strong{color:var(--em-dark)}
+.callout.warn{background:var(--warn-bg);border-color:var(--warn);color:#78350F}
+.callout.warn strong{color:#92400E}
+.callout.danger{background:var(--danger-bg);border-color:var(--danger);color:#991B1B}
+.callout.danger strong{color:var(--danger)}
+
+/* Done banner */
+.done-banner{margin-top:22px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:14px;padding:18px 22px;display:flex;align-items:center;gap:14px}
+.done-icon{font-size:28px;flex-shrink:0}
+.done-text{flex:1;font-size:14px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:3px;letter-spacing:0.04em}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:20px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final completion */
+.final{margin-top:64px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:36px 28px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:48px;margin-bottom:8px}
+.final h2{font-size:24px;font-weight:800;color:#92400E;margin-bottom:8px}
+.final p{font-size:14px;color:#78350F;line-height:1.85;max-width:520px;margin:0 auto 18px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:13px 28px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Next-up cards */
+.next-up{margin-top:48px}
+.next-up h3{font-size:16px;font-weight:800;color:var(--text);margin-bottom:14px}
+.next-up-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.next-up-card{background:#fff;border-radius:12px;padding:16px;border:1px solid var(--border-light);text-decoration:none;color:inherit;transition:all .15s;display:flex;gap:12px;align-items:center}
+.next-up-card:hover{border-color:var(--em);transform:translateY(-1px);box-shadow:0 4px 12px rgba(43,184,180,0.1)}
+.next-up-icon{font-size:26px;flex-shrink:0}
+.next-up-text{flex:1;min-width:0}
+.next-up-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px}
+.next-up-desc{font-size:11px;color:var(--text-muted);line-height:1.5}
+
 /* FAQ */
 .faq{display:flex;flex-direction:column;gap:10px}
 .faq-item{background:#fff;border:1px solid var(--border-light);border-radius:12px;padding:18px 20px}
@@ -110,31 +129,31 @@ h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 .faq-a{font-size:13px;color:#374151;line-height:1.8;display:flex;gap:10px}
 .faq-a::before{content:"A";flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--text-muted);color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center}
 
-/* Checklist */
-.checklist{background:linear-gradient(135deg,#F5FCFC 0%,#fff 100%);border:2px dashed var(--border);border-radius:18px;padding:28px}
-.checklist h3{font-size:16px;font-weight:800;color:var(--text);margin-bottom:14px}
-.checklist ul{list-style:none;display:flex;flex-direction:column;gap:8px}
-.checklist li{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:#374151;background:#fff;border-radius:8px;padding:10px 14px;border:1px solid var(--border-light)}
-.checklist li::before{content:"☐";flex-shrink:0;font-size:18px;line-height:1.4;color:var(--em-dark);font-weight:700}
+/* Trouble (rendered as a section, smaller) */
+.trouble-section{margin-top:48px}
+.trouble-section h3{font-size:16px;font-weight:800;color:var(--text);margin-bottom:14px}
 
 /* Foot */
-.foot{margin-top:80px;padding:32px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
-.foot-nav{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-bottom:8px}
-.foot-nav a{color:var(--em-dark);text-decoration:none;font-weight:600}
-.foot-nav a:hover{text-decoration:underline}
+.foot{margin-top:64px;padding:32px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
 
 @media (max-width:768px){
   .hero{padding:36px 20px 48px}
   .hero h1{font-size:22px}
+  .hero h1 span{font-size:14px}
   .hero p{font-size:13px}
-  h2{font-size:20px}
+  h2{font-size:18px}
   .container{padding:0 16px}
-  .toc{padding:18px 20px;margin-top:-24px}
-  .step{grid-template-columns:1fr;padding:18px}
-  .step-num{width:36px;height:36px;font-size:15px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:40px;height:40px;font-size:16px}
+  .step-section h2{font-size:18px}
+  .step-card{padding:18px 20px}
   .field-table-row{grid-template-columns:1fr;gap:4px;padding:12px}
   .field-table-row.head{display:none}
-  section{margin-top:40px}
+  .progress-dots{display:none}
+  .final{padding:28px 20px}
+  .final h2{font-size:20px}
 }
 </style>
 </head>
@@ -143,496 +162,293 @@ h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 <header class="hero">
   <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
   <div class="hero-inner">
-    <span class="hero-badge">GUIDE 01 ／ 共通</span>
-    <h1>メンバー登録の手順</h1>
-    <p>招待リンクの発行から、初回登録、プロフィール初期設定まで。<br>はじめてシステムを使う人もここを見れば一通り終わります。</p>
+    <span class="hero-badge">TUTORIAL ／ はじめての方へ</span>
+    <h1>ようこそ、HARUKA FILM へ！<span>このチュートリアルを進めれば、すぐに使い始められます</span></h1>
+    <p>3 つのステップを順番にやるだけ。途中で抜けても大丈夫、続きから戻れます。</p>
+    <div class="hero-eta">⏱ 所要時間：約 5 〜 10 分</div>
   </div>
 </header>
 
-<main class="container">
-
-<!-- TOC -->
-<div class="toc">
-  <div class="toc-title">📖 このガイドの内容</div>
-  <div class="toc-list">
-    <a class="toc-item" href="#overview"><span class="toc-num">1</span>登録の全体像</a>
-    <a class="toc-item" href="#roles"><span class="toc-num">2</span>ロール（権限）の選び方</a>
-    <a class="toc-item" href="#partA"><span class="toc-num">3</span>招待する側の手順</a>
-    <a class="toc-item" href="#partB"><span class="toc-num">4</span>招待される側の手順</a>
-    <a class="toc-item" href="#partC"><span class="toc-num">5</span>登録後の初期設定（本人）</a>
-    <a class="toc-item" href="#partD"><span class="toc-num">6</span>仕上げ（管理者）</a>
-    <a class="toc-item" href="#troubleshoot"><span class="toc-num">7</span>トラブルシューティング</a>
-    <a class="toc-item" href="#checklist"><span class="toc-num">8</span>完了チェックリスト</a>
+<!-- Progress bar (sticky) -->
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text" id="progress-text">準備OK ／ 0 / 3</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-dots">
+      <span class="progress-dot current" data-step="1"></span>
+      <span class="progress-dot" data-step="2"></span>
+      <span class="progress-dot" data-step="3"></span>
+    </div>
   </div>
 </div>
 
-<!-- 1. Overview -->
-<section id="overview">
-  <span class="section-num">01 / OVERVIEW</span>
-  <h2>① 登録は2人で進める作業</h2>
-  <p class="section-lead">メンバー登録は <b>「招待する側（管理者・秘書）」</b> と <b>「招待される側（新メンバー本人）」</b> の2人で進めます。<br>本ガイドはどちらの立場の人にも対応しています。該当する側だけ読めば OK です。</p>
+<main class="container">
 
-  <div class="role-grid">
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">📨</span>
-        <span class="role-name">招待する側</span>
-      </div>
-      <div class="role-desc"><b>管理者・秘書</b>。メンバー画面から招待リンクを発行し、Chatwork や LINE などで本人に送ります。<br><a href="#partA" style="color:var(--admin);font-weight:700">→ Part A へ</a></div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">📩</span>
-        <span class="role-name">招待される側</span>
-      </div>
-      <div class="role-desc"><b>新しく入る本人</b>。受け取ったリンクから自分で表示名・パスワードを決めて登録します。<br><a href="#partB" style="color:var(--invitee);font-weight:700">→ Part B へ</a></div>
+<!-- STEP 1: 招待リンクから登録する -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>アカウントを作る</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
     </div>
   </div>
 
-  <div class="callout tip" style="margin-top:18px">
-    <strong>💡 所要時間の目安：</strong> 招待発行 約2分 ／ 本人登録 約3分 ／ 初期設定 約5分。<b>合計 10 分程度</b>で完了します。
+  <div class="step-card">
+    <div class="step-card-title">届いた招待リンクを開く</div>
+    <p>事務局（秘書）から Chatwork や LINE などで <code>https://...invite.html?token=...</code> のリンクが届いているはずです。タップ／クリックして開いてください。</p>
+    <div class="callout warn">
+      <strong>⏰ 24時間ルール：</strong> リンクは発行から <b>24時間で無効</b> になります。期限切れだったら「リンクを再発行してください」と事務局に伝えてください。
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">表示内容を確認する</div>
+    <p>登録画面の上部に「📩 招待が届いています」の下に <b>あなたのメールアドレス</b> と <b>付与されるロール</b> が出ます。<b>間違いがないか</b>必ずチェック。</p>
+    <div class="callout danger">
+      <strong>❌ 違っていたら登録しないで！</strong> その場で事務局に連絡してください。誤った状態で登録してしまうと、あとから直してもらう手間がかかります。
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">表示名・パスワードを入力</div>
+    <p>3 項目を入れます。<b>パスワードは 8 文字以上</b>。あとで変えられるので、今は仮のもので OK。</p>
+    <div class="mock">
+      <div class="mock-label">入力イメージ</div>
+      <span class="mock-fieldlabel">表示名 <span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="text" value="田中 太郎" readonly>
+      <span class="mock-fieldlabel">パスワード <span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="password" value="••••••••" readonly>
+      <span class="mock-fieldlabel">パスワード（確認）</span>
+      <input class="mock-input" type="password" value="••••••••" readonly>
+      <button class="mock-btn">アカウントを作成してログイン</button>
+    </div>
+    <div class="callout tip">
+      <strong>💡 表示名のコツ：</strong> 他のメンバーから見える名前です。<b>普段呼ばれている名前</b>（田中、たろ、はなちゃんなど）にすると、メンションされやすくなります。
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">アカウント作成、おつかれさま！<small>自動でログインされて、ダッシュボードが開きます</small></div>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
+</section>
+
+<!-- STEP 2: プロフィール初期設定 -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>プロフィールを整える</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">プロフィール画面を開く</div>
+    <p>画面右上の <b>アバター（イニシャル丸）</b> をクリックすると、自分のプロフィール編集モーダルが開きます。スマホはハンバーガーメニュー →「👤 メンバー」から自分の行を編集。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">「基本情報」タブを埋める</div>
+    <div class="field-table">
+      <div class="field-table-row head"><div>項目</div><div>説明</div><div></div></div>
+      <div class="field-table-row">
+        <div class="field-name">📷 アバター</div>
+        <div class="field-desc">「アイコンを変更」から画像をアップロード。一覧画面で識別しやすくなります。</div>
+        <div><span class="field-pill recommended">推奨</span></div>
+      </div>
+      <div class="field-table-row">
+        <div class="field-name">ニックネーム</div>
+        <div class="field-desc">検索・フィルタで使える別名（例：たろ、はなちゃん）。普段呼ばれている名前を入れると探しやすい。</div>
+        <div><span class="field-pill optional">任意</span></div>
+      </div>
+      <div class="field-table-row">
+        <div class="field-name">職種</div>
+        <div class="field-desc">動画 ／ デザイン ／ 両方 から選択。クリエイティブのアサイン候補に影響します。</div>
+        <div><span class="field-pill recommended">推奨</span></div>
+      </div>
+      <div class="field-table-row">
+        <div class="field-name">誕生日</div>
+        <div class="field-desc">月日のみ表示にすることも可（年齢非公開）。社内の誕生日通知に使われます。</div>
+        <div><span class="field-pill optional">任意</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">「稼働時間」タブで稼働可能な時間帯を入力</div>
+    <p><b>平日／土日祝</b> それぞれの稼働可能時間帯を入れます。アサイン時の稼働判定に使われます。「土日祝は稼働なし」のチェックも可。</p>
+    <div class="callout tip">
+      <strong>💡 メモ欄のすすめ：</strong> スキル（After Effects / Premiere / Photoshop など）や得意ジャンル、連絡可能時間を書いておくと、アサインが回ってきやすくなります。
+    </div>
+  </div>
+
+  <div class="step-card" style="border-color:var(--warn);background:linear-gradient(180deg,#FFFCEB 0%,#fff 60%)">
+    <div class="step-card-title" style="color:#92400E">⭐ 「連絡先」タブ ── ここがいちばん大事</div>
+    <p>あなたに <b>通知（DM）が届くため</b> に必要な ID を入力します。これを入れないと、Dチェック依頼や修正通知が <b>あなたに飛びません</b>。一覧画面で気づくしかなくなるので、必ず登録を。</p>
+    <div class="field-table" style="margin-top:12px">
+      <div class="field-table-row head"><div>項目</div><div>取得方法</div><div></div></div>
+      <div class="field-table-row">
+        <div class="field-name">Slack DM ID</div>
+        <div class="field-desc">Slack の DM 画面でプロフィール右クリック →「メンバーIDをコピー」<br>例：<code>U0123456789</code></div>
+        <div><span class="field-pill recommended">推奨</span></div>
+      </div>
+      <div class="field-table-row">
+        <div class="field-name">Chatwork DM ID</div>
+        <div class="field-desc">Chatwork のメンション形式 <code>[To:6603336]</code> の数字部分。<br>プロフィール画面でも確認できます。</div>
+        <div><span class="field-pill recommended">推奨</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">プロフィール初期設定、完了！<small>これで他のメンバーからもあなたが見えるようになり、通知も届きます</small></div>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3" onclick="markStep(2)">STEP 3 へ進む</a></div>
+</section>
+
+<!-- STEP 3: 口座情報 -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>口座情報を登録する</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">なぜ口座情報を入れるの？</div>
+    <p>あなたが納品したクリエイティブは、自動的に <b>請求書ドラフト</b> になり、月末にあなた自身が「提出」ボタンを押すと管理者の承認待ちに入ります。<br>承認後の振込先として、口座情報が必要です。<b>編集者・デザイナーの方は必須</b>です。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">「口座情報」タブを埋める</div>
+    <div class="field-table">
+      <div class="field-table-row head"><div>項目</div><div>例</div><div></div></div>
+      <div class="field-table-row"><div class="field-name">銀行名 / コード</div><div class="field-desc">例：楽天銀行 / 0036</div><div><span class="field-pill required">必須</span></div></div>
+      <div class="field-table-row"><div class="field-name">支店名 / コード</div><div class="field-desc">例：ワルツ支店 / 204</div><div><span class="field-pill required">必須</span></div></div>
+      <div class="field-table-row"><div class="field-name">口座種別 / 番号</div><div class="field-desc">普通 / 当座、7桁の口座番号</div><div><span class="field-pill required">必須</span></div></div>
+      <div class="field-table-row"><div class="field-name">口座名義（カナ）</div><div class="field-desc">全角カナ、姓と名の間に半角スペース。例：タカハシ サトル</div><div><span class="field-pill required">必須</span></div></div>
+      <div class="field-table-row"><div class="field-name">電話番号 / 住所</div><div class="field-desc">請求書に印字されます。</div><div><span class="field-pill recommended">推奨</span></div></div>
+    </div>
+    <div class="callout warn">
+      <strong>⚠️ 名義カナは厳密に：</strong> 銀行口座の名義（カナ）と<b>1文字でも違う</b>と振込エラーになります。通帳・キャッシュカードを見ながら正確に入力してください。
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">口座情報、登録完了！<small>これで請求書がスムーズに処理されます</small></div>
   </div>
 </section>
 
-<!-- 2. Role selection -->
-<section id="roles">
-  <span class="section-num">02 / ROLES</span>
-  <h2>② ロール（権限）の選び方</h2>
-  <p class="section-lead">招待時に <b>ロール</b> を1つ選びます。これは「その人がシステム上で何をできるか」を決める重要な設定。<br>あとから管理者が変更できますが、まず近いものを選びましょう。</p>
+<!-- Final completion -->
+<section class="final" id="finished">
+  <div class="final-icon">🎉</div>
+  <h2>登録チュートリアル、完了！</h2>
+  <p>これで HARUKA FILM SYSTEM を使う準備が整いました。<br>あとは実際に画面を触りながら覚えていきましょう。</p>
+  <a class="final-cta" href="/haruka.html" onclick="markStep(3)">システムを開く →</a>
+</section>
 
-  <div class="role-grid">
-    <div class="role-card recommended">
-      <div class="role-card-head">
-        <span class="role-icon">✂️</span>
-        <span class="role-name">編集者</span>
-        <span class="role-code">editor</span>
+<!-- Next up: optional reading -->
+<section class="next-up">
+  <h3>📚 次に読むと便利なもの</h3>
+  <div class="next-up-grid">
+    <a class="next-up-card" href="/data-model.html">
+      <span class="next-up-icon">📐</span>
+      <div class="next-up-text">
+        <div class="next-up-title">データ構造の図解</div>
+        <div class="next-up-desc">クライアント・案件・チームの関係</div>
       </div>
-      <div class="role-desc">動画編集を担当。クリエイティブの制作・納品・自分の請求書作成。<b>動画編集者の標準</b>。</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">🎨</span>
-        <span class="role-name">デザイナー</span>
-        <span class="role-code">designer</span>
+    </a>
+    <a class="next-up-card" href="/guide.html">
+      <span class="next-up-icon">📖</span>
+      <div class="next-up-text">
+        <div class="next-up-title">ガイド一覧に戻る</div>
+        <div class="next-up-desc">他の操作ガイドを探す</div>
       </div>
-      <div class="role-desc">バナー・サムネ等のデザインを担当。基本権限は編集者と同じ。</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">🎯</span>
-        <span class="role-name">ディレクター</span>
-        <span class="role-code">director</span>
-      </div>
-      <div class="role-desc">クリエイティブのDチェック・修正依頼。チームの代表 D に指定可能。</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">📊</span>
-        <span class="role-name">プロデューサー</span>
-        <span class="role-code">producer</span>
-      </div>
-      <div class="role-desc">案件管理・予算・Pチェック。クライアントとのやり取り。</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">🔄</span>
-        <span class="role-name">P兼D</span>
-        <span class="role-code">producer_director</span>
-      </div>
-      <div class="role-desc">プロデューサーとディレクターの両方を兼ねる人向け。両方の権限を持つ。</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">📋</span>
-        <span class="role-name">秘書</span>
-        <span class="role-code">secretary</span>
-      </div>
-      <div class="role-desc">管理者とほぼ同等の権限。メンバー招待・マスター編集が可能。</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-head">
-        <span class="role-icon">👑</span>
-        <span class="role-name">管理者</span>
-        <span class="role-code">admin</span>
-      </div>
-      <div class="role-desc">全機能・全データへのフルアクセス。基本は経営層のみに付与。</div>
-    </div>
-  </div>
-
-  <div class="callout warn" style="margin-top:18px">
-    <strong>⚠️ ロール選びの基本：</strong> 迷ったら <b>「編集者」</b> を選んでください。あとから昇格は簡単ですが、いきなり強い権限を渡すと事故のもとです。
+    </a>
   </div>
 </section>
 
-<!-- 3. Part A: 招待する側 -->
-<section id="partA">
-  <span class="section-num admin">03 / PART A</span>
-  <span class="audience admin">📨 招待する側（管理者・秘書）</span>
-  <h2>③ 招待リンクを発行する</h2>
-  <p class="section-lead">メンバー画面から招待リンクを発行し、Chatwork / LINE / メール などで本人に送ります。</p>
-
-  <div class="steps">
-    <div class="step admin">
-      <div class="step-num">1</div>
-      <div class="step-body">
-        <div class="step-title">メンバー画面を開く</div>
-        <div class="step-desc">PC：上部ナビ「<b>メンバー</b>」<br>スマホ：ハンバーガーメニュー →「👤 メンバー」</div>
-        <div class="callout tip">
-          <strong>💡 表示されない？</strong> 招待権限がないアカウントです。管理者・秘書ロールでログインしてください。
-        </div>
-      </div>
-    </div>
-
-    <div class="step admin">
-      <div class="step-num">2</div>
-      <div class="step-body">
-        <div class="step-title">「＋ 招待リンク発行」をクリック</div>
-        <div class="step-desc">画面上部のツールバーにある <code>＋ 招待リンク発行</code> ボタンを押すと、発行モーダルが開きます。</div>
-        <div class="step-screen">
-          <div class="step-screen-label">画面イメージ</div>
-          <button class="step-btn-mock">＋ 招待リンク発行</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="step admin">
-      <div class="step-num">3</div>
-      <div class="step-body">
-        <div class="step-title">メールアドレスとロールを入力</div>
-        <div class="step-desc">招待先のメールアドレスと、付与するロールを選択します。</div>
-        <div class="step-screen">
-          <div class="step-screen-label">入力イメージ</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">招待先メールアドレス <span style="color:#E24B4A">*</span></div>
-          <div class="step-input-row">
-            <input class="step-input" type="text" value="member@example.com" readonly>
-          </div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:10px;margin-bottom:6px">権限</div>
-          <div class="step-input-row">
-            <select class="step-input" disabled>
-              <option>編集者</option>
-            </select>
-          </div>
-        </div>
-        <div class="callout warn">
-          <strong>⚠️ 注意：</strong> メールアドレスは <b>本人が普段使う実在のもの</b> を入力。間違えても招待は飛ばないので発行はできますが、ログイン時の本人識別子になるので慎重に。
-        </div>
-      </div>
-    </div>
-
-    <div class="step admin">
-      <div class="step-num">4</div>
-      <div class="step-body">
-        <div class="step-title">「リンクを発行」を押す</div>
-        <div class="step-desc">招待メッセージが自動生成されます（24時間有効の招待 URL 入り）。</div>
-        <div class="step-screen">
-          <div class="step-screen-label">生成されるメッセージの例</div>
-          <pre style="font-size:12px;color:var(--text);background:#fff;padding:10px 12px;border-radius:6px;border:1px solid var(--border-light);white-space:pre-wrap;line-height:1.7;font-family:'Noto Sans JP',sans-serif">【HARUKA FILM SYSTEM へのご招待】
-
-この度、チームメンバーとしてご参加いただくことになりました。
-以下のリンクより登録手続きをお願いいたします。
-
-▼ 参加登録URL（24時間以内に登録をお願いします）
-https://haruka-film-system.up.railway.app/invite.html?token=...
-
-登録完了後、Googleアカウントまたはパスワードでログインできます。
-権限：編集者
-
-ご不明な点はお気軽にご連絡ください。
-よろしくお願いいたします。</pre>
-        </div>
-      </div>
-    </div>
-
-    <div class="step admin">
-      <div class="step-num">5</div>
-      <div class="step-body">
-        <div class="step-title">「📋 メッセージをコピー」 → 本人に送信</div>
-        <div class="step-desc">コピーしたメッセージを <b>Chatwork ／ LINE ／ メール ／ Slack DM</b> など、普段使っている連絡手段で本人に送ってください。リンクには 24 時間の有効期限があります。</div>
-        <div class="callout danger">
-          <strong>🔒 セキュリティ：</strong> 招待リンクは <b>第三者に絶対に転送しない</b>こと。リンクを知る人なら誰でもそのメールアドレスでアカウントを作成できてしまいます。
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 4. Part B: 招待される側 -->
-<section id="partB">
-  <span class="section-num invitee">04 / PART B</span>
-  <span class="audience invitee">📩 招待される側（新メンバー本人）</span>
-  <h2>④ 招待リンクから登録する</h2>
-  <p class="section-lead">受け取った招待リンクを開き、自分で表示名とパスワードを決めて登録します。</p>
-
-  <div class="steps">
-    <div class="step invitee">
-      <div class="step-num">1</div>
-      <div class="step-body">
-        <div class="step-title">招待リンクを開く</div>
-        <div class="step-desc">Chatwork や LINE で受け取った <code>https://...invite.html?token=...</code> のリンクをタップ／クリックしてください。</div>
-        <div class="callout warn">
-          <strong>⏰ 24時間ルール：</strong> 発行から 24時間 を過ぎたリンクは無効になります。期限切れの場合は招待者に再発行を依頼してください。
-        </div>
-      </div>
-    </div>
-
-    <div class="step invitee">
-      <div class="step-num">2</div>
-      <div class="step-body">
-        <div class="step-title">登録画面で内容を確認</div>
-        <div class="step-desc">画面上部に「📩 招待が届いています」と <b>あなたのメールアドレス</b> ＋ <b>付与されるロール</b> が表示されます。間違いがないか確認してください。</div>
-        <div class="callout danger">
-          <strong>❌ 間違っていたら登録しないで！</strong> メールアドレスやロールが違う場合は、その場で招待者に連絡を。誤った状態で登録してしまうと、管理者にロール変更を依頼する必要があります。
-        </div>
-      </div>
-    </div>
-
-    <div class="step invitee">
-      <div class="step-num">3</div>
-      <div class="step-body">
-        <div class="step-title">表示名・パスワードを入力</div>
-        <div class="step-desc">3項目を入力します。</div>
-        <div class="field-table" style="margin-top:12px">
-          <div class="field-table-row head">
-            <div>項目</div><div>説明</div><div></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">表示名</div>
-            <div class="field-desc">他のメンバーから見える名前。本名 or 普段呼ばれている名前（例：田中 太郎）。あとで変更可。</div>
-            <div><span class="field-pill required">必須</span></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">パスワード</div>
-            <div class="field-desc"><b>8文字以上</b>。英数字混在を推奨。あとで変更可。</div>
-            <div><span class="field-pill required">必須</span></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">パスワード（確認）</div>
-            <div class="field-desc">同じパスワードをもう一度入力。打ち間違い防止。</div>
-            <div><span class="field-pill required">必須</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="step invitee">
-      <div class="step-num">4</div>
-      <div class="step-body">
-        <div class="step-title">「アカウントを作成してログイン」を押す</div>
-        <div class="step-desc">ボタンを押すと自動的にログインされ、ダッシュボード画面に遷移します。<b>ここまでで登録は完了</b>です 🎉</div>
-        <div class="callout tip">
-          <strong>💡 ログインは2方法：</strong> 次回以降は ① <b>メール＋パスワード</b>、② <b>Google アカウント連携</b> （同じメールアドレス）のどちらでも入れます。
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 5. Part C: 登録後の初期設定（本人） -->
-<section id="partC">
-  <span class="section-num invitee">05 / PART C</span>
-  <span class="audience invitee">👤 ログイン後（本人）</span>
-  <h2>⑤ プロフィールの初期設定</h2>
-  <p class="section-lead">登録直後はプロフィールが最低限です。ヘッダー右上の <b>アバター（イニシャル丸）をクリック</b> して、自分の情報を埋めましょう。</p>
-
-  <div class="steps">
-    <div class="step invitee">
-      <div class="step-num">1</div>
-      <div class="step-body">
-        <div class="step-title">基本情報タブ</div>
-        <div class="field-table" style="margin-top:8px">
-          <div class="field-table-row head">
-            <div>項目</div><div>説明</div><div></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">📷 アバター</div>
-            <div class="field-desc">「アイコンを変更」から画像をアップロード。一覧画面で識別しやすくなります。</div>
-            <div><span class="field-pill recommended">推奨</span></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">ニックネーム</div>
-            <div class="field-desc">検索・フィルタで使える別名（例：たろ、はなちゃん）。チャットで呼ばれている名前を入れると探しやすい。</div>
-            <div><span class="field-pill optional">任意</span></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">職種</div>
-            <div class="field-desc">動画 ／ デザイン ／ 両方 から選択。クリエイティブのアサイン候補に影響します。</div>
-            <div><span class="field-pill recommended">推奨</span></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">誕生日</div>
-            <div class="field-desc">月日のみ表示にすることも可（年齢非公開）。社内の誕生日通知に使われます。</div>
-            <div><span class="field-pill optional">任意</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="step invitee">
-      <div class="step-num">2</div>
-      <div class="step-body">
-        <div class="step-title">稼働時間タブ</div>
-        <div class="step-desc"><b>平日／土日祝</b> それぞれの稼働可能時間帯を入力。アサイン時の稼働判定に使われます。「土日祝は稼働なし」のチェックも可。</div>
-        <div class="callout tip">
-          <strong>💡 メモ欄：</strong> スキル（After Effects/Premiere/Photoshop など）や得意ジャンル、連絡可能時間を書いておくと、アサインが回ってきやすくなります。
-        </div>
-      </div>
-    </div>
-
-    <div class="step invitee">
-      <div class="step-num">3</div>
-      <div class="step-body">
-        <div class="step-title">連絡先タブ（重要）</div>
-        <div class="step-desc">あなたに <b>通知（DM）が届くため</b> に必要な ID を入力します。</div>
-        <div class="field-table" style="margin-top:8px">
-          <div class="field-table-row head"><div>項目</div><div>取得方法</div><div></div></div>
-          <div class="field-table-row">
-            <div class="field-name">Slack DM ID</div>
-            <div class="field-desc">Slack の DM 画面でプロフィール右クリック →「メンバーIDをコピー」<br>例：<code>U0123456789</code></div>
-            <div><span class="field-pill recommended">推奨</span></div>
-          </div>
-          <div class="field-table-row">
-            <div class="field-name">Chatwork DM ID</div>
-            <div class="field-desc">Chatwork のメンション形式 <code>[To:6603336]</code> の数字部分。<br>プロフィール画面でも確認できます。</div>
-            <div><span class="field-pill recommended">推奨</span></div>
-          </div>
-        </div>
-        <div class="callout warn">
-          <strong>⚠️ 入れないと…</strong> Dチェック・Pチェック依頼・修正通知などの DM が <b>あなたに飛びません</b>。一覧画面で気づくしかなくなるので必ず登録を。
-        </div>
-      </div>
-    </div>
-
-    <div class="step invitee">
-      <div class="step-num">4</div>
-      <div class="step-body">
-        <div class="step-title">口座情報タブ（編集者・デザイナー必須）</div>
-        <div class="step-desc">納品 → 請求書発行のため、振込先口座が必要です。</div>
-        <div class="field-table" style="margin-top:8px">
-          <div class="field-table-row head"><div>項目</div><div>例</div><div></div></div>
-          <div class="field-table-row"><div class="field-name">銀行名 / コード</div><div class="field-desc">例：楽天銀行 / 0036</div><div><span class="field-pill required">必須</span></div></div>
-          <div class="field-table-row"><div class="field-name">支店名 / コード</div><div class="field-desc">例：ワルツ支店 / 204</div><div><span class="field-pill required">必須</span></div></div>
-          <div class="field-table-row"><div class="field-name">口座種別 / 番号</div><div class="field-desc">普通 / 当座、7桁の口座番号</div><div><span class="field-pill required">必須</span></div></div>
-          <div class="field-table-row"><div class="field-name">口座名義（カナ）</div><div class="field-desc">全角カナ、姓と名の間に半角スペース。例：タカハシ サトル</div><div><span class="field-pill required">必須</span></div></div>
-          <div class="field-table-row"><div class="field-name">電話番号 / 住所</div><div class="field-desc">請求書に印字されます。</div><div><span class="field-pill recommended">推奨</span></div></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 6. Part D: 仕上げ（管理者） -->
-<section id="partD">
-  <span class="section-num admin">06 / PART D</span>
-  <span class="audience admin">⚙️ 仕上げ（管理者・秘書）</span>
-  <h2>⑥ 管理者がやる仕上げ作業</h2>
-  <p class="section-lead">本人が登録を完了したら、管理者が <b>ランク</b>・<b>所属チーム</b>・必要なら<b>単価上書き</b>を設定して完了です。</p>
-
-  <div class="steps">
-    <div class="step admin">
-      <div class="step-num">1</div>
-      <div class="step-body">
-        <div class="step-title">メンバー一覧で本人を編集</div>
-        <div class="step-desc">メンバー画面 → 該当メンバーの行の「編集」ボタン → 基本情報タブ。</div>
-      </div>
-    </div>
-    <div class="step admin">
-      <div class="step-num">2</div>
-      <div class="step-body">
-        <div class="step-title">ランク（S / A / B / C）を設定</div>
-        <div class="step-desc">編集者・デザイナーは <b>ランクで単価が決まります</b>。クリエイティブ単価マスター（マスター画面）と組み合わせて自動計算。</div>
-        <div class="callout tip">
-          <strong>💡 ランクの基準：</strong> 経験年数・実績・社内評価で決まる。判断が難しい場合はまず B から始めて様子を見るのが無難。
-        </div>
-      </div>
-    </div>
-    <div class="step admin">
-      <div class="step-num">3</div>
-      <div class="step-body">
-        <div class="step-title">所属チーム（基本）を設定</div>
-        <div class="step-desc">どの基本チームに所属するか選びます。代表 D / 代表 P が自動的にデフォルト承認者になります。</div>
-        <div class="callout warn">
-          <strong>⚠️ 1人1チーム：</strong> 兼務は不可。複数チームに関わる場合は、案件ごとに「案件専用 D / P」を上書き指定してください。
-        </div>
-      </div>
-    </div>
-    <div class="step admin">
-      <div class="step-num">4</div>
-      <div class="step-body">
-        <div class="step-title">（任意）クリエイティブ単価の上書き</div>
-        <div class="step-desc">特定の案件・特定のクリエイティブで、ランクとは違う単価を使いたい場合は、案件画面の「クリエイティブ単価」から個別に上書き可能。<b>変更時は理由必須</b>（監査ログに残る）。</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 7. Troubleshooting -->
-<section id="troubleshoot">
-  <span class="section-num">07 / FAQ</span>
-  <h2>⑦ トラブルシューティング</h2>
+<!-- Trouble shoot (compact) -->
+<section class="trouble-section">
+  <h3>💬 困ったときは</h3>
   <div class="faq">
     <div class="faq-item">
-      <div class="faq-q">招待リンクを開いたら「期限切れ」と出ました。</div>
-      <div class="faq-a">招待リンクは発行から <b>24時間で無効</b> になります。招待者に <b>再発行</b> を依頼してください。同じメールアドレスで再発行可能です。</div>
+      <div class="faq-q">招待リンクが期限切れになっていた</div>
+      <div class="faq-a">招待リンクは 24 時間で無効になります。事務局（秘書）に <b>「リンクを再発行してください」</b> と伝えてください。</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">「すでに使用されています」と出ました。</div>
-      <div class="faq-a">そのリンクはすでに登録に使われています。すでにアカウントが作成済みなので、<b>ログイン画面</b> からメール＋パスワードで入ってください。パスワードを忘れた場合は管理者に <b>パスワードリセット</b> を依頼。</div>
+      <div class="faq-q">「すでに使用されています」と表示された</div>
+      <div class="faq-a">そのリンクはすでに登録に使われています。<a href="/haruka.html">ログイン画面</a>からメール ＋ パスワードで入ってみてください。パスワードを忘れた場合は、事務局にパスワードリセットを依頼してください。</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">「このメールアドレスはすでに登録済み」と出て招待発行できません。</div>
-      <div class="faq-a">過去に同じメールで登録された人がいます。<b>メンバー一覧</b> で該当メンバーを検索 → 既存アカウントを使うか、不要なら無効化してから別メールで招待してください。</div>
+      <div class="faq-q">登録したのに通知（DM）が来ない</div>
+      <div class="faq-a">プロフィールの <b>「連絡先」タブ</b> で <code>Slack DM ID</code> または <code>Chatwork DM ID</code> が空欄になっていないか確認してください（STEP 2 参照）。それでも来ない場合は事務局に相談を。</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">登録したけど通知（DM）が来ません。</div>
-      <div class="faq-a">本人プロフィールの <b>連絡先タブ</b> で <code>Slack DM ID</code> または <code>Chatwork DM ID</code> が空欄の可能性大。プロフィール編集 → 連絡先タブで入力してください。それでも来ない場合は、Bot がそのワークスペース／ルームのメンバーになっているか管理者に確認を。</div>
+      <div class="faq-q">ロールが間違っていた</div>
+      <div class="faq-a">登録自体はそのままで OK。事務局に依頼すれば、メンバー編集画面でロールを変更してもらえます。アカウントを作り直す必要はありません。</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">ロールを間違えて発行・登録しました。</div>
-      <div class="faq-a">登録自体はそのままで OK。<b>管理者</b>に依頼すれば、メンバー編集画面でロールを変更できます。アカウントを作り直す必要はありません。</div>
+      <div class="faq-q">それ以外で困ったとき</div>
+      <div class="faq-a">事務局（秘書）または管理者に Chatwork / LINE で気軽に聞いてください。「○○ができない」と画面のスクショを添えると早いです。</div>
     </div>
-    <div class="faq-item">
-      <div class="faq-q">退職メンバーのアカウントはどうすれば？</div>
-      <div class="faq-a">削除ではなく <b>無効化（is_active = false）</b> がおすすめ。過去の請求書・コメント等の参照が壊れません。メンバー編集モーダル右上のメニューから無効化できます。</div>
-    </div>
-  </div>
-</section>
-
-<!-- 8. Checklist -->
-<section id="checklist">
-  <span class="section-num">08 / DONE</span>
-  <h2>⑧ 完了チェックリスト</h2>
-  <p class="section-lead">これが全部終わったら、メンバー登録は <b>完璧</b> です 🎉</p>
-
-  <div class="checklist">
-    <h3>📨 招待する側</h3>
-    <ul>
-      <li>正しいメールアドレスとロールで招待リンクを発行した</li>
-      <li>招待メッセージを本人に送信した（24時間以内に登録するよう伝えた）</li>
-      <li>本人の登録完了を確認し、ランク・所属チームを設定した</li>
-      <li>必要なら案件レベルでの単価上書きを設定した</li>
-    </ul>
-
-    <h3 style="margin-top:18px">📩 招待される側</h3>
-    <ul>
-      <li>表示名・パスワードを設定し、登録を完了した</li>
-      <li>プロフィール ＞ 基本情報：アバター・ニックネーム・職種を入力</li>
-      <li>プロフィール ＞ 稼働時間：平日／土日祝の稼働時間帯を入力</li>
-      <li>プロフィール ＞ 連絡先：Slack ID と Chatwork ID を入力（DM 通知のため）</li>
-      <li>プロフィール ＞ 口座情報：振込先口座と請求書用住所を入力（編集者・デザイナーは必須）</li>
-      <li><a href="/data-model.html" style="color:var(--em-dark)">データ構造ガイド</a> を一読し、システムの全体像を把握した</li>
-    </ul>
   </div>
 </section>
 
 </main>
 
 <footer class="foot">
-  <div class="foot-nav">
-    <a href="/guide.html">← ガイド一覧へ</a>
-    <a href="/data-model.html">次のガイド：データ構造の図解 →</a>
-  </div>
-  <p>HARUKA FILM SYSTEM ／ 新メンバー向けガイド</p>
+  <p style="margin-bottom:8px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ はじめての登録チュートリアル</p>
 </footer>
+
+<script>
+const TOTAL_STEPS = 3;
+let completed = parseInt(localStorage.getItem('haruka_tutorial_progress') || '0', 10);
+
+function updateProgress() {
+  const pct = Math.min(100, (completed / TOTAL_STEPS) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const label = completed === 0 ? '準備OK' : (completed >= TOTAL_STEPS ? '完了 🎉' : '進行中');
+  document.getElementById('progress-text').textContent = `${label} ／ ${completed} / ${TOTAL_STEPS}`;
+  document.querySelectorAll('.progress-dot').forEach((d, i) => {
+    const step = i + 1;
+    d.classList.toggle('done', step <= completed);
+    d.classList.toggle('current', step === completed + 1);
+  });
+}
+
+function markStep(n) {
+  if (n > completed) {
+    completed = n;
+    localStorage.setItem('haruka_tutorial_progress', String(completed));
+    updateProgress();
+  }
+}
+
+updateProgress();
+
+// 各 progress dot をクリックで対応セクションにジャンプ
+document.querySelectorAll('.progress-dot').forEach(d => {
+  d.style.cursor = 'pointer';
+  d.addEventListener('click', () => {
+    const s = d.dataset.step;
+    document.getElementById('step' + s)?.scrollIntoView({behavior:'smooth', block:'start'});
+  });
+});
+</script>
 
 </body>
 </html>
