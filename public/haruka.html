@@ -254,6 +254,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-hero::after{content:'';position:absolute;right:-60px;top:-60px;width:260px;height:260px;background:url('HARUKAFILM背景.png') center/cover;opacity:0.12;border-radius:50%;pointer-events:none}
 .dash-greeting{font-size:22px;font-weight:700;letter-spacing:0.04em;margin-bottom:4px}
 .dash-date-str{font-size:13px;opacity:0.8;letter-spacing:0.03em}
+.dash-quote{font-size:12px;font-style:italic;opacity:0.85;margin-top:8px;letter-spacing:0.03em;max-width:640px;line-height:1.55}
+.dash-quote-author{font-style:normal;opacity:0.7;font-size:11px;margin-left:6px;white-space:nowrap}
 .dash-hero-stats{display:flex;gap:28px;z-index:1}
 .dash-hero-stat{text-align:center;min-width:56px}
 .dash-hero-stat-val{font-size:30px;font-weight:800;line-height:1}
@@ -606,6 +608,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .dash-hero{flex-direction:column;gap:14px;padding:20px 16px;align-items:flex-start;border-radius:12px;margin-bottom:16px}
   .dash-greeting{font-size:18px}
   .dash-date-str{font-size:12px}
+  .dash-quote{font-size:11px;line-height:1.5}
+  .dash-quote-author{font-size:10px;display:block;margin-left:0;margin-top:2px}
   .dash-hero-stats{gap:20px;flex-wrap:wrap}
   .dash-hero-stat-val{font-size:26px}
   #dash-filter{display:none !important}
@@ -1136,6 +1140,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="z-index:1">
       <div class="dash-greeting" id="dash-greeting">読み込み中...</div>
       <div class="dash-date-str" id="dash-date-str"></div>
+      <div class="dash-quote" id="dash-quote"></div>
     </div>
     <div class="dash-hero-stats" id="dash-hero-stats"></div>
   </div>
@@ -6265,6 +6270,53 @@ function closeNavDrawer() {
 
 // ==================== ダッシュボード ====================
 
+// 著名人の格言（ダッシュボード用・出典が明確なもののみ）
+const DASH_QUOTES = [
+  // 国内: スポーツ
+  { t: '小さなことを積み重ねることが、とんでもないところへ行くただひとつの道だ。', a: 'イチロー' },
+  { t: '準備というのは、言い訳の材料となり得るものを排除していくために、考え得るすべてのことをこなしていくこと。', a: 'イチロー' },
+  { t: '努力は必ず報われる。もし報われない努力があるのならば、それはまだ努力と呼べない。', a: '王貞治' },
+  { t: '先入観は可能を不可能にする。', a: '大谷翔平' },
+  { t: '夢を抱くことに理由はない。叶えるのに努力はいる。', a: '三浦知良' },
+  { t: 'ボールを止める、蹴る。それを正確にやり続けたチームが勝つ。', a: '岡田武史' },
+  // 国内: 経営
+  { t: '失敗したところでやめてしまうから失敗になる。成功するまで続ければそれは成功になる。', a: '松下幸之助' },
+  { t: '道をひらくためには、まず歩まねばならぬ。', a: '松下幸之助' },
+  { t: '成功は失敗の99%によって支えられている。', a: '本田宗一郎' },
+  { t: '失敗のない人生なんて、ろくな人生じゃない。', a: '本田宗一郎' },
+  { t: '人生・仕事の結果 = 考え方 × 熱意 × 能力。', a: '稲盛和夫' },
+  { t: '夢なき者に成功なし。', a: '渋沢栄一' },
+  { t: '夢なき者に理想なし、理想なき者に計画なし、計画なき者に実行なし、実行なき者に成功なし。', a: '吉田松陰' },
+  // 国内: 文化人
+  { t: '人を信じよ、しかしその百倍も自らを信じよ。', a: '手塚治虫' },
+  { t: '面倒くさいって思うことを片付けるのが、生きるってことだから。', a: '宮崎駿' },
+  { t: 'いま自分にできることを、淡々と。', a: '黒澤明' },
+  // 海外: ビジネス・テック
+  { t: '夢を見ることができれば、それは実現できる。', a: 'ウォルト・ディズニー' },
+  { t: '始める方法はただ一つ、話すのをやめて行動すること。', a: 'ウォルト・ディズニー' },
+  { t: 'ハングリーであれ、愚かであれ。', a: 'スティーブ・ジョブズ' },
+  { t: '時間は限られている。だから他人の人生を生きて無駄にするな。', a: 'スティーブ・ジョブズ' },
+  { t: '素晴らしい仕事をする唯一の方法は、自分のやっていることを愛することだ。', a: 'スティーブ・ジョブズ' },
+  { t: '天才とは1パーセントのひらめきと99パーセントの努力である。', a: 'トーマス・エジソン' },
+  { t: 'できると思えばできる、できないと思えばできない。', a: 'ヘンリー・フォード' },
+  { t: '想像力は知識よりも重要である。', a: 'アルベルト・アインシュタイン' },
+  { t: '人生とは自転車に乗るようなものだ。バランスを保つには、走り続けなければならない。', a: 'アルベルト・アインシュタイン' },
+  // 海外: リーダー
+  { t: '何事も成功するまでは不可能に思えるものである。', a: 'ネルソン・マンデラ' },
+  { t: '成功とは終わりではなく、失敗もまた終わりではない。続ける勇気こそが大切なのだ。', a: 'ウィンストン・チャーチル' },
+  { t: '止まらないかぎり、どれだけゆっくりでも問題ではない。', a: '孔子' },
+  { t: '世界に変化を望むなら、自らがその変化となれ。', a: 'マハトマ・ガンジー' },
+  { t: '未来は、自分の夢の美しさを信じる人のものである。', a: 'エレノア・ルーズベルト' },
+  // 海外: スポーツ・カルチャー
+  { t: '考えるな、感じろ。', a: 'ブルース・リー' },
+  { t: '人生で大切なのは何回倒れたかではなく、何回立ち上がったかだ。', a: 'ヴィンス・ロンバルディ' },
+  { t: '人生とは、ほかの計画を立てているときに起こってしまう出来事のことだ。', a: 'ジョン・レノン' },
+];
+
+function pickDashQuote() {
+  return DASH_QUOTES[Math.floor(Math.random() * DASH_QUOTES.length)];
+}
+
 function loadDashboard() {
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'おはようございます' : hour < 18 ? 'こんにちは' : 'お疲れさまです';
@@ -6272,6 +6324,11 @@ function loadDashboard() {
   document.getElementById('dash-greeting').textContent = `${greet}、${name}さん`;
   document.getElementById('dash-date-str').textContent =
     new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
+  const q = pickDashQuote();
+  const quoteEl = document.getElementById('dash-quote');
+  if (quoteEl) {
+    quoteEl.innerHTML = `“${esc(q.t)}”<span class="dash-quote-author">— ${esc(q.a)}</span>`;
+  }
 
   initDashFilter(); // 追加
   const role = effectiveRole();
