@@ -1023,7 +1023,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- 全体連絡: 対応状況モーダル -->
 <div class="modal-overlay" id="modal-announcement-status">
-  <div class="modal-card" style="width:680px">
+  <div class="modal-card" style="width:min(1400px,95vw)">
     <div class="modal-title">対応状況<button class="modal-close" onclick="closeModal('modal-announcement-status')">×</button></div>
     <div id="ann-status-content"></div>
     <div class="modal-footer">
@@ -6552,9 +6552,21 @@ async function loadAnnouncements() {
     const done = !!a.my_done_at;
     const deadline = a.deadline_at ? new Date(a.deadline_at) : null;
     const overdue = deadline && deadline < new Date() && !done;
-    const deadlineLabel = deadline
-      ? `<span style="font-size:11px;color:${overdue ? '#C0392B' : 'var(--text-muted)'};margin-left:8px">期限: ${deadline.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}${overdue ? ' (超過)' : ''}</span>`
-      : '';
+    // 期限: タイトル下に大きめに表示（期限厳守を促すため目立たせる）
+    let deadlineBlock = '';
+    if (deadline) {
+      const fmt = deadline.toLocaleString('ja-JP', { month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' });
+      const bg = overdue ? '#FDECEA' : 'var(--em-pale)';
+      const fg = overdue ? '#C0392B' : 'var(--em-dark)';
+      const icon = overdue ? '⚠️' : '⏰';
+      const suffix = overdue ? '（超過）' : '';
+      deadlineBlock = `<div style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${fg};padding:6px 14px;border-radius:8px;font-size:15px;font-weight:700;margin-top:6px">
+        <span style="font-size:16px">${icon}</span>
+        <span style="font-size:11px;font-weight:500;opacity:0.85">期限</span>
+        <span>${esc(fmt)}</span>
+        <span style="font-size:12px;font-weight:600">${suffix}</span>
+      </div>`;
+    }
     // 投稿者: アバター + 名前
     const pu = a.posted_by_user || {};
     let posterAvatar = '';
@@ -6577,12 +6589,13 @@ async function loadAnnouncements() {
       ? `<button class="btn" onclick="closeAnnouncement('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px;color:#999">終了</button>`
       : '';
     const bodyHtml = a.body
-      ? `<div style="font-size:13px;color:var(--text);margin-top:4px;white-space:pre-wrap;line-height:1.6">${esc(a.body)}</div>`
+      ? `<div style="font-size:13px;color:var(--text);margin-top:8px;white-space:pre-wrap;line-height:1.6">${esc(a.body)}</div>`
       : '';
     return `<div style="padding:12px 0;border-bottom:0.5px solid var(--border-light)">
       <div style="display:flex;align-items:flex-start;gap:10px">
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${deadlineLabel}${posterAvatar}</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${posterAvatar}</div>
+          ${deadlineBlock}
           ${bodyHtml}
         </div>
         <div style="display:flex;gap:0;flex-shrink:0">${ackBtn}${statusBtn}${editBtn}${closeBtn}</div>
@@ -6683,33 +6696,72 @@ async function submitAnnouncement() {
 async function openAnnouncementStatus(id) {
   const res = await apiFetch(`${API}/announcements/${id}/status`);
   if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '取得失敗'), 'error'); return; }
-  const { announcement, members } = await res.json();
-  const done = members.filter(m => m.done_at);
-  const todo = members.filter(m => !m.done_at);
+  const { announcement, groups, members } = await res.json();
   const ROLE_LABEL = { admin:'管理者', secretary:'秘書', producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
-  const renderRow = (m, isDone) => {
+
+  // 全体集計（モーダル上部のサマリ用）
+  const allMembers = (members || []).length ? members : (groups || []).flatMap(g => g.members);
+  const totalDone = allMembers.filter(m => m.done_at).length;
+  const totalCount = allMembers.length;
+
+  const renderMemberRow = (m, leaderType) => {
     const av = m.avatar_url
-      ? `<img src="${esc(m.avatar_url)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" alt="">`
-      : `<div style="width:28px;height:28px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${esc((m.full_name || '?').charAt(0))}</div>`;
-    const when = isDone && m.done_at ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">${new Date(m.done_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}</span>` : '';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--border-light)">
+      ? `<img src="${esc(m.avatar_url)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0" alt="">`
+      : `<div style="width:28px;height:28px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">${esc((m.full_name || '?').charAt(0))}</div>`;
+    const isDone = !!m.done_at;
+    const statusIcon = isDone
+      ? `<span style="font-size:14px;flex-shrink:0" title="${m.done_at ? new Date(m.done_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : ''}">✅</span>`
+      : `<span style="font-size:14px;flex-shrink:0">⏳</span>`;
+    const leaderBadge = leaderType === 'director' ? '<span style="font-size:9px;background:#FFE082;color:#7C5800;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0">👑 リーダー</span>'
+      : leaderType === 'producer' ? '<span style="font-size:9px;background:#B3E5FC;color:#01579B;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0">PD</span>'
+      : '';
+    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:0.5px solid var(--border-light)">
+      ${statusIcon}
       ${av}
-      <div style="font-size:13px;color:${isDone ? 'var(--text)' : '#C0392B'};font-weight:${isDone ? '400' : '600'}">${esc(m.full_name)}</div>
-      <span style="font-size:10px;color:var(--text-muted)">${ROLE_LABEL[m.role] || m.role}</span>
-      ${when}
+      <div style="display:flex;flex-direction:column;min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:${isDone ? 'var(--text)' : '#C0392B'};font-weight:${isDone ? '400' : '600'};line-height:1.2">
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.full_name)}</span>
+          ${leaderBadge}
+        </div>
+        <div style="font-size:9px;color:var(--text-muted);margin-top:1px">${esc(ROLE_LABEL[m.role] || m.role)}</div>
+      </div>
     </div>`;
   };
+
+  // 各チームをカードにする（横並び）
+  const groupCards = (groups || []).map(g => {
+    const allDone = g.done_count === g.total_count;
+    const headerColor = allDone ? 'var(--em-dark)' : (g.done_count > 0 ? '#FF9800' : '#C0392B');
+    const teamLabel = g.team_id
+      ? `${esc(g.team_code)}チーム${g.team_name ? ' / ' + esc(g.team_name) : ''}`
+      : '未所属';
+    const memberRows = g.members.map(m => {
+      const leaderType = (m.user_id === g.director_id) ? 'director'
+        : (m.user_id === g.producer_id) ? 'producer'
+        : null;
+      return renderMemberRow(m, leaderType);
+    }).join('');
+    return `<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;min-width:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px">
+        <div style="font-size:12px;font-weight:700;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${teamLabel}</div>
+        <div style="font-size:11px;font-weight:600;color:${headerColor};flex-shrink:0">${g.done_count} / ${g.total_count}</div>
+      </div>
+      ${memberRows}
+    </div>`;
+  }).join('');
+
   document.getElementById('ann-status-content').innerHTML = `
-    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">${esc(announcement.title)}</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <div>
-        <div style="font-size:12px;font-weight:600;color:var(--em-dark);margin-bottom:8px">✅ 完了 (${done.length})</div>
-        ${done.length ? done.map(m => renderRow(m, true)).join('') : '<div style="font-size:12px;color:var(--text-muted)">まだ誰も完了していません</div>'}
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(announcement.title)}</div>
+        ${announcement.deadline_at ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">期限: ${new Date(announcement.deadline_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' })}</div>` : ''}
       </div>
-      <div>
-        <div style="font-size:12px;font-weight:600;color:#C0392B;margin-bottom:8px">⏳ 未完了 (${todo.length})</div>
-        ${todo.length ? todo.map(m => renderRow(m, false)).join('') : '<div style="font-size:12px;color:var(--text-muted)">全員完了しました 🎉</div>'}
+      <div style="font-size:14px;font-weight:700;color:var(--em-dark);background:var(--em-pale);padding:6px 14px;border-radius:8px;flex-shrink:0">
+        ${totalDone} / ${totalCount} 完了
       </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;align-items:start">
+      ${groupCards || '<div style="font-size:12px;color:var(--text-muted);padding:20px">表示できるメンバーがいません</div>'}
     </div>`;
   openModal('modal-announcement-status');
 }

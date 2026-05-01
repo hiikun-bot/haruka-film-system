@@ -3178,20 +3178,92 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
   if (aErr) return res.status(500).json({ error: aErr.message });
   if (!ann) return res.status(404).json({ error: '連絡が見つかりません' });
   const { data: members, error: mErr } = await supabase.from('users')
-    .select('id, full_name, role, avatar_url').eq('is_active', true).order('full_name');
+    .select('id, full_name, role, avatar_url, team_id').eq('is_active', true).order('full_name');
   if (mErr) return res.status(500).json({ error: mErr.message });
   const { data: acks, error: kErr } = await supabase.from('announcement_acks')
     .select('user_id, done_at').eq('announcement_id', req.params.id);
   if (kErr) return res.status(500).json({ error: kErr.message });
+  // チーム情報を取得（director_id/producer_id でリーダー判定。team_code 昇順で表示）
+  const { data: teams, error: tErr } = await supabase.from('teams')
+    .select('id, team_code, team_name, director_id, producer_id').order('team_code');
+  if (tErr) return res.status(500).json({ error: tErr.message });
+
   const ackMap = new Map((acks || []).map(a => [a.user_id, a.done_at]));
-  const list = (members || []).map(m => ({
+  const baseMember = (m) => ({
     user_id: m.id,
     full_name: m.full_name,
     role: m.role,
     avatar_url: m.avatar_url,
+    team_id: m.team_id,
     done_at: ackMap.get(m.id) || null,
-  }));
-  res.json({ announcement: ann, members: list });
+  });
+
+  // ユーザーをチームごとに振り分け（基本チームの users.team_id ベース）
+  const byTeam = new Map();
+  (teams || []).forEach(t => byTeam.set(t.id, []));
+  const noTeam = [];
+  (members || []).forEach(m => {
+    if (m.team_id && byTeam.has(m.team_id)) byTeam.get(m.team_id).push(baseMember(m));
+    else noTeam.push(baseMember(m));
+  });
+
+  // 各チーム内の並び: ディレクター → プロデューサー → 残り（名前順）
+  const ROLE_RANK = { admin: 0, secretary: 1, producer: 2, producer_director: 2, director: 3, designer: 4, editor: 5 };
+  function sortTeamMembers(arr, team) {
+    return arr.slice().sort((a, b) => {
+      const aIsDir = a.user_id === team.director_id;
+      const bIsDir = b.user_id === team.director_id;
+      if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+      const aIsProd = a.user_id === team.producer_id;
+      const bIsProd = b.user_id === team.producer_id;
+      if (aIsProd !== bIsProd) return aIsProd ? -1 : 1;
+      const ra = ROLE_RANK[a.role] ?? 9;
+      const rb = ROLE_RANK[b.role] ?? 9;
+      if (ra !== rb) return ra - rb;
+      return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
+    });
+  }
+
+  // チームごとに整形（メンバーがいないチームは省略）
+  const groups = (teams || [])
+    .filter(t => (byTeam.get(t.id) || []).length > 0)
+    .map(t => {
+      const sorted = sortTeamMembers(byTeam.get(t.id), t);
+      return {
+        team_id: t.id,
+        team_code: t.team_code,
+        team_name: t.team_name,
+        director_id: t.director_id,
+        producer_id: t.producer_id,
+        members: sorted,
+        done_count: sorted.filter(m => m.done_at).length,
+        total_count: sorted.length,
+      };
+    });
+
+  // 未所属
+  if (noTeam.length > 0) {
+    const sortedNoTeam = noTeam.slice().sort((a, b) => {
+      const ra = ROLE_RANK[a.role] ?? 9;
+      const rb = ROLE_RANK[b.role] ?? 9;
+      if (ra !== rb) return ra - rb;
+      return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
+    });
+    groups.push({
+      team_id: null,
+      team_code: '未所属',
+      team_name: '',
+      director_id: null,
+      producer_id: null,
+      members: sortedNoTeam,
+      done_count: sortedNoTeam.filter(m => m.done_at).length,
+      total_count: sortedNoTeam.length,
+    });
+  }
+
+  // 互換性のため flat なメンバー一覧も返す（古いフロントが残っても壊れないように）
+  const flat = (members || []).map(baseMember);
+  res.json({ announcement: ann, groups, members: flat });
 });
 
 
