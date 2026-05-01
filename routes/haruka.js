@@ -3802,20 +3802,31 @@ router.post('/teams', requireAuth, requirePermission('team.manage'), async (req,
 
 // チーム更新
 router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (req, res) => {
-  const { team_name, team_type, director_id, producer_id, is_active, member_ids } = req.body;
+  const { team_code, team_name, team_type, director_id, producer_id, is_active, member_ids } = req.body;
+  const updateData = {
+    team_name, team_type,
+    director_id: director_id || null,
+    producer_id: producer_id || null,
+    is_active,
+    updated_at: new Date().toISOString()
+  };
+  if (team_code !== undefined) {
+    const trimmed = String(team_code).trim();
+    if (!trimmed) return res.status(400).json({ error: 'チームコードは必須です' });
+    updateData.team_code = trimmed;
+  }
   const { data, error } = await supabase
     .from('teams')
-    .update({
-      team_name, team_type,
-      director_id: director_id || null,
-      producer_id: producer_id || null,
-      is_active,
-      updated_at: new Date().toISOString()
-    })
+    .update(updateData)
     .eq('id', req.params.id)
     .select()
     .single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: `チームコード「${updateData.team_code}」は既に使用されています` });
+    }
+    return res.status(500).json({ error: error.message });
+  }
 
   // team_members 中間テーブルで管理（users.team_id は基本チームとして変更しない）
   if (member_ids !== undefined) {
