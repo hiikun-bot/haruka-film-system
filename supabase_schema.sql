@@ -914,3 +914,32 @@ $rls_enable$;
 -- アプリ側で遷移ロジックをガードしているため CHECK 制約は不要。
 -- (projects_status_check と同じ方針)
 ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_status_check;
+
+-- ==================== 全体連絡（アナウンスメント） ====================
+-- ダッシュボードに表示される全社員向けの連絡。
+-- 投稿者は完了状況（誰がやったか）を一覧で確認できる。
+-- 投稿時に system_settings.broadcast_slack_channel_url が設定されていれば
+-- そのチャンネルへも自動で同じメッセージを投稿する。
+CREATE TABLE IF NOT EXISTS announcements (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  body TEXT,
+  posted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  posted_at TIMESTAMPTZ DEFAULT now(),
+  deadline_at TIMESTAMPTZ,
+  is_active BOOLEAN DEFAULT true,
+  slack_pushed_at TIMESTAMPTZ,
+  slack_push_result TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(is_active, posted_at DESC);
+
+-- 各メンバーの完了状況。完了ボタンを押した時に1行追加される。
+CREATE TABLE IF NOT EXISTS announcement_acks (
+  announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  done_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (announcement_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_announcement_acks_user ON announcement_acks(user_id);
