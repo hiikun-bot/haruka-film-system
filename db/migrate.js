@@ -221,6 +221,25 @@ async function runSchemaSync() {
         PRIMARY KEY (announcement_id, user_id)
       )`,
       "CREATE INDEX IF NOT EXISTS idx_announcement_acks_user ON announcement_acks(user_id)",
+      // つぶやき機能 (社内タイムライン)
+      `CREATE TABLE IF NOT EXISTS tweets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body TEXT NOT NULL CHECK (char_length(body) <= 280),
+        image_data TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '90 days'),
+        is_pinned BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_tweets_active ON tweets(created_at DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_tweets_user ON tweets(user_id)",
+      `CREATE TABLE IF NOT EXISTS tweet_likes (
+        tweet_id UUID NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        PRIMARY KEY (tweet_id, user_id)
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_tweet_likes_user ON tweet_likes(user_id)",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
