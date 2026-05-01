@@ -809,6 +809,172 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   }
 });
 
+// クリエイター別作成本数 + 単価 + 合計金額の集計
+// 1 creative の単価 = project_rates(project_id, creative_type, rank).{base_fee+script_fee+ai_fee+other_fee}
+// 同一クリエイティブに複数担当者がいる場合、それぞれ「フルカウント」する（既存の project×assignee ビューと整合）
+async function aggregateCreatorSummary({ year, month, statusFilter }) {
+  const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+  const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+  const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
+
+  let q = supabase
+    .from('creatives')
+    .select(`
+      id, file_name, status, creative_type, project_id,
+      final_deadline, created_at,
+      projects!inner(id, name, client_id, clients(id, name)),
+      creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
+    `)
+    .gte(dateColForFilter, startDate.toISOString())
+    .lt(dateColForFilter, endDate.toISOString());
+  if (statusFilter === 'delivered') q = q.eq('status', '納品');
+
+  const { data: creatives, error } = await q;
+  if (error) throw new Error(error.message);
+
+  // 関連 project_rates をまとめて取得（in クエリ）
+  const projectIds = Array.from(new Set((creatives || []).map(c => c.project_id).filter(Boolean)));
+  let ratesByProject = new Map();
+  if (projectIds.length > 0) {
+    const { data: rates } = await supabase
+      .from('project_rates').select('*').in('project_id', projectIds);
+    for (const r of (rates || [])) {
+      if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
+      ratesByProject.get(r.project_id).push(r);
+    }
+  }
+  const findRate = (projectId, baseType, rank) => {
+    const list = ratesByProject.get(projectId) || [];
+    return list.find(r => r.creative_type === baseType && r.rank === rank)
+        || list.find(r => r.creative_type === baseType)
+        || null;
+  };
+  const calcUnitPrice = (rate) => {
+    if (!rate) return 0;
+    return (rate.base_fee || 0) + (rate.script_fee || 0) + (rate.ai_fee || 0) + (rate.other_fee || 0);
+  };
+
+  // ユーザーごとに集計
+  const userMap = new Map(); // user_id -> aggregate
+  const ensureUser = (u) => {
+    if (!userMap.has(u.id)) {
+      userMap.set(u.id, {
+        id: u.id,
+        full_name: u.full_name || '(不明)',
+        nickname: u.nickname || null,
+        role: u.role || '-',
+        rank: u.rank || null,
+        video_count: 0,
+        design_count: 0,
+        video_total: 0,
+        design_total: 0,
+        grand_total: 0,
+        rate_unknown_count: 0, // 単価不明として扱った件数（参考表示用）
+      });
+    }
+    return userMap.get(u.id);
+  };
+
+  for (const c of (creatives || [])) {
+    const baseType = c.creative_type?.startsWith('video') ? 'video'
+                   : c.creative_type?.startsWith('design') ? 'design'
+                   : (c.creative_type || 'video');
+    const isVideo = baseType === 'video';
+    const assignees = (c.creative_assignments || [])
+      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
+    if (assignees.length === 0) continue;
+    for (const a of assignees) {
+      const user = ensureUser(a.users);
+      const rank = a.rank_applied || a.users?.rank || null;
+      const rate = findRate(c.project_id, baseType, rank);
+      const unitPrice = calcUnitPrice(rate);
+      if (isVideo) { user.video_count++; user.video_total += unitPrice; }
+      else         { user.design_count++; user.design_total += unitPrice; }
+      user.grand_total += unitPrice;
+      if (!rate) user.rate_unknown_count++;
+    }
+  }
+
+  const summary = Array.from(userMap.values())
+    .sort((a, b) => b.grand_total - a.grand_total
+      || (b.video_count + b.design_count) - (a.video_count + a.design_count)
+      || (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+
+  const total = summary.reduce((acc, u) => {
+    acc.video_count += u.video_count;
+    acc.design_count += u.design_count;
+    acc.video_total  += u.video_total;
+    acc.design_total += u.design_total;
+    acc.grand_total  += u.grand_total;
+    return acc;
+  }, { video_count: 0, design_count: 0, video_total: 0, design_total: 0, grand_total: 0 });
+
+  return { year, month, status: statusFilter, summary, total, creatives_count: (creatives || []).length };
+}
+
+// 画面表示用 GET
+router.get('/analytics/creator-summary', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です' });
+  }
+  try {
+    const result = await aggregateCreatorSummary({
+      year, month,
+      statusFilter: req.query.status === 'all' ? 'all' : 'delivered',
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || '集計に失敗しました' });
+  }
+});
+
+// スプレッドシート出力
+router.post('/analytics/creator-summary/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.body?.year ?? req.query.year, 10);
+  const month = parseInt(req.body?.month ?? req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です' });
+  }
+  try {
+    const data = await aggregateCreatorSummary({
+      year, month,
+      statusFilter: (req.body?.status ?? req.query.status) === 'all' ? 'all' : 'delivered',
+    });
+    const statusLabel = data.status === 'delivered' ? '納品のみ' : '全件';
+    const headers = ['クリエイター', '役割', 'ランク', '動画本数', '動画金額', 'デザイン枚数', 'デザイン金額', '合計金額'];
+    const dataRows = data.summary.map(u => [
+      u.full_name + (u.nickname ? ` (${u.nickname})` : ''),
+      u.role || '-',
+      u.rank || '-',
+      u.video_count,
+      u.video_total,
+      u.design_count,
+      u.design_total,
+      u.grand_total,
+    ]);
+    const totalRow = ['合計', '', '',
+      data.total.video_count, data.total.video_total,
+      data.total.design_count, data.total.design_total,
+      data.total.grand_total];
+    const sheetRows = [
+      [`HARUKA FILM 分析: クリエイター別作成本数 (${year}年${month}月 / ${statusLabel})`],
+      [`動画合計 ${data.total.video_count}本 / デザイン合計 ${data.total.design_count}枚 / 合計金額 ¥${data.total.grand_total.toLocaleString()}`],
+      [],
+      headers,
+      ...dataRows,
+      totalRow,
+    ];
+    const title = `分析_クリエイター別_${year}年${String(month).padStart(2,'0')}月_${statusLabel}`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: dataRows.length });
+  } catch (e) {
+    console.error('[analytics/creator-summary/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
 // スプレッドシート出力（CSV ではなく Sheets を基本とする方針）
 router.post('/analytics/creative-by-assignee/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
   const year  = parseInt(req.body?.year ?? req.query.year, 10);
