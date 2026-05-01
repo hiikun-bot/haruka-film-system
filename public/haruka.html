@@ -5469,8 +5469,11 @@ async function submitMember() {
 }
 
 function onRoleChange(role) {
+  // 旧仕様では director / producer / admin / PD のロールで所属チームを非表示にしていたが、
+  // 全体連絡の対応状況や各種チーム別集計が users.team_id 基準のため、
+  // 「ディレクターでも所属基本チームを設定したい」運用要望に合わせ常時表示する。
   const teamGroup = document.getElementById('m-team-group');
-  teamGroup.style.display = ['director','producer','admin','producer_director'].includes(role) ? 'none' : '';
+  if (teamGroup) teamGroup.style.display = '';
 }
 
 // ==================== ロール可視性 ====================
