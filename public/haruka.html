@@ -1756,9 +1756,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div id="t-member-list" style="border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto"></div>
       </div>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0">
-      <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
-      <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0">
+      <button class="btn" id="t-delete-btn" onclick="deleteCurrentTeam()" style="display:none;color:#A32D2D;border-color:#F09595">🗑️ 削除</button>
+      <div style="display:flex;gap:10px;margin-left:auto">
+        <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
+        <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2713,7 +2716,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <input type="checkbox" id="p-is-hidden" style="width:15px;height:15px">
         非表示にする
       </label>
-      <div style="display:flex;gap:10px">
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn" id="p-delete-btn" onclick="deleteCurrentProject()" style="display:none;color:#A32D2D;border-color:#F09595;margin-right:auto">🗑️ 削除</button>
         <button class="btn-primary" id="p-submit-btn" onclick="submitProject()">追加する</button>
         <button class="btn" onclick="closeModal('modal-project')">キャンセル</button>
       </div>
@@ -4871,7 +4875,28 @@ function openTeamModal(team) {
   const existingMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
   buildTeamMemberList(existingMemberIds);
 
+  // 削除ボタン: 編集モードかつ team.delete 権限保有時のみ表示
+  const tDelBtn = document.getElementById('t-delete-btn');
+  if (tDelBtn) tDelBtn.style.display = (isEdit && hasPermission('team.delete')) ? '' : 'none';
+
   openModal('modal-team');
+}
+
+async function deleteCurrentTeam() {
+  const teamId = document.getElementById('t-id').value;
+  if (!teamId) return;
+  const teamName = document.getElementById('t-name').value || document.getElementById('t-code').value || '';
+  if (!confirm(`チーム「${teamName}」を完全に削除しますか？\n\n※ 所属メンバーは「未所属」に戻ります。\n※ クリエイティブのチーム紐付けも解除されます。\n※ この操作は取り消せません。`)) return;
+  const res = await apiFetch(`${API}/teams/${teamId}`, { method: 'DELETE' });
+  if (res.ok) {
+    showToast('チームを削除しました', 'success');
+    closeModal('modal-team');
+    if (typeof loadTeams === 'function') await loadTeams();
+    if (typeof loadMembers === 'function') await loadMembers();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '削除失敗'), 'error');
+  }
 }
 
 // フィルター状態
@@ -5875,6 +5900,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
   document.getElementById('p-tab-panel-sync').style.display = 'none';
+  // 新規作成時は削除ボタンを必ず非表示
+  const pDelBtn = document.getElementById('p-delete-btn');
+  if (pDelBtn) pDelBtn.style.display = 'none';
   openModal('modal-project');
 }
 
@@ -5925,7 +5953,27 @@ function openEditProject(p) {
   document.getElementById('p-tab-nav').style.display = '';
   switchProjectTab('main');
 
+  // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
+  const pDelBtn = document.getElementById('p-delete-btn');
+  if (pDelBtn) pDelBtn.style.display = hasPermission('project.delete') ? '' : 'none';
+
   openModal('modal-project');
+}
+
+async function deleteCurrentProject() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  const projectName = document.getElementById('p-name').value || '';
+  if (!confirm(`案件「${projectName}」を完全に削除しますか？\n\n※ 紐づくクリエイティブ・サイクル・チェックリスト等もすべて削除されます。\n※ 請求書が紐づいている場合は削除できません（先に請求書を削除してください）。\n※ この操作は取り消せません。`)) return;
+  const res = await apiFetch(`${API}/projects/${projectId}`, { method: 'DELETE' });
+  if (res.ok) {
+    showToast('案件を削除しました', 'success');
+    closeModal('modal-project');
+    if (typeof loadProjects === 'function') await loadProjects();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '削除失敗'), 'error');
+  }
 }
 
 function selectDeadlineUnit(unit) {
@@ -8862,6 +8910,7 @@ const ROLE_PERM_LIST = [
   { section:'案件管理',       key:'project.create_edit',         label:'案件作成・編集' },
   { section:'案件管理',       key:'project.unit_price_view',     label:'単価設定閲覧' },
   { section:'案件管理',       key:'project.fee_view',            label:'報酬設定閲覧' },
+  { section:'案件管理',       key:'project.delete',              label:'案件削除（完全）' },
   { section:'クリエイティブ', key:'creative.all_projects_view',  label:'全案件のCL閲覧' },
   { section:'クリエイティブ', key:'creative.rank_price_column',  label:'ランク・単価列表示' },
   { section:'クリエイティブ', key:'creative.csv_import',         label:'一括登録（CSV）' },
@@ -8872,6 +8921,7 @@ const ROLE_PERM_LIST = [
   { section:'メンバー管理',   key:'member.delete',               label:'メンバー削除（完全）' },
   { section:'チーム管理',     key:'team.manage',                 label:'チーム作成・編集' },
   { section:'チーム管理',     key:'team.assign',                 label:'メンバー割当' },
+  { section:'チーム管理',     key:'team.delete',                 label:'チーム削除（完全）' },
   { section:'請求管理',       key:'invoice.own',                 label:'自分の請求作成・確認' },
   { section:'請求管理',       key:'invoice.all_view',            label:'全員の請求一覧閲覧' },
   { section:'マスター管理',   key:'master.page',                 label:'マスター管理ページ' },

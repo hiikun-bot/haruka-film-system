@@ -373,6 +373,26 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   res.json(data);
 });
 
+// 案件削除（admin/secretary/producer/PD のみ）
+// 紐づく請求書がある場合は安全のためブロック。
+// その他の関連データ（クリエイティブ・サイクル・商材・訴求軸・チェックリスト等）は
+// FK ON DELETE CASCADE により自動で削除される。
+router.delete('/projects/:id', requireAuth, requirePermission('project.delete'), async (req, res) => {
+  const projectId = req.params.id;
+  // 請求書の存在チェック (invoices.project_id は CASCADE 無し)
+  const { data: invs, error: invErr } = await supabase
+    .from('invoices').select('id').eq('project_id', projectId).limit(1);
+  if (invErr) return res.status(500).json({ error: invErr.message });
+  if (invs && invs.length > 0) {
+    return res.status(400).json({
+      error: 'この案件には請求書が紐づいているため削除できません。先に該当する請求書を削除してください。',
+    });
+  }
+  const { error } = await supabase.from('projects').delete().eq('id', projectId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // ==================== 月次サイクル ====================
 
 // サイクル一覧取得
@@ -3811,6 +3831,16 @@ router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (r
   res.json(data);
 });
 
+// チーム削除（admin/secretary/producer/PD のみ）
+// users.team_id / creatives.team_id は ON DELETE SET NULL で「未所属」に戻る。
+// team_members / client_teams は ON DELETE CASCADE で自動削除される。
+router.delete('/teams/:id', requireAuth, requirePermission('team.delete'), async (req, res) => {
+  const teamId = req.params.id;
+  const { error } = await supabase.from('teams').delete().eq('id', teamId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // ==================== Slack ワークスペース ====================
 
 // 一覧
@@ -4861,10 +4891,10 @@ router.get('/role-permissions', requireAuth, async (req, res) => {
 const VALID_ROLES = new Set(['admin','secretary','producer','producer_director','director','editor','designer']);
 const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
-  'project.create_edit','project.unit_price_view','project.fee_view',
+  'project.create_edit','project.unit_price_view','project.fee_view','project.delete',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others',
   'member.list','member.edit_password','member.deactivate','member.delete',
-  'team.manage','team.assign',
+  'team.manage','team.assign','team.delete',
   'invoice.own','invoice.all_view',
   'master.page','master.sys_config',
   'system.view_as',
