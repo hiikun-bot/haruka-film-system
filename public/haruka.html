@@ -4234,43 +4234,58 @@ function renderTeamsList() {
   const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
   const filtered = allTeams.filter(t => (t.team_type || 'video') === currentTeamTab);
   if (!filtered.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
-  list.innerHTML = filtered.map((t, i) => {
+  // 基本チーム（team_code が単一の英字 A〜Z）と案件ごとのチームに分類
+  const isBasicCode = (code) => typeof code === 'string' && /^[A-Za-z]$/.test(code);
+  const basicTeams = filtered.filter(t => isBasicCode(t.team_code));
+  const projectTeams = filtered.filter(t => !isBasicCode(t.team_code));
+  const renderTeamCard = (t) => {
     const origIdx = allTeams.indexOf(t);
-      const tmIds = new Set((t.team_members || []).map(tm => tm.user_id));
-      const teamMembers = allMembers.filter(m => tmIds.has(m.id) && m.is_active !== false)
-        .sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0));
-      const memberCount = teamMembers.length;
-      const memberChips = teamMembers.map(m => {
-        const canEdit = canEditMember(m);
-        return `<div onclick="${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:8px;background:var(--em-pale);border-radius:24px;padding:4px 12px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
-          ${avatarHtml(m, 36)}
-          <span style="color:var(--text);font-weight:500">${esc(m.full_name||'')}</span>
-          <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
-        </div>`;
-      }).join('');
-      return `
-      <div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;user-select:none" onclick="toggleTeamAccordion('${t.id}')">
-          <div style="width:44px;height:44px;border-radius:50%;background:var(--em-pale);border:2px solid var(--em);display:flex;align-items:center;justify-content:center;font-size:${t.team_code.length <= 1 ? 18 : t.team_code.length <= 2 ? 14 : 11}px;font-weight:700;color:var(--em-dark);flex-shrink:0;letter-spacing:-0.5px;text-transform:uppercase">${t.team_code}</div>
-          <div style="flex:1">
-            <div style="font-size:14px;font-weight:600">${t.team_name}</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${t.team_type === 'video' ? '動画チーム' : 'デザインチーム'} · ${memberCount}名</div>
-          </div>
-          <div style="font-size:12px;color:var(--text-muted);text-align:right;line-height:1.8;margin-right:8px">
-            ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
-            <div>${t.director?.full_name ? 'D: '+t.director.full_name : 'D未設定'}</div>
-          </div>
-          ${hasPermission('team.manage') ? `<button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>` : ''}
-          <span id="team-chevron-${t.id}" style="font-size:12px;color:var(--text-muted);margin-left:4px;flex-shrink:0">▼</span>
-        </div>
-        <div id="team-acc-${t.id}" style="display:none;border-top:1px solid var(--border);padding:12px 16px;background:#FAFEFE">
-          ${memberCount === 0
-            ? '<span style="font-size:12px;color:var(--text-muted)">メンバー未設定</span>'
-            : `<div style="display:flex;flex-wrap:wrap;gap:8px">${memberChips}</div>`
-          }
-        </div>
+    const tmIds = new Set((t.team_members || []).map(tm => tm.user_id));
+    const teamMembers = allMembers.filter(m => tmIds.has(m.id) && m.is_active !== false)
+      .sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0));
+    const memberCount = teamMembers.length;
+    const memberChips = teamMembers.map(m => {
+      const canEdit = canEditMember(m);
+      return `<div onclick="${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:8px;background:var(--em-pale);border-radius:24px;padding:4px 12px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
+        ${avatarHtml(m, 36)}
+        <span style="color:var(--text);font-weight:500">${esc(m.full_name||'')}</span>
+        <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
       </div>`;
     }).join('');
+    return `
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;user-select:none" onclick="toggleTeamAccordion('${t.id}')">
+        <div style="width:44px;height:44px;border-radius:50%;background:var(--em-pale);border:2px solid var(--em);display:flex;align-items:center;justify-content:center;font-size:${t.team_code.length <= 1 ? 18 : t.team_code.length <= 2 ? 14 : 11}px;font-weight:700;color:var(--em-dark);flex-shrink:0;letter-spacing:-0.5px;text-transform:uppercase">${t.team_code}</div>
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:600">${t.team_name}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${t.team_type === 'video' ? '動画チーム' : 'デザインチーム'} · ${memberCount}名</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);text-align:right;line-height:1.8;margin-right:8px">
+          ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
+          <div>${t.director?.full_name ? 'D: '+t.director.full_name : 'D未設定'}</div>
+        </div>
+        ${hasPermission('team.manage') ? `<button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>` : ''}
+        <span id="team-chevron-${t.id}" style="font-size:12px;color:var(--text-muted);margin-left:4px;flex-shrink:0">▼</span>
+      </div>
+      <div id="team-acc-${t.id}" style="display:none;border-top:1px solid var(--border);padding:12px 16px;background:#FAFEFE">
+        ${memberCount === 0
+          ? '<span style="font-size:12px;color:var(--text-muted)">メンバー未設定</span>'
+          : `<div style="display:flex;flex-wrap:wrap;gap:8px">${memberChips}</div>`
+        }
+      </div>
+    </div>`;
+  };
+  const renderSection = (title, teams, isFirst) => {
+    if (!teams.length) return '';
+    const header = `<div class="sec-label" style="margin-top:${isFirst ? 0 : 20}px;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+      <span>${title}</span>
+      <span style="font-size:11px;font-weight:600;color:var(--em-dark);background:var(--em-pale);border-radius:10px;padding:1px 8px;letter-spacing:0">${teams.length}</span>
+    </div>`;
+    return header + teams.map(renderTeamCard).join('');
+  };
+  const basicHtml = renderSection('基本チーム', basicTeams, true);
+  const projectHtml = renderSection('案件ごとのチーム', projectTeams, !basicTeams.length);
+  list.innerHTML = basicHtml + projectHtml;
 }
 
 async function loadTeams() {
