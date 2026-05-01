@@ -629,12 +629,18 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
 // ダッシュボード: 誕生日一覧（今日〜30日先）
 router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
   // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行
+  // (PG直の "column ... does not exist" と PostgREST の schema cache エラー両方を拾う)
   let { data, error } = await supabase
     .from('users')
     .select('id, full_name, birthday, avatar_url, role, hide_birth_year')
     .eq('is_active', true)
     .not('birthday', 'is', null);
-  if (error && /column .+ does not exist/.test(error.message || '')) {
+  const _missingHideBirthYear = error && (
+    /column .+ does not exist/.test(error.message || '') ||
+    /Could not find the .+ column/.test(error.message || '') ||
+    error.code === 'PGRST204'
+  );
+  if (_missingHideBirthYear) {
     ({ data, error } = await supabase
       .from('users')
       .select('id, full_name, birthday, avatar_url, role')
@@ -2330,7 +2336,12 @@ router.get('/members', requireAuth, async (req, res) => {
   const baseColsWith = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url, hide_birth_year';
   const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
-  const isMissingCol = (err) => err && /column .+ does not exist/.test(err.message || '');
+  // PostgreSQL 直の "column ... does not exist" と PostgREST の schema cache エラー (PGRST204) の両方を拾う
+  const isMissingCol = (err) => {
+    if (!err) return false;
+    const msg = err.message || '';
+    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+  };
   if (!canList) {
     // 自分1件のみ（機微情報フル）
     let { data, error } = await supabase.from('users')
@@ -2652,8 +2663,14 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   }
 
   // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行する
+  // (PG直の "column ... does not exist" と PostgREST の schema cache エラー両方を拾う)
+  const isMissingColErr = (err) => {
+    if (!err) return false;
+    const msg = err.message || '';
+    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+  };
   let { data, error } = await supabase.from('users').update(updateData).eq('id', req.params.id).select().single();
-  if (error && /column .+ does not exist/.test(error.message || '') && updateData.hide_birth_year !== undefined) {
+  if (isMissingColErr(error) && updateData.hide_birth_year !== undefined) {
     console.warn('[members:update] hide_birth_year列なし → fallback で再保存:', error.message);
     const { hide_birth_year: _omit, ...rest } = updateData;
     ({ data, error } = await supabase.from('users').update(rest).eq('id', req.params.id).select().single());
