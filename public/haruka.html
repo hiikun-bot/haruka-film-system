@@ -1324,8 +1324,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="btn" id="btn-show-resigned" onclick="toggleShowResigned()" style="font-size:11px;padding:3px 10px;color:#999;border-color:#ddd">退職者を表示</button>
         <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
           <span>並び替え：</span>
-          <button id="sort-btn-default" onclick="setMemberSort('default')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">登録順</button>
-          <button id="sort-btn-role" onclick="setMemberSort('role')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">ロール順</button>
+          <button id="sort-btn-default" onclick="setMemberSort('default')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">登録順</button>
+          <button id="sort-btn-role" onclick="setMemberSort('role')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">ロール順</button>
           <button id="sort-btn-team" onclick="setMemberSort('team')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">チーム順</button>
         </div>
       </div>
@@ -4209,7 +4209,7 @@ async function loadTeams() {
 
 // メンバー
 let showResigned = false;
-let memberSortBy = 'default';
+let memberSortBy = 'role';
 const ROLE_SORT_ORDER = { admin:7, secretary:6, producer:5, producer_director:4, director:3, designer:2, editor:1, client:0 };
 
 function setMemberSort(type) {
