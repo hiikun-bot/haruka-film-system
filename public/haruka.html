@@ -2719,44 +2719,74 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- 分析ページ（admin / secretary 専用） -->
 <div id="page-analytics" class="page">
-  <div style="padding:20px 24px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:18px">
-      <div>
-        <div style="font-size:18px;font-weight:700;color:var(--text)">📊 分析 / 集計</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
-          案件×担当者ごとのクリエイティブ作成本数を集計します（管理者・秘書のみ閲覧可）。
+  <div style="display:flex;min-height:calc(100vh - 100px);align-items:stretch">
+    <!-- 左サイドバー -->
+    <aside id="an-sidebar" style="width:220px;flex-shrink:0;background:var(--em-pale);border-right:1px solid var(--border);padding:20px 12px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;color:var(--em-dark);margin:0 6px 10px">📊 分析メニュー</div>
+      <button class="an-menu-btn an-menu-active" data-view="creator-summary" onclick="switchAnalyticsView('creator-summary')">
+        <span style="font-size:14px">👤</span><span>クリエイター別作成本数</span>
+      </button>
+      <button class="an-menu-btn" data-view="project-assignee" onclick="switchAnalyticsView('project-assignee')">
+        <span style="font-size:14px">📋</span><span>案件×担当者集計</span>
+      </button>
+      <div style="font-size:10px;color:var(--text-muted);margin:14px 6px 0;line-height:1.5">
+        他の集計は順次追加予定<br>
+        （月次推移・チーム別・納期遵守率 等）
+      </div>
+    </aside>
+
+    <!-- 右メイン -->
+    <main style="flex:1;padding:20px 24px;min-width:0">
+      <!-- 共通フィルタバー -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+        <div>
+          <div id="an-view-title" style="font-size:18px;font-weight:700;color:var(--text)">📊 分析 / 集計</div>
+          <div id="an-view-desc" style="font-size:12px;color:var(--text-muted);margin-top:4px">
+            管理者・秘書のみ閲覧可
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象月</div>
+            <input type="month" id="an-month" class="form-input" style="font-size:13px;padding:8px 10px">
+          </div>
+          <div id="an-client-wrap">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">クライアント</div>
+            <select id="an-client" class="form-select" style="font-size:13px;padding:8px 10px;min-width:180px">
+              <option value="">すべて</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象</div>
+            <select id="an-status-filter" class="form-select" style="font-size:13px;padding:8px 10px">
+              <option value="delivered">納品のみ</option>
+              <option value="all">全件（作業中含む）</option>
+            </select>
+          </div>
+          <button class="btn-primary" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
+          <button class="btn" id="an-sheet-btn" onclick="exportAnalyticsToSheet()" style="font-size:13px;padding:8px 16px;height:38px">📊 スプレッドシート出力</button>
         </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象月</div>
-          <input type="month" id="an-month" class="form-input" style="font-size:13px;padding:8px 10px">
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">クライアント</div>
-          <select id="an-client" class="form-select" style="font-size:13px;padding:8px 10px;min-width:180px">
-            <option value="">すべて</option>
-          </select>
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象</div>
-          <select id="an-status-filter" class="form-select" style="font-size:13px;padding:8px 10px">
-            <option value="delivered">納品のみ</option>
-            <option value="all">全件（作業中含む）</option>
-          </select>
-        </div>
-        <button class="btn-primary" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
-        <button class="btn" id="an-sheet-btn" onclick="exportAnalyticsToSheet()" style="font-size:13px;padding:8px 16px;height:38px">📊 スプレッドシート出力</button>
+
+      <div id="an-summary" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px"></div>
+
+      <div id="an-table-wrap" style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+        <div id="an-table-content" style="padding:24px;text-align:center;color:var(--text-muted)">「集計」ボタンを押すと結果が表示されます。</div>
       </div>
-    </div>
-
-    <div id="an-summary" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px"></div>
-
-    <div id="an-table-wrap" style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
-      <div id="an-table-content" style="padding:24px;text-align:center;color:var(--text-muted)">「集計」ボタンを押すと結果が表示されます。</div>
-    </div>
+    </main>
   </div>
 </div>
+
+<style>
+.an-menu-btn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:13px;padding:9px 10px;border:none;border-radius:7px;background:transparent;color:var(--text);cursor:pointer;margin-bottom:3px;transition:background .15s}
+.an-menu-btn:hover{background:rgba(255,255,255,0.6)}
+.an-menu-btn.an-menu-active{background:var(--em);color:#fff;font-weight:600}
+@media(max-width:768px){
+  #page-analytics > div{flex-direction:column}
+  #an-sidebar{width:100%;border-right:none;border-bottom:1px solid var(--border);padding:12px;display:flex;gap:6px;overflow-x:auto;flex-direction:row}
+  .an-menu-btn{flex-shrink:0;width:auto}
+}
+</style>
 
 <!-- マスター管理ページ -->
 <div id="page-master" class="page">
@@ -11891,6 +11921,7 @@ function renderKnowledgeCards(list, compact) {
 
 // ==================== 分析・集計ページ ====================
 let _analyticsLastResult = null;
+let _analyticsView = 'creator-summary'; // 'creator-summary' | 'project-assignee'
 
 function initAnalyticsPage() {
   // 当月をデフォルトセット
@@ -11905,21 +11936,52 @@ function initAnalyticsPage() {
       allClients.filter(c => c.status !== 'クライアント取引終了')
         .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   }
+  switchAnalyticsView(_analyticsView, true);
+}
+
+function switchAnalyticsView(view, skipReset) {
+  _analyticsView = view;
+  document.querySelectorAll('.an-menu-btn').forEach(b =>
+    b.classList.toggle('an-menu-active', b.dataset.view === view));
+  const titleEl = document.getElementById('an-view-title');
+  const descEl = document.getElementById('an-view-desc');
+  const clientWrap = document.getElementById('an-client-wrap');
+  if (view === 'creator-summary') {
+    if (titleEl) titleEl.textContent = '👤 クリエイター別作成本数';
+    if (descEl)  descEl.textContent  = 'クリエイターごとの動画/デザイン本数と単価・合計金額を集計します。';
+    if (clientWrap) clientWrap.style.display = 'none'; // 全件横断のため
+  } else {
+    if (titleEl) titleEl.textContent = '📋 案件×担当者集計';
+    if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。';
+    if (clientWrap) clientWrap.style.display = '';
+  }
+  if (!skipReset) {
+    document.getElementById('an-summary').innerHTML = '';
+    document.getElementById('an-table-content').innerHTML =
+      '<div style="padding:24px;text-align:center;color:var(--text-muted)">「集計」ボタンを押すと結果が表示されます。</div>';
+    _analyticsLastResult = null;
+  }
 }
 
 async function loadAnalytics() {
   const ym = document.getElementById('an-month').value;
   if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
   const [year, month] = ym.split('-');
-  const client_id = document.getElementById('an-client').value || '';
-  const status    = document.getElementById('an-status-filter').value || 'delivered';
+  const status = document.getElementById('an-status-filter').value || 'delivered';
 
   const wrap = document.getElementById('an-table-content');
   wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">集計中...</div>';
   document.getElementById('an-summary').innerHTML = '';
 
-  const url = `${API}/analytics/creative-by-assignee?year=${year}&month=${parseInt(month,10)}` +
-              (client_id ? `&client_id=${client_id}` : '') + `&status=${status}`;
+  let url;
+  if (_analyticsView === 'creator-summary') {
+    url = `${API}/analytics/creator-summary?year=${year}&month=${parseInt(month,10)}&status=${status}`;
+  } else {
+    const client_id = document.getElementById('an-client').value || '';
+    url = `${API}/analytics/creative-by-assignee?year=${year}&month=${parseInt(month,10)}` +
+          (client_id ? `&client_id=${client_id}` : '') + `&status=${status}`;
+  }
+
   const res = await apiFetch(url);
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -11928,7 +11990,65 @@ async function loadAnalytics() {
   }
   const data = await res.json();
   _analyticsLastResult = data;
-  renderAnalyticsTable(data);
+  if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
+  else renderAnalyticsTable(data);
+}
+
+function renderCreatorSummaryTable(data) {
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const sumEl = document.getElementById('an-summary');
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間</span> <strong>${data.year}年${data.month}月</strong></div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象</span> <strong>${data.status === 'delivered' ? '納品のみ' : '全件'}</strong></div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">動画</span> <strong>${data.total.video_count}本 / ${yen(data.total.video_total)}</strong></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.total.design_count}枚 / ${yen(data.total.design_total)}</strong></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total)}</strong></div>
+  `;
+  const wrap = document.getElementById('an-table-content');
+  if (!data.summary.length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">該当するクリエイターがありません</div>';
+    return;
+  }
+  const rows = data.summary.map(u => {
+    const noteRate = u.rate_unknown_count > 0
+      ? `<span title="単価が project_rates から見つからなかった件数。プロジェクトの単価設定を確認してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
+      : '';
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}${noteRate}</td>
+      <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
+      <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-align:center">${esc(u.rank || '-')}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#0369a1">${u.video_count > 0 ? `📹${u.video_count}` : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.video_total > 0 ? yen(u.video_total) : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#b45309">${u.design_count > 0 ? `🎨${u.design_count}` : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.design_total > 0 ? yen(u.design_total) : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total)}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:760px">
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">クリエイター</th>
+        <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">役割</th>
+        <th style="padding:9px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ランク</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">動画本数</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">動画金額</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">デザイン枚数</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">デザイン金額</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;background:var(--em);color:#fff">合計金額</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr style="border-top:2px solid var(--em);background:var(--em-pale);font-weight:700">
+        <td colspan="3" style="padding:11px 12px;text-align:right;font-size:12px;color:var(--em-dark)">合計</td>
+        <td style="padding:11px 12px;text-align:right;font-size:13px;color:#0369a1">📹${data.total.video_count}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.video_total)}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:13px;color:#b45309">🎨${data.total.design_count}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.design_total)}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.total.grand_total)}</td>
+      </tr>
+    </tbody>
+  </table>`;
 }
 
 function renderAnalyticsTable(data) {
@@ -12022,17 +12142,23 @@ async function exportAnalyticsToSheet() {
   const ym = document.getElementById('an-month').value;
   if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
   const [year, month] = ym.split('-');
-  const client_id = document.getElementById('an-client').value || '';
-  const status    = document.getElementById('an-status-filter').value || 'delivered';
+  const status = document.getElementById('an-status-filter').value || 'delivered';
+  const isCreator = _analyticsView === 'creator-summary';
+  const endpoint = isCreator
+    ? `${API}/analytics/creator-summary/export-sheet`
+    : `${API}/analytics/creative-by-assignee/export-sheet`;
+  const body = isCreator
+    ? { year: parseInt(year, 10), month: parseInt(month, 10), status }
+    : { year: parseInt(year, 10), month: parseInt(month, 10), client_id: document.getElementById('an-client').value || '', status };
 
   const btn = document.getElementById('an-sheet-btn');
   const orig = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
   try {
-    const res = await apiFetch(`${API}/analytics/creative-by-assignee/export-sheet`, {
+    const res = await apiFetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ year: parseInt(year, 10), month: parseInt(month, 10), client_id, status }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
