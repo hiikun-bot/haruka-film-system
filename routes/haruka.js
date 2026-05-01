@@ -3007,6 +3007,38 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
 
 const notif = require('../notifications');
 
+// Slack 全体連絡用のメッセージ本文を組み立てる。
+// タイトル・期限・対応ステップは Slack の code (`...`) / code block (```...```)
+// で囲むことで視認性を上げる。本文（body）は素のまま。
+// 末尾に「ダッシュボードを開いて完了 ✅ を押す」具体的アクションを必ず添える。
+// 全員に通知が届くように <!channel> メンションも付与する。
+function buildBroadcastSlackText(annData, { reissue = false } = {}) {
+  const lines = [];
+  lines.push('<!channel>');
+  // タイトル: inline code
+  lines.push(`\`📢 ${annData.title}${reissue ? ' （修正・再送）' : ''}\``);
+  // 本文: 素のまま
+  if (annData.body) {
+    lines.push('');
+    lines.push(annData.body);
+  }
+  // 期限: inline code
+  if (annData.deadline_at) {
+    const d = new Date(annData.deadline_at);
+    lines.push('');
+    lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}\``);
+  }
+  // 対応内容: code block でステップ列挙
+  lines.push('');
+  lines.push('👉 対応をお願いします');
+  lines.push('```');
+  lines.push('1. HARUKA FILM SYSTEM のダッシュボードを開く');
+  lines.push('2. 上部「📢 お知らせ」セクションの本連絡を確認');
+  lines.push('3. 対応が完了したら「完了 ✅」ボタンを押す');
+  lines.push('```');
+  return lines.join('\n');
+}
+
 // 自分宛のアクティブな連絡一覧（自分の done_at 同梱）
 router.get('/announcements', requireAuth, async (req, res) => {
   const showAll = req.query.all === '1';
@@ -3048,13 +3080,7 @@ router.post('/announcements', requireAuth, requirePermission('member.list'), asy
         .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
       const url = setting?.value;
       if (url) {
-        const lines = [`📢 *${created.title}*`];
-        if (created.body) lines.push(created.body);
-        if (created.deadline_at) {
-          const d = new Date(created.deadline_at);
-          lines.push(`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}`);
-        }
-        const text = lines.join('\n');
+        const text = buildBroadcastSlackText(created, { reissue: false });
         const r = await notif.sendSlackChannel(url, text);
         slackResult = r.ok ? 'ok' : `failed: ${r.reason || 'unknown'}`;
         if (r.ok) {
@@ -3097,13 +3123,7 @@ router.patch('/announcements/:id', requireAuth, requirePermission('member.list')
         .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
       const url = setting?.value;
       if (url) {
-        const lines = [`📢 *${data.title}* （修正・再送）`];
-        if (data.body) lines.push(data.body);
-        if (data.deadline_at) {
-          const d = new Date(data.deadline_at);
-          lines.push(`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}`);
-        }
-        const text = lines.join('\n');
+        const text = buildBroadcastSlackText(data, { reissue: true });
         const r = await notif.sendSlackChannel(url, text);
         slackResult = r.ok ? 'ok' : `failed: ${r.reason || 'unknown'}`;
         if (r.ok) {
