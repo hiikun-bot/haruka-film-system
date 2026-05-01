@@ -199,6 +199,28 @@ async function runSchemaSync() {
         deleted_invoice_item_ids JSONB
       )`,
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_birth_year BOOLEAN DEFAULT false",
+      // 全体連絡 (announcements) — ダッシュボードに表示される全社向け連絡 + 各メンバーの完了状況
+      `CREATE TABLE IF NOT EXISTS announcements (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title TEXT NOT NULL,
+        body TEXT,
+        posted_by UUID,
+        posted_at TIMESTAMPTZ DEFAULT now(),
+        deadline_at TIMESTAMPTZ,
+        is_active BOOLEAN DEFAULT true,
+        slack_pushed_at TIMESTAMPTZ,
+        slack_push_result TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(is_active, posted_at DESC)",
+      `CREATE TABLE IF NOT EXISTS announcement_acks (
+        announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        done_at TIMESTAMPTZ DEFAULT now(),
+        PRIMARY KEY (announcement_id, user_id)
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_announcement_acks_user ON announcement_acks(user_id)",
       // つぶやき機能 (社内タイムライン)
       `CREATE TABLE IF NOT EXISTS tweets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

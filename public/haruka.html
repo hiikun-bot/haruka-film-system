@@ -990,6 +990,47 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </datalist>
 
 <!-- 重複提出確認モーダル -->
+<!-- 全体連絡: 投稿モーダル -->
+<div class="modal-overlay" id="modal-announcement-compose">
+  <div class="modal-card" style="width:560px">
+    <div class="modal-title">📢 全体連絡を投稿<button class="modal-close" onclick="closeModal('modal-announcement-compose')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">タイトル <span style="color:#C0392B">*</span></label>
+      <input class="form-input" id="ann-c-title" placeholder="例) 今月分のクリエイティブを全部入れてください">
+    </div>
+    <div class="form-group">
+      <label class="form-label">本文</label>
+      <textarea class="form-input" id="ann-c-body" rows="5" placeholder="補足や手順などがあれば記入" style="resize:vertical;font-family:inherit"></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">期限（任意）</label>
+      <input type="datetime-local" class="form-input" id="ann-c-deadline">
+    </div>
+    <div class="form-group" style="margin-bottom:8px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text)">
+        <input type="checkbox" id="ann-c-slack" checked>
+        Slack の全体チャンネルにも投稿する
+      </label>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;margin-left:22px">投稿先はマスター → システム設定で変更できます</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-announcement-compose')">キャンセル</button>
+      <button class="btn-primary" onclick="submitAnnouncement()">投稿する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全体連絡: 対応状況モーダル -->
+<div class="modal-overlay" id="modal-announcement-status">
+  <div class="modal-card" style="width:680px">
+    <div class="modal-title">対応状況<button class="modal-close" onclick="closeModal('modal-announcement-status')">×</button></div>
+    <div id="ann-status-content"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-announcement-status')">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- つぶやき: 投稿モーダル -->
 <div class="modal-overlay" id="modal-tweet-compose">
   <div class="modal-card" style="width:520px">
@@ -1168,6 +1209,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <div class="dash-hero-stats" id="dash-hero-stats"></div>
   </div>
+  <!-- 全体連絡（全ロール共通） -->
+  <div id="dash-announcements" style="margin-bottom:14px"></div>
   <!-- 今日の納期（全ロール共通） -->
   <div id="dash-today" style="margin-bottom:14px"></div>
   <!-- 誕生日（全ロール共通） -->
@@ -5010,7 +5053,8 @@ async function saveTeam() {
 
   if (id) {
     // 編集（PUT）
-    const res = await apiFetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+    if (!team_code) { showToast('チームコードは必須です', 'warn'); return; }
+    const res = await apiFetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id,member_ids}) });
     if (res.ok) { closeModal('modal-team'); await loadTeams(); await loadMembers(); }
     else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
   } else {
@@ -5019,7 +5063,7 @@ async function saveTeam() {
     if (!res.ok) { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); return; }
     const newTeam = await res.json();
     if (member_ids.length > 0) {
-      await apiFetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+      await apiFetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id,member_ids}) });
     }
     closeModal('modal-team'); await loadTeams(); await loadMembers();
   }
@@ -6408,6 +6452,8 @@ function loadDashboard() {
   const role = effectiveRole();
   const today = new Date(); today.setHours(0,0,0,0);
 
+  // 全ロール共通: 全体連絡セクション
+  loadAnnouncements();
   // 全ロール共通: 今日の納期セクション
   renderTodayDeadlines(today);
   // 全ロール共通: 誕生日セクション
@@ -6467,6 +6513,159 @@ function renderTodayDeadlines(today) {
     ${rows}
   </div>`;
 }
+
+// ダッシュボード: 全体連絡
+function _canPostAnnouncement() {
+  const r = effectiveRole();
+  return ['admin','secretary','producer','producer_director'].includes(r);
+}
+
+async function loadAnnouncements() {
+  const el = document.getElementById('dash-announcements');
+  if (!el) return;
+  let list = [];
+  try {
+    const res = await apiFetch(`${API}/announcements`);
+    if (res.ok) list = await res.json();
+  } catch (e) { console.warn('[announcements] load failed', e); }
+  const canPost = _canPostAnnouncement();
+  const headerBtn = canPost
+    ? `<button class="btn" onclick="openAnnouncementCompose()" style="font-size:11px;padding:3px 10px;margin-left:auto">+ 全体連絡</button>`
+    : '';
+
+  if (!list || list.length === 0) {
+    if (!canPost) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="dash-section" style="border-left:4px solid var(--em-dark)">
+      <div class="dash-section-title" style="display:flex;align-items:center;gap:6px;color:var(--em-dark)">
+        📢 お知らせ ${headerBtn}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);padding:8px 0">アクティブな連絡はありません</div>
+    </div>`;
+    return;
+  }
+
+  const rows = list.map(a => {
+    const done = !!a.my_done_at;
+    const deadline = a.deadline_at ? new Date(a.deadline_at) : null;
+    const overdue = deadline && deadline < new Date() && !done;
+    const deadlineLabel = deadline
+      ? `<span style="font-size:11px;color:${overdue ? '#C0392B' : 'var(--text-muted)'};margin-left:8px">期限: ${deadline.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}${overdue ? ' (超過)' : ''}</span>`
+      : '';
+    const poster = a.posted_by_user?.full_name ? `<span style="font-size:11px;color:var(--text-muted);margin-left:8px">— ${esc(a.posted_by_user.full_name)}</span>` : '';
+    const ackBtn = done
+      ? `<button class="btn" onclick="undoAnnouncementAck('${a.id}')" style="font-size:11px;padding:3px 10px;background:var(--em-pale);color:var(--em-dark);border-color:var(--em-dark)">✅ 完了済 (取消)</button>`
+      : `<button class="btn" onclick="doAnnouncementAck('${a.id}')" style="font-size:11px;padding:3px 10px;background:var(--em-dark);color:#fff;border-color:var(--em-dark)">完了 ✅</button>`;
+    const statusBtn = canPost
+      ? `<button class="btn" onclick="openAnnouncementStatus('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px">対応状況</button>`
+      : '';
+    const editBtn = canPost
+      ? `<button class="btn" onclick="closeAnnouncement('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px;color:#999">終了</button>`
+      : '';
+    const bodyHtml = a.body
+      ? `<div style="font-size:13px;color:var(--text);margin-top:4px;white-space:pre-wrap;line-height:1.6">${esc(a.body)}</div>`
+      : '';
+    return `<div style="padding:12px 0;border-bottom:0.5px solid var(--border-light)">
+      <div style="display:flex;align-items:flex-start;gap:10px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${deadlineLabel}${poster}</div>
+          ${bodyHtml}
+        </div>
+        <div style="display:flex;gap:0;flex-shrink:0">${ackBtn}${statusBtn}${editBtn}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="dash-section" style="border-left:4px solid var(--em-dark)">
+    <div class="dash-section-title" style="display:flex;align-items:center;gap:6px;color:var(--em-dark)">
+      📢 お知らせ（${list.length}件） ${headerBtn}
+    </div>
+    ${rows}
+  </div>`;
+}
+
+async function doAnnouncementAck(id) {
+  const res = await apiFetch(`${API}/announcements/${id}/ack`, { method: 'POST' });
+  if (res.ok) { showToast('完了をマークしました', 'success'); loadAnnouncements(); }
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '失敗しました'), 'error'); }
+}
+
+async function undoAnnouncementAck(id) {
+  const res = await apiFetch(`${API}/announcements/${id}/ack`, { method: 'DELETE' });
+  if (res.ok) { showToast('完了を取り消しました', 'success'); loadAnnouncements(); }
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '失敗しました'), 'error'); }
+}
+
+async function closeAnnouncement(id) {
+  if (!confirm('この連絡を終了（非表示）しますか？')) return;
+  const res = await apiFetch(`${API}/announcements/${id}`, { method: 'DELETE' });
+  if (res.ok) { showToast('連絡を終了しました', 'success'); loadAnnouncements(); }
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '失敗しました'), 'error'); }
+}
+
+function openAnnouncementCompose() {
+  document.getElementById('ann-c-title').value = '';
+  document.getElementById('ann-c-body').value = '';
+  document.getElementById('ann-c-deadline').value = '';
+  document.getElementById('ann-c-slack').checked = true;
+  openModal('modal-announcement-compose');
+  setTimeout(() => document.getElementById('ann-c-title').focus(), 50);
+}
+
+async function submitAnnouncement() {
+  const title = document.getElementById('ann-c-title').value.trim();
+  const body = document.getElementById('ann-c-body').value.trim();
+  const deadlineLocal = document.getElementById('ann-c-deadline').value;
+  const pushSlack = document.getElementById('ann-c-slack').checked;
+  if (!title) { showToast('タイトルを入力してください', 'warn'); return; }
+  const deadline_at = deadlineLocal ? new Date(deadlineLocal).toISOString() : null;
+  const res = await apiFetch(`${API}/announcements`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, body, deadline_at, push_to_slack: pushSlack }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '投稿失敗'), 'error'); return; }
+  const data = await res.json();
+  closeModal('modal-announcement-compose');
+  if (data.slack_push_result === 'ok') showToast('投稿しました（Slack 通知済）', 'success');
+  else if (data.slack_push_result === 'no_channel_configured') showToast('投稿しました（Slack 通知先 未設定のためダッシュボードのみ）', 'success');
+  else if (data.slack_push_result && data.slack_push_result.startsWith('failed')) showToast('投稿しました（Slack 通知失敗: ' + data.slack_push_result + '）', 'warn');
+  else showToast('投稿しました', 'success');
+  loadAnnouncements();
+}
+
+async function openAnnouncementStatus(id) {
+  const res = await apiFetch(`${API}/announcements/${id}/status`);
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '取得失敗'), 'error'); return; }
+  const { announcement, members } = await res.json();
+  const done = members.filter(m => m.done_at);
+  const todo = members.filter(m => !m.done_at);
+  const ROLE_LABEL = { admin:'管理者', secretary:'秘書', producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
+  const renderRow = (m, isDone) => {
+    const av = m.avatar_url
+      ? `<img src="${esc(m.avatar_url)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" alt="">`
+      : `<div style="width:28px;height:28px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${esc((m.full_name || '?').charAt(0))}</div>`;
+    const when = isDone && m.done_at ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">${new Date(m.done_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--border-light)">
+      ${av}
+      <div style="font-size:13px;color:${isDone ? 'var(--text)' : '#C0392B'};font-weight:${isDone ? '400' : '600'}">${esc(m.full_name)}</div>
+      <span style="font-size:10px;color:var(--text-muted)">${ROLE_LABEL[m.role] || m.role}</span>
+      ${when}
+    </div>`;
+  };
+  document.getElementById('ann-status-content').innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">${esc(announcement.title)}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);margin-bottom:8px">✅ 完了 (${done.length})</div>
+        ${done.length ? done.map(m => renderRow(m, true)).join('') : '<div style="font-size:12px;color:var(--text-muted)">まだ誰も完了していません</div>'}
+      </div>
+      <div>
+        <div style="font-size:12px;font-weight:600;color:#C0392B;margin-bottom:8px">⏳ 未完了 (${todo.length})</div>
+        ${todo.length ? todo.map(m => renderRow(m, false)).join('') : '<div style="font-size:12px;color:var(--text-muted)">全員完了しました 🎉</div>'}
+      </div>
+    </div>`;
+  openModal('modal-announcement-status');
+}
+
 
 // ============================================================
 // ダッシュボード: つぶやき機能（社内タイムライン）
@@ -6660,6 +6859,7 @@ async function unlikeTweet(id) {
   const res = await apiFetch(`${API}/tweets/${id}/like`, { method: 'DELETE' });
   if (res.ok) loadTweets();
 }
+
 
 // ダッシュボード: 誕生日一覧
 async function loadDashboardBirthdays() {
@@ -9452,6 +9652,24 @@ async function renderSysconfigPage() {
         </div>
       </div>
 
+      <!-- 全体連絡 (Slack) -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">📢 全体連絡 — Slack 投稿先</div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">通知先チャンネル URL</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="sys-broadcast-slack-url" placeholder="https://app.slack.com/client/T.../C..." style="flex:1"
+              value="${esc(settings.broadcast_slack_channel_url || '')}">
+            <button class="btn" onclick="saveBroadcastSlackUrl()">保存</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
+          ダッシュボードから全体連絡を投稿する際、ここで指定した Slack チャンネルにも自動で同じメッセージが投稿されます。<br>
+          チャンネル URL は Slack の「チャンネルへのリンクをコピー」または app.slack.com の URL からそのまま貼り付け可能です。<br>
+          投稿先のワークスペースは事前に「Slack ワークスペース」メニューで bot_token を登録しておく必要があります。
+        </div>
+      </div>
+
       <div id="sys-save-msg" style="display:none;font-size:13px;color:var(--em-dark);padding:8px 0"></div>
     </div>
   `;
@@ -9488,6 +9706,28 @@ async function saveSysDrive() {
   const msgEl = document.getElementById('sys-save-msg');
   if (res.ok) {
     msgEl.textContent = '✓ 保存しました';
+    msgEl.style.display = '';
+    setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
+  } else {
+    const e = await res.json();
+    showToast('エラー: ' + translateError(e?.error), 'error');
+  }
+}
+
+async function saveBroadcastSlackUrl() {
+  const url = document.getElementById('sys-broadcast-slack-url').value.trim();
+  if (url && !/\/client\/T[A-Z0-9]+\/C[A-Z0-9]+/.test(url)) {
+    showToast('Slack チャンネル URL の形式が正しくありません (期待形式: https://app.slack.com/client/T.../C...)', 'warn');
+    return;
+  }
+  const res = await apiFetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'broadcast_slack_channel_url', value: url || null }),
+  });
+  const msgEl = document.getElementById('sys-save-msg');
+  if (res.ok) {
+    msgEl.textContent = '✓ 全体連絡 Slack チャンネル URL を保存しました';
     msgEl.style.display = '';
     setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
   } else {
