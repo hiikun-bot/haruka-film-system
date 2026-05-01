@@ -2325,17 +2325,31 @@ router.get('/members', requireAuth, async (req, res) => {
   const effectiveRole = getEffectiveRole(req);
   const canList = await userHasPermission(effectiveRole, 'member.list');
   const canSeeSensitive = await userHasPermission(effectiveRole, 'member.edit_password');
-  const baseCols = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url, hide_birth_year';
+  // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行する
+  // （schema-sync が失敗していて本番DBに該当列が存在しないケースのため。PR #91 / #79 と同様パターン）
+  const baseColsWith = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url, hide_birth_year';
+  const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
+  const isMissingCol = (err) => err && /column .+ does not exist/.test(err.message || '');
   if (!canList) {
     // 自分1件のみ（機微情報フル）
-    const { data, error } = await supabase.from('users')
-      .select(baseCols + sensitiveCols).eq('id', req.user.id).maybeSingle();
+    let { data, error } = await supabase.from('users')
+      .select(baseColsWith + sensitiveCols).eq('id', req.user.id).maybeSingle();
+    if (isMissingCol(error)) {
+      console.warn('[members] hide_birth_year列なし → fallback で再取得:', error.message);
+      ({ data, error } = await supabase.from('users')
+        .select(baseColsWithout + sensitiveCols).eq('id', req.user.id).maybeSingle());
+    }
     if (error) return res.status(500).json({ error: error.message });
     return res.json(data ? [data] : []);
   }
-  const cols = canSeeSensitive ? baseCols + sensitiveCols : baseCols;
-  const { data, error } = await supabase.from('users').select(cols).order('full_name');
+  const colsWith = canSeeSensitive ? baseColsWith + sensitiveCols : baseColsWith;
+  const colsWithout = canSeeSensitive ? baseColsWithout + sensitiveCols : baseColsWithout;
+  let { data, error } = await supabase.from('users').select(colsWith).order('full_name');
+  if (isMissingCol(error)) {
+    console.warn('[members] hide_birth_year列なし → fallback で再取得:', error.message);
+    ({ data, error } = await supabase.from('users').select(colsWithout).order('full_name'));
+  }
   if (error) return res.status(500).json({ error: error.message });
   // 自分自身のレコードには機微情報を必ず含める
   if (!canSeeSensitive && Array.isArray(data)) {
@@ -2637,7 +2651,13 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updateData.rank = rank || null;
   }
 
-  const { data, error } = await supabase.from('users').update(updateData).eq('id', req.params.id).select().single();
+  // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行する
+  let { data, error } = await supabase.from('users').update(updateData).eq('id', req.params.id).select().single();
+  if (error && /column .+ does not exist/.test(error.message || '') && updateData.hide_birth_year !== undefined) {
+    console.warn('[members:update] hide_birth_year列なし → fallback で再保存:', error.message);
+    const { hide_birth_year: _omit, ...rest } = updateData;
+    ({ data, error } = await supabase.from('users').update(rest).eq('id', req.params.id).select().single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
