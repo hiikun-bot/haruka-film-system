@@ -990,10 +990,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </datalist>
 
 <!-- 重複提出確認モーダル -->
-<!-- 全体連絡: 投稿モーダル -->
+<!-- 全体連絡: 投稿/編集モーダル -->
 <div class="modal-overlay" id="modal-announcement-compose">
   <div class="modal-card" style="width:680px">
-    <div class="modal-title">📢 全体連絡を投稿<button class="modal-close" onclick="closeModal('modal-announcement-compose')">×</button></div>
+    <div class="modal-title"><span id="ann-c-modal-title">📢 全体連絡を投稿</span><button class="modal-close" onclick="closeModal('modal-announcement-compose')">×</button></div>
+    <input type="hidden" id="ann-c-id" value="">
     <div class="form-group">
       <label class="form-label">タイトル <span style="color:#C0392B">*</span></label>
       <input class="form-input" id="ann-c-title" placeholder="例) 今月分のクリエイティブを全部入れてください">
@@ -1009,13 +1010,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div class="form-group" style="margin-bottom:8px">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text)">
         <input type="checkbox" id="ann-c-slack" checked>
-        Slack の全体チャンネルにも投稿する
+        <span id="ann-c-slack-label">Slack の全体チャンネルにも投稿する</span>
       </label>
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px;margin-left:22px">投稿先はマスター → システム設定で変更できます</div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal('modal-announcement-compose')">キャンセル</button>
-      <button class="btn-primary" onclick="submitAnnouncement()">投稿する</button>
+      <button class="btn-primary" id="ann-c-submit-btn" onclick="submitAnnouncement()">投稿する</button>
     </div>
   </div>
 </div>
@@ -6487,6 +6488,8 @@ function renderTodayDeadlines(today) {
 }
 
 // ダッシュボード: 全体連絡
+let _annCache = []; // 編集モーダルから参照する用に最新一覧をキャッシュ
+
 function _canPostAnnouncement() {
   const r = effectiveRole();
   return ['admin','secretary','producer','producer_director'].includes(r);
@@ -6500,6 +6503,7 @@ async function loadAnnouncements() {
     const res = await apiFetch(`${API}/announcements`);
     if (res.ok) list = await res.json();
   } catch (e) { console.warn('[announcements] load failed', e); }
+  _annCache = list;
   const canPost = _canPostAnnouncement();
   const headerBtn = canPost
     ? `<button class="btn" onclick="openAnnouncementCompose()" style="font-size:11px;padding:3px 10px;margin-left:auto">+ 全体連絡</button>`
@@ -6523,7 +6527,15 @@ async function loadAnnouncements() {
     const deadlineLabel = deadline
       ? `<span style="font-size:11px;color:${overdue ? '#C0392B' : 'var(--text-muted)'};margin-left:8px">期限: ${deadline.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}${overdue ? ' (超過)' : ''}</span>`
       : '';
-    const poster = a.posted_by_user?.full_name ? `<span style="font-size:11px;color:var(--text-muted);margin-left:8px">— ${esc(a.posted_by_user.full_name)}</span>` : '';
+    // 投稿者: アバター + 名前
+    const pu = a.posted_by_user || {};
+    let posterAvatar = '';
+    if (pu.full_name) {
+      const av = pu.avatar_url
+        ? `<img src="${esc(pu.avatar_url)}" style="width:18px;height:18px;border-radius:50%;object-fit:cover;flex-shrink:0">`
+        : `<div style="width:18px;height:18px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0">${esc((pu.full_name || '?').charAt(0))}</div>`;
+      posterAvatar = `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;color:var(--text-muted);vertical-align:middle">${av}<span>${esc(pu.full_name)}</span></span>`;
+    }
     const ackBtn = done
       ? `<button class="btn" onclick="undoAnnouncementAck('${a.id}')" style="font-size:11px;padding:3px 10px;background:var(--em-pale);color:var(--em-dark);border-color:var(--em-dark)">✅ 完了済 (取消)</button>`
       : `<button class="btn" onclick="doAnnouncementAck('${a.id}')" style="font-size:11px;padding:3px 10px;background:var(--em-dark);color:#fff;border-color:var(--em-dark)">完了 ✅</button>`;
@@ -6531,6 +6543,9 @@ async function loadAnnouncements() {
       ? `<button class="btn" onclick="openAnnouncementStatus('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px">対応状況</button>`
       : '';
     const editBtn = canPost
+      ? `<button class="btn" onclick="openAnnouncementEdit('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px">編集</button>`
+      : '';
+    const closeBtn = canPost
       ? `<button class="btn" onclick="closeAnnouncement('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px;color:#999">終了</button>`
       : '';
     const bodyHtml = a.body
@@ -6539,10 +6554,10 @@ async function loadAnnouncements() {
     return `<div style="padding:12px 0;border-bottom:0.5px solid var(--border-light)">
       <div style="display:flex;align-items:flex-start;gap:10px">
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${deadlineLabel}${poster}</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${deadlineLabel}${posterAvatar}</div>
           ${bodyHtml}
         </div>
-        <div style="display:flex;gap:0;flex-shrink:0">${ackBtn}${statusBtn}${editBtn}</div>
+        <div style="display:flex;gap:0;flex-shrink:0">${ackBtn}${statusBtn}${editBtn}${closeBtn}</div>
       </div>
     </div>`;
   }).join('');
@@ -6575,6 +6590,10 @@ async function closeAnnouncement(id) {
 }
 
 function openAnnouncementCompose() {
+  document.getElementById('ann-c-id').value = '';
+  document.getElementById('ann-c-modal-title').textContent = '📢 全体連絡を投稿';
+  document.getElementById('ann-c-submit-btn').textContent = '投稿する';
+  document.getElementById('ann-c-slack-label').textContent = 'Slack の全体チャンネルにも投稿する';
   document.getElementById('ann-c-title').value = '';
   document.getElementById('ann-c-body').value = '';
   document.getElementById('ann-c-deadline').value = '';
@@ -6583,24 +6602,53 @@ function openAnnouncementCompose() {
   setTimeout(() => document.getElementById('ann-c-title').focus(), 50);
 }
 
+function openAnnouncementEdit(id) {
+  const a = (_annCache || []).find(x => x.id === id);
+  if (!a) { showToast('連絡が見つかりません。リロードしてください', 'warn'); return; }
+  document.getElementById('ann-c-id').value = a.id;
+  document.getElementById('ann-c-modal-title').textContent = '📢 全体連絡を編集';
+  document.getElementById('ann-c-submit-btn').textContent = '保存する';
+  document.getElementById('ann-c-slack-label').textContent = 'Slack の全体チャンネルにも再送する';
+  document.getElementById('ann-c-title').value = a.title || '';
+  document.getElementById('ann-c-body').value = a.body || '';
+  // datetime-local は ISO そのままだと不可。YYYY-MM-DDTHH:mm 形式に変換
+  if (a.deadline_at) {
+    const d = new Date(a.deadline_at);
+    const pad = (n) => String(n).padStart(2, '0');
+    document.getElementById('ann-c-deadline').value =
+      `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } else {
+    document.getElementById('ann-c-deadline').value = '';
+  }
+  // 編集時は Slack 再送のチェックボックスをデフォルト OFF（明示的にチェックした時のみ再送）
+  document.getElementById('ann-c-slack').checked = false;
+  openModal('modal-announcement-compose');
+  setTimeout(() => document.getElementById('ann-c-body').focus(), 50);
+}
+
 async function submitAnnouncement() {
+  const id = document.getElementById('ann-c-id').value;
   const title = document.getElementById('ann-c-title').value.trim();
   const body = document.getElementById('ann-c-body').value.trim();
   const deadlineLocal = document.getElementById('ann-c-deadline').value;
   const pushSlack = document.getElementById('ann-c-slack').checked;
   if (!title) { showToast('タイトルを入力してください', 'warn'); return; }
   const deadline_at = deadlineLocal ? new Date(deadlineLocal).toISOString() : null;
-  const res = await apiFetch(`${API}/announcements`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  const isEdit = !!id;
+  const url = isEdit ? `${API}/announcements/${id}` : `${API}/announcements`;
+  const method = isEdit ? 'PATCH' : 'POST';
+  const res = await apiFetch(url, {
+    method, headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, body, deadline_at, push_to_slack: pushSlack }),
   });
-  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '投稿失敗'), 'error'); return; }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || (isEdit ? '保存失敗' : '投稿失敗')), 'error'); return; }
   const data = await res.json();
   closeModal('modal-announcement-compose');
-  if (data.slack_push_result === 'ok') showToast('投稿しました（Slack 通知済）', 'success');
-  else if (data.slack_push_result === 'no_channel_configured') showToast('投稿しました（Slack 通知先 未設定のためダッシュボードのみ）', 'success');
-  else if (data.slack_push_result && data.slack_push_result.startsWith('failed')) showToast('投稿しました（Slack 通知失敗: ' + data.slack_push_result + '）', 'warn');
-  else showToast('投稿しました', 'success');
+  const verb = isEdit ? '保存しました' : '投稿しました';
+  if (data.slack_push_result === 'ok') showToast(`${verb}（Slack ${isEdit ? '再送' : '通知'}済）`, 'success');
+  else if (data.slack_push_result === 'no_channel_configured') showToast(`${verb}（Slack 通知先 未設定）`, 'success');
+  else if (data.slack_push_result && data.slack_push_result.startsWith('failed')) showToast(`${verb}（Slack 通知失敗: ` + data.slack_push_result + '）', 'warn');
+  else showToast(verb, 'success');
   loadAnnouncements();
 }
 

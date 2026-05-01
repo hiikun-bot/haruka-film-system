@@ -3011,7 +3011,7 @@ const notif = require('../notifications');
 router.get('/announcements', requireAuth, async (req, res) => {
   const showAll = req.query.all === '1';
   let q = supabase.from('announcements')
-    .select('id, title, body, posted_by, posted_at, deadline_at, is_active, slack_pushed_at, posted_by_user:posted_by(id, full_name)')
+    .select('id, title, body, posted_by, posted_at, deadline_at, is_active, slack_pushed_at, posted_by_user:posted_by(id, full_name, avatar_url)')
     .order('posted_at', { ascending: false });
   if (!showAll) q = q.eq('is_active', true);
   const { data: list, error } = await q;
@@ -3079,7 +3079,7 @@ router.post('/announcements', requireAuth, requirePermission('member.list'), asy
 
 // 編集
 router.patch('/announcements/:id', requireAuth, requirePermission('member.list'), async (req, res) => {
-  const { title, body, deadline_at, is_active } = req.body || {};
+  const { title, body, deadline_at, is_active, push_to_slack } = req.body || {};
   const update = { updated_at: new Date().toISOString() };
   if (title !== undefined) update.title = String(title).trim();
   if (body !== undefined) update.body = body || null;
@@ -3088,7 +3088,41 @@ router.patch('/announcements/:id', requireAuth, requirePermission('member.list')
   const { data, error } = await supabase.from('announcements')
     .update(update).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // Slack 再送（リクエストで明示的に true が渡された場合のみ）
+  let slackResult = null;
+  if (push_to_slack === true) {
+    try {
+      const { data: setting } = await supabase.from('system_settings')
+        .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
+      const url = setting?.value;
+      if (url) {
+        const lines = [`📢 *${data.title}* （修正・再送）`];
+        if (data.body) lines.push(data.body);
+        if (data.deadline_at) {
+          const d = new Date(data.deadline_at);
+          lines.push(`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}`);
+        }
+        const text = lines.join('\n');
+        const r = await notif.sendSlackChannel(url, text);
+        slackResult = r.ok ? 'ok' : `failed: ${r.reason || 'unknown'}`;
+        if (r.ok) {
+          await supabase.from('announcements')
+            .update({ slack_pushed_at: new Date().toISOString(), slack_push_result: 'ok' })
+            .eq('id', req.params.id);
+        } else {
+          await supabase.from('announcements')
+            .update({ slack_push_result: slackResult }).eq('id', req.params.id);
+        }
+      } else {
+        slackResult = 'no_channel_configured';
+      }
+    } catch (e) {
+      console.warn('[announcements] slack re-push failed:', e.message);
+      slackResult = `error: ${e.message}`;
+    }
+  }
+  res.json({ ...data, slack_push_result: slackResult });
 });
 
 // 終了（is_active=false）
