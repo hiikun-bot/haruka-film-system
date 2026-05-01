@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜データの紐付け（リレーションシップ）図解</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --client:#7C3AED;--client-bg:#F3EAFE;--client-border:#C4A5F5;
+  --project:#2BB8B4;--project-bg:#E6F9F8;--project-border:#A8EDEA;
+  --team:#EA580C;--team-bg:#FDEDD8;--team-border:#FFB680;
+  --member:#0284C7;--member-bg:#DEF1FB;--member-border:#86CFEC;
+  --product:#EAB308;--product-bg:#FEF6CB;--product-border:#FCD34D;
+  --appeal:#DB2777;--appeal-bg:#FCE6F0;--appeal-border:#F4ABCB;
+  --creative:#16A34A;--creative-bg:#DCFCE7;--creative-border:#86EFAC;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:80px}
+
+/* Header */
+.hero{background:linear-gradient(135deg,#2BB8B4 0%,#3ECFCA 100%);color:#fff;padding:48px 24px 64px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:1080px;margin:0 auto}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:16px}
+.hero h1{font-size:32px;font-weight:800;letter-spacing:0.04em;margin-bottom:12px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero p{font-size:15px;opacity:0.95;max-width:640px;margin:0 auto;line-height:1.8}
+
+/* Container */
+.container{max-width:1080px;margin:0 auto;padding:0 24px}
+section{margin-top:64px}
+.section-num{display:inline-block;font-size:11px;font-weight:700;letter-spacing:0.16em;color:var(--em-dark);background:var(--em-pale);padding:4px 12px;border-radius:20px;margin-bottom:12px}
+h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spacing:0.02em}
+.section-lead{font-size:14px;color:var(--text-muted);margin-bottom:28px;line-height:1.8}
+
+/* Hierarchy */
+.hierarchy{display:flex;flex-direction:column;align-items:center;gap:0;padding:24px 0}
+.h-card{width:100%;max-width:680px;background:#fff;border-radius:14px;padding:20px 24px;box-shadow:0 4px 20px rgba(43,184,180,0.08);border:1px solid var(--border-light);position:relative;transition:transform .2s}
+.h-card:hover{transform:translateY(-2px)}
+.h-card.client{border-left:6px solid var(--client);background:linear-gradient(90deg,var(--client-bg) 0%,#fff 60%)}
+.h-card.project{border-left:6px solid var(--project);background:linear-gradient(90deg,var(--project-bg) 0%,#fff 60%);width:88%;max-width:600px}
+.h-card.team{border-left:6px solid var(--team);background:linear-gradient(90deg,var(--team-bg) 0%,#fff 60%);width:78%;max-width:520px}
+.h-card.member{border-left:6px solid var(--member);background:linear-gradient(90deg,var(--member-bg) 0%,#fff 60%);width:68%;max-width:440px}
+.h-card-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.h-icon{font-size:22px}
+.h-title{font-size:18px;font-weight:800;letter-spacing:0.02em}
+.h-card.client .h-title{color:var(--client)}
+.h-card.project .h-title{color:var(--project)}
+.h-card.team .h-title{color:var(--team)}
+.h-card.member .h-title{color:var(--member)}
+.h-pill{font-size:10px;font-weight:700;letter-spacing:0.1em;padding:3px 8px;border-radius:10px;margin-left:auto}
+.h-card.client .h-pill{background:var(--client);color:#fff}
+.h-card.project .h-pill{background:var(--project);color:#fff}
+.h-card.team .h-pill{background:var(--team);color:#fff}
+.h-card.member .h-pill{background:var(--member);color:#fff}
+.h-desc{font-size:13px;color:#374151;line-height:1.7}
+.h-example{font-size:12px;color:#6b7280;margin-top:6px;padding:6px 10px;background:#f9fafb;border-radius:6px;display:inline-block}
+.h-arrow{display:flex;flex-direction:column;align-items:center;padding:6px 0;color:var(--text-muted);font-size:11px;font-weight:600;letter-spacing:0.1em}
+.h-arrow svg{margin-top:2px}
+
+/* Three relationships */
+.rel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.rel-card{background:#fff;border-radius:14px;padding:24px;border:1px solid var(--border-light);box-shadow:0 2px 12px rgba(43,184,180,0.05)}
+.rel-card-head{font-size:11px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:8px}
+.rel-card h3{font-size:18px;font-weight:800;color:var(--text);margin-bottom:14px}
+.rel-card .rel-svg{display:flex;justify-content:center;align-items:center;height:90px;margin-bottom:14px}
+.rel-card p{font-size:13px;color:#4b5563;line-height:1.8}
+.rel-card .rel-eg{font-size:12px;color:#6b7280;margin-top:10px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:3px solid var(--em)}
+
+/* Project center diagram */
+.project-center{position:relative;background:#fff;border-radius:18px;padding:32px;border:1px solid var(--border-light);box-shadow:0 4px 24px rgba(43,184,180,0.06)}
+.pc-svg{width:100%;height:auto;display:block}
+.pc-legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:18px;padding-top:18px;border-top:1px dashed var(--border)}
+.pc-legend-item{display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#4b5563;line-height:1.6}
+.pc-legend-dot{flex-shrink:0;width:14px;height:14px;border-radius:50%;margin-top:4px;border:2px solid #fff;box-shadow:0 0 0 1.5px}
+.pc-legend-dot.client{background:var(--client);box-shadow:0 0 0 1.5px var(--client)}
+.pc-legend-dot.team{background:var(--team);box-shadow:0 0 0 1.5px var(--team)}
+.pc-legend-dot.creative{background:var(--creative);box-shadow:0 0 0 1.5px var(--creative)}
+.pc-legend-dot.product{background:var(--product);box-shadow:0 0 0 1.5px var(--product)}
+.pc-legend-dot.appeal{background:var(--appeal);box-shadow:0 0 0 1.5px var(--appeal)}
+
+/* Sync explainer */
+.sync-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
+.sync-card{background:#fff;border-radius:14px;padding:22px;border:1px solid var(--border-light)}
+.sync-card.on{border-left:6px solid var(--em-dark);background:linear-gradient(90deg,var(--em-pale) 0%,#fff 60%)}
+.sync-card.off{border-left:6px solid #f59e0b;background:linear-gradient(90deg,#fef3c7 0%,#fff 60%)}
+.sync-card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sync-tag{font-size:10px;font-weight:700;letter-spacing:0.12em;padding:3px 8px;border-radius:10px;color:#fff}
+.sync-card.on .sync-tag{background:var(--em-dark)}
+.sync-card.off .sync-tag{background:#d97706}
+.sync-card h4{font-size:15px;font-weight:800;color:var(--text)}
+.sync-card p{font-size:13px;color:#4b5563;line-height:1.8}
+.sync-card .sync-eg{font-size:12px;color:#6b7280;margin-top:10px;padding:8px 10px;background:#fff;border-radius:6px}
+
+/* Real example */
+.example{background:linear-gradient(135deg,#F5FCFC 0%,#fff 100%);border:2px dashed var(--border);border-radius:18px;padding:32px}
+.example-head{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.example-head .ex-tag{font-size:10px;font-weight:700;letter-spacing:0.16em;color:#fff;background:var(--em-dark);padding:4px 10px;border-radius:10px}
+.example h3{font-size:18px;font-weight:800;color:var(--text)}
+.ex-flow{display:flex;flex-direction:column;gap:14px}
+.ex-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.ex-step{flex:0 0 auto;font-size:11px;font-weight:700;color:var(--em-dark);background:#fff;border:1.5px solid var(--em);width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.ex-arrow{flex:0 0 auto;color:var(--text-muted);font-size:18px;font-weight:300}
+.ex-chip{padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;border:1.5px solid;display:inline-flex;align-items:center;gap:6px;background:#fff}
+.ex-chip.client{color:var(--client);border-color:var(--client-border);background:var(--client-bg)}
+.ex-chip.project{color:var(--project);border-color:var(--project-border);background:var(--project-bg)}
+.ex-chip.team{color:var(--team);border-color:var(--team-border);background:var(--team-bg)}
+.ex-chip.member{color:var(--member);border-color:var(--member-border);background:var(--member-bg)}
+.ex-chip.product{color:#a16207;border-color:var(--product-border);background:var(--product-bg)}
+.ex-chip.appeal{color:#9d174d;border-color:var(--appeal-border);background:var(--appeal-bg)}
+.ex-chip.creative{color:#15803d;border-color:var(--creative-border);background:var(--creative-bg)}
+.ex-note{font-size:12px;color:#6b7280;margin-left:46px;padding:6px 12px;background:#fff;border-radius:6px;border-left:3px solid var(--em);display:inline-block}
+
+/* FAQ */
+.faq{display:flex;flex-direction:column;gap:10px}
+.faq-item{background:#fff;border:1px solid var(--border-light);border-radius:12px;padding:18px 20px}
+.faq-q{font-size:14px;font-weight:700;color:var(--em-dark);margin-bottom:8px;display:flex;gap:10px}
+.faq-q::before{content:"Q";flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-dark);color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center}
+.faq-a{font-size:13px;color:#374151;line-height:1.8;display:flex;gap:10px}
+.faq-a::before{content:"A";flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--text-muted);color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center}
+
+/* Footer */
+.foot{margin-top:80px;padding:32px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:36px 20px 48px}
+  .hero h1{font-size:24px}
+  .hero p{font-size:13px}
+  h2{font-size:20px}
+  .container{padding:0 16px}
+  .h-card,.h-card.project,.h-card.team,.h-card.member{width:100%;max-width:none;padding:16px}
+  .h-title{font-size:15px}
+  .h-desc{font-size:12px}
+  .sync-grid{grid-template-columns:1fr}
+  .example{padding:20px}
+  .ex-chip{font-size:12px;padding:6px 10px}
+  .ex-note{margin-left:0;font-size:11px}
+  section{margin-top:44px}
+  .pc-svg{min-width:560px}
+  .project-center{padding:18px;overflow-x:auto}
+}
+
+/* Print */
+@media print{
+  body{background:#fff}
+  .hero{background:#2BB8B4 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  section{break-inside:avoid;margin-top:32px}
+  .h-card{box-shadow:none}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <span class="hero-badge">SYSTEM GUIDE</span>
+    <h1>データの紐付け（リレーションシップ）図解</h1>
+    <p>HARUKA FILM SYSTEM では「クライアント」「案件」「チーム」「メンバー」「訴求軸」「商材」がツリー構造で繋がっています。<br>このページは新メンバーへの説明資料としてお使いください。</p>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- 1. ヒエラルキー -->
+<section>
+  <span class="section-num">01 / HIERARCHY</span>
+  <h2>① 大きな入れ子構造</h2>
+  <p class="section-lead">まず一番大事なのは <b>「クライアント &gt; 案件 &gt; チーム &gt; メンバー」</b> の入れ子。<br>下の階層は必ず上の階層に <b>1つだけ</b> 紐づきます（メンバーは1チーム所属、案件は1クライアント所属）。</p>
+
+  <div class="hierarchy">
+    <div class="h-card client">
+      <div class="h-card-head">
+        <span class="h-icon">🏢</span>
+        <span class="h-title">クライアント</span>
+        <span class="h-pill">CLIENT</span>
+      </div>
+      <div class="h-desc">お金を払ってくれる発注元の会社。「誰の制作物を作っているか」のいちばん外側の枠。</div>
+      <div class="h-example">例：◯◯化粧品株式会社</div>
+    </div>
+
+    <div class="h-arrow">
+      <span>1社につき N 件</span>
+      <svg width="14" height="20" viewBox="0 0 14 20"><path d="M7 0 L7 16 M2 12 L7 18 L12 12" stroke="#5ABDB9" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+    </div>
+
+    <div class="h-card project">
+      <div class="h-card-head">
+        <span class="h-icon">📁</span>
+        <span class="h-title">案件</span>
+        <span class="h-pill">PROJECT</span>
+      </div>
+      <div class="h-desc">納品の単位。1つの目的・キャンペーンで作る制作物の束。締切・予算・担当 D/P もここで決まる。</div>
+      <div class="h-example">例：2026 夏キャンペーン動画</div>
+    </div>
+
+    <div class="h-arrow">
+      <span>担当チームを N 個アサイン</span>
+      <svg width="14" height="20" viewBox="0 0 14 20"><path d="M7 0 L7 16 M2 12 L7 18 L12 12" stroke="#5ABDB9" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+    </div>
+
+    <div class="h-card team">
+      <div class="h-card-head">
+        <span class="h-icon">👥</span>
+        <span class="h-title">チーム</span>
+        <span class="h-pill">TEAM</span>
+      </div>
+      <div class="h-desc">D/P/編集/デザインがセットになった制作チーム。代表 D・代表 P を持ち、案件の通知先のデフォルトになる。</div>
+      <div class="h-example">例：青チーム（代表D：田中、代表P：佐藤）</div>
+    </div>
+
+    <div class="h-arrow">
+      <span>1チームに N 人</span>
+      <svg width="14" height="20" viewBox="0 0 14 20"><path d="M7 0 L7 16 M2 12 L7 18 L12 12" stroke="#5ABDB9" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+    </div>
+
+    <div class="h-card member">
+      <div class="h-card-head">
+        <span class="h-icon">👤</span>
+        <span class="h-title">メンバー</span>
+        <span class="h-pill">MEMBER</span>
+      </div>
+      <div class="h-desc">あなた。1つのチームに所属し、ロール（編集者/ディレクターなど）と単価ランクを持つ。</div>
+      <div class="h-example">例：山田太郎（編集者・Aランク・青チーム所属）</div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. 3つの関係パターン -->
+<section>
+  <span class="section-num">02 / RELATIONSHIP</span>
+  <h2>② 紐付けの3つの基本パターン</h2>
+  <p class="section-lead">「リレーションシップ」と呼ぶときは、この3パターンのどれかを言っています。<br>システム上のすべての繋がりは、この3つの組み合わせで出来ています。</p>
+
+  <div class="rel-grid">
+    <div class="rel-card">
+      <div class="rel-card-head">PATTERN A</div>
+      <h3>1 対 1 (1:1)</h3>
+      <div class="rel-svg">
+        <svg width="220" height="80" viewBox="0 0 220 80">
+          <circle cx="40" cy="40" r="22" fill="#E6F9F8" stroke="#2BB8B4" stroke-width="2"/>
+          <text x="40" y="45" text-anchor="middle" font-size="13" font-weight="700" fill="#2BB8B4">A</text>
+          <line x1="64" y1="40" x2="156" y2="40" stroke="#5ABDB9" stroke-width="2"/>
+          <text x="110" y="34" text-anchor="middle" font-size="11" font-weight="600" fill="#5ABDB9">1:1</text>
+          <circle cx="180" cy="40" r="22" fill="#FCE6F0" stroke="#DB2777" stroke-width="2"/>
+          <text x="180" y="45" text-anchor="middle" font-size="13" font-weight="700" fill="#DB2777">B</text>
+        </svg>
+      </div>
+      <p>1つのAに対して、1つのBだけが紐づく関係。</p>
+      <div class="rel-eg">例：メンバー ↔ Slack ID（1人につき1つ）</div>
+    </div>
+
+    <div class="rel-card">
+      <div class="rel-card-head">PATTERN B</div>
+      <h3>1 対 多 (1:N)</h3>
+      <div class="rel-svg">
+        <svg width="220" height="90" viewBox="0 0 220 90">
+          <circle cx="40" cy="45" r="22" fill="#F3EAFE" stroke="#7C3AED" stroke-width="2"/>
+          <text x="40" y="50" text-anchor="middle" font-size="13" font-weight="700" fill="#7C3AED">親</text>
+          <line x1="62" y1="45" x2="150" y2="20" stroke="#5ABDB9" stroke-width="2"/>
+          <line x1="62" y1="45" x2="150" y2="45" stroke="#5ABDB9" stroke-width="2"/>
+          <line x1="62" y1="45" x2="150" y2="70" stroke="#5ABDB9" stroke-width="2"/>
+          <circle cx="170" cy="20" r="14" fill="#E6F9F8" stroke="#2BB8B4" stroke-width="2"/>
+          <text x="170" y="24" text-anchor="middle" font-size="10" font-weight="700" fill="#2BB8B4">子</text>
+          <circle cx="170" cy="45" r="14" fill="#E6F9F8" stroke="#2BB8B4" stroke-width="2"/>
+          <text x="170" y="49" text-anchor="middle" font-size="10" font-weight="700" fill="#2BB8B4">子</text>
+          <circle cx="170" cy="70" r="14" fill="#E6F9F8" stroke="#2BB8B4" stroke-width="2"/>
+          <text x="170" y="74" text-anchor="middle" font-size="10" font-weight="700" fill="#2BB8B4">子</text>
+        </svg>
+      </div>
+      <p>1つの親に、複数の子がぶら下がる関係。<b>このシステムの中心構造</b>。</p>
+      <div class="rel-eg">例：1クライアント → N案件 ／ 1案件 → Nクリエイティブ</div>
+    </div>
+
+    <div class="rel-card">
+      <div class="rel-card-head">PATTERN C</div>
+      <h3>多 対 多 (N:N)</h3>
+      <div class="rel-svg">
+        <svg width="220" height="90" viewBox="0 0 220 90">
+          <circle cx="40" cy="20" r="14" fill="#F3EAFE" stroke="#7C3AED" stroke-width="2"/>
+          <text x="40" y="24" text-anchor="middle" font-size="10" font-weight="700" fill="#7C3AED">A1</text>
+          <circle cx="40" cy="70" r="14" fill="#F3EAFE" stroke="#7C3AED" stroke-width="2"/>
+          <text x="40" y="74" text-anchor="middle" font-size="10" font-weight="700" fill="#7C3AED">A2</text>
+          <circle cx="180" cy="20" r="14" fill="#FDEDD8" stroke="#EA580C" stroke-width="2"/>
+          <text x="180" y="24" text-anchor="middle" font-size="10" font-weight="700" fill="#EA580C">B1</text>
+          <circle cx="180" cy="70" r="14" fill="#FDEDD8" stroke="#EA580C" stroke-width="2"/>
+          <text x="180" y="74" text-anchor="middle" font-size="10" font-weight="700" fill="#EA580C">B2</text>
+          <line x1="54" y1="20" x2="166" y2="20" stroke="#5ABDB9" stroke-width="1.5"/>
+          <line x1="54" y1="20" x2="166" y2="70" stroke="#5ABDB9" stroke-width="1.5"/>
+          <line x1="54" y1="70" x2="166" y2="20" stroke="#5ABDB9" stroke-width="1.5"/>
+          <line x1="54" y1="70" x2="166" y2="70" stroke="#5ABDB9" stroke-width="1.5"/>
+        </svg>
+      </div>
+      <p>双方向に複数紐づけられる関係。</p>
+      <div class="rel-eg">例：1クライアントを N チームが担当 ／ 1チームが N クライアントを持つ</div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. 案件中心の星形図 -->
+<section>
+  <span class="section-num">03 / PROJECT-CENTERED</span>
+  <h2>③ 案件のまわりに集まるすべてのもの</h2>
+  <p class="section-lead">案件は <b>「ハブ」</b>。クライアント・チーム・クリエイティブ・訴求軸・商材すべてが案件に集まります。<br>「迷ったらまず案件画面を見ろ」と覚えてください。</p>
+
+  <div class="project-center">
+    <svg class="pc-svg" viewBox="0 0 720 420" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#5ABDB9"/>
+        </marker>
+      </defs>
+
+      <!-- center: project -->
+      <circle cx="360" cy="210" r="78" fill="#fff" stroke="#2BB8B4" stroke-width="3"/>
+      <circle cx="360" cy="210" r="68" fill="#E6F9F8"/>
+      <text x="360" y="200" text-anchor="middle" font-size="28" font-weight="900" fill="#2BB8B4">📁</text>
+      <text x="360" y="225" text-anchor="middle" font-size="16" font-weight="800" fill="#1a6b68">案件</text>
+      <text x="360" y="245" text-anchor="middle" font-size="11" fill="#5ABDB9">PROJECT</text>
+
+      <!-- top: client -->
+      <line x1="360" y1="132" x2="360" y2="76" stroke="#5ABDB9" stroke-width="2" marker-end="url(#arr)" stroke-dasharray="0"/>
+      <text x="370" y="108" font-size="11" font-weight="600" fill="#5ABDB9">所属</text>
+      <rect x="280" y="20" width="160" height="56" rx="14" fill="#F3EAFE" stroke="#7C3AED" stroke-width="2"/>
+      <text x="360" y="44" text-anchor="middle" font-size="20">🏢</text>
+      <text x="360" y="64" text-anchor="middle" font-size="13" font-weight="800" fill="#7C3AED">クライアント</text>
+
+      <!-- right: team -->
+      <line x1="438" y1="210" x2="510" y2="210" stroke="#5ABDB9" stroke-width="2" marker-end="url(#arr)"/>
+      <text x="468" y="200" text-anchor="middle" font-size="11" font-weight="600" fill="#5ABDB9">担当</text>
+      <rect x="514" y="180" width="160" height="56" rx="14" fill="#FDEDD8" stroke="#EA580C" stroke-width="2"/>
+      <text x="594" y="204" text-anchor="middle" font-size="20">👥</text>
+      <text x="594" y="224" text-anchor="middle" font-size="13" font-weight="800" fill="#EA580C">チーム</text>
+
+      <!-- bottom: creatives -->
+      <line x1="360" y1="288" x2="360" y2="344" stroke="#5ABDB9" stroke-width="2" marker-end="url(#arr)"/>
+      <text x="370" y="318" font-size="11" font-weight="600" fill="#5ABDB9">配下</text>
+      <rect x="280" y="344" width="160" height="56" rx="14" fill="#DCFCE7" stroke="#16A34A" stroke-width="2"/>
+      <text x="360" y="368" text-anchor="middle" font-size="20">🎬</text>
+      <text x="360" y="388" text-anchor="middle" font-size="13" font-weight="800" fill="#16A34A">クリエイティブ</text>
+
+      <!-- left top: appeal -->
+      <line x1="295" y1="170" x2="226" y2="125" stroke="#5ABDB9" stroke-width="2" marker-end="url(#arr)" stroke-dasharray="4 4"/>
+      <text x="252" y="158" text-anchor="middle" font-size="11" font-weight="600" fill="#5ABDB9">訴求軸</text>
+      <rect x="46" y="78" width="160" height="56" rx="14" fill="#FCE6F0" stroke="#DB2777" stroke-width="2"/>
+      <text x="126" y="102" text-anchor="middle" font-size="20">🎯</text>
+      <text x="126" y="122" text-anchor="middle" font-size="13" font-weight="800" fill="#DB2777">訴求軸</text>
+
+      <!-- left bottom: product -->
+      <line x1="295" y1="250" x2="226" y2="295" stroke="#5ABDB9" stroke-width="2" marker-end="url(#arr)" stroke-dasharray="4 4"/>
+      <text x="252" y="288" text-anchor="middle" font-size="11" font-weight="600" fill="#5ABDB9">商材</text>
+      <rect x="46" y="286" width="160" height="56" rx="14" fill="#FEF6CB" stroke="#EAB308" stroke-width="2"/>
+      <text x="126" y="310" text-anchor="middle" font-size="20">📦</text>
+      <text x="126" y="330" text-anchor="middle" font-size="13" font-weight="800" fill="#a16207">商材</text>
+
+    </svg>
+
+    <div class="pc-legend">
+      <div class="pc-legend-item"><span class="pc-legend-dot client"></span><div><b style="color:var(--client)">クライアント</b>：案件はどのクライアントの仕事かを必ず1つ持つ。</div></div>
+      <div class="pc-legend-item"><span class="pc-legend-dot team"></span><div><b style="color:var(--team)">チーム</b>：誰が制作するか。チームの代表 D/P が案件のデフォルト担当。</div></div>
+      <div class="pc-legend-item"><span class="pc-legend-dot creative"></span><div><b style="color:#15803d">クリエイティブ</b>：案件の中で作る動画・デザイン1本ごと。バージョン履歴付き。</div></div>
+      <div class="pc-legend-item"><span class="pc-legend-dot appeal"></span><div><b style="color:var(--appeal)">訴求軸</b>：何を訴求するか（例：保湿力・低価格 など）。クライアント or 案件で管理。</div></div>
+      <div class="pc-legend-item"><span class="pc-legend-dot product"></span><div><b style="color:#a16207">商材</b>：どの商品を売るか（例：化粧水・乳液 など）。クライアント or 案件で管理。</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. 訴求軸 / 商材 の同期スイッチ -->
+<section>
+  <span class="section-num">04 / SYNC</span>
+  <h2>④ 訴求軸・商材は「親から自動同期」 or 「案件で個別管理」</h2>
+  <p class="section-lead">混乱しやすいポイント。訴求軸と商材は<b>クライアントレベルにも、案件レベルにも</b>持てます。<br>案件画面の「商材・訴求軸」タブで、どっちを使うかをスイッチで切り替えます。</p>
+
+  <div class="sync-grid">
+    <div class="sync-card on">
+      <div class="sync-card-head">
+        <span class="sync-tag">DEFAULT</span>
+        <h4>同期 ON：クライアントの定義をそのまま使う</h4>
+      </div>
+      <p>案件は <b>クライアントが持つ訴求軸／商材マスター</b> をそのまま参照。クライアント側で追加すれば全案件に反映。レギュラー案件で便利。</p>
+      <div class="sync-eg">例：化粧水ブランドA社のレギュラー動画 → クライアントA社で訴求軸を一元管理</div>
+    </div>
+    <div class="sync-card off">
+      <div class="sync-card-head">
+        <span class="sync-tag">CASE</span>
+        <h4>同期 OFF：案件専用で個別に持つ</h4>
+      </div>
+      <p>案件ごとに <b>独自の訴求軸／商材</b> をぶら下げる。スポット案件や、特殊なキャンペーンで使う。クライアントマスターは汚さない。</p>
+      <div class="sync-eg">例：A社の単発コラボ案件 → この案件専用の「コラボ商品」を案件側に登録</div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. 実例ウォークスルー -->
+<section>
+  <span class="section-num">05 / WALKTHROUGH</span>
+  <h2>⑤ 具体例で追ってみる</h2>
+  <p class="section-lead">「化粧品ブランドA社」のキャンペーン動画案件を例に、紐付けがどう繋がるかを上から下まで追います。</p>
+
+  <div class="example">
+    <div class="example-head">
+      <span class="ex-tag">EXAMPLE</span>
+      <h3>A社・夏キャンペーン2026動画</h3>
+    </div>
+    <div class="ex-flow">
+      <div class="ex-row">
+        <div class="ex-step">1</div>
+        <span class="ex-chip client">🏢 クライアント：A社（化粧品ブランド）</span>
+      </div>
+      <div class="ex-note">A社のマスターに、商材「化粧水・乳液・美容液」と訴求軸「保湿力・透明感」を登録済み。</div>
+
+      <div class="ex-row">
+        <div class="ex-step">2</div>
+        <span class="ex-chip project">📁 案件：夏キャンペーン2026動画</span>
+        <span class="ex-arrow">←</span>
+        <span class="ex-chip client">A社配下</span>
+      </div>
+      <div class="ex-note">案件の「商材・訴求軸」タブは <b>同期 ON</b>。A社のマスターをそのまま使う。</div>
+
+      <div class="ex-row">
+        <div class="ex-step">3</div>
+        <span class="ex-chip team">👥 担当：青チーム</span>
+        <span class="ex-arrow">←</span>
+        <span class="ex-chip project">案件にアサイン</span>
+      </div>
+      <div class="ex-note">青チームの代表 D（田中）と代表 P（佐藤）が、案件のデフォルト承認者になる。</div>
+
+      <div class="ex-row">
+        <div class="ex-step">4</div>
+        <span class="ex-chip member">👤 編集：山田太郎</span>
+        <span class="ex-arrow">←</span>
+        <span class="ex-chip team">青チーム所属</span>
+      </div>
+      <div class="ex-note">山田は青チーム所属の編集者（Aランク）。案件のクリエイティブにアサインされる。</div>
+
+      <div class="ex-row">
+        <div class="ex-step">5</div>
+        <span class="ex-chip creative">🎬 クリエイティブ：化粧水_保湿訴求_15秒</span>
+      </div>
+      <div class="ex-note">
+        ファイル名は自動生成 ←
+        <span class="ex-chip product" style="font-size:11px;padding:3px 8px">📦 化粧水</span>
+        +
+        <span class="ex-chip appeal" style="font-size:11px;padding:3px 8px">🎯 保湿訴求</span>
+        + 尺
+      </div>
+
+      <div class="ex-row">
+        <div class="ex-step">6</div>
+        <span style="font-size:13px;color:#374151">山田が制作 → Dチェック（田中）→ Pチェック（佐藤）→ クライアント確認 → 納品 → 山田の請求書ドラフトに自動追加</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. メンバーから見たつながり -->
+<section>
+  <span class="section-num">06 / MEMBER VIEW</span>
+  <h2>⑥ あなた（メンバー）から見たつながり</h2>
+  <p class="section-lead">逆向きにも辿れます。あなたから案件・クライアントに繋がる経路を覚えておくと、画面の「なぜここに表示？」が分かります。</p>
+
+  <div class="example">
+    <div class="ex-flow">
+      <div class="ex-row">
+        <span class="ex-chip member">👤 あなた</span>
+        <span class="ex-arrow">→</span>
+        <span style="font-size:12px;color:#5ABDB9;font-weight:600">所属</span>
+        <span class="ex-arrow">→</span>
+        <span class="ex-chip team">👥 1つのチーム</span>
+      </div>
+      <div class="ex-row">
+        <span class="ex-chip member">👤 あなた</span>
+        <span class="ex-arrow">→</span>
+        <span style="font-size:12px;color:#5ABDB9;font-weight:600">アサイン</span>
+        <span class="ex-arrow">→</span>
+        <span class="ex-chip creative">🎬 クリエイティブ複数</span>
+        <span class="ex-arrow">→</span>
+        <span class="ex-chip project">📁 案件</span>
+        <span class="ex-arrow">→</span>
+        <span class="ex-chip client">🏢 クライアント</span>
+      </div>
+      <div class="ex-note" style="margin-left:0">
+        ⚠️ あなたが「画面に見えるクリエイティブ」は、あなたが <b>アサインされている分</b>＋（権限により）チーム全体／全社のもの。<br>
+        通知（ChatWork DM・Slack DM）は、案件の D/P アサインがあなたに当たっているときに飛びます。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. FAQ -->
+<section>
+  <span class="section-num">07 / FAQ</span>
+  <h2>⑦ よくある「つまずき」</h2>
+
+  <div class="faq">
+    <div class="faq-item">
+      <div class="faq-q">案件画面に商材／訴求軸が表示されません。</div>
+      <div class="faq-a">案件タブ「商材・訴求軸」が <b>同期 ON</b>（デフォルト）の場合、<b>クライアント側のマスター</b> に登録が必要です。クライアント画面を開いて「商材」「訴求軸」タブで追加してください。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">クリエイティブのファイル名が空欄になります。</div>
+      <div class="faq-a">ファイル名は <b>商材コード × 訴求軸コード × 尺</b> から自動生成されます。商材か訴求軸が未選択だと生成されません。クリエイティブ詳細で両方選択してください。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">通知（ChatWork DM）が飛びません。</div>
+      <div class="faq-a">5つすべて揃う必要があります：① クライアント or 案件に <code>chatwork_room_id</code>、② 通知先メンバーに <code>chatwork_dm_id</code>、③ Bot がそのルームのメンバー、④ 対象ステータス遷移である、⑤ 環境変数 <code>CHATWORK_API_TOKEN</code>。1つでも欠けると無言でスキップされます。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">同じ人が複数チームに所属できますか？</div>
+      <div class="faq-a">いいえ。<b>メンバーは1チームのみ</b>に所属する設計です（兼務なし）。代わりに、案件ごとに「案件専用の D / P」を上書き指定できるので、必要なら案件側で人をアサインしてください。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">「ボール保持者」って何ですか？</div>
+      <div class="faq-a">クリエイティブ進捗の中で <b>「いま誰のアクション待ちか」</b> を可視化した概念です。Dチェック中ならディレクター、Pチェック中ならプロデューサー、修正中なら編集者…のように、ステータスから一意に決まります。</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p>HARUKA FILM SYSTEM ／ データの紐付け図解</p>
+  <p style="margin-top:8px">
+    <a href="/haruka.html">← システムに戻る</a>
+  </p>
+</footer>
+
+</body>
+</html>
