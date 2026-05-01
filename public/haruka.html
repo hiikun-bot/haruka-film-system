@@ -2723,7 +2723,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <!-- 左サイドバー -->
     <aside id="an-sidebar" style="width:220px;flex-shrink:0;background:var(--em-pale);border-right:1px solid var(--border);padding:20px 12px">
       <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;color:var(--em-dark);margin:0 6px 10px">📊 分析メニュー</div>
-      <button class="an-menu-btn an-menu-active" data-view="creator-summary" onclick="switchAnalyticsView('creator-summary')">
+      <div style="font-size:10px;color:var(--text-muted);margin:4px 6px 4px;letter-spacing:0.05em">経営</div>
+      <button class="an-menu-btn an-menu-active" data-view="monthly-revenue" onclick="switchAnalyticsView('monthly-revenue')">
+        <span style="font-size:14px">💰</span><span>月次売上・粗利</span>
+      </button>
+      <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">本数集計</div>
+      <button class="an-menu-btn" data-view="creator-summary" onclick="switchAnalyticsView('creator-summary')">
         <span style="font-size:14px">👤</span><span>クリエイター別作成本数</span>
       </button>
       <button class="an-menu-btn" data-view="project-assignee" onclick="switchAnalyticsView('project-assignee')">
@@ -11921,7 +11926,7 @@ function renderKnowledgeCards(list, compact) {
 
 // ==================== 分析・集計ページ ====================
 let _analyticsLastResult = null;
-let _analyticsView = 'creator-summary'; // 'creator-summary' | 'project-assignee'
+let _analyticsView = 'monthly-revenue'; // 'monthly-revenue' | 'creator-summary' | 'project-assignee'
 
 function initAnalyticsPage() {
   // 当月をデフォルトセット
@@ -11946,14 +11951,22 @@ function switchAnalyticsView(view, skipReset) {
   const titleEl = document.getElementById('an-view-title');
   const descEl = document.getElementById('an-view-desc');
   const clientWrap = document.getElementById('an-client-wrap');
-  if (view === 'creator-summary') {
+  const statusFilterWrap = document.getElementById('an-status-filter')?.parentElement;
+  if (view === 'monthly-revenue') {
+    if (titleEl) titleEl.textContent = '💰 月次売上・粗利';
+    if (descEl)  descEl.textContent  = '当月の売上（確定+見込み）/原価/粗利/粗利率をクライアント別に集計します。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+  } else if (view === 'creator-summary') {
     if (titleEl) titleEl.textContent = '👤 クリエイター別作成本数';
     if (descEl)  descEl.textContent  = 'クリエイターごとの動画/デザイン本数と単価・合計金額を集計します。';
-    if (clientWrap) clientWrap.style.display = 'none'; // 全件横断のため
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = '';
   } else {
     if (titleEl) titleEl.textContent = '📋 案件×担当者集計';
     if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。';
     if (clientWrap) clientWrap.style.display = '';
+    if (statusFilterWrap) statusFilterWrap.style.display = '';
   }
   if (!skipReset) {
     document.getElementById('an-summary').innerHTML = '';
@@ -11974,7 +11987,9 @@ async function loadAnalytics() {
   document.getElementById('an-summary').innerHTML = '';
 
   let url;
-  if (_analyticsView === 'creator-summary') {
+  if (_analyticsView === 'monthly-revenue') {
+    url = `${API}/analytics/monthly-revenue?year=${year}&month=${parseInt(month,10)}`;
+  } else if (_analyticsView === 'creator-summary') {
     url = `${API}/analytics/creator-summary?year=${year}&month=${parseInt(month,10)}&status=${status}`;
   } else {
     const client_id = document.getElementById('an-client').value || '';
@@ -11990,8 +12005,72 @@ async function loadAnalytics() {
   }
   const data = await res.json();
   _analyticsLastResult = data;
-  if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
+  if (_analyticsView === 'monthly-revenue') renderMonthlyRevenueTable(data);
+  else if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
   else renderAnalyticsTable(data);
+}
+
+function renderMonthlyRevenueTable(data) {
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const pct = (n) => `${(Number(n || 0) * 100).toFixed(1)}%`;
+  const sumEl = document.getElementById('an-summary');
+  const marginColor = data.total.gross_margin >= 0.30 ? '#15803D' : data.total.gross_margin >= 0.15 ? '#B45309' : '#B91C1C';
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象月</span> <strong>${data.year}年${data.month}月</strong></div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">売上(確定+見込)</span> <strong style="font-size:14px">${yen(data.total.revenue)}</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">確定 ${yen(data.confirmed.revenue)} / 見込 ${yen(data.forecast.revenue)}</div></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">原価(確定+見込)</span> <strong style="font-size:14px">${yen(data.total.cost)}</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">確定 ${yen(data.confirmed.cost)} / 見込 ${yen(data.forecast.cost)}</div></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">粗利</span> <strong style="font-size:14px">${yen(data.total.gross_profit)}</strong></div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">粗利率</span> <strong style="font-size:14px;color:${marginColor}">${pct(data.total.gross_margin)}</strong></div>
+  `;
+  const wrap = document.getElementById('an-table-content');
+  if (!data.by_client.length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する売上・原価データがありません</div>';
+    return;
+  }
+  const rows = data.by_client.map(c => {
+    const profitColor = c.gross_profit >= 0 ? '#15803D' : '#B91C1C';
+    const marginC = c.gross_margin >= 0.30 ? '#15803D' : c.gross_margin >= 0.15 ? '#B45309' : '#B91C1C';
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(c.name)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text)">${yen(c.confirmed_revenue)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text-muted)">${yen(c.forecast_revenue)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:600;color:#0369a1">${yen(c.total_revenue)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text)">${yen(c.confirmed_cost)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text-muted)">${yen(c.forecast_cost)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:600;color:#b45309">${yen(c.total_cost)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${profitColor}">${yen(c.gross_profit)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${marginC};background:var(--em-pale)">${pct(c.gross_margin)}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:920px">
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">クライアント</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">確定売上</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">見込売上</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">売上合計</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">確定原価</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">見込原価</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">原価合計</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">粗利</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">粗利率</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr style="border-top:2px solid var(--em);background:var(--em);color:#fff;font-weight:700">
+        <td style="padding:11px 12px;font-size:12px">全体合計</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px">${yen(data.confirmed.revenue)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px;opacity:0.85">${yen(data.forecast.revenue)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(data.total.revenue)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px">${yen(data.confirmed.cost)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px;opacity:0.85">${yen(data.forecast.cost)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(data.total.cost)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(data.total.gross_profit)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${pct(data.total.gross_margin)}</td>
+      </tr>
+    </tbody>
+  </table>`;
 }
 
 function renderCreatorSummaryTable(data) {
@@ -12143,13 +12222,17 @@ async function exportAnalyticsToSheet() {
   if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
   const [year, month] = ym.split('-');
   const status = document.getElementById('an-status-filter').value || 'delivered';
-  const isCreator = _analyticsView === 'creator-summary';
-  const endpoint = isCreator
-    ? `${API}/analytics/creator-summary/export-sheet`
-    : `${API}/analytics/creative-by-assignee/export-sheet`;
-  const body = isCreator
-    ? { year: parseInt(year, 10), month: parseInt(month, 10), status }
-    : { year: parseInt(year, 10), month: parseInt(month, 10), client_id: document.getElementById('an-client').value || '', status };
+  let endpoint, body;
+  if (_analyticsView === 'monthly-revenue') {
+    endpoint = `${API}/analytics/monthly-revenue/export-sheet`;
+    body = { year: parseInt(year, 10), month: parseInt(month, 10) };
+  } else if (_analyticsView === 'creator-summary') {
+    endpoint = `${API}/analytics/creator-summary/export-sheet`;
+    body = { year: parseInt(year, 10), month: parseInt(month, 10), status };
+  } else {
+    endpoint = `${API}/analytics/creative-by-assignee/export-sheet`;
+    body = { year: parseInt(year, 10), month: parseInt(month, 10), client_id: document.getElementById('an-client').value || '', status };
+  }
 
   const btn = document.getElementById('an-sheet-btn');
   const orig = btn?.textContent;
