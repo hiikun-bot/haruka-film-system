@@ -2038,24 +2038,44 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる
   const willFaststart = shouldFaststart(file.mimetype, generated_name || file.originalname);
   const uploadedBy = req.user?.id || null;
-  const { data: fileRecord, error: fErr } = await supabase
+  // 必須フィールド（旧スキーマでも必ず存在する）
+  const baseRow = {
+    creative_id: creativeId,
+    original_name: file.originalname,
+    generated_name: generated_name || file.originalname,
+    width: parseInt(width) || null,
+    height: parseInt(height) || null,
+    version: version,
+    drive_file_id: driveFileId,
+    drive_url: driveUrl,
+    uploaded_by: uploadedBy,
+  };
+  // 後方追加した optional 列（mime_type / file_size / faststart_status）。
+  // 本番 DB に列が無い環境では INSERT が PGRST204 で失敗するので、
+  // その場合は optional 列を外して再試行する。
+  const optionalRow = {
+    mime_type: file.mimetype || null,
+    file_size: file.size || file.buffer?.length || null,
+    faststart_status: willFaststart ? 'pending' : 'skipped',
+  };
+  const isMissingCol = (err) => {
+    if (!err) return false;
+    const msg = err.message || '';
+    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+  };
+  let { data: fileRecord, error: fErr } = await supabase
     .from('creative_files')
-    .insert({
-      creative_id: creativeId,
-      original_name: file.originalname,
-      generated_name: generated_name || file.originalname,
-      width: parseInt(width) || null,
-      height: parseInt(height) || null,
-      version: version,
-      drive_file_id: driveFileId,
-      drive_url: driveUrl,
-      uploaded_by: uploadedBy,
-      mime_type: file.mimetype || null,
-      file_size: file.size || file.buffer?.length || null,
-      faststart_status: willFaststart ? 'pending' : 'skipped',
-    })
+    .insert({ ...baseRow, ...optionalRow })
     .select()
     .single();
+  if (isMissingCol(fErr)) {
+    console.warn('[creative_files] 後方追加列なし → fallback で再試行:', fErr.message);
+    ({ data: fileRecord, error: fErr } = await supabase
+      .from('creative_files')
+      .insert(baseRow)
+      .select()
+      .single());
+  }
   if (fErr) return res.status(500).json({ error: fErr.message });
 
   res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });

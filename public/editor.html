@@ -287,6 +287,17 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 <div class="toast" id="toast"></div>
 
 <script>
+// ==================== UTIL ====================
+// HTML エスケープ（XSS 対策）。innerHTML へ書き込むデータ由来文字列は必ずこれを通す。
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ==================== STATE ====================
 const API = '';
 let currentAssetId  = null;
@@ -357,13 +368,13 @@ function renderFileList() {
   }
   el.innerHTML = allAssets.map(a => {
     const proj = allProjects.find(p => p.id === a.project_id);
-    return `<div class="file-item ${a.id === currentAssetId ? 'active' : ''}" onclick="selectAsset('${a.id}')">
-      <div class="file-item-name">${a.original_name}</div>
-      ${a.renamed_name ? `<div class="file-renamed">→ ${a.renamed_name}</div>` : ''}
+    return `<div class="file-item ${a.id === currentAssetId ? 'active' : ''}" onclick="selectAsset('${esc(a.id)}')">
+      <div class="file-item-name">${esc(a.original_name)}</div>
+      ${a.renamed_name ? `<div class="file-renamed">→ ${esc(a.renamed_name)}</div>` : ''}
       <div class="file-item-meta">
-        <span class="file-item-status status-${a.analysis_status}">${statusLabel(a.analysis_status)}</span>
-        ${proj ? `<span>${proj.name}</span>` : ''}
-        ${a.file_size ? `<span>${fmtSize(a.file_size)}</span>` : ''}
+        <span class="file-item-status status-${esc(a.analysis_status)}">${esc(statusLabel(a.analysis_status))}</span>
+        ${proj ? `<span>${esc(proj.name)}</span>` : ''}
+        ${a.file_size ? `<span>${esc(fmtSize(a.file_size))}</span>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -633,15 +644,16 @@ function updateReportPanel(asset) {
     <div class="report-section">
       <div class="report-label">📝 命名規約リネーム</div>
       <div class="rename-box">
-        <div class="rename-orig">${asset.original_name}</div>
-        <div class="rename-new">→ ${asset.renamed_name}</div>
+        <div class="rename-orig">${esc(asset.original_name)}</div>
+        <div class="rename-new">→ ${esc(asset.renamed_name)}</div>
         <div style="font-size:9px;color:var(--text-muted);margin-top:4px">案件名_日付_バージョン_連番</div>
       </div>
     </div>` : '';
 
   // AIレポート（Markdown風をHTMLに変換）
+  // 重要: マークダウン置換の前にエスケープして XSS を防ぎつつ、許可した変換のみ行う
   const reportHtml = asset.ai_report
-    ? asset.ai_report
+    ? esc(asset.ai_report)
         .replace(/^# (.+)$/mg, '<div style="font-size:15px;font-weight:700;margin-bottom:10px;color:var(--accent)">$1</div>')
         .replace(/^## (.+)$/mg, '<div class="report-label">$1</div>')
         .replace(/\n/g, '<br>')
@@ -654,7 +666,7 @@ function updateReportPanel(asset) {
       <div style="font-size:12px;line-height:1.8;color:var(--text)">${reportHtml}</div>
     </div>
     <div style="margin-top:16px">
-      <button class="btn btn-ghost btn-sm" onclick="downloadReport('${asset.id}')">📄 レポートをコピー</button>
+      <button class="btn btn-ghost btn-sm" onclick="downloadReport('${esc(asset.id)}')">📄 レポートをコピー</button>
     </div>
   `;
 }
@@ -707,21 +719,24 @@ function renderComments() {
     ].filter(Boolean).join('');
 
     const tsHtml = c.timestamp_seconds != null
-      ? `<span class="c-ts" onclick="seekTo(${c.timestamp_seconds})" title="この時間に移動">⏱ ${fmtTime(c.timestamp_seconds)}</span>` : '';
+      ? `<span class="c-ts" onclick="seekTo(${Number(c.timestamp_seconds)})" title="この時間に移動">⏱ ${esc(fmtTime(c.timestamp_seconds))}</span>` : '';
+
+    // body は改行のみ <br> に変換し、それ以外の HTML はエスケープして XSS を防ぐ
+    const bodyHtml = esc(c.body || '').replace(/\n/g, '<br>');
 
     return `<div class="c-item ${c.is_pinned?'pinned':''} ${c.resolved?'resolved':''} ${c.promoted_to_knowledge?'promoted':''}">
       <div class="c-header">
         ${tsHtml}
-        <span class="c-author">${c.author}</span>
+        <span class="c-author">${esc(c.author)}</span>
         ${badges}
         <span class="c-date">${new Date(c.created_at * 1000).toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
       </div>
-      <div class="c-body">${c.body.replace(/\n/g,'<br>')}</div>
+      <div class="c-body">${bodyHtml}</div>
       <div class="c-actions">
-        ${!c.resolved ? `<button class="btn btn-ghost btn-sm" onclick="resolveComment('${c.id}')">✅ 解決済みにする</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="pinComment('${c.id}', ${!c.is_pinned})">${c.is_pinned?'📌 ピン解除':'📌 ピン留め'}</button>
-        ${!c.promoted_to_knowledge ? `<button class="btn btn-purple btn-sm" onclick="promoteComment('${c.id}')">🧠 ナレッジ化</button>` : ''}
-        <button class="btn btn-danger btn-sm" onclick="deleteComment('${c.id}')">×</button>
+        ${!c.resolved ? `<button class="btn btn-ghost btn-sm" onclick="resolveComment('${esc(c.id)}')">✅ 解決済みにする</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="pinComment('${esc(c.id)}', ${!c.is_pinned})">${c.is_pinned?'📌 ピン解除':'📌 ピン留め'}</button>
+        ${!c.promoted_to_knowledge ? `<button class="btn btn-purple btn-sm" onclick="promoteComment('${esc(c.id)}')">🧠 ナレッジ化</button>` : ''}
+        <button class="btn btn-danger btn-sm" onclick="deleteComment('${esc(c.id)}')">×</button>
       </div>
     </div>`;
   }).join('');
