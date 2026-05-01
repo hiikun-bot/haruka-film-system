@@ -990,6 +990,30 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </datalist>
 
 <!-- 重複提出確認モーダル -->
+<!-- つぶやき: 投稿モーダル -->
+<div class="modal-overlay" id="modal-tweet-compose">
+  <div class="modal-card" style="width:520px">
+    <div class="modal-title">💭 つぶやき投稿<button class="modal-close" onclick="closeModal('modal-tweet-compose')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">写真 <span style="color:#C0392B">*</span></label>
+      <div id="tw-image-preview" style="width:100%;aspect-ratio:1/1;max-height:280px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px" onclick="document.getElementById('tw-image-input').click()">
+        写真を選択またはタップで撮影
+      </div>
+      <input type="file" id="tw-image-input" accept="image/*" capture="environment" style="display:none" onchange="onTweetImageSelected(event)">
+      <div id="tw-image-status" style="font-size:11px;color:var(--text-muted)"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:8px">
+      <label class="form-label">一言 <span style="color:#C0392B">*</span> <span id="tw-body-counter" style="font-weight:400;font-size:11px;color:var(--text-muted);margin-left:6px">0 / 280</span></label>
+      <textarea class="form-input" id="tw-body" rows="4" maxlength="280" placeholder="例) 今日の現場、夕日がエモかった" style="resize:vertical;font-family:inherit" oninput="updateTweetCounter()"></textarea>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">投稿は 90 日後に自動で非表示になります</div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-tweet-compose')">キャンセル</button>
+      <button class="btn-primary" id="tw-submit-btn" onclick="submitTweet()">投稿する</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-submit-duplicate">
   <div class="modal-card" style="width:500px">
     <div class="modal-title" style="color:#A32D2D">⚠ 重複提出の確認<button class="modal-close" onclick="closeModal('modal-submit-duplicate')">×</button></div>
@@ -1148,6 +1172,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div id="dash-today" style="margin-bottom:14px"></div>
   <!-- 誕生日（全ロール共通） -->
   <div id="dash-birthdays" style="margin-bottom:14px"></div>
+  <!-- つぶやき（全ロール共通） -->
+  <div id="dash-tweets" style="margin-bottom:14px"></div>
   <!-- 年月フィルター（adminのみ） -->
   <div id="dash-filter" style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
     <select id="dash-filter-year" class="form-select" style="width:100px" onchange="onDashFilterChange()"></select>
@@ -6386,6 +6412,8 @@ function loadDashboard() {
   renderTodayDeadlines(today);
   // 全ロール共通: 誕生日セクション
   loadDashboardBirthdays();
+  // 全ロール共通: つぶやきタイムライン
+  loadTweets();
 
   if (['admin','secretary','producer','producer_director'].includes(role)) {
     renderAdminDash(today);
@@ -6438,6 +6466,199 @@ function renderTodayDeadlines(today) {
     <div class="dash-section-title" style="color:#E24B4A">📅 今日の納期（${items.length}件）</div>
     ${rows}
   </div>`;
+}
+
+// ============================================================
+// ダッシュボード: つぶやき機能（社内タイムライン）
+// ============================================================
+
+let _twImageBlob = null;        // クライアント側でリサイズ後の Blob
+let _twImageDataUrl = null;     // プレビュー用
+
+function _twTimeAgo(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diffSec < 60) return 'たった今';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}分前`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}時間前`;
+  if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}日前`;
+  return d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+}
+
+function _twCanModerate() {
+  const r = effectiveRole();
+  return r === 'admin' || r === 'secretary';
+}
+
+async function loadTweets() {
+  const el = document.getElementById('dash-tweets');
+  if (!el) return;
+  let list = [];
+  try {
+    const res = await apiFetch(`${API}/tweets`);
+    if (res.ok) list = await res.json();
+  } catch (e) { console.warn('[tweets] load failed', e); }
+
+  const composeBtn = `<button class="btn" onclick="openTweetCompose()" style="font-size:11px;padding:3px 10px;margin-left:auto">+ つぶやく</button>`;
+
+  if (!list || list.length === 0) {
+    el.innerHTML = `<div class="dash-section" style="border-left:4px solid #E91E63">
+      <div class="dash-section-title" style="display:flex;align-items:center;gap:6px;color:#E91E63">
+        💭 つぶやき ${composeBtn}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);padding:10px 0">まだ投稿はありません。最初のつぶやきを投稿してみよう ✨</div>
+    </div>`;
+    return;
+  }
+
+  const myId = currentUser?.id;
+  const canMod = _twCanModerate();
+
+  const cards = list.map(t => {
+    const u = t.users || {};
+    const av = u.avatar_url
+      ? `<img src="${esc(u.avatar_url)}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0">`
+      : `<div style="width:36px;height:36px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0">${esc((u.full_name || '?').charAt(0))}</div>`;
+    const canDelete = (t.user_id === myId) || canMod;
+    const deleteBtn = canDelete
+      ? `<button onclick="deleteTweet('${t.id}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;margin-left:auto" title="削除">🗑️</button>`
+      : '';
+    const likeBtn = `<button onclick="${t.my_liked ? `unlikeTweet('${t.id}')` : `likeTweet('${t.id}')`}" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px;color:${t.my_liked ? '#E91E63' : 'var(--text-muted)'}">${t.my_liked ? '❤️' : '🤍'} ${t.like_count}</button>`;
+    const pinBadge = t.is_pinned ? '<span style="font-size:10px;background:var(--em-pale);color:var(--em-dark);padding:1px 6px;border-radius:8px;margin-left:6px">📌 ピン</span>' : '';
+    return `<div style="padding:14px 0;border-bottom:0.5px solid var(--border-light)">
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px">
+        ${av}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(u.full_name || '不明')}${pinBadge}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${_twTimeAgo(t.created_at)}</div>
+        </div>
+        ${deleteBtn}
+      </div>
+      <div style="border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--surface);max-width:480px">
+        <img src="${esc(t.image_data)}" style="width:100%;display:block;cursor:pointer" onclick="openTweetImage('${t.id}')">
+      </div>
+      <div style="font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.6;margin-bottom:6px">${esc(t.body)}</div>
+      <div style="display:flex;gap:8px;align-items:center">${likeBtn}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="dash-section" style="border-left:4px solid #E91E63">
+    <div class="dash-section-title" style="display:flex;align-items:center;gap:6px;color:#E91E63">
+      💭 つぶやき (${list.length}) ${composeBtn}
+    </div>
+    ${cards}
+  </div>`;
+}
+
+function openTweetImage(tweetId) {
+  const el = document.querySelector(`#dash-tweets img[onclick*="${tweetId}"]`);
+  if (el) window.open(el.src, '_blank');
+}
+
+function openTweetCompose() {
+  _twImageBlob = null;
+  _twImageDataUrl = null;
+  document.getElementById('tw-body').value = '';
+  document.getElementById('tw-image-input').value = '';
+  document.getElementById('tw-image-preview').innerHTML = '写真を選択またはタップで撮影';
+  document.getElementById('tw-image-status').textContent = '';
+  updateTweetCounter();
+  openModal('modal-tweet-compose');
+}
+
+function updateTweetCounter() {
+  const len = (document.getElementById('tw-body').value || '').length;
+  const counter = document.getElementById('tw-body-counter');
+  if (counter) {
+    counter.textContent = `${len} / 280`;
+    counter.style.color = len > 260 ? '#C0392B' : 'var(--text-muted)';
+  }
+}
+
+async function onTweetImageSelected(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('tw-image-status');
+  if (!file.type.startsWith('image/')) {
+    showToast('画像ファイルを選択してください', 'warn');
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showToast('20MB を超える画像は選べません', 'warn');
+    return;
+  }
+  status.textContent = '画像処理中...';
+  try {
+    // 長辺 1024px / JPEG 0.85 にリサイズ
+    const blob = await resizeImageToBlob(file, 1024, 1024, 0.85);
+    if (blob.size > 500 * 1024) {
+      // さらに圧縮: 800px / 0.75
+      const blob2 = await resizeImageToBlob(file, 800, 800, 0.75);
+      if (blob2.size > 500 * 1024) {
+        showToast('画像サイズが大きすぎます。別の写真を選んでください', 'warn');
+        status.textContent = '';
+        return;
+      }
+      _twImageBlob = blob2;
+    } else {
+      _twImageBlob = blob;
+    }
+    _twImageDataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(_twImageBlob);
+    });
+    document.getElementById('tw-image-preview').innerHTML = `<img src="${_twImageDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block">`;
+    status.textContent = `画像準備OK (${(_twImageBlob.size / 1024).toFixed(0)} KB)`;
+  } catch (err) {
+    console.error(err);
+    showToast('画像の処理に失敗しました', 'error');
+    status.textContent = '';
+  }
+}
+
+async function submitTweet() {
+  const body = document.getElementById('tw-body').value.trim();
+  if (!_twImageBlob) { showToast('写真を選んでください', 'warn'); return; }
+  if (!body) { showToast('本文を入力してください', 'warn'); return; }
+  if (body.length > 280) { showToast('本文は 280 字以内にしてください', 'warn'); return; }
+  const btn = document.getElementById('tw-submit-btn');
+  btn.disabled = true; btn.textContent = '投稿中...';
+  try {
+    const fd = new FormData();
+    fd.append('image', _twImageBlob, 'tweet.jpg');
+    fd.append('body', body);
+    const res = await apiFetch(`${API}/tweets`, { method: 'POST', body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '投稿失敗'), 'error');
+      return;
+    }
+    closeModal('modal-tweet-compose');
+    showToast('つぶやきました 💭', 'success');
+    loadTweets();
+  } finally {
+    btn.disabled = false; btn.textContent = '投稿する';
+  }
+}
+
+async function deleteTweet(id) {
+  if (!confirm('このつぶやきを削除しますか？')) return;
+  const res = await apiFetch(`${API}/tweets/${id}`, { method: 'DELETE' });
+  if (res.ok) { showToast('削除しました', 'success'); loadTweets(); }
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '失敗'), 'error'); }
+}
+
+async function likeTweet(id) {
+  const res = await apiFetch(`${API}/tweets/${id}/like`, { method: 'POST' });
+  if (res.ok) loadTweets();
+}
+
+async function unlikeTweet(id) {
+  const res = await apiFetch(`${API}/tweets/${id}/like`, { method: 'DELETE' });
+  if (res.ok) loadTweets();
 }
 
 // ダッシュボード: 誕生日一覧

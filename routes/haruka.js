@@ -2978,6 +2978,99 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
   res.json(data);
 });
 
+// ==================== つぶやき機能（社内タイムライン）====================
+//
+// 写真1枚 + 短いコメント + ❤️ いいね のミニ社内 SNS。
+// ダッシュボード上に表示され、90 日で自動消滅 (ピン留めは永続)。
+// 画像はアバターと同じく base64 data URL で DB に直接保存
+// (クライアント側で 1024px / JPEG 0.85 にリサイズ、400KB 上限)。
+
+const TWEET_IMAGE_MAX_BYTES = 500 * 1024; // base64 後 500KB 上限
+const TWEET_BODY_MAX = 280;
+
+// 自分のいいね状態 + いいね件数を含む一覧
+router.get('/tweets', requireAuth, async (req, res) => {
+  const { data: list, error } = await supabase
+    .from('tweets')
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, users(id, full_name, avatar_url, role)')
+    .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
+    .order('is_pinned', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  if (!list || list.length === 0) return res.json([]);
+  const ids = list.map(t => t.id);
+  // いいね件数
+  const { data: allLikes } = await supabase.from('tweet_likes')
+    .select('tweet_id, user_id').in('tweet_id', ids);
+  const countMap = new Map();
+  const myLikedSet = new Set();
+  (allLikes || []).forEach(l => {
+    countMap.set(l.tweet_id, (countMap.get(l.tweet_id) || 0) + 1);
+    if (l.user_id === req.user.id) myLikedSet.add(l.tweet_id);
+  });
+  res.json(list.map(t => ({
+    ...t,
+    like_count: countMap.get(t.id) || 0,
+    my_liked: myLikedSet.has(t.id),
+  })));
+});
+
+// つぶやき投稿（写真 + 本文）
+router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => {
+  const file = req.file;
+  const body = String(req.body?.body || '').trim();
+  if (!file) return res.status(400).json({ error: '写真が必要です' });
+  if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+    return res.status(400).json({ error: '画像ファイルを選択してください' });
+  }
+  if (!body) return res.status(400).json({ error: '本文を入力してください' });
+  if (body.length > TWEET_BODY_MAX) {
+    return res.status(400).json({ error: `本文は ${TWEET_BODY_MAX} 字以内にしてください` });
+  }
+  const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  if (dataUrl.length > TWEET_IMAGE_MAX_BYTES) {
+    return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから再投稿してください）' });
+  }
+  const { data, error } = await supabase.from('tweets')
+    .insert({ user_id: req.user.id, body, image_data: dataUrl })
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ...data, like_count: 0, my_liked: false });
+});
+
+// 削除（投稿者本人 OR admin / secretary）
+router.delete('/tweets/:id', requireAuth, async (req, res) => {
+  const { data: t, error: tErr } = await supabase.from('tweets')
+    .select('id, user_id').eq('id', req.params.id).maybeSingle();
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!t) return res.status(404).json({ error: 'つぶやきが見つかりません' });
+  const isSelf = t.user_id === req.user.id;
+  const role = getEffectiveRole(req);
+  const isMod = role === 'admin' || role === 'secretary';
+  if (!isSelf && !isMod) return res.status(403).json({ error: '権限がありません' });
+  const { error } = await supabase.from('tweets').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// いいね追加
+router.post('/tweets/:id/like', requireAuth, async (req, res) => {
+  const { error } = await supabase.from('tweet_likes')
+    .upsert({ tweet_id: req.params.id, user_id: req.user.id }, { onConflict: 'tweet_id,user_id' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// いいね取消
+router.delete('/tweets/:id/like', requireAuth, async (req, res) => {
+  const { error } = await supabase.from('tweet_likes')
+    .delete().eq('tweet_id', req.params.id).eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // ==================== クライアント請求書 ====================
 
 // 納品済みクリエイティブ一覧（クライアント向け請求書作成用）
