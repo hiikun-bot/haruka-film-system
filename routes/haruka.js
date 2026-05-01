@@ -694,17 +694,9 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
 });
 
 // ==================== 分析・集計 ====================
-// 案件 × 担当者ごとのクリエイティブ作成本数（動画 / デザイン）
-// クエリ: ?year=2026&month=4&client_id=...&status=delivered|all
-// 権限: analytics.view（admin/secretary デフォルト）
-router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('analytics.view'), async (req, res) => {
-  const year  = parseInt(req.query.year, 10);
-  const month = parseInt(req.query.month, 10);
-  if (!year || !month || month < 1 || month > 12) {
-    return res.status(400).json({ error: 'year, month は必須です（month は 1-12）' });
-  }
-  const client_id    = req.query.client_id || null;
-  const statusFilter = req.query.status === 'all' ? 'all' : 'delivered';
+// 案件 × 担当者ごとのクリエイティブ作成本数（動画 / デザイン）を集計する共通関数
+// GET（画面表示）と POST /export-sheet（Sheets出力）の両方から呼ばれる
+async function aggregateCreativeByAssignee({ year, month, client_id, statusFilter }) {
 
   // 期間: 当月の 00:00:00 から 翌月 00:00:00 未満
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
@@ -728,7 +720,7 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   if (client_id) query = query.eq('projects.client_id', client_id);
 
   const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) throw new Error(error.message);
 
   // 集計
   // matrix[projectKey][userId] = { video, design, total }
@@ -791,11 +783,90 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   const total = { video: 0, design: 0 };
   for (const c of cell.values()) { total.video += c.video; total.design += c.design; }
 
-  res.json({
+  return {
     year, month, client_id, status: statusFilter,
     projects, users, matrix, total,
     creatives_count: (data || []).length,
-  });
+  };
+}
+
+// 画面表示用 GET（JSONを返す）
+router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year  = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です（month は 1-12）' });
+  }
+  try {
+    const result = await aggregateCreativeByAssignee({
+      year, month,
+      client_id: req.query.client_id || null,
+      statusFilter: req.query.status === 'all' ? 'all' : 'delivered',
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || '集計に失敗しました' });
+  }
+});
+
+// スプレッドシート出力（CSV ではなく Sheets を基本とする方針）
+router.post('/analytics/creative-by-assignee/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year  = parseInt(req.body?.year ?? req.query.year, 10);
+  const month = parseInt(req.body?.month ?? req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です（month は 1-12）' });
+  }
+  try {
+    const data = await aggregateCreativeByAssignee({
+      year, month,
+      client_id: (req.body?.client_id ?? req.query.client_id) || null,
+      statusFilter: (req.body?.status ?? req.query.status) === 'all' ? 'all' : 'delivered',
+    });
+
+    // シート行を組み立てる
+    const userHeader = data.users.flatMap(u => [`${u.name}(動画)`, `${u.name}(デザイン)`]);
+    const headers = ['クライアント', '案件名', ...userHeader, '行計(動画)', '行計(デザイン)'];
+    const rows = data.matrix.map(row => {
+      const out = [row.project.client_name, row.project.name];
+      let rv = 0, rd = 0;
+      for (const u of data.users) {
+        const c = row.cells[u.id] || { video: 0, design: 0 };
+        out.push(c.video, c.design);
+        rv += c.video; rd += c.design;
+      }
+      out.push(rv, rd);
+      return out;
+    });
+    // 列計の最終行
+    const colTotalRow = ['', '列計'];
+    for (const u of data.users) {
+      let v = 0, d = 0;
+      for (const r of data.matrix) {
+        const c = r.cells[u.id] || { video: 0, design: 0 };
+        v += c.video; d += c.design;
+      }
+      colTotalRow.push(v, d);
+    }
+    colTotalRow.push(data.total.video, data.total.design);
+
+    const statusLabel = data.status === 'delivered' ? '納品のみ' : '全件';
+    const title = `分析_案件×担当者_${year}年${String(month).padStart(2,'0')}月_${statusLabel}`;
+
+    const sheetRows = [
+      [`HARUKA FILM 分析: 案件 × 担当者 (${year}年${month}月 / ${statusLabel})`],
+      [`動画合計: ${data.total.video} 本 / デザイン合計: ${data.total.design} 枚 / 集計件数: ${data.creatives_count} 件`],
+      [],
+      headers,
+      ...rows,
+      colTotalRow,
+    ];
+
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: rows.length });
+  } catch (e) {
+    console.error('[analytics/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
 });
 
 // ==================== クリエイティブ ====================

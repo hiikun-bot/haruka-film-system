@@ -2746,7 +2746,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </select>
         </div>
         <button class="btn-primary" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
-        <button class="btn" onclick="exportAnalyticsCsv()" style="font-size:13px;padding:8px 16px;height:38px">CSV出力</button>
+        <button class="btn" id="an-sheet-btn" onclick="exportAnalyticsToSheet()" style="font-size:13px;padding:8px 16px;height:38px">📊 スプレッドシート出力</button>
       </div>
     </div>
 
@@ -12017,31 +12017,37 @@ function renderAnalyticsTable(data) {
   </table>`;
 }
 
-function exportAnalyticsCsv() {
-  const data = _analyticsLastResult;
-  if (!data) { showToast('先に「集計」を押してください', 'warn'); return; }
-  const headers = ['クライアント', '案件名', ...data.users.map(u => `${u.name}(動画)`), ...data.users.map(u => `${u.name}(デザイン)`), '行計(動画)', '行計(デザイン)'];
-  const rows = data.matrix.map(row => {
-    const videoCounts = data.users.map(u => (row.cells[u.id]?.video || 0));
-    const designCounts = data.users.map(u => (row.cells[u.id]?.design || 0));
-    const rowVideo = videoCounts.reduce((s,n) => s+n, 0);
-    const rowDesign = designCounts.reduce((s,n) => s+n, 0);
-    return [row.project.client_name, row.project.name, ...videoCounts, ...designCounts, rowVideo, rowDesign];
-  });
-  // CSV エスケープ
-  const escCsv = (v) => {
-    const s = String(v ?? '');
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const csv = [headers, ...rows].map(r => r.map(escCsv).join(',')).join('\n');
-  // BOM 付き UTF-8 で Excel でも文字化けしない
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `analytics_${data.year}-${String(data.month).padStart(2,'0')}.csv`;
-  document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
+// スプレッドシート出力（CSV ではなく Sheets を基本とする方針）
+async function exportAnalyticsToSheet() {
+  const ym = document.getElementById('an-month').value;
+  if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
+  const [year, month] = ym.split('-');
+  const client_id = document.getElementById('an-client').value || '';
+  const status    = document.getElementById('an-status-filter').value || 'delivered';
+
+  const btn = document.getElementById('an-sheet-btn');
+  const orig = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
+  try {
+    const res = await apiFetch(`${API}/analytics/creative-by-assignee/export-sheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year: parseInt(year, 10), month: parseInt(month, 10), client_id, status }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('エクスポート失敗: ' + translateError(data?.error || 'unknown'), 'error');
+      return;
+    }
+    if (data.url) {
+      window.open(data.url, '_blank', 'noopener');
+      showToast(`${data.rows_count || 0}件をスプレッドシートに出力しました`, 'success');
+    } else {
+      showToast('スプレッドシートURLを取得できませんでした', 'error');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig || '📊 スプレッドシート出力'; }
+  }
 }
 
 // ==================== ナレッジページ ====================
