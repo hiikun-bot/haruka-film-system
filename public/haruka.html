@@ -6696,13 +6696,31 @@ async function submitAnnouncement() {
   loadAnnouncements();
 }
 
+// 対応状況モーダルの表示状態（再描画用）
+let _annStatusData = null;
+let _annStatusHideDone = false;
+
 async function openAnnouncementStatus(id) {
   const res = await apiFetch(`${API}/announcements/${id}/status`);
   if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '取得失敗'), 'error'); return; }
-  const { announcement, groups, members } = await res.json();
+  _annStatusData = await res.json();
+  _annStatusHideDone = false; // 初期値: 全員表示
+  _renderAnnouncementStatus();
+  openModal('modal-announcement-status');
+}
+
+function toggleAnnouncementStatusHideDone() {
+  _annStatusHideDone = !_annStatusHideDone;
+  _renderAnnouncementStatus();
+}
+
+function _renderAnnouncementStatus() {
+  if (!_annStatusData) return;
+  const { announcement, groups, members } = _annStatusData;
+  const hideDone = _annStatusHideDone;
   const ROLE_LABEL = { admin:'管理者', secretary:'秘書', producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
 
-  // 全体集計（モーダル上部のサマリ用）
+  // 全体集計（モーダル上部のサマリ用 — フィルタの影響を受けない母数）
   const allMembers = (members || []).length ? members : (groups || []).flatMap(g => g.members);
   const totalDone = allMembers.filter(m => m.done_at).length;
   const totalCount = allMembers.length;
@@ -6732,7 +6750,16 @@ async function openAnnouncementStatus(id) {
   };
 
   // 各チームをカードにする（横並び）
-  const groupCards = (groups || []).map(g => {
+  // 「完了済を隠す」ON 時は完了メンバーを除外し、結果が空のチームカードも非表示にする
+  const visibleGroups = (groups || [])
+    .map(g => {
+      const visibleMembers = hideDone ? g.members.filter(m => !m.done_at) : g.members;
+      return { ...g, members: visibleMembers };
+    })
+    .filter(g => g.members.length > 0);
+  const hiddenGroupCount = (groups || []).length - visibleGroups.length;
+
+  const groupCards = visibleGroups.map(g => {
     const allDone = g.done_count === g.total_count;
     const headerColor = allDone ? 'var(--em-dark)' : (g.done_count > 0 ? '#FF9800' : '#C0392B');
     const teamLabel = g.team_id
@@ -6753,20 +6780,33 @@ async function openAnnouncementStatus(id) {
     </div>`;
   }).join('');
 
+  // トグルボタン
+  const toggleBtn = `<button class="btn" onclick="toggleAnnouncementStatusHideDone()" style="font-size:11px;padding:5px 12px;background:${hideDone ? 'var(--em-dark)' : 'transparent'};color:${hideDone ? '#fff' : 'var(--text-muted)'};border-color:${hideDone ? 'var(--em-dark)' : 'var(--border)'}">
+    ${hideDone ? '✓ 完了済を隠している' : '完了済を隠す'}
+  </button>`;
+
+  // 全カード非表示時の空メッセージ
+  const emptyAllDone = (visibleGroups.length === 0)
+    ? `<div style="font-size:13px;color:var(--em-dark);background:var(--em-pale);padding:20px;border-radius:10px;text-align:center;font-weight:600">🎉 全員完了しました${hideDone ? '（完了済を隠しているため未完了者がいません）' : ''}</div>`
+    : '';
+
   document.getElementById('ann-status-content').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <div>
         <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(announcement.title)}</div>
         ${announcement.deadline_at ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">期限: ${new Date(announcement.deadline_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' })}</div>` : ''}
       </div>
-      <div style="font-size:14px;font-weight:700;color:var(--em-dark);background:var(--em-pale);padding:6px 14px;border-radius:8px;flex-shrink:0">
-        ${totalDone} / ${totalCount} 完了
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        ${toggleBtn}
+        <div style="font-size:14px;font-weight:700;color:var(--em-dark);background:var(--em-pale);padding:6px 14px;border-radius:8px">
+          ${totalDone} / ${totalCount} 完了
+        </div>
       </div>
     </div>
+    ${emptyAllDone}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;align-items:start">
-      ${groupCards || '<div style="font-size:12px;color:var(--text-muted);padding:20px">表示できるメンバーがいません</div>'}
+      ${groupCards}
     </div>`;
-  openModal('modal-announcement-status');
 }
 
 
