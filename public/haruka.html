@@ -4984,7 +4984,8 @@ async function saveTeam() {
 
   if (id) {
     // 編集（PUT）
-    const res = await apiFetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+    if (!team_code) { showToast('チームコードは必須です', 'warn'); return; }
+    const res = await apiFetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id,member_ids}) });
     if (res.ok) { closeModal('modal-team'); await loadTeams(); await loadMembers(); }
     else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
   } else {
@@ -4993,7 +4994,7 @@ async function saveTeam() {
     if (!res.ok) { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); return; }
     const newTeam = await res.json();
     if (member_ids.length > 0) {
-      await apiFetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name,team_type,director_id,producer_id,member_ids}) });
+      await apiFetch(`${API}/teams/${newTeam.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id,member_ids}) });
     }
     closeModal('modal-team'); await loadTeams(); await loadMembers();
   }
