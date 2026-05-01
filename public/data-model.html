@@ -27,6 +27,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 .hero{background:linear-gradient(135deg,#2BB8B4 0%,#3ECFCA 100%);color:#fff;padding:48px 24px 64px;text-align:center;position:relative;overflow:hidden}
 .hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
 .hero-inner{position:relative;max-width:1080px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
 .hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:16px}
 .hero h1{font-size:32px;font-weight:800;letter-spacing:0.04em;margin-bottom:12px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
 .hero p{font-size:15px;opacity:0.95;max-width:640px;margin:0 auto;line-height:1.8}
@@ -159,8 +161,9 @@ h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 <body>
 
 <header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
   <div class="hero-inner">
-    <span class="hero-badge">SYSTEM GUIDE</span>
+    <span class="hero-badge">GUIDE 02 ／ 共通</span>
     <h1>データの紐付け（リレーションシップ）図解</h1>
     <p>HARUKA FILM SYSTEM では「クライアント」「案件」「チーム」「メンバー」「訴求軸」「商材」がツリー構造で繋がっています。<br>このページは新メンバーへの説明資料としてお使いください。</p>
   </div>
@@ -525,9 +528,14 @@ h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 </main>
 
 <footer class="foot">
+  <p style="margin-bottom:8px">
+    <a href="/guide.html" style="color:var(--em-dark);text-decoration:none;font-weight:600">← ガイド一覧へ</a>
+    &nbsp;／&nbsp;
+    <a href="/guide-member-register.html" style="color:var(--em-dark);text-decoration:none;font-weight:600">前のガイド：メンバー登録の手順</a>
+  </p>
   <p>HARUKA FILM SYSTEM ／ データの紐付け図解</p>
   <p style="margin-top:8px">
-    <a href="/haruka.html">← システムに戻る</a>
+    <a href="/haruka.html" style="color:var(--em-dark);text-decoration:none;font-weight:600">システムに戻る</a>
   </p>
 </footer>
 
