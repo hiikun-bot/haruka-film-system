@@ -809,6 +809,186 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   }
 });
 
+// 月次売上・粗利ダッシュボード
+//
+// 売上(確定): invoice_type='client' の当月 invoices.total_amount 合計
+// 売上(見込み): 当月納期で未納品 creatives × project_client_fees の単価
+// 原価(確定): スタッフ請求書（invoice_type が NULL）の当月 total_amount 合計
+// 原価(見込み): 当月納期で未納品 creatives × project_rates の rank別単価合計
+async function aggregateMonthlyRevenue({ year, month }) {
+  const startDate = new Date(Date.UTC(year, month - 1, 1));
+  const endDate   = new Date(Date.UTC(year, month, 1));
+
+  const revenueByClient = new Map();
+  const ensureClient = (id, name) => {
+    if (!revenueByClient.has(id)) {
+      revenueByClient.set(id, { id, name: name || '(不明)', confirmed_revenue: 0, forecast_revenue: 0, confirmed_cost: 0, forecast_cost: 0 });
+    }
+    return revenueByClient.get(id);
+  };
+
+  // 確定売上: invoice_type='client' の当月分
+  const { data: clientInvoices } = await supabase
+    .from('invoices')
+    .select('id, total_amount, recipient_client_id, project_id')
+    .eq('invoice_type', 'client').eq('year', year).eq('month', month);
+  const clientIds = Array.from(new Set((clientInvoices || []).map(i => i.recipient_client_id).filter(Boolean)));
+  const clientNameById = new Map();
+  if (clientIds.length) {
+    const { data: cs } = await supabase.from('clients').select('id, name').in('id', clientIds);
+    (cs || []).forEach(c => clientNameById.set(c.id, c.name));
+  }
+  let confirmedRevenue = 0;
+  for (const inv of (clientInvoices || [])) {
+    confirmedRevenue += inv.total_amount || 0;
+    if (inv.recipient_client_id) ensureClient(inv.recipient_client_id, clientNameById.get(inv.recipient_client_id)).confirmed_revenue += inv.total_amount || 0;
+  }
+
+  // 確定原価: スタッフ請求書（invoice_type IS NULL）当月分
+  const { data: staffNullInvoices } = await supabase
+    .from('invoices')
+    .select('id, total_amount, project_id')
+    .is('invoice_type', null).eq('year', year).eq('month', month);
+  const staffInvoicesAll = staffNullInvoices || [];
+
+  // project_id → client_id
+  const projIds = Array.from(new Set([
+    ...(clientInvoices || []).map(i => i.project_id),
+    ...staffInvoicesAll.map(i => i.project_id),
+  ].filter(Boolean)));
+  const projectClientMap = new Map();
+  if (projIds.length) {
+    const { data: ps } = await supabase.from('projects').select('id, client_id').in('id', projIds);
+    (ps || []).forEach(p => projectClientMap.set(p.id, p.client_id));
+  }
+
+  let confirmedCost = 0;
+  for (const inv of staffInvoicesAll) {
+    confirmedCost += inv.total_amount || 0;
+    const cid = inv.project_id ? projectClientMap.get(inv.project_id) : null;
+    if (cid) ensureClient(cid, clientNameById.get(cid)).confirmed_cost += inv.total_amount || 0;
+  }
+
+  // 見込み: 当月納期で未納品 creatives
+  const { data: forecastCreatives } = await supabase
+    .from('creatives')
+    .select(`
+      id, status, creative_type, project_id, final_deadline,
+      projects!inner(id, client_id, clients(id, name)),
+      creative_assignments(role, rank_applied, users(id, rank))
+    `)
+    .gte('final_deadline', startDate.toISOString())
+    .lt('final_deadline', endDate.toISOString())
+    .neq('status', '納品');
+
+  const fcProjectIds = Array.from(new Set((forecastCreatives || []).map(c => c.project_id).filter(Boolean)));
+  const clientFeeByProject = new Map();
+  const ratesByProject = new Map();
+  if (fcProjectIds.length) {
+    const [{ data: fees }, { data: rates }] = await Promise.all([
+      supabase.from('project_client_fees').select('*').in('project_id', fcProjectIds),
+      supabase.from('project_rates').select('*').in('project_id', fcProjectIds),
+    ]);
+    (fees || []).forEach(f => clientFeeByProject.set(f.project_id, f));
+    (rates || []).forEach(r => {
+      if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
+      ratesByProject.get(r.project_id).push(r);
+    });
+  }
+  const findRate = (pid, baseType, rank) => {
+    const list = ratesByProject.get(pid) || [];
+    return list.find(r => r.creative_type === baseType && r.rank === rank)
+        || list.find(r => r.creative_type === baseType) || null;
+  };
+  const calcRateAmount = (rate) => rate ? ((rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0)) : 0;
+
+  let forecastRevenue = 0, forecastCost = 0;
+  for (const c of (forecastCreatives || [])) {
+    const baseType = c.creative_type?.startsWith('video') ? 'video'
+                   : c.creative_type?.startsWith('design') ? 'design' : 'video';
+    const fee = clientFeeByProject.get(c.project_id);
+    const unitClient = (fee && !fee.use_fixed_budget)
+      ? (baseType === 'video' ? (fee.video_unit_price || 0) : (fee.design_unit_price || 0))
+      : 0;
+    forecastRevenue += unitClient;
+    if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_revenue += unitClient;
+
+    const assignees = (c.creative_assignments || [])
+      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
+    let costForCreative = 0;
+    for (const a of assignees) {
+      const rank = a.rank_applied || a.users?.rank || null;
+      costForCreative += calcRateAmount(findRate(c.project_id, baseType, rank));
+    }
+    forecastCost += costForCreative;
+    if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_cost += costForCreative;
+  }
+
+  const totalRevenue = confirmedRevenue + forecastRevenue;
+  const totalCost    = confirmedCost + forecastCost;
+  const grossProfit  = totalRevenue - totalCost;
+  const grossMargin  = totalRevenue > 0 ? grossProfit / totalRevenue : 0;
+
+  const byClient = Array.from(revenueByClient.values()).map(c => {
+    const rev  = c.confirmed_revenue + c.forecast_revenue;
+    const cost = c.confirmed_cost + c.forecast_cost;
+    const profit = rev - cost;
+    return { ...c, total_revenue: rev, total_cost: cost, gross_profit: profit, gross_margin: rev > 0 ? profit / rev : 0 };
+  }).sort((a, b) => b.gross_profit - a.gross_profit);
+
+  return {
+    year, month,
+    confirmed: { revenue: confirmedRevenue, cost: confirmedCost, gross_profit: confirmedRevenue - confirmedCost },
+    forecast:  { revenue: forecastRevenue,  cost: forecastCost,  gross_profit: forecastRevenue - forecastCost },
+    total:     { revenue: totalRevenue, cost: totalCost, gross_profit: grossProfit, gross_margin: grossMargin },
+    by_client: byClient,
+  };
+}
+
+router.get('/analytics/monthly-revenue', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    res.json(await aggregateMonthlyRevenue({ year, month }));
+  } catch (e) { res.status(500).json({ error: e.message || '集計に失敗しました' }); }
+});
+
+router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.body?.year ?? req.query.year, 10);
+  const month = parseInt(req.body?.month ?? req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    const data = await aggregateMonthlyRevenue({ year, month });
+    const headers = ['クライアント', '確定売上', '見込み売上', '売上合計', '確定原価', '見込み原価', '原価合計', '粗利', '粗利率(%)'];
+    const dataRows = data.by_client.map(c => [
+      c.name,
+      c.confirmed_revenue, c.forecast_revenue, c.total_revenue,
+      c.confirmed_cost, c.forecast_cost, c.total_cost,
+      c.gross_profit,
+      Math.round(c.gross_margin * 1000) / 10,
+    ]);
+    const totalRow = ['全体合計',
+      data.confirmed.revenue, data.forecast.revenue, data.total.revenue,
+      data.confirmed.cost, data.forecast.cost, data.total.cost,
+      data.total.gross_profit,
+      Math.round(data.total.gross_margin * 1000) / 10,
+    ];
+    const sheetRows = [
+      [`HARUKA FILM 月次売上・粗利 (${year}年${month}月)`],
+      [`売上 ¥${data.total.revenue.toLocaleString()} / 原価 ¥${data.total.cost.toLocaleString()} / 粗利 ¥${data.total.gross_profit.toLocaleString()} (粗利率 ${(data.total.gross_margin*100).toFixed(1)}%)`],
+      [],
+      headers, ...dataRows, totalRow,
+    ];
+    const title = `分析_月次売上粗利_${year}年${String(month).padStart(2,'0')}月`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: dataRows.length });
+  } catch (e) {
+    console.error('[analytics/monthly-revenue/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
 // クリエイター別作成本数 + 単価 + 合計金額の集計
 // 1 creative の単価 = project_rates(project_id, creative_type, rank).{base_fee+script_fee+ai_fee+other_fee}
 // 同一クリエイティブに複数担当者がいる場合、それぞれ「フルカウント」する（既存の project×assignee ビューと整合）
