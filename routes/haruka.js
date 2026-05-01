@@ -2978,6 +2978,148 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
   res.json(data);
 });
 
+// ==================== 全体連絡（アナウンスメント） ====================
+//
+// ダッシュボードに掲示する全社向け連絡。各メンバーは「完了 ✅」を押せる。
+// 投稿者は誰がやった/やってないかの一覧が見える。
+// 投稿時に system_settings.broadcast_slack_channel_url が設定されていれば、
+// 同時に Slack チャンネルへも投稿する（通知失敗してもアプリは止めない）。
+
+const notif = require('../notifications');
+
+// 自分宛のアクティブな連絡一覧（自分の done_at 同梱）
+router.get('/announcements', requireAuth, async (req, res) => {
+  const showAll = req.query.all === '1';
+  let q = supabase.from('announcements')
+    .select('id, title, body, posted_by, posted_at, deadline_at, is_active, slack_pushed_at, posted_by_user:posted_by(id, full_name)')
+    .order('posted_at', { ascending: false });
+  if (!showAll) q = q.eq('is_active', true);
+  const { data: list, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  if (!list || list.length === 0) return res.json([]);
+  const ids = list.map(a => a.id);
+  const { data: acks } = await supabase.from('announcement_acks')
+    .select('announcement_id, done_at').eq('user_id', req.user.id).in('announcement_id', ids);
+  const ackMap = new Map((acks || []).map(a => [a.announcement_id, a.done_at]));
+  res.json(list.map(a => ({ ...a, my_done_at: ackMap.get(a.id) || null })));
+});
+
+// 投稿（member.list 権限保有者）
+router.post('/announcements', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const { title, body, deadline_at, push_to_slack } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'タイトルは必須です' });
+  const { data: created, error } = await supabase.from('announcements')
+    .insert({
+      title: String(title).trim(),
+      body: body || null,
+      posted_by: req.user.id,
+      deadline_at: deadline_at || null,
+      is_active: true,
+    })
+    .select('id, title, body, posted_at, deadline_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Slack 一斉通知（system_settings.broadcast_slack_channel_url が設定されていれば）
+  let slackResult = null;
+  if (push_to_slack !== false) {
+    try {
+      const { data: setting } = await supabase.from('system_settings')
+        .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
+      const url = setting?.value;
+      if (url) {
+        const lines = [`📢 *${created.title}*`];
+        if (created.body) lines.push(created.body);
+        if (created.deadline_at) {
+          const d = new Date(created.deadline_at);
+          lines.push(`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}`);
+        }
+        const text = lines.join('\n');
+        const r = await notif.sendSlackChannel(url, text);
+        slackResult = r.ok ? 'ok' : `failed: ${r.reason || 'unknown'}`;
+        if (r.ok) {
+          await supabase.from('announcements')
+            .update({ slack_pushed_at: new Date().toISOString(), slack_push_result: 'ok' })
+            .eq('id', created.id);
+        } else {
+          await supabase.from('announcements')
+            .update({ slack_push_result: slackResult })
+            .eq('id', created.id);
+        }
+      } else {
+        slackResult = 'no_channel_configured';
+      }
+    } catch (e) {
+      console.warn('[announcements] slack push failed:', e.message);
+      slackResult = `error: ${e.message}`;
+    }
+  }
+  res.json({ ...created, slack_push_result: slackResult });
+});
+
+// 編集
+router.patch('/announcements/:id', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const { title, body, deadline_at, is_active } = req.body || {};
+  const update = { updated_at: new Date().toISOString() };
+  if (title !== undefined) update.title = String(title).trim();
+  if (body !== undefined) update.body = body || null;
+  if (deadline_at !== undefined) update.deadline_at = deadline_at || null;
+  if (is_active !== undefined) update.is_active = !!is_active;
+  const { data, error } = await supabase.from('announcements')
+    .update(update).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 終了（is_active=false）
+router.delete('/announcements/:id', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const { error } = await supabase.from('announcements')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 完了をマーク
+router.post('/announcements/:id/ack', requireAuth, async (req, res) => {
+  const { error } = await supabase.from('announcement_acks')
+    .upsert({ announcement_id: req.params.id, user_id: req.user.id, done_at: new Date().toISOString() },
+            { onConflict: 'announcement_id,user_id' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, done_at: new Date().toISOString() });
+});
+
+// 完了を取り消し
+router.delete('/announcements/:id/ack', requireAuth, async (req, res) => {
+  const { error } = await supabase.from('announcement_acks')
+    .delete().eq('announcement_id', req.params.id).eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 対応状況（投稿者向け: 完了済みメンバー / 未完了メンバー）
+router.get('/announcements/:id/status', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const { data: ann, error: aErr } = await supabase.from('announcements')
+    .select('id, title, deadline_at, posted_at').eq('id', req.params.id).maybeSingle();
+  if (aErr) return res.status(500).json({ error: aErr.message });
+  if (!ann) return res.status(404).json({ error: '連絡が見つかりません' });
+  const { data: members, error: mErr } = await supabase.from('users')
+    .select('id, full_name, role, avatar_url').eq('is_active', true).order('full_name');
+  if (mErr) return res.status(500).json({ error: mErr.message });
+  const { data: acks, error: kErr } = await supabase.from('announcement_acks')
+    .select('user_id, done_at').eq('announcement_id', req.params.id);
+  if (kErr) return res.status(500).json({ error: kErr.message });
+  const ackMap = new Map((acks || []).map(a => [a.user_id, a.done_at]));
+  const list = (members || []).map(m => ({
+    user_id: m.id,
+    full_name: m.full_name,
+    role: m.role,
+    avatar_url: m.avatar_url,
+    done_at: ackMap.get(m.id) || null,
+  }));
+  res.json({ announcement: ann, members: list });
+});
+
 // ==================== クライアント請求書 ====================
 
 // 納品済みクリエイティブ一覧（クライアント向け請求書作成用）
