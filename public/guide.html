@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜新メンバー向けガイド</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --common:#0EA5E9;--common-bg:#E0F4FD;--common-border:#7DD3FC;
+  --editor:#16A34A;--editor-bg:#DCFCE7;--editor-border:#86EFAC;
+  --designer:#9333EA;--designer-bg:#F3E8FF;--designer-border:#D8B4FE;
+  --director:#EA580C;--director-bg:#FFEDD5;--director-border:#FED7AA;
+  --producer:#DB2777;--producer-bg:#FCE7F3;--producer-border:#FBCFE8;
+  --secretary:#0891B2;--secretary-bg:#CFFAFE;--secretary-border:#67E8F9;
+  --done:#10b981;--soon:#9ca3af;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:80px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#2BB8B4 0%,#3ECFCA 100%);color:#fff;padding:48px 24px 60px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:1080px;margin:0 auto}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:16px}
+.hero h1{font-size:32px;font-weight:800;letter-spacing:0.04em;margin-bottom:12px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero p{font-size:15px;opacity:0.95;max-width:640px;margin:0 auto;line-height:1.8}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+
+/* Container */
+.container{max-width:1080px;margin:0 auto;padding:0 24px}
+
+/* First step (はじめに) */
+.first-step{margin-top:-32px;position:relative;z-index:2;background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(43,184,180,0.18);padding:28px;border:2px solid var(--em-light);background:linear-gradient(135deg,#FFFEF7 0%,#FFFCEB 100%)}
+.first-step-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.first-step-tag{font-size:10px;font-weight:800;letter-spacing:0.18em;color:#fff;background:#F59E0B;padding:4px 10px;border-radius:10px}
+.first-step-head h2{font-size:22px;font-weight:800;color:#92400E}
+.first-step-body{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.first-step-icon{font-size:48px;line-height:1}
+.first-step-text{flex:1;min-width:240px}
+.first-step-text p{font-size:14px;color:#78350F;margin-bottom:10px}
+.first-step-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#F59E0B,#EA580C);color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 22px;border-radius:10px;box-shadow:0 4px 14px rgba(234,88,12,0.30);transition:transform .15s,box-shadow .15s}
+.first-step-cta:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(234,88,12,0.40)}
+
+/* Section */
+section{margin-top:56px}
+.section-num{display:inline-block;font-size:11px;font-weight:700;letter-spacing:0.16em;color:var(--em-dark);background:var(--em-pale);padding:4px 12px;border-radius:20px;margin-bottom:12px}
+h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spacing:0.02em}
+.section-lead{font-size:14px;color:var(--text-muted);margin-bottom:24px;line-height:1.8}
+
+/* Filter pills */
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}
+.f-pill{font-size:12px;font-weight:700;padding:7px 14px;border-radius:20px;border:1.5px solid;background:#fff;cursor:pointer;letter-spacing:0.04em;transition:all .15s;user-select:none}
+.f-pill[data-cat="all"]{color:var(--text);border-color:var(--border)}
+.f-pill[data-cat="all"].on{background:var(--text);color:#fff;border-color:var(--text)}
+.f-pill[data-cat="common"]{color:var(--common);border-color:var(--common-border);background:var(--common-bg)}
+.f-pill[data-cat="common"].on{background:var(--common);color:#fff;border-color:var(--common)}
+.f-pill[data-cat="editor"]{color:var(--editor);border-color:var(--editor-border);background:var(--editor-bg)}
+.f-pill[data-cat="editor"].on{background:var(--editor);color:#fff;border-color:var(--editor)}
+.f-pill[data-cat="designer"]{color:var(--designer);border-color:var(--designer-border);background:var(--designer-bg)}
+.f-pill[data-cat="designer"].on{background:var(--designer);color:#fff;border-color:var(--designer)}
+.f-pill[data-cat="director"]{color:var(--director);border-color:var(--director-border);background:var(--director-bg)}
+.f-pill[data-cat="director"].on{background:var(--director);color:#fff;border-color:var(--director)}
+.f-pill[data-cat="producer"]{color:var(--producer);border-color:var(--producer-border);background:var(--producer-bg)}
+.f-pill[data-cat="producer"].on{background:var(--producer);color:#fff;border-color:var(--producer)}
+.f-pill[data-cat="secretary"]{color:var(--secretary);border-color:var(--secretary-border);background:var(--secretary-bg)}
+.f-pill[data-cat="secretary"].on{background:var(--secretary);color:#fff;border-color:var(--secretary)}
+
+/* Category band */
+.cat-band{margin-top:32px}
+.cat-band-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:10px 14px;border-radius:12px;border-left:5px solid}
+.cat-band[data-cat="common"] .cat-band-head{background:var(--common-bg);border-left-color:var(--common)}
+.cat-band[data-cat="editor"] .cat-band-head{background:var(--editor-bg);border-left-color:var(--editor)}
+.cat-band[data-cat="designer"] .cat-band-head{background:var(--designer-bg);border-left-color:var(--designer)}
+.cat-band[data-cat="director"] .cat-band-head{background:var(--director-bg);border-left-color:var(--director)}
+.cat-band[data-cat="producer"] .cat-band-head{background:var(--producer-bg);border-left-color:var(--producer)}
+.cat-band[data-cat="secretary"] .cat-band-head{background:var(--secretary-bg);border-left-color:var(--secretary)}
+.cat-band-icon{font-size:20px}
+.cat-band-name{font-size:15px;font-weight:800}
+.cat-band[data-cat="common"] .cat-band-name{color:var(--common)}
+.cat-band[data-cat="editor"] .cat-band-name{color:var(--editor)}
+.cat-band[data-cat="designer"] .cat-band-name{color:var(--designer)}
+.cat-band[data-cat="director"] .cat-band-name{color:var(--director)}
+.cat-band[data-cat="producer"] .cat-band-name{color:var(--producer)}
+.cat-band[data-cat="secretary"] .cat-band-name{color:var(--secretary)}
+.cat-band-desc{font-size:12px;color:#4b5563;margin-left:auto}
+
+/* Cards */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.guide-card{background:#fff;border-radius:14px;padding:20px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.05);text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:10px;transition:transform .15s,box-shadow .15s,border-color .15s;position:relative;min-height:140px}
+.guide-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(43,184,180,0.12);border-color:var(--em)}
+.guide-card.soon{cursor:default;opacity:0.66}
+.guide-card.soon:hover{transform:none;box-shadow:0 2px 8px rgba(43,184,180,0.05);border-color:var(--border-light)}
+.gc-tag-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:2px}
+.gc-tag{font-size:9.5px;font-weight:700;letter-spacing:0.12em;padding:3px 8px;border-radius:8px;color:#fff;text-transform:uppercase}
+.gc-tag.common{background:var(--common)}
+.gc-tag.editor{background:var(--editor)}
+.gc-tag.designer{background:var(--designer)}
+.gc-tag.director{background:var(--director)}
+.gc-tag.producer{background:var(--producer)}
+.gc-tag.secretary{background:var(--secretary)}
+.gc-status{font-size:9.5px;font-weight:700;letter-spacing:0.1em;padding:3px 8px;border-radius:8px;color:#fff;margin-left:auto}
+.gc-status.ready{background:var(--done)}
+.gc-status.soon{background:var(--soon)}
+.gc-icon{font-size:28px;line-height:1}
+.gc-title{font-size:15px;font-weight:800;color:var(--text);line-height:1.5}
+.gc-desc{font-size:12px;color:#4b5563;line-height:1.7;flex:1}
+.gc-foot{display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:8px;border-top:1px dashed var(--border-light)}
+.gc-arrow{font-size:14px;color:var(--em-dark);font-weight:700}
+.guide-card.soon .gc-arrow{color:#9ca3af}
+.gc-est{font-size:11px;color:var(--text-muted)}
+
+/* Layer (役職層) */
+.layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:18px}
+.layer-card{background:#fff;border-radius:14px;padding:18px;border:1px solid var(--border-light);text-align:center;text-decoration:none;color:inherit;cursor:pointer;transition:transform .15s,box-shadow .15s,border-color .15s}
+.layer-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(43,184,180,0.12)}
+.layer-card-icon{font-size:32px;margin-bottom:8px;line-height:1}
+.layer-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:4px}
+.layer-card-desc{font-size:11px;color:#6b7280;line-height:1.6}
+.layer-card[data-go="common"]{background:linear-gradient(180deg,var(--common-bg) 0%,#fff 100%);border-color:var(--common-border)}
+.layer-card[data-go="common"] .layer-card-title{color:var(--common)}
+.layer-card[data-go="editor"]{background:linear-gradient(180deg,var(--editor-bg) 0%,#fff 100%);border-color:var(--editor-border)}
+.layer-card[data-go="editor"] .layer-card-title{color:var(--editor)}
+.layer-card[data-go="designer"]{background:linear-gradient(180deg,var(--designer-bg) 0%,#fff 100%);border-color:var(--designer-border)}
+.layer-card[data-go="designer"] .layer-card-title{color:var(--designer)}
+.layer-card[data-go="director"]{background:linear-gradient(180deg,var(--director-bg) 0%,#fff 100%);border-color:var(--director-border)}
+.layer-card[data-go="director"] .layer-card-title{color:var(--director)}
+.layer-card[data-go="producer"]{background:linear-gradient(180deg,var(--producer-bg) 0%,#fff 100%);border-color:var(--producer-border)}
+.layer-card[data-go="producer"] .layer-card-title{color:var(--producer)}
+.layer-card[data-go="secretary"]{background:linear-gradient(180deg,var(--secretary-bg) 0%,#fff 100%);border-color:var(--secretary-border)}
+.layer-card[data-go="secretary"] .layer-card-title{color:var(--secretary)}
+
+/* Footer */
+.foot{margin-top:80px;padding:32px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:36px 20px 48px}
+  .hero h1{font-size:22px}
+  .hero p{font-size:13px}
+  h2{font-size:18px}
+  .container{padding:0 16px}
+  .first-step{padding:20px;margin-top:-24px}
+  .first-step-head h2{font-size:18px}
+  .first-step-icon{font-size:36px}
+  .first-step-text p{font-size:13px}
+  .card-grid{grid-template-columns:1fr;gap:10px}
+  .layers{grid-template-columns:repeat(2,1fr);gap:10px}
+  section{margin-top:40px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/haruka.html">← システムに戻る</a>
+  <div class="hero-inner">
+    <span class="hero-badge">NEW MEMBER GUIDE</span>
+    <h1>HARUKA FILM SYSTEM へようこそ</h1>
+    <p>はじめての方も、経験者も。役割ごと・カテゴリごとに必要な手順をまとめました。<br>「何をすればいい？」がすぐ見つかるガイド集です。</p>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- まずやること -->
+<div class="first-step">
+  <div class="first-step-head">
+    <span class="first-step-tag">START HERE</span>
+    <h2>🚀 まずはメンバー登録から</h2>
+  </div>
+  <div class="first-step-body">
+    <div class="first-step-icon">📝</div>
+    <div class="first-step-text">
+      <p>このシステムを使うには、まずあなた自身のアカウント登録が必要です。<br>招待リンクの発行から、登録、初期設定までを順を追って説明します。</p>
+      <a class="first-step-cta" href="/guide-member-register.html">メンバー登録ガイドを開く →</a>
+    </div>
+  </div>
+</div>
+
+<!-- 役職層から探す -->
+<section>
+  <span class="section-num">01 / BY ROLE</span>
+  <h2>① あなたの役職から探す</h2>
+  <p class="section-lead">あなたのロール（職種・役割）に該当するカテゴリを選ぶと、関連するガイドだけが下に表示されます。</p>
+
+  <div class="layers">
+    <a class="layer-card" data-go="common" onclick="filterCat('common')">
+      <div class="layer-card-icon">👋</div>
+      <div class="layer-card-title">全員共通</div>
+      <div class="layer-card-desc">登録・ログイン・通知設定など</div>
+    </a>
+    <a class="layer-card" data-go="editor" onclick="filterCat('editor')">
+      <div class="layer-card-icon">🎬</div>
+      <div class="layer-card-title">動画編集者</div>
+      <div class="layer-card-desc">編集・納品・SOS・請求書</div>
+    </a>
+    <a class="layer-card" data-go="designer" onclick="filterCat('designer')">
+      <div class="layer-card-icon">🎨</div>
+      <div class="layer-card-title">デザイナー</div>
+      <div class="layer-card-desc">デザイン制作・納品・請求書</div>
+    </a>
+    <a class="layer-card" data-go="director" onclick="filterCat('director')">
+      <div class="layer-card-icon">🎯</div>
+      <div class="layer-card-title">ディレクター</div>
+      <div class="layer-card-desc">Dチェック・修正依頼・進行</div>
+    </a>
+    <a class="layer-card" data-go="producer" onclick="filterCat('producer')">
+      <div class="layer-card-icon">📊</div>
+      <div class="layer-card-title">プロデューサー</div>
+      <div class="layer-card-desc">案件作成・予算・Pチェック</div>
+    </a>
+    <a class="layer-card" data-go="secretary" onclick="filterCat('secretary')">
+      <div class="layer-card-icon">📋</div>
+      <div class="layer-card-title">秘書 / 管理者</div>
+      <div class="layer-card-desc">招待・マスター・権限管理</div>
+    </a>
+  </div>
+</section>
+
+<!-- やりたいことから探す（フィルター + カテゴリ別カード） -->
+<section>
+  <span class="section-num">02 / BY TASK</span>
+  <h2>② やりたいことから探す</h2>
+  <p class="section-lead">フィルターで絞り込めます。「⚙️ 準備中」のガイドは順次追加予定です。</p>
+
+  <div class="filters" id="filters">
+    <button class="f-pill on" data-cat="all" onclick="filterCat('all')">すべて</button>
+    <button class="f-pill" data-cat="common" onclick="filterCat('common')">👋 共通</button>
+    <button class="f-pill" data-cat="editor" onclick="filterCat('editor')">🎬 動画編集者</button>
+    <button class="f-pill" data-cat="designer" onclick="filterCat('designer')">🎨 デザイナー</button>
+    <button class="f-pill" data-cat="director" onclick="filterCat('director')">🎯 ディレクター</button>
+    <button class="f-pill" data-cat="producer" onclick="filterCat('producer')">📊 プロデューサー</button>
+    <button class="f-pill" data-cat="secretary" onclick="filterCat('secretary')">📋 秘書 / 管理者</button>
+  </div>
+
+  <!-- 共通 -->
+  <div class="cat-band" data-cat="common">
+    <div class="cat-band-head">
+      <span class="cat-band-icon">👋</span>
+      <span class="cat-band-name">全員共通</span>
+      <span class="cat-band-desc">どの役職でも最初にやること</span>
+    </div>
+    <div class="card-grid">
+      <a class="guide-card" href="/guide-member-register.html">
+        <div class="gc-tag-row">
+          <span class="gc-tag common">共通</span>
+          <span class="gc-status ready">公開中</span>
+        </div>
+        <div class="gc-icon">📝</div>
+        <div class="gc-title">メンバー登録の手順</div>
+        <div class="gc-desc">招待リンクの発行・受け取り・登録、初期設定まで完全網羅。</div>
+        <div class="gc-foot"><span class="gc-est">約5分で読了</span><span class="gc-arrow">→</span></div>
+      </a>
+      <a class="guide-card" href="/data-model.html">
+        <div class="gc-tag-row">
+          <span class="gc-tag common">共通</span>
+          <span class="gc-status ready">公開中</span>
+        </div>
+        <div class="gc-icon">📐</div>
+        <div class="gc-title">データの紐付け（リレーションシップ）</div>
+        <div class="gc-desc">クライアント＞案件＞チーム＞メンバー。訴求軸・商材の紐付けも図解。</div>
+        <div class="gc-foot"><span class="gc-est">約5分で読了</span><span class="gc-arrow">→</span></div>
+      </a>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag common">共通</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🔐</div>
+        <div class="gc-title">ログイン・パスワード変更</div>
+        <div class="gc-desc">パスワードを忘れたとき、変更したいとき。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag common">共通</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🔔</div>
+        <div class="gc-title">Slack / Chatwork 通知の設定</div>
+        <div class="gc-desc">DM が飛ぶようにするための ID 入力手順。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag common">共通</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🧭</div>
+        <div class="gc-title">画面ナビゲーションの基本</div>
+        <div class="gc-desc">ホーム・案件・クリエイティブ画面の見方と切り替え。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 動画編集者 -->
+  <div class="cat-band" data-cat="editor">
+    <div class="cat-band-head">
+      <span class="cat-band-icon">🎬</span>
+      <span class="cat-band-name">動画編集者</span>
+      <span class="cat-band-desc">制作 → 納品 → 請求まで</span>
+    </div>
+    <div class="card-grid">
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag editor">編集者</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">✂️</div>
+        <div class="gc-title">編集の進め方（ステータス遷移）</div>
+        <div class="gc-desc">未着手 → 制作中 → Dチェック → 納品 までの基本フロー。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag editor">編集者</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">📤</div>
+        <div class="gc-title">納品ファイルのアップロード</div>
+        <div class="gc-desc">faststart 変換と命名ルール、Premiere マーカー連携。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag editor">編集者</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🆘</div>
+        <div class="gc-title">SOS（ヘルプフラグ）の使い方</div>
+        <div class="gc-desc">困ったときの SOS ボタン。誰に通知が飛ぶか。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag editor">編集者</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🧾</div>
+        <div class="gc-title">請求書ドラフト → 提出</div>
+        <div class="gc-desc">納品済クリエイティブの自動集計と月締め提出。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- デザイナー -->
+  <div class="cat-band" data-cat="designer">
+    <div class="cat-band-head">
+      <span class="cat-band-icon">🎨</span>
+      <span class="cat-band-name">デザイナー</span>
+      <span class="cat-band-desc">デザイン制作 → 納品 → 請求</span>
+    </div>
+    <div class="card-grid">
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag designer">デザイナー</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🎨</div>
+        <div class="gc-title">デザインの進め方</div>
+        <div class="gc-desc">バナー・サムネ・LP デザインのステータス遷移。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag designer">デザイナー</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">📤</div>
+        <div class="gc-title">デザイン納品の方法</div>
+        <div class="gc-desc">PSD/AI/PNG の納品ルール、リネームの自動化。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ディレクター -->
+  <div class="cat-band" data-cat="director">
+    <div class="cat-band-head">
+      <span class="cat-band-icon">🎯</span>
+      <span class="cat-band-name">ディレクター</span>
+      <span class="cat-band-desc">Dチェック・修正依頼・進行</span>
+    </div>
+    <div class="card-grid">
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag director">ディレクター</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">✅</div>
+        <div class="gc-title">Dチェックの進め方</div>
+        <div class="gc-desc">タイムコード付きコメント／承認・修正依頼の出し方。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag director">ディレクター</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">📈</div>
+        <div class="gc-title">進行ボードの読み方</div>
+        <div class="gc-desc">ボール保持者・遅延案件のソート、SOS の拾い方。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- プロデューサー -->
+  <div class="cat-band" data-cat="producer">
+    <div class="cat-band-head">
+      <span class="cat-band-icon">📊</span>
+      <span class="cat-band-name">プロデューサー</span>
+      <span class="cat-band-desc">案件作成・予算管理・Pチェック</span>
+    </div>
+    <div class="card-grid">
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag producer">プロデューサー</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">📁</div>
+        <div class="gc-title">案件の作り方</div>
+        <div class="gc-desc">締切・担当・通知先・チェックリストの設定。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag producer">プロデューサー</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">💰</div>
+        <div class="gc-title">予算・単価の上書き</div>
+        <div class="gc-desc">案件レベルの単価上書き、変更理由の記録。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag producer">プロデューサー</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🔍</div>
+        <div class="gc-title">Pチェックの進め方</div>
+        <div class="gc-desc">クライアント送付前の最終確認フロー。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 秘書 / 管理者 -->
+  <div class="cat-band" data-cat="secretary">
+    <div class="cat-band-head">
+      <span class="cat-band-icon">📋</span>
+      <span class="cat-band-name">秘書 / 管理者</span>
+      <span class="cat-band-desc">メンバー・マスター・権限の管理</span>
+    </div>
+    <div class="card-grid">
+      <a class="guide-card" href="/guide-member-register.html">
+        <div class="gc-tag-row">
+          <span class="gc-tag secretary">秘書</span>
+          <span class="gc-status ready">公開中</span>
+        </div>
+        <div class="gc-icon">📨</div>
+        <div class="gc-title">メンバーを招待する</div>
+        <div class="gc-desc">招待リンク発行から登録完了までの手順。</div>
+        <div class="gc-foot"><span class="gc-est">約5分で読了</span><span class="gc-arrow">→</span></div>
+      </a>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag secretary">秘書</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">⚙️</div>
+        <div class="gc-title">マスター設定（商材・訴求軸）</div>
+        <div class="gc-desc">クライアント別マスターの追加・編集。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag secretary">秘書</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">🔑</div>
+        <div class="gc-title">権限・ロールの管理</div>
+        <div class="gc-desc">7ロールの違いとカスタム権限の上書き。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+      <div class="guide-card soon">
+        <div class="gc-tag-row">
+          <span class="gc-tag secretary">秘書</span>
+          <span class="gc-status soon">準備中</span>
+        </div>
+        <div class="gc-icon">📑</div>
+        <div class="gc-title">CSV インポート / エクスポート</div>
+        <div class="gc-desc">メンバー一括登録・データのバックアップ。</div>
+        <div class="gc-foot"><span class="gc-est">⚙️ 準備中</span><span class="gc-arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p>HARUKA FILM SYSTEM ／ 新メンバー向けガイド</p>
+  <p style="margin-top:8px"><a href="/haruka.html">← システムに戻る</a></p>
+</footer>
+
+<script>
+function filterCat(cat){
+  document.querySelectorAll('.f-pill').forEach(p=>p.classList.toggle('on', p.dataset.cat === cat));
+  document.querySelectorAll('.cat-band').forEach(b=>{
+    b.style.display = (cat === 'all' || b.dataset.cat === cat) ? '' : 'none';
+  });
+  if (cat !== 'all') {
+    const target = document.querySelector(`.cat-band[data-cat="${cat}"]`);
+    if (target) target.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+}
+</script>
+
+</body>
+</html>
