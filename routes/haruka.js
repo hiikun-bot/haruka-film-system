@@ -3198,12 +3198,19 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
     done_at: ackMap.get(m.id) || null,
   });
 
+  // 「基本チーム」= team_code が単一の英大文字 (A〜Z) のチーム。
+  // それ以外（cWX、RYO 等の案件付随チーム）はカード化せず、所属メンバーは
+  // 「未所属」グループにまとめる。これは対応状況の見やすさのため。
+  const isBasicTeam = (code) => typeof code === 'string' && /^[A-Z]$/.test(code);
+  const basicTeams = (teams || []).filter(t => isBasicTeam(t.team_code));
+  const basicTeamIdSet = new Set(basicTeams.map(t => t.id));
+
   // ユーザーをチームごとに振り分け（基本チームの users.team_id ベース）
   const byTeam = new Map();
-  (teams || []).forEach(t => byTeam.set(t.id, []));
+  basicTeams.forEach(t => byTeam.set(t.id, []));
   const noTeam = [];
   (members || []).forEach(m => {
-    if (m.team_id && byTeam.has(m.team_id)) byTeam.get(m.team_id).push(baseMember(m));
+    if (m.team_id && basicTeamIdSet.has(m.team_id)) byTeam.get(m.team_id).push(baseMember(m));
     else noTeam.push(baseMember(m));
   });
 
@@ -3224,8 +3231,8 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
     });
   }
 
-  // チームごとに整形（メンバーがいないチームは省略）
-  const groups = (teams || [])
+  // 基本チームごとに整形（メンバーがいない基本チームは省略）
+  const groups = basicTeams
     .filter(t => (byTeam.get(t.id) || []).length > 0)
     .map(t => {
       const sorted = sortTeamMembers(byTeam.get(t.id), t);
