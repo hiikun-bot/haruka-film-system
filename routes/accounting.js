@@ -342,12 +342,74 @@ router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) 
   }
 });
 
+// ---------- GET /projects/:id/rate-templates ----------
+// V2: 「単価設定から取込」UI 用。既存の単価設定（project_client_fees / project_rate_extras）を
+//     見積明細の候補リストとして返す。クライアント側はこれを並べて [+ 追加] でそのまま明細にコピーする。
+router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req, res) => {
+  const projectId = req.params.id;
+  if (!projectId) return res.status(400).json({ error: 'project id is required' });
+
+  try {
+    const [feesRes, extrasRes] = await Promise.all([
+      supabase.from('project_client_fees').select('*').eq('project_id', projectId).maybeSingle(),
+      supabase.from('project_rate_extras').select('*').eq('project_id', projectId),
+    ]);
+
+    const templates = [];
+    const fees = feesRes.data;
+    if (fees) {
+      if (Number(fees.video_unit_price) > 0) {
+        templates.push({
+          source: 'client_fee',
+          category: 'video',
+          label:    '動画編集',
+          unit:     '本',
+          unit_price: Number(fees.video_unit_price),
+        });
+      }
+      if (Number(fees.design_unit_price) > 0) {
+        templates.push({
+          source: 'client_fee',
+          category: 'design',
+          label:    '静止画デザイン',
+          unit:     '枚',
+          unit_price: Number(fees.design_unit_price),
+        });
+      }
+      if (fees.use_fixed_budget && Number(fees.fixed_budget) > 0) {
+        templates.push({
+          source: 'client_fee',
+          category: 'fixed',
+          label:    '固定予算（一式）',
+          unit:     '式',
+          unit_price: Number(fees.fixed_budget),
+        });
+      }
+    }
+
+    (extrasRes.data || []).forEach(ex => {
+      templates.push({
+        source: 'rate_extra',
+        category: ex.creative_type || 'other',
+        label:    ex.name,
+        unit:     '式',
+        unit_price: Number(ex.fee) || 0,
+      });
+    });
+
+    res.json({ templates });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '単価設定の取得に失敗しました' });
+  }
+});
+
 // =====================================================================
-// 書き込み系（Step B-2）— すべて secretary 以上 + feature flag 有効時のみ
+// 書き込み系（Step B-2）— すべて admin 限定 + feature flag 有効時のみ
 // =====================================================================
 
 // --- 入力サニタイズ -----------------------------------------------------
 const allowedBookStatus    = new Set(['open', 'closed']);
+const allowedContractTypes = new Set(['fixed', 'per_unit', 'mixed']); // V2 追加
 const allowedProjectTypes  = new Set(['video', 'hp', 'lp', 'other']);
 const allowedEstimateStat  = new Set(['draft', 'sent', 'accepted', 'rejected', 'archived']);
 const allowedCostSources   = new Set(['manual']);          // API 経由は manual のみ。invoice_item はトリガ経由
@@ -375,6 +437,14 @@ router.put('/projects/:id/finance-book', requireAuth, requireAdmin, async (req, 
   if (body.estimated_revenue !== undefined) patch.estimated_revenue = intOrZero(body.estimated_revenue);
   if (body.estimated_cost    !== undefined) patch.estimated_cost    = intOrZero(body.estimated_cost);
   if (body.note              !== undefined) patch.note              = body.note ? String(body.note) : null;
+  // V2: 契約タイプ + 想定本数
+  if (body.contract_type !== undefined) {
+    if (!allowedContractTypes.has(body.contract_type)) {
+      return res.status(400).json({ error: `contract_type は ${[...allowedContractTypes].join('/')} のいずれか` });
+    }
+    patch.contract_type = body.contract_type;
+  }
+  if (body.planned_unit_count !== undefined) patch.planned_unit_count = intOrNull(body.planned_unit_count);
   if (body.status            !== undefined) {
     if (!allowedBookStatus.has(body.status)) {
       return res.status(400).json({ error: `status は ${[...allowedBookStatus].join('/')} のいずれか` });
@@ -541,7 +611,8 @@ router.post('/projects/:id/estimates', requireAuth, requireAdmin, async (req, re
   }
 });
 
-// --- PUT /estimates/:eid  見積メタの更新（明細は別 PR） ---------------------
+// --- PUT /estimates/:eid  見積メタ + 明細をまとめて更新 ----------------------
+//   body.items が配列で渡されたら全行を「全削除→再挿入」で置き換え（差分計算は省略）
 router.put('/estimates/:eid', requireAuth, requireAdmin, async (req, res) => {
   const eid = req.params.eid;
   if (!eid) return res.status(400).json({ error: 'estimate id is required' });
@@ -549,20 +620,59 @@ router.put('/estimates/:eid', requireAuth, requireAdmin, async (req, res) => {
   const patch = {};
   if (body.title  !== undefined) patch.title  = body.title ? String(body.title) : null;
   if (body.note   !== undefined) patch.note   = body.note ? String(body.note) : null;
-  if (body.total_amount !== undefined) patch.total_amount = intOrZero(body.total_amount);
   if (body.status !== undefined) {
     if (!allowedEstimateStat.has(body.status)) {
       return res.status(400).json({ error: `status は ${[...allowedEstimateStat].join('/')} のいずれか` });
     }
     patch.status = body.status;
   }
-  if (Object.keys(patch).length === 0) return res.status(400).json({ error: '更新項目がありません' });
+
+  const hasItems = Array.isArray(body.items);
+  if (hasItems) {
+    // total_amount は明細から再計算（明示指定があればそれを優先）
+    const computed = body.items.reduce((s, it) => s + intOrZero(it.amount), 0);
+    patch.total_amount = body.total_amount !== undefined ? intOrZero(body.total_amount) : computed;
+  } else if (body.total_amount !== undefined) {
+    patch.total_amount = intOrZero(body.total_amount);
+  }
+
+  if (Object.keys(patch).length === 0 && !hasItems) {
+    return res.status(400).json({ error: '更新項目がありません' });
+  }
   patch.updated_at = new Date().toISOString();
+
   try {
-    const { data, error } = await supabase
+    const { data: est, error: estErr } = await supabase
       .from('project_estimates').update(patch).eq('id', eid).select().single();
-    if (error) throw new Error(error.message);
-    res.json({ estimate: data });
+    if (estErr) throw new Error(estErr.message);
+
+    let savedItems = null;
+    if (hasItems) {
+      // 全削除 → 再挿入（明細の小回り編集はバージョン分けで対応するため、ここは置換でOK）
+      const { error: delErr } = await supabase.from('project_estimate_items').delete().eq('estimate_id', eid);
+      if (delErr) throw new Error(delErr.message);
+      if (body.items.length) {
+        const rows = body.items.map((it, idx) => ({
+          estimate_id: eid,
+          category:    it.category || null,
+          label:       String(it.label || '(無題)'),
+          quantity:    Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+          unit:        it.unit || null,
+          unit_price:  intOrZero(it.unit_price),
+          amount:      intOrZero(it.amount),
+          sort_order:  Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : idx,
+          note:        it.note || null,
+        }));
+        const { data: insRes, error: insErr } = await supabase
+          .from('project_estimate_items').insert(rows).select();
+        if (insErr) throw new Error(insErr.message);
+        savedItems = insRes || [];
+      } else {
+        savedItems = [];
+      }
+    }
+
+    res.json({ estimate: { ...est, items: savedItems } });
   } catch (e) {
     res.status(500).json({ error: e.message || '見積の更新に失敗しました' });
   }

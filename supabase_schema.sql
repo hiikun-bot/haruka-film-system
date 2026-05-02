@@ -1296,4 +1296,15 @@ SELECT
       WHERE pre.source_invoice_id = i.id
    );
 
+-- ==================== 案件収支 V2: 契約タイプ ====================
+-- 詳細: migrations/2026-05-02_project_accounting_v2_contract_type.sql
+-- 加算のみ・既存無影響・ロールバック容易（カラム残置で問題なし）
+ALTER TABLE project_finance_books
+  ADD COLUMN IF NOT EXISTS contract_type TEXT DEFAULT 'fixed'
+  CHECK (contract_type IN ('fixed', 'per_unit', 'mixed'));
+ALTER TABLE project_finance_books
+  ADD COLUMN IF NOT EXISTS planned_unit_count INTEGER;
+CREATE INDEX IF NOT EXISTS idx_project_finance_books_contract_type
+  ON project_finance_books(contract_type);
+
 NOTIFY pgrst, 'reload schema';
