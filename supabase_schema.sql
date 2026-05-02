@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS projects (
   chatwork_room_id TEXT,
   is_hidden BOOLEAN DEFAULT false,
   seq_counter INTEGER DEFAULT 0,
+  project_type TEXT NOT NULL DEFAULT 'video' CHECK (project_type IN ('video','design')),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
