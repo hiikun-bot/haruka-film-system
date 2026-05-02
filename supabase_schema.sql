@@ -1320,4 +1320,21 @@ CREATE INDEX IF NOT EXISTS idx_project_estimates_estimate_number
   ON project_estimates(estimate_number)
   WHERE estimate_number IS NOT NULL;
 
+-- ==================== 品目名マスター（見積明細のクイック選択用） ====================
+-- 詳細: migrations/2026-05-02_item_name_master.sql
+CREATE TABLE IF NOT EXISTS item_name_master (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL CHECK (category IN ('video', 'design')),
+  name TEXT NOT NULL,
+  default_unit TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_item_name_master_active
+  ON item_name_master(is_active, category, sort_order);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_item_name_master_category_name
+  ON item_name_master(category, name);
+
 NOTIFY pgrst, 'reload schema';
