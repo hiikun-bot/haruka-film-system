@@ -249,6 +249,21 @@ async function runSchemaSync() {
       `CREATE INDEX IF NOT EXISTS idx_project_estimates_estimate_number
          ON project_estimates(estimate_number)
          WHERE estimate_number IS NOT NULL`,
+      // クライアント削除監査ログ (PR #169 / migrations/2026-05-02_client_deletion_logs.sql)
+      // schema-sync 本体で取りこぼされても、削除APIが 'public.client_deletion_logs not found in schema cache' で落ちないよう必ず作る
+      `CREATE TABLE IF NOT EXISTS client_deletion_logs (
+        id           BIGSERIAL PRIMARY KEY,
+        client_id    UUID,
+        client_name  TEXT NOT NULL,
+        client_short TEXT,
+        reason       TEXT NOT NULL,
+        deleted_by   UUID,
+        deleted_by_name TEXT,
+        related_projects_count INT DEFAULT 0,
+        deleted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_client_deletion_logs_deleted_at
+         ON client_deletion_logs(deleted_at DESC)`,
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
