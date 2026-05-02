@@ -403,6 +403,131 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
   }
 });
 
+// ---------- GET /quote-templates 過去の見積/請求書から引用候補を取得 ----------
+// 見積エディタの「📥 過去から引用」UI 用。
+// 同じ案件の過去見積・請求書を最初に並べ、続いて他案件のものを返す。
+// 各エントリには明細（items）が含まれ、クライアント側はそれをそのまま見積明細にコピーする。
+router.get('/quote-templates', requireAuth, requireAdmin, async (req, res) => {
+  const currentProjectId = req.query.project_id || null;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+
+  try {
+    // ----- 過去の見積（自分自身を除外） -----
+    const { data: ests, error: estErr } = await supabase
+      .from('project_estimates')
+      .select('id, project_id, version, title, total_amount, status, created_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (estErr) throw new Error(estErr.message);
+
+    const estIds = (ests || []).map(e => e.id);
+    let estItemsByEid = new Map();
+    if (estIds.length) {
+      const { data: items } = await supabase
+        .from('project_estimate_items')
+        .select('estimate_id, category, label, quantity, unit, unit_price, amount, sort_order')
+        .in('estimate_id', estIds)
+        .order('sort_order', { ascending: true });
+      (items || []).forEach(it => {
+        if (!estItemsByEid.has(it.estimate_id)) estItemsByEid.set(it.estimate_id, []);
+        estItemsByEid.get(it.estimate_id).push(it);
+      });
+    }
+
+    // ----- 過去のクライアント請求書 -----
+    const { data: invs, error: invErr } = await supabase
+      .from('invoices')
+      .select('id, project_id, invoice_number, total_amount, issued_at, year, month')
+      .eq('invoice_type', 'client')
+      .order('issued_at', { ascending: false, nullsFirst: false })
+      .limit(limit);
+    if (invErr) throw new Error(invErr.message);
+
+    const invIds = (invs || []).map(i => i.id);
+    let invItemsByIid = new Map();
+    if (invIds.length) {
+      const { data: items } = await supabase
+        .from('invoice_items')
+        .select('invoice_id, label, quantity, unit, unit_price, total_amount, sort_order, cost_type, creative_label')
+        .in('invoice_id', invIds)
+        .order('sort_order', { ascending: true });
+      (items || []).forEach(it => {
+        if (!invItemsByIid.has(it.invoice_id)) invItemsByIid.set(it.invoice_id, []);
+        invItemsByIid.get(it.invoice_id).push(it);
+      });
+    }
+
+    // ----- 案件名（一括取得） -----
+    const allPids = Array.from(new Set([
+      ...(ests || []).map(e => e.project_id),
+      ...(invs || []).map(i => i.project_id),
+    ].filter(Boolean)));
+    const projectNameByPid = new Map();
+    if (allPids.length) {
+      const { data: ps } = await supabase
+        .from('projects').select('id, name').in('id', allPids);
+      (ps || []).forEach(p => projectNameByPid.set(p.id, p.name));
+    }
+
+    // ----- 整形 -----
+    const estimateTemplates = (ests || []).map(e => ({
+      source:        'estimate',
+      template_id:   e.id,
+      project_id:    e.project_id,
+      project_name:  projectNameByPid.get(e.project_id) || '(不明)',
+      label:         `v${e.version} ${e.title || '(無題)'}`,
+      status:        e.status,
+      total_amount:  Number(e.total_amount) || 0,
+      occurred_on:   e.created_at,
+      same_project:  currentProjectId && e.project_id === currentProjectId,
+      items: (estItemsByEid.get(e.id) || []).map(it => ({
+        category:   it.category || null,
+        label:      it.label || '',
+        quantity:   Number(it.quantity) || 1,
+        unit:       it.unit || null,
+        unit_price: Number(it.unit_price) || 0,
+        amount:     Number(it.amount) || 0,
+      })),
+    }));
+
+    const invoiceTemplates = (invs || []).map(i => ({
+      source:        'invoice',
+      template_id:   i.id,
+      project_id:    i.project_id,
+      project_name:  projectNameByPid.get(i.project_id) || '(不明)',
+      label:         i.invoice_number || `${i.year || ''}/${i.month || ''}`,
+      status:        null,
+      total_amount:  Number(i.total_amount) || 0,
+      occurred_on:   i.issued_at,
+      same_project:  currentProjectId && i.project_id === currentProjectId,
+      items: (invItemsByIid.get(i.id) || []).map(it => ({
+        category:   it.cost_type || null,
+        label:      it.label || it.creative_label || '',
+        quantity:   Number(it.quantity) || 1,
+        unit:       it.unit || null,
+        unit_price: Number(it.unit_price) || 0,
+        amount:     Number(it.total_amount) || 0,
+      })),
+    }));
+
+    // 同じ案件のものを先頭に
+    const sortBySameProject = (a, b) => {
+      if (a.same_project && !b.same_project) return -1;
+      if (!a.same_project && b.same_project) return 1;
+      return 0;
+    };
+    estimateTemplates.sort(sortBySameProject);
+    invoiceTemplates.sort(sortBySameProject);
+
+    res.json({
+      estimates: estimateTemplates,
+      invoices:  invoiceTemplates,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '引用候補の取得に失敗しました' });
+  }
+});
+
 // =====================================================================
 // 書き込み系（Step B-2）— すべて admin 限定 + feature flag 有効時のみ
 // =====================================================================

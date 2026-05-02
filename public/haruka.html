@@ -1206,6 +1206,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
       <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px" onclick="addEstimateItemRow()">+ 行を追加</button>
       <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px;color:var(--em-dark);border-color:var(--em)" onclick="openRateImportPicker()">📊 単価設定から取込</button>
+      <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px;color:var(--em-dark);border-color:var(--em)" onclick="openQuoteImportPicker()">📥 過去から引用</button>
     </div>
 
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:14px;padding-top:10px;border-top:1.5px solid var(--em-pale)">
@@ -1242,6 +1243,31 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ==================== 過去の見積/請求書から引用ピッカー ==================== -->
+<div class="modal-overlay" id="modal-quote-import" style="z-index:310">
+  <div class="modal-card" style="width:680px;max-width:96vw">
+    <div class="modal-title">
+      📥 過去から引用
+      <button class="modal-close" onclick="closeModal('modal-quote-import')">×</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">過去の見積 / クライアント請求書の明細を現在の見積にコピーします</div>
+
+    <!-- タブ切替 -->
+    <div style="display:flex;gap:0;margin-bottom:12px;border-bottom:1.5px solid var(--em-pale)">
+      <button id="qi-tab-estimates" onclick="switchQuoteImportTab('estimates')" style="padding:8px 16px;border:none;background:none;color:var(--em-dark);border-bottom:2px solid var(--em);font-weight:600;cursor:pointer;font-size:13px;margin-bottom:-1.5px">📋 過去の見積</button>
+      <button id="qi-tab-invoices" onclick="switchQuoteImportTab('invoices')" style="padding:8px 16px;border:none;background:none;color:var(--text-muted);border-bottom:2px solid transparent;font-weight:500;cursor:pointer;font-size:13px;margin-bottom:-1.5px">💵 過去の請求書</button>
+    </div>
+
+    <div id="qi-list" style="max-height:420px;overflow-y:auto">
+      <div style="font-size:13px;color:var(--text-muted);padding:8px 0">読み込み中...</div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-quote-import')">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== 案件収支スタンドアロンモーダル（報酬ボタンから直接起動） ==================== -->
 <!-- PR #150 で誤って追加されていなかったモーダル HTML を補完 -->
 <div class="modal-overlay" id="modal-project-finance">
@@ -1249,7 +1275,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="padding:18px 28px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#fff;z-index:10;border-radius:16px 16px 0 0;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
-        <span id="pf-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">💰 案件収支</span>
+        <span id="pf-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">📋 見積</span>
       </div>
       <button class="modal-close" onclick="closeModal('modal-project-finance')">×</button>
     </div>
@@ -4014,7 +4040,7 @@ async function loadProjects() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
-            ${(currentUser?.role === 'admin') ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
+            ${(currentUser?.role === 'admin') ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">見積</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
@@ -6599,7 +6625,7 @@ async function openProjectFinanceModal(projectId, projectName) {
   _financeProjectId = projectId;
   _financeProjectName = projectName || '';
   const titleEl = document.getElementById('pf-modal-title');
-  if (titleEl) titleEl.textContent = `💰 案件収支 — ${_financeProjectName}`;
+  if (titleEl) titleEl.textContent = `📋 見積 — ${_financeProjectName}`;
   // 表示前に内容をリセット
   const el = document.getElementById('pf-content');
   if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:13px">読み込み中...</div>';
@@ -6929,7 +6955,7 @@ function renderEstimateItems() {
       <span style="font-size:13px;font-weight:600;text-align:right;padding:5px 4px">${_yen(amount)}</span>
       <button type="button" style="background:none;border:none;color:#A32D2D;cursor:pointer;font-size:14px" onclick="removeEstimateItem(${idx})" title="行を削除">×</button>
     </div>`;
-  }).join('') || '<div style="color:var(--text-muted);font-size:12px;padding:6px 0">明細がありません。「+ 行を追加」または「📊 単価設定から取込」で追加してください</div>';
+  }).join('') || '<div style="color:var(--text-muted);font-size:12px;padding:6px 0">明細がありません。「+ 行を追加」「📊 単価設定から取込」「📥 過去から引用」のいずれかで追加してください</div>';
   refreshEstimateTotal();
 }
 
@@ -7059,6 +7085,92 @@ function importRateTemplate(idx) {
     category:   t.category,
   });
   showToast(`${t.label} を明細に追加しました`, 'success');
+}
+
+// ==================== V2.1: 過去の見積/請求書から引用ピッカー ====================
+let _quoteTemplatesCache = { estimates: [], invoices: [] };
+let _quoteImportTab = 'estimates';
+
+async function openQuoteImportPicker() {
+  const projectId = _financeProjectId;
+  _quoteImportTab = 'estimates';
+  const list = document.getElementById('qi-list');
+  if (list) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">読み込み中...</div>';
+  openModal('modal-quote-import');
+  try {
+    const url = `${ACCOUNTING_API}/quote-templates${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`;
+    const res = await apiFetch(url);
+    const data = res.ok ? await res.json() : { estimates: [], invoices: [] };
+    _quoteTemplatesCache = {
+      estimates: data.estimates || [],
+      invoices:  data.invoices  || [],
+    };
+    renderQuoteImportList();
+  } catch (e) {
+    if (list) list.innerHTML = `<div style="color:#A32D2D;font-size:13px">読み込み失敗: ${esc(e.message)}</div>`;
+  }
+}
+
+function switchQuoteImportTab(tab) {
+  _quoteImportTab = tab;
+  const e = document.getElementById('qi-tab-estimates');
+  const i = document.getElementById('qi-tab-invoices');
+  const isEst = tab === 'estimates';
+  if (e) {
+    e.style.color = isEst ? 'var(--em-dark)' : 'var(--text-muted)';
+    e.style.borderBottomColor = isEst ? 'var(--em)' : 'transparent';
+    e.style.fontWeight = isEst ? '600' : '500';
+  }
+  if (i) {
+    i.style.color = isEst ? 'var(--text-muted)' : 'var(--em-dark)';
+    i.style.borderBottomColor = isEst ? 'transparent' : 'var(--em)';
+    i.style.fontWeight = isEst ? '500' : '600';
+  }
+  renderQuoteImportList();
+}
+
+function renderQuoteImportList() {
+  const list = document.getElementById('qi-list');
+  if (!list) return;
+  const items = _quoteTemplatesCache[_quoteImportTab] || [];
+  if (items.length === 0) {
+    list.innerHTML = `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">過去の${_quoteImportTab === 'estimates' ? '見積' : '請求書'}はまだありません</div>`;
+    return;
+  }
+  list.innerHTML = items.map((t, idx) => {
+    const sameLabel = t.same_project ? '<span style="font-size:10px;background:#fff7e6;color:#a86700;padding:1px 6px;border-radius:6px;margin-left:6px">同じ案件</span>' : '';
+    const dateStr = t.occurred_on ? String(t.occurred_on).slice(0,10) : '';
+    return `<div style="border:1px solid var(--border-light);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#fff">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <span style="font-size:11px;color:var(--text-muted);min-width:80px">${esc(dateStr)}</span>
+        <span style="font-size:13px;font-weight:600;flex:1;min-width:120px">${esc(t.project_name)}${sameLabel}</span>
+        <span style="font-size:12px;color:var(--text-muted)">${esc(t.label || '')}</span>
+        <span style="font-size:13px;font-weight:600">${_yen(t.total_amount)}</span>
+        <button class="btn-sm" style="font-size:11px;padding:3px 12px" onclick="importQuoteTemplate(${idx})">引用</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">明細 ${(t.items||[]).length} 件 ${(t.items||[]).slice(0,3).map(it => esc(it.label)).join(' / ')}${(t.items||[]).length > 3 ? ' ...' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function importQuoteTemplate(idx) {
+  const items = _quoteTemplatesCache[_quoteImportTab] || [];
+  const t = items[idx];
+  if (!t) return;
+  const cnt = (t.items || []).length;
+  if (cnt === 0) { showToast('明細がありません', 'warn'); return; }
+  // 既存の明細に追加（置き換えではなく append）
+  (t.items || []).forEach(it => {
+    addEstimateItemRow({
+      label:      it.label,
+      quantity:   it.quantity,
+      unit:       it.unit,
+      unit_price: it.unit_price,
+      category:   it.category,
+    });
+  });
+  showToast(`「${t.project_name} ${t.label || ''}」から ${cnt} 件の明細を引用しました`, 'success');
+  closeModal('modal-quote-import');
 }
 
 let _pclProjectId = null;
