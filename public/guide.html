@@ -117,9 +117,14 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 .gc-est{font-size:11px;color:var(--text-muted)}
 
 /* Layer (役職層) — 「選んでください感」を強く */
-.layer-cta{display:flex;align-items:center;justify-content:center;gap:10px;margin:18px 0 14px;font-size:14px;font-weight:800;color:var(--em-dark);text-align:center}
-.layer-cta-arrow{display:inline-block;font-size:22px;animation:bounce-y 1.4s ease-in-out infinite}
-@keyframes bounce-y{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+.layer-cta{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:14px;margin:28px 0 22px;font-size:24px;font-weight:900;color:var(--em-dark);text-align:center;letter-spacing:0.04em;line-height:1.3;animation:cta-wobble 1.6s ease-in-out infinite}
+.layer-cta b{background:linear-gradient(135deg,#F59E0B,#EA580C);color:#fff;padding:2px 12px;border-radius:8px;display:inline-block;animation:cta-flash 1.2s ease-in-out infinite;box-shadow:0 4px 12px rgba(234,88,12,0.35)}
+.layer-cta-finger{display:inline-block;font-size:34px;animation:cta-tap 1s ease-in-out infinite;transform-origin:bottom center}
+.layer-cta-arrow{display:inline-block;font-size:36px;font-weight:900;color:var(--em-dark);animation:bounce-y 0.7s cubic-bezier(.5,.05,.5,1.4) infinite;text-shadow:0 4px 14px rgba(43,184,180,0.45)}
+@keyframes bounce-y{0%,100%{transform:translateY(-4px)}50%{transform:translateY(14px)}}
+@keyframes cta-wobble{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+@keyframes cta-tap{0%,100%{transform:rotate(0) translateY(0)}25%{transform:rotate(-18deg) translateY(-6px)}50%{transform:rotate(0) translateY(0)}75%{transform:rotate(-18deg) translateY(-6px)}}
+@keyframes cta-flash{0%,100%{box-shadow:0 4px 12px rgba(234,88,12,0.35)}50%{box-shadow:0 6px 22px rgba(234,88,12,0.7),0 0 0 6px rgba(245,158,11,0.18)}}
 @keyframes pulse-shadow{0%,100%{box-shadow:0 0 0 0 rgba(62,207,202,0.55)}70%{box-shadow:0 0 0 14px rgba(62,207,202,0)}}
 .layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:6px}
 .layer-card{background:#fff;border-radius:14px;padding:20px 16px 14px;border:2px solid var(--border-light);text-align:center;text-decoration:none;color:inherit;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;position:relative;display:flex;flex-direction:column;gap:6px}
@@ -134,7 +139,6 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 .layer-card:hover .layer-card-pick{transform:translateY(-1px);box-shadow:0 4px 10px rgba(43,184,180,0.4)}
 .layer-card:hover .layer-card-pick::after{transform:translateX(3px)}
 .layer-card.recommend{animation:pulse-shadow 2.4s ease-out infinite}
-.layer-card.recommend::before{content:"おすすめ";position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#F59E0B,#EA580C);color:#fff;font-size:10px;font-weight:800;letter-spacing:0.1em;padding:3px 10px;border-radius:99px;box-shadow:0 4px 10px rgba(234,88,12,0.35);white-space:nowrap}
 .layer-card[data-go="common"]{background:linear-gradient(180deg,var(--common-bg) 0%,#fff 100%);border-color:var(--common-border)}
 .layer-card[data-go="common"] .layer-card-title{color:var(--common)}
 .layer-card[data-go="common"] .layer-card-pick{background:var(--common)}
@@ -177,6 +181,9 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
   .first-step-text p{font-size:13px}
   .card-grid{grid-template-columns:1fr;gap:10px}
   .layers{grid-template-columns:repeat(2,1fr);gap:10px}
+  .layer-cta{font-size:18px;gap:10px;margin:18px 0 14px}
+  .layer-cta-finger{font-size:26px}
+  .layer-cta-arrow{font-size:26px}
   section{margin-top:40px}
 }
 </style>
@@ -216,7 +223,8 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
   <p class="section-lead" id="role-lead">タップすると、その役職に関連するガイドだけが下に表示されます。</p>
 
   <div class="layer-cta">
-    <span>👇 まずはここを <b style="color:var(--em-dark)">タップ</b> してください</span>
+    <span class="layer-cta-finger">👇</span>
+    <span>まずはここを <b>タップ</b> してください</span>
     <span class="layer-cta-arrow">↓</span>
   </div>
 
