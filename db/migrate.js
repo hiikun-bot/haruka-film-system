@@ -240,6 +240,15 @@ async function runSchemaSync() {
         PRIMARY KEY (tweet_id, user_id)
       )`,
       "CREATE INDEX IF NOT EXISTS idx_tweet_likes_user ON tweet_likes(user_id)",
+      // 見積書フィールド (Phase A) — schema-sync 失敗時でも本番DBに必ず反映する保険
+      "ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS issue_date DATE",
+      "ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS valid_until DATE",
+      "ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS recipient_name TEXT",
+      "ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS honorific TEXT DEFAULT '御中'",
+      "ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS estimate_number TEXT",
+      `CREATE INDEX IF NOT EXISTS idx_project_estimates_estimate_number
+         ON project_estimates(estimate_number)
+         WHERE estimate_number IS NOT NULL`,
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
