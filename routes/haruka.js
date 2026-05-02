@@ -5095,6 +5095,27 @@ router.post('/admin/reload-schema-cache', requireAuth, async (req, res) => {
   }
 });
 
+// schema-sync を強制再実行する管理者エンドポイント
+// 用途: Railway起動時の schema-sync が DATABASE_URL 未設定や接続失敗で silent skip されたとき、
+//       SQL Editor を開かずに db/migrate.js の保険ALTERを含む全文再適用 + PostgREST通知を行うための復旧口。
+// 戻り値: runSchemaSync の生結果 ({ skipped } / { ok, okCount, errCount, errors, elapsedMs } / { ok:false, error })
+router.post('/admin/run-schema-sync', requireAuth, async (req, res) => {
+  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) return res.status(403).json({ error: '権限がありません' });
+  try {
+    const runSchemaSync = require('../db/migrate');
+    const result = await runSchemaSync();
+    const summary = result?.skipped
+      ? 'DATABASE_URL/SUPABASE_DB_URL が未設定のためスキップしました（Railway環境変数を確認してください）'
+      : result?.ok === false
+        ? `エラーで終了しました: ${result.error || `okCount=${result.okCount} errCount=${result.errCount}`}`
+        : `schema-sync 完了 (OK=${result?.okCount ?? 0} NG=${result?.errCount ?? 0}, ${result?.elapsedMs ?? 0}ms)`;
+    res.json({ ok: result?.ok !== false && !result?.skipped, summary, result });
+  } catch (err) {
+    console.error('[run-schema-sync]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==================== システム設定 ====================
 
 // システム設定取得（認証済みなら誰でも読める）
