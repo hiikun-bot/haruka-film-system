@@ -16,6 +16,8 @@
 <meta name="apple-mobile-web-app-title" content="HARUKA FILM">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?v=2">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet">
+<!-- 通知UI（Phase 1 段階2） -->
+<link rel="stylesheet" href="/css/notification.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
 :root{
@@ -1731,6 +1733,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
     <div class="header-user">
+      <!-- 通知ベル（Phase 1 段階2）— ユーザーアバターの左隣に配置 -->
+      <button
+        type="button"
+        id="notification-bell"
+        class="bell-button"
+        aria-label="通知"
+        aria-expanded="false"
+        aria-controls="notification-panel"
+        title="通知">
+        <svg class="bell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm6.5-6V11c0-3.36-1.79-6.17-5-6.86V3.5a1.5 1.5 0 0 0-3 0v.64C7.29 4.83 5.5 7.64 5.5 11v5L4 17.5V18h16v-.5L18.5 16z"/>
+        </svg>
+        <span id="notification-badge" class="bell-badge" hidden>0</span>
+      </button>
       <div class="user-av" id="user-av" onclick="openMyProfile()" title="プロフィール編集">HK</div>
       <span class="user-name" id="user-name" onclick="openMyProfile()" title="プロフィール編集" style="cursor:pointer">読み込み中</span>
       <span class="user-role" id="user-role" onclick="openMyProfile()" title="プロフィール編集" style="cursor:pointer">-</span>
@@ -1740,6 +1756,40 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
   </div>
 </div>
+
+<!-- 通知パネル（Phase 1 段階2）— 右からスライドイン -->
+<div id="notification-overlay" class="notification-overlay" aria-hidden="true"></div>
+<aside
+  id="notification-panel"
+  class="notification-panel"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="notification-panel-title"
+  aria-hidden="true">
+  <header class="notification-panel-head">
+    <h2 id="notification-panel-title" class="notification-panel-title">通知</h2>
+    <div class="notification-panel-actions">
+      <button
+        type="button"
+        id="notification-mark-all-read"
+        class="notification-action-btn"
+        title="すべて既読にする"
+        disabled>
+        <span aria-hidden="true">✓</span>
+        <span>すべて既読</span>
+      </button>
+      <button
+        type="button"
+        id="notification-panel-close"
+        class="notification-action-btn close"
+        aria-label="通知パネルを閉じる"
+        title="閉じる">✕</button>
+    </div>
+  </header>
+  <div id="notification-panel-body" class="notification-panel-body">
+    <div class="notification-loading">読み込み中…</div>
+  </div>
+</aside>
 
 <!-- ナビゲーションドロワー（モバイル） -->
 <div id="nav-drawer" class="nav-drawer">
@@ -4421,6 +4471,8 @@ async function init() {
     const res = await fetch('/auth/me');
     if (res.ok) {
       currentUser = await res.json();
+      // 通知モジュール（ESM・別ファイル）が currentUser.id を参照できるよう window へも公開
+      window.currentUser = currentUser;
       console.log('[HFS] currentUser:', currentUser.email, '| role:', currentUser.role, '| isSuperAdmin:', isSuperAdmin());
       document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
       document.getElementById('user-role').textContent = roleLabel(currentUser.role);
@@ -4428,6 +4480,11 @@ async function init() {
       // 認証済みユーザーにのみエラー報告ボタンを表示
       const _fab = document.getElementById('error-report-fab');
       if (_fab) _fab.style.display = '';
+      // 通知モジュール（bell / realtime）に「認証完了したよ」を伝えて
+      // 未読件数取得 + Realtime 接続を発火させる
+      document.dispatchEvent(new CustomEvent('notification:authReady', {
+        detail: { userId: currentUser.id }
+      }));
       // クリエイティブ初期ビューを適用
       const savedView = localStorage.getItem('hfs_cv_default_' + currentUser.id);
       if (savedView && savedView !== 'all') {
@@ -16887,5 +16944,12 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
+
+<!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
+<!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->
+<script type="module" src="/js/notification-card.js"></script>
+<script type="module" src="/js/notification-bell.js"></script>
+<script type="module" src="/js/notification-panel.js"></script>
+<script type="module" src="/js/notification-realtime.js"></script>
 </body>
 </html>

@@ -162,6 +162,17 @@ app.use('/api/haruka', harukaRouter);
 // /api/notifications 配下: 一覧 / 未読件数 / 既読化 / 全体通知発火
 app.use('/api/notifications', require('./routes/notifications'));
 
+// クライアント設定 API（Phase 1 段階2）
+// Supabase Realtime 接続用に anon key（公開可能な公開鍵）と URL をフロントへ渡す。
+// service_role キーは絶対に渡さない。anon キーは Supabase の RLS（行レベルセキュリティ）で
+// 守られる前提のフロント公開鍵で、ブラウザに置いて問題ないキー。
+app.get('/api/config', requireAuth, (req, res) => {
+  res.json({
+    supabase_url: process.env.SUPABASE_URL || '',
+    supabase_anon_key: process.env.SUPABASE_ANON_KEY || '',
+  });
+});
+
 // 案件収支 API（feature flag が有効な時のみマウント。flag OFF 時はそもそもエンドポイントが存在しない）
 if (accountingRouter) {
   app.use('/api/accounting', accountingRouter);
