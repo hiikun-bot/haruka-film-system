@@ -3896,7 +3896,7 @@ async function loadProjects() {
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
             ${hasPermission('project.fee_view') ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
-            ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProject(${JSON.stringify(p).replace(/"/g,'&quot;')})">編集</button>` : ''}
+            ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
         }).join('')
@@ -4819,7 +4819,14 @@ function renderCreatives() {
 
     // 納品済みは作業完了済みなので「超過」「あとN日」等の経過表示はせず、平静の表示にする
     const isDelivered = c.status === '納品';
-    const draftDueClass = isDelivered
+    // 「初稿提出済み」（編集 → Dチェック以降）の状態では初稿締切は既に達成済みなので、
+    // draftDiff < 0 でも「遅れ」とは扱わない（最終納品が遅れていないかだけ見る）
+    // 「編集」段階は初稿未提出として従来通り遅れ判定する
+    const DRAFT_SUBMITTED_STATUSES = ['Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
+    const draftSubmitted = DRAFT_SUBMITTED_STATUSES.includes(c.status);
+
+    // 初稿提出後は draft 締切は既に達成済みとして「提出済」表示にする
+    const draftDueClass = isDelivered || draftSubmitted
       ? 'due-ok'
       : (draftDiff === null ? '' : draftDiff < 0 ? 'due-urgent' : draftDiff <= 3 ? 'due-urgent' : draftDiff <= 7 ? 'due-near' : 'due-ok');
     const finalDueClass = isDelivered
@@ -4828,13 +4835,15 @@ function renderCreatives() {
 
     const draftLabel = isDelivered
       ? '納品済'
-      : (draftDiff === null ? '-' : draftDiff < 0 ? `${Math.abs(draftDiff)}日超過` : draftDiff === 0 ? '今日' : `あと${draftDiff}日`);
+      : draftSubmitted
+        ? '提出済'
+        : (draftDiff === null ? '-' : draftDiff < 0 ? `${Math.abs(draftDiff)}日超過` : draftDiff === 0 ? '今日' : `あと${draftDiff}日`);
     const finalLabel = isDelivered
       ? '納品済'
       : (finalDiff === null ? '-' : finalDiff < 0 ? `${Math.abs(finalDiff)}日超過` : finalDiff === 0 ? '今日' : `あと${finalDiff}日`);
 
     const isLate = (finalDiff !== null && finalDiff < 0 && c.status !== '納品') ||
-                (draftDiff !== null && draftDiff < 0 && c.status !== '納品');
+                (!draftSubmitted && draftDiff !== null && draftDiff < 0 && c.status !== '納品');
     const clientName = c.projects?.clients?.name || '-';
 
     return `<tr class="${isLate?'row-late':''} ${c.help_flag?'row-help':''}" data-id="${c.id}">
@@ -6176,6 +6185,18 @@ function openProjectModal(preClientId) {
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = 'none';
   openModal('modal-project');
+}
+
+// id から allProjects を引いて編集モーダルを開く（onclick 属性内に巨大な JSON を埋め込むと
+// 案件名等に含まれる特殊文字でパース不能になり、ステータス select 等が初期化されないバグの原因になる）
+function openEditProjectById(projectId) {
+  const p = (allProjects || []).find(x => x.id === projectId);
+  if (!p) {
+    showToast('案件データが見つかりません。再読み込みします。', 'warn');
+    if (typeof loadProjects === 'function') loadProjects();
+    return;
+  }
+  openEditProject(p);
 }
 
 function openEditProject(p) {
@@ -7606,6 +7627,15 @@ function renderEditorDash(today) {
     const cls  = diff===null?'':diff<0?'d-over':diff<=3?'d-warn':'';
     const num  = diff===null?'—':Math.abs(diff).toString();
     const unit = diff===null?'':diff<0?'日超過':diff===0?'今日が期限':'日後';
+    const sheetUrl = c.projects?.sheet_url || '';
+    const regUrl   = c.projects?.regulation_url || '';
+    const linksHtml = (sheetUrl || regUrl)
+      ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${
+          sheetUrl ? `<a href="${esc(sheetUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px;border:0.5px solid var(--em);border-radius:5px;color:var(--em-dark);text-decoration:none;white-space:nowrap;background:#fff">📊 管理シート ↗</a>` : ''
+        }${
+          regUrl ? `<a href="${esc(regUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px;border:0.5px solid var(--border);border-radius:5px;color:var(--text-muted);text-decoration:none;white-space:nowrap;background:#fff">📐 レギュ ↗</a>` : ''
+        }</div>`
+      : '';
     return `<div class="deadline-card">
       <div style="text-align:center;min-width:64px">
         <div class="deadline-num ${cls}">${num}</div>
@@ -7615,6 +7645,7 @@ function renderEditorDash(today) {
         <div class="deadline-name">${c.file_name}</div>
         <div class="deadline-meta">${c.projects?.clients?.name||''}${c.projects?.name?' / '+c.projects.name:''}</div>
         <div style="margin-top:6px"><span class="status-chip ${statusClass(c.status)}">${c.status}</span></div>
+        ${linksHtml}
       </div>
     </div>`;
   }).join('');
