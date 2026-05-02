@@ -2663,6 +2663,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
       <button id="p-tab-btn-sync" onclick="switchProjectTab('sync')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">商材・訴求軸</button>
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
+      <!-- 案件収支タブ（feature flag が有効な時のみ表示。デフォルト非表示） -->
+      <button id="p-tab-btn-finance" onclick="switchProjectTab('finance')" style="display:none;padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">💰 収支</button>
     </div>
 
     <!-- タブコンテンツエリア（固定高さ・スクロール） -->
@@ -2935,6 +2937,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
         <!-- リスト -->
         <div id="pcl-list"><div style="color:var(--text-muted);font-size:13px">読み込み中...</div></div>
+      </div>
+    </div>
+
+    <!-- パネル：案件収支（Step C） -->
+    <div id="p-tab-panel-finance" style="display:none;padding:24px 28px">
+      <div id="pf-content" style="max-width:880px">
+        <div style="color:var(--text-muted);font-size:13px">読み込み中...</div>
       </div>
     </div>
 
@@ -6426,6 +6435,8 @@ function openEditProject(p) {
   // 編集時はタブを表示し、基本情報タブをデフォルト表示
   document.getElementById('p-tab-nav').style.display = '';
   switchProjectTab('main');
+  // 案件収支タブの表示制御（feature flag 検出）
+  refreshFinanceTabVisibility();
 
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
   const pDelBtn = document.getElementById('p-delete-btn');
@@ -6477,7 +6488,7 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  const tabs = ['main', 'sync', 'checklist'];
+  const tabs = ['main', 'sync', 'checklist', 'finance'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -6490,6 +6501,321 @@ function switchProjectTab(tab) {
     }
   });
   if (tab === 'checklist') loadProjectChecklistItems();
+  if (tab === 'finance')   loadProjectFinance();
+}
+
+// ==================== 案件収支（Step C） ====================
+// feature flag: ENABLE_PROJECT_ACCOUNTING — サーバー側の /api/accounting/* が
+// 503 を返したらタブを隠す。それ以外は表示。
+// /api/accounting は haruka ルーターと別マウントなので API 定数を直接書く。
+const ACCOUNTING_API = '/api/accounting';
+let _accountingEnabled = null; // null=未確認 / true / false
+let _pfData = null;            // 現在表示中の案件の収支データ
+
+async function checkAccountingEnabled() {
+  if (_accountingEnabled !== null) return _accountingEnabled;
+  try {
+    const res = await apiFetch(`${ACCOUNTING_API}/projects?limit=1`);
+    _accountingEnabled = res.status !== 503 && res.status !== 404;
+  } catch (_) {
+    _accountingEnabled = false;
+  }
+  return _accountingEnabled;
+}
+
+// 案件モーダルを開いた時にタブボタンの表示を制御
+async function refreshFinanceTabVisibility() {
+  const ok = await checkAccountingEnabled();
+  const btn = document.getElementById('p-tab-btn-finance');
+  if (!btn) return;
+  btn.style.display = ok ? '' : 'none';
+}
+
+async function loadProjectFinance() {
+  const projectId = document.getElementById('p-id').value;
+  const el = document.getElementById('pf-content');
+  if (!projectId || !el) return;
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:13px">読み込み中...</div>';
+  try {
+    const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      el.innerHTML = `<div style="color:#A32D2D;font-size:13px">読み込み失敗: ${esc(err.error || res.statusText)}</div>`;
+      return;
+    }
+    _pfData = await res.json();
+    renderProjectFinance();
+  } catch (e) {
+    el.innerHTML = `<div style="color:#A32D2D;font-size:13px">読み込み失敗: ${esc(e.message)}</div>`;
+  }
+}
+
+function _yen(n) {
+  const v = Number(n) || 0;
+  return '¥' + v.toLocaleString('ja-JP');
+}
+
+function _ratePct(r) {
+  if (r === null || r === undefined) return '—';
+  return (r * 100).toFixed(1) + '%';
+}
+
+function _kpiCard(label, value, color) {
+  return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;flex:1;min-width:140px">
+    <div style="font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:0.06em;margin-bottom:6px">${esc(label)}</div>
+    <div style="font-size:18px;font-weight:700;color:${color || 'var(--text)'}">${esc(value)}</div>
+  </div>`;
+}
+
+function renderProjectFinance() {
+  const el = document.getElementById('pf-content');
+  if (!el || !_pfData) return;
+  const fb = _pfData.finance_book || {};
+  const sm = _pfData.summary || {};
+  const contract = Number(fb.contract_total) || 0;
+  const estRev   = Number(fb.estimated_revenue) || 0;
+  const actRev   = Number(sm.actual_revenue) || 0;
+  const actCost  = Number(sm.actual_cost) || 0;
+  const margin   = Number(sm.gross_margin) || 0;
+  const marginRate = sm.gross_margin_rate;
+  const marginColor = margin > 0 ? '#1f8a4a' : (margin < 0 ? '#A32D2D' : 'var(--text)');
+  const status = fb.status || 'open';
+
+  const estimates = _pfData.estimates || [];
+  const costs    = _pfData.cost_entries || [];
+  const revenues = _pfData.revenue_entries || [];
+
+  el.innerHTML = `
+    <!-- KPI 行1 -->
+    <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      ${_kpiCard('契約総額', _yen(contract))}
+      ${_kpiCard('見積売上', _yen(estRev))}
+      ${_kpiCard('実績売上', _yen(actRev))}
+    </div>
+    <!-- KPI 行2 -->
+    <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+      ${_kpiCard('実績原価', _yen(actCost))}
+      ${_kpiCard('粗利',     _yen(margin), marginColor)}
+      ${_kpiCard('粗利率',   _ratePct(marginRate), marginColor)}
+    </div>
+
+    <!-- アクション -->
+    <div style="display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap">
+      <button class="btn-primary" style="padding:7px 14px;font-size:13px" onclick="openFinanceBookEditor()">📝 契約総額を編集</button>
+      <button class="btn" style="padding:7px 14px;font-size:13px" onclick="toggleFinanceBookStatus('${esc(status)}')">${status === 'closed' ? '🔓 台帳をオープンに戻す' : '🔒 台帳をクローズ'}</button>
+    </div>
+
+    <!-- 売上エントリ -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--em-pale)">
+      <span style="display:inline-block;width:3px;height:14px;background:#1f8a4a;border-radius:2px"></span>
+      <span style="font-size:11px;font-weight:700;color:#1f8a4a;letter-spacing:0.10em;text-transform:uppercase">売上エントリ</span>
+      <span style="font-size:11px;color:var(--text-muted)">（${revenues.length}件）</span>
+      <button class="btn-sm" style="margin-left:auto;padding:4px 10px;font-size:11px" onclick="openRevenueEntryEditor()">+ 手付金 / 売上を追加</button>
+    </div>
+    <div style="margin-bottom:22px">
+      ${revenues.length === 0
+        ? '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">売上はまだありません</div>'
+        : revenues.map(r => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+            <span style="font-size:11px;color:var(--text-muted);width:90px">${esc(r.occurred_on || '—')}</span>
+            <span style="font-size:11px;background:${r.source === 'manual' ? '#fff7e6' : '#e6f7ff'};color:${r.source === 'manual' ? '#a86700' : '#1466a8'};padding:2px 7px;border-radius:6px">${r.source === 'manual' ? '手動' : '請求書'}</span>
+            <span style="font-size:11px;color:var(--text-muted);min-width:60px">${esc(r.revenue_type || '—')}</span>
+            <span style="font-size:13px;flex:1">${esc(r.label || '')}</span>
+            <span style="font-size:14px;font-weight:600;color:#1f8a4a">${_yen(r.amount)}</span>
+            ${r.source === 'manual' ? `<button class="btn-sm" style="font-size:11px;color:#A32D2D" onclick="deleteRevenueEntry('${esc(r.id)}')">削除</button>` : '<span style="width:50px"></span>'}
+          </div>
+        `).join('')}
+    </div>
+
+    <!-- 原価エントリ -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--em-pale)">
+      <span style="display:inline-block;width:3px;height:14px;background:#A32D2D;border-radius:2px"></span>
+      <span style="font-size:11px;font-weight:700;color:#A32D2D;letter-spacing:0.10em;text-transform:uppercase">原価エントリ</span>
+      <span style="font-size:11px;color:var(--text-muted)">（${costs.length}件）</span>
+      <button class="btn-sm" style="margin-left:auto;padding:4px 10px;font-size:11px" onclick="openCostEntryEditor()">+ 手動原価を追加</button>
+    </div>
+    <div style="margin-bottom:22px">
+      ${costs.length === 0
+        ? '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">原価はまだありません（請求書から自動連携されます）</div>'
+        : costs.map(c => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+            <span style="font-size:11px;color:var(--text-muted);width:90px">${esc(c.occurred_on || '—')}</span>
+            <span style="font-size:11px;background:${c.source === 'manual' ? '#fff7e6' : '#e6f7ff'};color:${c.source === 'manual' ? '#a86700' : '#1466a8'};padding:2px 7px;border-radius:6px">${c.source === 'manual' ? '手動' : '請求書'}</span>
+            <span style="font-size:11px;color:var(--text-muted);min-width:60px">${esc(c.cost_type || '—')}</span>
+            <span style="font-size:13px;flex:1">${esc(c.label || '')}</span>
+            <span style="font-size:14px;font-weight:600;color:#A32D2D">${_yen(c.amount)}</span>
+            ${c.source === 'manual' ? `<button class="btn-sm" style="font-size:11px;color:#A32D2D" onclick="deleteCostEntry('${esc(c.id)}')">削除</button>` : '<span style="width:50px"></span>'}
+          </div>
+        `).join('')}
+    </div>
+
+    <!-- 見積 -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--em-pale)">
+      <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
+      <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;text-transform:uppercase">見積</span>
+      <span style="font-size:11px;color:var(--text-muted)">（${estimates.length}件）</span>
+      <button class="btn-sm" style="margin-left:auto;padding:4px 10px;font-size:11px" onclick="openEstimateEditor()">+ 新規見積</button>
+    </div>
+    <div>
+      ${estimates.length === 0
+        ? '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">見積はまだありません</div>'
+        : estimates.map(e => `
+          <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:#fff">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:13px;font-weight:600">v${e.version}</span>
+              <span style="font-size:11px;background:${_estStatusColor(e.status).bg};color:${_estStatusColor(e.status).fg};padding:2px 8px;border-radius:6px">${esc(_estStatusLabel(e.status))}</span>
+              <span style="font-size:13px;flex:1">${esc(e.title || '(無題)')}</span>
+              <span style="font-size:14px;font-weight:600">${_yen(e.total_amount)}</span>
+              <button class="btn-sm" style="font-size:11px" onclick="changeEstimateStatus('${esc(e.id)}', '${e.status === 'accepted' ? 'draft' : 'accepted'}')">${e.status === 'accepted' ? '採用解除' : '採用'}</button>
+              <button class="btn-sm" style="font-size:11px;color:#A32D2D" onclick="deleteEstimate('${esc(e.id)}')">削除</button>
+            </div>
+            ${(e.items||[]).length ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
+              ${(e.items||[]).map(it => `<div style="display:flex;gap:8px;padding:3px 0;font-size:12px;color:var(--text-muted)">
+                <span style="width:60px">${esc(it.category || '')}</span>
+                <span style="flex:1">${esc(it.label || '')}</span>
+                <span>${Number(it.quantity||1).toLocaleString()} ${esc(it.unit||'')}</span>
+                <span>× ${_yen(it.unit_price)}</span>
+                <span style="font-weight:600;color:var(--text);min-width:80px;text-align:right">${_yen(it.amount)}</span>
+              </div>`).join('')}
+            </div>` : ''}
+          </div>
+        `).join('')}
+    </div>
+  `;
+}
+
+function _estStatusLabel(s) {
+  return ({ draft:'草案', sent:'提示中', accepted:'採用', rejected:'却下', archived:'アーカイブ' }[s]) || s || '—';
+}
+function _estStatusColor(s) {
+  return ({
+    draft:    { bg:'#f0f0f0', fg:'#666' },
+    sent:     { bg:'#e6f0ff', fg:'#1466a8' },
+    accepted: { bg:'#e1f7e6', fg:'#1f8a4a' },
+    rejected: { bg:'#fde6e6', fg:'#A32D2D' },
+    archived: { bg:'#f0f0f0', fg:'#999' },
+  }[s]) || { bg:'#f0f0f0', fg:'#666' };
+}
+
+// --- 契約総額の編集 -----------------------------------------------------
+async function openFinanceBookEditor() {
+  if (!_pfData) return;
+  const fb = _pfData.finance_book || {};
+  const cur = Number(fb.contract_total) || 0;
+  const v = prompt(`契約総額（円）を入力してください（現在: ${_yen(cur)}）`, String(cur));
+  if (v === null) return;
+  const n = parseInt(String(v).replace(/[^\d-]/g, ''), 10);
+  if (!Number.isFinite(n) || n < 0) { showToast('正しい数値を入力してください', 'warn'); return; }
+  const projectId = document.getElementById('p-id').value;
+  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/finance-book`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contract_total: n }),
+  });
+  if (res.ok) { showToast('契約総額を保存しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '保存失敗'), 'error'); }
+}
+
+async function toggleFinanceBookStatus(curStatus) {
+  if (!_pfData) return;
+  const next = curStatus === 'closed' ? 'open' : 'closed';
+  if (next === 'closed' && !confirm('この案件の収支台帳をクローズしますか？\n（後でオープンに戻すこともできます）')) return;
+  const projectId = document.getElementById('p-id').value;
+  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/finance-book`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: next }),
+  });
+  if (res.ok) { showToast(next === 'closed' ? '台帳をクローズしました' : '台帳をオープンに戻しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '保存失敗'), 'error'); }
+}
+
+// --- 売上エントリ -------------------------------------------------------
+async function openRevenueEntryEditor() {
+  const projectId = document.getElementById('p-id').value;
+  const type = prompt('種別を入力してください（deposit=手付金 / final=完了金 / monthly / lump_sum / other）', 'deposit');
+  if (type === null) return;
+  if (!['deposit','final','monthly','lump_sum','other'].includes(type)) { showToast('種別が不正です', 'warn'); return; }
+  const amount = prompt('金額（円）を入力してください', '0');
+  if (amount === null) return;
+  const n = parseInt(String(amount).replace(/[^\d-]/g, ''), 10);
+  if (!Number.isFinite(n) || n <= 0) { showToast('正しい金額を入力してください', 'warn'); return; }
+  const label = prompt('ラベル（例: 着手金 / 完了金）', type === 'deposit' ? '着手金' : '');
+  if (label === null) return;
+  const occurredOn = prompt('発生日（YYYY-MM-DD、空欄=今日）', new Date().toISOString().slice(0,10));
+  if (occurredOn === null) return;
+  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/revenue-entries`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revenue_type: type, amount: n, label: label || null, occurred_on: occurredOn || null }),
+  });
+  if (res.ok) { showToast('売上エントリを追加しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '追加失敗'), 'error'); }
+}
+
+async function deleteRevenueEntry(rid) {
+  if (!confirm('この売上エントリを削除しますか？')) return;
+  const res = await apiFetch(`${ACCOUNTING_API}/revenue-entries/${rid}`, { method: 'DELETE' });
+  if (res.ok) { showToast('削除しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '削除失敗'), 'error'); }
+}
+
+// --- 原価エントリ -------------------------------------------------------
+async function openCostEntryEditor() {
+  const projectId = document.getElementById('p-id').value;
+  const label = prompt('ラベルを入力してください（例: 外注デザイン / 取材費）', '');
+  if (label === null) return;
+  const amount = prompt('金額（円）を入力してください', '0');
+  if (amount === null) return;
+  const n = parseInt(String(amount).replace(/[^\d-]/g, ''), 10);
+  if (!Number.isFinite(n) || n <= 0) { showToast('正しい金額を入力してください', 'warn'); return; }
+  const occurredOn = prompt('発生日（YYYY-MM-DD、空欄=今日）', new Date().toISOString().slice(0,10));
+  if (occurredOn === null) return;
+  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/cost-entries`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: label || null, amount: n, occurred_on: occurredOn || null, cost_type: 'other' }),
+  });
+  if (res.ok) { showToast('原価エントリを追加しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '追加失敗'), 'error'); }
+}
+
+async function deleteCostEntry(cid) {
+  if (!confirm('この原価エントリを削除しますか？\n（請求書由来のエントリは API 経由削除できません）')) return;
+  const res = await apiFetch(`${ACCOUNTING_API}/cost-entries/${cid}`, { method: 'DELETE' });
+  if (res.ok) { showToast('削除しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '削除失敗'), 'error'); }
+}
+
+// --- 見積 ---------------------------------------------------------------
+async function openEstimateEditor() {
+  const projectId = document.getElementById('p-id').value;
+  const title = prompt('見積タイトル（例: v1 ラフ見積）', '');
+  if (title === null) return;
+  const total = prompt('見積総額（円）', '0');
+  if (total === null) return;
+  const n = parseInt(String(total).replace(/[^\d-]/g, ''), 10);
+  if (!Number.isFinite(n) || n < 0) { showToast('正しい金額を入力してください', 'warn'); return; }
+  const note = prompt('メモ（任意）', '');
+  if (note === null) return;
+  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/estimates`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: title || null, total_amount: n, note: note || null }),
+  });
+  if (res.ok) { showToast('見積を作成しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '作成失敗'), 'error'); }
+}
+
+async function changeEstimateStatus(eid, newStatus) {
+  const res = await apiFetch(`${ACCOUNTING_API}/estimates/${eid}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: newStatus }),
+  });
+  if (res.ok) { showToast('ステータスを更新しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '更新失敗'), 'error'); }
+}
+
+async function deleteEstimate(eid) {
+  if (!confirm('この見積を削除しますか？（明細も全て消えます）')) return;
+  const res = await apiFetch(`${ACCOUNTING_API}/estimates/${eid}`, { method: 'DELETE' });
+  if (res.ok) { showToast('削除しました', 'success'); loadProjectFinance(); }
+  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '削除失敗'), 'error'); }
 }
 
 let _pclProjectId = null;
