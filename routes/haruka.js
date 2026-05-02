@@ -269,6 +269,8 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
 // ==================== 案件 ====================
 
 // 案件一覧取得
+// has_rates / has_estimates は「単価設定済み」「見積作成済み」の判定フラグ。
+// UI 側で「単価」「見積」ボタンに設定済みかどうかを示すために返す。
 router.get('/projects', async (req, res) => {
   const { data, error } = await supabase
     .from('projects')
@@ -280,7 +282,21 @@ router.get('/projects', async (req, res) => {
     `)
     .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // 単価／見積の設定有無を一括取得（DISTINCT project_id をクライアント側でセット化）
+  const [ratesRes, estRes] = await Promise.all([
+    supabase.from('project_rates').select('project_id'),
+    supabase.from('project_estimates').select('project_id'),
+  ]);
+  const ratesSet = new Set((ratesRes.data || []).map(r => r.project_id));
+  const estSet   = new Set((estRes.data   || []).map(r => r.project_id));
+
+  const enriched = (data || []).map(p => ({
+    ...p,
+    has_rates: ratesSet.has(p.id),
+    has_estimates: estSet.has(p.id),
+  }));
+  res.json(enriched);
 });
 
 // 案件詳細取得
