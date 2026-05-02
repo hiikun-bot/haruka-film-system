@@ -4588,6 +4588,18 @@ function cssEscape(s) {
   return String(s).replace(/(["\\])/g, '\\$1');
 }
 
+// 案件ドロップダウン用に「非表示案件除外 + id 重複排除」を行う
+// （API は単純な select(*) で is_hidden フィルタも DISTINCT も無いため、
+//  フロント側でドロップダウン表示時のみ防御する）
+function dedupVisibleProjects(projects) {
+  const seen = new Map();
+  for (const p of (projects || [])) {
+    if (!p || p.is_hidden) continue;
+    if (!seen.has(p.id)) seen.set(p.id, p);
+  }
+  return Array.from(seen.values());
+}
+
 // 案件（クライアント→案件の階層表示）
 async function loadProjects() {
   const [pRes, cRes] = await Promise.all([
@@ -4598,10 +4610,12 @@ async function loadProjects() {
   allClients = await cRes.json();
 
   // クリエイティブ追加モーダルのセレクトを更新
+  // is_hidden 案件除外 + id 重複排除（DBに同名レコードが複数あった場合の保険）
+  const dropdownProjects = dedupVisibleProjects(allProjects);
   const sel = document.getElementById('c-project-id');
-  if (sel) sel.innerHTML = allProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
+  if (sel) sel.innerHTML = dropdownProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
   const bulkSel = document.getElementById('bulk-project-id');
-  if (bulkSel) bulkSel.innerHTML = allProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
+  if (bulkSel) bulkSel.innerHTML = dropdownProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
 
   // クライアント select を更新（旧 client-tabs ボタン群から移行）
   renderClientSelect();
