@@ -1397,6 +1397,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-bottom:8px">
       <span style="display:inline-block;width:18px;height:18px;background:var(--em);color:#fff;border-radius:50%;font-size:11px;text-align:center;line-height:18px;font-weight:700">2</span>
       品目明細
+      <!-- マスター件数インジケータ（控えめ表示・ホバーで操作ヒント） -->
+      <span id="fest-master-indicator" title="「📦 マスターから選択」ボタンでマスターから一括追加できます" style="margin-left:auto;font-size:10px;color:var(--text-faint);font-weight:500;letter-spacing:0;cursor:help;display:none">📦 マスター: 動画 <span id="fest-master-count-video">—</span>件 / デザイン <span id="fest-master-count-design">—</span>件</span>
     </div>
     <div style="display:grid;grid-template-columns:2fr 60px 60px 90px 90px 28px;gap:6px;padding:6px 8px;background:#f0f9f9;border-radius:6px;font-size:11px;font-weight:600;color:var(--em-dark);margin-bottom:4px">
       <span>品目</span><span>数量</span><span>単位</span><span>単価</span><span style="text-align:right">金額</span><span></span>
@@ -1405,6 +1407,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
       <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px" onclick="addEstimateItemRow()">+ 行を追加</button>
+      <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px;color:var(--em-dark);border-color:var(--em)" onclick="openItemMasterPicker()">📦 マスターから選択</button>
       <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px;color:var(--em-dark);border-color:var(--em)" onclick="openRateImportPicker()">📊 単価設定から取込</button>
       <button type="button" class="btn-sm" style="padding:5px 12px;font-size:12px;color:var(--em-dark);border-color:var(--em)" onclick="openQuoteImportPicker()">📥 過去から引用</button>
     </div>
@@ -1443,6 +1446,42 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal('modal-rate-import')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 案件収支 V2: 品目マスターから選択ピッカー ==================== -->
+<div class="modal-overlay" id="modal-item-master-picker" style="z-index:310">
+  <div class="modal-card" style="width:680px;max-width:96vw">
+    <div class="modal-title">
+      📦 品目マスターから選択
+      <button class="modal-close" onclick="closeModal('modal-item-master-picker')">×</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">マスター登録済みの品目をチェックして「追加」で見積明細に一括追加します</div>
+
+    <!-- カテゴリタブ -->
+    <div style="display:flex;gap:0;margin-bottom:10px;border-bottom:1.5px solid var(--em-pale);align-items:center">
+      <button id="imp-tab-video"  onclick="switchItemMasterPickerTab('video')"  style="padding:8px 16px;border:none;background:none;color:var(--em-dark);border-bottom:2px solid var(--em);font-weight:600;cursor:pointer;font-size:13px;margin-bottom:-1.5px">🎬 動画編集 <span id="imp-count-video"  style="font-size:11px;color:var(--text-faint);margin-left:4px"></span></button>
+      <button id="imp-tab-design" onclick="switchItemMasterPickerTab('design')" style="padding:8px 16px;border:none;background:none;color:var(--text-muted);border-bottom:2px solid transparent;font-weight:500;cursor:pointer;font-size:13px;margin-bottom:-1.5px">🎨 デザイン <span id="imp-count-design" style="font-size:11px;color:var(--text-faint);margin-left:4px"></span></button>
+      <button id="imp-tab-all"    onclick="switchItemMasterPickerTab('all')"    style="padding:8px 16px;border:none;background:none;color:var(--text-muted);border-bottom:2px solid transparent;font-weight:500;cursor:pointer;font-size:13px;margin-bottom:-1.5px">全カテゴリ <span id="imp-count-all" style="font-size:11px;color:var(--text-faint);margin-left:4px"></span></button>
+    </div>
+
+    <!-- 検索 -->
+    <div style="margin-bottom:8px">
+      <input type="text" id="imp-search" class="form-input" placeholder="🔍 品目名で絞り込み（インクリメンタル検索）" style="width:100%;font-size:13px;padding:6px 10px" oninput="renderItemMasterPickerList()">
+    </div>
+
+    <!-- リスト -->
+    <div id="imp-list" style="max-height:400px;overflow-y:auto;border:1px solid var(--border-light);border-radius:8px;padding:4px 0;background:#fff">
+      <div style="font-size:13px;color:var(--text-muted);padding:14px">読み込み中...</div>
+    </div>
+
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <span id="imp-status" style="font-size:12px;color:var(--text-muted)"></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="closeModal('modal-item-master-picker')">キャンセル</button>
+        <button class="btn-primary" id="imp-add-btn" onclick="confirmItemMasterPicker()">選択した品目を追加</button>
+      </div>
     </div>
   </div>
 </div>
@@ -7604,6 +7643,8 @@ function openEstimateEditor(eid) {
   document.getElementById('fest-editor-title').textContent = isNew ? '📋 見積を新規作成' : '📋 見積を編集';
   // 品目マスター（datalist）を案件種別でフィルタしてロード（async / 失敗しても見積編集はブロックしない）
   populateEstimateItemNameDatalist().catch(err => console.warn('[populateEstimateItemNameDatalist]', err));
+  // ヘッダの「📦 マスター: 動画 N件 / デザイン M件」インジケータも更新（控えめステータス表示）
+  refreshEstimateMasterIndicator().catch(err => console.warn('[refreshEstimateMasterIndicator]', err));
 
   // 既定値の生成
   const today = new Date().toISOString().slice(0, 10);
@@ -7716,6 +7757,258 @@ async function populateEstimateItemNameDatalist() {
   dl.innerHTML = opts.join('');
 }
 
+// 見積エディタ: 品目明細ヘッダの「📦 マスター: 動画 N件 / デザイン M件」インジケータを更新
+async function refreshEstimateMasterIndicator(opts) {
+  const ind = document.getElementById('fest-master-indicator');
+  if (!ind) return;
+  try {
+    const items = await getItemNameMasterForEstimate(null, opts || {});
+    const v = (items || []).filter(i => i && i.category === 'video').length;
+    const d = (items || []).filter(i => i && i.category === 'design').length;
+    const vEl = document.getElementById('fest-master-count-video');
+    const dEl = document.getElementById('fest-master-count-design');
+    if (vEl) vEl.textContent = v;
+    if (dEl) dEl.textContent = d;
+    ind.style.display = '';
+  } catch (e) {
+    // エラー時は控えめにフォールバック表示（文字色は変えてユーザーに気付いてもらう）
+    ind.style.display = '';
+    ind.style.color = '#A32D2D';
+    ind.textContent = '📦 マスター: 取得失敗（コンソール参照）';
+    console.warn('[refreshEstimateMasterIndicator]', e);
+  }
+}
+
+// ==================== 品目マスターから選択ピッカー ====================
+let _itemMasterPickerState = {
+  tab: 'video',         // 'video' | 'design' | 'all'
+  items: [],            // フェッチした全件（active_only=true）
+  selected: new Set(),  // チェックされた id 集合
+  error: null,          // 取得エラーメッセージ
+};
+
+async function openItemMasterPicker() {
+  // 状態リセット
+  _itemMasterPickerState.selected = new Set();
+  _itemMasterPickerState.error = null;
+  // 案件種別が分かれば初期タブとして使う（無ければ video）
+  let initialTab = 'video';
+  try {
+    const proj = _pfData?.project;
+    if (proj && proj.project_type) initialTab = getProjectType(proj);
+  } catch (_) {}
+  _itemMasterPickerState.tab = initialTab;
+
+  // タブUI即時反映
+  _updateItemMasterPickerTabUI();
+
+  // 検索クリア
+  const search = document.getElementById('imp-search');
+  if (search) search.value = '';
+
+  const list = document.getElementById('imp-list');
+  if (list) list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:14px">読み込み中...</div>';
+  const status = document.getElementById('imp-status');
+  if (status) status.textContent = '';
+
+  openModal('modal-item-master-picker');
+
+  // force=true で必ず最新を取得（管理画面で登録直後の即時反映）
+  try {
+    const items = await getItemNameMasterForEstimate(null, { force: true });
+    _itemMasterPickerState.items = items || [];
+    _itemMasterPickerState.error = null;
+  } catch (e) {
+    _itemMasterPickerState.items = [];
+    _itemMasterPickerState.error = e?.message || 'unknown error';
+    console.warn('[openItemMasterPicker] fetch failed:', e);
+  }
+  // インジケータも同時更新
+  refreshEstimateMasterIndicator().catch(() => {});
+  // datalist も同時更新
+  populateEstimateItemNameDatalist().catch(() => {});
+
+  _updateItemMasterPickerTabUI(); // 件数表示を更新
+  renderItemMasterPickerList();
+}
+
+function switchItemMasterPickerTab(tab) {
+  if (tab !== 'video' && tab !== 'design' && tab !== 'all') return;
+  _itemMasterPickerState.tab = tab;
+  _updateItemMasterPickerTabUI();
+  renderItemMasterPickerList();
+}
+
+function _updateItemMasterPickerTabUI() {
+  const items = _itemMasterPickerState.items || [];
+  const counts = {
+    video:  items.filter(i => i && i.category === 'video').length,
+    design: items.filter(i => i && i.category === 'design').length,
+    all:    items.length,
+  };
+  const cv = document.getElementById('imp-count-video');
+  const cd = document.getElementById('imp-count-design');
+  const ca = document.getElementById('imp-count-all');
+  if (cv) cv.textContent = `(${counts.video})`;
+  if (cd) cd.textContent = `(${counts.design})`;
+  if (ca) ca.textContent = `(${counts.all})`;
+  const setStyle = (id, active, color) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.color = active ? (color || 'var(--em-dark)') : 'var(--text-muted)';
+    el.style.borderBottomColor = active ? (color || 'var(--em)') : 'transparent';
+    el.style.fontWeight = active ? '600' : '500';
+  };
+  setStyle('imp-tab-video',  _itemMasterPickerState.tab === 'video',  '#1565c0');
+  setStyle('imp-tab-design', _itemMasterPickerState.tab === 'design', '#5E35B1');
+  setStyle('imp-tab-all',    _itemMasterPickerState.tab === 'all',    'var(--em)');
+}
+
+function renderItemMasterPickerList() {
+  const list = document.getElementById('imp-list');
+  if (!list) return;
+
+  // エラー時の表示
+  if (_itemMasterPickerState.error) {
+    list.innerHTML = `
+      <div style="padding:18px 20px">
+        <div style="font-size:13px;color:#A32D2D;font-weight:600;margin-bottom:6px">⚠ 品目マスターの取得に失敗しました</div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.7">本番DBに migration が反映されていない可能性があります。詳細はブラウザコンソールを確認してください。</div>
+        <div style="font-size:11px;color:var(--text-faint);margin-top:8px;font-family:monospace;word-break:break-all">${esc(_itemMasterPickerState.error)}</div>
+      </div>`;
+    const btn = document.getElementById('imp-add-btn');
+    if (btn) btn.disabled = true;
+    const status = document.getElementById('imp-status');
+    if (status) status.textContent = '';
+    return;
+  }
+
+  const all = _itemMasterPickerState.items || [];
+  const tab = _itemMasterPickerState.tab;
+  let scoped = (tab === 'all') ? all.slice() : all.filter(i => i && i.category === tab);
+
+  // 検索
+  const searchEl = document.getElementById('imp-search');
+  const q = (searchEl?.value || '').trim().toLowerCase();
+  if (q) {
+    scoped = scoped.filter(i => (i.name || '').toLowerCase().includes(q));
+  }
+
+  // ソート: sort_order → name
+  scoped.sort((a, b) => {
+    const ao = Number(a.sort_order) || 0;
+    const bo = Number(b.sort_order) || 0;
+    if (ao !== bo) return ao - bo;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+  });
+
+  // 空時フィードバック
+  if (scoped.length === 0) {
+    const totalAll = all.length;
+    const totalCat = (tab === 'all') ? totalAll : all.filter(i => i && i.category === tab).length;
+    const catLabel = tab === 'video' ? '動画' : (tab === 'design' ? 'デザイン' : '');
+    const isMasterEmpty = totalAll === 0;
+    const linkBtn = `<button class="btn-sm" style="padding:4px 12px;font-size:12px;margin-top:6px" onclick="closeModal('modal-item-master-picker');showPage('master',document.querySelector('.nav-btn[data-page=&quot;master&quot;]'));setTimeout(()=>{if(typeof selectMasterNav==='function')selectMasterNav('item_names');},120)">📦 品目マスター管理画面を開く</button>`;
+    if (isMasterEmpty) {
+      list.innerHTML = `
+        <div style="padding:18px 20px">
+          <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:4px">品目マスターが空です</div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.7">管理画面から登録してください。登録後、このモーダルを開き直すと反映されます。</div>
+          ${linkBtn}
+        </div>`;
+    } else if (q) {
+      list.innerHTML = `
+        <div style="padding:18px 20px">
+          <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:4px">「${esc(q)}」に一致する品目はありません</div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.7">${catLabel ? catLabel + 'カテゴリ: ' + totalCat + '件 / ' : ''}全カテゴリ: ${totalAll}件</div>
+        </div>`;
+    } else {
+      list.innerHTML = `
+        <div style="padding:18px 20px">
+          <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:4px">${catLabel}カテゴリには品目がありません</div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.7">${catLabel}カテゴリ: ${totalCat}件 / 全カテゴリ: ${totalAll}件<br>「全カテゴリ」タブに切り替えるか、管理画面から${catLabel}用の品目を追加してください。</div>
+          ${linkBtn}
+        </div>`;
+    }
+    const btn = document.getElementById('imp-add-btn');
+    if (btn) btn.disabled = true;
+    const status = document.getElementById('imp-status');
+    if (status) status.textContent = '';
+    return;
+  }
+
+  // 既に明細に存在する品目名（重複検出表示用）
+  const existingLabels = new Set((_festItems || []).map(it => (it && it.label || '').trim()).filter(Boolean));
+
+  list.innerHTML = scoped.map(it => {
+    const id = it.id;
+    const checked = _itemMasterPickerState.selected.has(id) ? 'checked' : '';
+    const dup = existingLabels.has((it.name || '').trim());
+    const dupBadge = dup ? '<span style="font-size:10px;background:#fff7e6;color:#a86700;padding:1px 6px;border-radius:6px;margin-left:6px">既に明細にあり</span>' : '';
+    const catLabel = it.category === 'video' ? '🎬 動画' : (it.category === 'design' ? '🎨 デザイン' : '—');
+    const priceStr = (it.default_unit_price ?? null) === null ? '' : `¥${Number(it.default_unit_price).toLocaleString('ja-JP')}`;
+    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-light);cursor:pointer;font-size:13px">
+      <input type="checkbox" ${checked} onchange="toggleItemMasterPickerSelection('${esc(id)}', this.checked)" style="margin:0">
+      <span style="flex:2;font-weight:500;color:var(--text)">${esc(it.name)}${dupBadge}</span>
+      <span style="width:90px;font-size:11px;color:var(--text-muted)">${catLabel}</span>
+      <span style="width:60px;font-size:12px;color:var(--text-muted);text-align:center">${esc(it.default_unit || '—')}</span>
+      <span style="width:90px;font-size:12px;color:var(--text);text-align:right">${priceStr}</span>
+    </label>`;
+  }).join('');
+
+  const btn = document.getElementById('imp-add-btn');
+  if (btn) btn.disabled = (_itemMasterPickerState.selected.size === 0);
+  const status = document.getElementById('imp-status');
+  if (status) status.textContent = `表示 ${scoped.length} 件 / 選択 ${_itemMasterPickerState.selected.size} 件`;
+}
+
+function toggleItemMasterPickerSelection(id, checked) {
+  if (!id) return;
+  if (checked) _itemMasterPickerState.selected.add(id);
+  else _itemMasterPickerState.selected.delete(id);
+  // 件数表示と追加ボタンの活性だけ即時更新（リスト全体は再描画しない）
+  const btn = document.getElementById('imp-add-btn');
+  if (btn) btn.disabled = (_itemMasterPickerState.selected.size === 0);
+  const status = document.getElementById('imp-status');
+  if (status) {
+    const visible = (status.textContent || '').match(/表示 (\d+) 件/);
+    const visN = visible ? visible[1] : '';
+    status.textContent = `${visN ? '表示 ' + visN + ' 件 / ' : ''}選択 ${_itemMasterPickerState.selected.size} 件`;
+  }
+}
+
+function confirmItemMasterPicker() {
+  const all = _itemMasterPickerState.items || [];
+  const ids = Array.from(_itemMasterPickerState.selected || []);
+  if (ids.length === 0) return;
+  const byId = new Map(all.map(it => [it.id, it]));
+  const existingLabels = new Set((_festItems || []).map(it => (it && it.label || '').trim()).filter(Boolean));
+  let added = 0, skipped = 0;
+  for (const id of ids) {
+    const it = byId.get(id);
+    if (!it || !it.name) { skipped++; continue; }
+    const name = String(it.name).trim();
+    if (existingLabels.has(name)) { skipped++; continue; } // 重複は安全側でスキップ
+    addEstimateItemRow({
+      label:      name,
+      quantity:   1,
+      unit:       it.default_unit || null,
+      unit_price: (it.default_unit_price != null) ? Number(it.default_unit_price) : 0,
+      category:   it.category || null,
+    });
+    existingLabels.add(name);
+    added++;
+  }
+  closeModal('modal-item-master-picker');
+  if (added > 0 && skipped > 0) {
+    showToast(`${added} 件を追加しました（既存と重複の ${skipped} 件はスキップ）`, 'success');
+  } else if (added > 0) {
+    showToast(`${added} 件をマスターから追加しました`, 'success');
+  } else if (skipped > 0) {
+    showToast(`選択した ${skipped} 件はすべて既に明細に存在するためスキップしました`, 'warn');
+  }
+}
+
 // 品目入力で完全一致したらマスターの default_unit / default_unit_price を補完（既存値があれば触らない）
 async function onEstimateItemNameChange(idx, value) {
   if (!value || !_festItems[idx]) return;
@@ -7749,6 +8042,8 @@ async function onEstimateItemNameChange(idx, value) {
 function addEstimateItemRow(seed) {
   _festItems.push(_newItem(seed || {}));
   renderEstimateItems();
+  // 行追加直後に datalist を最新化（マスター登録直後の即時反映用 / キャッシュで十分速い）
+  populateEstimateItemNameDatalist().catch(err => console.warn('[populateEstimateItemNameDatalist]', err));
 }
 
 function removeEstimateItem(idx) {
@@ -11789,12 +12084,28 @@ async function deleteItemNameMaster(id) {
 }
 
 // 見積エディタ用: 品目マスターを取得（5分キャッシュ）
-async function getItemNameMasterForEstimate(category) {
+// opts.force: true でキャッシュをバイパスして再取得（管理画面で登録直後の即時反映用）
+// opts は省略可。後方互換のため第2引数 boolean は { force: bool } として扱う
+async function getItemNameMasterForEstimate(category, opts) {
+  const force = (opts === true) || !!(opts && opts.force);
   const now = Date.now();
-  if (!_itemNameMasterCache || (now - _itemNameMasterCacheAt) > 5 * 60 * 1000) {
-    const res = await apiFetch(`${API}/item-name-master?active_only=true`);
-    _itemNameMasterCache = res.ok ? await res.json() : [];
-    _itemNameMasterCacheAt = now;
+  const cacheStale = !_itemNameMasterCache || (now - _itemNameMasterCacheAt) > 5 * 60 * 1000;
+  if (force || cacheStale) {
+    try {
+      const res = await apiFetch(`${API}/item-name-master?active_only=true`);
+      if (!res.ok) {
+        // force のときはキャッシュを温存して例外を投げる（呼び出し側がエラー表示できるよう）
+        if (force) throw new Error(`HTTP ${res.status}`);
+        _itemNameMasterCache = [];
+      } else {
+        _itemNameMasterCache = await res.json();
+      }
+      _itemNameMasterCacheAt = now;
+    } catch (e) {
+      if (force) throw e;
+      _itemNameMasterCache = _itemNameMasterCache || [];
+      _itemNameMasterCacheAt = now;
+    }
   }
   if (category && (category === 'video' || category === 'design')) {
     return _itemNameMasterCache.filter(i => i.category === category);
