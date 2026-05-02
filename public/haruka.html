@@ -1237,7 +1237,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <button class="ham-btn" onclick="openNavDrawer()" aria-label="メニューを開く">
     <span></span><span></span><span></span>
   </button>
-  <div class="logo-area">
+  <div class="logo-area" onclick="goHome()" title="ホームへ" style="cursor:pointer">
     <div class="logo-main" id="ws-logo-main">HARUKA FILM</div>
     <div class="logo-line"></div>
     <div class="logo-sub" id="ws-logo-sub">光を当てる、あなたのストーリーに</div>
@@ -1273,8 +1273,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <div class="header-user">
       <div class="user-av" id="user-av" onclick="openMyProfile()" title="プロフィール編集">HK</div>
-      <span class="user-name" id="user-name">読み込み中</span>
-      <span class="user-role" id="user-role">-</span>
+      <span class="user-name" id="user-name" onclick="openMyProfile()" title="プロフィール編集" style="cursor:pointer">読み込み中</span>
+      <span class="user-role" id="user-role" onclick="openMyProfile()" title="プロフィール編集" style="cursor:pointer">-</span>
       <a class="hbtn-icon" href="/guide.html" target="_blank" title="新メンバー向けガイド（メンバー登録・データ構造ほか）" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center">📖</a>
       <button class="hbtn-icon" onclick="openChangePasswordModal()" title="パスワード変更">🔑</button>
       <button class="hbtn-icon danger" onclick="logout()" title="ログアウト">⏻</button>
@@ -1881,9 +1881,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- チーム追加・編集モーダル -->
 <div class="modal-overlay" id="modal-team">
-  <div class="modal" style="max-width:580px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
-    <div class="modal-title" id="t-modal-title">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
-    <div style="overflow-y:auto;flex:1;padding:0 24px 8px">
+  <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;padding:24px 24px 0">
+    <div class="modal-title" id="t-modal-title" style="margin-bottom:14px;padding-right:0">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
+    <div style="overflow-y:auto;flex:1;padding:0 0 8px;margin:0 -4px 0 0">
       <input type="hidden" id="t-id">
       <div class="form-row">
         <div class="form-group">
@@ -1948,7 +1948,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div id="t-member-list" style="border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto"></div>
       </div>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 0 0;margin-top:8px;border-top:1px solid var(--border);flex-shrink:0">
       <button class="btn" id="t-delete-btn" onclick="deleteCurrentTeam()" style="display:none;color:#A32D2D;border-color:#F09595">🗑️ 削除</button>
       <div style="display:flex;gap:10px;margin-left:auto">
         <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
@@ -1995,19 +1995,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div class="modal-body">
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">現在のパスワード</label>
-        <input class="form-input" type="password" id="cp-current" placeholder="現在のパスワード">
+        <input class="form-input" type="password" id="cp-current" placeholder="現在のパスワード" autocomplete="current-password">
       </div>
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">新しいパスワード <span style="color:#E24B4A">*</span></label>
-        <input class="form-input" type="password" id="cp-new" placeholder="8文字以上">
+        <input class="form-input" type="password" id="cp-new" placeholder="8文字以上" autocomplete="new-password">
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.7">使用可能な文字: <strong style="color:var(--em-dark)">半角英字 / 数字 / 記号</strong>（8文字以上 / 全角・スペース不可）</div>
       </div>
       <div class="form-group" style="margin-bottom:0">
         <label class="form-label">新しいパスワード（確認）</label>
-        <input class="form-input" type="password" id="cp-confirm" placeholder="••••••••">
+        <input class="form-input" type="password" id="cp-confirm" placeholder="••••••••" autocomplete="new-password">
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="submitChangePassword()">変更する</button>
+      <button class="btn-primary" id="cp-submit-btn" onclick="submitChangePassword()">変更する</button>
       <button class="btn" onclick="closeModal('modal-change-password')">キャンセル</button>
     </div>
   </div>
@@ -5433,47 +5434,56 @@ function openEditMemberById(id) {
 }
 
 function openEditMember(m) {
-  document.getElementById('m-modal-title').textContent = 'メンバー編集';
-  document.getElementById('m-submit-btn').textContent = '保存する';
-  document.getElementById('m-id').value = m.id;
-  document.getElementById('m-name').value = m.full_name || '';
-  document.getElementById('m-nickname').value = m.nickname || '';
-  document.getElementById('m-email').value = m.email || '';
-  document.getElementById('m-email').disabled = true;
-  document.getElementById('m-role').value = m.role || 'editor';
-  document.getElementById('m-job-type').value = m.job_type || 'video';
-  document.getElementById('m-rank').value = m.rank || '';
-  // 基本チーム（A〜Z単一英字）のみを候補にする。案件チームが入っていれば legacy option を追加
-  populateMemberTeamSelect(m.team_id || null);
-  document.getElementById('m-slack').value = m.slack_dm_id || '';
-  document.getElementById('m-chatwork').value = m.chatwork_dm_id || '';
-  document.getElementById('m-birthday').value = m.birthday ? m.birthday.slice(0,10) : '';
-  { const cb = document.getElementById('m-hide-birth-year'); if (cb) cb.checked = !!m.hide_birth_year; }
-  // 稼働時間（新JSONB形式、旧単一カラムもフォールバック対応）
-  const wdRanges = m.weekday_hours || (m.weekday_start != null ? [{from: m.weekday_start, to: m.weekday_end ?? 18}] : [{from:9,to:18}]);
-  const weRanges = m.weekend_hours || (m.weekend_start != null ? [{from: m.weekend_start, to: m.weekend_end ?? 17}] : null);
-  const weekendOff = !weRanges;
-  document.getElementById('m-weekend-off').checked = weekendOff;
-  document.getElementById('m-weekend-inputs').style.display = weekendOff ? 'none' : '';
-  initTimeRanges('weekday', wdRanges);
-  initTimeRanges('weekend', weRanges || [{from:10,to:17}]);
-  document.getElementById('m-note').value = m.note || '';
-  document.getElementById('m-creative-default-view').value = localStorage.getItem('hfs_cv_default_' + m.id) || 'all';
-  document.getElementById('m-bank-name').value = m.bank_name || '';
-  document.getElementById('m-bank-code').value = m.bank_code || '';
-  document.getElementById('m-branch-name').value = m.branch_name || '';
-  document.getElementById('m-branch-code').value = m.branch_code || '';
-  document.getElementById('m-account-type').value = m.account_type || '普通';
-  document.getElementById('m-account-number').value = m.account_number || '';
-  document.getElementById('m-account-holder').value = m.account_holder_kana || '';
-  document.getElementById('m-phone').value = m.phone || '';
-  document.getElementById('m-postal-code').value = m.postal_code || '';
-  document.getElementById('m-address').value = m.address || '';
-  applyMemberModalAdminFields(m);
-  setMemberModalAvatar(m.id, m.avatar_url || null);
-  onRoleChange(m.role || 'editor');
-  switchMemberTab(0);
+  // 先にモーダルを開く（途中エラーで「グレーだけで本体が出ない」状態を防ぐ）
+  try { switchMemberTab(0); } catch(_) {}
   openModal('modal-member');
+  // 各フィールド代入は欠損プロパティ・要素不在に強くする
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+  try {
+    setText('m-modal-title', 'メンバー編集');
+    setText('m-submit-btn', '保存する');
+    setVal('m-id', m.id || '');
+    setVal('m-name', m.full_name || '');
+    setVal('m-nickname', m.nickname || '');
+    setVal('m-email', m.email || '');
+    const emailEl = document.getElementById('m-email'); if (emailEl) emailEl.disabled = true;
+    setVal('m-role', m.role || 'editor');
+    setVal('m-job-type', m.job_type || 'video');
+    setVal('m-rank', m.rank || '');
+    // 基本チーム（A〜Z単一英字）のみを候補にする。案件チームが入っていれば legacy option を追加
+    try { populateMemberTeamSelect(m.team_id || null); } catch(e) { console.error('[openEditMember] populateMemberTeamSelect:', e); }
+    setVal('m-slack', m.slack_dm_id || '');
+    setVal('m-chatwork', m.chatwork_dm_id || '');
+    setVal('m-birthday', m.birthday ? String(m.birthday).slice(0,10) : '');
+    { const cb = document.getElementById('m-hide-birth-year'); if (cb) cb.checked = !!m.hide_birth_year; }
+    // 稼働時間（新JSONB形式、旧単一カラムもフォールバック対応）
+    const wdRanges = m.weekday_hours || (m.weekday_start != null ? [{from: m.weekday_start, to: m.weekday_end ?? 18}] : [{from:9,to:18}]);
+    const weRanges = m.weekend_hours || (m.weekend_start != null ? [{from: m.weekend_start, to: m.weekend_end ?? 17}] : null);
+    const weekendOff = !weRanges;
+    const woff = document.getElementById('m-weekend-off'); if (woff) woff.checked = weekendOff;
+    const winputs = document.getElementById('m-weekend-inputs'); if (winputs) winputs.style.display = weekendOff ? 'none' : '';
+    try { initTimeRanges('weekday', wdRanges); } catch(_) {}
+    try { initTimeRanges('weekend', weRanges || [{from:10,to:17}]); } catch(_) {}
+    setVal('m-note', m.note || '');
+    setVal('m-creative-default-view', localStorage.getItem('hfs_cv_default_' + m.id) || 'all');
+    setVal('m-bank-name', m.bank_name || '');
+    setVal('m-bank-code', m.bank_code || '');
+    setVal('m-branch-name', m.branch_name || '');
+    setVal('m-branch-code', m.branch_code || '');
+    setVal('m-account-type', m.account_type || '普通');
+    setVal('m-account-number', m.account_number || '');
+    setVal('m-account-holder', m.account_holder_kana || '');
+    setVal('m-phone', m.phone || '');
+    setVal('m-postal-code', m.postal_code || '');
+    setVal('m-address', m.address || '');
+    try { applyMemberModalAdminFields(m); } catch(_) {}
+    try { setMemberModalAvatar(m.id, m.avatar_url || null); } catch(_) {}
+    try { onRoleChange(m.role || 'editor'); } catch(_) {}
+  } catch (e) {
+    console.error('[openEditMember] failed:', e);
+    showToast('編集画面の表示で問題が発生しました（コンソール参照）', 'warn');
+  }
 }
 
 // ==================== アバター（プロフィールアイコン） ====================
@@ -5606,6 +5616,7 @@ async function refreshAvatarUsages(memberId, avatarUrl) {
   // 主要なリスト・カードを再描画
   try { if (typeof renderMemberList === 'function') renderMemberList(); } catch(_) {}
   try { if (typeof renderCreatives === 'function') renderCreatives(); } catch(_) {}
+  try { if (typeof renderTeamsList === 'function') renderTeamsList(); } catch(_) {}
   try { if (typeof renderTeams === 'function') renderTeams(); } catch(_) {}
   try { if (typeof renderDashboard === 'function') renderDashboard(); } catch(_) {}
 }
@@ -5627,6 +5638,15 @@ function openMyProfile() {
   const me = allMembers.find(x => x.id === currentUser.id);
   if (me) openEditMember(me);
   else openEditMember({ id: currentUser.id, full_name: currentUser.name, email: currentUser.email, role: currentUser.role, avatar_url: currentUser.avatar_url });
+}
+
+// ロゴクリック → ホーム（ダッシュボード）へ
+function goHome() {
+  try {
+    const homeBtn = document.querySelector('.nav-btn[data-page="dashboard"]');
+    if (homeBtn) showPage('dashboard', homeBtn);
+    else showPage('dashboard');
+  } catch (e) { console.warn('[goHome]', e); }
 }
 
 async function submitMember() {
@@ -6119,8 +6139,34 @@ function canEditProject() {
   return hasPermission('project.create_edit');
 }
 
-function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (!el) { console.warn('[openModal] no element:', id); return; }
+  el.classList.add('open');
+}
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('open');
+}
+
+// 背景クリック / Esc キーでモーダルを閉じる（PC で「グレーになって動かない」状態の脱出口）
+// ファイルプレビュー（modal-file-preview）など独自実装は除外
+document.addEventListener('click', (e) => {
+  // クリックされた要素が modal-overlay 自身のときだけ閉じる（中の .modal クリックは閉じない）
+  const overlay = e.target.closest('.modal-overlay');
+  if (!overlay) return;
+  if (e.target !== overlay) return;
+  if (!overlay.classList.contains('open')) return;
+  overlay.classList.remove('open');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const opens = document.querySelectorAll('.modal-overlay.open');
+  if (!opens.length) return;
+  // 一番最後に開かれたもの（DOM 上は同じだが上位 z-index 想定）を閉じる
+  opens[opens.length - 1].classList.remove('open');
+});
 
 let showCompleted = false;
 let showEndedClients = false;
@@ -14219,23 +14265,46 @@ function openChangePasswordModal() {
   document.getElementById('cp-current').value = '';
   document.getElementById('cp-new').value = '';
   document.getElementById('cp-confirm').value = '';
+  // 送信ボタンの状態を初期化（前回失敗時に disabled 残留することがあるため）
+  const btn = document.getElementById('cp-submit-btn');
+  if (btn) { btn.disabled = false; btn.textContent = '変更する'; }
   openModal('modal-change-password');
+  // Enter で送信（モーダル開く度にバインド済みフラグで重複登録回避）
+  ['cp-current','cp-new','cp-confirm'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.cpEnterBound === '1') return;
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submitChangePassword(); }
+    });
+    el.dataset.cpEnterBound = '1';
+  });
+  // 自動フォーカス
+  setTimeout(() => { try { document.getElementById('cp-new').focus(); } catch(_) {} }, 50);
 }
 
 async function submitChangePassword() {
+  const btn = document.getElementById('cp-submit-btn');
+  if (btn && btn.disabled) return; // 二重送信ガード
   const cur  = document.getElementById('cp-current').value;
   const nw   = document.getElementById('cp-new').value;
   const conf = document.getElementById('cp-confirm').value;
   if (nw.length < 8)   { showToast('新しいパスワードは8文字以上必要です', 'warn'); return; }
   if (nw !== conf)     { showToast('パスワードが一致しません', 'warn'); return; }
-  const res = await apiFetch(`${API}/users/change-password`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ currentPassword: cur, newPassword: nw })
-  });
-  const data = await res.json();
-  if (!res.ok) { showToast(translateError(data?.error), 'error'); return; }
-  showToast('パスワードを変更しました', 'success');
-  closeModal('modal-change-password');
+  if (btn) { btn.disabled = true; btn.textContent = '変更中...'; }
+  try {
+    const res = await apiFetch(`${API}/users/change-password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: cur, newPassword: nw })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(translateError(data?.error) || 'パスワード変更に失敗しました', 'error'); return; }
+    showToast('パスワードを変更しました', 'success');
+    closeModal('modal-change-password');
+  } catch (e) {
+    showToast('通信エラー: ' + (e?.message || ''), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '変更する'; }
+  }
 }
 
 // ===== 管理者によるパスワードリセット =====
