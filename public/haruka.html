@@ -2742,11 +2742,49 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div><!-- /スクロール -->
 
     <!-- フッター -->
-    <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:#fff">
-      <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
-      <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
+    <!-- 削除ボタン: admin / secretary のみ表示（編集モード時のみ）。クリックで cl-delete-confirm モーダルを開く -->
+    <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-shrink:0;background:#fff">
+      <button class="btn" id="cl-delete-btn" onclick="openClientDeleteConfirm()"
+        style="display:none;color:#A32D2D;border-color:#F09595;background:#fff">🗑 クライアントを削除</button>
+      <div style="display:flex;gap:10px;margin-left:auto">
+        <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
+        <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
+      </div>
     </div>
 
+  </div>
+</div>
+
+<!-- クライアント削除確認モーダル -->
+<!-- 誤削除防止: 削除理由 (textarea) 必須。5文字未満は警告。空欄は実行ボタン disabled。 -->
+<div class="modal-overlay" id="modal-client-delete-confirm" style="z-index:320">
+  <div class="modal" style="max-width:480px;width:92vw;padding:24px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div id="cl-del-title" style="font-size:15px;font-weight:700;color:#A32D2D;margin-bottom:4px">クライアントを削除しますか？</div>
+        <div style="font-size:12px;color:var(--text);line-height:1.7">
+          関連する案件・クリエイティブ・請求情報も全て削除されます。<br>
+          <b style="color:#A32D2D">この操作は取り消せません。</b>
+        </div>
+      </div>
+    </div>
+    <div id="cl-del-related-count"
+      style="font-size:12px;color:var(--text-muted);background:#FFF7F2;border:1px solid #F2D9CC;border-radius:8px;padding:8px 12px;margin-bottom:14px">
+      関連案件件数を取得中...
+    </div>
+    <div style="margin-bottom:6px">
+      <label class="form-label" style="display:block;margin-bottom:6px">削除理由 <span style="color:#A32D2D">*</span></label>
+      <textarea class="form-input" id="cl-del-reason" rows="3"
+        placeholder="例: テストデータのため / 誤って作成したため / 取引終了のため"
+        oninput="validateClientDeleteReason()" style="resize:vertical"></textarea>
+      <div id="cl-del-reason-warn" style="font-size:11px;color:#A32D2D;margin-top:4px;min-height:14px"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-client-delete-confirm')">キャンセル</button>
+      <button class="btn-primary" id="cl-del-execute-btn" disabled onclick="executeClientDelete()"
+        style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
   </div>
 </div>
 
@@ -4389,6 +4427,13 @@ function openEditClient(id) {
   document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
+  // 削除ボタンの表示制御: admin / secretary のみ。それ以外は完全に非表示。
+  // サーバー側でも requireRole('admin','secretary') で 403 を返すため二重防御。
+  const delBtn = document.getElementById('cl-delete-btn');
+  if (delBtn) {
+    const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+    delBtn.style.display = (role === 'admin' || role === 'secretary') ? '' : 'none';
+  }
   switchClientTab('basic');
   openModal('modal-client');
 }
@@ -4406,6 +4451,9 @@ function openNewClientModal() {
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
+  // 新規作成時は削除ボタンを必ず非表示
+  const delBtn = document.getElementById('cl-delete-btn');
+  if (delBtn) delBtn.style.display = 'none';
   switchClientTab('basic');
   openModal('modal-client');
 }
@@ -4462,6 +4510,99 @@ async function submitClient() {
   } else {
     const e = await res.json();
     showToast('エラー: ' + translateError(e?.error), 'error');
+  }
+}
+
+// ===== クライアント削除 (admin / secretary のみ) =====
+// クライアント編集モーダルから「🗑 クライアントを削除」を押すと開く確認モーダルを制御。
+// 誤動作防止: 削除理由は必須（5文字未満は警告／空欄は実行ボタン disabled）。
+// サーバー側でも reason 必須・role 制限を二重で確認している。
+function openClientDeleteConfirm() {
+  const id = document.getElementById('cl-id').value;
+  const name = (document.getElementById('cl-name').value || '').trim();
+  if (!id) { showToast('削除対象のクライアントが特定できません', 'warn'); return; }
+
+  // 権限チェック（フロント側）。サーバーでも 403 で弾く
+  const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+  if (role !== 'admin' && role !== 'secretary') {
+    showToast('クライアント削除は管理者または秘書のみ実行できます', 'warn');
+    return;
+  }
+
+  document.getElementById('cl-del-title').textContent = `クライアント「${name || '(無題)'}」を削除しますか？`;
+
+  // 関連案件件数（allProjects から算出）。allProjects 未ロードでもエラーにしない。
+  const relCount = Array.isArray(allProjects)
+    ? allProjects.filter(p => p?.client_id === id).length
+    : 0;
+  document.getElementById('cl-del-related-count').textContent =
+    `現在 ${relCount} 件の案件が紐づいています。これらも併せて削除されます。`;
+
+  const reasonEl = document.getElementById('cl-del-reason');
+  reasonEl.value = '';
+  document.getElementById('cl-del-reason-warn').textContent = '';
+  document.getElementById('cl-del-execute-btn').disabled = true;
+  openModal('modal-client-delete-confirm');
+  // フォーカスを理由欄へ
+  setTimeout(() => reasonEl.focus(), 50);
+}
+
+// 理由 textarea の入力検証（リアルタイム）
+function validateClientDeleteReason() {
+  const reason = (document.getElementById('cl-del-reason').value || '').trim();
+  const warnEl = document.getElementById('cl-del-reason-warn');
+  const btn    = document.getElementById('cl-del-execute-btn');
+  if (!reason) {
+    warnEl.textContent = '';
+    btn.disabled = true;
+    return;
+  }
+  if (reason.length < 5) {
+    warnEl.textContent = 'もう少し詳しく入力してください（5文字以上推奨）';
+    // 5文字未満でも実行できないように disabled は維持
+    btn.disabled = true;
+    return;
+  }
+  warnEl.textContent = '';
+  btn.disabled = false;
+}
+
+async function executeClientDelete() {
+  const id   = document.getElementById('cl-id').value;
+  const name = (document.getElementById('cl-name').value || '').trim();
+  const reason = (document.getElementById('cl-del-reason').value || '').trim();
+  if (!id || !reason || reason.length < 5) {
+    showToast('削除理由を入力してください', 'warn');
+    return;
+  }
+  const btn = document.getElementById('cl-del-execute-btn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '削除中...';
+  try {
+    const res = await apiFetch(`${API}/clients/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (res.ok) {
+      closeModal('modal-client-delete-confirm');
+      closeModal('modal-client');
+      // 一覧再取得（クライアント・案件 両方反映）
+      await Promise.all([
+        (typeof loadClients === 'function') ? loadClients() : Promise.resolve(),
+        (typeof loadProjects === 'function') ? loadProjects() : Promise.resolve(),
+      ]);
+      showToast(`クライアント「${name}」を削除しました`, 'success');
+    } else {
+      const e = await res.json().catch(() => ({}));
+      showToast('削除に失敗: ' + translateError(e?.error || `HTTP ${res.status}`), 'error');
+    }
+  } catch (err) {
+    showToast('削除に失敗: ' + (err?.message || err), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
   }
 }
 
