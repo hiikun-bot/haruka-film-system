@@ -19,7 +19,10 @@
 const express = require('express');
 const router  = express.Router();
 const supabase = require('../supabase');
-const { requireAuth, requirePermission } = require('../auth');
+const { requireAuth, requirePermission, requireLevel } = require('../auth');
+
+// 書き込みは secretary 以上（= admin / secretary）
+const requireWrite = requireLevel('secretary');
 
 // ---------- Feature flag ----------
 function isEnabled() {
@@ -333,6 +336,349 @@ router.get('/projects/:id/similar', requireAuth, requirePermission('analytics.vi
     });
   } catch (e) {
     res.status(500).json({ error: e.message || '類似案件比較に失敗しました' });
+  }
+});
+
+// =====================================================================
+// 書き込み系（Step B-2）— すべて secretary 以上 + feature flag 有効時のみ
+// =====================================================================
+
+// --- 入力サニタイズ -----------------------------------------------------
+const allowedBookStatus    = new Set(['open', 'closed']);
+const allowedProjectTypes  = new Set(['video', 'hp', 'lp', 'other']);
+const allowedEstimateStat  = new Set(['draft', 'sent', 'accepted', 'rejected', 'archived']);
+const allowedCostSources   = new Set(['manual']);          // API 経由は manual のみ。invoice_item はトリガ経由
+const allowedRevSources    = new Set(['manual']);          // 同上 client_invoice はトリガ経由
+const allowedRevenueTypes  = new Set(['deposit', 'final', 'monthly', 'lump_sum', 'other']);
+
+function intOrNull(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+function intOrZero(v) {
+  return intOrNull(v) ?? 0;
+}
+
+// --- PUT /projects/:id/finance-book  契約総額・状態の upsert ---------------
+router.put('/projects/:id/finance-book', requireAuth, requireWrite, async (req, res) => {
+  const projectId = req.params.id;
+  if (!projectId) return res.status(400).json({ error: 'project id is required' });
+
+  const body = req.body || {};
+  const patch = {};
+  if (body.contract_total    !== undefined) patch.contract_total    = intOrZero(body.contract_total);
+  if (body.estimated_revenue !== undefined) patch.estimated_revenue = intOrZero(body.estimated_revenue);
+  if (body.estimated_cost    !== undefined) patch.estimated_cost    = intOrZero(body.estimated_cost);
+  if (body.note              !== undefined) patch.note              = body.note ? String(body.note) : null;
+  if (body.status            !== undefined) {
+    if (!allowedBookStatus.has(body.status)) {
+      return res.status(400).json({ error: `status は ${[...allowedBookStatus].join('/')} のいずれか` });
+    }
+    patch.status = body.status;
+    patch.closed_at = body.status === 'closed' ? new Date().toISOString() : null;
+  }
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: '更新項目がありません' });
+  }
+  patch.updated_at = new Date().toISOString();
+
+  try {
+    const { data: existing } = await supabase
+      .from('project_finance_books')
+      .select('id')
+      .eq('project_id', projectId)
+      .maybeSingle();
+
+    let saved;
+    if (existing) {
+      const { data, error } = await supabase
+        .from('project_finance_books')
+        .update(patch)
+        .eq('project_id', projectId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      saved = data;
+    } else {
+      const { data, error } = await supabase
+        .from('project_finance_books')
+        .insert({ project_id: projectId, ...patch })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      saved = data;
+    }
+    res.json({ finance_book: saved });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '保存に失敗しました' });
+  }
+});
+
+// --- PUT /projects/:id/input-profile  案件タイプ別入力 + メトリクス upsert ----
+router.put('/projects/:id/input-profile', requireAuth, requireWrite, async (req, res) => {
+  const projectId = req.params.id;
+  if (!projectId) return res.status(400).json({ error: 'project id is required' });
+
+  const body = req.body || {};
+  const patch = {};
+  if (body.project_type !== undefined) {
+    if (!allowedProjectTypes.has(body.project_type)) {
+      return res.status(400).json({ error: `project_type は ${[...allowedProjectTypes].join('/')} のいずれか` });
+    }
+    patch.project_type = body.project_type;
+  }
+  if (body.input_payload !== undefined) {
+    if (typeof body.input_payload !== 'object' || Array.isArray(body.input_payload)) {
+      return res.status(400).json({ error: 'input_payload は object である必要があります' });
+    }
+    patch.input_payload = body.input_payload;
+  }
+  if (body.normalized_metrics !== undefined) {
+    if (typeof body.normalized_metrics !== 'object' || Array.isArray(body.normalized_metrics)) {
+      return res.status(400).json({ error: 'normalized_metrics は object である必要があります' });
+    }
+    patch.normalized_metrics = body.normalized_metrics;
+  }
+  if (body.raw_request_text !== undefined) {
+    patch.raw_request_text = body.raw_request_text ? String(body.raw_request_text) : null;
+  }
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: '更新項目がありません' });
+  patch.updated_at = new Date().toISOString();
+
+  try {
+    const { data: existing } = await supabase
+      .from('project_input_profiles')
+      .select('id')
+      .eq('project_id', projectId)
+      .maybeSingle();
+    let saved;
+    if (existing) {
+      const { data, error } = await supabase
+        .from('project_input_profiles')
+        .update(patch).eq('project_id', projectId).select().single();
+      if (error) throw new Error(error.message);
+      saved = data;
+    } else {
+      const { data, error } = await supabase
+        .from('project_input_profiles')
+        .insert({ project_id: projectId, project_type: patch.project_type || 'other', ...patch })
+        .select().single();
+      if (error) throw new Error(error.message);
+      saved = data;
+    }
+    res.json({ input_profile: saved });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '保存に失敗しました' });
+  }
+});
+
+// --- POST /projects/:id/estimates  見積を新規作成（明細同梱） ----------------
+router.post('/projects/:id/estimates', requireAuth, requireWrite, async (req, res) => {
+  const projectId = req.params.id;
+  if (!projectId) return res.status(400).json({ error: 'project id is required' });
+
+  const body  = req.body || {};
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (body.status && !allowedEstimateStat.has(body.status)) {
+    return res.status(400).json({ error: `status は ${[...allowedEstimateStat].join('/')} のいずれか` });
+  }
+
+  try {
+    // 次バージョン番号
+    const { data: maxRow } = await supabase
+      .from('project_estimates')
+      .select('version')
+      .eq('project_id', projectId)
+      .order('version', { ascending: false })
+      .limit(1).maybeSingle();
+    const nextVersion = (maxRow?.version || 0) + 1;
+
+    // items の合計を計算（body.total_amount が無ければ自動計算）
+    const computedTotal = items.reduce((s, it) => s + intOrZero(it.amount), 0);
+    const totalAmount = body.total_amount !== undefined ? intOrZero(body.total_amount) : computedTotal;
+
+    const { data: est, error: estErr } = await supabase
+      .from('project_estimates')
+      .insert({
+        project_id: projectId,
+        version:    nextVersion,
+        title:      body.title || null,
+        total_amount: totalAmount,
+        status:     body.status || 'draft',
+        created_by: req.user?.id || null,
+        note:       body.note || null,
+      })
+      .select().single();
+    if (estErr) throw new Error(estErr.message);
+
+    let savedItems = [];
+    if (items.length) {
+      const rows = items.map((it, idx) => ({
+        estimate_id: est.id,
+        category:    it.category || null,
+        label:       String(it.label || '(無題)'),
+        quantity:    Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+        unit:        it.unit || null,
+        unit_price:  intOrZero(it.unit_price),
+        amount:      intOrZero(it.amount),
+        sort_order:  Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : idx,
+        note:        it.note || null,
+      }));
+      const { data: itemsRes, error: itErr } = await supabase
+        .from('project_estimate_items').insert(rows).select();
+      if (itErr) throw new Error(itErr.message);
+      savedItems = itemsRes || [];
+    }
+
+    res.status(201).json({ estimate: { ...est, items: savedItems } });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '見積の作成に失敗しました' });
+  }
+});
+
+// --- PUT /estimates/:eid  見積メタの更新（明細は別 PR） ---------------------
+router.put('/estimates/:eid', requireAuth, requireWrite, async (req, res) => {
+  const eid = req.params.eid;
+  if (!eid) return res.status(400).json({ error: 'estimate id is required' });
+  const body = req.body || {};
+  const patch = {};
+  if (body.title  !== undefined) patch.title  = body.title ? String(body.title) : null;
+  if (body.note   !== undefined) patch.note   = body.note ? String(body.note) : null;
+  if (body.total_amount !== undefined) patch.total_amount = intOrZero(body.total_amount);
+  if (body.status !== undefined) {
+    if (!allowedEstimateStat.has(body.status)) {
+      return res.status(400).json({ error: `status は ${[...allowedEstimateStat].join('/')} のいずれか` });
+    }
+    patch.status = body.status;
+  }
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: '更新項目がありません' });
+  patch.updated_at = new Date().toISOString();
+  try {
+    const { data, error } = await supabase
+      .from('project_estimates').update(patch).eq('id', eid).select().single();
+    if (error) throw new Error(error.message);
+    res.json({ estimate: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '見積の更新に失敗しました' });
+  }
+});
+
+// --- DELETE /estimates/:eid  見積削除（明細は CASCADE で消える） --------------
+router.delete('/estimates/:eid', requireAuth, requireWrite, async (req, res) => {
+  const eid = req.params.eid;
+  if (!eid) return res.status(400).json({ error: 'estimate id is required' });
+  try {
+    const { error } = await supabase.from('project_estimates').delete().eq('id', eid);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '見積の削除に失敗しました' });
+  }
+});
+
+// --- POST /projects/:id/cost-entries  手動の原価エントリ追加 ----------------
+//   トリガ経由（source='invoice_item'）の自動連携と区別するため、API は manual のみ
+router.post('/projects/:id/cost-entries', requireAuth, requireWrite, async (req, res) => {
+  const projectId = req.params.id;
+  const body = req.body || {};
+  if (!projectId) return res.status(400).json({ error: 'project id is required' });
+  if (body.amount === undefined) return res.status(400).json({ error: 'amount は必須' });
+
+  try {
+    const { data, error } = await supabase
+      .from('project_cost_entries')
+      .insert({
+        project_id:  projectId,
+        source:      'manual',
+        cost_type:   body.cost_type || null,
+        label:       body.label ? String(body.label) : null,
+        amount:      intOrZero(body.amount),
+        occurred_on: body.occurred_on || null,
+        user_id:     body.user_id || null,
+        note:        body.note || null,
+      })
+      .select().single();
+    if (error) throw new Error(error.message);
+    res.status(201).json({ cost_entry: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '原価エントリ追加に失敗しました' });
+  }
+});
+
+// --- DELETE /cost-entries/:cid  手動エントリのみ削除可（自動連携は触らない） ---
+router.delete('/cost-entries/:cid', requireAuth, requireWrite, async (req, res) => {
+  const cid = req.params.cid;
+  if (!cid) return res.status(400).json({ error: 'cost entry id is required' });
+  try {
+    const { data: existing, error: gErr } = await supabase
+      .from('project_cost_entries').select('source').eq('id', cid).maybeSingle();
+    if (gErr) throw new Error(gErr.message);
+    if (!existing) return res.status(404).json({ error: 'cost entry not found' });
+    if (!allowedCostSources.has(existing.source)) {
+      return res.status(409).json({
+        error: `source=${existing.source} のエントリは API 経由で削除できません（請求書側で操作してください）`,
+      });
+    }
+    const { error } = await supabase.from('project_cost_entries').delete().eq('id', cid);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '原価エントリ削除に失敗しました' });
+  }
+});
+
+// --- POST /projects/:id/revenue-entries  手動の売上エントリ追加（手付金等） --
+router.post('/projects/:id/revenue-entries', requireAuth, requireWrite, async (req, res) => {
+  const projectId = req.params.id;
+  const body = req.body || {};
+  if (!projectId) return res.status(400).json({ error: 'project id is required' });
+  if (body.amount === undefined) return res.status(400).json({ error: 'amount は必須' });
+  if (body.revenue_type && !allowedRevenueTypes.has(body.revenue_type)) {
+    return res.status(400).json({ error: `revenue_type は ${[...allowedRevenueTypes].join('/')} のいずれか` });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('project_revenue_entries')
+      .insert({
+        project_id:    projectId,
+        source:        'manual',
+        revenue_type:  body.revenue_type || 'other',
+        label:         body.label ? String(body.label) : null,
+        amount:        intOrZero(body.amount),
+        occurred_on:   body.occurred_on || null,
+        client_id:     body.client_id || null,
+        note:          body.note || null,
+      })
+      .select().single();
+    if (error) throw new Error(error.message);
+    res.status(201).json({ revenue_entry: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '売上エントリ追加に失敗しました' });
+  }
+});
+
+// --- DELETE /revenue-entries/:rid  手動エントリのみ削除可 --------------------
+router.delete('/revenue-entries/:rid', requireAuth, requireWrite, async (req, res) => {
+  const rid = req.params.rid;
+  if (!rid) return res.status(400).json({ error: 'revenue entry id is required' });
+  try {
+    const { data: existing, error: gErr } = await supabase
+      .from('project_revenue_entries').select('source').eq('id', rid).maybeSingle();
+    if (gErr) throw new Error(gErr.message);
+    if (!existing) return res.status(404).json({ error: 'revenue entry not found' });
+    if (!allowedRevSources.has(existing.source)) {
+      return res.status(409).json({
+        error: `source=${existing.source} のエントリは API 経由で削除できません（クライアント請求書側で操作してください）`,
+      });
+    }
+    const { error } = await supabase.from('project_revenue_entries').delete().eq('id', rid);
+    if (error) throw new Error(error.message);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message || '売上エントリ削除に失敗しました' });
   }
 });
 
