@@ -1179,12 +1179,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <input type="hidden" id="fest-id"> <!-- 編集モードならID、新規なら空 -->
 
-    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px">
-      <div class="form-group" style="flex:2;margin-bottom:0">
-        <label class="form-label">タイトル</label>
-        <input class="form-input" type="text" id="fest-edit-title" placeholder="例: v1 ラフ見積 / v2 商談後">
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap">
+      <div class="form-group" style="flex:2;margin-bottom:0;min-width:200px">
+        <label class="form-label">件名</label>
+        <input class="form-input" type="text" id="fest-edit-title" placeholder="例: HP制作 + 動画10本セット">
       </div>
-      <div class="form-group" style="flex:1;margin-bottom:0">
+      <div class="form-group" style="flex:1;margin-bottom:0;min-width:120px">
         <label class="form-label">ステータス</label>
         <select class="form-select" id="fest-edit-status">
           <option value="draft">草案</option>
@@ -6665,9 +6665,10 @@ function _kpiCard(label, value, color) {
   </div>`;
 }
 
-// ==================== V2: 案件収支タブ・レンダリング ====================
-// V1 の「契約総額単独 + 手付金/原価エントリ手動追加」UI を全面リライト。
-// 中心は: 契約タイプ選択 → タイプ別 KPI → 見積（明細ベース）。
+// ==================== V2.1: 案件収支タブ・レンダリング（契約タイプ廃止） ====================
+// 「固定型/単価型/混在型」の選択は廃止。明細の「単位（本/式/月など）」で
+// 自然に表現できるため、ユーザー側で意識する必要なし。
+// KPI も統一形式に。
 
 function renderProjectFinance() {
   const el = document.getElementById('pf-content');
@@ -6675,9 +6676,6 @@ function renderProjectFinance() {
   const fb = _pfData.finance_book || {};
   const sm = _pfData.summary || {};
 
-  const contractType = fb.contract_type || 'fixed';
-  const plannedUnits = Number(fb.planned_unit_count) || 0;
-  const contractTotal = Number(fb.contract_total) || 0;
   const actRev   = Number(sm.actual_revenue) || 0;
   const actCost  = Number(sm.actual_cost) || 0;
   const margin   = actRev - actCost;
@@ -6691,85 +6689,26 @@ function renderProjectFinance() {
   const costs    = _pfData.cost_entries || [];
   const revenues = _pfData.revenue_entries || [];
 
-  // 想定総額（タイプ別）
-  let projected = 0;
-  let projectedHint = '';
-  if (contractType === 'fixed') {
-    projected = acceptedTotal || contractTotal;
-    projectedHint = accepted ? `採用見積 v${accepted.version} の合計` : '契約総額（または採用見積）';
-  } else if (contractType === 'per_unit') {
-    // 採用見積の合計を「1単位の総額」とみなし、想定本数で掛け算するのではなく
-    // 採用見積に含まれる「本」単位の明細合計 × planned_unit_count / 見積上の本数の係数
-    // ここはシンプルに 採用見積合計 = 想定総額（1サイクル分）として表示する
-    projected = acceptedTotal;
-    projectedHint = accepted ? `採用見積 v${accepted.version} の合計` : '採用見積を作成してください';
-  } else { // mixed
-    projected = acceptedTotal || contractTotal;
-    projectedHint = '採用見積の合計（混在型）';
-  }
-
-  // タイプ別 KPI
-  const kpiHtml = (() => {
-    if (contractType === 'per_unit') {
-      const achieveRate = projected > 0 ? actRev / projected : null;
-      return `
-        <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-          ${_kpiCard('想定総額', _yen(projected))}
-          ${_kpiCard('実績売上', _yen(actRev))}
-          ${_kpiCard('達成率',   _ratePct(achieveRate))}
-        </div>
-        <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
-          ${_kpiCard('実績原価', _yen(actCost))}
-          ${_kpiCard('粗利',     _yen(margin), marginColor)}
-          ${_kpiCard('粗利率',   _ratePct(marginRate), marginColor)}
-        </div>`;
-    }
-    // fixed / mixed
-    const achieveRate = projected > 0 ? actRev / projected : null;
-    return `
-      <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-        ${_kpiCard('契約総額', _yen(projected))}
-        ${_kpiCard('実績売上', _yen(actRev))}
-        ${_kpiCard('達成率',   _ratePct(achieveRate))}
-      </div>
-      <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
-        ${_kpiCard('実績原価', _yen(actCost))}
-        ${_kpiCard('粗利',     _yen(margin), marginColor)}
-        ${_kpiCard('粗利率',   _ratePct(marginRate), marginColor)}
-      </div>`;
-  })();
-
-  // 契約タイプボタンの状態
-  const ctBtn = (val, label, hint) => {
-    const active = contractType === val;
-    return `<button class="ct-btn" data-ct="${val}" onclick="changeContractType('${val}')"
-      style="padding:9px 14px;border-radius:8px;border:1.5px solid ${active ? 'var(--em)' : 'var(--border)'};background:${active ? 'var(--em)' : '#fff'};color:${active ? '#fff' : 'var(--text)'};font-size:13px;font-weight:${active ? '600' : '500'};cursor:pointer;flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:140px">
-      <span>${label}</span>
-      <span style="font-size:10px;font-weight:400;opacity:0.85">${hint}</span>
-    </button>`;
-  };
+  // 採用見積の合計を「想定総額」とみなす（採用がなければ 0）
+  const projected = acceptedTotal;
+  const achieveRate = projected > 0 ? actRev / projected : null;
+  const projectedHint = accepted
+    ? `採用見積 v${accepted.version}「${accepted.title || '無題'}」の合計を想定総額として表示`
+    : '採用見積（status=採用）が無いため想定総額は ¥0 です。見積を作成して「採用」にすると反映されます。';
 
   el.innerHTML = `
-    <!-- 契約タイプ選択 -->
-    <div style="background:#f0f9f9;border:1px solid #b6e3e0;border-radius:10px;padding:14px 16px;margin-bottom:18px">
-      <div style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-bottom:10px">契約タイプ</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${ctBtn('fixed',    '🎯 固定型',   'HP / LP / 1本完結')}
-        ${ctBtn('per_unit', '🔁 単価型',   '動画 月◯本など')}
-        ${ctBtn('mixed',    '🔀 混在型',   '固定 + 月額など')}
-      </div>
-      ${contractType === 'per_unit' ? `
-        <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <label style="font-size:12px;color:var(--text-muted)">想定本数（合計）</label>
-          <input type="number" min="0" id="pf-planned-units" value="${plannedUnits}" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;width:100px;font-size:13px">
-          <button class="btn-sm" style="padding:4px 12px;font-size:12px" onclick="savePlannedUnitCount()">保存</button>
-          <span style="font-size:11px;color:var(--text-muted)">※ 動画◯本 / デザイン◯枚 を予定する場合の合計</span>
-        </div>` : ''}
-    </div>
-
     <!-- KPI -->
-    ${kpiHtml}
-    <div style="font-size:11px;color:var(--text-muted);margin-top:-12px;margin-bottom:18px;padding:0 4px">${esc(projectedHint)}</div>
+    <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      ${_kpiCard('想定総額', _yen(projected))}
+      ${_kpiCard('実績売上', _yen(actRev))}
+      ${_kpiCard('達成率',   _ratePct(achieveRate))}
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      ${_kpiCard('実績原価', _yen(actCost))}
+      ${_kpiCard('粗利',     _yen(margin), marginColor)}
+      ${_kpiCard('粗利率',   _ratePct(marginRate), marginColor)}
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:18px;padding:0 4px">${esc(projectedHint)}</div>
 
     <!-- 見積 -->
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--em-pale)">
@@ -6784,9 +6723,9 @@ function renderProjectFinance() {
         : estimates.map(e => `
           <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:#fff">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <span style="font-size:13px;font-weight:600">v${e.version}</span>
+              <span style="font-size:11px;color:var(--text-muted);min-width:36px">v${e.version}</span>
               <span style="font-size:11px;background:${_estStatusColor(e.status).bg};color:${_estStatusColor(e.status).fg};padding:2px 8px;border-radius:6px">${esc(_estStatusLabel(e.status))}</span>
-              <span style="font-size:13px;flex:1;min-width:120px">${esc(e.title || '(無題)')}</span>
+              <span style="font-size:13px;font-weight:600;flex:1;min-width:120px">${esc(e.title || '(件名未設定)')}</span>
               <span style="font-size:14px;font-weight:600">${_yen(e.total_amount)}</span>
               <button class="btn-sm" style="font-size:11px" onclick="openEstimateEditor('${esc(e.id)}')">編集</button>
               <button class="btn-sm" style="font-size:11px" onclick="changeEstimateStatus('${esc(e.id)}', '${e.status === 'accepted' ? 'draft' : 'accepted'}')">${e.status === 'accepted' ? '採用解除' : '採用'}</button>
