@@ -343,26 +343,78 @@ router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) 
 });
 
 // ---------- GET /projects/:id/rate-templates ----------
-// V2: 「単価設定から取込」UI 用。既存の単価設定（project_client_fees / project_rate_extras）を
-//     見積明細の候補リストとして返す。クライアント側はこれを並べて [+ 追加] でそのまま明細にコピーする。
+// 「📊 単価設定から取込」UI 用。
+// 単価設定モーダル（openRatesModal）が書き込む 3 テーブルすべてから候補を集める:
+//   1. project_rates       — ABC × creative_type × base_fee/script_fee/ai_fee（メイン）
+//   2. project_rate_extras — その他の自由項目
+//   3. project_client_fees — 旧モーダルのデータ（互換性のため残置）
 router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
   try {
-    const [feesRes, extrasRes] = await Promise.all([
-      supabase.from('project_client_fees').select('*').eq('project_id', projectId).maybeSingle(),
+    const [ratesRes, extrasRes, feesRes] = await Promise.all([
+      supabase.from('project_rates').select('*').eq('project_id', projectId),
       supabase.from('project_rate_extras').select('*').eq('project_id', projectId),
+      supabase.from('project_client_fees').select('*').eq('project_id', projectId).maybeSingle(),
     ]);
 
     const templates = [];
+
+    // 1. project_rates → ABC × creative_type × 各サブ項目を展開
+    //    動画: 編集 / 台本 / AI生成 を別行に
+    //    デザイン: 静止画1枚 のみ
+    const subCategoryLabel = {
+      video:  { base_fee: '動画編集', script_fee: '台本作成',  ai_fee: 'AI生成（ナレーション含む）' },
+      design: { base_fee: '静止画1枚' },
+    };
+    const unitForType = { video: '本', design: '枚' };
+    const rankOrder = { A: 0, B: 1, C: 2 };
+    const sortedRates = (ratesRes.data || [])
+      .slice()
+      .sort((a, b) => {
+        if (a.creative_type !== b.creative_type) return a.creative_type === 'video' ? -1 : 1;
+        return (rankOrder[a.rank] ?? 99) - (rankOrder[b.rank] ?? 99);
+      });
+    sortedRates.forEach(r => {
+      const labels = subCategoryLabel[r.creative_type] || {};
+      ['base_fee', 'script_fee', 'ai_fee'].forEach(field => {
+        const fee = Number(r[field]) || 0;
+        if (fee <= 0) return;                           // 0 円はスキップ
+        if (!labels[field]) return;                     // design に script/ai は無い
+        templates.push({
+          source:    'project_rate',
+          category:  r.creative_type,
+          label:     `${labels[field]}（${r.rank}ランク）`,
+          unit:      unitForType[r.creative_type] || '本',
+          unit_price: fee,
+          rank:      r.rank,
+          field,
+        });
+      });
+    });
+
+    // 2. project_rate_extras → 「その他」自由項目
+    (extrasRes.data || []).forEach(ex => {
+      const fee = Number(ex.fee) || 0;
+      if (fee <= 0) return;
+      templates.push({
+        source: 'rate_extra',
+        category: ex.creative_type || 'other',
+        label:    ex.name || '(無題)',
+        unit:     '式',
+        unit_price: fee,
+      });
+    });
+
+    // 3. project_client_fees → 旧モーダルのデータ（残置データを救済）
     const fees = feesRes.data;
     if (fees) {
       if (Number(fees.video_unit_price) > 0) {
         templates.push({
           source: 'client_fee',
           category: 'video',
-          label:    '動画編集',
+          label:    'クライアント単価（動画）',
           unit:     '本',
           unit_price: Number(fees.video_unit_price),
         });
@@ -371,7 +423,7 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
         templates.push({
           source: 'client_fee',
           category: 'design',
-          label:    '静止画デザイン',
+          label:    'クライアント単価（デザイン）',
           unit:     '枚',
           unit_price: Number(fees.design_unit_price),
         });
@@ -386,16 +438,6 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
         });
       }
     }
-
-    (extrasRes.data || []).forEach(ex => {
-      templates.push({
-        source: 'rate_extra',
-        category: ex.creative_type || 'other',
-        label:    ex.name,
-        unit:     '式',
-        unit_price: Number(ex.fee) || 0,
-      });
-    });
 
     res.json({ templates });
   } catch (e) {
