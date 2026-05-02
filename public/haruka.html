@@ -1175,7 +1175,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- ==================== 案件収支 V2: 見積エディタモーダル（明細テーブル） ==================== -->
 <!-- z-index 300: 親（modal-project z-index:200）の上に重ねる -->
-<div class="modal-overlay" id="modal-finance-estimate-editor" style="z-index:300">
+<div class="modal-overlay" id="modal-finance-estimate-editor" data-no-overlay-close="true" style="z-index:300">
   <div class="modal-card" style="width:760px;max-width:96vw">
     <div class="modal-title">
       <span id="fest-editor-title">📋 見積を編集</span>
@@ -6587,12 +6587,14 @@ function closeModal(id) {
 
 // 背景クリック / Esc キーでモーダルを閉じる（PC で「グレーになって動かない」状態の脱出口）
 // ファイルプレビュー（modal-file-preview）など独自実装は除外
+// data-no-overlay-close="true" が付いたモーダルは、入力中データの消失防止のため背景クリックでは閉じない
 document.addEventListener('click', (e) => {
   // クリックされた要素が modal-overlay 自身のときだけ閉じる（中の .modal クリックは閉じない）
   const overlay = e.target.closest('.modal-overlay');
   if (!overlay) return;
   if (e.target !== overlay) return;
   if (!overlay.classList.contains('open')) return;
+  if (overlay.dataset.noOverlayClose === 'true') return;
   overlay.classList.remove('open');
 });
 document.addEventListener('keydown', (e) => {
