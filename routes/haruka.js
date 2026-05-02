@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, getEffectiveRole, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, getEffectiveRole, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -264,6 +264,58 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
     .order('sort_order');
   const team_ids = (links || []).map(l => l.team_id);
   res.json({ ...data, team_ids });
+});
+
+// クライアント削除（admin / secretary のみ）
+// 監査ログ (client_deletion_logs) に必ず INSERT してから clients を削除する。
+// 削除理由は必須（5文字以上推奨／空欄は400）。
+// 関連レコード (projects / client_teams 等) は既存FKに従いカスケード or NULL化される。
+// 注意: 本実装は requireRole('admin','secretary') でハードコード判定（要件: 秘書まで限定）。
+router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), async (req, res) => {
+  const clientId = req.params.id;
+  const reason = (req.body?.reason ?? '').toString().trim();
+  if (!reason) {
+    return res.status(400).json({ error: '削除理由は必須です' });
+  }
+
+  // 対象クライアントの基本情報（スナップショット用）
+  const { data: client, error: cliErr } = await supabase
+    .from('clients')
+    .select('id, name, client_code')
+    .eq('id', clientId)
+    .maybeSingle();
+  if (cliErr) return res.status(500).json({ error: cliErr.message });
+  if (!client) return res.status(404).json({ error: 'クライアントが見つかりません' });
+
+  // 関連案件件数（監査ログ用に取得）
+  const { count: relCount, error: cntErr } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId);
+  if (cntErr) return res.status(500).json({ error: cntErr.message });
+
+  // 監査ログ INSERT （削除前に記録）
+  const { error: logErr } = await supabase
+    .from('client_deletion_logs')
+    .insert({
+      client_id: client.id,
+      client_name: client.name,
+      client_short: client.client_code || null,
+      reason,
+      deleted_by: req.user?.id || null,
+      deleted_by_name: req.user?.full_name || req.user?.email || null,
+      related_projects_count: relCount || 0,
+    });
+  if (logErr) {
+    // 監査ログに残せない場合は削除を中断（誤削除→記録なしを防ぐ）
+    return res.status(500).json({ error: '監査ログの記録に失敗したため削除を中止しました: ' + logErr.message });
+  }
+
+  // 本体削除
+  const { error: delErr } = await supabase.from('clients').delete().eq('id', clientId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+
+  res.json({ ok: true, related_projects_count: relCount || 0 });
 });
 
 // ==================== 案件 ====================
