@@ -134,6 +134,133 @@ tr.row-help td{background:#FFFBF2}
 .s-coral{background:#FAECE7;color:#712B13}
 .s-green{background:#E1F5EE;color:#085041}
 
+/* チームカードグリッド（チーム管理画面） */
+.team-card-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  gap:14px;
+}
+.team-card{
+  position:relative;
+  display:flex;flex-direction:column;
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:0;
+  overflow:hidden;
+  cursor:pointer;
+  transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  box-shadow:0 1px 2px rgba(15, 110, 86, 0.04);
+}
+.team-card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 12px 28px rgba(43, 184, 180, 0.18), 0 4px 8px rgba(43, 184, 180, 0.08);
+  border-color:var(--em-light);
+}
+.team-card-head{
+  position:relative;
+  display:flex;flex-direction:column;align-items:center;
+  padding:18px 14px 14px;
+  background:linear-gradient(135deg, var(--em-pale) 0%, #fff 100%);
+  border-bottom:1px solid var(--border);
+}
+.team-card-badge{
+  display:flex;align-items:center;justify-content:center;
+  border-radius:50%;
+  background:linear-gradient(135deg, var(--em) 0%, var(--em-dark) 100%);
+  color:#fff;
+  font-weight:700;
+  letter-spacing:-0.02em;
+  text-transform:uppercase;
+  text-shadow:0 1px 2px rgba(0,0,0,0.18);
+  box-shadow:0 6px 16px rgba(43, 184, 180, 0.35), inset 0 1px 0 rgba(255,255,255,0.35);
+  flex-shrink:0;
+}
+.team-card-badge.tcb-basic{
+  width:78px;height:78px;font-size:34px;
+}
+.team-card-badge.tcb-project{
+  width:62px;height:62px;font-size:16px;
+}
+.team-card-name{
+  margin-top:10px;
+  font-size:15px;font-weight:700;color:var(--text);
+  text-align:center;line-height:1.3;
+  word-break:break-word;
+}
+.team-card-meta{
+  margin-top:4px;
+  font-size:11px;color:var(--text-muted);
+  text-align:center;
+  letter-spacing:0.02em;
+}
+.team-card-edit{
+  position:absolute;top:8px;right:8px;
+  font-size:11px;padding:3px 9px;
+  border-radius:6px;border:1px solid var(--border);
+  background:rgba(255,255,255,0.85);
+  color:var(--em-dark);
+  cursor:pointer;
+  opacity:0.6;
+  transition:opacity .15s ease, background .15s ease;
+}
+.team-card:hover .team-card-edit{opacity:1;background:#fff}
+.team-card-edit:hover{background:var(--em-pale)}
+.team-card-body{
+  padding:10px 14px 12px;
+  display:flex;flex-direction:column;gap:8px;
+}
+.team-card-pd{
+  display:flex;flex-direction:column;gap:2px;
+  font-size:11.5px;color:var(--text-muted);line-height:1.4;
+}
+.team-card-pd .tcp-row{display:flex;align-items:center;gap:6px}
+.team-card-pd .tcp-key{font-weight:700;color:var(--em-dark);min-width:14px}
+.team-card-pd .tcp-val{color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-card-pd .tcp-empty{color:#bdbdbd}
+.team-card-avatars{
+  display:flex;align-items:center;
+  margin-top:auto;
+  padding-top:6px;
+  min-height:32px;
+}
+.team-card-avatars .tca-stack{
+  display:flex;align-items:center;
+}
+.team-card-avatars .tca-stack > .avatar{
+  border:2px solid #fff;
+  margin-left:-8px;
+  box-shadow:0 1px 3px rgba(0,0,0,0.12);
+  background:var(--em-pale);
+}
+.team-card-avatars .tca-stack > .avatar:first-child{margin-left:0}
+.team-card-avatars .tca-more{
+  margin-left:-8px;
+  width:28px;height:28px;border-radius:50%;
+  background:#fff;
+  border:2px solid var(--em-light);
+  color:var(--em-dark);
+  font-size:10px;font-weight:700;
+  display:inline-flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 3px rgba(0,0,0,0.08);
+}
+.team-card-avatars .tca-empty{
+  font-size:11px;color:#bdbdbd;font-style:italic;
+}
+.team-card-acc{
+  border-top:1px dashed var(--border);
+  padding:10px 14px 12px;
+  background:#FAFEFE;
+}
+.team-card-chev{
+  position:absolute;top:8px;right:46px;
+  font-size:10px;color:var(--text-muted);
+  pointer-events:none;
+  opacity:0.6;
+  transition:transform .2s ease;
+}
+.team-card.is-open .team-card-chev{transform:rotate(180deg)}
+
 /* メンバーモーダル タブ */
 .m-tab-btn{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--text-muted);cursor:pointer;transition:color .15s,border-color .15s;white-space:nowrap}
 .m-tab-btn.active{color:var(--em-dark);border-bottom-color:var(--em-dark);font-weight:600}
@@ -694,34 +821,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   /* + クライアント追加ボタンを全幅で目立たせる */
   #page-projects #btn-add-client{width:100%;min-height:42px;font-size:14px}
 
-  /* --- チームカード（#teams-list 内のインラインflex構造） --- */
-  /* 親 flex を折返し可能にして縦1文字折返しを防ぐ */
-  #teams-list .card > div:first-child{
-    flex-wrap:wrap !important;gap:8px 10px !important;padding:12px 14px !important
-  }
-  /* アイコン円 */
-  #teams-list .card > div:first-child > div:nth-child(1){
-    width:40px !important;height:40px !important;flex-shrink:0
-  }
-  /* チーム名 + タイプ・人数ブロック */
-  #teams-list .card > div:first-child > div:nth-child(2){
-    flex:1 1 calc(100% - 120px) !important;min-width:0;word-break:break-word
-  }
-  #teams-list .card > div:first-child > div:nth-child(2) > div{
-    white-space:normal !important;word-break:break-word !important
-  }
-  /* P: / D: のブロック → 下段へ、横並びに */
-  #teams-list .card > div:first-child > div:nth-child(3){
-    flex:1 1 100% !important;text-align:left !important;
-    margin-right:0 !important;line-height:1.5 !important;
-    display:flex !important;gap:6px 14px !important;flex-wrap:wrap
-  }
-  #teams-list .card > div:first-child > div:nth-child(3) > div{
-    white-space:nowrap
-  }
-  /* 編集ボタン・▼ は右上に小さく */
-  #teams-list .card > div:first-child > button{flex-shrink:0}
-  #teams-list .card > div:first-child > span[id^="team-chevron-"]{flex-shrink:0}
+  /* --- チームカードグリッド（カード型レイアウト） --- */
+  .team-card-grid{grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));gap:10px}
+  .team-card-head{padding:14px 10px 10px}
+  .team-card-badge.tcb-basic{width:60px;height:60px;font-size:26px}
+  .team-card-badge.tcb-project{width:50px;height:50px;font-size:13px}
+  .team-card-name{font-size:13px;margin-top:8px}
+  .team-card-meta{font-size:10px}
+  .team-card-edit{font-size:10px;padding:2px 7px;opacity:0.85}
+  .team-card-body{padding:8px 10px 10px;gap:6px}
+  .team-card-pd{font-size:10.5px}
+  .team-card-avatars .tca-stack > .avatar{border-width:1.5px;margin-left:-6px;--avatar-size:24px !important}
+  .team-card-avatars .tca-more{margin-left:-6px;width:24px;height:24px;font-size:9px}
+  .team-card-acc{padding:8px 10px 10px}
 
   /* --- メンバーカード --- */
   .member-card{padding:8px 10px;gap:10px}
@@ -4238,7 +4350,8 @@ function renderTeamsList() {
   const isBasicCode = (code) => typeof code === 'string' && /^[A-Za-z]$/.test(code);
   const basicTeams = filtered.filter(t => isBasicCode(t.team_code));
   const projectTeams = filtered.filter(t => !isBasicCode(t.team_code));
-  const renderTeamCard = (t) => {
+  const MAX_AVATARS = 4;
+  const renderTeamCard = (t, isBasic) => {
     const origIdx = allTeams.indexOf(t);
     const tmIds = new Set((t.team_members || []).map(tm => tm.user_id));
     const teamMembers = allMembers.filter(m => tmIds.has(m.id) && m.is_active !== false)
@@ -4246,28 +4359,41 @@ function renderTeamsList() {
     const memberCount = teamMembers.length;
     const memberChips = teamMembers.map(m => {
       const canEdit = canEditMember(m);
-      return `<div onclick="${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:8px;background:var(--em-pale);border-radius:24px;padding:4px 12px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
+      return `<div onclick="event.stopPropagation();${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:8px;background:var(--em-pale);border-radius:24px;padding:4px 12px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
         ${avatarHtml(m, 36)}
         <span style="color:var(--text);font-weight:500">${esc(m.full_name||'')}</span>
         <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
       </div>`;
     }).join('');
+    // スタックアバター（先頭 MAX_AVATARS 名 + 余りは +N バッジ）
+    const stackAvatars = teamMembers.slice(0, MAX_AVATARS).map(m => avatarHtml(m, 28)).join('');
+    const overflow = Math.max(0, memberCount - MAX_AVATARS);
+    const stackHtml = memberCount === 0
+      ? `<span class="tca-empty">メンバー未設定</span>`
+      : `<div class="tca-stack">${stackAvatars}${overflow > 0 ? `<span class="tca-more">+${overflow}</span>` : ''}</div>`;
+    const badgeClass = isBasic ? 'tcb-basic' : 'tcb-project';
+    const code = esc(t.team_code || '');
+    const teamName = esc(t.team_name || '');
+    const typeLabel = t.team_type === 'video' ? '動画チーム' : 'デザインチーム';
+    const producerName = t.producer?.full_name ? esc(t.producer.full_name) : '';
+    const directorName = t.director?.full_name ? esc(t.director.full_name) : '';
     return `
-    <div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;user-select:none" onclick="toggleTeamAccordion('${t.id}')">
-        <div style="width:44px;height:44px;border-radius:50%;background:var(--em-pale);border:2px solid var(--em);display:flex;align-items:center;justify-content:center;font-size:${t.team_code.length <= 1 ? 18 : t.team_code.length <= 2 ? 14 : 11}px;font-weight:700;color:var(--em-dark);flex-shrink:0;letter-spacing:-0.5px;text-transform:uppercase">${t.team_code}</div>
-        <div style="flex:1">
-          <div style="font-size:14px;font-weight:600">${t.team_name}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${t.team_type === 'video' ? '動画チーム' : 'デザインチーム'} · ${memberCount}名</div>
-        </div>
-        <div style="font-size:12px;color:var(--text-muted);text-align:right;line-height:1.8;margin-right:8px">
-          ${t.producer?.full_name ? `<div>P: ${t.producer.full_name}</div>` : ''}
-          <div>${t.director?.full_name ? 'D: '+t.director.full_name : 'D未設定'}</div>
-        </div>
-        ${hasPermission('team.manage') ? `<button class="btn-sm" style="font-size:11px;padding:3px 10px;flex-shrink:0" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>` : ''}
-        <span id="team-chevron-${t.id}" style="font-size:12px;color:var(--text-muted);margin-left:4px;flex-shrink:0">▼</span>
+    <div class="team-card" id="team-card-${t.id}" onclick="toggleTeamAccordion('${t.id}')">
+      <div class="team-card-head">
+        ${hasPermission('team.manage') ? `<button class="team-card-edit" type="button" onclick="event.stopPropagation();openTeamModal(allTeams[${origIdx}])">編集</button>` : ''}
+        <span class="team-card-chev" id="team-chevron-${t.id}">▼</span>
+        <div class="team-card-badge ${badgeClass}">${code}</div>
+        <div class="team-card-name">${teamName}</div>
+        <div class="team-card-meta">${typeLabel} · ${memberCount}名</div>
       </div>
-      <div id="team-acc-${t.id}" style="display:none;border-top:1px solid var(--border);padding:12px 16px;background:#FAFEFE">
+      <div class="team-card-body">
+        <div class="team-card-pd">
+          <div class="tcp-row"><span class="tcp-key">P</span>${producerName ? `<span class="tcp-val">${producerName}</span>` : '<span class="tcp-empty">未設定</span>'}</div>
+          <div class="tcp-row"><span class="tcp-key">D</span>${directorName ? `<span class="tcp-val">${directorName}</span>` : '<span class="tcp-empty">未設定</span>'}</div>
+        </div>
+        <div class="team-card-avatars">${stackHtml}</div>
+      </div>
+      <div class="team-card-acc" id="team-acc-${t.id}" style="display:none">
         ${memberCount === 0
           ? '<span style="font-size:12px;color:var(--text-muted)">メンバー未設定</span>'
           : `<div style="display:flex;flex-wrap:wrap;gap:8px">${memberChips}</div>`
@@ -4275,16 +4401,16 @@ function renderTeamsList() {
       </div>
     </div>`;
   };
-  const renderSection = (title, teams, isFirst) => {
+  const renderSection = (title, teams, isFirst, isBasic) => {
     if (!teams.length) return '';
-    const header = `<div class="sec-label" style="margin-top:${isFirst ? 0 : 20}px;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+    const header = `<div class="sec-label" style="margin-top:${isFirst ? 0 : 24}px;margin-bottom:12px;display:flex;align-items:center;gap:8px">
       <span>${title}</span>
       <span style="font-size:11px;font-weight:600;color:var(--em-dark);background:var(--em-pale);border-radius:10px;padding:1px 8px;letter-spacing:0">${teams.length}</span>
     </div>`;
-    return header + teams.map(renderTeamCard).join('');
+    return header + `<div class="team-card-grid">${teams.map(t => renderTeamCard(t, isBasic)).join('')}</div>`;
   };
-  const basicHtml = renderSection('基本チーム', basicTeams, true);
-  const projectHtml = renderSection('案件ごとのチーム', projectTeams, !basicTeams.length);
+  const basicHtml = renderSection('基本チーム', basicTeams, true, true);
+  const projectHtml = renderSection('案件ごとのチーム', projectTeams, !basicTeams.length, false);
   list.innerHTML = basicHtml + projectHtml;
 }
 
@@ -4324,10 +4450,12 @@ function setMemberSort(type) {
 function toggleTeamAccordion(teamId) {
   const acc = document.getElementById('team-acc-' + teamId);
   const chv = document.getElementById('team-chevron-' + teamId);
+  const card = document.getElementById('team-card-' + teamId);
   if (!acc) return;
   const open = acc.style.display === 'none';
   acc.style.display = open ? '' : 'none';
   if (chv) chv.textContent = open ? '▲' : '▼';
+  if (card) card.classList.toggle('is-open', open);
 }
 
 function toggleShowResigned() {
