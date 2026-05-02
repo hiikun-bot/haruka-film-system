@@ -13772,7 +13772,7 @@ async function openCreativeDetail(id) {
   // 再共有ボタン: 管理者のみ表示
   const _cdReshareBtn = document.getElementById('cd-client-review-reshare-btn');
   if (_cdReshareBtn) {
-    _cdReshareBtn.style.display = (currentUser?.role === 'admin') ? '' : 'none';
+    _cdReshareBtn.style.display = (typeof effectiveRole === 'function' && effectiveRole() === 'admin') ? '' : 'none';
   }
 
   // 担当者ドロップダウン初期化（未着手用）
@@ -14399,7 +14399,7 @@ async function loadCreativeFiles(creativeId) {
     // faststart プレビュー版の状態バッジ
     const fsStatus = f.faststart_status || null;
     const fsUrl    = f.faststart_drive_url || '';
-    const isAdmin  = (currentUser?.role === 'admin');
+    const isAdmin  = (typeof effectiveRole === 'function' && effectiveRole() === 'admin');
     let fsBadge = '';
     if (fsStatus === 'pending') {
       fsBadge = `<span title="プレビュー版生成待ち" style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⏳ 準備中</span>`;
