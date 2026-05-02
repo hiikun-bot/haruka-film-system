@@ -5452,4 +5452,102 @@ router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== 品目名マスター（見積明細のクイック選択用） ====================
+// 詳細: migrations/2026-05-02_item_name_master.sql
+
+// 一覧取得
+//   ?category=video|design  カテゴリ絞り込み（未指定=全件）
+//   ?active_only=true|false  アクティブのみ（既定 true）
+router.get('/item-name-master', async (req, res) => {
+  const { category, active_only } = req.query;
+  let q = supabase.from('item_name_master').select('*');
+  if (category) {
+    if (!['video', 'design'].includes(category)) {
+      return res.status(400).json({ error: 'category は video または design を指定してください' });
+    }
+    q = q.eq('category', category);
+  }
+  // active_only は明示的に 'false' を指定しない限り true 扱い
+  if (active_only !== 'false') q = q.eq('is_active', true);
+  q = q.order('sort_order', { ascending: true }).order('name', { ascending: true });
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// 新規作成
+router.post('/item-name-master', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { category, name, default_unit, sort_order } = req.body || {};
+  if (!category || !['video', 'design'].includes(category)) {
+    return res.status(400).json({ error: 'category は video または design を指定してください' });
+  }
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: '品目名は必須です' });
+  }
+  const { data, error } = await supabase.from('item_name_master')
+    .insert({
+      category,
+      name: String(name).trim(),
+      default_unit: default_unit ? String(default_unit).trim() : null,
+      sort_order: parseInt(sort_order) || 0,
+      is_active: true
+    })
+    .select().single();
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: `品目「${name}」は既に同じカテゴリに登録されています` });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// 更新
+router.put('/item-name-master/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { category, name, default_unit, sort_order, is_active } = req.body || {};
+  const updateData = { updated_at: new Date().toISOString() };
+  if (category !== undefined) {
+    if (!['video', 'design'].includes(category)) {
+      return res.status(400).json({ error: 'category は video または design を指定してください' });
+    }
+    updateData.category = category;
+  }
+  if (name !== undefined) {
+    const trimmed = String(name).trim();
+    if (!trimmed) return res.status(400).json({ error: '品目名は必須です' });
+    updateData.name = trimmed;
+  }
+  if (default_unit !== undefined) {
+    updateData.default_unit = default_unit ? String(default_unit).trim() : null;
+  }
+  if (sort_order !== undefined) updateData.sort_order = parseInt(sort_order) || 0;
+  if (is_active !== undefined) updateData.is_active = !!is_active;
+  const { data, error } = await supabase.from('item_name_master')
+    .update(updateData)
+    .eq('id', req.params.id)
+    .select().single();
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: `品目「${name}」は既に同じカテゴリに登録されています` });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// 削除（既定は論理削除 = is_active=false。?hard=true で物理削除）
+router.delete('/item-name-master/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  if (req.query.hard === 'true') {
+    const { error } = await supabase.from('item_name_master').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ ok: true, hard: true });
+  }
+  const { data, error } = await supabase.from('item_name_master')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, data });
+});
+
 module.exports = router;
