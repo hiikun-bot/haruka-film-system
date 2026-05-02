@@ -1170,7 +1170,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- ==================== 案件収支：エントリ追加モーダル（売上 / 原価 共用） ==================== -->
-<div class="modal-overlay" id="modal-finance-entry">
+<!-- z-index 300: 親（modal-project z-index:200）の上に重ねる -->
+<div class="modal-overlay" id="modal-finance-entry" style="z-index:300">
   <div class="modal-card" style="width:480px">
     <div class="modal-title">
       <span id="fe-title">エントリを追加</span>
@@ -1219,7 +1220,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- ==================== 案件収支：見積作成モーダル ==================== -->
-<div class="modal-overlay" id="modal-finance-estimate">
+<div class="modal-overlay" id="modal-finance-estimate" style="z-index:300">
   <div class="modal-card" style="width:520px">
     <div class="modal-title">
       📋 見積を新規作成
@@ -1259,7 +1260,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- ==================== 案件収支：契約総額の編集モーダル ==================== -->
-<div class="modal-overlay" id="modal-finance-contract">
+<div class="modal-overlay" id="modal-finance-contract" style="z-index:300">
   <div class="modal-card" style="width:440px">
     <div class="modal-title">
       📝 契約総額を編集
