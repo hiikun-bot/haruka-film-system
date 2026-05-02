@@ -9,7 +9,8 @@
 //   - server.js 側でルーター自体をマウントしない設計と二重防御
 //
 // 権限:
-//   - 全エンドポイント analytics.view 権限が必要（admin / secretary のみ）
+//   - 全エンドポイント admin ロール必須（secretary・director・editor 等は 403）
+//   - 経営機密（契約総額・粗利等）のため明示的にロックダウン
 //
 // 提供API（全て読み取り専用）:
 //   - GET /projects             案件収支一覧
@@ -19,10 +20,12 @@
 const express = require('express');
 const router  = express.Router();
 const supabase = require('../supabase');
-const { requireAuth, requirePermission, requireLevel } = require('../auth');
+const { requireAuth, requireLevel } = require('../auth');
 
-// 書き込みは secretary 以上（= admin / secretary）
-const requireWrite = requireLevel('secretary');
+// 案件収支は **admin ロールのみ** に強制制限。
+// secretary を含む他のロールは一切アクセス不可（API は 403、UI 側はタブ非表示）。
+// 業務的に契約総額・粗利は経営機密のため、明示的なロックダウンを行う。
+const requireAdmin = requireLevel('admin');
 
 // ---------- Feature flag ----------
 function isEnabled() {
@@ -94,7 +97,7 @@ async function aggregateActualsByProject(projectIds) {
 }
 
 // ---------- GET /projects 案件収支一覧 ----------
-router.get('/projects', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+router.get('/projects', requireAuth, requireAdmin, async (req, res) => {
   try {
     const limit  = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
@@ -157,7 +160,7 @@ router.get('/projects', requireAuth, requirePermission('analytics.view'), async 
 });
 
 // ---------- GET /projects/:id 案件詳細 ----------
-router.get('/projects/:id', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+router.get('/projects/:id', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
@@ -238,7 +241,7 @@ router.get('/projects/:id', requireAuth, requirePermission('analytics.view'), as
 //   3) 正規化メトリクス（complexity_score, delivery_days, estimated_person_hours, outsource_ratio）の
 //      ユークリッド距離で近い順にソート
 //   4) 上位 N 件を返す（差分ハイライト用に raw データも同梱）
-router.get('/projects/:id/similar', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   const topN = Math.min(parseInt(req.query.limit, 10) || 3, 10);
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
@@ -362,7 +365,7 @@ function intOrZero(v) {
 }
 
 // --- PUT /projects/:id/finance-book  契約総額・状態の upsert ---------------
-router.put('/projects/:id/finance-book', requireAuth, requireWrite, async (req, res) => {
+router.put('/projects/:id/finance-book', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
@@ -417,7 +420,7 @@ router.put('/projects/:id/finance-book', requireAuth, requireWrite, async (req, 
 });
 
 // --- PUT /projects/:id/input-profile  案件タイプ別入力 + メトリクス upsert ----
-router.put('/projects/:id/input-profile', requireAuth, requireWrite, async (req, res) => {
+router.put('/projects/:id/input-profile', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
@@ -475,7 +478,7 @@ router.put('/projects/:id/input-profile', requireAuth, requireWrite, async (req,
 });
 
 // --- POST /projects/:id/estimates  見積を新規作成（明細同梱） ----------------
-router.post('/projects/:id/estimates', requireAuth, requireWrite, async (req, res) => {
+router.post('/projects/:id/estimates', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
@@ -539,7 +542,7 @@ router.post('/projects/:id/estimates', requireAuth, requireWrite, async (req, re
 });
 
 // --- PUT /estimates/:eid  見積メタの更新（明細は別 PR） ---------------------
-router.put('/estimates/:eid', requireAuth, requireWrite, async (req, res) => {
+router.put('/estimates/:eid', requireAuth, requireAdmin, async (req, res) => {
   const eid = req.params.eid;
   if (!eid) return res.status(400).json({ error: 'estimate id is required' });
   const body = req.body || {};
@@ -566,7 +569,7 @@ router.put('/estimates/:eid', requireAuth, requireWrite, async (req, res) => {
 });
 
 // --- DELETE /estimates/:eid  見積削除（明細は CASCADE で消える） --------------
-router.delete('/estimates/:eid', requireAuth, requireWrite, async (req, res) => {
+router.delete('/estimates/:eid', requireAuth, requireAdmin, async (req, res) => {
   const eid = req.params.eid;
   if (!eid) return res.status(400).json({ error: 'estimate id is required' });
   try {
@@ -580,7 +583,7 @@ router.delete('/estimates/:eid', requireAuth, requireWrite, async (req, res) => 
 
 // --- POST /projects/:id/cost-entries  手動の原価エントリ追加 ----------------
 //   トリガ経由（source='invoice_item'）の自動連携と区別するため、API は manual のみ
-router.post('/projects/:id/cost-entries', requireAuth, requireWrite, async (req, res) => {
+router.post('/projects/:id/cost-entries', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   const body = req.body || {};
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
@@ -608,7 +611,7 @@ router.post('/projects/:id/cost-entries', requireAuth, requireWrite, async (req,
 });
 
 // --- DELETE /cost-entries/:cid  手動エントリのみ削除可（自動連携は触らない） ---
-router.delete('/cost-entries/:cid', requireAuth, requireWrite, async (req, res) => {
+router.delete('/cost-entries/:cid', requireAuth, requireAdmin, async (req, res) => {
   const cid = req.params.cid;
   if (!cid) return res.status(400).json({ error: 'cost entry id is required' });
   try {
@@ -630,7 +633,7 @@ router.delete('/cost-entries/:cid', requireAuth, requireWrite, async (req, res) 
 });
 
 // --- POST /projects/:id/revenue-entries  手動の売上エントリ追加（手付金等） --
-router.post('/projects/:id/revenue-entries', requireAuth, requireWrite, async (req, res) => {
+router.post('/projects/:id/revenue-entries', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   const body = req.body || {};
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
@@ -661,7 +664,7 @@ router.post('/projects/:id/revenue-entries', requireAuth, requireWrite, async (r
 });
 
 // --- DELETE /revenue-entries/:rid  手動エントリのみ削除可 --------------------
-router.delete('/revenue-entries/:rid', requireAuth, requireWrite, async (req, res) => {
+router.delete('/revenue-entries/:rid', requireAuth, requireAdmin, async (req, res) => {
   const rid = req.params.rid;
   if (!rid) return res.status(400).json({ error: 'revenue entry id is required' });
   try {

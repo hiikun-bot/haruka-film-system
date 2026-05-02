@@ -1169,6 +1169,116 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ==================== 案件収支：エントリ追加モーダル（売上 / 原価 共用） ==================== -->
+<div class="modal-overlay" id="modal-finance-entry">
+  <div class="modal-card" style="width:480px">
+    <div class="modal-title">
+      <span id="fe-title">エントリを追加</span>
+      <button class="modal-close" onclick="closeModal('modal-finance-entry')">×</button>
+    </div>
+    <input type="hidden" id="fe-kind"> <!-- 'revenue' or 'cost' -->
+
+    <!-- 売上専用：種別ラジオ -->
+    <div class="form-group" id="fe-type-row">
+      <label class="form-label">種別</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <button type="button" data-revtype="deposit"  onclick="selectFinanceType('deposit')"   class="fe-type-btn" style="padding:6px 14px;border-radius:8px;border:1.5px solid var(--em);background:var(--em);color:#fff;font-size:13px;cursor:pointer;font-weight:600">着手金（手付金）</button>
+        <button type="button" data-revtype="final"    onclick="selectFinanceType('final')"     class="fe-type-btn" style="padding:6px 14px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;cursor:pointer;font-weight:500">完了金</button>
+        <button type="button" data-revtype="monthly"  onclick="selectFinanceType('monthly')"   class="fe-type-btn" style="padding:6px 14px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;cursor:pointer;font-weight:500">月次</button>
+        <button type="button" data-revtype="lump_sum" onclick="selectFinanceType('lump_sum')" class="fe-type-btn" style="padding:6px 14px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;cursor:pointer;font-weight:500">一括（全額）</button>
+        <button type="button" data-revtype="other"    onclick="selectFinanceType('other')"     class="fe-type-btn" style="padding:6px 14px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);font-size:13px;cursor:pointer;font-weight:500">その他</button>
+      </div>
+      <input type="hidden" id="fe-type" value="deposit">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">金額（円） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" type="number" min="0" step="1" id="fe-amount" placeholder="例: 500000">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">ラベル <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（例: 着手金 50% / 外注デザイン費）</span></label>
+      <input class="form-input" type="text" id="fe-label" placeholder="">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">発生日</label>
+      <input class="form-input" type="date" id="fe-occurred-on">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">メモ <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
+      <textarea class="form-input" id="fe-note" rows="2" placeholder="" style="resize:vertical"></textarea>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-finance-entry')">キャンセル</button>
+      <button class="btn-primary" onclick="submitFinanceEntry()">追加する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 案件収支：見積作成モーダル ==================== -->
+<div class="modal-overlay" id="modal-finance-estimate">
+  <div class="modal-card" style="width:520px">
+    <div class="modal-title">
+      📋 見積を新規作成
+      <button class="modal-close" onclick="closeModal('modal-finance-estimate')">×</button>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">タイトル <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（例: v1 ラフ見積 / v2 商談後）</span></label>
+      <input class="form-input" type="text" id="fest-title" placeholder="">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">見積総額（円） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" type="number" min="0" step="1" id="fest-total" placeholder="例: 1000000">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">※ 明細追加は次バージョンで対応します。今は総額のみ登録します。</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">ステータス</label>
+      <select class="form-select" id="fest-status">
+        <option value="draft">草案</option>
+        <option value="sent">提示中</option>
+        <option value="accepted">採用</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">メモ <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
+      <textarea class="form-input" id="fest-note" rows="2" placeholder="想定内訳、商談時のやりとり等" style="resize:vertical"></textarea>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-finance-estimate')">キャンセル</button>
+      <button class="btn-primary" onclick="submitFinanceEstimate()">作成する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 案件収支：契約総額の編集モーダル ==================== -->
+<div class="modal-overlay" id="modal-finance-contract">
+  <div class="modal-card" style="width:440px">
+    <div class="modal-title">
+      📝 契約総額を編集
+      <button class="modal-close" onclick="closeModal('modal-finance-contract')">×</button>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">契約総額（円） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" type="number" min="0" step="1" id="fc-amount" placeholder="例: 1000000">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クライアントと合意した受注金額の総額。手付金 + 完了金などで分割される場合の合計値。</div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-finance-contract')">キャンセル</button>
+      <button class="btn-primary" onclick="submitFinanceContract()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-submit-duplicate">
   <div class="modal-card" style="width:500px">
     <div class="modal-title" style="color:#A32D2D">⚠ 重複提出の確認<button class="modal-close" onclick="closeModal('modal-submit-duplicate')">×</button></div>
@@ -6516,7 +6626,9 @@ async function checkAccountingEnabled() {
   if (_accountingEnabled !== null) return _accountingEnabled;
   try {
     const res = await apiFetch(`${ACCOUNTING_API}/projects?limit=1`);
-    _accountingEnabled = res.status !== 503 && res.status !== 404;
+    // 200 のみ有効。403=admin 以外 / 503=flag OFF / 404=未デプロイ → タブ非表示
+    // 経営機密（契約総額・粗利）のため admin 以外は完全に隠す
+    _accountingEnabled = res.status === 200;
   } catch (_) {
     _accountingEnabled = false;
   }
@@ -6586,6 +6698,21 @@ function renderProjectFinance() {
   const revenues = _pfData.revenue_entries || [];
 
   el.innerHTML = `
+    <!-- 使い方ガイド（最初の表示時のみ展開） -->
+    <details ${(contract === 0 && estimates.length === 0 && costs.length === 0 && revenues.length === 0) ? 'open' : ''} style="background:#f0f9f9;border:1px solid #b6e3e0;border-radius:10px;padding:12px 16px;margin-bottom:18px">
+      <summary style="font-size:12px;font-weight:600;color:var(--em-dark);cursor:pointer;outline:none">💡 はじめての使い方（クリックで開閉）</summary>
+      <div style="font-size:12px;color:var(--text);line-height:1.7;margin-top:8px">
+        <ol style="margin:0;padding-left:20px">
+          <li><strong>📝 契約総額を編集</strong> でクライアントとの受注金額を登録</li>
+          <li>必要なら <strong>+ 新規見積</strong> で見積バージョンを残す（過去比較用）</li>
+          <li>クライアントから入金されたら <strong>+ 手付金/売上を追加</strong> で売上計上（着手金・完了金など分割可）</li>
+          <li>外注費・経費は <strong>+ 手動原価を追加</strong>（社内スタッフ請求書は自動連携されます）</li>
+          <li>案件完了後は <strong>🔒 台帳をクローズ</strong> で確定</li>
+        </ol>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">※ <strong>[請求書]</strong> ラベル付きエントリは請求書から自動同期されているため、ここでは削除できません（請求書側で操作してください）</div>
+      </div>
+    </details>
+
     <!-- KPI 行1 -->
     <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
       ${_kpiCard('契約総額', _yen(contract))}
@@ -6698,21 +6825,30 @@ function _estStatusColor(s) {
 }
 
 // --- 契約総額の編集 -----------------------------------------------------
-async function openFinanceBookEditor() {
+function openFinanceBookEditor() {
   if (!_pfData) return;
   const fb = _pfData.finance_book || {};
-  const cur = Number(fb.contract_total) || 0;
-  const v = prompt(`契約総額（円）を入力してください（現在: ${_yen(cur)}）`, String(cur));
-  if (v === null) return;
-  const n = parseInt(String(v).replace(/[^\d-]/g, ''), 10);
-  if (!Number.isFinite(n) || n < 0) { showToast('正しい数値を入力してください', 'warn'); return; }
+  document.getElementById('fc-amount').value = String(Number(fb.contract_total) || 0);
+  openModal('modal-finance-contract');
+  setTimeout(() => document.getElementById('fc-amount').focus(), 50);
+}
+
+async function submitFinanceContract() {
+  const amount = parseInt(document.getElementById('fc-amount').value, 10);
+  if (!Number.isFinite(amount) || amount < 0) { showToast('正しい金額を入力してください', 'warn'); return; }
   const projectId = document.getElementById('p-id').value;
   const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/finance-book`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contract_total: n }),
+    body: JSON.stringify({ contract_total: amount }),
   });
-  if (res.ok) { showToast('契約総額を保存しました', 'success'); loadProjectFinance(); }
-  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '保存失敗'), 'error'); }
+  if (res.ok) {
+    showToast('契約総額を保存しました', 'success');
+    closeModal('modal-finance-contract');
+    loadProjectFinance();
+  } else {
+    const e = await res.json().catch(()=>({}));
+    showToast('エラー: ' + (e.error || '保存失敗'), 'error');
+  }
 }
 
 async function toggleFinanceBookStatus(curStatus) {
@@ -6728,26 +6864,79 @@ async function toggleFinanceBookStatus(curStatus) {
   else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '保存失敗'), 'error'); }
 }
 
-// --- 売上エントリ -------------------------------------------------------
-async function openRevenueEntryEditor() {
-  const projectId = document.getElementById('p-id').value;
-  const type = prompt('種別を入力してください（deposit=手付金 / final=完了金 / monthly / lump_sum / other）', 'deposit');
-  if (type === null) return;
-  if (!['deposit','final','monthly','lump_sum','other'].includes(type)) { showToast('種別が不正です', 'warn'); return; }
-  const amount = prompt('金額（円）を入力してください', '0');
-  if (amount === null) return;
-  const n = parseInt(String(amount).replace(/[^\d-]/g, ''), 10);
-  if (!Number.isFinite(n) || n <= 0) { showToast('正しい金額を入力してください', 'warn'); return; }
-  const label = prompt('ラベル（例: 着手金 / 完了金）', type === 'deposit' ? '着手金' : '');
-  if (label === null) return;
-  const occurredOn = prompt('発生日（YYYY-MM-DD、空欄=今日）', new Date().toISOString().slice(0,10));
-  if (occurredOn === null) return;
-  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/revenue-entries`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ revenue_type: type, amount: n, label: label || null, occurred_on: occurredOn || null }),
+// --- 売上 / 原価エントリ追加（共用モーダル） ----------------------------
+function openRevenueEntryEditor() {
+  document.getElementById('fe-kind').value = 'revenue';
+  document.getElementById('fe-title').textContent = '💚 売上エントリを追加';
+  document.getElementById('fe-type-row').style.display = '';
+  selectFinanceType('deposit');
+  document.getElementById('fe-amount').value = '';
+  document.getElementById('fe-label').value = '着手金';
+  document.getElementById('fe-occurred-on').value = new Date().toISOString().slice(0,10);
+  document.getElementById('fe-note').value = '';
+  openModal('modal-finance-entry');
+  setTimeout(() => document.getElementById('fe-amount').focus(), 50);
+}
+
+function openCostEntryEditor() {
+  document.getElementById('fe-kind').value = 'cost';
+  document.getElementById('fe-title').textContent = '💔 原価エントリを追加';
+  document.getElementById('fe-type-row').style.display = 'none';   // 原価では種別不要
+  document.getElementById('fe-amount').value = '';
+  document.getElementById('fe-label').value = '';
+  document.getElementById('fe-occurred-on').value = new Date().toISOString().slice(0,10);
+  document.getElementById('fe-note').value = '';
+  openModal('modal-finance-entry');
+  setTimeout(() => document.getElementById('fe-label').focus(), 50);
+}
+
+function selectFinanceType(t) {
+  document.getElementById('fe-type').value = t;
+  document.querySelectorAll('.fe-type-btn').forEach(btn => {
+    const active = btn.dataset.revtype === t;
+    btn.style.background   = active ? 'var(--em)' : 'transparent';
+    btn.style.borderColor  = active ? 'var(--em)' : 'var(--border)';
+    btn.style.color        = active ? '#fff' : 'var(--text-muted)';
+    btn.style.fontWeight   = active ? '600' : '500';
   });
-  if (res.ok) { showToast('売上エントリを追加しました', 'success'); loadProjectFinance(); }
-  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '追加失敗'), 'error'); }
+  // ラベルのデフォルト値をプリセット
+  const labelMap = { deposit:'着手金', final:'完了金', monthly:'月次', lump_sum:'一括', other:'' };
+  const labelEl = document.getElementById('fe-label');
+  if (labelEl && (!labelEl.value || ['着手金','完了金','月次','一括',''].includes(labelEl.value))) {
+    labelEl.value = labelMap[t] || '';
+  }
+}
+
+async function submitFinanceEntry() {
+  const kind   = document.getElementById('fe-kind').value;
+  const amount = parseInt(document.getElementById('fe-amount').value, 10);
+  const label  = document.getElementById('fe-label').value.trim();
+  const occurredOn = document.getElementById('fe-occurred-on').value || null;
+  const note   = document.getElementById('fe-note').value.trim() || null;
+  if (!Number.isFinite(amount) || amount <= 0) { showToast('正しい金額を入力してください', 'warn'); return; }
+
+  const projectId = document.getElementById('p-id').value;
+  let url, body;
+  if (kind === 'revenue') {
+    const type = document.getElementById('fe-type').value;
+    url  = `${ACCOUNTING_API}/projects/${projectId}/revenue-entries`;
+    body = { revenue_type: type, amount, label: label || null, occurred_on: occurredOn, note };
+  } else {
+    url  = `${ACCOUNTING_API}/projects/${projectId}/cost-entries`;
+    body = { cost_type: 'other', amount, label: label || null, occurred_on: occurredOn, note };
+  }
+  const res = await apiFetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) {
+    showToast(kind === 'revenue' ? '売上エントリを追加しました' : '原価エントリを追加しました', 'success');
+    closeModal('modal-finance-entry');
+    loadProjectFinance();
+  } else {
+    const e = await res.json().catch(()=>({}));
+    showToast('エラー: ' + (e.error || '追加失敗'), 'error');
+  }
 }
 
 async function deleteRevenueEntry(rid) {
@@ -6757,25 +6946,6 @@ async function deleteRevenueEntry(rid) {
   else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '削除失敗'), 'error'); }
 }
 
-// --- 原価エントリ -------------------------------------------------------
-async function openCostEntryEditor() {
-  const projectId = document.getElementById('p-id').value;
-  const label = prompt('ラベルを入力してください（例: 外注デザイン / 取材費）', '');
-  if (label === null) return;
-  const amount = prompt('金額（円）を入力してください', '0');
-  if (amount === null) return;
-  const n = parseInt(String(amount).replace(/[^\d-]/g, ''), 10);
-  if (!Number.isFinite(n) || n <= 0) { showToast('正しい金額を入力してください', 'warn'); return; }
-  const occurredOn = prompt('発生日（YYYY-MM-DD、空欄=今日）', new Date().toISOString().slice(0,10));
-  if (occurredOn === null) return;
-  const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/cost-entries`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label: label || null, amount: n, occurred_on: occurredOn || null, cost_type: 'other' }),
-  });
-  if (res.ok) { showToast('原価エントリを追加しました', 'success'); loadProjectFinance(); }
-  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '追加失敗'), 'error'); }
-}
-
 async function deleteCostEntry(cid) {
   if (!confirm('この原価エントリを削除しますか？\n（請求書由来のエントリは API 経由削除できません）')) return;
   const res = await apiFetch(`${ACCOUNTING_API}/cost-entries/${cid}`, { method: 'DELETE' });
@@ -6783,23 +6953,35 @@ async function deleteCostEntry(cid) {
   else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '削除失敗'), 'error'); }
 }
 
-// --- 見積 ---------------------------------------------------------------
-async function openEstimateEditor() {
+// --- 見積作成（モーダル） ------------------------------------------------
+function openEstimateEditor() {
+  document.getElementById('fest-title').value  = '';
+  document.getElementById('fest-total').value  = '';
+  document.getElementById('fest-status').value = 'draft';
+  document.getElementById('fest-note').value   = '';
+  openModal('modal-finance-estimate');
+  setTimeout(() => document.getElementById('fest-title').focus(), 50);
+}
+
+async function submitFinanceEstimate() {
+  const title  = document.getElementById('fest-title').value.trim() || null;
+  const total  = parseInt(document.getElementById('fest-total').value, 10);
+  const status = document.getElementById('fest-status').value;
+  const note   = document.getElementById('fest-note').value.trim() || null;
+  if (!Number.isFinite(total) || total < 0) { showToast('正しい金額を入力してください', 'warn'); return; }
   const projectId = document.getElementById('p-id').value;
-  const title = prompt('見積タイトル（例: v1 ラフ見積）', '');
-  if (title === null) return;
-  const total = prompt('見積総額（円）', '0');
-  if (total === null) return;
-  const n = parseInt(String(total).replace(/[^\d-]/g, ''), 10);
-  if (!Number.isFinite(n) || n < 0) { showToast('正しい金額を入力してください', 'warn'); return; }
-  const note = prompt('メモ（任意）', '');
-  if (note === null) return;
   const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/estimates`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: title || null, total_amount: n, note: note || null }),
+    body: JSON.stringify({ title, total_amount: total, status, note }),
   });
-  if (res.ok) { showToast('見積を作成しました', 'success'); loadProjectFinance(); }
-  else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '作成失敗'), 'error'); }
+  if (res.ok) {
+    showToast('見積を作成しました', 'success');
+    closeModal('modal-finance-estimate');
+    loadProjectFinance();
+  } else {
+    const e = await res.json().catch(()=>({}));
+    showToast('エラー: ' + (e.error || '作成失敗'), 'error');
+  }
 }
 
 async function changeEstimateStatus(eid, newStatus) {
