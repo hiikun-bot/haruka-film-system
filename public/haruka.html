@@ -3520,14 +3520,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
 
-      <!-- クライアント確認URL（手動入力） -->
+      <!-- クライアント確認URL（自動共有 / 手動入力） -->
       <div class="form-group" style="margin-bottom:18px">
-        <label class="form-label">クライアント確認URL</label>
+        <label class="form-label">
+          クライアント確認URL
+          <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:6px">🔗 自動共有済み</span>
+        </label>
         <div style="display:flex;gap:5px">
           <input class="form-input" id="cd-client-review-url" placeholder="https://drive.google.com/file/d/.../view" style="min-width:0;flex:1">
           <button class="btn" onclick="openLink('cd-client-review-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+          <button id="cd-client-review-reshare-btn" class="btn" onclick="reshareClientReviewUrl()" style="display:none;white-space:nowrap;padding:8px 10px;flex-shrink:0" title="Drive 上で公開設定し直して URL を再取得します">再共有</button>
         </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">「クライアント確認」ステータスに進めた際に通知本文へ自動挿入されます</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">「クライアントチェック中」に進めた瞬間、Drive 上のファイルが自動で「リンクを知っている人なら閲覧可」に設定され、URL がここにセットされます。手動入力済みのURLは上書きされません。</div>
       </div>
 
       <!-- 担当者セクション（未着手のみ） -->
@@ -12740,6 +12744,18 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-frameio-url').value = c.frameio_url || '';
   const _cdClientReviewUrlEl = document.getElementById('cd-client-review-url');
   if (_cdClientReviewUrlEl) _cdClientReviewUrlEl.value = c.client_review_url || '';
+  // 自動共有バッジ: Drive 共有 URL らしき値が入っていたら表示
+  const _cdAutoBadge = document.getElementById('cd-client-review-auto-badge');
+  if (_cdAutoBadge) {
+    const _cru = (c.client_review_url || '').trim();
+    const _looksDrive = /https?:\/\/drive\.google\.com\//i.test(_cru);
+    _cdAutoBadge.style.display = (_cru && _looksDrive) ? '' : 'none';
+  }
+  // 再共有ボタン: 管理者のみ表示
+  const _cdReshareBtn = document.getElementById('cd-client-review-reshare-btn');
+  if (_cdReshareBtn) {
+    _cdReshareBtn.style.display = (currentUser?.role === 'admin') ? '' : 'none';
+  }
 
   // 担当者ドロップダウン初期化（未着手用）
   const cdTeamSel = document.getElementById('cd-team-id');
@@ -13409,6 +13425,38 @@ async function loadCreativeFiles(creativeId) {
       </div>
     </div>`;
   }).join('');
+}
+
+// クライアント確認URLを再共有（管理者のみ）。
+// 既存値がある場合の上書きは confirm で確認してから force=true で実行。
+async function reshareClientReviewUrl() {
+  if (!currentCreativeDetail?.id) return;
+  const cur = (document.getElementById('cd-client-review-url')?.value || '').trim();
+  let force = false;
+  if (cur) {
+    if (!confirm('既にクライアント確認URLが入力されています。\nDrive で再共有して URL を上書きしますか？')) return;
+    force = true;
+  }
+  try {
+    const url = `${API}/creatives/${currentCreativeDetail.id}/share-client-review${force ? '?force=true' : ''}`;
+    const res = await apiFetch(url, { method: 'POST' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(`再共有失敗: ${json.error || res.status}`, 'warn');
+      return;
+    }
+    if (json.url) {
+      const inp = document.getElementById('cd-client-review-url');
+      if (inp) inp.value = json.url;
+      const badge = document.getElementById('cd-client-review-auto-badge');
+      if (badge) badge.style.display = '';
+      showToast(`Drive 共有URLをセットしました（${json.source || 'auto'}）`, 'info');
+    } else {
+      showToast(`共有対象ファイルが見つかりませんでした（source=${json.source || 'skipped'}）`, 'warn');
+    }
+  } catch (e) {
+    showToast(`再共有エラー: ${e.message}`, 'warn');
+  }
 }
 
 // faststart プレビュー版を再生成（管理者のみ表示される失敗時の再生成ボタン用）

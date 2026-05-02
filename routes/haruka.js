@@ -9,6 +9,7 @@ const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
+const { shareForClientReview } = require('../lib/drive-share');
 
 // FFmpeg（画質変換用）
 let ffmpegPath, ffmpeg;
@@ -1717,6 +1718,23 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
+  // - 通知より先に実行して client_review_url を確定させる
+  // - 失敗してもクリエイティブ更新自体は完遂（手動入力フォールバック）
+  // - 既存値があれば上書きしない（lib/drive-share 側で保護）
+  const STATUS_CLIENT_REVIEW = 'クライアントチェック中';
+  if (
+    updateData.status === STATUS_CLIENT_REVIEW &&
+    beforeStatus !== STATUS_CLIENT_REVIEW
+  ) {
+    try {
+      const result = await shareForClientReview({ creativeId: req.params.id });
+      console.log('[client-review] auto-share:', { creativeId: req.params.id, ...result });
+    } catch (err) {
+      console.error('[client-review] auto-share failed:', err?.stack || err?.message || err, { creativeId: req.params.id });
+    }
+  }
+
   // ステータスが実際に変わったときだけ Slack/Chatwork 通知（fire-and-forget）
   if (updateData.status !== undefined && beforeStatus !== updateData.status) {
     try {
@@ -1734,6 +1752,21 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   }
 
   res.json(data);
+});
+
+// 単発再共有エンドポイント
+//   POST /creatives/:id/share-client-review            -> 既存値を尊重
+//   POST /creatives/:id/share-client-review?force=true -> 既存値を上書き
+// 用途: 自動共有が失敗した／別ファイルにすり替えたい等、管理者操作用
+router.post('/creatives/:id/share-client-review', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const force = req.query?.force === 'true' || req.query?.force === '1' || req.body?.force === true;
+  try {
+    const result = await shareForClientReview({ creativeId: req.params.id, force });
+    res.json(result);
+  } catch (err) {
+    console.error('[client-review] manual share failed:', err?.stack || err?.message || err, { creativeId: req.params.id });
+    res.status(500).json({ error: err?.message || 'auto-share failed' });
+  }
 });
 
 // 管理者によるステータス強制変更（戻し含む）
@@ -1827,6 +1860,16 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     changed_by: req.user?.id || null,
     deleted_invoice_item_ids: deletedItemIds.length ? deletedItemIds : null,
   });
+
+  // 「クライアントチェック中」遷移時の Drive 自動共有（同期）
+  if (newStatus === 'クライアントチェック中' && creative.status !== 'クライアントチェック中') {
+    try {
+      const result = await shareForClientReview({ creativeId: req.params.id });
+      console.log('[client-review] auto-share (admin):', { creativeId: req.params.id, ...result });
+    } catch (err) {
+      console.error('[client-review] auto-share (admin) failed:', err?.stack || err?.message || err, { creativeId: req.params.id });
+    }
+  }
 
   // 通知（fire-and-forget）
   try {
