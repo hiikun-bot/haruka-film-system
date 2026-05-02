@@ -240,6 +240,18 @@ function showError(msg) {
   el.classList.add('show');
 }
 
+// ログイン後の遷移先を決定する。
+// 通知 URL（例: /haruka.html?creative=xxx）を踏んで未ログインだった場合、
+// requireAuth が ?next=... を付与して /login.html にリダイレクトしてくる。
+// オープンリダイレクトを防ぐため /haruka.html で始まる相対 URL のみ許可。
+function resolveNextUrl() {
+  try {
+    const nextParam = new URLSearchParams(location.search).get('next') || '';
+    if (/^\/haruka\.html(\?|$)/.test(nextParam)) return nextParam;
+  } catch (_) { /* noop */ }
+  return '/haruka.html';
+}
+
 async function login() {
   const email    = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value;
@@ -256,7 +268,7 @@ async function login() {
     });
     const data = await res.json();
     if (!res.ok) { showError(data.error || 'ログインに失敗しました'); return; }
-    window.location.href = '/haruka.html';
+    window.location.href = resolveNextUrl();
   } catch(e) {
     showError('ネットワークエラーが発生しました');
   } finally {

@@ -155,6 +155,63 @@ function slackFileLink(fileName, url) {
   return `*${fileName}*`;
 }
 
+// 起動時に APP_URL 未設定なら一度だけ警告。
+// （URL が含まれない通知は受信者がクリエイティブを特定する手がかりが減るため）
+if (!process.env.APP_URL) {
+  console.warn('[notif] APP_URL 未設定: 通知 URL が含まれません');
+}
+
+// 通知本文テンプレート: D/P チェック 系（クライアント確認・納品は別テンプレ）
+// kind: 通知の見出し（例: "Dチェック依頼" / "Pチェック修正依頼"）
+// emoji: 見出し前のアイコン（既存パターン: 📥 / 🔁）
+// project / client: detail.projects / detail.projects.clients
+// fileName: クリエイティブのファイル名（プレーン）
+// slackName: Slack 用ファイル名（リンク化済み）
+// actor: 操作した人（ログインユーザー）。未解決なら null。
+// recipient: 受信者（director / producer / 担当者）。未解決なら null。
+// comment: ステータス遷移時に付与されたコメント。空なら「（コメントなし）」表示。
+// creativeUrl: ディープリンク URL。未設定なら URL 行を出さない。
+function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackName, actor, recipient, comment, creativeUrl }) {
+  const projectLabel = (() => {
+    const cn = client?.name ? `【${client.name}】` : '';
+    const pn = project?.name || '';
+    if (cn || pn) return `${cn}${pn}` || '-';
+    return '-';
+  })();
+  const actorName     = actor?.full_name || '不明';
+  const recipientName = recipient?.full_name || '担当者';
+  const fromTo = `${actorName} → ${recipientName}`;
+  const commentBlock = (comment && String(comment).trim())
+    ? String(comment).trim()
+    : '（コメントなし）';
+
+  // Slack 本文（mrkdwn）。ファイル名は <url|name> 形式で青リンク化済み。
+  const slackBody = [
+    `${emoji} *${kind}*`,
+    `*案件*: ${projectLabel}`,
+    `*ファイル*: ${slackName}`,
+    `*担当者*: ${fromTo}`,
+    `*コメント*:`,
+    `> ${commentBlock.replace(/\n/g, '\n> ')}`,
+  ].join('\n');
+
+  // Chatwork 本文（[info][title]...[/title]...[/info]）。
+  // URL 行は info ブロック内に置く（クリック可能）。
+  const cwLines = [
+    `[info][title]${emoji} ${kind}[/title]`,
+    `案件: ${projectLabel}`,
+    `ファイル: ${fileName}`,
+    `担当者: ${fromTo}`,
+    `コメント:`,
+    commentBlock,
+  ];
+  if (creativeUrl) cwLines.push(`URL: ${creativeUrl}`);
+  cwLines.push('[/info]');
+  const cwBody = cwLines.join('\n');
+
+  return { slackBody, cwBody };
+}
+
 // =============== Status transition logic ===============
 
 // 関係者を解決して通知を送る
@@ -202,6 +259,12 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const slackName = slackFileLink(fileName, creativeUrl);
   const cwUrlLine = creativeUrl ? `\nURL: ${creativeUrl}` : '';
 
+  // 共通テンプレ生成ヘルパ（D/P 系で共有）
+  const tpl = (kind, emoji, recipient) => buildCreativeNotifBody({
+    kind, emoji, project, client, fileName, slackName,
+    actor, recipient, comment, creativeUrl,
+  });
+
   // 遷移ごとの処理
   // Slack / Chatwork ともに「個人宛通知」として扱うため、
   // 対象ユーザーに DM ID が設定されていない場合はその通知をスキップする。
@@ -236,8 +299,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    場合は、チャンネル/ルームに @here / [toall] でフォールバック投稿する。
   //    （ディレクターがいない案件でもCR提出が誰にも届かない事態を防ぐ）
   if (newStatus === 'Dチェック') {
-    const slackBody = `📥 Dチェック依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
-    const cwBody = `[info][title]📥 Dチェック依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
+    const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', director);
     const directorReachable = director && (director.slack_dm_id || director.chatwork_dm_id);
     if (directorReachable) {
       await sendNotif(director, slackBody, cwBody);
@@ -251,25 +313,24 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   }
   // 2) → Pチェック
   else if (newStatus === 'Pチェック') {
-    const slackBody = `📥 Pチェック依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
-    const cwBody = `[info][title]📥 Pチェック依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
+    const { slackBody, cwBody } = tpl('Pチェック依頼', '📥', producer);
     await sendNotif(producer, slackBody, cwBody);
   }
   // 3) → Dチェック後修正
   else if (newStatus === 'Dチェック後修正') {
-    const slackBody = `🔁 Dチェック修正依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
-    const cwBody = `[info][title]🔁 Dチェック修正依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
-    for (const ed of assignees) await sendNotif(ed, slackBody, cwBody);
+    for (const ed of assignees) {
+      const { slackBody, cwBody } = tpl('Dチェック修正依頼', '🔁', ed);
+      await sendNotif(ed, slackBody, cwBody);
+    }
   }
   // 4) → Pチェック後修正
   else if (newStatus === 'Pチェック後修正') {
-    const slackBody = `🔁 Pチェック修正依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
-    const cwBody = `[info][title]🔁 Pチェック修正依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
     const targets = [...assignees, director].filter(Boolean);
     const seen = new Set();
     for (const t of targets) {
       if (seen.has(t.id)) continue;
       seen.add(t.id);
+      const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', t);
       await sendNotif(t, slackBody, cwBody);
     }
   }
@@ -329,4 +390,7 @@ module.exports = {
   sendSlackChannel,
   sendSlackChannelWithFile,
   sendChatworkRoom,
+  // テスト・他モジュールから再利用可能にするためエクスポート
+  buildCreativeNotifBody,
+  buildCreativeUrl,
 };

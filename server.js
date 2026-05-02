@@ -124,7 +124,12 @@ app.use(async (req, res, next) => {
       if (err) { console.log(`[AUTO-LOGIN] login error:`, err.message); return next(); }
       console.log(`[AUTO-LOGIN] success: ${user.email} from IP ${ip}`);
       // ログイン直後はログイン画面に来た場合 haruka.html へリダイレクト
-      if (req.path === '/login.html' || req.path === '/') return res.redirect('/haruka.html');
+      // ?next=/haruka.html?creative=xxx 形式で指定があれば、許可済みパターンに限り尊重する
+      if (req.path === '/login.html' || req.path === '/') {
+        const nextParam = String(req.query?.next || '');
+        const safeNext = /^\/haruka\.html(\?|$)/.test(nextParam) ? nextParam : '/haruka.html';
+        return res.redirect(safeNext);
+      }
       next();
     });
   } catch(e) {
@@ -162,8 +167,13 @@ if (accountingRouter) {
 }
 
 // login.html: 認証済みユーザーは haruka.html へリダイレクト
+// （?next=/haruka.html?creative=xxx で来た場合はディープリンク先へ）
 app.get('/login.html', (req, res) => {
-  if (req.isAuthenticated?.()) return res.redirect('/haruka.html');
+  if (req.isAuthenticated?.()) {
+    const nextParam = String(req.query?.next || '');
+    const safeNext = /^\/haruka\.html(\?|$)/.test(nextParam) ? nextParam : '/haruka.html';
+    return res.redirect(safeNext);
+  }
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 // ルート: 認証済みなら haruka.html、未認証なら login.html
