@@ -4904,7 +4904,7 @@ async function loadProjects() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm${p.has_rates?' is-set':''}" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_rates?'単価設定済み':'単価未設定'}" style="color:var(--em-dark)">単価</button>` : ''}
-            ${(currentUser?.role === 'admin') ? `<button class="btn-sm${p.has_estimates?' is-set':''}" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_estimates?'見積作成済み':'見積未作成'}">見積</button>` : ''}
+            ${isTopAdmin() ? `<button class="btn-sm${p.has_estimates?' is-set':''}" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_estimates?'見積作成済み':'見積未作成'}">見積</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
@@ -7710,6 +7710,12 @@ async function checkAccountingEnabled() {
 
 // 報酬ボタンから案件収支モーダルを開く（V2: スタンドアロンモーダル化）
 async function openProjectFinanceModal(projectId, projectName) {
+  // 見積は機密情報（金額・原価）を含むため admin のみ開ける（VIEW AS でも非 admin は弾く）
+  // サーバー側 routes/accounting.js も requireAdmin で守られているが、フロントからの誤動作も保険でブロックする
+  if (!isTopAdmin()) {
+    showToast('見積を閲覧する権限がありません', 'warn');
+    return;
+  }
   _financeProjectId = projectId;
   _financeProjectName = projectName || '';
   const titleEl = document.getElementById('pf-modal-title');
@@ -7951,6 +7957,11 @@ function _newItem(seed = {}) {
 }
 
 function openEstimateEditor(eid) {
+  // 見積エディタも admin 限定（VIEW AS でも非 admin は弾く / サーバーの requireAdmin と二重防御）
+  if (!isTopAdmin()) {
+    showToast('見積を編集する権限がありません', 'warn');
+    return;
+  }
   document.getElementById('fest-id').value = eid || '';
   const isNew = !eid;
   document.getElementById('fest-editor-title').textContent = isNew ? '📋 見積を新規作成' : '📋 見積を編集';
