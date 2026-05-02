@@ -1504,9 +1504,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div class="toolbar">
     <div class="toolbar-row">
       <span style="font-size:13px;color:var(--text-muted);font-weight:500">クライアント：</span>
-      <div class="client-tabs" id="client-tabs">
-        <button class="ct active" onclick="setClient(this,'all')">すべて</button>
-      </div>
+      <select id="client-select" class="form-select" style="font-size:13px;padding:5px 10px;height:32px;min-width:160px;max-width:240px" onchange="setClientById(this.value)">
+        <option value="all">すべて</option>
+      </select>
       <button class="ct" id="toggle-ended-creatives" onclick="toggleEndedInCreatives()" title="取引終了クライアントを含めて表示" style="font-size:11px">+終了済</button>
       <input class="search-box" type="text" placeholder="クリエイティブ検索（ファイル名・クライアント・担当者・メモ）" oninput="filterSearch(this.value)">
       <select id="cv-assignee-filter" class="form-select" style="font-size:12px;padding:5px 10px;height:32px;min-width:120px;max-width:160px" onchange="setAssigneeFilter(this.value)">
@@ -3913,19 +3913,23 @@ async function loadClients() {
     const data = await res.json();
     allClients = Array.isArray(data) ? data : [];
   } catch(e) { allClients = []; console.error('[loadClients]', e); }
-  const tabs = document.getElementById('client-tabs');
-  tabs.innerHTML = '<button class="ct active" onclick="setClient(this,\'all\')">すべて</button>';
+  renderClientSelect();
+}
+
+// クリエイティブ画面の「クライアント」select を再描画
+function renderClientSelect() {
+  const sel = document.getElementById('client-select');
+  if (!sel) return;
   const visibleClients = showEndedInCreatives
     ? allClients
     : allClients.filter(c => c.status !== 'クライアント取引終了');
-  visibleClients.forEach(c => {
-    const btn = document.createElement('button');
-    btn.className = 'ct';
-    btn.textContent = c.name.slice(0,3);
-    btn.title = c.name;
-    btn.onclick = () => setClient(btn, c.id);
-    tabs.appendChild(btn);
-  });
+  const sortedClients = visibleClients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  const options = [
+    `<option value="all">すべて（${visibleClients.length}社）</option>`,
+    ...sortedClients.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`),
+  ];
+  sel.innerHTML = options.join('');
+  sel.value = currentClient || 'all';
 }
 
 // 案件（クライアント→案件の階層表示）
@@ -3943,22 +3947,8 @@ async function loadProjects() {
   const bulkSel = document.getElementById('bulk-project-id');
   if (bulkSel) bulkSel.innerHTML = allProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
 
-  // クライアントタブを更新
-  const tabs = document.getElementById('client-tabs');
-  if (tabs) {
-    tabs.innerHTML = '<button class="ct active" onclick="setClient(this,\'all\')">すべて</button>';
-    const visibleClientsForTabs = showEndedInCreatives
-      ? allClients
-      : allClients.filter(c => c.status !== 'クライアント取引終了');
-    visibleClientsForTabs.forEach(c => {
-      const btn = document.createElement('button');
-      btn.className = 'ct';
-      btn.textContent = c.name.slice(0, 4);
-      btn.title = c.name;
-      btn.onclick = () => setClient(btn, c.id);
-      tabs.appendChild(btn);
-    });
-  }
+  // クライアント select を更新（旧 client-tabs ボタン群から移行）
+  renderClientSelect();
 
   const list = document.getElementById('projects-list');
   if (!list) return;
@@ -5076,17 +5066,23 @@ function renderAlerts() {
 }
 
 function setClient(btn, id) {
+  // 旧 ボタン式タブ互換のラッパー（btn は無視可）
+  setClientById(id);
+}
+
+function setClientById(id) {
   currentClient = id;
-  document.querySelectorAll('.ct').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  // 「全て」選択時は担当者・ボール保持者フィルタもリセットする
+  // 「全て」選択時は担当者・ボール保持者フィルタもリセット
   if (id === 'all') {
     currentAssigneeFilter = '';
     document.querySelectorAll('.bf').forEach(b => b.classList.add('on'));
   }
-  // どの id でも担当者 select の値を currentAssigneeFilter と同期させる
-  const sel = document.getElementById('cv-assignee-filter');
-  if (sel) sel.value = currentAssigneeFilter || '';
+  // 担当者 select の値を currentAssigneeFilter と同期
+  const aSel = document.getElementById('cv-assignee-filter');
+  if (aSel) aSel.value = currentAssigneeFilter || '';
+  // クライアント select の値も同期（外部からの呼び出しに備えて）
+  const cSel = document.getElementById('client-select');
+  if (cSel && cSel.value !== id) cSel.value = id;
   // クライアント変更は DB 側で絞り込むため再取得
   creativesPage.offset = 0;
   loadCreatives();
@@ -6949,10 +6945,10 @@ function renderEstimateItems() {
     const amount = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0);
     return `<div style="display:grid;grid-template-columns:2fr 60px 60px 90px 90px 28px;gap:6px;padding:4px 0;align-items:center">
       <input type="text"   style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" value="${esc(it.label)}"      placeholder="品目"     oninput="updateEstimateItem(${idx},'label',this.value)">
-      <input type="number" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right" value="${it.quantity}" min="0" step="0.5"  oninput="updateEstimateItem(${idx},'quantity',this.value)">
+      <input type="number" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right" value="${it.quantity}" min="0" step="1"  oninput="updateEstimateItem(${idx},'quantity',this.value)">
       <input type="text"   style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center" value="${esc(it.unit||'')}" placeholder="本/式"  oninput="updateEstimateItem(${idx},'unit',this.value)">
       <input type="number" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right" value="${it.unit_price}" min="0" step="1"  oninput="updateEstimateItem(${idx},'unit_price',this.value)">
-      <span style="font-size:13px;font-weight:600;text-align:right;padding:5px 4px">${_yen(amount)}</span>
+      <span class="fest-item-amount" data-idx="${idx}" style="font-size:13px;font-weight:600;text-align:right;padding:5px 4px">${_yen(amount)}</span>
       <button type="button" style="background:none;border:none;color:#A32D2D;cursor:pointer;font-size:14px" onclick="removeEstimateItem(${idx})" title="行を削除">×</button>
     </div>`;
   }).join('') || '<div style="color:var(--text-muted);font-size:12px;padding:6px 0">明細がありません。「+ 行を追加」「📊 単価設定から取込」「📥 過去から引用」のいずれかで追加してください</div>';
@@ -6969,6 +6965,12 @@ function updateEstimateItem(idx, field, value) {
   if (!_festItems[idx]) return;
   if (field === 'quantity' || field === 'unit_price') {
     _festItems[idx][field] = Number(value) || 0;
+    // 行内「金額」表示も即時更新
+    const amountEl = document.querySelector(`.fest-item-amount[data-idx="${idx}"]`);
+    if (amountEl) {
+      const a = (Number(_festItems[idx].quantity) || 0) * (Number(_festItems[idx].unit_price) || 0);
+      amountEl.textContent = _yen(a);
+    }
   } else {
     _festItems[idx][field] = value;
   }
@@ -7005,7 +7007,13 @@ async function submitEstimateEditor() {
     }));
   const totalAmount = cleanItems.reduce((s, it) => s + it.amount, 0);
 
-  const projectId = document.getElementById('p-id').value;
+  // 報酬→見積リファクタ後はスタンドアロンモーダルから開かれるため
+  // 案件IDは _financeProjectId（modal-project-finance の状態）から取得
+  const projectId = _financeProjectId;
+  if (!projectId && !eid) {
+    showToast('エラー: 案件IDが取得できません。モーダルを開き直してください', 'error');
+    return;
+  }
   let res;
   if (eid) {
     res = await apiFetch(`${ACCOUNTING_API}/estimates/${eid}`, {
@@ -7023,8 +7031,9 @@ async function submitEstimateEditor() {
     closeModal('modal-finance-estimate-editor');
     loadProjectFinance();
   } else {
-    const e = await res.json().catch(()=>({}));
-    showToast('エラー: ' + (e.error || '保存失敗'), 'error');
+    const errBody = await res.json().catch(() => ({}));
+    console.error('[submitEstimateEditor] save failed', { status: res.status, body: errBody, projectId, eid });
+    showToast(`エラー (${res.status}): ${errBody.error || res.statusText || '保存失敗'}`, 'error');
   }
 }
 
