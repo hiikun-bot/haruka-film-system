@@ -5,6 +5,9 @@
 
 require('dotenv').config();
 const harukaRouter = require('./routes/haruka');
+// 案件収支機能（feature flag: ENABLE_PROJECT_ACCOUNTING）— Step B
+const accountingEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_PROJECT_ACCOUNTING || '').toLowerCase());
+const accountingRouter = accountingEnabled ? require('./routes/accounting') : null;
 const supabase = require('./supabase');
 const express = require('express');
 const cors = require('cors');
@@ -149,6 +152,14 @@ app.use('/api/', (req, res, next) => {
 
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
+
+// 案件収支 API（feature flag が有効な時のみマウント。flag OFF 時はそもそもエンドポイントが存在しない）
+if (accountingRouter) {
+  app.use('/api/accounting', accountingRouter);
+  console.log('[accounting] feature flag ENABLED — /api/accounting/* available');
+} else {
+  console.log('[accounting] feature flag DISABLED — set ENABLE_PROJECT_ACCOUNTING=true to enable');
+}
 
 // login.html: 認証済みユーザーは haruka.html へリダイレクト
 app.get('/login.html', (req, res) => {
