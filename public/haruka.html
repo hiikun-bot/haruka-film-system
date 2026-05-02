@@ -1037,6 +1037,149 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   from { opacity: 0; transform: translateX(30px); }
   to   { opacity: 1; transform: translateX(0); }
 }
+
+/* ========================================
+   クライアントフィルタ（クリエイティブ画面）
+   ======================================== */
+#client-multi { position: relative; min-width: 220px; max-width: 320px; }
+#client-multi-btn {
+  font-size: 13px; padding: 5px 10px; height: 32px; width: 100%;
+  text-align: left; background: #fff; cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+}
+#client-multi-btn .cm-count-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--em); color: #fff;
+  font-size: 11px; font-weight: 600; line-height: 1;
+  min-width: 18px; height: 18px; padding: 0 6px;
+  border-radius: 999px; flex-shrink: 0;
+}
+.cm-pop {
+  display: none; flex-direction: column;
+  position: absolute; top: 36px; left: 0;
+  min-width: 360px; max-width: 480px;
+  max-height: 80vh;
+  background: #fff; border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 50;
+  overflow: hidden;
+}
+.cm-pop.is-open { display: flex; }
+.cm-header {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border-light);
+  background: #fff;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cm-search-row { display: flex; align-items: center; gap: 8px; }
+.cm-search-wrap {
+  position: relative; flex: 1;
+}
+.cm-search-icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--text-muted); font-size: 13px; pointer-events: none;
+  line-height: 1;
+}
+.cm-search-input {
+  width: 100%; box-sizing: border-box;
+  font-size: 13px; padding: 7px 30px 7px 30px; height: 34px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: #fff; color: var(--text); outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.cm-search-input:focus {
+  border-color: var(--em);
+  box-shadow: 0 0 0 3px var(--em-pale);
+}
+.cm-search-clear {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: none; background: transparent; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; padding: 4px 6px; line-height: 1;
+  border-radius: 4px;
+}
+.cm-search-clear:hover { background: var(--em-pale); color: var(--em-dark); }
+.cm-status {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; color: var(--text-muted); padding: 0 2px;
+}
+.cm-selected-badge {
+  display: none; align-items: center; gap: 4px;
+  background: var(--em-pale); color: var(--em-dark);
+  font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px;
+}
+.cm-selected-badge.is-active { display: inline-flex; }
+.cm-list {
+  flex: 1 1 auto; overflow-y: auto;
+  padding: 6px; font-size: 13px;
+  /* 仮想スクロール候補: クライアント数が数百件規模になったら virtualize */
+}
+.cm-list.is-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 6px;
+}
+.cm-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; cursor: pointer; border-radius: 6px;
+  user-select: none;
+  transition: background-color .12s ease;
+  min-width: 0;
+}
+.cm-row:hover { background: var(--em-bg); }
+.cm-row.is-selected { background: var(--em-pale); }
+.cm-row.is-selected:hover { background: #DDF4F2; }
+.cm-row.is-focused { outline: 2px solid var(--em); outline-offset: -2px; }
+.cm-row input[type=checkbox] {
+  width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; margin: 0;
+  accent-color: var(--em);
+}
+.cm-row .cm-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+}
+.cm-row.is-selected .cm-name { font-weight: 600; color: var(--em-dark); }
+.cm-empty {
+  padding: 24px 12px; text-align: center;
+  font-size: 12px; color: var(--text-muted);
+}
+.cm-footer {
+  display: flex; gap: 6px; padding: 8px 12px;
+  border-top: 1px solid var(--border-light);
+  background: #fff;
+}
+.cm-btn {
+  flex: 1; font-size: 12px; padding: 6px 10px; height: 32px;
+  border-radius: 7px; cursor: pointer; font-weight: 500;
+  border: 1px solid var(--border);
+  background: #fff; color: var(--em-dark);
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.cm-btn:hover { background: var(--em-bg); border-color: var(--em-light); }
+.cm-btn.cm-btn-outline {
+  border-color: var(--em); color: var(--em-dark); background: #fff;
+}
+.cm-btn.cm-btn-outline:hover { background: var(--em-pale); }
+.cm-btn.cm-btn-primary {
+  background: var(--em); border-color: var(--em); color: #fff;
+}
+.cm-btn.cm-btn-primary:hover { background: var(--em-dark); border-color: var(--em-dark); }
+/* スマホ: ポップオーバーをシート風に */
+@media (max-width: 768px) {
+  .cm-pop {
+    position: fixed;
+    top: auto;
+    bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 90vw; min-width: 0; max-width: 90vw;
+    max-height: 80vh;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.18);
+  }
+  .cm-list.is-grid { grid-template-columns: 1fr; }
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -1551,22 +1694,37 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div class="toolbar-row">
       <span style="font-size:13px;color:var(--text-muted);font-weight:500">クライアント：</span>
       <!-- 複数選択チェックボックス・ドロップダウン -->
-      <div id="client-multi" style="position:relative;min-width:200px;max-width:280px">
-        <button type="button" id="client-multi-btn" onclick="toggleClientMultiOpen(event)" class="form-select" style="font-size:13px;padding:5px 10px;height:32px;width:100%;text-align:left;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
-          <span id="client-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">すべて</span>
-          <span style="margin-left:6px;color:var(--text-muted);flex-shrink:0">▾</span>
+      <div id="client-multi">
+        <button type="button" id="client-multi-btn" onclick="toggleClientMultiOpen(event)" class="form-select" aria-haspopup="listbox" aria-expanded="false">
+          <span id="client-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">すべて</span>
+          <span id="client-multi-count-badge" class="cm-count-badge" style="display:none">0</span>
+          <span style="color:var(--text-muted);flex-shrink:0;font-size:11px">▾</span>
         </button>
-        <div id="client-multi-pop" style="display:none;position:absolute;top:36px;left:0;width:280px;max-height:380px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:50;padding:6px 0">
-          <div style="position:sticky;top:0;background:#fff;padding:4px 10px 8px;border-bottom:1px solid var(--border-light);z-index:1">
-            <div style="position:relative">
-              <input type="text" id="client-multi-search" placeholder="クライアント名で検索..." oninput="filterClientMultiList(this.value)" onkeydown="onClientMultiSearchKey(event)" style="width:100%;font-size:12px;padding:6px 26px 6px 10px;height:30px;border:1px solid var(--border);border-radius:6px;outline:none;box-sizing:border-box">
-              <button type="button" id="client-multi-search-clear" onclick="clearClientMultiSearch()" title="クリア" style="display:none;position:absolute;right:4px;top:50%;transform:translateY(-50%);background:transparent;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:2px 6px;line-height:1">✕</button>
+        <div id="client-multi-pop" class="cm-pop" role="dialog" aria-label="クライアント選択">
+          <div class="cm-header">
+            <div class="cm-search-row">
+              <div class="cm-search-wrap">
+                <span class="cm-search-icon" aria-hidden="true">🔍</span>
+                <input type="text" id="client-multi-search" class="cm-search-input"
+                       placeholder="クライアント名で検索..."
+                       oninput="filterClientMultiList(this.value)"
+                       onkeydown="onClientMultiSearchKey(event)"
+                       autocomplete="off"
+                       aria-label="クライアント名で検索"
+                       aria-controls="client-multi-list">
+                <button type="button" id="client-multi-search-clear" class="cm-search-clear" onclick="clearClientMultiSearch()" title="クリア" aria-label="検索をクリア">✕</button>
+              </div>
+            </div>
+            <div class="cm-status">
+              <span id="client-multi-result-count">0社</span>
+              <span id="client-multi-selected-badge" class="cm-selected-badge"><span id="client-multi-selected-count">0</span>社選択中</span>
             </div>
           </div>
-          <div id="client-multi-list" style="font-size:13px"></div>
-          <div style="display:flex;gap:6px;padding:8px 10px 4px;border-top:1px solid var(--border-light)">
-            <button class="btn-sm" style="flex:1;font-size:11px" onclick="clearClientMulti()">クリア</button>
-            <button class="btn-sm" style="flex:1;font-size:11px;color:#fff;background:var(--em);border-color:var(--em)" onclick="closeClientMulti()">閉じる</button>
+          <div id="client-multi-list" class="cm-list" role="listbox" aria-multiselectable="true" tabindex="-1"></div>
+          <div class="cm-footer">
+            <button type="button" class="cm-btn cm-btn-outline" onclick="selectAllClientMulti()">すべて選択</button>
+            <button type="button" class="cm-btn" onclick="clearClientMulti()">クリア</button>
+            <button type="button" class="cm-btn cm-btn-primary" onclick="closeClientMulti()">閉じる</button>
           </div>
         </div>
       </div>
@@ -4046,63 +4204,123 @@ async function loadClients() {
   renderClientSelect();
 }
 
-// クリエイティブ画面の「クライアント」複数選択ドロップダウンを再描画
+// ====================================================
+// クリエイティブ画面の「クライアント」複数選択ドロップダウン
+// ====================================================
+// 表示対象クライアント（取引終了フィルタ適用後）。
+// 選択中→未選択 の順 + 各グループ内で日本語ロケール昇順にソートして返す。
+function getClientMultiVisibleClients() {
+  const visibleClients = (allClients || []).filter(c => showEndedInCreatives || c.status !== 'クライアント取引終了');
+  return visibleClients.slice().sort((a, b) => {
+    const aSel = currentClientIds.has(a.id) ? 0 : 1;
+    const bSel = currentClientIds.has(b.id) ? 0 : 1;
+    if (aSel !== bSel) return aSel - bSel;
+    return (a.name || '').localeCompare(b.name || '', 'ja');
+  });
+}
+
+// 仮想スクロール候補: クライアント数が数百件規模になったら virtualize を検討
 function renderClientSelect() {
   const list = document.getElementById('client-multi-list');
   if (!list) return;
-  const visibleClients = showEndedInCreatives
-    ? allClients
-    : allClients.filter(c => c.status !== 'クライアント取引終了');
-  const sortedClients = visibleClients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  const sortedClients = getClientMultiVisibleClients();
 
-  // 行を生成（チェックボックス）
-  const rows = sortedClients.map(c => {
-    const checked = currentClientIds.has(c.id) ? 'checked' : '';
-    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:13px" onmouseenter="this.style.background='#f5fafa'" onmouseleave="this.style.background='transparent'">
-      <input type="checkbox" value="${esc(c.id)}" ${checked} onchange="toggleClientId('${esc(c.id)}', this.checked)" style="width:14px;height:14px;cursor:pointer">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</span>
-    </label>`;
-  });
-  list.innerHTML = rows.join('');
+  // 11社以上なら2列グリッド
+  list.classList.toggle('is-grid', sortedClients.length >= 11);
+
+  if (!sortedClients.length) {
+    list.innerHTML = `<div class="cm-empty">クライアントがいません</div>`;
+  } else {
+    const rows = sortedClients.map(c => {
+      const isSel = currentClientIds.has(c.id);
+      const safeId = esc(c.id);
+      const safeName = esc(c.name || '(無名)');
+      return `<div class="cm-row${isSel ? ' is-selected' : ''}"
+                   role="option" aria-selected="${isSel}"
+                   data-id="${safeId}" data-name="${safeName.toLowerCase()}"
+                   tabindex="-1"
+                   onclick="onClientMultiRowClick(event, '${safeId}')"
+                   onkeydown="onClientMultiRowKey(event, '${safeId}')"
+                   title="${safeName}">
+        <input type="checkbox" value="${safeId}" ${isSel ? 'checked' : ''}
+               onclick="event.stopPropagation()"
+               onchange="toggleClientId('${safeId}', this.checked)">
+        <span class="cm-name">${safeName}</span>
+      </div>`;
+    });
+    list.innerHTML = rows.join('');
+  }
   refreshClientMultiLabel();
+  // 検索ボックスに入力が残っていれば、表示も維持する
+  const input = document.getElementById('client-multi-search');
+  if (input && input.value) filterClientMultiList(input.value);
+  else updateClientMultiResultCount();
 }
 
-// 「すべて」or 選択件数 or 1社名 を表示
+// ヘッダー側ボタンのラベル + バッジを更新
 function refreshClientMultiLabel() {
   const labelEl = document.getElementById('client-multi-label');
+  const badgeEl = document.getElementById('client-multi-count-badge');
   if (!labelEl) return;
   const count = currentClientIds.size;
+  const totalVisible = (allClients || []).filter(c => showEndedInCreatives || c.status !== 'クライアント取引終了').length;
   if (count === 0) {
-    labelEl.textContent = `すべて（${(allClients||[]).filter(c => showEndedInCreatives || c.status !== 'クライアント取引終了').length}社）`;
+    labelEl.textContent = `すべて（${totalVisible}社）`;
+    if (badgeEl) badgeEl.style.display = 'none';
   } else if (count === 1) {
     const id = [...currentClientIds][0];
     const c = (allClients || []).find(x => x.id === id);
     labelEl.textContent = c ? c.name : '1社選択中';
+    if (badgeEl) { badgeEl.textContent = '1'; badgeEl.style.display = ''; }
   } else {
     labelEl.textContent = `${count}社選択中`;
+    if (badgeEl) { badgeEl.textContent = String(count); badgeEl.style.display = ''; }
   }
+  // ポップ内の選択中バッジも更新
+  const selBadge = document.getElementById('client-multi-selected-badge');
+  const selCount = document.getElementById('client-multi-selected-count');
+  if (selBadge && selCount) {
+    selBadge.classList.toggle('is-active', count > 0);
+    selCount.textContent = String(count);
+  }
+}
+
+// 表示中件数（検索後）を更新
+function updateClientMultiResultCount() {
+  const list = document.getElementById('client-multi-list');
+  const counter = document.getElementById('client-multi-result-count');
+  if (!list || !counter) return;
+  const total = list.querySelectorAll('.cm-row').length;
+  const visible = list.querySelectorAll('.cm-row:not([hidden])').length;
+  counter.textContent = (total === visible) ? `${total}社` : `${visible} / ${total}社`;
 }
 
 // 開閉
 function toggleClientMultiOpen(ev) {
   if (ev) ev.stopPropagation();
   const pop = document.getElementById('client-multi-pop');
+  const btn = document.getElementById('client-multi-btn');
   if (!pop) return;
-  const willOpen = pop.style.display === 'none';
-  pop.style.display = willOpen ? '' : 'none';
+  const willOpen = !pop.classList.contains('is-open');
   if (willOpen) {
-    // 開くたびに検索入力をクリア & 全表示に戻す
+    // 開くたびに、選択中を上に集めて再ソート + 検索クリア
+    renderClientSelect();
     clearClientMultiSearch();
-    // 入力欄にフォーカス（軽くタイミングをずらす）
+    pop.classList.add('is-open');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
     setTimeout(() => {
       const input = document.getElementById('client-multi-search');
       if (input) input.focus();
     }, 0);
+  } else {
+    closeClientMulti();
   }
 }
 function closeClientMulti() {
   const pop = document.getElementById('client-multi-pop');
-  if (pop) pop.style.display = 'none';
+  const btn = document.getElementById('client-multi-btn');
+  if (pop) pop.classList.remove('is-open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
 // クライアント検索インクリメンタルフィルタ
@@ -4110,21 +4328,37 @@ function filterClientMultiList(q) {
   const query = (q || '').toLowerCase().trim();
   const list = document.getElementById('client-multi-list');
   if (!list) return;
-  const rows = list.querySelectorAll('label');
+  const rows = list.querySelectorAll('.cm-row');
   rows.forEach(row => {
-    const span = row.querySelector('span');
-    const name = (span ? span.textContent : '').toLowerCase();
-    row.style.display = (!query || name.includes(query)) ? '' : 'none';
+    const name = row.dataset.name || '';
+    const match = !query || name.includes(query);
+    row.hidden = !match;
   });
   // ✕ ボタンの表示制御
   const clearBtn = document.getElementById('client-multi-search-clear');
   if (clearBtn) clearBtn.style.display = query ? '' : 'none';
+  // 該当なし時の空状態
+  const empty = list.querySelector('.cm-empty.cm-empty-search');
+  const visibleCount = list.querySelectorAll('.cm-row:not([hidden])').length;
+  if (visibleCount === 0 && rows.length > 0) {
+    if (!empty) {
+      const div = document.createElement('div');
+      div.className = 'cm-empty cm-empty-search';
+      div.textContent = '該当なし';
+      list.appendChild(div);
+    }
+  } else if (empty) {
+    empty.remove();
+  }
+  updateClientMultiResultCount();
 }
 function clearClientMultiSearch() {
   const input = document.getElementById('client-multi-search');
   if (input) input.value = '';
   filterClientMultiList('');
 }
+
+// 検索ボックスのキーボード操作
 function onClientMultiSearchKey(ev) {
   if (ev.key === 'Enter') {
     ev.preventDefault();
@@ -4136,8 +4370,60 @@ function onClientMultiSearchKey(ev) {
     } else {
       closeClientMulti();
     }
+  } else if (ev.key === 'ArrowDown') {
+    ev.preventDefault();
+    focusFirstClientMultiRow();
   }
 }
+
+// 行のクリック・キーボード操作
+function onClientMultiRowClick(ev, id) {
+  // チェックボックス自体のクリックは行側で2重発火しないよう ignore
+  const cb = ev.currentTarget.querySelector('input[type=checkbox]');
+  if (!cb) return;
+  cb.checked = !cb.checked;
+  toggleClientId(id, cb.checked);
+}
+function onClientMultiRowKey(ev, id) {
+  if (ev.key === ' ' || ev.key === 'Enter') {
+    ev.preventDefault();
+    const cb = ev.currentTarget.querySelector('input[type=checkbox]');
+    if (cb) {
+      cb.checked = !cb.checked;
+      toggleClientId(id, cb.checked);
+    }
+  } else if (ev.key === 'ArrowDown') {
+    ev.preventDefault();
+    moveClientMultiFocus(ev.currentTarget, 1);
+  } else if (ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    moveClientMultiFocus(ev.currentTarget, -1);
+  } else if (ev.key === 'Escape') {
+    ev.preventDefault();
+    closeClientMulti();
+  }
+}
+function focusFirstClientMultiRow() {
+  const list = document.getElementById('client-multi-list');
+  if (!list) return;
+  const first = list.querySelector('.cm-row:not([hidden])');
+  if (first) first.focus();
+}
+function moveClientMultiFocus(currentRow, dir) {
+  const list = document.getElementById('client-multi-list');
+  if (!list) return;
+  const rows = Array.from(list.querySelectorAll('.cm-row:not([hidden])'));
+  const idx = rows.indexOf(currentRow);
+  if (idx < 0) return;
+  const next = rows[idx + dir];
+  if (next) next.focus();
+  else if (dir < 0) {
+    // 一番上から ↑ で検索ボックスに戻る
+    const input = document.getElementById('client-multi-search');
+    if (input) input.focus();
+  }
+}
+
 // 外側クリックで閉じる
 document.addEventListener('click', (e) => {
   const wrap = document.getElementById('client-multi');
@@ -4148,6 +4434,15 @@ document.addEventListener('click', (e) => {
 function toggleClientId(id, checked) {
   if (checked) currentClientIds.add(id);
   else         currentClientIds.delete(id);
+  // 行の見た目（is-selected）を即時反映（ソートはドロップダウン再オープン時）
+  const list = document.getElementById('client-multi-list');
+  if (list) {
+    const row = list.querySelector(`.cm-row[data-id="${cssEscape(id)}"]`);
+    if (row) {
+      row.classList.toggle('is-selected', checked);
+      row.setAttribute('aria-selected', String(checked));
+    }
+  }
   refreshClientMultiLabel();
   // currentClient（旧 single 値）も同期: 互換性維持
   if (currentClientIds.size === 0) currentClient = 'all';
@@ -4167,13 +4462,46 @@ function toggleClientId(id, checked) {
 
 function clearClientMulti() {
   currentClientIds.clear();
-  // 全チェックボックスを外す
   const list = document.getElementById('client-multi-list');
-  if (list) list.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+  if (list) {
+    list.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    list.querySelectorAll('.cm-row.is-selected').forEach(r => {
+      r.classList.remove('is-selected');
+      r.setAttribute('aria-selected', 'false');
+    });
+  }
   currentClient = 'all';
   refreshClientMultiLabel();
   creativesPage.offset = 0;
   loadCreatives();
+}
+
+// 表示中（検索フィルタ後）のクライアントをすべて選択
+function selectAllClientMulti() {
+  const list = document.getElementById('client-multi-list');
+  if (!list) return;
+  const rows = list.querySelectorAll('.cm-row:not([hidden])');
+  rows.forEach(row => {
+    const id = row.dataset.id;
+    if (!id) return;
+    currentClientIds.add(id);
+    const cb = row.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = true;
+    row.classList.add('is-selected');
+    row.setAttribute('aria-selected', 'true');
+  });
+  if (currentClientIds.size === 0) currentClient = 'all';
+  else if (currentClientIds.size === 1) currentClient = [...currentClientIds][0];
+  else currentClient = [...currentClientIds].join(',');
+  refreshClientMultiLabel();
+  creativesPage.offset = 0;
+  loadCreatives();
+}
+
+// CSS.escape の薄いラッパー（古いブラウザ対策）
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return String(s).replace(/(["\\])/g, '\\$1');
 }
 
 // 案件（クライアント→案件の階層表示）
