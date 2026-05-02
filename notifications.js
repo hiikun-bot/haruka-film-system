@@ -121,7 +121,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // クライアント設定より優先する（案件ごとに通知先を分けたいケース）
   const { data: detail, error: detailErr } = await supabase.from('creatives')
     .select(`
-      id, file_name, memo, team_id,
+      id, file_name, memo, team_id, client_review_url,
       project_id,
       teams(id, director_id, producer_id),
       projects(id, name, producer_id, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)),
@@ -233,6 +233,16 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    状態は許容する仕様。
   else if (newStatus === 'クライアントチェック中') {
     if (actor) {
+      // クライアント確認版URL: ユーザーが creatives.client_review_url に手動入力。
+      // 未設定時はプレースホルダ行を出して送信前に手動補完してもらう。
+      // （旧実装は "https://drive.google.com/..." をハードコードしており404の原因だった）
+      const reviewUrl = (detail.client_review_url && String(detail.client_review_url).trim()) || null;
+      const slackUrlLine = reviewUrl
+        ? `> ${reviewUrl}`
+        : '> （URL未設定。確認版のシェアリンクを下に追記してください）';
+      const cwUrlLine2 = reviewUrl
+        ? reviewUrl
+        : '（URL未設定。確認版のシェアリンクを下に追記してください）';
       const slackTpl =
 `✅ クライアント確認に進めました
 ファイル: ${slackName}
@@ -241,7 +251,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
 
 > 〇〇様、いつもお世話になっております。
 > 「${fileName}」のクライアント確認版を共有いたします。
-> https://drive.google.com/...
+${slackUrlLine}
 > ご確認のほどよろしくお願いいたします。
 
 ⚠️ 送信前に必ず内容を確認してください。`;
@@ -251,7 +261,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
 クライアントへ送るメッセージ案:
 〇〇様、いつもお世話になっております。
 「${fileName}」のクライアント確認版を共有いたします。
-https://drive.google.com/...
+${cwUrlLine2}
 ご確認のほどよろしくお願いいたします。
 
 ※送信前に必ず内容を確認してください。[/info]`;
