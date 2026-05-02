@@ -1197,7 +1197,6 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <option value="sent">提示中</option>
           <option value="accepted">採用</option>
           <option value="rejected">却下</option>
-          <option value="archived">アーカイブ</option>
         </select>
       </div>
     </div>
@@ -7002,7 +7001,8 @@ function openEstimateEditor(eid) {
   const clientName  = _pfData?.project?.client_name || '';
   const projectName = _pfData?.project?.name || _financeProjectName || '';
   // 取引先の既定値はクライアント名（無ければ案件名）
-  const defaultRecipient = clientName || projectName;
+  // 取引先はクライアント名のみ。案件名にフォールバックすると違う情報を入れてしまうため空にする
+  const defaultRecipient = clientName;
   // 件名の既定値: 「クライアント名 案件名 YYYYMM」
   const defaultTitle = [clientName, projectName, yyyymm].filter(Boolean).join(' ');
 
