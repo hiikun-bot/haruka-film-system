@@ -966,3 +966,36 @@ CREATE TABLE IF NOT EXISTS tweet_likes (
   PRIMARY KEY (tweet_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tweet_likes_user ON tweet_likes(user_id);
+
+-- ==================== users 個人情報カラム（過去の commit 50a1a3e で
+--   コードだけ追加され、本番DBへ反映されていなかったカラムを補完） ====================
+-- これが無いと PUT /api/members/:id が "column ... does not exist" で失敗し、
+-- メンバー編集が「保存しても反映されない」バグになる（feedback batch 002）。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname            TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS note                TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_name           TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_code           TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_name         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_code         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_type        TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_number      TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_holder_kana TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone               TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS postal_code         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS address             TEXT;
+
+-- ==================== users 休日曜日（feedback batch 002） ====================
+-- 「土曜日が基本仕事」など、メンバーごとに休日にあたる曜日を設定できるようにする。
+-- weekday_hours / weekend_hours は既存の時間帯設定（残す）。本カラムは「曜日カレンダー
+-- 上で休日扱いにする日」のリスト。既定は土日（[0,6] = 日, 土）。
+-- 配列は ISO 風 0=日, 1=月, ... 6=土。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS holiday_weekdays JSONB DEFAULT '[0,6]'::jsonb;
+
+-- ==================== users カメラマン機材情報（feedback batch 002） ====================
+-- 撮影系メンバーが「使用カメラ機種」「三脚」「照明」を登録できる欄。
+-- すべて任意 TEXT。空文字 / NULL = 未登録。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS camera_model TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tripod_info  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT;
+
+NOTIFY pgrst, 'reload schema';

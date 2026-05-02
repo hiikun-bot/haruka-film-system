@@ -2398,8 +2398,12 @@ router.get('/members', requireAuth, async (req, res) => {
   const canSeeSensitive = await userHasPermission(effectiveRole, 'member.edit_password');
   // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行する
   // （schema-sync が失敗していて本番DBに該当列が存在しないケースのため。PR #91 / #79 と同様パターン）
-  const baseColsWith = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url, hide_birth_year';
-  const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
+  // feedback batch 002 で追加: holiday_weekdays / camera_model / tripod_info / lighting_info
+  // 機材情報・休日曜日はチーム設計に必要なので一覧API でも返す（機微情報ではないので非機微列）。
+  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info';
+  const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
+  // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
+  const baseColsLegacy  = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
   const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
   // PostgreSQL 直の "column ... does not exist" と PostgREST の schema cache エラー (PGRST204) の両方を拾う
   const isMissingCol = (err) => {
@@ -2416,15 +2420,25 @@ router.get('/members', requireAuth, async (req, res) => {
       ({ data, error } = await supabase.from('users')
         .select(baseColsWithout + sensitiveCols).eq('id', req.user.id).maybeSingle());
     }
+    if (isMissingCol(error)) {
+      console.warn('[members] holiday_weekdays/camera等の追加列なし → legacy fallback:', error.message);
+      ({ data, error } = await supabase.from('users')
+        .select(baseColsLegacy + sensitiveCols).eq('id', req.user.id).maybeSingle());
+    }
     if (error) return res.status(500).json({ error: error.message });
     return res.json(data ? [data] : []);
   }
   const colsWith = canSeeSensitive ? baseColsWith + sensitiveCols : baseColsWith;
   const colsWithout = canSeeSensitive ? baseColsWithout + sensitiveCols : baseColsWithout;
+  const colsLegacy = canSeeSensitive ? baseColsLegacy + sensitiveCols : baseColsLegacy;
   let { data, error } = await supabase.from('users').select(colsWith).order('full_name');
   if (isMissingCol(error)) {
     console.warn('[members] hide_birth_year列なし → fallback で再取得:', error.message);
     ({ data, error } = await supabase.from('users').select(colsWithout).order('full_name'));
+  }
+  if (isMissingCol(error)) {
+    console.warn('[members] holiday_weekdays/camera等の追加列なし → legacy fallback:', error.message);
+    ({ data, error } = await supabase.from('users').select(colsLegacy).order('full_name'));
   }
   if (error) return res.status(500).json({ error: error.message });
   // 自分自身のレコードには機微情報を必ず含める
@@ -2686,7 +2700,9 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     birthday, hide_birth_year, weekday_hours, weekend_hours, note,
     bank_name, bank_code, branch_name, branch_code,
     account_type, account_number, account_holder_kana,
-    phone, postal_code, address
+    phone, postal_code, address,
+    // feedback batch 002: カメラ機材 / 休日曜日
+    camera_model, tripod_info, lighting_info, holiday_weekdays
   } = req.body;
 
   const updateData = {
@@ -2697,8 +2713,15 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     weekday_hours: weekday_hours || null,
     weekend_hours: weekend_hours || null,
     note: note || null,
+    // 機材情報・休日曜日（本人 / 管理者以外でも編集可。チーム設計のため公開情報扱い）
+    camera_model: camera_model || null,
+    tripod_info: tripod_info || null,
+    lighting_info: lighting_info || null,
+    // holiday_weekdays は配列のみ受け付け。空配列はそのまま空配列で保存（休日なし扱い）
+    holiday_weekdays: Array.isArray(holiday_weekdays) ? holiday_weekdays : undefined,
     updated_at: new Date().toISOString()
   };
+  if (updateData.holiday_weekdays === undefined) delete updateData.holiday_weekdays;
   // 機微フィールド（個人情報・口座）は 本人 or member.edit_password 保有者のみ更新可
   // → producer/PD が下位メンバーの口座情報を書き換えられないよう分離
   if (isSelf || isAdmin) {
@@ -2727,18 +2750,41 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updateData.rank = rank || null;
   }
 
-  // hide_birth_year 列が無い環境でも落ちないようフォールバックで再試行する
+  // hide_birth_year / holiday_weekdays / camera_* / 口座系などの列が無い環境でも落ちないよう
+  // 段階的にフォールバック再試行する。
   // (PG直の "column ... does not exist" と PostgREST の schema cache エラー両方を拾う)
   const isMissingColErr = (err) => {
     if (!err) return false;
     const msg = err.message || '';
     return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
   };
-  let { data, error } = await supabase.from('users').update(updateData).eq('id', req.params.id).select().single();
-  if (isMissingColErr(error) && updateData.hide_birth_year !== undefined) {
-    console.warn('[members:update] hide_birth_year列なし → fallback で再保存:', error.message);
-    const { hide_birth_year: _omit, ...rest } = updateData;
-    ({ data, error } = await supabase.from('users').update(rest).eq('id', req.params.id).select().single());
+  // どの列で落ちたかをエラーメッセージから抽出して、次の試行で当該列だけ削除する
+  const extractMissingCol = (err) => {
+    if (!err) return null;
+    const msg = err.message || '';
+    const m1 = msg.match(/column "?([a-zA-Z_]+)"? does not exist/);
+    if (m1) return m1[1];
+    const m2 = msg.match(/Could not find the '([a-zA-Z_]+)' column/);
+    if (m2) return m2[1];
+    return null;
+  };
+  let attempt = { ...updateData };
+  let { data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single();
+  // 最大 N 回まで「missing col を 1 個ずつ落として再試行」
+  for (let i = 0; i < 10 && isMissingColErr(error); i++) {
+    const col = extractMissingCol(error);
+    if (col && col in attempt) {
+      console.warn(`[members:update] ${col} 列なし → fallback で再保存:`, error.message);
+      delete attempt[col];
+    } else {
+      // 列名が抽出できなければ、追加で入れた可能性のある列をまとめて落として最後の挑戦
+      console.warn('[members:update] 列名抽出不可 → 追加カラム一括除外で再保存:', error.message);
+      ['hide_birth_year','holiday_weekdays','camera_model','tripod_info','lighting_info',
+       'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
+       'account_holder_kana','phone','postal_code','address','nickname','note','birthday']
+        .forEach(k => { if (k in attempt) delete attempt[k]; });
+    }
+    ({ data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);

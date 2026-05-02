@@ -1881,9 +1881,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- チーム追加・編集モーダル -->
 <div class="modal-overlay" id="modal-team">
-  <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;padding:24px 24px 0">
-    <div class="modal-title" id="t-modal-title" style="margin-bottom:14px;padding-right:0">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
-    <div style="overflow-y:auto;flex:1;padding:0 0 8px;margin:0 -4px 0 0">
+  <!-- ↓ width を明示 + flex-shrink:0 で、親 .modal-overlay の flex 配下で子が
+       min-content まで縮んで「左上に小さく潰れる」現象を防ぐ（feedback batch 002 / バグ7）。
+       padding:0 で外側余白を消し、内部の sticky ヘッダー / スクロール領域 / sticky フッター構造を活かす。
+       PR #137 の padding/margin 調整も内側ブロックに反映（margin:0 -4px 0 0 でスクロールバー分のはみ出しを抑える）。 -->
+  <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;padding:0">
+    <div class="modal-title" id="t-modal-title" style="padding:20px 24px 0;margin-bottom:14px">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
+    <div style="overflow-y:auto;flex:1;padding:0 24px 8px;margin:0 -4px 0 0">
+
       <input type="hidden" id="t-id">
       <div class="form-row">
         <div class="form-group">
@@ -2055,11 +2060,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="modal-close" onclick="closeModal('modal-member')">×</button>
       </div>
       <input type="hidden" id="m-id">
-      <div style="display:flex;border-bottom:2px solid var(--border)">
+      <div style="display:flex;border-bottom:2px solid var(--border);flex-wrap:wrap">
         <button class="m-tab-btn active" id="m-tab-btn-0" onclick="switchMemberTab(0)">基本情報</button>
         <button class="m-tab-btn" id="m-tab-btn-1" onclick="switchMemberTab(1)">稼働時間</button>
         <button class="m-tab-btn" id="m-tab-btn-2" onclick="switchMemberTab(2)">連絡先</button>
         <button class="m-tab-btn" id="m-tab-btn-3" onclick="switchMemberTab(3)">口座情報</button>
+        <button class="m-tab-btn" id="m-tab-btn-4" onclick="switchMemberTab(4)">機材・休日</button>
       </div>
     </div>
 
@@ -2252,6 +2258,37 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <div class="form-group" style="margin-bottom:4px">
             <label class="form-label">住所</label>
             <input class="form-input" id="m-address" placeholder="例：東京都渋谷区〇〇〇1-2-3" style="font-size:14px;padding:10px 14px">
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 4: 機材・休日（カメラマン/撮影系メンバー向け + 休日曜日設定） -->
+      <div id="m-tab-panel-4" class="m-tab-panel" style="display:none">
+        <!-- 休日曜日 -->
+        <div class="form-group" style="margin-bottom:24px">
+          <label class="form-label">休日にする曜日</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px" id="m-holiday-weekdays">
+            <!-- JS で動的に生成。日(0)〜土(6) -->
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px;line-height:1.6">
+            通常は土日休み（日・土）。土曜出勤メインの方などは曜日を切り替えてください。<br>
+            ここで選んだ曜日は稼働カレンダー上で「休日」扱いになります。
+          </div>
+        </div>
+        <!-- 撮影機材 -->
+        <div style="border-top:1px solid var(--border);padding-top:18px;margin-top:8px">
+          <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.08em">撮影機材（カメラマン向け・任意）</div>
+          <div class="form-group">
+            <label class="form-label">使用カメラ機種</label>
+            <input class="form-input" id="m-camera-model" placeholder="例：Sony FX3 / Canon R5C" style="font-size:14px;padding:10px 14px">
+          </div>
+          <div class="form-group">
+            <label class="form-label">三脚</label>
+            <input class="form-input" id="m-tripod-info" placeholder="例：マンフロット 504X / 自前あり" style="font-size:14px;padding:10px 14px">
+          </div>
+          <div class="form-group" style="margin-bottom:4px">
+            <label class="form-label">照明</label>
+            <input class="form-input" id="m-lighting-info" placeholder="例：Aputure 600d / LED小型のみ" style="font-size:14px;padding:10px 14px">
           </div>
         </div>
       </div>
@@ -4615,7 +4652,7 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${m.nickname}）</span>` : ''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
           <td style="padding:8px 12px;text-align:center">${mkBar(m.weekday_hours,'var(--em)','平日')}</td>
           <td style="padding:8px 12px;text-align:center">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<span style="font-size:11px;color:#bbb">休み</span>'}</td>
-          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${m.note ? `<span title="${esc(m.note)}">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
+          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
           <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
             ${hasPermission('member.deactivate') ? (m.is_active
@@ -5384,18 +5421,62 @@ function applyMemberModalAdminFields(m) {
   // ランクは admin/secretary/producer が見える。editor/designer は自分のランクも非表示
   const showRank = isAdm || role === 'producer' || role === 'producer_director';
   document.getElementById('m-rank-group').style.display = showRank ? '' : 'none';
-  // 口座情報タブは admin/secretary のみ表示
+  // 口座情報タブは admin/secretary または本人のみ表示
+  // （feedback batch 002 / 機能3: 「メンバー編集に口座情報の欄がありません」対応。
+  //   本人にも口座情報タブを見せて請求書振込先を自分で登録できるようにする）
+  const isSelf = !!(m && currentUser && m.id === currentUser.id);
   const bankTabBtn = document.getElementById('m-tab-btn-3');
-  if (bankTabBtn) bankTabBtn.style.display = isAdm ? '' : 'none';
+  if (bankTabBtn) bankTabBtn.style.display = (isAdm || isSelf) ? '' : 'none';
 }
 
 function switchMemberTab(idx) {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     const btn = document.getElementById('m-tab-btn-' + i);
     const panel = document.getElementById('m-tab-panel-' + i);
     if (btn) btn.classList.toggle('active', i === idx);
     if (panel) panel.style.display = i === idx ? '' : 'none';
   }
+}
+
+// 休日曜日チップを描画。selected は [0..6] の配列（0=日, 6=土）
+// 既定 [0,6]（土日）。土曜出勤メインの方などは [0] や任意の組合せに変更可。
+// 状態は data-on="1"/"0" で管理し、見た目は applyHolidayChipStyle() で同期する。
+function renderHolidayWeekdays(selectedArr) {
+  const container = document.getElementById('m-holiday-weekdays');
+  if (!container) return;
+  const selected = new Set((Array.isArray(selectedArr) ? selectedArr : [0,6]).map(n => Number(n)));
+  const LABELS = ['日','月','火','水','木','金','土'];
+  container.innerHTML = LABELS.map((lbl, i) => {
+    const on = selected.has(i);
+    return `<button type="button" class="m-holiday-chip" data-day="${i}" data-on="${on?1:0}" onclick="toggleHolidayWeekday(${i})" style="font-size:13px;padding:6px 14px;border-radius:20px;cursor:pointer;min-width:46px">${lbl}</button>`;
+  }).join('');
+  // スタイルは inline では無理（条件分岐が多いので JS で適用）
+  container.querySelectorAll('.m-holiday-chip').forEach(applyHolidayChipStyle);
+}
+
+function applyHolidayChipStyle(btn) {
+  const on = btn.dataset.on === '1';
+  const day = Number(btn.dataset.day);
+  const isWeekend = (day === 0 || day === 6);
+  btn.style.border = `1px solid ${on ? 'var(--em-dark)' : 'var(--border)'}`;
+  btn.style.background = on ? 'var(--em-pale)' : 'transparent';
+  btn.style.color = on ? 'var(--em-dark)' : (isWeekend ? '#A32D2D' : 'var(--text-muted)');
+  btn.style.fontWeight = on ? '600' : '500';
+}
+
+function toggleHolidayWeekday(day) {
+  const btn = document.querySelector(`#m-holiday-weekdays .m-holiday-chip[data-day="${day}"]`);
+  if (!btn) return;
+  btn.dataset.on = btn.dataset.on === '1' ? '0' : '1';
+  applyHolidayChipStyle(btn);
+}
+
+// 描画済みチップから選択中の曜日 [0..6] を収集
+function collectHolidayWeekdays() {
+  return Array.from(document.querySelectorAll('#m-holiday-weekdays .m-holiday-chip'))
+    .filter(b => b.dataset.on === '1')
+    .map(b => Number(b.dataset.day))
+    .sort((a,b) => a - b);
 }
 
 function openAddMember() {
@@ -5429,6 +5510,11 @@ function openAddMember() {
   document.getElementById('m-postal-code').value = '';
   document.getElementById('m-address').value = '';
   document.getElementById('m-creative-default-view').value = 'all';
+  // 機材・休日（feedback batch 002）
+  if (document.getElementById('m-camera-model'))  document.getElementById('m-camera-model').value = '';
+  if (document.getElementById('m-tripod-info'))   document.getElementById('m-tripod-info').value = '';
+  if (document.getElementById('m-lighting-info')) document.getElementById('m-lighting-info').value = '';
+  renderHolidayWeekdays([0, 6]); // 既定: 日・土
   applyMemberModalAdminFields(null);
   setMemberModalAvatar(null, null);
   onRoleChange('editor');
@@ -5442,7 +5528,7 @@ function openEditMemberById(id) {
 }
 
 function openEditMember(m) {
-  // 先にモーダルを開く（途中エラーで「グレーだけで本体が出ない」状態を防ぐ）
+  // 先にモーダルを開く（途中エラーで「グレーだけで本体が出ない」状態を防ぐ）— PR #137 の defensive 構造
   try { switchMemberTab(0); } catch(_) {}
   openModal('modal-member');
   // 各フィールド代入は欠損プロパティ・要素不在に強くする
@@ -5485,6 +5571,18 @@ function openEditMember(m) {
     setVal('m-phone', m.phone || '');
     setVal('m-postal-code', m.postal_code || '');
     setVal('m-address', m.address || '');
+    // 機材・休日（feedback batch 002）
+    setVal('m-camera-model',  m.camera_model  || '');
+    setVal('m-tripod-info',   m.tripod_info   || '');
+    setVal('m-lighting-info', m.lighting_info || '');
+    // holiday_weekdays は [0..6] の配列。未設定 → 既定 [0,6]（日・土休み）。文字列で来た場合はパース
+    {
+      let holidayArr = Array.isArray(m.holiday_weekdays) ? m.holiday_weekdays : [0, 6];
+      if (typeof m.holiday_weekdays === 'string') {
+        try { const parsed = JSON.parse(m.holiday_weekdays); if (Array.isArray(parsed)) holidayArr = parsed; } catch(_) {}
+      }
+      try { renderHolidayWeekdays(holidayArr); } catch(_) {}
+    }
     try { applyMemberModalAdminFields(m); } catch(_) {}
     try { setMemberModalAvatar(m.id, m.avatar_url || null); } catch(_) {}
     try { onRoleChange(m.role || 'editor'); } catch(_) {}
@@ -5614,19 +5712,23 @@ function resizeImageToBlob(file, targetW, targetH, quality) {
 
 // アバター変更後に画面全体を即時反映
 async function refreshAvatarUsages(memberId, avatarUrl) {
-  // ローカル状態の更新
+  // 1) ローカルキャッシュを即時更新（モーダル閉じる前のレスポンス向上のため）
   const m = allMembers.find(x => x.id === memberId);
   if (m) m.avatar_url = avatarUrl;
   if (currentUser && currentUser.id === memberId) {
     currentUser.avatar_url = avatarUrl;
     renderHeaderAvatar();
   }
-  // 主要なリスト・カードを再描画
+  // 2) 念のため主要画面を即時再描画（ローカル更新分の反映）
   try { if (typeof renderMemberList === 'function') renderMemberList(); } catch(_) {}
   try { if (typeof renderCreatives === 'function') renderCreatives(); } catch(_) {}
   try { if (typeof renderTeamsList === 'function') renderTeamsList(); } catch(_) {}
   try { if (typeof renderTeams === 'function') renderTeams(); } catch(_) {}
   try { if (typeof renderDashboard === 'function') renderDashboard(); } catch(_) {}
+  // 3) 「アイコンを更新しても反映されません」レポート対策（feedback batch 002 / バグ2）
+  //    → DB から最新の users 一覧を取り直し、複数画面・他ユーザー視点でも同期させる。
+  //    画面レンダリングは loadMembers 内で行われる。
+  try { if (typeof loadMembers === 'function') await loadMembers(); } catch(_) {}
 }
 
 function renderHeaderAvatar() {
@@ -5684,6 +5786,11 @@ async function submitMember() {
   const phone = document.getElementById('m-phone').value.trim() || null;
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
+  // 機材・休日（feedback batch 002）
+  const camera_model  = document.getElementById('m-camera-model')?.value.trim()  || null;
+  const tripod_info   = document.getElementById('m-tripod-info')?.value.trim()   || null;
+  const lighting_info = document.getElementById('m-lighting-info')?.value.trim() || null;
+  const holiday_weekdays = collectHolidayWeekdays();
   if (!full_name) { showToast('名前は必須です', 'warn'); return; }
   // 「所属チーム（基本）」が案件チーム（非基本）のままなら警告
   if (team_id) {
@@ -5693,7 +5800,15 @@ async function submitMember() {
       if (!ok) return;
     }
   }
-  const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, hide_birth_year, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
+  const payload = {
+    full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id,
+    birthday, hide_birth_year, weekday_hours, weekend_hours, note,
+    bank_name, bank_code, branch_name, branch_code,
+    account_type, account_number, account_holder_kana,
+    phone, postal_code, address,
+    // feedback batch 002
+    camera_model, tripod_info, lighting_info, holiday_weekdays,
+  };
   let res;
   if (id) {
     res = await apiFetch(`${API}/members/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
