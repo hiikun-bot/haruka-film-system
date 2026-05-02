@@ -126,15 +126,15 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 @keyframes cta-tap{0%,100%{transform:rotate(0) translateY(0)}25%{transform:rotate(-18deg) translateY(-6px)}50%{transform:rotate(0) translateY(0)}75%{transform:rotate(-18deg) translateY(-6px)}}
 @keyframes cta-flash{0%,100%{box-shadow:0 4px 12px rgba(234,88,12,0.35)}50%{box-shadow:0 6px 22px rgba(234,88,12,0.7),0 0 0 6px rgba(245,158,11,0.18)}}
 @keyframes pulse-shadow{0%,100%{box-shadow:0 0 0 0 rgba(62,207,202,0.55)}70%{box-shadow:0 0 0 14px rgba(62,207,202,0)}}
-.layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:6px}
-.layer-card{background:#fff;border-radius:14px;padding:20px 16px 14px;border:2px solid var(--border-light);text-align:center;text-decoration:none;color:inherit;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;position:relative;display:flex;flex-direction:column;gap:6px}
+.layers{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:6px}
+.layer-card{background:#fff;border-radius:14px;padding:16px 8px 12px;border:2px solid var(--border-light);text-align:center;text-decoration:none;color:inherit;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;position:relative;display:flex;flex-direction:column;gap:4px;min-width:0}
 .layer-card:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(43,184,180,0.18);border-color:var(--em)}
 .layer-card:active{transform:translateY(-1px)}
-.layer-card-icon{font-size:32px;margin-bottom:4px;line-height:1;transition:transform .25s}
+.layer-card-icon{font-size:28px;margin-bottom:2px;line-height:1;transition:transform .25s}
 .layer-card:hover .layer-card-icon{transform:scale(1.12) rotate(-4deg)}
-.layer-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:2px}
-.layer-card-desc{font-size:11px;color:#6b7280;line-height:1.6;flex:1}
-.layer-card-pick{margin-top:10px;font-size:11px;font-weight:800;letter-spacing:0.08em;color:#fff;background:var(--em-dark);padding:5px 12px;border-radius:99px;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:all .18s;align-self:center;box-shadow:0 2px 6px rgba(43,184,180,0.25)}
+.layer-card-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:2px;white-space:nowrap}
+.layer-card-desc{font-size:10.5px;color:#6b7280;line-height:1.5;flex:1}
+.layer-card-pick{margin-top:8px;font-size:10.5px;font-weight:800;letter-spacing:0.06em;color:#fff;background:var(--em-dark);padding:4px 10px;border-radius:99px;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:all .18s;align-self:center;box-shadow:0 2px 6px rgba(43,184,180,0.25);white-space:nowrap}
 .layer-card-pick::after{content:"→";font-weight:900;transition:transform .18s}
 .layer-card:hover .layer-card-pick{transform:translateY(-1px);box-shadow:0 4px 10px rgba(43,184,180,0.4)}
 .layer-card:hover .layer-card-pick::after{transform:translateX(3px)}
@@ -185,6 +185,9 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
   .layer-cta-finger{font-size:26px}
   .layer-cta-arrow{font-size:26px}
   section{margin-top:40px}
+}
+@media (min-width:769px) and (max-width:999px){
+  .layers{grid-template-columns:repeat(3,1fr);gap:10px}
 }
 </style>
 </head>
