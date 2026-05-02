@@ -2792,11 +2792,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- 単価設定モーダル -->
 <div class="modal-overlay" id="modal-rates">
   <div class="modal" style="max-width:680px;width:95vw;max-height:90vh;overflow-y:auto">
-    <div class="modal-title" id="rates-modal-title">単価設定<button class="modal-close" onclick="closeModal('modal-rates')">×</button></div>
+    <div class="modal-title" id="rates-modal-title">単価設定 ― <span id="rates-modal-subtitle">動画クリエイティブ</span><button class="modal-close" onclick="closeModal('modal-rates')">×</button></div>
     <input type="hidden" id="rates-project-id">
 
     <!-- 動画セクション -->
-    <div style="margin-bottom:20px">
+    <div id="rates-section-video" style="margin-bottom:20px">
       <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">動画編集者</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead>
@@ -2819,7 +2819,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
 
     <!-- デザインセクション -->
-    <div style="margin-bottom:20px">
+    <div id="rates-section-design" style="margin-bottom:20px">
       <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">デザイナー</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead>
@@ -6411,12 +6411,29 @@ let currentRatesProjectId = null;
 
 async function openRatesModal(projectId, projectName) {
   currentRatesProjectId = projectId;
-  document.getElementById('rates-modal-title').childNodes[0].textContent = `単価設定 — ${projectName}`;
   document.getElementById('rates-project-id').value = projectId;
 
-  // テーブル行を生成
+  // テーブル行を生成（DOMは両方常に描画する：保存ロジックは両セクションのDOMを参照する）
   buildRatesTable('video', ['動画編集', '台本作成', 'AI生成'], ['base_fee','script_fee','ai_fee']);
   buildRatesTable('design', ['静止画1枚'], ['base_fee']);
+
+  // 案件種別を判定（'video' | 'design'）
+  // 案件の project_type を優先。フォールバック: ロール判定（デザイナー → design, それ以外 → video）
+  const projForType = (allProjects || []).find(x => x.id === projectId);
+  const projType = projForType
+    ? getProjectType(projForType)
+    : (effectiveRole() === 'designer' ? 'design' : 'video');
+  const isVideo = projType === 'video';
+
+  // タイトル/サブタイトル更新
+  const subtitle = document.getElementById('rates-modal-subtitle');
+  if (subtitle) subtitle.textContent = isVideo ? '動画クリエイティブ' : 'デザインクリエイティブ';
+
+  // セクション表示切替（DOMは残す＝保存ロジックの整合性を保つ）
+  const videoSection  = document.getElementById('rates-section-video');
+  const designSection = document.getElementById('rates-section-design');
+  if (videoSection)  videoSection.style.display  = isVideo ? '' : 'none';
+  if (designSection) designSection.style.display = isVideo ? 'none' : '';
 
   // データ取得
   const [ratesRes, extrasRes] = await Promise.all([
@@ -6439,12 +6456,6 @@ async function openRatesModal(projectId, projectName) {
   document.getElementById('design-extras-list').innerHTML = '';
   extras.forEach(e => addRateExtraRow(e.creative_type, e.name, e.fee, e.id));
 
-  // 初期表示: 案件の project_type を優先（'design' なら デザイン、それ以外は 動画）
-  // フォールバック: ロール判定（デザイナー → design, それ以外 → video）
-  const projForType = (allProjects || []).find(x => x.id === projectId);
-  const projType = projForType
-    ? getProjectType(projForType)
-    : (effectiveRole() === 'designer' ? 'design' : 'video');
   // 単価モーダルはタブ構造ではないが、案件種別に対応する最初の入力にフォーカスしてヒントとする
   setTimeout(() => {
     const firstField = document.getElementById(`r-${projType}-A-base_fee`);
