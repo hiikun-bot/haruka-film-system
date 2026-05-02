@@ -353,11 +353,16 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
   try {
-    const [ratesRes, extrasRes, feesRes] = await Promise.all([
+    const [ratesRes, extrasRes, feesRes, dirRatesRes] = await Promise.all([
       supabase.from('project_rates').select('*').eq('project_id', projectId),
       supabase.from('project_rate_extras').select('*').eq('project_id', projectId),
       supabase.from('project_client_fees').select('*').eq('project_id', projectId).maybeSingle(),
+      // Issue #192: ディレクション費（テーブル未作成環境では silent skip）
+      supabase.from('project_director_rates').select('*').eq('project_id', projectId),
     ]);
+    if (dirRatesRes.error && !/does not exist|could not find the table/i.test(dirRatesRes.error.message || '')) {
+      console.warn('[rate-templates] director_rates load failed:', dirRatesRes.error.message);
+    }
 
     const templates = [];
 
@@ -404,6 +409,20 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
         label:    ex.name || '(無題)',
         unit:     '式',
         unit_price: fee,
+      });
+    });
+
+    // 2b. project_director_rates → ディレクション費（per-project, per-creative_type）
+    (dirRatesRes.data || []).forEach(d => {
+      const fee = Number(d.director_fee) || 0;
+      if (fee <= 0) return;
+      templates.push({
+        source: 'director_rate',
+        category: d.creative_type,
+        label:    d.creative_type === 'design' ? 'ディレクション費（静止画1枚あたり）' : 'ディレクション費（1本あたり）',
+        unit:     unitForType[d.creative_type] || '本',
+        unit_price: fee,
+        field:    'director_fee',
       });
     });
 
