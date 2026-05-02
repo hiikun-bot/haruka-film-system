@@ -308,9 +308,11 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     sheet_url, regulation_url, admin_note, start_date, end_date,
     chatwork_room_id,
     slack_channel_url,
-    deadline_unit, deadline_weekday
+    deadline_unit, deadline_weekday,
+    project_type
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
+  const normalizedProjectType = (project_type === 'design') ? 'design' : 'video';
   const { data, error } = await supabase
     .from('projects')
     .insert({
@@ -327,7 +329,8 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
       slack_channel_url: slack_channel_url || null,
       is_hidden: false,
       deadline_unit: deadline_unit || 'monthly',
-      deadline_weekday: deadline_weekday ?? null
+      deadline_weekday: deadline_weekday ?? null,
+      project_type: normalizedProjectType
     })
     .select()
     .single();
@@ -343,7 +346,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     chatwork_room_id, is_hidden,
     slack_channel_url,
     sync_products, sync_appeal_axes,
-    deadline_unit, deadline_weekday
+    deadline_unit, deadline_weekday,
+    project_type
   } = req.body;
   const updateData = {
     name, status,
@@ -363,6 +367,9 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   };
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
+  if (project_type !== undefined) {
+    updateData.project_type = (project_type === 'design') ? 'design' : 'video';
+  }
   const { data, error } = await supabase
     .from('projects')
     .update(updateData)

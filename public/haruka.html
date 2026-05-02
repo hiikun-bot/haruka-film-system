@@ -2855,6 +2855,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               </select>
             </div>
           </div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">案件種別 <span style="color:#E24B4A">*</span></label>
+              <select class="form-select" id="p-project-type" required>
+                <option value="video">動画編集</option>
+                <option value="design">デザイン</option>
+              </select>
+            </div>
+          </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">案件名 <span style="color:#E24B4A">*</span></label>
             <input class="form-input" id="p-name" placeholder="例：ARU公式 SNS動画制作">
@@ -6088,6 +6097,13 @@ function effectiveRole() {
   return previewRole ?? currentUser?.role ?? 'editor';
 }
 
+// 案件種別を取得（'video' | 'design'）。未定義/不正値は 'video' にフォールバック。
+// 古いキャッシュや project_type 列が無い古いレコードへの保険として使う。
+function getProjectType(project) {
+  const t = project?.project_type;
+  return (t === 'design') ? 'design' : 'video';
+}
+
 // ==================== メンバー Google スプレッドシート連携 ====================
 
 // 動画/デザイン タブを反映してサーバーへエクスポート要求
@@ -6209,6 +6225,18 @@ async function openRatesModal(projectId, projectName) {
   document.getElementById('video-extras-list').innerHTML = '';
   document.getElementById('design-extras-list').innerHTML = '';
   extras.forEach(e => addRateExtraRow(e.creative_type, e.name, e.fee, e.id));
+
+  // 初期表示: 案件の project_type を優先（'design' なら デザイン、それ以外は 動画）
+  // フォールバック: ロール判定（デザイナー → design, それ以外 → video）
+  const projForType = (allProjects || []).find(x => x.id === projectId);
+  const projType = projForType
+    ? getProjectType(projForType)
+    : (effectiveRole() === 'designer' ? 'design' : 'video');
+  // 単価モーダルはタブ構造ではないが、案件種別に対応する最初の入力にフォーカスしてヒントとする
+  setTimeout(() => {
+    const firstField = document.getElementById(`r-${projType}-A-base_fee`);
+    if (firstField) firstField.focus();
+  }, 50);
 
   openModal('modal-rates');
 }
@@ -6574,6 +6602,7 @@ function openProjectModal(preClientId) {
 
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
+  document.getElementById('p-project-type').value = 'video';
   document.getElementById('p-start-date').value = '';
   document.getElementById('p-end-date').value = '';
   document.getElementById('p-sheet-url').value = '';
@@ -6623,6 +6652,7 @@ function openEditProject(p) {
 
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
+  document.getElementById('p-project-type').value = getProjectType(p);
   document.getElementById('p-start-date').value = p.start_date ? p.start_date.slice(0,10) : '';
   document.getElementById('p-end-date').value = p.end_date ? p.end_date.slice(0,10) : '';
   document.getElementById('p-producer-id').value = p.producer_id || '';
@@ -7516,6 +7546,7 @@ async function submitProject() {
   const client_id = document.getElementById('p-client-id').value;
   const name = document.getElementById('p-name').value.trim();
   const status = document.getElementById('p-status').value;
+  const project_type = document.getElementById('p-project-type').value || 'video';
   const start_date = document.getElementById('p-start-date').value || null;
   const end_date = document.getElementById('p-end-date').value || null;
   const producer_id = document.getElementById('p-producer-id').value || null;
@@ -7548,7 +7579,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
+    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
   });
 
   btn.textContent = origText; btn.disabled = false;
