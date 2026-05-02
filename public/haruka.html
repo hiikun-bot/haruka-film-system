@@ -1553,6 +1553,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <span style="margin-left:6px;color:var(--text-muted);flex-shrink:0">▾</span>
         </button>
         <div id="client-multi-pop" style="display:none;position:absolute;top:36px;left:0;width:280px;max-height:380px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:50;padding:6px 0">
+          <div style="position:sticky;top:0;background:#fff;padding:4px 10px 8px;border-bottom:1px solid var(--border-light);z-index:1">
+            <div style="position:relative">
+              <input type="text" id="client-multi-search" placeholder="クライアント名で検索..." oninput="filterClientMultiList(this.value)" onkeydown="onClientMultiSearchKey(event)" style="width:100%;font-size:12px;padding:6px 26px 6px 10px;height:30px;border:1px solid var(--border);border-radius:6px;outline:none;box-sizing:border-box">
+              <button type="button" id="client-multi-search-clear" onclick="clearClientMultiSearch()" title="クリア" style="display:none;position:absolute;right:4px;top:50%;transform:translateY(-50%);background:transparent;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:2px 6px;line-height:1">✕</button>
+            </div>
+          </div>
           <div id="client-multi-list" style="font-size:13px"></div>
           <div style="display:flex;gap:6px;padding:8px 10px 4px;border-top:1px solid var(--border-light)">
             <button class="btn-sm" style="flex:1;font-size:11px" onclick="clearClientMulti()">クリア</button>
@@ -4022,11 +4028,55 @@ function toggleClientMultiOpen(ev) {
   if (ev) ev.stopPropagation();
   const pop = document.getElementById('client-multi-pop');
   if (!pop) return;
-  pop.style.display = pop.style.display === 'none' ? '' : 'none';
+  const willOpen = pop.style.display === 'none';
+  pop.style.display = willOpen ? '' : 'none';
+  if (willOpen) {
+    // 開くたびに検索入力をクリア & 全表示に戻す
+    clearClientMultiSearch();
+    // 入力欄にフォーカス（軽くタイミングをずらす）
+    setTimeout(() => {
+      const input = document.getElementById('client-multi-search');
+      if (input) input.focus();
+    }, 0);
+  }
 }
 function closeClientMulti() {
   const pop = document.getElementById('client-multi-pop');
   if (pop) pop.style.display = 'none';
+}
+
+// クライアント検索インクリメンタルフィルタ
+function filterClientMultiList(q) {
+  const query = (q || '').toLowerCase().trim();
+  const list = document.getElementById('client-multi-list');
+  if (!list) return;
+  const rows = list.querySelectorAll('label');
+  rows.forEach(row => {
+    const span = row.querySelector('span');
+    const name = (span ? span.textContent : '').toLowerCase();
+    row.style.display = (!query || name.includes(query)) ? '' : 'none';
+  });
+  // ✕ ボタンの表示制御
+  const clearBtn = document.getElementById('client-multi-search-clear');
+  if (clearBtn) clearBtn.style.display = query ? '' : 'none';
+}
+function clearClientMultiSearch() {
+  const input = document.getElementById('client-multi-search');
+  if (input) input.value = '';
+  filterClientMultiList('');
+}
+function onClientMultiSearchKey(ev) {
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    closeClientMulti();
+  } else if (ev.key === 'Escape') {
+    ev.preventDefault();
+    if (ev.target && ev.target.value) {
+      clearClientMultiSearch();
+    } else {
+      closeClientMulti();
+    }
+  }
 }
 // 外側クリックで閉じる
 document.addEventListener('click', (e) => {
