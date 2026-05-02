@@ -1022,6 +1022,36 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   #fp-comment-category{font-size:13px !important;padding:8px !important;min-height:40px}
   #fp-timecode-badge{font-size:12px !important}
   #fp-comment-input-area button{min-height:40px}
+
+  /* ===== ダッシュボード: 全体連絡カード ===== */
+  /* PC側はインラインstyleで横並び（タイトル+本文 / ボタン4つ）。
+     スマホ幅では右側ボタン群が250px占有してタイトルが縦1文字折返しになるので
+     縦積みに変換する */
+  #dash-announcements div[style*="display:flex"][style*="align-items:flex-start"]{
+    flex-direction:column !important;align-items:stretch !important;gap:10px !important
+  }
+  /* タイトル+本文ブロックを全幅化 */
+  #dash-announcements div[style*="align-items:flex-start"] > div[style*="flex:1"]{
+    flex:1 1 100% !important;min-width:0
+  }
+  /* タイトル本体を折返し可能に（縦1文字対策） */
+  #dash-announcements div[style*="align-items:flex-start"] > div[style*="flex:1"] > div:first-child{
+    word-break:break-word;line-height:1.5;font-size:15px !important
+  }
+  /* 本文の改行・余白を読みやすく */
+  #dash-announcements div[style*="white-space:pre-wrap"]{
+    font-size:13px !important;line-height:1.7 !important;margin-top:10px !important
+  }
+  /* 期限バッジは中央寄せに */
+  #dash-announcements div[style*="display:inline-flex"][style*="期限" i]{align-self:flex-start}
+  /* ボタン群（完了/対応状況/編集/終了）を折返し可能に */
+  #dash-announcements div[style*="display:flex"][style*="flex-shrink:0"]{
+    flex-wrap:wrap !important;gap:6px !important;width:100%
+  }
+  #dash-announcements div[style*="flex-shrink:0"] > button.btn{
+    margin-left:0 !important;flex:1 1 calc(50% - 3px);
+    min-height:38px;font-size:12px !important;padding:6px 8px !important
+  }
 }
 
 /* スマホ縦向き (<=420px) - さらに詰める */
