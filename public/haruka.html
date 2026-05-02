@@ -3482,6 +3482,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
 
+      <!-- クライアント確認URL（手動入力） -->
+      <div class="form-group" style="margin-bottom:18px">
+        <label class="form-label">クライアント確認URL</label>
+        <div style="display:flex;gap:5px">
+          <input class="form-input" id="cd-client-review-url" placeholder="https://drive.google.com/file/d/.../view" style="min-width:0;flex:1">
+          <button class="btn" onclick="openLink('cd-client-review-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">「クライアント確認」ステータスに進めた際に通知本文へ自動挿入されます</div>
+      </div>
+
       <!-- 担当者セクション（未着手のみ） -->
       <div id="cd-assignee-section" style="display:none;margin-bottom:18px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -12567,6 +12577,8 @@ async function openCreativeDetail(id) {
   // URL
   document.getElementById('cd-script-url').value = c.script_url  || '';
   document.getElementById('cd-frameio-url').value = c.frameio_url || '';
+  const _cdClientReviewUrlEl = document.getElementById('cd-client-review-url');
+  if (_cdClientReviewUrlEl) _cdClientReviewUrlEl.value = c.client_review_url || '';
 
   // 担当者ドロップダウン初期化（未着手用）
   const cdTeamSel = document.getElementById('cd-team-id');
@@ -13005,11 +13017,18 @@ async function forceDeliver() {
 
 async function directToClientCheck() {
   if (!currentCreativeDetail) return;
+  // クライアント確認URL未設定の警告
+  const _crUrlDirect = document.getElementById('cd-client-review-url')?.value.trim();
+  if (!_crUrlDirect) {
+    const ok = confirm('クライアント確認URLが未設定です。\n通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）');
+    if (!ok) { document.getElementById('cd-client-review-url')?.focus(); return; }
+  }
   if (!confirm('DチェックとPチェックをスキップして、直接CL確認に進めますか？\nファイルがアップロード済みであることを確認してください。')) return;
   const body = {
     status: 'クライアントチェック中',
     director_comment: document.getElementById('cd-comment-field').value.trim() || null,
     script_url: document.getElementById('cd-script-url').value.trim() || null,
+    client_review_url: document.getElementById('cd-client-review-url')?.value.trim() || null,
   };
   const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -13026,6 +13045,12 @@ async function skipToClientCheck() {
     showToast('承認コメントを入力してください。Pスキップでも承認コメントは必須です。', 'warn');
     noteField?.focus();
     return;
+  }
+  // クライアント確認URL未設定の警告
+  const _crUrlSkip = document.getElementById('cd-client-review-url')?.value.trim();
+  if (!_crUrlSkip) {
+    const ok = confirm('クライアント確認URLが未設定です。\n通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）');
+    if (!ok) { document.getElementById('cd-client-review-url')?.focus(); return; }
   }
   if (!confirm('Pチェックをスキップして、直接CL確認に進めますか？')) return;
   await saveCreativeDetail('クライアントチェック中');
@@ -13091,6 +13116,18 @@ async function advanceCreativeStatus() {
       showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
       replyField?.focus();
       return;
+    }
+  }
+
+  // クライアント確認に進める時はURL未設定なら警告（任意。続行可・キャンセル可）
+  if (target === 'クライアントチェック中') {
+    const url = document.getElementById('cd-client-review-url')?.value.trim();
+    if (!url) {
+      const ok = confirm('クライアント確認URLが未設定です。\n通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）');
+      if (!ok) {
+        document.getElementById('cd-client-review-url')?.focus();
+        return;
+      }
     }
   }
 
@@ -15319,6 +15356,7 @@ async function saveCreativeDetail(overrideStatus) {
   const body = {
     script_url:       document.getElementById('cd-script-url').value.trim()  || null,
     frameio_url:      document.getElementById('cd-frameio-url').value.trim() || null,
+    client_review_url: document.getElementById('cd-client-review-url')?.value.trim() || null,
   };
   if (isCheck) {
     // ディレクター/CLからの修正指示・承認コメントのみ更新（編集者コメントは保持）
