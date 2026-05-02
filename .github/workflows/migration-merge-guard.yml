@@ -1,0 +1,51 @@
+name: Migration Merge Guard
+
+# needs-db-migration ラベルが付いている PR は
+# db-migration-applied ラベルも付いて初めて pass する。
+# required status check として登録すれば auto-merge を停止できる。
+#
+# 仕様:
+#   - migration ファイルを含まない PR  → 即 success（job が走って即パス）
+#   - migration を含む PR
+#       - db-migration-applied 未付与 → fail
+#       - db-migration-applied 付与済 → success
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  migration-applied:
+    name: migration-applied
+    runs-on: ubuntu-latest
+    steps:
+      - name: ラベルを判定して結果を決める
+        env:
+          NEEDS: ${{ contains(github.event.pull_request.labels.*.name, 'needs-db-migration') }}
+          APPLIED: ${{ contains(github.event.pull_request.labels.*.name, 'db-migration-applied') }}
+        run: |
+          echo "needs-db-migration: $NEEDS"
+          echo "db-migration-applied: $APPLIED"
+
+          if [ "$NEEDS" != "true" ]; then
+            echo "✅ migration 不要の PR → pass"
+            exit 0
+          fi
+
+          if [ "$APPLIED" = "true" ]; then
+            echo "✅ migration 適用済み（db-migration-applied ラベル検出）→ pass"
+            exit 0
+          fi
+
+          echo "❌ 本番Supabase への migration が未適用です。"
+          echo ""
+          echo "対応:"
+          echo "  1. migrations/*.sql の中身を Supabase SQL Editor で実行"
+          echo "  2. このPRに 'db-migration-applied' ラベルを付与"
+          echo ""
+          echo "詳細: docs/db-migration-workflow.md"
+          exit 1

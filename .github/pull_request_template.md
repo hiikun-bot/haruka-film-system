@@ -20,6 +20,12 @@
 - [ ] PC ブラウザ（幅 1280px+）で表示・動作が変わっていないこと
 - [ ] 既存機能の回帰がないこと
 
+## 🗄 DB変更（migration を含む場合）
+- [ ] `migrations/` に新規SQLを追加した場合、本番Supabaseに適用済み（または計画あり）
+- [ ] `supabase_schema.sql` に同じ定義を追記した
+- [ ] 適用後、PR に `db-migration-applied` ラベルを付与した
+> ※ `migrations/**` 変更を含む PR には CI が自動で `needs-db-migration` ラベルを付与し、`db-migration-applied` が付くまで `migration-applied` チェックが fail します。詳細: [docs/db-migration-workflow.md](../blob/main/docs/db-migration-workflow.md)
+
 ## スクリーンショット / 動画（UI変更の場合）
 <!-- Before / After を貼る -->
 
