@@ -998,4 +998,302 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS camera_model TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tripod_info  TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT;
 
+-- ==================== 案件収支（Project Accounting）— Step A ====================
+-- 詳細は docs/project_accounting_design_ja.md
+-- スタンドアロン migration: migrations/2026-05-02_project_accounting_step_a.sql
+-- 既存テーブルは無変更。トリガで invoice_items / invoices から自動連携。
+
+-- invoices.invoice_type は本番DBに既に存在するが定義漏れがあったため明示
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_type TEXT;
+
+-- 案件収支台帳（1 project : 1 row）
+CREATE TABLE IF NOT EXISTS project_finance_books (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  contract_total INTEGER DEFAULT 0,
+  estimated_revenue INTEGER DEFAULT 0,
+  estimated_cost INTEGER DEFAULT 0,
+  actual_revenue INTEGER DEFAULT 0,
+  actual_cost INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+  closed_at TIMESTAMPTZ,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_finance_books_project ON project_finance_books(project_id);
+
+-- 案件タイプ別の入力プロファイル（HP/LP/動画ごとに可変）と正規化メトリクス
+CREATE TABLE IF NOT EXISTS project_input_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  project_type TEXT NOT NULL DEFAULT 'other'
+    CHECK (project_type IN ('video', 'hp', 'lp', 'other')),
+  input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  normalized_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+  raw_request_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_input_profiles_type ON project_input_profiles(project_type);
+
+-- 見積（バージョン別）
+CREATE TABLE IF NOT EXISTS project_estimates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL DEFAULT 1,
+  title TEXT,
+  total_amount INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'draft'
+    CHECK (status IN ('draft', 'sent', 'accepted', 'rejected', 'archived')),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_project_estimates_project ON project_estimates(project_id, version DESC);
+
+-- 見積明細
+CREATE TABLE IF NOT EXISTS project_estimate_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  estimate_id UUID NOT NULL REFERENCES project_estimates(id) ON DELETE CASCADE,
+  category TEXT,
+  label TEXT NOT NULL,
+  quantity NUMERIC(10,2) DEFAULT 1,
+  unit TEXT,
+  unit_price INTEGER DEFAULT 0,
+  amount INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_estimate_items_estimate ON project_estimate_items(estimate_id, sort_order);
+
+-- 原価エントリ（invoice_items 自動連携 + 手入力可）
+CREATE TABLE IF NOT EXISTS project_cost_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual', 'invoice_item')),
+  source_invoice_item_id UUID REFERENCES invoice_items(id) ON DELETE CASCADE,
+  source_invoice_id UUID REFERENCES invoices(id) ON DELETE SET NULL,
+  cost_type TEXT,
+  label TEXT,
+  amount INTEGER NOT NULL DEFAULT 0,
+  occurred_on DATE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_cost_entries_project ON project_cost_entries(project_id, occurred_on DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_cost_entries_invoice_item
+  ON project_cost_entries(source_invoice_item_id)
+  WHERE source_invoice_item_id IS NOT NULL;
+
+-- 売上エントリ（client invoice 自動連携 + 手入力可）
+CREATE TABLE IF NOT EXISTS project_revenue_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual', 'client_invoice')),
+  source_invoice_id UUID REFERENCES invoices(id) ON DELETE CASCADE,
+  revenue_type TEXT,
+  label TEXT,
+  amount INTEGER NOT NULL DEFAULT 0,
+  occurred_on DATE,
+  client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_revenue_entries_project ON project_revenue_entries(project_id, occurred_on DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_revenue_entries_invoice
+  ON project_revenue_entries(source_invoice_id)
+  WHERE source_invoice_id IS NOT NULL;
+
+-- ==================== 案件収支：トリガ関数 ====================
+
+CREATE OR REPLACE FUNCTION sync_cost_entry_from_invoice_item() RETURNS TRIGGER AS $$
+DECLARE
+  v_project_id   UUID;
+  v_invoice_type TEXT;
+BEGIN
+  IF NEW.invoice_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT i.project_id, i.invoice_type
+    INTO v_project_id, v_invoice_type
+    FROM invoices i
+   WHERE i.id = NEW.invoice_id;
+
+  IF v_invoice_type = 'client' THEN
+    DELETE FROM project_cost_entries WHERE source_invoice_item_id = NEW.id;
+    RETURN NEW;
+  END IF;
+
+  IF v_project_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM project_cost_entries WHERE source_invoice_item_id = NEW.id) THEN
+    UPDATE project_cost_entries
+       SET project_id        = v_project_id,
+           source_invoice_id = NEW.invoice_id,
+           cost_type         = COALESCE(NEW.cost_type, cost_type),
+           label             = COALESCE(NEW.label, label),
+           amount            = COALESCE(NEW.total_amount, 0),
+           updated_at        = now()
+     WHERE source_invoice_item_id = NEW.id;
+  ELSE
+    INSERT INTO project_cost_entries (
+      project_id, source, source_invoice_item_id, source_invoice_id,
+      cost_type, label, amount
+    ) VALUES (
+      v_project_id, 'invoice_item', NEW.id, NEW.invoice_id,
+      NEW.cost_type, NEW.label, COALESCE(NEW.total_amount, 0)
+    );
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'sync_cost_entry_from_invoice_item failed (invoice_item_id=%): %', NEW.id, SQLERRM;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION delete_cost_entry_from_invoice_item() RETURNS TRIGGER AS $$
+BEGIN
+  DELETE FROM project_cost_entries WHERE source_invoice_item_id = OLD.id;
+  RETURN OLD;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'delete_cost_entry_from_invoice_item failed (invoice_item_id=%): %', OLD.id, SQLERRM;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION sync_revenue_entry_from_invoice() RETURNS TRIGGER AS $$
+DECLARE
+  v_client_id UUID;
+BEGIN
+  IF NEW.invoice_type IS DISTINCT FROM 'client' THEN
+    DELETE FROM project_revenue_entries WHERE source_invoice_id = NEW.id;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.project_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT p.client_id INTO v_client_id FROM projects p WHERE p.id = NEW.project_id;
+
+  IF EXISTS (SELECT 1 FROM project_revenue_entries WHERE source_invoice_id = NEW.id) THEN
+    UPDATE project_revenue_entries
+       SET project_id  = NEW.project_id,
+           amount      = COALESCE(NEW.total_amount, 0),
+           client_id   = v_client_id,
+           updated_at  = now()
+     WHERE source_invoice_id = NEW.id;
+  ELSE
+    INSERT INTO project_revenue_entries (
+      project_id, source, source_invoice_id, revenue_type,
+      label, amount, occurred_on, client_id
+    ) VALUES (
+      NEW.project_id, 'client_invoice', NEW.id, 'lump_sum',
+      NEW.invoice_number, COALESCE(NEW.total_amount, 0),
+      COALESCE(NEW.issued_at::date, CURRENT_DATE), v_client_id
+    );
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'sync_revenue_entry_from_invoice failed (invoice_id=%): %', NEW.id, SQLERRM;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION delete_revenue_entry_from_invoice() RETURNS TRIGGER AS $$
+BEGIN
+  DELETE FROM project_revenue_entries WHERE source_invoice_id = OLD.id;
+  RETURN OLD;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'delete_revenue_entry_from_invoice failed (invoice_id=%): %', OLD.id, SQLERRM;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==================== 案件収支：トリガ ====================
+
+DROP TRIGGER IF EXISTS tr_invoice_items_to_cost ON invoice_items;
+CREATE TRIGGER tr_invoice_items_to_cost
+  AFTER INSERT OR UPDATE OF invoice_id, total_amount, cost_type, label
+  ON invoice_items
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_cost_entry_from_invoice_item();
+
+DROP TRIGGER IF EXISTS tr_invoice_items_to_cost_del ON invoice_items;
+CREATE TRIGGER tr_invoice_items_to_cost_del
+  AFTER DELETE
+  ON invoice_items
+  FOR EACH ROW
+  EXECUTE FUNCTION delete_cost_entry_from_invoice_item();
+
+DROP TRIGGER IF EXISTS tr_invoices_to_revenue ON invoices;
+CREATE TRIGGER tr_invoices_to_revenue
+  AFTER INSERT OR UPDATE OF project_id, total_amount, invoice_type, issued_at
+  ON invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_revenue_entry_from_invoice();
+
+DROP TRIGGER IF EXISTS tr_invoices_to_revenue_del ON invoices;
+CREATE TRIGGER tr_invoices_to_revenue_del
+  AFTER DELETE
+  ON invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION delete_revenue_entry_from_invoice();
+
+-- ==================== 案件収支：バックフィル ====================
+
+INSERT INTO project_finance_books (project_id)
+SELECT p.id
+  FROM projects p
+ WHERE NOT EXISTS (
+   SELECT 1 FROM project_finance_books fb WHERE fb.project_id = p.id
+ );
+
+INSERT INTO project_cost_entries (
+  project_id, source, source_invoice_item_id, source_invoice_id,
+  cost_type, label, amount
+)
+SELECT
+  i.project_id, 'invoice_item', ii.id, ii.invoice_id,
+  ii.cost_type, ii.label, COALESCE(ii.total_amount, 0)
+  FROM invoice_items ii
+  JOIN invoices i ON i.id = ii.invoice_id
+ WHERE i.project_id IS NOT NULL
+   AND (i.invoice_type IS NULL OR i.invoice_type <> 'client')
+   AND NOT EXISTS (
+     SELECT 1 FROM project_cost_entries pce
+      WHERE pce.source_invoice_item_id = ii.id
+   );
+
+INSERT INTO project_revenue_entries (
+  project_id, source, source_invoice_id, revenue_type,
+  label, amount, occurred_on, client_id
+)
+SELECT
+  i.project_id, 'client_invoice', i.id, 'lump_sum',
+  i.invoice_number, COALESCE(i.total_amount, 0),
+  COALESCE(i.issued_at::date, CURRENT_DATE), p.client_id
+  FROM invoices i
+  LEFT JOIN projects p ON p.id = i.project_id
+ WHERE i.invoice_type = 'client'
+   AND i.project_id IS NOT NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM project_revenue_entries pre
+      WHERE pre.source_invoice_id = i.id
+   );
+
 NOTIFY pgrst, 'reload schema';
