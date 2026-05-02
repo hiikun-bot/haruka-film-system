@@ -3557,7 +3557,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="display:flex;align-items:center;gap:10px">
           <label class="form-label" style="margin-bottom:0;white-space:nowrap;flex-shrink:0">チェック担当者</label>
           <select class="form-select" id="cd-check-director-id" onchange="cdRefreshCommentLabel()" style="flex:1">
-            <option value="">（チームのディレクター）</option>
+            <option value="">（案件のディレクター）</option>
           </select>
         </div>
       </div>
@@ -12657,6 +12657,25 @@ async function deleteMasterItem(id) {
 
 // ===== クリエイティブ詳細 =====
 
+// クリエイティブ詳細での「既定のディレクター」ID解決
+// 優先順位: 1) 案件 (projects.director_id) → 2) チーム (teams.director_id) → null
+// 案件側でディレクターが付け替えられたら、クリエイティブ詳細側にも即時反映させるため案件を最優先する。
+function cdResolveDefaultDirectorId() {
+  if (!currentCreativeDetail) return null;
+  const projDir = currentCreativeDetail.projects?.director_id;
+  if (projDir) return projDir;
+  const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
+  const editorUserId = editorAssign?.users?.id;
+  const editorTeamId = editorAssign?.users?.team_id
+    || (editorUserId ? allTeams.find(t => (t.team_members||[]).some(tm => tm.user_id === editorUserId))?.id : null)
+    || (editorUserId ? allMembers.find(m => m.id === editorUserId)?.team_id : null);
+  if (editorTeamId) {
+    const team = allTeams.find(t => t.id === editorTeamId);
+    return team?.director_id || null;
+  }
+  return null;
+}
+
 function cdRefreshCommentLabel() {
   const label = document.getElementById('cd-comment-label');
   if (!label || !currentCreativeDetail) return;
@@ -12667,15 +12686,8 @@ function cdRefreshCommentLabel() {
   if (selId) {
     directorName = allMembers.find(m => m.id === selId)?.full_name || '';
   } else {
-    // チームのデフォルトディレクター（users.team_id → team_members フォールバック）
-    const editorUserId = editorAssign?.users?.id;
-    const editorTeamId = editorAssign?.users?.team_id
-      || (editorUserId ? allTeams.find(t => (t.team_members||[]).some(tm => tm.user_id === editorUserId))?.id : null)
-      || (editorUserId ? allMembers.find(m => m.id === editorUserId)?.team_id : null);
-    if (editorTeamId) {
-      const team = allTeams.find(t => t.id === editorTeamId);
-      if (team?.director_id) directorName = allMembers.find(m => m.id === team.director_id)?.full_name || '';
-    }
+    const defaultDirId = cdResolveDefaultDirectorId();
+    if (defaultDirId) directorName = allMembers.find(m => m.id === defaultDirId)?.full_name || '';
   }
   const fromPart = editorName ? `<span style="font-weight:700;color:var(--text)">${editorName}</span> → ` : '';
   const toPart   = directorName ? `ディレクター（<span style="font-weight:700;color:var(--text)">${directorName}</span>）` : 'ディレクター';
@@ -13028,20 +13040,9 @@ function updateCreativeCommentLabel(status) {
       checkDirSection.style.display = '';
       // ディレクター・admin・producer_director を選択肢に
       const candidates = allMembers.filter(m => ['admin','director','producer_director'].includes(m.role) && m.is_active !== false);
-      // チームのデフォルトディレクターを取得
-      let defaultDirId = '';
-      if (currentCreativeDetail) {
-        const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
-        const editorUserId = editorAssign?.users?.id;
-        const editorTeamId = editorAssign?.users?.team_id
-          || (editorUserId ? allTeams.find(t => (t.team_members||[]).some(tm => tm.user_id === editorUserId))?.id : null)
-          || (editorUserId ? allMembers.find(m => m.id === editorUserId)?.team_id : null);
-        if (editorTeamId) {
-          const team = allTeams.find(t => t.id === editorTeamId);
-          defaultDirId = team?.director_id || '';
-        }
-      }
-      checkDirSel.innerHTML = '<option value="">（チームのディレクター）</option>' +
+      // 既定ディレクター: 案件 (projects.director_id) を最優先、次にチーム
+      const defaultDirId = cdResolveDefaultDirectorId() || '';
+      checkDirSel.innerHTML = '<option value="">（案件のディレクター）</option>' +
         candidates.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
       if (defaultDirId) checkDirSel.value = defaultDirId;
     }
