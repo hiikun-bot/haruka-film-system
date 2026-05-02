@@ -8,6 +8,7 @@ const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperA
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
+const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 
 // FFmpeg（画質変換用）
 let ffmpegPath, ffmpeg;
@@ -28,78 +29,8 @@ function shouldFaststart(mimeType, fileName) {
   return /\.(mp4|mov|m4v)$/i.test(fileName || '');
 }
 
-// 元動画に対して -c copy -movflags +faststart を適用（再エンコード無し・画質完全維持）し、
-// Drive に同フォルダの "<basename>_fast.mp4" としてアップロードして creative_files を更新する。
-// バックグラウンド実行用：Promise を投げっぱなしにし、エラーは driveLog に流す。
-async function processFaststartAsync(opts) {
-  const { creativeFileId, originalBuffer, originalName, parentFolderId, mimeType } = opts;
-  const fs   = require('fs');
-  const os   = require('os');
-  const path = require('path');
-
-  const tmpDir   = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-'));
-  const inputFp  = path.join(tmpDir, originalName.replace(/[^\w.-]/g, '_'));
-  const outName  = originalName.replace(/\.(mp4|mov|m4v)$/i, '_fast.mp4');
-  const outputFp = path.join(tmpDir, outName);
-  const cleanup  = () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(_){} };
-
-  // 失敗ステータスを記録するヘルパ
-  const markFailed = async (msg) => {
-    await supabase.from('creative_files').update({
-      faststart_status: 'failed',
-      faststart_processed_at: new Date().toISOString(),
-    }).eq('id', creativeFileId);
-    driveLog('warn', `faststart失敗: ${msg}`, { creativeFileId });
-  };
-
-  try {
-    fs.writeFileSync(inputFp, originalBuffer);
-
-    await new Promise((resolve, reject) => {
-      ffmpeg(inputFp)
-        .outputOptions(['-c copy', '-movflags +faststart'])
-        .on('end', resolve)
-        .on('error', reject)
-        .save(outputFp);
-    });
-
-    const outBuf  = fs.readFileSync(outputFp);
-    const outSize = outBuf.length;
-
-    // Drive アップロード
-    const drive = await getDriveService();
-    const { PassThrough } = require('stream');
-    const pt = new PassThrough();
-    pt.end(outBuf);
-    const upRes = await drive.files.create({
-      requestBody: { name: outName, parents: [parentFolderId] },
-      media: { mimeType: 'video/mp4', body: pt },
-      fields: 'id, webViewLink',
-      supportsAllDrives: true,
-    });
-    try {
-      await drive.permissions.create({
-        fileId: upRes.data.id,
-        supportsAllDrives: true,
-        requestBody: { role: 'reader', type: 'anyone' },
-      });
-    } catch(_){}
-
-    await supabase.from('creative_files').update({
-      faststart_drive_file_id: upRes.data.id,
-      faststart_drive_url:     upRes.data.webViewLink,
-      faststart_file_size:     outSize,
-      faststart_status:        'done',
-      faststart_processed_at:  new Date().toISOString(),
-    }).eq('id', creativeFileId);
-
-    driveLog('info', `faststart完了`, { creativeFileId, outSize, faststartId: upRes.data.id });
-  } catch (e) {
-    await markFailed(e.message);
-  } finally {
-    cleanup();
-  }
-}
+// 旧 processFaststartAsync は lib/faststart.js の generateFaststart に統合済み。
+// 呼び出し: generateFaststart({ creativeFileId }) — DB id だけで完結する fire-and-forget。
 
 // アップロードログリングバッファ（最新100件）
 const _uploadLogs = [];
@@ -2210,18 +2141,14 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
 
   res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });
 
-  // Drive への faststart アップロードはバックグラウンド処理。
-  // res.json() 後に実行することで、ユーザーのアップロード待ち時間を増やさない。
-  // ※ multer のメモリ上の file.buffer はレスポンス後も使えるため、引き渡せる。
-  if (willFaststart && driveFileId && typeFolderId_) {
+  // faststart プレビュー版生成は非同期（fire-and-forget）。
+  // res.json() 後に setImmediate で起動 → ユーザーのアップロード待ち時間を増やさない。
+  // ENABLE_FASTSTART_AUTOGEN=off で全体無効化可能（lib/faststart.js 側で判定）。
+  // TODO: 同時実行数が増えたら p-queue 等で直列化する
+  if (willFaststart && driveFileId && fileRecord?.id && faststartIsEnabled()) {
     setImmediate(() => {
-      processFaststartAsync({
-        creativeFileId: fileRecord.id,
-        originalBuffer: file.buffer,
-        originalName:   generated_name || file.originalname,
-        parentFolderId: typeFolderId_,
-        mimeType:       file.mimetype,
-      }).catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
+      generateFaststart({ creativeFileId: fileRecord.id })
+        .catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
     });
   }
 });
@@ -2341,64 +2268,34 @@ router.post('/creatives/files/:id/faststart', requireAuth, async (req, res) => {
   if (!targetIds.length) return res.json({ dispatched: 0, message: '対象ファイルがありません' });
 
   for (const fileId of targetIds) {
-    setImmediate(() => backfillFaststart(fileId).catch(err => {
+    setImmediate(() => generateFaststart({ creativeFileId: fileId }).catch(err => {
       driveLog('error', `backfill 失敗 [${fileId}]: ${err?.message}`);
     }));
   }
   res.json({ dispatched: targetIds.length, ids: targetIds });
 });
 
-// 既存 Drive ファイルから faststart 版を作って Drive にアップロードし、creative_files を更新する。
-async function backfillFaststart(creativeFileId) {
-  const { data: cf, error } = await supabase
-    .from('creative_files')
-    .select('id, drive_file_id, generated_name, mime_type')
-    .eq('id', creativeFileId).maybeSingle();
-  if (error || !cf || !cf.drive_file_id) {
-    driveLog('warn', `backfill: 対象なし [${creativeFileId}]`);
-    return;
-  }
-  // 進行中マーク
-  await supabase.from('creative_files').update({ faststart_status: 'processing' }).eq('id', creativeFileId);
+// 単体ファイル再生成エンドポイント（UI の「再生成」ボタン用）。
+// faststart_status='failed' のファイルや、強制的に再生成したい場合に呼ぶ。
+// 管理者のみ実行可。fire-and-forget でレスポンスは即返す。
+router.post('/creative-files/:id/regenerate-faststart', requireAuth, async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+  if (!ffmpeg) return res.status(503).json({ error: 'FFmpeg未インストール' });
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
 
-  const drive = await getDriveService();
-
-  // 親フォルダID取得（faststart 版を同フォルダにアップロードするため）
-  const meta = await drive.files.get({
-    fileId: cf.drive_file_id,
-    fields: 'parents,mimeType,size',
-    supportsAllDrives: true,
-  });
-  const parentFolderId = meta.data.parents?.[0];
-  if (!parentFolderId) {
-    await supabase.from('creative_files').update({ faststart_status: 'failed' }).eq('id', creativeFileId);
-    driveLog('warn', `backfill: 親フォルダ不明 [${creativeFileId}]`);
-    return;
-  }
-  const driveMime = meta.data.mimeType || cf.mime_type || 'video/mp4';
-
-  // ファイル本体をメモリにダウンロード
-  const dlRes = await drive.files.get(
-    { fileId: cf.drive_file_id, alt: 'media', supportsAllDrives: true },
-    { responseType: 'arraybuffer' }
-  );
-  const buf = Buffer.from(dlRes.data);
-
-  // mime_type / file_size のキャッシュも一緒に埋める
+  const creativeFileId = req.params.id;
+  // 強制再生成のため、既存 faststart_drive_file_id があっても処理させたい場合は
+  // 事前に status を pending にリセットする
   await supabase.from('creative_files').update({
-    mime_type: driveMime,
-    file_size: parseInt(meta.data.size || '0', 10) || buf.length,
+    faststart_status: 'pending',
+    faststart_drive_file_id: null,
   }).eq('id', creativeFileId);
 
-  // 共通の faststart 処理にバトンタッチ
-  await processFaststartAsync({
-    creativeFileId,
-    originalBuffer: buf,
-    originalName:   cf.generated_name,
-    parentFolderId,
-    mimeType:       driveMime,
-  });
-}
+  setImmediate(() => generateFaststart({ creativeFileId }).catch(err => {
+    driveLog('error', `regenerate-faststart 失敗 [${creativeFileId}]: ${err?.message}`);
+  }));
+  res.json({ ok: true, dispatched: creativeFileId });
+});
 
 // 画質変換ストリーミング（FFmpeg経由）
 // GET /files/:fileId/stream/transcode?height=720
