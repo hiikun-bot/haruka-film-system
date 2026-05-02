@@ -4774,8 +4774,17 @@ function renderCreatives() {
       if (!c.creative_assignments?.some(a => a.users?.id === currentUser?.id)) return false;
     }
     if (currentView === 'ball') {
-      const bt = c.ball_holder?.type;
-      if (!c.creative_assignments?.some(a => a.users?.id === currentUser?.id) || !['editor','all'].includes(bt)) return false;
+      // ball_holder.user_id (editor/director) や user_ids ('all') で厳密判定。
+      // producer タイプは特定ユーザーに紐づかないので role で判定（admin/producer をプロデューサーと見なす）。
+      const bh = c.ball_holder || {};
+      const myId = currentUser?.id;
+      const myRole = effectiveRole();
+      const isProducerLike = ['producer','admin'].includes(myRole);
+      let hasBall = false;
+      if (bh.type === 'editor' || bh.type === 'director') hasBall = !!myId && bh.user_id === myId;
+      else if (bh.type === 'producer') hasBall = isProducerLike;
+      else if (bh.type === 'all') hasBall = (!!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId)) || isProducerLike;
+      if (!hasBall) return false;
     }
     return true;
   });

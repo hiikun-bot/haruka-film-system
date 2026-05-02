@@ -1345,15 +1345,23 @@ router.get('/creatives', async (req, res) => {
   const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)');
   if (error) return res.status(500).json({ error: error.message });
 
-  // チーム逆引きMap（ディレクター名解決用 + teams 埋め込み代替用）
-  const directorByTeamId  = new Map();
-  const directorByUserId  = new Map();
-  const teamById          = new Map();
+  // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
+  const directorByTeamId    = new Map();
+  const directorByUserId    = new Map();
+  const directorIdByTeamId  = new Map();
+  const directorIdByUserId  = new Map();
+  const teamById            = new Map();
   (teamsRaw || []).forEach(t => {
     const name = t.director?.full_name || '';
-    if (t.director_id) directorByTeamId.set(t.id, name);
+    if (t.director_id) {
+      directorByTeamId.set(t.id, name);
+      directorIdByTeamId.set(t.id, t.director_id);
+    }
     (t.team_members || []).forEach(tm => {
-      if (tm.user_id && !directorByUserId.has(tm.user_id)) directorByUserId.set(tm.user_id, name);
+      if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+        directorByUserId.set(tm.user_id, name);
+        directorIdByUserId.set(tm.user_id, t.director_id || null);
+      }
     });
     teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
   });
@@ -1362,7 +1370,7 @@ router.get('/creatives', async (req, res) => {
   const withBall = (data || []).map(c => ({
     ...c,
     teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
-    ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId)
+    ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId)
   }));
 
   res.json({ data: withBall, total: count ?? withBall.length, limit, offset });
@@ -4010,34 +4018,39 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 // ==================== ボール保持者判定 ====================
 
-function getBallHolder(status, assignments, directorByTeamId, directorByUserId) {
+function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const dirAssign = assignments?.find(a => a.role === 'director');
 
   const editorName = editor?.users?.full_name || '編集者';
+  const editorId = editor?.users?.id || null;
 
-  // ディレクター名：assignment直接 → チームID逆引き → メンバーID逆引き → フォールバック
+  // ディレクター名 / ID：assignment直接 → チームID逆引き → メンバーID逆引き → フォールバック
   let directorName = dirAssign?.users?.full_name;
+  let directorId = dirAssign?.users?.id || null;
   if (!directorName && editor?.users) {
     const u = editor.users;
     directorName = (u.team_id && directorByTeamId?.get(u.team_id))
       || (u.id && directorByUserId?.get(u.id))
       || '';
+    directorId = (u.team_id && directorIdByTeamId?.get(u.team_id))
+      || (u.id && directorIdByUserId?.get(u.id))
+      || null;
   }
   directorName = directorName || 'ディレクター';
 
   const ballMap = {
-    '未着手': { holder: editorName, type: 'editor' },
-    '制作中（初稿提出前）': { holder: editorName, type: 'editor' },
-    '台本制作': { holder: editorName, type: 'editor' },
-    '素材・ナレ作成': { holder: editorName, type: 'editor' },
-    '編集': { holder: editorName, type: 'editor' },
-    'Dチェック': { holder: directorName, type: 'director' },
-    'Dチェック後修正': { holder: editorName, type: 'editor' },
+    '未着手': { holder: editorName, type: 'editor', user_id: editorId },
+    '制作中（初稿提出前）': { holder: editorName, type: 'editor', user_id: editorId },
+    '台本制作': { holder: editorName, type: 'editor', user_id: editorId },
+    '素材・ナレ作成': { holder: editorName, type: 'editor', user_id: editorId },
+    '編集': { holder: editorName, type: 'editor', user_id: editorId },
+    'Dチェック': { holder: directorName, type: 'director', user_id: directorId },
+    'Dチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     'Pチェック': { holder: 'プロデューサー', type: 'producer' },
-    'Pチェック後修正': { holder: editorName, type: 'editor' },
+    'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     'クライアントチェック中': { holder: 'クライアント', type: 'client' },
-    'クライアントチェック後修正': { holder: `${editorName}・${directorName}・プロデューサー`, type: 'all' },
+    'クライアントチェック後修正': { holder: `${editorName}・${directorName}・プロデューサー`, type: 'all', user_ids: [editorId, directorId].filter(Boolean) },
     '納品': { holder: '完了', type: 'done' },
   };
   return ballMap[status] || { holder: '不明', type: 'unknown' };
