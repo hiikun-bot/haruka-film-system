@@ -598,6 +598,63 @@ router.post('/projects/:id/rate-extras', async (req, res) => {
   res.json(data);
 });
 
+// ==================== ディレクション費（project_director_rates） ====================
+// Issue #192:
+// - クリエイティブ 1件あたり 1回必ず加算（編集者と兼務でも満額）
+// - 受取人は projects.director_id（案件のディレクター）
+// - 単価設定モーダルで video/design ごとに 1値だけ保存（rank なし）
+//
+// schema-sync 失敗で本番に project_director_rates が無いケースは silent skip させず、
+// 「テーブル未作成」の場合は 200 / 空配列で安全フォールバックする（読み出し時）。
+// 書き込み時は 503 で失敗を明示し、migration 適用を促す。
+const DIR_RATE_CREATIVE_TYPES = new Set(['video', 'design']);
+const isMissingPdrTable = (err) => err && /relation .*project_director_rates.* does not exist|could not find the table/i.test(err.message || '');
+
+// ディレクション費 一覧取得
+router.get('/projects/:id/director-rates', async (req, res) => {
+  const { data, error } = await supabase
+    .from('project_director_rates')
+    .select('*')
+    .eq('project_id', req.params.id)
+    .order('creative_type');
+  if (error) {
+    if (isMissingPdrTable(error)) {
+      console.warn('[director-rates] project_director_rates table missing, returning empty array. Apply migrations/2026-05-03_project_director_rates.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// ディレクション費 一括保存（upsert; fee=0 でも UNIQUE 行は維持）
+router.post('/projects/:id/director-rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
+  const projectId = req.params.id;
+  const { director_rates } = req.body;
+  if (!Array.isArray(director_rates) || !director_rates.length) return res.json([]);
+  const rows = director_rates.map(d => ({
+    project_id: projectId,
+    creative_type: normalizeRateCreativeType(d.creative_type),
+    director_fee: Math.max(0, parseInt(d.director_fee, 10) || 0),
+    updated_at: new Date().toISOString(),
+  }));
+  const invalid = rows.find(r => !DIR_RATE_CREATIVE_TYPES.has(r.creative_type));
+  if (invalid) {
+    return res.status(400).json({ error: 'ディレクション費の種別は video / design で保存してください' });
+  }
+  const { data, error } = await supabase
+    .from('project_director_rates')
+    .upsert(rows, { onConflict: 'project_id,creative_type' })
+    .select();
+  if (error) {
+    if (isMissingPdrTable(error)) {
+      return res.status(503).json({ error: 'project_director_rates テーブルが未作成です。migrations/2026-05-03_project_director_rates.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
 // クライアント報酬設定 取得
 router.get('/projects/:id/client-fee', async (req, res) => {
   const { data, error } = await supabase
@@ -962,21 +1019,39 @@ async function aggregateMonthlyRevenue({ year, month }) {
   const fcProjectIds = Array.from(new Set((forecastCreatives || []).map(c => c.project_id).filter(Boolean)));
   const clientFeeByProject = new Map();
   const ratesByProject = new Map();
+  const directorRateByProject = new Map(); // pid -> { video: fee, design: fee }
   if (fcProjectIds.length) {
-    const [{ data: fees }, { data: rates }] = await Promise.all([
+    const [feesRes, ratesRes, dirRatesRes] = await Promise.all([
       supabase.from('project_client_fees').select('*').in('project_id', fcProjectIds),
       supabase.from('project_rates').select('*').in('project_id', fcProjectIds),
+      supabase.from('project_director_rates').select('*').in('project_id', fcProjectIds),
     ]);
-    (fees || []).forEach(f => clientFeeByProject.set(f.project_id, f));
-    (rates || []).forEach(r => {
+    (feesRes.data || []).forEach(f => clientFeeByProject.set(f.project_id, f));
+    (ratesRes.data || []).forEach(r => {
       if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
       ratesByProject.get(r.project_id).push(r);
     });
+    // dirRatesRes はテーブル未作成でも全体集計を止めない（silent skip OK）
+    if (dirRatesRes.error) {
+      if (!isMissingPdrTable(dirRatesRes.error)) {
+        console.warn('[aggregateMonthlyRevenue] director_rates load failed:', dirRatesRes.error.message);
+      }
+    } else {
+      (dirRatesRes.data || []).forEach(d => {
+        if (!directorRateByProject.has(d.project_id)) directorRateByProject.set(d.project_id, {});
+        directorRateByProject.get(d.project_id)[d.creative_type] = d.director_fee || 0;
+      });
+    }
   }
   const findRate = (pid, baseType, rank) => {
     const list = ratesByProject.get(pid) || [];
     return list.find(r => r.creative_type === baseType && r.rank === rank)
         || list.find(r => r.creative_type === baseType) || null;
+  };
+  const findDirectorFee = (pid, baseType) => {
+    const m = directorRateByProject.get(pid);
+    if (!m) return 0;
+    return m[baseType] || 0;
   };
   const calcRateAmount = (rate) => rate ? ((rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0)) : 0;
 
@@ -998,6 +1073,8 @@ async function aggregateMonthlyRevenue({ year, month }) {
       const rank = a.rank_applied || a.users?.rank || null;
       costForCreative += calcRateAmount(findRate(c.project_id, baseType, rank));
     }
+    // ディレクション費は creative 単位で1回だけ加算（編集者兼務でも満額）
+    costForCreative += findDirectorFee(c.project_id, baseType);
     forecastCost += costForCreative;
     if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_cost += costForCreative;
   }
@@ -1080,7 +1157,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     .select(`
       id, file_name, status, creative_type, project_id,
       final_deadline, created_at,
-      projects!inner(id, name, client_id, clients(id, name)),
+      projects!inner(id, name, client_id, director_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `)
     .gte(dateColForFilter, startDate.toISOString())
@@ -1090,15 +1167,39 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   const { data: creatives, error } = await q;
   if (error) throw new Error(error.message);
 
-  // 関連 project_rates をまとめて取得（in クエリ）
+  // 関連 project_rates / project_director_rates をまとめて取得（in クエリ）
   const projectIds = Array.from(new Set((creatives || []).map(c => c.project_id).filter(Boolean)));
   let ratesByProject = new Map();
+  let directorRateByProject = new Map(); // pid -> { video, design }
+  let directorUserById = new Map(); // director_id -> user info（director_id が assignees に居ないケースを救う）
   if (projectIds.length > 0) {
-    const { data: rates } = await supabase
-      .from('project_rates').select('*').in('project_id', projectIds);
-    for (const r of (rates || [])) {
+    const [ratesRes, dirRatesRes] = await Promise.all([
+      supabase.from('project_rates').select('*').in('project_id', projectIds),
+      supabase.from('project_director_rates').select('*').in('project_id', projectIds),
+    ]);
+    for (const r of (ratesRes.data || [])) {
       if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
       ratesByProject.get(r.project_id).push(r);
+    }
+    if (dirRatesRes.error) {
+      if (!isMissingPdrTable(dirRatesRes.error)) {
+        console.warn('[aggregateCreatorSummary] director_rates load failed:', dirRatesRes.error.message);
+      }
+    } else {
+      (dirRatesRes.data || []).forEach(d => {
+        if (!directorRateByProject.has(d.project_id)) directorRateByProject.set(d.project_id, {});
+        directorRateByProject.get(d.project_id)[d.creative_type] = d.director_fee || 0;
+      });
+    }
+    // assignees に居ないディレクターを救うため director_id のユーザー情報を一括取得
+    const directorIds = Array.from(new Set(
+      (creatives || []).map(c => c.projects?.director_id).filter(Boolean)
+    ));
+    if (directorIds.length) {
+      const { data: dirUsers } = await supabase
+        .from('users').select('id, full_name, nickname, role, rank')
+        .in('id', directorIds);
+      (dirUsers || []).forEach(u => directorUserById.set(u.id, u));
     }
   }
   const findRate = (projectId, baseType, rank) => {
@@ -1106,6 +1207,11 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     return list.find(r => r.creative_type === baseType && r.rank === rank)
         || list.find(r => r.creative_type === baseType)
         || null;
+  };
+  const findDirectorFee = (projectId, baseType) => {
+    const m = directorRateByProject.get(projectId);
+    if (!m) return 0;
+    return m[baseType] || 0;
   };
   const calcUnitPrice = (rate) => {
     if (!rate) return 0;
@@ -1126,6 +1232,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         design_count: 0,
         video_total: 0,
         design_total: 0,
+        director_total: 0, // ディレクション費の集計（参考表示用）
         grand_total: 0,
         rate_unknown_count: 0, // 単価不明として扱った件数（参考表示用）
       });
@@ -1140,16 +1247,33 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     const isVideo = baseType === 'video';
     const assignees = (c.creative_assignments || [])
       .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
-    if (assignees.length === 0) continue;
-    for (const a of assignees) {
-      const user = ensureUser(a.users);
-      const rank = a.rank_applied || a.users?.rank || null;
-      const rate = findRate(c.project_id, baseType, rank);
-      const unitPrice = calcUnitPrice(rate);
-      if (isVideo) { user.video_count++; user.video_total += unitPrice; }
-      else         { user.design_count++; user.design_total += unitPrice; }
-      user.grand_total += unitPrice;
-      if (!rate) user.rate_unknown_count++;
+    // 編集者/デザイナー単価
+    if (assignees.length > 0) {
+      for (const a of assignees) {
+        const user = ensureUser(a.users);
+        const rank = a.rank_applied || a.users?.rank || null;
+        const rate = findRate(c.project_id, baseType, rank);
+        const unitPrice = calcUnitPrice(rate);
+        if (isVideo) { user.video_count++; user.video_total += unitPrice; }
+        else         { user.design_count++; user.design_total += unitPrice; }
+        user.grand_total += unitPrice;
+        if (!rate) user.rate_unknown_count++;
+      }
+    }
+    // ディレクション費: creative 1件あたり 1回必ず加算（編集者兼務でも満額）
+    // 受取人: projects.director_id（assignees に居なくても加算する）
+    const directorFee = findDirectorFee(c.project_id, baseType);
+    const directorId = c.projects?.director_id;
+    if (directorFee > 0 && directorId) {
+      const dirUser = directorUserById.get(directorId)
+        // assignments に居る場合のフォールバック
+        || (assignees.find(a => a.users?.id === directorId)?.users)
+        || null;
+      if (dirUser) {
+        const user = ensureUser(dirUser);
+        user.director_total += directorFee;
+        user.grand_total += directorFee;
+      }
     }
   }
 
@@ -1163,9 +1287,10 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     acc.design_count += u.design_count;
     acc.video_total  += u.video_total;
     acc.design_total += u.design_total;
+    acc.director_total += u.director_total || 0;
     acc.grand_total  += u.grand_total;
     return acc;
-  }, { video_count: 0, design_count: 0, video_total: 0, design_total: 0, grand_total: 0 });
+  }, { video_count: 0, design_count: 0, video_total: 0, design_total: 0, director_total: 0, grand_total: 0 });
 
   return { year, month, status: statusFilter, summary, total, creatives_count: (creatives || []).length };
 }
@@ -3052,24 +3177,49 @@ router.get('/invoices/preview-items', async (req, res) => {
   if (!uid || !year || !month) return res.status(400).json({ error: 'パラメータ不足' });
 
   // 自分がアサインされたクリエイティブを取得（月フィルタなし、全部取得してJS側でフィルタ）
-  const { data: creatives, error: cErr } = await supabase
-    .from('creatives')
-    .select(`
+  // Issue #192: ディレクター本人（projects.director_id = uid）のクリエイティブも対象に含める。
+  // creative_assignments に director_id が居ないケースを救うため、自分が担当する案件をUNIONで取得する。
+  const [{ data: assignedCreatives, error: cErr }, { data: directedProjects }] = await Promise.all([
+    supabase.from('creatives').select(`
       id, file_name, status, creative_type, final_deadline, draft_deadline,
       project_id, is_payable, special_payable, special_payable_reason,
-      projects(id, name, clients(name, client_code)),
+      projects(id, name, director_id, clients(name, client_code)),
       creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
-    `)
-    .not('creative_assignments', 'is', null);
+    `).not('creative_assignments', 'is', null),
+    supabase.from('projects').select('id').eq('director_id', uid),
+  ]);
   if (cErr) return res.status(500).json({ error: cErr.message });
 
-  // 自分のアサインのみ、かつ当月final_deadlineまたは当月作成
+  // ディレクター本人の案件にぶら下がる creatives を別途取得（assignment 無しでも拾えるように）
+  let directorCreatives = [];
+  const directedProjectIds = (directedProjects || []).map(p => p.id);
+  if (directedProjectIds.length) {
+    const { data: dc } = await supabase
+      .from('creatives')
+      .select(`
+        id, file_name, status, creative_type, final_deadline, draft_deadline,
+        project_id, is_payable, special_payable, special_payable_reason,
+        projects(id, name, director_id, clients(name, client_code)),
+        creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
+      `)
+      .in('project_id', directedProjectIds);
+    directorCreatives = dc || [];
+  }
+
+  // 重複排除して結合
+  const creativesById = new Map();
+  for (const c of (assignedCreatives || [])) creativesById.set(c.id, c);
+  for (const c of directorCreatives) if (!creativesById.has(c.id)) creativesById.set(c.id, c);
+  const allCreatives = Array.from(creativesById.values());
+
+  // 当月final_deadlineフィルタ + （自分がアサイン or ディレクター）
   const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
   const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
 
-  const myCreatives = (creatives || []).filter(c => {
+  const myCreatives = allCreatives.filter(c => {
     const mine = c.creative_assignments?.some(a => a.user_id === uid);
-    if (!mine) return false;
+    const isDirector = c.projects?.director_id === uid;
+    if (!mine && !isDirector) return false;
     const dl = c.final_deadline || c.draft_deadline || '';
     return dl >= startDate && dl <= endDate;
   });
@@ -3077,15 +3227,25 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 対象案件の単価をまとめて取得
   const projectIds = [...new Set(myCreatives.map(c => c.project_id))];
   let ratesMap = {};
+  let directorFeeMap = {}; // `${pid}__${type}` -> fee
   if (projectIds.length) {
-    const { data: rates } = await supabase
-      .from('project_rates')
-      .select('*')
-      .in('project_id', projectIds);
-    (rates || []).forEach(r => {
+    const [ratesRes, dirRatesRes] = await Promise.all([
+      supabase.from('project_rates').select('*').in('project_id', projectIds),
+      supabase.from('project_director_rates').select('*').in('project_id', projectIds),
+    ]);
+    (ratesRes.data || []).forEach(r => {
       const key = `${r.project_id}__${r.creative_type}__${r.rank}`;
       ratesMap[key] = r;
     });
+    if (dirRatesRes.error) {
+      if (!isMissingPdrTable(dirRatesRes.error)) {
+        console.warn('[preview-items] director_rates load failed:', dirRatesRes.error.message);
+      }
+    } else {
+      (dirRatesRes.data || []).forEach(d => {
+        directorFeeMap[`${d.project_id}__${d.creative_type}`] = d.director_fee || 0;
+      });
+    }
   }
 
   // ユーザーの現在のランクを取得（rank_appliedがNULLの古いデータ用）
@@ -3093,14 +3253,16 @@ router.get('/invoices/preview-items', async (req, res) => {
   const currentRank = currentUser?.rank || null;
 
   const PREVIEW_COST_TYPE_LABELS = {
-    base_fee:   '編集',
-    script_fee: '台本作成',
-    ai_fee:     'AI生成（ナレーション含む）',
-    other_fee:  'その他',
+    base_fee:     '編集',
+    script_fee:   '台本作成',
+    ai_fee:       'AI生成（ナレーション含む）',
+    other_fee:    'その他',
+    director_fee: 'ディレクション費',
   };
 
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
+    const isDirector = c.projects?.director_id === uid;
     const rankApplied = assignment?.rank_applied ?? currentRank;
     // creative_type (video_short等) をproject_ratesのカテゴリ (video/design) に正規化
     const baseType = c.creative_type?.startsWith('video') ? 'video'
@@ -3110,20 +3272,26 @@ router.get('/invoices/preview-items', async (req, res) => {
     const fallbackKey = `${c.project_id}__${baseType}__null`;
     const anyKey      = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__${baseType}__`));
     const anyProjectKey = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
-    const rate = ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null) || (anyProjectKey ? ratesMap[anyProjectKey] : null);
-    console.log(`[rate] ${c.file_name} type=${c.creative_type}→${baseType} rank=${rankApplied} found=${!!rate}`);
+    const rate = (assignment ? (ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null) || (anyProjectKey ? ratesMap[anyProjectKey] : null)) : null);
     const rateObj = rate ? {
       base_fee:   rate.base_fee   || 0,
       script_fee: rate.script_fee || 0,
       ai_fee:     rate.ai_fee     || 0,
       other_fee:  rate.other_fee  || 0,
     } : null;
-    const breakdown = rateObj ? [
-      { cost_type: 'base_fee',   label: PREVIEW_COST_TYPE_LABELS.base_fee,   unit_price: rateObj.base_fee   },
-      { cost_type: 'script_fee', label: PREVIEW_COST_TYPE_LABELS.script_fee, unit_price: rateObj.script_fee },
-      { cost_type: 'ai_fee',     label: PREVIEW_COST_TYPE_LABELS.ai_fee,     unit_price: rateObj.ai_fee     },
-      { cost_type: 'other_fee',  label: PREVIEW_COST_TYPE_LABELS.other_fee,  unit_price: rateObj.other_fee  },
-    ].filter(b => b.unit_price > 0) : [];
+    const directorFee = isDirector ? (directorFeeMap[`${c.project_id}__${baseType}`] || 0) : 0;
+    const breakdown = [
+      ...(rateObj ? [
+        { cost_type: 'base_fee',   label: PREVIEW_COST_TYPE_LABELS.base_fee,   unit_price: rateObj.base_fee   },
+        { cost_type: 'script_fee', label: PREVIEW_COST_TYPE_LABELS.script_fee, unit_price: rateObj.script_fee },
+        { cost_type: 'ai_fee',     label: PREVIEW_COST_TYPE_LABELS.ai_fee,     unit_price: rateObj.ai_fee     },
+        { cost_type: 'other_fee',  label: PREVIEW_COST_TYPE_LABELS.other_fee,  unit_price: rateObj.other_fee  },
+      ] : []),
+      ...(directorFee > 0 ? [
+        { cost_type: 'director_fee', label: PREVIEW_COST_TYPE_LABELS.director_fee, unit_price: directorFee },
+      ] : []),
+    ].filter(b => b.unit_price > 0);
+    const total = breakdown.reduce((sum, b) => sum + (b.unit_price || 0), 0);
     return {
       id: c.id,
       file_name: c.file_name,
@@ -3136,11 +3304,12 @@ router.get('/invoices/preview-items', async (req, res) => {
       project_id: c.project_id,
       project_name: c.projects?.name || '',
       client_name: c.projects?.clients?.name || '',
-      assignment_role: assignment?.role,
+      assignment_role: assignment?.role || (isDirector ? 'director' : null),
       rank_applied: assignment?.rank_applied || currentRank,
       rate: rateObj,
+      director_fee: directorFee,
       breakdown,
-      total: rateObj ? (rateObj.base_fee||0)+(rateObj.script_fee||0)+(rateObj.ai_fee||0)+(rateObj.other_fee||0) : 0,
+      total,
     };
   });
 
@@ -3842,7 +4011,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
 
   // selected_items のバリデーションと正規化
-  const ALLOWED_COST_TYPES = new Set(['base_fee', 'script_fee', 'ai_fee', 'other_fee']);
+  // Issue #192: ディレクター請求書には director_fee 行を含められる
+  const ALLOWED_COST_TYPES = new Set(['base_fee', 'script_fee', 'ai_fee', 'other_fee', 'director_fee']);
   const CHANGE_REASON_MAX = 500;
   let overrideMap = null;
   if (Array.isArray(selected_items) && selected_items.length) {
@@ -3881,8 +4051,9 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   // 請求可能なクリエイティブを取得
   // 後から追加された列（schema-sync が失敗していると本番に存在しない可能性がある）
   // PR #79 と同様に、SELECT 句を「optional 込み → 失敗時 optional 抜きで再試行」できる形にする
+  // Issue #192: ディレクター請求の判定のため projects(director_id) も取得
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
-  const buildSelect = (includeOptional) => `*${includeOptional ? ', ' + OPTIONAL_COLS.join(', ') : ''}, creative_assignments(user_id, role, rank_applied, users(id, full_name))`;
+  const buildSelect = (includeOptional) => `*${includeOptional ? ', ' + OPTIONAL_COLS.join(', ') : ''}, projects(id, director_id), creative_assignments(user_id, role, rank_applied, users(id, full_name))`;
 
   if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id) {
     return res.status(400).json({ error: '請求対象クリエイティブを選択してください' });
@@ -3919,11 +4090,20 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
 
   // 対象案件の単価をまとめて取得
   const projectIds = [...new Set(creatives.map(c => c.project_id))];
-  const { data: allRates } = await supabase
-    .from('project_rates')
-    .select('*')
-    .in('project_id', projectIds);
-  const rates = allRates || [];
+  const [ratesRes, dirRatesRes] = await Promise.all([
+    supabase.from('project_rates').select('*').in('project_id', projectIds),
+    supabase.from('project_director_rates').select('*').in('project_id', projectIds),
+  ]);
+  const rates = ratesRes.data || [];
+  // director_rates は schema-sync 未適用環境でも止めない（fallback: 空）
+  if (dirRatesRes.error && !isMissingPdrTable(dirRatesRes.error)) {
+    console.warn('[invoices/generate] director_rates load failed:', dirRatesRes.error.message);
+  }
+  const dirRates = dirRatesRes.data || [];
+  const findDirectorFeeForGenerate = (pid, baseType) => {
+    const row = dirRates.find(d => d.project_id === pid && d.creative_type === baseType);
+    return row?.director_fee || 0;
+  };
 
   // 請求書番号を自動採番
   const now = new Date();
@@ -3937,10 +4117,11 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   // 明細を生成
   // 新方式: 1 creative = 複数 invoice_items（コスト種別ごと）
   const COST_TYPE_LABELS = {
-    base_fee:   '編集',
-    script_fee: '台本作成',
-    ai_fee:     'AI生成（ナレーション含む）',
-    other_fee:  'その他',
+    base_fee:     '編集',
+    script_fee:   '台本作成',
+    ai_fee:       'AI生成（ナレーション含む）',
+    other_fee:    'その他',
+    director_fee: 'ディレクション費',
   };
   let totalAmount = 0;
   const itemRows = [];   // 実際に invoice_items に INSERT する行
@@ -3950,7 +4131,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const assignment = creative.creative_assignments?.find(
       a => a.user_id === issuer_id
     );
-    if (!assignment) continue;
+    const isDirector = creative.projects?.director_id === issuer_id;
+    if (!assignment && !isDirector) continue;
 
     const creativeLabel = creative.file_name || '';
     let breakdown;
@@ -3959,28 +4141,33 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const baseType = creative.creative_type?.startsWith('video') ? 'video'
                    : creative.creative_type?.startsWith('design') ? 'design'
                    : creative.creative_type;
-    const defaultRate = rates?.find(
+    const defaultRate = assignment ? (rates?.find(
       r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
     ) || rates?.find(
       r => r.project_id === creative.project_id && r.creative_type === baseType
-    );
+    )) : null;
+    const defaultDirectorFee = isDirector ? findDirectorFeeForGenerate(creative.project_id, baseType) : 0;
     const defaultUnitPriceMap = {
-      base_fee:   defaultRate?.base_fee   || 0,
-      script_fee: defaultRate?.script_fee || 0,
-      ai_fee:     defaultRate?.ai_fee     || 0,
-      other_fee:  defaultRate?.other_fee  || 0,
+      base_fee:     defaultRate?.base_fee   || 0,
+      script_fee:   defaultRate?.script_fee || 0,
+      ai_fee:       defaultRate?.ai_fee     || 0,
+      other_fee:    defaultRate?.other_fee  || 0,
+      director_fee: defaultDirectorFee,
     };
 
     if (overrideMap) {
       breakdown = overrideMap.get(creative.id) || [];
     } else {
-      if (!defaultRate) continue;
-      breakdown = [
+      const fromRate = defaultRate ? [
         { cost_type: 'base_fee',   unit_price: defaultUnitPriceMap.base_fee   },
         { cost_type: 'script_fee', unit_price: defaultUnitPriceMap.script_fee },
         { cost_type: 'ai_fee',     unit_price: defaultUnitPriceMap.ai_fee     },
         { cost_type: 'other_fee',  unit_price: defaultUnitPriceMap.other_fee  },
-      ].filter(b => b.unit_price > 0);
+      ] : [];
+      const fromDirector = (isDirector && defaultDirectorFee > 0) ? [
+        { cost_type: 'director_fee', unit_price: defaultDirectorFee },
+      ] : [];
+      breakdown = [...fromRate, ...fromDirector].filter(b => b.unit_price > 0);
     }
 
     if (!breakdown.length) continue;

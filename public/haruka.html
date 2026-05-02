@@ -3157,6 +3157,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div id="video-extras-list"></div>
         <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('video')">＋ その他追加</button>
       </div>
+      <!-- ディレクター（動画） -->
+      <div style="margin-top:18px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">ディレクター</div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
+          <label for="r-video-director_fee" style="color:var(--text-muted);min-width:200px">1本あたりのディレクション費（円）</label>
+          <input type="number" id="r-video-director_fee" value="0" min="0"
+            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
+          ※ 案件のディレクター（projects.director_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者兼務でも満額）。
+        </div>
+      </div>
     </div>
 
     <!-- デザインセクション -->
@@ -3177,6 +3189,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（デザイン）</div>
         <div id="design-extras-list"></div>
         <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('design')">＋ その他追加</button>
+      </div>
+      <!-- ディレクター（デザイン） -->
+      <div style="margin-top:18px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">ディレクター</div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
+          <label for="r-design-director_fee" style="color:var(--text-muted);min-width:200px">1枚あたりのディレクション費（円）</label>
+          <input type="number" id="r-design-director_fee" value="0" min="0"
+            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
+          ※ 案件のディレクター（projects.director_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者兼務でも満額）。
+        </div>
       </div>
     </div>
 
@@ -7079,12 +7103,14 @@ async function openRatesModal(projectId, projectName) {
   if (designSection) designSection.style.display = isVideo ? 'none' : '';
 
   // データ取得
-  const [ratesRes, extrasRes] = await Promise.all([
+  const [ratesRes, extrasRes, dirRes] = await Promise.all([
     apiFetch(`${API}/projects/${projectId}/rates`),
-    apiFetch(`${API}/projects/${projectId}/rate-extras`)
+    apiFetch(`${API}/projects/${projectId}/rate-extras`),
+    apiFetch(`${API}/projects/${projectId}/director-rates`)
   ]);
   const rates = ratesRes.ok ? await ratesRes.json() : [];
   const extras = extrasRes.ok ? await extrasRes.json() : [];
+  const dirRates = dirRes.ok ? await dirRes.json() : [];
 
   // 値をセット
   rates.forEach(r => {
@@ -7092,6 +7118,16 @@ async function openRatesModal(projectId, projectName) {
       const el = document.getElementById(`r-${r.creative_type}-${r.rank}-${field}`);
       if (el) el.value = r[field] || 0;
     });
+  });
+
+  // ディレクション費を反映（未設定なら 0）
+  ['video','design'].forEach(t => {
+    const el = document.getElementById(`r-${t}-director_fee`);
+    if (el) el.value = 0;
+  });
+  (dirRates || []).forEach(d => {
+    const el = document.getElementById(`r-${d.creative_type}-director_fee`);
+    if (el) el.value = d.director_fee || 0;
   });
 
   // その他をクリアして再描画
@@ -7171,7 +7207,13 @@ async function saveRates() {
     });
   });
 
-  const [ratesRes, extrasRes] = await Promise.all([
+  // ディレクション費（per-project, per-creative_type）
+  const directorRates = ['video','design'].map(type => ({
+    creative_type: type,
+    director_fee: parseInt(document.getElementById(`r-${type}-director_fee`)?.value || 0) || 0,
+  }));
+
+  const [ratesRes, extrasRes, dirRes] = await Promise.all([
     apiFetch(`${API}/projects/${projectId}/rates/bulk`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -7181,11 +7223,17 @@ async function saveRates() {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ extras })
+    }),
+    apiFetch(`${API}/projects/${projectId}/director-rates`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ director_rates: directorRates })
     })
   ]);
 
-  if (!ratesRes.ok || !extrasRes.ok) {
-    const err = !ratesRes.ok ? await ratesRes.json().catch(()=>({})) : await extrasRes.json().catch(()=>({}));
+  if (!ratesRes.ok || !extrasRes.ok || !dirRes.ok) {
+    const failedRes = !ratesRes.ok ? ratesRes : (!extrasRes.ok ? extrasRes : dirRes);
+    const err = await failedRes.json().catch(()=>({}));
     showToast('保存に失敗しました: ' + (err.error || '不明なエラー'), 'error');
     return;
   }
@@ -10547,10 +10595,11 @@ async function confirmDuplicateSubmit() {
 
 // コスト種別 → 表示ラベル（フロント・サーバー共通の方針）
 const COST_TYPE_LABELS = {
-  base_fee:   '編集',
-  script_fee: '台本作成',
-  ai_fee:     'AI生成（ナレーション含む）',
-  other_fee:  'その他',
+  base_fee:     '編集',
+  script_fee:   '台本作成',
+  ai_fee:       'AI生成（ナレーション含む）',
+  other_fee:    'その他',
+  director_fee: 'ディレクション費',
 };
 
 // 納品日（または下書き締切 / 更新日）取得 — グループ見出し用
@@ -11184,7 +11233,7 @@ function printClientInvoice(inv) {
   const subtotal = Math.floor(total / 1.1);
   const tax = total - subtotal;
 
-  const costLabel = { base_fee:'制作費', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他' };
+  const costLabel = { base_fee:'制作費', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他', director_fee:'ディレクション費' };
   const sortedItems = (inv.invoice_items || []).slice().sort((a, b) => {
     const sa = a.sort_order ?? 0, sb = b.sort_order ?? 0;
     if (sa !== sb) return sa - sb;

@@ -186,6 +186,21 @@ CREATE TABLE IF NOT EXISTS project_rates (
   UNIQUE(project_id, creative_type, rank)
 );
 
+-- ==================== project_director_rates ====================
+-- 案件別ディレクション費（per-project, per-creative_type）。
+-- creatives 1件あたり 1回必ず加算される（編集者と兼務でも満額）。
+-- 受取人は projects.director_id。
+CREATE TABLE IF NOT EXISTS project_director_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+  director_fee INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, creative_type)
+);
+CREATE INDEX IF NOT EXISTS idx_pdr_project ON project_director_rates(project_id);
+
 -- ==================== invoices ====================
 CREATE TABLE IF NOT EXISTS invoices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
