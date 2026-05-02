@@ -300,18 +300,55 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
   <p style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:-6px">⭐ がついている「連絡先」が今回いちばん大事</p>
 
-  <!-- 連絡先 -->
+  <!-- 連絡先 — インタラクティブ解説 -->
   <div class="step-card" style="margin-top:18px;border-color:var(--star);background:linear-gradient(180deg,#FFFCEB 0%,#fff 70%)">
-    <div class="step-card-title" style="color:var(--star-deep);font-size:15px">💬 連絡先 ── ここがいちばん大事</div>
-    <p style="margin-bottom:12px">これを入れないと、Dチェック依頼や修正通知が <b>あなたに飛びません</b>。</p>
+    <div class="step-card-title" style="color:var(--star-deep);font-size:15px">💬 連絡先 ── ここがいちばん大事 ／ 番号をタップ</div>
+    <p style="margin-bottom:8px">これを入れないと、Dチェック依頼や修正通知が <b>あなたに飛びません</b>。</p>
+    <div class="bie">
+      <div class="bie-mock">
+        <div class="bie-mock-title">連絡先</div>
+        <div class="bie-row" data-field="slack-id">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">💬 Slack DM ID</div>
+            <div class="bie-mock-input">例：U0123456789</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="chatwork-id">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">💬 Chatwork DM ID</div>
+            <div class="bie-mock-input">例：6603336</div>
+          </div>
+        </div>
+      </div>
+      <div class="bie-explain">
+        <div class="bie-explain-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① ②</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ／何がよくなる？／取得方法</small>
+        </div>
 
-    <div class="fields">
-      <div class="must-card">
-        <div class="must-card-icon">💬</div>
-        <div class="must-card-body">
-          <span class="must-card-tag">⭐ 絶対に入れる</span>
-          <h4>Slack DM ID（または Chatwork DM ID）</h4>
-          <p>Slack：DM 画面でプロフィール右クリック →「メンバーIDをコピー」 例：<code>U0123456789</code><br>Chatwork：メンション <code>[To:6603336]</code> の数字部分。</p>
+        <div class="bie-explain-content" data-field="slack-id">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>💬 Slack DM ID</div>
+          <h5>なぜ入れる？</h5>
+          <p>システムから <b>あなた宛て</b> に Slack DM を飛ばすための宛先 ID。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>Dチェック依頼／修正通知／納品確認が <b>あなたの Slack に直接届く</b>。「気づかずスルー」がなくなる。</p>
+          <div class="bie-explain-eg">📋 例：あなたのクリエイティブが「Dチェック」に進んだ瞬間、ディレクターに Slack DM 通知 → 確認スピードアップ</div>
+          <h5>取得方法</h5>
+          <p>Slack の DM 画面 → プロフィール右クリック → <b>「メンバーIDをコピー」</b>。<code>U</code> から始まる 10 桁前後の文字列。</p>
+        </div>
+
+        <div class="bie-explain-content" data-field="chatwork-id">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>💬 Chatwork DM ID</div>
+          <h5>なぜ入れる？</h5>
+          <p>Chatwork メンションの <b>あなたの番号</b>。Chatwork を主に使うクライアント・チームで重要。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>Chatwork の自分宛てに通知が飛ぶ。<b>Slack 派／Chatwork 派どちらでも漏れなく届く</b>。</p>
+          <div class="bie-explain-eg">📋 例：Chatwork メンション形式 <code style="background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px">[To:6603336]</code> の <b>数字部分</b> を入力</div>
+          <h5>取得方法</h5>
+          <p>Chatwork のメンションをコピペ、または プロフィール画面の「アカウント ID」を確認。</p>
         </div>
       </div>
     </div>
@@ -402,11 +439,85 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="opt-row" style="margin-top:10px">あとでもOKな項目：<strong>すべて</strong>（必須は登録時の名前・パスワードのみ）</div>
   </div>
 
-  <!-- 稼働時間 -->
+  <!-- 稼働時間 — インタラクティブ解説 -->
   <div class="step-card">
-    <div class="step-card-title">⏰ 稼働時間</div>
-    <p style="font-size:12.5px">平日／土日祝それぞれの<b>稼働可能時間帯</b>を入れる。土日祝なしの場合はチェック1つでOK。</p>
-    <div class="opt-row" style="margin-top:6px">💡 メモ欄にスキル（After Effects/Premiere/Photoshop など）を書くと、アサインが回ってきやすい</div>
+    <div class="step-card-title">⏰ 稼働時間 ── 番号をタップして「なぜ入れる？」を見る</div>
+    <div class="bie">
+      <div class="bie-mock">
+        <div class="bie-mock-title">稼働時間</div>
+        <div class="bie-row" data-field="weekday">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🕘 平日 稼働時間</div>
+            <div class="bie-mock-input">例：09:00 〜 18:00</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="weekend">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🌅 土日祝 稼働時間</div>
+            <div class="bie-mock-input">稼働なし／時間帯を指定</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="memo">
+          <div class="bie-num">3</div>
+          <div class="bie-input-area">
+            <div class="bie-label">📝 メモ（スキル等）</div>
+            <div class="bie-mock-input">例：After Effects 得意</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="default-view">
+          <div class="bie-num">4</div>
+          <div class="bie-input-area">
+            <div class="bie-label">👁 クリエイティブ初期ビュー</div>
+            <div class="bie-mock-input">全案件 ／ 自分の案件 ／ 自分のボール ▾</div>
+          </div>
+        </div>
+      </div>
+      <div class="bie-explain">
+        <div class="bie-explain-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① 〜 ④</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ入れる？／何がよくなる？／例</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="weekday">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>🕘 平日 稼働時間</div>
+          <h5>なぜ入れる？</h5>
+          <p>D／P が「夜遅い時間にアサインしていいか」を判断するため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p><b>稼働時間外の急な依頼が減る</b>。あなたが寝ている時間帯に「明日朝までにお願い」が来なくなる。</p>
+          <div class="bie-explain-eg">📋 例：22 時に修正依頼を出すか迷った D が、稼働「09:00 〜 21:00」だと分かれば → 翌朝に回す判断ができる</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="weekend">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>🌅 土日祝 稼働時間</div>
+          <h5>なぜ入れる？</h5>
+          <p>土日に動ける人かどうかをチームが知るため。「<b>稼働なし</b>」も明示できる（チェック 1 つ）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>金曜遅くに飛び込んできた緊急案件で、<b>土日稼働可能なメンバーから優先的にアサイン候補</b> に出る。</p>
+          <div class="bie-explain-eg">📋 例：金曜 18 時に CM 公開直前修正が発生 → 土日「稼働あり」のメンバーで素早くチーム編成</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="memo">
+          <div class="bie-explain-title"><span class="bie-explain-num">3</span>📝 メモ（スキル等）</div>
+          <h5>なぜ入れる？</h5>
+          <p>得意なソフト・ジャンルをチームに伝える自由記述欄。プロフィール一覧で表示される。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>ニッチなスキルが必要な案件で <b>指名されやすくなる</b>。連絡可能時間帯を補足するのにも使える。</p>
+          <div class="bie-explain-eg">📋 例：「After Effects 得意」と書いておくと、AE 必須の案件で D が「この人に頼もう」と即決</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="default-view">
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>👁 クリエイティブ初期ビュー</div>
+          <h5>なぜ設定する？</h5>
+          <p>クリエイティブ画面を開いたときの <b>初期表示フィルタ</b>。3 つから選べる。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p><b>「自分のボール」</b> を選ぶと、<u>今あなたが動かす番のクリエイティブだけ</u> が最初に並ぶ。仕事の優先度が一発で分かる。</p>
+          <div class="bie-explain-eg">📋 例：朝出社して画面を開いた瞬間、「今日やる作業」が 3 件だけ表示 → 余計なものが視界に入らず集中できる</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="done-banner">
@@ -433,29 +544,85 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p style="font-size:13px"><b>納品 → 自動で請求書ドラフト → 月末に自分で「提出」 → 振込</b> という流れ。<br>振込先として口座情報が必須です（編集者・デザイナー）。</p>
   </div>
 
-  <!-- 必須項目だけ目立たせる -->
-  <div class="fields" style="margin-top:14px">
-    <div class="must-card">
-      <div class="must-card-icon">🏦</div>
-      <div class="must-card-body">
-        <span class="must-card-tag">必須</span>
-        <h4>銀行口座の情報</h4>
-        <p>銀行名・支店名・コード・口座種別・口座番号・<strong>名義（カナ）</strong></p>
+  <!-- 口座情報 — インタラクティブ解説 -->
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">🏦 口座情報 ── 番号をタップして「なぜ入れる？」を見る</div>
+    <div class="bie">
+      <div class="bie-mock">
+        <div class="bie-mock-title">口座情報</div>
+        <div class="bie-row" data-field="bank">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🏦 銀行・支店・口座番号</div>
+            <div class="bie-mock-input">楽天銀行 / 0036 / ワルツ支店 / 普通 / 3XXXXXX</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="kana">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">✏️ 口座名義（カナ）</div>
+            <div class="bie-mock-input">例：タカハシ サトル</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="phone">
+          <div class="bie-num">3</div>
+          <div class="bie-input-area">
+            <div class="bie-label">📞 電話番号</div>
+            <div class="bie-mock-input">例：090-1234-5678</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="address">
+          <div class="bie-num">4</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🏠 住所（郵便番号含む）</div>
+            <div class="bie-mock-input">例：123-4567 東京都...</div>
+          </div>
+        </div>
+      </div>
+      <div class="bie-explain">
+        <div class="bie-explain-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① 〜 ④</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ入れる？／何がよくなる？／例</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="bank">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>🏦 銀行・支店・口座番号</div>
+          <h5>なぜ入れる？</h5>
+          <p>請求書承認後の <b>振込先</b>。これがないと支払いが止まる（編集者・デザイナーは必須）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>月末に請求書を提出 → 管理者承認 → <b>自動的にこの口座に振込</b>まれる。手作業のやり取りなし。</p>
+          <div class="bie-explain-eg">📋 例：5 月末に請求書提出 → 6 月 10 日にこの口座へ着金</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="kana">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>✏️ 口座名義（カナ）</div>
+          <h5>なぜ厳密？</h5>
+          <p>銀行の振込照合は <b>名義カナの完全一致</b> をチェック。1 文字でも違うとエラーで戻ってくる。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>正しく入れておけば一発で振込完了。<b>間違えると振込が戻ってきて支払い遅延</b> になる。</p>
+          <div class="bie-explain-eg">📋 NG 例：通帳「タカハシ　サトル」(全角スペース) を「タカハシ サトル」(半角) で入力 → 振込エラー<br>👉 通帳・キャッシュカードを見ながら正確に！</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="phone">
+          <div class="bie-explain-title"><span class="bie-explain-num">3</span>📞 電話番号</div>
+          <h5>なぜ入れる？</h5>
+          <p>請求書フォーマットの <b>請求者連絡先</b> として印字される。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>クライアントから見える正式な書類になる。経理問い合わせ時の連絡先として機能する。</p>
+          <div class="bie-explain-eg">📋 例：請求書の右上「請求者」欄に表示</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="address">
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>🏠 住所</div>
+          <h5>なぜ入れる？</h5>
+          <p>請求書の <b>正式な発行者住所</b>。税務上必要な情報として保存される。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>請求書フッターに住所が印字される。確定申告時の控えとしても残る。</p>
+          <div class="bie-explain-eg">📋 例：請求書フッター「〒123-4567 東京都渋谷区...」と表示</div>
+        </div>
       </div>
     </div>
-  </div>
-
-  <div class="reco-row" style="margin-top:10px;padding:0 4px">
-    <span class="reco-label">あわせて入れておく：</span>
-    <span class="reco-chip">📞 電話番号</span>
-    <span class="reco-chip">🏠 住所</span>
-    <span style="font-size:11px;color:var(--text-muted)">（請求書に印字）</span>
-  </div>
-
-  <!-- ⭐ ワンポイント -->
-  <div class="wanpoint">
-    <div class="wanpoint-title">名義カナは1文字でも違うとアウト</div>
-    <p>銀行口座の名義（カナ）と <strong>1文字でも違う</strong> と振込エラーに。<br>通帳・キャッシュカードを見ながら入れてください。</p>
   </div>
 
   <div class="done-banner">
