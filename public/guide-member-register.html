@@ -105,6 +105,41 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 .opt-row{margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.6}
 .opt-row strong{color:#6b7280;font-weight:600}
 
+/* Basic-info interactive explorer */
+.bie{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.bie-mock{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.bie-mock-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.bie-mock-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:14px 0 #F59E0B,28px 0 #10B981}
+.bie-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;background:#fafdfd}
+.bie-row:hover{background:var(--em-pale);border-color:var(--em-light)}
+.bie-row.selected{background:var(--em-pale);border-color:var(--em-dark);box-shadow:0 4px 12px rgba(43,184,180,0.18)}
+.bie-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--em-dark);color:var(--em-dark);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.bie-row:hover .bie-num{transform:scale(1.1)}
+.bie-row.selected .bie-num{background:var(--em-dark);color:#fff}
+.bie-input-area{flex:1;min-width:0}
+.bie-label{font-size:11px;color:var(--text);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.bie-mock-input{background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#9ca3af;font-family:inherit;min-height:22px;display:flex;align-items:center}
+.bie-mock-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bie-mock-input.disabled{background:#f5f5f5;color:#9ca3af}
+.bie-explain{background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px solid var(--star-border);border-radius:12px;padding:16px 18px;min-height:200px;position:relative}
+.bie-explain-prompt{font-size:12px;color:var(--star-deep);text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:center;height:100%;padding:12px}
+.bie-explain-prompt-arrow{font-size:24px;animation:bie-arrow 1.4s ease-in-out infinite}
+@keyframes bie-arrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-6px)}}
+.bie-explain-content{display:none}
+.bie-explain-content.show{display:block;animation:bie-fade 0.25s ease-out}
+@keyframes bie-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.bie-explain-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--star);color:#fff;font-size:11px;font-weight:800;margin-right:6px}
+.bie-explain-title{font-size:14px;font-weight:800;color:var(--star-deep);margin-bottom:10px;display:flex;align-items:center}
+.bie-explain h5{font-size:11px;font-weight:800;color:var(--star);letter-spacing:0.06em;margin:10px 0 4px;text-transform:uppercase}
+.bie-explain h5::before{content:"";display:inline-block;width:4px;height:12px;background:var(--star);margin-right:6px;vertical-align:middle;border-radius:2px}
+.bie-explain p{font-size:12.5px;color:#78350F;line-height:1.7}
+.bie-explain-eg{margin-top:8px;background:#fff;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#78350F;line-height:1.7;border-left:3px solid var(--star)}
+.bie-explain-eg b{color:#92400E;background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px}
+@media (max-width:768px){
+  .bie{grid-template-columns:1fr;gap:10px}
+  .bie-explain{min-height:auto}
+}
+
 /* Done banner (compact) */
 .done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
 .done-icon{font-size:24px;flex-shrink:0}
@@ -282,15 +317,89 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
   </div>
 
-  <!-- 基本情報 -->
+  <!-- 基本情報 — インタラクティブ解説 -->
   <div class="step-card" style="margin-top:14px">
-    <div class="step-card-title">👤 基本情報</div>
-    <div class="reco-row">
-      <span class="reco-label">入れておくと◎：</span>
-      <span class="reco-chip">📷 アバター</span>
-      <span class="reco-chip">💼 職種（動画／デザイン）</span>
+    <div class="step-card-title">👤 基本情報 ── 番号をタップして「なぜ入れる？」を見る</div>
+    <div class="bie">
+      <!-- 左：基本情報モック画面 -->
+      <div class="bie-mock">
+        <div class="bie-mock-title">基本情報</div>
+        <div class="bie-row" data-field="avatar">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">📷 アバター</div>
+            <div style="display:flex;align-items:center;gap:8px"><div class="bie-mock-avatar">田</div><span style="font-size:11px;color:var(--text-muted)">画像を変更</span></div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="nickname">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🏷 ニックネーム</div>
+            <div class="bie-mock-input">例：たろ</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="job">
+          <div class="bie-num">3</div>
+          <div class="bie-input-area">
+            <div class="bie-label">💼 職種</div>
+            <div class="bie-mock-input">動画 ／ デザイン ／ 両方　▾</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="birthday">
+          <div class="bie-num">4</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🎂 誕生日</div>
+            <div class="bie-mock-input">YYYY ／ MM ／ DD</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：選択した項目の説明（なぜ／メリット／例） -->
+      <div class="bie-explain">
+        <div class="bie-explain-prompt" id="bie-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① 〜 ④</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ入れる？／何がよくなる？／例</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="avatar">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>📷 アバター（プロフィール画像）</div>
+          <h5>なぜ入れる？</h5>
+          <p>クリエイティブ一覧やコメント欄で、誰の作業／発言かが <b>パッと見で分かる</b> ようにするため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>アサイン候補リストで <b>名前より先に顔が記憶される</b>ので、声がかかりやすくなる。</p>
+          <div class="bie-explain-eg">📋 例：D が編集者を選ぶとき、アイコンが入っている人から目に止まる → <b>アサイン率アップ</b></div>
+        </div>
+
+        <div class="bie-explain-content" data-field="nickname">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>🏷 ニックネーム</div>
+          <h5>なぜ入れる？</h5>
+          <p>本名と普段呼ばれている名前が違うとき、検索・メンションで <b>呼び名でも見つかる</b> ようにするため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>「田中太郎」の登録で「たろ」を入れておけば、メンバー検索で「たろ」と打っても出る。<b>連絡漏れを防ぐ</b>。</p>
+          <div class="bie-explain-eg">📋 例：「たろさんに連絡したい」→ メンバー検索 <code style="background:rgba(245,158,11,0.18);padding:1px 4px;border-radius:3px">たろ</code> でヒット</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="job">
+          <div class="bie-explain-title"><span class="bie-explain-num">3</span>💼 職種（動画／デザイン／両方）</div>
+          <h5>なぜ入れる？</h5>
+          <p>システムが <b>「この人にどのアサインを薦めるか」</b> を判定するため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>動画案件のアサイン候補に名前が出る／デザイン案件は出ない、と <b>自動で振り分けられる</b>。<br>「両方」を選べば両方の案件で候補に上がります。</p>
+          <div class="bie-explain-eg">📋 例：D が動画編集者をアサイン → <b>「動画」or「両方」</b>を選んだ人だけがリストに出る</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="birthday">
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>🎂 誕生日</div>
+          <h5>なぜ入れる？</h5>
+          <p>社内の誕生日通知に使われます。年は <b>非表示にする設定</b> も用意（月日のみ表示）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>誕生日当日にチームから祝ってもらえる。<b>会ったことがないリモートメンバーとも距離が縮まる</b>。</p>
+          <div class="bie-explain-eg">📋 例：誕生日当日朝に Slack で「今日は田中さんの誕生日 🎉」と通知</div>
+        </div>
+      </div>
     </div>
-    <div class="opt-row">あとでもOK：<strong>ニックネーム ／ 誕生日</strong></div>
+    <div class="opt-row" style="margin-top:10px">あとでもOKな項目：<strong>すべて</strong>（必須は登録時の名前・パスワードのみ）</div>
   </div>
 
   <!-- 稼働時間 -->
@@ -412,6 +521,19 @@ function markStep(n){ if(n>completed){ completed=n; localStorage.setItem('haruka
 updateProgress();
 document.querySelectorAll('.progress-dot').forEach(d=>{
   d.addEventListener('click',()=>document.getElementById('step'+d.dataset.step)?.scrollIntoView({behavior:'smooth',block:'start'}));
+});
+
+// Basic-info interactive explorer
+document.querySelectorAll('.bie-row').forEach(row=>{
+  row.addEventListener('click',()=>{
+    const field = row.dataset.field;
+    document.querySelectorAll('.bie-row').forEach(r=>r.classList.toggle('selected', r === row));
+    const prompt = document.getElementById('bie-prompt');
+    if (prompt) prompt.style.display = 'none';
+    document.querySelectorAll('.bie-explain-content').forEach(c=>{
+      c.classList.toggle('show', c.dataset.field === field);
+    });
+  });
 });
 </script>
 
