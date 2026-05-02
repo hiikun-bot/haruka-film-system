@@ -58,6 +58,51 @@ async function sendSlackChannel(channelUrl, text) {
   return slackPost(token, parsed.channel_id, text);
 }
 
+// Slack files V2 API でファイル付き投稿。bot に files:write + chat:write が必要。
+// legacy files.upload は 2025-03 廃止のため使わない。
+// 流れ: getUploadURLExternal → upload_url へ PUT → completeUploadExternal
+async function sendSlackChannelWithFile(channelUrl, text, fileBuffer, filename) {
+  const parsed = parseSlackChannelUrl(channelUrl);
+  if (!parsed) return { ok: false, reason: 'invalid_url' };
+  const token = await getSlackBotToken(parsed.team_id);
+  if (!token) return { ok: false, reason: 'no_workspace_token' };
+  if (!fileBuffer || !fileBuffer.length) return { ok: false, reason: 'empty_file' };
+  // Slack initial_comment は 4000 字制限。安全側で 3500 字に丸める。
+  const initial = String(text || '').slice(0, 3500);
+  try {
+    // 1) upload URL を取得
+    const step1 = await axios.post(
+      'https://slack.com/api/files.getUploadURLExternal',
+      new URLSearchParams({ filename: filename || 'file.bin', length: String(fileBuffer.length) }),
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+    );
+    if (!step1.data.ok) {
+      console.warn('[notif/slack] getUploadURLExternal:', step1.data.error);
+      return { ok: false, reason: step1.data.error };
+    }
+    const { upload_url, file_id } = step1.data;
+    // 2) 本体を upload_url に POST（raw body 推奨）
+    await axios.post(upload_url, fileBuffer, {
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': fileBuffer.length },
+      maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 30000,
+    });
+    // 3) チャンネルへ投稿完了
+    const step3 = await axios.post(
+      'https://slack.com/api/files.completeUploadExternal',
+      { files: [{ id: file_id, title: filename || 'file' }], channel_id: parsed.channel_id, initial_comment: initial },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+    );
+    if (!step3.data.ok) {
+      console.warn('[notif/slack] completeUploadExternal:', step3.data.error);
+      return { ok: false, reason: step3.data.error };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn('[notif/slack] file upload fail:', e.message);
+    return { ok: false, reason: e.message };
+  }
+}
+
 // =============== Chatwork API ===============
 async function sendChatworkRoom(roomId, text) {
   const token = process.env.CHATWORK_API_TOKEN;
@@ -282,5 +327,6 @@ module.exports = {
   notifyCreativeStatusChange,
   parseSlackChannelUrl,
   sendSlackChannel,
+  sendSlackChannelWithFile,
   sendChatworkRoom,
 };
