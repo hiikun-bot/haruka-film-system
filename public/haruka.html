@@ -6537,6 +6537,7 @@ async function saveRates() {
   }
   closeModal('modal-rates');
   showToast('単価を保存しました', 'success');
+  loadProjects();
 }
 
 // 実効ロールが管理者相当かどうか（admin / secretary を含む）
@@ -7441,6 +7442,7 @@ async function submitEstimateEditor() {
     showToast(eid ? '見積を保存しました' : '見積を作成しました', 'success');
     closeModal('modal-finance-estimate-editor');
     loadProjectFinance();
+    loadProjects();
   } else {
     const errBody = await res.json().catch(() => ({}));
     console.error('[submitEstimateEditor] save failed', { status: res.status, body: errBody, projectId, eid });
@@ -7460,7 +7462,7 @@ async function changeEstimateStatus(eid, newStatus) {
 async function deleteEstimate(eid) {
   if (!confirm('この見積を削除しますか？（明細も全て消えます）')) return;
   const res = await apiFetch(`${ACCOUNTING_API}/estimates/${eid}`, { method: 'DELETE' });
-  if (res.ok) { showToast('削除しました', 'success'); loadProjectFinance(); }
+  if (res.ok) { showToast('削除しました', 'success'); loadProjectFinance(); loadProjects(); }
   else { const e = await res.json().catch(()=>({})); showToast('エラー: ' + (e.error || '削除失敗'), 'error'); }
 }
 
