@@ -187,6 +187,9 @@ async function runSchemaSync() {
       "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_file_size BIGINT",
       "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_status TEXT",
       "ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_processed_at TIMESTAMPTZ",
+      // クライアント確認URL (PR #167 / migrations/2026-05-02_creatives_client_review_url.sql)
+      // 通知テンプレートに埋め込む Drive 共有URLを保持。schema-sync の CREATE TABLE IF NOT EXISTS では追加されないので保険ALTERで必ず追加する。
+      "ALTER TABLE creatives ADD COLUMN IF NOT EXISTS client_review_url TEXT",
       // 管理者によるステータス強制変更の監査ログ
       `CREATE TABLE IF NOT EXISTS creative_status_audit (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
