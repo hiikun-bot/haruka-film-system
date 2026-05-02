@@ -1359,4 +1359,24 @@ CREATE TABLE IF NOT EXISTS client_deletion_logs (
 CREATE INDEX IF NOT EXISTS idx_client_deletion_logs_deleted_at
   ON client_deletion_logs(deleted_at DESC);
 
+-- ============================================================
+-- 案件削除監査ログ
+-- 詳細: migrations/2026-05-03_project_deletion_logs.sql
+-- 親 projects は削除されるため、外部参照は持たず スナップショット で残す。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS project_deletion_logs (
+  id              BIGSERIAL PRIMARY KEY,
+  project_id      UUID,
+  project_name    TEXT NOT NULL,
+  client_id       UUID,
+  client_name     TEXT,
+  reason          TEXT NOT NULL,
+  deleted_by      UUID,
+  deleted_by_name TEXT,
+  related_creatives_count INT DEFAULT 0,
+  deleted_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_deletion_logs_deleted_at
+  ON project_deletion_logs(deleted_at DESC);
+
 NOTIFY pgrst, 'reload schema';

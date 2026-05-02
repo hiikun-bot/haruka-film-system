@@ -3029,6 +3029,41 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- 案件削除確認モーダル -->
+<!-- 誤削除防止: 削除理由 (textarea) 必須。5文字未満は警告。空欄は実行ボタン disabled。 -->
+<!-- z-index は案件編集モーダルより前面に出すため 320（クライアント版と同じ）。 -->
+<div class="modal-overlay" id="modal-project-delete-confirm" style="z-index:320">
+  <div class="modal" style="max-width:480px;width:92vw;padding:24px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div id="pj-del-title" style="font-size:15px;font-weight:700;color:#A32D2D;margin-bottom:4px">案件を削除しますか？</div>
+        <div style="font-size:12px;color:var(--text);line-height:1.7">
+          紐づくクリエイティブ・サイクル・チェックリスト等もすべて削除されます。<br>
+          請求書が紐づいている場合は削除できません（先に請求書を削除してください）。<br>
+          <b style="color:#A32D2D">この操作は取り消せません。</b>
+        </div>
+      </div>
+    </div>
+    <div id="pj-del-related-count"
+      style="font-size:12px;color:var(--text-muted);background:#FFF7F2;border:1px solid #F2D9CC;border-radius:8px;padding:8px 12px;margin-bottom:14px">
+      関連クリエイティブ件数を取得中...
+    </div>
+    <div style="margin-bottom:6px">
+      <label class="form-label" style="display:block;margin-bottom:6px">削除理由 <span style="color:#A32D2D">*</span></label>
+      <textarea class="form-input" id="pj-del-reason" rows="3"
+        placeholder="例: テストデータのため / 誤って作成したため / 案件中止のため"
+        oninput="validateProjectDeleteReason()" style="resize:vertical"></textarea>
+      <div id="pj-del-reason-warn" style="font-size:11px;color:#A32D2D;margin-top:4px;min-height:14px"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-delete-confirm')">キャンセル</button>
+      <button class="btn-primary" id="pj-del-execute-btn" disabled onclick="executeProjectDelete()"
+        style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 案件追加モーダル -->
 <!-- 単価設定モーダル -->
 <div class="modal-overlay" id="modal-rates">
@@ -3402,7 +3437,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         非表示にする
       </label>
       <div style="display:flex;gap:10px;align-items:center">
-        <button class="btn" id="p-delete-btn" onclick="deleteCurrentProject()" style="display:none;color:#A32D2D;border-color:#F09595;margin-right:auto">🗑️ 削除</button>
+        <button class="btn" id="p-delete-btn" onclick="openProjectDeleteConfirm()" style="display:none;color:#A32D2D;border-color:#F09595;margin-right:auto">🗑️ 削除</button>
         <button class="btn-primary" id="p-submit-btn" onclick="submitProject()">追加する</button>
         <button class="btn" onclick="closeModal('modal-project')">キャンセル</button>
       </div>
@@ -7357,19 +7392,85 @@ function openEditProject(p) {
   openModal('modal-project');
 }
 
-async function deleteCurrentProject() {
-  const projectId = document.getElementById('p-id').value;
-  if (!projectId) return;
-  const projectName = document.getElementById('p-name').value || '';
-  if (!confirm(`案件「${projectName}」を完全に削除しますか？\n\n※ 紐づくクリエイティブ・サイクル・チェックリスト等もすべて削除されます。\n※ 請求書が紐づいている場合は削除できません（先に請求書を削除してください）。\n※ この操作は取り消せません。`)) return;
-  const res = await apiFetch(`${API}/projects/${projectId}`, { method: 'DELETE' });
-  if (res.ok) {
-    showToast('案件を削除しました', 'success');
-    closeModal('modal-project');
-    if (typeof loadProjects === 'function') await loadProjects();
-  } else {
-    const e = await res.json().catch(() => ({}));
-    showToast('エラー: ' + (e.error || '削除失敗'), 'error');
+// ===== 案件削除（権限: project.delete）=====
+// 案件編集モーダルから「🗑️ 削除」を押すと開く確認モーダルを制御。
+// クライアント削除と同じUX: 削除理由 (textarea) 必須・5文字未満は実行ボタン disabled。
+// サーバー側でも reason 必須・requirePermission('project.delete') で二重に確認している。
+function openProjectDeleteConfirm() {
+  const id = document.getElementById('p-id').value;
+  const name = (document.getElementById('p-name').value || '').trim();
+  if (!id) { showToast('削除対象の案件が特定できません', 'warn'); return; }
+
+  document.getElementById('pj-del-title').textContent = `案件「${name || '(無題)'}」を削除しますか？`;
+
+  // 紐づくクリエイティブ件数（allCreatives から算出）。未ロードでもエラーにしない。
+  const relCount = Array.isArray(allCreatives)
+    ? allCreatives.filter(c => c?.project_id === id).length
+    : 0;
+  document.getElementById('pj-del-related-count').textContent =
+    `現在 ${relCount} 件のクリエイティブが紐づいています。サイクル・チェックリスト等の関連データも併せて削除されます。`;
+
+  const reasonEl = document.getElementById('pj-del-reason');
+  reasonEl.value = '';
+  document.getElementById('pj-del-reason-warn').textContent = '';
+  document.getElementById('pj-del-execute-btn').disabled = true;
+  openModal('modal-project-delete-confirm');
+  // フォーカスを理由欄へ
+  setTimeout(() => reasonEl.focus(), 50);
+}
+
+// 理由 textarea の入力検証（リアルタイム）
+function validateProjectDeleteReason() {
+  const reason = (document.getElementById('pj-del-reason').value || '').trim();
+  const warnEl = document.getElementById('pj-del-reason-warn');
+  const btn    = document.getElementById('pj-del-execute-btn');
+  if (!reason) {
+    warnEl.textContent = '';
+    btn.disabled = true;
+    return;
+  }
+  if (reason.length < 5) {
+    warnEl.textContent = 'もう少し詳しく入力してください（5文字以上推奨）';
+    // 5文字未満でも実行できないように disabled は維持
+    btn.disabled = true;
+    return;
+  }
+  warnEl.textContent = '';
+  btn.disabled = false;
+}
+
+async function executeProjectDelete() {
+  const id   = document.getElementById('p-id').value;
+  const name = (document.getElementById('p-name').value || '').trim();
+  const reason = (document.getElementById('pj-del-reason').value || '').trim();
+  if (!id || !reason || reason.length < 5) {
+    showToast('削除理由を入力してください', 'warn');
+    return;
+  }
+  const btn = document.getElementById('pj-del-execute-btn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '削除中...';
+  try {
+    const res = await apiFetch(`${API}/projects/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (res.ok) {
+      closeModal('modal-project-delete-confirm');
+      closeModal('modal-project');
+      if (typeof loadProjects === 'function') await loadProjects();
+      showToast(`案件「${name}」を削除しました`, 'success');
+    } else {
+      const e = await res.json().catch(() => ({}));
+      showToast('削除に失敗: ' + (typeof translateError === 'function' ? translateError(e?.error || `HTTP ${res.status}`) : (e?.error || `HTTP ${res.status}`)), 'error');
+    }
+  } catch (err) {
+    showToast('削除に失敗: ' + (err?.message || err), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
   }
 }
 
