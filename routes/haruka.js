@@ -1320,7 +1320,12 @@ router.get('/creatives', async (req, res) => {
     if (cycle_id)   q = q.eq('cycle_id', cycle_id);
     if (status)     q = q.eq('status', status);
     if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
-    if (client_id) q = q.eq('projects.client_id', client_id);
+    if (client_id) {
+      // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
+      const ids = String(client_id).split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length > 1) q = q.in('projects.client_id', ids);
+      else if (ids.length === 1) q = q.eq('projects.client_id', ids[0]);
+    }
     if (qPat) {
       // file_name OR memo OR (users.full_name / nickname にヒットした creative_id 集合) のいずれか
       const orConds = [`file_name.ilike.${qPat}`, `memo.ilike.${qPat}`];
@@ -1366,12 +1371,30 @@ router.get('/creatives', async (req, res) => {
     teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
   });
 
+  // 案件専用ディレクター解決用に projects.director_id 集合を一括取得
+  const projDirIds = Array.from(new Set(
+    (data || []).map(c => c.projects?.director_id).filter(Boolean)
+  ));
+  const userById = new Map();
+  if (projDirIds.length) {
+    const { data: dirUsers } = await supabase
+      .from('users').select('id, full_name').in('id', projDirIds);
+    (dirUsers || []).forEach(u => userById.set(u.id, u));
+  }
+
   // ボール保持者と teams を付与（teams は FK 不要の手動 stitch）
-  const withBall = (data || []).map(c => ({
-    ...c,
-    teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
-    ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId)
-  }));
+  const withBall = (data || []).map(c => {
+    const projectDirector = c.projects?.director_id ? userById.get(c.projects.director_id) || null : null;
+    return {
+      ...c,
+      teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
+      ball_holder: getBallHolder(
+        c.status, c.creative_assignments,
+        directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+        projectDirector
+      ),
+    };
+  });
 
   res.json({ data: withBall, total: count ?? withBall.length, limit, offset });
 });
@@ -4066,16 +4089,25 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 // ==================== ボール保持者判定 ====================
 
-function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId) {
+function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const dirAssign = assignments?.find(a => a.role === 'director');
 
   const editorName = editor?.users?.full_name || '編集者';
   const editorId = editor?.users?.id || null;
 
-  // ディレクター名 / ID：assignment直接 → チームID逆引き → メンバーID逆引き → フォールバック
+  // ディレクター名 / ID の優先順位:
+  //   1. assignment 直接（role='director' の creative_assignments）
+  //   2. projects.director_id（案件専用ディレクター・本来の最優先設定）
+  //   3. 編集者のチーム代表ディレクター（フォールバック）
+  //   4. 編集者の所属メンバー → チーム代表（フォールバック）
+  //   5. 'ディレクター' リテラル
   let directorName = dirAssign?.users?.full_name;
   let directorId = dirAssign?.users?.id || null;
+  if (!directorName && projectDirector) {
+    directorName = projectDirector.full_name || '';
+    directorId   = projectDirector.id || null;
+  }
   if (!directorName && editor?.users) {
     const u = editor.users;
     directorName = (u.team_id && directorByTeamId?.get(u.team_id))
