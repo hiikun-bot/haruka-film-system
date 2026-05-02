@@ -41,6 +41,14 @@ function requireAuth(req, res, next) {
   if (req.xhr || req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'ログインが必要です', redirect: '/login.html' });
   }
+  // 通知 URL（例: /haruka.html?creative=xxx）を踏んで未ログインだった場合、
+  // ログイン後に元の URL へ戻れるよう ?next= に originalUrl を保持する。
+  // GET 以外、または originalUrl が /haruka.html 以外（オープンリダイレクト防止）
+  // の場合は素朴に /login.html へ。
+  const originalUrl = req.originalUrl || '';
+  if (req.method === 'GET' && /^\/haruka\.html(\?|$)/.test(originalUrl)) {
+    return res.redirect('/login.html?next=' + encodeURIComponent(originalUrl));
+  }
   res.redirect('/login.html');
 }
 
