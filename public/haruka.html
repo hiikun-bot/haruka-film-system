@@ -2580,6 +2580,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       <!-- 商材タブ -->
       <div id="cl-tab-products" style="display:none;padding:20px 28px">
+        <!-- ファイル名命名ヘルプ -->
+        <div style="margin-bottom:10px;background:linear-gradient(135deg,#FFFCEB 0%,#FFF8E1 100%);border:1.5px solid #FCD34D;border-radius:10px;padding:12px 14px">
+          <div style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.06em;margin-bottom:8px">📁 入力したコードはファイル名にそのまま入ります</div>
+          <div style="background:#fff;border-radius:6px;padding:10px 12px;font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-bottom:8px;overflow-x:auto;white-space:nowrap">
+            <span style="color:#9ca3af">260502_</span><span style="background:#FCD34D;color:#92400E;padding:2px 6px;border-radius:4px;font-weight:700;box-shadow:0 0 0 1.5px #F59E0B">SV</span><span style="color:#9ca3af">_TVCM_15s_ap001_1080x1920_0000001</span>
+            <span style="color:#92400E;font-size:11px;font-family:'Noto Sans JP',sans-serif;margin-left:8px">← ここが商材コード</span>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#78350F;line-height:1.6">
+            <div>✓ <b>大文字に自動変換</b>（sv → SV）</div>
+            <div>✓ <b>2〜3 文字を推奨</b>（短いほど読みやすい）</div>
+            <div>✓ クライアント内で重複 NG</div>
+          </div>
+        </div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;background:var(--em-pale);padding:8px 12px;border-radius:8px">
           案件は既定でここに登録した商材を参照します。案件ごとに独自設定への切り替えも可能です。
         </div>
@@ -2590,6 +2603,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
               <input class="form-input" id="cl-prod-code" placeholder="例: SV" style="font-family:monospace;font-size:13px">
+              <div style="font-size:10px;color:#a16207;margin-top:3px">💡 大文字に自動変換</div>
             </div>
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
@@ -2610,6 +2624,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       <!-- 訴求軸タブ -->
       <div id="cl-tab-appeal-axes" style="display:none;padding:20px 28px">
+        <!-- ファイル名命名ヘルプ -->
+        <div style="margin-bottom:10px;background:linear-gradient(135deg,#FFFCEB 0%,#FFF8E1 100%);border:1.5px solid #FCD34D;border-radius:10px;padding:12px 14px">
+          <div style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.06em;margin-bottom:8px">📁 入力したコードはファイル名にそのまま入ります</div>
+          <div style="background:#fff;border-radius:6px;padding:10px 12px;font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-bottom:8px;overflow-x:auto;white-space:nowrap">
+            <span style="color:#9ca3af">260502_SV_TVCM_15s_</span><span style="background:#FCD34D;color:#92400E;padding:2px 6px;border-radius:4px;font-weight:700;box-shadow:0 0 0 1.5px #F59E0B">ap001</span><span style="color:#9ca3af">_1080x1920_0000001</span>
+            <span style="color:#92400E;font-size:11px;font-family:'Noto Sans JP',sans-serif;margin-left:8px">← ここが訴求軸コード</span>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#78350F;line-height:1.6">
+            <div>✓ <b>小文字に自動変換</b>（AP001 → ap001）</div>
+            <div>✓ 慣習：<code style="background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px;font-family:ui-monospace,Menlo,monospace">英字 + 3 桁数字</code>（例：ap001, ugc002）</div>
+            <div>✓ クライアント内で重複 NG</div>
+          </div>
+        </div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;background:var(--em-pale);padding:8px 12px;border-radius:8px">
           案件は既定でここに登録した訴求軸を参照します。案件ごとに独自設定への切り替えも可能です。
         </div>
@@ -2620,6 +2647,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
               <input class="form-input" id="cl-axis-code" placeholder="例: ap001" style="font-family:monospace;font-size:13px">
+              <div style="font-size:10px;color:#a16207;margin-top:3px">💡 小文字に自動変換</div>
             </div>
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
