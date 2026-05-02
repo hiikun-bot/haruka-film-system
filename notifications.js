@@ -172,11 +172,37 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     }
   };
 
+  // ディレクター不在時のフォールバック投稿（CR提出時のチャンネルメンション機能）
+  // - Slack: <!here> でチャンネル内のオンライン全員に通知
+  // - Chatwork: [toall] でルーム全員に通知
+  // ディレクターが任命されていない / DM ID 未設定の案件で、誰かが必ず気づける状態にする。
+  const sendChannelMention = async (slackBody, cwBody) => {
+    if (channelUrl) {
+      await sendSlackChannel(channelUrl, `<!here> ${slackBody}`);
+    }
+    if (roomId) {
+      await sendChatworkRoom(roomId, `[toall]\n${cwBody}`);
+    }
+  };
+
   // 1) → Dチェック
+  //    通常はディレクター個人にDM。
+  //    ディレクター未設定 or DM ID 未設定（slack_dm_id・chatwork_dm_id 両方とも無い）の
+  //    場合は、チャンネル/ルームに @here / [toall] でフォールバック投稿する。
+  //    （ディレクターがいない案件でもCR提出が誰にも届かない事態を防ぐ）
   if (newStatus === 'Dチェック') {
     const slackBody = `📥 Dチェック依頼\nファイル: ${slackName}${comment ? `\n💬 ${comment}` : ''}`;
     const cwBody = `[info][title]📥 Dチェック依頼[/title]ファイル: ${fileName}${cwUrlLine}${comment ? `\nコメント: ${comment}` : ''}[/info]`;
-    await sendNotif(director, slackBody, cwBody);
+    const directorReachable = director && (director.slack_dm_id || director.chatwork_dm_id);
+    if (directorReachable) {
+      await sendNotif(director, slackBody, cwBody);
+    } else {
+      // フォールバック: チャンネル/ルーム全員にメンション
+      const note = '\n（ディレクター未設定のため関係者にメンションしています）';
+      const slackFallback = slackBody + note;
+      const cwFallback = cwBody.replace('[/info]', note + '[/info]');
+      await sendChannelMention(slackFallback, cwFallback);
+    }
   }
   // 2) → Pチェック
   else if (newStatus === 'Pチェック') {

@@ -1302,7 +1302,7 @@ router.get('/creatives', async (req, res) => {
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
     creative_type, team_id, project_id, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
-    ${projectsRel}(id, name, client_id, clients(id, name, status)),
+    ${projectsRel}(id, name, client_id, sheet_url, regulation_url, clients(id, name, status)),
     project_cycles(id, year, month),
     creative_assignments(
       id, role, rank_applied,
@@ -1345,15 +1345,23 @@ router.get('/creatives', async (req, res) => {
   const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)');
   if (error) return res.status(500).json({ error: error.message });
 
-  // チーム逆引きMap（ディレクター名解決用 + teams 埋め込み代替用）
-  const directorByTeamId  = new Map();
-  const directorByUserId  = new Map();
-  const teamById          = new Map();
+  // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
+  const directorByTeamId    = new Map();
+  const directorByUserId    = new Map();
+  const directorIdByTeamId  = new Map();
+  const directorIdByUserId  = new Map();
+  const teamById            = new Map();
   (teamsRaw || []).forEach(t => {
     const name = t.director?.full_name || '';
-    if (t.director_id) directorByTeamId.set(t.id, name);
+    if (t.director_id) {
+      directorByTeamId.set(t.id, name);
+      directorIdByTeamId.set(t.id, t.director_id);
+    }
     (t.team_members || []).forEach(tm => {
-      if (tm.user_id && !directorByUserId.has(tm.user_id)) directorByUserId.set(tm.user_id, name);
+      if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+        directorByUserId.set(tm.user_id, name);
+        directorIdByUserId.set(tm.user_id, t.director_id || null);
+      }
     });
     teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
   });
@@ -1362,7 +1370,7 @@ router.get('/creatives', async (req, res) => {
   const withBall = (data || []).map(c => ({
     ...c,
     teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
-    ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId)
+    ball_holder: getBallHolder(c.status, c.creative_assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId)
   }));
 
   res.json({ data: withBall, total: count ?? withBall.length, limit, offset });
@@ -1404,14 +1412,20 @@ router.get('/creatives/:id', async (req, res) => {
 router.post('/creatives/bulk-preview', async (req, res) => {
   const { project_id, creative_type, appeal_type_id, count, draft_deadline, final_deadline,
           product_code, media_code, creative_fmt, creative_size } = req.body;
-  if (!project_id || !creative_type || !appeal_type_id || !count) {
-    return res.status(400).json({ error: '案件・種別・訴求タイプ・本数は必須です' });
+  // 訴求軸（appeal_type_id）は任意化: 未確定状態でもプレビュー可（ファイル名は空欄部分を詰めて生成される）
+  if (!project_id || !creative_type || !count) {
+    return res.status(400).json({ error: '案件・種別・本数は必須です' });
   }
   const { data: project } = await supabase
     .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
-  const { data: appealType } = await supabase
-    .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
-  if (!project || !appealType) return res.status(400).json({ error: '案件または訴求タイプが見つかりません' });
+  let appealType = null;
+  if (appeal_type_id) {
+    const { data: at } = await supabase
+      .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
+    appealType = at;
+  }
+  if (!project) return res.status(400).json({ error: '案件が見つかりません' });
+  if (appeal_type_id && !appealType) return res.status(400).json({ error: '訴求軸が見つかりません' });
 
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
@@ -1430,7 +1444,8 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
     const seqStr7 = String(nextSeq).padStart(7, '0');
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+    const appealCode = appealType ? appealType.code : '';
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
       .map(p => (p||'').toString().trim()).filter(Boolean);
     const fileName = parts.join('_');
     previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
@@ -1449,18 +1464,26 @@ router.post('/creatives/bulk', async (req, res) => {
     product_id, product_code, media_code, creative_fmt, creative_size,
     assignee_id, team_id
   } = req.body;
-  if (!project_id || !creative_type || !appeal_type_id || !count) {
-    return res.status(400).json({ error: '案件・種別・訴求タイプ・本数は必須です' });
+  // 訴求軸（appeal_type_id）は任意化: 未確定状態でも一括登録できるようにする
+  if (!project_id || !creative_type || !count) {
+    return res.status(400).json({ error: '案件・種別・本数は必須です' });
   }
   if (count < 1 || count > 100) {
     return res.status(400).json({ error: '本数は1〜100の間で指定してください' });
   }
   const { data: project } = await supabase
     .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
-  const { data: appealType } = await supabase
-    .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
-  if (!project || !appealType) {
-    return res.status(400).json({ error: '案件または訴求タイプが見つかりません' });
+  let appealType = null;
+  if (appeal_type_id) {
+    const { data: at } = await supabase
+      .from('client_appeal_axes').select('*').eq('id', appeal_type_id).single();
+    appealType = at;
+  }
+  if (!project) {
+    return res.status(400).json({ error: '案件が見つかりません' });
+  }
+  if (appeal_type_id && !appealType) {
+    return res.status(400).json({ error: '訴求軸が見つかりません' });
   }
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
@@ -1479,10 +1502,12 @@ router.post('/creatives/bulk', async (req, res) => {
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
     const seqStr7 = String(nextSeq).padStart(7, '0');
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+    const appealCode = appealType ? appealType.code : '';
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
       .map(p => (p||'').toString().trim()).filter(Boolean);
     const fileName = parts.join('_');
-    const insert = { project_id, file_name: fileName, creative_type, appeal_type_id,
+    const insert = { project_id, file_name: fileName, creative_type,
+      appeal_type_id: appeal_type_id || null,
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
       note: note || null, status: '未着手',
       product_id: product_id || null, media_code: media_code || null,
@@ -4039,34 +4064,39 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 // ==================== ボール保持者判定 ====================
 
-function getBallHolder(status, assignments, directorByTeamId, directorByUserId) {
+function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const dirAssign = assignments?.find(a => a.role === 'director');
 
   const editorName = editor?.users?.full_name || '編集者';
+  const editorId = editor?.users?.id || null;
 
-  // ディレクター名：assignment直接 → チームID逆引き → メンバーID逆引き → フォールバック
+  // ディレクター名 / ID：assignment直接 → チームID逆引き → メンバーID逆引き → フォールバック
   let directorName = dirAssign?.users?.full_name;
+  let directorId = dirAssign?.users?.id || null;
   if (!directorName && editor?.users) {
     const u = editor.users;
     directorName = (u.team_id && directorByTeamId?.get(u.team_id))
       || (u.id && directorByUserId?.get(u.id))
       || '';
+    directorId = (u.team_id && directorIdByTeamId?.get(u.team_id))
+      || (u.id && directorIdByUserId?.get(u.id))
+      || null;
   }
   directorName = directorName || 'ディレクター';
 
   const ballMap = {
-    '未着手': { holder: editorName, type: 'editor' },
-    '制作中（初稿提出前）': { holder: editorName, type: 'editor' },
-    '台本制作': { holder: editorName, type: 'editor' },
-    '素材・ナレ作成': { holder: editorName, type: 'editor' },
-    '編集': { holder: editorName, type: 'editor' },
-    'Dチェック': { holder: directorName, type: 'director' },
-    'Dチェック後修正': { holder: editorName, type: 'editor' },
+    '未着手': { holder: editorName, type: 'editor', user_id: editorId },
+    '制作中（初稿提出前）': { holder: editorName, type: 'editor', user_id: editorId },
+    '台本制作': { holder: editorName, type: 'editor', user_id: editorId },
+    '素材・ナレ作成': { holder: editorName, type: 'editor', user_id: editorId },
+    '編集': { holder: editorName, type: 'editor', user_id: editorId },
+    'Dチェック': { holder: directorName, type: 'director', user_id: directorId },
+    'Dチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     'Pチェック': { holder: 'プロデューサー', type: 'producer' },
-    'Pチェック後修正': { holder: editorName, type: 'editor' },
+    'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     'クライアントチェック中': { holder: 'クライアント', type: 'client' },
-    'クライアントチェック後修正': { holder: `${editorName}・${directorName}・プロデューサー`, type: 'all' },
+    'クライアントチェック後修正': { holder: `${editorName}・${directorName}・プロデューサー`, type: 'all', user_ids: [editorId, directorId].filter(Boolean) },
     '納品': { holder: '完了', type: 'done' },
   };
   return ballMap[status] || { holder: '不明', type: 'unknown' };
