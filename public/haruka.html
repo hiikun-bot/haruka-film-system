@@ -13372,6 +13372,22 @@ async function loadCreativeFiles(creativeId) {
       ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}','${_ct}','${_assigneeRoleRender}')`
       : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}','${_ct}','${_assigneeRoleRender}')`;
     const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
+    // faststart プレビュー版の状態バッジ
+    const fsStatus = f.faststart_status || null;
+    const fsUrl    = f.faststart_drive_url || '';
+    const isAdmin  = (currentUser?.role === 'admin');
+    let fsBadge = '';
+    if (fsStatus === 'pending') {
+      fsBadge = `<span title="プレビュー版生成待ち" style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⏳ 準備中</span>`;
+    } else if (fsStatus === 'processing') {
+      fsBadge = `<span title="プレビュー版生成中" style="font-size:10px;color:#1e40af;background:#dbeafe;border:0.5px solid #93c5fd;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">🎞 生成中</span>`;
+    } else if (fsStatus === 'done' && fsUrl) {
+      fsBadge = `<a href="${fsUrl}" target="_blank" rel="noopener" title="faststart プレビュー版を Drive で開く" style="font-size:10px;color:#065f46;background:#d1fae5;border:0.5px solid #6ee7b7;border-radius:5px;padding:2px 6px;text-decoration:none;white-space:nowrap;flex-shrink:0">✅ プレビュー版</a>`;
+    } else if (fsStatus === 'failed') {
+      const regenBtn = isAdmin ? `<button onclick="regenerateFaststart('${f.id}')" title="faststart 再生成" style="font-size:10px;color:#7c2d12;background:transparent;border:0.5px solid #fb923c;border-radius:5px;padding:2px 6px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px">↻ 再生成</button>` : '';
+      fsBadge = `<span title="faststart 生成失敗" style="font-size:10px;color:#991b1b;background:#fee2e2;border:0.5px solid #fca5a5;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⚠️ 生成失敗</span>${regenBtn}`;
+    }
+
     return `
     <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border)">
@@ -13379,6 +13395,7 @@ async function loadCreativeFiles(creativeId) {
         <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
         ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
         <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+        ${fsBadge}
         ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
       </div>
       <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
@@ -13392,6 +13409,27 @@ async function loadCreativeFiles(creativeId) {
       </div>
     </div>`;
   }).join('');
+}
+
+// faststart プレビュー版を再生成（管理者のみ表示される失敗時の再生成ボタン用）
+async function regenerateFaststart(creativeFileId) {
+  if (!creativeFileId) return;
+  if (!confirm('faststart プレビュー版を再生成しますか？\n（バックグラウンドで処理されます）')) return;
+  try {
+    const res = await apiFetch(`${API}/creative-files/${creativeFileId}/regenerate-faststart`, { method: 'POST' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(`再生成リクエスト失敗: ${json.error || res.status}`, 'warn');
+      return;
+    }
+    showToast('faststart 再生成をリクエストしました（バックグラウンド処理中）', 'info');
+    // 数秒後にファイル一覧を再読込してステータスを反映
+    if (currentCreativeDetail?.id) {
+      setTimeout(() => loadCreativeFiles(currentCreativeDetail.id), 2000);
+    }
+  } catch (e) {
+    showToast(`再生成エラー: ${e.message}`, 'warn');
+  }
 }
 
 let currentPreviewFileId = null;
