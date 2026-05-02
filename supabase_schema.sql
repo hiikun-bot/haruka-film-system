@@ -1340,4 +1340,23 @@ CREATE INDEX IF NOT EXISTS idx_item_name_master_active
 CREATE UNIQUE INDEX IF NOT EXISTS uq_item_name_master_category_name
   ON item_name_master(category, name);
 
+-- ============================================================
+-- クライアント削除監査ログ
+-- 詳細: migrations/2026-05-02_client_deletion_logs.sql
+-- 親 clients は削除されるため、外部参照は持たず スナップショット で残す。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS client_deletion_logs (
+  id           BIGSERIAL PRIMARY KEY,
+  client_id    UUID,
+  client_name  TEXT NOT NULL,
+  client_short TEXT,
+  reason       TEXT NOT NULL,
+  deleted_by   UUID,
+  deleted_by_name TEXT,
+  related_projects_count INT DEFAULT 0,
+  deleted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_client_deletion_logs_deleted_at
+  ON client_deletion_logs(deleted_at DESC);
+
 NOTIFY pgrst, 'reload schema';
