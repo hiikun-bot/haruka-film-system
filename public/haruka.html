@@ -6992,17 +6992,22 @@ function openEstimateEditor(eid) {
 
   // 既定値の生成
   const today = new Date().toISOString().slice(0, 10);
+  const yyyymm = today.slice(0, 7).replace('-', ''); // 例: 202605
   const defaultValidUntil = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 60); // 既定 60 日後
     return d.toISOString().slice(0, 10);
   })();
-  // 取引先の既定値はモーダルタイトル「📋 見積 — XXX」の XXX を流用
-  const defaultRecipient = _financeProjectName ? _financeProjectName.split(' — ').pop() : '';
-  // ↑ 案件名と混ざっている可能性があるが Phase A では割り切り。Phase B で project.client_name から取得予定
+  // クライアント名 / 案件名 を _pfData から取得（fallback あり）
+  const clientName  = _pfData?.project?.client_name || '';
+  const projectName = _pfData?.project?.name || _financeProjectName || '';
+  // 取引先の既定値はクライアント名（無ければ案件名）
+  const defaultRecipient = clientName || projectName;
+  // 件名の既定値: 「クライアント名 案件名 YYYYMM」
+  const defaultTitle = [clientName, projectName, yyyymm].filter(Boolean).join(' ');
 
   if (isNew) {
-    document.getElementById('fest-edit-title').value     = '';
+    document.getElementById('fest-edit-title').value     = defaultTitle;
     document.getElementById('fest-edit-status').value    = 'draft';
     document.getElementById('fest-edit-note').value      = '';
     document.getElementById('fest-edit-recipient').value = defaultRecipient;
