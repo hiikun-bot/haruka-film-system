@@ -7202,7 +7202,7 @@ async function populateEstimateItemNameDatalist() {
   dl.innerHTML = opts.join('');
 }
 
-// 品目入力で完全一致したらマスターの default_unit を「単位」に補完（既に手動入力されていれば触らない）
+// 品目入力で完全一致したらマスターの default_unit / default_unit_price を補完（既存値があれば触らない）
 async function onEstimateItemNameChange(idx, value) {
   if (!value || !_festItems[idx]) return;
   let category = null;
@@ -7212,14 +7212,24 @@ async function onEstimateItemNameChange(idx, value) {
   } catch (_) {}
   const items = await getItemNameMasterForEstimate(category);
   const match = (items || []).find(it => it && it.name === value.trim());
-  if (!match || !match.default_unit) return;
-  // 既存の単位が空 or 既定値「式」のときだけ自動補完。手動で他の単位を入れていたら上書きしない
-  const cur = (_festItems[idx].unit || '').trim();
-  if (cur && cur !== '式') return;
-  _festItems[idx].unit = match.default_unit;
-  // DOM の単位入力欄も同期
-  const unitInput = document.querySelector(`#fest-items input[data-fest-row="${idx}"][data-fest-field="unit"]`);
-  if (unitInput) unitInput.value = match.default_unit;
+  if (!match) return;
+  // 単位: 既存が空 or 既定値「式」のときだけ自動補完。手動で他の単位を入れていたら上書きしない
+  if (match.default_unit) {
+    const cur = (_festItems[idx].unit || '').trim();
+    if (!cur || cur === '式') {
+      _festItems[idx].unit = match.default_unit;
+      const unitInput = document.querySelector(`#fest-items input[data-fest-row="${idx}"][data-fest-field="unit"]`);
+      if (unitInput) unitInput.value = match.default_unit;
+    }
+  }
+  // 単価: 既存が 0/未設定のときだけ自動補完。手動で入れた金額は上書きしない
+  if (match.default_unit_price != null && Number(match.default_unit_price) > 0) {
+    const curPrice = Number(_festItems[idx].unit_price) || 0;
+    if (curPrice === 0) {
+      _festItems[idx].unit_price = Number(match.default_unit_price);
+      renderEstimateItems();
+    }
+  }
 }
 
 function addEstimateItemRow(seed) {
@@ -11148,7 +11158,8 @@ function _renderItemNameMasterContent() {
     if (_imEditingId === item.id) {
       return `<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border-light)">
         <input id="im-e-name" class="form-input" value="${esc(item.name)}" style="flex:3;font-size:13px">
-        <input id="im-e-unit" class="form-input" value="${esc(item.default_unit || '')}" placeholder="単位（任意）" style="flex:1;font-size:13px">
+        <input id="im-e-unit" class="form-input" value="${esc(item.default_unit || '')}" placeholder="単位" style="width:80px;font-size:13px">
+        <input id="im-e-price" class="form-input" type="number" min="0" step="1" value="${item.default_unit_price ?? ''}" placeholder="単価(円)" style="width:120px;font-size:13px;text-align:right">
         <input id="im-e-order" class="form-input" type="number" value="${item.sort_order || 0}" style="width:64px;font-size:13px">
         <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);white-space:nowrap">
           <input type="checkbox" id="im-e-active" ${item.is_active ? 'checked' : ''}> 有効
@@ -11158,9 +11169,13 @@ function _renderItemNameMasterContent() {
       </div>`;
     }
     const inactiveStyle = item.is_active ? '' : 'opacity:0.5;';
+    const priceStr = (item.default_unit_price ?? null) === null
+      ? '—'
+      : `¥${Number(item.default_unit_price).toLocaleString('ja-JP')}`;
     return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border-light);${inactiveStyle}">
       <span style="flex:3;font-size:14px;font-weight:500;color:var(--text)">${esc(item.name)}${item.is_active ? '' : ' <span style=\"font-size:10px;color:#A32D2D\">(無効)</span>'}</span>
-      <span style="flex:1;font-size:13px;color:var(--text-muted)">${esc(item.default_unit || '—')}</span>
+      <span style="width:80px;font-size:13px;color:var(--text-muted)">${esc(item.default_unit || '—')}</span>
+      <span style="width:120px;font-size:13px;color:var(--text);text-align:right">${priceStr}</span>
       <span style="font-size:12px;color:var(--text-faint);min-width:50px">順:${item.sort_order || 0}</span>
       <button class="btn-sm" style="font-size:11px" onclick="_imEditingId='${item.id}';_renderItemNameMasterContent()">編集</button>
       <button class="btn-sm" style="font-size:11px;color:#A32D2D;border-color:#F09595" onclick="deleteItemNameMaster('${item.id}')">${item.is_active ? '無効化' : '物理削除'}</button>
@@ -11168,7 +11183,7 @@ function _renderItemNameMasterContent() {
   }).join('');
 
   content.innerHTML = `
-    <div style="max-width:800px">
+    <div style="max-width:960px">
       <div style="margin-bottom:20px">
         <h3 style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px">📦 品目マスター</h3>
         <p style="font-size:13px;color:var(--text-muted)">見積明細の「品目」入力欄でクイック選択できる項目を管理します。動画編集／デザインの2区分で登録します。</p>
@@ -11179,7 +11194,8 @@ function _renderItemNameMasterContent() {
         <div style="font-size:12px;font-weight:600;color:var(--em-dark);margin-bottom:12px;letter-spacing:0.08em">新規追加（${_imTab === 'video' ? '🎬 動画編集' : '🎨 デザイン'}）</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="im-new-name" class="form-input" placeholder="品目名 *（例: 動画編集（A）/ ナレーション）" style="flex:3;min-width:200px;font-size:13px">
-          <input id="im-new-unit" class="form-input" placeholder="既定単位（例: 本 / 枚 / 式）" style="flex:1;min-width:100px;font-size:13px">
+          <input id="im-new-unit" class="form-input" placeholder="単位（本/枚/式）" style="width:120px;font-size:13px">
+          <input id="im-new-price" class="form-input" type="number" min="0" step="1" placeholder="既定単価(円)" style="width:140px;font-size:13px;text-align:right">
           <input id="im-new-order" class="form-input" type="number" placeholder="順" value="0" style="width:64px;font-size:13px">
           <button class="btn-primary" style="padding:8px 20px;font-size:13px;white-space:nowrap" onclick="addItemNameMaster()">追加</button>
         </div>
@@ -11202,7 +11218,7 @@ function _renderItemNameMasterContent() {
       <!-- リスト -->
       <div style="background:var(--white);border:1px solid var(--border);border-radius:12px;padding:0 20px">
         <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em">
-          <span style="flex:3">品目名</span><span style="flex:1">既定単位</span><span style="min-width:50px">順序</span><span style="min-width:120px"></span>
+          <span style="flex:3">品目名</span><span style="width:80px">既定単位</span><span style="width:120px;text-align:right">既定単価</span><span style="min-width:50px">順序</span><span style="min-width:120px"></span>
         </div>
         ${rows || '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">品目がありません。上のフォームから追加してください。</div>'}
       </div>
@@ -11213,11 +11229,13 @@ function _renderItemNameMasterContent() {
 async function addItemNameMaster() {
   const name  = document.getElementById('im-new-name').value.trim();
   const unit  = document.getElementById('im-new-unit').value.trim();
+  const priceRaw = document.getElementById('im-new-price').value.trim();
+  const price = priceRaw === '' ? null : (parseInt(priceRaw) || 0);
   const order = parseInt(document.getElementById('im-new-order').value) || 0;
   if (!name) { showToast('品目名を入力してください', 'warn'); return; }
   const res = await apiFetch(`${API}/item-name-master`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ category: _imTab, name, default_unit: unit || null, sort_order: order }),
+    body: JSON.stringify({ category: _imTab, name, default_unit: unit || null, default_unit_price: price, sort_order: order }),
   });
   if (res.ok) { await renderItemNameMasterPage(); }
   else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error || 'unknown'), 'error'); }
@@ -11226,12 +11244,14 @@ async function addItemNameMaster() {
 async function saveItemNameMasterEdit(id) {
   const name  = document.getElementById('im-e-name').value.trim();
   const unit  = document.getElementById('im-e-unit').value.trim();
+  const priceRaw = document.getElementById('im-e-price').value.trim();
+  const price = priceRaw === '' ? null : (parseInt(priceRaw) || 0);
   const order = parseInt(document.getElementById('im-e-order').value) || 0;
   const active = document.getElementById('im-e-active').checked;
   if (!name) { showToast('品目名は必須です', 'warn'); return; }
   const res = await apiFetch(`${API}/item-name-master/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, default_unit: unit || null, sort_order: order, is_active: active }),
+    body: JSON.stringify({ name, default_unit: unit || null, default_unit_price: price, sort_order: order, is_active: active }),
   });
   if (res.ok) { _imEditingId = null; await renderItemNameMasterPage(); }
   else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error || 'unknown'), 'error'); }

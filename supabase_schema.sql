@@ -1328,11 +1328,13 @@ CREATE TABLE IF NOT EXISTS item_name_master (
   category TEXT NOT NULL CHECK (category IN ('video', 'design')),
   name TEXT NOT NULL,
   default_unit TEXT,
+  default_unit_price INTEGER,
   sort_order INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE item_name_master ADD COLUMN IF NOT EXISTS default_unit_price INTEGER;
 CREATE INDEX IF NOT EXISTS idx_item_name_master_active
   ON item_name_master(is_active, category, sort_order);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_item_name_master_category_name
