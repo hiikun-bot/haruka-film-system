@@ -13499,10 +13499,10 @@ async function openCreativeDetail(id) {
     cdTeamSel.innerHTML = '<option value="">（未設定）</option>' +
       allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
     const currentAssignee = (c.creative_assignments || []).find(a => a.role === 'editor');
-    const currentUser = currentAssignee?.users;
-    cdTeamSel.value = currentUser?.team_id || '';
+    const assigneeUser = currentAssignee?.users;
+    cdTeamSel.value = assigneeUser?.team_id || '';
     cdUpdateAssigneeSelect();
-    document.getElementById('cd-assignee-id').value = currentUser?.id || '';
+    document.getElementById('cd-assignee-id').value = assigneeUser?.id || '';
   }
 
   // コメント（ステータス依存ラベル）
@@ -14109,9 +14109,10 @@ async function loadCreativeFiles(creativeId) {
     const _ct = currentCreativeDetail?.creative_type || '';
     const _assigneeRoleRender = currentCreativeDetail?.creative_assignments
       ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role || '';
+    // 引数は JSON.stringify で安全にエスケープ（ファイル名やURLに ' が含まれても onclick が壊れない）
     const checkBtnClick = canPreview
-      ? `openFilePreview('${driveFileId}','${esc(f.generated_name)}','${f.drive_url||''}','${f.id}','${_ct}','${_assigneeRoleRender}')`
-      : `openFilePreview(null,'${esc(f.generated_name)}','','${f.id}','${_ct}','${_assigneeRoleRender}')`;
+      ? `openFilePreview(${JSON.stringify(driveFileId)},${JSON.stringify(f.generated_name)},${JSON.stringify(f.drive_url||'')},${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`
+      : `openFilePreview(null,${JSON.stringify(f.generated_name)},'',${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`;
     const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
     // faststart プレビュー版の状態バッジ
     const fsStatus = f.faststart_status || null;
