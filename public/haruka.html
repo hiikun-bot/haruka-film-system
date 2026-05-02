@@ -1479,14 +1479,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button class="btn-primary" id="btn-add-team" onclick="openTeamModal()" style="display:none">＋ チーム追加</button>
     </div>
     <!-- チームタイプ切り替えタブ -->
-    <div style="display:flex;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin-bottom:20px;max-width:360px">
+    <div style="display:flex;flex-wrap:wrap;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin-bottom:20px;max-width:520px">
       <button id="team-tab-video" onclick="setTeamTab('video')"
-        style="flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)">
+        style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)">
         🎬 動画チーム
       </button>
       <button id="team-tab-design" onclick="setTeamTab('design')"
-        style="flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+        style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
         🎨 デザインチーム
+      </button>
+      <button id="team-tab-secretary" onclick="setTeamTab('secretary')"
+        style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+        📋 秘書チーム
       </button>
     </div>
     <div id="teams-list" class="loading">読み込み中...</div>
@@ -1890,6 +1894,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <select class="form-select" id="t-type">
             <option value="video">動画</option>
             <option value="design">デザイン</option>
+            <option value="secretary">秘書</option>
           </select>
         </div>
       </div>
@@ -3665,7 +3670,7 @@ async function apiFetch(input, init = {}) {
   return fetch(input, { ...init, headers });
 }
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
-let currentTeamTab = 'video'; // 'video' | 'design'
+let currentTeamTab = 'video'; // 'video' | 'design' | 'secretary'
 let currentMemberTab = 'video'; // 'video' | 'design'
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 let showEndedInCreatives = false;
@@ -4332,11 +4337,14 @@ function setTeamTab(type) {
   currentTeamTab = type;
   const vBtn = document.getElementById('team-tab-video');
   const dBtn = document.getElementById('team-tab-design');
+  const sBtn = document.getElementById('team-tab-secretary');
   if (vBtn && dBtn) {
     const activeStyle = `background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)`;
     const inactiveStyle = `background:transparent;color:var(--em-dark)`;
-    vBtn.style.cssText = `flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;${type === 'video' ? activeStyle : inactiveStyle}`;
-    dBtn.style.cssText = `flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;${type === 'design' ? activeStyle : inactiveStyle}`;
+    const baseStyle = `flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;`;
+    vBtn.style.cssText = baseStyle + (type === 'video' ? activeStyle : inactiveStyle);
+    dBtn.style.cssText = baseStyle + (type === 'design' ? activeStyle : inactiveStyle);
+    if (sBtn) sBtn.style.cssText = baseStyle + (type === 'secretary' ? activeStyle : inactiveStyle);
   }
   renderTeamsList();
 }
@@ -4375,7 +4383,8 @@ function renderTeamsList() {
     const badgeClass = isBasic ? 'tcb-basic' : 'tcb-project';
     const code = esc(t.team_code || '');
     const teamName = esc(t.team_name || '');
-    const typeLabel = t.team_type === 'video' ? '動画チーム' : 'デザインチーム';
+    const typeLabelMap = { video: '動画チーム', design: 'デザインチーム', secretary: '秘書チーム' };
+    const typeLabel = typeLabelMap[t.team_type] || '動画チーム';
     const producerName = t.producer?.full_name ? esc(t.producer.full_name) : '';
     const directorName = t.director?.full_name ? esc(t.director.full_name) : '';
     return `
@@ -4460,8 +4469,9 @@ async function loadTeams() {
       const basics = getBasicTeams();
       mSel.innerHTML = '<option value="">未設定</option>' + basics.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
     }
-    // 初期タブをロールで決定（デザイナーはデザイン、それ以外は動画）
-    currentTeamTab = effectiveRole() === 'designer' ? 'design' : 'video';
+    // 初期タブをロールで決定（デザイナーはデザイン、秘書は秘書、それ以外は動画）
+    const _role = effectiveRole();
+    currentTeamTab = _role === 'designer' ? 'design' : _role === 'secretary' ? 'secretary' : 'video';
     setTeamTab(currentTeamTab);
   } catch(e) { allTeams = []; }
 }
