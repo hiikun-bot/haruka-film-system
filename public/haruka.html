@@ -350,6 +350,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .btn{font-size:13px;padding:8px 18px;border-radius:8px;border:0.5px solid var(--border);background:transparent;color:var(--em-dark);cursor:pointer}
 .btn-primary{background:var(--em);color:#fff;border:none;font-size:14px;padding:9px 22px;border-radius:8px;cursor:pointer;font-weight:500}
 .btn-sm{font-size:13px;padding:5px 14px;border-radius:7px;border:0.5px solid var(--border);background:transparent;color:var(--em-dark);cursor:pointer}
+.btn-sm.is-set{background:var(--em-pale);border-color:var(--em);color:var(--em-dark);font-weight:600}
+.btn-sm.is-set::before{content:"✓ ";color:var(--em-dark);font-weight:700}
 .btn-danger{font-size:13px;padding:8px 18px;border-radius:8px;border:0.5px solid #F09595;background:transparent;color:#A32D2D;cursor:pointer}
 
 /* クライアントブロック */
@@ -4213,8 +4215,8 @@ async function loadProjects() {
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
-            ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
-            ${(currentUser?.role === 'admin') ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">見積</button>` : ''}
+            ${canSeeRates() ? `<button class="btn-sm${p.has_rates?' is-set':''}" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_rates?'単価設定済み':'単価未設定'}" style="color:var(--em-dark)">単価</button>` : ''}
+            ${(currentUser?.role === 'admin') ? `<button class="btn-sm${p.has_estimates?' is-set':''}" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_estimates?'見積作成済み':'見積未作成'}">見積</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
