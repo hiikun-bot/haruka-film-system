@@ -3235,6 +3235,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ✅ チェックリスト
         </div>
+        <div class="master-nav-item" onclick="selectMasterNav('item_names')" id="mnav-item_names"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📦 品目マスター
+        </div>
         <div id="mnav-roles" class="master-nav-item" onclick="selectMasterNav('roles')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
           🔐 ロール権限
@@ -10628,7 +10632,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','checklist','roles','userstats','sysconfig','slack_workspaces','notification_test'].forEach(t => {
+  ['generic','general','products','appeal_axes','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -10648,6 +10652,8 @@ function selectMasterNav(type) {
     renderAppealAxesMasterPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
+  } else if (type === 'item_names') {
+    renderItemNameMasterPage();
   } else if (type === 'roles') {
     renderRolesPage();
   } else if (type === 'userstats') {
@@ -11042,6 +11048,159 @@ async function deleteChecklistMaster(id) {
   const res = await apiFetch(`${API}/checklist-masters/${id}`, { method: 'DELETE' });
   if (res.ok) await renderChecklistMasterPage();
   else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
+}
+
+// ==================== 品目マスター（見積明細のクイック選択用） ====================
+let _imItems = [];
+let _imEditingId = null;
+let _imTab = 'video'; // 'video' | 'design'
+let _imIncludeInactive = false;
+// 見積エディタ用のキャッシュ
+let _itemNameMasterCache = null;
+let _itemNameMasterCacheAt = 0;
+
+async function renderItemNameMasterPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  // active_only=false で全件取得（is_active=false 含む）— 管理画面なので両方表示
+  const res = await apiFetch(`${API}/item-name-master?active_only=false`);
+  _imItems = res.ok ? await res.json() : [];
+  _imEditingId = null;
+  // 見積エディタ用キャッシュも同期で更新（次回オープン時に最新が出る）
+  _itemNameMasterCache = null;
+  _renderItemNameMasterContent();
+}
+
+function _renderItemNameMasterContent() {
+  const content = document.getElementById('master-content');
+  const counts = {
+    video:  _imItems.filter(i => i.category === 'video').length,
+    design: _imItems.filter(i => i.category === 'design').length,
+  };
+  let filtered = _imItems.filter(i => i.category === _imTab);
+  if (!_imIncludeInactive) filtered = filtered.filter(i => i.is_active);
+
+  const rows = filtered.map(item => {
+    if (_imEditingId === item.id) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border-light)">
+        <input id="im-e-name" class="form-input" value="${esc(item.name)}" style="flex:3;font-size:13px">
+        <input id="im-e-unit" class="form-input" value="${esc(item.default_unit || '')}" placeholder="単位（任意）" style="flex:1;font-size:13px">
+        <input id="im-e-order" class="form-input" type="number" value="${item.sort_order || 0}" style="width:64px;font-size:13px">
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);white-space:nowrap">
+          <input type="checkbox" id="im-e-active" ${item.is_active ? 'checked' : ''}> 有効
+        </label>
+        <button class="btn-sm" style="color:var(--em-dark)" onclick="saveItemNameMasterEdit('${item.id}')">保存</button>
+        <button class="btn-sm" onclick="_imEditingId=null;_renderItemNameMasterContent()">取消</button>
+      </div>`;
+    }
+    const inactiveStyle = item.is_active ? '' : 'opacity:0.5;';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border-light);${inactiveStyle}">
+      <span style="flex:3;font-size:14px;font-weight:500;color:var(--text)">${esc(item.name)}${item.is_active ? '' : ' <span style=\"font-size:10px;color:#A32D2D\">(無効)</span>'}</span>
+      <span style="flex:1;font-size:13px;color:var(--text-muted)">${esc(item.default_unit || '—')}</span>
+      <span style="font-size:12px;color:var(--text-faint);min-width:50px">順:${item.sort_order || 0}</span>
+      <button class="btn-sm" style="font-size:11px" onclick="_imEditingId='${item.id}';_renderItemNameMasterContent()">編集</button>
+      <button class="btn-sm" style="font-size:11px;color:#A32D2D;border-color:#F09595" onclick="deleteItemNameMaster('${item.id}')">${item.is_active ? '無効化' : '物理削除'}</button>
+    </div>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div style="max-width:800px">
+      <div style="margin-bottom:20px">
+        <h3 style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px">📦 品目マスター</h3>
+        <p style="font-size:13px;color:var(--text-muted)">見積明細の「品目」入力欄でクイック選択できる項目を管理します。動画編集／デザインの2区分で登録します。</p>
+      </div>
+
+      <!-- 新規追加フォーム -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);margin-bottom:12px;letter-spacing:0.08em">新規追加（${_imTab === 'video' ? '🎬 動画編集' : '🎨 デザイン'}）</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="im-new-name" class="form-input" placeholder="品目名 *（例: 動画編集（A）/ ナレーション）" style="flex:3;min-width:200px;font-size:13px">
+          <input id="im-new-unit" class="form-input" placeholder="既定単位（例: 本 / 枚 / 式）" style="flex:1;min-width:100px;font-size:13px">
+          <input id="im-new-order" class="form-input" type="number" placeholder="順" value="0" style="width:64px;font-size:13px">
+          <button class="btn-primary" style="padding:8px 20px;font-size:13px;white-space:nowrap" onclick="addItemNameMaster()">追加</button>
+        </div>
+      </div>
+
+      <!-- タブ -->
+      <div style="display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--border);align-items:center">
+        ${[
+          { key:'video',  label:'🎬 動画編集',  color:'#1565c0' },
+          { key:'design', label:'🎨 デザイン', color:'#5E35B1' },
+        ].map(t => {
+          const active = _imTab === t.key;
+          return `<button onclick="_imTab='${t.key}';_imEditingId=null;_renderItemNameMasterContent()" style="background:${active?'var(--white)':'transparent'};border:1px solid ${active?'var(--border)':'transparent'};border-bottom:${active?'2px solid '+t.color:'2px solid transparent'};padding:8px 16px;font-size:13px;font-weight:${active?'600':'500'};color:${active?t.color:'var(--text-muted)'};cursor:pointer;border-radius:8px 8px 0 0;margin-bottom:-1px">${t.label} <span style="font-size:11px;color:var(--text-faint);margin-left:4px">(${counts[t.key]})</span></button>`;
+        }).join('')}
+        <label style="margin-left:auto;display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);cursor:pointer">
+          <input type="checkbox" ${_imIncludeInactive ? 'checked' : ''} onchange="_imIncludeInactive=this.checked;_renderItemNameMasterContent()"> 無効化済みも表示
+        </label>
+      </div>
+
+      <!-- リスト -->
+      <div style="background:var(--white);border:1px solid var(--border);border-radius:12px;padding:0 20px">
+        <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.05em">
+          <span style="flex:3">品目名</span><span style="flex:1">既定単位</span><span style="min-width:50px">順序</span><span style="min-width:120px"></span>
+        </div>
+        ${rows || '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">品目がありません。上のフォームから追加してください。</div>'}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:8px">表示中 ${filtered.length} 件 / カテゴリ全 ${counts[_imTab]} 件</div>
+    </div>`;
+}
+
+async function addItemNameMaster() {
+  const name  = document.getElementById('im-new-name').value.trim();
+  const unit  = document.getElementById('im-new-unit').value.trim();
+  const order = parseInt(document.getElementById('im-new-order').value) || 0;
+  if (!name) { showToast('品目名を入力してください', 'warn'); return; }
+  const res = await apiFetch(`${API}/item-name-master`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category: _imTab, name, default_unit: unit || null, sort_order: order }),
+  });
+  if (res.ok) { await renderItemNameMasterPage(); }
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error || 'unknown'), 'error'); }
+}
+
+async function saveItemNameMasterEdit(id) {
+  const name  = document.getElementById('im-e-name').value.trim();
+  const unit  = document.getElementById('im-e-unit').value.trim();
+  const order = parseInt(document.getElementById('im-e-order').value) || 0;
+  const active = document.getElementById('im-e-active').checked;
+  if (!name) { showToast('品目名は必須です', 'warn'); return; }
+  const res = await apiFetch(`${API}/item-name-master/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, default_unit: unit || null, sort_order: order, is_active: active }),
+  });
+  if (res.ok) { _imEditingId = null; await renderItemNameMasterPage(); }
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error || 'unknown'), 'error'); }
+}
+
+async function deleteItemNameMaster(id) {
+  const item = _imItems.find(x => x.id === id);
+  if (!item) return;
+  if (item.is_active) {
+    if (!confirm(`品目「${item.name}」を無効化しますか？\n（一覧から非表示になります。データは残ります）`)) return;
+    const res = await apiFetch(`${API}/item-name-master/${id}`, { method: 'DELETE' });
+    if (res.ok) await renderItemNameMasterPage();
+    else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error || 'unknown'), 'error'); }
+  } else {
+    if (!confirm(`品目「${item.name}」を物理削除しますか？\n（このデータは復元できません）`)) return;
+    const res = await apiFetch(`${API}/item-name-master/${id}?hard=true`, { method: 'DELETE' });
+    if (res.ok) await renderItemNameMasterPage();
+    else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error || 'unknown'), 'error'); }
+  }
+}
+
+// 見積エディタ用: 品目マスターを取得（5分キャッシュ）
+async function getItemNameMasterForEstimate(category) {
+  const now = Date.now();
+  if (!_itemNameMasterCache || (now - _itemNameMasterCacheAt) > 5 * 60 * 1000) {
+    const res = await apiFetch(`${API}/item-name-master?active_only=true`);
+    _itemNameMasterCache = res.ok ? await res.json() : [];
+    _itemNameMasterCacheAt = now;
+  }
+  if (category && (category === 'video' || category === 'design')) {
+    return _itemNameMasterCache.filter(i => i.category === category);
+  }
+  return _itemNameMasterCache;
 }
 
 async function renderSysconfigPage() {
