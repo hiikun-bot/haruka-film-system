@@ -6047,6 +6047,74 @@ ${description || '（記入なし）'}
   res.json({ ok: true });
 });
 
+// ==================== 自動エラー通知（フロント発信） ====================
+// クライアント側 window.onerror / unhandledrejection / fetch 5xx をここに送る。
+// requireAuth は付けない（未ログイン時のエラー、login.html での例外も拾うため）。
+// 代わりに以下の安全策で乱用・DoS を抑止する:
+//   - IP ベースのレート制限（同 IP 10 秒で 5 回まで）
+//   - notifyAutoError 内部で signature 5 分 dedupe
+//   - ENV 未設定時は 200 で {skipped:'no-channel'}（フロントの暴走再送を防ぐ）
+//
+// クライアントは fetch(... { keepalive: true }) で fire-and-forget するため、
+// 200 を素早く返すことを優先する。
+const _autoErrorIpHits = new Map(); // ip -> [ts, ts, ...]（直近10秒のみ保持）
+const AUTO_ERROR_IP_WINDOW_MS = 10 * 1000;
+const AUTO_ERROR_IP_MAX = 5;
+function _autoErrorRateLimited(ip) {
+  if (!ip) return false;
+  const now = Date.now();
+  const arr = (_autoErrorIpHits.get(ip) || []).filter(t => now - t < AUTO_ERROR_IP_WINDOW_MS);
+  if (arr.length >= AUTO_ERROR_IP_MAX) {
+    _autoErrorIpHits.set(ip, arr);
+    return true;
+  }
+  arr.push(now);
+  _autoErrorIpHits.set(ip, arr);
+  // たまに掃除
+  if (_autoErrorIpHits.size > 1000) {
+    for (const [k, v] of _autoErrorIpHits) {
+      const filtered = v.filter(t => now - t < AUTO_ERROR_IP_WINDOW_MS);
+      if (filtered.length === 0) _autoErrorIpHits.delete(k);
+      else _autoErrorIpHits.set(k, filtered);
+    }
+  }
+  return false;
+}
+router.post('/auto-error', express.json({ limit: '32kb' }), async (req, res) => {
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.ip || '';
+  if (_autoErrorRateLimited(ip)) {
+    return res.status(200).json({ ok: true, skipped: 'rate-limited-ip' });
+  }
+  // body は JSON もしくは text(JSON)。keepalive 経由で application/json になる前提だが、念のため両対応。
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  }
+  body = body || {};
+
+  const message = String(body.message || '').trim();
+  if (!message) {
+    return res.status(400).json({ error: 'message is required' });
+  }
+
+  // ユーザー情報があれば付与（未ログインでも可）
+  const userEmail = body.userEmail || req.user?.email || null;
+  const result = await notif.notifyAutoError({
+    source: body.source === 'server' ? 'server' : 'client',
+    kind: String(body.kind || 'unknown').slice(0, 64),
+    message: message.slice(0, 4000),
+    stack: body.stack ? String(body.stack).slice(0, 4000) : null,
+    url: body.url ? String(body.url).slice(0, 500) : null,
+    userAgent: body.userAgent ? String(body.userAgent).slice(0, 300) : null,
+    statusCode: body.statusCode || null,
+    apiPath: body.apiPath ? String(body.apiPath).slice(0, 300) : null,
+    userEmail,
+  });
+  if (result?.skipped) return res.json({ ok: true, skipped: result.skipped });
+  if (!result?.ok)     return res.json({ ok: false, reason: result?.reason || 'unknown' });
+  return res.json({ ok: true });
+});
+
 // 削除（既定は論理削除 = is_active=false。?hard=true で物理削除）
 router.delete('/item-name-master/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   if (req.query.hard === 'true') {

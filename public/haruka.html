@@ -1298,6 +1298,92 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     _origConsoleError.apply(console, arguments);
   };
 })();
+
+// ===== 自動エラー通知（フロント発信） =====
+// window.onerror / unhandledrejection / fetch 5xx を /api/haruka/auto-error に投げる。
+// 既存の手動 🐛FAB（PR #188）とは独立。手動はユーザーがコメント＋スクショ付きで送るもの、
+// こちらはユーザー操作なしに自動でSlackへ流す。
+//
+// 安全対策:
+//   - localhost / 127.0.0.1 ではスキップ（開発環境で誤発火させない）
+//   - 同一signature（kind+message先頭+url）は 30 秒以内に連投しない
+//   - 自動通知 fetch 自体が失敗・5xx を返しても再送ループに入らないよう Set に乗ったキーは外さない
+//   - keepalive: true で fire-and-forget
+(function setupAutoErrorReporter() {
+  try {
+    var host = (location && location.hostname) || '';
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+      return; // 開発環境では無効
+    }
+    var DEDUP_WINDOW_MS = 30 * 1000;
+    var _recent = new Map(); // signature -> timeoutId
+    function _sig(p) {
+      return [
+        String(p.kind || '').slice(0, 64),
+        String(p.message || '').slice(0, 200),
+        String(p.url || '').slice(0, 200),
+      ].join('::');
+    }
+    function postAutoError(payload) {
+      try {
+        if (!payload || !payload.message) return;
+        var sig = _sig(payload);
+        if (_recent.has(sig)) return; // 30秒以内なので投げない
+        _recent.set(sig, setTimeout(function() { _recent.delete(sig); }, DEDUP_WINDOW_MS));
+
+        // /api/haruka/auto-error 自身のエラーで再帰しないよう URL を弾く
+        if (String(payload.apiPath || '').indexOf('/api/haruka/auto-error') !== -1) return;
+
+        var body = JSON.stringify({
+          source: 'client',
+          kind: payload.kind || 'unknown',
+          message: String(payload.message).slice(0, 4000),
+          stack: payload.stack ? String(payload.stack).slice(0, 4000) : null,
+          url: payload.url || location.href,
+          userAgent: navigator.userAgent,
+          statusCode: payload.statusCode || null,
+          apiPath: payload.apiPath || null,
+          // currentUser は haruka.html 内の let 変数なので window 経由では直接見えない。
+          // try ブロックで遅延参照（IIFE 評価時には未定義のため）。
+          userEmail: (function(){ try { return (typeof currentUser !== 'undefined' && currentUser && currentUser.email) || null; } catch(_) { return null; } })(),
+        });
+        // fetch 自体の失敗は黙殺（throw しない）
+        fetch('/api/haruka/auto-error', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: body,
+          keepalive: true,
+          credentials: 'same-origin',
+        }).catch(function() { /* swallow */ });
+      } catch (_) { /* swallow */ }
+    }
+    // 全グローバルから参照できるようにしておく（apiFetch から fetch 5xx 検知に使う）
+    window.__postAutoError = postAutoError;
+
+    window.addEventListener('error', function(e) {
+      try {
+        postAutoError({
+          kind: 'window.onerror',
+          message: e && e.message ? e.message : 'unknown error',
+          stack: e && e.error && e.error.stack ? e.error.stack : null,
+          url: location.href,
+        });
+      } catch (_) {}
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      try {
+        var reason = e && e.reason;
+        var msg = reason && reason.message ? reason.message : String(reason);
+        postAutoError({
+          kind: 'unhandledrejection',
+          message: msg,
+          stack: reason && reason.stack ? reason.stack : null,
+          url: location.href,
+        });
+      } catch (_) {}
+    });
+  } catch (_) { /* 初期化失敗でアプリを止めない */ }
+})();
 </script>
 
 <!-- 請求書印刷プレビューモーダル -->
@@ -4363,6 +4449,18 @@ async function apiFetch(input, init = {}) {
       let body = '';
       try { body = (await res.clone().text()).slice(0, 200); } catch (_) {}
       window.pushApiFailBuffer({ url, status: res.status, body });
+      // 5xx は自動エラー通知に流す（4xx はユーザー入力ミス系が多いので除外）
+      // /auto-error 自身の失敗で再帰しないようパス除外は postAutoError 側でも実施。
+      if (res.status >= 500 && typeof window.__postAutoError === 'function') {
+        window.__postAutoError({
+          kind: 'fetch-5xx',
+          message: `HTTP ${res.status} ${res.statusText || ''} ${url}`.trim(),
+          url: location.href,
+          apiPath: url,
+          statusCode: res.status,
+          stack: body || null,
+        });
+      }
     } catch (_) {}
   }
   return res;

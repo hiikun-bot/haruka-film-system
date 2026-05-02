@@ -1050,6 +1050,63 @@ app.get('*', (req, res, next) => {
     res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
   });
 });
+
+// ==================== 自動エラー通知（サーバ側） ====================
+// 1) Express error-handling middleware
+//    next(err) されたエラーのうち 5xx 相当を Slack に流す。
+//    既存の res.status(500).json(...) は握りつぶさない（middleware には渡らない）。
+//    HTTP ループを避けるため /api/haruka/auto-error 経由ではなく直接ヘルパを呼ぶ。
+// 2) process-level handlers
+//    uncaughtException / unhandledRejection を Slack へ。
+//    通知後もプロセスは継続（既存挙動の維持）。notify 内部は完全に try/catch されている。
+const { notifyAutoError } = require('./notifications');
+app.use((err, req, res, next) => {
+  try {
+    const status = (err && (err.status || err.statusCode)) || 500;
+    if (status >= 500) {
+      // 投げっぱなしで OK（fire & forget）。await しない。
+      notifyAutoError({
+        source: 'server',
+        kind: 'express-error',
+        message: err?.message || String(err),
+        stack: err?.stack || null,
+        url: req?.originalUrl || null,
+        apiPath: req?.originalUrl || null,
+        statusCode: status,
+        userEmail: req?.user?.email || null,
+        userAgent: req?.headers?.['user-agent'] || null,
+      }).catch(() => {});
+    }
+  } catch (_) { /* notify 失敗で 2 重例外にしない */ }
+  // レスポンス未送信ならデフォルト挙動（500）に倒す
+  if (res.headersSent) return next(err);
+  res.status((err && (err.status || err.statusCode)) || 500)
+     .json({ error: err?.message || 'Internal Server Error' });
+});
+
+process.on('uncaughtException', (err) => {
+  try { console.error('[uncaughtException]', err); } catch (_) {}
+  try {
+    notifyAutoError({
+      source: 'server',
+      kind: 'uncaughtException',
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    }).catch(() => {});
+  } catch (_) { /* 通知失敗でプロセスを巻き込まない */ }
+});
+process.on('unhandledRejection', (reason) => {
+  try { console.error('[unhandledRejection]', reason); } catch (_) {}
+  try {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    notifyAutoError({
+      source: 'server',
+      kind: 'unhandledRejection',
+      message: err.message,
+      stack: err.stack || null,
+    }).catch(() => {});
+  } catch (_) { /* 通知失敗でプロセスを巻き込まない */ }
+});
 // ==================== 初期管理者作成 ====================
 async function seedAdminIfNeeded() {
   try {

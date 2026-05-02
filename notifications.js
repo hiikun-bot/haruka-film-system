@@ -384,6 +384,106 @@ ${cwUrlLine2}
   }
 }
 
+// =============== 自動エラー通知 ===============
+// PR #188 の手動エラー報告（🐛 FAB）と並行する「自動」通知ヘルパ。
+// サーバ側 5xx / uncaughtException / unhandledRejection、
+// フロント側 window.onerror / unhandledrejection / fetch 5xx を Slack に流す。
+//
+// 設計メモ:
+// - 送信先は同じ ERROR_REPORT_SLACK_CHANNEL_URL を使う（環境変数を増やさない）
+// - 未設定なら no-op（CI / 開発環境で誤発火しない）
+// - サーバ内で同一 signature（kind+message先頭+url）は 5 分に 1 回だけ送る
+// - Slack 投稿失敗もログのみ（throw しない）
+//
+// signature ハッシュは crypto を使わず素の文字列で十分（in-memory dedupe 用）。
+
+const _autoErrorLastSentAt = new Map(); // signature -> ms（古いキーは _gcAutoErrorMap で掃除）
+const AUTO_ERROR_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 分
+const AUTO_ERROR_MAP_MAX = 500;
+
+function _gcAutoErrorMap() {
+  if (_autoErrorLastSentAt.size <= AUTO_ERROR_MAP_MAX) return;
+  // 単純に古い 1/3 を消す（厳密な LRU は不要）
+  const cutoff = Date.now() - AUTO_ERROR_DEDUP_WINDOW_MS;
+  for (const [k, v] of _autoErrorLastSentAt) {
+    if (v < cutoff) _autoErrorLastSentAt.delete(k);
+    if (_autoErrorLastSentAt.size <= AUTO_ERROR_MAP_MAX * 0.7) break;
+  }
+}
+
+function _autoErrorSignature({ kind, message, url }) {
+  const k = String(kind || '').slice(0, 64);
+  const m = String(message || '').slice(0, 200);
+  const u = String(url || '').slice(0, 200);
+  return `${k}::${m}::${u}`;
+}
+
+function _truncate(s, max) {
+  if (s == null) return '';
+  s = String(s);
+  return s.length > max ? s.slice(0, max) + '…(truncated)' : s;
+}
+
+function _formatAutoErrorText(payload) {
+  const {
+    source, kind, message, stack, url, userAgent,
+    statusCode, apiPath, userEmail, ts,
+  } = payload || {};
+  const lines = [];
+  const head = source === 'server' ? '🚨 サーバーエラー（自動）' : '⚠️ フロントエラー（自動）';
+  lines.push(`${head}`);
+  lines.push(`*種別*: \`${kind || 'unknown'}\``);
+  if (statusCode) lines.push(`*Status*: ${statusCode}`);
+  if (apiPath) lines.push(`*API*: \`${_truncate(apiPath, 200)}\``);
+  if (url) lines.push(`*URL*: ${_truncate(url, 300)}`);
+  if (userEmail) lines.push(`*ユーザー*: ${_truncate(userEmail, 100)}`);
+  if (userAgent) lines.push(`*UA*: ${_truncate(userAgent, 200)}`);
+  lines.push(`*発生時刻*: ${ts || new Date().toISOString()}`);
+  lines.push('');
+  lines.push('*メッセージ*:');
+  lines.push('```' + _truncate(message, 1500) + '```');
+  if (stack) {
+    lines.push('*スタック*:');
+    lines.push('```' + _truncate(stack, 2000) + '```');
+  }
+  return lines.join('\n');
+}
+
+// 自動エラー通知の本体。例外が起きても上位に投げない（uncaughtException 内から呼ばれるため）。
+// 戻り値:
+//   { ok: true }                          送信成功
+//   { ok: true, skipped: 'no-channel' }   ENV 未設定（no-op）
+//   { ok: true, skipped: 'rate-limited' } 同一シグネチャ抑制
+//   { ok: false, reason: '...' }          Slack 失敗
+async function notifyAutoError(payload) {
+  try {
+    const channelUrl = process.env.ERROR_REPORT_SLACK_CHANNEL_URL;
+    if (!channelUrl) return { ok: true, skipped: 'no-channel' };
+
+    const sig = _autoErrorSignature(payload || {});
+    const now = Date.now();
+    const last = _autoErrorLastSentAt.get(sig) || 0;
+    if (now - last < AUTO_ERROR_DEDUP_WINDOW_MS) {
+      return { ok: true, skipped: 'rate-limited' };
+    }
+    // 送信前に予約（並行 throw でも 1 回しか送らないように）
+    _autoErrorLastSentAt.set(sig, now);
+    _gcAutoErrorMap();
+
+    const text = _formatAutoErrorText({ ...payload, ts: payload?.ts || new Date().toISOString() });
+    const result = await sendSlackChannel(channelUrl, text);
+    if (!result?.ok) {
+      console.warn('[notif/auto-error] slack send failed:', result?.reason);
+      return { ok: false, reason: result?.reason || 'unknown' };
+    }
+    return { ok: true };
+  } catch (e) {
+    // notify 自体の失敗で uncaughtException ループに入らないよう、必ず握りつぶす
+    try { console.warn('[notif/auto-error] internal error:', e?.message || e); } catch (_) {}
+    return { ok: false, reason: 'internal' };
+  }
+}
+
 module.exports = {
   notifyCreativeStatusChange,
   parseSlackChannelUrl,
@@ -393,4 +493,8 @@ module.exports = {
   // テスト・他モジュールから再利用可能にするためエクスポート
   buildCreativeNotifBody,
   buildCreativeUrl,
+  // 自動エラー通知（PR ?: routes と server.js の両方から呼ぶ）
+  notifyAutoError,
+  _formatAutoErrorText,         // テスト用
+  _autoErrorSignature,          // テスト用
 };
