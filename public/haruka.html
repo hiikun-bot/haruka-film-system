@@ -7001,7 +7001,8 @@ function openEstimateEditor(eid) {
   const clientName  = _pfData?.project?.client_name || '';
   const projectName = _pfData?.project?.name || _financeProjectName || '';
   // 取引先の既定値はクライアント名（無ければ案件名）
-  const defaultRecipient = clientName || projectName;
+  // 取引先はクライアント名のみ。案件名にフォールバックすると違う情報を入れてしまうため空にする
+  const defaultRecipient = clientName;
   // 件名の既定値: 「クライアント名 案件名 YYYYMM」
   const defaultTitle = [clientName, projectName, yyyymm].filter(Boolean).join(' ');
 
