@@ -1,0 +1,425 @@
+/* =============================================================
+ * notification.css — Phase 1 段階2 通知UI
+ *
+ * 設計参照: docs/notification/notification_UI_SPEC.md
+ *
+ * カラーパレット（UI_SPEC 第12章）:
+ *   メインアクセント   #3ECFCA エメラルドグリーン
+ *   未読縦線          #3ECFCA
+ *   バッジ赤          #EF4444
+ *   背景白            #FFFFFF
+ *   既読背景グレー    #F9FAFB
+ *   ボーダーグレー    #E5E7EB
+ *   メインテキスト    #111827
+ *   サブテキスト      #6B7280
+ *   スポットライト    #D1FAE5
+ *
+ * 用語メモ:
+ *   ・「z-index（ジー インデックス）」— 重なり順。数字が大きいほど前面。
+ *     既存 modal-overlay は 200。通知パネルは 400 に置き、モーダルより前面に出す。
+ * ============================================================= */
+
+/* -----------------------------
+ * 1. ベルアイコン本体
+ *    UI_SPEC 第2章「ベルアイコン仕様」
+ * ----------------------------- */
+.bell-button {
+  position: relative;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.bell-button:focus-visible {
+  outline: 2px solid #3ECFCA;
+  outline-offset: 2px;
+}
+
+.bell-button:hover {
+  background: rgba(62, 207, 202, 0.08);
+}
+
+.bell-icon {
+  width: 24px;
+  height: 24px;
+  fill: #6B7280;
+  transition: fill 0.2s ease;
+  display: block;
+}
+
+.bell-button:hover .bell-icon,
+.bell-button.active .bell-icon {
+  fill: #3ECFCA;
+}
+
+/* 赤バッジ */
+.bell-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #EF4444;
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: 0 0 0 2px #ffffff;
+  pointer-events: none;
+}
+
+.bell-badge[hidden] {
+  display: none;
+}
+
+.bell-badge.pulse {
+  animation: badge-pulse 0.4s ease-out;
+}
+
+@keyframes badge-pulse {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* -----------------------------
+ * 2. 通知パネル
+ *    UI_SPEC 第3章「通知一覧パネル」
+ * ----------------------------- */
+.notification-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 400;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.notification-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.notification-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 400px;
+  max-width: 100vw;
+  height: 100vh;
+  background: #FFFFFF;
+  z-index: 401;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+}
+
+.notification-panel.open {
+  transform: translateX(0);
+}
+
+/* パネルヘッダー */
+.notification-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid #E5E7EB;
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.notification-panel-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.notification-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notification-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #6B7280;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.notification-action-btn:hover {
+  background: #F3F4F6;
+  color: #111827;
+}
+
+.notification-action-btn:disabled {
+  color: #D1D5DB;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.notification-action-btn.close {
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* パネル本体（カードリスト） */
+.notification-panel-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: #FFFFFF;
+}
+
+.notification-empty {
+  padding: 48px 18px;
+  text-align: center;
+  color: #6B7280;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.notification-empty-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+  opacity: 0.4;
+}
+
+.notification-loading {
+  padding: 24px;
+  text-align: center;
+  color: #6B7280;
+  font-size: 12px;
+}
+
+/* -----------------------------
+ * 3. 通知カード
+ *    UI_SPEC 第4章「通知カードのバリエーション」
+ * ----------------------------- */
+.notification-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 18px;
+  border-bottom: 1px solid #E5E7EB;
+  background: #FFFFFF;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+  min-height: 64px;
+}
+
+.notification-card:hover {
+  background: #F5FCFC;
+}
+
+/* 未読: 左に4pxのエメラルド縦線 + タイトル太字 + 背景白 */
+.notification-card.unread {
+  background: #FFFFFF;
+}
+
+.notification-card.unread::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #3ECFCA;
+}
+
+.notification-card.unread .notification-card-title {
+  font-weight: 700;
+  color: #111827;
+}
+
+/* 既読: 背景グレー + 縦線なし + タイトル レギュラー */
+.notification-card.read {
+  background: #F9FAFB;
+}
+
+.notification-card.read .notification-card-title {
+  font-weight: 400;
+  color: #4B5563;
+}
+
+/* スポットライト（新着）— UI_SPEC 第9章 */
+.notification-card.new {
+  animation: notification-spotlight 1s ease-out;
+}
+
+@keyframes notification-spotlight {
+  0%   { background: #D1FAE5; }
+  100% { background: #FFFFFF; }
+}
+
+.notification-card.unread.new {
+  animation-name: notification-spotlight-unread;
+}
+
+@keyframes notification-spotlight-unread {
+  0%   { background: #D1FAE5; }
+  100% { background: #FFFFFF; }
+}
+
+.notification-card.read.new {
+  animation-name: notification-spotlight-read;
+}
+
+@keyframes notification-spotlight-read {
+  0%   { background: #D1FAE5; }
+  100% { background: #F9FAFB; }
+}
+
+/* 円形アイコン（種別ごとの色は背景色で出し分け） */
+.notification-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: #FFFFFF;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* 種別ごとのアイコン背景色 — UI_SPEC 第4章の表 */
+.notification-card-icon.type-ball_returned { background: #10B981; } /* 緑 */
+.notification-card-icon.type-global        { background: #F59E0B; } /* オレンジ */
+.notification-card-icon.type-mention       { background: #3B82F6; } /* 青 */
+.notification-card-icon.type-post_reaction { background: #F472B6; } /* ピンク */
+.notification-card-icon.type-post_comment  { background: #06B6D4; } /* シアン */
+.notification-card-icon.type-sos           { background: #EF4444; } /* 赤 */
+.notification-card-icon.type-deadline      { background: #DC2626; } /* 赤 */
+.notification-card-icon.type-assignment    { background: #8B5CF6; } /* 紫 */
+.notification-card-icon.type-invoice       { background: #6366F1; } /* インディゴ */
+.notification-card-icon.type-default       { background: #6B7280; } /* グレー（種別不明時のフォールバック） */
+
+/* カードのテキスト本体 */
+.notification-card-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notification-card-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.notification-card-title {
+  font-size: 14px;
+  line-height: 1.4;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notification-card-time {
+  font-size: 11px;
+  color: #6B7280;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.notification-card-body {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: #374151;
+  /* 2行で省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  margin-bottom: 4px;
+}
+
+.notification-card.read .notification-card-body {
+  color: #6B7280;
+}
+
+.notification-card-sender {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+/* -----------------------------
+ * 4. モバイル対応
+ *    UI_SPEC 第10章
+ * ----------------------------- */
+@media (max-width: 768px) {
+  .notification-panel {
+    width: 100vw;
+  }
+
+  .notification-card {
+    padding: 14px 16px;
+    min-height: 60px;
+  }
+
+  .notification-card-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+
+  .notification-action-btn {
+    /* タップ可能領域 最低 44px × 44px */
+    min-width: 44px;
+    min-height: 44px;
+    padding: 10px;
+  }
+
+  .bell-button {
+    /* タップ可能領域 最低 44px × 44px */
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* -----------------------------
+ * 5. アクセシビリティ
+ *    UI_SPEC 第11章
+ * ----------------------------- */
+.notification-card:focus-visible {
+  outline: 2px solid #3ECFCA;
+  outline-offset: -2px;
+}
+
+.notification-action-btn:focus-visible {
+  outline: 2px solid #3ECFCA;
+  outline-offset: 2px;
+}
