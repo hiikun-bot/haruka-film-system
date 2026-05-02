@@ -1,0 +1,137 @@
+name: Migration Reminder
+
+# migration ファイルを含む PR に対して
+# 1) 警告コメントを投稿（marker で重複防止）
+# 2) needs-db-migration ラベルを自動付与
+# する workflow。
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'migrations/**'
+      - 'supabase_schema.sql'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  remind:
+    name: migration適用リマインド
+    runs-on: ubuntu-latest
+    steps:
+      - name: コード取得
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 追加された migration ファイルを抽出
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -e
+          # base...head の差分のうち、migrations/ 配下で追加 or 変更されたファイル
+          FILES=$(git diff --name-only --diff-filter=AMR "$BASE_SHA" "$HEAD_SHA" -- 'migrations/' 'supabase_schema.sql' || true)
+          echo "Detected files:"
+          echo "$FILES"
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ -z "$FILES" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 何も変更が無ければ終了
+        if: steps.changes.outputs.has_changes != 'true'
+        run: echo "migration 関連の変更が無いためスキップ"
+
+      - name: needs-db-migration ラベルを作成（無ければ）
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create needs-db-migration \
+            --color D93F0B \
+            --description "本番Supabaseへの migration 適用が必要" \
+            --repo "$GITHUB_REPOSITORY" \
+            2>/dev/null || true
+          gh label create db-migration-applied \
+            --color 0E8A16 \
+            --description "本番Supabaseへの migration 適用済み（手動付与）" \
+            --repo "$GITHUB_REPOSITORY" \
+            2>/dev/null || true
+
+      - name: needs-db-migration ラベルを PR に付与
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --add-label needs-db-migration || true
+
+      - name: 警告コメントを投稿（marker で重複防止）
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FILES: ${{ steps.changes.outputs.files }}
+        run: |
+          set -e
+          MARKER='<!-- migration-reminder -->'
+
+          # ファイル一覧を箇条書きに整形
+          FILE_LIST=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            FILE_LIST="${FILE_LIST}- \`${f}\`"$'\n'
+          done <<< "$FILES"
+
+          # 本文を組み立てる（heredoc を YAML の '|' 内で使うとインデントが崩れるため
+          # printf で明示的に組み立てる）
+          BODY=""
+          BODY="${BODY}${MARKER}"$'\n'
+          BODY="${BODY}## ⚠️ 本番Supabase への migration 適用が必要です"$'\n\n'
+          BODY="${BODY}このPRには以下の migration / schema 変更が含まれています:"$'\n\n'
+          BODY="${BODY}${FILE_LIST}"$'\n'
+          BODY="${BODY}### 適用手順（マージ前 or マージ直後）"$'\n'
+          BODY="${BODY}1. https://app.supabase.com/ → 該当プロジェクト → **SQL Editor**"$'\n'
+          BODY="${BODY}2. 上記ファイルの中身を貼り付けて実行"$'\n'
+          BODY="${BODY}3. **Settings → API → \"Reload schema cache\"** を一度クリック（任意・PostgREST のキャッシュ更新）"$'\n'
+          BODY="${BODY}4. このPRに **\`db-migration-applied\` ラベル** を付与"$'\n\n'
+          BODY="${BODY}> 未適用のままマージすると本番でエラーが出ます（直近3件発生中）。"$'\n'
+          BODY="${BODY}> このPRは \`needs-db-migration\` ラベルが付いている間 \`migration-applied\` チェックが fail し、auto-merge も止まります。"$'\n\n'
+          BODY="${BODY}詳細: [docs/db-migration-workflow.md](../blob/main/docs/db-migration-workflow.md)"$'\n'
+
+          # 既存の marker コメント ID を探す
+          EXISTING_ID=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"${MARKER}\"))][0].id" \
+            || echo "")
+
+          if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
+            echo "既存コメント ${EXISTING_ID} を更新"
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING_ID}" \
+              -f body="$BODY" >/dev/null
+          else
+            echo "新規コメントを投稿"
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          fi
+
+      - name: 整合チェック（参考情報・fail させない）
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          if [ -x scripts/check-schema-sync.sh ]; then
+            bash scripts/check-schema-sync.sh || true
+          else
+            echo "scripts/check-schema-sync.sh が無いためスキップ"
+          fi

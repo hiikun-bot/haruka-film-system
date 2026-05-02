@@ -99,6 +99,12 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - ブランチ保護でCI通過必須にしている場合、CIが通った瞬間にマージされる
 - 解除したいときは `auto-merge` ラベルを外す、または `gh pr merge <PR> --disable-auto` で解除
 
+### DB migration を含む PR（必読）
+- `migrations/**` または `supabase_schema.sql` を変更する PR は、CI が **`needs-db-migration` ラベルを自動付与** します（`.github/workflows/migration-reminder.yml`）
+- このラベルが付いている PR は、**本番Supabaseで適用 → `db-migration-applied` ラベルを手動付与** して初めて `migration-applied` チェックが pass します
+- `auto-merge` を併用しても、`db-migration-applied` が無い限り auto-merge は止まります（安全装置）
+- 適用手順・全体像: [`docs/db-migration-workflow.md`](docs/db-migration-workflow.md)
+
 ## マージ手順（旧・参考）
 ```bash
 # 全エージェント完了後、PR経由でマージするのが原則
