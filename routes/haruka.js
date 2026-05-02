@@ -384,9 +384,17 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
 // 紐づく請求書がある場合は安全のためブロック。
 // その他の関連データ（クリエイティブ・サイクル・商材・訴求軸・チェックリスト等）は
 // FK ON DELETE CASCADE により自動で削除される。
+// 監査ログ (project_deletion_logs) に必ず INSERT してから projects を削除する。
+// 削除理由は必須（5文字以上推奨／空欄は400）。
 router.delete('/projects/:id', requireAuth, requirePermission('project.delete'), async (req, res) => {
   const projectId = req.params.id;
+  const reason = (req.body?.reason ?? '').toString().trim();
+  if (!reason) {
+    return res.status(400).json({ error: '削除理由は必須です' });
+  }
+
   // 請求書の存在チェック (invoices.project_id は CASCADE 無し)
+  // 既存ガード: 請求書が紐づいている場合は監査ログも残さず 400 で中断
   const { data: invs, error: invErr } = await supabase
     .from('invoices').select('id').eq('project_id', projectId).limit(1);
   if (invErr) return res.status(500).json({ error: invErr.message });
@@ -395,9 +403,46 @@ router.delete('/projects/:id', requireAuth, requirePermission('project.delete'),
       error: 'この案件には請求書が紐づいているため削除できません。先に該当する請求書を削除してください。',
     });
   }
+
+  // 対象案件の基本情報（スナップショット用）
+  // clients(name) で外部結合してクライアント名スナップショットを取得
+  const { data: project, error: projErr } = await supabase
+    .from('projects')
+    .select('id, name, client_id, clients(name)')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (projErr) return res.status(500).json({ error: projErr.message });
+  if (!project) return res.status(404).json({ error: '案件が見つかりません' });
+
+  // 関連クリエイティブ件数（監査ログ用に取得）
+  const { count: relCount, error: cntErr } = await supabase
+    .from('creatives')
+    .select('id', { count: 'exact', head: true })
+    .eq('project_id', projectId);
+  if (cntErr) return res.status(500).json({ error: cntErr.message });
+
+  // 監査ログ INSERT （削除前に記録）
+  const { error: logErr } = await supabase
+    .from('project_deletion_logs')
+    .insert({
+      project_id: project.id,
+      project_name: project.name,
+      client_id: project.client_id || null,
+      client_name: project.clients?.name || null,
+      reason,
+      deleted_by: req.user?.id || null,
+      deleted_by_name: req.user?.full_name || req.user?.email || null,
+      related_creatives_count: relCount || 0,
+    });
+  if (logErr) {
+    // 監査ログに残せない場合は削除を中断（誤削除→記録なしを防ぐ）
+    return res.status(500).json({ error: '監査ログの記録に失敗したため削除を中止しました: ' + logErr.message });
+  }
+
+  // 本体削除
   const { error } = await supabase.from('projects').delete().eq('id', projectId);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true });
+  res.json({ ok: true, related_creatives_count: relCount || 0 });
 });
 
 // ==================== 月次サイクル ====================
