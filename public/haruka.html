@@ -2697,54 +2697,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
-<!-- クライアント報酬設定モーダル -->
-<div class="modal-overlay" id="modal-client-fee">
-  <div class="modal-card" style="max-width:480px">
-    <div class="modal-title">
-      クライアント報酬設定 — <span id="cf-project-name"></span>
-      <button class="modal-close" onclick="closeModal('modal-client-fee')">×</button>
-    </div>
-    <div class="modal-body">
-      <!-- 本数×単価モード -->
-      <div style="margin-bottom:16px">
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;margin-bottom:12px">
-          <input type="checkbox" id="cf-use-fixed" onchange="toggleClientFeeMode()" style="width:16px;height:16px">
-          案件固定予算を使用する
-        </label>
-      </div>
-
-      <!-- 本数×単価 -->
-      <div id="cf-unit-section">
-        <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:8px">1本あたり単価</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-          <div>
-            <label class="form-label">動画（円）</label>
-            <input class="form-input" type="number" id="cf-video-unit" min="0" placeholder="0">
-          </div>
-          <div>
-            <label class="form-label">デザイン（円）</label>
-            <input class="form-input" type="number" id="cf-design-unit" min="0" placeholder="0">
-          </div>
-        </div>
-      </div>
-
-      <!-- 固定予算 -->
-      <div id="cf-fixed-section" style="display:none">
-        <label class="form-label">案件固定予算（円）</label>
-        <input class="form-input" type="number" id="cf-fixed-budget" min="0" placeholder="0" style="margin-bottom:16px">
-      </div>
-
-      <div>
-        <label class="form-label">備考</label>
-        <input class="form-input" type="text" id="cf-note" placeholder="メモ（任意）">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-primary" onclick="saveClientFee()">保存する</button>
-      <button class="btn" onclick="closeModal('modal-client-fee')">キャンセル</button>
-    </div>
-  </div>
-</div>
+<!-- 旧クライアント報酬設定モーダルは削除（V2: 報酬ボタン → modal-project-finance に移行） -->
 
 <div class="modal-overlay" id="modal-project">
   <div class="modal" style="width:92vw;max-width:1020px;height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
@@ -2764,8 +2717,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
       <button id="p-tab-btn-sync" onclick="switchProjectTab('sync')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">商材・訴求軸</button>
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
-      <!-- 案件収支タブ（feature flag が有効な時のみ表示。デフォルト非表示） -->
-      <button id="p-tab-btn-finance" onclick="switchProjectTab('finance')" style="display:none;padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">💰 収支</button>
+      <!-- 「💰 収支」タブは廃止。報酬ボタンから modal-project-finance を直接開く -->
     </div>
 
     <!-- タブコンテンツエリア（固定高さ・スクロール） -->
@@ -3040,13 +2992,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div id="pcl-list"><div style="color:var(--text-muted);font-size:13px">読み込み中...</div></div>
       </div>
     </div>
-
-    <!-- パネル：案件収支（Step C） -->
-    <div id="p-tab-panel-finance" style="display:none;padding:24px 28px">
-      <div id="pf-content" style="max-width:880px">
-        <div style="color:var(--text-muted);font-size:13px">読み込み中...</div>
-      </div>
-    </div>
+    <!-- 「💰 収支」タブパネルは廃止（modal-project-finance に移行） -->
 
     </div><!-- /p-tab-content -->
 
@@ -4046,7 +3992,7 @@ async function loadProjects() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canSeeRates() ? `<button class="btn-sm" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" style="color:var(--em-dark)">単価</button>` : ''}
-            ${hasPermission('project.fee_view') ? `<button class="btn-sm" onclick="event.stopPropagation();openClientFeeModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
+            ${(currentUser?.role === 'admin') ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')">報酬</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
@@ -6536,8 +6482,7 @@ function openEditProject(p) {
   // 編集時はタブを表示し、基本情報タブをデフォルト表示
   document.getElementById('p-tab-nav').style.display = '';
   switchProjectTab('main');
-  // 案件収支タブの表示制御（feature flag 検出）
-  refreshFinanceTabVisibility();
+  // 「💰 収支」タブは廃止。案件カードの「報酬」ボタンから直接 modal-project-finance を開く
 
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
   const pDelBtn = document.getElementById('p-delete-btn');
@@ -6589,7 +6534,7 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  const tabs = ['main', 'sync', 'checklist', 'finance'];
+  const tabs = ['main', 'sync', 'checklist'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -6602,7 +6547,6 @@ function switchProjectTab(tab) {
     }
   });
   if (tab === 'checklist') loadProjectChecklistItems();
-  if (tab === 'finance')   loadProjectFinance();
 }
 
 // ==================== 案件収支（Step C） ====================
@@ -6611,6 +6555,8 @@ function switchProjectTab(tab) {
 // /api/accounting は haruka ルーターと別マウントなので API 定数を直接書く。
 const ACCOUNTING_API = '/api/accounting';
 let _accountingEnabled = null; // null=未確認 / true / false
+let _financeProjectId = null;  // 報酬ボタンから開いたモーダルの対象案件ID
+let _financeProjectName = '';  // 同モーダルのタイトル表示用
 let _pfData = null;            // 現在表示中の案件の収支データ
 
 async function checkAccountingEnabled() {
@@ -6626,16 +6572,21 @@ async function checkAccountingEnabled() {
   return _accountingEnabled;
 }
 
-// 案件モーダルを開いた時にタブボタンの表示を制御
-async function refreshFinanceTabVisibility() {
-  const ok = await checkAccountingEnabled();
-  const btn = document.getElementById('p-tab-btn-finance');
-  if (!btn) return;
-  btn.style.display = ok ? '' : 'none';
+// 報酬ボタンから案件収支モーダルを開く（V2: スタンドアロンモーダル化）
+async function openProjectFinanceModal(projectId, projectName) {
+  _financeProjectId = projectId;
+  _financeProjectName = projectName || '';
+  const titleEl = document.getElementById('pf-modal-title');
+  if (titleEl) titleEl.textContent = `💰 案件収支 — ${_financeProjectName}`;
+  // 表示前に内容をリセット
+  const el = document.getElementById('pf-content');
+  if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:13px">読み込み中...</div>';
+  openModal('modal-project-finance');
+  await loadProjectFinance();
 }
 
 async function loadProjectFinance() {
-  const projectId = document.getElementById('p-id').value;
+  const projectId = _financeProjectId;
   const el = document.getElementById('pf-content');
   if (!projectId || !el) return;
   el.innerHTML = '<div style="color:var(--text-muted);font-size:13px">読み込み中...</div>';
@@ -6869,7 +6820,7 @@ function _estStatusColor(s) {
 
 // --- 契約タイプ変更 ----------------------------------------------------
 async function changeContractType(newType) {
-  const projectId = document.getElementById('p-id').value;
+  const projectId = _financeProjectId;
   const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/finance-book`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ contract_type: newType }),
@@ -6880,7 +6831,7 @@ async function changeContractType(newType) {
 
 // --- 想定本数の保存（per_unit のみ） ------------------------------------
 async function savePlannedUnitCount() {
-  const projectId = document.getElementById('p-id').value;
+  const projectId = _financeProjectId;
   const cnt = parseInt(document.getElementById('pf-planned-units').value, 10);
   const body = { planned_unit_count: Number.isFinite(cnt) && cnt >= 0 ? cnt : 0 };
   const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/finance-book`, {
@@ -6896,7 +6847,7 @@ async function toggleFinanceBookStatus(curStatus) {
   if (!_pfData) return;
   const next = curStatus === 'closed' ? 'open' : 'closed';
   if (next === 'closed' && !confirm('この案件の収支台帳をクローズしますか？\n（後でオープンに戻すこともできます）')) return;
-  const projectId = document.getElementById('p-id').value;
+  const projectId = _financeProjectId;
   const res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/finance-book`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: next }),
@@ -7047,7 +6998,7 @@ async function deleteEstimate(eid) {
 
 // ==================== V2: 単価取込ピッカー ====================
 async function openRateImportPicker() {
-  const projectId = document.getElementById('p-id').value;
+  const projectId = _financeProjectId;
   const list = document.getElementById('rate-import-list');
   list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">読み込み中...</div>';
   openModal('modal-rate-import');
@@ -15087,51 +15038,7 @@ function copyInviteMsg() {
   });
 }
 
-// ===== クライアント報酬設定 =====
-let currentClientFeeProjectId = null;
-
-function toggleClientFeeMode() {
-  const useFixed = document.getElementById('cf-use-fixed').checked;
-  document.getElementById('cf-unit-section').style.display = useFixed ? 'none' : '';
-  document.getElementById('cf-fixed-section').style.display = useFixed ? '' : 'none';
-}
-
-async function openClientFeeModal(projectId, projectName) {
-  currentClientFeeProjectId = projectId;
-  document.getElementById('cf-project-name').textContent = projectName;
-
-  // 既存設定を取得
-  const res = await apiFetch(`${API}/projects/${projectId}/client-fee`);
-  const fee = res.ok ? await res.json() : null;
-
-  document.getElementById('cf-video-unit').value = fee?.video_unit_price || 0;
-  document.getElementById('cf-design-unit').value = fee?.design_unit_price || 0;
-  document.getElementById('cf-fixed-budget').value = fee?.fixed_budget || 0;
-  document.getElementById('cf-use-fixed').checked = fee?.use_fixed_budget || false;
-  document.getElementById('cf-note').value = fee?.note || '';
-  toggleClientFeeMode();
-
-  openModal('modal-client-fee');
-}
-
-async function saveClientFee() {
-  const useFixed = document.getElementById('cf-use-fixed').checked;
-  const body = {
-    video_unit_price: parseInt(document.getElementById('cf-video-unit').value) || 0,
-    design_unit_price: parseInt(document.getElementById('cf-design-unit').value) || 0,
-    fixed_budget: parseInt(document.getElementById('cf-fixed-budget').value) || null,
-    use_fixed_budget: useFixed,
-    note: document.getElementById('cf-note').value.trim() || null
-  };
-  const res = await apiFetch(`${API}/projects/${currentClientFeeProjectId}/client-fee`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) { showToast('保存に失敗しました', 'error'); return; }
-  closeModal('modal-client-fee');
-  showToast('報酬設定を保存しました', 'success');
-}
+// ===== 旧クライアント報酬設定の関数群（V2 で modal-project-finance に統合済み）削除 =====
 
 init();
 
