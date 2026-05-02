@@ -4471,6 +4471,8 @@ async function init() {
     const res = await fetch('/auth/me');
     if (res.ok) {
       currentUser = await res.json();
+      // 通知モジュール（ESM・別ファイル）が currentUser.id を参照できるよう window へも公開
+      window.currentUser = currentUser;
       console.log('[HFS] currentUser:', currentUser.email, '| role:', currentUser.role, '| isSuperAdmin:', isSuperAdmin());
       document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
       document.getElementById('user-role').textContent = roleLabel(currentUser.role);
@@ -4478,6 +4480,11 @@ async function init() {
       // 認証済みユーザーにのみエラー報告ボタンを表示
       const _fab = document.getElementById('error-report-fab');
       if (_fab) _fab.style.display = '';
+      // 通知モジュール（bell / realtime）に「認証完了したよ」を伝えて
+      // 未読件数取得 + Realtime 接続を発火させる
+      document.dispatchEvent(new CustomEvent('notification:authReady', {
+        detail: { userId: currentUser.id }
+      }));
       // クリエイティブ初期ビューを適用
       const savedView = localStorage.getItem('hfs_cv_default_' + currentUser.id);
       if (savedView && savedView !== 'all') {
@@ -16937,5 +16944,12 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
+
+<!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
+<!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->
+<script type="module" src="/js/notification-card.js"></script>
+<script type="module" src="/js/notification-bell.js"></script>
+<script type="module" src="/js/notification-panel.js"></script>
+<script type="module" src="/js/notification-realtime.js"></script>
 </body>
 </html>
