@@ -1547,9 +1547,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div class="toolbar">
     <div class="toolbar-row">
       <span style="font-size:13px;color:var(--text-muted);font-weight:500">クライアント：</span>
-      <select id="client-select" class="form-select" style="font-size:13px;padding:5px 10px;height:32px;min-width:160px;max-width:240px" onchange="setClientById(this.value)">
-        <option value="all">すべて</option>
-      </select>
+      <!-- 複数選択チェックボックス・ドロップダウン -->
+      <div id="client-multi" style="position:relative;min-width:200px;max-width:280px">
+        <button type="button" id="client-multi-btn" onclick="toggleClientMultiOpen(event)" class="form-select" style="font-size:13px;padding:5px 10px;height:32px;width:100%;text-align:left;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+          <span id="client-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">すべて</span>
+          <span style="margin-left:6px;color:var(--text-muted);flex-shrink:0">▾</span>
+        </button>
+        <div id="client-multi-pop" style="display:none;position:absolute;top:36px;left:0;width:280px;max-height:380px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:50;padding:6px 0">
+          <div id="client-multi-list" style="font-size:13px"></div>
+          <div style="display:flex;gap:6px;padding:8px 10px 4px;border-top:1px solid var(--border-light)">
+            <button class="btn-sm" style="flex:1;font-size:11px" onclick="clearClientMulti()">クリア</button>
+            <button class="btn-sm" style="flex:1;font-size:11px;color:#fff;background:var(--em);border-color:var(--em)" onclick="closeClientMulti()">閉じる</button>
+          </div>
+        </div>
+      </div>
       <button class="ct" id="toggle-ended-creatives" onclick="toggleEndedInCreatives()" title="取引終了クライアントを含めて表示" style="font-size:11px">+終了済</button>
       <input class="search-box" type="text" placeholder="クリエイティブ検索（ファイル名・クライアント・担当者・メモ）" oninput="filterSearch(this.value)">
       <select id="cv-assignee-filter" class="form-select" style="font-size:12px;padding:5px 10px;height:32px;min-width:120px;max-width:160px" onchange="setAssigneeFilter(this.value)">
@@ -3861,6 +3872,8 @@ let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMemb
 let currentTeamTab = 'video'; // 'video' | 'design' | 'secretary'
 let currentMemberTab = 'video'; // 'video' | 'design'
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
+// 複数選択対応: 選択中のクライアントID集合（空 Set = 全件）
+let currentClientIds = new Set();
 let showEndedInCreatives = false;
 // 一覧 API のページング状態
 let creativesPage = { limit: 50, offset: 0, total: 0 };
@@ -3959,20 +3972,90 @@ async function loadClients() {
   renderClientSelect();
 }
 
-// クリエイティブ画面の「クライアント」select を再描画
+// クリエイティブ画面の「クライアント」複数選択ドロップダウンを再描画
 function renderClientSelect() {
-  const sel = document.getElementById('client-select');
-  if (!sel) return;
+  const list = document.getElementById('client-multi-list');
+  if (!list) return;
   const visibleClients = showEndedInCreatives
     ? allClients
     : allClients.filter(c => c.status !== 'クライアント取引終了');
   const sortedClients = visibleClients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
-  const options = [
-    `<option value="all">すべて（${visibleClients.length}社）</option>`,
-    ...sortedClients.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`),
-  ];
-  sel.innerHTML = options.join('');
-  sel.value = currentClient || 'all';
+
+  // 行を生成（チェックボックス）
+  const rows = sortedClients.map(c => {
+    const checked = currentClientIds.has(c.id) ? 'checked' : '';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:13px" onmouseenter="this.style.background='#f5fafa'" onmouseleave="this.style.background='transparent'">
+      <input type="checkbox" value="${esc(c.id)}" ${checked} onchange="toggleClientId('${esc(c.id)}', this.checked)" style="width:14px;height:14px;cursor:pointer">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</span>
+    </label>`;
+  });
+  list.innerHTML = rows.join('');
+  refreshClientMultiLabel();
+}
+
+// 「すべて」or 選択件数 or 1社名 を表示
+function refreshClientMultiLabel() {
+  const labelEl = document.getElementById('client-multi-label');
+  if (!labelEl) return;
+  const count = currentClientIds.size;
+  if (count === 0) {
+    labelEl.textContent = `すべて（${(allClients||[]).filter(c => showEndedInCreatives || c.status !== 'クライアント取引終了').length}社）`;
+  } else if (count === 1) {
+    const id = [...currentClientIds][0];
+    const c = (allClients || []).find(x => x.id === id);
+    labelEl.textContent = c ? c.name : '1社選択中';
+  } else {
+    labelEl.textContent = `${count}社選択中`;
+  }
+}
+
+// 開閉
+function toggleClientMultiOpen(ev) {
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById('client-multi-pop');
+  if (!pop) return;
+  pop.style.display = pop.style.display === 'none' ? '' : 'none';
+}
+function closeClientMulti() {
+  const pop = document.getElementById('client-multi-pop');
+  if (pop) pop.style.display = 'none';
+}
+// 外側クリックで閉じる
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('client-multi');
+  if (!wrap) return;
+  if (!wrap.contains(e.target)) closeClientMulti();
+});
+
+function toggleClientId(id, checked) {
+  if (checked) currentClientIds.add(id);
+  else         currentClientIds.delete(id);
+  refreshClientMultiLabel();
+  // currentClient（旧 single 値）も同期: 互換性維持
+  if (currentClientIds.size === 0) currentClient = 'all';
+  else if (currentClientIds.size === 1) currentClient = [...currentClientIds][0];
+  else currentClient = [...currentClientIds].join(',');
+  // 担当者・ボール保持者フィルタも整合
+  if (currentClientIds.size === 0) {
+    currentAssigneeFilter = '';
+    document.querySelectorAll('.bf').forEach(b => b.classList.add('on'));
+  }
+  const aSel = document.getElementById('cv-assignee-filter');
+  if (aSel) aSel.value = currentAssigneeFilter || '';
+  // 再取得
+  creativesPage.offset = 0;
+  loadCreatives();
+}
+
+function clearClientMulti() {
+  currentClientIds.clear();
+  // 全チェックボックスを外す
+  const list = document.getElementById('client-multi-list');
+  if (list) list.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+  currentClient = 'all';
+  refreshClientMultiLabel();
+  creativesPage.offset = 0;
+  loadCreatives();
 }
 
 // 案件（クライアント→案件の階層表示）
@@ -4926,7 +5009,8 @@ function renderCreatives() {
   const filtered = allCreatives.filter(c => {
     // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
     if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
-    if (currentClient !== 'all' && c.projects?.clients?.id !== currentClient) return false;
+    // クライアント複数選択フィルタ（OR）
+    if (currentClientIds.size > 0 && !currentClientIds.has(c.projects?.clients?.id)) return false;
     if (searchText) {
       const haystack = [
         c.file_name,
@@ -5113,20 +5197,20 @@ function setClient(btn, id) {
   setClientById(id);
 }
 
+// 旧シングル選択APIの互換ラッパ — 'all' / 'uuid' / 'uuid1,uuid2' を受け付ける
 function setClientById(id) {
-  currentClient = id;
-  // 「全て」選択時は担当者・ボール保持者フィルタもリセット
-  if (id === 'all') {
+  currentClient = id || 'all';
+  if (!id || id === 'all') {
+    currentClientIds.clear();
     currentAssigneeFilter = '';
     document.querySelectorAll('.bf').forEach(b => b.classList.add('on'));
+  } else {
+    currentClientIds = new Set(String(id).split(',').filter(Boolean));
   }
-  // 担当者 select の値を currentAssigneeFilter と同期
   const aSel = document.getElementById('cv-assignee-filter');
   if (aSel) aSel.value = currentAssigneeFilter || '';
-  // クライアント select の値も同期（外部からの呼び出しに備えて）
-  const cSel = document.getElementById('client-select');
-  if (cSel && cSel.value !== id) cSel.value = id;
-  // クライアント変更は DB 側で絞り込むため再取得
+  // 複数選択 UI のラベル/チェック状態を再描画
+  renderClientSelect();
   creativesPage.offset = 0;
   loadCreatives();
 }
