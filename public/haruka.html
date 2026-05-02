@@ -4415,6 +4415,40 @@ function renderTeamsList() {
   list.innerHTML = basicHtml + projectHtml;
 }
 
+// 「所属チーム（基本）」用: 基本チームのみ（team_code が単一の英字 A〜Z）に絞る
+function getBasicTeams() {
+  return (Array.isArray(allTeams) ? allTeams : [])
+    .filter(t => /^[A-Za-z]$/.test(t.team_code || ''))
+    .sort((a, b) => (a.team_code || '').toUpperCase().localeCompare((b.team_code || '').toUpperCase()));
+}
+
+// メンバーモーダルの「所属チーム（基本）」select を構築する共通関数
+// currentTeamId が案件チーム（非基本）を指している場合、legacy option を末尾に追加して
+// ユーザーに「（旧・案件チーム / 要変更）」と気付いてもらえるようにする
+function populateMemberTeamSelect(currentTeamId) {
+  const sel = document.getElementById('m-team');
+  if (!sel) return;
+  const basics = getBasicTeams();
+  sel.innerHTML = '<option value="">未設定</option>' +
+    basics.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+  // 既存メンバーの team_id が basicTeams に無い場合、legacy option として追加
+  if (currentTeamId) {
+    const isBasic = basics.some(t => t.id === currentTeamId);
+    if (!isBasic) {
+      const teamObj = (Array.isArray(allTeams) ? allTeams : []).find(t => t.id === currentTeamId);
+      if (teamObj) {
+        const opt = document.createElement('option');
+        opt.value = teamObj.id;
+        opt.textContent = `${teamObj.team_code || '?'}チーム / ${teamObj.team_name || ''}（旧・案件チーム / 要変更）`;
+        opt.dataset.legacy = '1';
+        opt.style.color = '#c00';
+        sel.appendChild(opt);
+      }
+    }
+  }
+  sel.value = currentTeamId || '';
+}
+
 async function loadTeams() {
   try {
     const teamsRes = await apiFetch(`${API}/teams`);
@@ -4422,7 +4456,9 @@ async function loadTeams() {
     allTeams = await teamsRes.json();
     const mSel = document.getElementById('m-team');
     if (mSel) {
-      mSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+      // 「所属チーム（基本）」は基本チーム（A〜Z単一英字）のみを候補にする
+      const basics = getBasicTeams();
+      mSel.innerHTML = '<option value="">未設定</option>' + basics.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
     }
     // 初期タブをロールで決定（デザイナーはデザイン、それ以外は動画）
     currentTeamTab = effectiveRole() === 'designer' ? 'design' : 'video';
@@ -5333,9 +5369,8 @@ function openAddMember() {
   document.getElementById('m-role').value = 'editor';
   document.getElementById('m-job-type').value = 'video';
   document.getElementById('m-rank').value = '';
-  const teamSel = document.getElementById('m-team');
-  teamSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.name||t.team_code}</option>`).join('');
-  teamSel.value = '';
+  // 基本チーム（A〜Z単一英字）のみを候補にする
+  populateMemberTeamSelect(null);
   document.getElementById('m-slack').value = '';
   document.getElementById('m-chatwork').value = '';
   document.getElementById('m-birthday').value = '1983-07-25';
@@ -5377,9 +5412,8 @@ function openEditMember(m) {
   document.getElementById('m-role').value = m.role || 'editor';
   document.getElementById('m-job-type').value = m.job_type || 'video';
   document.getElementById('m-rank').value = m.rank || '';
-  const teamSel = document.getElementById('m-team');
-  teamSel.innerHTML = '<option value="">未設定</option>' + allTeams.map(t => `<option value="${t.id}">${t.name||t.team_code}</option>`).join('');
-  teamSel.value = m.team_id || '';
+  // 基本チーム（A〜Z単一英字）のみを候補にする。案件チームが入っていれば legacy option を追加
+  populateMemberTeamSelect(m.team_id || null);
   document.getElementById('m-slack').value = m.slack_dm_id || '';
   document.getElementById('m-chatwork').value = m.chatwork_dm_id || '';
   document.getElementById('m-birthday').value = m.birthday ? m.birthday.slice(0,10) : '';
@@ -5592,6 +5626,14 @@ async function submitMember() {
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
   if (!full_name) { showToast('名前は必須です', 'warn'); return; }
+  // 「所属チーム（基本）」が案件チーム（非基本）のままなら警告
+  if (team_id) {
+    const teamObj = (Array.isArray(allTeams) ? allTeams : []).find(t => t.id === team_id);
+    if (teamObj && !/^[A-Za-z]$/.test(teamObj.team_code || '')) {
+      const ok = confirm(`選択中のチーム「${teamObj.team_code || ''} / ${teamObj.team_name || ''}」は案件チームです。\n「所属チーム（基本）」には基本チーム（A〜Zの単一英字）を選ぶことを推奨します。\nこのまま保存しますか？`);
+      if (!ok) return;
+    }
+  }
   const payload = { full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, birthday, hide_birth_year, weekday_hours, weekend_hours, note, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address };
   let res;
   if (id) {
