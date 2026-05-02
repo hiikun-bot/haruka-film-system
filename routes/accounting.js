@@ -714,6 +714,28 @@ router.put('/projects/:id/input-profile', requireAuth, requireAdmin, async (req,
   }
 });
 
+// 見積書番号を自動採番: YYYYMMDD-N（その日の連番）
+async function generateEstimateNumber(issueDate) {
+  const d = issueDate ? new Date(issueDate) : new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const datePart = `${y}${m}${day}`;
+  // 同じ日付プレフィックスの最大連番 + 1
+  const { data } = await supabase
+    .from('project_estimates')
+    .select('estimate_number')
+    .like('estimate_number', `${datePart}-%`);
+  const used = (data || [])
+    .map(r => parseInt((r.estimate_number || '').split('-')[1], 10))
+    .filter(n => Number.isFinite(n));
+  const next = used.length ? Math.max(...used) + 1 : 1;
+  return `${datePart}-${next}`;
+}
+
+// 敬称の検証
+const allowedHonorifics = new Set(['御中', '様', '']);
+
 // --- POST /projects/:id/estimates  見積を新規作成（明細同梱） ----------------
 router.post('/projects/:id/estimates', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
@@ -723,6 +745,9 @@ router.post('/projects/:id/estimates', requireAuth, requireAdmin, async (req, re
   const items = Array.isArray(body.items) ? body.items : [];
   if (body.status && !allowedEstimateStat.has(body.status)) {
     return res.status(400).json({ error: `status は ${[...allowedEstimateStat].join('/')} のいずれか` });
+  }
+  if (body.honorific !== undefined && body.honorific !== null && !allowedHonorifics.has(body.honorific)) {
+    return res.status(400).json({ error: `honorific は ${[...allowedHonorifics].filter(s=>s).join('/')} のいずれか` });
   }
 
   try {
@@ -739,6 +764,10 @@ router.post('/projects/:id/estimates', requireAuth, requireAdmin, async (req, re
     const computedTotal = items.reduce((s, it) => s + intOrZero(it.amount), 0);
     const totalAmount = body.total_amount !== undefined ? intOrZero(body.total_amount) : computedTotal;
 
+    // Phase A: 見積書番号は明示指定が無ければ自動採番
+    const issueDate = body.issue_date || new Date().toISOString().slice(0, 10);
+    const estimateNumber = body.estimate_number || await generateEstimateNumber(issueDate);
+
     const { data: est, error: estErr } = await supabase
       .from('project_estimates')
       .insert({
@@ -749,6 +778,12 @@ router.post('/projects/:id/estimates', requireAuth, requireAdmin, async (req, re
         status:     body.status || 'draft',
         created_by: req.user?.id || null,
         note:       body.note || null,
+        // Phase A
+        issue_date:      issueDate,
+        valid_until:     body.valid_until || null,
+        recipient_name:  body.recipient_name || null,
+        honorific:       body.honorific !== undefined ? body.honorific : '御中',
+        estimate_number: estimateNumber,
       })
       .select().single();
     if (estErr) throw new Error(estErr.message);
@@ -792,6 +827,17 @@ router.put('/estimates/:eid', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: `status は ${[...allowedEstimateStat].join('/')} のいずれか` });
     }
     patch.status = body.status;
+  }
+  // Phase A: 見積書フィールド
+  if (body.issue_date      !== undefined) patch.issue_date      = body.issue_date || null;
+  if (body.valid_until     !== undefined) patch.valid_until     = body.valid_until || null;
+  if (body.recipient_name  !== undefined) patch.recipient_name  = body.recipient_name ? String(body.recipient_name) : null;
+  if (body.estimate_number !== undefined) patch.estimate_number = body.estimate_number ? String(body.estimate_number) : null;
+  if (body.honorific       !== undefined) {
+    if (body.honorific !== null && !allowedHonorifics.has(body.honorific)) {
+      return res.status(400).json({ error: `honorific は ${[...allowedHonorifics].filter(s=>s).join('/')} のいずれか` });
+    }
+    patch.honorific = body.honorific || null;
   }
 
   const hasItems = Array.isArray(body.items);
