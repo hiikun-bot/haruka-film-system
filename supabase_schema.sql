@@ -1307,4 +1307,16 @@ ALTER TABLE project_finance_books
 CREATE INDEX IF NOT EXISTS idx_project_finance_books_contract_type
   ON project_finance_books(contract_type);
 
+-- ==================== 案件収支 Phase A: 見積書フィールド ====================
+-- 詳細: migrations/2026-05-02_project_estimates_invoice_like_fields.sql
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS issue_date DATE;
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS valid_until DATE;
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS recipient_name TEXT;
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS honorific TEXT DEFAULT '御中'
+  CHECK (honorific IS NULL OR honorific IN ('御中', '様', ''));
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS estimate_number TEXT;
+CREATE INDEX IF NOT EXISTS idx_project_estimates_estimate_number
+  ON project_estimates(estimate_number)
+  WHERE estimate_number IS NOT NULL;
+
 NOTIFY pgrst, 'reload schema';

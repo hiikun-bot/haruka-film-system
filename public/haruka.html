@@ -1179,12 +1179,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <input type="hidden" id="fest-id"> <!-- 編集モードならID、新規なら空 -->
 
-    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap">
-      <div class="form-group" style="flex:2;margin-bottom:0;min-width:200px">
+    <!-- 1. 基本情報 -->
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-bottom:8px">
+      <span style="display:inline-block;width:18px;height:18px;background:var(--em);color:#fff;border-radius:50%;font-size:11px;text-align:center;line-height:18px;font-weight:700">1</span>
+      基本情報
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap">
+      <div class="form-group" style="flex:2;margin-bottom:0;min-width:240px">
         <label class="form-label">件名</label>
         <input class="form-input" type="text" id="fest-edit-title" placeholder="例: HP制作 + 動画10本セット">
       </div>
-      <div class="form-group" style="flex:1;margin-bottom:0;min-width:120px">
+      <div class="form-group" style="flex:1;margin-bottom:0;min-width:140px">
         <label class="form-label">ステータス</label>
         <select class="form-select" id="fest-edit-status">
           <option value="draft">草案</option>
@@ -1196,8 +1202,41 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
 
-    <!-- 明細テーブル -->
-    <div style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-bottom:6px">明細</div>
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1.5;margin-bottom:0;min-width:180px">
+        <label class="form-label">取引先 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（既定はクライアント名）</span></label>
+        <input class="form-input" type="text" id="fest-edit-recipient" placeholder="">
+      </div>
+      <div class="form-group" style="margin-bottom:0;min-width:90px">
+        <label class="form-label">敬称</label>
+        <select class="form-select" id="fest-edit-honorific">
+          <option value="御中">御中</option>
+          <option value="様">様</option>
+          <option value="">なし</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0;min-width:140px">
+        <label class="form-label">見積書番号 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（自動採番）</span></label>
+        <input class="form-input" type="text" id="fest-edit-number" placeholder="自動採番">
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:18px;flex-wrap:wrap">
+      <div class="form-group" style="margin-bottom:0;min-width:140px">
+        <label class="form-label">発行日</label>
+        <input class="form-input" type="date" id="fest-edit-issue-date">
+      </div>
+      <div class="form-group" style="margin-bottom:0;min-width:140px">
+        <label class="form-label">有効期限</label>
+        <input class="form-input" type="date" id="fest-edit-valid-until">
+      </div>
+    </div>
+
+    <!-- 2. 明細テーブル -->
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-bottom:8px">
+      <span style="display:inline-block;width:18px;height:18px;background:var(--em);color:#fff;border-radius:50%;font-size:11px;text-align:center;line-height:18px;font-weight:700">2</span>
+      品目明細
+    </div>
     <div style="display:grid;grid-template-columns:2fr 60px 60px 90px 90px 28px;gap:6px;padding:6px 8px;background:#f0f9f9;border-radius:6px;font-size:11px;font-weight:600;color:var(--em-dark);margin-bottom:4px">
       <span>品目</span><span>数量</span><span>単位</span><span>単価</span><span style="text-align:right">金額</span><span></span>
     </div>
@@ -1214,9 +1253,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <span id="fest-total-display" style="font-size:18px;font-weight:700">¥0</span>
     </div>
 
-    <div class="form-group" style="margin-top:14px;margin-bottom:6px">
-      <label class="form-label">メモ <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
-      <textarea class="form-input" id="fest-edit-note" rows="2" style="resize:vertical"></textarea>
+    <!-- 3. 備考 -->
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-top:18px;margin-bottom:8px">
+      <span style="display:inline-block;width:18px;height:18px;background:var(--em);color:#fff;border-radius:50%;font-size:11px;text-align:center;line-height:18px;font-weight:700">3</span>
+      備考
+    </div>
+    <div class="form-group" style="margin-bottom:6px">
+      <textarea class="form-input" id="fest-edit-note" rows="2" placeholder="納品物の前提条件・支払い条件など" style="resize:vertical"></textarea>
     </div>
 
     <div class="modal-footer">
@@ -6723,13 +6766,18 @@ function renderProjectFinance() {
         : estimates.map(e => `
           <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:#fff">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <span style="font-size:11px;color:var(--text-muted);min-width:36px">v${e.version}</span>
               <span style="font-size:11px;background:${_estStatusColor(e.status).bg};color:${_estStatusColor(e.status).fg};padding:2px 8px;border-radius:6px">${esc(_estStatusLabel(e.status))}</span>
               <span style="font-size:13px;font-weight:600;flex:1;min-width:120px">${esc(e.title || '(件名未設定)')}</span>
               <span style="font-size:14px;font-weight:600">${_yen(e.total_amount)}</span>
               <button class="btn-sm" style="font-size:11px" onclick="openEstimateEditor('${esc(e.id)}')">編集</button>
               <button class="btn-sm" style="font-size:11px" onclick="changeEstimateStatus('${esc(e.id)}', '${e.status === 'accepted' ? 'draft' : 'accepted'}')">${e.status === 'accepted' ? '採用解除' : '採用'}</button>
               <button class="btn-sm" style="font-size:11px;color:#A32D2D" onclick="deleteEstimate('${esc(e.id)}')">削除</button>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:2px">
+              ${e.estimate_number ? `<span>📄 ${esc(e.estimate_number)}</span>` : `<span>v${e.version}</span>`}
+              ${e.issue_date ? `<span>発行 ${esc(String(e.issue_date).slice(0,10))}</span>` : ''}
+              ${e.valid_until ? `<span>有効 ${esc(String(e.valid_until).slice(0,10))}</span>` : ''}
+              ${e.recipient_name ? `<span>👤 ${esc(e.recipient_name)} ${esc(e.honorific||'')}</span>` : ''}
             </div>
             ${(e.items||[]).length ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
               ${(e.items||[]).map(it => `<div style="display:grid;grid-template-columns:2fr 60px 50px 90px 100px;gap:6px;padding:3px 0;font-size:12px;color:var(--text-muted)">
@@ -6858,17 +6906,38 @@ function openEstimateEditor(eid) {
   const isNew = !eid;
   document.getElementById('fest-editor-title').textContent = isNew ? '📋 見積を新規作成' : '📋 見積を編集';
 
+  // 既定値の生成
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultValidUntil = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 60); // 既定 60 日後
+    return d.toISOString().slice(0, 10);
+  })();
+  // 取引先の既定値はモーダルタイトル「📋 見積 — XXX」の XXX を流用
+  const defaultRecipient = _financeProjectName ? _financeProjectName.split(' — ').pop() : '';
+  // ↑ 案件名と混ざっている可能性があるが Phase A では割り切り。Phase B で project.client_name から取得予定
+
   if (isNew) {
-    document.getElementById('fest-edit-title').value  = '';
-    document.getElementById('fest-edit-status').value = 'draft';
-    document.getElementById('fest-edit-note').value   = '';
+    document.getElementById('fest-edit-title').value     = '';
+    document.getElementById('fest-edit-status').value    = 'draft';
+    document.getElementById('fest-edit-note').value      = '';
+    document.getElementById('fest-edit-recipient').value = defaultRecipient;
+    document.getElementById('fest-edit-honorific').value = '御中';
+    document.getElementById('fest-edit-number').value    = ''; // 自動採番に任せる
+    document.getElementById('fest-edit-issue-date').value  = today;
+    document.getElementById('fest-edit-valid-until').value = defaultValidUntil;
     _festItems = [_newItem()];
   } else {
     const est = (_pfData?.estimates || []).find(e => e.id === eid);
     if (!est) { showToast('見積が見つかりません', 'warn'); return; }
-    document.getElementById('fest-edit-title').value  = est.title || '';
-    document.getElementById('fest-edit-status').value = est.status || 'draft';
-    document.getElementById('fest-edit-note').value   = est.note  || '';
+    document.getElementById('fest-edit-title').value     = est.title || '';
+    document.getElementById('fest-edit-status').value    = est.status || 'draft';
+    document.getElementById('fest-edit-note').value      = est.note  || '';
+    document.getElementById('fest-edit-recipient').value = est.recipient_name || defaultRecipient;
+    document.getElementById('fest-edit-honorific').value = est.honorific || '御中';
+    document.getElementById('fest-edit-number').value    = est.estimate_number || '';
+    document.getElementById('fest-edit-issue-date').value  = (est.issue_date || today).slice(0, 10);
+    document.getElementById('fest-edit-valid-until').value = (est.valid_until || defaultValidUntil).slice(0, 10);
     _festItems = (est.items || []).map(_newItem);
     if (_festItems.length === 0) _festItems = [_newItem()];
   }
@@ -6932,6 +7001,12 @@ async function submitEstimateEditor() {
   const title  = document.getElementById('fest-edit-title').value.trim() || null;
   const status = document.getElementById('fest-edit-status').value;
   const note   = document.getElementById('fest-edit-note').value.trim() || null;
+  // Phase A
+  const recipient_name  = document.getElementById('fest-edit-recipient').value.trim() || null;
+  const honorific       = document.getElementById('fest-edit-honorific').value;
+  const estimate_number = document.getElementById('fest-edit-number').value.trim() || null;
+  const issue_date      = document.getElementById('fest-edit-issue-date').value || null;
+  const valid_until     = document.getElementById('fest-edit-valid-until').value || null;
   // ラベル空の行は除去
   const cleanItems = _festItems
     .filter(it => (it.label || '').trim() !== '' && (Number(it.quantity) > 0 || Number(it.unit_price) > 0))
@@ -6953,16 +7028,21 @@ async function submitEstimateEditor() {
     showToast('エラー: 案件IDが取得できません。モーダルを開き直してください', 'error');
     return;
   }
+  const payload = {
+    title, status, note,
+    items: cleanItems, total_amount: totalAmount,
+    recipient_name, honorific, estimate_number, issue_date, valid_until,
+  };
   let res;
   if (eid) {
     res = await apiFetch(`${ACCOUNTING_API}/estimates/${eid}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, status, note, items: cleanItems, total_amount: totalAmount }),
+      body: JSON.stringify(payload),
     });
   } else {
     res = await apiFetch(`${ACCOUNTING_API}/projects/${projectId}/estimates`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, status, note, items: cleanItems, total_amount: totalAmount }),
+      body: JSON.stringify(payload),
     });
   }
   if (res.ok) {
