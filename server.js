@@ -158,6 +158,10 @@ app.use('/api/', (req, res, next) => {
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
 
+// 通知API（Phase 1 段階1）
+// /api/notifications 配下: 一覧 / 未読件数 / 既読化 / 全体通知発火
+app.use('/api/notifications', require('./routes/notifications'));
+
 // 案件収支 API（feature flag が有効な時のみマウント。flag OFF 時はそもそもエンドポイントが存在しない）
 if (accountingRouter) {
   app.use('/api/accounting', accountingRouter);
