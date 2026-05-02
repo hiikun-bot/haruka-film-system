@@ -5641,6 +5641,79 @@ router.put('/item-name-master/:id', requireAuth, requirePermission('project.crea
   res.json(data);
 });
 
+// ==================== エラー報告 ====================
+// 画面右下の 🐛 ボタンから呼ばれる。スクリーンショット + メタ情報 + ユーザーコメントを
+// Slack の専用チャンネルに投稿する。
+//   送信先: 環境変数 ERROR_REPORT_SLACK_CHANNEL_URL（slack_workspaces から bot_token 解決）
+//   bot に files:write / chat:write スコープが必要。
+const errorReportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+const _errorReportLastSentAt = new Map(); // userId -> ms; 連投抑制
+router.post('/error-report', requireAuth, errorReportUpload.single('screenshot'), async (req, res) => {
+  const channelUrl = process.env.ERROR_REPORT_SLACK_CHANNEL_URL;
+  if (!channelUrl) return res.status(503).json({ error: 'エラー通知チャンネル未設定' });
+
+  const userId = req.user?.id;
+  const now = Date.now();
+  const last = _errorReportLastSentAt.get(userId) || 0;
+  if (now - last < 10000) {
+    return res.status(429).json({ error: 'しばらく待ってから再送信してください' });
+  }
+
+  let metadata = {};
+  try { if (req.body?.metadata) metadata = JSON.parse(req.body.metadata); } catch (_) { metadata = {}; }
+  const description = String(req.body?.description || '').trim();
+  const screenshot = req.file;
+
+  const u = req.user || {};
+  const reporter = `${u.full_name || u.email || u.id || 'unknown'} (${u.email || 'no-email'}) / role:${u.role || '?'}`;
+  const ts = new Date().toISOString();
+  const url = String(metadata.url || '').slice(0, 500);
+  const ua = String(metadata.userAgent || '').slice(0, 300);
+  const size = metadata.viewport ? `${metadata.viewport.w}x${metadata.viewport.h}` : '';
+  const recentErrors = Array.isArray(metadata.recentErrors) ? metadata.recentErrors : [];
+  const recentApis = Array.isArray(metadata.recentFailedApis) ? metadata.recentFailedApis : [];
+  const fmtErr = recentErrors.length
+    ? recentErrors.map(e => {
+        const t = e.ts || '';
+        const head = `[${t}] ${e.type || ''}`;
+        return `${head} ${String(e.msg || '').slice(0, 300)}${e.src ? ` @ ${e.src}:${e.line || ''}` : ''}`;
+      }).join('\n').slice(0, 1500)
+    : '（なし）';
+  const fmtApi = recentApis.length
+    ? recentApis.map(a => `[${a.ts || ''}] ${a.status || ''} ${a.url || ''} ${String(a.body || '').slice(0, 200)}`).join('\n').slice(0, 1500)
+    : '（なし）';
+
+  const text =
+`🐛 エラー報告
+*報告者*: ${reporter}
+*発生時刻*: ${ts}
+*URL*: ${url}
+*User-Agent*: ${ua}
+*画面サイズ*: ${size}
+
+*ユーザーコメント*:
+${description || '（記入なし）'}
+
+*直近のコンソールエラー*:
+\`\`\`${fmtErr}\`\`\`
+
+*直近の失敗API*:
+\`\`\`${fmtApi}\`\`\``;
+
+  let result;
+  if (screenshot && screenshot.buffer && screenshot.buffer.length) {
+    result = await notif.sendSlackChannelWithFile(channelUrl, text, screenshot.buffer, 'screenshot.png');
+  } else {
+    // スクリーンショットが無くても通知は送る
+    result = await notif.sendSlackChannel(channelUrl, text);
+  }
+  if (!result?.ok) {
+    return res.status(500).json({ error: `Slack送信失敗: ${result?.reason || 'unknown'}` });
+  }
+  _errorReportLastSentAt.set(userId, now);
+  res.json({ ok: true });
+});
+
 // 削除（既定は論理削除 = is_active=false。?hard=true で物理削除）
 router.delete('/item-name-master/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   if (req.query.hard === 'true') {

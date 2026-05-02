@@ -1233,6 +1233,71 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <div id="print-only" style="display:none"></div>
 
+<!-- エラー報告 フローティングボタン（認証後に表示） -->
+<button id="error-report-fab" type="button" onclick="openErrorReport()" title="不具合を報告"
+  style="display:none;position:fixed;right:16px;bottom:16px;z-index:200;width:48px;height:48px;border-radius:50%;background:#A32D2D;color:#fff;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);cursor:pointer;font-size:22px">🐛</button>
+
+<!-- エラー報告モーダル -->
+<div class="modal-overlay" id="modal-error-report" data-no-overlay-close="true">
+  <div style="max-width:560px;width:95vw;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #e0e0e0">
+      <span style="font-size:15px;font-weight:600;color:#222">🐛 不具合を報告</span>
+      <button class="modal-close" onclick="closeModal('modal-error-report')" style="background:none;border:none;font-size:20px;cursor:pointer">×</button>
+    </div>
+    <div style="padding:16px 20px;overflow-y:auto">
+      <div style="background:#fff7e0;border:1px solid #f0c36d;color:#7a5b00;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px">
+        ⚠️ 送信されるスクリーンショットには画面に表示中の情報（クライアント名・金額・個人情報など）が含まれる可能性があります。問題ない範囲で送信してください。
+      </div>
+      <div style="font-size:12px;color:#555;margin-bottom:6px">スクリーンショット プレビュー:</div>
+      <div id="error-report-screenshot-preview" style="background:#f4f4f5;border:1px solid #e4e4e7;border-radius:6px;min-height:120px;display:flex;align-items:center;justify-content:center;color:#888;font-size:12px;margin-bottom:12px;overflow:hidden">取得中...</div>
+      <label style="font-size:12px;color:#555;display:block;margin-bottom:4px">詳細・再現手順（任意）</label>
+      <textarea id="error-report-description" rows="4" placeholder="例: 案件一覧で「保存」を押したが画面が真っ白になった" style="width:100%;padding:8px;border:1px solid #d4d4d8;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical"></textarea>
+      <div id="error-report-meta-summary" style="font-size:11px;color:#999;margin-top:8px"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid #e0e0e0;background:#fafafa">
+      <button class="btn" onclick="closeModal('modal-error-report')" style="font-size:13px;padding:8px 16px">キャンセル</button>
+      <button class="btn-primary" id="error-report-submit-btn" onclick="submitErrorReport()" style="font-size:13px;padding:8px 20px">送信</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== エラー報告: クライアント側バッファ =====
+// window.__errorBuffer / window.__apiFailBuffer に最近のエラーを溜める。
+// 認証より前に走らせて取りこぼしを減らす。
+(function setupErrorReportBuffers() {
+  window.__errorBuffer = [];
+  window.__apiFailBuffer = [];
+  window.pushErrorBuffer = function(entry) {
+    try {
+      window.__errorBuffer.push({ ts: new Date().toISOString(), ...entry });
+      if (window.__errorBuffer.length > 30) window.__errorBuffer.shift();
+    } catch (_) {}
+  };
+  window.pushApiFailBuffer = function(entry) {
+    try {
+      window.__apiFailBuffer.push({ ts: new Date().toISOString(), ...entry });
+      if (window.__apiFailBuffer.length > 10) window.__apiFailBuffer.shift();
+    } catch (_) {}
+  };
+  window.addEventListener('error', function(e) {
+    window.pushErrorBuffer({ type: 'error', msg: e.message, src: e.filename, line: e.lineno });
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    window.pushErrorBuffer({ type: 'rejection', msg: String((e.reason && e.reason.message) || e.reason) });
+  });
+  var _origConsoleError = console.error;
+  console.error = function() {
+    try {
+      var args = Array.prototype.slice.call(arguments);
+      var msg = args.map(function(a) { return typeof a === 'string' ? a : (function() { try { return JSON.stringify(a); } catch (_) { return String(a); } })(); }).join(' ').slice(0, 500);
+      window.pushErrorBuffer({ type: 'console', msg: msg });
+    } catch (_) {}
+    _origConsoleError.apply(console, arguments);
+  };
+})();
+</script>
+
 <!-- 請求書印刷プレビューモーダル -->
 <div class="modal-overlay" id="modal-invoice-print">
   <div style="max-width:820px;width:95vw;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
@@ -4216,7 +4281,108 @@ let previewRole = null; // 管理者用ロールプレビュー
 async function apiFetch(input, init = {}) {
   const headers = new Headers(init.headers || {});
   if (previewRole) headers.set('X-View-As', previewRole);
-  return fetch(input, { ...init, headers });
+  const res = await fetch(input, { ...init, headers });
+  // 失敗 API をバッファに残す（エラー報告用）。本体のクローンを読んで副作用を出さない。
+  if (!res.ok && typeof window.pushApiFailBuffer === 'function') {
+    try {
+      const url = typeof input === 'string' ? input : (input?.url || '');
+      let body = '';
+      try { body = (await res.clone().text()).slice(0, 200); } catch (_) {}
+      window.pushApiFailBuffer({ url, status: res.status, body });
+    } catch (_) {}
+  }
+  return res;
+}
+
+// ==================== エラー報告 ====================
+let _html2canvasLoading = null;
+function _ensureHtml2canvas() {
+  if (window.html2canvas) return Promise.resolve(window.html2canvas);
+  if (_html2canvasLoading) return _html2canvasLoading;
+  _html2canvasLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s.onload = () => resolve(window.html2canvas);
+    s.onerror = () => reject(new Error('html2canvas load failed'));
+    document.head.appendChild(s);
+  });
+  return _html2canvasLoading;
+}
+
+let _errorReportScreenshotBlob = null;
+async function openErrorReport() {
+  const fab = document.getElementById('error-report-fab');
+  const prev = document.getElementById('error-report-screenshot-preview');
+  const desc = document.getElementById('error-report-description');
+  const summary = document.getElementById('error-report-meta-summary');
+  if (desc) desc.value = '';
+  _errorReportScreenshotBlob = null;
+  if (prev) prev.innerHTML = '<span>取得中...</span>';
+  // モーダルが背景に映らないようキャプチャ前に FAB だけ一時的に隠す
+  if (fab) fab.style.visibility = 'hidden';
+  try {
+    const html2canvas = await _ensureHtml2canvas();
+    const canvas = await html2canvas(document.body, { scale: 0.7, logging: false, useCORS: true });
+    await new Promise((resolve) => canvas.toBlob((b) => {
+      _errorReportScreenshotBlob = b;
+      if (prev) {
+        prev.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(b);
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = '240px';
+        img.style.objectFit = 'contain';
+        prev.appendChild(img);
+      }
+      resolve();
+    }, 'image/png'));
+  } catch (e) {
+    console.warn('[error-report] screenshot failed:', e);
+    if (prev) prev.innerHTML = '<span>スクリーンショット取得に失敗しました（コメントのみで送信できます）</span>';
+  } finally {
+    if (fab) fab.style.visibility = '';
+  }
+  if (summary) {
+    const w = window.innerWidth, h = window.innerHeight;
+    const errs = (window.__errorBuffer || []).length;
+    const apis = (window.__apiFailBuffer || []).length;
+    summary.textContent = `付帯情報: URL / UA / 画面 ${w}x${h} / 直近エラー ${errs}件 / 直近失敗API ${apis}件`;
+  }
+  openModal('modal-error-report');
+}
+
+async function submitErrorReport() {
+  const btn = document.getElementById('error-report-submit-btn');
+  const desc = document.getElementById('error-report-description');
+  const description = desc ? desc.value.trim() : '';
+  const metadata = {
+    url: location.href,
+    userAgent: navigator.userAgent,
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+    recentErrors: (window.__errorBuffer || []).slice(-30),
+    recentFailedApis: (window.__apiFailBuffer || []).slice(-10),
+    user: currentUser ? { id: currentUser.id, email: currentUser.email, role: currentUser.role } : null,
+  };
+  const fd = new FormData();
+  if (_errorReportScreenshotBlob) fd.append('screenshot', _errorReportScreenshotBlob, 'screenshot.png');
+  fd.append('description', description);
+  fd.append('metadata', JSON.stringify(metadata));
+  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
+  try {
+    const res = await apiFetch(`${API}/error-report`, { method: 'POST', body: fd });
+    if (res.ok) {
+      showToast('エラー報告を送信しました', 'success');
+      closeModal('modal-error-report');
+    } else {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+      showToast('送信に失敗: ' + msg, 'error');
+    }
+  } catch (e) {
+    showToast('送信に失敗: ' + (e?.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '送信'; }
+  }
 }
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
 let currentTeamTab = 'video'; // 'video' | 'design' | 'secretary'
@@ -4259,6 +4425,9 @@ async function init() {
       document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
       document.getElementById('user-role').textContent = roleLabel(currentUser.role);
       renderHeaderAvatar();
+      // 認証済みユーザーにのみエラー報告ボタンを表示
+      const _fab = document.getElementById('error-report-fab');
+      if (_fab) _fab.style.display = '';
       // クリエイティブ初期ビューを適用
       const savedView = localStorage.getItem('hfs_cv_default_' + currentUser.id);
       if (savedView && savedView !== 'all') {
