@@ -1648,6 +1648,8 @@ router.post('/creatives', async (req, res) => {
       rank_applied: assigneeUser?.rank || null,
     });
   }
+  // 新規作成時も ball_holder_id を初期化（担当者付きで作られた場合は初期通知が飛ぶ）
+  syncBallHolderId(data.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   res.json(data);
 });
 
@@ -1796,6 +1798,12 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // ball_holder_id キャッシュ更新（status または assignee が変わった場合のみ）
+  // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
+  if (updateData.status !== undefined || assignee_id !== undefined) {
+    syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+  }
+
   res.json(data);
 });
 
@@ -1927,6 +1935,9 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
       actorUserId: req.user?.id || null,
     }).catch(e => console.warn('[notif] failed:', e.message));
   } catch(e) { console.warn('[notif] enqueue failed:', e.message); }
+
+  // ball_holder_id キャッシュ更新（管理者による直接ステータス変更も同様に通知発火対象）
+  syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
 
   res.json({
     ok: true,
@@ -2463,16 +2474,27 @@ router.post('/creatives/:id/assignments', async (req, res) => {
     .select(`*, users(id, full_name, role)`)
     .single();
   if (error) return res.status(500).json({ error: error.message });
+  // ball_holder_id キャッシュ更新（assignment 変更で誰が今ボール持つか変わるため）
+  syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   res.json(data);
 });
 
 // アサイン削除
 router.delete('/assignments/:id', async (req, res) => {
+  // 削除前に creative_id を控えておく（DELETE 後の同期に必要）
+  const { data: prev } = await supabase
+    .from('creative_assignments')
+    .select('creative_id')
+    .eq('id', req.params.id)
+    .maybeSingle();
   const { error } = await supabase
     .from('creative_assignments')
     .delete()
     .eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  if (prev?.creative_id) {
+    syncBallHolderId(prev.creative_id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+  }
   res.json({ ok: true });
 });
 
@@ -4203,6 +4225,109 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
   return ballMap[status] || { holder: '不明', type: 'unknown' };
 }
 
+// ==================== ball_holder_id キャッシュ同期 ====================
+//
+// 役割:
+//   通知機能（notify_ball_returned トリガー）が反応するのは creatives.ball_holder_id 列。
+//   一方、表示用の ball_holder（誰が今ボール持ってるか）は status × creative_assignments
+//   × projects.director_id から派生計算（getBallHolder）している。
+//
+//   トリガーで通知を打つには「派生結果のIDを実列にキャッシュUPDATEする」必要がある。
+//   これを担うのが syncBallHolderId()。
+//
+// 呼び出すべきタイミング:
+//   ・creative の status を更新した直後
+//   ・creative_assignments を追加・削除した直後
+//   ・projects.director_id を変更した直後（広範囲影響なので Phase 1 では未対応。Phase 2で再検討）
+//
+// 設計判断:
+//   getBallHolder() のロジックを温存してそのまま流用。Single source of truth を保つ。
+//   ball_holder_id が NULL／同値の場合は UPDATE しない（無駄な書き込みとトリガー誤発火を避ける）。
+//
+// パフォーマンス:
+//   1クリエイティブあたり追加クエリ 4本程度（creative + assignments + teams + project director）。
+//   バックフィル時はN+1注意（scripts/backfill_ball_holder_id.js は逐次実行で問題なし、
+//   全件でも数百〜数千件なので運用に耐える）。
+async function syncBallHolderId(creativeId, sb) {
+  const client = sb || supabase;
+  if (!creativeId) return null;
+  try {
+    // 1. クリエイティブ本体 + assignments + 案件専用ディレクター
+    const { data: c, error: cErr } = await client
+      .from('creatives')
+      .select(`
+        id, status, ball_holder_id, project_id, team_id,
+        projects(id, director_id),
+        creative_assignments(role, users(id, full_name, team_id))
+      `)
+      .eq('id', creativeId)
+      .maybeSingle();
+    if (cErr) { console.warn('[syncBallHolderId] creative fetch failed:', cErr.message); return null; }
+    if (!c) return null;
+
+    // 2. ディレクター解決用に teams を取得（チーム経由のディレクター推論）
+    const { data: teamsRaw } = await client
+      .from('teams')
+      .select('id, director_id, director:director_id(full_name), team_members(user_id)');
+    const directorByTeamId   = new Map();
+    const directorByUserId   = new Map();
+    const directorIdByTeamId = new Map();
+    const directorIdByUserId = new Map();
+    (teamsRaw || []).forEach(t => {
+      const name = t.director?.full_name || '';
+      if (t.director_id) {
+        directorByTeamId.set(t.id, name);
+        directorIdByTeamId.set(t.id, t.director_id);
+      }
+      (t.team_members || []).forEach(tm => {
+        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+          directorByUserId.set(tm.user_id, name);
+          directorIdByUserId.set(tm.user_id, t.director_id || null);
+        }
+      });
+    });
+
+    // 3. 案件専用ディレクターのフルネーム取得（assignment にディレクター無い時のフォールバック）
+    let projectDirector = null;
+    const projDirId = c.projects?.director_id;
+    if (projDirId) {
+      const { data: u } = await client.from('users').select('id, full_name').eq('id', projDirId).maybeSingle();
+      projectDirector = u || null;
+    }
+
+    // 4. getBallHolder() に投げて新しいID算出
+    const ball = getBallHolder(
+      c.status, c.creative_assignments,
+      directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+      projectDirector
+    );
+    // user_id（編集者・ディレクター）は単数 / user_ids（クライアントチェック後修正）は配列
+    // キャッシュ列は単数なので、user_ids の場合は先頭（編集者）を採用する
+    let nextHolderId = ball?.user_id || null;
+    if (!nextHolderId && Array.isArray(ball?.user_ids) && ball.user_ids.length > 0) {
+      nextHolderId = ball.user_ids[0];
+    }
+
+    // 5. 変化が無ければ UPDATE しない（トリガー無駄発火を回避）
+    if ((c.ball_holder_id || null) === (nextHolderId || null)) {
+      return c.ball_holder_id || null;
+    }
+
+    const { error: uErr } = await client
+      .from('creatives')
+      .update({ ball_holder_id: nextHolderId })
+      .eq('id', creativeId);
+    if (uErr) { console.warn('[syncBallHolderId] update failed:', uErr.message); return null; }
+    return nextHolderId;
+  } catch (e) {
+    console.warn('[syncBallHolderId] exception:', e.message);
+    return null;
+  }
+}
+
+// 外部スクリプト・他モジュールからも使えるよう named export はファイル末尾の
+// `router.syncBallHolderId = ...` ＋ `module.exports = router;` で公開している。
+
 // ==================== 訴求タイプ ====================
 
 // 訴求タイプマスター一覧
@@ -5729,4 +5854,10 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
   res.json({ ok: true, data });
 });
 
+// router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
+// 用途:
+//   const harukaRouter = require('./routes/haruka');                 // ルーター本体
+//   const { syncBallHolderId, getBallHolder } = require('./routes/haruka'); // ヘルパー
+router.syncBallHolderId = syncBallHolderId;
+router.getBallHolder    = getBallHolder;
 module.exports = router;
