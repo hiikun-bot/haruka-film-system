@@ -116,25 +116,49 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 .guide-card.soon .gc-arrow{color:#9ca3af}
 .gc-est{font-size:11px;color:var(--text-muted)}
 
-/* Layer (役職層) */
-.layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:18px}
-.layer-card{background:#fff;border-radius:14px;padding:18px;border:1px solid var(--border-light);text-align:center;text-decoration:none;color:inherit;cursor:pointer;transition:transform .15s,box-shadow .15s,border-color .15s}
-.layer-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(43,184,180,0.12)}
-.layer-card-icon{font-size:32px;margin-bottom:8px;line-height:1}
-.layer-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:4px}
-.layer-card-desc{font-size:11px;color:#6b7280;line-height:1.6}
+/* Layer (役職層) — 「選んでください感」を強く */
+.layer-cta{display:flex;align-items:center;justify-content:center;gap:10px;margin:18px 0 14px;font-size:14px;font-weight:800;color:var(--em-dark);text-align:center}
+.layer-cta-arrow{display:inline-block;font-size:22px;animation:bounce-y 1.4s ease-in-out infinite}
+@keyframes bounce-y{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+@keyframes pulse-shadow{0%,100%{box-shadow:0 0 0 0 rgba(62,207,202,0.55)}70%{box-shadow:0 0 0 14px rgba(62,207,202,0)}}
+.layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:6px}
+.layer-card{background:#fff;border-radius:14px;padding:20px 16px 14px;border:2px solid var(--border-light);text-align:center;text-decoration:none;color:inherit;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;position:relative;display:flex;flex-direction:column;gap:6px}
+.layer-card:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(43,184,180,0.18);border-color:var(--em)}
+.layer-card:active{transform:translateY(-1px)}
+.layer-card-icon{font-size:32px;margin-bottom:4px;line-height:1;transition:transform .25s}
+.layer-card:hover .layer-card-icon{transform:scale(1.12) rotate(-4deg)}
+.layer-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:2px}
+.layer-card-desc{font-size:11px;color:#6b7280;line-height:1.6;flex:1}
+.layer-card-pick{margin-top:10px;font-size:11px;font-weight:800;letter-spacing:0.08em;color:#fff;background:var(--em-dark);padding:5px 12px;border-radius:99px;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:all .18s;align-self:center;box-shadow:0 2px 6px rgba(43,184,180,0.25)}
+.layer-card-pick::after{content:"→";font-weight:900;transition:transform .18s}
+.layer-card:hover .layer-card-pick{transform:translateY(-1px);box-shadow:0 4px 10px rgba(43,184,180,0.4)}
+.layer-card:hover .layer-card-pick::after{transform:translateX(3px)}
+.layer-card.recommend{animation:pulse-shadow 2.4s ease-out infinite}
+.layer-card.recommend::before{content:"おすすめ";position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#F59E0B,#EA580C);color:#fff;font-size:10px;font-weight:800;letter-spacing:0.1em;padding:3px 10px;border-radius:99px;box-shadow:0 4px 10px rgba(234,88,12,0.35);white-space:nowrap}
 .layer-card[data-go="common"]{background:linear-gradient(180deg,var(--common-bg) 0%,#fff 100%);border-color:var(--common-border)}
 .layer-card[data-go="common"] .layer-card-title{color:var(--common)}
+.layer-card[data-go="common"] .layer-card-pick{background:var(--common)}
+.layer-card[data-go="common"]:hover{border-color:var(--common)}
 .layer-card[data-go="editor"]{background:linear-gradient(180deg,var(--editor-bg) 0%,#fff 100%);border-color:var(--editor-border)}
 .layer-card[data-go="editor"] .layer-card-title{color:var(--editor)}
+.layer-card[data-go="editor"] .layer-card-pick{background:var(--editor)}
+.layer-card[data-go="editor"]:hover{border-color:var(--editor)}
 .layer-card[data-go="designer"]{background:linear-gradient(180deg,var(--designer-bg) 0%,#fff 100%);border-color:var(--designer-border)}
 .layer-card[data-go="designer"] .layer-card-title{color:var(--designer)}
+.layer-card[data-go="designer"] .layer-card-pick{background:var(--designer)}
+.layer-card[data-go="designer"]:hover{border-color:var(--designer)}
 .layer-card[data-go="director"]{background:linear-gradient(180deg,var(--director-bg) 0%,#fff 100%);border-color:var(--director-border)}
 .layer-card[data-go="director"] .layer-card-title{color:var(--director)}
+.layer-card[data-go="director"] .layer-card-pick{background:var(--director)}
+.layer-card[data-go="director"]:hover{border-color:var(--director)}
 .layer-card[data-go="producer"]{background:linear-gradient(180deg,var(--producer-bg) 0%,#fff 100%);border-color:var(--producer-border)}
 .layer-card[data-go="producer"] .layer-card-title{color:var(--producer)}
+.layer-card[data-go="producer"] .layer-card-pick{background:var(--producer)}
+.layer-card[data-go="producer"]:hover{border-color:var(--producer)}
 .layer-card[data-go="secretary"]{background:linear-gradient(180deg,var(--secretary-bg) 0%,#fff 100%);border-color:var(--secretary-border)}
 .layer-card[data-go="secretary"] .layer-card-title{color:var(--secretary)}
+.layer-card[data-go="secretary"] .layer-card-pick{background:var(--secretary)}
+.layer-card[data-go="secretary"]:hover{border-color:var(--secretary)}
 
 /* Footer */
 .foot{margin-top:80px;padding:32px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
@@ -188,39 +212,50 @@ h2{font-size:22px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
 <!-- 役職層から探す -->
 <section>
   <span class="section-num">01 / BY ROLE</span>
-  <h2>① あなたの役職から探す</h2>
-  <p class="section-lead">あなたのロール（職種・役割）に該当するカテゴリを選ぶと、関連するガイドだけが下に表示されます。</p>
+  <h2 id="role-headline">① あなたの役職から探す</h2>
+  <p class="section-lead" id="role-lead">タップすると、その役職に関連するガイドだけが下に表示されます。</p>
+
+  <div class="layer-cta">
+    <span>👇 まずはここを <b style="color:var(--em-dark)">タップ</b> してください</span>
+    <span class="layer-cta-arrow">↓</span>
+  </div>
 
   <div class="layers">
     <a class="layer-card" data-go="common" onclick="filterCat('common')">
       <div class="layer-card-icon">👋</div>
       <div class="layer-card-title">全員共通</div>
       <div class="layer-card-desc">登録・ログイン・通知設定など</div>
+      <span class="layer-card-pick">選ぶ</span>
     </a>
     <a class="layer-card" data-go="editor" onclick="filterCat('editor')">
       <div class="layer-card-icon">🎬</div>
       <div class="layer-card-title">動画編集者</div>
       <div class="layer-card-desc">編集・納品・SOS・請求書</div>
+      <span class="layer-card-pick">選ぶ</span>
     </a>
     <a class="layer-card" data-go="designer" onclick="filterCat('designer')">
       <div class="layer-card-icon">🎨</div>
       <div class="layer-card-title">デザイナー</div>
       <div class="layer-card-desc">デザイン制作・納品・請求書</div>
+      <span class="layer-card-pick">選ぶ</span>
     </a>
     <a class="layer-card" data-go="director" onclick="filterCat('director')">
       <div class="layer-card-icon">🎯</div>
       <div class="layer-card-title">ディレクター</div>
       <div class="layer-card-desc">Dチェック・修正依頼・進行</div>
+      <span class="layer-card-pick">選ぶ</span>
     </a>
     <a class="layer-card" data-go="producer" onclick="filterCat('producer')">
       <div class="layer-card-icon">📊</div>
       <div class="layer-card-title">プロデューサー</div>
       <div class="layer-card-desc">案件作成・予算・Pチェック</div>
+      <span class="layer-card-pick">選ぶ</span>
     </a>
     <a class="layer-card" data-go="secretary" onclick="filterCat('secretary')">
       <div class="layer-card-icon">📋</div>
       <div class="layer-card-title">秘書 / 管理者</div>
       <div class="layer-card-desc">招待・マスター・権限管理</div>
+      <span class="layer-card-pick">選ぶ</span>
     </a>
   </div>
 </section>
@@ -516,6 +551,41 @@ function filterCat(cat){
     if (target) target.scrollIntoView({behavior:'smooth', block:'start'});
   }
 }
+
+// ロール → カテゴリのマッピング
+const ROLE_TO_CAT = {
+  editor: 'editor',
+  designer: 'designer',
+  director: 'director',
+  producer_director: 'producer', // P兼D は広い責任範囲のプロデューサー側に寄せる
+  producer: 'producer',
+  secretary: 'secretary',
+  admin: 'secretary',
+};
+
+// ログイン中なら自分のロールに合うカードを「あなた向け」として目立たせる
+(async function preselectMyRole(){
+  try {
+    const res = await fetch('/auth/me', { credentials: 'include' });
+    if (!res.ok) return;
+    const me = await res.json();
+    const cat = ROLE_TO_CAT[me?.role];
+    if (!cat) return;
+    const myCard = document.querySelector(`.layer-card[data-go="${cat}"]`);
+    if (myCard) {
+      myCard.classList.add('recommend');
+      // 既存の「選ぶ」ピルを「あなた向け ▶」に置換
+      const pick = myCard.querySelector('.layer-card-pick');
+      if (pick) pick.textContent = 'あなた向け';
+    }
+    // 見出しもパーソナライズ
+    const lead = document.getElementById('role-lead');
+    if (lead) {
+      const labels = {common:'全員共通', editor:'動画編集者', designer:'デザイナー', director:'ディレクター', producer:'プロデューサー', secretary:'秘書 / 管理者'};
+      lead.innerHTML = `あなたは <b style="color:var(--em-dark)">${labels[cat] || cat}</b> 向けです。下の「あなた向け」カードをタップ、または別の役職を選んでください。`;
+    }
+  } catch(_) { /* 未ログインなら何もしない */ }
+})();
 </script>
 
 </body>
