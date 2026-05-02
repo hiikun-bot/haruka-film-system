@@ -1242,6 +1242,28 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ==================== 案件収支スタンドアロンモーダル（報酬ボタンから直接起動） ==================== -->
+<!-- PR #150 で誤って追加されていなかったモーダル HTML を補完 -->
+<div class="modal-overlay" id="modal-project-finance">
+  <div class="modal" style="width:92vw;max-width:1020px;height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
+    <div style="padding:18px 28px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#fff;z-index:10;border-radius:16px 16px 0 0;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
+        <span id="pf-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">💰 案件収支</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-finance')">×</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;min-height:0">
+      <div id="pf-content" style="padding:24px 28px;max-width:920px">
+        <div style="color:var(--text-muted);font-size:13px">読み込み中...</div>
+      </div>
+    </div>
+    <div style="padding:12px 28px;border-top:1px solid var(--border);background:#fff;border-radius:0 0 16px 16px;flex-shrink:0;display:flex;justify-content:flex-end">
+      <button class="btn" onclick="closeModal('modal-project-finance')">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-submit-duplicate">
   <div class="modal-card" style="width:500px">
     <div class="modal-title" style="color:#A32D2D">⚠ 重複提出の確認<button class="modal-close" onclick="closeModal('modal-submit-duplicate')">×</button></div>
