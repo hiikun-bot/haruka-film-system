@@ -8,6 +8,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "@supabase/supabase-js": "^2.102.0",
     "axios": "^1.6.7",
     "bcryptjs": "^2.4.3",
