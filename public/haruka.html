@@ -1101,6 +1101,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <option value="時間"></option>
   <option value="月"></option>
 </datalist>
+<!-- 見積エディタの「品目」サジェスト（item_name_master から動的にビルド） -->
+<datalist id="ei-item-list"></datalist>
 
 <!-- 重複提出確認モーダル -->
 <!-- 全体連絡: 投稿/編集モーダル -->
@@ -7072,6 +7074,8 @@ function openEstimateEditor(eid) {
   document.getElementById('fest-id').value = eid || '';
   const isNew = !eid;
   document.getElementById('fest-editor-title').textContent = isNew ? '📋 見積を新規作成' : '📋 見積を編集';
+  // 品目マスター（datalist）を案件種別でフィルタしてロード（async / 失敗しても見積編集はブロックしない）
+  populateEstimateItemNameDatalist().catch(err => console.warn('[populateEstimateItemNameDatalist]', err));
 
   // 既定値の生成
   const today = new Date().toISOString().slice(0, 10);
@@ -7125,9 +7129,12 @@ function renderEstimateItems() {
   wrap.innerHTML = _festItems.map((it, idx) => {
     const amount = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0);
     return `<div style="display:grid;grid-template-columns:2fr 60px 60px 90px 90px 28px;gap:6px;padding:4px 0;align-items:center">
-      <input type="text"   style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" value="${esc(it.label)}"      placeholder="品目"     oninput="updateEstimateItem(${idx},'label',this.value)">
+      <input type="text" list="ei-item-list" data-fest-row="${idx}" data-fest-field="label"
+        style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" value="${esc(it.label)}" placeholder="品目"
+        oninput="updateEstimateItem(${idx},'label',this.value)" onchange="onEstimateItemNameChange(${idx},this.value)">
       <input type="number" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right" value="${it.quantity}" min="0" step="1"  oninput="updateEstimateItem(${idx},'quantity',this.value)">
-      <input type="text"   style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center" value="${esc(it.unit||'')}" placeholder="本/式"  oninput="updateEstimateItem(${idx},'unit',this.value)">
+      <input type="text"   data-fest-row="${idx}" data-fest-field="unit"
+        style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:center" value="${esc(it.unit||'')}" placeholder="本/式"  oninput="updateEstimateItem(${idx},'unit',this.value)">
       <input type="number" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;text-align:right" value="${it.unit_price}" min="0" step="1"  oninput="updateEstimateItem(${idx},'unit_price',this.value)">
       <span class="fest-item-amount" data-idx="${idx}" style="font-size:13px;font-weight:600;text-align:right;padding:5px 4px">${_yen(amount)}</span>
       <button type="button" style="background:none;border:none;color:#A32D2D;cursor:pointer;font-size:14px" onclick="removeEstimateItem(${idx})" title="行を削除">×</button>
@@ -7156,6 +7163,49 @@ function updateEstimateItem(idx, field, value) {
     _festItems[idx][field] = value;
   }
   refreshEstimateTotal();
+}
+
+// 見積エディタ: 品目入力欄の datalist を案件種別でフィルタしてビルド
+async function populateEstimateItemNameDatalist() {
+  const dl = document.getElementById('ei-item-list');
+  if (!dl) return;
+  // 案件種別が分かれば絞り込む（未設定なら全件）
+  let category = null;
+  try {
+    const proj = _pfData?.project;
+    if (proj && proj.project_type) category = getProjectType(proj);
+  } catch (_) { /* fallback to all */ }
+  const items = await getItemNameMasterForEstimate(category);
+  // カテゴリ未指定で全件の場合は重複名を 1 つにまとめる（datalist は単純な候補リスト）
+  const seen = new Set();
+  const opts = [];
+  for (const it of (items || [])) {
+    if (!it || !it.name) continue;
+    if (seen.has(it.name)) continue;
+    seen.add(it.name);
+    opts.push(`<option value="${esc(it.name)}"></option>`);
+  }
+  dl.innerHTML = opts.join('');
+}
+
+// 品目入力で完全一致したらマスターの default_unit を「単位」に補完（既に手動入力されていれば触らない）
+async function onEstimateItemNameChange(idx, value) {
+  if (!value || !_festItems[idx]) return;
+  let category = null;
+  try {
+    const proj = _pfData?.project;
+    if (proj && proj.project_type) category = getProjectType(proj);
+  } catch (_) {}
+  const items = await getItemNameMasterForEstimate(category);
+  const match = (items || []).find(it => it && it.name === value.trim());
+  if (!match || !match.default_unit) return;
+  // 既存の単位が空 or 既定値「式」のときだけ自動補完。手動で他の単位を入れていたら上書きしない
+  const cur = (_festItems[idx].unit || '').trim();
+  if (cur && cur !== '式') return;
+  _festItems[idx].unit = match.default_unit;
+  // DOM の単位入力欄も同期
+  const unitInput = document.querySelector(`#fest-items input[data-fest-row="${idx}"][data-fest-field="unit"]`);
+  if (unitInput) unitInput.value = match.default_unit;
 }
 
 function addEstimateItemRow(seed) {
