@@ -5500,18 +5500,27 @@ router.get('/item-name-master', async (req, res) => {
 
 // 新規作成
 router.post('/item-name-master', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
-  const { category, name, default_unit, sort_order } = req.body || {};
+  const { category, name, default_unit, default_unit_price, sort_order } = req.body || {};
   if (!category || !['video', 'design'].includes(category)) {
     return res.status(400).json({ error: 'category は video または design を指定してください' });
   }
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: '品目名は必須です' });
   }
+  let priceVal = null;
+  if (default_unit_price !== undefined && default_unit_price !== null && default_unit_price !== '') {
+    const n = parseInt(default_unit_price);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: '既定単価は0以上の整数で指定してください' });
+    }
+    priceVal = n;
+  }
   const { data, error } = await supabase.from('item_name_master')
     .insert({
       category,
       name: String(name).trim(),
       default_unit: default_unit ? String(default_unit).trim() : null,
+      default_unit_price: priceVal,
       sort_order: parseInt(sort_order) || 0,
       is_active: true
     })
@@ -5527,7 +5536,7 @@ router.post('/item-name-master', requireAuth, requirePermission('project.create_
 
 // 更新
 router.put('/item-name-master/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
-  const { category, name, default_unit, sort_order, is_active } = req.body || {};
+  const { category, name, default_unit, default_unit_price, sort_order, is_active } = req.body || {};
   const updateData = { updated_at: new Date().toISOString() };
   if (category !== undefined) {
     if (!['video', 'design'].includes(category)) {
@@ -5542,6 +5551,17 @@ router.put('/item-name-master/:id', requireAuth, requirePermission('project.crea
   }
   if (default_unit !== undefined) {
     updateData.default_unit = default_unit ? String(default_unit).trim() : null;
+  }
+  if (default_unit_price !== undefined) {
+    if (default_unit_price === null || default_unit_price === '') {
+      updateData.default_unit_price = null;
+    } else {
+      const n = parseInt(default_unit_price);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: '既定単価は0以上の整数で指定してください' });
+      }
+      updateData.default_unit_price = n;
+    }
   }
   if (sort_order !== undefined) updateData.sort_order = parseInt(sort_order) || 0;
   if (is_active !== undefined) updateData.is_active = !!is_active;
