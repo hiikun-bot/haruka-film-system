@@ -1648,9 +1648,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
           </div>
           <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">動画種別</label>
+            <label class="form-label">クリエイティブ種別</label>
             <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c')">
               <option value="video_short">ショート動画</option>
+              <option value="video_long">ロング動画</option>
               <option value="design_thumbnail">サムネイル</option>
               <option value="design_banner">バナー</option>
               <option value="design_post">投稿画像</option>
@@ -1658,9 +1659,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">商材</label>
+            <label class="form-label">商材 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
             <select class="form-select" id="c-product-id" onchange="tryAutoGenerateFileName()">
-              <option value="">案件を先に選択してください</option>
+              <option value="">未確定（後で設定）</option>
             </select>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -1682,9 +1683,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <!-- 右カラム -->
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">訴求タイプ</label>
+            <label class="form-label">訴求軸 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
             <select class="form-select" id="c-appeal-type" onchange="tryAutoGenerateFileName()">
-              <option value="">案件を先に選択してください</option>
+              <option value="">未確定（後で設定）</option>
             </select>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -1702,7 +1703,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
             <div style="display:flex;gap:6px">
-              <input class="form-input" id="c-file-name" placeholder="訴求タイプ選択後に自動生成されます" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
+              <input class="form-input" id="c-file-name" placeholder="訴求軸選択後に自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
               <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
             </div>
             <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
@@ -1756,9 +1757,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <!-- 左カラム -->
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">動画種別</label>
+            <label class="form-label">クリエイティブ種別</label>
             <select class="form-select" id="bulk-creative-type" onchange="autoSetCreativeFmt('bulk')">
               <option value="video_short">ショート動画</option>
+              <option value="video_long">ロング動画</option>
               <option value="design_thumbnail">サムネイル</option>
               <option value="design_banner">バナー</option>
               <option value="design_post">投稿画像</option>
@@ -1766,8 +1768,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">商材</label>
-            <select class="form-select" id="bulk-product-id"><option value="">案件を先に選択してください</option></select>
+            <label class="form-label">商材 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
+            <select class="form-select" id="bulk-product-id"><option value="">未確定（後で設定）</option></select>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div class="form-group" style="margin-bottom:0">
@@ -1787,8 +1789,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <!-- 右カラム -->
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">訴求タイプ</label>
-            <select class="form-select" id="bulk-appeal-type"><option value="">案件を先に選択してください</option></select>
+            <label class="form-label">訴求軸 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
+            <select class="form-select" id="bulk-appeal-type"><option value="">未確定（後で設定）</option></select>
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">登録本数</label>
@@ -3118,9 +3120,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div style="display:flex;flex-direction:column;gap:14px">
         <div style="font-size:12px;font-family:monospace;color:var(--em-dark);font-weight:600;word-break:break-all" id="ce-filename"></div>
         <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">動画種別</label>
+          <label class="form-label">クリエイティブ種別</label>
           <select class="form-select" id="ce-creative-type">
             <option value="video_short">ショート動画</option>
+            <option value="video_long">ロング動画</option>
             <option value="design_thumbnail">サムネイル</option>
             <option value="design_banner">バナー</option>
             <option value="design_post">投稿画像</option>
@@ -3146,8 +3149,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <select class="form-select" id="ce-creative-size"><option value="">（任意）</option></select>
         </div>
         <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">訴求タイプ</label>
-          <select class="form-select" id="ce-appeal-type"><option value="">（未設定）</option></select>
+          <label class="form-label">訴求軸 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
+          <select class="form-select" id="ce-appeal-type"><option value="">未確定（後で設定）</option></select>
         </div>
       </div>
       <!-- 右カラム -->
@@ -5016,7 +5019,7 @@ async function createCreative() {
 
   const assignee_id = document.getElementById('c-assignee-id').value;
   if (!project_id) { showToast('案件は必須です', 'warn'); return; }
-  if (!file_name) { showToast('提出用ファイル名は必須です\n訴求タイプを選択すると自動生成されます', 'warn'); return; }
+  if (!file_name) { showToast('提出用ファイル名は必須です\n訴求軸を選択するか手動で入力してください', 'warn'); return; }
   if (!assignee_id) { showToast('担当者を選択してください', 'warn'); return; }
 
   const product_id = document.getElementById('c-product-id')?.value || null;
@@ -9033,7 +9036,7 @@ async function reactivateMember(id) {
   }
 }
 
-// 案件選択時に訴求タイプを読み込む
+// 案件選択時に訴求軸を読み込む
 async function onProjectChange(projectId) {
   const sel = document.getElementById('c-appeal-type');
   const prodSel = document.getElementById('c-product-id');
@@ -9071,16 +9074,16 @@ async function onProjectChange(projectId) {
 
   const axes = sortByDisplayOrder(axesRes.ok ? await axesRes.json() : []);
   if (!axes.length) {
-    sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>';
+    sel.innerHTML = '<option value="">訴求軸が登録されていません</option>';
   } else {
-    sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
+    sel.innerHTML = '<option value="">未確定（後で設定）</option>' + axes.map(a =>
       `<option value="${a.id}">${a.name}</option>`
     ).join('');
   }
 
   const products = sortByDisplayOrder(prodRes.ok ? await prodRes.json() : []);
   if (prodSel) {
-    prodSel.innerHTML = '<option value="">（任意）</option>' + products.map(p =>
+    prodSel.innerHTML = '<option value="">未確定（後で設定）</option>' + products.map(p =>
       `<option value="${p.id}">${p.code} - ${p.name}</option>`
     ).join('');
   }
@@ -9251,7 +9254,7 @@ async function openCreateCreative() {
     });
   });
 
-  // 選択中の案件で訴求タイプと担当者を初期ロード（個別・一括両方）
+  // 選択中の案件で訴求軸と担当者を初期ロード（個別・一括両方）
   const initialProject = document.getElementById('c-project-id').value;
   const initialBulkProject = document.getElementById('bulk-project-id').value;
   await Promise.all([
@@ -9291,8 +9294,8 @@ async function onBulkProjectChange(projectId) {
     apiFetch(`${API}/projects/${projectId}/effective-products`),
   ]);
   const axes = sortByDisplayOrder(axesRes.ok ? await axesRes.json() : []);
-  if (!axes.length) { sel.innerHTML = '<option value="">訴求タイプが登録されていません</option>'; }
-  else { sel.innerHTML = '<option value="">訴求タイプを選択</option>' + axes.map(a =>
+  if (!axes.length) { sel.innerHTML = '<option value="">訴求軸が登録されていません</option>'; }
+  else { sel.innerHTML = '<option value="">未確定（後で設定）</option>' + axes.map(a =>
     `<option value="${a.id}">${a.name}</option>`
   ).join(''); }
   const products = sortByDisplayOrder(prodRes.ok ? await prodRes.json() : []);
@@ -9321,7 +9324,7 @@ async function bulkPreviewCreative() {
   const count = parseInt(document.getElementById('bulk-count').value);
   const draft_deadline = document.getElementById('bulk-draft-deadline').value;
   const final_deadline = document.getElementById('bulk-final-deadline').value;
-  if (!project_id || !appeal_type_id || !count) { showToast('案件・訴求タイプ・本数は必須です', 'warn'); return; }
+  if (!project_id || !count) { showToast('案件・本数は必須です', 'warn'); return; }
 
   // コード - 名称 → 名称のみ抽出
   const nameOnly = sel => {
@@ -9375,8 +9378,8 @@ async function bulkPreviewCreative() {
     <table style="width:100%;border-collapse:collapse">
       <thead>
         <tr style="background:var(--surface);position:sticky;top:0">
-          ${th('#')}${th('ファイル名')}${th('動画種別')}${th('商材')}${th('媒体')}
-          ${th('FMT')}${th('サイズ')}${th('訴求タイプ')}${th('チーム')}${th('担当者')}
+          ${th('#')}${th('ファイル名')}${th('クリエイティブ種別')}${th('商材')}${th('媒体')}
+          ${th('FMT')}${th('サイズ')}${th('訴求軸')}${th('チーム')}${th('担当者')}
           ${th('初稿提出日')}${th('最終納期')}
         </tr>
       </thead>
@@ -13872,7 +13875,7 @@ async function openCreativeEdit(id) {
   // ファイル名
   document.getElementById('ce-filename').textContent = c.file_name;
 
-  // 動画種別
+  // クリエイティブ種別
   document.getElementById('ce-creative-type').value = c.creative_type || 'video_short';
 
   // 媒体 / FMT / サイズ をマスターから組み立て
@@ -13896,7 +13899,7 @@ async function openCreativeEdit(id) {
   document.getElementById('ce-creative-fmt').value = c.creative_fmt  || '';
   document.getElementById('ce-creative-size').value = c.creative_size || '';
 
-  // 商材・訴求タイプ（案件に紐づく）
+  // 商材・訴求軸（案件に紐づく）
   const prodSel = document.getElementById('ce-product-id');
   const appealSel = document.getElementById('ce-appeal-type');
   prodSel.innerHTML = '<option value="">（未設定）</option>';
