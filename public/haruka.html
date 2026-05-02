@@ -4772,7 +4772,15 @@ function renderCreatives() {
     if (_role === 'designer' && !isDesign) return false;
     if (_role === 'editor' && isDesign) return false;
     if (currentView === 'mine') {
-      if (!c.creative_assignments?.some(a => a.users?.id === currentUser?.id)) return false;
+      // 自分の案件 = 以下のいずれかに該当する場合
+      //   1) 自分が編集者/デザイナー/director-as-editor として creative にアサインされている
+      //   2) 自分がその案件（projects）のディレクター（projects.director_id == 自分）
+      //   3) 自分がその案件（projects）のプロデューサー（projects.producer_id == 自分）
+      const myId = currentUser?.id;
+      const isAssignee = !!myId && c.creative_assignments?.some(a => a.users?.id === myId);
+      const isProjectDirector  = !!myId && c.projects?.director_id  === myId;
+      const isProjectProducer  = !!myId && c.projects?.producer_id  === myId;
+      if (!isAssignee && !isProjectDirector && !isProjectProducer) return false;
     }
     if (currentView === 'ball') {
       // ball_holder.user_id (editor/director) や user_ids ('all') で厳密判定。
