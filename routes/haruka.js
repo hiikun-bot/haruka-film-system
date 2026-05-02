@@ -4712,6 +4712,32 @@ router.get('/admin/user-stats', requireAuth, async (req, res) => {
   res.json(result);
 });
 
+// PostgREST スキーマキャッシュを手動でリロードする緊急用エンドポイント
+// 用途: 起動時の schema-sync で ALTER は通ったのに PostgREST のキャッシュに反映されず
+//       「Could not find the 'X' column of 'Y' in the schema cache」エラーが出る時の復旧。
+// 通常は db/migrate.js が NOTIFY pgrst, 'reload schema' を送るが、Supabase 側の
+// LISTEN が確立する前に送られたりすると取りこぼされる。再送できる手段を残しておく。
+router.post('/admin/reload-schema-cache', requireAuth, async (req, res) => {
+  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) return res.status(403).json({ error: '権限がありません' });
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  if (!dbUrl) return res.status(500).json({ error: 'DATABASE_URL/SUPABASE_DB_URL が未設定です' });
+  const { Client } = require('pg');
+  const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15000 });
+  try {
+    await client.connect();
+    // 取りこぼし対策で2回送る（PostgREST が処理中だと最初の通知を読み飛ばすケースがあるため）
+    await client.query("NOTIFY pgrst, 'reload schema'");
+    await new Promise(r => setTimeout(r, 500));
+    await client.query("NOTIFY pgrst, 'reload schema'");
+    res.json({ ok: true, message: 'PostgREST スキーマキャッシュのリロードを通知しました（反映に数秒かかります）' });
+  } catch (err) {
+    console.error('[reload-schema-cache]', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    try { await client.end(); } catch {}
+  }
+});
+
 // ==================== システム設定 ====================
 
 // システム設定取得（認証済みなら誰でも読める）

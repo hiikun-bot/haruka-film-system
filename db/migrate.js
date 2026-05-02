@@ -336,12 +336,18 @@ $$`;
       console.warn(`[schema-sync] RLS 一括有効化失敗: ${err.message}`);
     }
 
-    // PostgRESTのスキーマキャッシュをリロード（DDL反映のため）
-    try {
-      await client.query("NOTIFY pgrst, 'reload schema'");
-      console.log('[schema-sync] PostgRESTキャッシュをリロード通知');
-    } catch (err) {
-      console.warn('[schema-sync] PostgRESTリロード失敗（無視）:', err.message);
+    // PostgREST のスキーマキャッシュをリロード（DDL反映のため）
+    // NOTIFY は fire-and-forget で、Supabase 側の LISTEN が確立する前に送ると取りこぼされる
+    // ことがあるため、1秒の間隔を空けて3回送って多重化する。/api/admin/reload-schema-cache でも
+    // 手動再送可能。
+    for (let i = 0; i < 3; i++) {
+      try {
+        await client.query("NOTIFY pgrst, 'reload schema'");
+        console.log(`[schema-sync] PostgRESTキャッシュをリロード通知 (${i + 1}/3)`);
+      } catch (err) {
+        console.warn(`[schema-sync] PostgRESTリロード失敗 (${i + 1}/3, 無視):`, err.message);
+      }
+      if (i < 2) await new Promise(r => setTimeout(r, 1000));
     }
 
     return { ok: errCount === 0, okCount, errCount, errors, elapsedMs: elapsed };
