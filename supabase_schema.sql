@@ -945,13 +945,13 @@ CREATE TABLE IF NOT EXISTS announcement_acks (
 CREATE INDEX IF NOT EXISTS idx_announcement_acks_user ON announcement_acks(user_id);
 
 -- ==================== つぶやき機能（社内タイムライン）====================
--- 写真1枚 + 短いコメント + ❤️ いいね のミニ社内 SNS。
+-- 写真（任意） + 短いコメント + ❤️ いいね のミニ社内 SNS。
 -- ダッシュボード上に表示され、90 日で自動的に非表示（ピン留めは永続）。
 CREATE TABLE IF NOT EXISTS tweets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   body TEXT NOT NULL CHECK (char_length(body) <= 280),
-  image_data TEXT NOT NULL,
+  image_data TEXT,
   expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '90 days'),
   is_pinned BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()

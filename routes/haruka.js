@@ -3383,21 +3383,23 @@ router.get('/tweets', requireAuth, async (req, res) => {
   })));
 });
 
-// つぶやき投稿（写真 + 本文）
+// つぶやき投稿（写真は任意 + 本文）
 router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => {
   const file = req.file;
   const body = String(req.body?.body || '').trim();
-  if (!file) return res.status(400).json({ error: '写真が必要です' });
-  if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-    return res.status(400).json({ error: '画像ファイルを選択してください' });
-  }
   if (!body) return res.status(400).json({ error: '本文を入力してください' });
   if (body.length > TWEET_BODY_MAX) {
     return res.status(400).json({ error: `本文は ${TWEET_BODY_MAX} 字以内にしてください` });
   }
-  const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-  if (dataUrl.length > TWEET_IMAGE_MAX_BYTES) {
-    return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから再投稿してください）' });
+  let dataUrl = null;
+  if (file) {
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: '画像ファイルを選択してください' });
+    }
+    dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+    if (dataUrl.length > TWEET_IMAGE_MAX_BYTES) {
+      return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから再投稿してください）' });
+    }
   }
   const { data, error } = await supabase.from('tweets')
     .insert({ user_id: req.user.id, body, image_data: dataUrl })
