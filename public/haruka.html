@@ -3547,17 +3547,22 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
 
           <!-- サブディレクター（複数）— Dチェック依頼可能者 -->
+          <!-- UI仕様: Dチェックピッカーの「その他から選ぶ」と同等のロールフィルタチップ＋名前検索＋チェックボックスリスト -->
           <div class="form-group" style="margin-bottom:0;margin-top:14px">
-            <label class="form-label" style="display:flex;align-items:center;gap:6px">
-              サブディレクター
-              <span style="color:var(--text-muted);font-weight:400;font-size:11px">（Dチェック依頼可能者・任意）</span>
+            <label class="form-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
+              <span style="display:flex;align-items:center;gap:6px">
+                サブディレクター
+                <span style="color:var(--text-muted);font-weight:400;font-size:11px">（Dチェック依頼可能者・任意）</span>
+              </span>
+              <span id="p-sub-directors-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap;font-weight:400"></span>
             </label>
-            <div style="border:1.5px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-soft, #fafafa)">
-              <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-                <input type="text" id="p-sub-directors-search" placeholder="名前で検索..." class="form-input" style="flex:1;font-size:12px;padding:6px 10px">
-                <span id="p-sub-directors-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap"></span>
-              </div>
-              <div id="p-sub-directors-list" style="max-height:160px;overflow-y:auto;border-top:1px solid var(--border);padding-top:6px">
+            <div style="border:1.5px solid var(--border);border-radius:8px;padding:10px;background:var(--bg-soft, #fafafa)">
+              <!-- ロールフィルタチップ -->
+              <div id="p-sub-directors-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <!-- 名前検索 -->
+              <input type="text" id="p-sub-directors-search" placeholder="🔍 名前で検索..." style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
+              <!-- メンバーリスト -->
+              <div id="p-sub-directors-list" style="max-height:240px;overflow-y:auto">
                 <div style="padding:8px;color:var(--text-muted);font-size:12px">クライアントを選択するとチームメンバーが表示されます</div>
               </div>
               <div id="p-sub-directors-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
@@ -7958,7 +7963,16 @@ function clearDateFilter() {
 // 候補は「案件のクライアントに紐づくチームのメンバー」— ディレクター本人は除外する。
 // チームを変更（クライアント切替で間接的に変わる）したらピッカーをリフレッシュし、
 // チーム外になったIDが残っていたら警告表示+自動クリアする。
+//
+// UI仕様: Dチェックピッカー（dcp）と同じ「ロールフィルタチップ + 名前検索 + チェックボックスリスト」。
+// IME バグ対策のため、検索 input は一度しか描画せず、フィルタ変更時はリスト部分だけ更新する。
 let _editingProjectSubDirectorIds = [];
+let _psdState = {
+  roleFilter: '__all__',
+  search: '',
+  isComposing: false,
+  searchWired: false,
+};
 
 // 候補メンバー一覧を計算（client_id ベース）
 function getProjectSubDirectorCandidates() {
@@ -7991,18 +8005,19 @@ function getProjectSubDirectorCandidates() {
   return { candidates, teamCount: teamIds.length };
 }
 
+// メイン: 全体描画（チップ＋リスト）。検索 input の DOM は触らないが
+// 値は state から書き戻す（クライアント切り替え/モーダル開閉時にリセットしたい場合用）。
 function renderProjectSubDirectorPicker() {
   const list = document.getElementById('p-sub-directors-list');
   const counter = document.getElementById('p-sub-directors-counter');
   const warn = document.getElementById('p-sub-directors-warn');
+  const chipsWrap = document.getElementById('p-sub-directors-chips');
   if (!list) return;
   const { candidates, teamCount } = getProjectSubDirectorCandidates();
-  const search = (document.getElementById('p-sub-directors-search')?.value || '').toLowerCase();
   const directorId = document.getElementById('p-director-id')?.value || '';
 
   // チーム外になったIDを検出してクリア
   const allowedSet = new Set(candidates.map(c => c.id));
-  // ディレクター本人がサブに残っていたら除外（director を変更した直後など）
   const dropped = _editingProjectSubDirectorIds.filter(id => !allowedSet.has(id) || id === directorId);
   if (dropped.length) {
     _editingProjectSubDirectorIds = _editingProjectSubDirectorIds.filter(id => allowedSet.has(id) && id !== directorId);
@@ -8015,7 +8030,12 @@ function renderProjectSubDirectorPicker() {
     warn.textContent = '';
   }
 
+  // 検索 input の wiring（1回だけ）
+  psdWireSearchInput();
+
+  // 候補ゼロ時の表示
   if (!candidates.length) {
+    if (chipsWrap) chipsWrap.innerHTML = '';
     if (teamCount === 0) {
       list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">クライアントを選択するとチームメンバーが表示されます</div>';
     } else {
@@ -8025,36 +8045,108 @@ function renderProjectSubDirectorPicker() {
     return;
   }
 
-  const filtered = candidates.filter(m => {
-    if (!search) return true;
-    return (m.full_name || '').toLowerCase().includes(search)
-        || (m.nickname || '').toLowerCase().includes(search);
-  });
-
-  if (!filtered.length) {
-    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">該当なし</div>';
-  } else {
-    list.innerHTML = filtered.map(m => {
-      const checked = _editingProjectSubDirectorIds.includes(m.id);
-      const idEsc = esc(m.id);
-      const name = esc(m.full_name || '(名前未設定)');
-      const role = esc(m.role || '');
-      return `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;border-radius:6px" onmouseover="this.style.background='rgba(0,0,0,0.03)'" onmouseout="this.style.background=''">
-        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleProjectSubDirector('${idEsc}')" style="width:15px;height:15px;cursor:pointer">
-        <span style="font-size:13px">${name}</span>
-        ${role ? `<span style="font-size:10px;color:var(--text-muted);margin-left:4px">${role}</span>` : ''}
-      </label>`;
+  // ロールチップ描画（dcp と同じ helper を再利用: dcpCountByRole / dcpChipDefs / roleLabel）
+  if (chipsWrap) {
+    const counts = dcpCountByRole(candidates.map(m => ({ role: m.role || '' })));
+    const cur = _psdState.roleFilter || '__all__';
+    chipsWrap.innerHTML = dcpChipDefs(counts).map(c => {
+      const active = (cur === c.value);
+      return `<button type="button" data-role="${esc(c.value)}" onclick="psdSetRoleFilter('${esc(c.value)}')"
+        style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
+               background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
+               color:${active ? '#fff' : 'var(--text)'};
+               font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
+        ${esc(c.label)}(${c.count})
+      </button>`;
     }).join('');
   }
 
-  if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+  psdRenderList();
 
-  // 検索ボックスの oninput を一度だけ仕込む
-  const searchEl = document.getElementById('p-sub-directors-search');
-  if (searchEl && !searchEl._wired) {
-    searchEl._wired = true;
-    searchEl.addEventListener('input', renderProjectSubDirectorPicker);
+  if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+}
+
+// リストだけ更新（検索 input には触らない＝IME 中断回避）
+function psdRenderList() {
+  const list = document.getElementById('p-sub-directors-list');
+  if (!list) return;
+  const { candidates } = getProjectSubDirectorCandidates();
+  const roleFilter = _psdState.roleFilter || '__all__';
+  const search = (_psdState.search || '').trim().toLowerCase();
+
+  let filtered = candidates;
+  if (roleFilter && roleFilter !== '__all__') {
+    if (roleFilter === '__other__') {
+      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
+      filtered = filtered.filter(m => !known.has(m.role || ''));
+    } else {
+      filtered = filtered.filter(m => (m.role || '') === roleFilter);
+    }
   }
+  if (search) {
+    filtered = filtered.filter(m =>
+      (m.full_name || '').toLowerCase().includes(search) ||
+      (m.nickname || '').toLowerCase().includes(search)
+    );
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px;text-align:center">該当なし</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(m => {
+    const isChecked = _editingProjectSubDirectorIds.includes(m.id);
+    const idEsc = esc(m.id);
+    const name = esc(m.full_name || '(名前未設定)');
+    const role = m.role || '';
+    const roleBadge = role
+      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(roleLabel(role))}</span>`
+      : '';
+    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
+      <input type="checkbox" value="${idEsc}" ${isChecked ? 'checked' : ''} onchange="toggleProjectSubDirector('${idEsc}')" style="margin:0;width:16px;height:16px;cursor:pointer">
+      <span style="font-size:13px;font-weight:500;color:var(--text)">${name}</span>
+      ${roleBadge}
+    </label>`;
+  }).join('');
+}
+
+// チップの active 表示だけ更新（input/list には触らない）
+function psdUpdateChipsActive() {
+  const wrap = document.getElementById('p-sub-directors-chips');
+  if (!wrap) return;
+  const cur = _psdState.roleFilter || '__all__';
+  wrap.querySelectorAll('button[data-role]').forEach(btn => {
+    const active = (btn.getAttribute('data-role') === cur);
+    btn.style.background  = active ? 'var(--em-dark, #0d9488)' : '#fff';
+    btn.style.color       = active ? '#fff' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
+    btn.style.fontWeight  = active ? '600' : '500';
+  });
+}
+
+// 検索 input の IME 安全 wiring（1度だけ）
+function psdWireSearchInput() {
+  const ipt = document.getElementById('p-sub-directors-search');
+  if (!ipt || _psdState.searchWired) return;
+  _psdState.searchWired = true;
+  ipt.addEventListener('compositionstart', () => { _psdState.isComposing = true; });
+  ipt.addEventListener('compositionend', (ev) => {
+    _psdState.isComposing = false;
+    _psdState.search = ev.target.value;
+    psdRenderList();
+  });
+  ipt.addEventListener('input', (ev) => {
+    if (_psdState.isComposing) return;
+    _psdState.search = ev.target.value;
+    psdRenderList();
+  });
+}
+
+function psdSetRoleFilter(role) {
+  _psdState.roleFilter = role || '__all__';
+  psdUpdateChipsActive();
+  psdRenderList();
 }
 
 function toggleProjectSubDirector(userId) {
@@ -8065,14 +8157,28 @@ function toggleProjectSubDirector(userId) {
   } else {
     _editingProjectSubDirectorIds.push(userId);
   }
-  renderProjectSubDirectorPicker();
+  // チェック状態は <label> の background だけ更新（再描画でフォーカス飛ばさない）
+  document.querySelectorAll(`#p-sub-directors-list input[type="checkbox"][value="${CSS.escape(userId)}"]`).forEach(inp => {
+    const label = inp.closest('label');
+    if (label) {
+      label.style.background = _editingProjectSubDirectorIds.includes(userId) ? 'var(--em-pale, #ecfdfb)' : '#fff';
+    }
+  });
+  // counter だけ更新
+  const counter = document.getElementById('p-sub-directors-counter');
+  if (counter) {
+    const { candidates } = getProjectSubDirectorCandidates();
+    counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+  }
 }
 
 // クライアント変更時 — サブディレクター候補をリフレッシュ
 function onProjectClientChange() {
-  // 検索ボックスはリセット
+  // 検索・フィルタはリセット
   const searchEl = document.getElementById('p-sub-directors-search');
   if (searchEl) searchEl.value = '';
+  _psdState.search = '';
+  _psdState.roleFilter = '__all__';
   renderProjectSubDirectorPicker();
 }
 
@@ -8106,6 +8212,8 @@ function openProjectModal(preClientId) {
   document.getElementById('p-deadline-weekday').value = '';
   // サブディレクター: 新規は空で初期化
   _editingProjectSubDirectorIds = [];
+  _psdState.search = '';
+  _psdState.roleFilter = '__all__';
   const subSearch = document.getElementById('p-sub-directors-search');
   if (subSearch) subSearch.value = '';
   const subWarn = document.getElementById('p-sub-directors-warn');
@@ -8164,6 +8272,8 @@ function openEditProject(p) {
 
   // サブディレクター: DB値を復元（クライアント外IDが残っていれば render 側で警告クリア）
   _editingProjectSubDirectorIds = Array.isArray(p.sub_director_ids) ? [...p.sub_director_ids] : [];
+  _psdState.search = '';
+  _psdState.roleFilter = '__all__';
   const subSearch = document.getElementById('p-sub-directors-search');
   if (subSearch) subSearch.value = '';
   const subWarn = document.getElementById('p-sub-directors-warn');
