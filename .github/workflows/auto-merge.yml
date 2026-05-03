@@ -1,8 +1,21 @@
 name: Auto-merge
 
+# auto-merge ラベル付き PR の GitHub Auto-merge を有効化する。
+#
+# migration ガード（重要）:
+#   migration ファイル（migrations/** または supabase_schema.sql）を含む PR は、
+#   `db-migration-applied` ラベルが付くまで Auto-merge を **有効化しない**。
+#   さらに、既に有効化済みの PR で needs-db-migration が後から付いて
+#   db-migration-applied がまだの場合は --disable-auto で打ち消す（race防止）。
+#
+# 過去事例（PR #204）:
+#   needs-db-migration ラベル付与より先に auto-merge が走り、guard が初回 pass を返した
+#   状態でマージされて本番DB未適用のままRailwayへデプロイされた。
+#   その再発防止のため、auto-merge.yml 自身がラベル状態とPRファイルを直接確認する。
+
 on:
   pull_request:
-    types: [labeled, opened, reopened, synchronize, ready_for_review]
+    types: [labeled, unlabeled, opened, reopened, synchronize, ready_for_review]
   check_suite:
     types: [completed]
   workflow_run:
@@ -32,21 +45,52 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             2>/dev/null || true
 
-      - name: PR の auto-merge を有効化
+      - name: PR の auto-merge を有効化（migration ガード付き）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
+          set -e
           if [ -z "$PR_NUMBER" ]; then
             echo "PR番号が取得できないためスキップ（check_suite / workflow_run の場合は自動補完なし）"
             exit 0
           fi
-          # auto-merge ラベルが付いていれば auto-merge を有効化
+
+          # 1) ラベルを取得
           LABELS=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' || echo "")
-          if echo "$LABELS" | grep -qx "auto-merge"; then
-            echo "auto-merge ラベル検出 → GitHub Auto-merge を有効化"
-            gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --auto --delete-branch || true
-          else
+          if ! echo "$LABELS" | grep -qx "auto-merge"; then
             echo "auto-merge ラベルなし → スキップ"
+            exit 0
           fi
+
+          # 2) PR が migration を含むか判定
+          #    needs-db-migration ラベルがまだ付与されていない race を防ぐため、
+          #    PR の files API も直接見る。
+          MIGRATION_FILE_COUNT=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json files \
+            --jq '[.files[] | select(.path | startswith("migrations/") or . == "supabase_schema.sql")] | length')
+          HAS_NEEDS_LABEL=false
+          HAS_APPLIED_LABEL=false
+          echo "$LABELS" | grep -qx "needs-db-migration"   && HAS_NEEDS_LABEL=true
+          echo "$LABELS" | grep -qx "db-migration-applied" && HAS_APPLIED_LABEL=true
+
+          echo "MIGRATION_FILE_COUNT=$MIGRATION_FILE_COUNT"
+          echo "HAS_NEEDS_LABEL=$HAS_NEEDS_LABEL"
+          echo "HAS_APPLIED_LABEL=$HAS_APPLIED_LABEL"
+
+          IS_MIGRATION_PR=false
+          if [ "$MIGRATION_FILE_COUNT" -gt 0 ] || [ "$HAS_NEEDS_LABEL" = "true" ]; then
+            IS_MIGRATION_PR=true
+          fi
+
+          # 3) migration を含む PR で db-migration-applied 未付与なら、
+          #    既存の auto-merge を打ち消して終了
+          if [ "$IS_MIGRATION_PR" = "true" ] && [ "$HAS_APPLIED_LABEL" != "true" ]; then
+            echo "⏸ migration を含む PR だが db-migration-applied 未付与 → auto-merge を無効化（再有効化はラベル付与後）"
+            gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --disable-auto 2>/dev/null || true
+            exit 0
+          fi
+
+          # 4) ガード条件 OK → Auto-merge を有効化
+          echo "✅ ガード条件OK → GitHub Auto-merge を有効化"
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --auto --delete-branch || true
