@@ -2973,7 +2973,9 @@ router.get('/members', requireAuth, async (req, res) => {
   // （schema-sync が失敗していて本番DBに該当列が存在しないケースのため。PR #91 / #79 と同様パターン）
   // feedback batch 002 で追加: holiday_weekdays / camera_model / tripod_info / lighting_info
   // 機材情報・休日曜日はチーム設計に必要なので一覧API でも返す（機微情報ではないので非機微列）。
-  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info';
+  // default_creative_tab は最も新しい列なので baseColsWith にだけ含めて、未適用環境では fallback で外す
+  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab';
+  // hide_birth_year がない環境向けフォールバック（default_creative_tab も同様に外す）
   const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
   // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
   const baseColsLegacy  = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
@@ -3030,17 +3032,32 @@ router.get('/members', requireAuth, async (req, res) => {
 // メンバー作成
 router.post('/members', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
   const { email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id,
-          birthday, weekday_hours, weekend_hours } = req.body;
+          birthday, weekday_hours, weekend_hours, default_creative_tab } = req.body;
   if (!email || !full_name || !role) return res.status(400).json({ error: 'メール・名前・ロールは必須です' });
-  const { data, error } = await supabase
-    .from('users')
-    .insert({ email, full_name, role, job_type, rank: rank || null, team_id: team_id || null,
-              slack_dm_id: slack_dm_id || null, chatwork_dm_id: chatwork_dm_id || null,
-              birthday: birthday || null,
-              weekday_hours: weekday_hours || [{from:9,to:18}],
-              weekend_hours: weekend_hours || null })
-    .select()
-    .single();
+  // default_creative_tab のバリデーション ('all' / 'video' / 'design' / null)
+  const ALLOWED_DCT = new Set(['all', 'video', 'design']);
+  let dctValue = null;
+  if (default_creative_tab !== undefined && default_creative_tab !== null && default_creative_tab !== '') {
+    if (typeof default_creative_tab !== 'string' || !ALLOWED_DCT.has(default_creative_tab)) {
+      return res.status(400).json({ error: 'default_creative_tab は all / video / design / null のいずれかにしてください' });
+    }
+    dctValue = default_creative_tab;
+  }
+  const insertPayload = {
+    email, full_name, role, job_type, rank: rank || null, team_id: team_id || null,
+    slack_dm_id: slack_dm_id || null, chatwork_dm_id: chatwork_dm_id || null,
+    birthday: birthday || null,
+    weekday_hours: weekday_hours || [{from:9,to:18}],
+    weekend_hours: weekend_hours || null,
+    default_creative_tab: dctValue,
+  };
+  let { data, error } = await supabase.from('users').insert(insertPayload).select().single();
+  // default_creative_tab 列が無い環境（migration 未適用）でも落ちないようフォールバック
+  if (error && (/column .+ does not exist/.test(error.message || '') || /Could not find the .+ column/.test(error.message || '') || error.code === 'PGRST204')) {
+    console.warn('[members:create] default_creative_tab 列なし → fallback で再試行:', error.message);
+    delete insertPayload.default_creative_tab;
+    ({ data, error } = await supabase.from('users').insert(insertPayload).select().single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -3275,8 +3292,25 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     account_type, account_number, account_holder_kana,
     phone, postal_code, address,
     // feedback batch 002: カメラ機材 / 休日曜日
-    camera_model, tripod_info, lighting_info, holiday_weekdays
+    camera_model, tripod_info, lighting_info, holiday_weekdays,
+    // クリエイティブ画面の初期表示タブ ('all' / 'video' / 'design' / null)
+    default_creative_tab
   } = req.body;
+
+  // default_creative_tab のバリデーション: 'all' / 'video' / 'design' / null のみ許可
+  // それ以外（不正値）は NULL として保存（前向きフォールバック）
+  const ALLOWED_DEFAULT_CREATIVE_TAB = new Set(['all', 'video', 'design']);
+  let normalizedDefaultCreativeTab;
+  if (default_creative_tab === undefined) {
+    // リクエストに含まれない → 既存値を上書きしない（updateData に入れない）
+    normalizedDefaultCreativeTab = undefined;
+  } else if (default_creative_tab === null || default_creative_tab === '') {
+    normalizedDefaultCreativeTab = null;
+  } else if (typeof default_creative_tab === 'string' && ALLOWED_DEFAULT_CREATIVE_TAB.has(default_creative_tab)) {
+    normalizedDefaultCreativeTab = default_creative_tab;
+  } else {
+    return res.status(400).json({ error: 'default_creative_tab は all / video / design / null のいずれかにしてください' });
+  }
 
   const updateData = {
     full_name, nickname: nickname || null, job_type,
@@ -3295,6 +3329,10 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updated_at: new Date().toISOString()
   };
   if (updateData.holiday_weekdays === undefined) delete updateData.holiday_weekdays;
+  // default_creative_tab: undefined（リクエスト未指定）なら更新せず、それ以外（null含む）は反映
+  if (normalizedDefaultCreativeTab !== undefined) {
+    updateData.default_creative_tab = normalizedDefaultCreativeTab;
+  }
   // 機微フィールド（個人情報・口座）は 本人 or member.edit_password 保有者のみ更新可
   // → producer/PD が下位メンバーの口座情報を書き換えられないよう分離
   if (isSelf || isAdmin) {
@@ -3353,6 +3391,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
       // 列名が抽出できなければ、追加で入れた可能性のある列をまとめて落として最後の挑戦
       console.warn('[members:update] 列名抽出不可 → 追加カラム一括除外で再保存:', error.message);
       ['hide_birth_year','holiday_weekdays','camera_model','tripod_info','lighting_info',
+       'default_creative_tab',
        'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
        'account_holder_kana','phone','postal_code','address','nickname','note','birthday']
         .forEach(k => { if (k in attempt) delete attempt[k]; });
