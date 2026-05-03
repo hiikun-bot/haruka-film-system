@@ -1132,6 +1132,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS camera_model TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tripod_info  TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT;
 
+-- ==================== users クリエイティブ画面の初期表示タブ ====================
+-- (migrations/2026-05-04_users_default_creative_tab.sql)
+-- 値: 'all' / 'video' / 'design' / NULL（NULL はロール準拠フォールバック）
+-- CHECK 制約は付けない（将来タブが増える想定のため柔軟に）。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS default_creative_tab TEXT;
+
 -- ==================== 案件収支（Project Accounting）— Step A ====================
 -- 詳細は docs/project_accounting_design_ja.md
 -- スタンドアロン migration: migrations/2026-05-02_project_accounting_step_a.sql

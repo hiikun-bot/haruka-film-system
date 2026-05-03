@@ -2895,6 +2895,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </select>
           <div style="font-size:12px;color:var(--text-muted);margin-top:6px">クリエイティブ一覧を開いたときの初期表示フィルターです</div>
         </div>
+        <div class="form-group" style="margin-bottom:4px">
+          <label class="form-label">初期表示クリエイティブ画面</label>
+          <select class="form-select" id="m-default-creative-tab" style="font-size:14px;padding:10px 12px">
+            <option value="">自動（ロール準拠）</option>
+            <option value="all">共通（全件）</option>
+            <option value="video">動画編集</option>
+            <option value="design">デザイン</option>
+          </select>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">クリエイティブ画面を開いたときに最初に表示されるタブです（自動の場合: デザイナーはデザイン / それ以外は動画編集）</div>
+        </div>
       </div>
 
       <!-- Tab 2: 連絡先 -->
@@ -7055,6 +7065,8 @@ function openAddMember() {
   document.getElementById('m-postal-code').value = '';
   document.getElementById('m-address').value = '';
   document.getElementById('m-creative-default-view').value = 'all';
+  // 初期表示クリエイティブ画面（新規作成時は「自動 = ロール準拠」をデフォルトに）
+  if (document.getElementById('m-default-creative-tab')) document.getElementById('m-default-creative-tab').value = '';
   // 機材・休日（feedback batch 002）
   if (document.getElementById('m-camera-model'))  document.getElementById('m-camera-model').value = '';
   if (document.getElementById('m-tripod-info'))   document.getElementById('m-tripod-info').value = '';
@@ -7106,6 +7118,12 @@ function openEditMember(m) {
     try { initTimeRanges('weekend', weRanges || [{from:10,to:17}]); } catch(_) {}
     setVal('m-note', m.note || '');
     setVal('m-creative-default-view', localStorage.getItem('hfs_cv_default_' + m.id) || 'all');
+    // 初期表示クリエイティブ画面（DB の default_creative_tab。NULL なら 'auto' = 空文字）
+    {
+      const v = m.default_creative_tab;
+      const allowed = (v === 'all' || v === 'video' || v === 'design') ? v : '';
+      setVal('m-default-creative-tab', allowed);
+    }
     setVal('m-bank-name', m.bank_name || '');
     setVal('m-bank-code', m.bank_code || '');
     setVal('m-branch-name', m.branch_name || '');
@@ -7336,6 +7354,9 @@ async function submitMember() {
   const tripod_info   = document.getElementById('m-tripod-info')?.value.trim()   || null;
   const lighting_info = document.getElementById('m-lighting-info')?.value.trim() || null;
   const holiday_weekdays = collectHolidayWeekdays();
+  // 初期表示クリエイティブ画面: 空文字 = 自動 (NULL 送信)。それ以外は 'all'/'video'/'design'
+  const _dctRaw = document.getElementById('m-default-creative-tab')?.value;
+  const default_creative_tab = (_dctRaw === 'all' || _dctRaw === 'video' || _dctRaw === 'design') ? _dctRaw : null;
   if (!full_name) { showToast('名前は必須です', 'warn'); return; }
   // 「所属チーム（基本）」が案件チーム（非基本）のままなら警告
   if (team_id) {
@@ -7353,6 +7374,8 @@ async function submitMember() {
     phone, postal_code, address,
     // feedback batch 002
     camera_model, tripod_info, lighting_info, holiday_weekdays,
+    // クリエイティブ画面の初期表示タブ
+    default_creative_tab,
   };
   let res;
   if (id) {

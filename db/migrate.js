@@ -202,6 +202,9 @@ async function runSchemaSync() {
         deleted_invoice_item_ids JSONB
       )`,
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_birth_year BOOLEAN DEFAULT false",
+      // メンバーごとのクリエイティブ画面の初期表示タブ (migrations/2026-05-04_users_default_creative_tab.sql)
+      // 値: 'all' / 'video' / 'design' / NULL（NULL はロール準拠フォールバック）。schema-sync 失敗時の silent skip 防止
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_creative_tab TEXT",
       // 全体連絡 (announcements) — ダッシュボードに表示される全社向け連絡 + 各メンバーの完了状況
       `CREATE TABLE IF NOT EXISTS announcements (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
