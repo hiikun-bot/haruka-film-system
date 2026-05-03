@@ -2060,6 +2060,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- クリエイティブ -->
 <div id="page-creatives" class="page">
   <div id="alert-container"></div>
+  <!-- クリエイティブ種別タブ（共通／動画編集／デザイン） -->
+  <div id="creative-type-tabs" style="display:flex;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin:16px 20px 0;max-width:520px">
+    <button id="cv-tab-all" type="button" onclick="setCreativeTab('all')"
+      style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)">
+      共通 <span id="cv-tab-all-count" style="font-weight:500;opacity:.85">(0)</span>
+    </button>
+    <button id="cv-tab-video" type="button" onclick="setCreativeTab('video')"
+      style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+      🎬 動画編集 <span id="cv-tab-video-count" style="font-weight:500;opacity:.85">(0)</span>
+    </button>
+    <button id="cv-tab-design" type="button" onclick="setCreativeTab('design')"
+      style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+      🎨 デザイン <span id="cv-tab-design-count" style="font-weight:500;opacity:.85">(0)</span>
+    </button>
+  </div>
   <div class="toolbar">
     <div class="toolbar-row">
       <span style="font-size:13px;color:var(--text-muted);font-weight:500">クライアント：</span>
@@ -4848,6 +4863,7 @@ async function submitErrorReport() {
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
 let currentTeamTab = 'video'; // 'video' | 'design' | 'secretary'
 let currentMemberTab = 'video'; // 'video' | 'design'
+let currentCreativeTab = 'all'; // 'all' | 'video' | 'design' — クリエイティブ画面の種別タブ
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 // 複数選択対応: 選択中のクライアントID集合（空 Set = 全件）
 let currentClientIds = new Set();
@@ -4902,6 +4918,11 @@ async function init() {
         const btn = document.querySelector(`.ft[onclick="setView(this,'${savedView}')"]`);
         if (btn) { document.querySelectorAll('.ft').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }
       }
+      // クリエイティブ画面の初期種別タブを適用（default_creative_tab → ロールfallback）
+      try {
+        const initialCvTab = pickInitialCreativeTab(currentUser);
+        setCreativeTab(initialCvTab);
+      } catch (e) { console.warn('[HFS] setCreativeTab init failed:', e); }
     } else {
       window.location.href = '/login.html';
       return;
@@ -5898,6 +5919,37 @@ function sortByDisplayOrder(items) {
 }
 
 // メンバータブ
+// クリエイティブ画面の種別タブ（共通／動画編集／デザイン）
+function pickInitialCreativeTab(user) {
+  const explicit = user && user.default_creative_tab;
+  if (explicit === 'all' || explicit === 'video' || explicit === 'design') return explicit;
+  // フォールバック: ロール判定
+  if (user && (user.role === 'designer' || user.job_type === 'design')) return 'design';
+  return 'video';
+}
+
+function setCreativeTab(type) {
+  if (type !== 'all' && type !== 'video' && type !== 'design') type = 'all';
+  const changed = (currentCreativeTab !== type);
+  currentCreativeTab = type;
+  const aBtn = document.getElementById('cv-tab-all');
+  const vBtn = document.getElementById('cv-tab-video');
+  const dBtn = document.getElementById('cv-tab-design');
+  if (aBtn && vBtn && dBtn) {
+    const baseStyle = `flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;`;
+    const activeStyle = `background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)`;
+    const inactiveStyle = `background:transparent;color:var(--em-dark)`;
+    aBtn.style.cssText = baseStyle + (type === 'all' ? activeStyle : inactiveStyle);
+    vBtn.style.cssText = baseStyle + (type === 'video' ? activeStyle : inactiveStyle);
+    dBtn.style.cssText = baseStyle + (type === 'design' ? activeStyle : inactiveStyle);
+  }
+  // タブ切替時はページネーションを1ページ目へ戻す
+  if (changed) {
+    creativesPage.offset = 0;
+  }
+  if (typeof renderCreatives === 'function') renderCreatives();
+}
+
 function setMemberTab(type) {
   currentMemberTab = type;
   const vBtn = document.getElementById('member-tab-video');
@@ -6324,6 +6376,8 @@ function renderCreatives() {
   activeBalls.push('done');
 
   const _role = effectiveRole();
+  // タブ別カウント（共通/動画/デザイン） — タブ以外のフィルタは適用済の母集合に対して計算
+  let _cvTabCountAll = 0, _cvTabCountVideo = 0, _cvTabCountDesign = 0;
   const filtered = allCreatives.filter(c => {
     // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
     if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
@@ -6340,6 +6394,16 @@ function renderCreatives() {
     }
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
     if (currentAssigneeFilter && !c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
+    // 種別タブフィルタ（共通=全件 / video=video_* / design=design_*）
+    // 件数バッジを計算してから絞り込み
+    const _ct = (c.creative_type || '');
+    const _isVideoType = /^video_/.test(_ct);
+    const _isDesignType = /^design_/.test(_ct);
+    _cvTabCountAll += 1;
+    if (_isVideoType) _cvTabCountVideo += 1;
+    if (_isDesignType) _cvTabCountDesign += 1;
+    if (currentCreativeTab === 'video' && !_isVideoType) return false;
+    if (currentCreativeTab === 'design' && !_isDesignType) return false;
     // ロール別フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
     // creative_type OR 担当者ユーザーのroleで判定（video_shortでもデザイナー担当なら「デザイン」扱い）
     const assigneeForFilter = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
@@ -6379,6 +6443,15 @@ function renderCreatives() {
     ? `${filtered.length} / ${allCreatives.length}件表示中（全${creativesPage.total}件）`
     : `${filtered.length}件表示中`;
   document.getElementById('creative-count').textContent = totalLabel;
+  // 種別タブのカウントバッジを更新
+  try {
+    const _bAll = document.getElementById('cv-tab-all-count');
+    const _bVid = document.getElementById('cv-tab-video-count');
+    const _bDes = document.getElementById('cv-tab-design-count');
+    if (_bAll) _bAll.textContent = `(${_cvTabCountAll})`;
+    if (_bVid) _bVid.textContent = `(${_cvTabCountVideo})`;
+    if (_bDes) _bDes.textContent = `(${_cvTabCountDesign})`;
+  } catch (_) {}
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     renderCreativeLoadMore();
