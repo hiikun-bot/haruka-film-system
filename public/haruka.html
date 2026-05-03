@@ -12698,9 +12698,82 @@ async function renderSysconfigPage() {
         </div>
       </div>
 
+      <!-- メンテナンス（DB スキーマ同期） -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">🛠 メンテナンス — DB スキーマ同期</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="runSchemaSyncManual(this)">🔄 schema-sync を再実行</button>
+          <button class="btn btn-ghost" onclick="reloadSchemaCacheManual(this)">🔁 PostgREST キャッシュをリロード</button>
+        </div>
+        <div id="sys-maint-result" style="display:none;margin-top:12px;padding:10px;border-radius:6px;font-size:12px;line-height:1.6;font-family:monospace;white-space:pre-wrap;word-break:break-all"></div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:10px">
+          「列が schema cache に無い」エラーが本番で出たときの復旧用。<br>
+          <strong>schema-sync 再実行</strong>: <code>db/migrate.js</code> を再走行し、保険ALTERで不足カラムを追加した上で PostgREST キャッシュをリロードします（数秒〜十数秒かかります）。<br>
+          <strong>PostgREST キャッシュリロード</strong>: ALTER は通っているのに REST API 側で見えない時の軽量リカバリ（NOTIFY のみ）。
+        </div>
+      </div>
+
       <div id="sys-save-msg" style="display:none;font-size:13px;color:var(--em-dark);padding:8px 0"></div>
     </div>
   `;
+}
+
+async function runSchemaSyncManual(btn) {
+  const resultEl = document.getElementById('sys-maint-result');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = '🔄 実行中...';
+  resultEl.style.display = '';
+  resultEl.style.background = 'var(--em-pale)';
+  resultEl.style.color = 'var(--text)';
+  resultEl.textContent = 'schema-sync を再実行中... (数秒〜十数秒かかります)';
+  try {
+    const res = await apiFetch(`${API}/admin/run-schema-sync`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      resultEl.style.background = '#e8f5e9';
+      resultEl.style.color = '#1b5e20';
+      resultEl.textContent = `✓ ${data.summary || '完了'}`;
+    } else {
+      resultEl.style.background = '#ffebee';
+      resultEl.style.color = '#b71c1c';
+      resultEl.textContent = `✗ ${data.summary || data.error || `HTTP ${res.status}`}`;
+    }
+  } catch (e) {
+    resultEl.style.background = '#ffebee';
+    resultEl.style.color = '#b71c1c';
+    resultEl.textContent = `✗ 通信エラー: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+async function reloadSchemaCacheManual(btn) {
+  const resultEl = document.getElementById('sys-maint-result');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = '🔁 通知中...';
+  resultEl.style.display = '';
+  resultEl.style.background = 'var(--em-pale)';
+  resultEl.style.color = 'var(--text)';
+  resultEl.textContent = 'PostgREST キャッシュリロードを通知中...';
+  try {
+    const res = await apiFetch(`${API}/admin/reload-schema-cache`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      resultEl.style.background = '#e8f5e9';
+      resultEl.style.color = '#1b5e20';
+      resultEl.textContent = `✓ ${data.message || 'リロード通知を送信しました'}`;
+    } else {
+      resultEl.style.background = '#ffebee';
+      resultEl.style.color = '#b71c1c';
+      resultEl.textContent = `✗ ${data.error || `HTTP ${res.status}`}`;
+    }
+  } catch (e) {
+    resultEl.style.background = '#ffebee';
+    resultEl.style.color = '#b71c1c';
+    resultEl.textContent = `✗ 通信エラー: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
 }
 
 function parseSysDriveUrl() {
