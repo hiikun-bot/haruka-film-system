@@ -77,7 +77,7 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .sec-label{font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px}
 
 /* ツールバー */
-.toolbar{background:var(--white);border-bottom:0.5px solid var(--border);padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:sticky;top:88px;z-index:99}
+.toolbar{background:var(--white);border-bottom:0.5px solid var(--border);padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:sticky;top:60px;z-index:99}
 .toolbar-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .filter-tabs{display:flex;gap:4px}
 .ft{font-size:13px;padding:6px 16px;border-radius:8px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap}
@@ -738,7 +738,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
   /* --- ツールバー --- */
   .toolbar{top:60px;padding:10px 12px;gap:8px}
-  .toolbar[style*="top:88px"]{top:60px !important}
+  .toolbar[style*="top:60px"]{top:60px !important}
   .toolbar-row{gap:6px}
   .filter-tabs,.client-tabs,.ball-filter{flex-wrap:wrap;gap:4px}
   .ft,.ct{font-size:12px;padding:5px 12px}
@@ -1965,7 +1965,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- プレビューモード中バナー -->
-<div id="preview-mode-banner" style="display:none;background:linear-gradient(90deg,#FF6B35,#F7B731);padding:5px 20px;font-size:12px;font-weight:500;color:#fff;letter-spacing:0.05em;position:sticky;top:88px;z-index:97;align-items:center;gap:8px">
+<div id="preview-mode-banner" style="display:none;background:linear-gradient(90deg,#FF6B35,#F7B731);padding:5px 20px;font-size:12px;font-weight:500;color:#fff;letter-spacing:0.05em;position:sticky;top:60px;z-index:97;align-items:center;gap:8px">
   <span>👁</span>
   <span id="preview-mode-label"></span>
   <span style="margin-left:auto;opacity:0.9;font-size:11px">サーバーAPIも含めて検証中（実際の権限変更ではありません）</span>
@@ -3859,7 +3859,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- マスター管理ページ -->
 <div id="page-master" class="page">
-  <div class="toolbar" style="position:sticky;top:88px;z-index:99">
+  <div class="toolbar" style="position:sticky;top:60px;z-index:99">
     <div class="toolbar-row">
       <span style="font-size:14px;font-weight:600;color:var(--text)">マスター管理</span>
     </div>
@@ -3928,7 +3928,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- ナレッジページ -->
 <div id="page-knowledge" class="page">
-  <div class="toolbar" style="position:sticky;top:88px;z-index:99">
+  <div class="toolbar" style="position:sticky;top:60px;z-index:99">
     <div class="toolbar-row" style="flex-wrap:wrap;gap:10px;align-items:center">
       <span style="font-size:14px;font-weight:600;color:var(--text)">📚 ナレッジ</span>
       <!-- 動画/デザインタブ -->
