@@ -1524,6 +1524,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
     <input type="hidden" id="fest-id"> <!-- 編集モードならID、新規なら空 -->
 
+    <!-- 下書き復元バナー（新規作成時のみ・localStorage に未送信下書きが残っているとき表示） -->
+    <div id="fest-draft-banner" style="display:none;align-items:center;gap:10px;padding:8px 12px;margin-bottom:12px;background:#fff8e1;border:1px solid #ffc107;border-radius:6px;font-size:12px;color:#5d4037">
+      <span style="font-size:14px">💾</span>
+      <span style="flex:1;line-height:1.5">
+        前回の入力内容が残っています。<span id="fest-draft-banner-time" style="color:var(--text-muted);font-size:11px;margin-left:4px"></span>
+      </span>
+      <button type="button" class="btn-sm" style="padding:3px 12px;font-size:12px" onclick="restoreEstimateDraft()">復元</button>
+      <button type="button" class="btn-sm" style="padding:3px 12px;font-size:12px;color:#A32D2D;border-color:#e0e0e0" onclick="discardEstimateDraft()">破棄</button>
+    </div>
+
     <!-- 1. 基本情報 -->
     <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.10em;margin-bottom:8px">
       <span style="display:inline-block;width:18px;height:18px;background:var(--em);color:#fff;border-radius:50%;font-size:11px;text-align:center;line-height:18px;font-weight:700">1</span>
@@ -8148,6 +8158,176 @@ async function toggleFinanceBookStatus(curStatus) {
 // ==================== V2: 見積エディタ（明細テーブル） ====================
 let _festItems = [];   // 編集中の明細 (一時バッファ)
 
+// ---------- 下書き自動保存（新規作成のみ・localStorage） ----------
+// 仕様:
+// - 入力中に debounce 1.5s で localStorage に保存
+// - キー: estimate_draft_<projectId>（案件単位で1件 / 新規作成中のバックアップ）
+// - モーダルを開いたとき、下書きが残っていればバナーで復元確認
+// - 「保存する」成功時に下書き削除 / 「キャンセル」では削除しない（再開できるように）
+// - 編集モード（eid あり）はサーバーが正なので下書きは扱わない
+const _ESTIMATE_DRAFT_DEBOUNCE_MS = 1500;
+const _ESTIMATE_DRAFT_VERSION = 1;
+let _estimateDraftTimer = null;
+let _estimateDraftEnabled = false; // openEstimateEditor で適切に有効化
+
+function _estimateDraftKey(projectId) {
+  return `estimate_draft_${projectId}`;
+}
+
+function _collectEstimateDraftSnapshot() {
+  return {
+    v: _ESTIMATE_DRAFT_VERSION,
+    saved_at: new Date().toISOString(),
+    title:           document.getElementById('fest-edit-title')?.value ?? '',
+    status:          document.getElementById('fest-edit-status')?.value ?? 'draft',
+    recipient_name:  document.getElementById('fest-edit-recipient')?.value ?? '',
+    honorific:       document.getElementById('fest-edit-honorific')?.value ?? '御中',
+    issue_date:      document.getElementById('fest-edit-issue-date')?.value ?? '',
+    valid_until:     document.getElementById('fest-edit-valid-until')?.value ?? '',
+    note:            document.getElementById('fest-edit-note')?.value ?? '',
+    // 見積書番号は自動採番なので保存対象外
+    items: (_festItems || []).map(it => ({
+      label:      it.label || '',
+      quantity:   Number(it.quantity) || 0,
+      unit:       it.unit || '',
+      unit_price: Number(it.unit_price) || 0,
+      category:   it.category || null,
+      note:       it.note || null,
+    })),
+  };
+}
+
+function _isDraftSnapshotEmpty(snap) {
+  if (!snap) return true;
+  const hasText =
+    (snap.title || '').trim() !== '' ||
+    (snap.note || '').trim() !== '' ||
+    (snap.recipient_name || '').trim() !== '';
+  const hasMeaningfulItem = (snap.items || []).some(it =>
+    (it.label || '').trim() !== '' ||
+    Number(it.unit_price) > 0 ||
+    (Number(it.quantity) || 0) > 1
+  );
+  return !hasText && !hasMeaningfulItem;
+}
+
+function _saveEstimateDraftNow() {
+  if (!_estimateDraftEnabled) return;
+  const projectId = _financeProjectId;
+  if (!projectId) return;
+  // 編集モード（fest-id あり）は下書き保存しない
+  if (document.getElementById('fest-id')?.value) return;
+  try {
+    const snap = _collectEstimateDraftSnapshot();
+    if (_isDraftSnapshotEmpty(snap)) {
+      // 全部空 = 下書きを残さない（古い下書きがあれば消す）
+      localStorage.removeItem(_estimateDraftKey(projectId));
+      return;
+    }
+    localStorage.setItem(_estimateDraftKey(projectId), JSON.stringify(snap));
+  } catch (e) {
+    // localStorage 容量超過などは握りつぶす（保存失敗で操作を止めない）
+    console.warn('[estimate-draft] save failed:', e);
+  }
+}
+
+function _scheduleEstimateDraftSave() {
+  if (!_estimateDraftEnabled) return;
+  if (_estimateDraftTimer) clearTimeout(_estimateDraftTimer);
+  _estimateDraftTimer = setTimeout(_saveEstimateDraftNow, _ESTIMATE_DRAFT_DEBOUNCE_MS);
+}
+
+function _loadEstimateDraft(projectId) {
+  if (!projectId) return null;
+  try {
+    const raw = localStorage.getItem(_estimateDraftKey(projectId));
+    if (!raw) return null;
+    const snap = JSON.parse(raw);
+    if (!snap || typeof snap !== 'object') return null;
+    if (snap.v !== _ESTIMATE_DRAFT_VERSION) return null;
+    return snap;
+  } catch (e) {
+    console.warn('[estimate-draft] load failed:', e);
+    return null;
+  }
+}
+
+function _clearEstimateDraft(projectId) {
+  if (!projectId) return;
+  try {
+    localStorage.removeItem(_estimateDraftKey(projectId));
+  } catch (_) {}
+}
+
+function _formatDraftSavedAt(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `（保存: ${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}）`;
+  } catch (_) { return ''; }
+}
+
+function _showEstimateDraftBanner(snap) {
+  const banner = document.getElementById('fest-draft-banner');
+  if (!banner) return;
+  const timeEl = document.getElementById('fest-draft-banner-time');
+  if (timeEl) timeEl.textContent = _formatDraftSavedAt(snap?.saved_at);
+  banner.style.display = 'flex';
+}
+
+function _hideEstimateDraftBanner() {
+  const banner = document.getElementById('fest-draft-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+function _applyEstimateDraft(snap) {
+  if (!snap) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  set('fest-edit-title',      snap.title);
+  set('fest-edit-status',     snap.status);
+  set('fest-edit-recipient',  snap.recipient_name);
+  set('fest-edit-honorific',  snap.honorific);
+  set('fest-edit-issue-date', snap.issue_date);
+  set('fest-edit-valid-until',snap.valid_until);
+  set('fest-edit-note',       snap.note);
+  _festItems = (snap.items || []).map(_newItem);
+  if (_festItems.length === 0) _festItems = [_newItem()];
+  renderEstimateItems();
+}
+
+// バナーの「復元」ボタン
+function restoreEstimateDraft() {
+  const projectId = _financeProjectId;
+  if (!projectId) { _hideEstimateDraftBanner(); return; }
+  const snap = _loadEstimateDraft(projectId);
+  if (!snap) { _hideEstimateDraftBanner(); return; }
+  _applyEstimateDraft(snap);
+  _hideEstimateDraftBanner();
+  showToast('下書きを復元しました', 'success');
+}
+
+// バナーの「破棄」ボタン
+function discardEstimateDraft() {
+  const projectId = _financeProjectId;
+  if (!projectId) { _hideEstimateDraftBanner(); return; }
+  if (!confirm('保存された下書きを破棄しますか？')) return;
+  _clearEstimateDraft(projectId);
+  _hideEstimateDraftBanner();
+  showToast('下書きを破棄しました', 'success');
+}
+
+// モーダルの input/change を一括で拾って debounce 保存
+function _attachEstimateDraftListeners() {
+  const modal = document.getElementById('modal-finance-estimate-editor');
+  if (!modal || modal.dataset.draftListenerAttached === '1') return;
+  const handler = () => _scheduleEstimateDraftSave();
+  modal.addEventListener('input', handler);
+  modal.addEventListener('change', handler);
+  modal.dataset.draftListenerAttached = '1';
+}
+
 function _newItem(seed = {}) {
   return {
     label:      seed.label || '',
@@ -8165,6 +8345,10 @@ function openEstimateEditor(eid) {
     showToast('見積を編集する権限がありません', 'warn');
     return;
   }
+  // 初期化中は下書き自動保存を無効化（既定値の流し込みで意図せず上書きしないため）
+  _estimateDraftEnabled = false;
+  if (_estimateDraftTimer) { clearTimeout(_estimateDraftTimer); _estimateDraftTimer = null; }
+  _hideEstimateDraftBanner();
   document.getElementById('fest-id').value = eid || '';
   const isNew = !eid;
   document.getElementById('fest-editor-title').textContent = isNew ? '📋 見積を新規作成' : '📋 見積を編集';
@@ -8217,6 +8401,20 @@ function openEstimateEditor(eid) {
   renderEstimateItems();
   openModal('modal-finance-estimate-editor');
   setTimeout(() => document.getElementById('fest-edit-title').focus(), 50);
+
+  // 下書き復元バナー（新規作成時のみ・projectId がある場合）
+  // 既存の下書きが見つかったらバナーを表示。自動では復元せずユーザー確認を取る
+  const projectId = _financeProjectId;
+  if (isNew && projectId) {
+    const draft = _loadEstimateDraft(projectId);
+    if (draft && !_isDraftSnapshotEmpty(draft)) {
+      _showEstimateDraftBanner(draft);
+    }
+  }
+  // 自動保存リスナーをアタッチ（idempotent）
+  _attachEstimateDraftListeners();
+  // 新規作成時のみ自動保存を有効化（編集モードはサーバーが正なので下書き不要）
+  _estimateDraftEnabled = isNew;
 }
 
 function renderEstimateItems() {
@@ -8243,6 +8441,10 @@ function refreshEstimateTotal() {
   const total = _festItems.reduce((s, it) => s + (Number(it.quantity)||0) * (Number(it.unit_price)||0), 0);
   const el = document.getElementById('fest-total-display');
   if (el) el.textContent = _yen(total);
+  // 明細バッファ（_festItems）に変更があった可能性があるため下書き保存もスケジュール
+  // - updateEstimateItem / addEstimateItemRow / removeEstimateItem / インポート系で必ず通る
+  // - _estimateDraftEnabled が false の間（初期化中・編集モード）は何もしない
+  _scheduleEstimateDraftSave();
 }
 
 function updateEstimateItem(idx, field, value) {
@@ -8630,6 +8832,12 @@ async function submitEstimateEditor() {
   }
   if (res.ok) {
     showToast(eid ? '見積を保存しました' : '見積を作成しました', 'success');
+    // サーバー保存成功時は下書きを削除（新規作成のみ・編集モードは元から書いていない）
+    if (!eid && projectId) {
+      _estimateDraftEnabled = false;
+      if (_estimateDraftTimer) { clearTimeout(_estimateDraftTimer); _estimateDraftTimer = null; }
+      _clearEstimateDraft(projectId);
+    }
     closeModal('modal-finance-estimate-editor');
     loadProjectFinance();
     loadProjects();
