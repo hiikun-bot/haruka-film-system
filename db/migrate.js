@@ -292,6 +292,11 @@ async function runSchemaSync() {
         UNIQUE(project_id, creative_type)
       )`,
       "CREATE INDEX IF NOT EXISTS idx_ppr_project ON project_producer_rates(project_id)",
+      // 案件のサブディレクター（複数）— Dチェック依頼可能者
+      // (migrations/2026-05-03_project_sub_directors.sql)
+      // schema-sync 失敗時の silent skip を防ぐため必ず保険で追加する
+      "ALTER TABLE projects ADD COLUMN IF NOT EXISTS sub_director_ids UUID[] DEFAULT '{}'",
+      "CREATE INDEX IF NOT EXISTS idx_projects_sub_directors ON projects USING GIN(sub_director_ids)",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
