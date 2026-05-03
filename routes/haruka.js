@@ -5850,12 +5850,18 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
 
+  // project_client_fees は project_cycles に直接 FK を持たないため
+  // （project_id 経由でしか繋がらない）、projects 経由で埋め込む。
+  // 直接埋め込もうとすると PostgREST が "Could not find a relationship" で 500。
   const { data: cycles, error: cyclesError } = await supabase
     .from('project_cycles')
     .select(`
       *,
-      projects (id, name, client_id, clients(name)),
-      project_client_fees (video_unit_price, design_unit_price, fixed_budget, use_fixed_budget)
+      projects (
+        id, name, client_id,
+        clients(name),
+        project_client_fees(video_unit_price, design_unit_price, fixed_budget, use_fixed_budget)
+      )
     `)
     .eq('year', year)
     .eq('month', month);
@@ -5882,7 +5888,10 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
       c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))
     ).length;
 
-    const fee = cycle.project_client_fees;
+    // project_client_fees は projects 配下に格納される（上のクエリ参照）。
+    // UNIQUE(project_id) で 1:1 だが PostgREST は配列で返すので先頭を取る。
+    const feeRaw = cycle.projects?.project_client_fees;
+    const fee = Array.isArray(feeRaw) ? feeRaw[0] : feeRaw;
     const videoUnitPrice = fee?.video_unit_price || 0;
     const designUnitPrice = fee?.design_unit_price || 0;
 
