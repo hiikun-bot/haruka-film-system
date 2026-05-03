@@ -201,6 +201,21 @@ CREATE TABLE IF NOT EXISTS project_director_rates (
 );
 CREATE INDEX IF NOT EXISTS idx_pdr_project ON project_director_rates(project_id);
 
+-- ==================== project_producer_rates ====================
+-- 案件別プロデュース費（per-project, per-creative_type）。
+-- creatives 1件あたり 1回必ず加算される（編集者・ディレクターと兼務でも満額）。
+-- 受取人は projects.producer_id。
+CREATE TABLE IF NOT EXISTS project_producer_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+  producer_fee INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, creative_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ppr_project ON project_producer_rates(project_id);
+
 -- ==================== invoices ====================
 CREATE TABLE IF NOT EXISTS invoices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -267,6 +267,31 @@ async function runSchemaSync() {
       )`,
       `CREATE INDEX IF NOT EXISTS idx_client_deletion_logs_deleted_at
          ON client_deletion_logs(deleted_at DESC)`,
+      // 案件別ディレクション費 (PR #195 / migrations/2026-05-03_project_director_rates.sql)
+      // schema-sync 本体で取りこぼされても、単価設定モーダルが
+      // 'public.project_director_rates not found in schema cache' で落ちないよう保険で必ず作る
+      `CREATE TABLE IF NOT EXISTS project_director_rates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+        director_fee INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(project_id, creative_type)
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_pdr_project ON project_director_rates(project_id)",
+      // 案件別プロデュース費 (migrations/2026-05-03_project_producer_rates.sql)
+      // ディレクション費と完全対称。schema-sync 失敗時の silent skip を防ぐため必ず保険で作る
+      `CREATE TABLE IF NOT EXISTS project_producer_rates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+        producer_fee INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(project_id, creative_type)
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_ppr_project ON project_producer_rates(project_id)",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }

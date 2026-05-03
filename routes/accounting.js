@@ -353,15 +353,20 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
   try {
-    const [ratesRes, extrasRes, feesRes, dirRatesRes] = await Promise.all([
+    const [ratesRes, extrasRes, feesRes, dirRatesRes, prodRatesRes] = await Promise.all([
       supabase.from('project_rates').select('*').eq('project_id', projectId),
       supabase.from('project_rate_extras').select('*').eq('project_id', projectId),
       supabase.from('project_client_fees').select('*').eq('project_id', projectId).maybeSingle(),
       // Issue #192: ディレクション費（テーブル未作成環境では silent skip）
       supabase.from('project_director_rates').select('*').eq('project_id', projectId),
+      // プロデュース費（テーブル未作成環境では silent skip）
+      supabase.from('project_producer_rates').select('*').eq('project_id', projectId),
     ]);
     if (dirRatesRes.error && !/does not exist|could not find the table/i.test(dirRatesRes.error.message || '')) {
       console.warn('[rate-templates] director_rates load failed:', dirRatesRes.error.message);
+    }
+    if (prodRatesRes.error && !/does not exist|could not find the table/i.test(prodRatesRes.error.message || '')) {
+      console.warn('[rate-templates] producer_rates load failed:', prodRatesRes.error.message);
     }
 
     const templates = [];
@@ -423,6 +428,20 @@ router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req
         unit:     unitForType[d.creative_type] || '本',
         unit_price: fee,
         field:    'director_fee',
+      });
+    });
+
+    // 2c. project_producer_rates → プロデュース費（per-project, per-creative_type）
+    (prodRatesRes.data || []).forEach(p => {
+      const fee = Number(p.producer_fee) || 0;
+      if (fee <= 0) return;
+      templates.push({
+        source: 'producer_rate',
+        category: p.creative_type,
+        label:    p.creative_type === 'design' ? 'プロデュース費（静止画1枚あたり）' : 'プロデュース費（1本あたり）',
+        unit:     unitForType[p.creative_type] || '本',
+        unit_price: fee,
+        field:    'producer_fee',
       });
     });
 
