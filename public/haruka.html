@@ -3486,7 +3486,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <div class="form-row" style="margin-bottom:10px">
             <div class="form-group" style="flex:2;margin-bottom:0">
               <label class="form-label">クライアント <span style="color:#E24B4A">*</span></label>
-              <select class="form-select" id="p-client-id">
+              <select class="form-select" id="p-client-id" onchange="onProjectClientChange()">
                 <option value="">クライアントを選択</option>
               </select>
             </div>
@@ -3540,9 +3540,27 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">ディレクター</label>
-              <select class="form-select" id="p-director-id">
+              <select class="form-select" id="p-director-id" onchange="renderProjectSubDirectorPicker()">
                 <option value="">未設定</option>
               </select>
+            </div>
+          </div>
+
+          <!-- サブディレクター（複数）— Dチェック依頼可能者 -->
+          <div class="form-group" style="margin-bottom:0;margin-top:14px">
+            <label class="form-label" style="display:flex;align-items:center;gap:6px">
+              サブディレクター
+              <span style="color:var(--text-muted);font-weight:400;font-size:11px">（Dチェック依頼可能者・任意）</span>
+            </label>
+            <div style="border:1.5px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-soft, #fafafa)">
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+                <input type="text" id="p-sub-directors-search" placeholder="名前で検索..." class="form-input" style="flex:1;font-size:12px;padding:6px 10px">
+                <span id="p-sub-directors-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap"></span>
+              </div>
+              <div id="p-sub-directors-list" style="max-height:160px;overflow-y:auto;border-top:1px solid var(--border);padding-top:6px">
+                <div style="padding:8px;color:var(--text-muted);font-size:12px">クライアントを選択するとチームメンバーが表示されます</div>
+              </div>
+              <div id="p-sub-directors-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
             </div>
           </div>
         </div>
@@ -4213,15 +4231,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
 
-      <!-- チェック担当者選択（制作中ステージのみ） -->
-      <div id="cd-check-director-section" style="display:none;margin-bottom:14px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <label class="form-label" style="margin-bottom:0;white-space:nowrap;flex-shrink:0">チェック担当者</label>
-          <select class="form-select" id="cd-check-director-id" onchange="cdRefreshCommentLabel()" style="flex:1">
-            <option value="">（案件のディレクター）</option>
-          </select>
-        </div>
-      </div>
+      <!-- 旧 cd-check-director-section は削除（Dチェックへ進める時のピッカーに集約） -->
 
       <!-- コメントセクション（ステータス依存ラベル） -->
       <div class="form-group" style="margin-bottom:18px">
@@ -4351,6 +4361,30 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button id="cd-force-deliver-btn" onclick="forceDeliver()" style="display:none;background:#fff;color:#16a34a;border:1.5px solid #16a34a;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">納品完了モード</button>
       <!-- 承認 or 次ステップ -->
       <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dチェック担当者選択モーダル（Dチェックへ進める時のみ表示）-->
+<!-- 表示優先順:
+       1. 案件のメインディレクター（projects.director_id）⭐ デフォルト選択
+       2. サブディレクター（projects.sub_director_ids）※ migration 未適用なら空配列
+       3. 同じチームのメンバー（サブディレクターが空のときのみ）
+       4. 秘書チーム（users.role='secretary'）
+       5. その他から選ぶ（折りたたみ + 検索） -->
+<div class="modal-overlay" id="modal-d-check-picker" style="z-index:10001">
+  <div style="max-width:520px;width:95vw;margin:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34),0 4px 14px rgba(0,0,0,.12);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
+    <div style="padding:16px 22px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:15px;font-weight:600;color:var(--text)">Dチェックに進める</span>
+      <button class="modal-close" onclick="closeDCheckPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+    </div>
+    <div style="padding:16px 22px;overflow-y:auto;flex:1">
+      <div style="font-size:13px;color:var(--text);margin-bottom:14px">Dチェック担当を選んでください</div>
+      <div id="dcp-sections"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px;border-top:0.5px solid var(--border);background:var(--surface)">
+      <button class="btn" onclick="closeDCheckPicker()" style="font-size:13px;padding:8px 18px">キャンセル</button>
+      <button class="btn-primary" id="dcp-submit-btn" onclick="submitDCheckPicker()" style="font-size:13px;padding:9px 22px">Dチェックへ →</button>
     </div>
   </div>
 </div>
@@ -7920,6 +7954,129 @@ function clearDateFilter() {
   loadProjects();
 }
 
+// ===== 案件モーダル: サブディレクター（複数）ピッカー =====
+// projects.sub_director_ids（UUID[]）を編集する用のクライアントサイド状態管理。
+// 候補は「案件のクライアントに紐づくチームのメンバー」— ディレクター本人は除外する。
+// チームを変更（クライアント切替で間接的に変わる）したらピッカーをリフレッシュし、
+// チーム外になったIDが残っていたら警告表示+自動クリアする。
+let _editingProjectSubDirectorIds = [];
+
+// 候補メンバー一覧を計算（client_id ベース）
+function getProjectSubDirectorCandidates() {
+  const clientId = document.getElementById('p-client-id')?.value || '';
+  const directorId = document.getElementById('p-director-id')?.value || '';
+  if (!clientId) return { candidates: [], teamCount: 0 };
+  const cl = (allClients || []).find(c => c.id === clientId);
+  const teamIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
+  if (!teamIds.length) return { candidates: [], teamCount: 0 };
+  // 該当チームに所属するメンバー（team_members 経由）+ チームのリーダー (teams.director_id)
+  const teamSet = new Set(teamIds);
+  const allowed = new Set();
+  // teams から director_id を吸い上げ
+  for (const t of (allTeams || [])) {
+    if (teamSet.has(t.id) && t.director_id) allowed.add(t.director_id);
+  }
+  // メンバー: allMembers の users.team_id（基本チーム）に加え、team_members 中間テーブルもあるが
+  // フロント側にロード済みの allMembers ベースで判定する（既存のクリエイティブモーダルと同じロジック）
+  for (const m of (allMembers || [])) {
+    if (m.is_active === false) continue;
+    if (m.team_id && teamSet.has(m.team_id)) allowed.add(m.id);
+    // 兼任: users.team_ids が存在すれば併用（無くても基本チームでカバーされる）
+    if (Array.isArray(m.team_ids)) {
+      for (const tid of m.team_ids) if (teamSet.has(tid)) { allowed.add(m.id); break; }
+    }
+  }
+  const candidates = (allMembers || [])
+    .filter(m => allowed.has(m.id) && m.id !== directorId)
+    .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+  return { candidates, teamCount: teamIds.length };
+}
+
+function renderProjectSubDirectorPicker() {
+  const list = document.getElementById('p-sub-directors-list');
+  const counter = document.getElementById('p-sub-directors-counter');
+  const warn = document.getElementById('p-sub-directors-warn');
+  if (!list) return;
+  const { candidates, teamCount } = getProjectSubDirectorCandidates();
+  const search = (document.getElementById('p-sub-directors-search')?.value || '').toLowerCase();
+  const directorId = document.getElementById('p-director-id')?.value || '';
+
+  // チーム外になったIDを検出してクリア
+  const allowedSet = new Set(candidates.map(c => c.id));
+  // ディレクター本人がサブに残っていたら除外（director を変更した直後など）
+  const dropped = _editingProjectSubDirectorIds.filter(id => !allowedSet.has(id) || id === directorId);
+  if (dropped.length) {
+    _editingProjectSubDirectorIds = _editingProjectSubDirectorIds.filter(id => allowedSet.has(id) && id !== directorId);
+    if (warn) {
+      warn.style.display = '';
+      warn.textContent = `クライアントのチームに所属していない / ディレクター本人だった ${dropped.length} 名をサブディレクターから外しました。`;
+    }
+  } else if (warn) {
+    warn.style.display = 'none';
+    warn.textContent = '';
+  }
+
+  if (!candidates.length) {
+    if (teamCount === 0) {
+      list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">クライアントを選択するとチームメンバーが表示されます</div>';
+    } else {
+      list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">該当チームに所属するメンバーがいません（ディレクター本人は除外）</div>';
+    }
+    if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中`;
+    return;
+  }
+
+  const filtered = candidates.filter(m => {
+    if (!search) return true;
+    return (m.full_name || '').toLowerCase().includes(search)
+        || (m.nickname || '').toLowerCase().includes(search);
+  });
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">該当なし</div>';
+  } else {
+    list.innerHTML = filtered.map(m => {
+      const checked = _editingProjectSubDirectorIds.includes(m.id);
+      const idEsc = esc(m.id);
+      const name = esc(m.full_name || '(名前未設定)');
+      const role = esc(m.role || '');
+      return `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;border-radius:6px" onmouseover="this.style.background='rgba(0,0,0,0.03)'" onmouseout="this.style.background=''">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleProjectSubDirector('${idEsc}')" style="width:15px;height:15px;cursor:pointer">
+        <span style="font-size:13px">${name}</span>
+        ${role ? `<span style="font-size:10px;color:var(--text-muted);margin-left:4px">${role}</span>` : ''}
+      </label>`;
+    }).join('');
+  }
+
+  if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+
+  // 検索ボックスの oninput を一度だけ仕込む
+  const searchEl = document.getElementById('p-sub-directors-search');
+  if (searchEl && !searchEl._wired) {
+    searchEl._wired = true;
+    searchEl.addEventListener('input', renderProjectSubDirectorPicker);
+  }
+}
+
+function toggleProjectSubDirector(userId) {
+  if (!Array.isArray(_editingProjectSubDirectorIds)) _editingProjectSubDirectorIds = [];
+  const idx = _editingProjectSubDirectorIds.indexOf(userId);
+  if (idx >= 0) {
+    _editingProjectSubDirectorIds.splice(idx, 1);
+  } else {
+    _editingProjectSubDirectorIds.push(userId);
+  }
+  renderProjectSubDirectorPicker();
+}
+
+// クライアント変更時 — サブディレクター候補をリフレッシュ
+function onProjectClientChange() {
+  // 検索ボックスはリセット
+  const searchEl = document.getElementById('p-sub-directors-search');
+  if (searchEl) searchEl.value = '';
+  renderProjectSubDirectorPicker();
+}
+
 function openProjectModal(preClientId) {
   document.getElementById('p-modal-title').textContent = '新規案件';
   document.getElementById('p-id').value = '';
@@ -7948,6 +8105,13 @@ function openProjectModal(preClientId) {
   document.getElementById('p-is-hidden').checked = false;
   selectDeadlineUnit('monthly');
   document.getElementById('p-deadline-weekday').value = '';
+  // サブディレクター: 新規は空で初期化
+  _editingProjectSubDirectorIds = [];
+  const subSearch = document.getElementById('p-sub-directors-search');
+  if (subSearch) subSearch.value = '';
+  const subWarn = document.getElementById('p-sub-directors-warn');
+  if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
+  renderProjectSubDirectorPicker();
   // 新規作成時はタブ非表示
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
@@ -7998,6 +8162,14 @@ function openEditProject(p) {
   document.getElementById('p-slack-channel-url').value = p.slack_channel_url || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
+
+  // サブディレクター: DB値を復元（クライアント外IDが残っていれば render 側で警告クリア）
+  _editingProjectSubDirectorIds = Array.isArray(p.sub_director_ids) ? [...p.sub_director_ids] : [];
+  const subSearch = document.getElementById('p-sub-directors-search');
+  if (subSearch) subSearch.value = '';
+  const subWarn = document.getElementById('p-sub-directors-warn');
+  if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
+  renderProjectSubDirectorPicker();
 
   // 締め切り設定
   selectDeadlineUnit(p.deadline_unit || 'monthly');
@@ -9504,7 +9676,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday })
+    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [] })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -15103,10 +15275,12 @@ function cdRefreshCommentLabel() {
   if (!label || !currentCreativeDetail) return;
   const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const editorName = editorAssign?.users?.full_name || '';
-  const selId = document.getElementById('cd-check-director-id')?.value;
+  // チェック担当者セレクトは廃止（Dチェック進行時のモーダルで都度選択）。
+  // ラベル表示は assignment 内 director（既に上書き済み）→ 案件 director の順で解決。
   let directorName = '';
-  if (selId) {
-    directorName = allMembers.find(m => m.id === selId)?.full_name || '';
+  const dirAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'director');
+  if (dirAssign?.users?.full_name) {
+    directorName = dirAssign.users.full_name;
   } else {
     const defaultDirId = cdResolveDefaultDirectorId();
     if (defaultDirId) directorName = allMembers.find(m => m.id === defaultDirId)?.full_name || '';
@@ -15463,19 +15637,7 @@ function updateCreativeCommentLabel(status) {
   } else if (status === '未着手') {
     label.innerHTML = 'メモ（管理用）';
   } else if (['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
-    // チェック担当者ドロップダウンを表示・初期化
-    const checkDirSection = document.getElementById('cd-check-director-section');
-    const checkDirSel = document.getElementById('cd-check-director-id');
-    if (checkDirSection && checkDirSel) {
-      checkDirSection.style.display = '';
-      // ディレクター・admin・producer_director を選択肢に
-      const candidates = allMembers.filter(m => ['admin','director','producer_director'].includes(m.role) && m.is_active !== false);
-      // 既定ディレクター: 案件 (projects.director_id) を最優先、次にチーム
-      const defaultDirId = cdResolveDefaultDirectorId() || '';
-      checkDirSel.innerHTML = '<option value="">（案件のディレクター）</option>' +
-        candidates.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
-      if (defaultDirId) checkDirSel.value = defaultDirId;
-    }
+    // チェック担当者ドロップダウンは廃止。Dチェックへ進める時にピッカーで選ぶ。
     cdRefreshCommentLabel();
   } else {
     label.innerHTML = 'コメント';
@@ -15490,9 +15652,8 @@ function updateCreativeCommentLabel(status) {
   const editorRplyLabel = document.getElementById('cd-editor-reply-label');
 
   const assigneeSection = document.getElementById('cd-assignee-section');
-  const checkDirSection = document.getElementById('cd-check-director-section');
+  // 旧 cd-check-director-section は削除済み
   if (status === '未着手') {
-    if (checkDirSection)  checkDirSection.style.display  = 'none';
     if (uploadSection)    uploadSection.style.display    = 'none';
     if (noteGroup)        noteGroup.style.display        = 'none';
     if (editorRplyGroup)  editorRplyGroup.style.display  = 'none';
@@ -15505,7 +15666,6 @@ function updateCreativeCommentLabel(status) {
     field.style.cursor = '';
     field.style.borderColor = '';
   } else if (isCheckStage) {
-    if (checkDirSection)  checkDirSection.style.display  = 'none';
     if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = 'none';
     if (noteGroup)       noteGroup.style.display       = '';
@@ -15516,7 +15676,6 @@ function updateCreativeCommentLabel(status) {
       noteLabel.innerHTML = `${stageMap[status] || ''}　${senderMap[status] || 'ディレクター'}からの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>`;
     }
   } else if (isRevision) {
-    if (checkDirSection)  checkDirSection.style.display  = 'none';
     if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
@@ -15553,7 +15712,6 @@ function updateCreativeCommentLabel(status) {
       }
     }
   } else {
-    if (checkDirSection)  checkDirSection.style.display  = 'none';
     if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
@@ -15774,6 +15932,17 @@ async function advanceCreativeStatus() {
         return;
       }
     }
+  }
+
+  // 遷移先が「Dチェック」のときは confirm ではなく担当者選択モーダルに置き換え
+  // （シンプルな confirm は他の遷移先のみで使用）
+  if (target === 'Dチェック') {
+    openDCheckPicker({
+      onSubmit: async (directorUserId) => {
+        await saveCreativeDetail(target, { director_user_id: directorUserId || '' });
+      },
+    });
+    return;
   }
 
   const isApprove = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s));
@@ -17684,19 +17853,251 @@ function confirmUploadNo() {
 
 async function doDCheckTransition() {
   document.getElementById('cd-dcheck-confirm').style.display = 'none';
-  const statusEl = document.getElementById('cd-upload-status');
-  const editorComment = document.getElementById('cd-comment-field').value.trim();
-  const payload = { status: 'Dチェック' };
-  if (editorComment) payload.director_comment = editorComment;
-  const upd = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
-    method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  // Dチェック担当者選択モーダル経由で実行する
+  openDCheckPicker({
+    onSubmit: async (directorUserId) => {
+      const statusEl = document.getElementById('cd-upload-status');
+      const editorComment = document.getElementById('cd-comment-field').value.trim();
+      const payload = { status: 'Dチェック' };
+      if (editorComment) payload.director_comment = editorComment;
+      // null は「メインディレクター（=projects.director_id）」の意。assignment 上書き解除のため空文字列で送る。
+      payload.director_user_id = directorUserId || '';
+      const upd = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+      });
+      if (upd.ok) {
+        currentCreativeDetail.status = 'Dチェック';
+        updateCreativeStepIndicator('Dチェック');
+        updateCreativeCommentLabel('Dチェック');
+        document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
+        if (statusEl) { statusEl.textContent = '→ Dチェックに移行しました'; statusEl.style.color = 'var(--em-dark)'; }
+        // 詳細を再読み込みしてassignmentsを最新化（次回のラベル等に反映）
+        try { await openCreativeDetail(currentCreativeDetail.id); } catch (_) {}
+      } else {
+        const e = await upd.json().catch(() => ({}));
+        showToast('エラー: ' + translateError(e?.error), 'error');
+      }
+    },
   });
-  if (upd.ok) {
-    currentCreativeDetail.status = 'Dチェック';
-    updateCreativeStepIndicator('Dチェック');
-    updateCreativeCommentLabel('Dチェック');
-    document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
-    if (statusEl) { statusEl.textContent = '→ Dチェックに移行しました'; statusEl.style.color = 'var(--em-dark)'; }
+}
+
+// =====================================================================
+// Dチェック担当者選択モーダル
+// =====================================================================
+//   背景:
+//     Dチェックは案件メインディレクター以外（サブディレクター・秘書・他チーム）にも依頼したい。
+//     毎回スクロールで担当を選ぶのは面倒なので、確認ダイアログ内に集約する。
+//
+//   表示優先順:
+//     1. 案件のメインディレクター（projects.director_id）⭐ デフォルト選択
+//     2. サブディレクター（projects.sub_director_ids が空でないとき）
+//     3. 同じチームのメンバー（**サブディレクターが空のときのみ**）
+//     4. 秘書チーム（users.role='secretary'）
+//     5. その他から選ぶ（折りたたみ + 検索）
+//
+//   migration 未適用フォールバック:
+//     projects.sub_director_ids が undefined / null の場合は空配列扱い。
+// =====================================================================
+
+let _dcpState = null;
+
+function openDCheckPicker({ onSubmit } = {}) {
+  if (!currentCreativeDetail) return;
+
+  const project = currentCreativeDetail.projects || {};
+  const mainDirectorId = project.director_id || null;
+  const subDirectorIds = Array.isArray(project.sub_director_ids) ? project.sub_director_ids.filter(Boolean) : [];
+  // team_id 解決: クリエイティブ自身 → 編集者の team_id → 編集者所属チーム の順
+  let teamId = currentCreativeDetail.team_id || null;
+  if (!teamId) {
+    const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    teamId = editorAssign?.users?.team_id
+      || (editorAssign?.users?.id ? (allTeams || []).find(t => (t.team_members||[]).some(tm => tm.user_id === editorAssign.users.id))?.id : null)
+      || null;
+  }
+
+  // 候補ユーザー集合（id でユニーク化）
+  const memberById = new Map(allMembers.filter(m => m.is_active !== false).map(m => [m.id, m]));
+
+  // section: { title, items[{id, name, role}], showStar, badge }
+  const sections = [];
+  const usedIds = new Set();
+
+  // (1) メインディレクター
+  if (mainDirectorId && memberById.has(mainDirectorId)) {
+    const m = memberById.get(mainDirectorId);
+    sections.push({
+      title: null,
+      items: [{ id: m.id, name: m.full_name, sub: '案件ディレクター', star: true }],
+    });
+    usedIds.add(m.id);
+  }
+
+  // (2) サブディレクター（重複除去）
+  const subDirItems = subDirectorIds
+    .filter(id => id && memberById.has(id) && !usedIds.has(id))
+    .map(id => {
+      const m = memberById.get(id);
+      usedIds.add(m.id);
+      return { id: m.id, name: m.full_name, sub: roleLabel(m.role) };
+    });
+  if (subDirItems.length) {
+    sections.push({ title: 'サブディレクター', items: subDirItems });
+  }
+
+  // (3) 同じチームのメンバー（サブディレクターが空のときのみ）
+  if (subDirItems.length === 0 && teamId) {
+    const team = (allTeams || []).find(t => t.id === teamId);
+    const memberIds = (team?.team_members || []).map(tm => tm.user_id);
+    const teamItems = memberIds
+      .filter(id => id && memberById.has(id) && !usedIds.has(id))
+      .map(id => {
+        const m = memberById.get(id);
+        usedIds.add(m.id);
+        return { id: m.id, name: m.full_name, sub: roleLabel(m.role) };
+      });
+    if (teamItems.length) {
+      sections.push({ title: '同じチームのメンバー', items: teamItems });
+    }
+  }
+
+  // (4) 秘書チーム
+  const secItems = [...memberById.values()]
+    .filter(m => m.role === 'secretary' && !usedIds.has(m.id))
+    .map(m => {
+      usedIds.add(m.id);
+      return { id: m.id, name: m.full_name, sub: '秘書' };
+    });
+  if (secItems.length) {
+    sections.push({ title: '秘書チーム', items: secItems });
+  }
+
+  // (5) その他（折りたたみ・検索）
+  const otherItems = [...memberById.values()]
+    .filter(m => !usedIds.has(m.id) && m.role !== 'editor' && m.role !== 'designer' && m.role !== 'client')
+    .map(m => ({ id: m.id, name: m.full_name, sub: roleLabel(m.role) }))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+
+  _dcpState = {
+    sections,
+    otherItems,
+    selectedId: mainDirectorId && memberById.has(mainDirectorId) ? mainDirectorId : (sections[0]?.items[0]?.id || null),
+    onSubmit,
+    otherExpanded: false,
+    otherSearch: '',
+  };
+
+  renderDCheckPicker();
+  openModal('modal-d-check-picker');
+}
+
+function roleLabel(r) {
+  const map = {
+    admin: '管理者', secretary: '秘書', producer: 'プロデューサー',
+    director: 'ディレクター', producer_director: 'P兼D',
+    editor: '編集者', designer: 'デザイナー', client: 'クライアント',
+  };
+  return map[r] || r || '';
+}
+
+function renderDCheckPicker() {
+  const root = document.getElementById('dcp-sections');
+  if (!root || !_dcpState) return;
+  const { sections, otherItems, selectedId, otherExpanded, otherSearch } = _dcpState;
+
+  const renderItem = (it) => {
+    const checked = (it.id === selectedId) ? 'checked' : '';
+    const star = it.star ? '<span style="color:#f59e0b;margin-left:4px">⭐</span>' : '';
+    const sub = it.sub ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(it.sub)}</span>` : '';
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${it.id === selectedId ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
+        <input type="radio" name="dcp-pick" value="${esc(it.id)}" ${checked} onchange="dcpSelect('${esc(it.id)}')" style="margin:0">
+        <span style="font-size:13px;font-weight:500;color:var(--text)">${esc(it.name || '(名前なし)')}</span>
+        ${star}
+        ${sub}
+      </label>`;
+  };
+
+  const renderSection = (s) => {
+    const head = s.title
+      ? `<div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px;padding-left:2px">── ${esc(s.title)} ──</div>`
+      : '';
+    return head + s.items.map(renderItem).join('');
+  };
+
+  let html = sections.map(renderSection).join('');
+
+  // その他から選ぶ
+  if (otherItems.length) {
+    if (!otherExpanded) {
+      html += `
+        <button type="button" onclick="dcpExpandOther()" style="margin-top:14px;width:100%;background:none;border:0.5px dashed var(--border);border-radius:8px;padding:10px;color:var(--text-muted);font-size:12px;cursor:pointer">
+          ── その他から選ぶ（${otherItems.length}人） ──
+        </button>`;
+    } else {
+      const q = (otherSearch || '').trim().toLowerCase();
+      const filtered = q
+        ? otherItems.filter(it => (it.name || '').toLowerCase().includes(q))
+        : otherItems;
+      html += `
+        <div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px">── その他から選ぶ ──</div>
+        <input type="text" id="dcp-other-search" placeholder="🔍 名前で検索..." value="${esc(otherSearch)}" oninput="dcpUpdateSearch(this.value)"
+               style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
+        <div style="max-height:220px;overflow-y:auto">
+          ${filtered.length ? filtered.map(renderItem).join('') : '<div style="font-size:12px;color:var(--text-muted);padding:12px;text-align:center">該当なし</div>'}
+        </div>`;
+    }
+  }
+
+  root.innerHTML = html;
+  // 検索入力中はフォーカスを保持
+  if (otherExpanded) {
+    const ipt = document.getElementById('dcp-other-search');
+    if (ipt && document.activeElement !== ipt && otherSearch) {
+      ipt.focus();
+      try { ipt.setSelectionRange(ipt.value.length, ipt.value.length); } catch (_) {}
+    }
+  }
+}
+
+function dcpSelect(id) {
+  if (!_dcpState) return;
+  _dcpState.selectedId = id;
+  renderDCheckPicker();
+}
+
+function dcpExpandOther() {
+  if (!_dcpState) return;
+  _dcpState.otherExpanded = true;
+  renderDCheckPicker();
+  setTimeout(() => { try { document.getElementById('dcp-other-search')?.focus(); } catch (_) {} }, 30);
+}
+
+function dcpUpdateSearch(v) {
+  if (!_dcpState) return;
+  _dcpState.otherSearch = v;
+  renderDCheckPicker();
+}
+
+function closeDCheckPicker() {
+  closeModal('modal-d-check-picker');
+  _dcpState = null;
+}
+
+async function submitDCheckPicker() {
+  if (!_dcpState) return;
+  const id = _dcpState.selectedId;
+  if (!id) {
+    showToast('Dチェック担当を1人選んでください', 'warn');
+    return;
+  }
+  const onSubmit = _dcpState.onSubmit;
+  closeDCheckPicker();
+  if (typeof onSubmit === 'function') {
+    try { await onSubmit(id); } catch (e) {
+      console.error('[dcp] submit error:', e);
+      showToast('Dチェックへの遷移に失敗しました', 'error');
+    }
   }
 }
 
@@ -18077,7 +18478,7 @@ async function saveCreativeEdit() {
   }
 }
 
-async function saveCreativeDetail(overrideStatus) {
+async function saveCreativeDetail(overrideStatus, extraBody) {
   if (!currentCreativeDetail) return;
   const noteValue        = document.getElementById('cd-director-note')?.value.trim()  || null;
   const editorReplyValue = document.getElementById('cd-editor-reply')?.value.trim()   || null;
@@ -18106,6 +18507,10 @@ async function saveCreativeDetail(overrideStatus) {
     if (REVISION_STATUSES.includes(overrideStatus)) {
       body.revision_count = (currentCreativeDetail.revision_count || 0) + 1;
     }
+  }
+  // Dチェック遷移時の担当者上書き（modal で選んだ user_id を creative_assignments role='director' に反映）
+  if (extraBody && typeof extraBody === 'object') {
+    Object.assign(body, extraBody);
   }
   const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)

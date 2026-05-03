@@ -253,6 +253,64 @@ router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), asy
 
 // ==================== 案件 ====================
 
+// サブディレクター（複数）正規化ヘルパー
+// - 入力: 任意の値（配列でない / null / undefined / 不正値含む）
+// - 出力: { ids: 正規化済みUUID配列, dropped: 弾かれた件数 }
+// 仕様:
+//   1. 配列でなければ空配列扱い
+//   2. 文字列のみ採用、UUIDフォーマットの簡易チェック（36文字 + ハイフン4個）
+//   3. 重複除去（先勝ち）
+//   4. project の clients に紐づく client_teams のメンバー（team_members.user_id）に絞る
+//   5. director_id 本人は除外（自分自身をサブに登録する意味がないため）
+// チーム所属が取れない（client_id が無い等）場合は安全側に倒して空配列を返す
+async function normalizeSubDirectorIds(rawIds, { clientId, directorId }) {
+  if (!Array.isArray(rawIds)) return { ids: [], dropped: 0 };
+  // 1) 形式チェック + 重複除去
+  const seen = new Set();
+  const cleaned = [];
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const v of rawIds) {
+    if (typeof v !== 'string') continue;
+    const id = v.trim();
+    if (!uuidRe.test(id)) continue;
+    if (id === directorId) continue; // ディレクター本人は除外
+    if (seen.has(id)) continue;
+    seen.add(id);
+    cleaned.push(id);
+  }
+  if (!cleaned.length) return { ids: [], dropped: 0 };
+  if (!clientId) {
+    // クライアント未確定（新規作成中で client_id 未入力など）— チーム判定不可なので
+    // 空配列を返して silent skip。フロント側でクライアントが決まってから再度保存する想定。
+    return { ids: [], dropped: cleaned.length };
+  }
+  // 2) クライアントに紐づくチームのメンバーIDを集める
+  const { data: links } = await supabase
+    .from('client_teams')
+    .select('team_id')
+    .eq('client_id', clientId);
+  const teamIds = (links || []).map(l => l.team_id).filter(Boolean);
+  if (!teamIds.length) {
+    return { ids: [], dropped: cleaned.length };
+  }
+  // 3) team_members 経由で許可ユーザーを取得（チームの全メンバー）
+  const { data: members } = await supabase
+    .from('team_members')
+    .select('user_id')
+    .in('team_id', teamIds);
+  const allowed = new Set((members || []).map(m => m.user_id).filter(Boolean));
+  // 4) チームのリーダー（teams.director_id）も候補に含める（メンバーテーブル未登録のケースを救う）
+  const { data: teams } = await supabase
+    .from('teams')
+    .select('director_id')
+    .in('id', teamIds);
+  for (const t of (teams || [])) {
+    if (t.director_id) allowed.add(t.director_id);
+  }
+  const filtered = cleaned.filter(id => allowed.has(id));
+  return { ids: filtered, dropped: cleaned.length - filtered.length };
+}
+
 // 案件一覧取得
 // has_rates / has_estimates は「単価設定済み」「見積作成済み」の判定フラグ。
 // UI 側で「単価」「見積」ボタンに設定済みかどうかを示すために返す。
@@ -310,31 +368,45 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     chatwork_room_id,
     slack_channel_url,
     deadline_unit, deadline_weekday,
-    project_type
+    project_type,
+    sub_director_ids
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const normalizedProjectType = (project_type === 'design') ? 'design' : 'video';
-  const { data, error } = await supabase
+  // サブディレクター: 形式・チーム所属チェック
+  const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
+    clientId: client_id,
+    directorId: director_id || null,
+  });
+  const insertPayload = {
+    client_id, name,
+    status: status || '提案中',
+    producer_id: producer_id || null,
+    director_id: director_id || null,
+    sheet_url: sheet_url || null,
+    regulation_url: regulation_url || null,
+    admin_note: admin_note || null,
+    start_date: start_date || null,
+    end_date: end_date || null,
+    chatwork_room_id: chatwork_room_id || null,
+    slack_channel_url: slack_channel_url || null,
+    is_hidden: false,
+    deadline_unit: deadline_unit || 'monthly',
+    deadline_weekday: deadline_weekday ?? null,
+    project_type: normalizedProjectType,
+    sub_director_ids: subIds,
+  };
+  let { data, error } = await supabase
     .from('projects')
-    .insert({
-      client_id, name,
-      status: status || '提案中',
-      producer_id: producer_id || null,
-      director_id: director_id || null,
-      sheet_url: sheet_url || null,
-      regulation_url: regulation_url || null,
-      admin_note: admin_note || null,
-      start_date: start_date || null,
-      end_date: end_date || null,
-      chatwork_room_id: chatwork_room_id || null,
-      slack_channel_url: slack_channel_url || null,
-      is_hidden: false,
-      deadline_unit: deadline_unit || 'monthly',
-      deadline_weekday: deadline_weekday ?? null,
-      project_type: normalizedProjectType
-    })
+    .insert(insertPayload)
     .select()
     .single();
+  // schema-sync 失敗で sub_director_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_director_ids/i.test(error.message || '')) {
+    const { sub_director_ids: _omit, ...fallback } = insertPayload;
+    const retry = await supabase.from('projects').insert(fallback).select().single();
+    data = retry.data; error = retry.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -348,7 +420,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     slack_channel_url,
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday,
-    project_type
+    project_type,
+    sub_director_ids
   } = req.body;
   const updateData = {
     name, status,
@@ -371,12 +444,34 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (project_type !== undefined) {
     updateData.project_type = (project_type === 'design') ? 'design' : 'video';
   }
-  const { data, error } = await supabase
+  // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
+  // フィールドが渡ってきた時のみ正規化して反映する。
+  if (sub_director_ids !== undefined) {
+    // client_id は projects 側を引いて取得（クライアント変更は別経路では起きないが念のため）
+    const { data: cur } = await supabase
+      .from('projects')
+      .select('client_id, director_id')
+      .eq('id', req.params.id)
+      .single();
+    const effectiveDirectorId = (director_id !== undefined ? director_id : cur?.director_id) || null;
+    const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
+      clientId: cur?.client_id || null,
+      directorId: effectiveDirectorId,
+    });
+    updateData.sub_director_ids = subIds;
+  }
+  let { data, error } = await supabase
     .from('projects')
     .update(updateData)
     .eq('id', req.params.id)
     .select()
     .single();
+  // schema-sync 失敗で sub_director_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_director_ids/i.test(error.message || '') && updateData.sub_director_ids !== undefined) {
+    const { sub_director_ids: _omit, ...fallback } = updateData;
+    const retry = await supabase.from('projects').update(fallback).eq('id', req.params.id).select().single();
+    data = retry.data; error = retry.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -1724,6 +1819,25 @@ router.get('/creatives/:id', async (req, res) => {
     data.teams = null;
   }
 
+  // projects.sub_director_ids を別クエリで取得（migration 未適用環境では空配列扱い）
+  // projects には UUID[] として追加される予定。列が無い・schema-cache 未更新の場合は無視。
+  if (data && data.projects?.id) {
+    try {
+      const { data: projExt, error: projExtErr } = await supabase
+        .from('projects')
+        .select('sub_director_ids')
+        .eq('id', data.projects.id)
+        .maybeSingle();
+      if (!projExtErr && projExt) {
+        data.projects.sub_director_ids = Array.isArray(projExt.sub_director_ids) ? projExt.sub_director_ids : [];
+      } else {
+        data.projects.sub_director_ids = [];
+      }
+    } catch (_) {
+      data.projects.sub_director_ids = [];
+    }
+  }
+
   res.json(data);
 });
 
@@ -1906,6 +2020,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
+    director_user_id,
     force_delivered_reason
   } = req.body;
 
@@ -2009,6 +2124,24 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // Dチェック担当者更新（director_user_id が送られてきた場合）
+  // - 案件のメインディレクター以外（サブディレクター・秘書・他チームメンバー等）に Dチェックを依頼するために、
+  //   creative_assignments role='director' を上書きする。
+  // - 空文字列 / null の場合はディレクター割当を削除（projects.director_id にフォールバック）。
+  if (director_user_id !== undefined) {
+    await supabase.from('creative_assignments').delete().eq('creative_id', req.params.id).eq('role', 'director');
+    if (director_user_id) {
+      const { data: dirUser } = await supabase.from('users').select('rank').eq('id', director_user_id).single();
+      const { error: dirInsErr } = await supabase.from('creative_assignments').insert({
+        creative_id: req.params.id,
+        user_id: director_user_id,
+        role: 'director',
+        rank_applied: dirUser?.rank || null,
+      });
+      if (dirInsErr) console.warn('[creative_assignments][director] insert failed:', dirInsErr.message);
+    }
+  }
+
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
   // - 通知より先に実行して client_review_url を確定させる
   // - 失敗してもクリエイティブ更新自体は完遂（手動入力フォールバック）
@@ -2042,9 +2175,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // ball_holder_id キャッシュ更新（status または assignee が変わった場合のみ）
+  // ball_holder_id キャッシュ更新（status / assignee / director が変わった場合のみ）
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
-  if (updateData.status !== undefined || assignee_id !== undefined) {
+  if (updateData.status !== undefined || assignee_id !== undefined || director_user_id !== undefined) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
 
