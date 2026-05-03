@@ -4372,16 +4372,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
        3. その他から選ぶ（全ユーザー・ロールフィルタチップ + 名前検索・折りたたみ）
      1人以上必須。 -->
 <div class="modal-overlay" id="modal-d-check-picker" style="z-index:10001">
-  <div style="max-width:520px;width:95vw;margin:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34),0 4px 14px rgba(0,0,0,.12);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
-    <div style="padding:16px 22px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+  <!--
+    高さ固定の理由:
+      ロールチップ・検索でリスト件数が変動するたびにモーダル外形が伸縮し、レイアウトが揺れて操作しづらかった。
+      → height: min(85vh, 800px) で外形固定。中身（#dcp-sections-scroll）だけ内部スクロール。
+  -->
+  <div style="max-width:520px;width:95vw;margin:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34),0 4px 14px rgba(0,0,0,.12);display:flex;flex-direction:column;height:min(85vh,800px);max-height:calc(100vh - 48px)">
+    <div style="padding:16px 22px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <span style="font-size:15px;font-weight:600;color:var(--text)">Dチェックに進める</span>
       <button class="modal-close" onclick="closeDCheckPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
     </div>
-    <div style="padding:16px 22px;overflow-y:auto;flex:1">
+    <div id="dcp-sections-scroll" style="padding:16px 22px;overflow-y:auto;flex:1;min-height:0">
       <div style="font-size:13px;color:var(--text);margin-bottom:14px">Dチェック担当を選んでください（複数可）</div>
       <div id="dcp-sections"></div>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px;border-top:0.5px solid var(--border);background:var(--surface)">
+    <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px;border-top:0.5px solid var(--border);background:var(--surface);flex-shrink:0">
       <button class="btn" onclick="closeDCheckPicker()" style="font-size:13px;padding:8px 18px">キャンセル</button>
       <button class="btn-primary" id="dcp-submit-btn" onclick="submitDCheckPicker()" style="font-size:13px;padding:9px 22px">Dチェックへ →</button>
     </div>
@@ -17964,16 +17969,21 @@ function openDCheckPicker({ onSubmit } = {}) {
   const usedIds = new Set();
 
   // (1) 案件のディレクター（メインD + サブD）
+  // メインD（projects.director_id）は常に固定チェック・解除不可とする（基本動線：
+  // 「案件Dにチェック依頼」をワンクリックで進めるため）。サブDは通常通り解除可能。
   const projectDirItems = projectDirectorOrdered.map(({ id, isMain }) => {
     const m = memberById.get(id);
     usedIds.add(id);
     return {
       id: m.id,
       name: m.full_name,
-      sub: isMain ? '案件メインD' : 'サブD',
+      sub: isMain ? '案件ディレクター・固定' : 'サブD',
       star: isMain,
+      lock: !!isMain, // メインDは disabled + 解除不可
     };
   });
+  // メインDが存在する限り、セクションは常に表示する（サブD有無に関係なく）。
+  // 既存実装でも projectDirItems.length は mainD があれば >=1 なので結果は同じだが、明示的に意図を残す。
   if (projectDirItems.length) {
     sections.push({ title: '案件のディレクター', items: projectDirItems });
   }
@@ -18006,10 +18016,19 @@ function openDCheckPicker({ onSubmit } = {}) {
   const checkedIds = new Set();
   defaultCheckedIds.forEach(id => checkedIds.add(id));
 
+  // ロック済み（チェック解除不可）ID集合 — メインDのみ。
+  // dcpToggle / submit 時に必ず checkedIds に含まれることを保証する。
+  const lockedIds = new Set();
+  if (mainDirectorId && memberById.has(mainDirectorId)) {
+    lockedIds.add(mainDirectorId);
+    checkedIds.add(mainDirectorId); // 念のため
+  }
+
   _dcpState = {
     sections,
     otherItems,
     checkedIds,
+    lockedIds,
     onSubmit,
     otherExpanded: false,
     otherSearch: '',
@@ -18110,15 +18129,29 @@ function renderDCheckPicker() {
 // ── ヘルパ: 1件のチェックボックス行
 function dcpRenderItem(it) {
   if (!_dcpState) return '';
-  const isChecked = _dcpState.checkedIds.has(it.id);
+  const isLocked = !!it.lock || _dcpState.lockedIds?.has(it.id);
+  const isChecked = isLocked ? true : _dcpState.checkedIds.has(it.id);
   const star = it.star ? '<span style="color:#f59e0b;margin-left:4px">⭐</span>' : '';
   const sub = it.sub ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(it.sub)}</span>` : '';
+  // ロック行は背景=チェック済み配色固定 + opacity 下げて「外せない」ことを視覚化。
+  // disabled の input は onchange が発火しないが念のため preventDefault も入れる。
+  const labelBg = isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff';
+  const labelStyle = isLocked
+    ? `display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:not-allowed;border:0.5px solid var(--border);margin-bottom:6px;background:${labelBg};opacity:0.78`
+    : `display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${labelBg}`;
+  const inputAttrs = isLocked
+    ? `disabled checked onclick="event.preventDefault();return false" title="案件ディレクターは固定です（解除できません）"`
+    : `${isChecked ? 'checked' : ''} onchange="dcpToggle('${esc(it.id)}')"`;
+  const lockBadge = isLocked
+    ? '<span style="font-size:10px;color:#0d9488;margin-left:auto;background:#ccfbf1;border:0.5px solid #5eead4;padding:1px 6px;border-radius:4px;font-weight:600;letter-spacing:0.04em">固定</span>'
+    : '';
   return `
-    <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
-      <input type="checkbox" value="${esc(it.id)}" ${isChecked ? 'checked' : ''} onchange="dcpToggle('${esc(it.id)}')" style="margin:0;width:16px;height:16px;cursor:pointer">
+    <label style="${labelStyle}" title="${isLocked ? '案件ディレクターは固定です（解除できません）' : ''}">
+      <input type="checkbox" value="${esc(it.id)}" ${inputAttrs} style="margin:0;width:16px;height:16px;cursor:${isLocked ? 'not-allowed' : 'pointer'}">
       <span style="font-size:13px;font-weight:500;color:var(--text)">${esc(it.name || '(名前なし)')}</span>
       ${star}
       ${sub}
+      ${lockBadge}
     </label>`;
 }
 
@@ -18223,6 +18256,8 @@ function dcpUpdateSubmitButton() {
 //   <label> の background を手動更新するだけで充分。
 function dcpToggle(id) {
   if (!_dcpState) return;
+  // ロック対象（案件メインD）は解除させない。disabled input なので通常ここには来ないが、防御的に。
+  if (_dcpState.lockedIds && _dcpState.lockedIds.has(id)) return;
   if (_dcpState.checkedIds.has(id)) _dcpState.checkedIds.delete(id);
   else _dcpState.checkedIds.add(id);
   document.querySelectorAll(`#dcp-sections input[type="checkbox"][value="${CSS.escape(id)}"]`).forEach(inp => {
@@ -18256,6 +18291,10 @@ function closeDCheckPicker() {
 
 async function submitDCheckPicker() {
   if (!_dcpState) return;
+  // ロック対象（案件メインD）は必ず含める（防御的）
+  if (_dcpState.lockedIds) {
+    _dcpState.lockedIds.forEach(id => _dcpState.checkedIds.add(id));
+  }
   const ids = [..._dcpState.checkedIds];
   if (ids.length === 0) {
     showToast('Dチェック担当を1人以上選んでください', 'warn');
