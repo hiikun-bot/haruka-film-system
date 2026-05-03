@@ -18158,6 +18158,16 @@ async function openDCheckPicker({ onSubmit } = {}) {
     });
   if (mainDirItems.length) {
     leftSections.push({ title: '案件ディレクター', items: mainDirItems, variant: 'main' });
+  } else {
+    // 案件ディレクター不在を明示するプレースホルダーセクション
+    // ユーザーが「案件編集に戻ってディレクターを設定する」判断材料となるよう、
+    // セクションを非表示にせず警告色で目立たせる。
+    leftSections.push({
+      title: '案件ディレクター',
+      variant: 'main',
+      placeholder: 'ディレクター不在（案件編集から設定してください）',
+      items: [],
+    });
   }
 
   // (2L) 案件サブディレクター（やや目立ち・解除可能）
@@ -18450,6 +18460,27 @@ function dcpRenderSection(s) {
   const head = s.title
     ? `<div style="font-size:11px;font-weight:700;color:${headColor};letter-spacing:0.08em;margin:6px 0 6px;padding-left:2px">── ${esc(s.title)} ──</div>`
     : '';
+  // items 空 + placeholder 指定時 — 警告風プレースホルダーを表示（チェックボックス無し）
+  // 案件ディレクター不在のケースで、ユーザーに案件編集へ戻る判断を促す表示。
+  if ((!s.items || s.items.length === 0) && s.placeholder) {
+    const placeholderHtml = `
+      <div style="
+        padding: 14px 12px;
+        margin-bottom: 6px;
+        border: 1.5px dashed #f59e0b;
+        border-radius: 8px;
+        background: #fffbeb;
+        color: #92400e;
+        font-size: 13px;
+        font-weight: 600;
+        text-align: center;
+        line-height: 1.5;
+      ">
+        ⚠️ ディレクター不在<br>
+        <span style="font-size:11px;color:#a16207;font-weight:400">案件編集からディレクターを設定してください</span>
+      </div>`;
+    return head + placeholderHtml;
+  }
   const itemsHtml = s.items.map(it => dcpRenderItem(it, variant)).join('');
   // チーム内メンバーなど件数が多いセクションは内部スクロール
   if (s.scrollable) {
