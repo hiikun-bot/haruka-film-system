@@ -423,3 +423,229 @@
   outline: 2px solid #3ECFCA;
   outline-offset: 2px;
 }
+
+/* -----------------------------
+ * 6. 全体通知の投稿フォーム（Phase 1 段階3）
+ *    UI_SPEC 第8章「全体通知投稿UI（admin専用）」
+ *
+ *    用語メモ:
+ *    ・「カウンター」— 入力できる文字数の残量を「12 / 80」のように表示する目印。
+ *      80を超えそうになったら赤くして「もう書けないよ」と知らせる。
+ * ----------------------------- */
+.broadcast-form {
+  max-width: 720px;
+  /* スクロールできる領域内で 1カラムレイアウト */
+}
+
+.broadcast-form-section {
+  background: #FFFFFF;
+  border: 0.5px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+}
+
+.broadcast-form-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.broadcast-form-subtitle {
+  font-size: 12px;
+  color: #6B7280;
+  margin-bottom: 16px;
+  line-height: 1.6;
+}
+
+/* 文字数カウンター（タイトル・本文の右上に表示） */
+.broadcast-counter {
+  font-size: 11px;
+  color: #6B7280;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.broadcast-counter.over {
+  color: #EF4444;
+  font-weight: 600;
+}
+
+.broadcast-counter.warn {
+  color: #F59E0B;
+  font-weight: 600;
+}
+
+/* URL バリデーションエラー（赤いインライン表示） */
+.broadcast-url-error {
+  font-size: 11px;
+  color: #C0392B;
+  margin-top: 4px;
+  min-height: 14px;
+  display: block;
+}
+
+/* ラジオ4択 */
+.broadcast-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.broadcast-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #E5E7EB;
+  background: #FFFFFF;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  font-size: 14px;
+  color: #111827;
+}
+
+.broadcast-radio-label:hover {
+  background: #F5FCFC;
+  border-color: #3ECFCA;
+}
+
+.broadcast-radio-label input[type="radio"] {
+  accent-color: #3ECFCA;
+  cursor: pointer;
+}
+
+.broadcast-radio-label.checked {
+  background: #ECFEFF;
+  border-color: #3ECFCA;
+}
+
+.broadcast-radio-hint {
+  font-size: 11px;
+  color: #6B7280;
+  margin-left: auto;
+}
+
+/* アクションボタン群 — 「プレビュー」と「送信」を少し離して配置（誤送信防止） */
+.broadcast-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.broadcast-actions-left {
+  display: flex;
+  gap: 10px;
+}
+
+.broadcast-btn-preview {
+  background: #FFFFFF;
+  color: #3ECFCA;
+  border: 1.5px solid #3ECFCA;
+  font-size: 14px;
+  padding: 9px 22px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.broadcast-btn-preview:hover {
+  background: #ECFEFF;
+}
+
+.broadcast-btn-send {
+  background: #E24B4A;
+  color: #FFFFFF;
+  border: none;
+  font-size: 14px;
+  padding: 9px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.broadcast-btn-send:hover {
+  background: #C0392B;
+}
+
+.broadcast-btn-send:disabled {
+  background: #D1D5DB;
+  cursor: not-allowed;
+  color: #9CA3AF;
+}
+
+/* プレビューエリア（フォーム下に「実際に届く通知カード」を表示する） */
+.broadcast-preview-wrap {
+  margin-top: 8px;
+  background: #F9FAFB;
+  border: 1px dashed #D1D5DB;
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.broadcast-preview-label {
+  font-size: 11px;
+  color: #6B7280;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.broadcast-preview-empty {
+  font-size: 13px;
+  color: #9CA3AF;
+  text-align: center;
+  padding: 18px 0;
+}
+
+/* プレビュー用のカードは notification-card のスタイルそのまま流用するが、
+ * 単独表示 + プレビュー枠内なので border-radius を整える */
+.broadcast-preview-wrap .notification-card {
+  border-radius: 12px;
+  border: 1px solid #E5E7EB;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+/* アクセス権限がない時の案内 */
+.broadcast-forbidden {
+  padding: 40px 24px;
+  text-align: center;
+  color: #6B7280;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.broadcast-forbidden-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+/* スマホ */
+@media (max-width: 768px) {
+  .broadcast-form-section {
+    padding: 16px 14px;
+  }
+  .broadcast-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .broadcast-actions-left {
+    flex-direction: column;
+  }
+  .broadcast-btn-preview,
+  .broadcast-btn-send {
+    width: 100%;
+    min-height: 44px;
+  }
+}

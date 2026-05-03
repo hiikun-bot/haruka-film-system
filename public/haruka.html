@@ -1479,6 +1479,26 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- 全体通知（Phase 1 段階3）: 送信確認モーダル -->
+<!-- 対象人数を表示して、誤送信を防ぐワンクッション。data-no-overlay-close で背景クリックで消えないようにする -->
+<div class="modal-overlay" id="modal-broadcast-confirm" data-no-overlay-close="true">
+  <div class="modal-card" style="width:440px">
+    <div class="modal-title">
+      <span>送信前の確認</span>
+      <button class="modal-close" onclick="closeModal('modal-broadcast-confirm')">×</button>
+    </div>
+    <div style="padding:4px 0 16px;font-size:14px;color:var(--text);line-height:1.7">
+      <div id="bc-confirm-message">対象 <strong id="bc-confirm-count" style="color:var(--em-dark);font-size:18px">—</strong> 名 に送信します。よろしいですか？</div>
+      <div id="bc-confirm-target-label" style="font-size:12px;color:var(--text-muted);margin-top:8px"></div>
+      <div id="bc-confirm-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="bc-confirm-cancel" onclick="closeModal('modal-broadcast-confirm')">キャンセル</button>
+      <button class="btn-primary" id="bc-confirm-submit" style="background:#E24B4A">送信する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 全体連絡: 対応状況モーダル -->
 <div class="modal-overlay" id="modal-announcement-status">
   <div class="modal-card" style="width:min(1400px,95vw)">
@@ -3801,6 +3821,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div id="mnav-notification_test" class="master-nav-item" onclick="selectMasterNav('notification_test')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           🧪 通知テスト
+        </div>
+        <!-- 全体通知の送信（admin / secretary / producer / producer_director の4ロールのみ表示） -->
+        <div id="mnav-broadcast" class="master-nav-item" onclick="selectMasterNav('broadcast')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📢 全体通知を送信
         </div>
       </div>
     </div>
@@ -7566,6 +7591,14 @@ function applyRoleBasedUI() {
   // 通知テスト（Chatwork/Slack デバッグ用）も最高管理者専用
   const notifTestNav = document.getElementById('mnav-notification_test');
   if (notifTestNav) notifTestNav.style.display = showSuperAdminOnly ? '' : 'none';
+  // 全体通知の送信（Phase 1 段階3）— admin / secretary / producer / producer_director の4ロールに開放
+  // VIEW AS 中も effectiveRole で判定するので、たとえば admin が editor 視点プレビュー中は非表示になる
+  const broadcastNav = document.getElementById('mnav-broadcast');
+  if (broadcastNav) {
+    const r = effectiveRole();
+    const canBroadcast = ['admin','secretary','producer','producer_director'].includes(r);
+    broadcastNav.style.display = canBroadcast ? '' : 'none';
+  }
   // ドロワーのユーザー情報
   const drawerUser = document.getElementById('nav-drawer-user');
   if (drawerUser && currentUser) {
@@ -12044,7 +12077,7 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test'].forEach(t => {
+  ['generic','general','products','appeal_axes','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -12076,6 +12109,8 @@ function selectMasterNav(type) {
     renderSlackWorkspacesPage();
   } else if (type === 'notification_test') {
     renderNotificationTestPage();
+  } else if (type === 'broadcast') {
+    renderBroadcastNotificationPage();
   }
 }
 
@@ -12964,6 +12999,430 @@ async function runSlackTest() {
   } catch (e) {
     out.textContent = 'エラー: ' + e.message;
     out.style.color = '#E24B4A';
+  }
+}
+
+// ============================================================
+// 全体通知の投稿UI（Phase 1 段階3）
+//   設計参照: docs/notification/notification_UI_SPEC.md 第8章「全体通知投稿UI（admin専用）」
+//
+//   配置決定の理由:
+//     ・ 既存の master 画面（マスター管理）に「ロール権限」「システム設定」「通知テスト」など
+//        admin系のサブメニューがすでに横並びで存在する。
+//     ・ 全体通知も「全社にまたがる管理操作」なので同じ場所が直感的。
+//     ・ ヘッダーに常駐させると一般メンバーの目に触れて混乱するので、
+//        master サイドバーの中に置いてロール条件で出し分ける方が安全。
+//
+//   フォームの状態は DOM の値を都度読み取る方式（モジュールスコープ変数を持たない）。
+//   プレビューは入力イベントで再描画されるため、フォームを編集すると即時反映される。
+//
+//   通知カードの描画は public/js/notification-card.js（ESモジュール）を動的 import で読み込む。
+//   既存ベル/パネル機能を壊さないため、export はそのまま、ここで window.__broadcast に閉じ込めて使う。
+// ============================================================
+const BROADCAST_TARGET_ROLES = [
+  { value: 'all',              label: '全員',                hint: 'すべてのアクティブメンバー' },
+  { value: 'directors_above',  label: 'ディレクター以上',     hint: 'director / P兼D / プロデューサー / 管理者' },
+  { value: 'editors_only',     label: '編集者のみ',           hint: 'editor ロール' },
+  { value: 'designers_only',   label: 'デザイナーのみ',       hint: 'designer ロール' },
+];
+
+const BROADCAST_TITLE_MAX = 80;
+const BROADCAST_BODY_MAX  = 500;
+// 簡易 URL 正規表現（http:// または https:// で始まるか、/ 始まりの社内パス）
+// ・社内パスを許可するのは /announcements/... 形式の通知 link_url を入れたい想定
+const BROADCAST_URL_RE = /^(https?:\/\/[^\s]+|\/[^\s]*)$/i;
+
+async function renderBroadcastNotificationPage() {
+  const el = document.getElementById('master-content');
+  if (!el) return;
+
+  // フロント側の二重防御: URLから直接 master ページを開かれた場合に備えてロールチェック
+  const r = effectiveRole();
+  const canBroadcast = ['admin','secretary','producer','producer_director'].includes(r);
+  if (!canBroadcast) {
+    el.innerHTML = `
+      <div class="broadcast-forbidden">
+        <div class="broadcast-forbidden-icon" aria-hidden="true">🔒</div>
+        <div>このページを開く権限がありません</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:6px">全体通知の送信は 管理者・秘書・プロデューサー・P兼D のみ操作できます</div>
+      </div>
+    `;
+    return;
+  }
+
+  const radioHtml = BROADCAST_TARGET_ROLES.map((r, idx) => `
+    <label class="broadcast-radio-label${idx === 0 ? ' checked' : ''}" data-target-role="${r.value}">
+      <input type="radio" name="broadcast-target-role" value="${r.value}"${idx === 0 ? ' checked' : ''}>
+      <span>${esc(r.label)}</span>
+      <span class="broadcast-radio-hint">${esc(r.hint)}</span>
+    </label>
+  `).join('');
+
+  el.innerHTML = `
+    <div class="broadcast-form" id="broadcast-form-root">
+      <div style="margin-bottom:16px">
+        <h3 style="font-size:17px;font-weight:700;color:var(--text);margin:0 0 4px">📢 全体通知を送信</h3>
+        <p style="font-size:12px;color:var(--text-muted);margin:0;line-height:1.6">
+          受信者のヘッダー右上のベルに即時通知が届きます。送信前にプレビューで実際の見え方を確認できます。
+        </p>
+      </div>
+
+      <div class="broadcast-form-section">
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label" for="bc-title">
+            タイトル <span style="color:#C0392B">*</span>
+            <span class="broadcast-counter" id="bc-title-counter">0 / ${BROADCAST_TITLE_MAX}</span>
+          </label>
+          <input class="form-input" id="bc-title" type="text" maxlength="${BROADCAST_TITLE_MAX + 20}"
+            placeholder="例) 明日17時から全体ミーティングです">
+        </div>
+
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label" for="bc-body">
+            本文 <span style="color:#C0392B">*</span>
+            <span class="broadcast-counter" id="bc-body-counter">0 / ${BROADCAST_BODY_MAX}</span>
+          </label>
+          <textarea class="form-input" id="bc-body" rows="6" maxlength="${BROADCAST_BODY_MAX + 50}"
+            style="resize:vertical;font-family:inherit;min-height:140px"
+            placeholder="重要な発表があるので必ず参加してください。Zoomリンクは別途共有します。"></textarea>
+        </div>
+
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label" for="bc-link">
+            遷移先URL <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意）</span>
+          </label>
+          <input class="form-input" id="bc-link" type="text"
+            placeholder="例) https://example.com/meeting または /announcements/may-meeting">
+          <span class="broadcast-url-error" id="bc-link-error"></span>
+        </div>
+
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">送信対象</label>
+          <div class="broadcast-radio-group" id="bc-target-radio-group">
+            ${radioHtml}
+          </div>
+        </div>
+      </div>
+
+      <div class="broadcast-form-section">
+        <div class="broadcast-actions">
+          <div class="broadcast-actions-left">
+            <button type="button" class="broadcast-btn-preview" id="bc-preview-btn">プレビュー</button>
+          </div>
+          <button type="button" class="broadcast-btn-send" id="bc-send-btn" disabled>送信</button>
+        </div>
+      </div>
+
+      <div class="broadcast-preview-wrap" id="bc-preview-wrap" style="display:none">
+        <div class="broadcast-preview-label">プレビュー（受信者にはこう見えます）</div>
+        <div id="bc-preview-body">
+          <div class="broadcast-preview-empty">タイトルと本文を入れてプレビューを押すと、実際に届く通知カードがここに表示されます</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 動的 import で notification-card のレンダリング関数を取り込む
+  // （既存ベル/パネル機能を壊さないように、ここでは window グローバルに保存しない）
+  if (!window.__broadcastCardModule) {
+    try {
+      window.__broadcastCardModule = await import('/js/notification-card.js');
+    } catch (e) {
+      console.warn('[broadcast] notification-card 読み込み失敗', e);
+    }
+  }
+
+  setupBroadcastFormHandlers();
+  updateBroadcastSendButtonState();
+}
+
+// フォーム要素のイベントを一括で仕掛ける
+function setupBroadcastFormHandlers() {
+  const titleEl = document.getElementById('bc-title');
+  const bodyEl  = document.getElementById('bc-body');
+  const linkEl  = document.getElementById('bc-link');
+  const radioWrap = document.getElementById('bc-target-radio-group');
+  const previewBtn = document.getElementById('bc-preview-btn');
+  const sendBtn    = document.getElementById('bc-send-btn');
+
+  if (titleEl) {
+    titleEl.addEventListener('input', () => {
+      updateBroadcastCounter('bc-title', BROADCAST_TITLE_MAX);
+      updateBroadcastSendButtonState();
+      // プレビュー表示中なら即時更新（編集と同時にプレビューも追従させる）
+      if (document.getElementById('bc-preview-wrap')?.style.display !== 'none') {
+        renderBroadcastPreview();
+      }
+    });
+  }
+  if (bodyEl) {
+    bodyEl.addEventListener('input', () => {
+      updateBroadcastCounter('bc-body', BROADCAST_BODY_MAX);
+      updateBroadcastSendButtonState();
+      if (document.getElementById('bc-preview-wrap')?.style.display !== 'none') {
+        renderBroadcastPreview();
+      }
+    });
+  }
+  if (linkEl) {
+    linkEl.addEventListener('input', () => {
+      validateBroadcastUrl();
+      updateBroadcastSendButtonState();
+      if (document.getElementById('bc-preview-wrap')?.style.display !== 'none') {
+        renderBroadcastPreview();
+      }
+    });
+  }
+  if (radioWrap) {
+    radioWrap.addEventListener('change', () => {
+      // ラジオの見た目（.checked）を同期
+      radioWrap.querySelectorAll('.broadcast-radio-label').forEach(lbl => {
+        const input = lbl.querySelector('input[type=radio]');
+        if (input) lbl.classList.toggle('checked', input.checked);
+      });
+    });
+  }
+  if (previewBtn) {
+    previewBtn.addEventListener('click', () => renderBroadcastPreview());
+  }
+  if (sendBtn) {
+    sendBtn.addEventListener('click', () => onBroadcastSendClick());
+  }
+}
+
+// カウンター更新（80超え/500超えで色を変える）
+function updateBroadcastCounter(inputId, max) {
+  const input = document.getElementById(inputId);
+  const counter = document.getElementById(`${inputId}-counter`);
+  if (!input || !counter) return;
+  const len = (input.value || '').length;
+  counter.textContent = `${len} / ${max}`;
+  counter.classList.remove('warn', 'over');
+  if (len > max) {
+    counter.classList.add('over');
+  } else if (len > Math.floor(max * 0.9)) {
+    counter.classList.add('warn');
+  }
+}
+
+// URL バリデーション（任意項目なので空はOK）
+function validateBroadcastUrl() {
+  const linkEl  = document.getElementById('bc-link');
+  const errorEl = document.getElementById('bc-link-error');
+  if (!linkEl || !errorEl) return true;
+  const v = (linkEl.value || '').trim();
+  if (!v) {
+    errorEl.textContent = '';
+    errorEl.style.display = 'none';
+    return true;
+  }
+  if (!BROADCAST_URL_RE.test(v)) {
+    errorEl.textContent = 'URLの形式が正しくありません（例: https://... または /... 形式の社内パス）';
+    errorEl.style.display = '';
+    return false;
+  }
+  errorEl.textContent = '';
+  errorEl.style.display = 'none';
+  return true;
+}
+
+// 送信ボタンの活性条件: タイトル・本文が入っていて、URL が有効（または空）
+function updateBroadcastSendButtonState() {
+  const titleEl = document.getElementById('bc-title');
+  const bodyEl  = document.getElementById('bc-body');
+  const sendBtn = document.getElementById('bc-send-btn');
+  if (!sendBtn) return;
+  const titleOk = titleEl && titleEl.value.trim().length > 0 && titleEl.value.length <= BROADCAST_TITLE_MAX;
+  const bodyOk  = bodyEl  && bodyEl.value.trim().length > 0  && bodyEl.value.length  <= BROADCAST_BODY_MAX;
+  const urlOk   = validateBroadcastUrl();
+  sendBtn.disabled = !(titleOk && bodyOk && urlOk);
+}
+
+// 現在のフォーム値を読み出してプレビュー用の通知データを返す
+function getBroadcastFormValues() {
+  return {
+    title:    (document.getElementById('bc-title')?.value || '').trim(),
+    body:     (document.getElementById('bc-body')?.value  || '').trim(),
+    link_url: (document.getElementById('bc-link')?.value  || '').trim() || null,
+    target_role: document.querySelector('input[name="broadcast-target-role"]:checked')?.value || 'all',
+  };
+}
+
+// プレビューエリアに「実際に届く通知カード」を描画
+function renderBroadcastPreview() {
+  const wrap = document.getElementById('bc-preview-wrap');
+  const body = document.getElementById('bc-preview-body');
+  if (!wrap || !body) return;
+  wrap.style.display = '';
+
+  const v = getBroadcastFormValues();
+  if (!v.title && !v.body) {
+    body.innerHTML = `<div class="broadcast-preview-empty">タイトルと本文を入れてプレビューを押すと、実際に届く通知カードがここに表示されます</div>`;
+    return;
+  }
+
+  const mod = window.__broadcastCardModule;
+  if (!mod || typeof mod.renderNotificationCard !== 'function') {
+    body.innerHTML = `<div class="broadcast-preview-empty">プレビューモジュールの読み込みに失敗しました。画面を再読み込みしてください</div>`;
+    return;
+  }
+
+  // 段階2の renderNotificationCard が期待する形式に合わせる。
+  // is_read=false にして「未読」状態（左に縦線、タイトル太字）の見た目を出す。
+  // id は preview 用のダミー（クリックハンドラは仕掛けないので衝突しない）
+  const previewNotification = {
+    id: 'preview',
+    notification_type: 'global',
+    title: v.title || '（タイトル未入力）',
+    body:  v.body  || '',
+    link_url: v.link_url,
+    sender_name: window.currentUser?.name || window.currentUser?.full_name || '管理者',
+    sender_id: window.currentUser?.id || null,
+    created_at: new Date().toISOString(),
+    is_read: false,
+  };
+
+  body.innerHTML = mod.renderNotificationCard(previewNotification);
+}
+
+// 送信ボタン押下 → 対象人数を取得 → 確認モーダルを開く
+async function onBroadcastSendClick() {
+  // バリデーション最終確認
+  updateBroadcastSendButtonState();
+  const sendBtn = document.getElementById('bc-send-btn');
+  if (sendBtn?.disabled) return;
+
+  const v = getBroadcastFormValues();
+  const targetLabel = (BROADCAST_TARGET_ROLES.find(t => t.value === v.target_role)?.label) || '全員';
+
+  // 確認モーダルを開く前にローディング表示（人数取得中）
+  openModal('modal-broadcast-confirm');
+  const countEl   = document.getElementById('bc-confirm-count');
+  const targetEl  = document.getElementById('bc-confirm-target-label');
+  const errorEl   = document.getElementById('bc-confirm-error');
+  const submitBtn = document.getElementById('bc-confirm-submit');
+  if (countEl) countEl.textContent = '取得中…';
+  if (targetEl) targetEl.textContent = `送信対象: ${targetLabel}`;
+  if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+  if (submitBtn) submitBtn.disabled = true;
+
+  let count = 0;
+  try {
+    const res = await apiFetch(`/api/notifications/global/preview-count?target_role=${encodeURIComponent(v.target_role)}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const msg = res.status === 403
+        ? 'この操作の権限がありません'
+        : `対象人数の取得に失敗しました（${res.status} ${data.error || ''}）`;
+      if (errorEl) { errorEl.style.display = ''; errorEl.textContent = msg; }
+      if (countEl) countEl.textContent = '—';
+      return;
+    }
+    const data = await res.json();
+    count = Number(data.count) || 0;
+  } catch (e) {
+    if (errorEl) { errorEl.style.display = ''; errorEl.textContent = `通信エラー: ${e.message}`; }
+    if (countEl) countEl.textContent = '—';
+    return;
+  }
+
+  if (countEl) countEl.textContent = String(count);
+  if (submitBtn) {
+    submitBtn.disabled = count === 0;
+    // クリックハンドラを毎回付け替える（前回分が残らないよう一度クローン置換）
+    const fresh = submitBtn.cloneNode(true);
+    submitBtn.parentNode.replaceChild(fresh, submitBtn);
+    fresh.addEventListener('click', () => doBroadcastSend(count));
+  }
+}
+
+// 確認モーダルの「送信する」押下 → POST /api/notifications/global
+async function doBroadcastSend(expectedCount) {
+  const submitBtn = document.getElementById('bc-confirm-submit');
+  const cancelBtn = document.getElementById('bc-confirm-cancel');
+  const errorEl   = document.getElementById('bc-confirm-error');
+  const v = getBroadcastFormValues();
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = '送信中…';
+  }
+  if (cancelBtn) cancelBtn.disabled = true;
+  if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+  try {
+    const res = await apiFetch('/api/notifications/global', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: v.title,
+        body:  v.body,
+        link_url: v.link_url || null,
+        target_role: v.target_role,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const baseMsg = data.error || `${res.status} ${res.statusText || ''}`;
+      const friendly = res.status === 403
+        ? '送信に失敗しました: この操作の権限がありません'
+        : res.status >= 500
+        ? `送信に失敗しました: サーバー側で問題が発生しました（${baseMsg}）`
+        : `送信に失敗しました: ${baseMsg}`;
+      if (errorEl) { errorEl.style.display = ''; errorEl.textContent = friendly; }
+      if (typeof showToast === 'function') showToast(friendly, 'error', 6000);
+      return;
+    }
+    const data = await res.json();
+    const sent = Number(data.notification_count) || 0;
+    closeModal('modal-broadcast-confirm');
+    if (typeof showToast === 'function') {
+      showToast(`${sent}名に送信しました`, 'success');
+    }
+    resetBroadcastForm();
+  } catch (e) {
+    const friendly = `送信に失敗しました: ${e.message || '通信エラー'}`;
+    if (errorEl) { errorEl.style.display = ''; errorEl.textContent = friendly; }
+    if (typeof showToast === 'function') showToast(friendly, 'error', 6000);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送信する';
+    }
+    if (cancelBtn) cancelBtn.disabled = false;
+  }
+}
+
+// 送信成功後にフォームを初期化
+function resetBroadcastForm() {
+  const titleEl = document.getElementById('bc-title');
+  const bodyEl  = document.getElementById('bc-body');
+  const linkEl  = document.getElementById('bc-link');
+  if (titleEl) titleEl.value = '';
+  if (bodyEl)  bodyEl.value  = '';
+  if (linkEl)  linkEl.value  = '';
+
+  // ラジオは「全員」に戻す
+  document.querySelectorAll('input[name="broadcast-target-role"]').forEach((r, idx) => {
+    r.checked = (r.value === 'all');
+  });
+  document.querySelectorAll('.broadcast-radio-label').forEach(lbl => {
+    const input = lbl.querySelector('input[type=radio]');
+    if (input) lbl.classList.toggle('checked', input.checked);
+  });
+
+  // カウンター・URLエラー・送信ボタン状態を初期化
+  updateBroadcastCounter('bc-title', BROADCAST_TITLE_MAX);
+  updateBroadcastCounter('bc-body',  BROADCAST_BODY_MAX);
+  validateBroadcastUrl();
+  updateBroadcastSendButtonState();
+
+  // プレビューもクリア
+  const wrap = document.getElementById('bc-preview-wrap');
+  const body = document.getElementById('bc-preview-body');
+  if (wrap) wrap.style.display = 'none';
+  if (body) {
+    body.innerHTML = `<div class="broadcast-preview-empty">タイトルと本文を入れてプレビューを押すと、実際に届く通知カードがここに表示されます</div>`;
   }
 }
 
