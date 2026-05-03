@@ -9915,6 +9915,18 @@ function _twCanModerate() {
   return r === 'admin' || r === 'secretary';
 }
 
+// Phase 1 段階4: 5種リアクション設定
+const TWEET_REACTIONS = [
+  { type: 'good',      emoji: '👍', label: 'いいね' },
+  { type: 'heart',     emoji: '❤️', label: 'ハート' },
+  { type: 'clap',      emoji: '👏', label: '拍手' },
+  { type: 'smile',     emoji: '😊', label: 'スマイル' },
+  { type: 'surprised', emoji: '😳', label: 'びっくり' },
+];
+
+// 展開中のコメント欄を覚えておく（再描画後も開きっぱなしにしたい場合に使う）
+const _twOpenComments = new Set();
+
 async function loadTweets() {
   const el = document.getElementById('dash-tweets');
   if (!el) return;
@@ -9948,7 +9960,31 @@ async function loadTweets() {
     const deleteBtn = canDelete
       ? `<button onclick="deleteTweet('${t.id}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px;margin-left:auto" title="削除">🗑️</button>`
       : '';
-    const likeBtn = `<button onclick="${t.my_liked ? `unlikeTweet('${t.id}')` : `likeTweet('${t.id}')`}" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px;color:${t.my_liked ? '#E91E63' : 'var(--text-muted)'}">${t.my_liked ? '❤️' : '🤍'} ${t.like_count}</button>`;
+
+    // 5種リアクションボタン
+    const myReactions = new Set(t.my_reactions || []);
+    const counts = t.reaction_counts || {};
+    const reactionBtns = TWEET_REACTIONS.map(r => {
+      const active = myReactions.has(r.type);
+      const c = counts[r.type] || 0;
+      const handler = active
+        ? `removeTweetReaction('${t.id}','${r.type}')`
+        : `addTweetReaction('${t.id}','${r.type}')`;
+      const bg = active ? 'var(--em-pale)' : 'transparent';
+      const border = active ? '1px solid var(--em-dark)' : '1px solid var(--border-light)';
+      const color = active ? 'var(--em-dark)' : 'var(--text-muted)';
+      return `<button onclick="${handler}" title="${r.label}" style="background:${bg};border:${border};border-radius:14px;cursor:pointer;font-size:12px;padding:3px 9px;color:${color};display:inline-flex;align-items:center;gap:3px">
+        <span style="font-size:13px">${r.emoji}</span>
+        ${c > 0 ? `<span style="font-weight:600">${c}</span>` : ''}
+      </button>`;
+    }).join('');
+
+    const commentCount = t.comment_count || 0;
+    const open = _twOpenComments.has(t.id);
+    const commentToggleBtn = `<button onclick="toggleTweetComments('${t.id}')" style="background:none;border:1px solid var(--border-light);border-radius:14px;cursor:pointer;font-size:12px;padding:3px 9px;color:var(--text-muted);display:inline-flex;align-items:center;gap:3px">
+      💬 ${commentCount > 0 ? `<span style="font-weight:600">${commentCount}</span>` : ''}
+    </button>`;
+
     const pinBadge = t.is_pinned ? '<span style="font-size:10px;background:var(--em-pale);color:var(--em-dark);padding:1px 6px;border-radius:8px;margin-left:6px">📌 ピン</span>' : '';
     return `<div style="padding:14px 0;border-bottom:0.5px solid var(--border-light)">
       <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px">
@@ -9962,8 +9998,12 @@ async function loadTweets() {
       ${t.image_data ? `<div style="border-radius:10px;overflow:hidden;margin-bottom:8px;background:var(--surface);max-width:480px">
         <img src="${esc(t.image_data)}" style="width:100%;display:block;cursor:pointer" onclick="openTweetImage('${t.id}')">
       </div>` : ''}
-      <div style="font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.6;margin-bottom:6px">${esc(t.body)}</div>
-      <div style="display:flex;gap:8px;align-items:center">${likeBtn}</div>
+      <div style="font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.6;margin-bottom:8px">${esc(t.body)}</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${reactionBtns}
+        ${commentToggleBtn}
+      </div>
+      <div id="tw-comments-${t.id}" style="margin-top:${open ? '10px' : '0'};display:${open ? 'block' : 'none'}"></div>
     </div>`;
   }).join('');
 
@@ -9973,6 +10013,137 @@ async function loadTweets() {
     </div>
     ${cards}
   </div>`;
+
+  // 開いていたコメント欄を再ロード
+  _twOpenComments.forEach(id => loadTweetComments(id));
+}
+
+// コメント欄の開閉
+async function toggleTweetComments(tweetId) {
+  const wrap = document.getElementById(`tw-comments-${tweetId}`);
+  if (!wrap) return;
+  if (_twOpenComments.has(tweetId)) {
+    _twOpenComments.delete(tweetId);
+    wrap.style.display = 'none';
+    wrap.style.marginTop = '0';
+    return;
+  }
+  _twOpenComments.add(tweetId);
+  wrap.style.display = 'block';
+  wrap.style.marginTop = '10px';
+  await loadTweetComments(tweetId);
+}
+
+async function loadTweetComments(tweetId) {
+  const wrap = document.getElementById(`tw-comments-${tweetId}`);
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:6px 0">読み込み中...</div>';
+
+  let comments = [];
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments`);
+    if (res.ok) comments = await res.json();
+  } catch (e) { console.warn('[tweet comments] load failed', e); }
+
+  const myId = currentUser?.id;
+  const canMod = _twCanModerate();
+
+  const rows = (comments || []).map(c => {
+    const u = c.users || {};
+    const av = u.avatar_url
+      ? `<img src="${esc(u.avatar_url)}" style="width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0">`
+      : `<div style="width:24px;height:24px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0">${esc((u.full_name || '?').charAt(0))}</div>`;
+    const canDelete = (c.user_id === myId) || canMod;
+    const delBtn = canDelete
+      ? `<button onclick="deleteTweetComment('${tweetId}','${c.id}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 4px;margin-left:auto" title="削除">🗑️</button>`
+      : '';
+    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0">
+      ${av}
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px">
+          <span style="font-weight:600;color:var(--text)">${esc(u.full_name || '不明')}</span>
+          <span style="color:var(--text-muted)">${_twTimeAgo(c.created_at)}</span>
+          ${delBtn}
+        </div>
+        <div style="font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.5;margin-top:2px">${esc(c.body)}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div style="background:var(--surface);border-radius:8px;padding:8px 12px">
+      ${rows || '<div style="font-size:11px;color:var(--text-muted);padding:4px 0">まだコメントはありません</div>'}
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px;border-top:0.5px solid var(--border-light);padding-top:8px">
+        <input type="text" id="tw-comment-input-${tweetId}" maxlength="500"
+          placeholder="コメントを入力（500字、@名前 でメンション）"
+          onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitTweetComment('${tweetId}')}"
+          style="flex:1;padding:6px 10px;font-size:12px;border:1px solid var(--border-light);border-radius:14px;outline:none">
+        <button onclick="submitTweetComment('${tweetId}')" class="btn-primary" style="font-size:11px;padding:5px 12px">送信</button>
+      </div>
+    </div>
+  `;
+}
+
+async function submitTweetComment(tweetId) {
+  const inp = document.getElementById(`tw-comment-input-${tweetId}`);
+  if (!inp) return;
+  const body = (inp.value || '').trim();
+  if (!body) { showToast('コメントを入力してください', 'warn'); return; }
+  if (body.length > 500) { showToast('500字以内にしてください', 'warn'); return; }
+  inp.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '送信失敗'), 'error');
+      return;
+    }
+    inp.value = '';
+    await loadTweetComments(tweetId);
+    // 件数バッジを更新するため一覧も再描画
+    loadTweets();
+  } finally {
+    inp.disabled = false;
+  }
+}
+
+async function deleteTweetComment(tweetId, commentId) {
+  if (!confirm('このコメントを削除しますか？')) return;
+  const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, { method: 'DELETE' });
+  if (res.ok) {
+    showToast('削除しました', 'success');
+    await loadTweetComments(tweetId);
+    loadTweets();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
+}
+
+async function addTweetReaction(tweetId, type) {
+  const res = await apiFetch(`${API}/tweets/${tweetId}/reactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reaction_type: type }),
+  });
+  if (res.ok || res.status === 409) loadTweets();
+  else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
+}
+
+async function removeTweetReaction(tweetId, type) {
+  const res = await apiFetch(`${API}/tweets/${tweetId}/reactions/${type}`, { method: 'DELETE' });
+  if (res.ok) loadTweets();
+  else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
 }
 
 function openTweetImage(tweetId) {
