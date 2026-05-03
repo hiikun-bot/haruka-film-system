@@ -4139,6 +4139,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <span style="color:var(--text-muted)" id="cd-project-name"></span>
           <span style="color:var(--text-muted)" id="cd-assignee"></span>
           <span id="cd-revision-count-badge" style="display:none;font-size:11px;background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 8px;font-weight:600"></span>
+          <!-- Dチェック追加レビュアーバッジ（chat内: feature/creatives 追加メンバー呼出機能） -->
+          <span id="cd-additional-reviewers-badge" style="display:none;font-size:11px;background:#EDF6FF;color:#1d4ed8;border:0.5px solid #93c5fd;border-radius:4px;padding:1px 8px;font-weight:600" title=""></span>
         </div>
       </div>
 
@@ -4490,6 +4492,38 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <!-- リサイズハンドル（右下） -->
     <div id="fp-resize-handle" onmousedown="fpStartResize(event)" style="position:absolute;bottom:0;right:0;width:18px;height:18px;cursor:se-resize;opacity:0.5;display:flex;align-items:flex-end;justify-content:flex-end;padding:3px">
       <svg width="10" height="10" viewBox="0 0 10 10" fill="#71717a"><path d="M9 1L1 9M9 5L5 9M9 9"/><line x1="9" y1="1" x2="1" y2="9" stroke="#71717a" stroke-width="1.5"/><line x1="9" y1="5" x2="5" y2="9" stroke="#71717a" stroke-width="1.5"/></svg>
+    </div>
+  </div>
+</div>
+
+<!-- Dチェック追加レビュアー選択モーダル -->
+<!--
+  デザインチームのようにディレクター不在の案件で、編集者がDチェック依頼を出すときに
+  チームメンバーを「追加で呼ぶ」ためのモーダル。
+  - 選択肢: 自分の team_id 配下の active メンバー（自分・既存ディレクターを除外）
+  - 「スキップ」: 追加なしで Dチェックへ遷移
+  - 「この人達も呼んでDチェック依頼」: 選択メンバーを additional_reviewer_ids に保存しつつ Dチェックへ遷移
+  - 請求書ロジックには影響させない（creative_assignments には INSERT しない）
+-->
+<div class="modal-overlay" id="modal-dcheck-additional-reviewers" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="width:520px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;padding:0">
+    <div class="modal-title" style="padding:20px 24px 0;margin-bottom:6px">
+      Dチェック依頼
+      <button class="modal-close" onclick="closeModal('modal-dcheck-additional-reviewers')">×</button>
+    </div>
+    <div style="padding:0 24px 8px;font-size:12px;color:var(--text-muted);line-height:1.6">
+      自分のチームメンバーから追加で呼ぶ人を選択できます。<br>
+      （請求書には反映されません。あくまで「チェック参加者」として通知が飛びます）
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:0 24px 8px">
+      <div id="dcheck-add-empty" style="display:none;padding:20px 8px;font-size:13px;color:var(--text-muted);text-align:center">
+        追加で呼べるチームメンバーが見つかりません。
+      </div>
+      <div id="dcheck-add-list" style="border:1px solid var(--border);border-radius:8px;max-height:340px;overflow-y:auto"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0;background:var(--white)">
+      <button class="btn" onclick="confirmDCheckAdditional(false)" style="min-width:100px">スキップ（追加なし）</button>
+      <button class="btn-primary" onclick="confirmDCheckAdditional(true)" id="dcheck-add-confirm-btn" style="min-width:140px">この人達も呼んでDチェック依頼</button>
     </div>
   </div>
 </div>
@@ -6380,7 +6414,7 @@ function renderCreatives() {
       <td style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : editorName}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
-      <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
+      <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}${(Array.isArray(c.additional_reviewer_ids) && c.additional_reviewer_ids.length > 0) ? `<span title="Dチェックに追加で呼ばれているメンバーがいます" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#EDF6FF;border:0.5px solid #93c5fd;color:#1d4ed8;font-weight:600">+${c.additional_reviewer_ids.length}人</span>` : ''}</td>
       <td title="${esc(c.memo || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${esc(c.memo || '—')}</td>
       <td><span class="ball-dot ${dotClass}"></span><span class="ball-name">${ball.holder}</span></td>
       <td>
@@ -15392,6 +15426,10 @@ async function openCreativeDetail(id) {
     if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
     else revBadge.style.display = 'none';
   }
+  // Dチェック追加レビュアーバッジ
+  if (typeof renderAdditionalReviewerBadge === 'function') {
+    renderAdditionalReviewerBadge(c);
+  }
 
   // 納期バー
   (function() {
@@ -17861,22 +17899,151 @@ function confirmUploadNo() {
   document.getElementById('cd-manual-upload-btn').style.display = '';
 }
 
+// 「Dチェックへ進む」: 追加メンバー呼び出しモーダルを開いて、選択後に遷移を実行する。
+//
+// 旧フロー: そのまま PUT /creatives/:id { status: 'Dチェック' }
+// 新フロー: モーダルでチームメンバー選択 → スキップ or 「呼ぶ」を選んで遷移。
+//
+// 「自分が呼べる人」の絞り込み:
+//   - 自分（currentUser）の team_id に属するメンバー（active のみ）
+//   - 自分自身は除外
+//   - 既存ディレクター（cdResolveDefaultDirectorId）は除外（ball_holder で自動通知）
+//   - 編集者（assignment）も除外（自分かつ編集者であることが多い）
 async function doDCheckTransition() {
-  document.getElementById('cd-dcheck-confirm').style.display = 'none';
+  // 旧確認バーは隠す（モーダルに置き換え）
+  const oldBar = document.getElementById('cd-dcheck-confirm');
+  if (oldBar) oldBar.style.display = 'none';
+  if (!currentCreativeDetail) return;
+
+  // 候補メンバー算出
+  const myTeamId = currentUser?.team_id || null;
+  const myId = currentUser?.id || null;
+  const defaultDirId = (typeof cdResolveDefaultDirectorId === 'function')
+    ? cdResolveDefaultDirectorId() : null;
+  const editorIds = new Set(
+    (currentCreativeDetail.creative_assignments || [])
+      .map(a => a?.users?.id).filter(Boolean)
+  );
+
+  const candidates = (allMembers || [])
+    .filter(m =>
+      m && m.is_active !== false &&
+      m.id !== myId &&
+      m.id !== defaultDirId &&
+      !editorIds.has(m.id) &&
+      (myTeamId ? m.team_id === myTeamId : false)
+    )
+    .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+
+  // モーダル中身を描画
+  const listEl = document.getElementById('dcheck-add-list');
+  const emptyEl = document.getElementById('dcheck-add-empty');
+  if (!listEl || !emptyEl) {
+    // モーダル要素がなければ従来挙動にフォールバック
+    return _doDCheckTransitionRaw([]);
+  }
+  if (candidates.length === 0) {
+    listEl.innerHTML = '';
+    listEl.style.display = 'none';
+    emptyEl.style.display = '';
+  } else {
+    emptyEl.style.display = 'none';
+    listEl.style.display = '';
+    listEl.innerHTML = candidates.map(m => {
+      const role = (typeof roleLabel === 'function') ? roleLabel(m.role) : (m.role || '');
+      const av = (typeof avatarHtml === 'function') ? avatarHtml(m, 28) : '';
+      return `
+        <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" class="dcheck-add-check" value="${m.id}" style="width:15px;height:15px;cursor:pointer">
+          ${av}
+          <div style="display:flex;flex-direction:column;flex:1;min-width:0">
+            <span style="font-size:13px;font-weight:500;color:var(--text)">${esc(m.full_name || '')}</span>
+            <span style="font-size:11px;color:var(--text-muted)">${esc(role)}</span>
+          </div>
+        </label>`;
+    }).join('');
+    // 末尾のborder消し
+    const last = listEl.querySelector('label:last-child');
+    if (last) last.style.borderBottom = 'none';
+  }
+
+  openModal('modal-dcheck-additional-reviewers');
+}
+
+// モーダルから呼び出される確定ハンドラ。
+// withSelected=false: 選択を無視してスキップ（追加なしで Dチェックへ）
+// withSelected=true : チェック済みのメンバーを additional_reviewer_ids に詰めて Dチェックへ
+async function confirmDCheckAdditional(withSelected) {
+  let ids = [];
+  if (withSelected) {
+    const checks = document.querySelectorAll('.dcheck-add-check:checked');
+    ids = Array.from(checks).map(c => c.value).filter(Boolean);
+  }
+  closeModal('modal-dcheck-additional-reviewers');
+  await _doDCheckTransitionRaw(ids);
+}
+
+// 実遷移処理（PUT /creatives/:id）。additional_reviewer_ids が非空なら同梱する。
+async function _doDCheckTransitionRaw(additionalReviewerIds) {
   const statusEl = document.getElementById('cd-upload-status');
   const editorComment = document.getElementById('cd-comment-field').value.trim();
   const payload = { status: 'Dチェック' };
   if (editorComment) payload.director_comment = editorComment;
+  if (Array.isArray(additionalReviewerIds) && additionalReviewerIds.length > 0) {
+    payload.additional_reviewer_ids = additionalReviewerIds;
+  } else {
+    // 明示的に空配列を送ってクリア（再Dチェックで誰も呼ばないケース）
+    payload.additional_reviewer_ids = [];
+  }
   const upd = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
   });
   if (upd.ok) {
     currentCreativeDetail.status = 'Dチェック';
+    currentCreativeDetail.additional_reviewer_ids = payload.additional_reviewer_ids;
     updateCreativeStepIndicator('Dチェック');
     updateCreativeCommentLabel('Dチェック');
     document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
-    if (statusEl) { statusEl.textContent = '→ Dチェックに移行しました'; statusEl.style.color = 'var(--em-dark)'; }
+    // 追加レビュアーバッジを更新
+    if (typeof renderAdditionalReviewerBadge === 'function') {
+      renderAdditionalReviewerBadge(currentCreativeDetail);
+    }
+    if (statusEl) {
+      const extra = (payload.additional_reviewer_ids.length > 0)
+        ? `（+${payload.additional_reviewer_ids.length}人を追加で呼出）` : '';
+      statusEl.textContent = `→ Dチェックに移行しました${extra}`;
+      statusEl.style.color = 'var(--em-dark)';
+    }
+    if (typeof renderCreatives === 'function') renderCreatives();
+  } else {
+    if (statusEl) {
+      statusEl.textContent = 'Dチェックへの移行に失敗しました';
+      statusEl.style.color = '#E24B4A';
+    }
   }
+}
+
+// 追加レビュアーバッジ描画（クリエイティブ詳細用）
+// 場所: ステータスチップの隣の領域に「+N人を追加で呼出中」を出す
+function renderAdditionalReviewerBadge(c) {
+  const host = document.getElementById('cd-additional-reviewers-badge');
+  if (!host) return;
+  const ids = Array.isArray(c?.additional_reviewer_ids) ? c.additional_reviewer_ids : [];
+  if (!ids.length) {
+    host.style.display = 'none';
+    host.textContent = '';
+    return;
+  }
+  // 名前を解決（最大3名まで表示、超過分は +N で省略）
+  const names = ids.map(uid => {
+    const m = (allMembers || []).find(x => x.id === uid);
+    return m?.full_name || null;
+  }).filter(Boolean);
+  const shown = names.slice(0, 3).join(' / ');
+  const rest = names.length > 3 ? ` 他${names.length - 3}名` : '';
+  host.style.display = '';
+  host.title = names.join(', ');
+  host.textContent = `+${ids.length}人を追加で呼出中${shown ? `（${shown}${rest}）` : ''}`;
 }
 
 function detectMediaDimensions(file) {
