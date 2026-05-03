@@ -18070,19 +18070,43 @@ function openDCheckPicker({ onSubmit } = {}) {
   const mainDirectorId = project.director_id || null;
   const subDirectorIds = Array.isArray(project.sub_director_ids) ? project.sub_director_ids.filter(Boolean) : [];
 
-  const memberById = new Map(allMembers.filter(m => m.is_active !== false).map(m => [m.id, m]));
+  // memberByIdAll: is_active 関係なく全員（案件D・サブD用 — 離職者でも固定表示する必要がある）
+  // memberByIdActive: is_active === false を除外（チーム/秘書/その他セクション用）
+  const memberByIdAll = new Map((allMembers || []).map(m => [m.id, m]));
+  const memberByIdActive = new Map((allMembers || []).filter(m => m.is_active !== false).map(m => [m.id, m]));
+
+  // 案件Dユーザーの解決優先順位:
+  //   1) APIで埋め込まれた project.director（離職者・権限制限ユーザーでも取得可能）
+  //   2) allMembers から director_id でフォールバック検索
+  //   3) どちらも空なら、最低限 director_id をキーにプレースホルダ表示（読込失敗ケース）
+  function resolveDirectorUser(id, embedded) {
+    if (!id) return null;
+    if (embedded && embedded.id === id) return embedded;
+    const fromAll = memberByIdAll.get(id);
+    if (fromAll) return fromAll;
+    console.warn('[DCheckPicker] director user not found in allMembers nor embedded:', id);
+    return { id, full_name: '（読込失敗・要再読込）', role: 'director', is_active: true };
+  }
 
   // 案件のディレクター = メインD + サブD（順序維持・重複除去）
   // チーム経由のロジックは廃止（PR #218 修正で「案件のディレクター」セクションに集約）
+  // PR (this fix): allMembers 非依存。API 埋め込みを優先し、is_active===false でも固定表示する。
   const projectDirectorOrdered = [];
   const seen = new Set();
-  if (mainDirectorId && memberById.has(mainDirectorId) && !seen.has(mainDirectorId)) {
-    projectDirectorOrdered.push({ id: mainDirectorId, isMain: true });
+  // 埋め込まれたサブDユーザー（id → user マップ）
+  const subDirectorEmbeddedById = new Map(
+    (Array.isArray(project.sub_directors) ? project.sub_directors : []).filter(Boolean).map(u => [u.id, u])
+  );
+
+  if (mainDirectorId && !seen.has(mainDirectorId)) {
+    const u = resolveDirectorUser(mainDirectorId, project.director);
+    projectDirectorOrdered.push({ id: mainDirectorId, isMain: true, user: u });
     seen.add(mainDirectorId);
   }
   subDirectorIds.forEach(id => {
-    if (id && memberById.has(id) && !seen.has(id)) {
-      projectDirectorOrdered.push({ id, isMain: false });
+    if (id && !seen.has(id)) {
+      const u = resolveDirectorUser(id, subDirectorEmbeddedById.get(id));
+      projectDirectorOrdered.push({ id, isMain: false, user: u });
       seen.add(id);
     }
   });
@@ -18099,10 +18123,11 @@ function openDCheckPicker({ onSubmit } = {}) {
   const usedIds = new Set();
 
   // (1L) 案件ディレクター（メインDのみ・最目立ち）
+  // 重要: allMembers / is_active に関係なく director_id があれば必ず表示する
   const mainDirItems = projectDirectorOrdered
     .filter(x => x.isMain)
-    .map(({ id }) => {
-      const m = memberById.get(id);
+    .map(({ id, user }) => {
+      const m = user || { id, full_name: '（読込失敗）' };
       usedIds.add(id);
       return {
         id: m.id,
@@ -18119,8 +18144,8 @@ function openDCheckPicker({ onSubmit } = {}) {
   // (2L) 案件サブディレクター（やや目立ち・解除可能）
   const subDirItems = projectDirectorOrdered
     .filter(x => !x.isMain)
-    .map(({ id }) => {
-      const m = memberById.get(id);
+    .map(({ id, user }) => {
+      const m = user || { id, full_name: '（読込失敗）' };
       usedIds.add(id);
       return {
         id: m.id,
@@ -18175,7 +18200,7 @@ function openDCheckPicker({ onSubmit } = {}) {
     });
   }
 
-  const teamItems = [...memberById.values()]
+  const teamItems = [...memberByIdActive.values()]
     .filter(m => teamMemberIds.has(m.id) && !usedIds.has(m.id))
     .sort(dcpCompareUsers)
     .map(m => {
@@ -18187,7 +18212,7 @@ function openDCheckPicker({ onSubmit } = {}) {
   }
 
   // (1R) 秘書
-  const secItems = [...memberById.values()]
+  const secItems = [...memberByIdActive.values()]
     .filter(m => m.role === 'secretary' && !usedIds.has(m.id))
     .sort(dcpCompareUsers)
     .map(m => {
@@ -18200,7 +18225,7 @@ function openDCheckPicker({ onSubmit } = {}) {
 
   // (2R) その他（全ユーザー：admin/PD/producer/director/editor/designer 等すべて含む）
   // 並び順: ロール優先順 → ランク順 → 名前
-  const otherUsers = [...memberById.values()]
+  const otherUsers = [...memberByIdActive.values()]
     .filter(m => !usedIds.has(m.id))
     .sort(dcpCompareUsers);
   const otherItems = otherUsers.map(m => ({
@@ -18216,8 +18241,9 @@ function openDCheckPicker({ onSubmit } = {}) {
 
   // ロック済み（チェック解除不可）ID集合 — メインDのみ。
   // dcpToggle / submit 時に必ず checkedIds に含まれることを保証する。
+  // 重要: allMembers にいなくても director_id があれば必ずロック扱い（離職者・権限制限ケース対応）
   const lockedIds = new Set();
-  if (mainDirectorId && memberById.has(mainDirectorId)) {
+  if (mainDirectorId) {
     lockedIds.add(mainDirectorId);
     checkedIds.add(mainDirectorId); // 念のため
   }

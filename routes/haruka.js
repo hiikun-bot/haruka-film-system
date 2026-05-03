@@ -1796,7 +1796,11 @@ router.get('/creatives/:id', async (req, res) => {
     .from('creatives')
     .select(`
       *,
-      projects(id, name, producer_id, director_id, regulation_url, clients(id, name, client_code, status)),
+      projects(
+        id, name, producer_id, director_id, regulation_url,
+        director:director_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
+        clients(id, name, client_code, status)
+      ),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
@@ -1835,6 +1839,29 @@ router.get('/creatives/:id', async (req, res) => {
       }
     } catch (_) {
       data.projects.sub_director_ids = [];
+    }
+
+    // サブディレクターのユーザー情報を埋め込み（離職者・権限制限ユーザーでも常に表示できるように）
+    // Dチェックピッカーで「案件ディレクター/サブD」セクションが allMembers の状態に依存しないようにするのが目的。
+    const subIds = data.projects.sub_director_ids;
+    if (Array.isArray(subIds) && subIds.length) {
+      try {
+        const { data: subUsers, error: subErr } = await supabase
+          .from('users')
+          .select('id, full_name, nickname, role, rank, team_id, avatar_url, is_active')
+          .in('id', subIds);
+        if (!subErr && Array.isArray(subUsers)) {
+          // sub_director_ids の順序を維持
+          const userById = new Map(subUsers.map(u => [u.id, u]));
+          data.projects.sub_directors = subIds.map(id => userById.get(id)).filter(Boolean);
+        } else {
+          data.projects.sub_directors = [];
+        }
+      } catch (_) {
+        data.projects.sub_directors = [];
+      }
+    } else {
+      data.projects.sub_directors = [];
     }
   }
 
