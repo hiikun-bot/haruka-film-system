@@ -3787,14 +3787,119 @@ const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 // 自分のいいね状態 + いいね件数を含む一覧
 //   Phase 1 段階4 拡張: my_reactions / reaction_count / comment_count を付与。
 //   既存 like_count / my_liked は heart リアクション数で計算して互換維持。
+//   独立タブ向け拡張:
+//     ?mine=1        — 自分の投稿 OR 自分にメンションされた投稿 OR 自分がコメント参加した投稿
+//     ?staff_only=1  — 投稿者の role が admin / secretary のもののみ
 router.get('/tweets', requireAuth, async (req, res) => {
-  const { data: list, error } = await supabase
+  const mine = req.query.mine === '1' || req.query.mine === 'true';
+  const staffOnly = req.query.staff_only === '1' || req.query.staff_only === 'true';
+
+  let q = supabase
     .from('tweets')
     // FK ヒント `users!user_id` を明示。段階4 migration で tweet_reactions / tweet_comments
     // が users への FK を持ったことで PostgREST が relationship を一意に解決できなくなる
     // ため、tweets.user_id を介した埋め込みであることを明示する。
     .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
-    .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
+    .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
+
+  // 運営のみフィルター: admin / secretary が投稿したもの
+  if (staffOnly) {
+    const { data: staffUsers, error: sErr } = await supabase
+      .from('users').select('id').in('role', ['admin', 'secretary']);
+    if (sErr) return res.status(500).json({ error: sErr.message });
+    const staffIds = (staffUsers || []).map(u => u.id);
+    if (staffIds.length === 0) return res.json([]);
+    q = q.in('user_id', staffIds);
+  }
+
+  // 自分のつぶやき・返信フィルター:
+  //   1) 自分の投稿
+  //   2) mentioned_user_ids に自分が含まれる投稿
+  //   3) 自分がコメントに参加した投稿（tweet_comments を引いて tweet_id 集合を作る）
+  if (mine) {
+    const meId = req.user.id;
+    const { data: myComments, error: cErr } = await supabase
+      .from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null);
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    const commentedTweetIds = Array.from(new Set((myComments || []).map(c => c.tweet_id))).filter(Boolean);
+
+    // PostgREST .or() 内で配列 contains / in の両方を OR したいが、構文が複雑になるため
+    // 「自分の投稿 + メンション対象 + コメント参加対象」を別個に取得して merge する。
+    const queries = [];
+
+    // (a) 自分の投稿 + メンション対象
+    queries.push(
+      supabase.from('tweets')
+        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
+        .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`)
+    );
+
+    // (b) コメント参加対象
+    if (commentedTweetIds.length > 0) {
+      queries.push(
+        supabase.from('tweets')
+          .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+          .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
+          .in('id', commentedTweetIds)
+      );
+    }
+
+    const results = await Promise.all(queries);
+    const merged = new Map();
+    for (const r of results) {
+      if (r.error) return res.status(500).json({ error: r.error.message });
+      for (const t of (r.data || [])) merged.set(t.id, t);
+    }
+
+    let list = Array.from(merged.values());
+
+    // staff_only 併用時のフィルター
+    if (staffOnly) {
+      list = list.filter(t => ['admin', 'secretary'].includes(t.users?.role));
+    }
+
+    list.sort((a, b) => {
+      if (!!a.is_pinned !== !!b.is_pinned) return a.is_pinned ? -1 : 1;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+    list = list.slice(0, 50);
+
+    if (!list.length) return res.json([]);
+
+    // 既存 GET と同じロジックでリアクションを付与
+    const ids = list.map(t => t.id);
+    const { data: allReactions } = await supabase.from('tweet_reactions')
+      .select('tweet_id, user_id, reaction_type').in('tweet_id', ids);
+    const countByType = new Map();
+    const myReactionsMap = new Map();
+    (allReactions || []).forEach(r => {
+      if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
+      const cm = countByType.get(r.tweet_id);
+      cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+      if (r.user_id === req.user.id) {
+        if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
+        myReactionsMap.get(r.tweet_id).add(r.reaction_type);
+      }
+    });
+    return res.json(list.map(t => {
+      const myReactions = Array.from(myReactionsMap.get(t.id) || []);
+      const counts = countByType.get(t.id) || {};
+      const heartCount = counts.heart || 0;
+      return {
+        ...t,
+        reaction_count: t.reaction_count ?? 0,
+        comment_count:  t.comment_count  ?? 0,
+        reaction_counts: counts,
+        my_reactions: myReactions,
+        like_count: heartCount,
+        my_liked:   myReactions.includes('heart'),
+      };
+    }));
+  }
+
+  // 通常の一覧
+  const { data: list, error } = await q
     .order('is_pinned', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(50);
