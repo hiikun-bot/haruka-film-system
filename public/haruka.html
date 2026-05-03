@@ -8092,35 +8092,18 @@ let _psdState = {
   searchWired: false,
 };
 
-// 候補メンバー一覧を計算（client_id ベース）
+// 候補メンバー一覧を計算
+// 仕様: 全アクティブユーザーから案件メインディレクター本人だけを除外する。
+// （旧仕様のクライアントチーム制約は撤廃。Dチェックピッカーの「その他から選ぶ」と同じプール）
 function getProjectSubDirectorCandidates() {
-  const clientId = document.getElementById('p-client-id')?.value || '';
   const directorId = document.getElementById('p-director-id')?.value || '';
-  if (!clientId) return { candidates: [], teamCount: 0 };
-  const cl = (allClients || []).find(c => c.id === clientId);
-  const teamIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
-  if (!teamIds.length) return { candidates: [], teamCount: 0 };
-  // 該当チームに所属するメンバー（team_members 経由）+ チームのリーダー (teams.director_id)
-  const teamSet = new Set(teamIds);
-  const allowed = new Set();
-  // teams から director_id を吸い上げ
-  for (const t of (allTeams || [])) {
-    if (teamSet.has(t.id) && t.director_id) allowed.add(t.director_id);
-  }
-  // メンバー: allMembers の users.team_id（基本チーム）に加え、team_members 中間テーブルもあるが
-  // フロント側にロード済みの allMembers ベースで判定する（既存のクリエイティブモーダルと同じロジック）
-  for (const m of (allMembers || [])) {
-    if (m.is_active === false) continue;
-    if (m.team_id && teamSet.has(m.team_id)) allowed.add(m.id);
-    // 兼任: users.team_ids が存在すれば併用（無くても基本チームでカバーされる）
-    if (Array.isArray(m.team_ids)) {
-      for (const tid of m.team_ids) if (teamSet.has(tid)) { allowed.add(m.id); break; }
-    }
-  }
   const candidates = (allMembers || [])
-    .filter(m => allowed.has(m.id) && m.id !== directorId)
-    .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
-  return { candidates, teamCount: teamIds.length };
+    .filter(m => m && m.is_active !== false && m.id && m.id !== directorId)
+    .slice()
+    .sort(typeof dcpCompareUsers === 'function'
+      ? dcpCompareUsers
+      : (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+  return { candidates };
 }
 
 // メイン: 全体描画（チップ＋リスト）。検索 input の DOM は触らないが
@@ -8131,17 +8114,17 @@ function renderProjectSubDirectorPicker() {
   const warn = document.getElementById('p-sub-directors-warn');
   const chipsWrap = document.getElementById('p-sub-directors-chips');
   if (!list) return;
-  const { candidates, teamCount } = getProjectSubDirectorCandidates();
+  const { candidates } = getProjectSubDirectorCandidates();
   const directorId = document.getElementById('p-director-id')?.value || '';
 
-  // チーム外になったIDを検出してクリア
+  // ディレクター本人と重複した（あるいは無効化された）IDを検出してクリア
   const allowedSet = new Set(candidates.map(c => c.id));
   const dropped = _editingProjectSubDirectorIds.filter(id => !allowedSet.has(id) || id === directorId);
   if (dropped.length) {
     _editingProjectSubDirectorIds = _editingProjectSubDirectorIds.filter(id => allowedSet.has(id) && id !== directorId);
     if (warn) {
       warn.style.display = '';
-      warn.textContent = `クライアントのチームに所属していない / ディレクター本人だった ${dropped.length} 名をサブディレクターから外しました。`;
+      warn.textContent = `ディレクター本人と重複した / 無効化された ${dropped.length} 名をサブディレクターから外しました。`;
     }
   } else if (warn) {
     warn.style.display = 'none';
@@ -8151,14 +8134,10 @@ function renderProjectSubDirectorPicker() {
   // 検索 input の wiring（1回だけ）
   psdWireSearchInput();
 
-  // 候補ゼロ時の表示
+  // 候補ゼロ時の表示（ユーザー未ロード等のフォールバック）
   if (!candidates.length) {
     if (chipsWrap) chipsWrap.innerHTML = '';
-    if (teamCount === 0) {
-      list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">クライアントを選択するとチームメンバーが表示されます</div>';
-    } else {
-      list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">該当チームに所属するメンバーがいません（ディレクター本人は除外）</div>';
-    }
+    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">候補ユーザーがいません</div>';
     if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中`;
     return;
   }

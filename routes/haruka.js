@@ -256,16 +256,17 @@ router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), asy
 // サブディレクター（複数）正規化ヘルパー
 // - 入力: 任意の値（配列でない / null / undefined / 不正値含む）
 // - 出力: { ids: 正規化済みUUID配列, dropped: 弾かれた件数 }
-// 仕様:
+// 仕様（v2: クライアントチーム制約撤廃）:
 //   1. 配列でなければ空配列扱い
 //   2. 文字列のみ採用、UUIDフォーマットの簡易チェック（36文字 + ハイフン4個）
 //   3. 重複除去（先勝ち）
-//   4. project の clients に紐づく client_teams のメンバー（team_members.user_id）に絞る
-//   5. director_id 本人は除外（自分自身をサブに登録する意味がないため）
-// チーム所属が取れない（client_id が無い等）場合は安全側に倒して空配列を返す
-async function normalizeSubDirectorIds(rawIds, { clientId, directorId }) {
+//   4. director_id 本人は除外（自分自身をサブに登録する意味がないため）
+//   5. users テーブルに存在し is_active !== false のユーザーのみ採用
+//      （存在しないUUID / 退職メンバーは弾く）
+// clientId は API 互換のため引数に残すが、チーム判定には使わない。
+async function normalizeSubDirectorIds(rawIds, { clientId, directorId } = {}) {
   if (!Array.isArray(rawIds)) return { ids: [], dropped: 0 };
-  // 1) 形式チェック + 重複除去
+  // 1) 形式チェック + 重複除去 + ディレクター本人除外
   const seen = new Set();
   const cleaned = [];
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -279,34 +280,18 @@ async function normalizeSubDirectorIds(rawIds, { clientId, directorId }) {
     cleaned.push(id);
   }
   if (!cleaned.length) return { ids: [], dropped: 0 };
-  if (!clientId) {
-    // クライアント未確定（新規作成中で client_id 未入力など）— チーム判定不可なので
-    // 空配列を返して silent skip。フロント側でクライアントが決まってから再度保存する想定。
-    return { ids: [], dropped: cleaned.length };
+  // 2) users 存在確認 + is_active=false 除外
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, is_active')
+    .in('id', cleaned);
+  if (error) {
+    // フェイルセーフ: 検証失敗時は cleaned をそのまま返す（チェック厳しすぎて消えるより安全）
+    return { ids: cleaned, dropped: 0 };
   }
-  // 2) クライアントに紐づくチームのメンバーIDを集める
-  const { data: links } = await supabase
-    .from('client_teams')
-    .select('team_id')
-    .eq('client_id', clientId);
-  const teamIds = (links || []).map(l => l.team_id).filter(Boolean);
-  if (!teamIds.length) {
-    return { ids: [], dropped: cleaned.length };
-  }
-  // 3) team_members 経由で許可ユーザーを取得（チームの全メンバー）
-  const { data: members } = await supabase
-    .from('team_members')
-    .select('user_id')
-    .in('team_id', teamIds);
-  const allowed = new Set((members || []).map(m => m.user_id).filter(Boolean));
-  // 4) チームのリーダー（teams.director_id）も候補に含める（メンバーテーブル未登録のケースを救う）
-  const { data: teams } = await supabase
-    .from('teams')
-    .select('director_id')
-    .in('id', teamIds);
-  for (const t of (teams || [])) {
-    if (t.director_id) allowed.add(t.director_id);
-  }
+  const allowed = new Set(
+    (users || []).filter(u => u && u.is_active !== false).map(u => u.id)
+  );
   const filtered = cleaned.filter(id => allowed.has(id));
   return { ids: filtered, dropped: cleaned.length - filtered.length };
 }
@@ -373,7 +358,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const normalizedProjectType = (project_type === 'design') ? 'design' : 'video';
-  // サブディレクター: 形式・チーム所属チェック
+  // サブディレクター: 形式チェック + ユーザー存在/有効チェック（チーム制約は撤廃）
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
     clientId: client_id,
     directorId: director_id || null,
