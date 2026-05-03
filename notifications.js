@@ -294,21 +294,64 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   };
 
   // 1) → Dチェック
-  //    通常はディレクター個人にDM。
-  //    ディレクター未設定 or DM ID 未設定（slack_dm_id・chatwork_dm_id 両方とも無い）の
-  //    場合は、チャンネル/ルームに @here / [toall] でフォールバック投稿する。
-  //    （ディレクターがいない案件でもCR提出が誰にも届かない事態を防ぐ）
+  //    PR #218 で複数ディレクター（creative_assignments.role='director'）対応。
+  //    creative_assignments の role='director' に登録されている全員へ個別 DM 送信。
+  //    旧仕様（projects.director_id / teams.director_id の単一ディレクター）は
+  //    creative_assignments が空のときのフォールバックとして残す。
+  //    全員 DM ID 未設定だった場合のみ、チャンネル/ルームに @here / [toall] で
+  //    フォールバック投稿する（CR提出が誰にも届かない事態を防ぐ）。
+  //
+  //    オプション: NOTIFY_DCHECK_SECRETARY_CC=true のとき、チームの secretary
+  //    （users.role='secretary' かつ team_id 一致 かつ is_active=true）にも個別 DM。
+  //    重複（ディレクター兼任など）は seen Set で除外。
   if (newStatus === 'Dチェック') {
-    const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', director);
-    const directorReachable = director && (director.slack_dm_id || director.chatwork_dm_id);
-    if (directorReachable) {
-      await sendNotif(director, slackBody, cwBody);
-    } else {
-      // フォールバック: チャンネル/ルーム全員にメンション
-      const note = '\n（ディレクター未設定のため関係者にメンションしています）';
+    // 1-a) Dチェック宛先: assignments の director を最優先
+    const dCheckAssignees = (detail.creative_assignments || [])
+      .filter(a => a.role === 'director')
+      .map(a => a.users)
+      .filter(Boolean);
+    const dCheckTargets = dCheckAssignees.length > 0
+      ? dCheckAssignees
+      : [director].filter(Boolean);
+
+    const seen = new Set();
+    let anyReachable = false;
+    for (const t of dCheckTargets) {
+      if (!t || seen.has(t.id)) continue;
+      seen.add(t.id);
+      const reachable = t.slack_dm_id || t.chatwork_dm_id;
+      if (!reachable) continue;
+      anyReachable = true;
+      const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', t);
+      await sendNotif(t, slackBody, cwBody);
+    }
+
+    // 1-b) 全員 DM ID 未設定 → チャンネルフォールバック
+    if (!anyReachable) {
+      const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', null);
+      const note = '\n（ディレクター未設定または DM ID 未登録のため関係者にメンションしています）';
       const slackFallback = slackBody + note;
       const cwFallback = cwBody.replace('[/info]', note + '[/info]');
       await sendChannelMention(slackFallback, cwFallback);
+    }
+
+    // 1-c) オプション: 秘書 CC（ENV フラグで有効化）
+    //   チームの secretary に追加 DM（重複は seen で除外済み）。
+    //   既存挙動を壊さないよう、デフォルト OFF。
+    if (String(process.env.NOTIFY_DCHECK_SECRETARY_CC || '').toLowerCase() === 'true' && detail.team_id) {
+      const { data: secretaries, error: secErr } = await supabase.from('users')
+        .select('id, full_name, slack_dm_id, chatwork_dm_id, role, team_id, is_active')
+        .eq('team_id', detail.team_id)
+        .eq('role', 'secretary')
+        .eq('is_active', true);
+      if (secErr) console.warn('[notif] secretary select failed:', secErr.message);
+      for (const s of (secretaries || [])) {
+        if (!s || seen.has(s.id)) continue;
+        seen.add(s.id);
+        if (!(s.slack_dm_id || s.chatwork_dm_id)) continue;
+        const { slackBody, cwBody } = tpl('Dチェック依頼（CC: 秘書）', '📥', s);
+        await sendNotif(s, slackBody, cwBody);
+      }
     }
   }
   // 2) → Pチェック
