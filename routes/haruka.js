@@ -1724,6 +1724,25 @@ router.get('/creatives/:id', async (req, res) => {
     data.teams = null;
   }
 
+  // projects.sub_director_ids を別クエリで取得（migration 未適用環境では空配列扱い）
+  // projects には UUID[] として追加される予定。列が無い・schema-cache 未更新の場合は無視。
+  if (data && data.projects?.id) {
+    try {
+      const { data: projExt, error: projExtErr } = await supabase
+        .from('projects')
+        .select('sub_director_ids')
+        .eq('id', data.projects.id)
+        .maybeSingle();
+      if (!projExtErr && projExt) {
+        data.projects.sub_director_ids = Array.isArray(projExt.sub_director_ids) ? projExt.sub_director_ids : [];
+      } else {
+        data.projects.sub_director_ids = [];
+      }
+    } catch (_) {
+      data.projects.sub_director_ids = [];
+    }
+  }
+
   res.json(data);
 });
 
@@ -1906,6 +1925,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
+    director_user_id,
     force_delivered_reason
   } = req.body;
 
@@ -2009,6 +2029,24 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // Dチェック担当者更新（director_user_id が送られてきた場合）
+  // - 案件のメインディレクター以外（サブディレクター・秘書・他チームメンバー等）に Dチェックを依頼するために、
+  //   creative_assignments role='director' を上書きする。
+  // - 空文字列 / null の場合はディレクター割当を削除（projects.director_id にフォールバック）。
+  if (director_user_id !== undefined) {
+    await supabase.from('creative_assignments').delete().eq('creative_id', req.params.id).eq('role', 'director');
+    if (director_user_id) {
+      const { data: dirUser } = await supabase.from('users').select('rank').eq('id', director_user_id).single();
+      const { error: dirInsErr } = await supabase.from('creative_assignments').insert({
+        creative_id: req.params.id,
+        user_id: director_user_id,
+        role: 'director',
+        rank_applied: dirUser?.rank || null,
+      });
+      if (dirInsErr) console.warn('[creative_assignments][director] insert failed:', dirInsErr.message);
+    }
+  }
+
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
   // - 通知より先に実行して client_review_url を確定させる
   // - 失敗してもクリエイティブ更新自体は完遂（手動入力フォールバック）
@@ -2042,9 +2080,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // ball_holder_id キャッシュ更新（status または assignee が変わった場合のみ）
+  // ball_holder_id キャッシュ更新（status / assignee / director が変わった場合のみ）
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
-  if (updateData.status !== undefined || assignee_id !== undefined) {
+  if (updateData.status !== undefined || assignee_id !== undefined || director_user_id !== undefined) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
 
