@@ -152,6 +152,39 @@ tr.row-help td{background:#FFFBF2}
 .badge-project-type.badge-video{background:#fff1e6;color:#d45a1a}
 .badge-project-type.badge-design{background:#f0eaff;color:#6b46c1}
 
+/* クリエイティブ追加モーダル: 案件ドロップダウンの職種フィルタトグル */
+.cap-toggle{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:5px 11px;
+  border-radius:14px;
+  border:1px solid var(--border, #d8dde2);
+  background:#fff;
+  color:#5a6470;
+  font-size:12px;
+  font-weight:500;
+  cursor:pointer;
+  transition:all .15s;
+  line-height:1.4;
+  white-space:nowrap;
+}
+.cap-toggle:hover{ background:#f6f8fa; border-color:#bcc4cc; }
+.cap-toggle.is-active[data-cap="video"]{ background:#fff1e6; color:#d45a1a; border-color:#f5c79a; font-weight:600; }
+.cap-toggle.is-active[data-cap="design"]{ background:#f0eaff; color:#6b46c1; border-color:#cfbef0; font-weight:600; }
+.cap-toggle.is-active[data-cap="all"]{ background:#e8f6f5; color:#1f7a78; border-color:#9ed5d2; font-weight:600; }
+.cap-toggle .cap-count{
+  display:inline-block;
+  min-width:18px;
+  padding:0 4px;
+  border-radius:9px;
+  background:rgba(0,0,0,0.06);
+  font-size:11px;
+  text-align:center;
+  font-weight:600;
+}
+.cap-toggle.is-active .cap-count{ background:rgba(255,255,255,0.55); }
+
 /* チームカードグリッド（チーム管理画面） */
 .team-card-grid{
   display:grid;
@@ -2372,6 +2405,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">案件</label>
+            <div id="c-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+              <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
+              <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 デザイン <span class="cap-count" data-cap-count="design">0</span></button>
+              <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
+            </div>
             <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -2477,6 +2515,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <!-- 案件（全幅） -->
       <div class="form-group">
         <label class="form-label">案件</label>
+        <div id="bulk-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+          <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
+          <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 デザイン <span class="cap-count" data-cap-count="design">0</span></button>
+          <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
+        </div>
         <select class="form-select" id="bulk-project-id" onchange="onBulkProjectChange(this.value)"></select>
       </div>
       <!-- 2カラムグリッド -->
@@ -5301,6 +5344,98 @@ function dedupVisibleProjects(projects) {
   return Array.from(seen.values());
 }
 
+// ==================== クリエイティブ追加モーダル: 案件ドロップダウンの職種フィルタ ====================
+// 'all' | 'video' | 'design'。モーダルを開くたびに pickInitialProjectFilterTab() で初期値を決める。
+let _creativeAddProjectFilter = 'all';
+
+// 初期トグル選定: job_type 連動 → default_creative_tab → 'all'
+function pickInitialProjectFilterTab(user) {
+  if (!user) return 'all';
+  if (user.job_type === 'design') return 'design';
+  if (user.job_type === 'video')  return 'video';
+  if (user.default_creative_tab === 'video' || user.default_creative_tab === 'design') {
+    return user.default_creative_tab;
+  }
+  return 'all';
+}
+
+// 現在のフィルタに従って案件配列を絞り込む。
+// - 'all'    : 全件（project_type が NULL でも表示）
+// - 'video'  : project_type === 'video' のみ（NULL は除外）
+// - 'design' : project_type === 'design' のみ（NULL は除外）
+function filterProjectsByCap(projects, cap) {
+  const list = projects || [];
+  if (cap === 'video') return list.filter(p => p?.project_type === 'video');
+  if (cap === 'design') return list.filter(p => p?.project_type === 'design');
+  return list;
+}
+
+// クリエイティブ追加モーダルの「個別登録」「一括登録」両方の案件ドロップダウンと
+// 職種トグルのカウント・activeステートを再構築する。
+function renderCreativeAddProjectDropdowns() {
+  const visible = dedupVisibleProjects(allProjects || []);
+  const counts = {
+    video: visible.filter(p => p?.project_type === 'video').length,
+    design: visible.filter(p => p?.project_type === 'design').length,
+    all: visible.length,
+  };
+  // カウント更新
+  document.querySelectorAll('.creative-add-cap-tabs .cap-count').forEach(el => {
+    const k = el.getAttribute('data-cap-count');
+    if (counts[k] !== undefined) el.textContent = counts[k];
+  });
+  // active 状態
+  document.querySelectorAll('.creative-add-cap-tabs .cap-toggle').forEach(btn => {
+    const c = btn.getAttribute('data-cap');
+    if (c === _creativeAddProjectFilter) btn.classList.add('is-active');
+    else btn.classList.remove('is-active');
+  });
+
+  // フィルタを適用してドロップダウン option を再生成
+  const filtered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+  const optionsHtml = filtered.map(p =>
+    `<option value="${p.id}">${p.clients?.name || ''} / ${p.name}</option>`
+  ).join('');
+  const emptyHtml = `<option value="">該当する案件がありません</option>`;
+
+  ['c-project-id', 'bulk-project-id'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = filtered.length ? optionsHtml : emptyHtml;
+    // 直前の選択を維持できるなら維持。無ければ先頭選択。
+    if (prev && filtered.some(p => p.id === prev)) {
+      sel.value = prev;
+    } else if (filtered.length) {
+      sel.value = filtered[0].id;
+    }
+  });
+}
+
+// トグルクリックハンドラ。フィルタを切り替えて両ドロップダウンを再描画し、
+// 選択案件が変わった場合は訴求軸・担当者・商材も連動して更新する。
+async function setCreativeAddCapTab(cap) {
+  if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
+  if (_creativeAddProjectFilter === cap) return;
+  _creativeAddProjectFilter = cap;
+
+  const prevSingle = document.getElementById('c-project-id')?.value || '';
+  const prevBulk   = document.getElementById('bulk-project-id')?.value || '';
+  renderCreativeAddProjectDropdowns();
+  const nextSingle = document.getElementById('c-project-id')?.value || '';
+  const nextBulk   = document.getElementById('bulk-project-id')?.value || '';
+
+  // 案件選択が変わったらフォームの依存項目を再ロード
+  const tasks = [];
+  if (nextSingle && nextSingle !== prevSingle && typeof onProjectChange === 'function') {
+    tasks.push(onProjectChange(nextSingle));
+  }
+  if (nextBulk && nextBulk !== prevBulk && typeof onBulkProjectChange === 'function') {
+    tasks.push(onBulkProjectChange(nextBulk));
+  }
+  if (tasks.length) await Promise.all(tasks);
+}
+
 // 案件（クライアント→案件の階層表示）
 async function loadProjects() {
   const [pRes, cRes] = await Promise.all([
@@ -5311,12 +5446,8 @@ async function loadProjects() {
   allClients = await cRes.json();
 
   // クリエイティブ追加モーダルのセレクトを更新
-  // is_hidden 案件除外 + id 重複排除（DBに同名レコードが複数あった場合の保険）
-  const dropdownProjects = dedupVisibleProjects(allProjects);
-  const sel = document.getElementById('c-project-id');
-  if (sel) sel.innerHTML = dropdownProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
-  const bulkSel = document.getElementById('bulk-project-id');
-  if (bulkSel) bulkSel.innerHTML = dropdownProjects.map(p => `<option value="${p.id}">${p.clients?.name||''} / ${p.name}</option>`).join('');
+  // is_hidden 案件除外 + id 重複排除 + 職種フィルタ（individual/bulk 両方）
+  renderCreativeAddProjectDropdowns();
 
   // クライアント select を更新（旧 client-tabs ボタン群から移行）
   renderClientSelect();
@@ -12788,6 +12919,10 @@ function getDefaultDraftDeadline(finalDeadline) {
 async function openCreateCreative() {
   try {
   _autoFileNameDone = false; // 自動生成フラグをリセット
+  // 案件ドロップダウンの職種フィルタ初期値を user の job_type / default_creative_tab から決定し、
+  // 個別/一括 両方のドロップダウンを再構築する（カウント・active も同時更新）
+  _creativeAddProjectFilter = pickInitialProjectFilterTab(currentUser);
+  renderCreativeAddProjectDropdowns();
   const lastDay = getLastDayOfMonth();
   const draftDay = getDefaultDraftDeadline(lastDay);
 
