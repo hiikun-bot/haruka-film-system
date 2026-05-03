@@ -1,0 +1,612 @@
+/* =============================================================
+ * tweets-page.css — つぶやき独立タブ（リベシティ風タイムライン）
+ *
+ * Phase 1: みんなのつぶやき / 自分のつぶやき・返信 タブ切替、
+ *          運営のみ表示フィルター、カード型タイムライン、FAB 投稿。
+ *
+ * Phase 2 で実装予定（このCSSでは hidden / 未使用クラスのみ用意）:
+ *   ・フォロー中のみ表示
+ *   ・ブックマーク
+ *
+ * カラー:
+ *   ハルカブランドカラー  #3ECFCA
+ *   濃色 (アクセント)     #2BA8A4
+ *   薄色 (背景帯)         #E6F9F8
+ *   ボーダー              #E5E7EB
+ *   テキスト              #111827
+ *   サブテキスト          #6B7280
+ * ============================================================= */
+
+/* ---------- ページ全体 ---------- */
+.tweets-page-wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 96px; /* 下に余白 — FAB と被らないように */
+}
+
+/* ---------- ヘッダー ---------- */
+.tweets-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tweets-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* タブ切替 */
+.tweets-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.tweets-tab {
+  background: transparent;
+  border: none;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6B7280;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s ease;
+}
+
+.tweets-tab:hover {
+  color: #111827;
+}
+
+.tweets-tab.active {
+  color: #2BA8A4;
+}
+
+.tweets-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  background: #3ECFCA;
+  border-radius: 2px;
+}
+
+/* フィルター */
+.tweets-filters {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #374151;
+}
+
+.tweets-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tweets-filters input[type="checkbox"] {
+  accent-color: #3ECFCA;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* ---------- リスト ---------- */
+.tweets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tweets-loading,
+.tweets-empty {
+  text-align: center;
+  padding: 40px 16px;
+  color: #6B7280;
+  font-size: 13px;
+}
+
+/* ---------- カード ---------- */
+.tweet-card {
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 16px;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.tweet-card:hover {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border-color: #D1D5DB;
+}
+
+.tweet-card.pinned {
+  border-color: #3ECFCA;
+  background: #F4FDFC;
+}
+
+.tweet-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+/* アバター */
+.tweet-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: #E6F9F8;
+  color: #2BA8A4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.tweet-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* メタ行 (名前・ロール・時刻) */
+.tweet-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tweet-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tweet-author {
+  font-size: 14px;
+  font-weight: 700;
+  color: #2BA8A4;
+  cursor: default;
+}
+
+.tweet-time {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin-left: auto;
+}
+
+/* ロールバッジ — リベシティ「トラ会員」相当 */
+.tweet-role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.tweet-role-badge.role-admin {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.tweet-role-badge.role-secretary {
+  background: #EDE9FE;
+  color: #6D28D9;
+}
+
+.tweet-role-badge.role-producer,
+.tweet-role-badge.role-producer_director {
+  background: #DBEAFE;
+  color: #1D4ED8;
+}
+
+.tweet-role-badge.role-director {
+  background: #D1FAE5;
+  color: #047857;
+}
+
+.tweet-role-badge.role-editor,
+.tweet-role-badge.role-designer {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+/* ピン留めバッジ */
+.tweet-pin-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #E6F9F8;
+  color: #2BA8A4;
+}
+
+/* 三点メニュー（削除など） */
+.tweet-menu-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+  color: #9CA3AF;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.tweet-menu-btn:hover {
+  background: #F3F4F6;
+  color: #111827;
+}
+
+/* 本文 */
+.tweet-body {
+  font-size: 14px;
+  color: #111827;
+  white-space: pre-wrap;
+  line-height: 1.65;
+  word-break: break-word;
+  margin-bottom: 10px;
+}
+
+/* 画像 */
+.tweet-image-wrap {
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  background: #F9FAFB;
+  max-width: 480px;
+  border: 1px solid #E5E7EB;
+}
+
+.tweet-image-wrap img {
+  width: 100%;
+  display: block;
+  cursor: zoom-in;
+}
+
+/* リアクション・コメントフッター */
+.tweet-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+/* リアクションサマリ — 押された種別だけ表示 */
+.tweet-reaction-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tweet-reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #F3F4F6;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.tweet-reaction-pill:hover {
+  background: #E5E7EB;
+}
+
+.tweet-reaction-pill.active {
+  background: #E6F9F8;
+  border-color: #3ECFCA;
+  color: #2BA8A4;
+  font-weight: 700;
+}
+
+.tweet-reaction-pill .emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tweet-reaction-pill .count {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+/* ➕ 追加ボタン */
+.tweet-reaction-add {
+  position: relative;
+  background: transparent;
+  border: 1px dashed #D1D5DB;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tweet-reaction-add:hover {
+  background: #F9FAFB;
+  color: #2BA8A4;
+  border-color: #3ECFCA;
+}
+
+/* リアクションピッカー（ポップオーバー） */
+.tweet-reaction-picker {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 999px;
+  padding: 4px 8px;
+  display: none;
+  gap: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 5;
+}
+
+.tweet-reaction-picker.open {
+  display: inline-flex;
+}
+
+.tweet-reaction-picker button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.tweet-reaction-picker button:hover {
+  background: #E6F9F8;
+  transform: scale(1.15);
+}
+
+/* コメント・保存ボタン */
+.tweet-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid #E5E7EB;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tweet-action-btn:hover {
+  background: #F9FAFB;
+  border-color: #3ECFCA;
+  color: #2BA8A4;
+}
+
+.tweet-action-btn .count {
+  font-weight: 700;
+}
+
+/* コメント展開エリア */
+.tweet-comments-wrap {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #F3F4F6;
+}
+
+.tweet-comments-wrap .tw-comments-inner {
+  background: #F9FAFB;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.tweet-comments-wrap .tw-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.tweet-comments-wrap .tw-comment .tw-comment-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #E6F9F8;
+  color: #2BA8A4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.tweet-comments-wrap .tw-comment .tw-comment-av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tweet-comments-wrap .tw-comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6B7280;
+}
+
+.tweet-comments-wrap .tw-comment-author {
+  font-weight: 700;
+  color: #111827;
+}
+
+.tweet-comments-wrap .tw-comment-body {
+  font-size: 13px;
+  color: #111827;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+.tweet-comments-wrap .tw-comment-empty {
+  font-size: 12px;
+  color: #9CA3AF;
+  padding: 4px 0;
+}
+
+.tweet-comments-wrap .tw-comment-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+  border-top: 1px solid #E5E7EB;
+  padding-top: 8px;
+}
+
+.tweet-comments-wrap .tw-comment-form input {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: 13px;
+  border: 1px solid #E5E7EB;
+  border-radius: 999px;
+  outline: none;
+  background: #FFFFFF;
+}
+
+.tweet-comments-wrap .tw-comment-form input:focus {
+  border-color: #3ECFCA;
+}
+
+.tweet-comments-wrap .tw-comment-form button {
+  background: #3ECFCA;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tweet-comments-wrap .tw-comment-form button:hover {
+  background: #2BA8A4;
+}
+
+.tweet-comments-wrap .tw-comment-del {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: #9CA3AF;
+  padding: 0 4px;
+  margin-left: auto;
+}
+
+.tweet-comments-wrap .tw-comment-del:hover {
+  color: #DC2626;
+}
+
+/* ---------- FAB （右下投稿ボタン） ---------- */
+.tweets-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #3ECFCA;
+  color: #FFFFFF;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(62, 207, 202, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tweets-fab:hover {
+  background: #2BA8A4;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(62, 207, 202, 0.55);
+}
+
+.tweets-fab:active {
+  transform: translateY(0);
+}
+
+.tweets-fab svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+/* ---------- レスポンシブ ---------- */
+@media (max-width: 768px) {
+  .tweets-page-wrap {
+    padding: 16px 12px 80px;
+  }
+
+  .tweets-header h2 {
+    font-size: 20px;
+  }
+
+  .tweets-tab {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .tweet-card {
+    padding: 12px;
+    border-radius: 10px;
+  }
+
+  .tweet-avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+  }
+
+  .tweets-fab {
+    right: 16px;
+    bottom: 16px;
+    width: 52px;
+    height: 52px;
+  }
+}

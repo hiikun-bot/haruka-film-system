@@ -18,6 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet">
 <!-- 通知UI（Phase 1 段階2） -->
 <link rel="stylesheet" href="/css/notification.css">
+<link rel="stylesheet" href="/css/tweets-page.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
 :root{
@@ -1855,6 +1856,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-btn" data-page="members" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" data-page="invoices" onclick="showPage('invoices',this)">請求書</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">ナレッジ</button>
+    <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
   </div>
@@ -1950,6 +1952,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <button class="nav-drawer-btn" data-page="members" onclick="showPage('members',this)">👤 メンバー</button>
     <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 ナレッジ</button>
+    <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <div class="nav-drawer-account">
@@ -3976,6 +3979,40 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div id="kn-scroll-sentinel" style="height:1px"></div>
   </div>
 </div>
+
+<!-- ==================== つぶやき独立タブ（リベシティ風） ==================== -->
+<!-- ダッシュボード内のつぶやき欄とは別に、独立画面として提供する。
+     既存リアクション/コメント API をそのまま活用。
+     Phase 1: みんなのつぶやき / 自分のつぶやき・返信 タブ + 運営のみ表示。
+     Phase 2 で「フォロー中のみ表示」「ブックマーク」を追加予定。 -->
+<div id="page-tweets" class="page">
+  <div class="tweets-page-wrap">
+    <header class="tweets-header">
+      <h2>つぶやき</h2>
+      <div class="tweets-tabs" role="tablist">
+        <button class="tweets-tab active" data-tab="all"  role="tab" onclick="switchTweetsTab('all')">みんなのつぶやき</button>
+        <button class="tweets-tab"        data-tab="mine" role="tab" onclick="switchTweetsTab('mine')">自分のつぶやき・返信</button>
+      </div>
+      <div class="tweets-filters">
+        <label>
+          <input type="checkbox" id="tweets-filter-staff-only" onchange="toggleTweetsStaffOnly()">
+          運営のみ表示
+        </label>
+        <!-- Phase 2: フォロー中のみ表示は未実装（非表示） -->
+      </div>
+    </header>
+    <div id="tweets-list" class="tweets-list">
+      <div class="tweets-loading">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- つぶやき独立タブ用 投稿FAB（右下固定）— page-tweets が active のときだけ表示 -->
+<button id="tweets-fab" type="button" class="tweets-fab" style="display:none" onclick="openTweetCompose()" aria-label="つぶやきを投稿">
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+  </svg>
+</button>
 
 <!-- クリエイティブ修正モーダル -->
 <div class="modal-overlay" id="modal-creative-edit">
@@ -9486,6 +9523,11 @@ function showPage(name, btn) {
   if(name==='master') loadMasterPage();
   if(name==='knowledge') initKnowledgePage();
   if(name==='analytics') initAnalyticsPage();
+  if(name==='tweets')   loadTweetsPage();
+
+  // つぶやき独立ページの FAB 表示制御（このページの時だけ表示）
+  const tweetsFab = document.getElementById('tweets-fab');
+  if (tweetsFab) tweetsFab.style.display = (name === 'tweets') ? 'inline-flex' : 'none';
 }
 
 function openNavDrawer() {
@@ -10258,6 +10300,7 @@ async function submitTweet() {
     closeModal('modal-tweet-compose');
     showToast('つぶやきました 💭', 'success');
     loadTweets();
+    if (typeof loadTweetsPage === 'function') loadTweetsPage();
   } finally {
     btn.disabled = false; btn.textContent = '投稿する';
   }
@@ -10266,8 +10309,13 @@ async function submitTweet() {
 async function deleteTweet(id) {
   if (!confirm('このつぶやきを削除しますか？')) return;
   const res = await apiFetch(`${API}/tweets/${id}`, { method: 'DELETE' });
-  if (res.ok) { showToast('削除しました', 'success'); loadTweets(); }
-  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '失敗'), 'error'); }
+  if (res.ok) {
+    showToast('削除しました', 'success');
+    loadTweets();
+    if (typeof loadTweetsPage === 'function') loadTweetsPage();
+  } else {
+    const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
 }
 
 async function likeTweet(id) {
@@ -10278,6 +10326,327 @@ async function likeTweet(id) {
 async function unlikeTweet(id) {
   const res = await apiFetch(`${API}/tweets/${id}/like`, { method: 'DELETE' });
   if (res.ok) loadTweets();
+}
+
+// ==================== つぶやき独立タブ（リベシティ風タイムライン） ====================
+//
+// ダッシュボード内 loadTweets() とは別画面。同じ API を使うため、
+// API レスポンスの形（reaction_counts / my_reactions / users 埋め込み）を共有する。
+//
+// 状態:
+//   _twPageState.tab        — 'all' | 'mine'
+//   _twPageState.staffOnly  — 運営（admin/secretary）の投稿のみ表示
+//   _twPageOpenComments     — コメント欄を開いている tweet_id の集合
+const _twPageState = { tab: 'all', staffOnly: false };
+const _twPageOpenComments = new Set();
+
+// ロール → 表示ラベル/CSSクラス（リベシティ「トラ会員」相当のピル）
+const _twRoleBadgeMap = {
+  admin:             { label: '管理者',         cls: 'role-admin' },
+  secretary:         { label: '秘書',           cls: 'role-secretary' },
+  producer:          { label: 'プロデューサー', cls: 'role-producer' },
+  producer_director: { label: 'P兼D',           cls: 'role-producer_director' },
+  director:          { label: 'ディレクター',   cls: 'role-director' },
+  editor:            { label: '編集者',         cls: 'role-editor' },
+  designer:          { label: 'デザイナー',     cls: 'role-designer' },
+};
+
+// 「運営」の判定（フロントフィルター用 — API 側の staff_only と整合）
+function _twIsStaffRole(role) {
+  return role === 'admin' || role === 'secretary';
+}
+
+function switchTweetsTab(tab) {
+  if (tab !== 'all' && tab !== 'mine') return;
+  _twPageState.tab = tab;
+  document.querySelectorAll('.tweets-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  loadTweetsPage();
+}
+
+function toggleTweetsStaffOnly() {
+  const cb = document.getElementById('tweets-filter-staff-only');
+  _twPageState.staffOnly = !!(cb && cb.checked);
+  loadTweetsPage();
+}
+
+async function loadTweetsPage() {
+  const el = document.getElementById('tweets-list');
+  if (!el) return;
+
+  const params = new URLSearchParams();
+  if (_twPageState.tab === 'mine')   params.set('mine', '1');
+  if (_twPageState.staffOnly)        params.set('staff_only', '1');
+  const qs = params.toString();
+  const url = qs ? `${API}/tweets?${qs}` : `${API}/tweets`;
+
+  el.innerHTML = '<div class="tweets-loading">読み込み中…</div>';
+
+  let list = [];
+  try {
+    const res = await apiFetch(url);
+    if (res.ok) list = await res.json();
+    else {
+      el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
+      return;
+    }
+  } catch (e) {
+    console.warn('[tweets-page] load failed', e);
+    el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
+    return;
+  }
+
+  // 念のためフロント側でも staff_only フィルター（API 未対応時のフォールバック）
+  if (_twPageState.staffOnly) {
+    list = list.filter(t => _twIsStaffRole(t?.users?.role));
+  }
+
+  if (!list || list.length === 0) {
+    const msg = _twPageState.tab === 'mine'
+      ? 'まだ自分のつぶやき・返信はありません。'
+      : 'まだ投稿はありません。最初のつぶやきを投稿してみよう ✨';
+    el.innerHTML = `<div class="tweets-empty">${msg}</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(renderTweetCard).join('');
+
+  // 開いていたコメント欄を再ロード
+  _twPageOpenComments.forEach(id => loadTweetCommentsPage(id));
+}
+
+function renderTweetCard(t) {
+  const u = t.users || {};
+  const myId = currentUser?.id;
+  const canMod = _twCanModerate();
+  const canDelete = (t.user_id === myId) || canMod;
+
+  const av = u.avatar_url
+    ? `<div class="tweet-avatar"><img src="${esc(u.avatar_url)}" alt=""></div>`
+    : `<div class="tweet-avatar">${esc((u.full_name || '?').charAt(0))}</div>`;
+
+  const roleInfo = _twRoleBadgeMap[u.role];
+  const roleBadge = roleInfo
+    ? `<span class="tweet-role-badge ${roleInfo.cls}">${esc(roleInfo.label)}</span>`
+    : '';
+
+  const pinBadge = t.is_pinned ? '<span class="tweet-pin-badge">📌 ピン</span>' : '';
+
+  const deleteBtn = canDelete
+    ? `<button class="tweet-menu-btn" onclick="deleteTweet('${t.id}')" title="削除">🗑️</button>`
+    : '';
+
+  // リアクションサマリ — 押された種別だけ表示（リベシティ踏襲）
+  const myReactions = new Set(t.my_reactions || []);
+  const counts = t.reaction_counts || {};
+  const summaryPills = TWEET_REACTIONS
+    .filter(r => (counts[r.type] || 0) > 0 || myReactions.has(r.type))
+    .map(r => {
+      const active = myReactions.has(r.type);
+      const c = counts[r.type] || 0;
+      const handler = active
+        ? `removeTweetReactionFromCard('${t.id}','${r.type}')`
+        : `addTweetReactionFromCard('${t.id}','${r.type}')`;
+      return `<button class="tweet-reaction-pill ${active ? 'active' : ''}" onclick="${handler}" title="${esc(r.label)}">
+        <span class="emoji">${r.emoji}</span>${c > 0 ? `<span class="count">${c}</span>` : ''}
+      </button>`;
+    }).join('');
+
+  // ➕ リアクション追加ピッカー
+  const pickerBtns = TWEET_REACTIONS.map(r => {
+    const active = myReactions.has(r.type);
+    const handler = active
+      ? `removeTweetReactionFromCard('${t.id}','${r.type}')`
+      : `addTweetReactionFromCard('${t.id}','${r.type}')`;
+    return `<button onclick="${handler}" title="${esc(r.label)}">${r.emoji}</button>`;
+  }).join('');
+  const addReactionWrap = `<span class="tweet-reaction-add-wrap" style="position:relative;display:inline-block">
+    <button class="tweet-reaction-add" onclick="toggleTweetReactionPicker(event,'${t.id}')" title="リアクションを追加">➕</button>
+    <span id="tw-page-picker-${t.id}" class="tweet-reaction-picker">${pickerBtns}</span>
+  </span>`;
+
+  const commentCount = t.comment_count || 0;
+  const open = _twPageOpenComments.has(t.id);
+  const commentBtn = `<button class="tweet-action-btn" onclick="openTweetCommentsFromCard('${t.id}')" title="コメント">
+    <span>💬</span><span>返信</span>${commentCount > 0 ? `<span class="count">${commentCount}</span>` : ''}
+  </button>`;
+
+  // ブックマーク（Phase 2 — 今は非表示）
+  // 必要なら以下を有効化:
+  // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
+
+  const imageHtml = t.image_data
+    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" onclick="window.open(this.src,'_blank')"></div>`
+    : '';
+
+  return `<article class="tweet-card ${t.is_pinned ? 'pinned' : ''}" data-tweet-id="${t.id}">
+    <div class="tweet-card-head">
+      ${av}
+      <div class="tweet-meta">
+        <div class="tweet-meta-row">
+          <span class="tweet-author">${esc(u.full_name || '不明')}</span>
+          ${roleBadge}
+          ${pinBadge}
+          <span class="tweet-time">${_twTimeAgo(t.created_at)}</span>
+        </div>
+      </div>
+      ${deleteBtn}
+    </div>
+    ${imageHtml}
+    <div class="tweet-body">${esc(t.body)}</div>
+    <div class="tweet-footer">
+      <div class="tweet-reaction-summary">${summaryPills}</div>
+      ${addReactionWrap}
+      ${commentBtn}
+    </div>
+    <div id="tw-page-comments-${t.id}" class="tweet-comments-wrap" style="display:${open ? 'block' : 'none'}"></div>
+  </article>`;
+}
+
+// リアクション追加ピッカーの開閉
+function toggleTweetReactionPicker(ev, tweetId) {
+  if (ev) { ev.stopPropagation(); }
+  // 他のピッカーを閉じる
+  document.querySelectorAll('.tweet-reaction-picker.open').forEach(p => {
+    if (p.id !== `tw-page-picker-${tweetId}`) p.classList.remove('open');
+  });
+  const picker = document.getElementById(`tw-page-picker-${tweetId}`);
+  if (picker) picker.classList.toggle('open');
+}
+// 外側クリックでピッカーを閉じる
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.tweet-reaction-add-wrap')) {
+    document.querySelectorAll('.tweet-reaction-picker.open').forEach(p => p.classList.remove('open'));
+  }
+});
+
+async function addTweetReactionFromCard(tweetId, type) {
+  const res = await apiFetch(`${API}/tweets/${tweetId}/reactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reaction_type: type }),
+  });
+  if (res.ok || res.status === 409) {
+    loadTweetsPage();
+    if (document.getElementById('page-dashboard')?.classList.contains('active')) loadTweets();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
+}
+
+async function removeTweetReactionFromCard(tweetId, type) {
+  const res = await apiFetch(`${API}/tweets/${tweetId}/reactions/${type}`, { method: 'DELETE' });
+  if (res.ok) {
+    loadTweetsPage();
+    if (document.getElementById('page-dashboard')?.classList.contains('active')) loadTweets();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
+}
+
+// コメント欄の開閉（独立ページ用）
+async function openTweetCommentsFromCard(tweetId) {
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  if (!wrap) return;
+  if (_twPageOpenComments.has(tweetId)) {
+    _twPageOpenComments.delete(tweetId);
+    wrap.style.display = 'none';
+    return;
+  }
+  _twPageOpenComments.add(tweetId);
+  wrap.style.display = 'block';
+  await loadTweetCommentsPage(tweetId);
+}
+
+async function loadTweetCommentsPage(tweetId) {
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="tw-comment-empty">読み込み中…</div>';
+  let comments = [];
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments`);
+    if (res.ok) comments = await res.json();
+  } catch (e) { console.warn('[tweets-page] comments load failed', e); }
+
+  const myId = currentUser?.id;
+  const canMod = _twCanModerate();
+
+  const rows = (comments || []).map(c => {
+    const u = c.users || {};
+    const av = u.avatar_url
+      ? `<div class="tw-comment-av"><img src="${esc(u.avatar_url)}" alt=""></div>`
+      : `<div class="tw-comment-av">${esc((u.full_name || '?').charAt(0))}</div>`;
+    const canDelete = (c.user_id === myId) || canMod;
+    const delBtn = canDelete
+      ? `<button class="tw-comment-del" onclick="deleteTweetCommentPage('${tweetId}','${c.id}')" title="削除">🗑️</button>`
+      : '';
+    return `<div class="tw-comment">
+      ${av}
+      <div style="flex:1;min-width:0">
+        <div class="tw-comment-meta">
+          <span class="tw-comment-author">${esc(u.full_name || '不明')}</span>
+          <span>${_twTimeAgo(c.created_at)}</span>
+          ${delBtn}
+        </div>
+        <div class="tw-comment-body">${esc(c.body)}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="tw-comments-inner">
+      ${rows || '<div class="tw-comment-empty">まだコメントはありません</div>'}
+      <div class="tw-comment-form">
+        <input type="text" id="tw-page-comment-input-${tweetId}" maxlength="500"
+          placeholder="コメントを入力（500字、@名前 でメンション）"
+          onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitTweetCommentPage('${tweetId}')}">
+        <button onclick="submitTweetCommentPage('${tweetId}')">送信</button>
+      </div>
+    </div>
+  `;
+}
+
+async function submitTweetCommentPage(tweetId) {
+  const inp = document.getElementById(`tw-page-comment-input-${tweetId}`);
+  if (!inp) return;
+  const body = (inp.value || '').trim();
+  if (!body) { showToast('コメントを入力してください', 'warn'); return; }
+  if (body.length > 500) { showToast('500字以内にしてください', 'warn'); return; }
+  inp.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '送信失敗'), 'error');
+      return;
+    }
+    inp.value = '';
+    await loadTweetCommentsPage(tweetId);
+    // 件数バッジを更新するため一覧も再描画
+    loadTweetsPage();
+  } finally {
+    inp.disabled = false;
+  }
+}
+
+async function deleteTweetCommentPage(tweetId, commentId) {
+  if (!confirm('このコメントを削除しますか？')) return;
+  const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, { method: 'DELETE' });
+  if (res.ok) {
+    showToast('削除しました', 'success');
+    await loadTweetCommentsPage(tweetId);
+    loadTweetsPage();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
 }
 
 
