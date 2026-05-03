@@ -4365,13 +4365,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
-<!-- Dチェック担当者選択モーダル（Dチェックへ進める時のみ表示）-->
+<!-- Dチェック担当者選択モーダル（Dチェックへ進める時のみ表示・複数選択対応）-->
 <!-- 表示優先順:
-       1. 案件のメインディレクター（projects.director_id）⭐ デフォルト選択
-       2. サブディレクター（projects.sub_director_ids）※ migration 未適用なら空配列
-       3. 同じチームのメンバー（サブディレクターが空のときのみ）
-       4. 秘書チーム（users.role='secretary'）
-       5. その他から選ぶ（折りたたみ + 検索） -->
+       1. メインディレクター（projects.director_id）⭐ 既定チェック
+       2. サブディレクター（projects.sub_director_ids） 既定チェック
+       3. 案件チームのディレクター（users.role='director'）既定チェック
+       4. 秘書チーム
+       5. その他から選ぶ（全ユーザー・ロール優先順 → ランク順・折りたたみ + 検索）
+     1人以上必須。 -->
 <div class="modal-overlay" id="modal-d-check-picker" style="z-index:10001">
   <div style="max-width:520px;width:95vw;margin:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34),0 4px 14px rgba(0,0,0,.12);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
     <div style="padding:16px 22px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -4379,7 +4380,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <button class="modal-close" onclick="closeDCheckPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
     </div>
     <div style="padding:16px 22px;overflow-y:auto;flex:1">
-      <div style="font-size:13px;color:var(--text);margin-bottom:14px">Dチェック担当を選んでください</div>
+      <div style="font-size:13px;color:var(--text);margin-bottom:14px">Dチェック担当を選んでください（複数可）</div>
       <div id="dcp-sections"></div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px;border-top:0.5px solid var(--border);background:var(--surface)">
@@ -15938,8 +15939,9 @@ async function advanceCreativeStatus() {
   // （シンプルな confirm は他の遷移先のみで使用）
   if (target === 'Dチェック') {
     openDCheckPicker({
-      onSubmit: async (directorUserId) => {
-        await saveCreativeDetail(target, { director_user_id: directorUserId || '' });
+      onSubmit: async (directorUserIds) => {
+        // 複数選択対応: director_user_ids（配列）でサーバへ
+        await saveCreativeDetail(target, { director_user_ids: Array.isArray(directorUserIds) ? directorUserIds : [] });
       },
     });
     return;
@@ -17853,15 +17855,15 @@ function confirmUploadNo() {
 
 async function doDCheckTransition() {
   document.getElementById('cd-dcheck-confirm').style.display = 'none';
-  // Dチェック担当者選択モーダル経由で実行する
+  // Dチェック担当者選択モーダル経由で実行する（複数選択対応）
   openDCheckPicker({
-    onSubmit: async (directorUserId) => {
+    onSubmit: async (directorUserIds) => {
       const statusEl = document.getElementById('cd-upload-status');
       const editorComment = document.getElementById('cd-comment-field').value.trim();
       const payload = { status: 'Dチェック' };
       if (editorComment) payload.director_comment = editorComment;
-      // null は「メインディレクター（=projects.director_id）」の意。assignment 上書き解除のため空文字列で送る。
-      payload.director_user_id = directorUserId || '';
+      // 配列で送る。サーバ側で creative_assignments role='director' に同期。
+      payload.director_user_ids = Array.isArray(directorUserIds) ? directorUserIds : [];
       const upd = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
         method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
       });
@@ -17882,24 +17884,55 @@ async function doDCheckTransition() {
 }
 
 // =====================================================================
-// Dチェック担当者選択モーダル
+// Dチェック担当者選択モーダル（複数選択対応）
 // =====================================================================
 //   背景:
-//     Dチェックは案件メインディレクター以外（サブディレクター・秘書・他チーム）にも依頼したい。
-//     毎回スクロールで担当を選ぶのは面倒なので、確認ダイアログ内に集約する。
+//     Dチェックは案件メインディレクター以外（サブディレクター・秘書・他チーム・admin等）にも
+//     依頼したい。複数人にチェック依頼したいケースもあるため、checkbox 化して複数選択可能にする。
 //
 //   表示優先順:
-//     1. 案件のメインディレクター（projects.director_id）⭐ デフォルト選択
-//     2. サブディレクター（projects.sub_director_ids が空でないとき）
-//     3. 同じチームのメンバー（**サブディレクターが空のときのみ**）
+//     1. メインディレクター（projects.director_id） ⭐ 既定チェック
+//     2. サブディレクター（projects.sub_director_ids） 既定チェック
+//     3. 案件のチームに属する users.role='director' のメンバー全員 既定チェック
+//        （案件 → client_teams → teams → team_members ルート、+ クリエイティブ自身の team_id）
 //     4. 秘書チーム（users.role='secretary'）
-//     5. その他から選ぶ（折りたたみ + 検索）
+//     5. その他から選ぶ（折りたたみ・検索・全ユーザー対象）
+//        並び順: ロール優先順 → ランク順
 //
-//   migration 未適用フォールバック:
-//     projects.sub_director_ids が undefined / null の場合は空配列扱い。
+//   ロール優先順（重要・既定値）:
+//     admin > secretary > producer_director > producer > director > editor > designer > その他
+//
+//   ランク順:
+//     S > A > B > C > (未設定)
+//
+//   バックエンド:
+//     PUT /creatives/:id に director_user_ids: string[] を渡す。
+//     1人以上必須。
 // =====================================================================
 
 let _dcpState = null;
+
+const DCP_ROLE_ORDER = {
+  admin: 0, secretary: 1, producer_director: 2, producer: 3,
+  director: 4, editor: 5, designer: 6,
+};
+const DCP_RANK_ORDER = { S: 0, A: 1, B: 2, C: 3 };
+
+function dcpRoleRank(role) {
+  return Object.prototype.hasOwnProperty.call(DCP_ROLE_ORDER, role) ? DCP_ROLE_ORDER[role] : 99;
+}
+function dcpUserRankOrder(rank) {
+  return Object.prototype.hasOwnProperty.call(DCP_RANK_ORDER, rank) ? DCP_RANK_ORDER[rank] : 99;
+}
+function dcpCompareUsers(a, b) {
+  const ra = dcpRoleRank(a.role);
+  const rb = dcpRoleRank(b.role);
+  if (ra !== rb) return ra - rb;
+  const rka = dcpUserRankOrder(a.rank);
+  const rkb = dcpUserRankOrder(b.rank);
+  if (rka !== rkb) return rka - rkb;
+  return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
+}
 
 function openDCheckPicker({ onSubmit } = {}) {
   if (!currentCreativeDetail) return;
@@ -17907,19 +17940,45 @@ function openDCheckPicker({ onSubmit } = {}) {
   const project = currentCreativeDetail.projects || {};
   const mainDirectorId = project.director_id || null;
   const subDirectorIds = Array.isArray(project.sub_director_ids) ? project.sub_director_ids.filter(Boolean) : [];
-  // team_id 解決: クリエイティブ自身 → 編集者の team_id → 編集者所属チーム の順
-  let teamId = currentCreativeDetail.team_id || null;
-  if (!teamId) {
-    const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
-    teamId = editorAssign?.users?.team_id
-      || (editorAssign?.users?.id ? (allTeams || []).find(t => (t.team_members||[]).some(tm => tm.user_id === editorAssign.users.id))?.id : null)
-      || null;
-  }
 
-  // 候補ユーザー集合（id でユニーク化）
+  // team_id 解決: クリエイティブ自身 → 編集者の team_id → 編集者所属チーム
+  // さらに案件 → client_teams → teams ルート（PR #216 で確立）でチームを束ねる
+  const teamIds = new Set();
+  if (currentCreativeDetail.team_id) teamIds.add(currentCreativeDetail.team_id);
+  // 編集者経由
+  const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
+  if (editorAssign?.users?.team_id) teamIds.add(editorAssign.users.team_id);
+  if (editorAssign?.users?.id) {
+    const t = (allTeams || []).find(t => (t.team_members||[]).some(tm => tm.user_id === editorAssign.users.id));
+    if (t?.id) teamIds.add(t.id);
+  }
+  // 案件 → client_teams → teams ルート（projects.client_teams が埋め込まれていれば利用）
+  const projectClientTeams = Array.isArray(project.client_teams) ? project.client_teams : [];
+  projectClientTeams.forEach(ct => {
+    const tid = ct.team_id || ct.team?.id;
+    if (tid) teamIds.add(tid);
+  });
+
   const memberById = new Map(allMembers.filter(m => m.is_active !== false).map(m => [m.id, m]));
 
-  // section: { title, items[{id, name, role}], showStar, badge }
+  // チーム所属ディレクター（users.role='director' のみ）を集約
+  const teamDirectorIds = new Set();
+  teamIds.forEach(tid => {
+    const team = (allTeams || []).find(t => t.id === tid);
+    (team?.team_members || []).forEach(tm => {
+      const m = memberById.get(tm.user_id);
+      if (m && m.role === 'director') teamDirectorIds.add(m.id);
+    });
+  });
+
+  // 既定でチェックされる ID 集合
+  const defaultCheckedIds = new Set();
+  if (mainDirectorId && memberById.has(mainDirectorId)) defaultCheckedIds.add(mainDirectorId);
+  subDirectorIds.forEach(id => { if (memberById.has(id)) defaultCheckedIds.add(id); });
+  teamDirectorIds.forEach(id => defaultCheckedIds.add(id));
+
+  // セクション組み立て
+  // section: { title, items[{id, name, sub, star, defaultChecked}] }
   const sections = [];
   const usedIds = new Set();
 
@@ -17928,42 +17987,40 @@ function openDCheckPicker({ onSubmit } = {}) {
     const m = memberById.get(mainDirectorId);
     sections.push({
       title: null,
-      items: [{ id: m.id, name: m.full_name, sub: '案件ディレクター', star: true }],
+      items: [{ id: m.id, name: m.full_name, sub: '案件メインD', star: true }],
     });
     usedIds.add(m.id);
   }
 
-  // (2) サブディレクター（重複除去）
+  // (2) サブディレクター
   const subDirItems = subDirectorIds
     .filter(id => id && memberById.has(id) && !usedIds.has(id))
     .map(id => {
       const m = memberById.get(id);
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, sub: roleLabel(m.role) };
+      return { id: m.id, name: m.full_name, sub: 'サブD' };
     });
   if (subDirItems.length) {
     sections.push({ title: 'サブディレクター', items: subDirItems });
   }
 
-  // (3) 同じチームのメンバー（サブディレクターが空のときのみ）
-  if (subDirItems.length === 0 && teamId) {
-    const team = (allTeams || []).find(t => t.id === teamId);
-    const memberIds = (team?.team_members || []).map(tm => tm.user_id);
-    const teamItems = memberIds
-      .filter(id => id && memberById.has(id) && !usedIds.has(id))
-      .map(id => {
-        const m = memberById.get(id);
-        usedIds.add(m.id);
-        return { id: m.id, name: m.full_name, sub: roleLabel(m.role) };
-      });
-    if (teamItems.length) {
-      sections.push({ title: '同じチームのメンバー', items: teamItems });
-    }
+  // (3) 案件チームのディレクター（重複除外）
+  const teamDirItems = [...teamDirectorIds]
+    .filter(id => !usedIds.has(id))
+    .map(id => {
+      const m = memberById.get(id);
+      usedIds.add(m.id);
+      return { id: m.id, name: m.full_name, sub: 'チームD' };
+    })
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  if (teamDirItems.length) {
+    sections.push({ title: 'チームのディレクター', items: teamDirItems });
   }
 
   // (4) 秘書チーム
   const secItems = [...memberById.values()]
     .filter(m => m.role === 'secretary' && !usedIds.has(m.id))
+    .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
       return { id: m.id, name: m.full_name, sub: '秘書' };
@@ -17972,16 +18029,21 @@ function openDCheckPicker({ onSubmit } = {}) {
     sections.push({ title: '秘書チーム', items: secItems });
   }
 
-  // (5) その他（折りたたみ・検索）
+  // (5) その他（全ユーザー：admin/PD/producer/director/editor/designer 等すべて含む）
+  // 並び順: ロール優先順 → ランク順 → 名前
   const otherItems = [...memberById.values()]
-    .filter(m => !usedIds.has(m.id) && m.role !== 'editor' && m.role !== 'designer' && m.role !== 'client')
-    .map(m => ({ id: m.id, name: m.full_name, sub: roleLabel(m.role) }))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    .filter(m => !usedIds.has(m.id))
+    .sort(dcpCompareUsers)
+    .map(m => ({ id: m.id, name: m.full_name, sub: roleLabel(m.role) }));
+
+  // checked 集合（mutable）
+  const checkedIds = new Set();
+  defaultCheckedIds.forEach(id => checkedIds.add(id));
 
   _dcpState = {
     sections,
     otherItems,
-    selectedId: mainDirectorId && memberById.has(mainDirectorId) ? mainDirectorId : (sections[0]?.items[0]?.id || null),
+    checkedIds,
     onSubmit,
     otherExpanded: false,
     otherSearch: '',
@@ -18003,15 +18065,15 @@ function roleLabel(r) {
 function renderDCheckPicker() {
   const root = document.getElementById('dcp-sections');
   if (!root || !_dcpState) return;
-  const { sections, otherItems, selectedId, otherExpanded, otherSearch } = _dcpState;
+  const { sections, otherItems, checkedIds, otherExpanded, otherSearch } = _dcpState;
 
   const renderItem = (it) => {
-    const checked = (it.id === selectedId) ? 'checked' : '';
+    const isChecked = checkedIds.has(it.id);
     const star = it.star ? '<span style="color:#f59e0b;margin-left:4px">⭐</span>' : '';
-    const sub = it.sub ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(it.sub)}</span>` : '';
+    const sub = it.sub ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(it.sub)}</span>` : '';
     return `
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${it.id === selectedId ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
-        <input type="radio" name="dcp-pick" value="${esc(it.id)}" ${checked} onchange="dcpSelect('${esc(it.id)}')" style="margin:0">
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
+        <input type="checkbox" value="${esc(it.id)}" ${isChecked ? 'checked' : ''} onchange="dcpToggle('${esc(it.id)}')" style="margin:0;width:16px;height:16px;cursor:pointer">
         <span style="font-size:13px;font-weight:500;color:var(--text)">${esc(it.name || '(名前なし)')}</span>
         ${star}
         ${sub}
@@ -18043,10 +18105,20 @@ function renderDCheckPicker() {
         <div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px">── その他から選ぶ ──</div>
         <input type="text" id="dcp-other-search" placeholder="🔍 名前で検索..." value="${esc(otherSearch)}" oninput="dcpUpdateSearch(this.value)"
                style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
-        <div style="max-height:220px;overflow-y:auto">
+        <div style="max-height:260px;overflow-y:auto">
           ${filtered.length ? filtered.map(renderItem).join('') : '<div style="font-size:12px;color:var(--text-muted);padding:12px;text-align:center">該当なし</div>'}
         </div>`;
     }
+  }
+
+  // 選択数表示 + 送信ボタン disabled制御
+  const count = checkedIds.size;
+  const submitBtn = document.getElementById('dcp-submit-btn');
+  if (submitBtn) {
+    submitBtn.disabled = count === 0;
+    submitBtn.style.opacity = count === 0 ? '0.5' : '1';
+    submitBtn.style.cursor = count === 0 ? 'not-allowed' : 'pointer';
+    submitBtn.textContent = count === 0 ? 'Dチェックへ →' : `Dチェックへ → (${count}人)`;
   }
 
   root.innerHTML = html;
@@ -18060,9 +18132,10 @@ function renderDCheckPicker() {
   }
 }
 
-function dcpSelect(id) {
+function dcpToggle(id) {
   if (!_dcpState) return;
-  _dcpState.selectedId = id;
+  if (_dcpState.checkedIds.has(id)) _dcpState.checkedIds.delete(id);
+  else _dcpState.checkedIds.add(id);
   renderDCheckPicker();
 }
 
@@ -18086,15 +18159,15 @@ function closeDCheckPicker() {
 
 async function submitDCheckPicker() {
   if (!_dcpState) return;
-  const id = _dcpState.selectedId;
-  if (!id) {
-    showToast('Dチェック担当を1人選んでください', 'warn');
+  const ids = [..._dcpState.checkedIds];
+  if (ids.length === 0) {
+    showToast('Dチェック担当を1人以上選んでください', 'warn');
     return;
   }
   const onSubmit = _dcpState.onSubmit;
   closeDCheckPicker();
   if (typeof onSubmit === 'function') {
-    try { await onSubmit(id); } catch (e) {
+    try { await onSubmit(ids); } catch (e) {
       console.error('[dcp] submit error:', e);
       showToast('Dチェックへの遷移に失敗しました', 'error');
     }
