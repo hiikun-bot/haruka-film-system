@@ -4367,11 +4367,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <!-- Dチェック担当者選択モーダル（Dチェックへ進める時のみ表示・複数選択対応）-->
 <!-- 表示優先順:
-       1. メインディレクター（projects.director_id）⭐ 既定チェック
-       2. サブディレクター（projects.sub_director_ids） 既定チェック
-       3. 案件チームのディレクター（users.role='director'）既定チェック
-       4. 秘書チーム
-       5. その他から選ぶ（全ユーザー・ロール優先順 → ランク順・折りたたみ + 検索）
+       1. 案件のディレクター（projects.director_id [⭐] + projects.sub_director_ids の和集合）既定チェック
+       2. 秘書チーム
+       3. その他から選ぶ（全ユーザー・ロールフィルタチップ + 名前検索・折りたたみ）
      1人以上必須。 -->
 <div class="modal-overlay" id="modal-d-check-picker" style="z-index:10001">
   <div style="max-width:520px;width:95vw;margin:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34),0 4px 14px rgba(0,0,0,.12);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
@@ -17891,15 +17889,14 @@ async function doDCheckTransition() {
 //     依頼したい。複数人にチェック依頼したいケースもあるため、checkbox 化して複数選択可能にする。
 //
 //   表示優先順:
-//     1. メインディレクター（projects.director_id） ⭐ 既定チェック
-//     2. サブディレクター（projects.sub_director_ids） 既定チェック
-//     3. 案件のチームに属する users.role='director' のメンバー全員 既定チェック
-//        （案件 → client_teams → teams → team_members ルート、+ クリエイティブ自身の team_id）
-//     4. 秘書チーム（users.role='secretary'）
-//     5. その他から選ぶ（折りたたみ・検索・全ユーザー対象）
+//     1. 案件のディレクター（projects.director_id [⭐メインD] + projects.sub_director_ids [サブD] の和集合）
+//        既定チェック（重複は除去、メインDのみ⭐表示）
+//        ※チーム経由ロジックは廃止（PR #218 修正）
+//     2. 秘書チーム（users.role='secretary'）
+//     3. その他から選ぶ（折りたたみ・ロールフィルタチップ + 名前検索・全ユーザー対象）
 //        並び順: ロール優先順 → ランク順
 //
-//   ロール優先順（重要・既定値）:
+//   ロール優先順（重要・既定値・フィルタチップの並び順にも使う）:
 //     admin > secretary > producer_director > producer > director > editor > designer > その他
 //
 //   ランク順:
@@ -17941,83 +17938,47 @@ function openDCheckPicker({ onSubmit } = {}) {
   const mainDirectorId = project.director_id || null;
   const subDirectorIds = Array.isArray(project.sub_director_ids) ? project.sub_director_ids.filter(Boolean) : [];
 
-  // team_id 解決: クリエイティブ自身 → 編集者の team_id → 編集者所属チーム
-  // さらに案件 → client_teams → teams ルート（PR #216 で確立）でチームを束ねる
-  const teamIds = new Set();
-  if (currentCreativeDetail.team_id) teamIds.add(currentCreativeDetail.team_id);
-  // 編集者経由
-  const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
-  if (editorAssign?.users?.team_id) teamIds.add(editorAssign.users.team_id);
-  if (editorAssign?.users?.id) {
-    const t = (allTeams || []).find(t => (t.team_members||[]).some(tm => tm.user_id === editorAssign.users.id));
-    if (t?.id) teamIds.add(t.id);
-  }
-  // 案件 → client_teams → teams ルート（projects.client_teams が埋め込まれていれば利用）
-  const projectClientTeams = Array.isArray(project.client_teams) ? project.client_teams : [];
-  projectClientTeams.forEach(ct => {
-    const tid = ct.team_id || ct.team?.id;
-    if (tid) teamIds.add(tid);
-  });
-
   const memberById = new Map(allMembers.filter(m => m.is_active !== false).map(m => [m.id, m]));
 
-  // チーム所属ディレクター（users.role='director' のみ）を集約
-  const teamDirectorIds = new Set();
-  teamIds.forEach(tid => {
-    const team = (allTeams || []).find(t => t.id === tid);
-    (team?.team_members || []).forEach(tm => {
-      const m = memberById.get(tm.user_id);
-      if (m && m.role === 'director') teamDirectorIds.add(m.id);
-    });
+  // 案件のディレクター = メインD + サブD（順序維持・重複除去）
+  // チーム経由のロジックは廃止（PR #218 修正で「案件のディレクター」セクションに集約）
+  const projectDirectorOrdered = [];
+  const seen = new Set();
+  if (mainDirectorId && memberById.has(mainDirectorId) && !seen.has(mainDirectorId)) {
+    projectDirectorOrdered.push({ id: mainDirectorId, isMain: true });
+    seen.add(mainDirectorId);
+  }
+  subDirectorIds.forEach(id => {
+    if (id && memberById.has(id) && !seen.has(id)) {
+      projectDirectorOrdered.push({ id, isMain: false });
+      seen.add(id);
+    }
   });
 
-  // 既定でチェックされる ID 集合
-  const defaultCheckedIds = new Set();
-  if (mainDirectorId && memberById.has(mainDirectorId)) defaultCheckedIds.add(mainDirectorId);
-  subDirectorIds.forEach(id => { if (memberById.has(id)) defaultCheckedIds.add(id); });
-  teamDirectorIds.forEach(id => defaultCheckedIds.add(id));
+  // 既定チェック: 案件のディレクター全員
+  const defaultCheckedIds = new Set(projectDirectorOrdered.map(x => x.id));
 
   // セクション組み立て
-  // section: { title, items[{id, name, sub, star, defaultChecked}] }
+  // section: { title, items[{id, name, sub, star}] }
   const sections = [];
   const usedIds = new Set();
 
-  // (1) メインディレクター
-  if (mainDirectorId && memberById.has(mainDirectorId)) {
-    const m = memberById.get(mainDirectorId);
-    sections.push({
-      title: null,
-      items: [{ id: m.id, name: m.full_name, sub: '案件メインD', star: true }],
-    });
-    usedIds.add(m.id);
+  // (1) 案件のディレクター（メインD + サブD）
+  const projectDirItems = projectDirectorOrdered.map(({ id, isMain }) => {
+    const m = memberById.get(id);
+    usedIds.add(id);
+    return {
+      id: m.id,
+      name: m.full_name,
+      sub: isMain ? '案件メインD' : 'サブD',
+      star: isMain,
+    };
+  });
+  if (projectDirItems.length) {
+    sections.push({ title: '案件のディレクター', items: projectDirItems });
   }
 
-  // (2) サブディレクター
-  const subDirItems = subDirectorIds
-    .filter(id => id && memberById.has(id) && !usedIds.has(id))
-    .map(id => {
-      const m = memberById.get(id);
-      usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, sub: 'サブD' };
-    });
-  if (subDirItems.length) {
-    sections.push({ title: 'サブディレクター', items: subDirItems });
-  }
-
-  // (3) 案件チームのディレクター（重複除外）
-  const teamDirItems = [...teamDirectorIds]
-    .filter(id => !usedIds.has(id))
-    .map(id => {
-      const m = memberById.get(id);
-      usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, sub: 'チームD' };
-    })
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
-  if (teamDirItems.length) {
-    sections.push({ title: 'チームのディレクター', items: teamDirItems });
-  }
-
-  // (4) 秘書チーム
+  // (2) 秘書チーム
   const secItems = [...memberById.values()]
     .filter(m => m.role === 'secretary' && !usedIds.has(m.id))
     .sort(dcpCompareUsers)
@@ -18029,12 +17990,17 @@ function openDCheckPicker({ onSubmit } = {}) {
     sections.push({ title: '秘書チーム', items: secItems });
   }
 
-  // (5) その他（全ユーザー：admin/PD/producer/director/editor/designer 等すべて含む）
+  // (3) その他（全ユーザー：admin/PD/producer/director/editor/designer 等すべて含む）
   // 並び順: ロール優先順 → ランク順 → 名前
-  const otherItems = [...memberById.values()]
+  const otherUsers = [...memberById.values()]
     .filter(m => !usedIds.has(m.id))
-    .sort(dcpCompareUsers)
-    .map(m => ({ id: m.id, name: m.full_name, sub: roleLabel(m.role) }));
+    .sort(dcpCompareUsers);
+  const otherItems = otherUsers.map(m => ({
+    id: m.id,
+    name: m.full_name,
+    sub: roleLabel(m.role),
+    role: m.role || '',
+  }));
 
   // checked 集合（mutable）
   const checkedIds = new Set();
@@ -18047,6 +18013,8 @@ function openDCheckPicker({ onSubmit } = {}) {
     onSubmit,
     otherExpanded: false,
     otherSearch: '',
+    otherRoleFilter: '__all__', // '__all__' | 'admin' | 'secretary' | ...
+    otherIsComposing: false,    // IME composition 中フラグ
   };
 
   renderDCheckPicker();
@@ -18062,32 +18030,18 @@ function roleLabel(r) {
   return map[r] || r || '';
 }
 
+// =============================================================
+// 描画戦略（IMEバグ対策）:
+//   - 検索input は **一度だけ生成**、再描画しない（IME composition 中断を防ぐ）
+//   - フィルタ変更時はリスト部分（#dcp-other-list）と チップ active 表示だけ更新
+//   - composition 中はフィルタを走らせない（compositionstart/end でガード）
+// =============================================================
 function renderDCheckPicker() {
   const root = document.getElementById('dcp-sections');
   if (!root || !_dcpState) return;
-  const { sections, otherItems, checkedIds, otherExpanded, otherSearch } = _dcpState;
+  const { sections, otherItems, otherExpanded } = _dcpState;
 
-  const renderItem = (it) => {
-    const isChecked = checkedIds.has(it.id);
-    const star = it.star ? '<span style="color:#f59e0b;margin-left:4px">⭐</span>' : '';
-    const sub = it.sub ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(it.sub)}</span>` : '';
-    return `
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
-        <input type="checkbox" value="${esc(it.id)}" ${isChecked ? 'checked' : ''} onchange="dcpToggle('${esc(it.id)}')" style="margin:0;width:16px;height:16px;cursor:pointer">
-        <span style="font-size:13px;font-weight:500;color:var(--text)">${esc(it.name || '(名前なし)')}</span>
-        ${star}
-        ${sub}
-      </label>`;
-  };
-
-  const renderSection = (s) => {
-    const head = s.title
-      ? `<div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px;padding-left:2px">── ${esc(s.title)} ──</div>`
-      : '';
-    return head + s.items.map(renderItem).join('');
-  };
-
-  let html = sections.map(renderSection).join('');
+  let html = sections.map(dcpRenderSection).join('');
 
   // その他から選ぶ
   if (otherItems.length) {
@@ -18097,46 +18051,187 @@ function renderDCheckPicker() {
           ── その他から選ぶ（${otherItems.length}人） ──
         </button>`;
     } else {
-      const q = (otherSearch || '').trim().toLowerCase();
-      const filtered = q
-        ? otherItems.filter(it => (it.name || '').toLowerCase().includes(q))
-        : otherItems;
+      // ロールチップ用の人数集計
+      const counts = dcpCountByRole(otherItems);
+      const chipsHtml = dcpChipDefs(counts).map(c => {
+        const active = (_dcpState.otherRoleFilter === c.value);
+        return `<button type="button" data-role="${esc(c.value)}" onclick="dcpSetRoleFilter('${esc(c.value)}')"
+          style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
+                 background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
+                 color:${active ? '#fff' : 'var(--text)'};
+                 font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
+          ${esc(c.label)}(${c.count})
+        </button>`;
+      }).join('');
+
       html += `
         <div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px">── その他から選ぶ ──</div>
-        <input type="text" id="dcp-other-search" placeholder="🔍 名前で検索..." value="${esc(otherSearch)}" oninput="dcpUpdateSearch(this.value)"
+        <div id="dcp-role-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${chipsHtml}</div>
+        <input type="text" id="dcp-other-search" placeholder="🔍 名前で検索..." value="${esc(_dcpState.otherSearch || '')}"
                style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
-        <div style="max-height:260px;overflow-y:auto">
-          ${filtered.length ? filtered.map(renderItem).join('') : '<div style="font-size:12px;color:var(--text-muted);padding:12px;text-align:center">該当なし</div>'}
-        </div>`;
+        <div id="dcp-other-list" style="max-height:260px;overflow-y:auto"></div>`;
     }
   }
 
-  // 選択数表示 + 送信ボタン disabled制御
-  const count = checkedIds.size;
-  const submitBtn = document.getElementById('dcp-submit-btn');
-  if (submitBtn) {
-    submitBtn.disabled = count === 0;
-    submitBtn.style.opacity = count === 0 ? '0.5' : '1';
-    submitBtn.style.cursor = count === 0 ? 'not-allowed' : 'pointer';
-    submitBtn.textContent = count === 0 ? 'Dチェックへ →' : `Dチェックへ → (${count}人)`;
-  }
+  dcpUpdateSubmitButton();
 
   root.innerHTML = html;
-  // 検索入力中はフォーカスを保持
+
+  // input の DOM が再生成された直後だけ、IME対応のイベントを bind しなおす。
+  // 以後この input は再描画しない（リスト部分だけ書き換える）。
   if (otherExpanded) {
     const ipt = document.getElementById('dcp-other-search');
-    if (ipt && document.activeElement !== ipt && otherSearch) {
-      ipt.focus();
-      try { ipt.setSelectionRange(ipt.value.length, ipt.value.length); } catch (_) {}
+    if (ipt) {
+      ipt.addEventListener('compositionstart', () => {
+        if (_dcpState) _dcpState.otherIsComposing = true;
+      });
+      ipt.addEventListener('compositionend', (ev) => {
+        if (!_dcpState) return;
+        _dcpState.otherIsComposing = false;
+        _dcpState.otherSearch = ev.target.value;
+        dcpRenderOtherList();
+      });
+      ipt.addEventListener('input', (ev) => {
+        if (!_dcpState) return;
+        // composition 中はフィルタ走らせない（IME 確定後に compositionend で更新）
+        if (_dcpState.otherIsComposing) return;
+        _dcpState.otherSearch = ev.target.value;
+        dcpRenderOtherList();
+      });
+      // 展開直後にフォーカス（caret 末尾）
+      if (document.activeElement !== ipt && _dcpState.otherSearch) {
+        try { ipt.focus(); ipt.setSelectionRange(ipt.value.length, ipt.value.length); } catch (_) {}
+      }
     }
+    dcpRenderOtherList();
   }
 }
 
+// ── ヘルパ: 1件のチェックボックス行
+function dcpRenderItem(it) {
+  if (!_dcpState) return '';
+  const isChecked = _dcpState.checkedIds.has(it.id);
+  const star = it.star ? '<span style="color:#f59e0b;margin-left:4px">⭐</span>' : '';
+  const sub = it.sub ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(it.sub)}</span>` : '';
+  return `
+    <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
+      <input type="checkbox" value="${esc(it.id)}" ${isChecked ? 'checked' : ''} onchange="dcpToggle('${esc(it.id)}')" style="margin:0;width:16px;height:16px;cursor:pointer">
+      <span style="font-size:13px;font-weight:500;color:var(--text)">${esc(it.name || '(名前なし)')}</span>
+      ${star}
+      ${sub}
+    </label>`;
+}
+
+function dcpRenderSection(s) {
+  const head = s.title
+    ? `<div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px;padding-left:2px">── ${esc(s.title)} ──</div>`
+    : '';
+  return head + s.items.map(dcpRenderItem).join('');
+}
+
+// ── ヘルパ: ロール別人数集計
+function dcpCountByRole(items) {
+  const m = new Map();
+  items.forEach(it => {
+    const k = it.role || '__other__';
+    m.set(k, (m.get(k) || 0) + 1);
+  });
+  return m;
+}
+
+// ── ヘルパ: ロールチップ定義（順序：ロール優先順 → 「その他」最後）
+//   存在するロールのみ表示（人数 0 は出さない）
+function dcpChipDefs(countsByRole) {
+  const total = [...countsByRole.values()].reduce((a, b) => a + b, 0);
+  const defs = [{ value: '__all__', label: '全て', count: total }];
+
+  // 既知ロールを優先順で
+  const ordered = ['admin', 'secretary', 'producer_director', 'producer', 'director', 'editor', 'designer'];
+  ordered.forEach(r => {
+    const n = countsByRole.get(r) || 0;
+    if (n > 0) defs.push({ value: r, label: roleLabel(r), count: n });
+  });
+  // 既知でないロール（client や null など）
+  const otherCount = countsByRole.get('__other__') || 0;
+  if (otherCount > 0) defs.push({ value: '__other__', label: 'その他', count: otherCount });
+  // ordered に無いキー（保険）
+  countsByRole.forEach((n, k) => {
+    if (k === '__other__') return;
+    if (ordered.includes(k)) return;
+    defs.push({ value: k, label: roleLabel(k) || k, count: n });
+  });
+
+  return defs;
+}
+
+// ── リストだけ更新（input の再描画を回避）
+function dcpRenderOtherList() {
+  const list = document.getElementById('dcp-other-list');
+  if (!list || !_dcpState) return;
+  const { otherItems, otherSearch, otherRoleFilter } = _dcpState;
+
+  // ロールフィルタ
+  let filtered = otherItems;
+  if (otherRoleFilter && otherRoleFilter !== '__all__') {
+    if (otherRoleFilter === '__other__') {
+      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
+      filtered = filtered.filter(it => !known.has(it.role || ''));
+    } else {
+      filtered = filtered.filter(it => (it.role || '') === otherRoleFilter);
+    }
+  }
+  // 名前検索
+  const q = (otherSearch || '').trim().toLowerCase();
+  if (q) {
+    filtered = filtered.filter(it => (it.name || '').toLowerCase().includes(q));
+  }
+
+  list.innerHTML = filtered.length
+    ? filtered.map(dcpRenderItem).join('')
+    : '<div style="font-size:12px;color:var(--text-muted);padding:12px;text-align:center">該当なし</div>';
+}
+
+// ── チップ active 表示だけ更新（input の再描画を回避）
+function dcpUpdateChipsActive() {
+  const wrap = document.getElementById('dcp-role-chips');
+  if (!wrap || !_dcpState) return;
+  const cur = _dcpState.otherRoleFilter;
+  wrap.querySelectorAll('button[data-role]').forEach(btn => {
+    const active = (btn.getAttribute('data-role') === cur);
+    btn.style.background = active ? 'var(--em-dark, #0d9488)' : '#fff';
+    btn.style.color      = active ? '#fff' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
+    btn.style.fontWeight = active ? '600' : '500';
+  });
+}
+
+// ── 送信ボタンの disabled / ラベル更新
+function dcpUpdateSubmitButton() {
+  if (!_dcpState) return;
+  const submitBtn = document.getElementById('dcp-submit-btn');
+  if (!submitBtn) return;
+  const count = _dcpState.checkedIds.size;
+  submitBtn.disabled = count === 0;
+  submitBtn.style.opacity = count === 0 ? '0.5' : '1';
+  submitBtn.style.cursor = count === 0 ? 'not-allowed' : 'pointer';
+  submitBtn.textContent = count === 0 ? 'Dチェックへ →' : `Dチェックへ → (${count}人)`;
+}
+
+// ── checkbox toggle
+//   全体再描画は IME composition を巻き込むので避け、該当行の background と
+//   送信ボタンだけ更新する。<input> の checked 状態はブラウザ側で維持されるので
+//   <label> の background を手動更新するだけで充分。
 function dcpToggle(id) {
   if (!_dcpState) return;
   if (_dcpState.checkedIds.has(id)) _dcpState.checkedIds.delete(id);
   else _dcpState.checkedIds.add(id);
-  renderDCheckPicker();
+  document.querySelectorAll(`#dcp-sections input[type="checkbox"][value="${CSS.escape(id)}"]`).forEach(inp => {
+    const label = inp.closest('label');
+    if (label) {
+      label.style.background = _dcpState.checkedIds.has(id) ? 'var(--em-pale, #ecfdfb)' : '#fff';
+    }
+  });
+  dcpUpdateSubmitButton();
 }
 
 function dcpExpandOther() {
@@ -18146,10 +18241,12 @@ function dcpExpandOther() {
   setTimeout(() => { try { document.getElementById('dcp-other-search')?.focus(); } catch (_) {} }, 30);
 }
 
-function dcpUpdateSearch(v) {
+function dcpSetRoleFilter(role) {
   if (!_dcpState) return;
-  _dcpState.otherSearch = v;
-  renderDCheckPicker();
+  _dcpState.otherRoleFilter = role || '__all__';
+  // input は触らない（再描画しない）。チップ表示とリストだけ更新。
+  dcpUpdateChipsActive();
+  dcpRenderOtherList();
 }
 
 function closeDCheckPicker() {
