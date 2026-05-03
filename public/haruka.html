@@ -2681,15 +2681,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
       <div class="form-group">
         <label class="form-label">担当プロデューサー（任意）</label>
-        <select class="form-select" id="t-producer">
-          <option value="">未設定</option>
-        </select>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="t-producer-avatar" style="flex-shrink:0;display:inline-flex"></span>
+          <select class="form-select" id="t-producer" onchange="updateUserSelectAvatar('t-producer','t-producer-avatar')" style="flex:1;min-width:0">
+            <option value="">未設定</option>
+          </select>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">担当ディレクター（任意）</label>
-        <select class="form-select" id="t-director">
-          <option value="">未設定</option>
-        </select>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="t-director-avatar" style="flex-shrink:0;display:inline-flex"></span>
+          <select class="form-select" id="t-director" onchange="updateUserSelectAvatar('t-director','t-director-avatar')" style="flex:1;min-width:0">
+            <option value="">未設定</option>
+          </select>
+        </div>
       </div>
       <!-- メンバー選択 -->
       <div class="form-group" style="margin-bottom:4px">
@@ -3615,15 +3621,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <div class="form-row">
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">プロデューサー</label>
-              <select class="form-select" id="p-producer-id">
-                <option value="">未設定</option>
-              </select>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span id="p-producer-avatar" style="flex-shrink:0;display:inline-flex"></span>
+                <select class="form-select" id="p-producer-id" onchange="updateUserSelectAvatar('p-producer-id','p-producer-avatar')" style="flex:1;min-width:0">
+                  <option value="">未設定</option>
+                </select>
+              </div>
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">ディレクター</label>
-              <select class="form-select" id="p-director-id" onchange="renderProjectSubDirectorPicker()">
-                <option value="">未設定</option>
-              </select>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span id="p-director-avatar" style="flex-shrink:0;display:inline-flex"></span>
+                <select class="form-select" id="p-director-id" onchange="updateUserSelectAvatar('p-director-id','p-director-avatar'); renderProjectSubDirectorPicker()" style="flex:1;min-width:0">
+                  <option value="">未設定</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -4777,6 +4789,26 @@ function avatarHtml(user, size, opts) {
     return `<span class="${cls.join(' ')}${extraCls}" style="${style}"${titleAttr}><img src="${esc(url)}" alt="${esc(name)}" loading="lazy" onerror="this.parentNode.innerHTML='${esc(initial)}'"></span>`;
   }
   return `<span class="${cls.join(' ')}${extraCls}" style="${style}"${titleAttr}>${esc(initial)}</span>`;
+}
+
+// 標準 <select> の隣にアバターを表示する用ヘルパ。
+// onchange="updateUserSelectAvatar('select-id', 'avatar-id', 24)" で呼ぶ。
+// allMembers 配列から user を引いて avatarHtml を流し込む。未選択時は空のスペーサー（ガタつき防止）。
+function updateUserSelectAvatar(selectId, avatarId, size) {
+  const sel = document.getElementById(selectId);
+  const avatarEl = document.getElementById(avatarId);
+  if (!sel || !avatarEl) return;
+  const sz = size || 24;
+  const userId = sel.value;
+  if (!userId) {
+    // 未選択時は同サイズの透明プレースホルダで枠サイズを維持しレイアウトを安定させる
+    avatarEl.innerHTML = `<span style="display:inline-block;width:${sz}px;height:${sz}px"></span>`;
+    return;
+  }
+  const user = (typeof allMembers !== 'undefined' && Array.isArray(allMembers))
+    ? allMembers.find(m => m && m.id === userId)
+    : null;
+  avatarEl.innerHTML = avatarHtml(user || { full_name: '?' }, sz);
 }
 
 // ユーザー名 + アバターをまとめて返す（横並び、avatar-name のクラスで装飾可）
@@ -6949,6 +6981,9 @@ function openTeamModal(team) {
     pSel.value = '';
     dSel.value = '';
   }
+  // アバタープレビュー反映（両モード共通）
+  updateUserSelectAvatar('t-producer', 't-producer-avatar', 24);
+  updateUserSelectAvatar('t-director', 't-director-avatar', 24);
 
   // メンバーリスト初期化（team_membersから既存メンバーIDを取得）
   _tmFilterRole = ''; _tmFilterRank = '';
@@ -7009,6 +7044,7 @@ function buildTeamMemberList(memberIdSet) {
       const isLast = i === filtered.length - 1;
       return `<label style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;${isLast?'':'border-bottom:1px solid var(--border);'}user-select:none">
         <input type="checkbox" class="t-member-check" value="${m.id}" ${inTeam ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0" onchange="updateTeamMemberCount()">
+        ${avatarHtml(m, 28)}
         <span style="font-size:13px;flex:1">${m.full_name}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">（${m.nickname}）</span>` : ''}</span>
         <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:4px">${ROLE_SHORT[m.role] || m.role}</span>
         ${m.rank ? `<span style="font-size:11px;color:var(--em-dark);font-weight:600;background:var(--em-pale);padding:1px 6px;border-radius:4px">${m.rank}</span>` : ''}
@@ -8333,6 +8369,7 @@ function psdRenderList() {
       : '';
     return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
       <input type="checkbox" value="${idEsc}" ${isChecked ? 'checked' : ''} onchange="toggleProjectSubDirector('${idEsc}')" style="margin:0;width:16px;height:16px;cursor:pointer">
+      ${avatarHtml(m, 28)}
       <span style="font-size:13px;font-weight:500;color:var(--text)">${name}</span>
       ${roleBadge}
     </label>`;
@@ -8424,6 +8461,9 @@ function openProjectModal(preClientId) {
   const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director','producer','admin'].includes(m.role));
   document.getElementById('p-producer-id').innerHTML = '<option value="">未設定</option>' + producers.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
   document.getElementById('p-director-id').innerHTML = '<option value="">未設定</option>' + directors.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+  // アバタープレビュー初期化（新規は未選択）
+  updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
+  updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
 
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
@@ -8491,6 +8531,9 @@ function openEditProject(p) {
   document.getElementById('p-end-date').value = p.end_date ? p.end_date.slice(0,10) : '';
   document.getElementById('p-producer-id').value = p.producer_id || '';
   document.getElementById('p-director-id').value = p.director_id || '';
+  // アバタープレビュー反映
+  updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
+  updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
   document.getElementById('p-sheet-url').value = p.sheet_url || '';
   document.getElementById('p-regulation-url').value = p.regulation_url || '';
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
