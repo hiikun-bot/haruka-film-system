@@ -1906,7 +1906,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
-    force_delivered_reason
+    force_delivered_reason,
+    additional_reviewer_ids
   } = req.body;
 
   // help_flag（SOS）の権限制御:
@@ -1960,6 +1961,19 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (creative_size !== undefined) updateData.creative_size = creative_size || null;
   if (team_id !== undefined) updateData.team_id = team_id || null;
   if (memo !== undefined) updateData.memo = (memo && String(memo).trim()) ? memo : null;
+  // Dチェック追加レビュアー（UUID配列）— 配列以外は無視。重複・空文字は除去。
+  if (additional_reviewer_ids !== undefined) {
+    if (Array.isArray(additional_reviewer_ids)) {
+      const cleaned = Array.from(new Set(
+        additional_reviewer_ids
+          .map(v => (typeof v === 'string' ? v.trim() : ''))
+          .filter(v => v && /^[0-9a-fA-F-]{36}$/.test(v))
+      ));
+      updateData.additional_reviewer_ids = cleaned;
+    } else if (additional_reviewer_ids === null) {
+      updateData.additional_reviewer_ids = [];
+    }
+  }
 
   // 納品完了モード（途中工程をスキップして直接「納品」にする）
   // 必ず理由が必要。クリエイティブファイル未アップロードでも許可。
@@ -2046,6 +2060,66 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
   if (updateData.status !== undefined || assignee_id !== undefined) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+  }
+
+  // Dチェック追加レビュアー通知
+  // 「編集 → Dチェック」遷移かつ additional_reviewer_ids が非空のときに、
+  // 各ユーザーへ notification_logs を直接INSERT（type: director_check_additional）。
+  // - creative_assignments には INSERT しない（請求書ロジックには影響させない）
+  // - 元のディレクター（cdResolveDefaultDirector相当）へのD通知は既存の ball_returned で発火
+  // - fire-and-forget。失敗してもメイン処理は止めない。
+  try {
+    const isDCheckTransition =
+      updateData.status === 'Dチェック' && beforeStatus !== 'Dチェック';
+    const reviewers = Array.isArray(updateData.additional_reviewer_ids)
+      ? updateData.additional_reviewer_ids
+      : [];
+    if (isDCheckTransition && reviewers.length > 0) {
+      // 元ディレクター解決（projects.director_id 優先、なければ team.director_id）
+      let originalDirectorId = null;
+      try {
+        const { data: ctx } = await supabase
+          .from('creatives')
+          .select('id, file_name, team_id, projects(director_id)')
+          .eq('id', req.params.id)
+          .maybeSingle();
+        originalDirectorId = ctx?.projects?.director_id || null;
+        if (!originalDirectorId && ctx?.team_id) {
+          const { data: team } = await supabase
+            .from('teams').select('director_id').eq('id', ctx.team_id).maybeSingle();
+          originalDirectorId = team?.director_id || null;
+        }
+        const fileName = ctx?.file_name || data?.file_name || 'クリエイティブ';
+        const senderId = req.user?.id || null;
+        // 自己通知 / 元ディレクター宛て通知は除外（重複防止）
+        const targets = reviewers.filter(uid =>
+          uid && uid !== senderId && uid !== originalDirectorId
+        );
+        if (targets.length > 0) {
+          const rows = targets.map(uid => ({
+            user_id: uid,
+            notification_type: 'director_check_additional',
+            title: 'Dチェックの確認依頼',
+            body: `${fileName}のDチェックに追加で呼ばれました`,
+            link_url: `/creatives/${req.params.id}`,
+            meta: {
+              creative_id: req.params.id,
+              file_name: fileName,
+              original_director_id: originalDirectorId,
+            },
+            sender_id: senderId,
+          }));
+          supabase.from('notification_logs').insert(rows)
+            .then(({ error: nErr }) => {
+              if (nErr) console.warn('[notif] director_check_additional INSERT failed:', nErr.message);
+            });
+        }
+      } catch (e) {
+        console.warn('[notif] director_check_additional 例外:', e.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[notif] director_check_additional 外側例外:', e.message);
   }
 
   res.json(data);

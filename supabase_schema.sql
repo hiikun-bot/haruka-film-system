@@ -1607,6 +1607,14 @@ ALTER TABLE creatives
 CREATE INDEX IF NOT EXISTS idx_creatives_ball_holder
   ON creatives(ball_holder_id);
 
+-- creatives.additional_reviewer_ids（Dチェック追加レビュアー: 請求書には影響させない）
+-- 編集者がDチェック依頼を出す際にチームメンバーを追加で呼ぶ用途。
+-- creative_assignments には INSERT しないため、請求書集計ロジックは触らない。
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS additional_reviewer_ids UUID[] NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_creatives_additional_reviewers
+  ON creatives USING GIN(additional_reviewer_ids);
+
 -- RLS
 ALTER TABLE notification_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS notification_select_own ON notification_logs;
