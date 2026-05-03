@@ -1838,6 +1838,22 @@ router.get('/creatives/:id', async (req, res) => {
     }
   }
 
+  // 案件 → client_teams → teams のルートで担当チーム ID を埋め込み
+  // （Dチェック担当者選択モーダルでチーム所属ディレクターを既定チェックするために使う）
+  if (data && data.projects?.clients?.id) {
+    try {
+      const { data: ctRows } = await supabase
+        .from('client_teams')
+        .select('team_id')
+        .eq('client_id', data.projects.clients.id);
+      data.projects.client_teams = (ctRows || []).map(r => ({ team_id: r.team_id })).filter(r => r.team_id);
+    } catch (_) {
+      data.projects.client_teams = [];
+    }
+  } else if (data?.projects) {
+    data.projects.client_teams = [];
+  }
+
   res.json(data);
 });
 
@@ -2021,6 +2037,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
     director_user_id,
+    director_user_ids,
     force_delivered_reason
   } = req.body;
 
@@ -2124,21 +2141,60 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // Dチェック担当者更新（director_user_id が送られてきた場合）
+  // Dチェック担当者更新（director_user_ids（複数）または director_user_id（単数互換）が送られてきた場合）
   // - 案件のメインディレクター以外（サブディレクター・秘書・他チームメンバー等）に Dチェックを依頼するために、
-  //   creative_assignments role='director' を上書きする。
-  // - 空文字列 / null の場合はディレクター割当を削除（projects.director_id にフォールバック）。
-  if (director_user_id !== undefined) {
-    await supabase.from('creative_assignments').delete().eq('creative_id', req.params.id).eq('role', 'director');
-    if (director_user_id) {
-      const { data: dirUser } = await supabase.from('users').select('rank').eq('id', director_user_id).single();
-      const { error: dirInsErr } = await supabase.from('creative_assignments').insert({
-        creative_id: req.params.id,
-        user_id: director_user_id,
-        role: 'director',
-        rank_applied: dirUser?.rank || null,
-      });
-      if (dirInsErr) console.warn('[creative_assignments][director] insert failed:', dirInsErr.message);
+  //   creative_assignments role='director' を「選択されたユーザーIDセット」に同期する。
+  //   選択されたが既存にない → INSERT
+  //   既存にあるが選択されていない → DELETE
+  // - 空配列の場合は no-op（既存維持）。
+  // - 互換: director_user_id が送られてきた場合は配列化して扱う。
+  let dirIdsInput = null;
+  if (Array.isArray(director_user_ids)) {
+    dirIdsInput = director_user_ids;
+  } else if (director_user_id !== undefined) {
+    // 旧UI互換: 空文字 / null の場合は「割当削除（メインDフォールバック）」を意味していたため、空配列で表現
+    dirIdsInput = director_user_id ? [director_user_id] : [];
+  }
+  if (dirIdsInput !== null) {
+    // 重複除去 + 偽値除去
+    const desiredIds = [...new Set(dirIdsInput.filter(Boolean))];
+
+    if (desiredIds.length === 0) {
+      // 旧UIの「メインDフォールバック」と同じ挙動を維持するため、空配列なら全削除する。
+      // （新UIは1人以上必須のためここには到達しない想定）
+      await supabase.from('creative_assignments')
+        .delete().eq('creative_id', req.params.id).eq('role', 'director');
+    } else {
+      // 既存 director assignment を取得し、差分同期
+      const { data: existing } = await supabase
+        .from('creative_assignments')
+        .select('id, user_id')
+        .eq('creative_id', req.params.id)
+        .eq('role', 'director');
+      const existingIds = new Set((existing || []).map(r => r.user_id).filter(Boolean));
+      const desiredSet = new Set(desiredIds);
+      const toDelete = (existing || []).filter(r => !desiredSet.has(r.user_id)).map(r => r.id);
+      const toInsertIds = desiredIds.filter(id => !existingIds.has(id));
+
+      if (toDelete.length > 0) {
+        const { error: dErr } = await supabase
+          .from('creative_assignments').delete().in('id', toDelete);
+        if (dErr) console.warn('[creative_assignments][director] delete failed:', dErr.message);
+      }
+      if (toInsertIds.length > 0) {
+        // 一括 rank 取得（N+1解消）
+        const { data: dirUsers } = await supabase
+          .from('users').select('id, rank').in('id', toInsertIds);
+        const rankById = new Map((dirUsers || []).map(u => [u.id, u.rank || null]));
+        const rows = toInsertIds.map(uid => ({
+          creative_id: req.params.id,
+          user_id: uid,
+          role: 'director',
+          rank_applied: rankById.get(uid) || null,
+        }));
+        const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
+        if (iErr) console.warn('[creative_assignments][director] insert failed:', iErr.message);
+      }
     }
   }
 
@@ -2177,7 +2233,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 
   // ball_holder_id キャッシュ更新（status / assignee / director が変わった場合のみ）
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
-  if (updateData.status !== undefined || assignee_id !== undefined || director_user_id !== undefined) {
+  // - 複数ディレクター指定時は getBallHolder() が role='director' の最初のassignmentを採用する仕様（合理的フォールバック）
+  if (updateData.status !== undefined || assignee_id !== undefined || director_user_id !== undefined || director_user_ids !== undefined) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
 
