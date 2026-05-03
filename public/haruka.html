@@ -4182,7 +4182,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
 
       <!-- クライアント確認URL（自動共有 / 手動入力） -->
-      <div class="form-group" style="margin-bottom:18px">
+      <div class="form-group" id="cd-client-review-group" style="margin-bottom:18px">
         <label class="form-label">
           クライアント確認URL
           <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:6px">🔗 自動共有済み</span>
@@ -15203,6 +15203,13 @@ async function openCreativeDetail(id) {
   const _cdReshareBtn = document.getElementById('cd-client-review-reshare-btn');
   if (_cdReshareBtn) {
     _cdReshareBtn.style.display = (typeof effectiveRole === 'function' && effectiveRole() === 'admin') ? '' : 'none';
+  }
+  // クライアント確認URL欄: D/P/CL確認/CL後修正でのみ表示（それ以外は非表示）
+  // 「Pスキップ → CL確認」「DPスキップ → CL確認」ボタンが D/P で押せるため、それらの段階でも見える必要がある
+  const _cdClientReviewGroup = document.getElementById('cd-client-review-group');
+  if (_cdClientReviewGroup) {
+    const _CR_VISIBLE_STATUSES = ['Dチェック', 'Pチェック', 'クライアントチェック中', 'クライアントチェック後修正'];
+    _cdClientReviewGroup.style.display = _CR_VISIBLE_STATUSES.includes(c.status) ? '' : 'none';
   }
 
   // 担当者ドロップダウン初期化（未着手用）
