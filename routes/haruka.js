@@ -3790,7 +3790,10 @@ const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 router.get('/tweets', requireAuth, async (req, res) => {
   const { data: list, error } = await supabase
     .from('tweets')
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users(id, full_name, avatar_url, role)')
+    // FK ヒント `users!user_id` を明示。段階4 migration で tweet_reactions / tweet_comments
+    // が users への FK を持ったことで PostgREST が relationship を一意に解決できなくなる
+    // ため、tweets.user_id を介した埋め込みであることを明示する。
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
     .order('is_pinned', { ascending: false })
     .order('created_at', { ascending: false })
@@ -4030,7 +4033,7 @@ router.delete('/tweets/:id/reactions/:type', requireAuth, async (req, res) => {
 //   deleted_at IS NULL のみ、created_at 昇順
 router.get('/tweets/:id/comments', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('tweet_comments')
-    .select('id, tweet_id, user_id, body, mentioned_user_ids, created_at, users(id, full_name, avatar_url, role)')
+    .select('id, tweet_id, user_id, body, mentioned_user_ids, created_at, users!user_id(id, full_name, avatar_url, role)')
     .eq('tweet_id', req.params.id)
     .is('deleted_at', null)
     .order('created_at', { ascending: true });
