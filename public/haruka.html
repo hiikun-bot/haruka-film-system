@@ -3823,9 +3823,34 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .an-menu-btn:hover{background:rgba(255,255,255,0.6)}
 .an-menu-btn.an-menu-active{background:var(--em);color:#fff;font-weight:600}
 @media(max-width:768px){
-  #page-analytics > div{flex-direction:column}
-  #an-sidebar{width:100%;border-right:none;border-bottom:1px solid var(--border);padding:12px;display:flex;gap:6px;overflow-x:auto;flex-direction:row}
-  .an-menu-btn{flex-shrink:0;width:auto}
+  /* インライン style="width:220px" 等を上書きするため !important 必須 */
+  #page-analytics > div{flex-direction:column !important;min-height:auto !important;align-items:stretch !important}
+  #an-sidebar{
+    width:100% !important;
+    border-right:none !important;
+    border-bottom:1px solid var(--border);
+    padding:8px !important;
+    display:flex !important;
+    gap:6px !important;
+    overflow-x:auto;
+    flex-direction:row !important;
+    flex-shrink:0 !important;
+    -webkit-overflow-scrolling:touch
+  }
+  /* セクションラベル（「分析メニュー」「経営」「本数集計」等）はモバイル横スクロールでは省略 */
+  #an-sidebar > div{display:none !important}
+  .an-menu-btn{
+    flex-shrink:0 !important;width:auto !important;
+    white-space:nowrap;font-size:12px !important;padding:8px 12px !important;
+    margin-bottom:0 !important
+  }
+  /* 右メイン: padding 縮小 */
+  #page-analytics main{padding:14px !important}
+  /* フィルタバー: ボタン群が綺麗に折り返すように */
+  #page-analytics main > div:first-child{flex-direction:column !important;align-items:stretch !important}
+  #page-analytics main > div:first-child > div:last-child{flex-wrap:wrap !important;gap:8px !important}
+  #page-analytics main input[type="month"],
+  #page-analytics main select{width:100% !important;min-width:0 !important;font-size:14px !important}
 }
 </style>
 
