@@ -4582,7 +4582,11 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   // PR #79 と同様に、SELECT 句を「optional 込み → 失敗時 optional 抜きで再試行」できる形にする
   // Issue #192: ディレクター請求の判定のため projects(director_id) も取得
   // プロデューサー対応: projects(producer_id) も取得
-  const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
+  // 追加メンバー（Dチェック呼び出し）対応: creatives.additional_reviewer_ids も取得
+  //   - additional_reviewer_ids に含まれるユーザーは「Dチェック追加レビュアー」であり、報酬対象外。
+  //   - creative_assignments には INSERT されない方針なので構造的には混入しないが、
+  //     将来的なバグでも報酬が発生しないよう本ハンドラ内で明示的にガードする（防御的プログラミング）。
+  const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at', 'additional_reviewer_ids'];
   const buildSelect = (includeOptional) => `*${includeOptional ? ', ' + OPTIONAL_COLS.join(', ') : ''}, projects(id, director_id, producer_id), creative_assignments(user_id, role, rank_applied, users(id, full_name))`;
 
   if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id) {
@@ -4614,6 +4618,27 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   }
   if (cErr) return res.status(500).json({ error: cErr.message });
   if (!creatives.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
+
+  // 追加メンバー（Dチェック呼び出し）ガード: 列が無い場合・schema-sync 未適用環境では空配列扱い。
+  // creatives 側 PR がまだ本番に適用されていない場合でも 500 にならないよう、必ずアプリ側で || [] する。
+  const additionalReviewerIdsOf = (c) => Array.isArray(c?.additional_reviewer_ids) ? c.additional_reviewer_ids : [];
+
+  // 早期拒否: issuer_id が「全該当クリエイティブで追加レビュアーとしてしか紐づいていない」場合は明示的に 400。
+  //   - 追加レビュアーは creative_assignments に INSERT されないので、本来 selectAble にもならないが、
+  //     不正リクエストや将来の混入バグを早期検知するための明示ガード。
+  //   - issuer が director_id / producer_id 経由で正規請求対象なら通す（その場合は弾かない）。
+  const issuerIsOnlyAdditionalReviewer = creatives.every(c => {
+    const additional = additionalReviewerIdsOf(c);
+    if (!additional.includes(issuer_id)) return false; // 追加レビュアーですらない creative は対象外なので false
+    const isDirector = c.projects?.director_id === issuer_id;
+    const isProducer = c.projects?.producer_id === issuer_id;
+    const inAssignments = (c.creative_assignments || []).some(a => a.user_id === issuer_id);
+    // director/producer/assignments のいずれかに正規所属しているなら追加レビュアーであっても請求は通す
+    return !isDirector && !isProducer && !inAssignments;
+  });
+  if (issuerIsOnlyAdditionalReviewer) {
+    return res.status(400).json({ error: '追加レビュアー（Dチェック呼び出し）は請求対象外です' });
+  }
 
   // selected_creative_ids使用時はproject_idを最初のクリエイティブから補完
   if (!project_id && creatives.length) project_id = creatives[0].project_id;
@@ -4668,12 +4693,23 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   let sortCounter = 0;
 
   for (const creative of creatives) {
+    // 追加レビュアー（Dチェック呼び出し）の防御フィルタ:
+    //   - additional_reviewer_ids に含まれる user は creative_assignments に INSERT されない設計だが、
+    //     仮に何らかのバグで assignment に紛れ込んでいても、正規 role が付いていなければ請求対象にしない。
+    //   - 同一人物が「editor 等の正規assignment」かつ「additional_reviewer_ids」両方に居るケースは
+    //     正規assignment側を優先する（＝ assignment 検索ロジックでヒットすれば請求対象、これは現状動作で満たされる）。
+    //   - director_id / producer_id は projects テーブル側の固定値であり、creatives.additional_reviewer_ids とは
+    //     別カラム・別テーブル。構造上「追加メンバーが director_id に化ける」ことはあり得ない。
+    const additionalReviewerIds = additionalReviewerIdsOf(creative);
     const assignment = creative.creative_assignments?.find(
       a => a.user_id === issuer_id
     );
     const isDirector = creative.projects?.director_id === issuer_id;
     const isProducer = creative.projects?.producer_id === issuer_id;
     if (!assignment && !isDirector && !isProducer) continue;
+    // 防御ガード: assignment が無く director/producer でもなく、追加レビュアーとしてのみ紐づくなら明示スキップ
+    // （上の continue で既に弾かれているはずだが、二重防御として残す）
+    if (!assignment && !isDirector && !isProducer && additionalReviewerIds.includes(issuer_id)) continue;
 
     const creativeLabel = creative.file_name || '';
     let breakdown;
