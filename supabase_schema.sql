@@ -999,6 +999,108 @@ CREATE TABLE IF NOT EXISTS tweet_likes (
 );
 CREATE INDEX IF NOT EXISTS idx_tweet_likes_user ON tweet_likes(user_id);
 
+-- -------- 通知 Phase 1 段階4: つぶやき拡張（B案） --------
+-- migrations/2026-05-03_notification_phase4_tweets_rich.sql と同等の定義を schema-sync 用に同期。
+-- 既存 tweets を活かし、5種リアクション + コメント + メンション通知を増設する。
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS mentioned_user_ids UUID[] DEFAULT '{}';
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS reaction_count INT NOT NULL DEFAULT 0;
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS comment_count  INT NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_tweets_mentioned ON tweets USING GIN(mentioned_user_ids);
+
+CREATE TABLE IF NOT EXISTS tweet_reactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tweet_id UUID NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+  user_id  UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  reaction_type TEXT NOT NULL CHECK (reaction_type IN ('good','heart','clap','smile','surprised')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tweet_id, user_id, reaction_type)
+);
+CREATE INDEX IF NOT EXISTS idx_tweet_reactions_tweet ON tweet_reactions(tweet_id);
+CREATE INDEX IF NOT EXISTS idx_tweet_reactions_user  ON tweet_reactions(user_id);
+
+CREATE TABLE IF NOT EXISTS tweet_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tweet_id UUID NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+  user_id  UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (char_length(body) <= 500),
+  mentioned_user_ids UUID[] DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_tweet_comments_tweet ON tweet_comments(tweet_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_tweet_comments_mentioned ON tweet_comments USING GIN(mentioned_user_ids);
+
+-- 既存 tweet_likes → tweet_reactions(heart) への冪等コピー
+INSERT INTO tweet_reactions (tweet_id, user_id, reaction_type, created_at)
+SELECT tweet_id, user_id, 'heart', created_at FROM tweet_likes
+ON CONFLICT (tweet_id, user_id, reaction_type) DO NOTHING;
+
+UPDATE tweets t
+SET reaction_count = COALESCE(
+  (SELECT COUNT(*) FROM tweet_reactions r WHERE r.tweet_id = t.id), 0);
+UPDATE tweets t
+SET comment_count = COALESCE(
+  (SELECT COUNT(*) FROM tweet_comments c WHERE c.tweet_id = t.id AND c.deleted_at IS NULL), 0);
+
+-- リアクション数 / コメント数の自動カウントトリガー
+CREATE OR REPLACE FUNCTION update_tweet_reaction_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE tweets SET reaction_count = reaction_count + 1 WHERE id = NEW.tweet_id;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE tweets SET reaction_count = GREATEST(reaction_count - 1, 0) WHERE id = OLD.tweet_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_tweet_reactions_count ON tweet_reactions;
+CREATE TRIGGER trg_tweet_reactions_count
+AFTER INSERT OR DELETE ON tweet_reactions
+FOR EACH ROW EXECUTE FUNCTION update_tweet_reaction_count();
+
+CREATE OR REPLACE FUNCTION update_tweet_comment_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE tweets SET comment_count = comment_count + 1 WHERE id = NEW.tweet_id;
+  ELSIF TG_OP = 'UPDATE' AND NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
+    UPDATE tweets SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = NEW.tweet_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_tweet_comments_count ON tweet_comments;
+CREATE TRIGGER trg_tweet_comments_count
+AFTER INSERT OR UPDATE ON tweet_comments
+FOR EACH ROW EXECUTE FUNCTION update_tweet_comment_count();
+
+ALTER TABLE tweet_reactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tweet_reactions_select_all ON tweet_reactions;
+CREATE POLICY tweet_reactions_select_all ON tweet_reactions FOR SELECT USING (true);
+DROP POLICY IF EXISTS tweet_reactions_insert_own ON tweet_reactions;
+CREATE POLICY tweet_reactions_insert_own ON tweet_reactions FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS tweet_reactions_delete_own ON tweet_reactions;
+CREATE POLICY tweet_reactions_delete_own ON tweet_reactions FOR DELETE USING (user_id = auth.uid());
+
+ALTER TABLE tweet_comments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tweet_comments_select_visible ON tweet_comments;
+CREATE POLICY tweet_comments_select_visible ON tweet_comments FOR SELECT USING (deleted_at IS NULL);
+DROP POLICY IF EXISTS tweet_comments_insert_own ON tweet_comments;
+CREATE POLICY tweet_comments_insert_own ON tweet_comments FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS tweet_comments_update_own ON tweet_comments;
+CREATE POLICY tweet_comments_update_own ON tweet_comments FOR UPDATE USING (user_id = auth.uid());
+
+DO $$
+BEGIN
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tweets;
+  EXCEPTION WHEN duplicate_object THEN NULL; WHEN undefined_object THEN NULL; END;
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tweet_reactions;
+  EXCEPTION WHEN duplicate_object THEN NULL; WHEN undefined_object THEN NULL; END;
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tweet_comments;
+  EXCEPTION WHEN duplicate_object THEN NULL; WHEN undefined_object THEN NULL; END;
+END $$;
+
 -- ==================== users 個人情報カラム（過去の commit 50a1a3e で
 --   コードだけ追加され、本番DBへ反映されていなかったカラムを補完） ====================
 -- これが無いと PUT /api/members/:id が "column ... does not exist" で失敗し、

@@ -10,6 +10,7 @@ const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
+const { createNotification, extractMentions } = require('../utils/notification');
 
 // FFmpeg（画質変換用）
 let ffmpegPath, ffmpeg;
@@ -3780,12 +3781,16 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
 
 const TWEET_IMAGE_MAX_BYTES = 500 * 1024; // base64 後 500KB 上限
 const TWEET_BODY_MAX = 280;
+const TWEET_COMMENT_MAX = 500;
+const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 
 // 自分のいいね状態 + いいね件数を含む一覧
+//   Phase 1 段階4 拡張: my_reactions / reaction_count / comment_count を付与。
+//   既存 like_count / my_liked は heart リアクション数で計算して互換維持。
 router.get('/tweets', requireAuth, async (req, res) => {
   const { data: list, error } = await supabase
     .from('tweets')
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, users(id, full_name, avatar_url, role)')
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users(id, full_name, avatar_url, role)')
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
     .order('is_pinned', { ascending: false })
     .order('created_at', { ascending: false })
@@ -3793,23 +3798,41 @@ router.get('/tweets', requireAuth, async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   if (!list || list.length === 0) return res.json([]);
   const ids = list.map(t => t.id);
-  // いいね件数
-  const { data: allLikes } = await supabase.from('tweet_likes')
-    .select('tweet_id, user_id').in('tweet_id', ids);
-  const countMap = new Map();
-  const myLikedSet = new Set();
-  (allLikes || []).forEach(l => {
-    countMap.set(l.tweet_id, (countMap.get(l.tweet_id) || 0) + 1);
-    if (l.user_id === req.user.id) myLikedSet.add(l.tweet_id);
+
+  // 5種リアクションを一括取得（種別ごとカウント + 自分が押した種別）
+  const { data: allReactions } = await supabase.from('tweet_reactions')
+    .select('tweet_id, user_id, reaction_type').in('tweet_id', ids);
+  const countByType = new Map();   // tweet_id -> { good: n, heart: n, ... }
+  const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
+  (allReactions || []).forEach(r => {
+    if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
+    const cm = countByType.get(r.tweet_id);
+    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+    if (r.user_id === req.user.id) {
+      if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
+      myReactionsMap.get(r.tweet_id).add(r.reaction_type);
+    }
   });
-  res.json(list.map(t => ({
-    ...t,
-    like_count: countMap.get(t.id) || 0,
-    my_liked: myLikedSet.has(t.id),
-  })));
+
+  res.json(list.map(t => {
+    const myReactions = Array.from(myReactionsMap.get(t.id) || []);
+    const counts = countByType.get(t.id) || {};
+    const heartCount = counts.heart || 0;
+    return {
+      ...t,
+      reaction_count: t.reaction_count ?? 0,
+      comment_count:  t.comment_count  ?? 0,
+      reaction_counts: counts,           // { good: 3, heart: 2, ... }
+      my_reactions: myReactions,         // ['good','heart']
+      // 互換維持（旧UIが残っても壊れないように）
+      like_count: heartCount,
+      my_liked:   myReactions.includes('heart'),
+    };
+  }));
 });
 
 // つぶやき投稿（写真は任意 + 本文）
+//   Phase 1 段階4: メンション抽出 → mentioned_user_ids 保存 → mention 通知発火
 router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => {
   const file = req.file;
   const body = String(req.body?.body || '').trim();
@@ -3827,12 +3850,48 @@ router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => 
       return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから再投稿してください）' });
     }
   }
+
+  // メンション解決
+  const mentionedIds = await extractMentions(body);
+
   const { data, error } = await supabase.from('tweets')
-    .insert({ user_id: req.user.id, body, image_data: dataUrl })
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at')
+    .insert({
+      user_id: req.user.id,
+      body,
+      image_data: dataUrl,
+      mentioned_user_ids: mentionedIds,
+    })
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count')
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ ...data, like_count: 0, my_liked: false });
+
+  // メンション通知（自分自身は除外）
+  const senderName = req.user.nickname || req.user.full_name || '誰か';
+  const excerpt = body.length > 50 ? body.slice(0, 50) + '…' : body;
+  for (const uid of (mentionedIds || [])) {
+    if (uid === req.user.id) continue;
+    createNotification({
+      userId: uid,
+      type: 'mention',
+      title: `${senderName}さんがあなたをメンションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${data.id}`,
+      meta: {
+        tweet_id: data.id,
+        mentioned_by_name: senderName,
+        post_excerpt: excerpt,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] mention 通知失敗:', e.message));
+  }
+
+  res.json({
+    ...data,
+    reaction_counts: {},
+    my_reactions: [],
+    like_count: 0,
+    my_liked: false,
+  });
 });
 
 // 削除（投稿者本人 OR admin / secretary）
@@ -3850,18 +3909,234 @@ router.delete('/tweets/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// いいね追加
+// ---------- 既存いいねAPI（互換維持） ----------
+// heart リアクションと別に tweet_likes も維持しているが、ユーザー体感で揃うよう
+// like ボタン押下時は tweet_reactions(heart) も一緒に発火する。
 router.post('/tweets/:id/like', requireAuth, async (req, res) => {
   const { error } = await supabase.from('tweet_likes')
     .upsert({ tweet_id: req.params.id, user_id: req.user.id }, { onConflict: 'tweet_id,user_id' });
   if (error) return res.status(500).json({ error: error.message });
+  // 新リアクション体系へも反映（既に heart 押し済みなら ON CONFLICT でスキップ）
+  await supabase.from('tweet_reactions')
+    .upsert(
+      { tweet_id: req.params.id, user_id: req.user.id, reaction_type: 'heart' },
+      { onConflict: 'tweet_id,user_id,reaction_type' }
+    );
   res.json({ ok: true });
 });
 
-// いいね取消
 router.delete('/tweets/:id/like', requireAuth, async (req, res) => {
   const { error } = await supabase.from('tweet_likes')
     .delete().eq('tweet_id', req.params.id).eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  await supabase.from('tweet_reactions')
+    .delete()
+    .eq('tweet_id', req.params.id)
+    .eq('user_id', req.user.id)
+    .eq('reaction_type', 'heart');
+  res.json({ ok: true });
+});
+
+// ==================== Phase 1 段階4: 5種リアクション ====================
+
+// リアクション追加
+//   POST /api/tweets/:id/reactions  body: { reaction_type }
+//   既に同じ種別を押している場合は 409 を返す（UI 側はトグル運用なので基本起きない）
+router.post('/tweets/:id/reactions', requireAuth, async (req, res) => {
+  const tweetId = req.params.id;
+  const reactionType = String(req.body?.reaction_type || '').trim();
+  if (!TWEET_REACTION_TYPES.includes(reactionType)) {
+    return res.status(400).json({ error: 'リアクション種別が不正です' });
+  }
+
+  // 投稿者を確認（通知発火用）
+  const { data: tweet, error: tErr } = await supabase.from('tweets')
+    .select('id, user_id, body').eq('id', tweetId).maybeSingle();
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!tweet) return res.status(404).json({ error: 'つぶやきが見つかりません' });
+
+  const { data, error } = await supabase.from('tweet_reactions')
+    .insert({ tweet_id: tweetId, user_id: req.user.id, reaction_type: reactionType })
+    .select('id, reaction_type')
+    .single();
+  if (error) {
+    // UNIQUE 違反 → 409
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'すでにこのリアクションを押しています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+
+  // heart リアクションは旧 tweet_likes にも同期（GETの like_count 整合維持）
+  if (reactionType === 'heart') {
+    await supabase.from('tweet_likes')
+      .upsert({ tweet_id: tweetId, user_id: req.user.id }, { onConflict: 'tweet_id,user_id' });
+  }
+
+  // 投稿者が自分以外なら post_reaction 通知
+  if (tweet.user_id !== req.user.id) {
+    const senderName = req.user.nickname || req.user.full_name || '誰か';
+    const reactionEmoji = {
+      good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
+    }[reactionType] || '✨';
+    const excerpt = (tweet.body || '').length > 50
+      ? tweet.body.slice(0, 50) + '…'
+      : (tweet.body || '');
+    createNotification({
+      userId: tweet.user_id,
+      type: 'post_reaction',
+      title: `${senderName}さんが ${reactionEmoji} リアクションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${tweetId}`,
+      meta: {
+        tweet_id: tweetId,
+        reaction_type: reactionType,
+        sender_name: senderName,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] reaction 通知失敗:', e.message));
+  }
+
+  res.json({ ok: true, id: data.id, reaction_type: data.reaction_type });
+});
+
+// リアクション取消
+//   DELETE /api/tweets/:id/reactions/:type
+router.delete('/tweets/:id/reactions/:type', requireAuth, async (req, res) => {
+  const reactionType = String(req.params.type || '');
+  if (!TWEET_REACTION_TYPES.includes(reactionType)) {
+    return res.status(400).json({ error: 'リアクション種別が不正です' });
+  }
+  const { error } = await supabase.from('tweet_reactions')
+    .delete()
+    .eq('tweet_id', req.params.id)
+    .eq('user_id', req.user.id)
+    .eq('reaction_type', reactionType);
+  if (error) return res.status(500).json({ error: error.message });
+
+  // heart の場合は旧 tweet_likes も削除
+  if (reactionType === 'heart') {
+    await supabase.from('tweet_likes')
+      .delete().eq('tweet_id', req.params.id).eq('user_id', req.user.id);
+  }
+
+  res.json({ ok: true });
+});
+
+// ==================== Phase 1 段階4: コメント ====================
+
+// コメント一覧
+//   GET /api/tweets/:id/comments
+//   deleted_at IS NULL のみ、created_at 昇順
+router.get('/tweets/:id/comments', requireAuth, async (req, res) => {
+  const { data, error } = await supabase.from('tweet_comments')
+    .select('id, tweet_id, user_id, body, mentioned_user_ids, created_at, users(id, full_name, avatar_url, role)')
+    .eq('tweet_id', req.params.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// コメント投稿
+//   POST /api/tweets/:id/comments  body: { body }
+//   ・メンション抽出 → mentioned_user_ids 保存 → mention 通知
+//   ・投稿者が自分以外なら post_comment 通知
+router.post('/tweets/:id/comments', requireAuth, async (req, res) => {
+  const tweetId = req.params.id;
+  const body = String(req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'コメントを入力してください' });
+  if (body.length > TWEET_COMMENT_MAX) {
+    return res.status(400).json({ error: `コメントは ${TWEET_COMMENT_MAX} 字以内にしてください` });
+  }
+
+  const { data: tweet, error: tErr } = await supabase.from('tweets')
+    .select('id, user_id, body').eq('id', tweetId).maybeSingle();
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!tweet) return res.status(404).json({ error: 'つぶやきが見つかりません' });
+
+  const mentionedIds = await extractMentions(body);
+
+  const { data: comment, error } = await supabase.from('tweet_comments')
+    .insert({
+      tweet_id: tweetId,
+      user_id: req.user.id,
+      body,
+      mentioned_user_ids: mentionedIds,
+    })
+    .select('id, tweet_id, user_id, body, mentioned_user_ids, created_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // 通知発火
+  const senderName = req.user.nickname || req.user.full_name || '誰か';
+  const excerpt = body.length > 50 ? body.slice(0, 50) + '…' : body;
+  const notifiedSet = new Set(); // 同じ人への二重通知を防ぐ
+
+  // 1) 投稿者へのコメント通知（自分以外）
+  if (tweet.user_id !== req.user.id) {
+    notifiedSet.add(tweet.user_id);
+    createNotification({
+      userId: tweet.user_id,
+      type: 'post_comment',
+      title: `${senderName}さんがコメントしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${tweetId}`,
+      meta: {
+        tweet_id: tweetId,
+        comment_id: comment.id,
+        sender_name: senderName,
+        post_excerpt: excerpt,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] comment 通知失敗:', e.message));
+  }
+
+  // 2) メンション通知（自分自身 / 投稿者重複は除外）
+  for (const uid of (mentionedIds || [])) {
+    if (uid === req.user.id) continue;
+    if (notifiedSet.has(uid)) continue;
+    notifiedSet.add(uid);
+    createNotification({
+      userId: uid,
+      type: 'mention',
+      title: `${senderName}さんがあなたをメンションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${tweetId}`,
+      meta: {
+        tweet_id: tweetId,
+        comment_id: comment.id,
+        mentioned_by_name: senderName,
+        post_excerpt: excerpt,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] mention(comment) 通知失敗:', e.message));
+  }
+
+  // フロント表示用に user 情報も付与して返す
+  const { data: u } = await supabase.from('users')
+    .select('id, full_name, avatar_url, role').eq('id', req.user.id).maybeSingle();
+
+  res.json({ ...comment, users: u || null });
+});
+
+// コメント削除（本人 or admin/secretary、論理削除）
+//   DELETE /api/tweets/:id/comments/:commentId
+router.delete('/tweets/:id/comments/:commentId', requireAuth, async (req, res) => {
+  const { data: c, error: cErr } = await supabase.from('tweet_comments')
+    .select('id, user_id, deleted_at').eq('id', req.params.commentId).maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!c) return res.status(404).json({ error: 'コメントが見つかりません' });
+  if (c.deleted_at) return res.json({ ok: true }); // 既に削除済み
+
+  const isSelf = c.user_id === req.user.id;
+  const role = getEffectiveRole(req);
+  const isMod = role === 'admin' || role === 'secretary';
+  if (!isSelf && !isMod) return res.status(403).json({ error: '権限がありません' });
+
+  const { error } = await supabase.from('tweet_comments')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', req.params.commentId);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
