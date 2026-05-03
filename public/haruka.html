@@ -18063,8 +18063,27 @@ function dcpCompareUsers(a, b) {
   return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
 }
 
-function openDCheckPicker({ onSubmit } = {}) {
+async function openDCheckPicker({ onSubmit } = {}) {
   if (!currentCreativeDetail) return;
+
+  // 案件ディレクターが後から設定/変更されたケースに備えて最新の詳細を再取得する。
+  // currentCreativeDetail.projects.director_id は openCreativeDetail() 時点のスナップショットなので、
+  // 別ウィンドウ等で案件編集された場合に古いまま残り、案件ディレクターセクションが表示されない問題があった。
+  // 失敗してもキャッシュ値で継続（ネットワーク断などで処理が止まらないように）。
+  try {
+    const cid = currentCreativeDetail.id;
+    if (cid) {
+      const refRes = await apiFetch(`${API}/creatives/${cid}`);
+      if (refRes.ok) {
+        const fresh = await refRes.json();
+        if (fresh && fresh.id === cid) {
+          currentCreativeDetail = fresh;
+        }
+      }
+    }
+  } catch (_) {
+    // 無視してキャッシュ値で継続
+  }
 
   const project = currentCreativeDetail.projects || {};
   const mainDirectorId = project.director_id || null;
