@@ -1256,6 +1256,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- カスタム確認モーダル: window.showConfirmDialog を提供（ネイティブ confirm() の代替） -->
+<script src="/js/confirm-dialog.js"></script>
 </head>
 <body>
 <div id="toast-container"></div>
@@ -15861,10 +15863,18 @@ async function directToClientCheck() {
   // クライアント確認URL未設定の警告
   const _crUrlDirect = document.getElementById('cd-client-review-url')?.value.trim();
   if (!_crUrlDirect) {
-    const ok = confirm('クライアント確認URLが未設定です。\n通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）');
+    const ok = await showConfirmDialog({
+      title: 'クライアント確認URLが未設定です',
+      message: '通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
+      okLabel: 'このまま進める',
+    });
     if (!ok) { document.getElementById('cd-client-review-url')?.focus(); return; }
   }
-  if (!confirm('DチェックとPチェックをスキップして、直接CL確認に進めますか？\nファイルがアップロード済みであることを確認してください。')) return;
+  if (!(await showConfirmDialog({
+    title: '直接CL確認に進める',
+    message: 'DチェックとPチェックをスキップして、直接CL確認に進めますか？\nファイルがアップロード済みであることを確認してください。',
+    okLabel: 'CL確認へ進める',
+  }))) return;
   const body = {
     status: 'クライアントチェック中',
     director_comment: document.getElementById('cd-comment-field').value.trim() || null,
@@ -15890,10 +15900,18 @@ async function skipToClientCheck() {
   // クライアント確認URL未設定の警告
   const _crUrlSkip = document.getElementById('cd-client-review-url')?.value.trim();
   if (!_crUrlSkip) {
-    const ok = confirm('クライアント確認URLが未設定です。\n通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）');
+    const ok = await showConfirmDialog({
+      title: 'クライアント確認URLが未設定です',
+      message: '通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
+      okLabel: 'このまま進める',
+    });
     if (!ok) { document.getElementById('cd-client-review-url')?.focus(); return; }
   }
-  if (!confirm('Pチェックをスキップして、直接CL確認に進めますか？')) return;
+  if (!(await showConfirmDialog({
+    title: 'Pチェックをスキップ',
+    message: 'Pチェックをスキップして、直接CL確認に進めますか？',
+    okLabel: 'CL確認へ進める',
+  }))) return;
   await saveCreativeDetail('クライアントチェック中');
 }
 
@@ -15910,7 +15928,11 @@ async function advanceCreativeStatus() {
       document.getElementById('cd-assignee-id')?.focus();
       return;
     }
-    if (!confirm(`「${target}」に進めますか？`)) return;
+    if (!(await showConfirmDialog({
+      title: 'ステータスを進める',
+      message: `「${target}」に進めますか？`,
+      okLabel: '進める',
+    }))) return;
     const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -15964,7 +15986,11 @@ async function advanceCreativeStatus() {
   if (target === 'クライアントチェック中') {
     const url = document.getElementById('cd-client-review-url')?.value.trim();
     if (!url) {
-      const ok = confirm('クライアント確認URLが未設定です。\n通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）');
+      const ok = await showConfirmDialog({
+        title: 'クライアント確認URLが未設定です',
+        message: '通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
+        okLabel: 'このまま進める',
+      });
       if (!ok) {
         document.getElementById('cd-client-review-url')?.focus();
         return;
@@ -15972,8 +15998,12 @@ async function advanceCreativeStatus() {
     }
   }
 
-  const label = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s)) ? '承認' : '次のステップへ';
-  if (!confirm(`「${target}」に${label === '承認' ? '承認して進め' : '進め'}ますか？`)) return;
+  const isApprove = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s));
+  if (!(await showConfirmDialog({
+    title: isApprove ? '承認して進める' : 'ステータスを進める',
+    message: `「${target}」に${isApprove ? '承認して進め' : '進め'}ますか？`,
+    okLabel: isApprove ? '承認して進める' : '進める',
+  }))) return;
   await saveCreativeDetail(target);
 }
 
@@ -15987,7 +16017,11 @@ async function backToDCheck() {
     replyField?.focus();
     return;
   }
-  if (!confirm('CL確認の前に、一度Dチェックに戻しますか？')) return;
+  if (!(await showConfirmDialog({
+    title: 'Dチェックに戻す',
+    message: 'CL確認の前に、一度Dチェックに戻しますか？',
+    okLabel: 'Dチェックに戻す',
+  }))) return;
   await saveCreativeDetail('Dチェック');
 }
 
@@ -16002,7 +16036,12 @@ async function requestRevision() {
     noteField?.focus();
     return;
   }
-  if (!confirm(`修正依頼として「${target}」に戻しますか？`)) return;
+  if (!(await showConfirmDialog({
+    title: '修正依頼に戻す',
+    message: `修正依頼として「${target}」に戻しますか？`,
+    okLabel: '修正依頼として戻す',
+    okVariant: 'danger',
+  }))) return;
   await saveCreativeDetail(target);
 }
 
@@ -16127,7 +16166,11 @@ async function reshareClientReviewUrl() {
 // faststart プレビュー版を再生成（管理者のみ表示される失敗時の再生成ボタン用）
 async function regenerateFaststart(creativeFileId) {
   if (!creativeFileId) return;
-  if (!confirm('faststart プレビュー版を再生成しますか？\n（バックグラウンドで処理されます）')) return;
+  if (!(await showConfirmDialog({
+    title: 'プレビュー版を再生成',
+    message: 'faststart プレビュー版を再生成しますか？\n（バックグラウンドで処理されます）',
+    okLabel: '再生成する',
+  }))) return;
   try {
     const res = await apiFetch(`${API}/creative-files/${creativeFileId}/regenerate-faststart`, { method: 'POST' });
     const json = await res.json().catch(() => ({}));
