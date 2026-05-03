@@ -1085,6 +1085,32 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* ===== エラートースト（画面上部・大きめ） ===== */
+/* 通常 toast (success/warn/info) は右下のまま。error のみここに描画する。 */
+#toast-container-error {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 99999;
+  pointer-events: none;
+  max-width: 600px;
+  width: max-content;
+}
+#toast-container-error > * { pointer-events: auto; }
+@keyframes errorToastIn {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 768px) {
+  #toast-container-error {
+    left: 8px; right: 8px; transform: none; max-width: none; width: auto;
+  }
+}
+
 /* ========================================
    クライアントフィルタ（クリエイティブ画面）
    ======================================== */
@@ -1232,6 +1258,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </head>
 <body>
 <div id="toast-container"></div>
+<!-- エラー専用トーストコンテナ（画面上部・中央・大きめ）。type==='error' のみここに描画される。 -->
+<div id="toast-container-error"></div>
 
 <div id="print-only" style="display:none"></div>
 
@@ -4382,10 +4410,36 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <script>
 // ===== トースト通知 & エラー翻訳 =====
+// 使い方:
+//   showToast('保存しました', 'success')              // 右下に4秒（既存挙動）
+//   showToast('読み込みに失敗しました', 'error')      // 画面上部・大きめ・12秒・🐛報告ボタン付き（新挙動）
+//   showToast('注意してください', 'warn')             // 右下に4秒（既存挙動）
+//   showToast('情報です', 'info')                     // 右下に4秒（既存挙動）
+//   showToast('カスタム時間', 'error', 6000)          // duration を明示すれば優先される
+// type === 'error' のときだけ描画先・サイズ・表示時間が変わり、「🐛 このエラーを報告」ボタンが付く。
+// 同一エラーメッセージを 2 秒以内に再表示しようとした場合は連投ガードで無視する（success/warn/info は対象外）。
+const _errorToastLastSeen = new Map(); // message -> timestamp(ms)
 function showToast(message, type, duration) {
   type = type || 'info';
-  duration = duration || 4000;
-  const container = document.getElementById('toast-container');
+  const isError = (type === 'error');
+  // duration が未指定なら、error は 12 秒、それ以外は 4 秒
+  if (duration == null) duration = isError ? 12000 : 4000;
+  // 同一エラー連投ガード（2 秒以内の重複は無視）
+  if (isError) {
+    const key = String(message);
+    const now = Date.now();
+    const last = _errorToastLastSeen.get(key) || 0;
+    if (now - last < 2000) return;
+    _errorToastLastSeen.set(key, now);
+    // メモリ肥大防止: たまに古いエントリを掃除
+    if (_errorToastLastSeen.size > 50) {
+      for (const [k, ts] of _errorToastLastSeen) {
+        if (now - ts > 60000) _errorToastLastSeen.delete(k);
+      }
+    }
+  }
+  const containerId = isError ? 'toast-container-error' : 'toast-container';
+  const container = document.getElementById(containerId);
   if (!container) { console.warn('[toast]', message); return; }
   const C = {
     success: { bg:'#e8f5e9', border:'#4caf50', icon:'✓', text:'#2e7d32' },
@@ -4395,23 +4449,66 @@ function showToast(message, type, duration) {
   };
   const c = C[type] || C.info;
   const t = document.createElement('div');
-  t.style.cssText = 'display:flex;align-items:flex-start;gap:10px;background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:8px;padding:12px 16px;box-shadow:0 4px 16px rgba(0,0,0,.18);font-size:13px;color:' + c.text + ';line-height:1.5;max-width:380px;word-break:break-word;animation:toastIn .2s ease;transition:opacity .3s,transform .3s;';
+  if (isError) {
+    // 大きめ・上部用スタイル
+    t.style.cssText = 'display:flex;align-items:flex-start;gap:12px;background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:10px;padding:14px 18px;box-shadow:0 6px 20px rgba(0,0,0,.22);font-size:14px;color:' + c.text + ';line-height:1.55;max-width:min(560px, calc(100vw - 32px));word-break:break-word;animation:errorToastIn .22s ease;transition:opacity .3s,transform .3s;';
+  } else {
+    t.style.cssText = 'display:flex;align-items:flex-start;gap:10px;background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:8px;padding:12px 16px;box-shadow:0 4px 16px rgba(0,0,0,.18);font-size:13px;color:' + c.text + ';line-height:1.5;max-width:380px;word-break:break-word;animation:toastIn .2s ease;transition:opacity .3s,transform .3s;';
+  }
   const icon = document.createElement('span');
-  icon.style.cssText = 'font-weight:700;font-size:15px;flex-shrink:0;margin-top:1px';
+  icon.style.cssText = 'font-weight:700;font-size:' + (isError ? '16px' : '15px') + ';flex-shrink:0;margin-top:1px';
   icon.textContent = c.icon;
   const msg = document.createElement('span');
   msg.style.flex = '1';
   msg.textContent = message;
+  t.appendChild(icon); t.appendChild(msg);
+  // error のときだけ「🐛 このエラーを報告」ボタンを ✕ の左に挿入
+  if (isError) {
+    const reportBtn = document.createElement('button');
+    reportBtn.type = 'button';
+    reportBtn.textContent = '🐛 このエラーを報告';
+    reportBtn.style.cssText = 'background:#fff;border:1px solid #ef5350;color:#c62828;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0;line-height:1.2;white-space:nowrap';
+    reportBtn.onclick = function() {
+      // クリック後はトーストを閉じる。openErrorReport は async だが await しなくても問題ない（reportFromToast 内で待つ）
+      try { t.remove(); } catch(_) {}
+      try { reportFromToast(message); } catch(e) { console.warn('[toast] reportFromToast failed:', e); }
+    };
+    t.appendChild(reportBtn);
+  }
   const btn = document.createElement('button');
-  btn.style.cssText = 'background:none;border:none;cursor:pointer;color:' + c.text + ';font-size:18px;padding:0;line-height:1;flex-shrink:0;opacity:.5;margin-top:-1px';
+  btn.style.cssText = 'background:none;border:none;cursor:pointer;color:' + c.text + ';font-size:' + (isError ? '20px' : '18px') + ';padding:0;line-height:1;flex-shrink:0;opacity:.55;margin-top:-1px';
   btn.textContent = '×';
   btn.onclick = function() { t.remove(); };
-  t.appendChild(icon); t.appendChild(msg); t.appendChild(btn);
+  t.appendChild(btn);
   container.appendChild(t);
   setTimeout(function() {
-    t.style.opacity = '0'; t.style.transform = 'translateX(20px)';
+    t.style.opacity = '0';
+    t.style.transform = isError ? 'translateY(-20px)' : 'translateX(20px)';
     setTimeout(function() { t.remove(); }, 300);
   }, duration);
+}
+
+// 🐛 ボタン押下からエラー報告フローを起動。openErrorReport() の textarea を「エラー内容」で自動プリフィルする。
+async function reportFromToast(originalMessage) {
+  // FAB クリックと同等のフローを起動。openErrorReport() 完了後に textarea を上書き。
+  try {
+    await openErrorReport();
+  } catch (e) {
+    console.warn('[reportFromToast] openErrorReport failed:', e);
+    return;
+  }
+  const desc = document.getElementById('error-report-description');
+  if (desc) {
+    const prefill = `【自動入力】エラー内容: ${originalMessage}\n\n（発生時の操作を追記してください）`;
+    desc.value = prefill;
+    // カーソルを末尾の「（発生時の…）」の手前に置いてユーザーが追記しやすく
+    setTimeout(() => {
+      try {
+        desc.focus();
+        desc.setSelectionRange(prefill.length - 21, prefill.length - 21);
+      } catch (_) {}
+    }, 30);
+  }
 }
 
 function translateError(err) {
