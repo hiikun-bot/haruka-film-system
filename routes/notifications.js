@@ -138,6 +138,47 @@ router.patch('/read-all', async (req, res) => {
 });
 
 // ============================================================
+// 共通ヘルパー: target_role 文字列に応じて users SELECT クエリを組み立てる
+//   POST /global と GET /global/preview-count で使い回し、絞り込みロジックの二重実装を避ける。
+//   戻り値: { query }（呼び出し側で .select('id') 済み）または { error: '...' }
+// ============================================================
+function buildTargetRoleQuery(targetRole) {
+  let q = supabase.from('users').select('id', { count: 'exact', head: true }).eq('is_active', true);
+  if (targetRole === 'all' || targetRole == null) {
+    return { query: q };
+  }
+  if (targetRole === 'directors_above') {
+    return { query: q.in('role', ['director', 'producer_director', 'producer', 'admin']) };
+  }
+  if (targetRole === 'editors_only') {
+    return { query: q.eq('role', 'editor') };
+  }
+  if (targetRole === 'designers_only') {
+    return { query: q.eq('role', 'designer') };
+  }
+  return { error: 'target_role が不正です' };
+}
+
+// ============================================================
+// GET /api/notifications/global/preview-count?target_role=all
+//   全体通知の送信前に「対象人数」を返す軽量エンドポイント。
+//   フロントの確認ダイアログ「対象 N名 に送信します。よろしいですか？」で利用する。
+//   権限は POST /global と同じ4ロール。
+// ============================================================
+router.get(
+  '/global/preview-count',
+  requireRole('admin', 'secretary', 'producer', 'producer_director'),
+  async (req, res) => {
+    const targetRole = req.query.target_role ? String(req.query.target_role) : 'all';
+    const { query, error: roleErr } = buildTargetRoleQuery(targetRole);
+    if (roleErr) return res.status(400).json({ error: roleErr });
+    const { count, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ count: count || 0, target_role: targetRole });
+  }
+);
+
+// ============================================================
 // POST /api/notifications/global
 //   全体通知。target_role に応じて users SELECT → bulk insert。
 //   権限: admin / secretary / producer / producer_director の4ロール。
