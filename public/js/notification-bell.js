@@ -54,6 +54,8 @@ export function setBadgeCount(n) {
     badge.textContent = safe > 99 ? '99+' : String(safe);
   }
   if (bell) {
+    // 未読時は has-unread クラスを付与（CSSでアイコン色変更 + バッジ脈動グロー）
+    bell.classList.toggle('has-unread', safe > 0);
     // スクリーンリーダー用の文言も同期
     bell.setAttribute('aria-label', safe > 0 ? `通知 ${safe}件未読` : '通知');
   }
