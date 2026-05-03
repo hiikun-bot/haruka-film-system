@@ -36,6 +36,31 @@
 | スマホUI（レスポンシブ） | feature/mobile |
 | PC版共有ロジック・サーバー | feature/pc |
 
+## 主要既存機能の地図（実装前の必読チェック）
+
+新機能依頼が来たら、設計書を読む**前に**この表で「同名/類似機能の既存実装」を確認する。
+重複・競合があれば「設計書通りの新規実装」「既存拡張」「設計書修正」のどれで進めるかをまずユーザーに提示する。
+
+| 領域 | 主要テーブル | バックエンド | フロント | 補足 |
+|---|---|---|---|---|
+| 社内SNS（つぶやき） | `tweets` / `tweet_likes` / `tweet_reactions` / `tweet_comments` | `routes/haruka.js` の `/api/tweets/*` | `public/haruka.html` の `loadTweets()`（ダッシュボード `dash-tweets`）+ 投稿モーダル `modal-tweet-compose` | 5種リアクション + コメント + メンションは Phase 1 段階4 で追加（PR #204）|
+| 全体連絡（旧版） | `announcements` / `announcement_acks` | `routes/haruka.js` | `public/haruka.html` の `modal-announcement-status` | 既読確認つきの全体周知。新通知系（`notification_logs`）と並走 |
+| 通知（Phase 1） | `notification_logs` / `notification_settings` | `routes/notifications.js` + `utils/notification.js` | `public/js/notification-bell.js` / `notification-panel.js` / `notification-realtime.js` / `notification-card.js` | リベシティ風 5エンドポイント。Realtime購読あり |
+| 通知（旧設計の遺物） | `posts` / `post_reactions` / `post_comments` | なし | なし | migration `2026-05-03_notification_phase1.sql` で作成されたが**未使用**。Phase 1 段階4 で `tweets` 拡張に方針変更したため塩漬け |
+| クリエイティブ | `creatives` / `creative_assignments` / `creative_versions` | `routes/haruka.js` の `/api/creatives/*` | `public/haruka.html` クリエイティブタブ | `ball_holder_id` がボール保持者キャッシュ |
+| 案件 | `projects` / `project_director_rates` / `project_producer_rates` / `project_deletion_logs` | `routes/haruka.js` | `public/haruka.html` 案件タブ | 単価モーダルにディレクター/プロデューサー費セクションあり |
+| クライアント・商材 | `clients` / `products` / `appeal_axes` | `routes/haruka.js` | `public/haruka.html` クライアントタブ・商材マスター画面 | |
+| メンバー | `users` / `user_stats` / `teams` / `team_members` | `routes/haruka.js` | `public/haruka.html` メンバータブ | `users.role` で admin/secretary/producer/producer_director/director/editor/designer |
+| 請求 | `invoices` / `client_invoices` | `routes/haruka.js` の `/api/invoices/*` `/api/client-invoice/*` | `public/haruka.html` 請求タブ | `migrations/2026-04-28_invoice_items_step1.sql` 進行中 |
+| 自動エラー通知 | - | `routes/haruka.js` の `/api/error-report` | `public/js/auto-error-report.js` | 500/uncaught/window.onerror を Slack 投稿（PR #197）|
+
+**運用ルール**
+- 「○○機能を追加して」と言われた瞬間、まず上表とコードベースを `grep` で確認する
+- 設計書（`docs/notification/*.md` 等）を全文読み込むのは、既存重複が無いと確認できてから
+- 上表に新領域を追加した PR を作るときは、この表も同 PR で更新する
+
+---
+
 ## スマホチャット（mobile）の実装範囲（厳密）
 
 ### ✅ 触ってOK
