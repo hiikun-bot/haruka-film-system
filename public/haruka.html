@@ -17003,7 +17003,7 @@ async function submitChangePassword() {
   if (nw !== conf)     { showToast('パスワードが一致しません', 'warn'); return; }
   if (btn) { btn.disabled = true; btn.textContent = '変更中...'; }
   try {
-    const res = await apiFetch(`${API}/users/change-password`, {
+    const res = await apiFetch(`/api/users/change-password`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentPassword: cur, newPassword: nw })
     });
