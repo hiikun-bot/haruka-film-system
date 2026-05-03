@@ -2462,7 +2462,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">担当者 <span style="color:#E24B4A">*</span></label>
-              <select class="form-select" id="c-assignee-id"><option value="">担当者を選択</option></select>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span id="c-assignee-avatar" style="flex-shrink:0;display:inline-flex;align-items:center"></span>
+                <select class="form-select" id="c-assignee-id" onchange="renderAssigneeAvatar('c-assignee-id','c-assignee-avatar')" style="flex:1;min-width:0"><option value="">担当者を選択</option></select>
+              </div>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -2589,9 +2592,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label class="form-label">担当者 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意）</span></label>
-          <select class="form-select" id="bulk-assignee-id">
-            <option value="">未設定</option>
-          </select>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="bulk-assignee-avatar" style="flex-shrink:0;display:inline-flex;align-items:center"></span>
+            <select class="form-select" id="bulk-assignee-id" onchange="renderAssigneeAvatar('bulk-assignee-id','bulk-assignee-avatar')" style="flex:1;min-width:0">
+              <option value="">未設定</option>
+            </select>
+          </div>
         </div>
       </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:10px 0 4px">10 本を一括登録します</div>
@@ -13240,6 +13246,29 @@ function updateAssigneeSelect() {
     const selfInList = candidates.find(m => m.id === currentUser.id);
     if (selfInList) sel.value = currentUser.id;
   }
+  renderAssigneeAvatar('c-assignee-id', 'c-assignee-avatar');
+}
+
+// 担当者 select の隣に選択中アバターを表示するヘルパ
+//   selId: <select> の DOM id
+//   avatarSpanId: アバターを差し込む <span> の DOM id
+//   未選択時はクリア。allMembers 内に該当ユーザーが居なくても avatar_url 無し initial 円で表示する。
+function renderAssigneeAvatar(selId, avatarSpanId) {
+  const sel = document.getElementById(selId);
+  const span = document.getElementById(avatarSpanId);
+  if (!span) return;
+  const id = sel?.value || '';
+  if (!id) { span.innerHTML = ''; return; }
+  let user = null;
+  if (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) {
+    user = allMembers.find(m => m.id === id) || null;
+  }
+  if (!user) {
+    // フォールバック: option text を名前として使う
+    const opt = sel?.options?.[sel.selectedIndex];
+    user = { full_name: opt?.text || '', avatar_url: null };
+  }
+  span.innerHTML = avatarHtml(user, 28);
 }
 
 function updateBulkAssigneeSelect() {
@@ -13265,6 +13294,7 @@ function updateBulkAssigneeSelect() {
     const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
     return `<option value="${m.id}">${m.full_name}${label}</option>`;
   }).join('');
+  renderAssigneeAvatar('bulk-assignee-id', 'bulk-assignee-avatar');
 }
 
 // ===== 汎用マスター管理 =====
@@ -18361,6 +18391,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
       return {
         id: m.id,
         name: m.full_name,
+        avatar_url: m.avatar_url || null,
         sub: '案件ディレクター・固定',
         star: true,
         lock: true, // メインDは disabled + 解除不可
@@ -18389,6 +18420,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
       return {
         id: m.id,
         name: m.full_name,
+        avatar_url: m.avatar_url || null,
         sub: 'サブD',
       };
     });
@@ -18444,7 +18476,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, sub: roleLabel(m.role), role: m.role || '' };
+      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: roleLabel(m.role), role: m.role || '' };
     });
   if (teamItems.length) {
     leftSections.push({ title: 'チーム内メンバー', items: teamItems, variant: 'team', scrollable: true });
@@ -18456,7 +18488,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, sub: '秘書' };
+      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: '秘書' };
     });
   if (secItems.length) {
     rightSections.push({ title: '秘書', items: secItems, variant: 'plain' });
@@ -18470,6 +18502,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
   const otherItems = otherUsers.map(m => ({
     id: m.id,
     name: m.full_name,
+    avatar_url: m.avatar_url || null,
     sub: roleLabel(m.role),
     role: m.role || '',
   }));
@@ -18651,10 +18684,16 @@ function dcpRenderItem(it, variantOverride) {
   const lockBadge = isLocked
     ? `<span style="font-size:10px;color:${variant === 'main' ? '#0d9488' : '#0d9488'};margin-left:auto;background:#fff;border:0.5px solid #5eead4;padding:1px 6px;border-radius:4px;font-weight:600;letter-spacing:0.04em">固定</span>`
     : '';
+  // アバター（avatar_url があれば img、無ければ initial 円） — avatarHtml を流用
+  const avatarUserObj = { full_name: it.name || '', avatar_url: it.avatar_url || null };
+  const avatarMarkup = (typeof avatarHtml === 'function')
+    ? avatarHtml(avatarUserObj, 28)
+    : '';
   return `
     <label data-dcp-row="${esc(it.id)}" data-dcp-variant="${esc(variant)}" style="${labelStyle}" title="${isLocked ? '案件ディレクターは固定です（解除できません）' : ''}">
-      <input type="checkbox" value="${esc(it.id)}" ${inputAttrs} style="margin:0;width:16px;height:16px;cursor:${isLocked ? 'not-allowed' : 'pointer'};accent-color:${variant === 'main' ? '#fff' : '#0d9488'}">
-      <span style="font-size:13px;font-weight:${fontWeight};color:${v.color}">${esc(it.name || '(名前なし)')}</span>
+      <input type="checkbox" value="${esc(it.id)}" ${inputAttrs} style="margin:0;width:16px;height:16px;cursor:${isLocked ? 'not-allowed' : 'pointer'};accent-color:${variant === 'main' ? '#fff' : '#0d9488'};flex-shrink:0">
+      ${avatarMarkup}
+      <span style="font-size:13px;font-weight:${fontWeight};color:${v.color};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || '(名前なし)')}</span>
       ${star}
       ${sub}
       ${lockBadge}
