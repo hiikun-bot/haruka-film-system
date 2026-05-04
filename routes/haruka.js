@@ -68,6 +68,102 @@ router.get('/me', (req, res) => {
   res.json({ id, email, full_name, role, rank, team_id, avatar_url, workspace_id });
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// クリエイティブ画面 詳細フィルターの「自分のデフォルト値」を保存・取得する
+// migration 2026-05-05_user_creative_filter_defaults.sql で users.creative_filter_defaults JSONB を追加。
+// 列が無い環境（migration 未適用）でも 200 で空オブジェクトを返してフロントを止めない。
+// ─────────────────────────────────────────────────────────────────────
+const ALLOWED_CV_MODES   = new Set(['gantt', 'list']);
+const ALLOWED_CV_GROUPS  = new Set(['project', 'assignee']);
+const ALLOWED_CV_RANGES  = new Set(['week', '2week', 'month', '2month']);
+
+function _normalizeCreativeFilterDefaults(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out = {};
+  // boolean 系
+  for (const k of ['includeEnded', 'includeDelivered', 'delayedOnly', 'sosOnly']) {
+    if (k in input) out[k] = !!input[k];
+  }
+  // 文字列 (ID/ステータス)
+  for (const k of ['team', 'status']) {
+    if (k in input) {
+      const v = input[k];
+      out[k] = (v == null) ? '' : String(v).slice(0, 200);
+    }
+  }
+  // mode / group / range — 値ホワイトリスト
+  if ('mode' in input  && ALLOWED_CV_MODES.has(input.mode))   out.mode  = input.mode;
+  if ('group' in input && ALLOWED_CV_GROUPS.has(input.group)) out.group = input.group;
+  if ('range' in input && ALLOWED_CV_RANGES.has(input.range)) out.range = input.range;
+  // ballFilter — { e/d/p/c: bool }
+  if (input.ballFilter && typeof input.ballFilter === 'object' && !Array.isArray(input.ballFilter)) {
+    const bf = {};
+    for (const k of ['e', 'd', 'p', 'c']) if (k in input.ballFilter) bf[k] = !!input.ballFilter[k];
+    out.ballFilter = bf;
+  }
+  // assigneeIds — UUID配列（最大100件）
+  if (Array.isArray(input.assigneeIds)) {
+    out.assigneeIds = input.assigneeIds
+      .filter(x => typeof x === 'string' && x.length > 0 && x.length <= 64)
+      .slice(0, 100);
+  }
+  return out;
+}
+
+router.get('/users/me/creative-filter-defaults', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data, error } = await supabase
+      .from('users')
+      .select('creative_filter_defaults')
+      .eq('id', userId)
+      .single();
+    if (error) {
+      // 列が無い環境（migration 未適用）でも空で返してフロントを止めない
+      const msg = error.message || '';
+      if (/column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || error.code === 'PGRST204') {
+        console.warn('[creative-filter-defaults:get] 列なし → 空オブジェクトを返します:', msg);
+        return res.json({});
+      }
+      return res.status(500).json({ error: error.message });
+    }
+    res.json(data?.creative_filter_defaults || {});
+  } catch (e) {
+    console.error('[creative-filter-defaults:get]', e);
+    res.status(500).json({ error: e.message || 'unknown' });
+  }
+});
+
+router.put('/users/me/creative-filter-defaults', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    // null / 空オブジェクトでクリア
+    const isClear = body === null || (Object.keys(body).length === 0);
+    const payloadValue = isClear ? null : _normalizeCreativeFilterDefaults(body);
+
+    const { data, error } = await supabase
+      .from('users')
+      .update({ creative_filter_defaults: payloadValue, updated_at: new Date().toISOString() })
+      .eq('id', userId)
+      .select('creative_filter_defaults')
+      .single();
+    if (error) {
+      const msg = error.message || '';
+      if (/column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || error.code === 'PGRST204') {
+        return res.status(503).json({
+          error: 'creative_filter_defaults 列が未適用です。migration 2026-05-05_user_creative_filter_defaults.sql を本番に適用してください。'
+        });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+    res.json(data?.creative_filter_defaults || {});
+  } catch (e) {
+    console.error('[creative-filter-defaults:put]', e);
+    res.status(500).json({ error: e.message || 'unknown' });
+  }
+});
+
 // ログ取得エンドポイント
 router.get('/upload-logs', requireAuth, (_req, res) => {
   res.json({ logs: [..._uploadLogs].reverse() });

@@ -3223,6 +3223,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="m-tab-btn" id="m-tab-btn-2" onclick="switchMemberTab(2)">連絡先</button>
         <button class="m-tab-btn" id="m-tab-btn-3" onclick="switchMemberTab(3)">口座情報</button>
         <button class="m-tab-btn" id="m-tab-btn-4" onclick="switchMemberTab(4)">機材・休日</button>
+        <button class="m-tab-btn" id="m-tab-btn-5" onclick="switchMemberTab(5)" style="display:none">クリエイティブ初期値</button>
       </div>
     </div>
 
@@ -3458,6 +3459,102 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <input class="form-input" id="m-lighting-info" placeholder="例：Aputure 600d / LED小型のみ" style="font-size:14px;padding:10px 14px">
           </div>
         </div>
+      </div>
+
+      <!-- Tab 5: クリエイティブ画面 詳細フィルター 初期値（本人のみ表示） -->
+      <div id="m-tab-panel-5" class="m-tab-panel" style="display:none">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.7;background:var(--bg);border-radius:10px;padding:12px 14px">
+          クリエイティブ画面を開いたときの詳細フィルター初期値を設定できます。<br>
+          ローカルに保存された直近の操作（localStorage）が無い場合のみ、ここで保存した値が適用されます。
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+          <button type="button" class="btn" id="m-cvfd-snapshot-btn" onclick="cvfdSnapshotCurrent()" style="font-size:12px;padding:6px 12px">📸 現在のフィルター値を保存</button>
+          <button type="button" class="btn" id="m-cvfd-clear-btn" onclick="cvfdClearAll()" style="font-size:12px;padding:6px 12px">クリア（既定値に戻す）</button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">表示モード</label>
+          <select class="form-select" id="m-cvfd-mode" style="font-size:14px;padding:10px 12px;max-width:240px">
+            <option value="">未指定</option>
+            <option value="gantt">ガント</option>
+            <option value="list">リスト</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">グルーピング</label>
+          <select class="form-select" id="m-cvfd-group" style="font-size:14px;padding:10px 12px;max-width:240px">
+            <option value="">未指定</option>
+            <option value="project">案件単位</option>
+            <option value="assignee">担当者単位</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">期間</label>
+          <select class="form-select" id="m-cvfd-range" style="font-size:14px;padding:10px 12px;max-width:240px">
+            <option value="">未指定</option>
+            <option value="week">1週間</option>
+            <option value="2week">2週間</option>
+            <option value="month">1ヶ月</option>
+            <option value="2month">2ヶ月</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">チェックボックス系</label>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-includeEnded"> 取引終了クライアント含む
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-includeDelivered"> 納品済み含む
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-delayedOnly"> 遅延のみ
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-sosOnly"> SOSのみ
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">チーム（初期選択）</label>
+          <select class="form-select" id="m-cvfd-team" style="font-size:14px;padding:10px 12px;max-width:280px">
+            <option value="">未指定（全チーム）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">ステータス（初期選択）</label>
+          <select class="form-select" id="m-cvfd-status" style="font-size:14px;padding:10px 12px;max-width:280px">
+            <option value="">未指定（全ステータス）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">ボール種別（ON にするもの）</label>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-ball-e" checked> 編集者
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-ball-d" checked> D
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-ball-p" checked> P
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="m-cvfd-ball-c" checked> クライアント
+            </label>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:6px">
+          <label class="form-label">担当者（初期選択 / カンマ区切り検索可）</label>
+          <input type="text" class="form-input" id="m-cvfd-assignee-search" placeholder="名前・ニックネームで検索" style="font-size:13px;padding:8px 12px;margin-bottom:6px" oninput="_cvfdAssigneeFilter(this.value)">
+          <div id="m-cvfd-assignee-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface)">
+            <!-- JS で動的生成 -->
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px">未選択 = フィルタ無し（全員表示）</div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+          <button type="button" class="btn-primary" onclick="cvfdSave()" style="font-size:13px;padding:8px 18px">この設定を保存</button>
+        </div>
+        <div id="m-cvfd-status-msg" style="font-size:12px;color:var(--text-muted);margin-top:8px;text-align:right"></div>
       </div>
 
     </div>
@@ -5379,6 +5476,137 @@ let currentAssigneeIds = (() => {
 function _saveAssigneeIds() {
   try { localStorage.setItem('cv_assignee_ids', JSON.stringify([...currentAssigneeIds])); } catch (_) {}
 }
+
+// ─── クリエイティブ画面の詳細フィルター/ボール種別 永続化 + DBデフォルト適用 ──
+// 優先順位: localStorage > DB > ハードコード既定
+// localStorage に値があればユーザーの直近操作を尊重し、DB の値で上書きしない。
+function _saveCvAdvFilters() {
+  try { localStorage.setItem('cv_adv_filters', JSON.stringify(cvAdvFilters)); } catch (_) {}
+}
+function _loadCvAdvFiltersFromLocal() {
+  try {
+    const raw = localStorage.getItem('cv_adv_filters');
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : null;
+  } catch (_) { return null; }
+}
+function _saveCvBallFilter() {
+  try {
+    const buttons = document.querySelectorAll('.bf');
+    const state = {};
+    buttons.forEach(b => {
+      if (b.classList.contains('bf-e')) state.e = b.classList.contains('on');
+      if (b.classList.contains('bf-d')) state.d = b.classList.contains('on');
+      if (b.classList.contains('bf-p')) state.p = b.classList.contains('on');
+      if (b.classList.contains('bf-c')) state.c = b.classList.contains('on');
+    });
+    localStorage.setItem('cv_ball_filter', JSON.stringify(state));
+  } catch (_) {}
+}
+function _applyCvBallFilterState(state) {
+  if (!state || typeof state !== 'object') return;
+  const map = { e: '.bf-e', d: '.bf-d', p: '.bf-p', c: '.bf-c' };
+  for (const k of Object.keys(map)) {
+    if (!(k in state)) continue;
+    const btn = document.querySelector(map[k]);
+    if (btn) btn.classList.toggle('on', !!state[k]);
+  }
+}
+function _loadCvBallFilterFromLocal() {
+  try {
+    const raw = localStorage.getItem('cv_ball_filter');
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : null;
+  } catch (_) { return null; }
+}
+
+// 起動時に localStorage 値で cvAdvFilters を上書き（DB 取得は別途 init で）
+(function _hydrateCvAdvFromLocal(){
+  const saved = _loadCvAdvFiltersFromLocal();
+  if (saved) {
+    cvAdvFilters = {
+      includeEnded:     ('includeEnded'     in saved) ? !!saved.includeEnded     : cvAdvFilters.includeEnded,
+      includeDelivered: ('includeDelivered' in saved) ? !!saved.includeDelivered : cvAdvFilters.includeDelivered,
+      delayedOnly:      ('delayedOnly'      in saved) ? !!saved.delayedOnly      : cvAdvFilters.delayedOnly,
+      sosOnly:          ('sosOnly'          in saved) ? !!saved.sosOnly          : cvAdvFilters.sosOnly,
+      team:   ('team'   in saved && typeof saved.team   === 'string') ? saved.team   : cvAdvFilters.team,
+      status: ('status' in saved && typeof saved.status === 'string') ? saved.status : cvAdvFilters.status,
+    };
+    if (cvAdvFilters.includeEnded) showEndedInCreatives = true;
+  }
+})();
+
+// DB から「自分のクリエイティブ画面 デフォルト値」を取得し、localStorage に値が無いキーだけを埋める
+async function applyCreativeFilterDefaultsFromServer() {
+  try {
+    const res = await apiFetch(`${API}/users/me/creative-filter-defaults`);
+    if (!res.ok) return;
+    const dbDef = await res.json().catch(() => ({}));
+    if (!dbDef || typeof dbDef !== 'object') return;
+    let hasAdvUpdate = false;
+
+    // cvAdvFilters: localStorage に cv_adv_filters が無いときだけ DB を反映
+    if (!localStorage.getItem('cv_adv_filters')) {
+      const next = { ...cvAdvFilters };
+      let changed = false;
+      for (const k of ['includeEnded', 'includeDelivered', 'delayedOnly', 'sosOnly']) {
+        if (k in dbDef) { next[k] = !!dbDef[k]; changed = true; }
+      }
+      for (const k of ['team', 'status']) {
+        if (k in dbDef && typeof dbDef[k] === 'string') { next[k] = dbDef[k]; changed = true; }
+      }
+      if (changed) {
+        cvAdvFilters = next;
+        if (cvAdvFilters.includeEnded) showEndedInCreatives = true;
+        _saveCvAdvFilters();
+        hasAdvUpdate = true;
+      }
+    }
+
+    // ボール種別: localStorage 'cv_ball_filter' が無いときだけ DB を反映
+    if (!localStorage.getItem('cv_ball_filter') && dbDef.ballFilter && typeof dbDef.ballFilter === 'object') {
+      try { localStorage.setItem('cv_ball_filter', JSON.stringify(dbDef.ballFilter)); } catch (_) {}
+      _applyCvBallFilterState(dbDef.ballFilter);
+    }
+
+    // mode / group / range: 各 localStorage キーが無いときだけ DB を反映
+    if (!localStorage.getItem('cv_mode') && (dbDef.mode === 'gantt' || dbDef.mode === 'list')) {
+      try { localStorage.setItem('cv_mode', dbDef.mode); } catch (_) {}
+      currentCreativeMode = dbDef.mode;
+      try { setCreativeMode(currentCreativeMode); } catch (_) {}
+    }
+    if (!localStorage.getItem('cv_group') && (dbDef.group === 'project' || dbDef.group === 'assignee')) {
+      try { localStorage.setItem('cv_group', dbDef.group); } catch (_) {}
+      currentCreativeGroup = dbDef.group;
+    }
+    if (!localStorage.getItem('cv_range') && ['week','2week','month','2month'].includes(dbDef.range)) {
+      try { localStorage.setItem('cv_range', dbDef.range); } catch (_) {}
+      currentCreativeRange = dbDef.range;
+      try { _cvUpdateRangeButtonsActive && _cvUpdateRangeButtonsActive(); } catch (_) {}
+    }
+
+    // 担当者ID: localStorage 'cv_assignee_ids' が無いときだけ DB を反映
+    if (!localStorage.getItem('cv_assignee_ids') && Array.isArray(dbDef.assigneeIds)) {
+      const ids = dbDef.assigneeIds.filter(x => typeof x === 'string' && x);
+      currentAssigneeIds = new Set(ids);
+      _saveAssigneeIds();
+    }
+
+    // UI 反映（チェックボックス / バッジ / 一覧再描画）
+    if (hasAdvUpdate) {
+      const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+      setChk('cv-flt-ended', cvAdvFilters.includeEnded);
+      setChk('cv-flt-delivered', cvAdvFilters.includeDelivered);
+      setChk('cv-flt-delayed', cvAdvFilters.delayedOnly);
+      setChk('cv-flt-sos', cvAdvFilters.sosOnly);
+      const tSel = document.getElementById('cv-flt-team');   if (tSel) tSel.value = cvAdvFilters.team || '';
+      const sSel = document.getElementById('cv-flt-status'); if (sSel) sSel.value = cvAdvFilters.status || '';
+      try { _cvAdvUpdateBadge(); } catch (_) {}
+    }
+  } catch (e) { console.warn('[applyCreativeFilterDefaultsFromServer]', e); }
+}
 let showEndedInCreatives = false;
 // 一覧 API のページング状態
 let creativesPage = { limit: 50, offset: 0, total: 0 };
@@ -5395,7 +5623,7 @@ let creativeAdvFiltersOpen = false;
 // 詳細フィルターの値（既定値=フィルタ無効と等価）
 let cvAdvFilters = {
   includeEnded: false,        // 取引終了クライアント含む
-  includeDelivered: true,     // 納品済み含む（既定: true で従来挙動維持）
+  includeDelivered: false,    // 納品済み含む（既定: false。納品済みは初期で隠す）
   delayedOnly: false,         // 遅延のみ
   sosOnly: false,             // SOSのみ
   team: '',                   // チームID（空=全）
@@ -5470,6 +5698,9 @@ async function init() {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
+  // クリエイティブ画面のフィルター初期値を DB から取得（localStorage 未設定キーのみ反映）
+  // loadCreatives() の前に呼ぶことで、初回読み込み時から DB のデフォルトを適用できる
+  try { await applyCreativeFilterDefaultsFromServer(); } catch (e) { console.warn('[init] applyCreativeFilterDefaultsFromServer failed:', e); }
   // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
   await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
   loadDashboard();
@@ -8459,6 +8690,11 @@ function _cvSidePanelHtml(rows) {
       setChk('cv-flt-delivered', cvAdvFilters.includeDelivered);
       setChk('cv-flt-delayed', cvAdvFilters.delayedOnly);
       setChk('cv-flt-sos', cvAdvFilters.sosOnly);
+      const tSel = document.getElementById('cv-flt-team');   if (tSel) tSel.value = cvAdvFilters.team || '';
+      const sSel = document.getElementById('cv-flt-status'); if (sSel) sSel.value = cvAdvFilters.status || '';
+      // ボール種別の永続化値を初期反映（無ければ HTML 既定の全 ON のまま）
+      const ballState = _loadCvBallFilterFromLocal();
+      if (ballState) _applyCvBallFilterState(ballState);
       _cvAdvUpdateBadge();
     }
   };
@@ -8516,13 +8752,14 @@ function onCvAdvFilterChange() {
     if (btn && typeof setToggleStyle === 'function') { btn.classList.toggle('active', showEndedInCreatives); setToggleStyle(btn, showEndedInCreatives); }
     if (typeof loadClients === 'function') loadClients();
   }
+  _saveCvAdvFilters();
   _cvAdvUpdateBadge();
   if (typeof renderCreatives === 'function') renderCreatives();
 }
 function resetCvAdvFilters() {
-  cvAdvFilters = { includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false, team:'', status:'' };
+  cvAdvFilters = { includeEnded:false, includeDelivered:false, delayedOnly:false, sosOnly:false, team:'', status:'' };
   ['cv-flt-ended','cv-flt-delivered','cv-flt-delayed','cv-flt-sos'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.checked = (id === 'cv-flt-delivered');
+    const el = document.getElementById(id); if (el) el.checked = false;
   });
   ['cv-flt-team','cv-flt-status'].forEach(id => {
     const el = document.getElementById(id); if (el) { el.value = ''; el.title = ''; }
@@ -8533,6 +8770,7 @@ function resetCvAdvFilters() {
     if (btn && typeof setToggleStyle === 'function') { btn.classList.toggle('active', false); setToggleStyle(btn, false); }
     if (typeof loadClients === 'function') loadClients();
   }
+  _saveCvAdvFilters();
   _cvAdvUpdateBadge();
   if (typeof renderCreatives === 'function') renderCreatives();
 }
@@ -8540,7 +8778,7 @@ function _cvAdvUpdateBadge() {
   // 適用中件数（既定値と異なる項目をカウント）
   let n = 0;
   if (cvAdvFilters.includeEnded) n++;
-  if (!cvAdvFilters.includeDelivered) n++; // 既定 true
+  if (cvAdvFilters.includeDelivered) n++; // 既定 false（OFF が初期）
   if (cvAdvFilters.delayedOnly) n++;
   if (cvAdvFilters.sosOnly) n++;
   if (cvAdvFilters.team) n++;
@@ -8646,7 +8884,7 @@ function filterSearch(val) {
     loadCreatives();
   }, 300);
 }
-function toggleBall(btn) { btn.classList.toggle('on'); renderCreatives(); }
+function toggleBall(btn) { btn.classList.toggle('on'); _saveCvBallFilter(); renderCreatives(); }
 
 // SOS（help_flag）を当該クリエイティブに対して操作できるか
 //   creative.sos_others 権限あり → 全クリエイティブで可
@@ -9136,7 +9374,7 @@ function applyMemberModalAdminFields(m) {
 }
 
 function switchMemberTab(idx) {
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const btn = document.getElementById('m-tab-btn-' + i);
     const panel = document.getElementById('m-tab-panel-' + i);
     if (btn) btn.classList.toggle('active', i === idx);
@@ -9188,6 +9426,8 @@ function collectHolidayWeekdays() {
 function openAddMember() {
   document.getElementById('m-modal-title').textContent = 'メンバー追加';
   document.getElementById('m-submit-btn').textContent = '追加する';
+  // 新規追加では「クリエイティブ初期値」タブは非表示（自分宛のみ機能のため）
+  { const cvfdTab = document.getElementById('m-tab-btn-5'); if (cvfdTab) cvfdTab.style.display = 'none'; }
   document.getElementById('m-id').value = '';
   document.getElementById('m-name').value = '';
   document.getElementById('m-nickname').value = '';
@@ -9300,9 +9540,208 @@ function openEditMember(m) {
     try { applyMemberModalAdminFields(m); } catch(_) {}
     try { setMemberModalAvatar(m.id, m.avatar_url || null); } catch(_) {}
     try { onRoleChange(m.role || 'editor'); } catch(_) {}
+    // クリエイティブ初期値タブ — 自分のプロフィール編集時のみ表示
+    try {
+      const isSelf = !!(currentUser && m.id && currentUser.id === m.id);
+      const tabBtn = document.getElementById('m-tab-btn-5');
+      if (tabBtn) tabBtn.style.display = isSelf ? '' : 'none';
+      if (isSelf) cvfdInitTab();
+    } catch (e) { console.warn('[openEditMember] cvfd tab init:', e); }
   } catch (e) {
     console.error('[openEditMember] failed:', e);
     showToast('編集画面の表示で問題が発生しました（コンソール参照）', 'warn');
+  }
+}
+
+// ─── クリエイティブ画面 詳細フィルター 初期値タブ（メンバー編集モーダル内） ───
+// 本人のプロフィール編集時のみ表示。'm-tab-panel-5' に値を読み込み・保存する。
+async function cvfdInitTab() {
+  // チーム select 選択肢
+  const teamSel = document.getElementById('m-cvfd-team');
+  if (teamSel) {
+    teamSel.innerHTML = '<option value="">未指定（全チーム）</option>' +
+      (allTeams || []).map(t => `<option value="${t.id}">${esc(t.team_code || t.team_name || 'チーム')}</option>`).join('');
+  }
+  // ステータス select 選択肢
+  const statusSel = document.getElementById('m-cvfd-status');
+  if (statusSel) {
+    const list = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
+    statusSel.innerHTML = '<option value="">未指定（全ステータス）</option>' + list.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  }
+  // 担当者リスト（複数選択チェックボックス）
+  _cvfdRenderAssigneeList(allMembers || [], new Set());
+  // DB から現在保存値を取得して反映
+  try {
+    const res = await apiFetch(`${API}/users/me/creative-filter-defaults`);
+    if (res.ok) {
+      const def = await res.json().catch(() => ({}));
+      cvfdApplyValuesToTab(def);
+    } else {
+      cvfdApplyValuesToTab({});
+    }
+  } catch (e) {
+    console.warn('[cvfdInitTab] fetch failed:', e);
+    cvfdApplyValuesToTab({});
+  }
+}
+
+function _cvfdRenderAssigneeList(members, selectedIds) {
+  const box = document.getElementById('m-cvfd-assignee-list');
+  if (!box) return;
+  const sel = (selectedIds instanceof Set) ? selectedIds : new Set(selectedIds || []);
+  const sorted = (members || []).filter(m => m.is_active !== false).slice().sort((a, b) =>
+    (a.full_name || '').localeCompare(b.full_name || '', 'ja')
+  );
+  box.dataset.allIds = JSON.stringify(sorted.map(m => m.id));
+  box.innerHTML = sorted.map(m => {
+    const checked = sel.has(m.id) ? 'checked' : '';
+    const label = `${esc(m.full_name || '')}${m.nickname ? ' (' + esc(m.nickname) + ')' : ''}`;
+    return `<label class="cvfd-assignee-item" data-name="${esc((m.full_name || '') + ' ' + (m.nickname || ''))}" style="display:flex;align-items:center;gap:8px;padding:4px 6px;font-size:13px;cursor:pointer;border-radius:6px">
+      <input type="checkbox" class="cvfd-assignee-cb" value="${esc(m.id)}" ${checked}>
+      <span>${label}</span>
+    </label>`;
+  }).join('') || '<div style="font-size:12px;color:var(--text-muted);padding:6px">メンバーがいません</div>';
+}
+
+function _cvfdAssigneeFilter(q) {
+  const norm = (q || '').toLowerCase();
+  document.querySelectorAll('#m-cvfd-assignee-list .cvfd-assignee-item').forEach(el => {
+    const name = (el.dataset.name || '').toLowerCase();
+    el.style.display = (!norm || name.includes(norm)) ? '' : 'none';
+  });
+}
+
+function _cvfdGetSelectedAssigneeIds() {
+  const ids = [];
+  document.querySelectorAll('#m-cvfd-assignee-list .cvfd-assignee-cb:checked').forEach(cb => {
+    if (cb.value) ids.push(cb.value);
+  });
+  return ids;
+}
+
+function cvfdApplyValuesToTab(def) {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+  const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  setVal('m-cvfd-mode',   def.mode  || '');
+  setVal('m-cvfd-group',  def.group || '');
+  setVal('m-cvfd-range',  def.range || '');
+  setChk('m-cvfd-includeEnded',     def.includeEnded);
+  setChk('m-cvfd-includeDelivered', def.includeDelivered);
+  setChk('m-cvfd-delayedOnly',      def.delayedOnly);
+  setChk('m-cvfd-sosOnly',          def.sosOnly);
+  setVal('m-cvfd-team',   def.team   || '');
+  setVal('m-cvfd-status', def.status || '');
+  // ボール種別 — 既定は全 ON
+  const bf = (def.ballFilter && typeof def.ballFilter === 'object') ? def.ballFilter : { e:true, d:true, p:true, c:true };
+  setChk('m-cvfd-ball-e', 'e' in bf ? !!bf.e : true);
+  setChk('m-cvfd-ball-d', 'd' in bf ? !!bf.d : true);
+  setChk('m-cvfd-ball-p', 'p' in bf ? !!bf.p : true);
+  setChk('m-cvfd-ball-c', 'c' in bf ? !!bf.c : true);
+  // 担当者
+  const ids = Array.isArray(def.assigneeIds) ? def.assigneeIds : [];
+  _cvfdRenderAssigneeList(allMembers || [], new Set(ids));
+  // メッセージクリア
+  const msg = document.getElementById('m-cvfd-status-msg'); if (msg) msg.textContent = '';
+}
+
+function cvfdReadFromTab() {
+  const get = (id) => document.getElementById(id);
+  const out = {};
+  const mode  = get('m-cvfd-mode')?.value;
+  const group = get('m-cvfd-group')?.value;
+  const range = get('m-cvfd-range')?.value;
+  if (mode)  out.mode  = mode;
+  if (group) out.group = group;
+  if (range) out.range = range;
+  out.includeEnded     = !!get('m-cvfd-includeEnded')?.checked;
+  out.includeDelivered = !!get('m-cvfd-includeDelivered')?.checked;
+  out.delayedOnly      = !!get('m-cvfd-delayedOnly')?.checked;
+  out.sosOnly          = !!get('m-cvfd-sosOnly')?.checked;
+  out.team   = get('m-cvfd-team')?.value   || '';
+  out.status = get('m-cvfd-status')?.value || '';
+  out.ballFilter = {
+    e: !!get('m-cvfd-ball-e')?.checked,
+    d: !!get('m-cvfd-ball-d')?.checked,
+    p: !!get('m-cvfd-ball-p')?.checked,
+    c: !!get('m-cvfd-ball-c')?.checked,
+  };
+  out.assigneeIds = _cvfdGetSelectedAssigneeIds();
+  return out;
+}
+
+// 「現在のフィルター値を保存」 — クリエイティブタブで実際に使われている値をフォームに反映
+function cvfdSnapshotCurrent() {
+  const snap = {
+    mode:  currentCreativeMode,
+    group: currentCreativeGroup,
+    range: currentCreativeRange,
+    includeEnded:     !!cvAdvFilters.includeEnded,
+    includeDelivered: !!cvAdvFilters.includeDelivered,
+    delayedOnly:      !!cvAdvFilters.delayedOnly,
+    sosOnly:          !!cvAdvFilters.sosOnly,
+    team:   cvAdvFilters.team   || '',
+    status: cvAdvFilters.status || '',
+    ballFilter: (() => {
+      const state = { e:true, d:true, p:true, c:true };
+      document.querySelectorAll('.bf').forEach(b => {
+        if (b.classList.contains('bf-e')) state.e = b.classList.contains('on');
+        if (b.classList.contains('bf-d')) state.d = b.classList.contains('on');
+        if (b.classList.contains('bf-p')) state.p = b.classList.contains('on');
+        if (b.classList.contains('bf-c')) state.c = b.classList.contains('on');
+      });
+      return state;
+    })(),
+    assigneeIds: [...(currentAssigneeIds || [])],
+  };
+  cvfdApplyValuesToTab(snap);
+  const msg = document.getElementById('m-cvfd-status-msg');
+  if (msg) msg.textContent = '現在の値をフォームに反映しました（保存ボタンで確定）';
+}
+
+async function cvfdSave() {
+  const payload = cvfdReadFromTab();
+  const msg = document.getElementById('m-cvfd-status-msg');
+  if (msg) msg.textContent = '保存中…';
+  try {
+    const res = await apiFetch(`${API}/users/me/creative-filter-defaults`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (msg) msg.textContent = '保存失敗: ' + (data?.error || res.status);
+      showToast('保存失敗: ' + (data?.error || 'unknown'), 'warn');
+      return;
+    }
+    if (msg) msg.textContent = '保存しました';
+    showToast('クリエイティブ画面の初期値を保存しました', 'success');
+  } catch (e) {
+    if (msg) msg.textContent = '保存失敗: ' + (e?.message || e);
+    showToast('保存失敗: ' + (e?.message || e), 'warn');
+  }
+}
+
+async function cvfdClearAll() {
+  if (!confirm('保存済みの初期値設定をクリアします。よろしいですか？')) return;
+  const msg = document.getElementById('m-cvfd-status-msg');
+  if (msg) msg.textContent = 'クリア中…';
+  try {
+    const res = await apiFetch(`${API}/users/me/creative-filter-defaults`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (msg) msg.textContent = 'クリア失敗: ' + (data?.error || res.status);
+      return;
+    }
+    cvfdApplyValuesToTab({});
+    if (msg) msg.textContent = 'クリアしました';
+    showToast('初期値をクリアしました（既定値に戻ります）', 'success');
+  } catch (e) {
+    if (msg) msg.textContent = 'クリア失敗: ' + (e?.message || e);
   }
 }
 
