@@ -2534,11 +2534,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div class="cv-adv-row cv-adv-row-bottom">
         <div class="cv-adv-field">
           <span class="cv-adv-label">ボール種別</span>
-          <div class="ball-filter cv-adv-ball" style="margin:0">
-            <button class="bf bf-e on" onclick="toggleBall(this)">編集者</button>
-            <button class="bf bf-d on" onclick="toggleBall(this)">D</button>
-            <button class="bf bf-p on" onclick="toggleBall(this)">P</button>
-            <button class="bf bf-c on" onclick="toggleBall(this)">クライアント</button>
+          <div class="ball-filter cv-adv-ball" id="cv-flt-ball-pills" style="margin:0">
+            <button type="button" class="bf bf-e on" data-ball="editor" aria-pressed="true" onclick="toggleBall(this)">編集者</button>
+            <button type="button" class="bf bf-d on" data-ball="D" aria-pressed="true" onclick="toggleBall(this)">D</button>
+            <button type="button" class="bf bf-p on" data-ball="P" aria-pressed="true" onclick="toggleBall(this)">P</button>
+            <button type="button" class="bf bf-c on" data-ball="client" aria-pressed="true" onclick="toggleBall(this)">クライアント</button>
           </div>
         </div>
         <button class="cv-adv-clear" type="button" onclick="resetCvAdvFilters()" title="詳細フィルターをリセット">クリア</button>
@@ -5403,14 +5403,50 @@ let currentCreativeRange = (typeof localStorage!=='undefined' && localStorage.ge
 let creativeGanttDateOffset = 0;
 // 詳細フィルター展開状態
 let creativeAdvFiltersOpen = false;
-// 詳細フィルターの値（既定値=フィルタ無効と等価）
+// ステータス pill の選択肢（statusClass のキー集合から）
+const _CV_STATUS_LIST = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
+// ボール種別の選択肢
+const _CV_BALL_LIST = ['editor','D','P','client'];
+// localStorage キー
+const _CV_LS_KEY_STATUSES = 'cv_adv_statuses';
+const _CV_LS_KEY_BALLS    = 'cv_adv_ball_types';
+function _cvLoadStatusesFromLS() {
+  try {
+    const raw = localStorage.getItem(_CV_LS_KEY_STATUSES);
+    if (!raw) return new Set(_CV_STATUS_LIST);
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set(_CV_STATUS_LIST);
+    return new Set(arr.filter(s => _CV_STATUS_LIST.includes(s)));
+  } catch (_) { return new Set(_CV_STATUS_LIST); }
+}
+function _cvLoadBallTypesFromLS() {
+  try {
+    const raw = localStorage.getItem(_CV_LS_KEY_BALLS);
+    if (!raw) return new Set(_CV_BALL_LIST);
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set(_CV_BALL_LIST);
+    return new Set(arr.filter(s => _CV_BALL_LIST.includes(s)));
+  } catch (_) { return new Set(_CV_BALL_LIST); }
+}
+function _cvSaveStatusesToLS() {
+  try { localStorage.setItem(_CV_LS_KEY_STATUSES, JSON.stringify([...cvAdvFilters.statuses])); } catch (_) {}
+}
+function _cvSaveBallTypesToLS() {
+  try { localStorage.setItem(_CV_LS_KEY_BALLS, JSON.stringify([...cvAdvFilters.ballTypes])); } catch (_) {}
+}
+// 詳細フィルターの値（既定値=全選択=フィルタ無効と等価）
 let cvAdvFilters = {
   includeEnded: false,        // 取引終了クライアント含む
   includeDelivered: true,     // 納品済み含む（既定: true で従来挙動維持）
   delayedOnly: false,         // 遅延のみ
   sosOnly: false,             // SOSのみ
-  status: [],                 // ステータス（空配列=全）— 複数選択 pill UI
+  // ステータス（複数選択 Set）— 初期値=全押下=全表示
+  statuses: _cvLoadStatusesFromLS(),
+  // ボール種別（複数選択 Set: 'editor' | 'D' | 'P' | 'client'）— 初期値=全押下=全表示
+  ballTypes: _cvLoadBallTypesFromLS(),
 };
+// 後方互換のための status エイリアス（旧コードが配列で参照する場合に備える）
+function _cvAdvStatusArray() { return Array.from(cvAdvFilters.statuses || []); }
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
@@ -8489,23 +8525,36 @@ function toggleCreativeAdvFilters(forceOpen) {
   creativeAdvFiltersOpen = willOpen;
   if (willOpen) _cvAdvPopulateDropdowns();
 }
-// ステータス pill の選択肢（statusClass のキー集合から）
-const _CV_STATUS_LIST = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
 function _cvAdvPopulateDropdowns() {
   // ステータス pill ボタン群を生成
   const pillBox = document.getElementById('cv-flt-status-pills');
   if (pillBox && pillBox.dataset.populated !== '1') {
-    const selected = new Set(cvAdvFilters.status || []);
+    const selected = cvAdvFilters.statuses instanceof Set
+      ? cvAdvFilters.statuses
+      : new Set(cvAdvFilters.statuses || []);
     pillBox.innerHTML = _CV_STATUS_LIST.map(s => {
-      const on = selected.has(s) ? ' on' : '';
-      return `<button type="button" class="cv-adv-status-pill${on}" data-status="${esc(s)}" onclick="toggleCvStatusPill(this)">${esc(s)}</button>`;
+      const isOn = selected.has(s);
+      return `<button type="button" class="cv-adv-status-pill${isOn ? ' on' : ''}" data-status="${esc(s)}" aria-pressed="${isOn ? 'true' : 'false'}" onclick="toggleCvStatusPill(this)">${esc(s)}</button>`;
     }).join('');
     pillBox.dataset.populated = '1';
+  }
+  // ボール pill の aria-pressed / on 状態を cvAdvFilters.ballTypes に同期
+  const ballBox = document.getElementById('cv-flt-ball-pills');
+  if (ballBox) {
+    const ballSel = cvAdvFilters.ballTypes instanceof Set
+      ? cvAdvFilters.ballTypes
+      : new Set(cvAdvFilters.ballTypes || []);
+    ballBox.querySelectorAll('button[data-ball]').forEach(b => {
+      const isOn = ballSel.has(b.dataset.ball);
+      b.classList.toggle('on', isOn);
+      b.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+    });
   }
 }
 function toggleCvStatusPill(btn) {
   if (!btn) return;
-  btn.classList.toggle('on');
+  const wasOn = btn.classList.toggle('on');
+  btn.setAttribute('aria-pressed', wasOn ? 'true' : 'false');
   onCvAdvFilterChange();
 }
 function onCvAdvFilterChange() {
@@ -8513,9 +8562,15 @@ function onCvAdvFilterChange() {
   cvAdvFilters.includeDelivered = !!document.getElementById('cv-flt-delivered')?.checked;
   cvAdvFilters.delayedOnly      = !!document.getElementById('cv-flt-delayed')?.checked;
   cvAdvFilters.sosOnly          = !!document.getElementById('cv-flt-sos')?.checked;
-  // ステータス: pill群の on 状態から配列を構築
+  // ステータス: pill群の on 状態から Set を構築
   const pills = document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill.on');
-  cvAdvFilters.status = Array.from(pills).map(b => b.dataset.status).filter(Boolean);
+  cvAdvFilters.statuses = new Set(Array.from(pills).map(b => b.dataset.status).filter(Boolean));
+  // ボール種別: pill 群の on 状態から Set を構築
+  const ballPills = document.querySelectorAll('#cv-flt-ball-pills button[data-ball].on');
+  cvAdvFilters.ballTypes = new Set(Array.from(ballPills).map(b => b.dataset.ball).filter(Boolean));
+  // localStorage に永続化
+  _cvSaveStatusesToLS();
+  _cvSaveBallTypesToLS();
   // 「取引終了含む」は既存トグル状態と同期
   if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives !== cvAdvFilters.includeEnded) {
     showEndedInCreatives = cvAdvFilters.includeEnded;
@@ -8527,12 +8582,27 @@ function onCvAdvFilterChange() {
   if (typeof renderCreatives === 'function') renderCreatives();
 }
 function resetCvAdvFilters() {
-  cvAdvFilters = { includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false, status:[] };
+  cvAdvFilters = {
+    includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false,
+    statuses: new Set(_CV_STATUS_LIST),  // 全押下=全表示
+    ballTypes: new Set(_CV_BALL_LIST),   // 全押下=全表示
+  };
   ['cv-flt-ended','cv-flt-delivered','cv-flt-delayed','cv-flt-sos'].forEach(id => {
     const el = document.getElementById(id); if (el) el.checked = (id === 'cv-flt-delivered');
   });
-  // ステータス pill を全 OFF
-  document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill').forEach(b => b.classList.remove('on'));
+  // ステータス pill を全 ON（初期値=全表示）
+  document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill').forEach(b => {
+    b.classList.add('on');
+    b.setAttribute('aria-pressed', 'true');
+  });
+  // ボール pill も全 ON
+  document.querySelectorAll('#cv-flt-ball-pills button[data-ball]').forEach(b => {
+    b.classList.add('on');
+    b.setAttribute('aria-pressed', 'true');
+  });
+  // localStorage 永続化（クリア後の初期値も保存）
+  _cvSaveStatusesToLS();
+  _cvSaveBallTypesToLS();
   if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives) {
     showEndedInCreatives = false;
     const btn = document.getElementById('toggle-ended-creatives');
@@ -8549,7 +8619,12 @@ function _cvAdvUpdateBadge() {
   if (!cvAdvFilters.includeDelivered) n++; // 既定 true
   if (cvAdvFilters.delayedOnly) n++;
   if (cvAdvFilters.sosOnly) n++;
-  if (Array.isArray(cvAdvFilters.status) && cvAdvFilters.status.length > 0) n++;
+  // ステータス: 全選択 = 非カウント、一部解除（=全数未満）= カウント
+  const statusSize = cvAdvFilters.statuses instanceof Set ? cvAdvFilters.statuses.size : (Array.isArray(cvAdvFilters.statuses) ? cvAdvFilters.statuses.length : 0);
+  if (statusSize !== _CV_STATUS_LIST.length) n++;
+  // ボール種別: 全選択 = 非カウント、一部解除 = カウント
+  const ballSize = cvAdvFilters.ballTypes instanceof Set ? cvAdvFilters.ballTypes.size : (Array.isArray(cvAdvFilters.ballTypes) ? cvAdvFilters.ballTypes.length : 0);
+  if (ballSize !== _CV_BALL_LIST.length) n++;
   const badge = document.getElementById('cv-adv-badge');
   const btn = document.getElementById('cv-adv-btn');
   if (btn) {
@@ -8567,8 +8642,12 @@ function _cvApplyAdvFilter(c) {
   if (!f.includeDelivered && (c.status === '納品' || c.force_delivered)) return false;
   // SOSのみ
   if (f.sosOnly && !c.help_flag) return false;
-  // ステータス（複数選択。空 = 全許可）
-  if (Array.isArray(f.status) && f.status.length > 0 && !f.status.includes(c.status)) return false;
+  // ステータス（複数選択。Set ベース。押下中のステータスのみ表示。空 Set = 全 OFF = 何も表示しない）
+  if (f.statuses instanceof Set) {
+    if (!f.statuses.has(c.status)) return false;
+  } else if (Array.isArray(f.statuses)) {
+    if (f.statuses.length === 0 || !f.statuses.includes(c.status)) return false;
+  }
   // 遅延のみ（rawFinal 確定 & 未納品 & 過去）
   if (f.delayedOnly) {
     const today = _cvAtMidnight(new Date());
@@ -8644,7 +8723,17 @@ function filterSearch(val) {
     loadCreatives();
   }, 300);
 }
-function toggleBall(btn) { btn.classList.toggle('on'); renderCreatives(); }
+function toggleBall(btn) {
+  if (!btn) return;
+  const isOn = btn.classList.toggle('on');
+  btn.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+  // cvAdvFilters.ballTypes を pill 群の on 状態と同期
+  const ballPills = document.querySelectorAll('#cv-flt-ball-pills button[data-ball].on');
+  cvAdvFilters.ballTypes = new Set(Array.from(ballPills).map(b => b.dataset.ball).filter(Boolean));
+  _cvSaveBallTypesToLS();
+  _cvAdvUpdateBadge();
+  renderCreatives();
+}
 
 // SOS（help_flag）を当該クリエイティブに対して操作できるか
 //   creative.sos_others 権限あり → 全クリエイティブで可
