@@ -326,7 +326,19 @@ tr.row-help td{background:#FFFBF2}
 .cv-adv-panel{margin-top:8px;padding:12px 14px 10px;background:#f8fdfc;border:0.5px solid var(--em-light);border-radius:10px;display:flex;flex-direction:column;gap:10px}
 .cv-adv-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .cv-adv-row-toggles{gap:18px}
-.cv-adv-row-selects{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) minmax(220px,auto);gap:14px;align-items:center}
+.cv-adv-row-status{align-items:flex-start}
+.cv-adv-field-status{align-items:flex-start;flex:1 1 100%;min-width:0}
+.cv-adv-field-status .cv-adv-label{padding-top:5px}
+.cv-adv-status-pills{display:flex;flex-wrap:wrap;gap:5px;flex:1 1 auto;min-width:0}
+.cv-adv-status-pills .cv-adv-status-pill{
+  font-size:11px;padding:4px 10px;border-radius:7px;
+  border:0.5px solid var(--border);background:#fff;color:var(--text-faint);
+  cursor:pointer;transition:all .12s;white-space:nowrap;line-height:1.4
+}
+.cv-adv-status-pills .cv-adv-status-pill:hover{border-color:var(--em-light);background:#f5fbfa}
+.cv-adv-status-pills .cv-adv-status-pill.on{
+  background:var(--em-pale);color:var(--em-dark);border-color:var(--em);font-weight:600
+}
 .cv-adv-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;user-select:none}
 .cv-adv-toggle input[type="checkbox"]{width:14px;height:14px;cursor:pointer;accent-color:var(--em)}
 .cv-adv-field{display:inline-flex;align-items:center;gap:8px;min-width:0}
@@ -340,8 +352,9 @@ tr.row-help td{background:#FFFBF2}
 .cv-adv-clear:hover{background:#fbeaea;color:#a03030;border-color:#f1c5c5}
 .cv-adv-row-bottom{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between}
 @media (max-width:900px){
-  .cv-adv-row-selects{grid-template-columns:1fr;gap:8px}
   .cv-adv-clear{justify-self:start}
+  .cv-adv-field-status{flex-direction:column;align-items:flex-start;gap:6px}
+  .cv-adv-field-status .cv-adv-label{padding-top:0}
 }
 
 /* ガント本体を少しコンパクトに */
@@ -2508,21 +2521,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <span>SOSのみ</span>
         </label>
       </div>
-      <!-- 2段: チーム / ステータス（select幅を広げて文字潰れ防止） -->
-      <div class="cv-adv-row cv-adv-row-selects">
-        <label class="cv-adv-field">
-          <span class="cv-adv-label">チーム</span>
-          <select id="cv-flt-team" class="form-select cv-adv-select" onchange="onCvAdvFilterChange()" title="">
-            <option value="">全チーム</option>
-          </select>
-        </label>
-        <label class="cv-adv-field">
+      <!-- 2段: ステータス（pillボタン群で複数選択可） -->
+      <div class="cv-adv-row cv-adv-row-status">
+        <div class="cv-adv-field cv-adv-field-status">
           <span class="cv-adv-label">ステータス</span>
-          <select id="cv-flt-status" class="form-select cv-adv-select" onchange="onCvAdvFilterChange()" title="">
-            <option value="">全ステータス</option>
-          </select>
-        </label>
-        <span></span>
+          <div id="cv-flt-status-pills" class="cv-adv-status-pills" role="group" aria-label="ステータス">
+            <!-- pill ボタンは _cvAdvPopulateDropdowns() で生成 -->
+          </div>
+        </div>
       </div>
       <!-- 3段: ボール種別 + クリア -->
       <div class="cv-adv-row cv-adv-row-bottom">
@@ -5398,8 +5404,7 @@ let cvAdvFilters = {
   includeDelivered: true,     // 納品済み含む（既定: true で従来挙動維持）
   delayedOnly: false,         // 遅延のみ
   sosOnly: false,             // SOSのみ
-  team: '',                   // チームID（空=全）
-  status: '',                 // ステータス（空=全）
+  status: [],                 // ステータス（空配列=全）— 複数選択 pill UI
 };
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
@@ -7460,7 +7465,7 @@ function renderCreatives() {
       else if (bh.type === 'all') hasBall = (!!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId)) || isProducerLike;
       if (!hasBall) return false;
     }
-    // 詳細フィルター（チーム/ステータス/ランク/SOS/納品済み/遅延のみ）
+    // 詳細フィルター（ステータス/SOS/納品済み/遅延のみ）
     if (typeof _cvApplyAdvFilter === 'function' && !_cvApplyAdvFilter(c)) return false;
     return true;
   });
@@ -8479,36 +8484,33 @@ function toggleCreativeAdvFilters(forceOpen) {
   creativeAdvFiltersOpen = willOpen;
   if (willOpen) _cvAdvPopulateDropdowns();
 }
+// ステータス pill の選択肢（statusClass のキー集合から）
+const _CV_STATUS_LIST = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
 function _cvAdvPopulateDropdowns() {
-  // チーム
-  const teamSel = document.getElementById('cv-flt-team');
-  if (teamSel && teamSel.dataset.populated !== '1') {
-    const opts = ['<option value="">全チーム</option>'].concat(
-      (allTeams || []).map(t => `<option value="${t.id}">${esc(t.team_code || t.team_name || 'チーム')}</option>`)
-    );
-    teamSel.innerHTML = opts.join('');
-    teamSel.dataset.populated = '1';
+  // ステータス pill ボタン群を生成
+  const pillBox = document.getElementById('cv-flt-status-pills');
+  if (pillBox && pillBox.dataset.populated !== '1') {
+    const selected = new Set(cvAdvFilters.status || []);
+    pillBox.innerHTML = _CV_STATUS_LIST.map(s => {
+      const on = selected.has(s) ? ' on' : '';
+      return `<button type="button" class="cv-adv-status-pill${on}" data-status="${esc(s)}" onclick="toggleCvStatusPill(this)">${esc(s)}</button>`;
+    }).join('');
+    pillBox.dataset.populated = '1';
   }
-  // ステータス（statusClass のキー集合から構築）
-  const statusSel = document.getElementById('cv-flt-status');
-  if (statusSel && statusSel.dataset.populated !== '1') {
-    const list = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
-    statusSel.innerHTML = '<option value="">全ステータス</option>' + list.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    statusSel.dataset.populated = '1';
-  }
+}
+function toggleCvStatusPill(btn) {
+  if (!btn) return;
+  btn.classList.toggle('on');
+  onCvAdvFilterChange();
 }
 function onCvAdvFilterChange() {
   cvAdvFilters.includeEnded     = !!document.getElementById('cv-flt-ended')?.checked;
   cvAdvFilters.includeDelivered = !!document.getElementById('cv-flt-delivered')?.checked;
   cvAdvFilters.delayedOnly      = !!document.getElementById('cv-flt-delayed')?.checked;
   cvAdvFilters.sosOnly          = !!document.getElementById('cv-flt-sos')?.checked;
-  cvAdvFilters.team   = document.getElementById('cv-flt-team')?.value   || '';
-  cvAdvFilters.status = document.getElementById('cv-flt-status')?.value || '';
-  // チーム/ステータスは省略表示時に全文を title で見せる
-  const tSel = document.getElementById('cv-flt-team');
-  if (tSel) tSel.title = tSel.options[tSel.selectedIndex]?.text || '';
-  const sSel = document.getElementById('cv-flt-status');
-  if (sSel) sSel.title = sSel.options[sSel.selectedIndex]?.text || '';
+  // ステータス: pill群の on 状態から配列を構築
+  const pills = document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill.on');
+  cvAdvFilters.status = Array.from(pills).map(b => b.dataset.status).filter(Boolean);
   // 「取引終了含む」は既存トグル状態と同期
   if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives !== cvAdvFilters.includeEnded) {
     showEndedInCreatives = cvAdvFilters.includeEnded;
@@ -8520,13 +8522,12 @@ function onCvAdvFilterChange() {
   if (typeof renderCreatives === 'function') renderCreatives();
 }
 function resetCvAdvFilters() {
-  cvAdvFilters = { includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false, team:'', status:'' };
+  cvAdvFilters = { includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false, status:[] };
   ['cv-flt-ended','cv-flt-delivered','cv-flt-delayed','cv-flt-sos'].forEach(id => {
     const el = document.getElementById(id); if (el) el.checked = (id === 'cv-flt-delivered');
   });
-  ['cv-flt-team','cv-flt-status'].forEach(id => {
-    const el = document.getElementById(id); if (el) { el.value = ''; el.title = ''; }
-  });
+  // ステータス pill を全 OFF
+  document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill').forEach(b => b.classList.remove('on'));
   if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives) {
     showEndedInCreatives = false;
     const btn = document.getElementById('toggle-ended-creatives');
@@ -8543,8 +8544,7 @@ function _cvAdvUpdateBadge() {
   if (!cvAdvFilters.includeDelivered) n++; // 既定 true
   if (cvAdvFilters.delayedOnly) n++;
   if (cvAdvFilters.sosOnly) n++;
-  if (cvAdvFilters.team) n++;
-  if (cvAdvFilters.status) n++;
+  if (Array.isArray(cvAdvFilters.status) && cvAdvFilters.status.length > 0) n++;
   const badge = document.getElementById('cv-adv-badge');
   const btn = document.getElementById('cv-adv-btn');
   if (btn) {
@@ -8562,15 +8562,8 @@ function _cvApplyAdvFilter(c) {
   if (!f.includeDelivered && (c.status === '納品' || c.force_delivered)) return false;
   // SOSのみ
   if (f.sosOnly && !c.help_flag) return false;
-  // チーム
-  if (f.team) {
-    const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-    const editorTeamId = editor?.users?.team_id;
-    const tid = c.team_id || editorTeamId;
-    if (tid !== f.team) return false;
-  }
-  // ステータス
-  if (f.status && c.status !== f.status) return false;
+  // ステータス（複数選択。空 = 全許可）
+  if (Array.isArray(f.status) && f.status.length > 0 && !f.status.includes(c.status)) return false;
   // 遅延のみ（rawFinal 確定 & 未納品 & 過去）
   if (f.delayedOnly) {
     const today = _cvAtMidnight(new Date());
