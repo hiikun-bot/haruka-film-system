@@ -124,6 +124,85 @@ tr:hover td{background:#f0fbfa}
 tr.row-late td{background:#FFF8F8}
 tr.row-help td{background:#FFFBF2}
 
+/* ===== クリエイティブ ガントチャート ===== */
+.cv-gantt-main{background:#fff;border:0.5px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(43,184,180,.06)}
+.cv-gantt-sidepanel{background:#fff;border:0.5px solid var(--border);border-radius:12px;padding:14px;font-size:13px;max-height:80vh;overflow-y:auto;box-shadow:0 1px 3px rgba(43,184,180,.06)}
+.cv-g-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:0.5px solid var(--border);background:var(--em-pale);font-size:12px;color:var(--em-dark)}
+.cv-g-scroll{position:relative;overflow-x:auto;overflow-y:auto;max-height:72vh}
+.cv-g-grid{display:grid;min-width:100%;position:relative}
+/* 左固定列ヘッダ */
+.cv-g-head-left,.cv-g-head-right{position:sticky;top:0;background:var(--em-pale);font-size:11px;color:var(--em-dark);font-weight:600;padding:6px 8px;border-bottom:0.5px solid var(--border);z-index:6;letter-spacing:0.04em;text-transform:none}
+.cv-g-head-left{position:sticky;left:0;z-index:7}
+.cv-g-fixed{position:sticky;left:0;background:#fff;border-right:0.5px solid var(--border);z-index:5}
+.cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
+.cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
+.cv-g-row-fixed{display:grid;grid-template-columns:170px 200px 130px 100px 86px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);min-height:40px;background:#fff}
+.cv-g-row-fixed:hover{background:#f0fbfa}
+.cv-g-row-fixed.is-late{background:#FFF6F6}
+.cv-g-row-fixed > .c{padding:6px 10px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-g-row-fixed .c-client{font-weight:500;color:var(--em-dark)}
+.cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted}
+.cv-g-row-fixed .c-name:hover{color:var(--text)}
+.cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:6px}
+.cv-g-row-fixed .c-status .status-chip{font-size:11px;padding:2px 8px}
+.cv-g-row-fixed .c-delay{font-size:11px;font-weight:600;text-align:right;padding-right:12px}
+.cv-g-row-fixed .c-delay.late{color:#E24B4A}
+.cv-g-row-fixed .c-delay.warn{color:#E89B0E}
+.cv-g-row-fixed .c-delay.ok{color:var(--em-dark)}
+.cv-g-row-fixed .c-delay.done{color:#7FA68A}
+.cv-g-group-row{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4}
+.cv-g-group-row .gicount{font-weight:400;color:var(--text-muted);font-size:11px}
+/* タイムライン部 */
+.cv-g-timeline-head{position:sticky;top:0;display:flex;background:var(--em-pale);border-bottom:0.5px solid var(--border);z-index:5;height:40px}
+.cv-g-tl-day{flex:0 0 auto;border-right:0.5px solid var(--border-light);font-size:10px;color:var(--em-dark);text-align:center;padding-top:4px;line-height:1.2;box-sizing:border-box}
+.cv-g-tl-day.is-month-start{border-left:1px solid var(--em-dark)}
+.cv-g-tl-day.is-week-start{border-left:0.5px solid var(--em)}
+.cv-g-tl-day.is-weekend{background:#f7fafa;color:var(--text-muted)}
+.cv-g-tl-day.is-today{background:#FFF4D9;color:#B36F00;font-weight:700}
+.cv-g-row-tl{position:relative;border-bottom:0.5px solid var(--border-light);height:40px;background:#fff}
+.cv-g-row-tl.is-late{background:#FFFBFB}
+.cv-g-row-tl:hover{background:#FAFFFF}
+.cv-g-row-tl.is-late:hover{background:#FFF6F6}
+.cv-g-bar{position:absolute;top:50%;transform:translateY(-50%);height:8px;border-radius:4px;background:linear-gradient(90deg,#A8EDEA,#3ECFCA);box-shadow:inset 0 0 0 0.5px var(--em-dark);opacity:0.85}
+.cv-g-bar.late{background:linear-gradient(90deg,#FBC8C8,#E24B4A);box-shadow:inset 0 0 0 0.5px #B23030}
+.cv-g-bar.done{background:linear-gradient(90deg,#D1F0DA,#7FA68A);opacity:0.7}
+.cv-g-bar.dashed{background:transparent;border:1px dashed var(--em-dark);height:8px}
+.cv-g-ms{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;font-weight:700;color:#fff;z-index:2;cursor:default}
+.cv-g-ms.ms-start{background:#7CC9C5;clip-path:polygon(0 0,100% 50%,0 100%);width:12px;height:12px;border-radius:0}
+.cv-g-ms.ms-draft{width:14px;height:14px;background:#F2A93B;transform:translate(-50%,-50%) rotate(45deg)}
+.cv-g-ms.ms-client{width:14px;height:14px;background:#9B7BD9;border-radius:50%}
+.cv-g-ms.ms-final{width:18px;height:18px;background:#E24B4A;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);box-shadow:none}
+.cv-g-ms.ms-dp{width:10px;height:10px;background:#5ABDB9;border-radius:50%;font-size:8px}
+.cv-g-ms.ms-dp.ms-d{background:#1E88B0}
+.cv-g-ms.ms-dp.ms-p{background:#7E57C2}
+.cv-g-today-line{position:absolute;top:0;bottom:0;width:0;border-left:2px solid #E89B0E;z-index:3;pointer-events:none}
+.cv-g-today-label{position:absolute;top:-2px;background:#E89B0E;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:700;transform:translateX(-50%);white-space:nowrap;z-index:4;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+/* 凡例 */
+.cv-g-legend{display:flex;flex-wrap:wrap;gap:10px;padding:8px 14px;font-size:11px;color:var(--text-muted);background:#fdfffe;border-top:0.5px solid var(--border-light)}
+.cv-g-legend .lg-item{display:inline-flex;align-items:center;gap:4px}
+/* サイドパネル */
+.cv-sp-section{margin-bottom:18px}
+.cv-sp-section h4{font-size:12px;font-weight:600;color:var(--em-dark);margin:0 0 8px;letter-spacing:0.04em;border-bottom:0.5px solid var(--border-light);padding-bottom:4px}
+.cv-sp-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.cv-sp-stat{background:var(--em-pale);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--em-dark)}
+.cv-sp-stat .num{display:block;font-size:20px;font-weight:700;color:var(--text);line-height:1.1;margin-bottom:2px}
+.cv-sp-stat.is-late{background:#FBEAEA;color:#A03030}
+.cv-sp-stat.is-late .num{color:#E24B4A}
+.cv-sp-list{display:flex;flex-direction:column;gap:6px}
+.cv-sp-item{background:#fdfffe;border:0.5px solid var(--border-light);border-radius:8px;padding:7px 9px;font-size:11px;line-height:1.4;cursor:pointer;transition:background .15s}
+.cv-sp-item:hover{background:var(--em-pale)}
+.cv-sp-item.is-late{border-left:3px solid #E24B4A}
+.cv-sp-item .ttl{font-weight:600;color:var(--em-dark);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-sp-item .meta{color:var(--text-muted);font-size:10px;display:flex;gap:6px;flex-wrap:wrap}
+.cv-sp-item .delay-pill{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:#FBEAEA;color:#A03030;margin-left:4px}
+@media (max-width:1100px){
+  #cv-gantt-layout{grid-template-columns:1fr !important}
+  .cv-gantt-sidepanel{max-height:none}
+}
+@media (max-width:768px){
+  .cv-g-row-fixed{grid-template-columns:120px 140px 100px 80px 64px}
+}
+
 /* バッジ類 */
 .proj-tag{font-size:12px;padding:3px 10px;border-radius:8px;white-space:nowrap;font-weight:500;cursor:default}
 .status-chip{font-size:12px;padding:4px 10px;border-radius:8px;font-weight:500;white-space:nowrap;display:inline-block}
@@ -2176,8 +2255,34 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </span>
       <button class="btn-primary" onclick="openCreateCreative()" style="margin-left:8px">＋ 追加</button>
     </div>
+    <!-- ビュー切替: ガント / リスト -->
+    <div class="toolbar-row" id="cv-mode-bar" style="gap:12px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:13px;color:var(--text-muted);font-weight:500">表示：</span>
+      <div class="filter-tabs">
+        <button class="ft active" id="cv-mode-gantt" onclick="setCreativeMode('gantt')">📅 ガント</button>
+        <button class="ft" id="cv-mode-list" onclick="setCreativeMode('list')">📋 リスト</button>
+      </div>
+      <span id="cv-gantt-controls" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <span style="width:1px;height:20px;background:var(--border)"></span>
+        <span style="font-size:13px;color:var(--text-muted);font-weight:500">グループ：</span>
+        <div class="filter-tabs">
+          <button class="ft active" id="cv-group-project" onclick="setCreativeGroup('project')">案件別</button>
+          <button class="ft" id="cv-group-assignee" onclick="setCreativeGroup('assignee')">担当者別</button>
+        </div>
+        <span style="width:1px;height:20px;background:var(--border)"></span>
+        <span style="font-size:13px;color:var(--text-muted);font-weight:500">期間：</span>
+        <div class="filter-tabs">
+          <button class="ft" id="cv-range-week" onclick="setCreativeRange('week')">1週</button>
+          <button class="ft" id="cv-range-2week" onclick="setCreativeRange('2week')">2週</button>
+          <button class="ft active" id="cv-range-month" onclick="setCreativeRange('month')">1ヶ月</button>
+          <button class="ft" id="cv-range-2month" onclick="setCreativeRange('2month')">2ヶ月</button>
+        </div>
+        <button class="btn" onclick="creativeGanttScrollToToday()" style="font-size:12px;padding:5px 12px">今日へ</button>
+      </span>
+    </div>
   </div>
-  <div style="padding:20px">
+  <!-- リスト表示 -->
+  <div id="creative-view-list" style="padding:20px;display:none">
     <div class="table-wrap">
       <table>
         <thead>
@@ -2202,6 +2307,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <tr><td colspan="13" class="loading">読み込み中...</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+  <!-- ガント表示 -->
+  <div id="creative-view-gantt" style="padding:16px 20px 20px;display:block">
+    <div id="cv-gantt-layout" style="display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start">
+      <div id="cv-gantt-main" class="cv-gantt-main">
+        <div class="loading" style="padding:40px">読み込み中...</div>
+      </div>
+      <aside id="cv-gantt-sidepanel" class="cv-gantt-sidepanel"></aside>
     </div>
   </div>
 </div>
@@ -4997,6 +5111,10 @@ let showEndedInCreatives = false;
 let creativesPage = { limit: 50, offset: 0, total: 0 };
 let _searchDebounceTimer = null;
 let _creativesLoadSeq = 0;
+// クリエイティブ画面の表示モード（gantt | list）/ グルーピング / 期間 — localStorage で保持
+let currentCreativeMode  = (typeof localStorage!=='undefined' && localStorage.getItem('cv_mode'))  || 'gantt';
+let currentCreativeGroup = (typeof localStorage!=='undefined' && localStorage.getItem('cv_group')) || 'project';
+let currentCreativeRange = (typeof localStorage!=='undefined' && localStorage.getItem('cv_range')) || 'month';
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
@@ -6770,6 +6888,9 @@ function renderCreatives() {
   document.getElementById('creative-count').textContent = totalLabel;
   // 種別タブのカウントバッジは サーバー側 /api/creatives/counts の結果から更新
   updateCreativeTabBadges();
+  // ガントチャートも同じフィルタ済データで描画（モード切替によらず常に最新化）
+  try { renderCreativesGantt(filtered); } catch(e) { console.warn('[gantt] render error:', e); }
+
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     renderCreativeLoadMore();
@@ -6888,6 +7009,424 @@ function renderCreativeLoadMore() {
   </td>`;
   tbody.appendChild(tr);
 }
+
+// ============================================================
+// クリエイティブ ガントチャート
+// ============================================================
+// 表示モード切替（gantt | list）
+function setCreativeMode(mode) {
+  currentCreativeMode = (mode === 'list') ? 'list' : 'gantt';
+  try { localStorage.setItem('cv_mode', currentCreativeMode); } catch(_) {}
+  document.getElementById('cv-mode-gantt')?.classList.toggle('active', currentCreativeMode === 'gantt');
+  document.getElementById('cv-mode-list')?.classList.toggle('active', currentCreativeMode === 'list');
+  document.getElementById('creative-view-gantt').style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
+  document.getElementById('creative-view-list').style.display  = (currentCreativeMode === 'gantt') ? 'none' : '';
+  document.getElementById('cv-gantt-controls').style.display   = (currentCreativeMode === 'gantt') ? '' : 'none';
+  if (typeof renderCreatives === 'function') renderCreatives();
+  if (currentCreativeMode === 'gantt') setTimeout(creativeGanttScrollToToday, 0);
+}
+function setCreativeGroup(group) {
+  currentCreativeGroup = (group === 'assignee') ? 'assignee' : 'project';
+  try { localStorage.setItem('cv_group', currentCreativeGroup); } catch(_) {}
+  document.getElementById('cv-group-project').classList.toggle('active', currentCreativeGroup === 'project');
+  document.getElementById('cv-group-assignee').classList.toggle('active', currentCreativeGroup === 'assignee');
+  if (typeof renderCreatives === 'function') renderCreatives();
+}
+function setCreativeRange(range) {
+  const allowed = ['week','2week','month','2month'];
+  currentCreativeRange = allowed.includes(range) ? range : 'month';
+  try { localStorage.setItem('cv_range', currentCreativeRange); } catch(_) {}
+  ['week','2week','month','2month'].forEach(r => {
+    const el = document.getElementById('cv-range-' + r);
+    if (el) el.classList.toggle('active', r === currentCreativeRange);
+  });
+  if (typeof renderCreatives === 'function') renderCreatives();
+  setTimeout(creativeGanttScrollToToday, 0);
+}
+function creativeGanttScrollToToday() {
+  const scroll = document.querySelector('#creative-view-gantt .cv-g-scroll');
+  const today = scroll?.querySelector('.cv-g-today-line');
+  if (!scroll || !today) return;
+  const left = parseFloat(today.style.left || '0');
+  scroll.scrollLeft = Math.max(0, left - scroll.clientWidth * 0.3);
+}
+
+// 日付ヘルパ
+function _cvAtMidnight(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function _cvDateAdd(d, days) { const x = new Date(d); x.setDate(x.getDate()+days); x.setHours(0,0,0,0); return x; }
+function _cvDayDiff(a, b) {
+  // 暦日差: タイムゾーン跨ぎでもズレないよう UTC ベースで計算
+  const A = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const B = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((A - B)/86400000);
+}
+
+// 期間範囲（today を含む見やすいレンジに正規化）
+function _cvRangeWindow() {
+  const today = _cvAtMidnight(new Date());
+  let start, end;
+  if (currentCreativeRange === 'week') {
+    start = _cvDateAdd(today, -3);
+    end   = _cvDateAdd(today, 4);
+  } else if (currentCreativeRange === '2week') {
+    start = _cvDateAdd(today, -3);
+    end   = _cvDateAdd(today, 11);
+  } else if (currentCreativeRange === '2month') {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    end   = new Date(today.getFullYear(), today.getMonth()+2, 0); // 翌月末
+  } else { // month
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    end   = _cvDateAdd(new Date(today.getFullYear(), today.getMonth()+1, 0), 7); // 月末+1週で来月入口を少し
+  }
+  return { start: _cvAtMidnight(start), end: _cvAtMidnight(end), today };
+}
+
+// 1行ぶんの判定情報を作る（リストと同じロジックを共有）
+function _cvRowInfo(c) {
+  const today = _cvAtMidnight(new Date());
+  const draft = c.draft_deadline ? _cvAtMidnight(new Date(c.draft_deadline)) : null;
+  const final = c.final_deadline ? _cvAtMidnight(new Date(c.final_deadline)) : null;
+  const start = c.created_at ? _cvAtMidnight(new Date(c.created_at)) : null;
+  const isDelivered = c.status === '納品';
+  // クライアント確認予定日: draft と final の間の中間点を派生（DB列が無いため）
+  let clientCheck = null;
+  if (draft && final && final > draft) {
+    const mid = new Date(draft.getTime() + (final - draft)/2);
+    clientCheck = _cvAtMidnight(mid);
+  }
+  // 実績納品日: 納品済みなら updated_at を実績日として扱う
+  const deliveredAt = (isDelivered && c.updated_at) ? _cvAtMidnight(new Date(c.updated_at)) : null;
+  const finalDiff = final ? _cvDayDiff(final, today) : null;
+  const DRAFT_SUBMITTED = ['Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
+  const draftSubmitted = DRAFT_SUBMITTED.includes(c.status);
+  const isLate = !isDelivered && (
+    (finalDiff !== null && finalDiff < 0) ||
+    (!draftSubmitted && draft && _cvDayDiff(draft, today) < 0)
+  );
+  // 遅延ラベル（日数で必ず）
+  let delayLabel = '-', delayClass = 'ok';
+  if (isDelivered) { delayLabel = '納品済'; delayClass = 'done'; }
+  else if (final) {
+    if (finalDiff < 0) { delayLabel = `${Math.abs(finalDiff)}日遅れ`; delayClass = 'late'; }
+    else if (finalDiff === 0) { delayLabel = '本日納品'; delayClass = 'warn'; }
+    else if (finalDiff <= 2) { delayLabel = `あと${finalDiff}日`; delayClass = 'warn'; }
+    else if (finalDiff <= 7) { delayLabel = `あと${finalDiff}日`; delayClass = 'ok'; }
+    else { delayLabel = '予定通り'; delayClass = 'ok'; }
+  }
+  return {
+    today, draft, final, start, clientCheck, deliveredAt,
+    isDelivered, isLate, delayLabel, delayClass,
+  };
+}
+
+// ガント本体描画
+function renderCreativesGantt(filtered) {
+  const main = document.getElementById('cv-gantt-main');
+  const side = document.getElementById('cv-gantt-sidepanel');
+  if (!main) return;
+  const win = _cvRangeWindow();
+  const totalDays = _cvDayDiff(win.end, win.start) + 1;
+  // 1日あたり px 幅: 期間に応じて伸縮
+  const dayPx = (currentCreativeRange === 'week') ? 64
+              : (currentCreativeRange === '2week') ? 44
+              : (currentCreativeRange === '2month') ? 16
+              : 22;
+  const tlWidth = dayPx * totalDays;
+
+  if (!filtered || !filtered.length) {
+    main.innerHTML = `
+      <div class="cv-g-toolbar"><span>${win.start.toLocaleDateString('ja-JP')} 〜 ${win.end.toLocaleDateString('ja-JP')}</span></div>
+      <div style="padding:48px;text-align:center;color:var(--text-muted)">該当するクリエイティブがありません</div>`;
+    if (side) side.innerHTML = _cvSidePanelHtml([]);
+    return;
+  }
+
+  // チームルックアップ
+  const teamById = new Map(allTeams.map(t => [t.id, t]));
+  const teamByMember = new Map();
+  allTeams.forEach(t => (t.team_members || []).forEach(tm => {
+    if (!teamByMember.has(tm.user_id)) teamByMember.set(tm.user_id, t);
+  }));
+
+  // タイムラインヘッダ生成（日付セル）
+  const dayCells = [];
+  for (let i=0; i<totalDays; i++) {
+    const d = _cvDateAdd(win.start, i);
+    const isToday = _cvDayDiff(d, win.today) === 0;
+    const dow = d.getDay();
+    const isWeekend = (dow === 0 || dow === 6);
+    const isMonthStart = (d.getDate() === 1);
+    const isWeekStart = (dow === 1);
+    const showLabel = (currentCreativeRange === 'week' || currentCreativeRange === '2week') ? true : (d.getDate() === 1 || dow === 1);
+    let label = '';
+    if (currentCreativeRange === 'week' || currentCreativeRange === '2week') {
+      label = `${d.getMonth()+1}/${d.getDate()}<br><span style="font-size:9px;opacity:.7">${'日月火水木金土'[dow]}</span>`;
+    } else if (isMonthStart) {
+      label = `<b>${d.getMonth()+1}月</b>`;
+    } else if (isWeekStart) {
+      label = `${d.getDate()}`;
+    } else if (currentCreativeRange === 'month') {
+      // 1ヶ月表示でも週始まり以外は控えめに日付だけ
+      label = (d.getDate() % 2 === 1) ? `<span style="opacity:.5">${d.getDate()}</span>` : '';
+    }
+    const cls = ['cv-g-tl-day'];
+    if (isMonthStart) cls.push('is-month-start');
+    if (isWeekStart) cls.push('is-week-start');
+    if (isWeekend) cls.push('is-weekend');
+    if (isToday) cls.push('is-today');
+    dayCells.push(`<div class="${cls.join(' ')}" style="width:${dayPx}px">${showLabel?label:''}</div>`);
+  }
+
+  // 行ごとにメタ情報を集約
+  const rows = filtered.map(c => {
+    const info = _cvRowInfo(c);
+    const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const editorUser = editor?.users || null;
+    const homeTeamId = editorUser?.team_id;
+    const team = (c.team_id ? teamById.get(c.team_id) : null)
+      || (homeTeamId ? teamById.get(homeTeamId) : null)
+      || (editorUser?.id ? teamByMember.get(editorUser.id) : null);
+    return { c, info, editorUser, team };
+  });
+
+  // 並び順: 遅延 → 締切が近い順 → クライアント名
+  rows.sort((a, b) => {
+    if (a.info.isLate !== b.info.isLate) return a.info.isLate ? -1 : 1;
+    const af = a.info.final ? a.info.final.getTime() : Infinity;
+    const bf = b.info.final ? b.info.final.getTime() : Infinity;
+    if (af !== bf) return af - bf;
+    return (a.c.projects?.clients?.name || '').localeCompare(b.c.projects?.clients?.name || '', 'ja');
+  });
+
+  // グルーピング
+  const groups = new Map();
+  rows.forEach(r => {
+    let key, label;
+    if (currentCreativeGroup === 'assignee') {
+      key = r.editorUser?.id || 'unassigned';
+      label = r.editorUser?.full_name ? (r.editorUser.nickname ? `${r.editorUser.nickname}（${r.editorUser.full_name}）` : r.editorUser.full_name) : '未アサイン';
+    } else {
+      const cli = r.c.projects?.clients?.name || '不明クライアント';
+      const proj = r.c.projects?.name || '案件未設定';
+      key = `${r.c.projects?.id || 'none'}::${r.c.projects?.clients?.id || 'none'}`;
+      label = `${cli} / ${proj}`;
+    }
+    if (!groups.has(key)) groups.set(key, { label, items: [] });
+    groups.get(key).items.push(r);
+  });
+
+  // タイムライン1行のHTML生成
+  const renderTimelineRow = (r) => {
+    const { c, info } = r;
+    const segments = [];
+    // バー: 着手開始(start) → 最終納期(final) を予定バーとして描画
+    if (info.start && info.final) {
+      const s = Math.max(0, _cvDayDiff(info.start, win.start));
+      const e = Math.min(totalDays-1, _cvDayDiff(info.final, win.start));
+      if (e >= 0 && s <= totalDays-1 && e >= s) {
+        const left = s * dayPx + dayPx*0.15;
+        const width = (e - s + 1) * dayPx - dayPx*0.3;
+        const cls = info.isDelivered ? 'done' : (info.isLate ? 'late' : '');
+        segments.push(`<div class="cv-g-bar ${cls}" style="left:${left}px;width:${Math.max(width, 6)}px" title="${esc(c.file_name)}"></div>`);
+      }
+    } else if (info.final) {
+      // start が無くても final だけある場合は短いバーを final の手前 5日分で描画
+      const e = _cvDayDiff(info.final, win.start);
+      const s = Math.max(0, e - 5);
+      if (e >= 0 && s <= totalDays-1) {
+        const left = Math.max(0, s) * dayPx + dayPx*0.15;
+        const width = (Math.min(totalDays-1, e) - Math.max(0,s) + 1) * dayPx - dayPx*0.3;
+        const cls = info.isDelivered ? 'done' : (info.isLate ? 'late' : '');
+        segments.push(`<div class="cv-g-bar ${cls}" style="left:${left}px;width:${Math.max(width,6)}px"></div>`);
+      }
+    }
+    // マイルストーン
+    const pushMs = (date, kind, title) => {
+      if (!date) return;
+      const idx = _cvDayDiff(date, win.start);
+      if (idx < 0 || idx > totalDays-1) return;
+      const left = idx * dayPx + dayPx/2;
+      segments.push(`<div class="cv-g-ms ms-${kind}" style="left:${left}px" title="${esc(title)}"></div>`);
+    };
+    pushMs(info.start, 'start',  `着手開始: ${info.start?.toLocaleDateString('ja-JP') || ''}`);
+    pushMs(info.draft, 'draft',  `初稿締切: ${info.draft?.toLocaleDateString('ja-JP') || ''}`);
+    pushMs(info.clientCheck, 'client', `クライアント確認 (推定): ${info.clientCheck?.toLocaleDateString('ja-JP') || ''}`);
+    pushMs(info.final, 'final',  `最終納品: ${info.final?.toLocaleDateString('ja-JP') || ''}`);
+    // D/Pバッジ（1週/2週表示時のみ控えめに）
+    // 現状 Dチェック/Pチェック の予定日列が無いので、status から類推して draft 〜 final 間に小さい点を打つ
+    if (currentCreativeRange === 'week' || currentCreativeRange === '2week') {
+      if (c.status === 'Dチェック' || c.status === 'Dチェック後修正') {
+        pushMs(info.today, 'dp ms-d', `現在: Dチェック`);
+      } else if (c.status === 'Pチェック' || c.status === 'Pチェック後修正') {
+        pushMs(info.today, 'dp ms-p', `現在: Pチェック`);
+      }
+    }
+    return segments.join('');
+  };
+
+  // 固定列（左）の HTML
+  const renderFixedRow = (r) => {
+    const { c, info, editorUser, team } = r;
+    const clientName = c.projects?.clients?.name || '-';
+    const teamLabel = team ? `${team.team_code}` : '';
+    const assignee = editorUser
+      ? `${(typeof avatarHtml === 'function' ? avatarHtml(editorUser, 22) : '')}<span style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis">${esc(editorUser.full_name || '')}${teamLabel?` <span class="team-badge" style="font-size:10px;padding:1px 5px">${esc(teamLabel)}</span>`:''}</span>`
+      : `<span style="font-size:11px;color:var(--text-muted)">未アサイン${teamLabel?` <span class="team-badge" style="font-size:10px;padding:1px 5px">${esc(teamLabel)}</span>`:''}</span>`;
+    return `
+      <div class="cv-g-row-fixed ${info.isLate?'is-late':''}" data-id="${c.id}">
+        <div class="c c-client" title="${esc(clientName)}">${esc(clientName)}</div>
+        <div class="c c-name" title="${esc(c.file_name)}" onclick="openCreativeDetail('${c.id}')">${esc(c.file_name || '')}</div>
+        <div class="c c-assignee">${assignee}</div>
+        <div class="c c-status"><span class="status-chip ${statusClass(c.status)}">${esc(c.status || '')}</span></div>
+        <div class="c c-delay ${info.delayClass}">${esc(info.delayLabel)}</div>
+      </div>`;
+  };
+
+  // タイムライン1行のラッパ
+  const renderTimelineRowWrap = (r) => {
+    return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
+  };
+
+  // 固定列の枠（カテゴリヘッダ）
+  const fixedColTpl = `170px 200px 130px 100px 86px`;
+  const FIXED_W = 170 + 200 + 130 + 100 + 86;
+
+  // 行をグループ単位で構築
+  let fixedHtml = '';
+  let tlHtml = '';
+  groups.forEach((g, key) => {
+    fixedHtml += `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span>${esc(g.label)}</span><span class="gicount">${g.items.length}件</span></div>`;
+    tlHtml    += `<div class="cv-g-row-tl" style="width:${tlWidth}px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);height:32px"></div>`;
+    g.items.forEach(r => {
+      fixedHtml += renderFixedRow(r);
+      tlHtml    += renderTimelineRowWrap(r);
+    });
+  });
+
+  // 今日線の left 座標
+  const todayIdx = _cvDayDiff(win.today, win.start);
+  const todayLeft = (todayIdx >= 0 && todayIdx <= totalDays-1) ? (todayIdx * dayPx + dayPx/2) : -9999;
+
+  main.innerHTML = `
+    <div class="cv-g-toolbar">
+      <span>${win.start.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})} 〜 ${win.end.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}（${totalDays}日間 / ${rows.length}件）</span>
+      <span style="color:var(--text-muted)">グループ: ${currentCreativeGroup === 'assignee' ? '担当者別' : '案件別'}</span>
+    </div>
+    <div class="cv-g-scroll">
+      <div class="cv-g-grid" style="grid-template-columns:${FIXED_W}px ${tlWidth}px">
+        <!-- 左ヘッダ -->
+        <div class="cv-g-fixed is-header" style="display:grid;grid-template-columns:${fixedColTpl};position:sticky;left:0;top:0;z-index:8;background:var(--em-pale);border-bottom:0.5px solid var(--border)">
+          <div class="cv-g-head-left" style="position:static">クライアント／案件</div>
+          <div class="cv-g-head-left" style="position:static">クリエイティブ名</div>
+          <div class="cv-g-head-left" style="position:static">担当</div>
+          <div class="cv-g-head-left" style="position:static">ステータス</div>
+          <div class="cv-g-head-left" style="position:static;text-align:right;padding-right:12px">遅延状況</div>
+        </div>
+        <!-- 右ヘッダ（日付） -->
+        <div class="cv-g-timeline-head" style="width:${tlWidth}px;position:sticky;top:0;z-index:6">${dayCells.join('')}</div>
+        <!-- 左：固定列の本体 -->
+        <div class="cv-g-fixed" style="width:${FIXED_W}px;position:sticky;left:0;z-index:5">${fixedHtml}</div>
+        <!-- 右：タイムライン本体 -->
+        <div style="position:relative;width:${tlWidth}px">
+          ${tlHtml}
+          ${todayLeft >= 0 ? `<div class="cv-g-today-line" style="left:${todayLeft}px"></div><div class="cv-g-today-label" style="left:${todayLeft}px">今日</div>` : ''}
+        </div>
+      </div>
+    </div>
+    <div class="cv-g-legend">
+      <span class="lg-item"><span class="cv-g-ms ms-start" style="position:static;transform:none"></span>着手</span>
+      <span class="lg-item"><span class="cv-g-ms ms-draft" style="position:static;transform:rotate(45deg)"></span>初稿締切</span>
+      <span class="lg-item"><span class="cv-g-ms ms-client" style="position:static;transform:none"></span>CL確認(推定)</span>
+      <span class="lg-item"><span class="cv-g-ms ms-final" style="position:static;transform:none"></span>最終納品</span>
+      <span class="lg-item"><span style="display:inline-block;width:18px;height:6px;background:linear-gradient(90deg,#A8EDEA,#3ECFCA);border-radius:3px"></span>進行中</span>
+      <span class="lg-item"><span style="display:inline-block;width:18px;height:6px;background:linear-gradient(90deg,#FBC8C8,#E24B4A);border-radius:3px"></span>遅延</span>
+      <span class="lg-item"><span style="display:inline-block;width:18px;height:6px;background:linear-gradient(90deg,#D1F0DA,#7FA68A);border-radius:3px"></span>納品済</span>
+      <span class="lg-item" style="margin-left:auto;color:var(--text-muted)">縦線=今日のみ／予定実績の区別は今後対応</span>
+    </div>
+  `;
+
+  if (side) side.innerHTML = _cvSidePanelHtml(rows);
+}
+
+// 右側サマリーパネル HTML
+function _cvSidePanelHtml(rows) {
+  const today = _cvAtMidnight(new Date());
+  const inDays = (n) => _cvDateAdd(today, n);
+  const next7 = inDays(7);
+  // 集計
+  let lateCount = 0, finalSoon = 0, draftSoon = 0, clientCheckSoon = 0;
+  const lateRows = [];
+  const todayRows = [];
+  rows.forEach(r => {
+    const i = r.info;
+    if (i.isLate) { lateCount++; lateRows.push(r); }
+    if (i.final && !i.isDelivered && i.final >= today && i.final <= next7) finalSoon++;
+    if (i.draft && !i.isDelivered && i.draft >= today && i.draft <= next7) draftSoon++;
+    if (i.clientCheck && !i.isDelivered && i.clientCheck >= today && i.clientCheck <= next7) clientCheckSoon++;
+    // 本日対応:本日中の締切やCL確認推定
+    const onToday = (i.draft && _cvDayDiff(i.draft, today) === 0)
+                 || (i.final && _cvDayDiff(i.final, today) === 0)
+                 || (i.clientCheck && _cvDayDiff(i.clientCheck, today) === 0);
+    if (onToday && !i.isDelivered) todayRows.push(r);
+  });
+
+  const renderItem = (r, opts={}) => {
+    const cli = r.c.projects?.clients?.name || '-';
+    const ball = r.c.ball_holder?.holder || '担当未定';
+    return `<div class="cv-sp-item ${opts.late?'is-late':''}" onclick="openCreativeDetail('${r.c.id}')">
+      <div class="ttl">${esc(r.c.file_name || '')}${opts.late?`<span class="delay-pill">${esc(r.info.delayLabel)}</span>`:''}</div>
+      <div class="meta">
+        <span>${esc(cli)}</span>
+        <span style="color:var(--em-dark)">${esc(r.c.status || '')}</span>
+        <span>ボール: ${esc(ball)}</span>
+      </div>
+    </div>`;
+  };
+
+  return `
+    <div class="cv-sp-section">
+      <h4>要対応サマリー</h4>
+      <div class="cv-sp-stats">
+        <div class="cv-sp-stat ${lateCount?'is-late':''}"><span class="num">${lateCount}</span>遅延</div>
+        <div class="cv-sp-stat"><span class="num">${finalSoon}</span>最終納品(7日内)</div>
+        <div class="cv-sp-stat"><span class="num">${draftSoon}</span>初稿締切(7日内)</div>
+        <div class="cv-sp-stat"><span class="num">${clientCheckSoon}</span>CL確認(7日内)</div>
+      </div>
+    </div>
+    ${lateRows.length ? `<div class="cv-sp-section">
+      <h4>問題のある案件 (${lateRows.length})</h4>
+      <div class="cv-sp-list">${lateRows.slice(0,8).map(r => renderItem(r,{late:true})).join('')}</div>
+      ${lateRows.length>8?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${lateRows.length-8} 件</div>`:''}
+    </div>` : ''}
+    ${todayRows.length ? `<div class="cv-sp-section">
+      <h4>本日対応すべき案件 (${todayRows.length})</h4>
+      <div class="cv-sp-list">${todayRows.slice(0,8).map(r => renderItem(r)).join('')}</div>
+    </div>` : `<div class="cv-sp-section"><h4>本日対応すべき案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">本日中の締切・確認はありません</div></div>`}
+  `;
+}
+
+// 起動時にトグルの状態を反映
+(function _initCreativeViewToggles(){
+  if (typeof document === 'undefined') return;
+  const apply = () => {
+    if (document.getElementById('cv-mode-gantt')) {
+      // 永続化された値で初期化
+      setCreativeMode(currentCreativeMode);
+      ['week','2week','month','2month'].forEach(r => {
+        const el = document.getElementById('cv-range-' + r);
+        if (el) el.classList.toggle('active', r === currentCreativeRange);
+      });
+      const gp = document.getElementById('cv-group-project');
+      const ga = document.getElementById('cv-group-assignee');
+      if (gp && ga) {
+        gp.classList.toggle('active', currentCreativeGroup === 'project');
+        ga.classList.toggle('active', currentCreativeGroup === 'assignee');
+      }
+    }
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+  else setTimeout(apply, 0);
+})();
 
 function renderAlerts() {
   const today = new Date();
