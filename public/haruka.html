@@ -5444,6 +5444,53 @@ function filterProjectsByCap(projects, cap) {
   return list;
 }
 
+// ==================== クリエイティブ追加モーダル: チームドロップダウンの職種フィルタ ====================
+// 案件タブ chip と連動。秘書チーム (team_type==='secretary') は動画/デザイン両方で表示。
+// case team_type が NULL/未設定のチームは「全て」のときだけ表示。
+function filterTeamsByCap(teams, cap) {
+  const list = Array.isArray(teams) ? teams : [];
+  if (cap === 'video')  return list.filter(t => t?.team_type === 'video'  || t?.team_type === 'secretary');
+  if (cap === 'design') return list.filter(t => t?.team_type === 'design' || t?.team_type === 'secretary');
+  return list;
+}
+
+// 個別/一括両方のチームドロップダウンを再構築する。直前選択を維持できるなら維持。
+// 候補から外れた場合は空（未選択）に戻す。
+function renderCreativeAddTeamDropdowns() {
+  const teams = Array.isArray(allTeams) ? allTeams : [];
+  const filtered = filterTeamsByCap(teams, _creativeAddProjectFilter);
+  const renderOptions = (placeholder) =>
+    `<option value="">${placeholder}</option>` +
+    filtered.map(t => {
+      const typeLabel = t.team_type === 'video' ? '動画'
+        : t.team_type === 'design' ? 'デザイン'
+        : t.team_type === 'secretary' ? '秘書' : '';
+      const typeBadge = typeLabel ? `（${typeLabel}）` : '';
+      return `<option value="${t.id}" data-team-type="${t.team_type || ''}">${t.team_code}チーム / ${t.team_name}${typeBadge}</option>`;
+    }).join('');
+
+  const singleSel = document.getElementById('c-team-id');
+  if (singleSel) {
+    const prev = singleSel.value;
+    singleSel.innerHTML = renderOptions('チームを選択（任意）');
+    if (prev && filtered.some(t => t.id === prev)) {
+      singleSel.value = prev;
+    } else {
+      singleSel.value = '';
+    }
+  }
+  const bulkSel = document.getElementById('bulk-team-id');
+  if (bulkSel) {
+    const prev = bulkSel.value;
+    bulkSel.innerHTML = renderOptions('未設定');
+    if (prev && filtered.some(t => t.id === prev)) {
+      bulkSel.value = prev;
+    } else {
+      bulkSel.value = '';
+    }
+  }
+}
+
 // クリエイティブ追加モーダルの「個別登録」「一括登録」両方の案件ドロップダウンと
 // 職種トグルのカウント・activeステートを再構築する。
 function renderCreativeAddProjectDropdowns() {
@@ -5484,6 +5531,9 @@ function renderCreativeAddProjectDropdowns() {
       sel.value = filtered[0].id;
     }
   });
+
+  // 案件タブと連動して team dropdown も再構築（秘書チームは横断で残る）
+  renderCreativeAddTeamDropdowns();
 }
 
 // トグルクリックハンドラ。フィルタを切り替えて両ドロップダウンを再描画し、
@@ -5508,6 +5558,10 @@ async function setCreativeAddCapTab(cap) {
     tasks.push(onBulkProjectChange(nextBulk));
   }
   if (tasks.length) await Promise.all(tasks);
+
+  // チーム候補が変わった可能性があるので担当者セレクトも追従
+  if (typeof updateAssigneeSelect === 'function') updateAssigneeSelect();
+  if (typeof updateBulkAssigneeSelect === 'function') updateBulkAssigneeSelect();
 }
 
 // 案件（クライアント→案件の階層表示）
@@ -6954,6 +7008,60 @@ async function updateStatus() {
   }
 }
 
+// ==================== 案件種別 × チーム種別 整合性バリデーション ====================
+// projects.project_type ('video'|'design') と teams.team_type ('video'|'design'|'secretary')
+// の組み合わせを検証。秘書チームは横断利用 OK のためスキップ。
+// 戻り値:
+//   null      … 整合（OK / 検証スキップ）
+//   { ... }   … 不整合（呼び出し元で showCreativeMismatchDialog に渡す）
+function checkProjectTeamMismatch(projectId, teamId) {
+  if (!projectId || !teamId) return null;
+  const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+  const team    = (Array.isArray(allTeams)    ? allTeams    : []).find(t => t.id === teamId);
+  if (!project || !team) return null;
+  const pt = project.project_type;
+  const tt = team.team_type;
+  if (!pt || !tt) return null;             // どちらか未設定なら判定保留
+  if (tt === 'secretary') return null;     // 秘書はバイパス
+  if (pt === tt) return null;              // 一致 → OK
+  const PT_LABEL = { video: '動画', design: 'デザイン' };
+  const TT_LABEL = { video: '動画', design: 'デザイン', secretary: '秘書' };
+  return {
+    projectName: project.name || '（無題）',
+    projectType: pt,
+    projectTypeLabel: PT_LABEL[pt] || pt,
+    teamName: `${team.team_code || ''}チーム / ${team.team_name || ''}`.trim(),
+    teamType: tt,
+    teamTypeLabel: TT_LABEL[tt] || tt,
+  };
+}
+
+// 不整合検出時に表示するモーダル。showConfirmDialog ベースで「修正する / そのまま続行」の二択にせず、
+// 仕様どおり [修正する][キャンセル] にして提出はキャンセル（強制差し戻し）する。
+async function showCreativeMismatchDialog(info) {
+  const message =
+    `案件種別とチーム種別が一致しません。\n\n` +
+    `  案件: 「${info.projectName}」（${info.projectTypeLabel}）\n` +
+    `  チーム: 「${info.teamName}」（${info.teamTypeLabel}）\n\n` +
+    `このまま登録すると、案件の集計やDチェック通知が\n` +
+    `正しく動かない可能性があります。\n\n` +
+    `対処方法:\n` +
+    `  1. 案件タブを「${info.teamTypeLabel}」に切り替えて、${info.teamTypeLabel}案件を選び直す\n` +
+    `  2. または、案件種別と一致するチーム（${info.projectTypeLabel}チーム）を選び直す\n` +
+    `  3. それでも問題ない場合は、案件編集画面で案件種別を見直す`;
+  if (typeof window.showConfirmDialog === 'function') {
+    await window.showConfirmDialog({
+      title: '⚠️ 案件種別とチーム種別が一致しません',
+      message,
+      okLabel: '修正する',
+      cancelLabel: 'キャンセル',
+      okVariant: 'danger',
+    });
+  } else {
+    alert(message);
+  }
+}
+
 async function createCreative() {
   const project_id = document.getElementById('c-project-id').value;
   const file_name = document.getElementById('c-file-name').value.trim();
@@ -6973,6 +7081,13 @@ async function createCreative() {
   const creative_fmt = document.getElementById('c-creative-fmt')?.value || null;
   const creative_size = document.getElementById('c-creative-size')?.value || null;
   const team_id = document.getElementById('c-team-id')?.value || null;
+
+  // 案件種別 × チーム種別 の整合性チェック（不整合なら提出停止）
+  const mismatch = checkProjectTeamMismatch(project_id, team_id);
+  if (mismatch) {
+    await showCreativeMismatchDialog(mismatch);
+    return;
+  }
 
   // 内部コードと制作日を取得（generateFileName で生成済みの場合）
   const internal_code = document.getElementById('c-internal-code')?.value?.trim() || null;
@@ -12922,18 +13037,40 @@ async function onProjectChange(projectId) {
     return;
   }
 
-  // 案件→クライアント→紐付くチームの先頭 を自動選択（クリエイティブ追加モーダルでチーム未選択時のみ）
+  // 案件→クライアント→紐付くチームから「案件種別と一致する team_type」を優先して自動選択。
+  // 整合チームが見つからない場合は誤紐付け防止のため未選択のままにする。
+  // （「秘書」チームは team_type が異なるが、video/design 案件を兼ねうるので候補に含める）
   try {
     const proj = (allProjects || []).find(p => p.id === projectId);
     const clientId = proj?.client_id || proj?.clients?.id;
     const cl = clientId ? (allClients || []).find(c => c.id === clientId) : null;
-    const firstTeamId = cl?.team_ids?.[0];
+    const linkedIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
     const teamSelect = document.getElementById('c-team-id');
-    if (teamSelect && firstTeamId) {
-      // 案件切替時は常に先頭チームに自動更新（ユーザーが選択し直したい場合は手動で変えられる）
-      teamSelect.value = firstTeamId;
+    if (teamSelect && linkedIds.length) {
+      const teamsAll = Array.isArray(allTeams) ? allTeams : [];
+      const linkedTeams = linkedIds
+        .map(id => teamsAll.find(t => t.id === id))
+        .filter(Boolean);
+      const projType = proj?.project_type;
+      // 1) project_type と一致する team_type を最優先 / 2) 秘書チーム / 3) なし（未選択）
+      let chosen = null;
+      if (projType) {
+        chosen = linkedTeams.find(t => t.team_type === projType)
+              || linkedTeams.find(t => t.team_type === 'secretary')
+              || null;
+      } else {
+        // project_type 未設定の案件は従来挙動どおり先頭を選ぶ
+        chosen = linkedTeams[0] || null;
+      }
+      // 現在の team dropdown の選択肢に存在することも確認（cap フィルタで消えていれば選ばない）
+      const stillSelectable = chosen && Array.from(teamSelect.options).some(o => o.value === chosen.id);
+      if (stillSelectable) {
+        teamSelect.value = chosen.id;
+      } else {
+        teamSelect.value = '';
+      }
       if (typeof onTeamChange === 'function') {
-        try { onTeamChange(firstTeamId); } catch(_) {}
+        try { onTeamChange(teamSelect.value); } catch(_) {}
       }
     }
   } catch (e) {
@@ -13068,14 +13205,9 @@ async function openCreateCreative() {
   document.getElementById('bulk-draft-deadline').value = draftDay;
   document.getElementById('bulk-final-deadline').value = lastDay;
 
-  // チームセレクトを初期化
-  const teamOptions = '<option value="">未設定</option>' +
-    allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
-  const teamSel = document.getElementById('c-team-id');
-  if (teamSel) teamSel.innerHTML = '<option value="">チームを選択（任意）</option>' +
-    allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
-  const bulkTeamSel = document.getElementById('bulk-team-id');
-  if (bulkTeamSel) { bulkTeamSel.innerHTML = teamOptions; updateBulkAssigneeSelect(); }
+  // チームセレクトを初期化（案件タブ chip と連動した team_type フィルタを適用）
+  renderCreativeAddTeamDropdowns();
+  if (typeof updateBulkAssigneeSelect === 'function') updateBulkAssigneeSelect();
 
   // マスターデータが未ロードなら取得
   if (!masterCategories.length || !masterItems.length) {
@@ -13219,6 +13351,13 @@ async function bulkPreviewCreative() {
   const assignee_id  = document.getElementById('bulk-assignee-id')?.value || null;
   const team_id      = document.getElementById('bulk-team-id')?.value || null;
 
+  // 一括登録の整合性チェック（複数件をまとめて作るため、不整合があれば全件キャンセル）
+  const bulkMismatch = checkProjectTeamMismatch(project_id, team_id);
+  if (bulkMismatch) {
+    await showCreativeMismatchDialog(bulkMismatch);
+    return;
+  }
+
   // 表示用: 名称のみ
   const creativetypeText = document.getElementById('bulk-creative-type')?.options[document.getElementById('bulk-creative-type').selectedIndex]?.text || '—';
   const productName   = nameOnly(document.getElementById('bulk-product-id'));
@@ -13288,6 +13427,12 @@ function bulkConfirmBack() {
 
 async function bulkCreateCreative() {
   if (!_bulkPayload) return;
+  // 二重ガード: preview 後にチームが差し替わった場合も再チェック
+  const guardMismatch = checkProjectTeamMismatch(_bulkPayload.project_id, _bulkPayload.team_id);
+  if (guardMismatch) {
+    await showCreativeMismatchDialog(guardMismatch);
+    return;
+  }
   const btn = document.getElementById('bulk-confirm-ok-btn');
   btn.textContent = '登録中...'; btn.disabled = true;
 
