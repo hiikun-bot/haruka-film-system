@@ -281,6 +281,14 @@ tr.row-help td{background:#FFFBF2}
 .cv-toolbar-compact{padding:4px 20px 3px !important;gap:4px !important}
 .cv-toolbar-compact .toolbar-row{gap:8px;align-items:center;flex-wrap:wrap;padding:0;margin:0}
 .cv-tb-main{display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:6px}
+/* 大分類タブ（共通／動画編集／デザイン）— 条件行の先頭に配置 */
+.cv-cat-seg{display:inline-flex;align-items:center;background:var(--em-pale);border-radius:10px;padding:2px;gap:2px;flex-shrink:0}
+.cv-cat-seg .cv-cat-btn{display:inline-flex;align-items:center;gap:4px;min-width:78px;justify-content:center;padding:5px 10px;border-radius:8px;border:none;font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;background:transparent;color:var(--em-dark);white-space:nowrap}
+.cv-cat-seg .cv-cat-btn .cv-cat-count{font-weight:500;opacity:.8;font-size:11px}
+.cv-cat-seg .cv-cat-btn:hover:not(.active){background:rgba(255,255,255,.5)}
+.cv-cat-seg .cv-cat-btn.active{background:#0fb9a4;color:#fff;box-shadow:0 1px 4px rgba(15,185,164,.30)}
+.cv-cat-seg .cv-cat-btn.active .cv-cat-count{opacity:.92;color:#fff}
+.cv-tb-sep{width:1px;height:22px;background:var(--border);margin:0 2px;flex-shrink:0}
 .cv-tb-search{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .cv-tb-search .cv-tb-client #client-multi-btn{min-width:118px;max-width:160px}
 .cv-tb-search .cv-tb-assignee{min-width:124px;max-width:160px}
@@ -306,30 +314,42 @@ tr.row-help td{background:#FFFBF2}
 .cv-tb-period-label{font-size:11px;color:var(--text-muted);margin:0 4px;white-space:nowrap}
 .cv-tb-title{font-size:11px;color:var(--em-dark);font-weight:600;letter-spacing:0.04em;margin-right:6px;padding:3px 0}
 
-/* 詳細フィルターボタン */
-.cv-adv-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;font-size:12px;border-radius:8px;border:0.5px solid var(--border);background:#fff;color:var(--text);cursor:pointer;transition:all .15s}
-.cv-adv-btn:hover{background:var(--em-pale);border-color:var(--em-light)}
-.cv-adv-btn[aria-expanded="true"]{background:var(--em-pale);border-color:var(--em);color:var(--em-dark)}
+/* 詳細フィルターボタン（薄ミント背景で見つけやすく） */
+.cv-adv-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;font-size:12px;font-weight:600;border-radius:8px;border:0.5px solid var(--em-light);background:var(--em-pale);color:var(--em-dark);cursor:pointer;transition:all .15s}
+.cv-adv-btn:hover{background:#d6f1ee;border-color:var(--em)}
+.cv-adv-btn[aria-expanded="true"]{background:#d6f1ee;border-color:var(--em);color:var(--em-dark)}
+.cv-adv-btn.has-active{border-color:var(--em);border-width:1.5px;box-shadow:0 0 0 1px rgba(15,185,164,.18)}
+.cv-adv-btn .cv-adv-icon{font-size:13px;line-height:1}
 .cv-adv-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:16px;padding:0 5px;font-size:10px;font-weight:700;background:var(--em);color:#fff;border-radius:8px}
 
-/* 詳細フィルターパネル */
-.cv-adv-panel{margin-top:8px;padding:10px 14px;background:#f8fdfc;border:0.5px solid var(--em-light);border-radius:10px;display:flex;flex-direction:column;gap:8px}
+/* 詳細フィルターパネル（grid化で文字潰れを防ぐ） */
+.cv-adv-panel{margin-top:8px;padding:12px 14px 10px;background:#f8fdfc;border:0.5px solid var(--em-light);border-radius:10px;display:flex;flex-direction:column;gap:10px}
 .cv-adv-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cv-adv-row-toggles{gap:18px}
+.cv-adv-row-selects{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) minmax(220px,auto);gap:14px;align-items:center}
 .cv-adv-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;user-select:none}
 .cv-adv-toggle input[type="checkbox"]{width:14px;height:14px;cursor:pointer;accent-color:var(--em)}
-.cv-adv-field{display:inline-flex;align-items:center;gap:6px}
-.cv-adv-label{font-size:11px;color:var(--text-muted);font-weight:500}
-.cv-adv-select{height:28px;font-size:12px;padding:3px 8px;min-width:160px;max-width:220px;text-overflow:ellipsis}
+.cv-adv-field{display:inline-flex;align-items:center;gap:8px;min-width:0}
+.cv-adv-field .cv-adv-label{flex-shrink:0}
+.cv-adv-label{font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:0.02em}
+.cv-adv-select{height:30px;font-size:12px;padding:4px 26px 4px 10px;min-width:200px;width:100%;max-width:100%;text-overflow:ellipsis;background-color:#fff}
 .cv-adv-select option{font-size:12px}
+.cv-adv-ball{display:inline-flex;flex-wrap:wrap;gap:4px}
 .cv-adv-ball .bf{font-size:11px;padding:3px 8px}
-.cv-adv-clear{margin-left:auto;height:28px;padding:0 12px;font-size:11px;border-radius:8px;border:0.5px solid var(--border);background:#fff;color:var(--text-muted);cursor:pointer}
+.cv-adv-clear{height:28px;padding:0 14px;font-size:11px;font-weight:600;border-radius:8px;border:0.5px solid var(--border);background:#fff;color:var(--text-muted);cursor:pointer;justify-self:end}
 .cv-adv-clear:hover{background:#fbeaea;color:#a03030;border-color:#f1c5c5}
+.cv-adv-row-bottom{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between}
+@media (max-width:900px){
+  .cv-adv-row-selects{grid-template-columns:1fr;gap:8px}
+  .cv-adv-clear{justify-self:start}
+}
 
 /* ガント本体を少しコンパクトに */
 .cv-gantt-main{border-radius:10px}
 .cv-g-toolbar{padding:4px 12px;font-size:11px;display:flex;gap:12px;align-items:center;border-bottom:0.5px solid var(--border-light);background:#fafefd}
-/* タブ・ツールバー圧縮で確保した縦領域をガント本体へ。1画面 18-22 件目標 */
-.cv-g-scroll{max-height:calc(100vh - 165px);min-height:65vh}
+/* タブ・ツールバー圧縮で確保した縦領域をガント本体へ。1画面 18-22 件目標
+   大分類タブを条件行に統合したことで上部1行ぶん（約30px）削減 */
+.cv-g-scroll{max-height:calc(100vh - 140px);min-height:68vh}
 
 @media (max-width:1200px){
   .cv-tb-action{margin-left:0}
@@ -2310,25 +2330,22 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- クリエイティブ -->
 <div id="page-creatives" class="page">
   <div id="alert-container"></div>
-  <!-- クリエイティブ種別タブ（共通／動画編集／デザイン） -->
-  <div id="creative-type-tabs" style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px;margin:6px 20px 0;max-width:480px">
-    <button id="cv-tab-all" type="button" onclick="setCreativeTab('all')"
-      style="flex:1;min-width:88px;padding:5px 0;border-radius:7px;border:none;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 1px 4px rgba(43,184,180,.20)">
-      共通 <span id="cv-tab-all-count" style="font-weight:500;opacity:.85">(0)</span>
-    </button>
-    <button id="cv-tab-video" type="button" onclick="setCreativeTab('video')"
-      style="flex:1;min-width:88px;padding:5px 0;border-radius:7px;border:none;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
-      🎬 動画編集 <span id="cv-tab-video-count" style="font-weight:500;opacity:.85">(0)</span>
-    </button>
-    <button id="cv-tab-design" type="button" onclick="setCreativeTab('design')"
-      style="flex:1;min-width:88px;padding:5px 0;border-radius:7px;border:none;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
-      🎨 デザイン <span id="cv-tab-design-count" style="font-weight:500;opacity:.85">(0)</span>
-    </button>
-  </div>
   <div class="toolbar cv-toolbar-compact">
-    <!-- 1行目: 検索条件 + ビュー切替 + アクション -->
+    <!-- 1行目: 大分類タブ + 検索条件 + ビュー切替 + アクション -->
     <div class="toolbar-row cv-tb-main">
-      <span class="cv-tb-title" aria-hidden="true">進行ガントチャート</span>
+      <!-- 大分類タブ（共通／動画編集／デザイン）— 条件行の先頭に配置 -->
+      <div id="creative-type-tabs" class="cv-cat-seg" role="tablist" aria-label="クリエイティブ種別">
+        <button id="cv-tab-all" type="button" class="cv-cat-btn active" role="tab" aria-selected="true" onclick="setCreativeTab('all')">
+          <span>共通</span><span class="cv-cat-count" id="cv-tab-all-count">(0)</span>
+        </button>
+        <button id="cv-tab-video" type="button" class="cv-cat-btn" role="tab" aria-selected="false" onclick="setCreativeTab('video')">
+          <span>🎬 動画編集</span><span class="cv-cat-count" id="cv-tab-video-count">(0)</span>
+        </button>
+        <button id="cv-tab-design" type="button" class="cv-cat-btn" role="tab" aria-selected="false" onclick="setCreativeTab('design')">
+          <span>🎨 デザイン</span><span class="cv-cat-count" id="cv-tab-design-count">(0)</span>
+        </button>
+      </div>
+      <span class="cv-tb-sep" aria-hidden="true"></span>
       <div class="cv-tb-search">
         <div id="client-multi" class="cv-tb-client">
           <button type="button" id="client-multi-btn" onclick="toggleClientMultiOpen(event)" class="form-select" aria-haspopup="listbox" aria-expanded="false" style="height:30px;font-size:12px">
@@ -2368,7 +2385,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <option value="">担当者：全員</option>
         </select>
         <input class="search-box cv-tb-keyword" type="text" placeholder="キーワードで検索" oninput="filterSearch(this.value)" style="height:30px;font-size:12px;padding:5px 10px">
+        <!-- 詳細フィルター（検索条件の右隣に配置して見つけやすく） -->
+        <button type="button" class="cv-adv-btn" id="cv-adv-btn" onclick="toggleCreativeAdvFilters()" aria-expanded="false" aria-controls="cv-adv-panel" title="詳細フィルター（チーム／ステータス／ボール種別など）">
+          <span class="cv-adv-icon" aria-hidden="true">⚙</span>
+          <span>詳細フィルター</span>
+          <span id="cv-adv-badge" class="cv-adv-badge" style="display:none">0</span>
+          <span id="cv-adv-caret" style="font-size:10px;opacity:.7">▾</span>
+        </button>
       </div>
+      <span class="cv-tb-sep" aria-hidden="true"></span>
       <!-- 中央: 全案件/自分の案件/自分のボール -->
       <div class="cv-tb-view" role="radiogroup" aria-label="案件範囲">
         <div class="filter-tabs cv-seg cv-seg-strong">
@@ -2388,7 +2413,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       </div>
     </div>
 
-    <!-- 2行目: 表示形式 / グループ / 期間 / 期間ナビ / 詳細フィルター -->
+    <!-- 2行目: 表示形式 / グループ / 期間 / 期間ナビ -->
     <div class="toolbar-row cv-tb-main" id="cv-tb-row2">
       <div class="cv-tb-view" id="cv-mode-seg-wrap" role="radiogroup" aria-label="表示形式">
         <span class="cv-tb-vlabel">表示</span>
@@ -2425,17 +2450,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </span>
         <span id="cv-gantt-period-label" class="cv-tb-period-label" aria-live="polite"></span>
       </div>
-      <button type="button" class="cv-adv-btn" id="cv-adv-btn" onclick="toggleCreativeAdvFilters()" aria-expanded="false" aria-controls="cv-adv-panel" style="margin-left:auto">
-        <span style="font-size:13px">⚙</span>
-        <span>詳細フィルター</span>
-        <span id="cv-adv-badge" class="cv-adv-badge" style="display:none">0</span>
-        <span id="cv-adv-caret" style="font-size:10px;opacity:.7">▾</span>
-      </button>
     </div>
 
     <!-- 詳細フィルターパネル（展開時のみ表示） -->
     <div id="cv-adv-panel" class="cv-adv-panel" style="display:none">
-      <div class="cv-adv-row">
+      <!-- 1段: トグル系 -->
+      <div class="cv-adv-row cv-adv-row-toggles">
         <label class="cv-adv-toggle">
           <input type="checkbox" id="cv-flt-ended" onchange="onCvAdvFilterChange()">
           <span>取引終了クライアント含む</span>
@@ -2453,7 +2473,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <span>SOSのみ</span>
         </label>
       </div>
-      <div class="cv-adv-row">
+      <!-- 2段: チーム / ステータス（select幅を広げて文字潰れ防止） -->
+      <div class="cv-adv-row cv-adv-row-selects">
         <label class="cv-adv-field">
           <span class="cv-adv-label">チーム</span>
           <select id="cv-flt-team" class="form-select cv-adv-select" onchange="onCvAdvFilterChange()" title="">
@@ -2466,6 +2487,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <option value="">全ステータス</option>
           </select>
         </label>
+        <span></span>
+      </div>
+      <!-- 3段: ボール種別 + クリア -->
+      <div class="cv-adv-row cv-adv-row-bottom">
         <div class="cv-adv-field">
           <span class="cv-adv-label">ボール種別</span>
           <div class="ball-filter cv-adv-ball" style="margin:0">
@@ -6539,13 +6564,17 @@ function setCreativeTab(type, opts = {}) {
   const aBtn = document.getElementById('cv-tab-all');
   const vBtn = document.getElementById('cv-tab-video');
   const dBtn = document.getElementById('cv-tab-design');
-  if (aBtn && vBtn && dBtn) {
-    const baseStyle = `flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;`;
-    const activeStyle = `background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)`;
-    const inactiveStyle = `background:transparent;color:var(--em-dark)`;
-    aBtn.style.cssText = baseStyle + (type === 'all' ? activeStyle : inactiveStyle);
-    vBtn.style.cssText = baseStyle + (type === 'video' ? activeStyle : inactiveStyle);
-    dBtn.style.cssText = baseStyle + (type === 'design' ? activeStyle : inactiveStyle);
+  // クラスベースのアクティブ切替（インラインスタイル上書きを廃止）
+  [aBtn, vBtn, dBtn].forEach(b => {
+    if (!b) return;
+    b.classList.remove('active');
+    b.setAttribute('aria-selected', 'false');
+  });
+  const map = { all: aBtn, video: vBtn, design: dBtn };
+  const cur = map[type];
+  if (cur) {
+    cur.classList.add('active');
+    cur.setAttribute('aria-selected', 'true');
   }
   // タブ切替時はサーバーから当該タブのデータを再取得（offset=0）
   // total もタブ別件数になるので「次の50件を読み込む（残り N 件）」が正確になる
@@ -8155,6 +8184,11 @@ function _cvAdvUpdateBadge() {
   if (cvAdvFilters.team) n++;
   if (cvAdvFilters.status) n++;
   const badge = document.getElementById('cv-adv-badge');
+  const btn = document.getElementById('cv-adv-btn');
+  if (btn) {
+    if (n > 0) btn.classList.add('has-active');
+    else btn.classList.remove('has-active');
+  }
   if (!badge) return;
   if (n > 0) { badge.textContent = String(n); badge.style.display = ''; }
   else { badge.style.display = 'none'; }
