@@ -7854,7 +7854,7 @@ function renderCreativesGantt(filtered) {
         <div class="c c-name" title="${esc(c.file_name)}" onclick="openCreativeDetail('${c.id}')">${esc(c.file_name || '')}</div>
         <div class="c c-assignee" title="${esc(fullNameTitle)}">${assignee}</div>
         <div class="c c-status" title="${esc(c.status || '')}"><span class="status-chip ${statusClass(c.status)}">${esc(statusShortLabel(c.status))}</span></div>
-        <div class="c c-delay ${info.delayClass}">${esc(info.delayLabel)}</div>
+        <div class="c c-delay ${info.delayClass}" title="${esc(info.delayLabel)}">${esc(info.delayLabel)}</div>
       </div>`;
   };
 
