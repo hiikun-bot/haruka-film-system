@@ -296,6 +296,43 @@ async function normalizeSubDirectorIds(rawIds, { clientId, directorId } = {}) {
   return { ids: filtered, dropped: cleaned.length - filtered.length };
 }
 
+// サブプロデューサー（複数）正規化ヘルパー
+// normalizeSubDirectorIds と完全パラレル。Pチェック依頼可能者を保存する用途。
+// 仕様:
+//   1. 配列でなければ空配列扱い
+//   2. 文字列のみ採用、UUIDフォーマットの簡易チェック
+//   3. 重複除去（先勝ち）
+//   4. producer_id 本人は除外（自分自身をサブに登録する意味がないため）
+//   5. users テーブルに存在し is_active !== false のユーザーのみ採用
+async function normalizeSubProducerIds(rawIds, { clientId, producerId } = {}) {
+  if (!Array.isArray(rawIds)) return { ids: [], dropped: 0 };
+  const seen = new Set();
+  const cleaned = [];
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const v of rawIds) {
+    if (typeof v !== 'string') continue;
+    const id = v.trim();
+    if (!uuidRe.test(id)) continue;
+    if (id === producerId) continue; // プロデューサー本人は除外
+    if (seen.has(id)) continue;
+    seen.add(id);
+    cleaned.push(id);
+  }
+  if (!cleaned.length) return { ids: [], dropped: 0 };
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, is_active')
+    .in('id', cleaned);
+  if (error) {
+    return { ids: cleaned, dropped: 0 };
+  }
+  const allowed = new Set(
+    (users || []).filter(u => u && u.is_active !== false).map(u => u.id)
+  );
+  const filtered = cleaned.filter(id => allowed.has(id));
+  return { ids: filtered, dropped: cleaned.length - filtered.length };
+}
+
 // 案件一覧取得
 // has_rates / has_estimates は「単価設定済み」「見積作成済み」の判定フラグ。
 // UI 側で「単価」「見積」ボタンに設定済みかどうかを示すために返す。
@@ -354,7 +391,8 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     slack_channel_url,
     deadline_unit, deadline_weekday,
     project_type,
-    sub_director_ids
+    sub_director_ids,
+    sub_producer_ids
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const normalizedProjectType = (project_type === 'design') ? 'design' : 'video';
@@ -362,6 +400,11 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
     clientId: client_id,
     directorId: director_id || null,
+  });
+  // サブプロデューサー: sub_director と完全パラレル
+  const { ids: subProducerIds } = await normalizeSubProducerIds(sub_producer_ids, {
+    clientId: client_id,
+    producerId: producer_id || null,
   });
   const insertPayload = {
     client_id, name,
@@ -380,15 +423,16 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_weekday: deadline_weekday ?? null,
     project_type: normalizedProjectType,
     sub_director_ids: subIds,
+    sub_producer_ids: subProducerIds,
   };
   let { data, error } = await supabase
     .from('projects')
     .insert(insertPayload)
     .select()
     .single();
-  // schema-sync 失敗で sub_director_ids 列が本番にまだ無い場合のフォールバック
-  if (error && /sub_director_ids/i.test(error.message || '')) {
-    const { sub_director_ids: _omit, ...fallback } = insertPayload;
+  // schema-sync 失敗で sub_director_ids / sub_producer_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_director_ids|sub_producer_ids/i.test(error.message || '')) {
+    const { sub_director_ids: _omitD, sub_producer_ids: _omitP, ...fallback } = insertPayload;
     const retry = await supabase.from('projects').insert(fallback).select().single();
     data = retry.data; error = retry.error;
   }
@@ -406,7 +450,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday,
     project_type,
-    sub_director_ids
+    sub_director_ids,
+    sub_producer_ids
   } = req.body;
   const updateData = {
     name, status,
@@ -429,21 +474,33 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (project_type !== undefined) {
     updateData.project_type = (project_type === 'design') ? 'design' : 'video';
   }
-  // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
+  // サブディレクター/サブプロデューサー: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
   // フィールドが渡ってきた時のみ正規化して反映する。
-  if (sub_director_ids !== undefined) {
-    // client_id は projects 側を引いて取得（クライアント変更は別経路では起きないが念のため）
+  // 現在の client_id / director_id / producer_id を一度だけ取得（共通利用）
+  let _cur = null;
+  if (sub_director_ids !== undefined || sub_producer_ids !== undefined) {
     const { data: cur } = await supabase
       .from('projects')
-      .select('client_id, director_id')
+      .select('client_id, director_id, producer_id')
       .eq('id', req.params.id)
       .single();
-    const effectiveDirectorId = (director_id !== undefined ? director_id : cur?.director_id) || null;
+    _cur = cur || null;
+  }
+  if (sub_director_ids !== undefined) {
+    const effectiveDirectorId = (director_id !== undefined ? director_id : _cur?.director_id) || null;
     const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
-      clientId: cur?.client_id || null,
+      clientId: _cur?.client_id || null,
       directorId: effectiveDirectorId,
     });
     updateData.sub_director_ids = subIds;
+  }
+  if (sub_producer_ids !== undefined) {
+    const effectiveProducerId = (producer_id !== undefined ? producer_id : _cur?.producer_id) || null;
+    const { ids: subProducerIds } = await normalizeSubProducerIds(sub_producer_ids, {
+      clientId: _cur?.client_id || null,
+      producerId: effectiveProducerId,
+    });
+    updateData.sub_producer_ids = subProducerIds;
   }
   let { data, error } = await supabase
     .from('projects')
@@ -451,9 +508,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     .eq('id', req.params.id)
     .select()
     .single();
-  // schema-sync 失敗で sub_director_ids 列が本番にまだ無い場合のフォールバック
-  if (error && /sub_director_ids/i.test(error.message || '') && updateData.sub_director_ids !== undefined) {
-    const { sub_director_ids: _omit, ...fallback } = updateData;
+  // schema-sync 失敗で sub_director_ids / sub_producer_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_director_ids|sub_producer_ids/i.test(error.message || '') &&
+      (updateData.sub_director_ids !== undefined || updateData.sub_producer_ids !== undefined)) {
+    const { sub_director_ids: _omitD, sub_producer_ids: _omitP, ...fallback } = updateData;
     const retry = await supabase.from('projects').update(fallback).eq('id', req.params.id).select().single();
     data = retry.data; error = retry.error;
   }
@@ -1808,46 +1866,66 @@ router.get('/creatives/:id', async (req, res) => {
     data.teams = null;
   }
 
-  // projects.sub_director_ids を別クエリで取得（migration 未適用環境では空配列扱い）
+  // projects.sub_director_ids / sub_producer_ids を別クエリで取得（migration 未適用環境では空配列扱い）
   // projects には UUID[] として追加される予定。列が無い・schema-cache 未更新の場合は無視。
   if (data && data.projects?.id) {
     try {
       const { data: projExt, error: projExtErr } = await supabase
         .from('projects')
-        .select('sub_director_ids')
+        .select('sub_director_ids, sub_producer_ids')
         .eq('id', data.projects.id)
         .maybeSingle();
       if (!projExtErr && projExt) {
         data.projects.sub_director_ids = Array.isArray(projExt.sub_director_ids) ? projExt.sub_director_ids : [];
+        data.projects.sub_producer_ids = Array.isArray(projExt.sub_producer_ids) ? projExt.sub_producer_ids : [];
       } else {
-        data.projects.sub_director_ids = [];
+        // sub_producer_ids 列だけ無い場合に備え、director だけ再フェッチして fallback
+        try {
+          const { data: projExt2, error: projExt2Err } = await supabase
+            .from('projects')
+            .select('sub_director_ids')
+            .eq('id', data.projects.id)
+            .maybeSingle();
+          data.projects.sub_director_ids = (!projExt2Err && projExt2 && Array.isArray(projExt2.sub_director_ids))
+            ? projExt2.sub_director_ids : [];
+        } catch (_) {
+          data.projects.sub_director_ids = [];
+        }
+        data.projects.sub_producer_ids = [];
       }
     } catch (_) {
       data.projects.sub_director_ids = [];
+      data.projects.sub_producer_ids = [];
     }
 
-    // サブディレクターのユーザー情報を埋め込み（離職者・権限制限ユーザーでも常に表示できるように）
-    // Dチェックピッカーで「案件ディレクター/サブD」セクションが allMembers の状態に依存しないようにするのが目的。
-    const subIds = data.projects.sub_director_ids;
-    if (Array.isArray(subIds) && subIds.length) {
+    // サブディレクター/サブプロデューサーのユーザー情報を一括取得して埋め込み
+    // （離職者・権限制限ユーザーでも常に表示できるように、allMembers状態に依存しない経路を確保）
+    const subDirIds = data.projects.sub_director_ids;
+    const subProdIds = data.projects.sub_producer_ids;
+    const allSubIds = Array.from(new Set([
+      ...(Array.isArray(subDirIds) ? subDirIds : []),
+      ...(Array.isArray(subProdIds) ? subProdIds : []),
+    ]));
+    let userById = new Map();
+    if (allSubIds.length) {
       try {
         const { data: subUsers, error: subErr } = await supabase
           .from('users')
           .select('id, full_name, nickname, role, rank, team_id, avatar_url, is_active')
-          .in('id', subIds);
+          .in('id', allSubIds);
         if (!subErr && Array.isArray(subUsers)) {
-          // sub_director_ids の順序を維持
-          const userById = new Map(subUsers.map(u => [u.id, u]));
-          data.projects.sub_directors = subIds.map(id => userById.get(id)).filter(Boolean);
-        } else {
-          data.projects.sub_directors = [];
+          userById = new Map(subUsers.map(u => [u.id, u]));
         }
       } catch (_) {
-        data.projects.sub_directors = [];
+        // noop
       }
-    } else {
-      data.projects.sub_directors = [];
     }
+    data.projects.sub_directors = Array.isArray(subDirIds)
+      ? subDirIds.map(id => userById.get(id)).filter(Boolean)
+      : [];
+    data.projects.sub_producers = Array.isArray(subProdIds)
+      ? subProdIds.map(id => userById.get(id)).filter(Boolean)
+      : [];
   }
 
   // 案件 → client_teams → teams のルートで担当チーム ID を埋め込み
