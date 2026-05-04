@@ -570,6 +570,14 @@ ${cwUrlLine2}
 ※送信前に必ず内容を確認してください。[/info]`;
       await sendNotif(actor, slackTpl, cwTpl);
     }
+    // 編集者・デザイナーへの「クライアントチェックに進みます！」お知らせ
+    // actor は既にテンプレ案内を受け取っているので重複送信を避ける
+    const assigneeSlack = `🎉 クライアントチェックに進みました！\nファイル: ${slackName}\nお疲れ様です！D/Pチェックを通過し、クライアント確認版の共有に進みます ☺️`;
+    const assigneeCw = `[info][title]🎉 クライアントチェックに進みました[/title]ファイル: ${fileName}${cwUrlLine}\nお疲れ様です！\nD/Pチェックを通過し、クライアント確認版の共有に進みます ☺️[/info]`;
+    for (const ed of editorAssignees) {
+      if (!ed || (actor && ed.id === actor.id)) continue;
+      await sendNotif(ed, assigneeSlack, assigneeCw);
+    }
   }
   // 6) → 納品（クリエイター向けにお祝いメッセージ）
   //    PR #67 で削除されていたが、クリエイターは「クライアントOKが出たかどうか」を
