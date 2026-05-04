@@ -5193,7 +5193,9 @@ function avatarHtml(user, size, opts) {
     cls.push('avatar-' + (size || 'sm'));
   }
   const extraCls = opts?.className ? ' ' + opts.className : '';
-  const titleAttr = name ? ` title="${esc(name)}"` : '';
+  // opts.title が指定されていればそちらを優先（フルネーム＋ニックネームなど呼び出し側で整形した文字列を使う）
+  const titleText = (opts && typeof opts.title === 'string' && opts.title) ? opts.title : name;
+  const titleAttr = titleText ? ` title="${esc(titleText)}"` : '';
   if (url) {
     return `<span class="${cls.join(' ')}${extraCls}" style="${style}"${titleAttr}><img src="${esc(url)}" alt="${esc(name)}" loading="lazy" onerror="this.parentNode.innerHTML='${esc(initial)}'"></span>`;
   }
@@ -8178,7 +8180,16 @@ function renderCreativesGantt(filtered) {
     const clientName = c.projects?.clients?.name || '-';
     const projName = c.projects?.name || '';
     const teamLabel = _cvTeamShort(team);
-    const fullNameTitle = editorUser ? `${editorUser.full_name || ''}${team?` / ${team.team_code||team.team_name||''}チーム`:''}` : '未アサイン';
+    // ホバー時のラベル: 「フルネーム（ニックネーム） / 〇〇チーム」 形式。フルネームが取れない場合はニックネームのみ。
+    let personLabel = '';
+    if (editorUser) {
+      const fn = editorUser.full_name || '';
+      const nn = editorUser.nickname || '';
+      if (fn && nn && fn !== nn) personLabel = `${fn}（${nn}）`;
+      else personLabel = fn || nn || '';
+    }
+    const teamSuffix = team ? ` / ${team.team_code||team.team_name||''}チーム` : '';
+    const fullNameTitle = editorUser ? `${personLabel}${teamSuffix}`.trim() : '未アサイン';
     const assignee = editorUser
       ? `${(typeof avatarHtml === 'function' ? avatarHtml(editorUser, 22, { title: fullNameTitle }) : '')}${teamLabel?`<span class="team-mini" title="${esc(fullNameTitle)}">${esc(teamLabel)}</span>`:''}`
       : `<span class="team-mini" title="未アサイン" style="background:#eee;color:#888">未</span>${teamLabel?`<span class="team-mini">${esc(teamLabel)}</span>`:''}`;
@@ -8217,8 +8228,18 @@ function renderCreativesGantt(filtered) {
       const u = g.meta.user;
       const team = g.meta.team;
       const teamLabel = team ? `${team.team_code||''}${team.team_name?` / ${team.team_name}`:''}` : '';
-      const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 26) : '')
-                   : `<span style="display:inline-flex;width:26px;height:26px;border-radius:50%;background:#ddd;align-items:center;justify-content:center;font-size:11px;color:#888">未</span>`;
+      // グループ見出しアバターのホバー: 「フルネーム（ニックネーム）」 / チーム情報
+      let groupTitle = '未アサイン';
+      if (u) {
+        const fn = u.full_name || '';
+        const nn = u.nickname || '';
+        let pl = '';
+        if (fn && nn && fn !== nn) pl = `${fn}（${nn}）`;
+        else pl = fn || nn || '名無し';
+        groupTitle = teamLabel ? `${pl} / ${teamLabel}チーム` : pl;
+      }
+      const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 26, { title: groupTitle }) : '')
+                   : `<span style="display:inline-flex;width:26px;height:26px;border-radius:50%;background:#ddd;align-items:center;justify-content:center;font-size:11px;color:#888" title="未アサイン">未</span>`;
       const dispName = u ? (u.full_name || u.nickname || '名無し') : '未アサイン';
       return `<div class="cv-g-group-row is-assignee" style="width:${FIXED_W}px">
         ${av}
