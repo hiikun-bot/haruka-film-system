@@ -169,6 +169,7 @@ if (!process.env.APP_URL) {
 // slackName: Slack 用ファイル名（リンク化済み）
 // actor: 操作した人（ログインユーザー）。未解決なら null。
 // recipient: 受信者（director / producer / 担当者）。未解決なら null。
+//            複数受信者を1メッセージにまとめる場合は配列を渡す（カンマ区切りで表示）。
 // comment: ステータス遷移時に付与されたコメント。空なら「（コメントなし）」表示。
 // creativeUrl: ディープリンク URL。未設定なら URL 行を出さない。
 function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackName, actor, recipient, comment, creativeUrl }) {
@@ -178,8 +179,15 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
     if (cn || pn) return `${cn}${pn}` || '-';
     return '-';
   })();
-  const actorName     = actor?.full_name || '不明';
-  const recipientName = recipient?.full_name || '担当者';
+  const actorName = actor?.full_name || '不明';
+  // recipient は単一ユーザーオブジェクト or 配列を許容
+  const recipientName = (() => {
+    if (Array.isArray(recipient)) {
+      const names = recipient.map(r => r?.full_name).filter(Boolean);
+      return names.length ? names.join(', ') : '担当者';
+    }
+    return recipient?.full_name || '担当者';
+  })();
   const fromTo = `${actorName} → ${recipientName}`;
   const commentBlock = (comment && String(comment).trim())
     ? String(comment).trim()
@@ -241,10 +249,20 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const fileName  = detail.file_name;
 
   // 担当者の解決
-  // 担当者全員（role に関わらず）。重複排除はしない（後段で seen Set で一括管理）
-  const assignees = (detail.creative_assignments || [])
+  // role 別に分離:
+  //   - editorAssignees: 編集者・デザイナー（製作者側）。修正依頼・納品通知の宛先
+  //   - directorAssignees: ディレクター（チェッカー側）。Dチェック依頼の宛先
+  // 旧 `assignees` は editorAssignees にエイリアス（製作者側に通知する意図に統一）
+  const editorAssignees = (detail.creative_assignments || [])
+    .filter(a => ['editor', 'designer', 'director_as_editor'].includes(a.role))
     .map(a => a.users)
     .filter(Boolean);
+  const directorAssignees = (detail.creative_assignments || [])
+    .filter(a => a.role === 'director')
+    .map(a => a.users)
+    .filter(Boolean);
+  // 互換: 既存コードで `assignees` を参照している箇所は editorAssignees の意図
+  const assignees = editorAssignees;
   // 案件レベル優先 → 無ければクリエイティブの team レベルにフォールバック
   // （ユーザーが teams.director_id だけ設定して projects.director_id を設定し忘れる UX 問題への対策）
   const directorId = project?.director_id || detail.teams?.director_id || null;
@@ -280,6 +298,41 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     }
   };
 
+  // 集約版: 複数 user 宛に同じ本文を「1回だけ」投稿する。
+  // 重複は id ベースで除外。Slack は <@id> をスペース区切りで連結、
+  // Chatwork は [To:id][To:id] を連結（仕様上複数 To 可）。
+  // DM ID 未設定者はそのプラットフォームでスキップ（届かない人にメンションしても無音のため）。
+  // 戻り値: { reachableSlackCount, reachableCwCount, anyReachable }
+  const sendNotifMulti = async (users, slackBody, cwBody) => {
+    const result = { reachableSlackCount: 0, reachableCwCount: 0, anyReachable: false };
+    if (!Array.isArray(users) || users.length === 0) return result;
+    const seen = new Set();
+    const uniq = users.filter(u => {
+      if (!u || !u.id || seen.has(u.id)) return false;
+      seen.add(u.id);
+      return true;
+    });
+    if (uniq.length === 0) return result;
+    if (channelUrl) {
+      const slackUsers = uniq.filter(u => u.slack_dm_id);
+      result.reachableSlackCount = slackUsers.length;
+      if (slackUsers.length) {
+        const mentions = slackUsers.map(u => `<@${u.slack_dm_id}>`).join(' ');
+        await sendSlackChannel(channelUrl, `${mentions} ${slackBody}`);
+      }
+    }
+    if (roomId) {
+      const cwUsers = uniq.filter(u => u.chatwork_dm_id);
+      result.reachableCwCount = cwUsers.length;
+      if (cwUsers.length) {
+        const mentions = cwUsers.map(u => `[To:${u.chatwork_dm_id}]`).join('');
+        await sendChatworkRoom(roomId, `${mentions}\n${cwBody}`);
+      }
+    }
+    result.anyReachable = result.reachableSlackCount > 0 || result.reachableCwCount > 0;
+    return result;
+  };
+
   // ディレクター不在時のフォールバック投稿（CR提出時のチャンネルメンション機能）
   // - Slack: <!here> でチャンネル内のオンライン全員に通知
   // - Chatwork: [toall] でルーム全員に通知
@@ -306,38 +359,14 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    重複（ディレクター兼任など）は seen Set で除外。
   if (newStatus === 'Dチェック') {
     // 1-a) Dチェック宛先: assignments の director を最優先
-    const dCheckAssignees = (detail.creative_assignments || [])
-      .filter(a => a.role === 'director')
-      .map(a => a.users)
-      .filter(Boolean);
-    const dCheckTargets = dCheckAssignees.length > 0
-      ? dCheckAssignees
+    //   旧仕様（projects.director_id / teams.director_id）はフォールバック。
+    const dCheckTargets = directorAssignees.length > 0
+      ? directorAssignees.slice()
       : [director].filter(Boolean);
 
-    const seen = new Set();
-    let anyReachable = false;
-    for (const t of dCheckTargets) {
-      if (!t || seen.has(t.id)) continue;
-      seen.add(t.id);
-      const reachable = t.slack_dm_id || t.chatwork_dm_id;
-      if (!reachable) continue;
-      anyReachable = true;
-      const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', t);
-      await sendNotif(t, slackBody, cwBody);
-    }
-
-    // 1-b) 全員 DM ID 未設定 → チャンネルフォールバック
-    if (!anyReachable) {
-      const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', null);
-      const note = '\n（ディレクター未設定または DM ID 未登録のため関係者にメンションしています）';
-      const slackFallback = slackBody + note;
-      const cwFallback = cwBody.replace('[/info]', note + '[/info]');
-      await sendChannelMention(slackFallback, cwFallback);
-    }
-
-    // 1-c) オプション: 秘書 CC（ENV フラグで有効化）
-    //   チームの secretary に追加 DM（重複は seen で除外済み）。
-    //   既存挙動を壊さないよう、デフォルト OFF。
+    // 1-b) 秘書 CC（ENV フラグで有効化、デフォルト OFF）
+    //   ディレクター宛と「同じ1メッセージ」にまとめてTOメンションするため、
+    //   先に秘書を取得してから sendNotifMulti で一括送信する。
     if (String(process.env.NOTIFY_DCHECK_SECRETARY_CC || '').toLowerCase() === 'true' && detail.team_id) {
       const { data: secretaries, error: secErr } = await supabase.from('users')
         .select('id, full_name, slack_dm_id, chatwork_dm_id, role, team_id, is_active')
@@ -346,12 +375,21 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
         .eq('is_active', true);
       if (secErr) console.warn('[notif] secretary select failed:', secErr.message);
       for (const s of (secretaries || [])) {
-        if (!s || seen.has(s.id)) continue;
-        seen.add(s.id);
-        if (!(s.slack_dm_id || s.chatwork_dm_id)) continue;
-        const { slackBody, cwBody } = tpl('Dチェック依頼（CC: 秘書）', '📥', s);
-        await sendNotif(s, slackBody, cwBody);
+        if (s) dCheckTargets.push(s);
       }
+    }
+
+    // 1-c) 集約版で1メッセージ送信（複数メンションを連結）
+    const { slackBody, cwBody } = tpl('Dチェック依頼', '📥', dCheckTargets);
+    const sendResult = await sendNotifMulti(dCheckTargets, slackBody, cwBody);
+
+    // 1-d) 全員 DM ID 未設定 → チャンネルフォールバック
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Dチェック依頼', '📥', null);
+      const note = '\n（ディレクター未設定または DM ID 未登録のため関係者にメンションしています）';
+      const slackFallback = fbSlack + note;
+      const cwFallback = fbCw.replace('[/info]', note + '[/info]');
+      await sendChannelMention(slackFallback, cwFallback);
     }
   }
   // 2) → Pチェック
@@ -359,23 +397,19 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     const { slackBody, cwBody } = tpl('Pチェック依頼', '📥', producer);
     await sendNotif(producer, slackBody, cwBody);
   }
-  // 3) → Dチェック後修正
+  // 3) → Dチェック後修正（ボールが製作者側に戻る）
+  //    宛先は editorAssignees（編集者・デザイナー）。ディレクターは除外
+  //    （旧 assignees だと director も含まれていて、editor 側に「修正してください」が
+  //     届かないバグがあった。PR #?）
   else if (newStatus === 'Dチェック後修正') {
-    for (const ed of assignees) {
-      const { slackBody, cwBody } = tpl('Dチェック修正依頼', '🔁', ed);
-      await sendNotif(ed, slackBody, cwBody);
-    }
+    const { slackBody, cwBody } = tpl('Dチェック修正依頼', '🔁', editorAssignees);
+    await sendNotifMulti(editorAssignees, slackBody, cwBody);
   }
-  // 4) → Pチェック後修正
+  // 4) → Pチェック後修正（プロデューサーから戻る → editor + director の両方が修正対象）
   else if (newStatus === 'Pチェック後修正') {
-    const targets = [...assignees, director].filter(Boolean);
-    const seen = new Set();
-    for (const t of targets) {
-      if (seen.has(t.id)) continue;
-      seen.add(t.id);
-      const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', t);
-      await sendNotif(t, slackBody, cwBody);
-    }
+    const targets = [...editorAssignees, director].filter(Boolean);
+    const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', targets);
+    await sendNotifMulti(targets, slackBody, cwBody);
   }
   // 5) → クライアントチェック中（操作した本人にテンプレ案内）
   //    メンション方式によりチームにも見える形になるが、ミス防止のため第三者レビュー可能な
@@ -423,7 +457,8 @@ ${cwUrlLine2}
   else if (newStatus === '納品') {
     const slackBody = `🎉 クライアントOK！納品完了\nファイル: ${slackName}\nお疲れ様でした！クライアントから承認をいただき納品となりました ☺️✨`;
     const cwBody = `[info][title]🎉 クライアントOK！納品完了[/title]ファイル: ${fileName}${cwUrlLine}\nお疲れ様でした！\nクライアントから承認をいただき納品となりました ☺️✨[/info]`;
-    for (const ed of assignees) await sendNotif(ed, slackBody, cwBody);
+    // 担当者全員（editor・designer）に1メッセージで通知
+    await sendNotifMulti(editorAssignees, slackBody, cwBody);
   }
 }
 
