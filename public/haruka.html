@@ -195,6 +195,11 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-line-actual.is-overrun{border-top-color:#E24B4A}
 .cv-g-line-planned.is-late{border-top-color:rgba(226,75,74,0.5)}
 .cv-g-line-actual.is-done {border-top-color:#7FA68A}
+/* 制作中バー（start→draft の確定スパン。ステータス=制作中ロール時のみ） */
+.cv-g-line-production{position:absolute;top:50%;transform:translateY(-5px);height:10px;border-radius:5px;background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 1px 2px rgba(43,184,180,0.25);pointer-events:auto;z-index:1}
+.cv-g-line-production.is-late{background:linear-gradient(90deg,#E24B4A 0%,#F07A78 100%);box-shadow:0 1px 2px rgba(226,75,74,0.30)}
+/* 開始日が推定値の時は左端を明示（実線→開始日不確定） */
+.cv-g-line-production.is-est-start{background:repeating-linear-gradient(135deg,rgba(43,184,180,0.55) 0 6px,rgba(43,184,180,0.30) 6px 12px);box-shadow:none}
 /* 旧バー互換（残しておく。今は未使用） */
 .cv-g-bar{position:absolute;top:50%;transform:translateY(-50%);height:8px;border-radius:4px;background:linear-gradient(90deg,#A8EDEA,#3ECFCA);box-shadow:inset 0 0 0 0.5px var(--em-dark);opacity:0.85}
 .cv-g-bar.late{background:linear-gradient(90deg,#FBC8C8,#E24B4A);box-shadow:inset 0 0 0 0.5px #B23030}
@@ -215,9 +220,22 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-ms.is-mini{width:8px !important;height:8px !important;clip-path:none !important;border-radius:50% !important;font-size:0;background-clip:padding-box}
 .cv-g-today-line{position:absolute;top:0;bottom:0;width:0;border-left:2px solid #E89B0E;z-index:3;pointer-events:none}
 .cv-g-today-label{position:absolute;top:-2px;background:#E89B0E;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:700;transform:translateX(-50%);white-space:nowrap;z-index:4;box-shadow:0 1px 2px rgba(0,0,0,.15)}
-/* 凡例 */
+/* 凡例（旧・下部用 / 現在は cv-g-legend-top を使用） */
 .cv-g-legend{display:flex;flex-wrap:wrap;gap:10px;padding:8px 14px;font-size:11px;color:var(--text-muted);background:#fdfffe;border-top:0.5px solid var(--border-light)}
 .cv-g-legend .lg-item{display:inline-flex;align-items:center;gap:4px}
+/* 凡例（新・ヘッダー付近、ガント本体トップにスティッキー） */
+.cv-g-legend-top{display:flex;flex-wrap:nowrap;gap:12px;padding:5px 14px;font-size:10.5px;color:var(--text-muted);background:#fafefd;border-top:0.5px solid var(--border-light);border-bottom:0.5px solid var(--border-light);position:sticky;top:0;z-index:9;overflow-x:auto;white-space:nowrap;align-items:center}
+.cv-g-legend-top::-webkit-scrollbar{height:4px}
+.cv-g-legend-top .lg-item{display:inline-flex;align-items:center;gap:4px;flex-shrink:0}
+.cv-g-legend-top .lg-line{display:inline-block;width:18px;height:0;flex-shrink:0}
+.cv-g-legend-top .lg-line-planned{border-top:2px dashed rgba(43,184,180,0.55)}
+.cv-g-legend-top .lg-line-actual{border-top:3px solid #2BB8B4}
+.cv-g-legend-top .lg-line-late{border-top:3px solid #E24B4A}
+.cv-g-legend-top .lg-bar{display:inline-block;width:18px;height:8px;border-radius:4px;flex-shrink:0}
+.cv-g-legend-top .lg-bar-production{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%)}
+.cv-g-legend-top .lg-ms{position:static !important;transform:none !important;flex-shrink:0;width:10px;height:10px}
+.cv-g-legend-top .lg-ms.ms-draft{transform:rotate(45deg) !important}
+.cv-g-legend-top .lg-est{margin-left:auto;color:var(--text-faint);font-size:10px}
 /* サイドパネル */
 .cv-sp-section{margin-bottom:18px}
 .cv-sp-section h4{font-size:12px;font-weight:600;color:var(--em-dark);margin:0 0 8px;letter-spacing:0.04em;border-bottom:0.5px solid var(--border-light);padding-bottom:4px}
@@ -244,8 +262,8 @@ tr.row-help td{background:#FFFBF2}
 }
 
 /* ─── クリエイティブ コンパクトツールバー（最大2行） ─── */
-.cv-toolbar-compact{padding:8px 20px 6px !important;gap:6px !important}
-.cv-toolbar-compact .toolbar-row{gap:10px;align-items:center;flex-wrap:wrap;padding:0;margin:0}
+.cv-toolbar-compact{padding:4px 20px 3px !important;gap:4px !important}
+.cv-toolbar-compact .toolbar-row{gap:8px;align-items:center;flex-wrap:wrap;padding:0;margin:0}
 .cv-tb-main{display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:6px}
 .cv-tb-search{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .cv-tb-search .cv-tb-client #client-multi-btn{min-width:118px;max-width:160px}
@@ -293,8 +311,9 @@ tr.row-help td{background:#FFFBF2}
 
 /* ガント本体を少しコンパクトに */
 .cv-gantt-main{border-radius:10px}
-.cv-g-toolbar{padding:6px 12px;font-size:11px}
-.cv-g-scroll{max-height:calc(100vh - 200px);min-height:60vh}
+.cv-g-toolbar{padding:4px 12px;font-size:11px;display:flex;gap:12px;align-items:center;border-bottom:0.5px solid var(--border-light);background:#fafefd}
+/* タブ・ツールバー圧縮で確保した縦領域をガント本体へ。1画面 18-22 件目標 */
+.cv-g-scroll{max-height:calc(100vh - 165px);min-height:65vh}
 
 @media (max-width:1200px){
   .cv-tb-action{margin-left:0}
@@ -2276,17 +2295,17 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <div id="page-creatives" class="page">
   <div id="alert-container"></div>
   <!-- クリエイティブ種別タブ（共通／動画編集／デザイン） -->
-  <div id="creative-type-tabs" style="display:flex;background:var(--em-pale);border-radius:14px;padding:4px;gap:4px;margin:16px 20px 0;max-width:520px">
+  <div id="creative-type-tabs" style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px;margin:6px 20px 0;max-width:480px">
     <button id="cv-tab-all" type="button" onclick="setCreativeTab('all')"
-      style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 2px 8px rgba(43,184,180,.25)">
+      style="flex:1;min-width:88px;padding:5px 0;border-radius:7px;border:none;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .2s;background:var(--em);color:#fff;box-shadow:0 1px 4px rgba(43,184,180,.20)">
       共通 <span id="cv-tab-all-count" style="font-weight:500;opacity:.85">(0)</span>
     </button>
     <button id="cv-tab-video" type="button" onclick="setCreativeTab('video')"
-      style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+      style="flex:1;min-width:88px;padding:5px 0;border-radius:7px;border:none;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
       🎬 動画編集 <span id="cv-tab-video-count" style="font-weight:500;opacity:.85">(0)</span>
     </button>
     <button id="cv-tab-design" type="button" onclick="setCreativeTab('design')"
-      style="flex:1;min-width:96px;padding:10px 0;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
+      style="flex:1;min-width:88px;padding:5px 0;border-radius:7px;border:none;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .2s;background:transparent;color:var(--em-dark)">
       🎨 デザイン <span id="cv-tab-design-count" style="font-weight:500;opacity:.85">(0)</span>
     </button>
   </div>
@@ -7311,7 +7330,22 @@ function creativeGanttJumpToDate(val) {
 }
 
 // 日付ヘルパ
-function _cvAtMidnight(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+// ISO日付文字列(YYYY-MM-DD) はタイムゾーンによって UTC 解釈で 1日ズレるため、
+// 文字列で受けたら年月日を直接パースしてローカル日付として扱う。
+function _cvAtMidnight(d) {
+  if (typeof d === 'string') {
+    // 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS...'
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      const x = new Date(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10));
+      x.setHours(0,0,0,0);
+      return x;
+    }
+  }
+  const x = new Date(d);
+  x.setHours(0,0,0,0);
+  return x;
+}
 function _cvDateAdd(d, days) { const x = new Date(d); x.setDate(x.getDate()+days); x.setHours(0,0,0,0); return x; }
 function _cvDayDiff(a, b) {
   // 暦日差: タイムゾーン跨ぎでもズレないよう UTC ベースで計算
@@ -7343,43 +7377,71 @@ function _cvRangeWindow() {
 }
 
 // 1行ぶんの判定情報を作る（リストと同じロジックを共有）
-// データ欠損時は推定値で埋める（ガントの空白行を防ぐ）。
-//   - 着手開始 (start): created_at → 無ければ final - 標準制作日数(14日)
-//   - 初稿締切 (draft): draft_deadline → 無ければ final - 7日
-//   - クライアント確認 (clientCheck): draft と final の中間（既存ロジック維持）
-//   - 最終納品 (final): final_deadline → 無ければ created_at + 14日（最終フォールバック）
+// 制作開始日 (start) の優先順位（重要）:
+//   1) 担当者割当日: creative_assignments.created_at の最古（DBにあれば）
+//   2) ステータス変更日（status_logs。本実装時点では未存在なのでスキップ）
+//   3) draft_deadline - _CV_DRAFT_PRE_DAYS（標準制作日数）で逆算した仮開始日
+//   4) 表示期間内の開始日 win.start（最後の保険、_cvRowInfo 外では参照不可なため
+//      最終フォールバックは today を使う）
+//   5) 案件登録日 creatives.created_at（最終手段、警告ログ）
+// 初稿締切 (draft): draft_deadline → 無ければ final - 7日
+// 最終納品 (final): final_deadline → 無ければ start + _CV_STD_PROD_DAYS
+// クライアント確認 (clientCheck): draft と final の中間（既存ロジック維持）
 // 推定された値には isEstimated.* に true を立て、UIで点線表示や注記に利用する。
-const _CV_STD_PROD_DAYS = 14; // 標準制作日数（仮）
+const _CV_STD_PROD_DAYS = 7;   // 標準制作日数（draft_deadline からの逆算用）
 const _CV_DRAFT_PRE_DAYS = 7;  // 最終納品の何日前を初稿締切と推定するか
+const _CV_FALLBACK_DAYS = 14;  // start も final も全く無い場合の総延長
+const _CV_PRODUCTION_STATUSES = ['未着手','台本制作','素材・ナレ作成','編集','制作中','制作中（初稿提出前）'];
 function _cvRowInfo(c) {
   const today = _cvAtMidnight(new Date());
-  const rawDraft = c.draft_deadline ? _cvAtMidnight(new Date(c.draft_deadline)) : null;
-  const rawFinal = c.final_deadline ? _cvAtMidnight(new Date(c.final_deadline)) : null;
-  const rawStart = c.created_at ? _cvAtMidnight(new Date(c.created_at)) : null;
+  // ISO 日付文字列(YYYY-MM-DD) はそのまま渡してローカル日付パースさせる（TZズレ対策）
+  const rawDraft = c.draft_deadline ? _cvAtMidnight(c.draft_deadline) : null;
+  const rawFinal = c.final_deadline ? _cvAtMidnight(c.final_deadline) : null;
+  const rawCreatedAt = c.created_at ? _cvAtMidnight(c.created_at) : null;
   const isDelivered = c.status === '納品';
+  // 担当者割当日: creative_assignments.created_at の最古値
+  let rawAssignedAt = null;
+  const asgs = Array.isArray(c.creative_assignments) ? c.creative_assignments : [];
+  for (const a of asgs) {
+    if (!a || !a.created_at) continue;
+    const d = _cvAtMidnight(a.created_at);
+    if (!rawAssignedAt || d < rawAssignedAt) rawAssignedAt = d;
+  }
 
-  // フォールバック: final が無ければ created_at + 14日（最後の砦）
+  // ── 最終納品 (final): final_deadline → 推定（start + 14日 / today + 14日）
   let final = rawFinal;
   let finalEstimated = false;
-  if (!final && rawStart) {
-    final = _cvDateAdd(rawStart, _CV_STD_PROD_DAYS);
-    finalEstimated = true;
+
+  // ── 制作開始日 (start) を優先順位で決定
+  // 1) 担当者割当日
+  // 2) (status_logs 未対応のためスキップ)
+  // 3) draft_deadline - _CV_STD_PROD_DAYS
+  // 4) final_deadline - 14日
+  // 5) creatives.created_at（警告）
+  let start = null;
+  let startEstimated = true; // 担当者割当日以外はすべて推定
+  if (rawAssignedAt) {
+    start = rawAssignedAt;
+    startEstimated = false;
+  } else if (rawDraft) {
+    start = _cvDateAdd(rawDraft, -_CV_STD_PROD_DAYS);
+  } else if (rawFinal) {
+    start = _cvDateAdd(rawFinal, -_CV_FALLBACK_DAYS);
+  } else if (rawCreatedAt) {
+    // 最終手段: 案件登録日。データ欠損ケースは警告ログ。
+    try { console.warn('[gantt] _cvRowInfo: fallback to created_at for', c.id, c.file_name); } catch(_) {}
+    start = rawCreatedAt;
+  } else {
+    start = today; // 完全にデータが無い場合
   }
-  // 最終フォールバック: start も final も無ければ today / today+14
+
+  // final が未設定なら start + 14日
   if (!final) {
-    final = _cvDateAdd(today, _CV_STD_PROD_DAYS);
+    final = _cvDateAdd(start, _CV_FALLBACK_DAYS);
     finalEstimated = true;
   }
 
-  // フォールバック: start が無ければ final - 14日 / さもなくば created_at
-  let start = rawStart;
-  let startEstimated = false;
-  if (!start && final) {
-    start = _cvDateAdd(final, -_CV_STD_PROD_DAYS);
-    startEstimated = true;
-  }
-
-  // フォールバック: draft が無ければ final - 7日
+  // ── 初稿締切 (draft): draft_deadline → 推定（final - 7日）
   let draft = rawDraft;
   let draftEstimated = false;
   if (!draft && final) {
@@ -7389,6 +7451,11 @@ function _cvRowInfo(c) {
     if (start && draft < start) draft = start;
   }
 
+  // start が draft を超えてしまっている場合は draft の少し前にクランプ（推定値時のみ）
+  if (startEstimated && draft && start > draft) {
+    start = _cvDateAdd(draft, -_CV_STD_PROD_DAYS);
+  }
+
   // クライアント確認予定日: draft と final の間の中間点（DB列が無いため常に推定）
   let clientCheck = null;
   if (draft && final && final > draft) {
@@ -7396,7 +7463,7 @@ function _cvRowInfo(c) {
     clientCheck = _cvAtMidnight(mid);
   }
   // 実績納品日: 納品済みなら updated_at を実績日として扱う
-  const deliveredAt = (isDelivered && c.updated_at) ? _cvAtMidnight(new Date(c.updated_at)) : null;
+  const deliveredAt = (isDelivered && c.updated_at) ? _cvAtMidnight(c.updated_at) : null;
   const finalDiff = final ? _cvDayDiff(final, today) : null;
   const DRAFT_SUBMITTED = ['Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
   const draftSubmitted = DRAFT_SUBMITTED.includes(c.status);
@@ -7424,9 +7491,12 @@ function _cvRowInfo(c) {
     (rawFinal && _cvDayDiff(rawFinal, today) === 0) ||
     (clientCheck && _cvDayDiff(clientCheck, today) === 0)
   );
+  // rawStart は「実績データから取れた制作開始日」= 担当者割当日 を指す。
+  // 案件登録日は実態と乖離するため rawStart には含めない（互換目的で残すのみ）。
+  const rawStart = rawAssignedAt || null;
   return {
     today, draft, final, start, clientCheck, deliveredAt,
-    rawDraft, rawFinal, rawStart,
+    rawDraft, rawFinal, rawStart, rawAssignedAt, rawCreatedAt,
     isDelivered, isLate, delayLabel, delayClass, onToday,
     isEstimated: {
       start: startEstimated,
@@ -7584,10 +7654,34 @@ function renderCreativesGantt(filtered) {
       }
     }
 
-    // ── 2) 実績線（実線）: actualStart → actualEnd（today or deliveredAt）
+    // ── 2) 制作中バー（実線、強調）: 制作中ステータス かつ start→draft が描けるとき必ず描画
+    //   start = 担当者割当日 / draft 締切から逆算 / final 逆算 のいずれか
+    //   draft = 初稿締切（rawDraft 優先、無ければ推定）
+    //   既に初稿提出済（Dチェック以降）の場合は描かない
+    //   _CV_PRODUCTION_STATUSES に明示的に列挙したステータス、もしくは初稿提出前
+    //   かつ未納品・未保留の status（DRAFT_SUBMITTED の補集合）を「制作中」と扱う。
+    const _SUBMITTED_LIST = ['Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
+    const inProduction = _CV_PRODUCTION_STATUSES.includes(c.status)
+      || (c.status && c.status !== '保留' && !_SUBMITTED_LIST.includes(c.status));
+    if (inProduction && info.start && info.draft && info.draft >= info.start) {
+      const s = Math.max(0, _cvDayDiff(info.start, win.start));
+      const e = Math.min(totalDays-1, _cvDayDiff(info.draft, win.start));
+      if (e >= 0 && s <= totalDays-1 && e >= s) {
+        const left = s * dayPx + dayPx*0.15;
+        const width = (e - s + 1) * dayPx - dayPx*0.3;
+        let cls = 'is-production';
+        if (info.isLate) cls += ' is-late';
+        if (info.isEstimated.start) cls += ' is-est-start';
+        const title = `制作中: ${info.start.toLocaleDateString('ja-JP')} → ${info.draft.toLocaleDateString('ja-JP')}（初稿締切）${info.isEstimated.start?'※開始日推定':''}`;
+        segments.push(`<div class="cv-g-line-production ${cls}" style="left:${left}px;width:${Math.max(width, 6)}px" title="${esc(title)}"></div>`);
+      }
+    }
+
+    // ── 3) 実績線（実線）: actualStart → actualEnd（today or deliveredAt）
+    //   ※ 制作中バーが描かれている場合は重複を避けるためスキップ
     const aStart = _cvActualStartFor(r);
     const aEnd   = _cvActualEndFor(r);
-    if (aStart && aEnd && aEnd >= aStart) {
+    if (!inProduction && aStart && aEnd && aEnd >= aStart) {
       const s = Math.max(0, _cvDayDiff(aStart, win.start));
       const e = Math.min(totalDays-1, _cvDayDiff(aEnd, win.start));
       if (e >= 0 && s <= totalDays-1 && e >= s) {
@@ -7730,11 +7824,29 @@ function renderCreativesGantt(filtered) {
   const todayIdx = _cvDayDiff(win.today, win.start);
   const todayLeft = (todayIdx >= 0 && todayIdx <= totalDays-1) ? (todayIdx * dayPx + dayPx/2) : -9999;
 
+  // 凡例HTML（ヘッダー直下のスティッキー位置に表示）
+  const legendHtml = `
+    <div class="cv-g-legend cv-g-legend-top">
+      <span class="lg-item"><span class="lg-bar lg-bar-production"></span>制作中</span>
+      <span class="lg-item"><span class="lg-line lg-line-planned"></span>予定</span>
+      <span class="lg-item"><span class="lg-line lg-line-actual"></span>実績</span>
+      <span class="lg-item"><span class="cv-g-ms ms-start lg-ms"></span>着手</span>
+      <span class="lg-item"><span class="cv-g-ms ms-draft lg-ms"></span>初稿締切</span>
+      <span class="lg-item"><span class="cv-g-ms ms-client lg-ms"></span>CL確認</span>
+      <span class="lg-item"><span class="cv-g-ms ms-final lg-ms"></span>最終納品</span>
+      ${showDp ? `<span class="lg-item"><span class="cv-g-ms ms-dp ms-d lg-ms"></span>Dチェック</span>
+      <span class="lg-item"><span class="cv-g-ms ms-dp ms-p lg-ms"></span>Pチェック</span>` : ''}
+      <span class="lg-item"><span class="lg-line lg-line-late"></span>遅延/超過</span>
+      <span class="lg-item lg-est">薄色＝推定値</span>
+    </div>
+  `;
+
   main.innerHTML = `
     <div class="cv-g-toolbar">
       <span>${totalDays}日間 / ${rows.length}件</span>
       <span style="color:var(--text-muted)">グループ: ${currentCreativeGroup === 'assignee' ? '担当者別' : '案件別'}</span>
     </div>
+    ${legendHtml}
     <div class="cv-g-scroll">
       <div class="cv-g-grid" style="grid-template-columns:${FIXED_W}px ${tlWidth}px">
         <div class="cv-g-fixed is-header" style="display:grid;grid-template-columns:${fixedColTpl};position:sticky;left:0;top:0;z-index:8;background:var(--em-pale);border-bottom:0.5px solid var(--border)">
@@ -7751,18 +7863,6 @@ function renderCreativesGantt(filtered) {
           ${todayLeft >= 0 ? `<div class="cv-g-today-line" style="left:${todayLeft}px"></div><div class="cv-g-today-label" style="left:${todayLeft}px">今日</div>` : ''}
         </div>
       </div>
-    </div>
-    <div class="cv-g-legend">
-      <span class="lg-item"><span style="display:inline-block;width:24px;height:0;border-top:2px dashed rgba(43,184,180,0.55)"></span>予定</span>
-      <span class="lg-item"><span style="display:inline-block;width:24px;height:0;border-top:3px solid #2BB8B4"></span>実績</span>
-      <span class="lg-item"><span class="cv-g-ms ms-start" style="position:static;transform:none"></span>着手開始</span>
-      <span class="lg-item"><span class="cv-g-ms ms-draft" style="position:static;transform:rotate(45deg)"></span>初稿締切</span>
-      <span class="lg-item"><span class="cv-g-ms ms-client" style="position:static;transform:none"></span>CL確認</span>
-      <span class="lg-item"><span class="cv-g-ms ms-final" style="position:static;transform:none"></span>最終納品</span>
-      ${showDp ? `<span class="lg-item"><span class="cv-g-ms ms-dp ms-d" style="position:static;transform:none"></span>Dチェック</span>
-      <span class="lg-item"><span class="cv-g-ms ms-dp ms-p" style="position:static;transform:none"></span>Pチェック</span>` : ''}
-      <span class="lg-item"><span style="display:inline-block;width:24px;height:0;border-top:3px solid #E24B4A"></span>遅延/超過</span>
-      <span class="lg-item" style="margin-left:auto;color:var(--text-muted)">薄い色＝推定値（DBに該当列なし）</span>
     </div>
   `;
 
