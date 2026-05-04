@@ -156,16 +156,23 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-fixed .c-delay.ok{color:var(--em-dark)}
 .cv-g-row-fixed .c-delay.done{color:#7FA68A}
 /* 案件別グループ見出し */
-.cv-g-group-row{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4}
+.cv-g-group-row{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;align-content:center;padding:6px 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4}
 .cv-g-group-row .gicount{font-weight:400;color:var(--text-muted);font-size:11px}
 /* 担当者別グループ見出し（強化版） */
-.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:10px 12px;gap:10px;border-bottom:1px solid var(--em-light)}
+.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:7px 12px;gap:5px 10px;border-bottom:1px solid var(--em-light)}
 .cv-g-group-row.is-assignee .ga-name{font-weight:700;color:var(--text)}
 .cv-g-group-row.is-assignee .ga-team{font-size:11px;color:var(--em-dark);background:#fff;border-radius:6px;padding:2px 7px;font-weight:600}
 .cv-g-group-row.is-assignee .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:500}
 .cv-g-group-row.is-assignee .ga-stats .gs{padding:2px 7px;border-radius:6px;background:#fff;color:var(--em-dark)}
 .cv-g-group-row.is-assignee .ga-stats .gs.is-late{background:#FBEAEA;color:#A03030;font-weight:700}
 .cv-g-group-row.is-assignee .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
+.cv-g-group-row .ga-stats{display:inline-flex;gap:4px;margin-left:0;font-size:10.5px;font-weight:500;min-width:0;flex:1 1 100%;overflow:hidden}
+.cv-g-group-row .ga-stats .gs{padding:2px 6px;border-radius:6px;background:#fff;color:var(--em-dark);white-space:nowrap}
+.cv-g-group-row .ga-stats .gs.is-draft{background:#FFF4D9;color:#8A5A00;font-weight:700}
+.cv-g-group-row .ga-stats .gs.is-final{background:#FBEAEA;color:#A03030;font-weight:700}
+.cv-g-group-row .ga-stats .gs.is-late{background:#FBEAEA;color:#A03030;font-weight:700}
+.cv-g-group-row .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
+.cv-g-group-row .ga-stats .gs.is-load{background:#FAEEDA;color:#854F0B;font-weight:700}
 /* タイムライン部 */
 .cv-g-timeline-head{position:sticky;top:0;display:flex;background:var(--em-pale);border-bottom:0.5px solid var(--border);z-index:5;height:40px}
 .cv-g-tl-day{flex:0 0 auto;border-right:0.5px solid var(--border-light);color:var(--em-dark);text-align:center;padding-top:3px;line-height:1.15;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;overflow:hidden}
@@ -188,16 +195,22 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-tl.is-late{background:#FFFBFB}
 .cv-g-row-tl:hover{background:#FAFFFF}
 .cv-g-row-tl.is-late:hover{background:#FFF6F6}
-/* 予定線: 点線（薄め）／ 実績線: 実線（濃い） */
+/* 期間バー: 制作期間と確認・修正期間を主役にする */
 .cv-g-line{position:absolute;left:0;right:0;pointer-events:none}
 .cv-g-line-planned{position:absolute;top:50%;transform:translateY(-1px);border-top:2px dashed rgba(43,184,180,0.55);height:0;pointer-events:none}
 .cv-g-line-actual {position:absolute;top:50%;transform:translateY(-2px);border-top:3px solid #2BB8B4;height:0;pointer-events:none}
 .cv-g-line-actual.is-overrun{border-top-color:#E24B4A}
 .cv-g-line-planned.is-late{border-top-color:rgba(226,75,74,0.5)}
 .cv-g-line-actual.is-done {border-top-color:#7FA68A}
-/* 制作中バー（start→draft の確定スパン。ステータス=制作中ロール時のみ） */
-.cv-g-line-production{position:absolute;top:50%;transform:translateY(-5px);height:10px;border-radius:5px;background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 1px 2px rgba(43,184,180,0.25);pointer-events:auto;z-index:1}
+.cv-g-line-production{position:absolute;top:50%;transform:translateY(-7px);height:12px;border-radius:6px;background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 1px 2px rgba(43,184,180,0.25);pointer-events:auto;z-index:1}
 .cv-g-line-production.is-late{background:linear-gradient(90deg,#E24B4A 0%,#F07A78 100%);box-shadow:0 1px 2px rgba(226,75,74,0.30)}
+.cv-g-line-production.is-due-soon{background:linear-gradient(90deg,#F2A93B 0%,#F8C96D 100%);box-shadow:0 1px 2px rgba(242,169,59,0.28)}
+.cv-g-line-production.is-overlap{box-shadow:0 0 0 2px rgba(232,155,14,0.30),0 1px 2px rgba(43,184,180,0.25)}
+.cv-g-line-production.is-done{background:#B7DDC0;box-shadow:none;opacity:.65}
+.cv-g-line-review{position:absolute;top:50%;transform:translateY(4px);height:6px;border-radius:4px;background:linear-gradient(90deg,#9B7BD9 0%,#B7A3E8 100%);box-shadow:0 1px 2px rgba(155,123,217,0.20);pointer-events:auto;z-index:1}
+.cv-g-line-review.is-final-soon{background:linear-gradient(90deg,#E89B0E 0%,#F2B84B 100%)}
+.cv-g-line-review.is-late{background:linear-gradient(90deg,#E24B4A 0%,#F07A78 100%);box-shadow:0 1px 2px rgba(226,75,74,0.30)}
+.cv-g-line-review.is-done{background:#B7DDC0;box-shadow:none;opacity:.55}
 /* 開始日が推定値の時は左端を明示（実線→開始日不確定） */
 .cv-g-line-production.is-est-start{background:repeating-linear-gradient(135deg,rgba(43,184,180,0.55) 0 6px,rgba(43,184,180,0.30) 6px 12px);box-shadow:none}
 /* 旧バー互換（残しておく。今は未使用） */
@@ -233,6 +246,9 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-legend-top .lg-line-late{border-top:3px solid #E24B4A}
 .cv-g-legend-top .lg-bar{display:inline-block;width:18px;height:8px;border-radius:4px;flex-shrink:0}
 .cv-g-legend-top .lg-bar-production{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%)}
+.cv-g-legend-top .lg-bar-review{background:linear-gradient(90deg,#9B7BD9 0%,#B7A3E8 100%)}
+.cv-g-legend-top .lg-bar-draft-soon{background:linear-gradient(90deg,#F2A93B 0%,#F8C96D 100%)}
+.cv-g-legend-top .lg-bar-overlap{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 0 0 2px rgba(232,155,14,0.30)}
 .cv-g-legend-top .lg-ms{position:static !important;transform:none !important;flex-shrink:0;width:10px;height:10px}
 .cv-g-legend-top .lg-ms.ms-draft{transform:rotate(45deg) !important}
 .cv-g-legend-top .lg-est{margin-left:auto;color:var(--text-faint);font-size:10px}
@@ -7386,6 +7402,33 @@ function _cvRangeWindow() {
   const end = _cvDateAdd(baseDate, rule.after);
   return { start, end, today, center: baseDate, baseDate };
 }
+function _cvWithinDays(date, today, days) {
+  if (!date) return false;
+  const diff = _cvDayDiff(date, today);
+  return diff >= 0 && diff <= days;
+}
+function _cvIsDraftSoon(r, today) {
+  return !r.info.isDelivered && !!r.info.rawDraft && _cvWithinDays(r.info.rawDraft, today, 7);
+}
+function _cvIsFinalSoon(r, today) {
+  return !r.info.isDelivered && !!r.info.rawFinal && _cvWithinDays(r.info.rawFinal, today, 7);
+}
+function _cvBallHolderName(c) {
+  const holder = c?.ball_holder;
+  if (!holder || holder.type === 'done') return '';
+  return holder.holder || '';
+}
+function _cvGroupStats(items, today) {
+  const stats = { total: items.length, draftSoon: 0, finalSoon: 0, late: 0, today: 0, loadAttention: 0 };
+  items.forEach(r => {
+    if (_cvIsDraftSoon(r, today)) stats.draftSoon++;
+    if (_cvIsFinalSoon(r, today)) stats.finalSoon++;
+    if (r.info.isLate) stats.late++;
+    if (r.info.onToday) stats.today++;
+    if ((r.loadMax || 0) >= 3) stats.loadAttention++;
+  });
+  return stats;
+}
 
 // 1行ぶんの判定情報を作る（リストと同じロジックを共有）
 // 制作開始日 (start) の優先順位（重要）:
@@ -7620,6 +7663,28 @@ function renderCreativesGantt(filtered) {
     return (a.c.projects?.clients?.name || '').localeCompare(b.c.projects?.clients?.name || '', 'ja');
   });
 
+  // 担当者ごとの制作期間重なりを可視化するため、表示範囲内の日別負荷を集計する。
+  const loadByUserDay = new Map();
+  rows.forEach(r => {
+    if (!r.editorUser?.id || !r.info.start || !r.info.draft || r.info.isDelivered) return;
+    const s = Math.max(0, _cvDayDiff(r.info.start, win.start));
+    const e = Math.min(totalDays-1, _cvDayDiff(r.info.draft, win.start));
+    if (e < 0 || s > totalDays-1 || e < s) return;
+    for (let idx=s; idx<=e; idx++) {
+      const key = `${r.editorUser.id}:${idx}`;
+      loadByUserDay.set(key, (loadByUserDay.get(key) || 0) + 1);
+    }
+  });
+  rows.forEach(r => {
+    let max = 0;
+    if (r.editorUser?.id && r.info.start && r.info.draft && !r.info.isDelivered) {
+      const s = Math.max(0, _cvDayDiff(r.info.start, win.start));
+      const e = Math.min(totalDays-1, _cvDayDiff(r.info.draft, win.start));
+      for (let idx=s; idx<=e; idx++) max = Math.max(max, loadByUserDay.get(`${r.editorUser.id}:${idx}`) || 0);
+    }
+    r.loadMax = max;
+  });
+
   // グルーピング
   const groups = new Map();
   rows.forEach(r => {
@@ -7645,28 +7710,8 @@ function renderCreativesGantt(filtered) {
     const { c, info } = r;
     const segments = [];
 
-    // ── 1) 予定線（点線）: start → final （データが無い時は推定済み）
-    if (info.start && info.final) {
-      const s = Math.max(0, _cvDayDiff(info.start, win.start));
-      const e = Math.min(totalDays-1, _cvDayDiff(info.final, win.start));
-      if (e >= 0 && s <= totalDays-1 && e >= s) {
-        const left = s * dayPx + dayPx*0.15;
-        const width = (e - s + 1) * dayPx - dayPx*0.3;
-        const lateCls = info.isLate ? 'is-late' : '';
-        segments.push(`<div class="cv-g-line-planned ${lateCls}" style="left:${left}px;width:${Math.max(width, 6)}px" title="予定: ${info.start.toLocaleDateString('ja-JP')} → ${info.final.toLocaleDateString('ja-JP')}${info.isEstimated.start||info.isEstimated.final?'（推定含）':''}"></div>`);
-      }
-    }
-
-    // ── 2) 制作中バー（実線、強調）: 制作中ステータス かつ start→draft が描けるとき必ず描画
-    //   start = 担当者割当日 / draft 締切から逆算 / final 逆算 のいずれか
-    //   draft = 初稿締切（rawDraft 優先、無ければ推定）
-    //   既に初稿提出済（Dチェック以降）の場合は描かない
-    //   _CV_PRODUCTION_STATUSES に明示的に列挙したステータス、もしくは初稿提出前
-    //   かつ未納品・未保留の status（DRAFT_SUBMITTED の補集合）を「制作中」と扱う。
-    const _SUBMITTED_LIST = ['Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
-    const inProduction = _CV_PRODUCTION_STATUSES.includes(c.status)
-      || (c.status && c.status !== '保留' && !_SUBMITTED_LIST.includes(c.status));
-    if (inProduction && info.start && info.draft && info.draft >= info.start) {
+    // ── 1) 制作期間: 担当者割当日（または推定着手日）→ 初稿締切
+    if (info.start && info.draft && info.draft >= info.start) {
       const s = Math.max(0, _cvDayDiff(info.start, win.start));
       const e = Math.min(totalDays-1, _cvDayDiff(info.draft, win.start));
       if (e >= 0 && s <= totalDays-1 && e >= s) {
@@ -7674,27 +7719,28 @@ function renderCreativesGantt(filtered) {
         const width = (e - s + 1) * dayPx - dayPx*0.3;
         let cls = 'is-production';
         if (info.isLate) cls += ' is-late';
+        else if (_cvIsDraftSoon(r, win.today)) cls += ' is-due-soon';
+        if ((r.loadMax || 0) >= 3) cls += ' is-overlap';
+        if (info.isDelivered) cls += ' is-done';
         if (info.isEstimated.start) cls += ' is-est-start';
-        const title = `制作中: ${info.start.toLocaleDateString('ja-JP')} → ${info.draft.toLocaleDateString('ja-JP')}（初稿締切）${info.isEstimated.start?'※開始日推定':''}`;
+        const title = `制作期間: ${info.start.toLocaleDateString('ja-JP')} → ${info.draft.toLocaleDateString('ja-JP')}（初稿締切）${info.isEstimated.start?'※開始日推定':''}${(r.loadMax||0)>=3?` / 同日最大${r.loadMax}件`:''}`;
         segments.push(`<div class="cv-g-line-production ${cls}" style="left:${left}px;width:${Math.max(width, 6)}px" title="${esc(title)}"></div>`);
       }
     }
 
-    // ── 3) 実績線（実線）: actualStart → actualEnd（today or deliveredAt）
-    //   ※ 制作中バーが描かれている場合は重複を避けるためスキップ
-    const aStart = _cvActualStartFor(r);
-    const aEnd   = _cvActualEndFor(r);
-    if (!inProduction && aStart && aEnd && aEnd >= aStart) {
-      const s = Math.max(0, _cvDayDiff(aStart, win.start));
-      const e = Math.min(totalDays-1, _cvDayDiff(aEnd, win.start));
+    // ── 2) 確認・修正・納品準備期間: 初稿締切 → 最終納品
+    if (info.draft && info.final && info.final >= info.draft) {
+      const s = Math.max(0, _cvDayDiff(info.draft, win.start));
+      const e = Math.min(totalDays-1, _cvDayDiff(info.final, win.start));
       if (e >= 0 && s <= totalDays-1 && e >= s) {
         const left = s * dayPx + dayPx*0.15;
         const width = (e - s + 1) * dayPx - dayPx*0.3;
         let cls = '';
-        if (info.isDelivered) cls = 'is-done';
-        // 実績が予定 final を超過しているかつ未納品 → 赤
-        if (!info.isDelivered && info.rawFinal && aEnd > info.rawFinal) cls = 'is-overrun';
-        segments.push(`<div class="cv-g-line-actual ${cls}" style="left:${left}px;width:${Math.max(width, 4)}px" title="実績: ${aStart.toLocaleDateString('ja-JP')} → ${aEnd.toLocaleDateString('ja-JP')}"></div>`);
+        if (info.isDelivered) cls += ' is-done';
+        else if (info.rawFinal && _cvDayDiff(info.rawFinal, win.today) < 0) cls += ' is-late';
+        else if (_cvIsFinalSoon(r, win.today)) cls += ' is-final-soon';
+        const title = `確認・修正: ${info.draft.toLocaleDateString('ja-JP')} → ${info.final.toLocaleDateString('ja-JP')}（最終納品）${info.isEstimated.final?'※納品日推定':''}`;
+        segments.push(`<div class="cv-g-line-review ${cls}" style="left:${left}px;width:${Math.max(width, 6)}px" title="${esc(title)}"></div>`);
       }
     }
 
@@ -7787,11 +7833,19 @@ function renderCreativesGantt(filtered) {
 
   // グループ見出し（担当者別は強化版）
   const renderGroupHeader = (g) => {
+    const stats = _cvGroupStats(g.items, win.today);
+    const statsHtml = `
+      <span class="ga-stats">
+        <span class="gs">${stats.total}件</span>
+        <span class="gs ${stats.draftSoon?'is-draft':''}">初稿7日:${stats.draftSoon}</span>
+        <span class="gs ${stats.finalSoon?'is-final':''}">納品7日:${stats.finalSoon}</span>
+        <span class="gs ${stats.late?'is-late':''}">遅延:${stats.late}</span>
+        <span class="gs ${stats.today?'is-today':''}">本日:${stats.today}</span>
+        ${stats.loadAttention ? `<span class="gs is-load">重なり:${stats.loadAttention}</span>` : ''}
+      </span>`;
     if (currentCreativeGroup === 'assignee' && g.meta) {
       const u = g.meta.user;
       const team = g.meta.team;
-      const lateNum = g.items.filter(r => r.info.isLate).length;
-      const todayNum = g.items.filter(r => r.info.onToday).length;
       const teamLabel = team ? `${team.team_code||''}${team.team_name?` / ${team.team_name}`:''}` : '';
       const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 26) : '')
                    : `<span style="display:inline-flex;width:26px;height:26px;border-radius:50%;background:#ddd;align-items:center;justify-content:center;font-size:11px;color:#888">未</span>`;
@@ -7800,16 +7854,12 @@ function renderCreativesGantt(filtered) {
         ${av}
         <span class="ga-name">${esc(dispName)}</span>
         ${teamLabel ? `<span class="ga-team">${esc(teamLabel)}チーム</span>` : ''}
-        <span class="ga-stats">
-          <span class="gs">${g.items.length}件</span>
-          <span class="gs ${lateNum?'is-late':''}">遅延${lateNum}</span>
-          <span class="gs ${todayNum?'is-today':''}">本日${todayNum}</span>
-        </span>
+        ${statsHtml}
       </div>`;
     }
-    return `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span>${esc(g.label)}</span><span class="gicount">${g.items.length}件</span></div>`;
+    return `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span>${esc(g.label)}</span>${statsHtml}</div>`;
   };
-  const groupHeadHeight = (currentCreativeGroup === 'assignee') ? 44 : 32;
+  const groupHeadHeight = (currentCreativeGroup === 'assignee') ? 54 : 48;
 
   // 行をグループ単位で構築（左列・タイムライン共通の renderTimelineRow を使用）
   let fixedHtml = '';
@@ -7830,16 +7880,17 @@ function renderCreativesGantt(filtered) {
   // 凡例HTML（ヘッダー直下のスティッキー位置に表示）
   const legendHtml = `
     <div class="cv-g-legend cv-g-legend-top">
-      <span class="lg-item"><span class="lg-bar lg-bar-production"></span>制作中</span>
-      <span class="lg-item"><span class="lg-line lg-line-planned"></span>予定</span>
-      <span class="lg-item"><span class="lg-line lg-line-actual"></span>実績</span>
+      <span class="lg-item"><span class="lg-bar lg-bar-production"></span>制作期間</span>
+      <span class="lg-item"><span class="lg-bar lg-bar-review"></span>確認・修正</span>
+      <span class="lg-item"><span class="lg-bar lg-bar-draft-soon"></span>初稿/本日近い</span>
+      <span class="lg-item"><span class="lg-bar lg-bar-overlap"></span>負荷重なり</span>
       <span class="lg-item"><span class="cv-g-ms ms-start lg-ms"></span>着手</span>
       <span class="lg-item"><span class="cv-g-ms ms-draft lg-ms"></span>初稿締切</span>
       <span class="lg-item"><span class="cv-g-ms ms-client lg-ms"></span>CL確認</span>
       <span class="lg-item"><span class="cv-g-ms ms-final lg-ms"></span>最終納品</span>
       ${showDp ? `<span class="lg-item"><span class="cv-g-ms ms-dp ms-d lg-ms"></span>Dチェック</span>
       <span class="lg-item"><span class="cv-g-ms ms-dp ms-p lg-ms"></span>Pチェック</span>` : ''}
-      <span class="lg-item"><span class="lg-line lg-line-late"></span>遅延/超過</span>
+      <span class="lg-item"><span class="lg-line lg-line-late"></span>遅延</span>
       <span class="lg-item lg-est">薄色＝推定値</span>
     </div>
   `;
@@ -7877,62 +7928,106 @@ function renderCreativesGantt(filtered) {
 // 右側サマリーパネル HTML
 function _cvSidePanelHtml(rows) {
   const today = _cvAtMidnight(new Date());
-  const next7 = _cvDateAdd(today, 7);
   // 集計（rawFinal/rawDraft が無い行は推定なので集計から除外＝確定データのみ）
-  let lateCount = 0, finalSoon = 0, draftSoon = 0, clientCheckSoon = 0;
+  let lateCount = 0, finalSoon = 0, draftSoon = 0;
   const lateRows = [];
+  const draftSoonRows = [];
+  const finalSoonRows = [];
   const todayRows = [];
+  const ballRows = [];
+  const assigneeLoad = new Map();
   rows.forEach(r => {
     const i = r.info;
     if (i.isLate) { lateCount++; lateRows.push(r); }
-    if (i.rawFinal && !i.isDelivered && i.rawFinal >= today && i.rawFinal <= next7) finalSoon++;
-    if (i.rawDraft && !i.isDelivered && i.rawDraft >= today && i.rawDraft <= next7) draftSoon++;
-    if (i.clientCheck && !i.isDelivered && i.clientCheck >= today && i.clientCheck <= next7) clientCheckSoon++;
+    if (_cvIsFinalSoon(r, today)) { finalSoon++; finalSoonRows.push(r); }
+    if (_cvIsDraftSoon(r, today)) { draftSoon++; draftSoonRows.push(r); }
     if (i.onToday) todayRows.push(r);
+    if (_cvBallHolderName(r.c)) ballRows.push(r);
+    if ((r.loadMax || 0) >= 3) {
+      const key = r.editorUser?.id || 'unassigned';
+      const cur = assigneeLoad.get(key) || { name: r.editorUser?.full_name || '未アサイン', team: _cvTeamShort(r.team), count: 0, max: 0 };
+      cur.count++;
+      cur.max = Math.max(cur.max, r.loadMax || 0);
+      assigneeLoad.set(key, cur);
+    }
   });
+  const loadRows = Array.from(assigneeLoad.values()).sort((a,b) => b.max - a.max || b.count - a.count);
   // 遅延の重い順にソート
   lateRows.sort((a, b) => {
     const da = a.info.rawFinal ? _cvDayDiff(a.info.rawFinal, today) : 0;
     const db = b.info.rawFinal ? _cvDayDiff(b.info.rawFinal, today) : 0;
     return da - db; // より小さい(=より過去)が先頭
   });
+  draftSoonRows.sort((a,b) => (a.info.rawDraft?.getTime() || Infinity) - (b.info.rawDraft?.getTime() || Infinity));
+  finalSoonRows.sort((a,b) => (a.info.rawFinal?.getTime() || Infinity) - (b.info.rawFinal?.getTime() || Infinity));
+  todayRows.sort((a,b) => (a.info.rawDraft?.getTime() || a.info.rawFinal?.getTime() || Infinity) - (b.info.rawDraft?.getTime() || b.info.rawFinal?.getTime() || Infinity));
 
   const renderItem = (r, opts={}) => {
     const cli = r.c.projects?.clients?.name || '-';
     const proj = r.c.projects?.name || '';
-    const ball = r.c.ball_holder?.holder || '担当未定';
+    const ball = _cvBallHolderName(r.c) || '担当未定';
     const showDelay = opts.late || (opts.kind === 'today' && r.info.delayLabel && r.info.delayLabel !== '-');
+    const dateLabel = opts.kind === 'draft' && r.info.rawDraft
+      ? `初稿 ${r.info.rawDraft.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}`
+      : opts.kind === 'final' && r.info.rawFinal
+        ? `納品 ${r.info.rawFinal.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}`
+        : '';
     return `<div class="cv-sp-item ${opts.late?'is-late':''}" onclick="openCreativeDetail('${r.c.id}')">
       <div class="ttl">${esc(r.c.file_name || '')}${showDelay?`<span class="delay-pill">${esc(r.info.delayLabel)}</span>`:''}</div>
       <div class="meta">
         <span>${esc(cli)}${proj?` / ${esc(proj)}`:''}</span>
+        ${dateLabel ? `<span style="color:#8A5A00">${esc(dateLabel)}</span>` : ''}
         <span style="color:var(--em-dark)">${esc(r.c.status || '')}</span>
         <span>ボール: ${esc(ball)}</span>
       </div>
     </div>`;
   };
 
-  // 順序: 遅延 → 最終納品7日内 → 初稿締切7日内 → CL確認7日内 → 本日対応
+  // 順序: 遅延 → 初稿締切7日内 → 最終納品7日内 → 本日対応 → 負荷注意 → ボール保持
   return `
     <div class="cv-sp-section">
       <h4>要対応サマリー</h4>
       <div class="cv-sp-stats">
         <div class="cv-sp-stat ${lateCount?'is-late':''}"><span class="num">${lateCount}</span>遅延</div>
-        <div class="cv-sp-stat"><span class="num">${finalSoon}</span>最終納品 7日内</div>
         <div class="cv-sp-stat"><span class="num">${draftSoon}</span>初稿締切 7日内</div>
-        <div class="cv-sp-stat"><span class="num">${clientCheckSoon}</span>CL確認 7日内</div>
+        <div class="cv-sp-stat ${finalSoon?'is-late':''}"><span class="num">${finalSoon}</span>最終納品 7日内</div>
+        <div class="cv-sp-stat"><span class="num">${todayRows.length}</span>本日対応</div>
+        <div class="cv-sp-stat"><span class="num">${loadRows.length}</span>負荷注意</div>
+        <div class="cv-sp-stat"><span class="num">${ballRows.length}</span>ボール保持中</div>
       </div>
     </div>
     ${lateRows.length ? `<div class="cv-sp-section">
-      <h4>問題のある案件 (${lateRows.length})</h4>
+      <h4>遅延案件 (${lateRows.length})</h4>
       <div class="cv-sp-list">${lateRows.slice(0,3).map(r => renderItem(r,{late:true})).join('')}</div>
       ${lateRows.length>3?`<div class="cv-sp-more" onclick="cvSpShowAllDelayed()">もっと見る（他 ${lateRows.length-3} 件）</div>`:''}
-    </div>` : `<div class="cv-sp-section"><h4>問題のある案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">遅延案件はありません</div></div>`}
+    </div>` : `<div class="cv-sp-section"><h4>遅延案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">遅延案件はありません</div></div>`}
+    ${draftSoonRows.length ? `<div class="cv-sp-section">
+      <h4>初稿締切7日内 (${draftSoonRows.length})</h4>
+      <div class="cv-sp-list">${draftSoonRows.slice(0,3).map(r => renderItem(r,{kind:'draft'})).join('')}</div>
+      ${draftSoonRows.length>3?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${draftSoonRows.length-3} 件</div>`:''}
+    </div>` : ''}
+    ${finalSoonRows.length ? `<div class="cv-sp-section">
+      <h4>最終納品7日内 (${finalSoonRows.length})</h4>
+      <div class="cv-sp-list">${finalSoonRows.slice(0,3).map(r => renderItem(r,{kind:'final'})).join('')}</div>
+      ${finalSoonRows.length>3?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${finalSoonRows.length-3} 件</div>`:''}
+    </div>` : ''}
     ${todayRows.length ? `<div class="cv-sp-section">
       <h4>本日対応すべき案件 (${todayRows.length})</h4>
       <div class="cv-sp-list">${todayRows.slice(0,3).map(r => renderItem(r,{kind:'today'})).join('')}</div>
       ${todayRows.length>3?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${todayRows.length-3} 件</div>`:''}
     </div>` : `<div class="cv-sp-section"><h4>本日対応すべき案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">本日中の締切・確認はありません</div></div>`}
+    ${loadRows.length ? `<div class="cv-sp-section">
+      <h4>担当者ごとの負荷注意 (${loadRows.length})</h4>
+      <div class="cv-sp-list">${loadRows.slice(0,4).map(x => `<div class="cv-sp-item">
+        <div class="ttl">${esc(x.name)}${x.team?` / ${esc(x.team)}チーム`:''}<span class="delay-pill">最大${x.max}件重なり</span></div>
+        <div class="meta"><span>重なり対象 ${x.count}件</span></div>
+      </div>`).join('')}</div>
+    </div>` : ''}
+    ${ballRows.length ? `<div class="cv-sp-section">
+      <h4>ボール保持中 (${ballRows.length})</h4>
+      <div class="cv-sp-list">${ballRows.slice(0,4).map(r => renderItem(r,{kind:'ball'})).join('')}</div>
+      ${ballRows.length>4?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${ballRows.length-4} 件</div>`:''}
+    </div>` : ''}
   `;
 }
 
