@@ -5041,9 +5041,10 @@ async function init() {
         if (btn) { document.querySelectorAll('.ft').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }
       }
       // クリエイティブ画面の初期種別タブを適用（default_creative_tab → ロールfallback）
+      // 直後の Promise.all で loadCreatives() を呼ぶので、ここでは reload をスキップ
       try {
         const initialCvTab = pickInitialCreativeTab(currentUser);
-        setCreativeTab(initialCvTab);
+        setCreativeTab(initialCvTab, { skipReload: true });
       } catch (e) { console.warn('[HFS] setCreativeTab init failed:', e); }
     } else {
       window.location.href = '/login.html';
@@ -6138,7 +6139,7 @@ function pickInitialCreativeTab(user) {
   return 'video';
 }
 
-function setCreativeTab(type) {
+function setCreativeTab(type, opts = {}) {
   if (type !== 'all' && type !== 'video' && type !== 'design') type = 'all';
   const changed = (currentCreativeTab !== type);
   currentCreativeTab = type;
@@ -6153,9 +6154,16 @@ function setCreativeTab(type) {
     vBtn.style.cssText = baseStyle + (type === 'video' ? activeStyle : inactiveStyle);
     dBtn.style.cssText = baseStyle + (type === 'design' ? activeStyle : inactiveStyle);
   }
-  // タブ切替時はページネーションを1ページ目へ戻す
+  // タブ切替時はサーバーから当該タブのデータを再取得（offset=0）
+  // total もタブ別件数になるので「次の50件を読み込む（残り N 件）」が正確になる
+  // opts.skipReload=true の場合は init 中の重複ロードを避けるため再取得しない
   if (changed) {
     creativesPage.offset = 0;
+    if (!opts.skipReload && typeof loadCreatives === 'function') {
+      // 並行起動レース対策は loadCreatives 内の _creativesLoadSeq に委譲
+      loadCreatives();
+      return;
+    }
   }
   if (typeof renderCreatives === 'function') renderCreatives();
 }
@@ -6500,6 +6508,11 @@ async function loadCreatives(opts = {}) {
   if (currentClient && currentClient !== 'all') params.set('client_id', currentClient);
   if (currentAssigneeFilter)                    params.set('assignee_id', currentAssigneeFilter);
   if (searchText)                               params.set('q', searchText);
+  // タブフィルタ（共通/動画/デザイン）はサーバー側で creative_type prefix 絞り込み
+  // → ページネーションの total が現在のタブ専用件数になる（残り N 件表示の正確化）
+  if (currentCreativeTab === 'video' || currentCreativeTab === 'design') {
+    params.set('tab', currentCreativeTab);
+  }
   // ダッシュボードや「納品済」表示が壊れないよう、デフォルトで 納品 も含める
   // （API 既定は exclude だが、本フロントは常に include_done=1 を送る）
   params.set('include_done', '1');

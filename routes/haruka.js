@@ -1632,6 +1632,15 @@ router.get('/creatives', async (req, res) => {
   const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 50, 1), 200);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
+  // タブフィルタ: creative_type の prefix で粗く絞り込む
+  //   tab=video  → creative_type LIKE 'video_%'
+  //   tab=design → creative_type LIKE 'design_%'
+  //   tab=all / 未指定 → フィルタなし
+  // フロント側のページネーション「次の50件を読み込む」が
+  // タブ別の総件数を正しく扱うために必要（ボタンの「残り N 件」を正確化）
+  const tabRaw = (req.query.tab || '').toString().toLowerCase();
+  const tabFilter = (tabRaw === 'video' || tabRaw === 'design') ? tabRaw : null;
+
   // assignee_id フィルタは PostgREST の埋め込み JOIN で絞り込めないので、
   // 先に creative_assignments から該当 creative_id 集合を取得し .in() で絞る
   let assigneeCreativeIds = null;
@@ -1695,6 +1704,7 @@ router.get('/creatives', async (req, res) => {
     if (project_id) q = q.eq('project_id', project_id);
     if (cycle_id)   q = q.eq('cycle_id', cycle_id);
     if (status)     q = q.eq('status', status);
+    if (tabFilter)  q = q.like('creative_type', `${tabFilter}_%`);
     if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
     if (client_id) {
       // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
