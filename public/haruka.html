@@ -17312,6 +17312,10 @@ function fillCommentTemplate() {
 
 async function openCreativeDetail(id) {
   const res = await apiFetch(`${API}/creatives/${id}`);
+  if (res.status === 404) {
+    showToast('このクリエイティブは削除されています', 'info');
+    return;
+  }
   if (!res.ok) { showToast('データの取得に失敗しました', 'error'); return; }
   const c = await res.json();
   currentCreativeDetail = c;
