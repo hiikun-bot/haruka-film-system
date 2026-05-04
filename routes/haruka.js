@@ -1900,8 +1900,11 @@ router.get('/creatives/:id', async (req, res) => {
       )
     `)
     .eq('id', req.params.id)
-    .single();
+    .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) {
+    return res.status(404).json({ error: 'このクリエイティブは見つかりません（削除されている可能性があります）' });
+  }
 
   // teams を別クエリで取得（FK 不要にするため PostgREST の埋め込みは使わない）
   if (data && data.team_id) {
