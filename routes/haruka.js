@@ -1785,6 +1785,102 @@ router.get('/creatives', async (req, res) => {
   res.json({ data: withBall, total: count ?? withBall.length, limit, offset });
 });
 
+// 種別タブのカウンタ専用エンドポイント
+//   GET /api/creatives/counts
+//   返り値: { all, video, design }
+//
+// /api/creatives と同じフィルタ群（client_id / assignee_id / q / project_id /
+// cycle_id / status / include_done / ball_holder）を受けるが、`tab` は無視する。
+// 共通(=all)・動画(=video_*)・デザイン(=design_*) の3カウントを並列で取得。
+//
+// 背景: PR #237 でサーバー側 tab フィルタを導入したため、クライアントの
+// allCreatives は現在表示中のタブの行しか含まなくなり、
+// 「allCreatives.filter(...).length」で計算していたタブカウンタが
+// 共通(44) / 動画編集(44) / デザイン(0) のように壊れていた。
+router.get('/creatives/counts', async (req, res) => {
+  const {
+    project_id, cycle_id, status,
+    client_id, assignee_id, q, include_done,
+  } = req.query;
+
+  // assignee_id フィルタは creative_assignments → creative_id 集合化
+  let assigneeCreativeIds = null;
+  if (assignee_id) {
+    const { data: caRows, error: caErr } = await supabase
+      .from('creative_assignments')
+      .select('creative_id')
+      .eq('user_id', assignee_id);
+    if (caErr) return res.status(500).json({ error: caErr.message });
+    assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
+    if (assigneeCreativeIds.length === 0) {
+      return res.json({ all: 0, video: 0, design: 0 });
+    }
+  }
+
+  // q（フリーワード）処理は /api/creatives と揃える
+  let qPat = '';
+  let userMatchCreativeIds = null;
+  if (q && q.trim()) {
+    const qTerm = q.replace(/[,()]/g, '').replace(/\s+/g, ' ').trim();
+    if (qTerm) {
+      qPat = `%${qTerm}%`;
+      const { data: assignMatches, error: amErr } = await supabase
+        .from('creative_assignments')
+        .select('creative_id, users!inner(full_name, nickname)')
+        .or(`full_name.ilike.${qPat},nickname.ilike.${qPat}`, { foreignTable: 'users' });
+      if (amErr) return res.status(500).json({ error: amErr.message });
+      userMatchCreativeIds = Array.from(new Set((assignMatches || []).map(a => a.creative_id))).filter(Boolean);
+    }
+  }
+
+  // count: exact + head: true で行は返さずにカウントだけ取得（軽量化）
+  // client_id を効かせるために projects!inner を select 句に含める必要がある。
+  const buildCountQuery = (typePrefix) => {
+    const projectsRel = client_id ? 'projects!inner(client_id)' : null;
+    const selectExpr = projectsRel ? `id, ${projectsRel}` : 'id';
+    let q2 = supabase
+      .from('creatives')
+      .select(selectExpr, { count: 'exact', head: true });
+    if (project_id) q2 = q2.eq('project_id', project_id);
+    if (cycle_id)   q2 = q2.eq('cycle_id', cycle_id);
+    if (status)     q2 = q2.eq('status', status);
+    if (typePrefix) q2 = q2.like('creative_type', `${typePrefix}_%`);
+    if (!(include_done === '1' || include_done === 'true')) q2 = q2.neq('status', '納品');
+    if (client_id) {
+      const ids = String(client_id).split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length > 1) q2 = q2.in('projects.client_id', ids);
+      else if (ids.length === 1) q2 = q2.eq('projects.client_id', ids[0]);
+    }
+    if (qPat) {
+      const orConds = [`file_name.ilike.${qPat}`, `memo.ilike.${qPat}`];
+      if (userMatchCreativeIds && userMatchCreativeIds.length > 0) {
+        orConds.push(`id.in.(${userMatchCreativeIds.join(',')})`);
+      }
+      q2 = q2.or(orConds.join(','));
+    }
+    if (assigneeCreativeIds) q2 = q2.in('id', assigneeCreativeIds);
+    return q2;
+  };
+
+  try {
+    const [allRes, videoRes, designRes] = await Promise.all([
+      buildCountQuery(null),
+      buildCountQuery('video'),
+      buildCountQuery('design'),
+    ]);
+    if (allRes.error)    return res.status(500).json({ error: allRes.error.message });
+    if (videoRes.error)  return res.status(500).json({ error: videoRes.error.message });
+    if (designRes.error) return res.status(500).json({ error: designRes.error.message });
+    res.json({
+      all:    allRes.count    ?? 0,
+      video:  videoRes.count  ?? 0,
+      design: designRes.count ?? 0,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 // クリエイティブ単体取得
 router.get('/creatives/:id', async (req, res) => {
   const { data, error } = await supabase
