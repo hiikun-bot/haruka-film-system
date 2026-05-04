@@ -5412,7 +5412,9 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     'Pチェック': { holder: 'プロデューサー', type: 'producer' },
     'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     'クライアントチェック中': { holder: 'クライアント', type: 'client' },
-    'クライアントチェック後修正': { holder: `${editorName}・${directorName}・プロデューサー`, type: 'all', user_ids: [editorId, directorId].filter(Boolean) },
+    // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
+    // 次は編集者が修正する段階。よって Dチェック後修正・Pチェック後修正と揃えて editor 単独をボール保持者とする。
+    'クライアントチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     '納品': { holder: '完了', type: 'done' },
   };
   return ballMap[status] || { holder: '不明', type: 'unknown' };
@@ -5494,8 +5496,10 @@ async function syncBallHolderId(creativeId, sb) {
       directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
       projectDirector
     );
-    // user_id（編集者・ディレクター）は単数 / user_ids（クライアントチェック後修正）は配列
-    // キャッシュ列は単数なので、user_ids の場合は先頭（編集者）を採用する
+    // user_id（editor / director / producer 等）は単数。
+    // 将来 type:'all' のような複数保持ステータスを再導入する場合のフォールバックとして、
+    // user_ids 配列があればその先頭（編集者）をキャッシュに採用するロジックを残しておく。
+    // （現時点では type:'all' を使うステータスは存在しないため、このフォールバックは発火しない）
     let nextHolderId = ball?.user_id || null;
     if (!nextHolderId && Array.isArray(ball?.user_ids) && ball.user_ids.length > 0) {
       nextHolderId = ball.user_ids[0];
