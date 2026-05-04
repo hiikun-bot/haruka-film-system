@@ -512,7 +512,7 @@ h2{font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;letter-spa
     </div>
     <div class="faq-item">
       <div class="faq-q">通知（ChatWork DM）が飛びません。</div>
-      <div class="faq-a">5つすべて揃う必要があります：① クライアント or 案件に <code>chatwork_room_id</code>、② 通知先メンバーに <code>chatwork_dm_id</code>、③ 送信用アカウントがそのルームのメンバー、④ 対象ステータス遷移である、⑤ 環境変数 <code>CHATWORK_API_TOKEN</code>。From本人から送る場合は <code>CHATWORK_USER_TOKENS_JSON</code> に本人の account_id と APIトークンを設定してください。</div>
+      <div class="faq-a">5つすべて揃う必要があります：① クライアント or 案件に <code>chatwork_room_id</code>、② 通知先メンバーに <code>chatwork_dm_id</code>、③ 通知Bot用ChatWorkアカウントがそのルームのメンバー、④ 対象ステータス遷移である、⑤ 環境変数 <code>CHATWORK_API_TOKEN</code>。個人名で送信者表示したい場合は各本人のAPIトークンが必要になるため、通常は通知Botアカウント運用を推奨します。</div>
     </div>
     <div class="faq-item">
       <div class="faq-q">同じ人が複数チームに所属できますか？</div>
