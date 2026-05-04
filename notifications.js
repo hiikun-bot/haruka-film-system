@@ -6,6 +6,9 @@
 //
 // 環境変数:
 //   - CHATWORK_API_TOKEN: Chatwork API トークン (アカウント単位で発行)
+//   - CHATWORK_USER_TOKENS_JSON: Chatwork account_id ごとのAPIトークンJSON
+//       例: {"123456":"token_for_user_a","789012":"token_for_user_b"}
+//     または CHATWORK_API_TOKEN_<account_id> でも個別指定可。
 //
 // Slack はワークスペースごとに bot_token が必要。slack_workspaces テーブル参照。
 // 失敗してもアプリは止めない（catch して console.warn）。
@@ -104,8 +107,76 @@ async function sendSlackChannelWithFile(channelUrl, text, fileBuffer, filename) 
 }
 
 // =============== Chatwork API ===============
-async function sendChatworkRoom(roomId, text) {
-  const token = process.env.CHATWORK_API_TOKEN;
+let _chatworkUserTokensCache = null;
+let _chatworkUserTokensRaw = null;
+let _chatworkUserTokensWarned = false;
+const _chatworkRoomMemberCache = new Map();
+
+function getChatworkUserTokens() {
+  const raw = process.env.CHATWORK_USER_TOKENS_JSON || '';
+  if (_chatworkUserTokensCache && raw === _chatworkUserTokensRaw) return _chatworkUserTokensCache;
+  _chatworkUserTokensRaw = raw;
+  _chatworkUserTokensCache = {};
+  if (!raw.trim()) return _chatworkUserTokensCache;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      _chatworkUserTokensCache = parsed;
+    }
+  } catch (e) {
+    if (!_chatworkUserTokensWarned) {
+      console.warn('[notif/chatwork] CHATWORK_USER_TOKENS_JSON parse failed:', e.message);
+      _chatworkUserTokensWarned = true;
+    }
+  }
+  return _chatworkUserTokensCache;
+}
+
+function getChatworkTokenForAccount(accountId) {
+  if (!accountId) return null;
+  const key = String(accountId).trim();
+  if (!key) return null;
+  const envKey = `CHATWORK_API_TOKEN_${key.replace(/[^A-Za-z0-9_]/g, '_')}`;
+  return process.env[envKey] || getChatworkUserTokens()[key] || null;
+}
+
+async function isChatworkAccountInRoom(roomId, accountId, token) {
+  if (!roomId || !accountId || !token) return false;
+  const cacheKey = `${roomId}:${accountId}`;
+  if (_chatworkRoomMemberCache.has(cacheKey)) return _chatworkRoomMemberCache.get(cacheKey);
+  try {
+    const res = await axios.get(`https://api.chatwork.com/v2/rooms/${roomId}/members`, {
+      headers: { 'X-ChatWorkToken': token },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+    if (res.status !== 200 || !Array.isArray(res.data)) {
+      _chatworkRoomMemberCache.set(cacheKey, false);
+      return false;
+    }
+    const found = res.data.some(m => String(m.account_id) === String(accountId));
+    _chatworkRoomMemberCache.set(cacheKey, found);
+    return found;
+  } catch (e) {
+    console.warn('[notif/chatwork] member check failed:', e.message);
+    _chatworkRoomMemberCache.set(cacheKey, false);
+    return false;
+  }
+}
+
+async function resolveChatworkPostToken(roomId, actor) {
+  const defaultToken = process.env.CHATWORK_API_TOKEN;
+  const actorAccountId = actor?.chatwork_dm_id;
+  const actorToken = getChatworkTokenForAccount(actorAccountId);
+  if (actorAccountId && actorToken) {
+    const isMember = await isChatworkAccountInRoom(roomId, actorAccountId, actorToken);
+    if (isMember) return { token: actorToken, sender: 'actor' };
+  }
+  return { token: defaultToken, sender: 'default' };
+}
+
+async function sendChatworkRoom(roomId, text, opts={}) {
+  const token = opts.token || process.env.CHATWORK_API_TOKEN;
   if (!token) return { ok: false, reason: 'no_token' };
   if (!roomId) return { ok: false, reason: 'no_room' };
   try {
@@ -125,10 +196,10 @@ async function sendChatworkRoom(roomId, text) {
 // accountId は宛先ユーザーの Chatwork account ID（[To:NNN] 形式）。
 // Chatwork API は「他人のマイチャットへ投稿」をサポートしないため、
 // 旧 sendChatworkDM (accountId を roomId 扱い) は実質動作せず、本方式に置換。
-async function sendChatworkMention(roomId, accountId, text) {
+async function sendChatworkMention(roomId, accountId, text, opts={}) {
   if (!roomId || !accountId) return { ok: false, reason: 'missing_room_or_account' };
   const body = `[To:${accountId}]\n${text}`;
-  return sendChatworkRoom(roomId, body);
+  return sendChatworkRoom(roomId, body, opts);
 }
 
 // =============== Helpers ===============
@@ -275,6 +346,9 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const director = await loadUser(directorId);
   const producer = await loadUser(producerId);
   const actor    = await loadUser(actorUserId);
+  const chatworkPost = roomId
+    ? await resolveChatworkPostToken(roomId, actor)
+    : { token: null, sender: 'none' };
 
   // 通知メッセージにクリエイティブ詳細モーダルへのディープリンクを埋め込む
   // （URL クリックで該当クリエイティブを直接開ける）
@@ -299,7 +373,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       await sendSlackChannel(channelUrl, `<@${user.slack_dm_id}> ${slackBody}`);
     }
     if (roomId && user.chatwork_dm_id) {
-      await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody);
+      await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody, { token: chatworkPost.token });
     }
   };
 
@@ -331,7 +405,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       result.reachableCwCount = cwUsers.length;
       if (cwUsers.length) {
         const mentions = cwUsers.map(u => `[To:${u.chatwork_dm_id}]`).join('');
-        await sendChatworkRoom(roomId, `${mentions}\n${cwBody}`);
+        await sendChatworkRoom(roomId, `${mentions}\n${cwBody}`, { token: chatworkPost.token });
       }
     }
     result.anyReachable = result.reachableSlackCount > 0 || result.reachableCwCount > 0;
@@ -347,7 +421,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       await sendSlackChannel(channelUrl, `<!here> ${slackBody}`);
     }
     if (roomId) {
-      await sendChatworkRoom(roomId, `[toall]\n${cwBody}`);
+      await sendChatworkRoom(roomId, `[toall]\n${cwBody}`, { token: chatworkPost.token });
     }
   };
 

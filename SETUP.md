@@ -75,6 +75,11 @@ GOOGLE_DRIVE_ROOT_FOLDER_ID = （Step3のフォルダID）
 
 SESSION_SECRET      = （任意のランダム文字列）
 APP_URL             = （RailwayのデプロイURL）
+
+# ChatWork通知（任意）
+CHATWORK_API_TOKEN  = （フォールバック送信用のChatWork APIトークン）
+# From本人から送信したい場合は、ChatWork account_id ごとのAPIトークンを設定
+CHATWORK_USER_TOKENS_JSON = {"123456":"user_token","789012":"user_token"}
 ```
 
 > **自動スキーマ同期について**
