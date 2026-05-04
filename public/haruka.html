@@ -4648,6 +4648,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <span style="color:var(--text-muted)" id="cd-assignee"></span>
           <span id="cd-revision-count-badge" style="display:none;font-size:11px;background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 8px;font-weight:600"></span>
         </div>
+        <!-- Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示） -->
+        <!-- 第三者から「いま誰にボールがあるか」を一目で分かるようにするための UI。
+             creative_assignments[role='director'] を全部列挙する。
+             保存先は PR #218（複数Dチェック担当者対応）と同じ。 -->
+        <div id="cd-d-checkers" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--text-muted);align-items:center;flex-wrap:wrap;gap:8px"></div>
       </div>
 
       <!-- 納期表示 -->
@@ -17685,6 +17690,41 @@ async function openCreativeDetail(id) {
   } else {
     cdAssigneeEl.textContent = '担当者未設定';
   }
+  // Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示）
+  // - データソース: creative_assignments[role='director']（PR #218 で複数選択対応済み）
+  // - 0人なら「Dチェック担当: 未設定」とグレー表示
+  // - 1人でも複数でも一貫して表示
+  // - チェックOK出した人を区別する個別 approval 列は現状なし → 単純列挙
+  (function renderDCheckers() {
+    const el = document.getElementById('cd-d-checkers');
+    if (!el) return;
+    if (c.status !== 'Dチェック') {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    const directors = (c.creative_assignments || [])
+      .filter(a => a && a.role === 'director' && a.users)
+      .map(a => a.users);
+    // 重複除去（同じユーザーが複数行ある場合に備えて）
+    const seen = new Set();
+    const uniq = directors.filter(u => {
+      if (!u || !u.id) return false;
+      if (seen.has(u.id)) return false;
+      seen.add(u.id);
+      return true;
+    });
+    el.style.display = 'flex';
+    if (uniq.length === 0) {
+      el.innerHTML = `<span style="font-weight:600;color:var(--text)">Dチェック担当:</span><span style="color:var(--text-muted)">未設定</span>`;
+      return;
+    }
+    const chips = uniq.map(u => {
+      const name = u.full_name || u.nickname || '';
+      return `<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:999px;padding:2px 10px 2px 2px">${avatarHtml(u, 22)}<span style="font-size:12px;color:var(--text);font-weight:500">${esc(name)}</span></span>`;
+    }).join('');
+    el.innerHTML = `<span style="font-weight:600;color:var(--text)">Dチェック担当:</span>${chips}`;
+  })();
   // 修正回数バッジ
   const revBadge = document.getElementById('cd-revision-count-badge');
   if (revBadge) {
