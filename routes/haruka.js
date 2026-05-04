@@ -1686,11 +1686,11 @@ router.get('/creatives', async (req, res) => {
   const buildSelect = (includeOptional) => `
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
-    creative_type, team_id, project_id, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
+    creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
     ${projectsRel}(id, name, client_id, producer_id, director_id, sheet_url, regulation_url, clients(id, name, status)),
     project_cycles(id, year, month),
     creative_assignments(
-      id, role, rank_applied,
+      id, role, rank_applied, created_at,
       users(id, full_name, nickname, role, rank, team_id, avatar_url)
     )
   `;
