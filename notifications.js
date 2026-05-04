@@ -250,8 +250,9 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
 
   // 担当者の解決
   // role 別に分離:
-  //   - editorAssignees: 編集者・デザイナー（製作者側）。修正依頼・納品通知の宛先
+  //   - editorAssignees:   編集者・デザイナー（製作者側）。修正依頼・納品通知の宛先
   //   - directorAssignees: ディレクター（チェッカー側）。Dチェック依頼の宛先
+  //   - producerAssignees: プロデューサー（チェッカー側）。Pチェック依頼の宛先
   // 旧 `assignees` は editorAssignees にエイリアス（製作者側に通知する意図に統一）
   const editorAssignees = (detail.creative_assignments || [])
     .filter(a => ['editor', 'designer', 'director_as_editor'].includes(a.role))
@@ -259,6 +260,10 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     .filter(Boolean);
   const directorAssignees = (detail.creative_assignments || [])
     .filter(a => a.role === 'director')
+    .map(a => a.users)
+    .filter(Boolean);
+  const producerAssignees = (detail.creative_assignments || [])
+    .filter(a => a.role === 'producer')
     .map(a => a.users)
     .filter(Boolean);
   // 互換: 既存コードで `assignees` を参照している箇所は editorAssignees の意図
@@ -393,9 +398,45 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     }
   }
   // 2) → Pチェック
+  //    PR (this PR) で複数プロデューサー（creative_assignments.role='producer'）対応。
+  //    Dチェックと同じパターン:
+  //      creative_assignments role='producer' に登録されている全員へ個別 DM 送信。
+  //      旧仕様（projects.producer_id の単一プロデューサー）は assignments が空のときのフォールバック。
+  //      全員 DM ID 未設定だった場合のみ、チャンネル/ルームに @here / [toall] でフォールバック投稿。
+  //
+  //    オプション: NOTIFY_PCHECK_SECRETARY_CC=true のとき、チームの secretary
+  //    （users.role='secretary' かつ team_id 一致 かつ is_active=true）にも個別 DM CC。
   else if (newStatus === 'Pチェック') {
-    const { slackBody, cwBody } = tpl('Pチェック依頼', '📥', producer);
-    await sendNotif(producer, slackBody, cwBody);
+    // 2-a) Pチェック宛先: assignments の producer を最優先、無ければ projects.producer_id にフォールバック
+    const pCheckTargets = producerAssignees.length > 0
+      ? producerAssignees.slice()
+      : [producer].filter(Boolean);
+
+    // 2-b) 秘書 CC（ENV フラグで有効化、デフォルト OFF）— Dチェックと同じパターン
+    if (String(process.env.NOTIFY_PCHECK_SECRETARY_CC || '').toLowerCase() === 'true' && detail.team_id) {
+      const { data: secretaries, error: secErr } = await supabase.from('users')
+        .select('id, full_name, slack_dm_id, chatwork_dm_id, role, team_id, is_active')
+        .eq('team_id', detail.team_id)
+        .eq('role', 'secretary')
+        .eq('is_active', true);
+      if (secErr) console.warn('[notif] secretary select failed:', secErr.message);
+      for (const s of (secretaries || [])) {
+        if (s) pCheckTargets.push(s);
+      }
+    }
+
+    // 2-c) 集約版で1メッセージ送信
+    const { slackBody, cwBody } = tpl('Pチェック依頼', '📥', pCheckTargets);
+    const sendResult = await sendNotifMulti(pCheckTargets, slackBody, cwBody);
+
+    // 2-d) 全員 DM ID 未設定 → チャンネルフォールバック
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Pチェック依頼', '📥', null);
+      const note = '\n（プロデューサー未設定または DM ID 未登録のため関係者にメンションしています）';
+      const slackFallback = fbSlack + note;
+      const cwFallback = fbCw.replace('[/info]', note + '[/info]');
+      await sendChannelMention(slackFallback, cwFallback);
+    }
   }
   // 3) → Dチェック後修正（ボールが製作者側に戻る）
   //    宛先は editorAssignees（編集者・デザイナー）。ディレクターは除外
@@ -406,8 +447,13 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     await sendNotifMulti(editorAssignees, slackBody, cwBody);
   }
   // 4) → Pチェック後修正（プロデューサーから戻る → editor + director の両方が修正対象）
+  //    多重ディレクター対応: directorAssignees があればそれを使う（無ければ projects.director_id を1人だけ）。
+  //    sendNotifMulti は id 重複を内部で除外するので二重メンションにはならない。
   else if (newStatus === 'Pチェック後修正') {
-    const targets = [...editorAssignees, director].filter(Boolean);
+    const directorTargets = directorAssignees.length > 0
+      ? directorAssignees
+      : [director].filter(Boolean);
+    const targets = [...editorAssignees, ...directorTargets];
     const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', targets);
     await sendNotifMulti(targets, slackBody, cwBody);
   }
