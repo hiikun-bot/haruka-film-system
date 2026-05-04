@@ -1287,16 +1287,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   }
   .cm-list.is-grid { grid-template-columns: 1fr; }
 }
-/* Dチェック担当者選択モーダル: 2カラム → スマホでは1カラム */
+/* D/Pチェック担当者選択モーダル: 2カラム → スマホでは1カラム */
 @media (max-width: 768px) {
-  #modal-d-check-picker .dcp-grid {
+  #modal-d-check-picker .dcp-grid,
+  #modal-p-check-picker .dcp-grid {
     grid-template-columns: 1fr !important;
     overflow-y: auto !important;
   }
-  #modal-d-check-picker .dcp-col {
+  #modal-d-check-picker .dcp-col,
+  #modal-p-check-picker .dcp-col {
     overflow-y: visible !important;
   }
-  #modal-d-check-picker .dcp-modal-shell {
+  #modal-d-check-picker .dcp-modal-shell,
+  #modal-p-check-picker .dcp-modal-shell {
     max-width: 95vw !important;
   }
 }
@@ -4497,6 +4500,34 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px;border-top:0.5px solid var(--border);background:var(--surface);flex-shrink:0">
       <button class="btn" onclick="closeDCheckPicker()" style="font-size:13px;padding:8px 18px">キャンセル</button>
       <button class="btn-primary" id="dcp-submit-btn" onclick="submitDCheckPicker()" style="font-size:13px;padding:9px 22px">Dチェックへ →</button>
+    </div>
+  </div>
+</div>
+
+<!-- =====================================================================
+     Pチェック担当者選択モーダル（複数選択対応）
+     Dチェックピッカーと同仕様の2カラム構成。
+       左カラム: 案件のプロデューサー / サブプロデューサー / チーム内メンバー
+       右カラム: 秘書 / その他から選ぶ（フィルタ・検索）
+     画面幅 768px 未満では .dcp-grid が 1 カラムにフォールバック（CSS @media）。
+     DOM ID は pcp- プレフィックスで分離（D側を壊さない）。
+===================================================================== -->
+<div class="modal-overlay" id="modal-p-check-picker" style="z-index:10001">
+  <div class="dcp-modal-shell" style="max-width:1100px;width:min(95vw,1100px);margin:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34),0 4px 14px rgba(0,0,0,.12);display:flex;flex-direction:column;height:min(85vh,800px);max-height:calc(100vh - 48px)">
+    <div style="padding:16px 22px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <span style="font-size:15px;font-weight:600;color:var(--text)">Pチェックに進める</span>
+      <button class="modal-close" onclick="closePCheckPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+    </div>
+    <div style="padding:14px 22px 0;flex-shrink:0">
+      <div style="font-size:13px;color:var(--text);margin-bottom:10px">Pチェック担当を選んでください（複数可）</div>
+    </div>
+    <div id="pcp-sections-scroll" class="dcp-grid" style="padding:4px 22px 16px;flex:1;min-height:0;display:grid;grid-template-columns:1fr 1.2fr;gap:18px;overflow:hidden">
+      <div id="pcp-col-left" class="dcp-col" style="display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0;padding-right:4px"></div>
+      <div id="pcp-col-right" class="dcp-col" style="display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0;padding-right:4px"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px;border-top:0.5px solid var(--border);background:var(--surface);flex-shrink:0">
+      <button class="btn" onclick="closePCheckPicker()" style="font-size:13px;padding:8px 18px">キャンセル</button>
+      <button class="btn-primary" id="pcp-submit-btn" onclick="submitPCheckPicker()" style="font-size:13px;padding:9px 22px">Pチェックへ →</button>
     </div>
   </div>
 </div>
@@ -16360,6 +16391,17 @@ async function advanceCreativeStatus() {
     return;
   }
 
+  // 遷移先が「Pチェック」のときも同じく担当者選択モーダルを表示
+  // （Dチェックピッカーと同仕様：複数選択・案件P固定・サブP/秘書/その他）
+  if (target === 'Pチェック') {
+    openPCheckPicker({
+      onSubmit: async (producerUserIds) => {
+        await saveCreativeDetail(target, { producer_user_ids: Array.isArray(producerUserIds) ? producerUserIds : [] });
+      },
+    });
+    return;
+  }
+
   const isApprove = ['承認', '承認（'].some(s => document.getElementById('cd-next-step-btn').textContent.includes(s));
   if (!(await showConfirmDialog({
     title: isApprove ? '承認して進める' : 'ステータスを進める',
@@ -18929,6 +18971,476 @@ async function submitDCheckPicker() {
     try { await onSubmit(ids); } catch (e) {
       console.error('[dcp] submit error:', e);
       showToast('Dチェックへの遷移に失敗しました', 'error');
+    }
+  }
+}
+
+// =====================================================================
+// Pチェック担当者選択モーダル（複数選択対応）
+// =====================================================================
+//   背景:
+//     Dチェックと同様、Pチェックも案件メインプロデューサー以外（サブプロデューサー・秘書・
+//     他チーム・admin等）にも依頼したい。複数人にチェック依頼したいケースもあるため、
+//     checkbox 化して複数選択可能にする。
+//
+//   表示優先順:
+//     1. 案件のプロデューサー（projects.producer_id [⭐] + projects.sub_producer_ids [サブP]
+//        の和集合）既定チェック（重複は除去、メインPのみ⭐表示）
+//     2. 秘書チーム（users.role='secretary'）
+//     3. その他から選ぶ（折りたたみ・ロールフィルタチップ + 名前検索・全ユーザー対象）
+//
+//   バックエンド:
+//     PUT /creatives/:id に producer_user_ids: string[] を渡す。
+//     1人以上必須。
+//
+//   注意:
+//     projects.sub_producer_ids 列は projects-worker が並行で migration 実装中。
+//     migration 未適用 / undefined の場合は空配列扱いでフォールバックし、
+//     「サブプロデューサー」セクションは非表示になるだけ（動作は壊れない）。
+//
+//   実装方針:
+//     Dチェックピッカーと配色・挙動を完全一致させるため、共通ヘルパ
+//     dcpVariantStyle / dcpCountByRole / dcpChipDefs / roleLabel をそのまま再利用する。
+//     状態（_pcpState）と DOM ID（pcp-*）だけ分離して、Dピッカーには一切影響を与えない。
+// =====================================================================
+
+let _pcpState = null;
+
+async function openPCheckPicker({ onSubmit } = {}) {
+  if (!currentCreativeDetail) return;
+
+  // 案件プロデューサーが後から設定/変更されたケースに備えて最新の詳細を再取得する。
+  // 失敗してもキャッシュ値で継続（ネットワーク断などで処理が止まらないように）。
+  try {
+    const cid = currentCreativeDetail.id;
+    if (cid) {
+      const refRes = await apiFetch(`${API}/creatives/${cid}`);
+      if (refRes.ok) {
+        const fresh = await refRes.json();
+        if (fresh && fresh.id === cid) {
+          currentCreativeDetail = fresh;
+        }
+      }
+    }
+  } catch (_) {
+    // 無視してキャッシュ値で継続
+  }
+
+  const project = currentCreativeDetail.projects || {};
+  const mainProducerId = project.producer_id || null;
+  // projects.sub_producer_ids は projects-worker 並行実装中。undefined のときは空配列扱い。
+  const subProducerIds = Array.isArray(project.sub_producer_ids) ? project.sub_producer_ids.filter(Boolean) : [];
+
+  const memberByIdAll = new Map((allMembers || []).map(m => [m.id, m]));
+  const memberByIdActive = new Map((allMembers || []).filter(m => m.is_active !== false).map(m => [m.id, m]));
+
+  // 案件Pユーザーの解決優先順位:
+  //   1) APIで埋め込まれた project.producer
+  //   2) allMembers から producer_id でフォールバック検索
+  //   3) どちらも空なら、最低限 producer_id をキーにプレースホルダ表示
+  function resolveProducerUser(id, embedded) {
+    if (!id) return null;
+    if (embedded && embedded.id === id) return embedded;
+    const fromAll = memberByIdAll.get(id);
+    if (fromAll) return fromAll;
+    console.warn('[PCheckPicker] producer user not found in allMembers nor embedded:', id);
+    return { id, full_name: '（読込失敗・要再読込）', role: 'producer', is_active: true };
+  }
+
+  // 案件のプロデューサー = メインP + サブP（順序維持・重複除去）
+  const projectProducerOrdered = [];
+  const seen = new Set();
+  // 埋め込まれたサブPユーザー（id → user マップ）
+  // projects-worker が project.sub_producers を埋め込む実装が入る想定。無くても可。
+  const subProducerEmbeddedById = new Map(
+    (Array.isArray(project.sub_producers) ? project.sub_producers : []).filter(Boolean).map(u => [u.id, u])
+  );
+
+  if (mainProducerId && !seen.has(mainProducerId)) {
+    const u = resolveProducerUser(mainProducerId, project.producer);
+    projectProducerOrdered.push({ id: mainProducerId, isMain: true, user: u });
+    seen.add(mainProducerId);
+  }
+  subProducerIds.forEach(id => {
+    if (id && !seen.has(id)) {
+      const u = resolveProducerUser(id, subProducerEmbeddedById.get(id));
+      projectProducerOrdered.push({ id, isMain: false, user: u });
+      seen.add(id);
+    }
+  });
+
+  // 既定チェック: 案件のプロデューサー全員
+  const defaultCheckedIds = new Set(projectProducerOrdered.map(x => x.id));
+
+  const leftSections = [];
+  const rightSections = [];
+  const usedIds = new Set();
+
+  // (1L) 案件プロデューサー（メインPのみ・最目立ち）
+  const mainProdItems = projectProducerOrdered
+    .filter(x => x.isMain)
+    .map(({ id, user }) => {
+      const m = user || { id, full_name: '（読込失敗）' };
+      usedIds.add(id);
+      return {
+        id: m.id,
+        name: m.full_name,
+        avatar_url: m.avatar_url || null,
+        sub: '案件プロデューサー・固定',
+        star: true,
+        lock: true,
+      };
+    });
+  if (mainProdItems.length) {
+    leftSections.push({ title: '案件プロデューサー', items: mainProdItems, variant: 'main' });
+  } else {
+    // 案件プロデューサー不在のプレースホルダー
+    leftSections.push({
+      title: '案件プロデューサー',
+      variant: 'main',
+      placeholder: 'プロデューサー不在（案件編集から設定してください）',
+      items: [],
+    });
+  }
+
+  // (2L) 案件サブプロデューサー（やや目立ち・解除可能）
+  const subProdItems = projectProducerOrdered
+    .filter(x => !x.isMain)
+    .map(({ id, user }) => {
+      const m = user || { id, full_name: '（読込失敗）' };
+      usedIds.add(id);
+      return {
+        id: m.id,
+        name: m.full_name,
+        avatar_url: m.avatar_url || null,
+        sub: 'サブP',
+      };
+    });
+  if (subProdItems.length) {
+    leftSections.push({ title: '案件サブプロデューサー', items: subProdItems, variant: 'sub' });
+  }
+
+  // (3L) チーム内メンバー（案件のチーム経由）
+  const teamIdSet = new Set();
+  const creativeTeamId = currentCreativeDetail.team_id || null;
+  if (creativeTeamId) teamIdSet.add(creativeTeamId);
+  if (project.team_id) teamIdSet.add(project.team_id);
+  const clientTeamsArr = Array.isArray(project.client_teams) ? project.client_teams : [];
+  clientTeamsArr.forEach(ct => {
+    const tid = ct?.team_id || ct?.team?.id || (typeof ct === 'string' ? ct : null);
+    if (tid) teamIdSet.add(tid);
+  });
+  const clientObj = project.clients || project.client || null;
+  if (clientObj && Array.isArray(clientObj.client_teams)) {
+    clientObj.client_teams.forEach(ct => {
+      const tid = ct?.team_id || ct?.team?.id;
+      if (tid) teamIdSet.add(tid);
+    });
+  }
+
+  const teamMemberIds = new Set();
+  if (typeof allTeams !== 'undefined' && Array.isArray(allTeams)) {
+    allTeams.forEach(t => {
+      if (!teamIdSet.has(t.id)) return;
+      (t.team_members || []).forEach(tm => {
+        if (tm && tm.user_id) teamMemberIds.add(tm.user_id);
+      });
+    });
+  }
+  if (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) {
+    allMembers.forEach(m => {
+      if (m && m.team_id && teamIdSet.has(m.team_id)) {
+        teamMemberIds.add(m.id);
+      }
+    });
+  }
+
+  const teamItems = [...memberByIdActive.values()]
+    .filter(m => teamMemberIds.has(m.id) && !usedIds.has(m.id))
+    .sort(dcpCompareUsers)
+    .map(m => {
+      usedIds.add(m.id);
+      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: roleLabel(m.role), role: m.role || '' };
+    });
+  if (teamItems.length) {
+    leftSections.push({ title: 'チーム内メンバー', items: teamItems, variant: 'team', scrollable: true });
+  }
+
+  // (1R) 秘書
+  const secItems = [...memberByIdActive.values()]
+    .filter(m => m.role === 'secretary' && !usedIds.has(m.id))
+    .sort(dcpCompareUsers)
+    .map(m => {
+      usedIds.add(m.id);
+      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: '秘書' };
+    });
+  if (secItems.length) {
+    rightSections.push({ title: '秘書', items: secItems, variant: 'plain' });
+  }
+
+  // (2R) その他
+  const otherUsers = [...memberByIdActive.values()]
+    .filter(m => !usedIds.has(m.id))
+    .sort(dcpCompareUsers);
+  const otherItems = otherUsers.map(m => ({
+    id: m.id,
+    name: m.full_name,
+    avatar_url: m.avatar_url || null,
+    sub: roleLabel(m.role),
+    role: m.role || '',
+  }));
+
+  const checkedIds = new Set();
+  defaultCheckedIds.forEach(id => checkedIds.add(id));
+
+  // ロック済み（チェック解除不可）ID集合 — メインPのみ。
+  const lockedIds = new Set();
+  if (mainProducerId) {
+    lockedIds.add(mainProducerId);
+    checkedIds.add(mainProducerId);
+  }
+
+  _pcpState = {
+    leftSections,
+    rightSections,
+    otherItems,
+    checkedIds,
+    lockedIds,
+    onSubmit,
+    otherExpanded: true,
+    otherSearch: '',
+    otherRoleFilter: '__all__',
+    otherIsComposing: false,
+  };
+
+  renderPCheckPicker();
+  openModal('modal-p-check-picker');
+}
+
+// ── レンダラ（Dピッカーの dcpRenderItem / dcpRenderSection を流用しつつ、
+//    lockedIds / checkedIds の参照は _pcpState に切り替えるためにラップする）
+function pcpRenderItem(it, variantOverride) {
+  if (!_pcpState) return '';
+  const variant = variantOverride || it.variant || 'plain';
+  const isLocked = !!it.lock || _pcpState.lockedIds?.has(it.id);
+  const isChecked = isLocked ? true : _pcpState.checkedIds.has(it.id);
+  const v = dcpVariantStyle(variant, isChecked, isLocked);
+  const star = it.star ? `<span style="color:${variant === 'main' ? '#fde68a' : '#f59e0b'};margin-left:4px">⭐</span>` : '';
+  const sub = it.sub
+    ? `<span style="font-size:11px;color:${v.subColor};margin-left:6px;background:${v.subBg};padding:1px 6px;border-radius:4px">${esc(it.sub)}</span>`
+    : '';
+  const fontWeight = (variant === 'main') ? 700 : (variant === 'sub') ? 600 : 500;
+  const baseStyle = `display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;${v.hint};margin-bottom:6px;background:${v.bg};color:${v.color}`;
+  const labelStyle = isLocked ? `${baseStyle};cursor:not-allowed` : `${baseStyle};cursor:pointer`;
+  const inputAttrs = isLocked
+    ? `disabled checked onclick="event.preventDefault();return false" title="案件プロデューサーは固定です（解除できません）"`
+    : `${isChecked ? 'checked' : ''} onchange="pcpToggle('${esc(it.id)}')"`;
+  const lockBadge = isLocked
+    ? `<span style="font-size:10px;color:#0d9488;margin-left:auto;background:#fff;border:0.5px solid #5eead4;padding:1px 6px;border-radius:4px;font-weight:600;letter-spacing:0.04em">固定</span>`
+    : '';
+  const avatarUserObj = { full_name: it.name || '', avatar_url: it.avatar_url || null };
+  const avatarMarkup = (typeof avatarHtml === 'function') ? avatarHtml(avatarUserObj, 28) : '';
+  return `
+    <label data-pcp-row="${esc(it.id)}" data-pcp-variant="${esc(variant)}" style="${labelStyle}" title="${isLocked ? '案件プロデューサーは固定です（解除できません）' : ''}">
+      <input type="checkbox" value="${esc(it.id)}" ${inputAttrs} style="margin:0;width:16px;height:16px;cursor:${isLocked ? 'not-allowed' : 'pointer'};accent-color:${variant === 'main' ? '#fff' : '#0d9488'};flex-shrink:0">
+      ${avatarMarkup}
+      <span style="font-size:13px;font-weight:${fontWeight};color:${v.color};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || '(名前なし)')}</span>
+      ${star}
+      ${sub}
+      ${lockBadge}
+    </label>`;
+}
+
+function pcpRenderSection(s) {
+  const variant = s.variant || 'plain';
+  const headColor = (variant === 'main') ? '#0d9488'
+                   : (variant === 'sub') ? '#0f766e'
+                   : 'var(--text-muted)';
+  const head = s.title
+    ? `<div style="font-size:11px;font-weight:700;color:${headColor};letter-spacing:0.08em;margin:6px 0 6px;padding-left:2px">── ${esc(s.title)} ──</div>`
+    : '';
+  if ((!s.items || s.items.length === 0) && s.placeholder) {
+    const placeholderHtml = `
+      <div style="
+        padding: 14px 12px;
+        margin-bottom: 6px;
+        border: 1.5px dashed #f59e0b;
+        border-radius: 8px;
+        background: #fffbeb;
+        color: #92400e;
+        font-size: 13px;
+        font-weight: 600;
+        text-align: center;
+        line-height: 1.5;
+      ">
+        ⚠️ プロデューサー不在<br>
+        <span style="font-size:11px;color:#a16207;font-weight:400">案件編集からプロデューサーを設定してください</span>
+      </div>`;
+    return head + placeholderHtml;
+  }
+  const itemsHtml = s.items.map(it => pcpRenderItem(it, variant)).join('');
+  if (s.scrollable) {
+    return head + `<div style="max-height:260px;overflow-y:auto;padding-right:2px">${itemsHtml}</div>`;
+  }
+  return head + itemsHtml;
+}
+
+function renderPCheckPicker() {
+  const colLeft = document.getElementById('pcp-col-left');
+  const colRight = document.getElementById('pcp-col-right');
+  if (!colLeft || !colRight || !_pcpState) return;
+  const { leftSections, rightSections, otherItems } = _pcpState;
+
+  colLeft.innerHTML = (leftSections || []).map(pcpRenderSection).join('') ||
+    '<div style="font-size:12px;color:var(--text-muted);padding:10px 4px">案件のプロデューサーは未設定です</div>';
+
+  let rightHtml = (rightSections || []).map(pcpRenderSection).join('');
+
+  if (otherItems.length) {
+    const counts = dcpCountByRole(otherItems);
+    const chipsHtml = dcpChipDefs(counts).map(c => {
+      const active = (_pcpState.otherRoleFilter === c.value);
+      return `<button type="button" data-role="${esc(c.value)}" onclick="pcpSetRoleFilter('${esc(c.value)}')"
+        style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
+               background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
+               color:${active ? '#fff' : 'var(--text)'};
+               font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
+        ${esc(c.label)}(${c.count})
+      </button>`;
+    }).join('');
+
+    rightHtml += `
+      <div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;margin:14px 0 6px">── その他から選ぶ ──</div>
+      <div id="pcp-role-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${chipsHtml}</div>
+      <input type="text" id="pcp-other-search" placeholder="🔍 名前で検索..." value="${esc(_pcpState.otherSearch || '')}"
+             style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
+      <div id="pcp-other-list"></div>`;
+  }
+
+  colRight.innerHTML = rightHtml ||
+    '<div style="font-size:12px;color:var(--text-muted);padding:10px 4px">候補者がいません</div>';
+
+  pcpUpdateSubmitButton();
+
+  if (otherItems.length) {
+    const ipt = document.getElementById('pcp-other-search');
+    if (ipt) {
+      ipt.addEventListener('compositionstart', () => {
+        if (_pcpState) _pcpState.otherIsComposing = true;
+      });
+      ipt.addEventListener('compositionend', (ev) => {
+        if (!_pcpState) return;
+        _pcpState.otherIsComposing = false;
+        _pcpState.otherSearch = ev.target.value;
+        pcpRenderOtherList();
+      });
+      ipt.addEventListener('input', (ev) => {
+        if (!_pcpState) return;
+        if (_pcpState.otherIsComposing) return;
+        _pcpState.otherSearch = ev.target.value;
+        pcpRenderOtherList();
+      });
+      if (document.activeElement !== ipt && _pcpState.otherSearch) {
+        try { ipt.focus(); ipt.setSelectionRange(ipt.value.length, ipt.value.length); } catch (_) {}
+      }
+    }
+    pcpRenderOtherList();
+  }
+}
+
+function pcpRenderOtherList() {
+  const list = document.getElementById('pcp-other-list');
+  if (!list || !_pcpState) return;
+  const { otherItems, otherSearch, otherRoleFilter } = _pcpState;
+
+  let filtered = otherItems;
+  if (otherRoleFilter && otherRoleFilter !== '__all__') {
+    if (otherRoleFilter === '__other__') {
+      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
+      filtered = filtered.filter(it => !known.has(it.role || ''));
+    } else {
+      filtered = filtered.filter(it => (it.role || '') === otherRoleFilter);
+    }
+  }
+  const q = (otherSearch || '').trim().toLowerCase();
+  if (q) {
+    filtered = filtered.filter(it => (it.name || '').toLowerCase().includes(q));
+  }
+
+  list.innerHTML = filtered.length
+    ? filtered.map(pcpRenderItem).join('')
+    : '<div style="font-size:12px;color:var(--text-muted);padding:12px;text-align:center">該当なし</div>';
+}
+
+function pcpUpdateChipsActive() {
+  const wrap = document.getElementById('pcp-role-chips');
+  if (!wrap || !_pcpState) return;
+  const cur = _pcpState.otherRoleFilter;
+  wrap.querySelectorAll('button[data-role]').forEach(btn => {
+    const active = (btn.getAttribute('data-role') === cur);
+    btn.style.background = active ? 'var(--em-dark, #0d9488)' : '#fff';
+    btn.style.color      = active ? '#fff' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
+    btn.style.fontWeight = active ? '600' : '500';
+  });
+}
+
+function pcpUpdateSubmitButton() {
+  if (!_pcpState) return;
+  const submitBtn = document.getElementById('pcp-submit-btn');
+  if (!submitBtn) return;
+  const count = _pcpState.checkedIds.size;
+  submitBtn.disabled = count === 0;
+  submitBtn.style.opacity = count === 0 ? '0.5' : '1';
+  submitBtn.style.cursor = count === 0 ? 'not-allowed' : 'pointer';
+  submitBtn.textContent = count === 0 ? 'Pチェックへ →' : `Pチェックへ → (${count}人)`;
+}
+
+function pcpToggle(id) {
+  if (!_pcpState) return;
+  if (_pcpState.lockedIds && _pcpState.lockedIds.has(id)) return;
+  if (_pcpState.checkedIds.has(id)) _pcpState.checkedIds.delete(id);
+  else _pcpState.checkedIds.add(id);
+  const isChecked = _pcpState.checkedIds.has(id);
+  document.querySelectorAll(`#pcp-sections-scroll input[type="checkbox"][value="${CSS.escape(id)}"]`).forEach(inp => {
+    const label = inp.closest('label');
+    if (label) {
+      const variant = label.getAttribute('data-pcp-variant') || 'plain';
+      const v = dcpVariantStyle(variant, isChecked, false);
+      label.style.background = v.bg;
+    }
+  });
+  pcpUpdateSubmitButton();
+}
+
+function pcpSetRoleFilter(role) {
+  if (!_pcpState) return;
+  _pcpState.otherRoleFilter = role || '__all__';
+  pcpUpdateChipsActive();
+  pcpRenderOtherList();
+}
+
+function closePCheckPicker() {
+  closeModal('modal-p-check-picker');
+  _pcpState = null;
+}
+
+async function submitPCheckPicker() {
+  if (!_pcpState) return;
+  if (_pcpState.lockedIds) {
+    _pcpState.lockedIds.forEach(id => _pcpState.checkedIds.add(id));
+  }
+  const ids = [..._pcpState.checkedIds];
+  if (ids.length === 0) {
+    showToast('Pチェック担当を1人以上選んでください', 'warn');
+    return;
+  }
+  const onSubmit = _pcpState.onSubmit;
+  closePCheckPicker();
+  if (typeof onSubmit === 'function') {
+    try { await onSubmit(ids); } catch (e) {
+      console.error('[pcp] submit error:', e);
+      showToast('Pチェックへの遷移に失敗しました', 'error');
     }
   }
 }

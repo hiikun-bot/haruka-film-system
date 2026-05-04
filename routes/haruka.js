@@ -1784,6 +1784,7 @@ router.get('/creatives/:id', async (req, res) => {
       projects(
         id, name, producer_id, director_id, regulation_url,
         director:director_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
+        producer:producer_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         clients(id, name, client_code, status)
       ),
       project_cycles(id, year, month),
@@ -1808,9 +1809,12 @@ router.get('/creatives/:id', async (req, res) => {
     data.teams = null;
   }
 
-  // projects.sub_director_ids を別クエリで取得（migration 未適用環境では空配列扱い）
+  // projects.sub_director_ids / sub_producer_ids を別クエリで取得
+  // （migration 未適用環境では空配列扱い）
   // projects には UUID[] として追加される予定。列が無い・schema-cache 未更新の場合は無視。
+  // sub_producer_ids は projects-worker が並行実装中の列。未適用なら try/catch で握りつぶす。
   if (data && data.projects?.id) {
+    // sub_director_ids（既存）
     try {
       const { data: projExt, error: projExtErr } = await supabase
         .from('projects')
@@ -1826,28 +1830,48 @@ router.get('/creatives/:id', async (req, res) => {
       data.projects.sub_director_ids = [];
     }
 
-    // サブディレクターのユーザー情報を埋め込み（離職者・権限制限ユーザーでも常に表示できるように）
-    // Dチェックピッカーで「案件ディレクター/サブD」セクションが allMembers の状態に依存しないようにするのが目的。
-    const subIds = data.projects.sub_director_ids;
-    if (Array.isArray(subIds) && subIds.length) {
+    // sub_producer_ids（新規・projects-worker と並行実装）
+    // 列が無い場合（migration 未適用）は空配列にフォールバック → Pチェックピッカーで
+    // サブPセクションが非表示になるだけで、メインPだけは固定表示される。
+    try {
+      const { data: projP, error: projPErr } = await supabase
+        .from('projects')
+        .select('sub_producer_ids')
+        .eq('id', data.projects.id)
+        .maybeSingle();
+      if (!projPErr && projP) {
+        data.projects.sub_producer_ids = Array.isArray(projP.sub_producer_ids) ? projP.sub_producer_ids : [];
+      } else {
+        data.projects.sub_producer_ids = [];
+      }
+    } catch (_) {
+      data.projects.sub_producer_ids = [];
+    }
+
+    // サブディレクター/サブプロデューサーのユーザー情報を埋め込み
+    // （離職者・権限制限ユーザーでも常に表示できるように）
+    // D/Pピッカーで「案件D/P・サブD/P」セクションが allMembers の状態に依存しないようにするのが目的。
+    // 一括取得（N+1 解消）— sub_director_ids と sub_producer_ids の和集合を1クエリで。
+    const subDIds = Array.isArray(data.projects.sub_director_ids) ? data.projects.sub_director_ids : [];
+    const subPIds = Array.isArray(data.projects.sub_producer_ids) ? data.projects.sub_producer_ids : [];
+    const allSubIds = [...new Set([...subDIds, ...subPIds].filter(Boolean))];
+    let userById = new Map();
+    if (allSubIds.length) {
       try {
         const { data: subUsers, error: subErr } = await supabase
           .from('users')
           .select('id, full_name, nickname, role, rank, team_id, avatar_url, is_active')
-          .in('id', subIds);
+          .in('id', allSubIds);
         if (!subErr && Array.isArray(subUsers)) {
-          // sub_director_ids の順序を維持
-          const userById = new Map(subUsers.map(u => [u.id, u]));
-          data.projects.sub_directors = subIds.map(id => userById.get(id)).filter(Boolean);
-        } else {
-          data.projects.sub_directors = [];
+          userById = new Map(subUsers.map(u => [u.id, u]));
         }
       } catch (_) {
-        data.projects.sub_directors = [];
+        // userById は空のまま
       }
-    } else {
-      data.projects.sub_directors = [];
     }
+    // 順序維持しつつフィルタ
+    data.projects.sub_directors = subDIds.map(id => userById.get(id)).filter(Boolean);
+    data.projects.sub_producers = subPIds.map(id => userById.get(id)).filter(Boolean);
   }
 
   // 案件 → client_teams → teams のルートで担当チーム ID を埋め込み
@@ -2050,6 +2074,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     assignee_id, team_id, memo,
     director_user_id,
     director_user_ids,
+    producer_user_ids,
     force_delivered_reason
   } = req.body;
 
@@ -2210,6 +2235,52 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // Pチェック担当者更新（producer_user_ids（複数）が送られてきた場合）
+  // - 案件のメインプロデューサー以外（サブP・秘書・他チームメンバー等）に Pチェックを依頼するために、
+  //   creative_assignments role='producer' を「選択されたユーザーIDセット」に同期する。
+  //   選択されたが既存にない → INSERT
+  //   既存にあるが選択されていない → DELETE
+  // - 空配列の場合は全削除（新UIは1人以上必須のため通常到達しない）。
+  // 設計は director_user_ids と同等（PR #218 と対称）。
+  if (Array.isArray(producer_user_ids)) {
+    const desiredIds = [...new Set(producer_user_ids.filter(Boolean))];
+
+    if (desiredIds.length === 0) {
+      await supabase.from('creative_assignments')
+        .delete().eq('creative_id', req.params.id).eq('role', 'producer');
+    } else {
+      const { data: existing } = await supabase
+        .from('creative_assignments')
+        .select('id, user_id')
+        .eq('creative_id', req.params.id)
+        .eq('role', 'producer');
+      const existingIds = new Set((existing || []).map(r => r.user_id).filter(Boolean));
+      const desiredSet = new Set(desiredIds);
+      const toDelete = (existing || []).filter(r => !desiredSet.has(r.user_id)).map(r => r.id);
+      const toInsertIds = desiredIds.filter(id => !existingIds.has(id));
+
+      if (toDelete.length > 0) {
+        const { error: dErr } = await supabase
+          .from('creative_assignments').delete().in('id', toDelete);
+        if (dErr) console.warn('[creative_assignments][producer] delete failed:', dErr.message);
+      }
+      if (toInsertIds.length > 0) {
+        // 一括 rank 取得（N+1解消）
+        const { data: prdUsers } = await supabase
+          .from('users').select('id, rank').in('id', toInsertIds);
+        const rankById = new Map((prdUsers || []).map(u => [u.id, u.rank || null]));
+        const rows = toInsertIds.map(uid => ({
+          creative_id: req.params.id,
+          user_id: uid,
+          role: 'producer',
+          rank_applied: rankById.get(uid) || null,
+        }));
+        const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
+        if (iErr) console.warn('[creative_assignments][producer] insert failed:', iErr.message);
+      }
+    }
+  }
+
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
   // - 通知より先に実行して client_review_url を確定させる
   // - 失敗してもクリエイティブ更新自体は完遂（手動入力フォールバック）
@@ -2246,7 +2317,13 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   // ball_holder_id キャッシュ更新（status / assignee / director が変わった場合のみ）
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
   // - 複数ディレクター指定時は getBallHolder() が role='director' の最初のassignmentを採用する仕様（合理的フォールバック）
-  if (updateData.status !== undefined || assignee_id !== undefined || director_user_id !== undefined || director_user_ids !== undefined) {
+  if (
+    updateData.status !== undefined ||
+    assignee_id !== undefined ||
+    director_user_id !== undefined ||
+    director_user_ids !== undefined ||
+    producer_user_ids !== undefined
+  ) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
 
