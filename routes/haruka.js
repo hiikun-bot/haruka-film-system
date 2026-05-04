@@ -1643,17 +1643,20 @@ router.get('/creatives', async (req, res) => {
 
   // assignee_id フィルタは PostgREST の埋め込み JOIN で絞り込めないので、
   // 先に creative_assignments から該当 creative_id 集合を取得し .in() で絞る
+  // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
   let assigneeCreativeIds = null;
   if (assignee_id) {
-    const { data: caRows, error: caErr } = await supabase
-      .from('creative_assignments')
-      .select('creative_id')
-      .eq('user_id', assignee_id);
-    if (caErr) return res.status(500).json({ error: caErr.message });
-    assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
-    // ヒット 0 件なら以降の本体クエリ自体スキップ
-    if (assigneeCreativeIds.length === 0) {
-      return res.json({ data: [], total: 0, limit, offset });
+    const userIds = String(assignee_id).split(',').map(s => s.trim()).filter(Boolean);
+    if (userIds.length > 0) {
+      let caQuery = supabase.from('creative_assignments').select('creative_id');
+      caQuery = (userIds.length > 1) ? caQuery.in('user_id', userIds) : caQuery.eq('user_id', userIds[0]);
+      const { data: caRows, error: caErr } = await caQuery;
+      if (caErr) return res.status(500).json({ error: caErr.message });
+      assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
+      // ヒット 0 件なら以降の本体クエリ自体スキップ
+      if (assigneeCreativeIds.length === 0) {
+        return res.json({ data: [], total: 0, limit, offset });
+      }
     }
   }
 
@@ -1804,16 +1807,19 @@ router.get('/creatives/counts', async (req, res) => {
   } = req.query;
 
   // assignee_id フィルタは creative_assignments → creative_id 集合化
+  // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
   let assigneeCreativeIds = null;
   if (assignee_id) {
-    const { data: caRows, error: caErr } = await supabase
-      .from('creative_assignments')
-      .select('creative_id')
-      .eq('user_id', assignee_id);
-    if (caErr) return res.status(500).json({ error: caErr.message });
-    assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
-    if (assigneeCreativeIds.length === 0) {
-      return res.json({ all: 0, video: 0, design: 0 });
+    const userIds = String(assignee_id).split(',').map(s => s.trim()).filter(Boolean);
+    if (userIds.length > 0) {
+      let caQuery = supabase.from('creative_assignments').select('creative_id');
+      caQuery = (userIds.length > 1) ? caQuery.in('user_id', userIds) : caQuery.eq('user_id', userIds[0]);
+      const { data: caRows, error: caErr } = await caQuery;
+      if (caErr) return res.status(500).json({ error: caErr.message });
+      assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
+      if (assigneeCreativeIds.length === 0) {
+        return res.json({ all: 0, video: 0, design: 0 });
+      }
     }
   }
 
