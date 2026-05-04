@@ -3629,7 +3629,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <label class="form-label">プロデューサー</label>
               <div style="display:flex;align-items:center;gap:8px">
                 <span id="p-producer-avatar" style="flex-shrink:0;display:inline-flex"></span>
-                <select class="form-select" id="p-producer-id" onchange="updateUserSelectAvatar('p-producer-id','p-producer-avatar')" style="flex:1;min-width:0">
+                <select class="form-select" id="p-producer-id" onchange="updateUserSelectAvatar('p-producer-id','p-producer-avatar'); renderProjectSubProducerPicker()" style="flex:1;min-width:0">
                   <option value="">未設定</option>
                 </select>
               </div>
@@ -3642,6 +3642,26 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                   <option value="">未設定</option>
                 </select>
               </div>
+            </div>
+          </div>
+
+          <!-- サブプロデューサー（複数）— Pチェック依頼可能者 -->
+          <!-- サブディレクターと完全パラレルなUI -->
+          <div class="form-group" style="margin-bottom:0;margin-top:14px">
+            <label class="form-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
+              <span style="display:flex;align-items:center;gap:6px">
+                サブプロデューサー
+                <span style="color:var(--text-muted);font-weight:400;font-size:11px">（Pチェック依頼可能者・任意）</span>
+              </span>
+              <span id="p-sub-producers-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap;font-weight:400"></span>
+            </label>
+            <div style="border:1.5px solid var(--border);border-radius:8px;padding:10px;background:var(--bg-soft, #fafafa)">
+              <div id="p-sub-producers-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <input type="text" id="p-sub-producers-search" placeholder="🔍 名前で検索..." style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
+              <div id="p-sub-producers-list" style="max-height:240px;overflow-y:auto">
+                <div style="padding:8px;color:var(--text-muted);font-size:12px">候補を読み込み中...</div>
+              </div>
+              <div id="p-sub-producers-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
             </div>
           </div>
 
@@ -8443,7 +8463,7 @@ function toggleProjectSubDirector(userId) {
   }
 }
 
-// クライアント変更時 — サブディレクター候補をリフレッシュ
+// クライアント変更時 — サブディレクター/サブプロデューサー候補をリフレッシュ
 function onProjectClientChange() {
   // 検索・フィルタはリセット
   const searchEl = document.getElementById('p-sub-directors-search');
@@ -8451,6 +8471,187 @@ function onProjectClientChange() {
   _psdState.search = '';
   _psdState.roleFilter = '__all__';
   renderProjectSubDirectorPicker();
+  // サブプロデューサーも同様にリセット
+  const ppSearchEl = document.getElementById('p-sub-producers-search');
+  if (ppSearchEl) ppSearchEl.value = '';
+  _pspState.search = '';
+  _pspState.roleFilter = '__all__';
+  renderProjectSubProducerPicker();
+}
+
+// ===== 案件モーダル: サブプロデューサー（複数）ピッカー =====
+// projects.sub_producer_ids（UUID[]）を編集する用のクライアントサイド状態管理。
+// サブディレクターと完全パラレルな実装。プロデューサー本人は除外。
+let _editingProjectSubProducerIds = [];
+let _pspState = {
+  roleFilter: '__all__',
+  search: '',
+  isComposing: false,
+  searchWired: false,
+};
+
+function getProjectSubProducerCandidates() {
+  const producerId = document.getElementById('p-producer-id')?.value || '';
+  const candidates = (allMembers || [])
+    .filter(m => m && m.is_active !== false && m.id && m.id !== producerId)
+    .slice()
+    .sort(typeof dcpCompareUsers === 'function'
+      ? dcpCompareUsers
+      : (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+  return { candidates };
+}
+
+function renderProjectSubProducerPicker() {
+  const list = document.getElementById('p-sub-producers-list');
+  const counter = document.getElementById('p-sub-producers-counter');
+  const warn = document.getElementById('p-sub-producers-warn');
+  const chipsWrap = document.getElementById('p-sub-producers-chips');
+  if (!list) return;
+  const { candidates } = getProjectSubProducerCandidates();
+  const producerId = document.getElementById('p-producer-id')?.value || '';
+
+  const allowedSet = new Set(candidates.map(c => c.id));
+  const dropped = _editingProjectSubProducerIds.filter(id => !allowedSet.has(id) || id === producerId);
+  if (dropped.length) {
+    _editingProjectSubProducerIds = _editingProjectSubProducerIds.filter(id => allowedSet.has(id) && id !== producerId);
+    if (warn) {
+      warn.style.display = '';
+      warn.textContent = `プロデューサー本人と重複した / 無効化された ${dropped.length} 名をサブプロデューサーから外しました。`;
+    }
+  } else if (warn) {
+    warn.style.display = 'none';
+    warn.textContent = '';
+  }
+
+  pspWireSearchInput();
+
+  if (!candidates.length) {
+    if (chipsWrap) chipsWrap.innerHTML = '';
+    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">候補ユーザーがいません</div>';
+    if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中`;
+    return;
+  }
+
+  if (chipsWrap) {
+    const counts = dcpCountByRole(candidates.map(m => ({ role: m.role || '' })));
+    const cur = _pspState.roleFilter || '__all__';
+    chipsWrap.innerHTML = dcpChipDefs(counts).map(c => {
+      const active = (cur === c.value);
+      return `<button type="button" data-role="${esc(c.value)}" onclick="pspSetRoleFilter('${esc(c.value)}')"
+        style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
+               background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
+               color:${active ? '#fff' : 'var(--text)'};
+               font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
+        ${esc(c.label)}(${c.count})
+      </button>`;
+    }).join('');
+  }
+
+  pspRenderList();
+
+  if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+}
+
+function pspRenderList() {
+  const list = document.getElementById('p-sub-producers-list');
+  if (!list) return;
+  const { candidates } = getProjectSubProducerCandidates();
+  const roleFilter = _pspState.roleFilter || '__all__';
+  const search = (_pspState.search || '').trim().toLowerCase();
+
+  let filtered = candidates;
+  if (roleFilter && roleFilter !== '__all__') {
+    if (roleFilter === '__other__') {
+      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
+      filtered = filtered.filter(m => !known.has(m.role || ''));
+    } else {
+      filtered = filtered.filter(m => (m.role || '') === roleFilter);
+    }
+  }
+  if (search) {
+    filtered = filtered.filter(m =>
+      (m.full_name || '').toLowerCase().includes(search) ||
+      (m.nickname || '').toLowerCase().includes(search)
+    );
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px;text-align:center">該当なし</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(m => {
+    const isChecked = _editingProjectSubProducerIds.includes(m.id);
+    const idEsc = esc(m.id);
+    const name = esc(m.full_name || '(名前未設定)');
+    const role = m.role || '';
+    const roleBadge = role
+      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(roleLabel(role))}</span>`
+      : '';
+    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
+      <input type="checkbox" value="${idEsc}" ${isChecked ? 'checked' : ''} onchange="toggleProjectSubProducer('${idEsc}')" style="margin:0;width:16px;height:16px;cursor:pointer">
+      ${avatarHtml(m, 28)}
+      <span style="font-size:13px;font-weight:500;color:var(--text)">${name}</span>
+      ${roleBadge}
+    </label>`;
+  }).join('');
+}
+
+function pspUpdateChipsActive() {
+  const wrap = document.getElementById('p-sub-producers-chips');
+  if (!wrap) return;
+  const cur = _pspState.roleFilter || '__all__';
+  wrap.querySelectorAll('button[data-role]').forEach(btn => {
+    const active = (btn.getAttribute('data-role') === cur);
+    btn.style.background  = active ? 'var(--em-dark, #0d9488)' : '#fff';
+    btn.style.color       = active ? '#fff' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
+    btn.style.fontWeight  = active ? '600' : '500';
+  });
+}
+
+function pspWireSearchInput() {
+  const ipt = document.getElementById('p-sub-producers-search');
+  if (!ipt || _pspState.searchWired) return;
+  _pspState.searchWired = true;
+  ipt.addEventListener('compositionstart', () => { _pspState.isComposing = true; });
+  ipt.addEventListener('compositionend', (ev) => {
+    _pspState.isComposing = false;
+    _pspState.search = ev.target.value;
+    pspRenderList();
+  });
+  ipt.addEventListener('input', (ev) => {
+    if (_pspState.isComposing) return;
+    _pspState.search = ev.target.value;
+    pspRenderList();
+  });
+}
+
+function pspSetRoleFilter(role) {
+  _pspState.roleFilter = role || '__all__';
+  pspUpdateChipsActive();
+  pspRenderList();
+}
+
+function toggleProjectSubProducer(userId) {
+  if (!Array.isArray(_editingProjectSubProducerIds)) _editingProjectSubProducerIds = [];
+  const idx = _editingProjectSubProducerIds.indexOf(userId);
+  if (idx >= 0) {
+    _editingProjectSubProducerIds.splice(idx, 1);
+  } else {
+    _editingProjectSubProducerIds.push(userId);
+  }
+  document.querySelectorAll(`#p-sub-producers-list input[type="checkbox"][value="${CSS.escape(userId)}"]`).forEach(inp => {
+    const label = inp.closest('label');
+    if (label) {
+      label.style.background = _editingProjectSubProducerIds.includes(userId) ? 'var(--em-pale, #ecfdfb)' : '#fff';
+    }
+  });
+  const counter = document.getElementById('p-sub-producers-counter');
+  if (counter) {
+    const { candidates } = getProjectSubProducerCandidates();
+    counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+  }
 }
 
 function openProjectModal(preClientId) {
@@ -8493,6 +8694,15 @@ function openProjectModal(preClientId) {
   const subWarn = document.getElementById('p-sub-directors-warn');
   if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
   renderProjectSubDirectorPicker();
+  // サブプロデューサー: 新規は空で初期化
+  _editingProjectSubProducerIds = [];
+  _pspState.search = '';
+  _pspState.roleFilter = '__all__';
+  const ppSearch = document.getElementById('p-sub-producers-search');
+  if (ppSearch) ppSearch.value = '';
+  const ppWarn = document.getElementById('p-sub-producers-warn');
+  if (ppWarn) { ppWarn.style.display = 'none'; ppWarn.textContent = ''; }
+  renderProjectSubProducerPicker();
   // 新規作成時はタブ非表示
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
@@ -8556,6 +8766,15 @@ function openEditProject(p) {
   const subWarn = document.getElementById('p-sub-directors-warn');
   if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
   renderProjectSubDirectorPicker();
+  // サブプロデューサー: DB値を復元
+  _editingProjectSubProducerIds = Array.isArray(p.sub_producer_ids) ? [...p.sub_producer_ids] : [];
+  _pspState.search = '';
+  _pspState.roleFilter = '__all__';
+  const ppSearch = document.getElementById('p-sub-producers-search');
+  if (ppSearch) ppSearch.value = '';
+  const ppWarn = document.getElementById('p-sub-producers-warn');
+  if (ppWarn) { ppWarn.style.display = 'none'; ppWarn.textContent = ''; }
+  renderProjectSubProducerPicker();
 
   // 締め切り設定
   selectDeadlineUnit(p.deadline_unit || 'monthly');
@@ -10062,7 +10281,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [] })
+    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [] })
   });
 
   btn.textContent = origText; btn.disabled = false;
