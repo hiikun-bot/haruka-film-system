@@ -137,7 +137,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
 .cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
 /* 5列レイアウト: クライアント/案件名 + クリエイティブ名 + 担当(アイコン+略称) + ステータス + 遅延 */
-.cv-g-row-fixed{display:grid;grid-template-columns:130px 170px 64px 110px 70px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);min-height:40px;background:#fff}
+.cv-g-row-fixed{display:grid;grid-template-columns:122px 150px 60px 100px 56px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);min-height:40px;background:#fff}
 .cv-g-row-fixed:hover{background:#f0fbfa}
 .cv-g-row-fixed.is-late{background:rgba(239,68,68,0.05)}
 .cv-g-row-fixed.is-late:hover{background:rgba(239,68,68,0.09)}
@@ -222,12 +222,75 @@ tr.row-help td{background:#FFFBF2}
 .cv-sp-item .ttl{font-weight:600;color:var(--em-dark);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-sp-item .meta{color:var(--text-muted);font-size:10px;display:flex;gap:6px;flex-wrap:wrap}
 .cv-sp-item .delay-pill{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:#FBEAEA;color:#A03030;margin-left:4px}
+.cv-sp-more{font-size:11px;color:var(--em-dark);margin-top:6px;cursor:pointer;text-decoration:underline;padding:4px 0;text-align:center}
+.cv-sp-more:hover{color:var(--em);background:var(--em-pale);border-radius:6px}
 @media (max-width:1100px){
   #cv-gantt-layout{grid-template-columns:1fr !important}
   .cv-gantt-sidepanel{max-height:none}
 }
 @media (max-width:768px){
   .cv-g-row-fixed{grid-template-columns:100px 130px 50px 90px 60px}
+}
+
+/* ─── クリエイティブ コンパクトツールバー ─── */
+.cv-toolbar-compact{padding:8px 20px 6px !important;gap:6px !important}
+.cv-toolbar-compact .toolbar-row{gap:10px;align-items:center;flex-wrap:wrap;padding:0;margin:0}
+.cv-tb-main{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cv-tb-search{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.cv-tb-search .cv-tb-client #client-multi-btn{min-width:120px;max-width:170px}
+.cv-tb-search .cv-tb-assignee{min-width:130px;max-width:170px}
+.cv-tb-search .cv-tb-keyword{min-width:200px;max-width:280px;flex:0 1 240px}
+.cv-tb-view{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cv-tb-action{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+.cv-tb-divider{width:1px;height:18px;background:var(--border)}
+.cv-seg .ft{font-size:11px;padding:5px 11px}
+
+/* 詳細フィルターボタン */
+.cv-adv-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;font-size:12px;border-radius:8px;border:0.5px solid var(--border);background:#fff;color:var(--text);cursor:pointer;transition:all .15s}
+.cv-adv-btn:hover{background:var(--em-pale);border-color:var(--em-light)}
+.cv-adv-btn[aria-expanded="true"]{background:var(--em-pale);border-color:var(--em);color:var(--em-dark)}
+.cv-adv-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:16px;padding:0 5px;font-size:10px;font-weight:700;background:var(--em);color:#fff;border-radius:8px}
+
+/* 詳細フィルターパネル */
+.cv-adv-panel{margin-top:8px;padding:10px 14px;background:#f8fdfc;border:0.5px solid var(--em-light);border-radius:10px;display:flex;flex-direction:column;gap:8px}
+.cv-adv-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cv-adv-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;user-select:none}
+.cv-adv-toggle input[type="checkbox"]{width:14px;height:14px;cursor:pointer;accent-color:var(--em)}
+.cv-adv-field{display:inline-flex;align-items:center;gap:6px}
+.cv-adv-label{font-size:11px;color:var(--text-muted);font-weight:500}
+.cv-adv-select{height:28px;font-size:12px;padding:3px 8px;min-width:120px;max-width:180px}
+.cv-adv-ball .bf{font-size:11px;padding:3px 8px}
+.cv-adv-clear{margin-left:auto;height:28px;padding:0 12px;font-size:11px;border-radius:8px;border:0.5px solid var(--border);background:#fff;color:var(--text-muted);cursor:pointer}
+.cv-adv-clear:hover{background:#fbeaea;color:#a03030;border-color:#f1c5c5}
+
+/* ガント期間操作バー */
+.cv-g-opbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;margin-bottom:8px;background:#fff;border:0.5px solid var(--border-light);border-radius:10px;box-shadow:0 1px 2px rgba(43,184,180,.04)}
+.cv-g-op-group{display:inline-flex;align-items:center;gap:4px}
+.cv-g-op-divider{width:1px;height:18px;background:var(--border-light)}
+.cv-g-op-btn{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 11px;font-size:12px;font-weight:500;border-radius:7px;border:0.5px solid transparent;background:#e6f7f4;color:var(--em-dark);cursor:pointer;transition:all .15s;white-space:nowrap}
+.cv-g-op-btn:hover{background:#cfeeec;color:var(--em-dark)}
+.cv-g-op-btn:active{transform:translateY(0.5px)}
+.cv-g-op-nav .cv-g-op-btn{font-size:16px;font-weight:600;padding:0 9px}
+.cv-g-op-today{font-weight:700 !important;background:#fff4d9 !important;color:#8a5a00 !important;border-color:#f1d690 !important}
+.cv-g-op-today:hover{background:#fde9b8 !important}
+.cv-g-rng-active{background:#0fb9a4 !important;color:#fff !important;font-weight:700;box-shadow:0 1px 3px rgba(15,185,164,.35)}
+.cv-g-rng-active:hover{background:#0ca08e !important;color:#fff !important}
+.cv-g-op-cal{position:relative}
+.cv-g-op-date-input{position:absolute;inset:0;opacity:0;pointer-events:none;width:100%;height:100%}
+.cv-g-op-cal-btn{padding:0 9px}
+.cv-g-op-period-label{margin-left:auto;font-size:11px;color:var(--text-muted);padding-right:4px}
+
+/* ガント本体を少しコンパクトに */
+.cv-gantt-main{border-radius:10px}
+.cv-g-toolbar{padding:6px 12px;font-size:11px}
+.cv-g-scroll{max-height:78vh}
+
+@media (max-width:1200px){
+  .cv-tb-action{margin-left:0}
+}
+@media (max-width:900px){
+  .cv-g-opbar{padding:5px 8px;gap:5px}
+  .cv-g-op-period-label{display:none}
 }
 
 /* バッジ類 */
@@ -2217,95 +2280,138 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       🎨 デザイン <span id="cv-tab-design-count" style="font-weight:500;opacity:.85">(0)</span>
     </button>
   </div>
-  <div class="toolbar">
-    <div class="toolbar-row">
-      <span style="font-size:13px;color:var(--text-muted);font-weight:500">クライアント：</span>
-      <!-- 複数選択チェックボックス・ドロップダウン -->
-      <div id="client-multi">
-        <button type="button" id="client-multi-btn" onclick="toggleClientMultiOpen(event)" class="form-select" aria-haspopup="listbox" aria-expanded="false">
-          <span id="client-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">すべて</span>
-          <span id="client-multi-count-badge" class="cm-count-badge" style="display:none">0</span>
-          <span style="color:var(--text-muted);flex-shrink:0;font-size:11px">▾</span>
-        </button>
-        <div id="client-multi-pop" class="cm-pop" role="dialog" aria-label="クライアント選択">
-          <div class="cm-header">
-            <div class="cm-search-row">
-              <div class="cm-search-wrap">
-                <span class="cm-search-icon" aria-hidden="true">🔍</span>
-                <input type="text" id="client-multi-search" class="cm-search-input"
-                       placeholder="クライアント名で検索..."
-                       oninput="filterClientMultiList(this.value)"
-                       onkeydown="onClientMultiSearchKey(event)"
-                       autocomplete="off"
-                       aria-label="クライアント名で検索"
-                       aria-controls="client-multi-list">
-                <button type="button" id="client-multi-search-clear" class="cm-search-clear" onclick="clearClientMultiSearch()" title="クリア" aria-label="検索をクリア">✕</button>
+  <div class="toolbar cv-toolbar-compact">
+    <!-- 上部 1行: 検索条件 + 表示条件 + アクション -->
+    <div class="toolbar-row cv-tb-main">
+      <!-- 左: 検索条件 -->
+      <div class="cv-tb-search">
+        <div id="client-multi" class="cv-tb-client">
+          <button type="button" id="client-multi-btn" onclick="toggleClientMultiOpen(event)" class="form-select" aria-haspopup="listbox" aria-expanded="false" style="height:30px;font-size:12px">
+            <span id="client-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">クライアント</span>
+            <span id="client-multi-count-badge" class="cm-count-badge" style="display:none">0</span>
+            <span style="color:var(--text-muted);flex-shrink:0;font-size:11px">▾</span>
+          </button>
+          <div id="client-multi-pop" class="cm-pop" role="dialog" aria-label="クライアント選択">
+            <div class="cm-header">
+              <div class="cm-search-row">
+                <div class="cm-search-wrap">
+                  <span class="cm-search-icon" aria-hidden="true">🔍</span>
+                  <input type="text" id="client-multi-search" class="cm-search-input"
+                         placeholder="クライアント名で検索..."
+                         oninput="filterClientMultiList(this.value)"
+                         onkeydown="onClientMultiSearchKey(event)"
+                         autocomplete="off"
+                         aria-label="クライアント名で検索"
+                         aria-controls="client-multi-list">
+                  <button type="button" id="client-multi-search-clear" class="cm-search-clear" onclick="clearClientMultiSearch()" title="クリア" aria-label="検索をクリア">✕</button>
+                </div>
+              </div>
+              <div class="cm-status">
+                <span id="client-multi-result-count">0社</span>
+                <span id="client-multi-selected-badge" class="cm-selected-badge"><span id="client-multi-selected-count">0</span>社選択中</span>
               </div>
             </div>
-            <div class="cm-status">
-              <span id="client-multi-result-count">0社</span>
-              <span id="client-multi-selected-badge" class="cm-selected-badge"><span id="client-multi-selected-count">0</span>社選択中</span>
+            <div id="client-multi-list" class="cm-list" role="listbox" aria-multiselectable="true" tabindex="-1"></div>
+            <div class="cm-footer">
+              <button type="button" class="cm-btn cm-btn-outline" onclick="selectAllClientMulti()">すべて選択</button>
+              <button type="button" class="cm-btn" onclick="clearClientMulti()">クリア</button>
+              <button type="button" class="cm-btn cm-btn-primary" onclick="closeClientMulti()">閉じる</button>
             </div>
           </div>
-          <div id="client-multi-list" class="cm-list" role="listbox" aria-multiselectable="true" tabindex="-1"></div>
-          <div class="cm-footer">
-            <button type="button" class="cm-btn cm-btn-outline" onclick="selectAllClientMulti()">すべて選択</button>
-            <button type="button" class="cm-btn" onclick="clearClientMulti()">クリア</button>
-            <button type="button" class="cm-btn cm-btn-primary" onclick="closeClientMulti()">閉じる</button>
-          </div>
         </div>
+        <select id="cv-assignee-filter" class="form-select cv-tb-assignee" style="font-size:12px;padding:5px 8px;height:30px" onchange="setAssigneeFilter(this.value)">
+          <option value="">担当者：全員</option>
+        </select>
+        <input class="search-box cv-tb-keyword" type="text" placeholder="案件名・クリエイティブ名で検索" oninput="filterSearch(this.value)" style="height:30px;font-size:12px;padding:5px 10px">
+        <button type="button" class="cv-adv-btn" id="cv-adv-btn" onclick="toggleCreativeAdvFilters()" aria-expanded="false" aria-controls="cv-adv-panel">
+          <span style="font-size:13px">⚙</span>
+          <span>詳細フィルター</span>
+          <span id="cv-adv-badge" class="cv-adv-badge" style="display:none">0</span>
+          <span id="cv-adv-caret" style="font-size:10px;opacity:.7">▾</span>
+        </button>
       </div>
-      <button class="ct" id="toggle-ended-creatives" onclick="toggleEndedInCreatives()" title="取引終了クライアントを含めて表示" style="font-size:11px">+終了済</button>
-      <input class="search-box" type="text" placeholder="クリエイティブ検索（ファイル名・クライアント・担当者・メモ）" oninput="filterSearch(this.value)">
-      <select id="cv-assignee-filter" class="form-select" style="font-size:12px;padding:5px 10px;height:32px;min-width:120px;max-width:160px" onchange="setAssigneeFilter(this.value)">
-        <option value="">担当者：全員</option>
-      </select>
-    </div>
-    <div class="toolbar-row">
-      <span style="font-size:13px;color:var(--text-muted);font-weight:500">ビュー：</span>
-      <div class="filter-tabs">
-        <button class="ft active" onclick="setView(this,'all')">全案件</button>
-        <button class="ft" onclick="setView(this,'mine')">自分の案件</button>
-        <button class="ft" onclick="setView(this,'ball')">自分のボール</button>
-      </div>
-      <div class="ball-filter">
-        <span style="font-size:13px;color:var(--text-muted)">ボール：</span>
-        <button class="bf bf-e on" onclick="toggleBall(this)">編集者</button>
-        <button class="bf bf-d on" onclick="toggleBall(this)">D</button>
-        <button class="bf bf-p on" onclick="toggleBall(this)">P</button>
-        <button class="bf bf-c on" onclick="toggleBall(this)">クライアント</button>
-      </div>
-      <span class="count-badge" id="creative-count">0件</span>
-      <span id="creative-delete-bar" style="display:none;align-items:center;gap:8px;margin-left:8px">
-        <span id="creative-selected-count" style="font-size:13px;color:var(--text-muted)">0件選択中</span>
-        <button class="btn-danger" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 12px">削除</button>
-      </span>
-      <button class="btn-primary" onclick="openCreateCreative()" style="margin-left:8px">＋ 追加</button>
-    </div>
-    <!-- ビュー切替: ガント / リスト -->
-    <div class="toolbar-row" id="cv-mode-bar" style="gap:12px;flex-wrap:wrap;align-items:center">
-      <span style="font-size:13px;color:var(--text-muted);font-weight:500">表示：</span>
-      <div class="filter-tabs">
-        <button class="ft active" id="cv-mode-gantt" onclick="setCreativeMode('gantt')">📅 ガント</button>
-        <button class="ft" id="cv-mode-list" onclick="setCreativeMode('list')">📋 リスト</button>
-      </div>
-      <span id="cv-gantt-controls" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <span style="width:1px;height:20px;background:var(--border)"></span>
-        <span style="font-size:13px;color:var(--text-muted);font-weight:500">グループ：</span>
-        <div class="filter-tabs">
+      <!-- 中央: 表示条件 -->
+      <div class="cv-tb-view">
+        <div class="filter-tabs cv-seg">
+          <button class="ft active" onclick="setView(this,'all')">全案件</button>
+          <button class="ft" onclick="setView(this,'mine')">自分の案件</button>
+          <button class="ft" onclick="setView(this,'ball')">自分のボール</button>
+        </div>
+        <span class="cv-tb-divider" id="cv-group-divider"></span>
+        <div class="filter-tabs cv-seg" id="cv-group-seg">
           <button class="ft active" id="cv-group-project" onclick="setCreativeGroup('project')">案件別</button>
           <button class="ft" id="cv-group-assignee" onclick="setCreativeGroup('assignee')">担当者別</button>
         </div>
-        <span style="width:1px;height:20px;background:var(--border)"></span>
-        <span style="font-size:13px;color:var(--text-muted);font-weight:500">期間：</span>
-        <div class="filter-tabs">
-          <button class="ft" id="cv-range-week" onclick="setCreativeRange('week')">1週</button>
-          <button class="ft" id="cv-range-2week" onclick="setCreativeRange('2week')">2週</button>
-          <button class="ft active" id="cv-range-month" onclick="setCreativeRange('month')">1ヶ月</button>
-          <button class="ft" id="cv-range-2month" onclick="setCreativeRange('2month')">2ヶ月</button>
+      </div>
+      <!-- 右: アクション -->
+      <div class="cv-tb-action">
+        <span class="count-badge" id="creative-count" style="font-size:12px">0件</span>
+        <span id="creative-delete-bar" style="display:none;align-items:center;gap:6px">
+          <span id="creative-selected-count" style="font-size:12px;color:var(--text-muted)">0件選択中</span>
+          <button class="btn-danger" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 10px">削除</button>
+        </span>
+        <button class="btn-primary" onclick="openCreateCreative()" style="font-size:12px;padding:6px 12px">＋ 追加</button>
+      </div>
+    </div>
+
+    <!-- 詳細フィルターパネル（展開時のみ表示） -->
+    <div id="cv-adv-panel" class="cv-adv-panel" style="display:none">
+      <div class="cv-adv-row">
+        <label class="cv-adv-toggle">
+          <input type="checkbox" id="cv-flt-ended" onchange="onCvAdvFilterChange()">
+          <span>取引終了クライアント含む</span>
+        </label>
+        <label class="cv-adv-toggle">
+          <input type="checkbox" id="cv-flt-delivered" onchange="onCvAdvFilterChange()">
+          <span>納品済み含む</span>
+        </label>
+        <label class="cv-adv-toggle">
+          <input type="checkbox" id="cv-flt-delayed" onchange="onCvAdvFilterChange()">
+          <span>遅延のみ</span>
+        </label>
+        <label class="cv-adv-toggle">
+          <input type="checkbox" id="cv-flt-sos" onchange="onCvAdvFilterChange()">
+          <span>SOSのみ</span>
+        </label>
+      </div>
+      <div class="cv-adv-row">
+        <label class="cv-adv-field">
+          <span class="cv-adv-label">チーム</span>
+          <select id="cv-flt-team" class="form-select cv-adv-select" onchange="onCvAdvFilterChange()">
+            <option value="">全チーム</option>
+          </select>
+        </label>
+        <label class="cv-adv-field">
+          <span class="cv-adv-label">ステータス</span>
+          <select id="cv-flt-status" class="form-select cv-adv-select" onchange="onCvAdvFilterChange()">
+            <option value="">全ステータス</option>
+          </select>
+        </label>
+        <label class="cv-adv-field">
+          <span class="cv-adv-label">ランク</span>
+          <select id="cv-flt-rank" class="form-select cv-adv-select" onchange="onCvAdvFilterChange()">
+            <option value="">全ランク</option>
+            <option value="S">S</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option>
+          </select>
+        </label>
+        <div class="cv-adv-field">
+          <span class="cv-adv-label">ボール種別</span>
+          <div class="ball-filter cv-adv-ball" style="margin:0">
+            <button class="bf bf-e on" onclick="toggleBall(this)">編集者</button>
+            <button class="bf bf-d on" onclick="toggleBall(this)">D</button>
+            <button class="bf bf-p on" onclick="toggleBall(this)">P</button>
+            <button class="bf bf-c on" onclick="toggleBall(this)">クライアント</button>
+          </div>
         </div>
-        <button class="btn" onclick="creativeGanttScrollToToday()" style="font-size:12px;padding:5px 12px">今日へ</button>
-      </span>
+        <div class="cv-adv-field">
+          <span class="cv-adv-label">表示形式</span>
+          <div class="filter-tabs cv-seg">
+            <button class="ft active" id="cv-mode-gantt" onclick="setCreativeMode('gantt')">📅 ガント</button>
+            <button class="ft" id="cv-mode-list" onclick="setCreativeMode('list')">📋 リスト</button>
+          </div>
+        </div>
+        <button class="cv-adv-clear" type="button" onclick="resetCvAdvFilters()" title="詳細フィルターをリセット">クリア</button>
+      </div>
     </div>
   </div>
   <!-- リスト表示 -->
@@ -2337,8 +2443,31 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div>
   </div>
   <!-- ガント表示 -->
-  <div id="creative-view-gantt" style="padding:16px 20px 20px;display:block">
-    <div id="cv-gantt-layout" style="display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start">
+  <div id="creative-view-gantt" style="padding:8px 20px 20px;display:block">
+    <!-- ガント期間操作バー -->
+    <div id="cv-gantt-opbar" class="cv-g-opbar">
+      <div class="cv-g-op-group cv-g-op-nav">
+        <button type="button" class="cv-g-op-btn" onclick="creativeGanttNav('prev')" aria-label="前の期間へ" title="前の期間へ">‹</button>
+        <button type="button" class="cv-g-op-btn cv-g-op-today" onclick="creativeGanttNav('today')" aria-label="今日を含む期間へ" title="今日を含む期間へ">今日へ</button>
+        <button type="button" class="cv-g-op-btn" onclick="creativeGanttNav('next')" aria-label="次の期間へ" title="次の期間へ">›</button>
+      </div>
+      <span class="cv-g-op-divider"></span>
+      <div class="cv-g-op-group cv-g-op-range">
+        <button type="button" class="cv-g-op-btn cv-g-rng" id="cv-range-week" onclick="setCreativeRange('week')">1週</button>
+        <button type="button" class="cv-g-op-btn cv-g-rng" id="cv-range-2week" onclick="setCreativeRange('2week')">2週</button>
+        <button type="button" class="cv-g-op-btn cv-g-rng cv-g-rng-active" id="cv-range-month" onclick="setCreativeRange('month')">1ヶ月</button>
+        <button type="button" class="cv-g-op-btn cv-g-rng" id="cv-range-2month" onclick="setCreativeRange('2month')">2ヶ月</button>
+      </div>
+      <span class="cv-g-op-divider"></span>
+      <div class="cv-g-op-group cv-g-op-cal">
+        <button type="button" class="cv-g-op-btn cv-g-op-cal-btn" onclick="creativeGanttOpenDatePicker(event)" aria-label="カレンダーから日付を選択" title="カレンダーから日付を選択">
+          <span style="font-size:14px;line-height:1">📅</span>
+        </button>
+        <input type="date" id="cv-gantt-datepicker" class="cv-g-op-date-input" onchange="creativeGanttJumpToDate(this.value)" aria-label="ジャンプ先の日付">
+      </div>
+      <span id="cv-gantt-period-label" class="cv-g-op-period-label" aria-live="polite"></span>
+    </div>
+    <div id="cv-gantt-layout" style="display:grid;grid-template-columns:1fr 264px;gap:14px;align-items:start">
       <div id="cv-gantt-main" class="cv-gantt-main">
         <div class="loading" style="padding:40px">読み込み中...</div>
       </div>
@@ -5142,6 +5271,20 @@ let _creativesLoadSeq = 0;
 let currentCreativeMode  = (typeof localStorage!=='undefined' && localStorage.getItem('cv_mode'))  || 'gantt';
 let currentCreativeGroup = (typeof localStorage!=='undefined' && localStorage.getItem('cv_group')) || 'project';
 let currentCreativeRange = (typeof localStorage!=='undefined' && localStorage.getItem('cv_range')) || 'month';
+// ガント期間表示の中心日オフセット（今日からの日数。0=今日基準）
+let creativeGanttDateOffset = 0;
+// 詳細フィルター展開状態
+let creativeAdvFiltersOpen = false;
+// 詳細フィルターの値（既定値=フィルタ無効と等価）
+let cvAdvFilters = {
+  includeEnded: false,        // 取引終了クライアント含む
+  includeDelivered: true,     // 納品済み含む（既定: true で従来挙動維持）
+  delayedOnly: false,         // 遅延のみ
+  sosOnly: false,             // SOSのみ
+  team: '',                   // チームID（空=全）
+  status: '',                 // ステータス（空=全）
+  rank: '',                   // ランク（空=全）
+};
 let selectedCreativeId = null;
 let currentCreativeDetail = null;  // 詳細モーダルで開いているクリエイティブ
 let uploadFileData = null;          // { file, width, height }
@@ -6905,6 +7048,8 @@ function renderCreatives() {
       else if (bh.type === 'all') hasBall = (!!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId)) || isProducerLike;
       if (!hasBall) return false;
     }
+    // 詳細フィルター（チーム/ステータス/ランク/SOS/納品済み/遅延のみ）
+    if (typeof _cvApplyAdvFilter === 'function' && !_cvApplyAdvFilter(c)) return false;
     return true;
   });
 
@@ -7046,9 +7191,18 @@ function setCreativeMode(mode) {
   try { localStorage.setItem('cv_mode', currentCreativeMode); } catch(_) {}
   document.getElementById('cv-mode-gantt')?.classList.toggle('active', currentCreativeMode === 'gantt');
   document.getElementById('cv-mode-list')?.classList.toggle('active', currentCreativeMode === 'list');
-  document.getElementById('creative-view-gantt').style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
-  document.getElementById('creative-view-list').style.display  = (currentCreativeMode === 'gantt') ? 'none' : '';
-  document.getElementById('cv-gantt-controls').style.display   = (currentCreativeMode === 'gantt') ? '' : 'none';
+  const gantt = document.getElementById('creative-view-gantt');
+  const list = document.getElementById('creative-view-list');
+  if (gantt) gantt.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
+  if (list)  list.style.display  = (currentCreativeMode === 'gantt') ? 'none' : '';
+  // 期間操作バーはガント時のみ
+  const opbar = document.getElementById('cv-gantt-opbar');
+  if (opbar) opbar.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
+  // グループセグ／ディバイダはガント時のみ意味がある
+  const gseg = document.getElementById('cv-group-seg');
+  const gdv  = document.getElementById('cv-group-divider');
+  if (gseg) gseg.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
+  if (gdv)  gdv.style.display  = (currentCreativeMode === 'gantt') ? '' : 'none';
   if (typeof renderCreatives === 'function') renderCreatives();
   if (currentCreativeMode === 'gantt') setTimeout(creativeGanttScrollToToday, 0);
 }
@@ -7063,19 +7217,72 @@ function setCreativeRange(range) {
   const allowed = ['week','2week','month','2month'];
   currentCreativeRange = allowed.includes(range) ? range : 'month';
   try { localStorage.setItem('cv_range', currentCreativeRange); } catch(_) {}
-  ['week','2week','month','2month'].forEach(r => {
-    const el = document.getElementById('cv-range-' + r);
-    if (el) el.classList.toggle('active', r === currentCreativeRange);
-  });
+  // 期間サイズ切替時はオフセットをリセット（直感的に「今を見せる」）
+  creativeGanttDateOffset = 0;
+  _cvUpdateRangeButtonsActive();
   if (typeof renderCreatives === 'function') renderCreatives();
   setTimeout(creativeGanttScrollToToday, 0);
 }
+// 期間ボタンの active 表示を統一（旧 .ft.active と新 .cv-g-rng-active 両対応）
+function _cvUpdateRangeButtonsActive() {
+  ['week','2week','month','2month'].forEach(r => {
+    const el = document.getElementById('cv-range-' + r);
+    if (!el) return;
+    const isActive = (r === currentCreativeRange);
+    el.classList.toggle('active', isActive);
+    el.classList.toggle('cv-g-rng-active', isActive);
+  });
+}
 function creativeGanttScrollToToday() {
   const scroll = document.querySelector('#creative-view-gantt .cv-g-scroll');
-  const today = scroll?.querySelector('.cv-g-today-line');
-  if (!scroll || !today) return;
-  const left = parseFloat(today.style.left || '0');
-  scroll.scrollLeft = Math.max(0, left - scroll.clientWidth * 0.3);
+  if (!scroll) return;
+  const today = scroll.querySelector('.cv-g-today-line');
+  if (today) {
+    const left = parseFloat(today.style.left || '0');
+    scroll.scrollLeft = Math.max(0, left - scroll.clientWidth * 0.3);
+  } else {
+    // 今日線がレンジ外（オフセット適用時）→ 表示の先頭に揃える
+    scroll.scrollLeft = 0;
+  }
+}
+// 期間ナビ: prev / today / next
+function creativeGanttNav(dir) {
+  const step = (currentCreativeRange === 'week') ? 7
+             : (currentCreativeRange === '2week') ? 14
+             : (currentCreativeRange === '2month') ? 60
+             : 30; // month
+  if (dir === 'prev') creativeGanttDateOffset -= step;
+  else if (dir === 'next') creativeGanttDateOffset += step;
+  else creativeGanttDateOffset = 0; // today
+  if (typeof renderCreatives === 'function') renderCreatives();
+  setTimeout(creativeGanttScrollToToday, 0);
+}
+// カレンダーから日付選択
+function creativeGanttOpenDatePicker(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const inp = document.getElementById('cv-gantt-datepicker');
+  if (!inp) return;
+  // 既定値: 現在表示中期間の中心
+  try {
+    const today = new Date(); today.setHours(0,0,0,0);
+    today.setDate(today.getDate() + creativeGanttDateOffset);
+    inp.value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  } catch(_) {}
+  // showPicker 対応ブラウザは即座に開く / 非対応はクリックで誘発
+  if (typeof inp.showPicker === 'function') {
+    try { inp.showPicker(); return; } catch(_) {}
+  }
+  inp.click();
+}
+function creativeGanttJumpToDate(val) {
+  if (!val) return;
+  const target = new Date(val + 'T00:00:00');
+  if (isNaN(target)) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const ms = 86400000;
+  creativeGanttDateOffset = Math.round((target - today) / ms);
+  if (typeof renderCreatives === 'function') renderCreatives();
+  setTimeout(creativeGanttScrollToToday, 0);
 }
 
 // 日付ヘルパ
@@ -7088,24 +7295,26 @@ function _cvDayDiff(a, b) {
   return Math.round((A - B)/86400000);
 }
 
-// 期間範囲（today を含む見やすいレンジに正規化）
+// 期間範囲（today + creativeGanttDateOffset を中心にレンジを構成）
 function _cvRangeWindow() {
   const today = _cvAtMidnight(new Date());
+  // 表示中の中心日（オフセット適用後）
+  const center = _cvDateAdd(today, creativeGanttDateOffset || 0);
   let start, end;
   if (currentCreativeRange === 'week') {
-    start = _cvDateAdd(today, -3);
-    end   = _cvDateAdd(today, 4);
+    start = _cvDateAdd(center, -3);
+    end   = _cvDateAdd(center, 4);
   } else if (currentCreativeRange === '2week') {
-    start = _cvDateAdd(today, -3);
-    end   = _cvDateAdd(today, 11);
+    start = _cvDateAdd(center, -3);
+    end   = _cvDateAdd(center, 11);
   } else if (currentCreativeRange === '2month') {
-    start = new Date(today.getFullYear(), today.getMonth(), 1);
-    end   = new Date(today.getFullYear(), today.getMonth()+2, 0); // 翌月末
+    start = new Date(center.getFullYear(), center.getMonth(), 1);
+    end   = new Date(center.getFullYear(), center.getMonth()+2, 0); // 翌月末
   } else { // month
-    start = new Date(today.getFullYear(), today.getMonth(), 1);
-    end   = _cvDateAdd(new Date(today.getFullYear(), today.getMonth()+1, 0), 7); // 月末+1週で来月入口を少し
+    start = new Date(center.getFullYear(), center.getMonth(), 1);
+    end   = _cvDateAdd(new Date(center.getFullYear(), center.getMonth()+1, 0), 7); // 月末+1週で来月入口を少し
   }
-  return { start: _cvAtMidnight(start), end: _cvAtMidnight(end), today };
+  return { start: _cvAtMidnight(start), end: _cvAtMidnight(end), today, center: _cvAtMidnight(center) };
 }
 
 // 1行ぶんの判定情報を作る（リストと同じロジックを共有）
@@ -7239,9 +7448,19 @@ function renderCreativesGantt(filtered) {
 
   if (!filtered || !filtered.length) {
     main.innerHTML = `
-      <div class="cv-g-toolbar"><span>${win.start.toLocaleDateString('ja-JP')} 〜 ${win.end.toLocaleDateString('ja-JP')}</span></div>
+      <div class="cv-g-toolbar"><span>該当なし</span></div>
       <div style="padding:48px;text-align:center;color:var(--text-muted)">該当するクリエイティブがありません</div>`;
     if (side) side.innerHTML = _cvSidePanelHtml([]);
+    // 期間ラベル（操作バー右）
+    try {
+      const lbl = document.getElementById('cv-gantt-period-label');
+      if (lbl) {
+        const offTxt = (creativeGanttDateOffset === 0)
+          ? '今日基準'
+          : (creativeGanttDateOffset > 0 ? `+${creativeGanttDateOffset}日` : `${creativeGanttDateOffset}日`);
+        lbl.textContent = `${win.start.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})} 〜 ${win.end.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}（${offTxt}）`;
+      }
+    } catch(_) {}
     return;
   }
 
@@ -7438,9 +7657,9 @@ function renderCreativesGantt(filtered) {
     return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
   };
 
-  // 固定列の枠（5列） — ガント領域を広く取るため左を圧縮
-  const fixedColTpl = `130px 170px 64px 110px 70px`;
-  const FIXED_W = 130 + 170 + 64 + 110 + 70; // = 544px
+  // 固定列の枠（5列） — ガント領域を広く取るため左をさらに圧縮（544 → 488px）
+  const fixedColTpl = `122px 150px 60px 100px 56px`;
+  const FIXED_W = 122 + 150 + 60 + 100 + 56; // = 488px
 
   // グループ見出し（担当者別は強化版）
   const renderGroupHeader = (g) => {
@@ -7486,7 +7705,7 @@ function renderCreativesGantt(filtered) {
 
   main.innerHTML = `
     <div class="cv-g-toolbar">
-      <span>${win.start.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})} 〜 ${win.end.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}（${totalDays}日間 / ${rows.length}件）</span>
+      <span>${totalDays}日間 / ${rows.length}件</span>
       <span style="color:var(--text-muted)">グループ: ${currentCreativeGroup === 'assignee' ? '担当者別' : '案件別'}</span>
     </div>
     <div class="cv-g-scroll">
@@ -7521,6 +7740,16 @@ function renderCreativesGantt(filtered) {
   `;
 
   if (side) side.innerHTML = _cvSidePanelHtml(rows);
+  // 期間ラベル（操作バー右）
+  try {
+    const lbl = document.getElementById('cv-gantt-period-label');
+    if (lbl) {
+      const offTxt = (creativeGanttDateOffset === 0)
+        ? '今日基準'
+        : (creativeGanttDateOffset > 0 ? `+${creativeGanttDateOffset}日` : `${creativeGanttDateOffset}日`);
+      lbl.textContent = `${win.start.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})} 〜 ${win.end.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}（${offTxt}）`;
+    }
+  } catch(_) {}
 }
 
 // 右側サマリーパネル HTML
@@ -7559,6 +7788,7 @@ function _cvSidePanelHtml(rows) {
     </div>`;
   };
 
+  // 順序: 遅延 → 最終納品7日内 → 初稿締切7日内 → CL確認7日内 → 本日対応
   return `
     <div class="cv-sp-section">
       <h4>要対応サマリー</h4>
@@ -7571,12 +7801,13 @@ function _cvSidePanelHtml(rows) {
     </div>
     ${lateRows.length ? `<div class="cv-sp-section">
       <h4>問題のある案件 (${lateRows.length})</h4>
-      <div class="cv-sp-list">${lateRows.slice(0,8).map(r => renderItem(r,{late:true})).join('')}</div>
-      ${lateRows.length>8?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${lateRows.length-8} 件</div>`:''}
+      <div class="cv-sp-list">${lateRows.slice(0,3).map(r => renderItem(r,{late:true})).join('')}</div>
+      ${lateRows.length>3?`<div class="cv-sp-more" onclick="cvSpShowAllDelayed()">もっと見る（他 ${lateRows.length-3} 件）</div>`:''}
     </div>` : `<div class="cv-sp-section"><h4>問題のある案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">遅延案件はありません</div></div>`}
     ${todayRows.length ? `<div class="cv-sp-section">
       <h4>本日対応すべき案件 (${todayRows.length})</h4>
-      <div class="cv-sp-list">${todayRows.slice(0,8).map(r => renderItem(r)).join('')}</div>
+      <div class="cv-sp-list">${todayRows.slice(0,3).map(r => renderItem(r)).join('')}</div>
+      ${todayRows.length>3?`<div style="font-size:10px;color:var(--text-muted);margin-top:6px">…他 ${todayRows.length-3} 件</div>`:''}
     </div>` : `<div class="cv-sp-section"><h4>本日対応すべき案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">本日中の締切・確認はありません</div></div>`}
   `;
 }
@@ -7588,21 +7819,146 @@ function _cvSidePanelHtml(rows) {
     if (document.getElementById('cv-mode-gantt')) {
       // 永続化された値で初期化
       setCreativeMode(currentCreativeMode);
-      ['week','2week','month','2month'].forEach(r => {
-        const el = document.getElementById('cv-range-' + r);
-        if (el) el.classList.toggle('active', r === currentCreativeRange);
-      });
+      _cvUpdateRangeButtonsActive();
       const gp = document.getElementById('cv-group-project');
       const ga = document.getElementById('cv-group-assignee');
       if (gp && ga) {
         gp.classList.toggle('active', currentCreativeGroup === 'project');
         ga.classList.toggle('active', currentCreativeGroup === 'assignee');
       }
+      // 詳細フィルターのドロップダウン初期化
+      _cvAdvPopulateDropdowns();
+      // 既定値を UI に反映
+      const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+      setChk('cv-flt-ended', cvAdvFilters.includeEnded);
+      setChk('cv-flt-delivered', cvAdvFilters.includeDelivered);
+      setChk('cv-flt-delayed', cvAdvFilters.delayedOnly);
+      setChk('cv-flt-sos', cvAdvFilters.sosOnly);
+      _cvAdvUpdateBadge();
     }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
   else setTimeout(apply, 0);
 })();
+
+// ─── 詳細フィルター ──────────────────────────────────
+function toggleCreativeAdvFilters(forceOpen) {
+  const panel = document.getElementById('cv-adv-panel');
+  const btn   = document.getElementById('cv-adv-btn');
+  const caret = document.getElementById('cv-adv-caret');
+  if (!panel || !btn) return;
+  const willOpen = (typeof forceOpen === 'boolean') ? forceOpen : (panel.style.display === 'none');
+  panel.style.display = willOpen ? '' : 'none';
+  btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  if (caret) caret.textContent = willOpen ? '▴' : '▾';
+  creativeAdvFiltersOpen = willOpen;
+  if (willOpen) _cvAdvPopulateDropdowns();
+}
+function _cvAdvPopulateDropdowns() {
+  // チーム
+  const teamSel = document.getElementById('cv-flt-team');
+  if (teamSel && teamSel.dataset.populated !== '1') {
+    const opts = ['<option value="">全チーム</option>'].concat(
+      (allTeams || []).map(t => `<option value="${t.id}">${esc(t.team_code || t.team_name || 'チーム')}</option>`)
+    );
+    teamSel.innerHTML = opts.join('');
+    teamSel.dataset.populated = '1';
+  }
+  // ステータス（statusClass のキー集合から構築）
+  const statusSel = document.getElementById('cv-flt-status');
+  if (statusSel && statusSel.dataset.populated !== '1') {
+    const list = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
+    statusSel.innerHTML = '<option value="">全ステータス</option>' + list.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    statusSel.dataset.populated = '1';
+  }
+}
+function onCvAdvFilterChange() {
+  cvAdvFilters.includeEnded     = !!document.getElementById('cv-flt-ended')?.checked;
+  cvAdvFilters.includeDelivered = !!document.getElementById('cv-flt-delivered')?.checked;
+  cvAdvFilters.delayedOnly      = !!document.getElementById('cv-flt-delayed')?.checked;
+  cvAdvFilters.sosOnly          = !!document.getElementById('cv-flt-sos')?.checked;
+  cvAdvFilters.team   = document.getElementById('cv-flt-team')?.value   || '';
+  cvAdvFilters.status = document.getElementById('cv-flt-status')?.value || '';
+  cvAdvFilters.rank   = document.getElementById('cv-flt-rank')?.value   || '';
+  // 「取引終了含む」は既存トグル状態と同期
+  if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives !== cvAdvFilters.includeEnded) {
+    showEndedInCreatives = cvAdvFilters.includeEnded;
+    const btn = document.getElementById('toggle-ended-creatives');
+    if (btn && typeof setToggleStyle === 'function') { btn.classList.toggle('active', showEndedInCreatives); setToggleStyle(btn, showEndedInCreatives); }
+    if (typeof loadClients === 'function') loadClients();
+  }
+  _cvAdvUpdateBadge();
+  if (typeof renderCreatives === 'function') renderCreatives();
+}
+function resetCvAdvFilters() {
+  cvAdvFilters = { includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false, team:'', status:'', rank:'' };
+  ['cv-flt-ended','cv-flt-delivered','cv-flt-delayed','cv-flt-sos'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.checked = (id === 'cv-flt-delivered');
+  });
+  ['cv-flt-team','cv-flt-status','cv-flt-rank'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives) {
+    showEndedInCreatives = false;
+    const btn = document.getElementById('toggle-ended-creatives');
+    if (btn && typeof setToggleStyle === 'function') { btn.classList.toggle('active', false); setToggleStyle(btn, false); }
+    if (typeof loadClients === 'function') loadClients();
+  }
+  _cvAdvUpdateBadge();
+  if (typeof renderCreatives === 'function') renderCreatives();
+}
+function _cvAdvUpdateBadge() {
+  // 適用中件数（既定値と異なる項目をカウント）
+  let n = 0;
+  if (cvAdvFilters.includeEnded) n++;
+  if (!cvAdvFilters.includeDelivered) n++; // 既定 true
+  if (cvAdvFilters.delayedOnly) n++;
+  if (cvAdvFilters.sosOnly) n++;
+  if (cvAdvFilters.team) n++;
+  if (cvAdvFilters.status) n++;
+  if (cvAdvFilters.rank) n++;
+  const badge = document.getElementById('cv-adv-badge');
+  if (!badge) return;
+  if (n > 0) { badge.textContent = String(n); badge.style.display = ''; }
+  else { badge.style.display = 'none'; }
+}
+// 共通の追加フィルタ関数（renderCreatives のフィルタチェーンに後追いで合流）
+function _cvApplyAdvFilter(c) {
+  const f = cvAdvFilters;
+  // 納品済み除外
+  if (!f.includeDelivered && (c.status === '納品' || c.force_delivered)) return false;
+  // SOSのみ
+  if (f.sosOnly && !c.help_flag) return false;
+  // チーム
+  if (f.team) {
+    const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const editorTeamId = editor?.users?.team_id;
+    const tid = c.team_id || editorTeamId;
+    if (tid !== f.team) return false;
+  }
+  // ステータス
+  if (f.status && c.status !== f.status) return false;
+  // ランク
+  if (f.rank) {
+    const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const rk = editor?.rank_applied || editor?.users?.rank;
+    if (rk !== f.rank) return false;
+  }
+  // 遅延のみ（rawFinal 確定 & 未納品 & 過去）
+  if (f.delayedOnly) {
+    const today = _cvAtMidnight(new Date());
+    const fin = c.final_deadline ? _cvAtMidnight(new Date(c.final_deadline)) : null;
+    const delivered = (c.status === '納品');
+    if (!fin || delivered || fin >= today) return false;
+  }
+  return true;
+}
+// サイドパネル「もっと見る」: 遅延のみフィルタ ON + 詳細パネル展開
+function cvSpShowAllDelayed() {
+  const chk = document.getElementById('cv-flt-delayed');
+  if (chk) { chk.checked = true; onCvAdvFilterChange(); }
+  toggleCreativeAdvFilters(true);
+}
 
 function renderAlerts() {
   const today = new Date();
