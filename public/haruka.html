@@ -5297,7 +5297,7 @@ let _creativesLoadSeq = 0;
 let currentCreativeMode  = (typeof localStorage!=='undefined' && localStorage.getItem('cv_mode'))  || 'gantt';
 let currentCreativeGroup = (typeof localStorage!=='undefined' && localStorage.getItem('cv_group')) || 'project';
 let currentCreativeRange = (typeof localStorage!=='undefined' && localStorage.getItem('cv_range')) || 'month';
-// ガント期間表示の中心日オフセット（今日からの日数。0=今日基準）
+// ガント期間表示の基準日オフセット（baseDate = 今日 + offset。0=今日基準）
 let creativeGanttDateOffset = 0;
 // 詳細フィルター展開状態
 let creativeAdvFiltersOpen = false;
@@ -7309,8 +7309,8 @@ function creativeGanttOpenDatePicker(ev) {
   // 既定値: 現在表示中期間の中心
   try {
     const today = new Date(); today.setHours(0,0,0,0);
-    today.setDate(today.getDate() + creativeGanttDateOffset);
-    inp.value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const baseDate = _cvGanttBaseDate(today);
+    inp.value = `${baseDate.getFullYear()}-${String(baseDate.getMonth()+1).padStart(2,'0')}-${String(baseDate.getDate()).padStart(2,'0')}`;
   } catch(_) {}
   // showPicker 対応ブラウザは即座に開く / 非対応はクリックで誘発
   if (typeof inp.showPicker === 'function') {
@@ -7354,26 +7354,37 @@ function _cvDayDiff(a, b) {
   return Math.round((A - B)/86400000);
 }
 
-// 期間範囲（today + creativeGanttDateOffset を中心にレンジを構成）
+// ガント表示期間は baseDate から固定幅で算出する。
+// 1ヶ月/2ヶ月表示は月初・月末に依存させず、前後移動時も表示日数を固定する。
+const _CV_GANTT_RANGE_RULES = {
+  week:   { before: 3, after: 4 },
+  '2week': { before: 3, after: 11 },
+  month:  { before: 6, after: 34 },
+  '2month': { before: 6, after: 62 },
+};
+function _cvGanttBaseDate(today) {
+  return _cvDateAdd(today || _cvAtMidnight(new Date()), creativeGanttDateOffset || 0);
+}
+function _cvGanttOffsetLabel() {
+  if (creativeGanttDateOffset === 0) return '今日基準';
+  return `今日から${creativeGanttDateOffset > 0 ? '+' : ''}${creativeGanttDateOffset}日`;
+}
+function _cvUpdateGanttPeriodLabel(win) {
+  try {
+    const lbl = document.getElementById('cv-gantt-period-label');
+    if (!lbl || !win) return;
+    const fmt = { month:'numeric', day:'numeric' };
+    lbl.textContent = `${win.start.toLocaleDateString('ja-JP',fmt)} 〜 ${win.end.toLocaleDateString('ja-JP',fmt)}（${_cvGanttOffsetLabel()}）`;
+  } catch(_) {}
+}
+// 期間範囲（baseDate = today + creativeGanttDateOffset を基準にレンジを構成）
 function _cvRangeWindow() {
   const today = _cvAtMidnight(new Date());
-  // 表示中の中心日（オフセット適用後）
-  const center = _cvDateAdd(today, creativeGanttDateOffset || 0);
-  let start, end;
-  if (currentCreativeRange === 'week') {
-    start = _cvDateAdd(center, -3);
-    end   = _cvDateAdd(center, 4);
-  } else if (currentCreativeRange === '2week') {
-    start = _cvDateAdd(center, -3);
-    end   = _cvDateAdd(center, 11);
-  } else if (currentCreativeRange === '2month') {
-    start = new Date(center.getFullYear(), center.getMonth(), 1);
-    end   = new Date(center.getFullYear(), center.getMonth()+2, 0); // 翌月末
-  } else { // month
-    start = new Date(center.getFullYear(), center.getMonth(), 1);
-    end   = _cvDateAdd(new Date(center.getFullYear(), center.getMonth()+1, 0), 7); // 月末+1週で来月入口を少し
-  }
-  return { start: _cvAtMidnight(start), end: _cvAtMidnight(end), today, center: _cvAtMidnight(center) };
+  const baseDate = _cvGanttBaseDate(today);
+  const rule = _CV_GANTT_RANGE_RULES[currentCreativeRange] || _CV_GANTT_RANGE_RULES.month;
+  const start = _cvDateAdd(baseDate, -rule.before);
+  const end = _cvDateAdd(baseDate, rule.after);
+  return { start, end, today, center: baseDate, baseDate };
 }
 
 // 1行ぶんの判定情報を作る（リストと同じロジックを共有）
@@ -7547,15 +7558,7 @@ function renderCreativesGantt(filtered) {
       <div style="padding:48px;text-align:center;color:var(--text-muted)">該当するクリエイティブがありません</div>`;
     if (side) side.innerHTML = _cvSidePanelHtml([]);
     // 期間ラベル（操作バー右）
-    try {
-      const lbl = document.getElementById('cv-gantt-period-label');
-      if (lbl) {
-        const offTxt = (creativeGanttDateOffset === 0)
-          ? '今日基準'
-          : (creativeGanttDateOffset > 0 ? `+${creativeGanttDateOffset}日` : `${creativeGanttDateOffset}日`);
-        lbl.textContent = `${win.start.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})} 〜 ${win.end.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}（${offTxt}）`;
-      }
-    } catch(_) {}
+    _cvUpdateGanttPeriodLabel(win);
     return;
   }
 
@@ -7868,15 +7871,7 @@ function renderCreativesGantt(filtered) {
 
   if (side) side.innerHTML = _cvSidePanelHtml(rows);
   // 期間ラベル（操作バー右）
-  try {
-    const lbl = document.getElementById('cv-gantt-period-label');
-    if (lbl) {
-      const offTxt = (creativeGanttDateOffset === 0)
-        ? '今日基準'
-        : (creativeGanttDateOffset > 0 ? `+${creativeGanttDateOffset}日` : `${creativeGanttDateOffset}日`);
-      lbl.textContent = `${win.start.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})} 〜 ${win.end.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}（${offTxt}）`;
-    }
-  } catch(_) {}
+  _cvUpdateGanttPeriodLabel(win);
 }
 
 // 右側サマリーパネル HTML
