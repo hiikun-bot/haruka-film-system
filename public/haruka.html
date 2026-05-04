@@ -268,6 +268,11 @@ tr.row-help td{background:#FFFBF2}
 /* 表示形式・グループ・期間 のセグメントは強い差をつける */
 .cv-seg-strong .ft{background:#fff;border:0.5px solid var(--border);color:var(--text-muted);font-size:11px;padding:5px 11px;border-radius:7px;margin:0 1px}
 .cv-seg-strong .ft.active{background:#0fb9a4;color:#fff;border-color:#0fb9a4;font-weight:700;box-shadow:0 1px 3px rgba(15,185,164,.30)}
+.cv-seg-strong .ft:hover:not(.active){background:#e6f7f4;color:var(--em-dark);border-color:var(--em-light)}
+/* 表示形式 単独トグルボタン（現在モードの「逆」を表示してクリックで切替） */
+.cv-mode-toggle{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px;font-size:11px;font-weight:600;color:var(--em-dark);background:#fff;border:0.5px solid var(--em-light);border-radius:7px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.cv-mode-toggle:hover{background:#e6f7f4;border-color:var(--em);color:var(--em-dark)}
+.cv-mode-toggle .cv-mode-toggle-icon{font-size:12px;line-height:1}
 .cv-tb-period-label{font-size:11px;color:var(--text-muted);margin:0 4px;white-space:nowrap}
 .cv-tb-title{font-size:11px;color:var(--em-dark);font-weight:600;letter-spacing:0.04em;margin-right:6px;padding:3px 0}
 
@@ -2354,12 +2359,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     <!-- 2行目: 表示形式 / グループ / 期間 / 期間ナビ / 詳細フィルター -->
     <div class="toolbar-row cv-tb-main" id="cv-tb-row2">
-      <div class="cv-tb-view" role="radiogroup" aria-label="表示形式">
-        <span class="cv-tb-vlabel">表示形式</span>
-        <div class="filter-tabs cv-seg cv-seg-strong">
-          <button class="ft active" id="cv-mode-gantt" role="radio" aria-checked="true" onclick="setCreativeMode('gantt')">📅 ガント</button>
-          <button class="ft" id="cv-mode-list" role="radio" aria-checked="false" onclick="setCreativeMode('list')">📋 リスト</button>
-        </div>
+      <div class="cv-tb-view" id="cv-mode-toggle-wrap">
+        <button type="button" class="cv-mode-toggle" id="cv-mode-toggle"
+                aria-pressed="false" onclick="toggleCreativeMode()"
+                title="表示形式を切替">
+          <span class="cv-mode-toggle-icon" id="cv-mode-toggle-icon" aria-hidden="true">📋</span>
+          <span class="cv-mode-toggle-label" id="cv-mode-toggle-label">リスト</span>
+        </button>
       </div>
       <span class="cv-tb-divider" id="cv-group-divider"></span>
       <div class="cv-tb-view" id="cv-group-seg-wrap" role="radiogroup" aria-label="グループ">
@@ -5334,7 +5340,13 @@ async function init() {
       if (savedView && savedView !== 'all') {
         currentView = savedView;
         const btn = document.querySelector(`.ft[onclick="setView(this,'${savedView}')"]`);
-        if (btn) { document.querySelectorAll('.ft').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }
+        if (btn) {
+          // 同じセグメント内のみで active を付け替え（他のセグメント=表示形式/グループ/期間 を巻き込まない）
+          const seg = btn.closest('.filter-tabs');
+          if (seg) seg.querySelectorAll('.ft').forEach(b => { b.classList.remove('active'); if (b.hasAttribute('role')) b.setAttribute('aria-checked','false'); });
+          btn.classList.add('active');
+          if (btn.hasAttribute('role')) btn.setAttribute('aria-checked','true');
+        }
       }
       // クリエイティブ画面の初期種別タブを適用（default_creative_tab → ロールfallback）
       // 直後の Promise.all で loadCreatives() を呼ぶので、ここでは reload をスキップ
@@ -7194,10 +7206,14 @@ function renderCreativeLoadMore() {
 function setCreativeMode(mode) {
   currentCreativeMode = (mode === 'list') ? 'list' : 'gantt';
   try { localStorage.setItem('cv_mode', currentCreativeMode); } catch(_) {}
-  const mg = document.getElementById('cv-mode-gantt');
-  const ml = document.getElementById('cv-mode-list');
-  if (mg) { mg.classList.toggle('active', currentCreativeMode === 'gantt'); mg.setAttribute('aria-checked', String(currentCreativeMode === 'gantt')); }
-  if (ml) { ml.classList.toggle('active', currentCreativeMode === 'list');  ml.setAttribute('aria-checked', String(currentCreativeMode === 'list')); }
+  // 単独トグルボタン: 現在のモードの「逆」を表示する（押すと切り替わる）
+  const tBtn   = document.getElementById('cv-mode-toggle');
+  const tIcon  = document.getElementById('cv-mode-toggle-icon');
+  const tLabel = document.getElementById('cv-mode-toggle-label');
+  if (tBtn) tBtn.setAttribute('aria-pressed', currentCreativeMode === 'list' ? 'true' : 'false');
+  if (tIcon)  tIcon.textContent  = (currentCreativeMode === 'gantt') ? '📋' : '📅';
+  if (tLabel) tLabel.textContent = (currentCreativeMode === 'gantt') ? 'リスト' : 'ガント';
+  if (tBtn) tBtn.title = (currentCreativeMode === 'gantt') ? 'リスト表示に切替' : 'ガント表示に切替';
   const gantt = document.getElementById('creative-view-gantt');
   const list = document.getElementById('creative-view-list');
   if (gantt) gantt.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
@@ -7210,6 +7226,10 @@ function setCreativeMode(mode) {
   });
   if (typeof renderCreatives === 'function') renderCreatives();
   if (currentCreativeMode === 'gantt') setTimeout(creativeGanttScrollToToday, 0);
+}
+// 単独トグルボタン用: 現在モードの逆を即セット
+function toggleCreativeMode() {
+  setCreativeMode(currentCreativeMode === 'gantt' ? 'list' : 'gantt');
 }
 function setCreativeGroup(group) {
   currentCreativeGroup = (group === 'assignee') ? 'assignee' : 'project';
@@ -7827,7 +7847,7 @@ function _cvSidePanelHtml(rows) {
 (function _initCreativeViewToggles(){
   if (typeof document === 'undefined') return;
   const apply = () => {
-    if (document.getElementById('cv-mode-gantt')) {
+    if (document.getElementById('cv-mode-toggle')) {
       // 永続化された値で初期化
       setCreativeMode(currentCreativeMode);
       _cvUpdateRangeButtonsActive();
@@ -7839,6 +7859,19 @@ function _cvSidePanelHtml(rows) {
         gp.setAttribute('aria-checked', String(currentCreativeGroup === 'project'));
         ga.setAttribute('aria-checked', String(currentCreativeGroup === 'assignee'));
       }
+      // 案件範囲（全案件/自分の案件/自分のボール）も初期 active を確実に反映
+      try {
+        const viewSeg = document.querySelector('.cv-tb-view[aria-label="案件範囲"] .filter-tabs');
+        if (viewSeg) {
+          const targetView = (typeof currentView === 'string' && currentView) ? currentView : 'all';
+          viewSeg.querySelectorAll('.ft').forEach(b => {
+            const onclick = b.getAttribute('onclick') || '';
+            const isMatch = onclick.indexOf(`'${targetView}'`) >= 0;
+            b.classList.toggle('active', isMatch);
+            if (b.hasAttribute('role')) b.setAttribute('aria-checked', String(isMatch));
+          });
+        }
+      } catch(_) {}
       // 詳細フィルターのドロップダウン初期化
       _cvAdvPopulateDropdowns();
       // 既定値を UI に反映
