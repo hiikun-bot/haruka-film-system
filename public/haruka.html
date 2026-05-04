@@ -168,11 +168,22 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-group-row.is-assignee .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
 /* タイムライン部 */
 .cv-g-timeline-head{position:sticky;top:0;display:flex;background:var(--em-pale);border-bottom:0.5px solid var(--border);z-index:5;height:40px}
-.cv-g-tl-day{flex:0 0 auto;border-right:0.5px solid var(--border-light);font-size:10px;color:var(--em-dark);text-align:center;padding-top:4px;line-height:1.2;box-sizing:border-box}
+.cv-g-tl-day{flex:0 0 auto;border-right:0.5px solid var(--border-light);color:var(--em-dark);text-align:center;padding-top:3px;line-height:1.15;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;overflow:hidden}
+.cv-g-tl-day .d-num{font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:-0.2px}
+.cv-g-tl-day .d-dow{font-size:9px;font-weight:500;color:var(--text-muted);margin-top:1px;letter-spacing:0}
+.cv-g-tl-day .d-month{font-size:10px;font-weight:700;color:var(--em-dark);background:#fff;border-radius:4px;padding:0 4px;margin-bottom:1px}
 .cv-g-tl-day.is-month-start{border-left:1px solid var(--em-dark)}
 .cv-g-tl-day.is-week-start{border-left:0.5px solid var(--em)}
-.cv-g-tl-day.is-weekend{background:#f7fafa;color:var(--text-muted)}
+.cv-g-tl-day.is-weekend{background:rgba(228,238,242,0.35)}
+.cv-g-tl-day.is-sat .d-dow{color:#3b82f6}
+.cv-g-tl-day.is-sun .d-dow{color:#ef4444}
 .cv-g-tl-day.is-today{background:#FFF4D9;color:#B36F00;font-weight:700}
+.cv-g-tl-day.is-today .d-num{color:#B36F00}
+.cv-g-tl-day.is-today .d-dow{color:#B36F00}
+.cv-g-tl-day.is-narrow .d-num{font-size:11px}
+.cv-g-tl-day.is-narrow .d-dow{font-size:8px;margin-top:0}
+.cv-g-tl-day.is-narrow .d-month{font-size:9px;padding:0 2px}
+/* 行側の土日うっすら背景（タイムライン全体の縦縞を避けるため、ヘッダーのみ着色） */
 .cv-g-row-tl{position:relative;border-bottom:0.5px solid var(--border-light);height:40px;background:#fff}
 .cv-g-row-tl.is-late{background:#FFFBFB}
 .cv-g-row-tl:hover{background:#FAFFFF}
@@ -7467,32 +7478,34 @@ function renderCreativesGantt(filtered) {
     if (!teamByMember.has(tm.user_id)) teamByMember.set(tm.user_id, t);
   }));
 
-  // タイムラインヘッダ生成（日付セル）
+  // タイムラインヘッダ生成（日付セル） — 全日付に「数字+曜日」表示。月初は月名強調
+  const DOW_CHARS = '日月火水木金土';
+  const isNarrow = (currentCreativeRange === '2month'); // セル幅が狭い表示はフォント縮小
   const dayCells = [];
   for (let i=0; i<totalDays; i++) {
     const d = _cvDateAdd(win.start, i);
     const isToday = _cvDayDiff(d, win.today) === 0;
     const dow = d.getDay();
-    const isWeekend = (dow === 0 || dow === 6);
+    const isSat = (dow === 6);
+    const isSun = (dow === 0);
+    const isWeekend = (isSat || isSun);
     const isMonthStart = (d.getDate() === 1);
     const isWeekStart = (dow === 1);
-    const showLabel = (currentCreativeRange === 'week' || currentCreativeRange === '2week') ? true : (d.getDate() === 1 || dow === 1);
-    let label = '';
-    if (currentCreativeRange === 'week' || currentCreativeRange === '2week') {
-      label = `${d.getMonth()+1}/${d.getDate()}<br><span style="font-size:9px;opacity:.7">${'日月火水木金土'[dow]}</span>`;
-    } else if (isMonthStart) {
-      label = `<b>${d.getMonth()+1}月</b>`;
-    } else if (isWeekStart) {
-      label = `${d.getDate()}`;
-    } else if (currentCreativeRange === 'month') {
-      label = (d.getDate() % 2 === 1) ? `<span style="opacity:.5">${d.getDate()}</span>` : '';
-    }
+    const dowChar = DOW_CHARS[dow];
+    // 月初は数字の代わりに「N月」を月名バッジとして表示し、その下に曜日
+    const numHtml = isMonthStart
+      ? `<span class="d-month">${d.getMonth()+1}月</span>`
+      : `<span class="d-num">${d.getDate()}</span>`;
+    const dowHtml = `<span class="d-dow">${dowChar}</span>`;
     const cls = ['cv-g-tl-day'];
     if (isMonthStart) cls.push('is-month-start');
     if (isWeekStart) cls.push('is-week-start');
     if (isWeekend) cls.push('is-weekend');
+    if (isSat) cls.push('is-sat');
+    if (isSun) cls.push('is-sun');
     if (isToday) cls.push('is-today');
-    dayCells.push(`<div class="${cls.join(' ')}" style="width:${dayPx}px">${showLabel?label:''}</div>`);
+    if (isNarrow) cls.push('is-narrow');
+    dayCells.push(`<div class="${cls.join(' ')}" style="width:${dayPx}px">${numHtml}${dowHtml}</div>`);
   }
 
   // 行ごとにメタ情報を集約
