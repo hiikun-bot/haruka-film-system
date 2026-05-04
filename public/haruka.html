@@ -4983,6 +4983,9 @@ async function submitErrorReport() {
   }
 }
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
+// 種別タブ（共通／動画／デザイン）のサーバー側 count 値。
+// allCreatives は現在のタブのみを保持するため、タブカウンタはこちらから引く。
+let creativeTabCounts = { all: 0, video: 0, design: 0 };
 let currentTeamTab = 'video'; // 'video' | 'design' | 'secretary'
 let currentMemberTab = 'video'; // 'video' | 'design'
 let currentCreativeTab = 'all'; // 'all' | 'video' | 'design' — クリエイティブ画面の種別タブ
@@ -5057,6 +5060,7 @@ async function init() {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
+  // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
   await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
   loadDashboard();
   applyDeepLinkOnLoad();
@@ -6161,7 +6165,8 @@ function setCreativeTab(type, opts = {}) {
     creativesPage.offset = 0;
     if (!opts.skipReload && typeof loadCreatives === 'function') {
       // 並行起動レース対策は loadCreatives 内の _creativesLoadSeq に委譲
-      loadCreatives();
+      // タブ切り替えではカウンタは不変なので skipCounts を渡して再取得を省略
+      loadCreatives({ skipCounts: true });
       return;
     }
   }
@@ -6492,8 +6497,11 @@ async function loadMembers() {
 
 // クリエイティブ
 // opts.append=true なら「もっと読み込む」用に既存 allCreatives に追記
+// opts.skipCounts=true なら タブカウンタの再取得をスキップ
+//   （タブ切り替えだけのときはカウンタは不変なので呼ばない）
 async function loadCreatives(opts = {}) {
   const append = !!opts.append;
+  const skipCounts = !!opts.skipCounts;
   const tbody = document.getElementById('creative-tbody');
   if (!append) {
     tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
@@ -6516,6 +6524,10 @@ async function loadCreatives(opts = {}) {
   // ダッシュボードや「納品済」表示が壊れないよう、デフォルトで 納品 も含める
   // （API 既定は exclude だが、本フロントは常に include_done=1 を送る）
   params.set('include_done', '1');
+  // タブカウンタも並列に再取得（append/タブ切り替えのときは省略）
+  if (!append && !skipCounts) {
+    loadCreativeTabCounts();
+  }
   try {
     const res = await apiFetch(`${API}/creatives?${params.toString()}`);
     const json = await res.json().catch(() => ({}));
@@ -6542,6 +6554,44 @@ async function loadCreatives(opts = {}) {
     if (!append) allCreatives = [];
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
   }
+}
+
+// 種別タブ（共通／動画／デザイン）のサーバー側カウント取得。
+// /api/creatives と同じフィルタを送るが tab は送らない（全タブの件数を返す）。
+// 並行リクエストの古いレスポンスは破棄するため seq を使う。
+let _creativeTabCountsSeq = 0;
+async function loadCreativeTabCounts() {
+  const seq = ++_creativeTabCountsSeq;
+  const params = new URLSearchParams();
+  if (currentClient && currentClient !== 'all') params.set('client_id', currentClient);
+  if (currentAssigneeFilter)                    params.set('assignee_id', currentAssigneeFilter);
+  if (searchText)                               params.set('q', searchText);
+  params.set('include_done', '1');
+  try {
+    const res = await apiFetch(`${API}/creatives/counts?${params.toString()}`);
+    const json = await res.json().catch(() => ({}));
+    if (seq !== _creativeTabCountsSeq) return; // 古いレスポンスは破棄
+    if (!res.ok) return;
+    creativeTabCounts = {
+      all:    Number.isFinite(json.all)    ? json.all    : 0,
+      video:  Number.isFinite(json.video)  ? json.video  : 0,
+      design: Number.isFinite(json.design) ? json.design : 0,
+    };
+    // バッジを即時更新（renderCreatives を待たずに反映）
+    updateCreativeTabBadges();
+  } catch (_) { /* ignore: バッジ更新は best-effort */ }
+}
+
+// 種別タブのバッジ DOM を creativeTabCounts から更新
+function updateCreativeTabBadges() {
+  try {
+    const _bAll = document.getElementById('cv-tab-all-count');
+    const _bVid = document.getElementById('cv-tab-video-count');
+    const _bDes = document.getElementById('cv-tab-design-count');
+    if (_bAll) _bAll.textContent = `(${creativeTabCounts.all})`;
+    if (_bVid) _bVid.textContent = `(${creativeTabCounts.video})`;
+    if (_bDes) _bDes.textContent = `(${creativeTabCounts.design})`;
+  } catch (_) {}
 }
 
 // 「もっと読み込む」: offset を進めて追記取得
@@ -6599,8 +6649,9 @@ function renderCreatives() {
   activeBalls.push('done');
 
   const _role = effectiveRole();
-  // タブ別カウント（共通/動画/デザイン） — タブ以外のフィルタは適用済の母集合に対して計算
-  let _cvTabCountAll = 0, _cvTabCountVideo = 0, _cvTabCountDesign = 0;
+  // タブ別カウント（共通/動画/デザイン）はサーバー側 /api/creatives/counts から取得した
+  // creativeTabCounts を参照する。allCreatives は現在のタブの行しか持たないため、
+  // ここで計算するとタブを跨いだ件数が正しく出ない（バグ #237 系の原因）。
   const filtered = allCreatives.filter(c => {
     // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
     if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
@@ -6618,13 +6669,10 @@ function renderCreatives() {
     if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
     if (currentAssigneeFilter && !c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
     // 種別タブフィルタ（共通=全件 / video=video_* / design=design_*）
-    // 件数バッジを計算してから絞り込み
+    // カウントはサーバー側 /api/creatives/counts に集約。ここではタブで絞り込むだけ。
     const _ct = (c.creative_type || '');
     const _isVideoType = /^video_/.test(_ct);
     const _isDesignType = /^design_/.test(_ct);
-    _cvTabCountAll += 1;
-    if (_isVideoType) _cvTabCountVideo += 1;
-    if (_isDesignType) _cvTabCountDesign += 1;
     if (currentCreativeTab === 'video' && !_isVideoType) return false;
     if (currentCreativeTab === 'design' && !_isDesignType) return false;
     // ロール別フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
@@ -6666,15 +6714,8 @@ function renderCreatives() {
     ? `${filtered.length} / ${allCreatives.length}件表示中（全${creativesPage.total}件）`
     : `${filtered.length}件表示中`;
   document.getElementById('creative-count').textContent = totalLabel;
-  // 種別タブのカウントバッジを更新
-  try {
-    const _bAll = document.getElementById('cv-tab-all-count');
-    const _bVid = document.getElementById('cv-tab-video-count');
-    const _bDes = document.getElementById('cv-tab-design-count');
-    if (_bAll) _bAll.textContent = `(${_cvTabCountAll})`;
-    if (_bVid) _bVid.textContent = `(${_cvTabCountVideo})`;
-    if (_bDes) _bDes.textContent = `(${_cvTabCountDesign})`;
-  } catch (_) {}
+  // 種別タブのカウントバッジは サーバー側 /api/creatives/counts の結果から更新
+  updateCreativeTabBadges();
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     renderCreativeLoadMore();
