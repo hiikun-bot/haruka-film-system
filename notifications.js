@@ -562,7 +562,14 @@ function _formatAutoErrorText(payload) {
   if (url) lines.push(`*URL*: ${_truncate(url, 300)}`);
   if (userEmail) lines.push(`*ユーザー*: ${_truncate(userEmail, 100)}`);
   if (userAgent) lines.push(`*UA*: ${_truncate(userAgent, 200)}`);
-  lines.push(`*発生時刻*: ${ts || new Date().toISOString()}`);
+  const tsDate = ts ? new Date(ts) : new Date();
+  const jstStr = tsDate.toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  lines.push(`*発生時刻*: ${jstStr} JST`);
   lines.push('');
   lines.push('*メッセージ*:');
   lines.push('```' + _truncate(message, 1500) + '```');
