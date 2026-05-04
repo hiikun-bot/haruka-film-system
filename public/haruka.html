@@ -148,8 +148,8 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-fixed .c-name:hover{color:var(--text)}
 .cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:4px;justify-content:flex-start}
 .cv-g-row-fixed .c-assignee .team-mini{font-size:10px;color:var(--em-dark);background:var(--em-pale);border-radius:4px;padding:1px 4px;font-weight:600}
-.cv-g-row-fixed .c-status{overflow:visible}
-.cv-g-row-fixed .c-status .status-chip{font-size:10px;padding:2px 6px}
+.cv-g-row-fixed .c-status{overflow:hidden;min-width:0}
+.cv-g-row-fixed .c-status .status-chip{font-size:10px;padding:2px 6px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .cv-g-row-fixed .c-delay{font-size:11px;font-weight:600;text-align:right;padding-right:12px}
 .cv-g-row-fixed .c-delay.late{color:#E24B4A;font-weight:700}
 .cv-g-row-fixed .c-delay.warn{color:#E89B0E}
@@ -7831,6 +7831,13 @@ function renderCreativesGantt(filtered) {
     return segments.join('');
   };
 
+  // ガントの固定列ステータスは幅 100px しかないため長いラベルだけ短縮表示する（業務ロジックは元値のまま）
+  const statusShortLabel = (s) => {
+    if (s === 'クライアントチェック中') return 'CLチェック中';
+    if (s === 'クライアントチェック後修正') return 'CLチェック後修正';
+    return s || '';
+  };
+
   // 固定列（左）の HTML — assignee は アイコン+チーム略称（ホバーで氏名）
   const renderFixedRow = (r) => {
     const { c, info, editorUser, team } = r;
@@ -7846,7 +7853,7 @@ function renderCreativesGantt(filtered) {
         <div class="c c-client" title="${esc(clientName)}${projName?` / ${esc(projName)}`:''}">${esc(clientName)}${projName?`<small>${esc(projName)}</small>`:''}</div>
         <div class="c c-name" title="${esc(c.file_name)}" onclick="openCreativeDetail('${c.id}')">${esc(c.file_name || '')}</div>
         <div class="c c-assignee" title="${esc(fullNameTitle)}">${assignee}</div>
-        <div class="c c-status"><span class="status-chip ${statusClass(c.status)}">${esc(c.status || '')}</span></div>
+        <div class="c c-status" title="${esc(c.status || '')}"><span class="status-chip ${statusClass(c.status)}">${esc(statusShortLabel(c.status))}</span></div>
         <div class="c c-delay ${info.delayClass}">${esc(info.delayLabel)}</div>
       </div>`;
   };
