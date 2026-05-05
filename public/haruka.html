@@ -20272,8 +20272,6 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   const link = document.getElementById('fp-drive-link');
   if (driveUrl) { link.href = driveUrl; link.style.display = ''; }
   else { link.style.display = 'none'; }
-  const premBtn = document.getElementById('fp-premiere-btn');
-  if (premBtn) premBtn.style.display = fileRecordId ? '' : 'none';
 
   const player = document.getElementById('fp-player');
   const ctrlBar = document.getElementById('fp-controls-bar');
@@ -20282,6 +20280,11 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
 
   const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
+
+  // Premiereボタン: 動画クリエイティブ + DBレコードあり のときだけ表示
+  // （静止画はタイムコード概念がないため非表示。Premiere Pro連携不要）
+  const premBtn = document.getElementById('fp-premiere-btn');
+  if (premBtn) premBtn.style.display = (fileRecordId && isVideo) ? '' : 'none';
 
   if (driveFileId) {
     if (isVideo) {
