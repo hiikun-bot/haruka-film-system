@@ -138,11 +138,17 @@ tr:hover td{background:#f0fbfa}
 tr.row-late td{background:#FFF8F8}
 tr.row-help td{background:#FFFBF2}
 
-/* ===== クリエイティブ ガントチャート ===== */
-.cv-gantt-main{background:#fff;border:0.5px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(43,184,180,.06);min-width:0}
+/* ===== クリエイティブ ガントチャート =====
+   sticky 戦略:
+   - --cv-gantt-top: ヘッダー(60px) + クリエイティブツールバー実測高さ(JSで計算)
+   - .cv-gantt-main 自体を sticky にしてウィンドウスクロールしてもガント本体が画面に残るようにする
+   - その内側 .cv-g-scroll が唯一の縦スクロールコンテナとなり、内部の sticky ヘッダー(凡例/日付軸/列ヘッダー)が機能する
+*/
+:root{--cv-gantt-top:140px}
+.cv-gantt-main{background:#fff;border:0.5px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(43,184,180,.06);min-width:0;position:sticky;top:var(--cv-gantt-top);max-height:calc(100vh - var(--cv-gantt-top) - 12px);display:flex;flex-direction:column;align-self:start}
 .cv-gantt-sidepanel{background:#fff;border:0.5px solid var(--border);border-radius:12px;padding:14px;font-size:13px;max-height:calc(100vh - 180px);overflow-y:auto;box-shadow:0 1px 3px rgba(43,184,180,.06);position:sticky;top:12px;align-self:start}
-.cv-g-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:0.5px solid var(--border);background:var(--em-pale);font-size:12px;color:var(--em-dark)}
-.cv-g-scroll{position:relative;overflow-x:auto;overflow-y:auto;max-height:72vh}
+.cv-g-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:0.5px solid var(--border);background:var(--em-pale);font-size:12px;color:var(--em-dark);flex:0 0 auto}
+.cv-g-scroll{position:relative;overflow-x:auto;overflow-y:auto;flex:1 1 auto;min-height:0}
 .cv-g-grid{display:grid;min-width:100%;position:relative}
 /* 左固定列ヘッダ */
 .cv-g-head-left,.cv-g-head-right{position:sticky;top:0;background:var(--em-pale);font-size:11px;color:var(--em-dark);font-weight:600;padding:8px 8px;border-bottom:0.5px solid var(--border);z-index:6;letter-spacing:0.04em;text-transform:none;line-height:1.3}
@@ -328,6 +334,10 @@ tr.row-help td{background:#FFFBF2}
 @media (max-width:1100px){
   #cv-gantt-layout{grid-template-columns:1fr !important}
   .cv-gantt-sidepanel{max-height:none;position:static}
+  /* 縦に並ぶ狭幅レイアウトではガント本体の sticky を解除し、通常スクロールに戻す
+     （sticky のままだとサイドパネル分と重なって画面占有しっぱなしになる） */
+  .cv-gantt-main{position:static;max-height:none}
+  .cv-g-scroll{max-height:calc(100vh - 140px)}
 }
 @media (max-width:768px){
   .cv-g-row-fixed{grid-template-columns:100px 130px 50px 90px 60px}
@@ -418,9 +428,8 @@ tr.row-help td{background:#FFFBF2}
 /* ガント本体を少しコンパクトに */
 .cv-gantt-main{border-radius:10px}
 .cv-g-toolbar{padding:4px 12px;font-size:11px;display:flex;gap:12px;align-items:center;border-bottom:0.5px solid var(--border-light);background:#fafefd}
-/* タブ・ツールバー圧縮で確保した縦領域をガント本体へ。1画面 18-22 件目標
-   大分類タブを条件行に統合したことで上部1行ぶん（約30px）削減 */
-.cv-g-scroll{max-height:calc(100vh - 140px);min-height:68vh}
+/* .cv-gantt-main が flex column + max-height で viewport 内に収まるため、
+   .cv-g-scroll は flex:1 で残り高さを全て使う。max-height/min-height は不要。 */
 
 @media (max-width:1200px){
   .cv-tb-action{margin-left:0}
@@ -8052,6 +8061,32 @@ function renderCreativeLoadMore() {
 // ============================================================
 // クリエイティブ ガントチャート
 // ============================================================
+// ガント sticky オフセット更新: クリエイティブ画面の .toolbar.cv-toolbar-compact の
+// 実測下端を CSS変数 --cv-gantt-top に設定する。
+// これにより .cv-gantt-main が position:sticky; top:var(--cv-gantt-top) で
+// ヘッダー(60px) + ツールバー（詳細フィルター展開で高さが変動）の直下に
+// 正しく張り付き、ウィンドウスクロール時もガント本体（列ヘッダー・日付軸）が
+// 画面に常時表示される。
+function updateCreativeGanttStickyOffset() {
+  try {
+    const page = document.getElementById('page-creatives');
+    if (!page || !page.classList.contains('active')) return;
+    const tb = page.querySelector('.toolbar.cv-toolbar-compact');
+    if (!tb) return;
+    const rect = tb.getBoundingClientRect();
+    // sticky 状態のときの bottom（= 60px ヘッダー直下に張り付いた状態の下端）を採用
+    const top = Math.max(60, Math.round(rect.bottom));
+    document.documentElement.style.setProperty('--cv-gantt-top', top + 'px');
+  } catch(_) { /* noop */ }
+}
+// リサイズ・詳細フィルター展開などで高さが変わったら追従
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', updateCreativeGanttStickyOffset);
+  // 詳細フィルターの開閉・大分類タブ切替などでもツールバー高さが変わるため、
+  // クリック後に再計測（capture でも普通の bubble でも良いが、wide net で OK）
+  window.addEventListener('click', () => setTimeout(updateCreativeGanttStickyOffset, 0));
+}
+
 // 表示モード切替（gantt | list）
 function setCreativeMode(mode) {
   currentCreativeMode = (mode === 'list') ? 'list' : 'gantt';
@@ -8078,7 +8113,10 @@ function setCreativeMode(mode) {
     if (el) el.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
   });
   if (typeof renderCreatives === 'function') renderCreatives();
-  if (currentCreativeMode === 'gantt') setTimeout(creativeGanttScrollToToday, 0);
+  if (currentCreativeMode === 'gantt') {
+    setTimeout(creativeGanttScrollToToday, 0);
+    setTimeout(updateCreativeGanttStickyOffset, 0);
+  }
 }
 // 後方互換: 現在モードの逆を即セット
 function toggleCreativeMode() {
@@ -8879,6 +8917,8 @@ function renderCreativesGantt(filtered) {
   if (side) side.innerHTML = _cvSidePanelHtml(rows);
   // 期間ラベル（操作バー右）
   _cvUpdateGanttPeriodLabel(win);
+  // ツールバー高さ実測 → sticky オフセット更新
+  setTimeout(updateCreativeGanttStickyOffset, 0);
 }
 
 // 右側サマリーパネル HTML
