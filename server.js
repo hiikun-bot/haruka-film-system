@@ -1157,5 +1157,12 @@ const runSchemaSync = require('./db/migrate');
   ╚═══════════════════════════════════════╝
   `);
     await seedAdminIfNeeded();
+    // 通知 Phase 1: 予約配信ワーカを起動（1分ごとに scheduled_send_at <= now の予約を配信扱いにする）
+    try {
+      const { startNotificationScheduler } = require('./workers/notification-scheduler');
+      startNotificationScheduler();
+    } catch (e) {
+      console.error('[startup] notification-scheduler 起動失敗:', e.message);
+    }
   });
 })();

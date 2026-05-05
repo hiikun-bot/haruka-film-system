@@ -1893,6 +1893,43 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- 通知 Phase 1: 自分の予約送信 一覧モーダル -->
+<div class="modal-overlay" id="modal-scheduled-notifications">
+  <div class="modal-card" style="width:min(900px,95vw)">
+    <div class="modal-title">
+      <span>📅 自分の予約送信</span>
+      <button class="modal-close" onclick="closeModal('modal-scheduled-notifications')">×</button>
+    </div>
+    <div id="scheduled-notif-content" style="min-height:120px;padding:8px 0">
+      <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">読み込み中…</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-scheduled-notifications')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 通知 Phase 1: 予約送信 日時変更モーダル -->
+<div class="modal-overlay" id="modal-scheduled-reschedule" data-no-overlay-close="true">
+  <div class="modal-card" style="width:420px">
+    <div class="modal-title">
+      <span>配信日時を変更</span>
+      <button class="modal-close" onclick="closeModal('modal-scheduled-reschedule')">×</button>
+    </div>
+    <div style="padding:6px 0 14px">
+      <input type="hidden" id="rs-target-id" value="">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px" id="rs-current-info"></div>
+      <label class="form-label">新しい配信日時</label>
+      <input type="datetime-local" class="form-input" id="rs-new-at">
+      <div id="rs-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-scheduled-reschedule')">キャンセル</button>
+      <button class="btn-primary" id="rs-submit-btn" onclick="submitRescheduleNotification()">変更する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 全体連絡: 対応状況モーダル -->
 <div class="modal-overlay" id="modal-announcement-status">
   <div class="modal-card" style="width:min(1400px,95vw)">
@@ -17001,12 +17038,43 @@ async function renderBroadcastNotificationPage() {
             ${radioHtml}
           </div>
         </div>
+
+        <!-- 送信モード（時間帯指定送信モード） -->
+        <div class="form-group" style="margin-bottom:8px;margin-top:14px">
+          <label class="form-label">送信モード</label>
+          <div class="broadcast-radio-group" id="bc-sendmode-radio-group" style="display:flex;flex-direction:column;gap:6px">
+            <label class="broadcast-radio-label checked" data-send-mode="immediate" style="display:flex;align-items:center;gap:6px">
+              <input type="radio" name="broadcast-send-mode" value="immediate" checked>
+              <span>即時送信</span>
+              <span class="broadcast-radio-hint">送信ボタンを押した瞬間に届きます</span>
+            </label>
+            <label class="broadcast-radio-label" data-send-mode="scheduled" style="display:flex;align-items:center;gap:6px">
+              <input type="radio" name="broadcast-send-mode" value="scheduled">
+              <span>時間帯指定送信</span>
+              <span class="broadcast-radio-hint">受信者の活動時間に合わせて配信します</span>
+            </label>
+          </div>
+          <!-- scheduled サブオプション -->
+          <div id="bc-scheduled-suboptions" style="display:none;margin-top:10px;padding:10px 12px;background:rgba(0,0,0,0.025);border-radius:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer">
+              <input type="radio" name="broadcast-scheduled-mode" value="auto" checked>
+              <span>受信者ごとの次回活動開始時刻に自動配信（既定）</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);margin-top:6px;cursor:pointer">
+              <input type="radio" name="broadcast-scheduled-mode" value="explicit">
+              <span>日時を明示指定</span>
+            </label>
+            <input type="datetime-local" class="form-input" id="bc-scheduled-at" style="margin-top:6px;display:none;max-width:260px">
+          </div>
+        </div>
       </div>
 
       <div class="broadcast-form-section">
         <div class="broadcast-actions">
           <div class="broadcast-actions-left">
             <button type="button" class="broadcast-btn-preview" id="bc-preview-btn">プレビュー</button>
+            <button type="button" class="btn" id="bc-scheduled-list-btn" style="margin-left:8px;font-size:12px;padding:6px 12px"
+              onclick="openScheduledNotificationsModal()">📅 自分の予約送信</button>
           </div>
           <button type="button" class="broadcast-btn-send" id="bc-send-btn" disabled>送信</button>
         </div>
@@ -17087,6 +17155,28 @@ function setupBroadcastFormHandlers() {
   if (sendBtn) {
     sendBtn.addEventListener('click', () => onBroadcastSendClick());
   }
+
+  // 送信モード（即時 / 時間帯指定）と sub option の制御
+  const sendModeWrap = document.getElementById('bc-sendmode-radio-group');
+  if (sendModeWrap) {
+    sendModeWrap.addEventListener('change', () => {
+      sendModeWrap.querySelectorAll('.broadcast-radio-label').forEach(lbl => {
+        const input = lbl.querySelector('input[type=radio]');
+        if (input) lbl.classList.toggle('checked', input.checked);
+      });
+      const mode = document.querySelector('input[name="broadcast-send-mode"]:checked')?.value || 'immediate';
+      const sub = document.getElementById('bc-scheduled-suboptions');
+      if (sub) sub.style.display = (mode === 'scheduled') ? '' : 'none';
+    });
+  }
+  const scheduledModeWrap = document.getElementById('bc-scheduled-suboptions');
+  if (scheduledModeWrap) {
+    scheduledModeWrap.addEventListener('change', () => {
+      const sub = document.querySelector('input[name="broadcast-scheduled-mode"]:checked')?.value || 'auto';
+      const dt = document.getElementById('bc-scheduled-at');
+      if (dt) dt.style.display = (sub === 'explicit') ? '' : 'none';
+    });
+  }
 }
 
 // カウンター更新（80超え/500超えで色を変える）
@@ -17139,11 +17229,24 @@ function updateBroadcastSendButtonState() {
 
 // 現在のフォーム値を読み出してプレビュー用の通知データを返す
 function getBroadcastFormValues() {
+  const sendMode = document.querySelector('input[name="broadcast-send-mode"]:checked')?.value || 'immediate';
+  const scheduledMode = document.querySelector('input[name="broadcast-scheduled-mode"]:checked')?.value || 'auto';
+  let scheduledSendAt = null;
+  if (sendMode === 'scheduled' && scheduledMode === 'explicit') {
+    const v = document.getElementById('bc-scheduled-at')?.value || '';
+    if (v) {
+      // datetime-local はローカルタイム文字列。new Date() がローカルタイム解釈してくれる。
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) scheduledSendAt = d.toISOString();
+    }
+  }
   return {
     title:    (document.getElementById('bc-title')?.value || '').trim(),
     body:     (document.getElementById('bc-body')?.value  || '').trim(),
     link_url: (document.getElementById('bc-link')?.value  || '').trim() || null,
     target_role: document.querySelector('input[name="broadcast-target-role"]:checked')?.value || 'all',
+    send_mode: sendMode,
+    scheduled_send_at: scheduledSendAt,
   };
 }
 
@@ -17258,6 +17361,8 @@ async function doBroadcastSend(expectedCount) {
         body:  v.body,
         link_url: v.link_url || null,
         target_role: v.target_role,
+        send_mode: v.send_mode || 'immediate',
+        scheduled_send_at: v.scheduled_send_at || null,
       }),
     });
     if (!res.ok) {
@@ -17276,7 +17381,14 @@ async function doBroadcastSend(expectedCount) {
     const sent = Number(data.notification_count) || 0;
     closeModal('modal-broadcast-confirm');
     if (typeof showToast === 'function') {
-      showToast(`${sent}名に送信しました`, 'success');
+      if (data.send_mode === 'scheduled') {
+        const when = data.scheduled_send_at
+          ? new Date(data.scheduled_send_at).toLocaleString('ja-JP', { hour12: false })
+          : '受信者ごとの活動枠';
+        showToast(`${sent}名に予約しました（配信予定: ${when}）`, 'success', 5000);
+      } else {
+        showToast(`${sent}名に送信しました`, 'success');
+      }
     }
     resetBroadcastForm();
   } catch (e) {
@@ -17305,6 +17417,17 @@ function resetBroadcastForm() {
   document.querySelectorAll('input[name="broadcast-target-role"]').forEach((r, idx) => {
     r.checked = (r.value === 'all');
   });
+  // 送信モードも「即時送信」に戻す
+  document.querySelectorAll('input[name="broadcast-send-mode"]').forEach(r => {
+    r.checked = (r.value === 'immediate');
+  });
+  document.querySelectorAll('input[name="broadcast-scheduled-mode"]').forEach(r => {
+    r.checked = (r.value === 'auto');
+  });
+  const sub = document.getElementById('bc-scheduled-suboptions');
+  if (sub) sub.style.display = 'none';
+  const dt = document.getElementById('bc-scheduled-at');
+  if (dt) { dt.style.display = 'none'; dt.value = ''; }
   document.querySelectorAll('.broadcast-radio-label').forEach(lbl => {
     const input = lbl.querySelector('input[type=radio]');
     if (input) lbl.classList.toggle('checked', input.checked);
@@ -17322,6 +17445,159 @@ function resetBroadcastForm() {
   if (wrap) wrap.style.display = 'none';
   if (body) {
     body.innerHTML = `<div class="broadcast-preview-empty">タイトルと本文を入れてプレビューを押すと、実際に届く通知カードがここに表示されます</div>`;
+  }
+}
+
+// ============================================================
+// 通知 Phase 1: 自分の予約送信 一覧／キャンセル／日時変更
+// ============================================================
+async function openScheduledNotificationsModal() {
+  openModal('modal-scheduled-notifications');
+  const content = document.getElementById('scheduled-notif-content');
+  if (content) content.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">読み込み中…</div>';
+  try {
+    const res = await apiFetch('/api/notifications/scheduled');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      content.innerHTML = `<div style="color:#C0392B;font-size:13px;padding:10px">取得に失敗しました: ${esc(data.error || res.status)}</div>`;
+      return;
+    }
+    const json = await res.json();
+    renderScheduledNotifList(json.scheduled || []);
+  } catch (e) {
+    content.innerHTML = `<div style="color:#C0392B;font-size:13px;padding:10px">通信エラー: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderScheduledNotifList(items) {
+  const content = document.getElementById('scheduled-notif-content');
+  if (!content) return;
+  if (!items || items.length === 0) {
+    content.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:30px 0">予約中の通知はありません</div>';
+    return;
+  }
+  const fmt = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return Number.isFinite(d.getTime()) ? d.toLocaleString('ja-JP', { hour12: false }) : '—';
+  };
+  const rows = items.map(it => {
+    const minTime = fmt(it.scheduled_send_at);
+    const maxTime = fmt(it.scheduled_send_at_max);
+    const timeCell = (minTime === maxTime)
+      ? minTime
+      : `${minTime} 〜 ${maxTime}<div style="font-size:11px;color:var(--text-muted)">受信者ごと個別</div>`;
+    const targetId = it.global_notification_id || it.id;
+    return `
+      <tr>
+        <td style="padding:8px 6px;vertical-align:top">
+          <div style="font-weight:600;font-size:13px">${esc(it.title || '(無題)')}</div>
+          <div style="font-size:12px;color:var(--text-muted);max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.body || '')}</div>
+        </td>
+        <td style="padding:8px 6px;font-size:12px;text-align:center;white-space:nowrap">${it.recipients_count}名</td>
+        <td style="padding:8px 6px;font-size:12px;white-space:nowrap">${timeCell}</td>
+        <td style="padding:8px 6px;text-align:right;white-space:nowrap">
+          <button class="btn" style="font-size:11px;padding:4px 10px" onclick="openRescheduleModal('${esc(targetId)}','${esc(it.scheduled_send_at || '')}','${esc(it.title || '')}')">日時変更</button>
+          <button class="btn" style="font-size:11px;padding:4px 10px;color:#C0392B;border-color:#C0392B" onclick="cancelScheduledNotification('${esc(targetId)}')">キャンセル</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  content.innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="background:rgba(0,0,0,0.03);font-size:12px;color:var(--text-muted)">
+          <th style="padding:8px 6px;text-align:left">タイトル / 本文</th>
+          <th style="padding:8px 6px;text-align:center">受信者</th>
+          <th style="padding:8px 6px;text-align:left">配信予定</th>
+          <th style="padding:8px 6px;text-align:right">操作</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function cancelScheduledNotification(targetId) {
+  if (!targetId) return;
+  if (!confirm('この予約をキャンセルしますか？')) return;
+  try {
+    const res = await apiFetch(`/api/notifications/${encodeURIComponent(targetId)}/cancel`, { method: 'PATCH' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (typeof showToast === 'function') showToast(`キャンセル失敗: ${data.error || res.status}`, 'error', 5000);
+      return;
+    }
+    const data = await res.json();
+    if (typeof showToast === 'function') showToast(`${data.cancelled_count || 0} 件キャンセルしました`, 'success');
+    openScheduledNotificationsModal(); // 再読み込み
+  } catch (e) {
+    if (typeof showToast === 'function') showToast(`通信エラー: ${e.message}`, 'error', 5000);
+  }
+}
+
+function openRescheduleModal(targetId, currentIso, title) {
+  document.getElementById('rs-target-id').value = targetId || '';
+  document.getElementById('rs-error').style.display = 'none';
+  const info = document.getElementById('rs-current-info');
+  if (info) {
+    const cur = currentIso ? new Date(currentIso).toLocaleString('ja-JP', { hour12: false }) : '—';
+    info.textContent = `「${title || ''}」 現在の配信予定: ${cur}`;
+  }
+  // datetime-local には現状値を初期セット（ローカルタイム）
+  const dt = document.getElementById('rs-new-at');
+  if (dt) {
+    if (currentIso) {
+      const d = new Date(currentIso);
+      const pad = n => String(n).padStart(2, '0');
+      dt.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } else {
+      dt.value = '';
+    }
+  }
+  openModal('modal-scheduled-reschedule');
+}
+
+async function submitRescheduleNotification() {
+  const id = document.getElementById('rs-target-id').value;
+  const local = document.getElementById('rs-new-at').value;
+  const errEl = document.getElementById('rs-error');
+  errEl.style.display = 'none';
+  if (!id || !local) {
+    errEl.style.display = '';
+    errEl.textContent = '日時を入力してください';
+    return;
+  }
+  const d = new Date(local);
+  if (!Number.isFinite(d.getTime())) {
+    errEl.style.display = '';
+    errEl.textContent = '日時の形式が不正です';
+    return;
+  }
+  if (d.getTime() < Date.now() - 60_000) {
+    errEl.style.display = '';
+    errEl.textContent = '現在時刻より後を指定してください';
+    return;
+  }
+  try {
+    const res = await apiFetch(`/api/notifications/${encodeURIComponent(id)}/reschedule`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scheduled_send_at: d.toISOString() }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      errEl.style.display = '';
+      errEl.textContent = `変更失敗: ${data.error || res.status}`;
+      return;
+    }
+    const data = await res.json();
+    if (typeof showToast === 'function') showToast(`${data.updated_count || 0} 件の配信時刻を変更しました`, 'success');
+    closeModal('modal-scheduled-reschedule');
+    openScheduledNotificationsModal();
+  } catch (e) {
+    errEl.style.display = '';
+    errEl.textContent = `通信エラー: ${e.message}`;
   }
 }
 
