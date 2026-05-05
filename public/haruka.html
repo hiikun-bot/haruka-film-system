@@ -3022,7 +3022,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <label class="form-label">案件</label>
             <div id="c-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
               <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
-              <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 デザイン <span class="cap-count" data-cap-count="design">0</span></button>
+              <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
               <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
             </div>
             <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
@@ -3135,7 +3135,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <label class="form-label">案件</label>
         <div id="bulk-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
           <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
-          <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 デザイン <span class="cap-count" data-cap-count="design">0</span></button>
+          <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
           <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
         </div>
         <select class="form-select" id="bulk-project-id" onchange="onBulkProjectChange(this.value)"></select>
@@ -4304,16 +4304,6 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               </label>
               <select class="form-select" id="p-primary-category" required>
                 <option value="">読込中...</option>
-              </select>
-            </div>
-            <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">旧 案件種別 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（互換用・カテゴリと連動）</span></label>
-              <select class="form-select" id="p-project-type">
-                <option value="video">動画編集</option>
-                <option value="design">デザイン</option>
-                <option value="lp">LP制作</option>
-                <option value="hp">HP制作</option>
-                <option value="other">その他</option>
               </select>
             </div>
           </div>
@@ -6326,16 +6316,29 @@ function pickInitialProjectFilterTab(user) {
 }
 
 // 現在のフィルタに従って案件配列を絞り込む。
-// クリエイティブ側のキャパは 'video' / 'design' の 2 値しかないため、
-// LP/HP/other は 'design' タブに統合表示する（getCreativeCapForProject の方針と整合）。
-// - 'all'    : 全件（project_type が NULL でも表示）
-// - 'video'  : video のみ（NULL は除外）
-// - 'design' : design / lp / hp / other（NULL は除外）
+// クリエイティブ側のキャパは 'video' / 'design'（=静止画） の 2 値しかないため、
+// 動画カテゴリ以外（image / lp / hp / line / その他）はすべて 'design' タブに統合表示する。
+// 判定は primary_category code 駆動（getProjectCategory()）。未設定の旧案件は
+// PROJECT_TYPE_TO_CATEGORY_CODE 経由で project_type からフォールバックされる。
+// - 'all'    : 全件（カテゴリ未解決でも表示）
+// - 'video'  : primary_category.code === 'video'
+// - 'design' : primary_category.code !== 'video' かつ 解決済み
 function filterProjectsByCap(projects, cap) {
   const list = projects || [];
-  if (cap === 'video')  return list.filter(p => p?.project_type === 'video');
-  if (cap === 'design') return list.filter(p => p?.project_type && p.project_type !== 'video');
-  return list;
+  if (cap === 'all') return list;
+  // カテゴリ code を解決：primary_category（API埋め込み）→ primary_category_id（キャッシュ参照）
+  // → project_type 経由のフォールバック（PROJECT_TYPE_TO_CATEGORY_CODE）の順
+  const resolveCode = (p) => {
+    const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(p) : null;
+    if (cat?.code) return cat.code;
+    return PROJECT_TYPE_TO_CATEGORY_CODE[p?.project_type] || null;
+  };
+  return list.filter(p => {
+    const code = resolveCode(p);
+    if (cap === 'video')  return code === 'video';
+    if (cap === 'design') return !!code && code !== 'video';
+    return true;
+  });
 }
 
 // ==================== クリエイティブ追加モーダル: チームドロップダウンの職種フィルタ ====================
@@ -6389,10 +6392,17 @@ function renderCreativeAddTeamDropdowns() {
 // 職種トグルのカウント・activeステートを再構築する。
 function renderCreativeAddProjectDropdowns() {
   const visible = dedupVisibleProjects(allProjects || []);
+  // primary_category code 駆動でカウント。未設定案件は getProjectCategory のフォールバックで分類される。
+  // 万一 _categoriesCache が空の場合は project_type から code を派生して保険にする。
+  const _resolveCode = (p) => {
+    const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(p) : null;
+    if (cat?.code) return cat.code;
+    return PROJECT_TYPE_TO_CATEGORY_CODE[p?.project_type] || null;
+  };
   const counts = {
-    video: visible.filter(p => p?.project_type === 'video').length,
-    // design タブには design + lp + hp + other を集計（getCreativeCapForProject と整合）
-    design: visible.filter(p => p?.project_type && p.project_type !== 'video').length,
+    video: visible.filter(p => _resolveCode(p) === 'video').length,
+    // design (=静止画) タブには video 以外（image / lp / hp / line / その他）を集計
+    design: visible.filter(p => { const c = _resolveCode(p); return !!c && c !== 'video'; }).length,
     all: visible.length,
   };
   // カウント更新
@@ -11674,8 +11684,8 @@ function openProjectModal(preClientId) {
 
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
-  document.getElementById('p-project-type').value = 'video';
   // カテゴリ select 初期化（マスタを fetch して populate。デフォルトは 'video' カテゴリ）
+  // 旧 project_type select は削除済み（カテゴリ code から submitProject 時に自動派生）
   loadCategories().then(() => {
     const sel = document.getElementById('p-primary-category');
     if (!sel) return;
@@ -11755,7 +11765,7 @@ function openEditProject(p) {
 
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
-  document.getElementById('p-project-type').value = getProjectType(p);
+  // 旧 project_type select は削除済み。category select に既存値（または旧 project_type からの推定）を反映するのみ。
   // カテゴリ select 初期化（マスタを fetch して populate。p.primary_category_id 優先 / 旧 project_type からの推定をフォールバック）
   loadCategories().then(() => {
     const sel = document.getElementById('p-primary-category');
@@ -13283,8 +13293,13 @@ async function submitProject() {
   const client_id = document.getElementById('p-client-id').value;
   const name = document.getElementById('p-name').value.trim();
   const status = document.getElementById('p-status').value;
-  const project_type = document.getElementById('p-project-type').value || 'video';
   const primary_category_id = (document.getElementById('p-primary-category')?.value || '') || null;
+  // 旧 project_type 列は UI 削除済み。選択中カテゴリの code から派生して送信（互換維持）。
+  // マッピング: video→'video' / image→'design' / lp→'lp' / hp→'hp' / line→'video' (フォールバック) / 不明→'video'
+  const _selectedCategory = primary_category_id ? getCategory(primary_category_id) : null;
+  const _categoryCode = _selectedCategory?.code || '';
+  const CATEGORY_CODE_TO_PROJECT_TYPE = { video: 'video', image: 'design', lp: 'lp', hp: 'hp', line: 'video' };
+  const project_type = CATEGORY_CODE_TO_PROJECT_TYPE[_categoryCode] || 'video';
   const tags = getCurrentTagsInputValues();
   const start_date = document.getElementById('p-start-date').value || null;
   const end_date = document.getElementById('p-end-date').value || null;
