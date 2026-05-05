@@ -1894,8 +1894,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div class="modal-title">💭 つぶやき投稿<button class="modal-close" onclick="closeModal('modal-tweet-compose')">×</button></div>
     <div class="form-group">
       <label class="form-label">写真 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
-      <div id="tw-image-preview" style="width:100%;aspect-ratio:1/1;max-height:280px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px" onclick="document.getElementById('tw-image-input').click()">
-        写真を選択またはタップで撮影（任意）
+      <div id="tw-image-preview" style="width:100%;aspect-ratio:1/1;max-height:280px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px;text-align:center;padding:8px;transition:border-color .15s,background-color .15s" onclick="document.getElementById('tw-image-input').click()" ondragover="onTweetImageDragOver(event)" ondragenter="onTweetImageDragOver(event)" ondragleave="onTweetImageDragLeave(event)" ondrop="onTweetImageDrop(event)">
+        写真を選択 / ドラッグ&ドロップ / タップで撮影（任意）
       </div>
       <input type="file" id="tw-image-input" accept="image/*" capture="environment" style="display:none" onchange="onTweetImageSelected(event)">
       <div id="tw-image-status" style="font-size:11px;color:var(--text-muted)"></div>
@@ -12805,12 +12805,14 @@ const TWEET_REACTIONS = [
 // deleteTweetComment() / addTweetReaction() / removeTweetReaction() / openTweetImage() /
 // likeTweet() / unlikeTweet() は削除した（独立タブ側の *Page / *FromCard 系を使う）。
 
+const TWEET_IMAGE_PLACEHOLDER = '写真を選択 / ドラッグ&ドロップ / タップで撮影（任意）';
+
 function openTweetCompose() {
   _twImageBlob = null;
   _twImageDataUrl = null;
   document.getElementById('tw-body').value = '';
   document.getElementById('tw-image-input').value = '';
-  document.getElementById('tw-image-preview').innerHTML = '写真を選択またはタップで撮影（任意）';
+  document.getElementById('tw-image-preview').innerHTML = TWEET_IMAGE_PLACEHOLDER;
   document.getElementById('tw-image-status').textContent = '';
   updateTweetCounter();
   openModal('modal-tweet-compose');
@@ -12825,8 +12827,7 @@ function updateTweetCounter() {
   }
 }
 
-async function onTweetImageSelected(e) {
-  const file = e.target.files && e.target.files[0];
+async function processTweetImageFile(file) {
   if (!file) return;
   const status = document.getElementById('tw-image-status');
   if (!file.type.startsWith('image/')) {
@@ -12866,6 +12867,47 @@ async function onTweetImageSelected(e) {
     showToast('画像の処理に失敗しました', 'error');
     status.textContent = '';
   }
+}
+
+async function onTweetImageSelected(e) {
+  const file = e.target.files && e.target.files[0];
+  await processTweetImageFile(file);
+}
+
+// D&D: dragover/dragenter は preventDefault しないと drop が発火しない
+function onTweetImageDragOver(e) {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  const el = document.getElementById('tw-image-preview');
+  if (el) {
+    el.style.borderColor = 'var(--em-dark)';
+    el.style.backgroundColor = 'rgba(0,0,0,0.03)';
+  }
+}
+
+function onTweetImageDragLeave(e) {
+  const el = document.getElementById('tw-image-preview');
+  if (!el) return;
+  // 子要素（<img>）に enter したときの leave は無視
+  if (e.relatedTarget && el.contains(e.relatedTarget)) return;
+  el.style.borderColor = '';
+  el.style.backgroundColor = '';
+}
+
+async function onTweetImageDrop(e) {
+  e.preventDefault();
+  const el = document.getElementById('tw-image-preview');
+  if (el) {
+    el.style.borderColor = '';
+    el.style.backgroundColor = '';
+  }
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  // ファイル選択 input の値もクリアして、以後の change イベントと整合させる
+  const input = document.getElementById('tw-image-input');
+  if (input) input.value = '';
+  await processTweetImageFile(file);
 }
 
 async function submitTweet() {
