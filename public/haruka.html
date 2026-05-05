@@ -22377,14 +22377,30 @@ function confirmUploadNo() {
 async function doDCheckTransition() {
   document.getElementById('cd-dcheck-confirm').style.display = 'none';
   // Dチェック担当者選択モーダル経由で実行する（複数選択対応）
+  // onSubmit は { directorUserIds, additionalReviewerIds } を受け取る（後方互換のため第1引数が配列のみのケースも吸収）
   openDCheckPicker({
-    onSubmit: async (directorUserIds) => {
+    onSubmit: async (firstArg, secondArg) => {
+      // 後方互換: 配列が直接渡された場合 → director_user_ids として扱う
+      let directorUserIds, additionalReviewerIds;
+      if (Array.isArray(firstArg)) {
+        directorUserIds = firstArg;
+        additionalReviewerIds = Array.isArray(secondArg) ? secondArg : [];
+      } else if (firstArg && typeof firstArg === 'object') {
+        directorUserIds = Array.isArray(firstArg.directorUserIds) ? firstArg.directorUserIds : [];
+        additionalReviewerIds = Array.isArray(firstArg.additionalReviewerIds) ? firstArg.additionalReviewerIds : [];
+      } else {
+        directorUserIds = [];
+        additionalReviewerIds = [];
+      }
       const statusEl = document.getElementById('cd-upload-status');
       const editorComment = document.getElementById('cd-comment-field').value.trim();
       const payload = { status: 'Dチェック' };
       if (editorComment) payload.director_comment = editorComment;
       // 配列で送る。サーバ側で creative_assignments role='director' に同期。
       payload.director_user_ids = Array.isArray(directorUserIds) ? directorUserIds : [];
+      // 追加レビュアー（任意・creatives.additional_reviewer_ids に保存）。
+      // 0人でも明示的に空配列を送って既存設定をクリア可能にする。
+      payload.additional_reviewer_ids = Array.isArray(additionalReviewerIds) ? additionalReviewerIds : [];
       const upd = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
         method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
       });
@@ -22671,6 +22687,65 @@ async function openDCheckPicker({ onSubmit } = {}) {
     checkedIds.add(mainDirectorId); // 念のため
   }
 
+  // ── 追加レビュアー候補（任意・PR #211 の意図を main 起点で再実装）
+  //   creatives.additional_reviewer_ids に格納する用途。
+  //   候補: 同じチーム内のアクティブメンバー
+  //     - チームの判定優先順: creative.team_id > project.team_id > currentUser.team_id
+  //   除外:
+  //     - 自分自身（currentUser）
+  //     - 既定チェック対象（メインD・サブD = projectDirectorOrdered）
+  //     - 既存 assignees（creative_assignments の editor / designer / director_as_editor / director）
+  //   状態は checkedIds と独立した extraReviewerIds で管理し、creative_assignments には INSERT しない。
+  const myUserId = (typeof currentUser !== 'undefined' && currentUser && currentUser.id) ? currentUser.id : null;
+  const myTeamId = (typeof currentUser !== 'undefined' && currentUser && currentUser.team_id) ? currentUser.team_id : null;
+  const reviewerTeamId = creativeTeamId || project.team_id || myTeamId || null;
+  const existingAssigneeIds = new Set();
+  (currentCreativeDetail.creative_assignments || []).forEach(a => {
+    const uid = a?.users?.id || a?.user_id;
+    if (uid) existingAssigneeIds.add(uid);
+  });
+  // 既定チェック対象（projectDirectorOrdered）も除外
+  projectDirectorOrdered.forEach(x => { if (x.id) existingAssigneeIds.add(x.id); });
+
+  let extraReviewerItems = [];
+  if (reviewerTeamId) {
+    // チームのメンバーIDを構築
+    const reviewerTeamMemberIds = new Set();
+    if (typeof allTeams !== 'undefined' && Array.isArray(allTeams)) {
+      const t = allTeams.find(t => t.id === reviewerTeamId);
+      if (t && Array.isArray(t.team_members)) {
+        t.team_members.forEach(tm => { if (tm && tm.user_id) reviewerTeamMemberIds.add(tm.user_id); });
+      }
+    }
+    // フォールバック: allMembers の team_id でも紐付け
+    if (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) {
+      allMembers.forEach(m => {
+        if (m && m.team_id === reviewerTeamId) reviewerTeamMemberIds.add(m.id);
+      });
+    }
+    extraReviewerItems = [...memberByIdActive.values()]
+      .filter(m => reviewerTeamMemberIds.has(m.id))
+      .filter(m => m.id !== myUserId)
+      .filter(m => !existingAssigneeIds.has(m.id))
+      .sort(dcpCompareUsers)
+      .map(m => ({
+        id: m.id,
+        name: m.full_name,
+        avatar_url: m.avatar_url || null,
+        sub: roleLabel(m.role),
+        role: m.role || '',
+      }));
+  }
+
+  // 追加レビュアー既存値（creatives.additional_reviewer_ids）があれば既定チェック
+  const existingExtraIds = Array.isArray(currentCreativeDetail.additional_reviewer_ids)
+    ? currentCreativeDetail.additional_reviewer_ids.filter(Boolean)
+    : [];
+  const extraReviewerIds = new Set();
+  // 候補に含まれる既存IDのみ反映（ノイズ排除）
+  const extraCandidateIdSet = new Set(extraReviewerItems.map(it => it.id));
+  existingExtraIds.forEach(id => { if (extraCandidateIdSet.has(id)) extraReviewerIds.add(id); });
+
   _dcpState = {
     leftSections,
     rightSections,
@@ -22678,6 +22753,9 @@ async function openDCheckPicker({ onSubmit } = {}) {
     checkedIds,
     lockedIds,
     onSubmit,
+    // 追加レビュアー（任意・creatives.additional_reviewer_ids 用 / 別state）
+    extraReviewerItems,
+    extraReviewerIds,
     // 「その他から選ぶ」は2カラム化に伴い常時展開（折りたたみ廃止）
     otherExpanded: true,
     otherSearch: '',
@@ -22737,6 +22815,20 @@ function renderDCheckPicker() {
       <input type="text" id="dcp-other-search" placeholder="🔍 名前で検索..." value="${esc(_dcpState.otherSearch || '')}"
              style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
       <div id="dcp-other-list"></div>`;
+  }
+
+  // ── 追加レビュアー（任意・creatives.additional_reviewer_ids）
+  // 既定ディレクター・既存assignees・自分を除外したチームメンバーから複数選択。
+  // checkedIds とは独立した extraReviewerIds に格納し、creative_assignments には影響しない。
+  const extraItems = Array.isArray(_dcpState.extraReviewerItems) ? _dcpState.extraReviewerItems : [];
+  if (extraItems.length) {
+    const extraCount = _dcpState.extraReviewerIds ? _dcpState.extraReviewerIds.size : 0;
+    rightHtml += `
+      <div style="font-size:11px;font-weight:700;color:#0f766e;letter-spacing:0.08em;margin:14px 0 4px;padding-left:2px">── 追加レビュアー（任意） ──</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;padding-left:2px;line-height:1.5">
+        同じチームのメンバーをDチェックに呼び出します（任意・0人でも可）${extraCount ? ` <span style=\"color:#0d9488;font-weight:600\">${extraCount}人選択中</span>` : ''}
+      </div>
+      <div id="dcp-extra-list">${extraItems.map(dcpRenderExtraItem).join('')}</div>`;
   }
 
   colRight.innerHTML = rightHtml ||
@@ -23007,6 +23099,55 @@ function dcpExpandOther() {
   setTimeout(() => { try { document.getElementById('dcp-other-search')?.focus(); } catch (_) {} }, 30);
 }
 
+// =============================================================
+// 追加レビュアー（任意・creatives.additional_reviewer_ids）
+// PR #211 の意図を main 起点で再実装。creative_assignments には INSERT しない。
+// =============================================================
+function dcpRenderExtraItem(it) {
+  if (!_dcpState) return '';
+  const isChecked = _dcpState.extraReviewerIds && _dcpState.extraReviewerIds.has(it.id);
+  const v = dcpVariantStyle('plain', isChecked, false);
+  const sub = it.sub
+    ? `<span style="font-size:11px;color:${v.subColor};margin-left:6px;background:${v.subBg};padding:1px 6px;border-radius:4px">${esc(it.sub)}</span>`
+    : '';
+  const baseStyle = `display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;${v.hint};margin-bottom:6px;background:${v.bg};color:${v.color};cursor:pointer`;
+  const avatarUserObj = { full_name: it.name || '', avatar_url: it.avatar_url || null };
+  const avatarMarkup = (typeof avatarHtml === 'function') ? avatarHtml(avatarUserObj, 28) : '';
+  return `
+    <label data-dcp-extra-row="${esc(it.id)}" style="${baseStyle}">
+      <input type="checkbox" value="${esc(it.id)}" ${isChecked ? 'checked' : ''} onchange="dcpToggleExtra('${esc(it.id)}')" style="margin:0;width:16px;height:16px;cursor:pointer;accent-color:#0d9488;flex-shrink:0">
+      ${avatarMarkup}
+      <span style="font-size:13px;font-weight:500;color:${v.color};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || '(名前なし)')}</span>
+      ${sub}
+    </label>`;
+}
+
+function dcpToggleExtra(id) {
+  if (!_dcpState || !_dcpState.extraReviewerIds) return;
+  if (_dcpState.extraReviewerIds.has(id)) _dcpState.extraReviewerIds.delete(id);
+  else _dcpState.extraReviewerIds.add(id);
+  // 該当行の background を更新（input の checked 状態はブラウザが維持）
+  const isChecked = _dcpState.extraReviewerIds.has(id);
+  const row = document.querySelector(`[data-dcp-extra-row="${CSS.escape(id)}"]`);
+  if (row) {
+    const v = dcpVariantStyle('plain', isChecked, false);
+    row.style.background = v.bg;
+  }
+  // ヘッダーの「N人選択中」表示は再計算で更新する（軽量パッチ）
+  dcpUpdateExtraHeaderCount();
+}
+
+function dcpUpdateExtraHeaderCount() {
+  if (!_dcpState) return;
+  // 「N人選択中」は説明文ノードに含まれる span を再構成する
+  const list = document.getElementById('dcp-extra-list');
+  if (!list) return;
+  const desc = list.previousElementSibling; // 説明 div
+  if (!desc) return;
+  const count = _dcpState.extraReviewerIds ? _dcpState.extraReviewerIds.size : 0;
+  desc.innerHTML = `同じチームのメンバーをDチェックに呼び出します（任意・0人でも可）${count ? ` <span style=\"color:#0d9488;font-weight:600\">${count}人選択中</span>` : ''}`;
+}
+
 function dcpSetRoleFilter(role) {
   if (!_dcpState) return;
   _dcpState.otherRoleFilter = role || '__all__';
@@ -23031,10 +23172,16 @@ async function submitDCheckPicker() {
     showToast('Dチェック担当を1人以上選んでください', 'warn');
     return;
   }
+  // 追加レビュアー（任意・creatives.additional_reviewer_ids）
+  const extraIds = _dcpState.extraReviewerIds ? [..._dcpState.extraReviewerIds] : [];
   const onSubmit = _dcpState.onSubmit;
   closeDCheckPicker();
   if (typeof onSubmit === 'function') {
-    try { await onSubmit(ids); } catch (e) {
+    try {
+      // 後方互換: 第1引数がオブジェクトのとき新形式、配列のとき旧形式（director_user_ids のみ）。
+      // 既存の呼び出し側はオブジェクト/配列の両方を受けられるよう doDCheckTransition 側で吸収済み。
+      await onSubmit({ directorUserIds: ids, additionalReviewerIds: extraIds }, extraIds);
+    } catch (e) {
       console.error('[dcp] submit error:', e);
       showToast('Dチェックへの遷移に失敗しました', 'error');
     }
