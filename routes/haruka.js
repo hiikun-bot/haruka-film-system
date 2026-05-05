@@ -7687,6 +7687,15 @@ router.post('/auto-error', express.json({ limit: '32kb' }), async (req, res) => 
     userAgent: body.userAgent ? String(body.userAgent).slice(0, 300) : null,
     statusCode: body.statusCode || null,
     apiPath: body.apiPath ? String(body.apiPath).slice(0, 300) : null,
+    // 原因特定用の追加情報（PR: エラー原因特定の構造改革）
+    filename: body.filename ? String(body.filename).slice(0, 500) : null,
+    lineno: body.lineno ?? null,
+    colno: body.colno ?? null,
+    trace: body.trace && typeof body.trace === 'object' ? body.trace : null,
+    // breadcrumbs はフロントから配列で送られてくる。最大 8 件 × 各 ~200B 程度。
+    breadcrumbs: Array.isArray(body.breadcrumbs) ? body.breadcrumbs.slice(0, 16) : null,
+    clientBuild: body.clientBuild ? String(body.clientBuild).slice(0, 80) : null,
+    serverBuild: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || process.env.COMMIT_SHA || null,
     userEmail,
   });
   if (result?.skipped) return res.json({ ok: true, skipped: result.skipped });
