@@ -299,8 +299,28 @@ async function normalizeSubDirectorIds(rawIds, { clientId, directorId } = {}) {
 // 案件一覧取得
 // has_rates / has_estimates は「単価設定済み」「見積作成済み」の判定フラグ。
 // UI 側で「単価」「見積」ボタンに設定済みかどうかを示すために返す。
+//
+// クエリパラメータ（任意）:
+//   - types: 'video,lp,hp' のようなカンマ区切り。複数 OR 絞り込み。
+//            project_type が NULL のレコードは除外される。
+//   - tags : '急ぎ,季節モノ' のようなカンマ区切り。複数 AND 絞り込み
+//            （指定したタグを「全部」持つ案件のみ）。
+//
+// レスポンスには各案件の tags: string[] を含める（N+1 回避のため一括取得）。
 router.get('/projects', async (req, res) => {
-  const { data, error } = await supabase
+  // --- クエリ正規化 ---
+  const ALLOWED_TYPES = new Set(['video','design','lp','hp','other']);
+  const typesParam = (req.query.types || '').toString().trim();
+  const tagsParam  = (req.query.tags  || '').toString().trim();
+  const wantedTypes = typesParam
+    ? typesParam.split(',').map(s => s.trim()).filter(s => ALLOWED_TYPES.has(s))
+    : [];
+  const wantedTags = tagsParam
+    ? Array.from(new Set(tagsParam.split(',').map(s => s.trim()).filter(Boolean)))
+    : [];
+
+  // --- 案件本体 ---
+  let query = supabase
     .from('projects')
     .select(`
       *,
@@ -309,22 +329,79 @@ router.get('/projects', async (req, res) => {
       director:users!projects_director_id_fkey(id, full_name)
     `)
     .order('created_at', { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
+  if (wantedTypes.length) query = query.in('project_type', wantedTypes);
 
-  // 単価／見積の設定有無を一括取得（DISTINCT project_id をクライアント側でセット化）
-  const [ratesRes, estRes] = await Promise.all([
-    supabase.from('project_rates').select('project_id'),
-    supabase.from('project_estimates').select('project_id'),
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  let projects = data || [];
+
+  // --- タグ AND 絞り込み（指定があれば project_id を絞ってからリスト適用）---
+  // project_tags は (project_id, tag) PK なので、tag IN (...) を引いて
+  // 「全タグを保持する project_id」を JS 側で集計する（タグ数 ≦ 数十程度を想定）。
+  if (wantedTags.length && projects.length) {
+    const { data: tagRows, error: tagErr } = await supabase
+      .from('project_tags')
+      .select('project_id, tag')
+      .in('tag', wantedTags);
+    if (tagErr) return res.status(500).json({ error: tagErr.message });
+    const countMap = new Map(); // project_id -> Set<tag>
+    for (const r of (tagRows || [])) {
+      let s = countMap.get(r.project_id);
+      if (!s) { s = new Set(); countMap.set(r.project_id, s); }
+      s.add(r.tag);
+    }
+    const okSet = new Set();
+    for (const [pid, s] of countMap) {
+      if (wantedTags.every(t => s.has(t))) okSet.add(pid);
+    }
+    projects = projects.filter(p => okSet.has(p.id));
+  }
+
+  if (!projects.length) return res.json([]);
+
+  // --- 単価・見積・全タグを一括取得（N+1 回避）---
+  const projectIds = projects.map(p => p.id);
+  const [ratesRes, estRes, allTagsRes] = await Promise.all([
+    supabase.from('project_rates').select('project_id').in('project_id', projectIds),
+    supabase.from('project_estimates').select('project_id').in('project_id', projectIds),
+    supabase.from('project_tags').select('project_id, tag').in('project_id', projectIds),
   ]);
   const ratesSet = new Set((ratesRes.data || []).map(r => r.project_id));
   const estSet   = new Set((estRes.data   || []).map(r => r.project_id));
+  const tagsMap = new Map(); // project_id -> string[]
+  for (const r of (allTagsRes.data || [])) {
+    let arr = tagsMap.get(r.project_id);
+    if (!arr) { arr = []; tagsMap.set(r.project_id, arr); }
+    arr.push(r.tag);
+  }
+  // タグはアルファベット順で安定化（UI 安定 / chip 並びの一貫性）
+  for (const arr of tagsMap.values()) arr.sort((a,b) => a.localeCompare(b));
 
-  const enriched = (data || []).map(p => ({
+  const enriched = projects.map(p => ({
     ...p,
     has_rates: ratesSet.has(p.id),
     has_estimates: estSet.has(p.id),
+    tags: tagsMap.get(p.id) || [],
   }));
   res.json(enriched);
+});
+
+// 案件タグの候補（既存タグ distinct）。オートコンプリート用。
+// 上位 50 件まで返す。使用回数の多い順。
+router.get('/projects/tag-suggestions', async (req, res) => {
+  const { data, error } = await supabase
+    .from('project_tags')
+    .select('tag');
+  if (error) return res.status(500).json({ error: error.message });
+  const counts = new Map();
+  for (const r of (data || [])) {
+    counts.set(r.tag, (counts.get(r.tag) || 0) + 1);
+  }
+  const list = Array.from(counts.entries())
+    .sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 50)
+    .map(([tag, count]) => ({ tag, count }));
+  res.json(list);
 });
 
 // 案件詳細取得
@@ -345,6 +422,54 @@ router.get('/projects/:id', async (req, res) => {
   res.json(data);
 });
 
+// project_type を新カテゴリ ('video'|'design'|'lp'|'hp'|'other') に正規化。
+// 不正値は 'video' にフォールバック（既存 default 維持）。
+const ALLOWED_PROJECT_TYPES = new Set(['video','design','lp','hp','other']);
+function normalizeProjectType(v) {
+  return ALLOWED_PROJECT_TYPES.has(v) ? v : 'video';
+}
+
+// タグ配列を正規化: 文字列化 → trim → 空除去 → 重複除去 → 長さ上限 32
+function normalizeTags(input) {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue;
+    const t = raw.trim().slice(0, 32);
+    if (!t) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+// 案件のタグを差分適用（delete-all → bulk insert のシンプル方式）。
+// project_tags テーブル未デプロイ時は silent skip（schema-sync 失敗の保険）。
+async function replaceProjectTags(projectId, tags) {
+  if (!projectId) return { error: null };
+  const list = Array.isArray(tags) ? tags : [];
+  // delete 全件
+  const delRes = await supabase.from('project_tags').delete().eq('project_id', projectId);
+  if (delRes.error) {
+    if (/project_tags/i.test(delRes.error.message || '') && /does not exist|relation/i.test(delRes.error.message || '')) {
+      return { error: null }; // 本番未適用時のフォールバック
+    }
+    return { error: delRes.error };
+  }
+  if (!list.length) return { error: null };
+  const rows = list.map(tag => ({ project_id: projectId, tag }));
+  const insRes = await supabase.from('project_tags').insert(rows);
+  if (insRes.error) {
+    if (/project_tags/i.test(insRes.error.message || '') && /does not exist|relation/i.test(insRes.error.message || '')) {
+      return { error: null };
+    }
+    return { error: insRes.error };
+  }
+  return { error: null };
+}
+
 // 案件作成
 router.post('/projects', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const {
@@ -354,10 +479,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     slack_channel_url,
     deadline_unit, deadline_weekday,
     project_type,
-    sub_director_ids
+    sub_director_ids,
+    tags
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
-  const normalizedProjectType = (project_type === 'design') ? 'design' : 'video';
+  const normalizedProjectType = normalizeProjectType(project_type);
+  const normalizedTags = normalizeTags(tags);
   // サブディレクター: 形式チェック + ユーザー存在/有効チェック（チーム制約は撤廃）
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
     clientId: client_id,
@@ -393,7 +520,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     data = retry.data; error = retry.error;
   }
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
+  if (data?.id) {
+    const tagRes = await replaceProjectTags(data.id, normalizedTags);
+    if (tagRes.error) return res.status(500).json({ error: tagRes.error.message });
+  }
+  res.json({ ...(data || {}), tags: normalizedTags });
 });
 
 // 案件更新
@@ -406,7 +538,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday,
     project_type,
-    sub_director_ids
+    sub_director_ids,
+    tags
   } = req.body;
   const updateData = {
     name, status,
@@ -427,7 +560,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
   if (project_type !== undefined) {
-    updateData.project_type = (project_type === 'design') ? 'design' : 'video';
+    updateData.project_type = normalizeProjectType(project_type);
   }
   // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
   // フィールドが渡ってきた時のみ正規化して反映する。
@@ -458,7 +591,16 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     data = retry.data; error = retry.error;
   }
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // タグ更新は tags が明示的に渡されたときのみ実行（部分更新で巻き込み消失しないよう）
+  let resolvedTags;
+  if (tags !== undefined) {
+    const normalizedTags = normalizeTags(tags);
+    const tagRes = await replaceProjectTags(req.params.id, normalizedTags);
+    if (tagRes.error) return res.status(500).json({ error: tagRes.error.message });
+    resolvedTags = normalizedTags;
+  }
+  res.json(resolvedTags !== undefined ? { ...(data || {}), tags: resolvedTags } : data);
 });
 
 // 案件削除（admin/secretary/producer/PD のみ）

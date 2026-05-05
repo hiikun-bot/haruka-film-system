@@ -465,6 +465,41 @@ tr.row-help td{background:#FFFBF2}
 }
 .badge-project-type.badge-video{background:#fff1e6;color:#d45a1a}
 .badge-project-type.badge-design{background:#f0eaff;color:#6b46c1}
+.badge-project-type.badge-lp{background:#e6f1ff;color:#1d4ed8}
+.badge-project-type.badge-hp{background:#e3f7ec;color:#0a7a3b}
+.badge-project-type.badge-other{background:#eee;color:#555}
+
+/* 案件タグ chip（小） */
+.tag-chip{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:1px 7px;border-radius:10px;
+  font-size:11px;font-weight:500;line-height:1.5;
+  background:#F0F2F6;color:#3a4256;white-space:nowrap;
+}
+.tag-chip-more{
+  display:inline-flex;align-items:center;
+  padding:1px 6px;border-radius:10px;
+  font-size:10px;font-weight:600;
+  background:#E1E5EE;color:#5a627a;
+}
+/* 案件絞り込みフィルタチップ（クリック可能） */
+.proj-filter-chip{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:4px 10px;border-radius:14px;
+  font-size:12px;font-weight:600;cursor:pointer;
+  background:#F4F5F8;color:#5a627a;
+  border:1px solid transparent;
+  transition:all .15s;
+  user-select:none;
+}
+.proj-filter-chip:hover{background:#E8EBF0}
+.proj-filter-chip.is-active{
+  background:var(--em);color:#fff;border-color:var(--em);
+}
+.proj-filter-chip .pf-count{
+  font-size:10px;opacity:.85;font-weight:500;
+}
+.proj-filter-chip.is-active .pf-count{opacity:.95}
 
 /* クリエイティブ追加モーダル: 案件ドロップダウンの職種フィルタトグル */
 .cap-toggle{
@@ -2714,6 +2749,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button id="btn-add-client" class="btn-primary" onclick="openNewClientModal()">＋ クライアント追加</button>
       </div>
     </div>
+    <!-- カテゴリ・タグ絞り込み -->
+    <div id="proj-filters" style="margin-bottom:14px;padding:12px 14px;background:var(--em-pale, #f6f0ff);border-radius:10px;display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:.08em">CATEGORY</span>
+        <div id="proj-filter-types" style="display:flex;flex-wrap:wrap;gap:6px;flex:1"></div>
+        <button class="btn-sm" type="button" onclick="clearProjectFilters()" style="font-size:11px">クリア</button>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">
+        <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:.08em;padding-top:4px">TAGS</span>
+        <div id="proj-filter-tags" style="display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0">
+          <span style="font-size:12px;color:var(--text-muted)">タグなし</span>
+        </div>
+      </div>
+    </div>
     <div id="projects-list" class="loading">読み込み中...</div>
   </div>
 </div>
@@ -4154,12 +4203,26 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <select class="form-select" id="p-project-type" required>
                 <option value="video">動画編集</option>
                 <option value="design">デザイン</option>
+                <option value="lp">LP制作</option>
+                <option value="hp">HP制作</option>
+                <option value="other">その他</option>
               </select>
             </div>
           </div>
-          <div class="form-group" style="margin-bottom:0">
+          <div class="form-group" style="margin-bottom:10px">
             <label class="form-label">案件名 <span style="color:#E24B4A">*</span></label>
             <input class="form-input" id="p-name" placeholder="例：ARU公式 SNS動画制作">
+          </div>
+          <!-- タグ（任意・補助カテゴリ） -->
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
+              <span style="display:flex;align-items:center;gap:6px">タグ
+                <span style="color:var(--text-muted);font-weight:400;font-size:11px">（カンマ区切り・任意）</span>
+              </span>
+            </label>
+            <input class="form-input" id="p-tags-input" list="p-tags-suggestions" placeholder="例：急ぎ, 季節モノ, ABテスト" oninput="renderProjectTagsPreview()">
+            <datalist id="p-tags-suggestions"></datalist>
+            <div id="p-tags-preview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"></div>
           </div>
         </div>
 
@@ -6172,13 +6235,15 @@ function pickInitialProjectFilterTab(user) {
 }
 
 // 現在のフィルタに従って案件配列を絞り込む。
+// クリエイティブ側のキャパは 'video' / 'design' の 2 値しかないため、
+// LP/HP/other は 'design' タブに統合表示する（getCreativeCapForProject の方針と整合）。
 // - 'all'    : 全件（project_type が NULL でも表示）
-// - 'video'  : project_type === 'video' のみ（NULL は除外）
-// - 'design' : project_type === 'design' のみ（NULL は除外）
+// - 'video'  : video のみ（NULL は除外）
+// - 'design' : design / lp / hp / other（NULL は除外）
 function filterProjectsByCap(projects, cap) {
   const list = projects || [];
-  if (cap === 'video') return list.filter(p => p?.project_type === 'video');
-  if (cap === 'design') return list.filter(p => p?.project_type === 'design');
+  if (cap === 'video')  return list.filter(p => p?.project_type === 'video');
+  if (cap === 'design') return list.filter(p => p?.project_type && p.project_type !== 'video');
   return list;
 }
 
@@ -6235,7 +6300,8 @@ function renderCreativeAddProjectDropdowns() {
   const visible = dedupVisibleProjects(allProjects || []);
   const counts = {
     video: visible.filter(p => p?.project_type === 'video').length,
-    design: visible.filter(p => p?.project_type === 'design').length,
+    // design タブには design + lp + hp + other を集計（getCreativeCapForProject と整合）
+    design: visible.filter(p => p?.project_type && p.project_type !== 'video').length,
     all: visible.length,
   };
   // カウント更新
@@ -6350,8 +6416,27 @@ async function loadProjects() {
     return;
   }
 
-  list.innerHTML = visibleClients.map(client => {
-    const allClientProjects = allProjects.filter(p => p.client_id === client.id);
+  // カテゴリ・タグの絞り込みチップ表示を更新（カウントは未フィルタの allProjects 全体に対して計算）
+  if (typeof renderProjectFilterChips === 'function') renderProjectFilterChips();
+  // 絞り込みを適用した案件配列（client グルーピング前に間引き）
+  const filteredProjects = (typeof applyProjectFilters === 'function')
+    ? applyProjectFilters(allProjects)
+    : allProjects;
+  // フィルタが有効なときは「該当案件を持たないクライアント」を非表示
+  const isFilterActive = (projFilterState.types.size + projFilterState.tags.size) > 0;
+  const renderClients = isFilterActive
+    ? visibleClients.filter(c => filteredProjects.some(p => p.client_id === c.id))
+    : visibleClients;
+  if (isFilterActive && !renderClients.length) {
+    list.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:14px">
+      条件に一致する案件がありません<br>
+      <button class="btn-sm" style="margin-top:10px" onclick="clearProjectFilters()">フィルタをクリア</button>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = renderClients.map(client => {
+    const allClientProjects = filteredProjects.filter(p => p.client_id === client.id);
     const clientProjects = showCompleted
       ? allClientProjects
       : allClientProjects.filter(p => p.status !== '完了' && !p.is_hidden);
@@ -6381,12 +6466,13 @@ async function loadProjects() {
           const cwIcon = p.chatwork_room_id ? `<span title="Chatwork: ${p.chatwork_room_id}" style="font-size:11px;background:#E8F5E9;color:#2E7D32;padding:2px 7px;border-radius:5px;font-weight:500">CW</span>` : '';
           const slIcon = p.slack_channel_url ? `<span title="Slack: ${p.slack_channel_url}" style="font-size:11px;background:#EDE7F6;color:#4527A0;padding:2px 7px;border-radius:5px;font-weight:500">SL</span>` : '';
           const typeBadge = getProjectTypeBadge(p);
+          const tagChips = renderProjectTagsInline(p.tags);
           return `
           <div class="project-row">
             <div style="flex:1;min-width:0">
               <div style="font-size:14px;font-weight:500;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 ${p.name}
-                ${typeBadge}${cwIcon}${slIcon}
+                ${typeBadge}${cwIcon}${slIcon}${tagChips}
               </div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap">
                 ${pd ? `<span>${pd}</span>` : ''}
@@ -9375,8 +9461,12 @@ function checkProjectTeamMismatch(projectId, teamId) {
   const tt = team.team_type;
   if (!pt || !tt) return null;             // どちらか未設定なら判定保留
   if (tt === 'secretary') return null;     // 秘書はバイパス
-  if (pt === tt) return null;              // 一致 → OK
-  const PT_LABEL = { video: '動画', design: 'デザイン' };
+  // LP/HP/other 案件はデザインキャパとして扱うため design チームと一致なら OK
+  const projCap = (typeof getCreativeCapForProject === 'function')
+    ? getCreativeCapForProject(project)
+    : (pt === 'video' ? 'video' : 'design');
+  if (projCap === tt) return null;         // キャパ一致 → OK
+  const PT_LABEL = { video: '動画', design: 'デザイン', lp: 'LP', hp: 'HP', other: 'その他' };
   const TT_LABEL = { video: '動画', design: 'デザイン', secretary: '秘書' };
   return {
     projectName: project.name || '（無題）',
@@ -10247,24 +10337,189 @@ function effectiveRole() {
   return previewRole ?? currentUser?.role ?? 'editor';
 }
 
-// 案件種別を取得（'video' | 'design'）。未定義/不正値は 'video' にフォールバック。
+// 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
+// 未定義/不正値は 'video' にフォールバック。
 // 古いキャッシュや project_type 列が無い古いレコードへの保険として使う。
+const PROJECT_TYPE_VALUES = ['video','design','lp','hp','other'];
 function getProjectType(project) {
   const t = project?.project_type;
-  return (t === 'design') ? 'design' : 'video';
+  return PROJECT_TYPE_VALUES.includes(t) ? t : 'video';
 }
 
+// クリエイティブのキャパ区分（'video' | 'design'）に正規化。
+// LP/HP/other は当面 design 寄り扱い（クリエイティブ追加時の初期タブ等のフォールバックに使用）。
+// 既存の 'video'/'design' レコードは挙動が変わらない（恒等変換）。
+function getCreativeCapForProject(project) {
+  const t = getProjectType(project);
+  if (t === 'video') return 'video';
+  return 'design';
+}
+
+// 各カテゴリの表示メタ情報。color / label / icon を一元管理。
+// クリエイティブの cap 区分（video/design）には影響しない（フロント表示専用）。
+const PROJECT_TYPE_META = {
+  video:  { label: '動画',     icon: '🎬', cls: 'badge-video',  title: '動画案件' },
+  design: { label: 'デザイン', icon: '🎨', cls: 'badge-design', title: 'デザイン案件' },
+  lp:     { label: 'LP',       icon: '📄', cls: 'badge-lp',     title: 'LP制作案件' },
+  hp:     { label: 'HP',       icon: '🌐', cls: 'badge-hp',     title: 'HP制作案件' },
+  other:  { label: 'その他',   icon: '📦', cls: 'badge-other',  title: 'その他案件' },
+};
+
 // 案件種別バッジHTMLを返す。project_type が未設定でも getProjectType() のフォールバックで
-// 必ず 'video' / 'design' のいずれかになるため、バッジは常時表示される。
-// migration 未適用で project_type 列が PostgREST から返らない環境でも 'video' バッジが出る。
+// 必ず有効値になるため、バッジは常時表示される。
 function getProjectTypeBadge(projectOrType) {
   const type = (typeof projectOrType === 'string')
-    ? ((projectOrType === 'design') ? 'design' : 'video')
+    ? (PROJECT_TYPE_VALUES.includes(projectOrType) ? projectOrType : 'video')
     : getProjectType(projectOrType);
-  if (type === 'design') {
-    return `<span class="badge-project-type badge-design" title="デザイン案件">🎨 デザイン</span>`;
+  const m = PROJECT_TYPE_META[type] || PROJECT_TYPE_META.video;
+  return `<span class="badge-project-type ${m.cls}" title="${m.title}">${m.icon} ${m.label}</span>`;
+}
+
+// ==================== 案件カテゴリ・タグフィルタ ====================
+// projects-list 上部のチップフィルタ。types は OR、tags は AND で絞り込み。
+// 状態は loadProjects() の表示時に直接 allProjects から JS フィルタする
+// （現状件数規模では十分高速。サーバー側 ?types=&tags= もバックエンドに用意済み）。
+const projFilterState = {
+  types: new Set(), // 主カテゴリ（'video'|'design'|'lp'|'hp'|'other'）
+  tags:  new Set(), // タグ（AND）
+};
+
+function clearProjectFilters() {
+  projFilterState.types.clear();
+  projFilterState.tags.clear();
+  renderProjectFilterChips();
+  if (typeof loadProjects === 'function') loadProjects();
+}
+
+// カテゴリ chip と タグ chip を再描画（カウント・activeステート反映）
+function renderProjectFilterChips() {
+  const projects = Array.isArray(allProjects) ? allProjects : [];
+  // ---- カテゴリ ----
+  const typeBox = document.getElementById('proj-filter-types');
+  if (typeBox) {
+    const counts = {};
+    PROJECT_TYPE_VALUES.forEach(t => { counts[t] = 0; });
+    projects.forEach(p => {
+      const t = p?.project_type;
+      if (t && counts[t] !== undefined) counts[t]++;
+    });
+    typeBox.innerHTML = PROJECT_TYPE_VALUES.map(t => {
+      const meta = PROJECT_TYPE_META[t];
+      const active = projFilterState.types.has(t) ? 'is-active' : '';
+      return `<span class="proj-filter-chip ${active}" onclick="toggleProjectTypeFilter('${t}')">
+        ${meta.icon} ${meta.label}<span class="pf-count">${counts[t] || 0}</span>
+      </span>`;
+    }).join('');
   }
-  return `<span class="badge-project-type badge-video" title="動画案件">🎬 動画</span>`;
+  // ---- タグ ----
+  const tagBox = document.getElementById('proj-filter-tags');
+  if (tagBox) {
+    const tagCount = new Map();
+    projects.forEach(p => {
+      const tags = Array.isArray(p?.tags) ? p.tags : [];
+      tags.forEach(t => tagCount.set(t, (tagCount.get(t) || 0) + 1));
+    });
+    if (!tagCount.size) {
+      tagBox.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">使用中のタグはまだありません</span>';
+    } else {
+      const sorted = Array.from(tagCount.entries()).sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      tagBox.innerHTML = sorted.map(([tag, n]) => {
+        const active = projFilterState.tags.has(tag) ? 'is-active' : '';
+        const safeAttr = tag.replace(/'/g, "\\'");
+        const safeText = esc(tag);
+        return `<span class="proj-filter-chip ${active}" onclick="toggleProjectTagFilter('${safeAttr}')">
+          🏷 ${safeText}<span class="pf-count">${n}</span>
+        </span>`;
+      }).join('');
+    }
+  }
+}
+
+function toggleProjectTypeFilter(type) {
+  if (!PROJECT_TYPE_VALUES.includes(type)) return;
+  if (projFilterState.types.has(type)) projFilterState.types.delete(type);
+  else projFilterState.types.add(type);
+  renderProjectFilterChips();
+  if (typeof loadProjects === 'function') loadProjects();
+}
+
+function toggleProjectTagFilter(tag) {
+  if (!tag) return;
+  if (projFilterState.tags.has(tag)) projFilterState.tags.delete(tag);
+  else projFilterState.tags.add(tag);
+  renderProjectFilterChips();
+  if (typeof loadProjects === 'function') loadProjects();
+}
+
+// allProjects に対してフィルタを適用（types: OR / tags: AND）
+function applyProjectFilters(list) {
+  let out = Array.isArray(list) ? list : [];
+  if (projFilterState.types.size) {
+    out = out.filter(p => p?.project_type && projFilterState.types.has(p.project_type));
+  }
+  if (projFilterState.tags.size) {
+    const wanted = Array.from(projFilterState.tags);
+    out = out.filter(p => {
+      const have = new Set(Array.isArray(p?.tags) ? p.tags : []);
+      return wanted.every(t => have.has(t));
+    });
+  }
+  return out;
+}
+
+// 案件カードに表示する小さいタグ chip（最大 3 個 + +N バッジ）
+function renderProjectTagsInline(tags) {
+  const list = Array.isArray(tags) ? tags : [];
+  if (!list.length) return '';
+  const max = 3;
+  const head = list.slice(0, max).map(t => `<span class="tag-chip">🏷 ${esc(t)}</span>`).join('');
+  const more = list.length > max ? `<span class="tag-chip-more" title="${esc(list.slice(max).join(', '))}">+${list.length - max}</span>` : '';
+  return head + more;
+}
+
+// ==================== タグ入力（モーダル）====================
+// カンマ区切り入力 → 配列化。空白除去・重複除去・長さ 32 まで。
+function parseTagsInput(raw) {
+  if (typeof raw !== 'string') return [];
+  const seen = new Set();
+  const out = [];
+  raw.split(',').map(s => s.trim()).forEach(s => {
+    if (!s) return;
+    const t = s.slice(0, 32);
+    if (seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  });
+  return out;
+}
+
+function getCurrentTagsInputValues() {
+  const el = document.getElementById('p-tags-input');
+  return parseTagsInput(el ? el.value : '');
+}
+
+function renderProjectTagsPreview() {
+  const tags = getCurrentTagsInputValues();
+  const box = document.getElementById('p-tags-preview');
+  if (!box) return;
+  box.innerHTML = tags.map(t => `<span class="tag-chip">🏷 ${esc(t)}</span>`).join('');
+}
+
+// 既存タグ補完を datalist に流し込む（アプリ起動後 1 度取得すれば十分。失敗は silent）
+let _projectTagSuggestions = null;
+async function loadProjectTagSuggestions(force = false) {
+  if (_projectTagSuggestions && !force) return _projectTagSuggestions;
+  try {
+    const res = await apiFetch(`${API}/projects/tag-suggestions`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    _projectTagSuggestions = Array.isArray(data) ? data.map(r => r.tag) : [];
+    const dl = document.getElementById('p-tags-suggestions');
+    if (dl) dl.innerHTML = _projectTagSuggestions.map(t => `<option value="${esc(t)}"></option>`).join('');
+    return _projectTagSuggestions;
+  } catch (_e) {
+    return [];
+  }
 }
 
 // ==================== メンバー Google スプレッドシート連携 ====================
@@ -11045,6 +11300,11 @@ function openProjectModal(preClientId) {
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
   document.getElementById('p-project-type').value = 'video';
+  // タグ入力初期化
+  const pTagInputNew = document.getElementById('p-tags-input');
+  if (pTagInputNew) pTagInputNew.value = '';
+  renderProjectTagsPreview();
+  loadProjectTagSuggestions();
   document.getElementById('p-start-date').value = '';
   document.getElementById('p-end-date').value = '';
   document.getElementById('p-sheet-url').value = '';
@@ -11104,6 +11364,11 @@ function openEditProject(p) {
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
   document.getElementById('p-project-type').value = getProjectType(p);
+  // タグ初期値
+  const pTagInputEdit = document.getElementById('p-tags-input');
+  if (pTagInputEdit) pTagInputEdit.value = Array.isArray(p.tags) ? p.tags.join(', ') : '';
+  renderProjectTagsPreview();
+  loadProjectTagSuggestions();
   document.getElementById('p-start-date').value = p.start_date ? p.start_date.slice(0,10) : '';
   document.getElementById('p-end-date').value = p.end_date ? p.end_date.slice(0,10) : '';
   document.getElementById('p-producer-id').value = p.producer_id || '';
@@ -11852,7 +12117,9 @@ async function populateEstimateItemNameDatalist() {
   let category = null;
   try {
     const proj = _pfData?.project;
-    if (proj && proj.project_type) category = getProjectType(proj);
+    // 品目マスターの category は 'video'|'design' 二値のみ。
+    // LP/HP/other は design 寄り扱いに丸める。
+    if (proj && proj.project_type) category = getCreativeCapForProject(proj);
   } catch (_) { /* fallback to all */ }
   const items = await getItemNameMasterForEstimate(category);
   // カテゴリ未指定で全件の場合は重複名を 1 つにまとめる（datalist は単純な候補リスト）
@@ -11905,7 +12172,8 @@ async function openItemMasterPicker() {
   let initialTab = 'video';
   try {
     const proj = _pfData?.project;
-    if (proj && proj.project_type) initialTab = getProjectType(proj);
+    // 品目マスターのタブは 'video'|'design' 二値。LP/HP/other は design 扱い。
+    if (proj && proj.project_type) initialTab = getCreativeCapForProject(proj);
   } catch (_) {}
   _itemMasterPickerState.tab = initialTab;
 
@@ -12125,7 +12393,8 @@ async function onEstimateItemNameChange(idx, value) {
   let category = null;
   try {
     const proj = _pfData?.project;
-    if (proj && proj.project_type) category = getProjectType(proj);
+    // 品目マスターは video/design 二値のみ。LP/HP/other は design 扱い。
+    if (proj && proj.project_type) category = getCreativeCapForProject(proj);
   } catch (_) {}
   const items = await getItemNameMasterForEstimate(category);
   const match = (items || []).find(it => it && it.name === value.trim());
@@ -12601,6 +12870,7 @@ async function submitProject() {
   const name = document.getElementById('p-name').value.trim();
   const status = document.getElementById('p-status').value;
   const project_type = document.getElementById('p-project-type').value || 'video';
+  const tags = getCurrentTagsInputValues();
   const start_date = document.getElementById('p-start-date').value || null;
   const end_date = document.getElementById('p-end-date').value || null;
   const producer_id = document.getElementById('p-producer-id').value || null;
@@ -12633,7 +12903,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [] })
+    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], tags })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -15548,9 +15818,14 @@ async function onProjectChange(projectId) {
         .filter(Boolean);
       const projType = proj?.project_type;
       // 1) project_type と一致する team_type を最優先 / 2) 秘書チーム / 3) なし（未選択）
+      // チームの team_type は 'video'|'design'|'secretary' の 3 値しかないため、
+      // LP/HP/other は design キャパに丸めて team を探す。
       let chosen = null;
       if (projType) {
-        chosen = linkedTeams.find(t => t.team_type === projType)
+        const cap = (typeof getCreativeCapForProject === 'function')
+          ? getCreativeCapForProject(proj)
+          : (projType === 'video' ? 'video' : 'design');
+        chosen = linkedTeams.find(t => t.team_type === cap)
               || linkedTeams.find(t => t.team_type === 'secretary')
               || null;
       } else {
