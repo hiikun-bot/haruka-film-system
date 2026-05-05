@@ -3422,7 +3422,10 @@ router.get('/members', requireAuth, async (req, res) => {
   const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
   // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
   const baseColsLegacy  = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
-  const sensitiveCols = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
+  // invoice_registration_number は invoices-worker のmigration適用前は存在しないため
+  // 末尾に置いて、未適用環境向けの追加フォールバックで削除できるようにしておく
+  const sensitiveColsLegacy = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
+  const sensitiveCols = sensitiveColsLegacy + ', invoice_registration_number';
   // PostgreSQL 直の "column ... does not exist" と PostgREST の schema cache エラー (PGRST204) の両方を拾う
   const isMissingCol = (err) => {
     if (!err) return false;
@@ -3434,22 +3437,32 @@ router.get('/members', requireAuth, async (req, res) => {
     let { data, error } = await supabase.from('users')
       .select(baseColsWith + sensitiveCols).eq('id', req.user.id).maybeSingle();
     if (isMissingCol(error)) {
+      console.warn('[members] invoice_registration_number等の最新列なし → fallback で再取得:', error.message);
+      ({ data, error } = await supabase.from('users')
+        .select(baseColsWith + sensitiveColsLegacy).eq('id', req.user.id).maybeSingle());
+    }
+    if (isMissingCol(error)) {
       console.warn('[members] hide_birth_year列なし → fallback で再取得:', error.message);
       ({ data, error } = await supabase.from('users')
-        .select(baseColsWithout + sensitiveCols).eq('id', req.user.id).maybeSingle());
+        .select(baseColsWithout + sensitiveColsLegacy).eq('id', req.user.id).maybeSingle());
     }
     if (isMissingCol(error)) {
       console.warn('[members] holiday_weekdays/camera等の追加列なし → legacy fallback:', error.message);
       ({ data, error } = await supabase.from('users')
-        .select(baseColsLegacy + sensitiveCols).eq('id', req.user.id).maybeSingle());
+        .select(baseColsLegacy + sensitiveColsLegacy).eq('id', req.user.id).maybeSingle());
     }
     if (error) return res.status(500).json({ error: error.message });
     return res.json(data ? [data] : []);
   }
   const colsWith = canSeeSensitive ? baseColsWith + sensitiveCols : baseColsWith;
-  const colsWithout = canSeeSensitive ? baseColsWithout + sensitiveCols : baseColsWithout;
-  const colsLegacy = canSeeSensitive ? baseColsLegacy + sensitiveCols : baseColsLegacy;
+  const colsWithFallback = canSeeSensitive ? baseColsWith + sensitiveColsLegacy : baseColsWith;
+  const colsWithout = canSeeSensitive ? baseColsWithout + sensitiveColsLegacy : baseColsWithout;
+  const colsLegacy = canSeeSensitive ? baseColsLegacy + sensitiveColsLegacy : baseColsLegacy;
   let { data, error } = await supabase.from('users').select(colsWith).order('full_name');
+  if (isMissingCol(error)) {
+    console.warn('[members] invoice_registration_number等の最新列なし → fallback で再取得:', error.message);
+    ({ data, error } = await supabase.from('users').select(colsWithFallback).order('full_name'));
+  }
   if (isMissingCol(error)) {
     console.warn('[members] hide_birth_year列なし → fallback で再取得:', error.message);
     ({ data, error } = await supabase.from('users').select(colsWithout).order('full_name'));
@@ -3461,9 +3474,14 @@ router.get('/members', requireAuth, async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   // 自分自身のレコードには機微情報を必ず含める
   if (!canSeeSensitive && Array.isArray(data)) {
-    const { data: self } = await supabase.from('users')
-      .select('id, birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address')
+    const selfBaseCols = 'id, birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
+    let { data: self } = await supabase.from('users')
+      .select(selfBaseCols + ', invoice_registration_number')
       .eq('id', req.user.id).maybeSingle();
+    if (!self) {
+      // 列未適用環境フォールバック
+      ({ data: self } = await supabase.from('users').select(selfBaseCols).eq('id', req.user.id).maybeSingle());
+    }
     if (self) {
       const idx = data.findIndex(m => m.id === self.id);
       if (idx >= 0) Object.assign(data[idx], self);
@@ -3809,6 +3827,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     birthday, hide_birth_year, weekday_hours, weekend_hours, note,
     bank_name, bank_code, branch_name, branch_code,
     account_type, account_number, account_holder_kana,
+    invoice_registration_number,
     phone, postal_code, address,
     // feedback batch 002: カメラ機材 / 休日曜日
     camera_model, tripod_info, lighting_info, holiday_weekdays,
@@ -3868,6 +3887,14 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updateData.account_type = account_type || null;
     updateData.account_number = account_number || null;
     updateData.account_holder_kana = account_holder_kana || null;
+    // インボイス登録番号: 空欄 OR /^T\d{13}$/ のみ許可（クライアント側でも検証済みだがサーバーでも防御）
+    if (invoice_registration_number !== undefined) {
+      const irn = (invoice_registration_number || '').trim();
+      if (irn && !/^T\d{13}$/.test(irn)) {
+        return res.status(400).json({ error: '適格請求書発行事業者登録番号は「T」+ 数字13桁で入力してください' });
+      }
+      updateData.invoice_registration_number = irn || null;
+    }
     updateData.phone = phone || null;
     updateData.postal_code = postal_code || null;
     updateData.address = address || null;
@@ -3919,7 +3946,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
        'creative_default_include_ended','creative_default_include_delivered','creative_default_delayed_only','creative_default_sos_only',
        'creative_default_statuses','creative_default_ball_types',
        'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
-       'account_holder_kana','phone','postal_code','address','nickname','note','birthday']
+       'account_holder_kana','invoice_registration_number','phone','postal_code','address','nickname','note','birthday']
         .forEach(k => { if (k in attempt) delete attempt[k]; });
     }
     ({ data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single());
