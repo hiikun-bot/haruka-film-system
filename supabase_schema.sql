@@ -361,11 +361,15 @@ CREATE TABLE IF NOT EXISTS creative_file_comments (
   timecode TEXT,
   is_knowledge BOOLEAN DEFAULT false,
   category_id UUID REFERENCES master_items(id) ON DELETE SET NULL,
+  bbox JSONB,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
+CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
+  ON creative_file_comments ((bbox IS NOT NULL))
+  WHERE bbox IS NOT NULL;
 
 -- ==================== creative_file_likes ====================
 -- タイムコード別いいね（routes/haruka.js の /creative-files/:id/likes 系で使用）
