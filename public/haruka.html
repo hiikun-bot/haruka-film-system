@@ -76,8 +76,22 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .card{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:14px}
 .sec-label{font-size:12px;font-weight:500;color:var(--em-dark);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px}
 
-/* ツールバー */
-.toolbar{background:var(--white);border-bottom:0.5px solid var(--border);padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:sticky;top:60px;z-index:99}
+/* ツールバー
+   - sticky でヘッダー直下に固定（既存挙動）
+   - z-index は body 直下のドロップダウン系より低く、ヘッダー (.hfs-header z-index:100) より低く保つ
+   - overflow は設定しない: 中の cm-pop / 詳細フィルター内ポップが画面外にはみ出して描画できるようにするため */
+.toolbar{background:var(--white);border-bottom:0.5px solid var(--border);padding:12px 20px;display:flex;flex-direction:column;gap:10px;position:sticky;top:60px;z-index:99;box-shadow:0 1px 0 rgba(43,184,180,0.08)}
+
+/* 案件画面（#page-projects）のヘッダー行を sticky 化 — クリエイティブ画面のtoolbarと同じ挙動 */
+@media (min-width:769px){
+  #page-projects > div > div:first-child{
+    position:sticky;top:60px;z-index:99;
+    background:var(--em-bg);
+    margin:-20px -20px 20px;padding:20px;
+    border-bottom:0.5px solid var(--border);
+    box-shadow:0 1px 0 rgba(43,184,180,0.08);
+  }
+}
 .toolbar-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .filter-tabs{display:flex;gap:4px}
 .ft{font-size:13px;padding:6px 16px;border-radius:8px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap}
@@ -358,8 +372,10 @@ tr.row-help td{background:#FFFBF2}
 .cv-adv-btn .cv-adv-icon{font-size:13px;line-height:1}
 .cv-adv-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:16px;padding:0 5px;font-size:10px;font-weight:700;background:var(--em);color:#fff;border-radius:8px}
 
-/* 詳細フィルターパネル（grid化で文字潰れを防ぐ） */
-.cv-adv-panel{margin-top:8px;padding:12px 14px 10px;background:#f8fdfc;border:0.5px solid var(--em-light);border-radius:10px;display:flex;flex-direction:column;gap:10px}
+/* 詳細フィルターパネル（grid化で文字潰れを防ぐ）
+   - 詳細フィルター展開時に toolbar が画面いっぱいに伸びてヘッダー sticky が破綻するのを防ぐため、
+     パネル単体に縦の上限を設けて内側スクロールにフォールバック */
+.cv-adv-panel{margin-top:8px;padding:12px 14px 10px;background:#f8fdfc;border:0.5px solid var(--em-light);border-radius:10px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 200px);overflow-y:auto}
 .cv-adv-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .cv-adv-row-toggles{gap:18px}
 .cv-adv-row-status{align-items:flex-start}
