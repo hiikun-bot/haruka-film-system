@@ -1552,6 +1552,27 @@ CREATE INDEX IF NOT EXISTS idx_project_deletion_logs_deleted_at
   ON project_deletion_logs(deleted_at DESC);
 
 -- ============================================================
+-- クリエイティブ事後修正監査ログ
+-- 詳細: migrations/2026-05-05_creative_edit_logs.sql
+-- 役割: 案件取り違え等で後から付け替えた場合の「誰が・いつ・何を・どう変えたか・なぜ」を記録
+-- ============================================================
+CREATE TABLE IF NOT EXISTS creative_edit_logs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id     UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  edited_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+  edited_by_name  TEXT,
+  edited_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  field_name      TEXT NOT NULL,
+  old_value       TEXT,
+  new_value       TEXT,
+  reason          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_creative_edit_logs_creative
+  ON creative_edit_logs(creative_id, edited_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creative_edit_logs_edited_at
+  ON creative_edit_logs(edited_at DESC);
+
+-- ============================================================
 -- 通知機能 Phase 1 段階1 — 通知基盤
 -- 詳細: migrations/2026-05-03_notification_phase1.sql
 -- 役割: notification_logs / notification_settings / posts / post_reactions / post_comments

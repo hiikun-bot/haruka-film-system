@@ -2445,6 +2445,271 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   res.json(data);
 });
 
+// ============================================================
+// 事後修正モード（クリエイティブ追加時の取り違え救済）
+// ============================================================
+// 背景: クリエイティブ追加時に案件を取り違えて登録するケース（同名クライアントの動画/デザイン案件混同等）
+//       がある。後から正しい案件・属性に付け替え、変更履歴を creative_edit_logs に残す。
+//
+// 編集可能項目:
+//   - project_id（最重要・案件取り違え救済の主目的）
+//   - cycle_id（project_id 変更時は必ずクリアし、フロント側で再選択）
+//   - product_id, appeal_type_id（project_id に紐づくため、案件変更時は再選択必須）
+//   - creative_type, file_name, memo, note
+//
+// 権限:
+//   - admin / secretary は無条件で可
+//   - producer / producer_director / director は「自分が当該クリエイティブの旧 project の director_id / producer_id /
+//     creative_assignments(role='director' or 'producer') のいずれかに該当」する場合のみ可
+//   - editor / designer は不可（自分担当でも不可）
+//
+// 整合性ガード:
+//   - status='納品' / force_delivered=true / 紐づく invoice_items の親 invoices.status != 'draft' → project_id 変更を禁止
+//     （その他項目は変更可）
+//
+// reason は project_id を変更するときのみ必須。それ以外は任意。
+//
+// すべての変更は creative_edit_logs にフィールドごと1行ずつ INSERT する。
+//
+// ============================================================
+
+// 「事後修正モード」での編集可否を判定するヘルパー（権限 + ガード）
+async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
+  // 1. 対象クリエイティブを取得
+  const { data: c, error: cErr } = await supabase
+    .from('creatives')
+    .select('id, project_id, status, force_delivered, projects:project_id(director_id, producer_id)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (cErr) return { ok: false, status: 500, error: cErr.message };
+  if (!c) return { ok: false, status: 404, error: 'クリエイティブが見つかりません' };
+
+  // 2. 権限判定
+  const ALLOW_ANY = ['admin', 'secretary'];
+  const ALLOW_OWN = ['producer', 'producer_director', 'director'];
+  let canEdit = false;
+  let canChangeProject = true;
+  let projectChangeBlockedReason = null;
+
+  if (ALLOW_ANY.includes(userRole)) {
+    canEdit = true;
+  } else if (ALLOW_OWN.includes(userRole)) {
+    // 旧 project の director / producer 本人 OR creative_assignments(role='director'|'producer') 本人
+    const isProjectLeader =
+      (c.projects?.director_id && c.projects.director_id === userId) ||
+      (c.projects?.producer_id && c.projects.producer_id === userId);
+    let isAssigned = false;
+    if (!isProjectLeader) {
+      const { data: asn } = await supabase
+        .from('creative_assignments')
+        .select('id')
+        .eq('creative_id', creativeId)
+        .eq('user_id', userId)
+        .in('role', ['director', 'producer'])
+        .limit(1);
+      isAssigned = (asn && asn.length > 0);
+    }
+    canEdit = isProjectLeader || isAssigned;
+  }
+
+  if (!canEdit) {
+    return { ok: false, status: 403, error: '事後修正モードを使用する権限がありません（admin / secretary / 担当プロデューサー / 担当ディレクター のみ操作可能）' };
+  }
+
+  // 3. 案件変更ガード: 納品済み / force_delivered / 確定済み請求書に紐付く
+  const DELIVERED_STATUSES = ['納品', '完納', '納品済'];
+  if (DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true) {
+    canChangeProject = false;
+    projectChangeBlockedReason = '納品済みのため案件を変更できません（その他項目は変更可）';
+  }
+  if (canChangeProject) {
+    const { data: linked } = await supabase
+      .from('invoice_items')
+      .select('id, invoice:invoices(status)')
+      .eq('creative_id', creativeId);
+    const hasFinalized = (linked || []).some(it => it.invoice && it.invoice.status && it.invoice.status !== 'draft');
+    if (hasFinalized) {
+      canChangeProject = false;
+      projectChangeBlockedReason = '請求書が発行・確定済みのため案件を変更できません（その他項目は変更可）';
+    }
+  }
+
+  return { ok: true, creative: c, canChangeProject, projectChangeBlockedReason };
+}
+
+// GET /api/creatives/:id/edit-eligibility
+// フロント: 「編集」ボタン表示制御 + 案件変更可否のグレーアウトに使用
+router.get('/creatives/:id/edit-eligibility', requireAuth, async (req, res) => {
+  const role = getEffectiveRole(req);
+  const result = await evaluateCreativeEditEligibility(req.params.id, req.user?.id, role);
+  if (!result.ok) {
+    // 403/404/500 はそのまま返す。フロントは「編集」ボタン非表示とする。
+    return res.status(result.status).json({ error: result.error, can_edit: false });
+  }
+  res.json({
+    can_edit: true,
+    can_change_project: result.canChangeProject,
+    project_change_blocked_reason: result.projectChangeBlockedReason,
+  });
+});
+
+// PUT /api/creatives/:id/edit-mode
+// 事後修正モード本体。通常の PUT /creatives/:id とは独立した経路で、変更ごとに監査ログを残す。
+router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
+  const creativeId = req.params.id;
+  const role = getEffectiveRole(req);
+  const eligibility = await evaluateCreativeEditEligibility(creativeId, req.user?.id, role);
+  if (!eligibility.ok) {
+    return res.status(eligibility.status).json({ error: eligibility.error });
+  }
+
+  // 受付項目（ホワイトリスト）— 通常 PUT との混線を避けるため明示的に絞る
+  const ALLOWED = ['project_id', 'creative_type', 'file_name', 'product_id', 'appeal_type_id', 'memo', 'note'];
+  const reason = (req.body?.reason ?? '').toString().trim() || null;
+  const incoming = {};
+  for (const k of ALLOWED) {
+    if (k in (req.body || {})) {
+      let v = req.body[k];
+      if (typeof v === 'string') v = v.trim();
+      if (v === '') v = null;
+      incoming[k] = v;
+    }
+  }
+  if (Object.keys(incoming).length === 0) {
+    return res.status(400).json({ error: '変更項目がありません' });
+  }
+
+  // 旧クリエイティブをフルロードして差分計算 + 表示用スナップショット作成
+  const { data: before, error: beforeErr } = await supabase
+    .from('creatives')
+    .select('id, project_id, creative_type, file_name, product_id, appeal_type_id, memo, note, projects:project_id(id, name)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (beforeErr) return res.status(500).json({ error: beforeErr.message });
+  if (!before) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+  // project_id 変更: ガード + 整合性: cycle_id / product_id / appeal_type_id をクリアまたはフロントで再指定
+  const projectChanged = ('project_id' in incoming) && incoming.project_id !== before.project_id;
+  if (projectChanged) {
+    if (!eligibility.canChangeProject) {
+      return res.status(400).json({ error: eligibility.projectChangeBlockedReason || '案件を変更できません' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: '案件変更時は「変更理由」が必須です' });
+    }
+    if (!incoming.project_id) {
+      return res.status(400).json({ error: '案件は必須です' });
+    }
+    // 移動先案件が実在するか確認
+    const { data: dst } = await supabase.from('projects').select('id, name').eq('id', incoming.project_id).maybeSingle();
+    if (!dst) return res.status(400).json({ error: '指定された案件が見つかりません' });
+
+    // 案件変更時は cycle_id をリセット（旧案件の月次サイクルは別案件に持ち越せない）
+    incoming.cycle_id = null;
+    // product_id / appeal_type_id がフロントから明示送信されていなければ null にリセット（整合性）
+    if (!('product_id' in incoming)) incoming.product_id = null;
+    if (!('appeal_type_id' in incoming)) incoming.appeal_type_id = null;
+  }
+
+  // 表示用スナップショットを作るために旧 product / appeal の名称を取得
+  // 商材は client_products / project_products どちらかに格納されている（sync_products フラグ依存）→ 両方を試行
+  // 訴求軸も同様に client_appeal_axes / project_appeal_axes
+  async function lookupProductName(id) {
+    if (!id) return null;
+    let r = await supabase.from('client_products').select('name').eq('id', id).maybeSingle();
+    if (r.data?.name) return r.data.name;
+    r = await supabase.from('project_products').select('name').eq('id', id).maybeSingle();
+    return r.data?.name || null;
+  }
+  async function lookupAppealName(id) {
+    if (!id) return null;
+    let r = await supabase.from('client_appeal_axes').select('name').eq('id', id).maybeSingle();
+    if (r.data?.name) return r.data.name;
+    r = await supabase.from('project_appeal_axes').select('name').eq('id', id).maybeSingle();
+    return r.data?.name || null;
+  }
+
+  const oldProductName = await lookupProductName(before.product_id);
+  const oldAppealName = await lookupAppealName(before.appeal_type_id);
+  const newProjectName = projectChanged
+    ? (await supabase.from('projects').select('name').eq('id', incoming.project_id).maybeSingle()).data?.name || null
+    : (before.projects?.name || null);
+  const newProductName = ('product_id' in incoming) ? await lookupProductName(incoming.product_id) : null;
+  const newAppealName = ('appeal_type_id' in incoming) ? await lookupAppealName(incoming.appeal_type_id) : null;
+
+  // 差分検出 + ログ行作成
+  const editorName = req.user?.full_name || req.user?.nickname || req.user?.email || null;
+  const logRows = [];
+  const fieldDisplay = {
+    project_id: { old: before.projects?.name || null, new: newProjectName },
+    product_id: { old: oldProductName, new: newProductName },
+    appeal_type_id: { old: oldAppealName, new: newAppealName },
+  };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (k === 'cycle_id') continue; // 表示しない（project_id 変更に付随する内部リセット）
+    const oldRaw = before[k] ?? null;
+    const newRaw = v ?? null;
+    if (oldRaw === newRaw) continue;
+    const disp = fieldDisplay[k];
+    logRows.push({
+      creative_id: creativeId,
+      edited_by: req.user?.id || null,
+      edited_by_name: editorName,
+      field_name: k,
+      old_value: disp ? (disp.old ?? (oldRaw ? String(oldRaw) : null)) : (oldRaw == null ? null : String(oldRaw)),
+      new_value: disp ? (disp.new ?? (newRaw ? String(newRaw) : null)) : (newRaw == null ? null : String(newRaw)),
+      reason: reason,
+    });
+  }
+  if (logRows.length === 0) {
+    return res.status(400).json({ error: '実際の変更がありません' });
+  }
+
+  // 案件変更時、旧案件の director / producer 担当が新案件で不整合になる可能性があるが、
+  // 担当者は creative_assignments で明示管理されているため自動クリアはしない（既存担当をそのまま維持）。
+  // 必要なら詳細モーダルから別途 D/P チェッカーで再指定できる。
+
+  // 監査ログを先に INSERT（更新失敗時にログだけ残るのは許容: 後から状況を追える）
+  const { error: logErr } = await supabase.from('creative_edit_logs').insert(logRows);
+  if (logErr) {
+    return res.status(500).json({ error: '監査ログ記録に失敗しました: ' + logErr.message });
+  }
+
+  // 本体 UPDATE（cycle_id 含む）
+  const updatePayload = { ...incoming, updated_at: new Date().toISOString() };
+  const { data: updated, error: updErr } = await supabase
+    .from('creatives')
+    .update(updatePayload)
+    .eq('id', creativeId)
+    .select()
+    .single();
+  if (updErr) return res.status(500).json({ error: updErr.message });
+
+  // ボール保持者キャッシュは project 変更でも担当が変わらない限り影響しないが、念のため同期
+  if (projectChanged) {
+    syncBallHolderId(creativeId).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+  }
+
+  res.json({ ok: true, creative: updated, log_count: logRows.length });
+});
+
+// GET /api/creatives/:id/edit-logs
+// 事後修正モードの編集履歴を取得（クリエイティブ詳細画面の下部に表示）
+router.get('/creatives/:id/edit-logs', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_edit_logs')
+    .select('id, creative_id, edited_by, edited_by_name, edited_at, field_name, old_value, new_value, reason, editor:edited_by(id, full_name, nickname, avatar_url)')
+    .eq('creative_id', req.params.id)
+    .order('edited_at', { ascending: false })
+    .limit(200);
+  if (error) {
+    // 列・テーブル未適用環境では空配列を返す（schema-cache 反映待ち等で UI を壊さない）
+    console.warn('[creative_edit_logs] fetch failed:', error.message);
+    return res.json([]);
+  }
+  res.json(data || []);
+});
+
 // 単発再共有エンドポイント
 //   POST /creatives/:id/share-client-review            -> 既存値を尊重
 //   POST /creatives/:id/share-client-review?force=true -> 既存値を上書き
