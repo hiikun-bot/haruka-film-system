@@ -19,6 +19,36 @@
 
 ## 開発の進め方ルール（必ず守ること）
 
+### ⭐ 設計判断は docs/design/ に集約（必要時だけ読む）
+スレッドごとに設計判断がバラつく問題を防ぐため、ドメイン設計の議論・判断は [docs/design/](docs/design/) を単一の正としている。
+
+**読むべきタイミング（それ以外は読まない）**
+- スキーマ変更・新テーブル・新概念を扱うとき
+- 「どこに列を足すか」「どのテーブルが正か」迷ったとき
+- 設計の方針を聞かれたとき・複数案で迷ったとき
+
+**読まなくて良いケース**: バグ修正、UI微調整、文言変更、既存機能の軽い拡張
+
+**ADR インデックス（pinpoint で該当ファイルだけ読む）**
+| 触る領域・キーワード | 読むファイル |
+|---|---|
+| 商品 / 訴求軸 / appeal_axes / products / ファイル名生成 | [decisions/001](docs/design/decisions/001-creative-first-product-appeal.md) |
+| 見積明細 / 単価 / rates / 粗利 / deliverable / project_*_rates | [decisions/002](docs/design/decisions/002-estimate-lines-unify-deliverable-rates.md) |
+| ロール / users.role / 権限 / roles マスタ | [decisions/003](docs/design/decisions/003-roles-as-master-data.md) |
+| 通貨 / 課金タイプ / 時間単価 / %歩合 | [decisions/004](docs/design/decisions/004-pricing-extensibility.md) |
+| 見積ステータス / 契約状態 / 却下 / 進行管理 | [decisions/005](docs/design/decisions/005-estimate-deliverable-lifecycle.md) |
+| 案件固定費 / スタジオ / 機材 / 経費 / project_client_fees | [decisions/006](docs/design/decisions/006-project-fixed-costs.md) |
+| 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
+| ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
+| 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
+| ADR Status遷移 / migration 連携 / レビュー期限 | [lifecycle.md](docs/design/lifecycle.md) |
+| ADR の書き方・運用ルール | [README.md](docs/design/README.md) |
+
+**運用**
+- 設計議論をしたら `docs/design/` に追記。memory・CLAUDE.md には書かない
+- 矛盾を見つけたら実装を止めてユーザーに報告
+- 新規判断は `decisions/NNN-<topic>.md` を ADR 形式（Status / Context / Decision / Consequences / Alternatives）で作成
+
 ### 原則
 - ユーザーから開発依頼が来たら、**機能単位に分解してサブエージェントに並行で振る**
 - 各エージェントは対応する worktree フォルダで作業させる
