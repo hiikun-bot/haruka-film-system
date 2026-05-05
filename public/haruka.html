@@ -3734,6 +3734,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- 請求情報（インボイス制度対応） -->
+        <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA">
+          <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">🧾 請求情報</div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">
+              適格請求書発行事業者登録番号
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">T + 13桁の数字（例：T1234567890123）</span>
+            </label>
+            <input class="form-input" id="cl-invoice-registration-number" type="text"
+              placeholder="T1234567890123" maxlength="14" pattern="^T\d{13}$"
+              style="font-family:ui-monospace,Menlo,monospace;font-size:14px;letter-spacing:0.05em;width:100%;box-sizing:border-box">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">空欄可。インボイス制度対応の請求書で参照されます。</div>
+          </div>
+        </div>
+
         <!-- 通知連携 (Slack / Chatwork) -->
         <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--em-pale)">
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">📢 進捗通知の連携先（任意）</div>
@@ -6554,6 +6569,8 @@ function openEditClient(id) {
   document.getElementById('cl-other').value     = c.other_url     || '';
   document.getElementById('cl-slack-channel-url').value = c.slack_channel_url || '';
   document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
+  const invRegEl = document.getElementById('cl-invoice-registration-number');
+  if (invRegEl) invRegEl.value = c.invoice_registration_number || '';
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
   // 削除ボタンの表示制御: admin / secretary のみ。それ以外は完全に非表示。
@@ -6576,7 +6593,7 @@ function openNewClientModal() {
   document.getElementById('cl-persona').value = '';
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
-  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id']
+  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id','cl-invoice-registration-number']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
@@ -6597,6 +6614,14 @@ async function submitClient() {
   const status = document.getElementById('cl-status').value;
   if (!name) { showToast('クライアント名は必須です', 'warn'); return; }
   if (!client_code) { showToast('略称（英3文字）は必須です', 'warn'); return; }
+
+  // 適格請求書発行事業者登録番号: 空欄 OR 「T + 13桁数字」
+  const invoiceRegRaw = (document.getElementById('cl-invoice-registration-number')?.value || '').trim();
+  if (invoiceRegRaw && !/^T\d{13}$/.test(invoiceRegRaw)) {
+    showToast('登録番号は「T + 13桁の数字」の形式で入力してください（例：T1234567890123）', 'warn');
+    return;
+  }
+  const invoice_registration_number = invoiceRegRaw || null;
 
   const btn = document.getElementById('cl-submit-btn');
   const origText = btn.textContent;
@@ -6619,6 +6644,7 @@ async function submitClient() {
       other_url:     linkVal('cl-other'),
       slack_channel_url: linkVal('cl-slack-channel-url'),
       chatwork_room_id:  linkVal('cl-chatwork-room-id'),
+      invoice_registration_number,
       team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });

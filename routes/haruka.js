@@ -152,12 +152,19 @@ async function syncClientTeams(clientId, teamIds) {
 
 // クライアント作成
 router.post('/clients', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
-  const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id } = req.body;
+  const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id, invoice_registration_number } = req.body;
   if (!name) return res.status(400).json({ error: 'クライアント名は必須です' });
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const insertData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', persona: persona || null };
   if (slack_channel_url !== undefined) insertData.slack_channel_url = slack_channel_url || null;
   if (chatwork_room_id !== undefined) insertData.chatwork_room_id = chatwork_room_id || null;
+  if (invoice_registration_number !== undefined) {
+    const v = (invoice_registration_number || '').toString().trim();
+    if (v && !/^T\d{13}$/.test(v)) {
+      return res.status(400).json({ error: '登録番号は「T + 13桁の数字」の形式で入力してください' });
+    }
+    insertData.invoice_registration_number = v || null;
+  }
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) insertData[f] = req.body[f] || null; });
   const { data, error } = await supabase
     .from('clients')
@@ -173,11 +180,18 @@ router.post('/clients', requireAuth, requirePermission('project.create_edit'), a
 
 // クライアント更新
 router.put('/clients/:id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
-  const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id } = req.body;
+  const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id, invoice_registration_number } = req.body;
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
   const updateData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', persona: persona || null, updated_at: new Date().toISOString() };
   if (slack_channel_url !== undefined) updateData.slack_channel_url = slack_channel_url || null;
   if (chatwork_room_id !== undefined) updateData.chatwork_room_id = chatwork_room_id || null;
+  if (invoice_registration_number !== undefined) {
+    const v = (invoice_registration_number || '').toString().trim();
+    if (v && !/^T\d{13}$/.test(v)) {
+      return res.status(400).json({ error: '登録番号は「T + 13桁の数字」の形式で入力してください' });
+    }
+    updateData.invoice_registration_number = v || null;
+  }
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) updateData[f] = req.body[f] || null; });
   const { data, error } = await supabase
     .from('clients')
