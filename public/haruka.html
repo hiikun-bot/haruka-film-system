@@ -4756,6 +4756,86 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- クリエイティブ事後修正モード（取り違え救済） -->
+<!--
+  用途: クリエイティブ追加時に案件を取り違えて登録したケースの救済。
+        admin / secretary / 担当プロデューサー / 担当ディレクター のみ表示・操作可能。
+  ガード: 納品済み or 確定請求書に紐付くクリエイティブは「案件変更」のみグレーアウト。
+  監査: 変更ごとに creative_edit_logs に1行ずつ INSERT（サーバー側）。
+        案件変更時は「変更理由」が必須。
+-->
+<div class="modal-overlay" id="modal-creative-postedit" style="z-index:10001">
+  <div class="modal" style="width:760px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--text)">事後修正モード</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">案件取り違え等を後から修正します。すべての変更は履歴に残ります。</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-creative-postedit')">×</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+      <div style="font-size:12px;font-family:monospace;color:var(--em-dark);font-weight:600;word-break:break-all" id="pe-filename"></div>
+
+      <!-- 案件変更ガード理由（納品済/請求確定）-->
+      <div id="pe-project-blocked-banner" style="display:none;background:#fef3c7;border:1px solid #f0b429;color:#8a6500;border-radius:8px;padding:10px 14px;font-size:12.5px"></div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">紐づく案件 <span style="color:#d97706;font-weight:700">＊最重要</span></label>
+        <select class="form-select" id="pe-project-id" onchange="peOnProjectChange()"></select>
+        <div id="pe-project-changed-warn" style="display:none;margin-top:6px;font-size:12px;color:#d97706">案件を変更しました。商材・訴求軸を再選択してください（旧案件のものは新案件に持ち越せません）。</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">クリエイティブ種別</label>
+          <select class="form-select" id="pe-creative-type">
+            <option value="video_short">ショート動画</option>
+            <option value="video_long">ロング動画</option>
+            <option value="design_thumbnail">サムネイル</option>
+            <option value="design_banner">バナー</option>
+            <option value="design_post">投稿画像</option>
+            <option value="design_story">ストーリーズ</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">ファイル名（タイトル）</label>
+          <input class="form-input" type="text" id="pe-file-name">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">商材</label>
+          <select class="form-select" id="pe-product-id"><option value="">（未設定）</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">訴求軸</label>
+          <select class="form-select" id="pe-appeal-type"><option value="">（未設定）</option></select>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">メモ（管理用 / note）</label>
+        <textarea class="form-input" id="pe-note" rows="2" style="resize:vertical"></textarea>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">メモ（チーム共有 / memo）</label>
+        <textarea class="form-input" id="pe-memo" rows="2" style="resize:vertical"></textarea>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">変更理由 <span id="pe-reason-required" style="display:none;color:#dc2626;font-weight:700">＊案件変更時は必須</span></label>
+        <textarea class="form-input" id="pe-reason" rows="2" style="resize:vertical" placeholder="例: 同名クライアントの動画案件と取り違えて登録していたため正しい案件に変更"></textarea>
+      </div>
+    </div>
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
+      <button class="btn" onclick="closeModal('modal-creative-postedit')">キャンセル</button>
+      <button class="btn-primary" onclick="saveCreativePostEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- クリエイティブ詳細モーダル -->
 <div class="modal-overlay" id="modal-creative-detail">
   <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
@@ -4775,7 +4855,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       <!-- 基本情報バナー -->
       <div style="background:var(--em-pale);border-radius:10px;padding:12px 16px;margin-bottom:18px">
-        <div style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;margin-bottom:6px;word-break:break-all" id="cd-filename"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;margin-bottom:6px;word-break:break-all;flex:1" id="cd-filename"></div>
+          <!-- 事後修正モード起動ボタン（権限ありのみ表示） -->
+          <button id="cd-postedit-btn"
+                  onclick="openCreativePostEdit()"
+                  style="display:none;flex-shrink:0;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11.5px;color:var(--text-muted);cursor:pointer;white-space:nowrap"
+                  title="案件の取り違え等を後から修正します">
+            ✎ 事後修正
+          </button>
+        </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
           <span id="cd-status-chip"></span>
           <span style="color:var(--text-muted)" id="cd-project-name"></span>
@@ -4959,6 +5048,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div id="cd-files-section" style="display:none;margin-bottom:16px">
         <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">アップロード済みファイル</div>
         <div id="cd-files-list"></div>
+      </div>
+
+      <!-- 編集履歴（事後修正モードでの変更ログ）-->
+      <!-- creative_edit_logs を時系列で表示。空のときは非表示。 -->
+      <div id="cd-edit-history-section" style="display:none;margin-top:24px;padding-top:18px;border-top:1px dashed var(--border)">
+        <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">編集履歴（事後修正モード）</div>
+        <div id="cd-edit-history-list" style="display:flex;flex-direction:column;gap:8px"></div>
       </div>
 
     </div>
@@ -18443,6 +18539,10 @@ async function openCreativeDetail(id) {
   // アップロード済みファイル
   await loadCreativeFiles(id);
 
+  // 事後修正モード: ボタン表示制御 + 編集履歴ロード（並列・失敗しても無視）
+  refreshCreativePostEditButton(id).catch(() => {});
+  refreshCreativeEditHistory(id).catch(() => {});
+
   openModal('modal-creative-detail');
 }
 
@@ -22791,6 +22891,260 @@ async function saveCreativeEdit() {
   } else {
     const e = await res.json();
     showToast('保存エラー: ' + translateError(e?.error), 'error');
+  }
+}
+
+// =====================================================================
+// 事後修正モード（postedit）— 案件取り違え救済
+// =====================================================================
+// 機能:
+//   - 「事後修正」ボタン: 詳細モーダル右上に表示。
+//     表示条件: GET /api/creatives/:id/edit-eligibility が can_edit=true を返したときのみ。
+//   - モーダル本体（modal-creative-postedit）:
+//       project_id / creative_type / file_name / product_id / appeal_type_id / note / memo / reason
+//   - 案件変更時: 商材・訴求軸を新案件のもので再選択させる。reason 必須。
+//   - サーバーが creative_edit_logs に1行ずつ INSERT。
+//   - 詳細モーダル下部「編集履歴」に時系列表示。
+// =====================================================================
+
+// 詳細モーダル内で「事後修正」ボタンの可視性を更新
+async function refreshCreativePostEditButton(creativeId) {
+  const btn = document.getElementById('cd-postedit-btn');
+  if (!btn) return;
+  btn.style.display = 'none';
+  if (!creativeId) return;
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/edit-eligibility`);
+    if (!res.ok) return;
+    const j = await res.json();
+    if (j?.can_edit) {
+      btn.style.display = '';
+      btn.dataset.canChangeProject = j.can_change_project ? '1' : '0';
+      btn.dataset.projectBlockedReason = j.project_change_blocked_reason || '';
+    }
+  } catch (_) {
+    // 失敗時は黙って非表示のまま
+  }
+}
+
+// 詳細モーダル下部の「編集履歴」を再描画
+async function refreshCreativeEditHistory(creativeId) {
+  const sec = document.getElementById('cd-edit-history-section');
+  const list = document.getElementById('cd-edit-history-list');
+  if (!sec || !list) return;
+  sec.style.display = 'none';
+  list.innerHTML = '';
+  if (!creativeId) return;
+  let rows = [];
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/edit-logs`);
+    if (!res.ok) return;
+    rows = await res.json();
+  } catch (_) {
+    return;
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  const FIELD_LABEL = {
+    project_id: '紐づく案件',
+    creative_type: 'クリエイティブ種別',
+    file_name: 'ファイル名',
+    product_id: '商材',
+    appeal_type_id: '訴求軸',
+    memo: 'メモ（共有）',
+    note: 'メモ（管理）',
+  };
+
+  // edited_at + edited_by + reason ごとにグルーピング（同一保存の複数列変更を1ブロックに）
+  const groups = new Map();
+  for (const r of rows) {
+    const key = `${r.edited_at}|${r.edited_by || ''}|${r.reason || ''}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        edited_at: r.edited_at,
+        edited_by_name: r.editor?.full_name || r.editor?.nickname || r.edited_by_name || '不明',
+        editor: r.editor || null,
+        reason: r.reason || null,
+        changes: [],
+      });
+    }
+    groups.get(key).changes.push(r);
+  }
+
+  const html = Array.from(groups.values())
+    .sort((a, b) => new Date(b.edited_at) - new Date(a.edited_at))
+    .map(g => {
+      const dt = new Date(g.edited_at);
+      const dtStr = dt.toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+      const avatar = g.editor ? avatarHtml(g.editor, 22) : '';
+      const changesHtml = g.changes.map(c => {
+        const label = FIELD_LABEL[c.field_name] || c.field_name;
+        const oldV = c.old_value ?? '（未設定）';
+        const newV = c.new_value ?? '（未設定）';
+        return `<div style="font-size:12px;color:var(--text);margin-top:4px">
+          <span style="color:var(--text-muted)">${esc(label)}:</span>
+          <span style="text-decoration:line-through;color:var(--text-muted)">${esc(String(oldV))}</span>
+          <span style="color:var(--text-muted);margin:0 4px">→</span>
+          <span style="font-weight:600">${esc(String(newV))}</span>
+        </div>`;
+      }).join('');
+      const reasonHtml = g.reason
+        ? `<div style="margin-top:6px;padding:6px 10px;background:#fff8e6;border-left:3px solid #f0b429;border-radius:4px;font-size:12px;color:#8a6500;white-space:pre-wrap">理由: ${esc(g.reason)}</div>`
+        : '';
+      return `<div style="background:#fff;border:0.5px solid var(--border);border-radius:8px;padding:10px 14px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)">
+          ${avatar}
+          <span style="font-weight:600;color:var(--text)">${esc(g.edited_by_name)}</span>
+          <span>${esc(dtStr)}</span>
+        </div>
+        ${changesHtml}
+        ${reasonHtml}
+      </div>`;
+    }).join('');
+
+  list.innerHTML = html;
+  sec.style.display = '';
+}
+
+// 事後修正モーダルを開く
+async function openCreativePostEdit() {
+  if (!currentCreativeDetail) return;
+  const c = currentCreativeDetail;
+
+  // ボタン側に保持された権限/ガード状態を取得
+  const btn = document.getElementById('cd-postedit-btn');
+  const canChangeProject = btn?.dataset.canChangeProject === '1';
+  const blockReason = btn?.dataset.projectBlockedReason || '';
+
+  document.getElementById('pe-filename').textContent = c.file_name;
+
+  // 案件セレクト構築（allProjects から）
+  const projSel = document.getElementById('pe-project-id');
+  const sortedProjects = (allProjects || []).slice().sort((a, b) => {
+    const an = (a.clients?.name || '') + ' / ' + (a.name || '');
+    const bn = (b.clients?.name || '') + ' / ' + (b.name || '');
+    return an.localeCompare(bn, 'ja');
+  });
+  projSel.innerHTML = sortedProjects.map(p => {
+    const cn = p.clients?.name ? `${p.clients.name} / ` : '';
+    return `<option value="${p.id}">${esc(cn + (p.name || ''))}</option>`;
+  }).join('');
+  projSel.value = c.project_id || '';
+
+  // 案件変更ガード
+  const banner = document.getElementById('pe-project-blocked-banner');
+  if (!canChangeProject && blockReason) {
+    projSel.disabled = true;
+    banner.style.display = '';
+    banner.textContent = blockReason;
+  } else {
+    projSel.disabled = false;
+    banner.style.display = 'none';
+    banner.textContent = '';
+  }
+
+  document.getElementById('pe-creative-type').value = c.creative_type || 'video_short';
+  document.getElementById('pe-file-name').value = c.file_name || '';
+  document.getElementById('pe-note').value = c.note || '';
+  document.getElementById('pe-memo').value = c.memo || '';
+  document.getElementById('pe-reason').value = '';
+  document.getElementById('pe-project-changed-warn').style.display = 'none';
+  document.getElementById('pe-reason-required').style.display = 'none';
+
+  // 商材・訴求軸を現案件で初期化
+  await peLoadProductAndAppeal(c.project_id, c.product_id, c.appeal_type_id);
+
+  // 案件初期値を保持（変更検知用）
+  document.getElementById('modal-creative-postedit').dataset.originalProjectId = c.project_id || '';
+
+  openModal('modal-creative-postedit');
+}
+
+// 商材・訴求軸を当該 project_id 配下で再ロードする
+async function peLoadProductAndAppeal(projectId, currentProductId, currentAppealId) {
+  const prodSel = document.getElementById('pe-product-id');
+  const appealSel = document.getElementById('pe-appeal-type');
+  prodSel.innerHTML = '<option value="">（未設定）</option>';
+  appealSel.innerHTML = '<option value="">（未設定）</option>';
+  if (!projectId) return;
+  try {
+    const [axesRes, prodRes] = await Promise.all([
+      apiFetch(`${API}/projects/${projectId}/effective-appeal-axes`),
+      apiFetch(`${API}/projects/${projectId}/effective-products`),
+    ]);
+    if (axesRes.ok) {
+      const axes = (typeof sortByDisplayOrder === 'function')
+        ? sortByDisplayOrder(await axesRes.json())
+        : (await axesRes.json());
+      appealSel.innerHTML = '<option value="">（未設定）</option>' +
+        axes.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+    }
+    if (prodRes.ok) {
+      const products = (typeof sortByDisplayOrder === 'function')
+        ? sortByDisplayOrder(await prodRes.json())
+        : (await prodRes.json());
+      prodSel.innerHTML = '<option value="">（未設定）</option>' +
+        products.map(p => `<option value="${p.id}">${esc((p.code ? p.code + ' - ' : '') + (p.name || ''))}</option>`).join('');
+    }
+  } catch (e) {
+    console.warn('[postedit] load product/appeal failed:', e?.message);
+  }
+  if (currentProductId) prodSel.value = currentProductId;
+  if (currentAppealId) appealSel.value = currentAppealId;
+}
+
+// 案件セレクト変更時: 商材・訴求軸をリセット + 警告表示 + 理由必須化
+async function peOnProjectChange() {
+  const sel = document.getElementById('pe-project-id');
+  const original = document.getElementById('modal-creative-postedit').dataset.originalProjectId || '';
+  const changed = sel.value && sel.value !== original;
+  document.getElementById('pe-project-changed-warn').style.display = changed ? '' : 'none';
+  document.getElementById('pe-reason-required').style.display = changed ? '' : 'none';
+  // 商材・訴求軸を新案件のもので再ロード（既存値はクリア）
+  await peLoadProductAndAppeal(sel.value, null, null);
+}
+
+// 保存
+async function saveCreativePostEdit() {
+  if (!currentCreativeDetail) return;
+  const id = currentCreativeDetail.id;
+  const original = document.getElementById('modal-creative-postedit').dataset.originalProjectId || '';
+  const projectId = document.getElementById('pe-project-id').value || null;
+  const reason = document.getElementById('pe-reason').value.trim() || null;
+  const projectChanged = projectId && projectId !== original;
+
+  if (projectChanged && !reason) {
+    showToast('案件変更時は「変更理由」が必須です', 'error');
+    document.getElementById('pe-reason').focus();
+    return;
+  }
+
+  const body = {
+    project_id: projectId,
+    creative_type: document.getElementById('pe-creative-type').value,
+    file_name: document.getElementById('pe-file-name').value.trim() || null,
+    product_id: document.getElementById('pe-product-id').value || null,
+    appeal_type_id: document.getElementById('pe-appeal-type').value || null,
+    note: document.getElementById('pe-note').value.trim() || null,
+    memo: document.getElementById('pe-memo').value.trim() || null,
+    reason,
+  };
+
+  const res = await apiFetch(`${API}/creatives/${id}/edit-mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) {
+    closeModal('modal-creative-postedit');
+    showToast('事後修正を保存しました', 'success');
+    // 詳細モーダルを開き直して反映
+    try { await openCreativeDetail(id); } catch (_) {}
+    // 一覧キャッシュも更新
+    try { await loadCreatives(); } catch (_) {}
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('保存エラー: ' + (typeof translateError === 'function' ? translateError(e?.error) : (e?.error || '不明なエラー')), 'error');
   }
 }
 
