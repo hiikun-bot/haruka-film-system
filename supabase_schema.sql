@@ -473,6 +473,44 @@ CREATE TABLE IF NOT EXISTS creative_version_history (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ==================== milestone_templates（種別ごとの工程テンプレ）====================
+-- 案件種別 (projects.project_type) ごとに工程テンプレを保持。
+-- 案件作成時にこのテンプレを creative_milestones に展開する想定（Step2）。
+CREATE TABLE IF NOT EXISTS milestone_templates (
+  id BIGSERIAL PRIMARY KEY,
+  project_type TEXT NOT NULL,        -- 'video' / 'lp' / 'hp' / 'design' / 'other'
+  phase_key TEXT NOT NULL,           -- 'shooting' / 'wireframe' / 'coding' ...
+  phase_label TEXT NOT NULL,         -- '撮影' / 'ワイヤー' / 'コーディング'
+  sort_order INT NOT NULL,
+  default_offset_days INT,           -- 案件開始日からの標準オフセット（NULL可）
+  default_duration_days INT,         -- 工程の標準所要日数（NULL可）
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(project_type, phase_key)
+);
+CREATE INDEX IF NOT EXISTS idx_milestone_templates_type_order
+  ON milestone_templates(project_type, sort_order);
+
+-- ==================== creative_milestones（案件ごとの実マイルストーン）====================
+-- creatives ごとの実工程レコード。ガント描画はこのテーブルを参照する想定（Step2）。
+CREATE TABLE IF NOT EXISTS creative_milestones (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  phase_key TEXT NOT NULL,
+  phase_label TEXT NOT NULL,
+  sort_order INT NOT NULL,
+  start_date DATE,
+  end_date DATE,
+  status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' / 'in_progress' / 'done' / 'skipped'
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(creative_id, phase_key)
+);
+CREATE INDEX IF NOT EXISTS idx_creative_milestones_creative
+  ON creative_milestones(creative_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_creative_milestones_dates
+  ON creative_milestones(start_date, end_date);
+
 -- 管理者によるステータス強制変更の監査ログ
 -- 「誰が・いつ・どの状態 → どの状態に・なぜ・付随削除した下書き明細」を残す
 CREATE TABLE IF NOT EXISTS creative_status_audit (
