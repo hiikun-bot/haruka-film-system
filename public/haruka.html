@@ -12567,12 +12567,16 @@ async function submitAnnouncement() {
 // 対応状況モーダルの表示状態（再描画用）
 let _annStatusData = null;
 let _annStatusHideDone = false;
+let _annStatusCurrentId = null;
+let _annStatusReminding = false;
 
 async function openAnnouncementStatus(id) {
   const res = await apiFetch(`${API}/announcements/${id}/status`);
   if (!res.ok) { const e = await res.json().catch(() => ({})); showToast('エラー: ' + (e.error || '取得失敗'), 'error'); return; }
   _annStatusData = await res.json();
+  _annStatusCurrentId = id;
   _annStatusHideDone = false; // 初期値: 全員表示
+  _annStatusReminding = false;
   _renderAnnouncementStatus();
   openModal('modal-announcement-status');
 }
@@ -12580,6 +12584,49 @@ async function openAnnouncementStatus(id) {
 function toggleAnnouncementStatusHideDone() {
   _annStatusHideDone = !_annStatusHideDone;
   _renderAnnouncementStatus();
+}
+
+// 未対応者へ督促（ロール内訳付き確認 → POST → toast）
+async function sendAnnouncementRemind() {
+  if (!_annStatusData || !_annStatusCurrentId) return;
+  if (_annStatusReminding) return;
+
+  const ROLE_LABEL = { admin:'管理者', secretary:'秘書', producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
+  const allMembers = (_annStatusData.members || []).length
+    ? _annStatusData.members
+    : (_annStatusData.groups || []).flatMap(g => g.members);
+  const unacked = allMembers.filter(m => !m.done_at);
+  if (unacked.length === 0) {
+    showToast('全員対応済みです', 'info');
+    return;
+  }
+  // ロール内訳を集計
+  const roleCounts = {};
+  unacked.forEach(m => {
+    const key = ROLE_LABEL[m.role] || m.role || 'その他';
+    roleCounts[key] = (roleCounts[key] || 0) + 1;
+  });
+  const breakdown = Object.entries(roleCounts).map(([k, v]) => `${k} ${v}名`).join(' / ');
+  const ok = confirm(`未対応 ${unacked.length}名（${breakdown}）にSlackメンション付きで督促通知を送ります。\nよろしいですか？`);
+  if (!ok) return;
+
+  _annStatusReminding = true;
+  _renderAnnouncementStatus();
+  try {
+    const res = await apiFetch(`${API}/announcements/${_annStatusCurrentId}/remind`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('エラー: ' + (data.error || '送信失敗'), 'error');
+    } else {
+      const slackMsg = data.slackPosted ? '' : '（Slack未送信）';
+      showToast(`督促通知を送信しました（${data.remindedCount || unacked.length}名）${slackMsg}`, 'success');
+    }
+  } catch (e) {
+    showToast('エラー: ' + (e.message || '送信失敗'), 'error');
+  } finally {
+    _annStatusReminding = false;
+    _renderAnnouncementStatus();
+  }
 }
 
 function _renderAnnouncementStatus() {
@@ -12653,6 +12700,15 @@ function _renderAnnouncementStatus() {
     ${hideDone ? '✓ 完了済を隠している' : '完了済を隠す'}
   </button>`;
 
+  // 未対応者への督促ボタン（unacked 0 のときは非表示）
+  const unackedTotal = totalCount - totalDone;
+  const remindDisabled = unackedTotal === 0 || _annStatusReminding;
+  const remindBtn = unackedTotal === 0
+    ? ''
+    : `<button class="btn" onclick="sendAnnouncementRemind()" ${remindDisabled ? 'disabled' : ''} style="font-size:11px;padding:5px 12px;background:${_annStatusReminding ? 'var(--text-muted)' : '#C0392B'};color:#fff;border-color:${_annStatusReminding ? 'var(--text-muted)' : '#C0392B'};${remindDisabled ? 'opacity:0.6;cursor:not-allowed' : ''}">
+      ${_annStatusReminding ? '送信中...' : `📣 未対応者に督促 (${unackedTotal})`}
+    </button>`;
+
   // 全カード非表示時の空メッセージ
   const emptyAllDone = (visibleGroups.length === 0)
     ? `<div style="font-size:13px;color:var(--em-dark);background:var(--em-pale);padding:20px;border-radius:10px;text-align:center;font-weight:600">🎉 全員完了しました${hideDone ? '（完了済を隠しているため未完了者がいません）' : ''}</div>`
@@ -12665,6 +12721,7 @@ function _renderAnnouncementStatus() {
         ${announcement.deadline_at ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">期限: ${new Date(announcement.deadline_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' })}</div>` : ''}
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        ${remindBtn}
         ${toggleBtn}
         <div style="font-size:14px;font-weight:700;color:var(--em-dark);background:var(--em-pale);padding:6px 14px;border-radius:8px">
           ${totalDone} / ${totalCount} 完了

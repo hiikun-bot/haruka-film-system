@@ -4102,6 +4102,120 @@ router.delete('/announcements/:id/ack', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// 未対応者への督促（同じ announcement に対する再督促は 5分間レート制限）
+// インメモリ Map で実装（プロセス再起動でリセットされるが許容）。migration を追加しないため。
+const _announcementRemindCooldown = new Map(); // key: announcement_id, value: timestamp(ms)
+const REMIND_COOLDOWN_MS = 5 * 60 * 1000;
+
+// ロール並び順（仕様: admin → secretary → producer → producer_director → director → editor → designer）
+const REMIND_ROLE_RANK = {
+  admin: 0, secretary: 1, producer: 2, producer_director: 3,
+  director: 4, editor: 5, designer: 6,
+};
+
+router.post('/announcements/:id/remind', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const annId = req.params.id;
+
+  // レート制限チェック
+  const last = _announcementRemindCooldown.get(annId);
+  const now = Date.now();
+  if (last && (now - last) < REMIND_COOLDOWN_MS) {
+    const remainSec = Math.ceil((REMIND_COOLDOWN_MS - (now - last)) / 1000);
+    const remainMin = Math.ceil(remainSec / 60);
+    return res.status(429).json({ error: `直近で督促済みです。約${remainMin}分後に再送可能です。` });
+  }
+
+  // announcement 取得
+  const { data: ann, error: aErr } = await supabase.from('announcements')
+    .select('id, title, deadline_at, is_active')
+    .eq('id', annId).maybeSingle();
+  if (aErr) return res.status(500).json({ error: aErr.message });
+  if (!ann) return res.status(404).json({ error: '連絡が見つかりません' });
+
+  // 全アクティブメンバー
+  const { data: members, error: mErr } = await supabase.from('users')
+    .select('id, full_name, role, slack_dm_id')
+    .eq('is_active', true);
+  if (mErr) return res.status(500).json({ error: mErr.message });
+
+  // 完了済み user_id
+  const { data: acks, error: kErr } = await supabase.from('announcement_acks')
+    .select('user_id, done_at').eq('announcement_id', annId);
+  if (kErr) return res.status(500).json({ error: kErr.message });
+  const doneSet = new Set((acks || []).filter(a => a.done_at).map(a => a.user_id));
+
+  // 未対応者を抽出
+  const unacked = (members || []).filter(m => !doneSet.has(m.id));
+  if (unacked.length === 0) {
+    return res.status(400).json({ error: '全員対応済みです' });
+  }
+
+  // ロール → 名前順ソート
+  unacked.sort((a, b) => {
+    const ra = REMIND_ROLE_RANK[a.role] ?? 99;
+    const rb = REMIND_ROLE_RANK[b.role] ?? 99;
+    if (ra !== rb) return ra - rb;
+    return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
+  });
+
+  // Slack メンション組み立て: slack_dm_id があれば <@id>、なければ名前のみ
+  const mentionParts = unacked.map(u => {
+    if (u.slack_dm_id) return `<@${u.slack_dm_id}>`;
+    return u.full_name || '(名前未設定)';
+  });
+  const mentionLine = mentionParts.join(' ');
+
+  // Slack 投稿
+  let slackPosted = false;
+  try {
+    const { data: setting } = await supabase.from('system_settings')
+      .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
+    const url = setting?.value;
+    if (url) {
+      const lines = [];
+      lines.push('`【督促】未対応の方へ`');
+      lines.push(mentionLine);
+      lines.push('');
+      lines.push('▼対応をお願いします');
+      lines.push(`\`${ann.title}\``);
+      if (ann.deadline_at) {
+        const d = new Date(ann.deadline_at);
+        lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}\``);
+      }
+      const text = lines.join('\n');
+      const r = await notif.sendSlackChannel(url, text);
+      slackPosted = !!r.ok;
+      if (!r.ok) console.warn('[announcement remind] slack push failed:', r.reason);
+    } else {
+      console.warn('[announcement remind] broadcast_slack_channel_url 未設定');
+    }
+  } catch (e) {
+    console.warn('[announcement remind] slack push error:', e.message);
+  }
+
+  // in-app 通知（一括 INSERT）
+  try {
+    const { createBulkNotifications } = require('../utils/notification');
+    const rows = unacked.map(u => ({
+      user_id: u.id,
+      notification_type: 'announcement_remind',
+      title: '未対応の通知があります',
+      body: ann.title,
+      link_url: null,
+      meta: { announcement_id: annId },
+      sender_id: req.user.id,
+    }));
+    await createBulkNotifications(rows);
+  } catch (e) {
+    console.warn('[announcement remind] notification insert failed:', e.message);
+  }
+
+  // クールダウンを記録
+  _announcementRemindCooldown.set(annId, now);
+
+  res.json({ success: true, remindedCount: unacked.length, slackPosted });
+});
+
 // 対応状況（投稿者向け: 完了済みメンバー / 未完了メンバー）
 router.get('/announcements/:id/status', requireAuth, requirePermission('member.list'), async (req, res) => {
   const { data: ann, error: aErr } = await supabase.from('announcements')
