@@ -11,6 +11,99 @@ const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('..
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
+const {
+  getUserRoleCodes,
+  userHasRole,
+  getUsersRolesMap,
+  invalidateRolesCache,
+} = require('../utils/roles');
+
+// ==================== ロール判定ヘルパー（dual-read 期間用） ====================
+// Stage 0 / Step 2 (ADR 003): authorization 経路の role 判定はこのヘルパー経由で行う。
+// user_roles を読み、空ならフォールバックで users.role を 1 要素として扱う。
+// 'producer_director' を持つユーザーは producer / director の両方を持つ扱いにする。
+async function getRequesterRoleCodes(req) {
+  if (!req || !req.user) return [];
+  const codes = await getUserRoleCodes(req.user.id);
+  if (codes.length > 0) return codes;
+  // dual-read fallback: 旧 users.role
+  const legacy = req.user.role;
+  if (!legacy) return [];
+  if (legacy === 'producer_director') return ['producer', 'director'];
+  return [legacy];
+}
+
+async function requesterHasAnyRole(req, codes) {
+  const myCodes = await getRequesterRoleCodes(req);
+  if (myCodes.length === 0) return false;
+  for (const c of codes) {
+    if (myCodes.includes(c)) return true;
+  }
+  return false;
+}
+
+// 'admin' / 'secretary' のいずれかを保有しているか（多くのスタッフ判定で使う）
+async function isStaffRequester(req) {
+  return requesterHasAnyRole(req, ['admin', 'secretary']);
+}
+
+// 与えられた user_id が admin/secretary を持つかを user_roles 経由で確認。
+// dual-read fallback: user_roles が空なら users.role を読む。
+async function userIsStaff(userId) {
+  if (!userId) return false;
+  const codes = await getUserRoleCodes(userId);
+  if (codes.includes('admin') || codes.includes('secretary')) return true;
+  if (codes.length === 0) {
+    const { data } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
+    const r = data?.role;
+    return r === 'admin' || r === 'secretary';
+  }
+  return false;
+}
+
+// users.role を更新する際に user_roles も同期更新する（dual-write）。
+// - 'producer_director' は user_roles に producer + director の 2 行
+// - それ以外は roles.code を引いて 1 行
+// - 既存行は DELETE → INSERT で再構築
+// 失敗時はログのみで握り潰す（users.role の更新は既に完了している前提）。
+async function syncUserRolesForLegacyRole(userId, legacyRole) {
+  if (!userId) return;
+  if (!legacyRole) return; // 不変扱い
+  try {
+    // 期待するロールコード集合
+    let expected;
+    if (legacyRole === 'producer_director') expected = ['producer', 'director'];
+    else expected = [legacyRole];
+
+    // roles マスタから ID を引く
+    const { data: rolesData, error: rolesErr } = await supabase
+      .from('roles').select('id, code').in('code', expected);
+    if (rolesErr) {
+      console.warn('[user_roles sync] roles 取得失敗:', rolesErr.message);
+      return;
+    }
+    const idByCode = new Map((rolesData || []).map(r => [r.code, r.id]));
+    const rows = expected
+      .map(code => idByCode.get(code))
+      .filter(Boolean)
+      .map(roleId => ({ user_id: userId, role_id: roleId }));
+
+    // 既存行を全消去（scope_type/scope_id を扱わず、user_id 単位で一括再構築）
+    const { error: delErr } = await supabase
+      .from('user_roles').delete().eq('user_id', userId);
+    if (delErr) {
+      console.warn('[user_roles sync] 既存行削除失敗:', delErr.message);
+      return;
+    }
+    if (rows.length === 0) return;
+    const { error: insErr } = await supabase.from('user_roles').insert(rows);
+    if (insErr) {
+      console.warn('[user_roles sync] insert 失敗:', insErr.message);
+    }
+  } catch (e) {
+    console.warn('[user_roles sync] 例外:', e.message);
+  }
+}
 
 // FFmpeg（画質変換用）
 let ffmpegPath, ffmpeg;
@@ -3622,7 +3715,7 @@ router.get('/files/:fileId/stream', async (req, res) => {
 // 対象: creative_files の動画で faststart_drive_file_id 未設定のもの
 // 管理者のみ実行可。指定 creative_file id 単体 or pending 全件 ?all=1。
 router.post('/creatives/files/:id/faststart', requireAuth, async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
   if (!ffmpeg) return res.status(503).json({ error: 'FFmpeg未インストール' });
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
 
@@ -3655,7 +3748,7 @@ router.post('/creatives/files/:id/faststart', requireAuth, async (req, res) => {
 // faststart_status='failed' のファイルや、強制的に再生成したい場合に呼ぶ。
 // 管理者のみ実行可。fire-and-forget でレスポンスは即返す。
 router.post('/creative-files/:id/regenerate-faststart', requireAuth, async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
   if (!ffmpeg) return res.status(503).json({ error: 'FFmpeg未インストール' });
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
 
@@ -3965,6 +4058,11 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     ({ data, error } = await supabase.from('users').insert(attempt).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
+  // dual-write: 新規作成された user の users.role に対応する user_roles を作成
+  if (data && data.id && role) {
+    await syncUserRolesForLegacyRole(data.id, role);
+    invalidateRolesCache();
+  }
   if (droppedColumns.length > 0) {
     console.warn(`[members:create] silent drop された列: ${droppedColumns.join(', ')}`);
     return res.json({ ...data, _droppedColumns: droppedColumns });
@@ -4037,7 +4135,7 @@ async function bulkInsertMembers(members) {
             nickname, slack_dm_id, chatwork_dm_id, phone, postal_code, address, note } = m;
     if (!full_name || !email || !role) { failed++; errors.push({ email, reason: '名前・メール・ロール必須' }); continue; }
     if (existingEmails.has(String(email).toLowerCase())) { skipped++; continue; }
-    const { error } = await supabase.from('users').insert({
+    const { data: inserted, error } = await supabase.from('users').insert({
       full_name, email, role,
       job_type: job_type || null,
       rank: rank || null,
@@ -4051,10 +4149,19 @@ async function bulkInsertMembers(members) {
       address: address || null,
       note: note || null,
       weekday_hours: [{from:9,to:18}]
-    });
+    }).select('id').single();
     if (error) { failed++; errors.push({ email, reason: error.message }); }
-    else { created++; existingEmails.add(String(email).toLowerCase()); }
+    else {
+      created++;
+      existingEmails.add(String(email).toLowerCase());
+      // dual-write: user_roles も同期
+      if (inserted && inserted.id) {
+        await syncUserRolesForLegacyRole(inserted.id, role);
+      }
+    }
   }
+  // 一括処理後にロールキャッシュを破棄
+  invalidateRolesCache();
   return { created, failed, skipped, errors };
 }
 
@@ -4218,23 +4325,53 @@ router.post('/members/import-sheet', requireAuth, requirePermission('member.edit
 });
 
 // メンバー更新
+// MEMBER_ROLE_RANK: ロールコードベースでランクを与える。
+// 'producer' を持つ + 'director' を持つ（旧 producer_director 相当）は両者の高い方を採用。
 const MEMBER_ROLE_RANK = { admin:6, secretary:5, producer:5, producer_director:4, director:3, designer:2, editor:1 };
+function rankOfRoleCodes(codes) {
+  if (!Array.isArray(codes) || codes.length === 0) return 0;
+  let max = 0;
+  for (const c of codes) {
+    const v = MEMBER_ROLE_RANK[c] || 0;
+    if (v > max) max = v;
+  }
+  return max;
+}
 router.put('/members/:id', requireAuth, async (req, res) => {
   const requester = req.user;
-  const requesterRole = requester.role;
-  const requesterLevel = MEMBER_ROLE_RANK[requesterRole] || 0;
+  // user_roles ベースの実効ロール集合（fallback で users.role を 1 要素として扱う）
+  const requesterCodes = await getRequesterRoleCodes(req);
+  const requesterRole = requester.role; // 旧コード経路（一部のロジックは legacy 値を見る）
+  const requesterLevel = rankOfRoleCodes(requesterCodes);
 
   // 対象メンバーを取得して権限チェック
   const { data: target } = await supabase.from('users').select('id,role').eq('id', req.params.id).maybeSingle();
   if (!target) return res.status(404).json({ error: 'メンバーが見つかりません' });
 
-  const targetLevel = MEMBER_ROLE_RANK[target.role] || 0;
-  const isAdmin = await userHasPermission(requesterRole, 'member.edit_password');
+  // 対象のロールも user_roles ベースで取得
+  const targetCodes = await getUserRoleCodes(target.id);
+  // user_roles が空なら legacy users.role を fallback
+  const effectiveTargetCodes = targetCodes.length > 0
+    ? targetCodes
+    : (target.role === 'producer_director' ? ['producer','director'] : (target.role ? [target.role] : []));
+  const targetLevel = rankOfRoleCodes(effectiveTargetCodes);
+
+  // member.edit_password 保有可否（user_roles 集合 → role_permissions 経由で評価）
+  // 現状の userHasPermission は単一 legacy role 文字列を受けるため、配列中の各コードを順に試す
+  let isAdmin = false;
+  for (const c of (requesterCodes.length > 0 ? requesterCodes : [requesterRole])) {
+    if (!c) continue;
+    if (await userHasPermission(c, 'member.edit_password')) { isAdmin = true; break; }
+  }
   const isSelf = requester.id === target.id;
+
+  const requesterIsProducerLike = requesterCodes.includes('producer')
+    || requesterCodes.includes('producer_director')
+    || requesterRole === 'producer' || requesterRole === 'producer_director';
 
   // 権限チェック: member.edit_password 保有者は全員編集可。producer は自分+下位ランク。それ以外は自分のみ
   if (!isAdmin) {
-    const canEdit = (requesterRole === 'producer' || requesterRole === 'producer_director')
+    const canEdit = requesterIsProducerLike
       ? (isSelf || targetLevel < requesterLevel)
       : isSelf;
     if (!canEdit) return res.status(403).json({ error: '権限が不足しています' });
@@ -4333,7 +4470,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updateData.left_reason = left_reason || null;
   }
   // ランク変更は member.edit_password 保有者または producer/PD
-  if (isAdmin || requesterRole === 'producer' || requesterRole === 'producer_director') {
+  if (isAdmin || requesterIsProducerLike) {
     updateData.rank = rank || null;
   }
 
@@ -4387,6 +4524,13 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     ({ data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
+  // dual-write: users.role が更新された場合は user_roles も同期する。
+  // 'role' フィールドが updateData に含まれていた場合のみ実施（admin による変更時のみ）。
+  // 失敗してもアプリは止めない（ログ警告のみ）。
+  if (Object.prototype.hasOwnProperty.call(updateData, 'role')) {
+    await syncUserRolesForLegacyRole(req.params.id, updateData.role);
+    invalidateRolesCache();
+  }
   // 列が drop された場合は警告フラグを付ける（フロント側で toast 警告を出せるよう）
   if (droppedColumns.length > 0) {
     console.warn(`[members:update] silent drop された列: ${droppedColumns.join(', ')} — 本番DBに該当列が無い可能性があります`);
@@ -4764,7 +4908,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
   }
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: '請求書が見つかりません' });
-  if (data.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role)) {
+  if (data.issuer_id !== req.user?.id && !(await isStaffRequester(req))) {
     return res.status(403).json({ error: 'アクセス権限がありません' });
   }
   res.json(data);
@@ -5191,11 +5335,19 @@ router.get('/tweets', requireAuth, async (req, res) => {
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
 
   // 運営のみフィルター: admin / secretary が投稿したもの
+  // user_roles JOIN roles ベースで staff の user_id を取得（dual-read: 旧 users.role も並走）
   if (staffOnly) {
-    const { data: staffUsers, error: sErr } = await supabase
+    const staffSet = new Set();
+    // 1) user_roles 経由
+    const { data: ur } = await supabase
+      .from('user_roles').select('user_id, roles(code)').in('roles.code', ['admin','secretary']);
+    (ur || []).forEach(r => { if (r.roles) staffSet.add(r.user_id); });
+    // 2) dual-read: 旧 users.role も拾う（user_roles 未反映ユーザーをカバー）
+    const { data: legacyStaff, error: sErr } = await supabase
       .from('users').select('id').in('role', ['admin', 'secretary']);
     if (sErr) return res.status(500).json({ error: sErr.message });
-    const staffIds = (staffUsers || []).map(u => u.id);
+    (legacyStaff || []).forEach(u => staffSet.add(u.id));
+    const staffIds = Array.from(staffSet);
     if (staffIds.length === 0) return res.json([]);
     q = q.in('user_id', staffIds);
   }
@@ -5748,7 +5900,7 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
   const { data: inv, error: fetchErr } = await supabase
     .from('invoices').select('issuer_id, status').eq('id', invId).single();
   if (fetchErr || !inv) return res.status(404).json({ error: '請求書が見つかりません' });
-  if (inv.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role))
+  if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req)))
     return res.status(403).json({ error: 'アクセス権限がありません' });
 
   // 明細編集は draft / rejected のみ許可（提出済み以降は不可）
@@ -5921,7 +6073,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const { cycle_id, selected_creative_ids, selected_items } = req.body;
   let { project_id } = req.body;
   // admin/secretary のみ代理発行可能、それ以外はログインユーザー本人に固定
-  const issuer_id = (['admin', 'secretary'].includes(req.user?.role) && req.body.issuer_id)
+  const issuer_id = ((await isStaffRequester(req)) && req.body.issuer_id)
     ? req.body.issuer_id
     : req.user.id;
   if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
@@ -6312,7 +6464,7 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
   const { data: inv } = await supabase.from('invoices').select('issuer_id, status').eq('id', invId).single();
   if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
   if (!['draft','rejected'].includes(inv.status)) return res.status(400).json({ error: '下書き・差し戻し以外は削除できません' });
-  if (inv.issuer_id !== req.user?.id && !['admin','secretary'].includes(req.user?.role))
+  if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req)))
     return res.status(403).json({ error: 'アクセス権限がありません' });
 
   // 1. invoice_item_details を削除（invoice_items 経由）
@@ -7579,8 +7731,8 @@ router.delete('/creative-file-comments/:id', requireAuth, async (req, res) => {
   const userId = req.user?.id;
   const { data: comment } = await supabase.from('creative_file_comments').select('user_id').eq('id', req.params.id).single();
   if (!comment) return res.status(404).json({ error: '見つかりません' });
-  const userRow = await supabase.from('users').select('role').eq('id', userId).single();
-  const isAdmin = ['admin', 'secretary'].includes(userRow.data?.role);
+  // user_roles 経由 + dual-read fallback で staff 判定
+  const isAdmin = (await isStaffRequester(req)) || (await userIsStaff(userId));
   if (comment.user_id !== userId && !isAdmin) return res.status(403).json({ error: '権限がありません' });
   const { error } = await supabase.from('creative_file_comments').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });

@@ -22,6 +22,24 @@ const router = express.Router();
 const supabase = require('../supabase');
 const { requireAuth, requireRole } = require('../auth');
 const { createBulkNotifications, nextActiveSlot } = require('../utils/notification');
+const { getUserRoleCodes } = require('../utils/roles');
+
+// dual-read 期間: user_roles 経由でロール集合を取得し、空なら req.user.role を fallback。
+// 'producer_director' を持つユーザーは producer / director の両方を持つ扱いにする。
+async function getRequesterRoleCodes(req) {
+  if (!req || !req.user) return [];
+  const codes = await getUserRoleCodes(req.user.id);
+  if (codes.length > 0) return codes;
+  const legacy = req.user.role;
+  if (!legacy) return [];
+  if (legacy === 'producer_director') return ['producer', 'director'];
+  return [legacy];
+}
+
+async function requesterHasAnyRole(req, codes) {
+  const myCodes = await getRequesterRoleCodes(req);
+  return myCodes.some(c => codes.includes(c));
+}
 
 // 全エンドポイント共通: ログイン必須
 router.use(requireAuth);
@@ -148,23 +166,54 @@ router.patch('/read-all', async (req, res) => {
 });
 
 // ============================================================
-// 共通ヘルパー: target_role 文字列に応じて users SELECT クエリを組み立てる
+// 共通ヘルパー: target_role 文字列を user_roles JOIN ベースの user_id 集合に解決する。
+// dual-read 期間: user_roles JOIN roles と、旧 users.role IN (...) を並走で読み、
+// その和集合を返す（user_roles 未反映ユーザーをカバー）。
+// 戻り値:
+//   { error?: string, ids?: string[] | null }
+//   ids が null の場合は「絞り込みなし（target_role='all'）」を意味する。
 // ============================================================
-function buildTargetRoleQuery(targetRole) {
+const TARGET_ROLE_TO_CODES = {
+  directors_above: ['director', 'producer_director', 'producer', 'admin'],
+  editors_only: ['editor'],
+  designers_only: ['designer'],
+};
+
+async function resolveTargetRoleUserIds(targetRole) {
+  if (targetRole === 'all' || targetRole == null) return { ids: null };
+  const wantedCodes = TARGET_ROLE_TO_CODES[targetRole];
+  if (!wantedCodes) return { error: 'target_role が不正です' };
+
+  // user_roles 経由（合成値 'producer_director' は roles マスタに無いため除外して引く）
+  const codesForJoin = wantedCodes.filter(c => c !== 'producer_director');
+  const idSet = new Set();
+  if (codesForJoin.length > 0) {
+    const { data: ur, error: urErr } = await supabase
+      .from('user_roles').select('user_id, roles(code)').in('roles.code', codesForJoin);
+    if (urErr) return { error: urErr.message };
+    (ur || []).forEach(r => { if (r.roles) idSet.add(r.user_id); });
+  }
+
+  // dual-read: 旧 users.role 列も拾う（'producer_director' を含む全コード）
+  const { data: legacy, error: legErr } = await supabase
+    .from('users').select('id').in('role', wantedCodes);
+  if (legErr) return { error: legErr.message };
+  (legacy || []).forEach(u => idSet.add(u.id));
+
+  return { ids: Array.from(idSet) };
+}
+
+// 後方互換: count head クエリを組み立てる薄いラッパ。
+async function buildTargetRoleQuery(targetRole) {
+  const resolved = await resolveTargetRoleUserIds(targetRole);
+  if (resolved.error) return { error: resolved.error };
   let q = supabase.from('users').select('id', { count: 'exact', head: true }).eq('is_active', true);
-  if (targetRole === 'all' || targetRole == null) {
-    return { query: q };
+  if (resolved.ids === null) return { query: q };
+  if (resolved.ids.length === 0) {
+    // 該当ユーザーがいない場合、count=0 を確実に返すために絶対 false な条件を入れる
+    return { query: q.in('id', ['00000000-0000-0000-0000-000000000000']) };
   }
-  if (targetRole === 'directors_above') {
-    return { query: q.in('role', ['director', 'producer_director', 'producer', 'admin']) };
-  }
-  if (targetRole === 'editors_only') {
-    return { query: q.eq('role', 'editor') };
-  }
-  if (targetRole === 'designers_only') {
-    return { query: q.eq('role', 'designer') };
-  }
-  return { error: 'target_role が不正です' };
+  return { query: q.in('id', resolved.ids) };
 }
 
 // ============================================================
@@ -175,7 +224,7 @@ router.get(
   requireRole('admin', 'secretary', 'producer', 'producer_director'),
   async (req, res) => {
     const targetRole = req.query.target_role ? String(req.query.target_role) : 'all';
-    const { query, error: roleErr } = buildTargetRoleQuery(targetRole);
+    const { query, error: roleErr } = await buildTargetRoleQuery(targetRole);
     if (roleErr) return res.status(400).json({ error: roleErr });
     const { count, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
@@ -221,16 +270,15 @@ router.post(
       parsedScheduledAt = d;
     }
 
-    // 対象ユーザー絞り込み
+    // 対象ユーザー絞り込み（user_roles + 旧 users.role の dual-read 和集合）
+    const resolved = await resolveTargetRoleUserIds(target_role);
+    if (resolved.error) return res.status(400).json({ error: resolved.error });
     let userQ = supabase.from('users').select('id').eq('is_active', true);
-    if (target_role === 'directors_above') {
-      userQ = userQ.in('role', ['director', 'producer_director', 'producer', 'admin']);
-    } else if (target_role === 'editors_only') {
-      userQ = userQ.eq('role', 'editor');
-    } else if (target_role === 'designers_only') {
-      userQ = userQ.eq('role', 'designer');
-    } else if (target_role !== 'all') {
-      return res.status(400).json({ error: 'target_role が不正です' });
+    if (resolved.ids !== null) {
+      if (resolved.ids.length === 0) {
+        return res.json({ notification_count: 0, global_id: null, send_mode });
+      }
+      userQ = userQ.in('id', resolved.ids);
     }
     const { data: users, error: usersErr } = await userQ;
     if (usersErr) return res.status(500).json({ error: usersErr.message });
@@ -283,8 +331,7 @@ router.post(
 // ============================================================
 router.get('/scheduled', async (req, res) => {
   const userId = req.user.id;
-  const role = req.user?.role;
-  const isPrivileged = ['admin', 'secretary'].includes(role);
+  const isPrivileged = await requesterHasAnyRole(req, ['admin', 'secretary']);
 
   // 差出人本人 + admin/secretary は全員の予約を見られる
   let q = supabase
@@ -346,8 +393,7 @@ router.get('/scheduled', async (req, res) => {
 // ============================================================
 router.patch('/:id/cancel', async (req, res) => {
   const userId = req.user.id;
-  const role = req.user?.role;
-  const isPrivileged = ['admin', 'secretary'].includes(role);
+  const isPrivileged = await requesterHasAnyRole(req, ['admin', 'secretary']);
   const id = req.params.id;
 
   // 1) まず id を notification_logs.id として検索
@@ -419,8 +465,7 @@ router.patch('/:id/cancel', async (req, res) => {
 // ============================================================
 router.patch('/:id/reschedule', async (req, res) => {
   const userId = req.user.id;
-  const role = req.user?.role;
-  const isPrivileged = ['admin', 'secretary'].includes(role);
+  const isPrivileged = await requesterHasAnyRole(req, ['admin', 'secretary']);
   const id = req.params.id;
   const { scheduled_send_at } = req.body || {};
 
