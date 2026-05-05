@@ -5115,9 +5115,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <!-- コメント入力 -->
         <div id="fp-comment-input-area" style="padding:12px;border-top:1px solid #2a2a2e;flex-shrink:0;background:#1e1e22">
           <!-- タイムコードバッジ（Frame.io スタイル） -->
-          <div id="fp-tc-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:22px">
+          <div id="fp-tc-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:22px;flex-wrap:wrap">
             <span id="fp-timecode-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:13px;font-weight:700;padding:3px 12px;border-radius:6px;font-family:monospace;cursor:pointer;letter-spacing:0.06em;border:1px solid #92400e" onclick="fpClearTimecode()" title="クリックで削除">00:00:00:00</span>
+            <span id="fp-bbox-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;border:1px solid #f5c518;letter-spacing:0.04em" onclick="fpClearBbox()" title="クリックで範囲選択を解除">📍 範囲選択中 ×</span>
             <span id="fp-timecode-hint" style="font-size:11px;color:#3f3f46">— 一時停止でタイムコードを記録 —</span>
+            <span id="fp-bbox-hint" style="display:none;font-size:11px;color:#3f3f46">— 画像をドラッグして範囲を選択 —</span>
           </div>
           <select id="fp-comment-category" style="width:100%;font-size:12px;margin-bottom:6px;background:#2a2a2e;color:#e4e4e7;border:1px solid #3f3f46;border-radius:6px;padding:6px 8px">
             <option value="">カテゴリーを選択（必須）</option>
@@ -19185,7 +19187,16 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     } else if (isImage) {
       ctrlBar.style.display = 'none';
       fpShowLoading('画像を読み込み中...');
-      player.innerHTML = `<img src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain" onload="fpHideLoading()" onerror="fpShowLoadingError('画像の読み込みに失敗しました')">`;
+      // 画像と overlay レイヤーを同じ wrapper 内に配置
+      // - wrapper は画像と同じ表示サイズ（object-fit:contain は wrapper 内 img に適用）
+      // - overlay は画像にぴったり重ねる（overlay 自身の表示サイズを実画像表示サイズに同期）
+      player.innerHTML = `
+        <div id="fp-image-wrap" style="position:relative;max-width:100%;max-height:100%;display:flex;align-items:center;justify-content:center;width:100%;height:100%">
+          <img id="fp-image" src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none" draggable="false" onload="fpOnImageLoaded()" onerror="fpShowLoadingError('画像の読み込みに失敗しました')">
+          <div id="fp-image-overlay" style="position:absolute;left:0;top:0;width:0;height:0;cursor:crosshair;pointer-events:auto"></div>
+        </div>`;
+      // ドラッグ選択ハンドラを overlay にバインド（画像読み込み後に位置も同期）
+      setTimeout(() => fpInitImageBboxOverlay(), 50);
     } else {
       ctrlBar.style.display = 'none';
       fpShowLoading('プレビューを読み込み中...');
@@ -19203,6 +19214,12 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   }
 
   fpClearTimecode();
+  fpClearBbox();
+  // 画像のときは「範囲選択ヒント」を、動画のときは「タイムコードヒント」を出し分け
+  const tcHint   = document.getElementById('fp-timecode-hint');
+  const bboxHint = document.getElementById('fp-bbox-hint');
+  if (tcHint)   tcHint.style.display   = isImage ? 'none' : '';
+  if (bboxHint) bboxHint.style.display = isImage ? '' : 'none';
   // creative_type に応じて動画/デザインのカテゴリーを読み込む
   const _resolvedCreativeType = creativeType || currentCreativeDetail?.creative_type || '';
   const _resolvedAssigneeRole = assigneeRole
@@ -19245,6 +19262,13 @@ function closeFilePreview() {
   if (_fpClipInterval) { clearInterval(_fpClipInterval); _fpClipInterval = null; }
   _fpLikes = [];
   _fpABState = 0; _fpAB = { a: null, b: null }; _fpSpeed = 1.0; _fpLoopEnabled = false;
+  // bbox / overlay 状態のクリーンアップ
+  _fpComments = [];
+  _fpPendingBbox = null;
+  if (_fpBboxResizeHandler) {
+    window.removeEventListener('resize', _fpBboxResizeHandler);
+    _fpBboxResizeHandler = null;
+  }
 }
 
 // ===== プレビュー ローディングインジケーター =====
@@ -19858,8 +19882,11 @@ async function loadFileComments(fileId) {
   const res = await apiFetch(`${API}/creative-files/${fileId}/comments`);
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
+  _fpComments = Array.isArray(list) ? list : [];
   renderComments(list);
   fpRenderCommentMarkers(list);
+  // 画像の範囲選択（bbox）overlay を再描画
+  fpRenderBboxOverlays();
 }
 
 async function showUploadLogs() {
@@ -19959,6 +19986,206 @@ function fpClearTimecode() {
   if (ta) ta.style.borderColor = '#3f3f46';
 }
 
+// ============================================================
+// 画像コメントの範囲選択（bounding box / Drive 風）
+// ============================================================
+let _fpPendingBbox       = null; // 送信前の選択中 bbox（正規化座標）
+let _fpComments          = []; // 直近ロードしたコメント（overlay 再描画用）
+let _fpBboxResizeHandler = null;
+
+// 画像が読み込まれた時のハンドラ（onload から呼ぶ）
+function fpOnImageLoaded() {
+  fpHideLoading();
+  fpSyncOverlaySize();
+  fpRenderBboxOverlays();
+}
+
+// overlay の表示サイズ／位置を実際の画像表示サイズに合わせる
+function fpSyncOverlaySize() {
+  const img = document.getElementById('fp-image');
+  const ov  = document.getElementById('fp-image-overlay');
+  if (!img || !ov || !img.complete || !img.naturalWidth) return;
+  // object-fit:contain による実表示サイズを計算
+  const wrap = img.parentElement;
+  const wrapW = wrap.clientWidth;
+  const wrapH = wrap.clientHeight;
+  if (wrapW <= 0 || wrapH <= 0) return;
+  const ratioImg  = img.naturalWidth / img.naturalHeight;
+  const ratioWrap = wrapW / wrapH;
+  let dispW, dispH;
+  if (ratioImg >= ratioWrap) {
+    dispW = Math.min(wrapW, img.naturalWidth);
+    dispH = dispW / ratioImg;
+  } else {
+    dispH = Math.min(wrapH, img.naturalHeight);
+    dispW = dispH * ratioImg;
+  }
+  ov.style.width  = dispW + 'px';
+  ov.style.height = dispH + 'px';
+  ov.style.left   = ((wrapW - dispW) / 2) + 'px';
+  ov.style.top    = ((wrapH - dispH) / 2) + 'px';
+}
+
+// overlay にドラッグ選択ハンドラを取り付ける（画像プレビュー時のみ）
+function fpInitImageBboxOverlay() {
+  const ov  = document.getElementById('fp-image-overlay');
+  const img = document.getElementById('fp-image');
+  if (!ov || !img) return;
+  // 既存ハンドラがあっても要素再生成のため再取り付けでOK
+  let dragging = false;
+  let startX = 0, startY = 0;
+  let dragRect = null;
+
+  ov.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    // overlay 上の既存 bbox 表示要素をクリックした場合は素通り
+    if (e.target && e.target.classList && e.target.classList.contains('fp-bbox-existing')) return;
+    e.preventDefault();
+    const r = ov.getBoundingClientRect();
+    startX = e.clientX - r.left;
+    startY = e.clientY - r.top;
+    dragging = true;
+    dragRect = document.createElement('div');
+    dragRect.id = 'fp-bbox-drag';
+    dragRect.style.cssText = 'position:absolute;border:2px solid #f5c518;background:rgba(245,197,24,0.18);left:' + startX + 'px;top:' + startY + 'px;width:0;height:0;pointer-events:none;box-sizing:border-box';
+    ov.appendChild(dragRect);
+  });
+
+  const onMove = (e) => {
+    if (!dragging || !dragRect) return;
+    const r = ov.getBoundingClientRect();
+    const cx = Math.max(0, Math.min(r.width,  e.clientX - r.left));
+    const cy = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    const x = Math.min(cx, startX), y = Math.min(cy, startY);
+    const w = Math.abs(cx - startX), h = Math.abs(cy - startY);
+    dragRect.style.left   = x + 'px';
+    dragRect.style.top    = y + 'px';
+    dragRect.style.width  = w + 'px';
+    dragRect.style.height = h + 'px';
+  };
+  const onUp = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    const ovEl = document.getElementById('fp-image-overlay');
+    const dr   = document.getElementById('fp-bbox-drag');
+    if (!ovEl || !dr) { _fpPendingBbox = null; return; }
+    const r = ovEl.getBoundingClientRect();
+    const cx = Math.max(0, Math.min(r.width,  e.clientX - r.left));
+    const cy = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    const px = Math.min(cx, startX), py = Math.min(cy, startY);
+    const pw = Math.abs(cx - startX), ph = Math.abs(cy - startY);
+    // 5px 未満は無効（誤クリック防止）
+    if (pw < 5 || ph < 5) { dr.remove(); return; }
+    // 正規化座標（0..1）に変換
+    const W = r.width || 1, H = r.height || 1;
+    let nx = px / W, ny = py / H, nw = pw / W, nh = ph / H;
+    // クリッピング保険
+    nx = Math.max(0, Math.min(1, nx));
+    ny = Math.max(0, Math.min(1, ny));
+    nw = Math.max(0.0001, Math.min(1 - nx, nw));
+    nh = Math.max(0.0001, Math.min(1 - ny, nh));
+    _fpPendingBbox = { x: nx, y: ny, w: nw, h: nh };
+    // ドラッグ中の表示要素は「選択中マーカー」として残す
+    dr.id = 'fp-bbox-pending';
+    dr.style.boxShadow = '0 0 0 1px #fde68a inset';
+    // バッジを表示
+    const badge = document.getElementById('fp-bbox-badge');
+    const hint  = document.getElementById('fp-bbox-hint');
+    if (badge) badge.style.display = '';
+    if (hint)  hint.style.display  = 'none';
+    // 入力欄にスクロール＋フォーカス
+    const ta = document.getElementById('fp-comment-text');
+    if (ta) {
+      ta.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      ta.focus();
+      ta.style.borderColor = '#f5c518';
+    }
+  };
+  // mousemove / mouseup は document に張る（overlay 外でも追従）
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup',   onUp);
+
+  // ウィンドウリサイズで overlay も追従
+  if (_fpBboxResizeHandler) window.removeEventListener('resize', _fpBboxResizeHandler);
+  _fpBboxResizeHandler = () => { fpSyncOverlaySize(); fpRenderBboxOverlays(); };
+  window.addEventListener('resize', _fpBboxResizeHandler);
+}
+
+// 既存コメントの bbox を overlay にレンダリング（pending は保持）
+function fpRenderBboxOverlays() {
+  const ov = document.getElementById('fp-image-overlay');
+  if (!ov) return;
+  // 既存の bbox 要素を一掃（pending は別IDなので残る）
+  ov.querySelectorAll('.fp-bbox-existing').forEach(el => el.remove());
+  if (!_fpComments || !_fpComments.length) return;
+  fpSyncOverlaySize();
+  const W = ov.clientWidth, H = ov.clientHeight;
+  if (!W || !H) return;
+  _fpComments.forEach(c => {
+    const b = c && c.bbox;
+    if (!b || typeof b !== 'object') return;
+    if (typeof b.x !== 'number' || typeof b.y !== 'number' || typeof b.w !== 'number' || typeof b.h !== 'number') return;
+    const div = document.createElement('div');
+    div.className = 'fp-bbox-existing';
+    div.dataset.commentId = c.id;
+    div.title = (c.users?.full_name ? c.users.full_name + ': ' : '') + (c.comment || '');
+    div.style.cssText = 'position:absolute;border:2px solid #f5c518;background:rgba(245,197,24,0.08);box-sizing:border-box;cursor:pointer;pointer-events:auto;transition:background .15s';
+    div.style.left   = (b.x * W) + 'px';
+    div.style.top    = (b.y * H) + 'px';
+    div.style.width  = (b.w * W) + 'px';
+    div.style.height = (b.h * H) + 'px';
+    div.addEventListener('mouseenter', () => { div.style.background = 'rgba(245,197,24,0.22)'; });
+    div.addEventListener('mouseleave', () => { div.style.background = 'rgba(245,197,24,0.08)'; });
+    div.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fpScrollToComment(c.id);
+    });
+    ov.appendChild(div);
+  });
+}
+
+// 範囲選択（pending）解除
+function fpClearBbox() {
+  _fpPendingBbox = null;
+  const badge = document.getElementById('fp-bbox-badge');
+  const hint  = document.getElementById('fp-bbox-hint');
+  if (badge) badge.style.display = 'none';
+  // hint は openFilePreview 側で画像/動画判定して制御するのでここでは触らない
+  const ov = document.getElementById('fp-image-overlay');
+  if (ov) {
+    const dr = ov.querySelector('#fp-bbox-pending') || ov.querySelector('#fp-bbox-drag');
+    if (dr) dr.remove();
+  }
+  const ta = document.getElementById('fp-comment-text');
+  if (ta) ta.style.borderColor = '#3f3f46';
+}
+
+// 右ペインの該当コメントへスクロール＋ハイライト
+function fpScrollToComment(commentId) {
+  const item = document.getElementById('fp-comment-item-' + commentId);
+  if (!item) return;
+  item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  const original = item.style.boxShadow;
+  item.style.boxShadow = '0 0 0 2px #f5c518';
+  setTimeout(() => { item.style.boxShadow = original || ''; }, 1500);
+}
+
+// 右ペインの「📍 範囲」バッジから overlay 上の bbox を一時ハイライト
+function fpHighlightBbox(commentId) {
+  const ov = document.getElementById('fp-image-overlay');
+  if (!ov) return;
+  const target = ov.querySelector('.fp-bbox-existing[data-comment-id="' + commentId + '"]');
+  if (!target) return;
+  target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+  const orig = target.style.boxShadow;
+  target.style.boxShadow = '0 0 0 3px #fde68a, 0 0 18px rgba(245,197,24,0.7)';
+  target.style.background = 'rgba(245,197,24,0.32)';
+  setTimeout(() => {
+    target.style.boxShadow = orig || '';
+    target.style.background = 'rgba(245,197,24,0.08)';
+  }, 1500);
+}
+
 function fpSeekTo(tc) {
   const video = document.getElementById('fp-video');
   if (!video || !tc) return;
@@ -19979,10 +20206,11 @@ function renderComments(list) {
     return;
   }
   el.innerHTML = list.map(c => `
-    <div style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'}">
+    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           ${c.timecode ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : ''}
+          ${c.bbox ? `<span onclick="fpHighlightBbox('${c.id}')" style="background:rgba(245,197,24,0.18);color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #f5c518" title="クリックで画像上の範囲をハイライト">📍 範囲</span>` : ''}
           ${avatarHtml(c.users || { full_name: '不明' }, 40)}
           <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
           ${c.is_knowledge ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : ''}
@@ -20017,18 +20245,21 @@ async function submitFileComment() {
     const video = document.getElementById('fp-video');
     if (video && !isNaN(video.currentTime)) timecode = fpTimecodeStr(video.currentTime);
   }
+  // 画像の範囲選択（bbox）を payload に含める
+  const bbox = (_fpPendingBbox && typeof _fpPendingBbox === 'object') ? _fpPendingBbox : null;
   const btn = document.querySelector('#fp-comment-input-area button');
   btn.disabled = true; btn.textContent = '送信中...';
   const res = await apiFetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode }),
+    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode, bbox }),
   });
   btn.disabled = false; btn.textContent = '送信';
   if (res.ok) {
     document.getElementById('fp-comment-text').value = '';
     document.getElementById('fp-is-knowledge').checked = false;
     fpClearTimecode();
+    fpClearBbox();
     await loadFileComments(currentPreviewFileId);
   } else {
     const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error');

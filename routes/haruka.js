@@ -6738,33 +6738,80 @@ async function enrichCommentCategories(comments) {
   return comments.map(c => ({ ...c, master_items: c.category_id ? (map[c.category_id] || null) : null }));
 }
 
+// 列欠損検出（schema-sync 失敗 / migration 未適用ケースのフォールバック判定）
+const _isMissingCfcColumn = (err) => {
+  if (!err) return false;
+  const msg = err.message || '';
+  return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+};
+
+// bbox の正規化座標バリデーション ({x, y, w, h} すべて 0..1 の数値)
+function _validateBbox(bbox) {
+  if (bbox == null) return { ok: true, value: null };
+  if (typeof bbox !== 'object') return { ok: false, error: 'bbox は object である必要があります' };
+  const { x, y, w, h } = bbox;
+  const inRange = (v) => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1;
+  if (!inRange(x) || !inRange(y) || !inRange(w) || !inRange(h)) {
+    return { ok: false, error: 'bbox は {x,y,w,h} すべて 0..1 の数値である必要があります' };
+  }
+  if (w <= 0 || h <= 0) return { ok: false, error: 'bbox の w/h は 0 より大きい必要があります' };
+  if (x + w > 1.0001 || y + h > 1.0001) return { ok: false, error: 'bbox が範囲外です' };
+  return { ok: true, value: { x, y, w, h } };
+}
+
 // ファイルのコメント一覧
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('creative_file_comments')
     .select('*, users(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
+  // bbox 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
+  if (_isMissingCfcColumn(error)) {
+    console.warn('[creative-file-comments] bbox列なし疑い → 明示列指定で再取得:', error.message);
+    ({ data, error } = await supabase
+      .from('creative_file_comments')
+      .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users(id, full_name, role, avatar_url)')
+      .eq('creative_file_id', req.params.fid)
+      .order('created_at', { ascending: true }));
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(await enrichCommentCategories(data));
 });
 
 // コメント追加
 router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { comment, timecode, is_knowledge, category_id } = req.body;
+  const { comment, timecode, is_knowledge, category_id, bbox } = req.body;
   if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
-  const { data, error } = await supabase
+  const bboxCheck = _validateBbox(bbox);
+  if (!bboxCheck.ok) return res.status(400).json({ error: bboxCheck.error });
+
+  const basePayload = {
+    creative_file_id: req.params.fid,
+    user_id: req.user?.id || null,
+    comment: comment.trim(),
+    timecode: timecode || null,
+    is_knowledge: !!is_knowledge,
+    category_id: category_id || null,
+  };
+  const fullPayload = bboxCheck.value
+    ? { ...basePayload, bbox: bboxCheck.value }
+    : basePayload;
+
+  let { data, error } = await supabase
     .from('creative_file_comments')
-    .insert({
-      creative_file_id: req.params.fid,
-      user_id: req.user?.id || null,
-      comment: comment.trim(),
-      timecode: timecode || null,
-      is_knowledge: !!is_knowledge,
-      category_id: category_id || null,
-    })
+    .insert(fullPayload)
     .select('*, users(id, full_name, role, avatar_url)')
     .single();
+  // bbox 列が未追加の環境では bbox を外して再試行（500を返さない）
+  if (_isMissingCfcColumn(error) && bboxCheck.value) {
+    console.warn('[creative-file-comments] bbox列なし → bbox を外して再試行:', error.message);
+    ({ data, error } = await supabase
+      .from('creative_file_comments')
+      .insert(basePayload)
+      .select('*, users(id, full_name, role, avatar_url)')
+      .single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   const [enriched] = await enrichCommentCategories([data]);
   res.json(enriched);
