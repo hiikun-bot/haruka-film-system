@@ -3151,7 +3151,8 @@ router.get('/members', requireAuth, async (req, res) => {
   // feedback batch 002 で追加: holiday_weekdays / camera_model / tripod_info / lighting_info
   // 機材情報・休日曜日はチーム設計に必要なので一覧API でも返す（機微情報ではないので非機微列）。
   // default_creative_tab は最も新しい列なので baseColsWith にだけ含めて、未適用環境では fallback で外す
-  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab';
+  // creative_default_* (PR #277) はメンバーマスターでクリエイティブ画面の初期表示状態を保持。未適用環境では fallback で外す
+  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types';
   // hide_birth_year がない環境向けフォールバック（default_creative_tab も同様に外す）
   const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
   // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
@@ -3220,6 +3221,9 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     }
     dctValue = default_creative_tab;
   }
+  // クリエイティブ画面の初期値10列（PR #277）— 受け取って正規化
+  const cvDefaults = normalizeCreativeDefaults(req.body);
+  if (cvDefaults._error) return res.status(400).json({ error: cvDefaults._error });
   const insertPayload = {
     email, full_name, role, job_type, rank: rank || null, team_id: team_id || null,
     slack_dm_id: slack_dm_id || null, chatwork_dm_id: chatwork_dm_id || null,
@@ -3227,17 +3231,90 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     weekday_hours: weekday_hours || [{from:9,to:18}],
     weekend_hours: weekend_hours || null,
     default_creative_tab: dctValue,
+    ...cvDefaults.fields,
   };
   let { data, error } = await supabase.from('users').insert(insertPayload).select().single();
-  // default_creative_tab 列が無い環境（migration 未適用）でも落ちないようフォールバック
-  if (error && (/column .+ does not exist/.test(error.message || '') || /Could not find the .+ column/.test(error.message || '') || error.code === 'PGRST204')) {
-    console.warn('[members:create] default_creative_tab 列なし → fallback で再試行:', error.message);
-    delete insertPayload.default_creative_tab;
+  // 列が無い環境（migration 未適用）でも落ちないよう、不明列を1つずつ落として再試行
+  const isMissingColCreate = (err) => {
+    if (!err) return false;
+    const msg = err.message || '';
+    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+  };
+  const extractMissingColCreate = (err) => {
+    if (!err) return null;
+    const msg = err.message || '';
+    const m1 = msg.match(/column "?([a-zA-Z_]+)"? does not exist/);
+    if (m1) return m1[1];
+    const m2 = msg.match(/Could not find the '([a-zA-Z_]+)' column/);
+    if (m2) return m2[1];
+    return null;
+  };
+  for (let i = 0; i < 12 && isMissingColCreate(error); i++) {
+    const col = extractMissingColCreate(error);
+    if (col && col in insertPayload) {
+      console.warn(`[members:create] ${col} 列なし → fallback で再試行:`, error.message);
+      delete insertPayload[col];
+    } else {
+      // 抽出不可: 既知の追加列をまとめて落として最後の挑戦
+      console.warn('[members:create] 列名抽出不可 → 追加カラム一括除外で再試行:', error.message);
+      ['default_creative_tab',
+       'creative_default_view','creative_default_view_mode','creative_default_group_mode','creative_default_range',
+       'creative_default_include_ended','creative_default_include_delivered','creative_default_delayed_only','creative_default_sos_only',
+       'creative_default_statuses','creative_default_ball_types']
+        .forEach(k => { if (k in insertPayload) delete insertPayload[k]; });
+    }
     ({ data, error } = await supabase.from('users').insert(insertPayload).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
+
+// クリエイティブ画面の初期値10列（PR #277）を req.body から拾って正規化する。
+// undefined（リクエストに含まれない）→ 既存値を上書きしない（fields に入れない）。
+// null / 空文字 → DB に NULL 保存（フロントは既定値フォールバック）。
+// 値が許可リスト外 → _error を返す（呼び出し側で 400 を返す）。
+function normalizeCreativeDefaults(body) {
+  const ALLOWED_VIEW       = new Set(['all', 'mine', 'ball']);
+  const ALLOWED_VIEW_MODE  = new Set(['gantt', 'list']);
+  const ALLOWED_GROUP_MODE = new Set(['project', 'client', 'assignee', 'team']);
+  const ALLOWED_RANGE      = new Set(['week', '2week', 'month', '2month']);
+  const ALLOWED_STATUS     = new Set(['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留']);
+  const ALLOWED_BALL       = new Set(['editor', 'D', 'P', 'client']);
+  const fields = {};
+  const setText = (key, val, allowed, label) => {
+    if (val === undefined) return null;
+    if (val === null || val === '') { fields[key] = null; return null; }
+    if (typeof val !== 'string' || !allowed.has(val)) return `${label} は ${[...allowed].join(' / ')} / null のいずれかにしてください`;
+    fields[key] = val;
+    return null;
+  };
+  const setBool = (key, val) => {
+    if (val === undefined) return;
+    if (val === null) { fields[key] = null; return; }
+    fields[key] = !!val;
+  };
+  const setArrayJsonb = (key, val, allowed, label) => {
+    if (val === undefined) return null;
+    if (val === null) { fields[key] = null; return null; }
+    if (!Array.isArray(val)) return `${label} は配列または null にしてください`;
+    const cleaned = val.filter(s => typeof s === 'string' && allowed.has(s));
+    fields[key] = cleaned;
+    return null;
+  };
+  let err = null;
+  err = err || setText('creative_default_view',       body.creative_default_view,       ALLOWED_VIEW,       'creative_default_view');
+  err = err || setText('creative_default_view_mode',  body.creative_default_view_mode,  ALLOWED_VIEW_MODE,  'creative_default_view_mode');
+  err = err || setText('creative_default_group_mode', body.creative_default_group_mode, ALLOWED_GROUP_MODE, 'creative_default_group_mode');
+  err = err || setText('creative_default_range',      body.creative_default_range,      ALLOWED_RANGE,      'creative_default_range');
+  setBool('creative_default_include_ended',     body.creative_default_include_ended);
+  setBool('creative_default_include_delivered', body.creative_default_include_delivered);
+  setBool('creative_default_delayed_only',      body.creative_default_delayed_only);
+  setBool('creative_default_sos_only',          body.creative_default_sos_only);
+  err = err || setArrayJsonb('creative_default_statuses',   body.creative_default_statuses,   ALLOWED_STATUS, 'creative_default_statuses');
+  err = err || setArrayJsonb('creative_default_ball_types', body.creative_default_ball_types, ALLOWED_BALL,   'creative_default_ball_types');
+  if (err) return { _error: err };
+  return { fields };
+}
 
 // メンバー一括登録（共通処理）— members 配列を受け取り、{ created, failed, errors } を返却
 async function bulkInsertMembers(members) {
@@ -3510,6 +3587,10 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   if (normalizedDefaultCreativeTab !== undefined) {
     updateData.default_creative_tab = normalizedDefaultCreativeTab;
   }
+  // クリエイティブ画面の初期値10列（PR #277）— 受け取って正規化し、明示指定された列のみ反映
+  const cvDefaults = normalizeCreativeDefaults(req.body);
+  if (cvDefaults._error) return res.status(400).json({ error: cvDefaults._error });
+  Object.assign(updateData, cvDefaults.fields);
   // 機微フィールド（個人情報・口座）は 本人 or member.edit_password 保有者のみ更新可
   // → producer/PD が下位メンバーの口座情報を書き換えられないよう分離
   if (isSelf || isAdmin) {
@@ -3569,6 +3650,9 @@ router.put('/members/:id', requireAuth, async (req, res) => {
       console.warn('[members:update] 列名抽出不可 → 追加カラム一括除外で再保存:', error.message);
       ['hide_birth_year','holiday_weekdays','camera_model','tripod_info','lighting_info',
        'default_creative_tab',
+       'creative_default_view','creative_default_view_mode','creative_default_group_mode','creative_default_range',
+       'creative_default_include_ended','creative_default_include_delivered','creative_default_delayed_only','creative_default_sos_only',
+       'creative_default_statuses','creative_default_ball_types',
        'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
        'account_holder_kana','phone','postal_code','address','nickname','note','birthday']
         .forEach(k => { if (k in attempt) delete attempt[k]; });
