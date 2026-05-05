@@ -6551,10 +6551,22 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   res.json(await enrichCommentCategories(data));
 });
 
+// region のサニタイズ（不正値は null 化して後段の DB エラーを防ぐ）
+function _sanitizeRegion(region) {
+  if (!region || typeof region !== 'object') return null;
+  const { x, y, w, h, image_side } = region;
+  const ok = [x, y, w, h].every(v => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1);
+  if (!ok) return null;
+  if (w <= 0 || h <= 0) return null;
+  const side = (image_side === 'A' || image_side === 'B') ? image_side : null;
+  return { x, y, w, h, image_side: side };
+}
+
 // コメント追加
 router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { comment, timecode, is_knowledge, category_id } = req.body;
+  const { comment, timecode, is_knowledge, category_id, region } = req.body;
   if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
+  const cleanRegion = _sanitizeRegion(region);
   const { data, error } = await supabase
     .from('creative_file_comments')
     .insert({
@@ -6564,6 +6576,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       timecode: timecode || null,
       is_knowledge: !!is_knowledge,
       category_id: category_id || null,
+      region: cleanRegion,
     })
     .select('*, users(id, full_name, role, avatar_url)')
     .single();

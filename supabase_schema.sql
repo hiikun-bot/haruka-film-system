@@ -361,11 +361,13 @@ CREATE TABLE IF NOT EXISTS creative_file_comments (
   timecode TEXT,
   is_knowledge BOOLEAN DEFAULT false,
   category_id UUID REFERENCES master_items(id) ON DELETE SET NULL,
+  region JSONB, -- 静止画レビュー用矩形範囲: { x, y, w, h, image_side?: 'A'|'B'|null }
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
+CREATE INDEX IF NOT EXISTS idx_cfc_region_not_null ON creative_file_comments(creative_file_id) WHERE region IS NOT NULL;
 
 -- ==================== システム設定 ====================
 CREATE TABLE IF NOT EXISTS system_settings (

@@ -18746,6 +18746,9 @@ async function regenerateFaststart(creativeFileId) {
 }
 
 let currentPreviewFileId = null;
+let _fpIsImagePreview = false;     // 静止画モードか（範囲指定UIを有効化）
+let _fpRegionComments = [];        // 領域付きコメントのキャッシュ
+let _fpHighlightedRegionId = null; // 双方向ハイライト用
 
 // ========== Frame.io スタイル プレビュー ==========
 
@@ -18774,6 +18777,9 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
 
   const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
+  _fpIsImagePreview = !!isImage;
+  _fpRegionComments = [];
+  _fpHighlightedRegionId = null;
 
   if (driveFileId) {
     if (isVideo) {
@@ -18802,7 +18808,16 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     } else if (isImage) {
       ctrlBar.style.display = 'none';
       fpShowLoading('画像を読み込み中...');
-      player.innerHTML = `<img src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain" onload="fpHideLoading()" onerror="fpShowLoadingError('画像の読み込みに失敗しました')">`;
+      // 静止画モードでは画像をステージで包み、領域指定オーバーレイを敷く
+      player.innerHTML = `
+        <div id="fp-img-stage" style="position:relative;display:inline-block;max-width:100%;max-height:100%;line-height:0">
+          <img id="fp-image" src="${API}/files/${driveFileId}/stream"
+               style="max-width:100%;max-height:100%;object-fit:contain;display:block;-webkit-user-drag:none;user-select:none;pointer-events:none"
+               draggable="false"
+               onload="fpHideLoading();fpInitRegionStage()"
+               onerror="fpShowLoadingError('画像の読み込みに失敗しました')">
+          <div id="fp-region-overlay" style="position:absolute;inset:0;cursor:crosshair;touch-action:none"></div>
+        </div>`;
     } else {
       ctrlBar.style.display = 'none';
       fpShowLoading('プレビューを読み込み中...');
@@ -18820,6 +18835,11 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   }
 
   fpClearTimecode();
+  // 画像モード時はタイムコードヒントを「ドラッグで範囲指定」に差し替え
+  if (_fpIsImagePreview) {
+    const hint = document.getElementById('fp-timecode-hint');
+    if (hint) hint.textContent = '— 画像をドラッグして範囲を指定できます（任意）—';
+  }
   // creative_type に応じて動画/デザインのカテゴリーを読み込む
   const _resolvedCreativeType = creativeType || currentCreativeDetail?.creative_type || '';
   const _resolvedAssigneeRole = assigneeRole
@@ -18862,6 +18882,11 @@ function closeFilePreview() {
   if (_fpClipInterval) { clearInterval(_fpClipInterval); _fpClipInterval = null; }
   _fpLikes = [];
   _fpABState = 0; _fpAB = { a: null, b: null }; _fpSpeed = 1.0; _fpLoopEnabled = false;
+  // 静止画レビュー領域指定の状態リセット
+  _fpIsImagePreview = false;
+  _fpRegionComments = [];
+  _fpHighlightedRegionId = null;
+  fpClearPendingRegion();
 }
 
 // ===== プレビュー ローディングインジケーター =====
@@ -19151,6 +19176,231 @@ function fpRenderCommentMarkers(comments) {
     dot.onclick = (e) => { e.stopPropagation(); fpSeekTo(list[0].timecode); };
     container.appendChild(dot);
   });
+}
+
+// ==================== 静止画レビュー: 領域指定コメント ====================
+// 設計: 画像 <img> をステージで囲み、上に透明オーバーレイを敷く。
+//   - ドラッグ → 半透明矩形 → mouseup でコメント入力領域にフォーカス（領域は pending として保持）
+//   - 送信時 region(0..1正規化) を付加。サーバー側で sanitize。
+//   - 既存コメントの矩形は画像上に半透明描画。クリックで右パネルにスクロール+ハイライト。
+//   - 右パネルのコメントカード（範囲付き）をクリック/hover で対応矩形をハイライト。
+//   - 動画は既存の挙動を維持（_fpIsImagePreview=false のため新ロジックは無効）。
+
+let _fpPendingRegion = null;     // 送信前の確定矩形 { x,y,w,h,image_side? }
+let _fpDrawingRegion = null;     // ドラッグ中の生座標
+let _fpRegionDragStart = null;
+
+function fpInitRegionStage() {
+  if (!_fpIsImagePreview) return;
+  const overlay = document.getElementById('fp-region-overlay');
+  const stage = document.getElementById('fp-img-stage');
+  const img = document.getElementById('fp-image');
+  if (!overlay || !stage || !img) return;
+  // 画像の表示サイズに合わせてステージを縮める（max-width/max-height で縮んだ実寸）
+  const fit = () => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    stage.style.width  = img.clientWidth  + 'px';
+    stage.style.height = img.clientHeight + 'px';
+    fpRenderRegionsOnImage();
+  };
+  fit();
+  // ウィンドウリサイズで再計算
+  if (!overlay._fpResizeBound) {
+    window.addEventListener('resize', fit);
+    overlay._fpResizeBound = true;
+  }
+  // ドラッグ開始
+  overlay.onmousedown = (e) => {
+    // 既存矩形の上を押下した場合はそちらの click に任せる（要素自体を上に置いていないので不要）
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const rect = overlay.getBoundingClientRect();
+    _fpRegionDragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top, rect };
+    fpClearPendingRegion();
+    document.addEventListener('mousemove', _fpOnRegionDrag);
+    document.addEventListener('mouseup', _fpOnRegionDragEnd);
+  };
+  // タッチ
+  overlay.ontouchstart = (e) => {
+    if (!e.touches || !e.touches[0]) return;
+    const t = e.touches[0];
+    const rect = overlay.getBoundingClientRect();
+    _fpRegionDragStart = { x: t.clientX - rect.left, y: t.clientY - rect.top, rect };
+    fpClearPendingRegion();
+    document.addEventListener('touchmove', _fpOnRegionTouchDrag, { passive: false });
+    document.addEventListener('touchend', _fpOnRegionDragEnd);
+  };
+}
+
+function _fpOnRegionDrag(e) {
+  if (!_fpRegionDragStart) return;
+  const { rect } = _fpRegionDragStart;
+  _fpDrawTempRect(_fpRegionDragStart.x, _fpRegionDragStart.y, e.clientX - rect.left, e.clientY - rect.top);
+}
+function _fpOnRegionTouchDrag(e) {
+  if (!_fpRegionDragStart || !e.touches || !e.touches[0]) return;
+  e.preventDefault();
+  const { rect } = _fpRegionDragStart;
+  const t = e.touches[0];
+  _fpDrawTempRect(_fpRegionDragStart.x, _fpRegionDragStart.y, t.clientX - rect.left, t.clientY - rect.top);
+}
+
+function _fpDrawTempRect(x1, y1, x2, y2) {
+  const overlay = document.getElementById('fp-region-overlay');
+  if (!overlay) return;
+  const w = overlay.clientWidth, h = overlay.clientHeight;
+  const left   = Math.max(0, Math.min(w, Math.min(x1, x2)));
+  const top    = Math.max(0, Math.min(h, Math.min(y1, y2)));
+  const right  = Math.max(0, Math.min(w, Math.max(x1, x2)));
+  const bottom = Math.max(0, Math.min(h, Math.max(y1, y2)));
+  let temp = document.getElementById('fp-region-temp');
+  if (!temp) {
+    temp = document.createElement('div');
+    temp.id = 'fp-region-temp';
+    temp.style.cssText = 'position:absolute;border:2px dashed #3ECFCA;background:rgba(62,207,202,0.15);pointer-events:none;border-radius:2px';
+    overlay.appendChild(temp);
+  }
+  temp.style.left   = left + 'px';
+  temp.style.top    = top + 'px';
+  temp.style.width  = (right - left) + 'px';
+  temp.style.height = (bottom - top) + 'px';
+  _fpDrawingRegion = { left, top, width: right - left, height: bottom - top, overlayW: w, overlayH: h };
+}
+
+function _fpOnRegionDragEnd() {
+  document.removeEventListener('mousemove', _fpOnRegionDrag);
+  document.removeEventListener('mouseup', _fpOnRegionDragEnd);
+  document.removeEventListener('touchmove', _fpOnRegionTouchDrag);
+  document.removeEventListener('touchend', _fpOnRegionDragEnd);
+  _fpRegionDragStart = null;
+  const r = _fpDrawingRegion;
+  _fpDrawingRegion = null;
+  // 小さすぎるドラッグはクリック扱い（ペンディング矩形をクリアする）
+  if (!r || r.width < 6 || r.height < 6) {
+    const t = document.getElementById('fp-region-temp');
+    if (t) t.remove();
+    fpClearPendingRegion();
+    return;
+  }
+  // 0..1 正規化（オーバーレイ＝画像表示エリア基準）
+  const region = {
+    x: r.left / r.overlayW,
+    y: r.top / r.overlayH,
+    w: r.width / r.overlayW,
+    h: r.height / r.overlayH,
+    image_side: null,
+  };
+  // 0..1 にクランプ
+  ['x','y','w','h'].forEach(k => { region[k] = Math.max(0, Math.min(1, region[k])); });
+  if (region.w <= 0 || region.h <= 0) { fpClearPendingRegion(); return; }
+  _fpPendingRegion = region;
+  fpUpdatePendingRegionUI();
+  // フォーカスをコメント欄へ
+  const ta = document.getElementById('fp-comment-text');
+  if (ta) {
+    ta.style.borderColor = '#3ECFCA';
+    ta.focus();
+  }
+}
+
+function fpClearPendingRegion() {
+  _fpPendingRegion = null;
+  const t = document.getElementById('fp-region-temp');
+  if (t) t.remove();
+  fpUpdatePendingRegionUI();
+}
+
+function fpUpdatePendingRegionUI() {
+  // 入力エリアに「範囲指定中」バッジを差し込む（タイムコード行を流用）
+  const tcRow = document.getElementById('fp-tc-row');
+  if (!tcRow) return;
+  let badge = document.getElementById('fp-region-pending-badge');
+  if (_fpPendingRegion) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.id = 'fp-region-pending-badge';
+      badge.style.cssText = 'background:#0c4a6e;color:#7dd3fc;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;letter-spacing:0.04em;border:1px solid #155e75';
+      badge.title = 'クリックで範囲指定をキャンセル';
+      badge.onclick = () => fpClearPendingRegion();
+      tcRow.appendChild(badge);
+    }
+    const r = _fpPendingRegion;
+    badge.textContent = `📌 範囲指定中 (${Math.round(r.w*100)}% × ${Math.round(r.h*100)}%)`;
+    // ヒントを「送信で確定」風に
+    const hint = document.getElementById('fp-timecode-hint');
+    if (hint && hint.style.display !== 'none' && _fpIsImagePreview) {
+      hint.textContent = '— 範囲を選択中。コメントを入力して送信してください —';
+    }
+  } else {
+    if (badge) badge.remove();
+    // 静止画モードの場合、ヒントを画像レビュー用に
+    if (_fpIsImagePreview) {
+      const hint = document.getElementById('fp-timecode-hint');
+      if (hint) hint.textContent = '— 画像をドラッグして範囲を指定できます（任意）—';
+    }
+  }
+}
+
+function fpRenderRegionsOnImage() {
+  const stage = document.getElementById('fp-img-stage');
+  const overlay = document.getElementById('fp-region-overlay');
+  if (!stage || !overlay) return;
+  // 既存の保存済み矩形のみ削除（ドラッグ中の temp は維持）
+  Array.from(overlay.querySelectorAll('.fp-region-saved')).forEach(el => el.remove());
+  if (!_fpRegionComments.length) return;
+  const w = overlay.clientWidth, h = overlay.clientHeight;
+  if (!w || !h) return;
+  _fpRegionComments.forEach((c, idx) => {
+    const r = c.region || {};
+    if (typeof r.x !== 'number') return;
+    const div = document.createElement('div');
+    div.className = 'fp-region-saved';
+    div.dataset.cfcId = c.id;
+    div.style.cssText = `position:absolute;left:${r.x*100}%;top:${r.y*100}%;width:${r.w*100}%;height:${r.h*100}%;border:2px solid rgba(96,165,250,0.85);background:rgba(96,165,250,0.15);border-radius:2px;cursor:pointer;pointer-events:auto;transition:border-color .15s,background .15s,box-shadow .15s;box-sizing:border-box`;
+    div.title = `${c.users?.full_name || '不明'}: ${(c.comment || '').slice(0, 40)}`;
+    // 番号バッジ
+    const n = document.createElement('div');
+    n.textContent = String(idx + 1);
+    n.style.cssText = 'position:absolute;left:-1px;top:-1px;background:#1d4ed8;color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:0 0 6px 0;line-height:1.2;font-family:monospace';
+    div.appendChild(n);
+    div.onmouseenter = () => fpHighlightRegion(c.id);
+    div.onmouseleave = () => fpHighlightRegion(null);
+    div.onclick = (e) => { e.stopPropagation(); fpHighlightRegion(c.id); fpScrollToCommentCard(c.id); };
+    overlay.appendChild(div);
+  });
+  // ハイライト状態の再適用
+  if (_fpHighlightedRegionId) fpHighlightRegion(_fpHighlightedRegionId);
+}
+
+function fpHighlightRegion(cfcId) {
+  _fpHighlightedRegionId = cfcId;
+  // 矩形側
+  document.querySelectorAll('#fp-region-overlay .fp-region-saved').forEach(el => {
+    if (cfcId && el.dataset.cfcId === cfcId) {
+      el.style.border = '2px solid #fbbf24';
+      el.style.background = 'rgba(251,191,36,0.25)';
+      el.style.boxShadow = '0 0 0 3px rgba(251,191,36,0.35)';
+    } else {
+      el.style.border = '2px solid rgba(96,165,250,0.85)';
+      el.style.background = 'rgba(96,165,250,0.15)';
+      el.style.boxShadow = 'none';
+    }
+  });
+  // コメントカード側
+  document.querySelectorAll('#fp-comments-list [data-cfc-id]').forEach(el => {
+    if (cfcId && el.dataset.cfcId === cfcId) {
+      el.style.boxShadow = '0 0 0 2px #fbbf24';
+      el.style.borderColor = '#fbbf24';
+    } else {
+      el.style.boxShadow = 'none';
+      // 元の border は inline で書かれているのでそのまま（再描画時に戻る）
+    }
+  });
+}
+
+function fpScrollToCommentCard(cfcId) {
+  const card = document.querySelector(`#fp-comments-list [data-cfc-id="${cfcId}"]`);
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 async function fpDownloadMarkers() {
@@ -19475,8 +19725,11 @@ async function loadFileComments(fileId) {
   const res = await apiFetch(`${API}/creative-files/${fileId}/comments`);
   if (!res.ok) { el.innerHTML = '<div style="color:#E24B4A;font-size:12px;text-align:center;padding:20px">取得失敗</div>'; return; }
   const list = await res.json();
+  // 静止画レビュー：領域付きコメントをキャッシュして画像上に再描画
+  _fpRegionComments = (list || []).filter(c => c && c.region && typeof c.region === 'object');
   renderComments(list);
   fpRenderCommentMarkers(list);
+  if (_fpIsImagePreview) fpRenderRegionsOnImage();
 }
 
 async function showUploadLogs() {
@@ -19596,17 +19849,18 @@ function renderComments(list) {
     return;
   }
   el.innerHTML = list.map(c => `
-    <div style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'}">
+    <div data-cfc-id="${c.id}" data-has-region="${c.region ? '1' : '0'}" ${c.region ? `onmouseenter="fpHighlightRegion('${c.id}')" onmouseleave="fpHighlightRegion(null)" onclick="fpHighlightRegion('${c.id}')"` : ''} style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};${c.region ? 'cursor:pointer;' : ''}transition:box-shadow .15s,border-color .15s">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          ${c.timecode ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : ''}
+          ${c.timecode ? `<span onclick="event.stopPropagation();fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : ''}
+          ${c.region ? `<span style="background:#1e3a8a;color:#bfdbfe;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;letter-spacing:0.04em" title="範囲指定コメント（クリックで強調）">📌 範囲${c.region.image_side ? ' '+esc(c.region.image_side) : ''}</span>` : ''}
           ${avatarHtml(c.users || { full_name: '不明' }, 40)}
           <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
           ${c.is_knowledge ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : ''}
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="font-size:10px;color:var(--text-muted)">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-          ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1" title="削除">✕</button>` : ''}
+          ${c.user_id === currentUser?.id ? `<button onclick="event.stopPropagation();deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1" title="削除">✕</button>` : ''}
         </div>
       </div>
       <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
@@ -19636,16 +19890,19 @@ async function submitFileComment() {
   }
   const btn = document.querySelector('#fp-comment-input-area button');
   btn.disabled = true; btn.textContent = '送信中...';
+  // 静止画レビューでドラッグ中の領域があれば付加
+  const pendingRegion = (_fpIsImagePreview && _fpPendingRegion) ? _fpPendingRegion : null;
   const res = await apiFetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode }),
+    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode, region: pendingRegion }),
   });
   btn.disabled = false; btn.textContent = '送信';
   if (res.ok) {
     document.getElementById('fp-comment-text').value = '';
     document.getElementById('fp-is-knowledge').checked = false;
     fpClearTimecode();
+    fpClearPendingRegion();
     await loadFileComments(currentPreviewFileId);
   } else {
     const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error');
