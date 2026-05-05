@@ -43,7 +43,7 @@ jobs:
           #    （ラベル付与は GITHUB_TOKEN が原因で downstream に再伝播しないため、
           #     ラベル状態だけに頼ると race で誤判定する）
           MIGRATION_FILE_COUNT=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json files \
-            --jq '[.files[] | select(.path | startswith("migrations/") or .path == "supabase_schema.sql")] | length')
+            --jq '[.files[] | select((.path | startswith("migrations/")) or (.path == "supabase_schema.sql"))] | length')
 
           # 2) ラベル状態
           LABELS=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' || echo "")
