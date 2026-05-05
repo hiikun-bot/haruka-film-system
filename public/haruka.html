@@ -3979,24 +3979,24 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <div style="padding-top:12px;border-top:1px solid var(--border)">
           <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
           <div style="display:grid;grid-template-columns:120px 1fr 1fr 150px auto;gap:8px;align-items:end">
-            <div>
+            <div style="position:relative;padding-bottom:16px">
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">コード</div>
               <input class="form-input" id="cl-axis-code" placeholder="例: ap001" style="font-family:monospace;font-size:13px">
-              <div style="font-size:10px;color:#a16207;margin-top:3px">💡 小文字に自動変換</div>
+              <div style="position:absolute;left:0;right:0;bottom:0;font-size:10px;color:#a16207;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">💡 小文字に自動変換</div>
             </div>
-            <div>
+            <div style="padding-bottom:16px">
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">名称</div>
               <input class="form-input" id="cl-axis-name" placeholder="例: UGC風">
             </div>
-            <div>
+            <div style="padding-bottom:16px">
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">備考</div>
               <input class="form-input" id="cl-axis-note" placeholder="任意">
             </div>
-            <div>
+            <div style="padding-bottom:16px">
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">有効期限日</div>
               <input class="form-input" type="date" id="cl-axis-expires">
             </div>
-            <button class="btn-primary" style="white-space:nowrap;height:38px" onclick="addClientAxis()">追加</button>
+            <button class="btn-primary" style="white-space:nowrap;height:38px;margin-bottom:16px" onclick="addClientAxis()">追加</button>
           </div>
         </div>
       </div>
