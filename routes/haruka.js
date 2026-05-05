@@ -366,14 +366,17 @@ router.get('/projects', async (req, res) => {
     : [];
 
   // --- 案件本体 ---
+  // primary_category_id は Stage A で追加。テーブル/列が無い環境では select で落ちる可能性が
+  // あるため、まず join 付きで試し、失敗したら join 無しでリトライする。
+  const baseSelect = `
+    *,
+    clients(id, name),
+    producer:users!projects_producer_id_fkey(id, full_name),
+    director:users!projects_director_id_fkey(id, full_name)
+  `;
   let query = supabase
     .from('projects')
-    .select(`
-      *,
-      clients(id, name),
-      producer:users!projects_producer_id_fkey(id, full_name),
-      director:users!projects_director_id_fkey(id, full_name)
-    `)
+    .select(baseSelect)
     .order('created_at', { ascending: false });
   if (wantedTypes.length) query = query.in('project_type', wantedTypes);
 
@@ -405,12 +408,15 @@ router.get('/projects', async (req, res) => {
 
   if (!projects.length) return res.json([]);
 
-  // --- 単価・見積・全タグを一括取得（N+1 回避）---
+  // --- 単価・見積・全タグ・カテゴリを一括取得（N+1 回避）---
   const projectIds = projects.map(p => p.id);
-  const [ratesRes, estRes, allTagsRes] = await Promise.all([
+  const [ratesRes, estRes, allTagsRes, catsRes] = await Promise.all([
     supabase.from('project_rates').select('project_id').in('project_id', projectIds),
     supabase.from('project_estimates').select('project_id').in('project_id', projectIds),
     supabase.from('project_tags').select('project_id, tag').in('project_id', projectIds),
+    // creative_categories: 一覧で全カテゴリを引き、JS 側で id → meta 変換。
+    // テーブル未作成（Stage A migration 未適用）時は silent skip。
+    supabase.from('creative_categories').select('id, code, name, color, render_kind'),
   ]);
   const ratesSet = new Set((ratesRes.data || []).map(r => r.project_id));
   const estSet   = new Set((estRes.data   || []).map(r => r.project_id));
@@ -423,11 +429,18 @@ router.get('/projects', async (req, res) => {
   // タグはアルファベット順で安定化（UI 安定 / chip 並びの一貫性）
   for (const arr of tagsMap.values()) arr.sort((a,b) => a.localeCompare(b));
 
+  // カテゴリ map（テーブル未作成時は空 Map）
+  const catMap = new Map();
+  if (!catsRes.error) {
+    for (const c of (catsRes.data || [])) catMap.set(c.id, c);
+  }
+
   const enriched = projects.map(p => ({
     ...p,
     has_rates: ratesSet.has(p.id),
     has_estimates: estSet.has(p.id),
     tags: tagsMap.get(p.id) || [],
+    primary_category: p.primary_category_id ? (catMap.get(p.primary_category_id) || null) : null,
   }));
   res.json(enriched);
 });
@@ -465,7 +478,18 @@ router.get('/projects/:id', async (req, res) => {
     .eq('id', req.params.id)
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // primary_category 情報を別クエリで補完（FK join に依存しないフォールバック）
+  let primary_category = null;
+  if (data?.primary_category_id) {
+    const catRes = await supabase
+      .from('creative_categories')
+      .select('id, code, name, color, render_kind')
+      .eq('id', data.primary_category_id)
+      .maybeSingle();
+    if (!catRes.error) primary_category = catRes.data || null;
+  }
+  res.json({ ...(data || {}), primary_category });
 });
 
 // project_type を新カテゴリ ('video'|'design'|'lp'|'hp'|'other') に正規化。
@@ -525,6 +549,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     slack_channel_url,
     deadline_unit, deadline_weekday,
     project_type,
+    primary_category_id,
     sub_director_ids,
     tags
   } = req.body;
@@ -552,6 +577,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_unit: deadline_unit || 'monthly',
     deadline_weekday: deadline_weekday ?? null,
     project_type: normalizedProjectType,
+    primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
   };
   let { data, error } = await supabase
@@ -564,6 +590,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const { sub_director_ids: _omit, ...fallback } = insertPayload;
     const retry = await supabase.from('projects').insert(fallback).select().single();
     data = retry.data; error = retry.error;
+  }
+  // schema-sync 失敗で primary_category_id 列がまだ無い場合のフォールバック（Stage A migration 未適用）
+  if (error && /primary_category_id/i.test(error.message || '')) {
+    const { primary_category_id: _omit2, ...fallback2 } = insertPayload;
+    const retry2 = await supabase.from('projects').insert(fallback2).select().single();
+    data = retry2.data; error = retry2.error;
   }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
@@ -584,6 +616,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday,
     project_type,
+    primary_category_id,
     sub_director_ids,
     tags
   } = req.body;
@@ -607,6 +640,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
   if (project_type !== undefined) {
     updateData.project_type = normalizeProjectType(project_type);
+  }
+  // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
+  if (primary_category_id !== undefined) {
+    updateData.primary_category_id = primary_category_id || null;
   }
   // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
   // フィールドが渡ってきた時のみ正規化して反映する。
@@ -635,6 +672,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { sub_director_ids: _omit, ...fallback } = updateData;
     const retry = await supabase.from('projects').update(fallback).eq('id', req.params.id).select().single();
     data = retry.data; error = retry.error;
+  }
+  // schema-sync 失敗で primary_category_id 列がまだ無い場合のフォールバック（Stage A migration 未適用）
+  if (error && /primary_category_id/i.test(error.message || '') && updateData.primary_category_id !== undefined) {
+    const { primary_category_id: _omit2, ...fallback2 } = updateData;
+    const retry2 = await supabase.from('projects').update(fallback2).eq('id', req.params.id).select().single();
+    data = retry2.data; error = retry2.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -746,6 +789,171 @@ router.post('/projects/:id/cycles', requireAuth, requirePermission('project.crea
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// ==================== カテゴリマスタ (Stage A) ====================
+// マスタテーブル creative_categories を駆動して、案件・クリエイティブの
+// 種別をハードコード分岐ではなくレコード追加だけで増やせるようにする。
+//
+// 既存の project_type / creative_type / RATE_CREATIVE_TYPES は Stage A の段階では
+// 残す（Stage B/C で削除予定）。
+//
+// schema-sync 失敗で本番に creative_categories テーブルが無い場合は、
+// 200/空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingCategoriesTable = (err) =>
+  err && /relation .*creative_categories.* does not exist|could not find the table/i.test(err.message || '');
+
+// GET /api/categories
+//   一覧取得。?include_inactive=1 で is_active=false も返す。
+//   render_kind / color / sort_order / default_status_template_id を含む。
+//   sort_order 昇順（同値時は name 昇順）。
+router.get('/categories', async (req, res) => {
+  const includeInactive = String(req.query.include_inactive || '') === '1';
+  let query = supabase
+    .from('creative_categories')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (!includeInactive) query = query.eq('is_active', true);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      console.warn('[categories] creative_categories table missing. Apply migrations/2026-05-05_creative_categories.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/categories/:id  単件取得
+router.get('/categories/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_categories')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingCategoriesTable(error)) return res.json(null);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || null);
+});
+
+// POST /api/categories  新規作成（admin/secretary 権限想定）
+const ALLOWED_RENDER_KINDS = new Set(['video','image','longpage','iframe','pdf']);
+router.post('/categories', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { code, name, render_kind, sort_order, color, is_active } = req.body || {};
+  if (!code || !name || !render_kind) {
+    return res.status(400).json({ error: 'code / name / render_kind は必須です' });
+  }
+  if (!ALLOWED_RENDER_KINDS.has(render_kind)) {
+    return res.status(400).json({ error: 'render_kind は video/image/longpage/iframe/pdf のいずれかで指定してください' });
+  }
+  const insert = {
+    code: String(code).trim(),
+    name: String(name).trim(),
+    render_kind,
+    sort_order: Number.isFinite(parseInt(sort_order, 10)) ? parseInt(sort_order, 10) : 0,
+    color: color || null,
+    is_active: is_active === false ? false : true,
+  };
+  const { data, error } = await supabase
+    .from('creative_categories')
+    .insert(insert)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_categories テーブルが未作成です。migrations/2026-05-05_creative_categories.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/categories/:id  更新
+router.put('/categories/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { code, name, render_kind, sort_order, color, is_active, default_status_template_id } = req.body || {};
+  const update = { updated_at: new Date().toISOString() };
+  if (code !== undefined) update.code = String(code).trim();
+  if (name !== undefined) update.name = String(name).trim();
+  if (render_kind !== undefined) {
+    if (!ALLOWED_RENDER_KINDS.has(render_kind)) {
+      return res.status(400).json({ error: 'render_kind は video/image/longpage/iframe/pdf のいずれかで指定してください' });
+    }
+    update.render_kind = render_kind;
+  }
+  if (sort_order !== undefined) update.sort_order = parseInt(sort_order, 10) || 0;
+  if (color !== undefined) update.color = color || null;
+  if (is_active !== undefined) update.is_active = !!is_active;
+  if (default_status_template_id !== undefined) update.default_status_template_id = default_status_template_id || null;
+
+  const { data, error } = await supabase
+    .from('creative_categories')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_categories テーブルが未作成です。migration を適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/categories/:id  削除
+//   FK でぶら下がる projects.primary_category_id / creatives.category_id がある場合は
+//   ON DELETE が SET NULL ではないため、参照中の場合はサーバー側で 409 を返す。
+router.delete('/categories/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const id = req.params.id;
+  // 参照チェック（projects / creatives）
+  const [projUseRes, crUseRes] = await Promise.all([
+    supabase.from('projects').select('id', { count: 'exact', head: true }).eq('primary_category_id', id),
+    supabase.from('creatives').select('id', { count: 'exact', head: true }).eq('category_id', id),
+  ]);
+  const projUse = projUseRes.count || 0;
+  const crUse   = crUseRes.count   || 0;
+  if (projUse > 0 || crUse > 0) {
+    return res.status(409).json({
+      error: `このカテゴリは案件 ${projUse} 件 / クリエイティブ ${crUse} 件 で使用中のため削除できません。先に他カテゴリへ振り替えるか、is_active=false で非表示化してください。`
+    });
+  }
+  const { error } = await supabase.from('creative_categories').delete().eq('id', id);
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_categories テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
+});
+
+// GET /api/status-templates?category_id=...
+//   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
+router.get('/status-templates', async (req, res) => {
+  const { category_id } = req.query;
+  let query = supabase
+    .from('creative_status_templates')
+    .select('*, items:creative_status_template_items(*)')
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true });
+  if (category_id) query = query.eq('category_id', category_id);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingCategoriesTable(error) || /relation .*creative_status_templates.* does not exist/i.test(error.message || '')) {
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // items を sort_order 昇順に整列して返す
+  const out = (data || []).map(t => ({
+    ...t,
+    items: (t.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+  }));
+  res.json(out);
 });
 
 // ==================== 単価設定 ====================

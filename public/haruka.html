@@ -4258,7 +4258,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <!-- タブナビ（編集時のみ） -->
     <div id="p-tab-nav" style="display:none;padding:0 28px;border-bottom:1px solid var(--border);flex-shrink:0">
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
-      <button id="p-tab-btn-sync" onclick="switchProjectTab('sync')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">商材・訴求軸</button>
+      <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行） -->
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
       <!-- 「💰 収支」タブは廃止。報酬ボタンから modal-project-finance を直接開く -->
     </div>
@@ -4299,8 +4299,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
           <div class="form-row" style="margin-bottom:10px">
             <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">案件種別 <span style="color:#E24B4A">*</span></label>
-              <select class="form-select" id="p-project-type" required>
+              <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span>
+                <span style="font-size:11px;color:var(--text-muted);font-weight:400">（マスタ駆動・カテゴリ管理から追加可能）</span>
+              </label>
+              <select class="form-select" id="p-primary-category" required>
+                <option value="">読込中...</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">旧 案件種別 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（互換用・カテゴリと連動）</span></label>
+              <select class="form-select" id="p-project-type">
                 <option value="video">動画編集</option>
                 <option value="design">デザイン</option>
                 <option value="lp">LP制作</option>
@@ -4507,88 +4515,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     </div><!-- /グリッド -->
     </div><!-- /p-tab-panel-main -->
 
-    <!-- パネル：商材・訴求軸（編集時のみ） -->
-    <div id="p-tab-panel-sync" style="display:none;padding:24px 28px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px">
-
-        <!-- 商材カラム -->
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材</span>
-          </div>
-          <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:12px">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-              <div>
-                <div style="font-size:13px;font-weight:500">クライアントの商材マスターを参照します</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="p-sync-products-desc">クライアントマスターを参照</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
-                <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
-                <div onclick="toggleProjectSync('products')" style="cursor:pointer">
-                  <input type="checkbox" id="p-sync-products" style="display:none">
-                  <div id="p-sync-products-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
-                    <div id="p-sync-products-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div id="p-products-override" style="display:none">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の商材</span>
-              <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
-            </div>
-            <div id="p-products-list" style="margin-bottom:8px;max-height:280px;overflow-y:auto"></div>
-            <div style="display:flex;gap:5px">
-              <input class="form-input" id="pp-code" placeholder="コード" style="width:80px;font-size:12px">
-              <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
-              <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
-              <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectProduct()">追加</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 訴求軸カラム -->
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">訴求軸</span>
-          </div>
-          <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:12px">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-              <div>
-                <div style="font-size:13px;font-weight:500">クライアントの訴求軸マスターを参照します</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="p-sync-axes-desc">クライアントマスターを参照</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
-                <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
-                <div onclick="toggleProjectSync('axes')" style="cursor:pointer">
-                  <input type="checkbox" id="p-sync-axes" style="display:none">
-                  <div id="p-sync-axes-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
-                    <div id="p-sync-axes-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div id="p-axes-override" style="display:none">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の訴求軸</span>
-              <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
-            </div>
-            <div id="p-axes-list" style="margin-bottom:8px;max-height:280px;overflow-y:auto"></div>
-            <div style="display:flex;gap:5px">
-              <input class="form-input" id="pa-code" placeholder="コード" style="width:80px;font-size:12px">
-              <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
-              <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
-              <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="addProjectAxis()">追加</button>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div><!-- /p-tab-panel-sync -->
+    <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行）。
+         旧 #p-tab-panel-sync は削除済み。関連JSは Stage C で削除予定。 -->
+    <!-- Stage A: 旧トグル参照を残すコードのために最小限の hidden stub を残す -->
+    <div id="p-tab-panel-sync" style="display:none"></div>
+    <input type="checkbox" id="p-sync-products" style="display:none">
+    <input type="checkbox" id="p-sync-axes" style="display:none">
+    <div id="p-products-override" style="display:none"></div>
+    <div id="p-axes-override" style="display:none"></div>
 
     <!-- パネル：案件チェックリスト -->
     <div id="p-tab-panel-checklist" style="display:none;padding:24px 28px">
@@ -4747,13 +4681,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           汎用マスター
         </div>
-        <div class="master-nav-item" onclick="selectMasterNav('products')" id="mnav-products"
+        <!-- 商材マスター・訴求軸マスターは Stage A で削除（カテゴリマスタ駆動に移行） -->
+        <div class="master-nav-item" onclick="selectMasterNav('categories')" id="mnav-categories"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
-          商材マスター
-        </div>
-        <div class="master-nav-item" onclick="selectMasterNav('appeal_axes')" id="mnav-appeal_axes"
-          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
-          訴求軸マスター
+          🏷️ カテゴリ管理
         </div>
         <div class="master-nav-item" onclick="selectMasterNav('checklist')" id="mnav-checklist"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
@@ -6022,7 +5953,8 @@ async function init() {
   }
   applyRoleBasedUI();
   // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
-  await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
+  // loadCategories() : Stage A で追加。案件一覧バッジ・モーダルが参照する。
+  await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives(), loadCategories()]);
   loadDashboard();
   applyDeepLinkOnLoad();
 }
@@ -10524,6 +10456,59 @@ function effectiveRole() {
   return previewRole ?? currentUser?.role ?? 'editor';
 }
 
+// ==================== カテゴリマスタ (Stage A) ====================
+// /api/categories のクライアント側キャッシュ。
+// loadCategories() で一度取得し、以降は getCategory(id) / getCategoryByCode(code) で参照。
+// migration 未適用環境では空配列のままになる（API は 200/[] フォールバック）。
+let _categoriesCache = null;          // null = 未取得 / [] = 取得済み（空含む）
+let _categoriesCachePromise = null;
+async function loadCategories(force = false) {
+  if (_categoriesCache && !force) return _categoriesCache;
+  if (_categoriesCachePromise && !force) return _categoriesCachePromise;
+  _categoriesCachePromise = (async () => {
+    try {
+      const res = await apiFetch(`${API}/categories`);
+      _categoriesCache = res.ok ? (await res.json() || []) : [];
+    } catch (_) {
+      _categoriesCache = [];
+    }
+    _categoriesCachePromise = null;
+    return _categoriesCache;
+  })();
+  return _categoriesCachePromise;
+}
+function getCategory(id) {
+  if (!id || !_categoriesCache) return null;
+  return _categoriesCache.find(c => c.id === id) || null;
+}
+function getCategoryByCode(code) {
+  if (!code || !_categoriesCache) return null;
+  return _categoriesCache.find(c => c.code === code) || null;
+}
+// project_type → category code の Stage A マッピング（互換用）
+const PROJECT_TYPE_TO_CATEGORY_CODE = { video: 'video', design: 'image', lp: 'lp', hp: 'hp', other: 'image' };
+// project の primary_category を解決（明示 ID 優先 / 無ければ project_type からフォールバック）
+function getProjectCategory(project) {
+  if (!project) return null;
+  if (project.primary_category) return project.primary_category;
+  if (project.primary_category_id) return getCategory(project.primary_category_id);
+  const code = PROJECT_TYPE_TO_CATEGORY_CODE[project.project_type] || 'video';
+  return getCategoryByCode(code);
+}
+// 案件モーダル等の <select id="p-primary-category"> を populate する
+function populateCategorySelect(selectEl, selectedId) {
+  if (!selectEl) return;
+  const cats = (_categoriesCache || []).filter(c => c.is_active !== false);
+  if (!cats.length) {
+    selectEl.innerHTML = '<option value="">（カテゴリが登録されていません）</option>';
+    return;
+  }
+  const opts = ['<option value="">未設定</option>']
+    .concat(cats.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`));
+  selectEl.innerHTML = opts.join('');
+  if (selectedId) selectEl.value = selectedId;
+}
+
 // 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
 // 未定義/不正値は 'video' にフォールバック。
 // 古いキャッシュや project_type 列が無い古いレコードへの保険として使う。
@@ -10552,9 +10537,19 @@ const PROJECT_TYPE_META = {
   other:  { label: 'その他',   icon: '📦', cls: 'badge-other',  title: 'その他案件' },
 };
 
-// 案件種別バッジHTMLを返す。project_type が未設定でも getProjectType() のフォールバックで
-// 必ず有効値になるため、バッジは常時表示される。
+// 案件種別バッジHTMLを返す。
+// Stage A: project が primary_category（または primary_category_id）を持っていれば
+// それを優先表示（color/name はマスタ駆動）。無ければ従来の project_type ベース。
 function getProjectTypeBadge(projectOrType) {
+  // オブジェクトかつカテゴリ情報があれば優先
+  if (projectOrType && typeof projectOrType === 'object') {
+    const cat = getProjectCategory(projectOrType);
+    if (cat) {
+      const color = cat.color || '#666';
+      // 視認性: 背景は薄塗り、文字は濃色（color の暗版を簡易計算する代わりに em-dark を流用）
+      return `<span class="badge-project-type" style="background:${color}22;color:${color};border:1px solid ${color}44" title="${esc(cat.name)}">${esc(cat.name)}</span>`;
+    }
+  }
   const type = (typeof projectOrType === 'string')
     ? (PROJECT_TYPE_VALUES.includes(projectOrType) ? projectOrType : 'video')
     : getProjectType(projectOrType);
@@ -11669,6 +11664,14 @@ function openProjectModal(preClientId) {
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
   document.getElementById('p-project-type').value = 'video';
+  // カテゴリ select 初期化（マスタを fetch して populate。デフォルトは 'video' カテゴリ）
+  loadCategories().then(() => {
+    const sel = document.getElementById('p-primary-category');
+    if (!sel) return;
+    populateCategorySelect(sel, null);
+    const def = getCategoryByCode('video');
+    if (def) sel.value = def.id;
+  });
   // タグ入力初期化
   const pTagInputNew = document.getElementById('p-tags-input');
   if (pTagInputNew) pTagInputNew.value = '';
@@ -11742,6 +11745,18 @@ function openEditProject(p) {
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
   document.getElementById('p-project-type').value = getProjectType(p);
+  // カテゴリ select 初期化（マスタを fetch して populate。p.primary_category_id 優先 / 旧 project_type からの推定をフォールバック）
+  loadCategories().then(() => {
+    const sel = document.getElementById('p-primary-category');
+    if (!sel) return;
+    populateCategorySelect(sel, p.primary_category_id || null);
+    if (!p.primary_category_id) {
+      // 旧データ：project_type → カテゴリ code をマッピングして初期選択
+      const code = PROJECT_TYPE_TO_CATEGORY_CODE[getProjectType(p)] || 'video';
+      const cat = getCategoryByCode(code);
+      if (cat) sel.value = cat.id;
+    }
+  });
   // タグ初期値
   const pTagInputEdit = document.getElementById('p-tags-input');
   if (pTagInputEdit) pTagInputEdit.value = Array.isArray(p.tags) ? p.tags.join(', ') : '';
@@ -11916,7 +11931,8 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  const tabs = ['main', 'sync', 'checklist'];
+  // 'sync' タブは Stage A で削除済み。'main' と 'checklist' のみ。
+  const tabs = ['main', 'checklist'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -13257,6 +13273,7 @@ async function submitProject() {
   const name = document.getElementById('p-name').value.trim();
   const status = document.getElementById('p-status').value;
   const project_type = document.getElementById('p-project-type').value || 'video';
+  const primary_category_id = (document.getElementById('p-primary-category')?.value || '') || null;
   const tags = getCurrentTagsInputValues();
   const start_date = document.getElementById('p-start-date').value || null;
   const end_date = document.getElementById('p-end-date').value || null;
@@ -13290,7 +13307,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
+    body: JSON.stringify({ client_id, name, status, project_type, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -16754,7 +16771,8 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  ['generic','general','products','appeal_axes','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  // 'products'/'appeal_axes' は Stage A で削除済み。'categories' を追加。
+  ['generic','general','categories','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -16768,10 +16786,8 @@ function selectMasterNav(type) {
     renderMasterPage();
   } else if (type === 'general') {
     renderGeneralMasterPage();
-  } else if (type === 'products') {
-    renderProductsMasterPage();
-  } else if (type === 'appeal_axes') {
-    renderAppealAxesMasterPage();
+  } else if (type === 'categories') {
+    renderCategoriesMasterPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
@@ -18747,6 +18763,207 @@ function selectMasterCategory(id) {
 let productsCurrentClientId = null;
 
 let showArchivedClientsInMaster = false;
+
+// ==================== カテゴリ管理 (Stage A) ====================
+// マスター画面の「🏷️ カテゴリ管理」セクション。
+// /api/categories の CRUD を行い、追加したカテゴリは即座に
+// 案件モーダル / 案件一覧バッジ / クリエイティブモーダル等に反映される。
+async function renderCategoriesMasterPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  // include_inactive=1 で非アクティブも含めて取得（管理画面では全件表示）
+  let cats = [];
+  try {
+    const res = await apiFetch(`${API}/categories?include_inactive=1`);
+    cats = res.ok ? await res.json() : [];
+  } catch (e) { cats = []; }
+  // キャッシュも更新（モーダル等に即反映）
+  _categoriesCache = cats.filter(c => c.is_active !== false);
+
+  const RENDER_KIND_LABELS = {
+    video: '🎬 動画',
+    image: '🎨 静止画',
+    longpage: '📄 縦長ページ (HP/LP)',
+    iframe: '🖼️ iframe',
+    pdf: '📑 PDF',
+  };
+
+  const rows = cats.map(c => `
+    <tr style="background:var(--surface)">
+      <td style="padding:10px 12px;text-align:center">
+        <span style="display:inline-block;width:20px;height:20px;border-radius:6px;background:${esc(c.color || '#999')};vertical-align:middle"></span>
+      </td>
+      <td style="padding:10px 12px;font-family:monospace;font-size:12px;color:var(--text-muted)">${esc(c.code)}</td>
+      <td style="padding:10px 12px;font-size:14px;font-weight:600">${esc(c.name)}</td>
+      <td style="padding:10px 12px;font-size:12px">${esc(RENDER_KIND_LABELS[c.render_kind] || c.render_kind)}</td>
+      <td style="padding:10px 12px;text-align:center;font-size:13px">${c.sort_order || 0}</td>
+      <td style="padding:10px 12px;text-align:center">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+          <input type="checkbox" ${c.is_active === false ? '' : 'checked'} onchange="toggleCategoryActive('${c.id}', this.checked)">
+          ${c.is_active === false ? '<span style="color:var(--text-muted)">非表示</span>' : '<span style="color:var(--em-dark)">有効</span>'}
+        </label>
+      </td>
+      <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+        <button class="btn-sm" onclick="openCategoryModal('${c.id}')">編集</button>
+        <button class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="deleteCategory('${c.id}')">削除</button>
+      </td>
+    </tr>
+  `).join('');
+
+  content.innerHTML = `
+    <div style="margin-bottom:18px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--text-main)">🏷️ カテゴリ管理</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">案件・クリエイティブのカテゴリ。レコード追加だけで案件モーダル等に即反映されます。</div>
+      </div>
+      <button class="btn-primary" onclick="openCategoryModal(null)">＋ 新規追加</button>
+    </div>
+
+    ${cats.length === 0 ? `
+      <div style="background:#FFF8E1;border:1px solid #F59E0B;border-radius:10px;padding:20px;color:#92400E;font-size:13px;line-height:1.7">
+        ⚠️ カテゴリが 1 件もありません。<br>
+        本番Supabase に <code>migrations/2026-05-05_creative_categories.sql</code> が適用されているか確認してください。
+      </div>
+    ` : `
+      <div style="background:var(--white);border:0.5px solid var(--border);border-radius:12px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="background:var(--em-pale)">
+            <tr>
+              <th style="padding:10px 12px;text-align:center;width:60px">色</th>
+              <th style="padding:10px 12px;text-align:left;width:120px">コード</th>
+              <th style="padding:10px 12px;text-align:left">表示名</th>
+              <th style="padding:10px 12px;text-align:left;width:200px">レンダラ</th>
+              <th style="padding:10px 12px;text-align:center;width:80px">並び</th>
+              <th style="padding:10px 12px;text-align:center;width:120px">表示</th>
+              <th style="padding:10px 12px;text-align:right;width:160px">操作</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `}
+
+    <!-- 編集モーダル（インライン） -->
+    <div id="category-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:92vw;max-height:90vh;overflow:auto">
+        <div style="font-size:16px;font-weight:700;margin-bottom:16px" id="cat-modal-title">カテゴリ追加</div>
+        <input type="hidden" id="cat-modal-id">
+        <div class="form-group">
+          <label class="form-label">コード <span style="color:#E24B4A">*</span></label>
+          <input class="form-input" id="cat-modal-code" placeholder="例: utage" style="font-family:monospace">
+        </div>
+        <div class="form-group">
+          <label class="form-label">表示名 <span style="color:#E24B4A">*</span></label>
+          <input class="form-input" id="cat-modal-name" placeholder="例: UTAGE">
+        </div>
+        <div class="form-group">
+          <label class="form-label">レンダラ種別 <span style="color:#E24B4A">*</span></label>
+          <select class="form-select" id="cat-modal-render">
+            <option value="video">🎬 動画</option>
+            <option value="image">🎨 静止画</option>
+            <option value="longpage">📄 縦長ページ (HP/LP)</option>
+            <option value="iframe">🖼️ iframe</option>
+            <option value="pdf">📑 PDF</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label class="form-label">バッジ色</label>
+            <input class="form-input" id="cat-modal-color" type="color" value="#666666">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label class="form-label">並び順</label>
+            <input class="form-input" id="cat-modal-sort" type="number" min="0" value="100">
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:8px;cursor:pointer">
+          <input type="checkbox" id="cat-modal-active" checked>
+          <span>有効（is_active=true）</span>
+        </label>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
+          <button class="btn" onclick="closeCategoryModal()">キャンセル</button>
+          <button class="btn-primary" onclick="saveCategory()">保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openCategoryModal(id) {
+  const modal = document.getElementById('category-modal');
+  if (!modal) return;
+  const cat = id ? (_categoriesCache || []).find(c => c.id === id)
+                  : null;
+  // 削除済み（非アクティブ含む）から探す必要があれば再取得が必要だが、
+  // renderCategoriesMasterPage で _categoriesCache を更新しているので一旦これで十分
+  document.getElementById('cat-modal-title').textContent = id ? 'カテゴリ編集' : 'カテゴリ追加';
+  document.getElementById('cat-modal-id').value = id || '';
+  document.getElementById('cat-modal-code').value = cat?.code || '';
+  document.getElementById('cat-modal-name').value = cat?.name || '';
+  document.getElementById('cat-modal-render').value = cat?.render_kind || 'video';
+  document.getElementById('cat-modal-color').value = cat?.color || '#666666';
+  document.getElementById('cat-modal-sort').value = (cat?.sort_order ?? 100);
+  document.getElementById('cat-modal-active').checked = cat?.is_active !== false;
+  modal.style.display = 'flex';
+}
+function closeCategoryModal() {
+  const modal = document.getElementById('category-modal');
+  if (modal) modal.style.display = 'none';
+}
+async function saveCategory() {
+  const id = document.getElementById('cat-modal-id').value;
+  const payload = {
+    code: document.getElementById('cat-modal-code').value.trim(),
+    name: document.getElementById('cat-modal-name').value.trim(),
+    render_kind: document.getElementById('cat-modal-render').value,
+    color: document.getElementById('cat-modal-color').value,
+    sort_order: parseInt(document.getElementById('cat-modal-sort').value, 10) || 0,
+    is_active: document.getElementById('cat-modal-active').checked,
+  };
+  if (!payload.code || !payload.name) {
+    showToast('コードと表示名は必須です', 'warn');
+    return;
+  }
+  const res = await apiFetch(id ? `${API}/categories/${id}` : `${API}/categories`, {
+    method: id ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('保存失敗: ' + (e?.error || res.status), 'error');
+    return;
+  }
+  closeCategoryModal();
+  await loadCategories(true); // キャッシュ強制更新
+  renderCategoriesMasterPage();
+  showToast('保存しました', 'success');
+}
+async function toggleCategoryActive(id, isActive) {
+  const res = await apiFetch(`${API}/categories/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: !!isActive }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('更新失敗: ' + (e?.error || res.status), 'error');
+  }
+  await loadCategories(true);
+  renderCategoriesMasterPage();
+}
+async function deleteCategory(id) {
+  if (!confirm('このカテゴリを削除しますか？\n（参照中の案件・クリエイティブがある場合は削除できません）')) return;
+  const res = await apiFetch(`${API}/categories/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('削除失敗: ' + (e?.error || res.status), 'error');
+    return;
+  }
+  await loadCategories(true);
+  renderCategoriesMasterPage();
+  showToast('削除しました', 'success');
+}
 
 async function renderProductsMasterPage() {
   const content = document.getElementById('master-content');

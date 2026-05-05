@@ -49,7 +49,8 @@
 | 通知（旧設計の遺物） | `posts` / `post_reactions` / `post_comments` | なし | なし | migration `2026-05-03_notification_phase1.sql` で作成されたが**未使用**。Phase 1 段階4 で `tweets` 拡張に方針変更したため塩漬け |
 | クリエイティブ | `creatives` / `creative_assignments` / `creative_versions` | `routes/haruka.js` の `/api/creatives/*` | `public/haruka.html` クリエイティブタブ | `ball_holder_id` がボール保持者キャッシュ |
 | 案件 | `projects` / `project_director_rates` / `project_producer_rates` / `project_deletion_logs` | `routes/haruka.js` | `public/haruka.html` 案件タブ | 単価モーダルにディレクター/プロデューサー費セクションあり |
-| クライアント・商材 | `clients` / `products` / `appeal_axes` | `routes/haruka.js` | `public/haruka.html` クライアントタブ・商材マスター画面 | |
+| 案件カテゴリ (Stage A) | `creative_categories` / `creative_status_templates` / `creative_status_template_items` / `project_category_rates` | `routes/haruka.js` の `/api/categories/*` `/api/status-templates` | `public/haruka.html` の **設定タブ「🏷️ カテゴリ管理」** + 案件モーダルの category select | カテゴリ追加だけで UI/DB が拡張される設計（PR #TBD・Stage A）。Stage B/C で旧 `project_type` / `RATE_CREATIVE_TYPES` 削除予定 |
+| クライアント・商材 | `clients` / `products` / `appeal_axes` (削除予定) | `routes/haruka.js` | `public/haruka.html` クライアントタブ | **Stage C で products / appeal_axes / project_products / project_appeal_axes 系を完全削除予定**。Stage A では商材/訴求軸タブ・マスター画面の HTML を非表示化済み |
 | メンバー | `users` / `user_stats` / `teams` / `team_members` | `routes/haruka.js` | `public/haruka.html` メンバータブ | `users.role` で admin/secretary/producer/producer_director/director/editor/designer |
 | 請求 | `invoices` / `client_invoices` | `routes/haruka.js` の `/api/invoices/*` `/api/client-invoice/*` | `public/haruka.html` 請求タブ | `migrations/2026-04-28_invoice_items_step1.sql` 進行中 |
 | 自動エラー通知 | - | `routes/haruka.js` の `/api/error-report` | `public/js/auto-error-report.js` | 500/uncaught/window.onerror を Slack 投稿（PR #197）|
