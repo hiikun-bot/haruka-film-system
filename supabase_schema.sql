@@ -367,6 +367,21 @@ CREATE TABLE IF NOT EXISTS creative_file_comments (
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
 
+-- ==================== creative_file_likes ====================
+-- ファイルプレビューでの「いいね」（タイムコード付き）
+CREATE TABLE IF NOT EXISTS creative_file_likes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_file_id UUID NOT NULL REFERENCES creative_files(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  timecode_sec NUMERIC(10,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (creative_file_id, user_id, timecode_sec)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cfl_creative_file_id ON creative_file_likes(creative_file_id);
+CREATE INDEX IF NOT EXISTS idx_cfl_user_id           ON creative_file_likes(user_id);
+CREATE INDEX IF NOT EXISTS idx_cfl_created_at        ON creative_file_likes(created_at DESC);
+
 -- ==================== システム設定 ====================
 CREATE TABLE IF NOT EXISTS system_settings (
   key TEXT PRIMARY KEY,
