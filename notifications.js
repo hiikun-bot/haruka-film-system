@@ -671,6 +671,7 @@ function _formatAutoErrorText(payload) {
   const {
     source, kind, message, stack, url, userAgent,
     statusCode, apiPath, userEmail, ts,
+    filename, lineno, colno, trace, serverBuild, clientBuild, breadcrumbs,
   } = payload || {};
   const lines = [];
   const head = source === 'server' ? '🚨 サーバーエラー（自動）' : '⚠️ フロントエラー（自動）';
@@ -679,8 +680,17 @@ function _formatAutoErrorText(payload) {
   if (statusCode) lines.push(`*Status*: ${statusCode}`);
   if (apiPath) lines.push(`*API*: \`${_truncate(apiPath, 200)}\``);
   if (url) lines.push(`*URL*: ${_truncate(url, 300)}`);
+  if (filename) {
+    // lineno/colno は 0 が有効値の可能性があるため、null/'' のみ除外（false 系を一律弾かない）
+    const loc = [filename, lineno != null ? lineno : null, colno != null ? colno : null]
+      .filter(v => v !== null && v !== '').join(':');
+    lines.push(`*発生箇所*: \`${_truncate(loc, 500)}\``);
+  }
   if (userEmail) lines.push(`*ユーザー*: ${_truncate(userEmail, 100)}`);
   if (userAgent) lines.push(`*UA*: ${_truncate(userAgent, 200)}`);
+  // ビルド情報（クライアント / サーバー両方を併記。差異があればバージョンずれを即座に判別できる）
+  if (serverBuild) lines.push(`*Server Build*: \`${_truncate(serverBuild, 80)}\``);
+  if (clientBuild) lines.push(`*Client Build*: \`${_truncate(clientBuild, 80)}\``);
   const tsDate = ts ? new Date(ts) : new Date();
   const jstStr = tsDate.toLocaleString('ja-JP', {
     timeZone: 'Asia/Tokyo',
@@ -689,6 +699,46 @@ function _formatAutoErrorText(payload) {
     hour12: false,
   });
   lines.push(`*発生時刻*: ${jstStr} JST`);
+  // 原因特定トレース: フロントが収集した実行環境情報（navigation timing / viewport / lastScript 等）
+  if (trace && typeof trace === 'object') {
+    const nav = trace.navigation || {};
+    const lastScript = trace.lastScript || {};
+    const vp = trace.viewport || {};
+    const traceLines = [
+      `readyState=${trace.readyState || '-'}`,
+      `visibility=${trace.visibilityState || '-'}`,
+      `online=${trace.online}`,
+      `viewport=${vp.w || '-'}x${vp.h || '-'}@${vp.dpr || '-'}`,
+      `scriptCount=${trace.scriptCount || '-'}`,
+      `lastScript=${lastScript.src || '-'}`,
+      `navType=${nav.type || '-'}`,
+      `transfer=${nav.transferSize || 0}`,
+      `encoded=${nav.encodedBodySize || 0}`,
+      `decoded=${nav.decodedBodySize || 0}`,
+      `responseStatus=${nav.responseStatus || '-'}`,
+      `responseEnd=${nav.responseEnd || '-'}`,
+      `domInteractive=${nav.domInteractive || '-'}`,
+      `domComplete=${nav.domComplete || '-'}`,
+    ];
+    lines.push('*原因特定トレース*:');
+    lines.push('```' + _truncate(traceLines.join('\n'), 1800) + '```');
+  }
+  // breadcrumbs: ユーザーの直前行動（最大 8 件、新→古の順で表示）
+  if (Array.isArray(breadcrumbs) && breadcrumbs.length) {
+    const crumbLines = breadcrumbs.slice().reverse().map(b => {
+      try {
+        const dt = b && b.ts ? new Date(b.ts).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false }) : '-';
+        const type = String(b && b.type || '-').slice(0, 30);
+        let data = '';
+        if (b && b.data != null) {
+          data = typeof b.data === 'string' ? b.data : JSON.stringify(b.data);
+        }
+        return `${dt} ${type}: ${data}`.slice(0, 240);
+      } catch (_) { return '-'; }
+    });
+    lines.push('*直前の行動（新→古）*:');
+    lines.push('```' + _truncate(crumbLines.join('\n'), 1800) + '```');
+  }
   lines.push('');
   lines.push('*メッセージ*:');
   lines.push('```' + _truncate(message, 1500) + '```');

@@ -1730,6 +1730,75 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         }
       } catch (_) {}
     }
+    // ==================== breadcrumb（パンくず）リングバッファ ====================
+    // ユーザーの直前行動を最大8件記録し、エラー発生時に同梱して原因特定を高速化する。
+    // 設計方針:
+    //   - O(1) 書込み（push + shift のみ）。クリック全捕捉等はしない（ノイズになる）
+    //   - 呼び出し元: openModal / showPage / apiFetch(5xx時のみ)
+    //   - 1要素 ~100B 程度。8件で ~1KB 以下。ペイロードへの影響は無視できる
+    var _breadcrumbs = [];
+    var _BREAD_MAX = 8;
+    function addBreadcrumb(type, data) {
+      try {
+        _breadcrumbs.push({
+          ts: Date.now(),
+          type: String(type || '').slice(0, 30),
+          data: typeof data === 'string' ? data.slice(0, 200) : data,
+        });
+        if (_breadcrumbs.length > _BREAD_MAX) _breadcrumbs.shift();
+      } catch (_) {}
+    }
+    window.__addBreadcrumb = addBreadcrumb;
+    window.__getBreadcrumbs = function() { return _breadcrumbs.slice(); };
+
+    function _collectAutoErrorTrace(extra) {
+      var trace = {};
+      try { trace.filename = extra && extra.filename ? String(extra.filename).slice(0, 500) : null; } catch (_) {}
+      try { trace.lineno = extra && extra.lineno != null ? Number(extra.lineno) : null; } catch (_) {}
+      try { trace.colno = extra && extra.colno != null ? Number(extra.colno) : null; } catch (_) {}
+      try { trace.readyState = document.readyState || null; } catch (_) {}
+      try { trace.visibilityState = document.visibilityState || null; } catch (_) {}
+      try { trace.online = navigator.onLine; } catch (_) {}
+      try { trace.viewport = { w: window.innerWidth || null, h: window.innerHeight || null, dpr: window.devicePixelRatio || null }; } catch (_) {}
+      try { trace.scriptCount = document.scripts ? document.scripts.length : null; } catch (_) {}
+      try {
+        if (document.scripts && document.scripts.length) {
+          var s = document.scripts[document.scripts.length - 1];
+          trace.lastScript = {
+            src: s.src || '[inline]',
+            async: !!s.async,
+            defer: !!s.defer,
+            type: s.type || null,
+          };
+        }
+      } catch (_) {}
+      try {
+        var nav = performance && performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+        if (nav) {
+          trace.navigation = {
+            type: nav.type || null,
+            transferSize: nav.transferSize || 0,
+            encodedBodySize: nav.encodedBodySize || 0,
+            decodedBodySize: nav.decodedBodySize || 0,
+            responseStatus: nav.responseStatus || null,
+            startTime: Math.round(nav.startTime || 0),
+            responseEnd: Math.round(nav.responseEnd || 0),
+            domInteractive: Math.round(nav.domInteractive || 0),
+            domComplete: Math.round(nav.domComplete || 0),
+          };
+        }
+      } catch (_) {}
+      try {
+        // クライアントビルドは /api/build-info から取得した値を優先。フォールバックで meta タグも見る。
+        if (typeof window.__clientBuild === 'string' && window.__clientBuild) {
+          trace.clientBuild = window.__clientBuild;
+        } else {
+          var buildMeta = document.querySelector('meta[name="app-build"], meta[name="commit-sha"], meta[name="railway-git-commit-sha"]');
+          trace.clientBuild = buildMeta ? (buildMeta.getAttribute('content') || null) : null;
+        }
+      } catch (_) {}
+      return trace;
+    }
     function postAutoError(payload) {
       try {
         if (!payload || !payload.message) return;
@@ -1752,6 +1821,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           userAgent: navigator.userAgent,
           statusCode: payload.statusCode || null,
           apiPath: payload.apiPath || null,
+          // ?? を使う理由: lineno === 0 / colno === 0 を null に潰さないため（|| だと 0 が消える）
+          filename: payload.filename ?? null,
+          lineno: payload.lineno ?? null,
+          colno: payload.colno ?? null,
+          trace: _collectAutoErrorTrace(payload),
+          breadcrumbs: (function(){ try { return window.__getBreadcrumbs ? window.__getBreadcrumbs() : []; } catch(_) { return []; } })(),
+          clientBuild: (function(){ try { return window.__clientBuild || null; } catch(_) { return null; } })(),
           // currentUser は haruka.html 内の let 変数なので window 経由では直接見えない。
           // try ブロックで遅延参照（IIFE 評価時には未定義のため）。
           userEmail: (function(){ try { return (typeof currentUser !== 'undefined' && currentUser && currentUser.email) || null; } catch(_) { return null; } })(),
@@ -1776,6 +1852,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           message: e && e.message ? e.message : 'unknown error',
           stack: e && e.error && e.error.stack ? e.error.stack : null,
           url: location.href,
+          filename: e && e.filename ? e.filename : null,
+          lineno: e && e.lineno != null ? e.lineno : null,
+          colno: e && e.colno != null ? e.colno : null,
         });
       } catch (_) {}
     });
@@ -5589,6 +5668,10 @@ async function apiFetch(input, init = {}) {
     }
   }
 
+  // ビルドバージョン照合: サーバーの X-Server-Build と起動時に保存した __clientBuild が違えば
+  // ユーザーに「新しいバージョンが利用可能」のトーストを 1 度だけ表示する。
+  try { _checkBuildMismatch(res); } catch (_) {}
+
   // 失敗 API をバッファに残す（エラー報告用）。本体のクローンを読んで副作用を出さない。
   if (!res.ok && typeof window.pushApiFailBuffer === 'function') {
     try {
@@ -5599,6 +5682,8 @@ async function apiFetch(input, init = {}) {
       // 5xx は自動エラー通知に流す（4xx はユーザー入力ミス系が多いので除外）
       // /auto-error 自身の失敗で再帰しないようパス除外は postAutoError 側でも実施。
       if (res.status >= 500 && typeof window.__postAutoError === 'function') {
+        // breadcrumb は 5xx のみ記録（成功した API は記録しない、ノイズになる）
+        try { if (window.__addBreadcrumb) window.__addBreadcrumb('api_5xx', `${res.status} ${url}`); } catch (_) {}
         window.__postAutoError({
           kind: 'fetch-5xx',
           message: `HTTP ${res.status} ${res.statusText || ''} ${url}`.trim(),
@@ -5611,6 +5696,37 @@ async function apiFetch(input, init = {}) {
     } catch (_) {}
   }
   return res;
+}
+
+// ==================== ビルドバージョン照合 ====================
+// 起動時に /api/build-info から取得したクライアントビルドと、毎レスポンスの X-Server-Build を比較。
+// 差異があれば 1 度だけトーストを出す（ユーザーに再読み込みを促す）。
+let __versionWarnShown = false;
+function _checkBuildMismatch(res) {
+  if (__versionWarnShown) return;
+  if (!window.__clientBuild) return;
+  const sb = res && res.headers && res.headers.get ? res.headers.get('X-Server-Build') : null;
+  if (!sb) return;
+  if (sb === window.__clientBuild) return;
+  __versionWarnShown = true;
+  try {
+    if (typeof showToast === 'function') {
+      showToast('新しいバージョンが利用可能です。Cmd+Shift+R（Win: Ctrl+Shift+R）で再読み込みしてください。', 'warn', 12000);
+    }
+  } catch (_) {}
+}
+
+async function initBuildVersion() {
+  // 起動時に 1 回だけ叩く軽量エンドポイント。失敗しても黙殺（オフライン等）。
+  try {
+    const r = await fetch('/api/build-info', { credentials: 'same-origin' });
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.build) {
+        window.__clientBuild = d.build;
+      }
+    }
+  } catch (_) { /* swallow */ }
 }
 
 // ==================== エラー報告 ====================
@@ -5782,6 +5898,8 @@ async function loadWorkspaceInfo() {
 }
 
 async function init() {
+  // ビルドバージョン照合のためサーバーの build hash を起動時に取得（軽量エンドポイント、失敗時は黙殺）
+  initBuildVersion();
   loadWorkspaceInfo();
   try {
     const res = await fetch('/auth/me');
@@ -10802,6 +10920,7 @@ function openModal(id) {
   const el = document.getElementById(id);
   if (!el) { console.warn('[openModal] no element:', id); return; }
   el.classList.add('open');
+  try { if (window.__addBreadcrumb) window.__addBreadcrumb('modal_open', id); } catch (_) {}
 }
 function closeModal(id) {
   const el = document.getElementById(id);
@@ -12697,6 +12816,7 @@ async function submitProject() {
 }
 
 function showPage(name, btn) {
+  try { if (window.__addBreadcrumb) window.__addBreadcrumb('page_change', name); } catch (_) {}
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
   document.querySelectorAll('.nav-btn,.nav-drawer-btn').forEach(b=>b.classList.remove('active'));
