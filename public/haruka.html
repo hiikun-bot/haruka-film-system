@@ -131,7 +131,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-scroll{position:relative;overflow-x:auto;overflow-y:auto;max-height:72vh}
 .cv-g-grid{display:grid;min-width:100%;position:relative}
 /* 左固定列ヘッダ */
-.cv-g-head-left,.cv-g-head-right{position:sticky;top:0;background:var(--em-pale);font-size:11px;color:var(--em-dark);font-weight:600;padding:6px 8px;border-bottom:0.5px solid var(--border);z-index:6;letter-spacing:0.04em;text-transform:none}
+.cv-g-head-left,.cv-g-head-right{position:sticky;top:0;background:var(--em-pale);font-size:11px;color:var(--em-dark);font-weight:600;padding:8px 8px;border-bottom:0.5px solid var(--border);z-index:6;letter-spacing:0.04em;text-transform:none;line-height:1.3}
 .cv-g-head-left{position:sticky;left:0;z-index:7}
 .cv-g-fixed{position:sticky;left:0;background:#fff;border-right:0.5px solid var(--border);z-index:5}
 .cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
@@ -144,8 +144,8 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-fixed > .c{padding:6px 10px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-g-row-fixed .c-client{font-weight:500;color:var(--em-dark);line-height:1.25;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .cv-g-row-fixed .c-client small{display:block;font-weight:400;color:var(--text-muted);font-size:10px}
-.cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted}
-.cv-g-row-fixed .c-name:hover{color:var(--text)}
+.cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;font-size:12px;font-weight:500;letter-spacing:-0.01em}
+.cv-g-row-fixed .c-name:hover{color:var(--text);background:var(--em-pale);border-radius:4px}
 .cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:4px;justify-content:flex-start}
 .cv-g-row-fixed .c-assignee .team-mini{font-size:10px;color:var(--em-dark);background:var(--em-pale);border-radius:4px;padding:1px 4px;font-weight:600}
 .cv-g-row-fixed .c-status{overflow:hidden;min-width:0}
@@ -159,7 +159,10 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-group-row{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;align-content:center;padding:6px 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4}
 .cv-g-group-row .gicount{font-weight:400;color:var(--text-muted);font-size:11px}
 /* 担当者別グループ見出し（強化版） */
-.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:7px 12px;gap:5px 10px;border-bottom:1px solid var(--em-light)}
+.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:6px 12px;gap:5px 10px;border-bottom:1px solid var(--em-light)}
+.cv-g-group-row.is-client{background:linear-gradient(to right,#F5EEFC,#FBF8FE);padding:5px 12px;border-bottom:1px solid #D9C7F2}
+.cv-g-group-row.is-team{background:linear-gradient(to right,#E8F3FB,#F4F9FD);padding:5px 12px;border-bottom:1px solid #C9DDEC}
+.cv-g-group-row .ga-icon{font-size:13px;line-height:1}
 .cv-g-group-row.is-assignee .ga-name{font-weight:700;color:var(--text)}
 .cv-g-group-row.is-assignee .ga-team{font-size:11px;color:var(--em-dark);background:#fff;border-radius:6px;padding:2px 7px;font-weight:600}
 .cv-g-group-row.is-assignee .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:500}
@@ -174,7 +177,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-group-row .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
 .cv-g-group-row .ga-stats .gs.is-load{background:#FAEEDA;color:#854F0B;font-weight:700}
 /* タイムライン部 */
-.cv-g-timeline-head{position:sticky;top:0;display:flex;background:var(--em-pale);border-bottom:0.5px solid var(--border);z-index:5;height:40px}
+.cv-g-timeline-head{position:sticky;top:0;display:flex;background:var(--em-pale);border-bottom:0.5px solid var(--border);z-index:5;height:34px}
 .cv-g-tl-day{flex:0 0 auto;border-right:0.5px solid var(--border-light);color:var(--em-dark);text-align:center;padding-top:3px;line-height:1.15;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;overflow:hidden}
 .cv-g-tl-day .d-num{font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:-0.2px}
 .cv-g-tl-day .d-dow{font-size:9px;font-weight:500;color:var(--text-muted);margin-top:1px;letter-spacing:0}
@@ -2475,7 +2478,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <span class="cv-tb-vlabel">グループ</span>
         <div class="filter-tabs cv-seg cv-seg-strong" id="cv-group-seg">
           <button class="ft active" id="cv-group-project" role="radio" aria-checked="true" onclick="setCreativeGroup('project')">案件別</button>
+          <button class="ft" id="cv-group-client" role="radio" aria-checked="false" onclick="setCreativeGroup('client')">クライアント別</button>
           <button class="ft" id="cv-group-assignee" role="radio" aria-checked="false" onclick="setCreativeGroup('assignee')">担当者別</button>
+          <button class="ft" id="cv-group-team" role="radio" aria-checked="false" onclick="setCreativeGroup('team')">チーム別</button>
         </div>
       </div>
       <span class="cv-tb-divider" id="cv-range-divider"></span>
@@ -5397,7 +5402,12 @@ let _searchDebounceTimer = null;
 let _creativesLoadSeq = 0;
 // クリエイティブ画面の表示モード（gantt | list）/ グルーピング / 期間 — localStorage で保持
 let currentCreativeMode  = (typeof localStorage!=='undefined' && localStorage.getItem('cv_mode'))  || 'gantt';
-let currentCreativeGroup = (typeof localStorage!=='undefined' && localStorage.getItem('cv_group')) || 'project';
+let currentCreativeGroup = (function(){
+  const allowed = ['project','client','assignee','team'];
+  let v = null;
+  try { v = localStorage.getItem('cv_group') || localStorage.getItem('ganttGroupBy'); } catch(_) {}
+  return allowed.includes(v) ? v : 'project';
+})();
 let currentCreativeRange = (typeof localStorage!=='undefined' && localStorage.getItem('cv_range')) || 'month';
 // ガント期間表示の基準日オフセット（baseDate = 今日 + offset。0=今日基準）
 let creativeGanttDateOffset = 0;
@@ -7675,13 +7685,35 @@ function setCreativeMode(mode) {
 function toggleCreativeMode() {
   setCreativeMode(currentCreativeMode === 'gantt' ? 'list' : 'gantt');
 }
+// 凡例アコーディオンの開閉トグル（再描画なしで DOM 操作、状態は localStorage に保持）
+function toggleCreativeGanttLegend() {
+  const wrap = document.getElementById('cv-g-legend-wrap');
+  if (!wrap) return;
+  const willOpen = !wrap.classList.contains('is-open');
+  wrap.classList.toggle('is-open', willOpen);
+  const btn = wrap.querySelector('.cv-g-legend-toggle');
+  if (btn) {
+    btn.setAttribute('aria-expanded', String(willOpen));
+    const lbl = btn.querySelector('span:not(.arr)');
+    if (lbl) lbl.textContent = `凡例を${willOpen ? '隠す' : '表示'}`;
+  }
+  try { localStorage.setItem('cv_legend_open', willOpen ? '1' : '0'); } catch(_) {}
+}
 function setCreativeGroup(group) {
-  currentCreativeGroup = (group === 'assignee') ? 'assignee' : 'project';
-  try { localStorage.setItem('cv_group', currentCreativeGroup); } catch(_) {}
-  const gp = document.getElementById('cv-group-project');
-  const ga = document.getElementById('cv-group-assignee');
-  if (gp) { gp.classList.toggle('active', currentCreativeGroup === 'project');  gp.setAttribute('aria-checked', String(currentCreativeGroup === 'project')); }
-  if (ga) { ga.classList.toggle('active', currentCreativeGroup === 'assignee'); ga.setAttribute('aria-checked', String(currentCreativeGroup === 'assignee')); }
+  const allowed = ['project','client','assignee','team'];
+  currentCreativeGroup = allowed.includes(group) ? group : 'project';
+  try {
+    localStorage.setItem('cv_group', currentCreativeGroup);
+    // 互換キー（指示書名）
+    localStorage.setItem('ganttGroupBy', currentCreativeGroup);
+  } catch(_) {}
+  allowed.forEach(g => {
+    const el = document.getElementById('cv-group-' + g);
+    if (!el) return;
+    const active = (currentCreativeGroup === g);
+    el.classList.toggle('active', active);
+    el.setAttribute('aria-checked', String(active));
+  });
   if (typeof renderCreatives === 'function') renderCreatives();
 }
 function setCreativeRange(range) {
@@ -7976,7 +8008,9 @@ function _cvRowInfo(c) {
 function _cvTeamShort(team) {
   if (!team) return '';
   if (team.team_code) return String(team.team_code);
-  const n = team.team_name || '';
+  let n = team.team_name || '';
+  // 末尾の「チーム」を一旦取り除いて短縮（呼び出し側で 'チーム' を付けるため、二重表記を防ぐ）
+  n = n.replace(/チーム$/, '');
   return n.length > 3 ? n.slice(0,3) : n;
 }
 
@@ -8103,12 +8137,38 @@ function renderCreativesGantt(filtered) {
     if (currentCreativeGroup === 'assignee') {
       key = r.editorUser?.id || 'unassigned';
       label = r.editorUser?.full_name ? (r.editorUser.nickname ? `${r.editorUser.nickname}（${r.editorUser.full_name}）` : r.editorUser.full_name) : '未アサイン';
-      meta = { user: r.editorUser, team: r.team };
+      meta = { kind: 'assignee', user: r.editorUser, team: r.team };
+    } else if (currentCreativeGroup === 'client') {
+      const cliObj = r.c.projects?.clients;
+      key = cliObj?.id || 'unknown-client';
+      label = cliObj?.name || '不明クライアント';
+      meta = { kind: 'client', client: cliObj || null };
+    } else if (currentCreativeGroup === 'team') {
+      const team = r.team;
+      key = team?.id || 'no-team';
+      // チーム表記の重複「〜チームチーム」を防ぐ
+      let teamLabel;
+      if (!team) teamLabel = 'チーム未設定';
+      else {
+        const code = team.team_code || '';
+        const name = team.team_name || '';
+        const baseRaw = name || code;
+        if (/チーム$/.test(baseRaw)) {
+          teamLabel = (name && code && name !== code) ? `${code} / ${name}` : baseRaw;
+        } else if (code && name && name !== code) {
+          teamLabel = `${code} / ${name}チーム`;
+        } else {
+          teamLabel = `${baseRaw}チーム`;
+        }
+      }
+      label = teamLabel;
+      meta = { kind: 'team', team: team || null };
     } else {
       const cli = r.c.projects?.clients?.name || '不明クライアント';
       const proj = r.c.projects?.name || '案件未設定';
       key = `${r.c.projects?.id || 'none'}::${r.c.projects?.clients?.id || 'none'}`;
       label = `${cli} / ${proj}`;
+      meta = { kind: 'project' };
     }
     if (!groups.has(key)) groups.set(key, { label, items: [], meta });
     groups.get(key).items.push(r);
@@ -8234,15 +8294,31 @@ function renderCreativesGantt(filtered) {
       if (fn && nn && fn !== nn) personLabel = `${fn}（${nn}）`;
       else personLabel = fn || nn || '';
     }
-    const teamSuffix = team ? ` / ${team.team_code||team.team_name||''}チーム` : '';
+    // 「〜チームチーム」二重表記を防ぐ。team_name または team_code に既に「チーム」が含まれていればそのまま使う。
+    const _teamFullLabel = (() => {
+      if (!team) return '';
+      const code = team.team_code || '';
+      const name = team.team_name || '';
+      const baseRaw = name || code;
+      // baseRaw が既に「チーム」で終わるなら追加しない
+      if (/チーム$/.test(baseRaw)) return name && code && name !== code ? `${code} / ${name}` : baseRaw;
+      if (code && name && name !== code) return `${code} / ${name}チーム`;
+      return `${baseRaw}チーム`;
+    })();
+    const teamSuffix = _teamFullLabel ? ` / ${_teamFullLabel}` : '';
     const fullNameTitle = editorUser ? `${personLabel}${teamSuffix}`.trim() : '未アサイン';
     const assignee = editorUser
       ? `${(typeof avatarHtml === 'function' ? avatarHtml(editorUser, 22, { title: fullNameTitle }) : '')}${teamLabel?`<span class="team-mini" title="${esc(fullNameTitle)}">${esc(teamLabel)}</span>`:''}`
       : `<span class="team-mini" title="未アサイン" style="background:#eee;color:#888">未</span>${teamLabel?`<span class="team-mini">${esc(teamLabel)}</span>`:''}`;
+    // クリエイティブ名の表示: 長すぎるファイル名は中央省略（先頭8 + … + 末尾10）。フル文字列は title でホバー表示。
+    const rawName = c.file_name || '';
+    const displayName = (rawName.length > 22)
+      ? `${rawName.slice(0, 8)}…${rawName.slice(-10)}`
+      : rawName;
     return `
       <div class="cv-g-row-fixed ${info.isLate?'is-late':''}" data-id="${c.id}">
         <div class="c c-client" title="${esc(clientName)}${projName?` / ${esc(projName)}`:''}">${esc(clientName)}${projName?`<small>${esc(projName)}</small>`:''}</div>
-        <div class="c c-name" title="${esc(c.file_name)}" onclick="openCreativeDetail('${c.id}')">${esc(c.file_name || '')}</div>
+        <div class="c c-name" title="${esc(rawName)}" onclick="openCreativeDetail('${c.id}')">${esc(displayName)}</div>
         <div class="c c-assignee" title="${esc(fullNameTitle)}">${assignee}</div>
         <div class="c c-status" title="${esc(c.status || '')}"><span class="status-chip ${statusClass(c.status)}">${esc(statusShortLabel(c.status))}</span></div>
         <div class="c c-delay ${info.delayClass}" title="${esc(info.delayLabel)}">${esc(info.delayLabel)}</div>
@@ -8254,26 +8330,40 @@ function renderCreativesGantt(filtered) {
     return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
   };
 
-  // 固定列の枠（5列） — ガント領域を広く取るため左をさらに圧縮（544 → 488px）
-  const fixedColTpl = `122px 150px 60px 100px 56px`;
-  const FIXED_W = 122 + 150 + 60 + 100 + 56; // = 488px
+  // 固定列の枠（5列） — クリエイティブ名列を広げて視認性UP（488 → 522px）
+  const fixedColTpl = `122px 184px 60px 100px 56px`;
+  const FIXED_W = 122 + 184 + 60 + 100 + 56; // = 522px
 
-  // グループ見出し（担当者別は強化版）
+  // チーム表記の重複「〜チームチーム」を防ぐヘルパ。team_name が既に「チーム」で終わっていればそのまま使う。
+  const formatTeamLabel = (team) => {
+    if (!team) return '';
+    const code = team.team_code || '';
+    const name = team.team_name || '';
+    if (name && /チーム$/.test(name)) return code ? `${code} / ${name}` : name;
+    if (code && name) return `${code} / ${name}チーム`;
+    if (code) return `${code}チーム`;
+    if (name) return `${name}チーム`;
+    return '';
+  };
+
+  // グループ見出し（担当者別は強化版 / クライアント・チーム別も対応）
   const renderGroupHeader = (g) => {
     const stats = _cvGroupStats(g.items, win.today);
-    const statsHtml = `
-      <span class="ga-stats">
-        <span class="gs">${stats.total}件</span>
-        <span class="gs ${stats.draftSoon?'is-draft':''}">初稿7日:${stats.draftSoon}</span>
-        <span class="gs ${stats.finalSoon?'is-final':''}">納品7日:${stats.finalSoon}</span>
-        <span class="gs ${stats.late?'is-late':''}">遅延:${stats.late}</span>
-        <span class="gs ${stats.today?'is-today':''}">本日:${stats.today}</span>
-        ${stats.loadAttention ? `<span class="gs is-load">重なり:${stats.loadAttention}</span>` : ''}
-      </span>`;
-    if (currentCreativeGroup === 'assignee' && g.meta) {
-      const u = g.meta.user;
-      const team = g.meta.team;
-      const teamLabel = team ? `${team.team_code||''}${team.team_name?` / ${team.team_name}`:''}` : '';
+    // ゼロ件バッジは出さない（要件 #2）
+    const chips = [];
+    chips.push(`<span class="gs">${stats.total}件</span>`);
+    if (stats.draftSoon > 0) chips.push(`<span class="gs is-draft">初稿7日:${stats.draftSoon}</span>`);
+    if (stats.finalSoon > 0) chips.push(`<span class="gs is-final">納品7日:${stats.finalSoon}</span>`);
+    if (stats.late > 0) chips.push(`<span class="gs is-late">遅延:${stats.late}</span>`);
+    if (stats.today > 0) chips.push(`<span class="gs is-today">本日:${stats.today}</span>`);
+    if (stats.loadAttention > 0) chips.push(`<span class="gs is-load">重なり:${stats.loadAttention}</span>`);
+    const statsHtml = `<span class="ga-stats">${chips.join('')}</span>`;
+
+    const meta = g.meta || {};
+    if (meta.kind === 'assignee') {
+      const u = meta.user;
+      const team = meta.team;
+      const teamLabel = formatTeamLabel(team);
       // グループ見出しアバターのホバー: 「フルネーム（ニックネーム）」 / チーム情報
       let groupTitle = '未アサイン';
       if (u) {
@@ -8282,21 +8372,36 @@ function renderCreativesGantt(filtered) {
         let pl = '';
         if (fn && nn && fn !== nn) pl = `${fn}（${nn}）`;
         else pl = fn || nn || '名無し';
-        groupTitle = teamLabel ? `${pl} / ${teamLabel}チーム` : pl;
+        groupTitle = teamLabel ? `${pl} / ${teamLabel}` : pl;
       }
-      const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 26, { title: groupTitle }) : '')
-                   : `<span style="display:inline-flex;width:26px;height:26px;border-radius:50%;background:#ddd;align-items:center;justify-content:center;font-size:11px;color:#888" title="未アサイン">未</span>`;
+      const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 24, { title: groupTitle }) : '')
+                   : `<span style="display:inline-flex;width:24px;height:24px;border-radius:50%;background:#ddd;align-items:center;justify-content:center;font-size:11px;color:#888" title="未アサイン">未</span>`;
       const dispName = u ? (u.full_name || u.nickname || '名無し') : '未アサイン';
       return `<div class="cv-g-group-row is-assignee" style="width:${FIXED_W}px">
         ${av}
         <span class="ga-name">${esc(dispName)}</span>
-        ${teamLabel ? `<span class="ga-team">${esc(teamLabel)}チーム</span>` : ''}
+        ${teamLabel ? `<span class="ga-team">${esc(teamLabel)}</span>` : ''}
         ${statsHtml}
       </div>`;
     }
-    return `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span>${esc(g.label)}</span>${statsHtml}</div>`;
+    if (meta.kind === 'client') {
+      return `<div class="cv-g-group-row is-client" style="width:${FIXED_W}px">
+        <span class="ga-icon" aria-hidden="true">🏷</span>
+        <span class="ga-name">${esc(g.label)}</span>
+        ${statsHtml}
+      </div>`;
+    }
+    if (meta.kind === 'team') {
+      return `<div class="cv-g-group-row is-team" style="width:${FIXED_W}px">
+        <span class="ga-icon" aria-hidden="true">👥</span>
+        <span class="ga-name">${esc(g.label)}</span>
+        ${statsHtml}
+      </div>`;
+    }
+    return `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span class="ga-name">${esc(g.label)}</span>${statsHtml}</div>`;
   };
-  const groupHeadHeight = (currentCreativeGroup === 'assignee') ? 54 : 48;
+  // グループヘッダー高さ（担当者別: 大きめ、その他: 標準）
+  const groupHeadHeight = (currentCreativeGroup === 'assignee') ? 48 : 40;
 
   // 行をグループ単位で構築（左列・タイムライン共通の renderTimelineRow を使用）
   let fixedHtml = '';
@@ -8314,28 +8419,47 @@ function renderCreativesGantt(filtered) {
   const todayIdx = _cvDayDiff(win.today, win.start);
   const todayLeft = (todayIdx >= 0 && todayIdx <= totalDays-1) ? (todayIdx * dayPx + dayPx/2) : -9999;
 
-  // 凡例HTML（ヘッダー直下のスティッキー位置に表示）
+  // 凡例HTML（アコーディオン形式: デフォルト閉。3グループに視覚的に分離）
+  const legendOpen = (() => {
+    try { return localStorage.getItem('cv_legend_open') === '1'; } catch(_) { return false; }
+  })();
   const legendHtml = `
-    <div class="cv-g-legend cv-g-legend-top">
-      <span class="lg-item"><span class="lg-bar lg-bar-production"></span>制作期間</span>
-      <span class="lg-item"><span class="lg-bar lg-bar-review"></span>確認・修正</span>
-      <span class="lg-item"><span class="lg-bar lg-bar-draft-soon"></span>初稿/本日近い</span>
-      <span class="lg-item"><span class="lg-bar lg-bar-overlap"></span>負荷重なり</span>
-      <span class="lg-item"><span class="cv-g-ms ms-start lg-ms"></span>着手</span>
-      <span class="lg-item"><span class="cv-g-ms ms-draft lg-ms"></span>初稿締切</span>
-      <span class="lg-item"><span class="cv-g-ms ms-client lg-ms"></span>CL確認</span>
-      <span class="lg-item"><span class="cv-g-ms ms-final lg-ms"></span>最終納品</span>
-      ${showDp ? `<span class="lg-item"><span class="cv-g-ms ms-dp ms-d lg-ms"></span>Dチェック</span>
-      <span class="lg-item"><span class="cv-g-ms ms-dp ms-p lg-ms"></span>Pチェック</span>` : ''}
-      <span class="lg-item"><span class="lg-line lg-line-late"></span>遅延</span>
-      <span class="lg-item lg-est">薄色＝推定値</span>
+    <div class="cv-g-legend-wrap${legendOpen ? ' is-open' : ''}" id="cv-g-legend-wrap">
+      <button type="button" class="cv-g-legend-toggle" onclick="toggleCreativeGanttLegend()" aria-expanded="${legendOpen}">
+        <span class="arr">▼</span><span>凡例を${legendOpen ? '隠す' : '表示'}</span>
+      </button>
+      <div class="cv-g-legend-top">
+        <span class="lg-group">
+          <span class="lg-group-label">期間バー</span>
+          <span class="lg-item"><span class="lg-bar lg-bar-production"></span>制作期間</span>
+          <span class="lg-item"><span class="lg-bar lg-bar-review"></span>確認・修正</span>
+          <span class="lg-item"><span class="lg-bar lg-bar-draft-soon"></span>初稿/本日近い</span>
+          <span class="lg-item"><span class="lg-bar lg-bar-overlap"></span>負荷重なり</span>
+        </span>
+        <span class="lg-divider"></span>
+        <span class="lg-group">
+          <span class="lg-group-label">マイルストーン</span>
+          <span class="lg-item"><span class="cv-g-ms ms-start lg-ms"></span>着手</span>
+          <span class="lg-item"><span class="cv-g-ms ms-draft lg-ms"></span>初稿締切</span>
+          <span class="lg-item"><span class="cv-g-ms ms-client lg-ms"></span>CL確認</span>
+          <span class="lg-item"><span class="cv-g-ms ms-final lg-ms"></span>最終納品</span>
+          ${showDp ? `<span class="lg-item"><span class="cv-g-ms ms-dp ms-d lg-ms"></span>Dチェック</span>
+          <span class="lg-item"><span class="cv-g-ms ms-dp ms-p lg-ms"></span>Pチェック</span>` : ''}
+        </span>
+        <span class="lg-divider"></span>
+        <span class="lg-group">
+          <span class="lg-group-label">アラート</span>
+          <span class="lg-item"><span class="lg-line lg-line-late"></span>遅延</span>
+          <span class="lg-item lg-est">薄色＝推定値</span>
+        </span>
+      </div>
     </div>
   `;
 
   main.innerHTML = `
     <div class="cv-g-toolbar">
       <span>${totalDays}日間 / ${rows.length}件</span>
-      <span style="color:var(--text-muted)">グループ: ${currentCreativeGroup === 'assignee' ? '担当者別' : '案件別'}</span>
+      <span style="color:var(--text-muted)">グループ: ${({assignee:'担当者別',client:'クライアント別',team:'チーム別',project:'案件別'}[currentCreativeGroup] || '案件別')}</span>
     </div>
     ${legendHtml}
     <div class="cv-g-scroll">
@@ -8476,14 +8600,13 @@ function _cvSidePanelHtml(rows) {
       // 永続化された値で初期化
       setCreativeMode(currentCreativeMode);
       _cvUpdateRangeButtonsActive();
-      const gp = document.getElementById('cv-group-project');
-      const ga = document.getElementById('cv-group-assignee');
-      if (gp && ga) {
-        gp.classList.toggle('active', currentCreativeGroup === 'project');
-        ga.classList.toggle('active', currentCreativeGroup === 'assignee');
-        gp.setAttribute('aria-checked', String(currentCreativeGroup === 'project'));
-        ga.setAttribute('aria-checked', String(currentCreativeGroup === 'assignee'));
-      }
+      ['project','client','assignee','team'].forEach(g => {
+        const el = document.getElementById('cv-group-' + g);
+        if (!el) return;
+        const active = (currentCreativeGroup === g);
+        el.classList.toggle('active', active);
+        el.setAttribute('aria-checked', String(active));
+      });
       // 案件範囲（全案件/自分の案件/自分のボール）も初期 active を確実に反映
       try {
         const viewSeg = document.querySelector('.cv-tb-view[aria-label="案件範囲"] .filter-tabs');
