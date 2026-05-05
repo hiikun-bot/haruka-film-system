@@ -5254,10 +5254,47 @@ let previewRole = null; // 管理者用ロールプレビュー
 // サーバー側 (auth.js#getEffectiveRole) は最高管理者からのリクエストに限りこのヘッダを尊重するため、
 // 一般ユーザーのブラウザから誤って previewRole がセットされていても権限昇格にはならない。
 // API 呼び出しは原則これを使うこと。第1引数は fetch と同じ。
+//
+// 5xx 自動リトライ:
+//   Railway デプロイ中の dyno 入れ替え隙間で 502/503/504 "Application failed to respond" が
+//   稀に返る。リクエストはアプリに届いていないので副作用ゼロ → 全メソッドで1回リトライする。
+//   500 は「アプリ内で例外」なので副作用が出ているおそれがあり、GET/HEAD のみ安全にリトライ。
+//   ストリーム body (ReadableStream) は再送不能なのでリトライ対象外。
 async function apiFetch(input, init = {}) {
   const headers = new Headers(init.headers || {});
   if (previewRole) headers.set('X-View-As', previewRole);
-  const res = await fetch(input, { ...init, headers });
+  const opts = { ...init, headers };
+
+  const method = String(opts.method || 'GET').toUpperCase();
+  const isSafeMethod = method === 'GET' || method === 'HEAD';
+  const isStreamBody = opts.body && typeof opts.body.getReader === 'function';
+  const canRetry = !isStreamBody;
+
+  let res;
+  try {
+    res = await fetch(input, opts);
+  } catch (e) {
+    // ネットワーク断・dyno 入れ替え瞬断は TypeError になることもある。1回だけ再試行。
+    if (canRetry) {
+      await new Promise(r => setTimeout(r, 700));
+      res = await fetch(input, opts);
+    } else {
+      throw e;
+    }
+  }
+
+  // 5xx リトライ: 502/503/504 は全メソッド、500 は安全メソッドのみ
+  const isProxy5xx = res.status === 502 || res.status === 503 || res.status === 504;
+  const shouldRetry = canRetry && (isProxy5xx || (res.status === 500 && isSafeMethod));
+  if (shouldRetry) {
+    await new Promise(r => setTimeout(r, 700));
+    try {
+      res = await fetch(input, opts);
+    } catch (_) {
+      // リトライ自体が失敗したら元の res を返す
+    }
+  }
+
   // 失敗 API をバッファに残す（エラー報告用）。本体のクローンを読んで副作用を出さない。
   if (!res.ok && typeof window.pushApiFailBuffer === 'function') {
     try {
