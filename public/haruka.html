@@ -19138,6 +19138,8 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   currentPreviewFileId   = fileRecordId || null;
   _fpCurrentDriveFileId  = driveFileId  || null;
   _fpCurrentQuality      = 'original';
+  // ファイル切替時に zoom 状態をリセット（ファイル間で持ち越さない）
+  _fpZoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
   // 画質バッジをリセット
   const qBtn = document.getElementById('fp-quality-btn');
   if (qBtn) { qBtn.textContent = 'HD'; qBtn.style.color = '#a1a1aa'; qBtn.style.borderColor = '#3f3f46'; }
@@ -19187,16 +19189,26 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     } else if (isImage) {
       ctrlBar.style.display = 'none';
       fpShowLoading('画像を読み込み中...');
-      // 画像と overlay レイヤーを同じ wrapper 内に配置
-      // - wrapper は画像と同じ表示サイズ（object-fit:contain は wrapper 内 img に適用）
-      // - overlay は画像にぴったり重ねる（overlay 自身の表示サイズを実画像表示サイズに同期）
+      // 画像と overlay レイヤーを transform レイヤー内に配置（zoom/pan 対応）
+      // - stage は overflow:hidden で表示窓
+      // - transform レイヤーが scale + translate を一括で持つ
+      // - img と overlay は natural サイズ（後から fpSyncOverlaySize で確定）
       player.innerHTML = `
-        <div id="fp-image-wrap" style="position:relative;max-width:100%;max-height:100%;display:flex;align-items:center;justify-content:center;width:100%;height:100%">
-          <img id="fp-image" src="${API}/files/${driveFileId}/stream" style="max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none" draggable="false" onload="fpOnImageLoaded()" onerror="fpShowLoadingError('画像の読み込みに失敗しました')">
-          <div id="fp-image-overlay" style="position:absolute;left:0;top:0;width:0;height:0;cursor:crosshair;pointer-events:auto"></div>
+        <div id="fp-image-stage" style="position:relative;width:100%;height:100%;overflow:hidden;cursor:crosshair;touch-action:none">
+          <div id="fp-image-transform" style="position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform">
+            <img id="fp-image" src="${API}/files/${driveFileId}/stream" style="display:block;user-select:none;-webkit-user-drag:none;pointer-events:none" draggable="false" onload="fpOnImageLoaded()" onerror="fpShowLoadingError('画像の読み込みに失敗しました')">
+            <div id="fp-image-overlay" style="position:absolute;left:0;top:0;width:0;height:0;pointer-events:auto"></div>
+          </div>
+          <div id="fp-zoom-toolbar" style="position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:rgba(24,24,27,0.85);border:1px solid #3f3f46;border-radius:8px;padding:4px 6px;font-size:12px;color:#e4e4e7;backdrop-filter:blur(4px);z-index:5;user-select:none">
+            <button type="button" onclick="fpZoomBy(1/1.25, event)" title="縮小 (Cmd/Ctrl + -)" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:14px;line-height:1">−</button>
+            <button type="button" id="fp-zoom-display" onclick="fpZoomReset100()" title="100%表示（クリックでリセット）" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:11px;min-width:48px">100%</button>
+            <button type="button" onclick="fpZoomBy(1.25, event)" title="拡大 (Cmd/Ctrl + +)" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:14px;line-height:1">＋</button>
+            <span style="width:1px;height:14px;background:#3f3f46;margin:0 2px"></span>
+            <button type="button" onclick="fpZoomFit()" title="フィット表示にリセット (Cmd/Ctrl + 0)" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:13px;line-height:1">⤺</button>
+          </div>
         </div>`;
-      // ドラッグ選択ハンドラを overlay にバインド（画像読み込み後に位置も同期）
-      setTimeout(() => fpInitImageBboxOverlay(), 50);
+      // ドラッグ選択ハンドラ＋zoom/pan ハンドラを取り付け
+      setTimeout(() => { fpInitImageBboxOverlay(); fpInitImageZoom(); }, 50);
     } else {
       ctrlBar.style.display = 'none';
       fpShowLoading('プレビューを読み込み中...');
@@ -19269,6 +19281,10 @@ function closeFilePreview() {
     window.removeEventListener('resize', _fpBboxResizeHandler);
     _fpBboxResizeHandler = null;
   }
+  // zoom 状態リセット
+  _fpZoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
+  _fpZoomWheelHandler = null;
+  _fpZoomDblHandler   = null;
 }
 
 // ===== プレビュー ローディングインジケーター =====
@@ -19342,6 +19358,25 @@ function fpKeyHandler(e) {
   if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
     if (e.code === 'Escape') { e.target.blur(); e.preventDefault(); }
     return;
+  }
+  // Cmd/Ctrl + (+ / - / 0): 画像プレビューが開いている時のみ zoom
+  if ((e.metaKey || e.ctrlKey) && document.getElementById('fp-image-stage')) {
+    // "+" は Shift+= でも来るし、テンキーは "+" で来るし、英字配列だと "=" で来る
+    if (e.key === '+' || e.key === '=' || (e.shiftKey && e.key === ';')) {
+      e.preventDefault();
+      fpZoomBy(1.25);
+      return;
+    }
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      fpZoomBy(1 / 1.25);
+      return;
+    }
+    if (e.key === '0') {
+      e.preventDefault();
+      fpZoomFit();
+      return;
+    }
   }
   if (e.code === 'Space') { e.preventDefault(); fpTogglePlay(); }
   if (e.code === 'Escape') { closeFilePreview(); }
@@ -19993,37 +20028,161 @@ let _fpPendingBbox       = null; // 送信前の選択中 bbox（正規化座標
 let _fpComments          = []; // 直近ロードしたコメント（overlay 再描画用）
 let _fpBboxResizeHandler = null;
 
+// ===== 画像 zoom / pan 状態 =====
+// scale: 絶対倍率（fit 時の倍率は _fpZoom.fitScale。100%=画像のnatural等倍）
+// tx, ty: stage 内左上原点での translate（px）
+// fitScale: stage に fit したときの scale（リセット時の戻り先）
+let _fpZoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
+const FP_ZOOM_MIN = 0.25;
+const FP_ZOOM_MAX = 5;
+let _fpZoomWheelHandler  = null;
+let _fpZoomDblHandler    = null;
+
 // 画像が読み込まれた時のハンドラ（onload から呼ぶ）
 function fpOnImageLoaded() {
   fpHideLoading();
   fpSyncOverlaySize();
+  fpZoomFit();              // fit に合わせて初期 transform を確定
   fpRenderBboxOverlays();
 }
 
-// overlay の表示サイズ／位置を実際の画像表示サイズに合わせる
+// overlay と img の natural サイズ（=transformレイヤー内の論理サイズ）を確定する
+// transform レイヤーで scale するため、ここでは natural サイズをそのままセット
 function fpSyncOverlaySize() {
   const img = document.getElementById('fp-image');
   const ov  = document.getElementById('fp-image-overlay');
   if (!img || !ov || !img.complete || !img.naturalWidth) return;
-  // object-fit:contain による実表示サイズを計算
-  const wrap = img.parentElement;
-  const wrapW = wrap.clientWidth;
-  const wrapH = wrap.clientHeight;
-  if (wrapW <= 0 || wrapH <= 0) return;
-  const ratioImg  = img.naturalWidth / img.naturalHeight;
-  const ratioWrap = wrapW / wrapH;
-  let dispW, dispH;
-  if (ratioImg >= ratioWrap) {
-    dispW = Math.min(wrapW, img.naturalWidth);
-    dispH = dispW / ratioImg;
+  // img は CSS でサイズ未指定。明示的に natural サイズを与える（後で transform で拡大縮小）
+  img.style.width  = img.naturalWidth  + 'px';
+  img.style.height = img.naturalHeight + 'px';
+  ov.style.width   = img.naturalWidth  + 'px';
+  ov.style.height  = img.naturalHeight + 'px';
+}
+
+function fpApplyTransform() {
+  const layer = document.getElementById('fp-image-transform');
+  if (!layer) return;
+  const { scale, tx, ty } = _fpZoom;
+  layer.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  // bbox 枠線・pending 枠線を scale 逆比例で更新（常に約2px相当を保つ）
+  const borderW = Math.max(1, 2 / (scale || 1));
+  document.querySelectorAll('#fp-image-overlay .fp-bbox-existing').forEach(el => {
+    el.style.borderWidth = borderW + 'px';
+  });
+  const pending = document.getElementById('fp-bbox-pending') || document.getElementById('fp-bbox-drag');
+  if (pending) pending.style.borderWidth = borderW + 'px';
+  fpUpdateZoomDisplay();
+}
+
+function fpUpdateZoomDisplay() {
+  const disp = document.getElementById('fp-zoom-display');
+  if (!disp) return;
+  // fitScale を 100% 表記する（フィット表示=100%表示の慣習）。等倍になった時のみ "100% (1:1)" 等は割愛
+  const pct = Math.round((_fpZoom.scale / (_fpZoom.fitScale || 1)) * 100);
+  disp.textContent = pct + '%';
+}
+
+function fpClampZoom(s) {
+  return Math.max(FP_ZOOM_MIN, Math.min(FP_ZOOM_MAX, s));
+}
+
+// stage 内座標 (clientX, clientY) を中心にズームを適用（カーソル位置固定）
+function fpZoomAt(newScale, clientX, clientY) {
+  const stage = document.getElementById('fp-image-stage');
+  if (!stage) return;
+  const rect = stage.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const s0 = _fpZoom.scale;
+  const s1 = fpClampZoom(newScale);
+  // 現在のローカル座標（transform 前）
+  const localX = (x - _fpZoom.tx) / s0;
+  const localY = (y - _fpZoom.ty) / s0;
+  _fpZoom.scale = s1;
+  _fpZoom.tx = x - localX * s1;
+  _fpZoom.ty = y - localY * s1;
+  fpApplyTransform();
+}
+
+// stage の中心を基準に scale を変える（ボタン用）
+function fpZoomBy(factor, evt) {
+  const stage = document.getElementById('fp-image-stage');
+  if (!stage) return;
+  const rect = stage.getBoundingClientRect();
+  fpZoomAt(_fpZoom.scale * factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+// 100% 表示（画像 natural 等倍）。stage 中心固定
+function fpZoomReset100() {
+  const stage = document.getElementById('fp-image-stage');
+  if (!stage) return;
+  const rect = stage.getBoundingClientRect();
+  fpZoomAt(1, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+// stage に fit させる（初期表示=リセット）
+function fpZoomFit() {
+  const stage = document.getElementById('fp-image-stage');
+  const img   = document.getElementById('fp-image');
+  if (!stage || !img || !img.naturalWidth) return;
+  const sw = stage.clientWidth;
+  const sh = stage.clientHeight;
+  if (!sw || !sh) return;
+  const fit = Math.min(sw / img.naturalWidth, sh / img.naturalHeight);
+  _fpZoom.fitScale = fit;
+  _fpZoom.scale    = fit;
+  _fpZoom.tx       = (sw - img.naturalWidth  * fit) / 2;
+  _fpZoom.ty       = (sh - img.naturalHeight * fit) / 2;
+  fpApplyTransform();
+}
+
+// ダブルクリック: 100% と fit のトグル
+function fpZoomToggle100Fit(e) {
+  if (!e) return;
+  const fit = _fpZoom.fitScale || 1;
+  // ほぼ fit なら 100% に、それ以外（>fit, =1, etc）なら fit に戻す
+  if (Math.abs(_fpZoom.scale - fit) < 1e-3) {
+    fpZoomAt(1, e.clientX, e.clientY);
   } else {
-    dispH = Math.min(wrapH, img.naturalHeight);
-    dispW = dispH * ratioImg;
+    fpZoomFit();
   }
-  ov.style.width  = dispW + 'px';
-  ov.style.height = dispH + 'px';
-  ov.style.left   = ((wrapW - dispW) / 2) + 'px';
-  ov.style.top    = ((wrapH - dispH) / 2) + 'px';
+}
+
+// stage に zoom/pan ハンドラを取り付け
+function fpInitImageZoom() {
+  const stage = document.getElementById('fp-image-stage');
+  if (!stage) return;
+  // 既存ハンドラを除去
+  if (_fpZoomWheelHandler) stage.removeEventListener('wheel', _fpZoomWheelHandler);
+  if (_fpZoomDblHandler)   stage.removeEventListener('dblclick', _fpZoomDblHandler);
+
+  // wheel: ピンチ/Cmd+wheel = zoom、それ以外で拡大時のみ pan
+  _fpZoomWheelHandler = (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      // ピンチ（macOSは ctrlKey:true で発火） or Cmd+wheel
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.01);
+      fpZoomAt(_fpZoom.scale * factor, e.clientX, e.clientY);
+    } else if (_fpZoom.scale > _fpZoom.fitScale + 1e-3) {
+      // 拡大時はパン
+      e.preventDefault();
+      _fpZoom.tx -= e.deltaX;
+      _fpZoom.ty -= e.deltaY;
+      fpApplyTransform();
+    }
+    // フィット時の通常スクロールは preventDefault しない（モーダルにバブル）
+  };
+  stage.addEventListener('wheel', _fpZoomWheelHandler, { passive: false });
+
+  _fpZoomDblHandler = (e) => {
+    // ツールバーのクリックは除外
+    if (e.target && e.target.closest && e.target.closest('#fp-zoom-toolbar')) return;
+    // 既存 bbox クリックは除外
+    if (e.target && e.target.classList && e.target.classList.contains('fp-bbox-existing')) return;
+    e.preventDefault();
+    fpZoomToggle100Fit(e);
+  };
+  stage.addEventListener('dblclick', _fpZoomDblHandler);
 }
 
 // overlay にドラッグ選択ハンドラを取り付ける（画像プレビュー時のみ）
@@ -20036,26 +20195,44 @@ function fpInitImageBboxOverlay() {
   let startX = 0, startY = 0;
   let dragRect = null;
 
+  // overlay は transform レイヤー内（natural サイズ）。座標は natural-pixel 空間で扱う。
+  // mouse 座標 → natural 座標は (clientX - rect.left) / scale で換算。
+  const toLocal = (clientX, clientY) => {
+    const r = ov.getBoundingClientRect();
+    const sx = r.width  || 1;
+    const sy = r.height || 1;
+    const ow = ov.clientWidth  || 1; // natural width
+    const oh = ov.clientHeight || 1; // natural height
+    return {
+      x: (clientX - r.left) * (ow / sx),
+      y: (clientY - r.top)  * (oh / sy),
+      W: ow,
+      H: oh,
+    };
+  };
+
   ov.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     // overlay 上の既存 bbox 表示要素をクリックした場合は素通り
     if (e.target && e.target.classList && e.target.classList.contains('fp-bbox-existing')) return;
     e.preventDefault();
-    const r = ov.getBoundingClientRect();
-    startX = e.clientX - r.left;
-    startY = e.clientY - r.top;
+    const p = toLocal(e.clientX, e.clientY);
+    startX = p.x;
+    startY = p.y;
     dragging = true;
     dragRect = document.createElement('div');
     dragRect.id = 'fp-bbox-drag';
-    dragRect.style.cssText = 'position:absolute;border:2px solid #f5c518;background:rgba(245,197,24,0.18);left:' + startX + 'px;top:' + startY + 'px;width:0;height:0;pointer-events:none;box-sizing:border-box';
+    // 線幅は scale に依存させない（natural 空間では細線・拡大時もくっきり）
+    const lineW = Math.max(1, 2 / (_fpZoom.scale || 1));
+    dragRect.style.cssText = 'position:absolute;border:' + lineW + 'px solid #f5c518;background:rgba(245,197,24,0.18);left:' + startX + 'px;top:' + startY + 'px;width:0;height:0;pointer-events:none;box-sizing:border-box';
     ov.appendChild(dragRect);
   });
 
   const onMove = (e) => {
     if (!dragging || !dragRect) return;
-    const r = ov.getBoundingClientRect();
-    const cx = Math.max(0, Math.min(r.width,  e.clientX - r.left));
-    const cy = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    const p = toLocal(e.clientX, e.clientY);
+    const cx = Math.max(0, Math.min(p.W, p.x));
+    const cy = Math.max(0, Math.min(p.H, p.y));
     const x = Math.min(cx, startX), y = Math.min(cy, startY);
     const w = Math.abs(cx - startX), h = Math.abs(cy - startY);
     dragRect.style.left   = x + 'px';
@@ -20069,15 +20246,15 @@ function fpInitImageBboxOverlay() {
     const ovEl = document.getElementById('fp-image-overlay');
     const dr   = document.getElementById('fp-bbox-drag');
     if (!ovEl || !dr) { _fpPendingBbox = null; return; }
-    const r = ovEl.getBoundingClientRect();
-    const cx = Math.max(0, Math.min(r.width,  e.clientX - r.left));
-    const cy = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    const p = toLocal(e.clientX, e.clientY);
+    const cx = Math.max(0, Math.min(p.W, p.x));
+    const cy = Math.max(0, Math.min(p.H, p.y));
     const px = Math.min(cx, startX), py = Math.min(cy, startY);
     const pw = Math.abs(cx - startX), ph = Math.abs(cy - startY);
-    // 5px 未満は無効（誤クリック防止）
+    // 5px 未満（natural 空間）は無効（誤クリック防止）
     if (pw < 5 || ph < 5) { dr.remove(); return; }
     // 正規化座標（0..1）に変換
-    const W = r.width || 1, H = r.height || 1;
+    const W = p.W || 1, H = p.H || 1;
     let nx = px / W, ny = py / H, nw = pw / W, nh = ph / H;
     // クリッピング保険
     nx = Math.max(0, Math.min(1, nx));
@@ -20105,9 +20282,18 @@ function fpInitImageBboxOverlay() {
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup',   onUp);
 
-  // ウィンドウリサイズで overlay も追従
+  // ウィンドウリサイズで overlay も追従。fit 表示中なら fit を保ちつつ再計算
   if (_fpBboxResizeHandler) window.removeEventListener('resize', _fpBboxResizeHandler);
-  _fpBboxResizeHandler = () => { fpSyncOverlaySize(); fpRenderBboxOverlays(); };
+  _fpBboxResizeHandler = () => {
+    fpSyncOverlaySize();
+    // fit 表示中（scale ≒ fitScale）ならリサイズ後の fit に追従
+    if (Math.abs(_fpZoom.scale - (_fpZoom.fitScale || 0)) < 1e-3) {
+      fpZoomFit();
+    } else {
+      fpApplyTransform();
+    }
+    fpRenderBboxOverlays();
+  };
   window.addEventListener('resize', _fpBboxResizeHandler);
 }
 
@@ -20121,6 +20307,9 @@ function fpRenderBboxOverlays() {
   fpSyncOverlaySize();
   const W = ov.clientWidth, H = ov.clientHeight;
   if (!W || !H) return;
+  // transform レイヤー内でレンダリングするので、ボーダー幅は scale に逆比例させて
+  // 表示上は常に2px相当に保つ（拡大時のもさつき防止＆fit時の視認性確保）
+  const borderW = Math.max(1, 2 / (_fpZoom.scale || 1));
   _fpComments.forEach(c => {
     const b = c && c.bbox;
     if (!b || typeof b !== 'object') return;
@@ -20129,7 +20318,7 @@ function fpRenderBboxOverlays() {
     div.className = 'fp-bbox-existing';
     div.dataset.commentId = c.id;
     div.title = (c.users?.full_name ? c.users.full_name + ': ' : '') + (c.comment || '');
-    div.style.cssText = 'position:absolute;border:2px solid #f5c518;background:rgba(245,197,24,0.08);box-sizing:border-box;cursor:pointer;pointer-events:auto;transition:background .15s';
+    div.style.cssText = 'position:absolute;border:' + borderW + 'px solid #f5c518;background:rgba(245,197,24,0.08);box-sizing:border-box;cursor:pointer;pointer-events:auto;transition:background .15s';
     div.style.left   = (b.x * W) + 'px';
     div.style.top    = (b.y * H) + 'px';
     div.style.width  = (b.w * W) + 'px';
