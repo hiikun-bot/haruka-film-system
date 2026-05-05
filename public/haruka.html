@@ -4559,6 +4559,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- つぶやき画像ライトボックス（クリックで拡大表示） -->
+<div id="tweet-lightbox" class="tweet-lightbox-overlay" onclick="closeTweetLightbox(event)">
+  <button type="button" class="tweet-lightbox-close" onclick="closeTweetLightbox(event)" aria-label="閉じる">×</button>
+  <img id="tweet-lightbox-img" src="" alt="">
+</div>
+
 <!-- つぶやき独立タブ用 投稿FAB（右下固定）— page-tweets が active のときだけ表示 -->
 <button id="tweets-fab" type="button" class="tweets-fab" style="display:none" onclick="openTweetCompose()" aria-label="つぶやきを投稿">
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -12895,6 +12901,31 @@ function onTweetImageDragLeave(e) {
   el.style.backgroundColor = '';
 }
 
+// 画像ライトボックス（タイムラインの画像クリックで等倍拡大表示）
+function openTweetLightbox(src) {
+  if (!src) return;
+  const overlay = document.getElementById('tweet-lightbox');
+  const img = document.getElementById('tweet-lightbox-img');
+  if (!overlay || !img) return;
+  img.src = src;
+  overlay.classList.add('show');
+  document.addEventListener('keydown', _twLightboxKeyHandler);
+}
+
+function closeTweetLightbox(e) {
+  // 画像本体クリックは閉じない（オーバーレイ／×ボタン／Escのみ閉じる）
+  if (e && e.target && e.target.id === 'tweet-lightbox-img') return;
+  const overlay = document.getElementById('tweet-lightbox');
+  const img = document.getElementById('tweet-lightbox-img');
+  if (overlay) overlay.classList.remove('show');
+  if (img) img.src = '';
+  document.removeEventListener('keydown', _twLightboxKeyHandler);
+}
+
+function _twLightboxKeyHandler(e) {
+  if (e.key === 'Escape') closeTweetLightbox();
+}
+
 async function onTweetImageDrop(e) {
   e.preventDefault();
   const el = document.getElementById('tw-image-preview');
@@ -13094,7 +13125,7 @@ function renderTweetCard(t) {
   // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
 
   const imageHtml = t.image_data
-    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" onclick="window.open(this.src,'_blank')"></div>`
+    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" onclick="openTweetLightbox(this.src)"></div>`
     : '';
 
   return `<article class="tweet-card ${t.is_pinned ? 'pinned' : ''}" data-tweet-id="${t.id}">

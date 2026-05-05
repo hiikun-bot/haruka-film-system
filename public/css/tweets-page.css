@@ -271,21 +271,67 @@
   margin-bottom: 10px;
 }
 
-/* 画像 */
+/* 画像 — 自然サイズで表示。カード幅は超えず、縦は max-height で抑制（超えたらクリックで拡大）*/
 .tweet-image-wrap {
   border-radius: 10px;
   overflow: hidden;
   margin-bottom: 10px;
   background: #F9FAFB;
-  max-width: 480px;
   border: 1px solid #E5E7EB;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
 }
 
 .tweet-image-wrap img {
-  width: 100%;
   display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 520px;
   cursor: zoom-in;
 }
+
+/* つぶやき画像ライトボックス */
+.tweet-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 10000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+  overflow: auto;
+}
+.tweet-lightbox-overlay.show { display: flex; }
+.tweet-lightbox-overlay img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.tweet-lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tweet-lightbox-close:hover { background: rgba(255, 255, 255, 0.28); }
 
 /* リアクション・コメントフッター */
 .tweet-footer {
