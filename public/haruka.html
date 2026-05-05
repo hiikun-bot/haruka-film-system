@@ -3591,6 +3591,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <label class="form-label">口座名義（カナ）</label>
           <input class="form-input" id="m-account-holder" placeholder="例：タカハシ サトル" style="font-size:15px;padding:12px 14px">
         </div>
+        <!-- インボイス制度: 適格請求書発行事業者 登録番号 (T+13桁) -->
+        <div class="form-group" style="margin-top:20px;margin-bottom:4px">
+          <label class="form-label">適格請求書発行事業者登録番号</label>
+          <input class="form-input" id="m-invoice-registration-number" type="text" placeholder="T1234567890123" maxlength="14" pattern="^T\d{13}$" style="font-size:14px;padding:10px 14px;max-width:240px">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5">インボイス制度の登録番号。先頭「T」+ 数字13桁。未登録の場合は空欄でOK。</div>
+        </div>
         <!-- 請求書用連絡先 -->
         <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
           <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.08em">請求書用 連絡先・住所</div>
@@ -9885,6 +9891,7 @@ function openAddMember() {
   document.getElementById('m-account-type').value = '普通';
   document.getElementById('m-account-number').value = '';
   document.getElementById('m-account-holder').value = '';
+  if (document.getElementById('m-invoice-registration-number')) document.getElementById('m-invoice-registration-number').value = '';
   document.getElementById('m-phone').value = '';
   document.getElementById('m-postal-code').value = '';
   document.getElementById('m-address').value = '';
@@ -9966,6 +9973,7 @@ function openEditMember(m) {
     setVal('m-account-type', m.account_type || '普通');
     setVal('m-account-number', m.account_number || '');
     setVal('m-account-holder', m.account_holder_kana || '');
+    setVal('m-invoice-registration-number', m.invoice_registration_number || '');
     setVal('m-phone', m.phone || '');
     setVal('m-postal-code', m.postal_code || '');
     setVal('m-address', m.address || '');
@@ -10181,6 +10189,12 @@ async function submitMember() {
   const account_type = document.getElementById('m-account-type').value || null;
   const account_number = document.getElementById('m-account-number').value.trim() || null;
   const account_holder_kana = document.getElementById('m-account-holder').value.trim() || null;
+  // インボイス登録番号 (T+13桁)。空欄 OR /^T\d{13}$/ にマッチしないと保存を止める
+  const invoice_registration_number = (document.getElementById('m-invoice-registration-number')?.value.trim()) || null;
+  if (invoice_registration_number && !/^T\d{13}$/.test(invoice_registration_number)) {
+    showToast('適格請求書発行事業者登録番号は「T」+ 数字13桁で入力してください', 'warn');
+    return;
+  }
   const phone = document.getElementById('m-phone').value.trim() || null;
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
@@ -10211,6 +10225,7 @@ async function submitMember() {
     birthday, hide_birth_year, weekday_hours, weekend_hours, note,
     bank_name, bank_code, branch_name, branch_code,
     account_type, account_number, account_holder_kana,
+    invoice_registration_number,
     phone, postal_code, address,
     // feedback batch 002
     camera_model, tripod_info, lighting_info, holiday_weekdays,
