@@ -136,6 +136,26 @@ router.get('/clients', async (req, res) => {
 
 const LINK_FIELDS = ['website_url','twitter_url','instagram_url','facebook_url','youtube_url','tiktok_url','line_url','other_url'];
 
+// 適格請求書発行事業者 登録番号 のバリデーション・正規化。
+//   - undefined  → 「未指定」を表す sentinel `undefined` を返す（updateData に入れない）
+//   - null / ''  → null として保存（登録解除）
+//   - 'T' + 半角数字13桁 → 大文字化して保存
+//   - それ以外  → { error: '...' }
+// 全角数字や記号混入はユーザー誤入力としてエラーにする（請求書上に印字される正式番号のため厳格化）。
+function normalizeInvoiceRegistrationNumber(raw) {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  if (typeof raw !== 'string') return { error: '登録番号は文字列で指定してください' };
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  // 'T1234567890123' 形式（先頭 T 大文字小文字許容、その後ろは半角数字13桁）
+  const m = trimmed.match(/^[Tt](\d{13})$/);
+  if (!m) {
+    return { error: '登録番号は「T + 半角数字13桁」の形式で入力してください（例: T1234567890123）' };
+  }
+  return 'T' + m[1];
+}
+
 // クライアント-チーム紐付けを sync するヘルパ
 async function syncClientTeams(clientId, teamIds) {
   if (!Array.isArray(teamIds)) return;
@@ -158,19 +178,25 @@ router.post('/clients', requireAuth, requirePermission('project.create_edit'), a
   const insertData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', persona: persona || null };
   if (slack_channel_url !== undefined) insertData.slack_channel_url = slack_channel_url || null;
   if (chatwork_room_id !== undefined) insertData.chatwork_room_id = chatwork_room_id || null;
-  if (invoice_registration_number !== undefined) {
-    const v = (invoice_registration_number || '').toString().trim();
-    if (v && !/^T\d{13}$/.test(v)) {
-      return res.status(400).json({ error: '登録番号は「T + 13桁の数字」の形式で入力してください' });
-    }
-    insertData.invoice_registration_number = v || null;
+  // 適格請求書発行事業者 登録番号（インボイス制度）
+  if ('invoice_registration_number' in req.body) {
+    const v = normalizeInvoiceRegistrationNumber(req.body.invoice_registration_number);
+    if (v && typeof v === 'object' && v.error) return res.status(400).json({ error: v.error });
+    if (v !== undefined) insertData.invoice_registration_number = v;
   }
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) insertData[f] = req.body[f] || null; });
-  const { data, error } = await supabase
+  // 列未反映環境（migration 未適用）でも 500 にせずグレースフルにフォールバック
+  let attempt = { ...insertData };
+  let { data, error } = await supabase
     .from('clients')
-    .insert(insertData)
+    .insert(attempt)
     .select()
     .single();
+  if (error && /invoice_registration_number/.test(error.message || '')) {
+    console.warn('[clients:create] invoice_registration_number 列未反映のためフォールバック保存:', error.message);
+    delete attempt.invoice_registration_number;
+    ({ data, error } = await supabase.from('clients').insert(attempt).select().single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   if (data && req.body.team_ids !== undefined) {
     await syncClientTeams(data.id, req.body.team_ids);
@@ -185,20 +211,26 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
   const updateData = { name, client_code: code, note, sales_start_date: sales_start_date || null, status: status || '提案中', persona: persona || null, updated_at: new Date().toISOString() };
   if (slack_channel_url !== undefined) updateData.slack_channel_url = slack_channel_url || null;
   if (chatwork_room_id !== undefined) updateData.chatwork_room_id = chatwork_room_id || null;
-  if (invoice_registration_number !== undefined) {
-    const v = (invoice_registration_number || '').toString().trim();
-    if (v && !/^T\d{13}$/.test(v)) {
-      return res.status(400).json({ error: '登録番号は「T + 13桁の数字」の形式で入力してください' });
-    }
-    updateData.invoice_registration_number = v || null;
+  // 適格請求書発行事業者 登録番号（インボイス制度）
+  if ('invoice_registration_number' in req.body) {
+    const v = normalizeInvoiceRegistrationNumber(req.body.invoice_registration_number);
+    if (v && typeof v === 'object' && v.error) return res.status(400).json({ error: v.error });
+    if (v !== undefined) updateData.invoice_registration_number = v;
   }
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) updateData[f] = req.body[f] || null; });
-  const { data, error } = await supabase
+  // 列未反映環境（migration 未適用）でも 500 にせずグレースフルにフォールバック
+  let attempt = { ...updateData };
+  let { data, error } = await supabase
     .from('clients')
-    .update(updateData)
+    .update(attempt)
     .eq('id', req.params.id)
     .select()
     .single();
+  if (error && /invoice_registration_number/.test(error.message || '')) {
+    console.warn('[clients:update] invoice_registration_number 列未反映のためフォールバック保存:', error.message);
+    delete attempt.invoice_registration_number;
+    ({ data, error } = await supabase.from('clients').update(attempt).eq('id', req.params.id).select().single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   if (req.body.team_ids !== undefined) {
     await syncClientTeams(req.params.id, req.body.team_ids);
@@ -3912,6 +3944,12 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updateData.phone = phone || null;
     updateData.postal_code = postal_code || null;
     updateData.address = address || null;
+    // 適格請求書発行事業者 登録番号（インボイス制度）。本人/管理者のみ書き換え可。
+    if (invoice_registration_number !== undefined) {
+      const v = normalizeInvoiceRegistrationNumber(invoice_registration_number);
+      if (v && typeof v === 'object' && v.error) return res.status(400).json({ error: v.error });
+      updateData.invoice_registration_number = v; // null or 'T...'
+    }
   }
   // ロール変更・在籍ステータスは member.edit_password のみ
   if (isAdmin) {
@@ -4100,12 +4138,25 @@ router.get('/invoices', async (req, res) => {
     if (status) q = q.eq('status', status);
     return q;
   };
-  const fullSelect = `*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,original_unit_price,price_change_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
-  const fallbackSelect = `*, projects(id,name,clients(id,name)), issuer:issuer_id(id,full_name), invoice_items(id,total_amount,is_special,special_reason,label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
-  let { data, error } = await buildQuery(fullSelect);
+  // 段階的フォールバック:
+  //   1) 監査列 + 登録番号 あり (full)
+  //   2) 監査列なし + 登録番号 あり
+  //   3) 監査列 + 登録番号なし
+  //   4) どちらもなし
+  // migration 適用前後どちらでも 500 にならないようにする。
+  const select = ({ audit, regNo }) => `*, projects(id,name,clients(id,name${regNo ? ',invoice_registration_number' : ''})), issuer:issuer_id(id,full_name${regNo ? ',invoice_registration_number' : ''}), invoice_items(id,total_amount,is_special,special_reason${audit ? ',original_unit_price,price_change_reason' : ''},label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
+  let { data, error } = await buildQuery(select({ audit: true, regNo: true }));
+  if (error && /invoice_registration_number/.test(error.message || '')) {
+    console.warn('[invoices] invoice_registration_number 列未反映のためフォールバック:', error.message);
+    ({ data, error } = await buildQuery(select({ audit: true, regNo: false })));
+  }
   if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
     console.warn('[invoices] 監査列未反映のためフォールバック select を使用:', error.message);
-    ({ data, error } = await buildQuery(fallbackSelect));
+    ({ data, error } = await buildQuery(select({ audit: false, regNo: true })));
+    if (error && /invoice_registration_number/.test(error.message || '')) {
+      console.warn('[invoices] invoice_registration_number 列も未反映のため二重フォールバック:', error.message);
+      ({ data, error } = await buildQuery(select({ audit: false, regNo: false })));
+    }
   }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -4287,13 +4338,17 @@ router.get('/invoices/preview-items', async (req, res) => {
 
 // 請求書詳細（PDF印刷用）― preview-items より後に定義
 router.get('/invoices/:id', requireAuth, async (req, res) => {
-  const buildSelect = (auditCols) => `
+  // インボイス制度対応:
+  //   issuer.invoice_registration_number / clients.invoice_registration_number を含めて取得し、
+  //   PDF/印刷プレビューで適格請求書発行事業者の登録番号（T+13桁）を表示する。
+  //   列未反映環境（migration 未適用）でも落ちないよう、列なしフォールバック select を別途用意する。
+  const buildSelect = (auditCols, withRegNo) => `
       *,
-      projects(id, name, clients(id, name, client_code)),
+      projects(id, name, clients(id, name, client_code${withRegNo ? ', invoice_registration_number' : ''})),
       issuer:issuer_id(
         id, full_name, email,
         bank_name, bank_code, branch_name, branch_code,
-        account_type, account_number, account_holder_kana
+        account_type, account_number, account_holder_kana${withRegNo ? ',\n        invoice_registration_number' : ''}
       ),
       invoice_items(
         id, total_amount, is_special, special_reason,
@@ -4301,15 +4356,23 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
         label, quantity, unit, unit_price, sort_order,
         cost_type, creative_label, creative_id,
         creatives(id, file_name, creative_type, final_deadline, draft_deadline, updated_at,
-          projects(id, name, clients(id, name, client_code))
+          projects(id, name, clients(id, name, client_code${withRegNo ? ', invoice_registration_number' : ''}))
         ),
         invoice_item_details(cost_type, unit_price, amount)
       )
     `;
-  let { data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', req.params.id).single();
+  let { data, error } = await supabase.from('invoices').select(buildSelect(true, true)).eq('id', req.params.id).single();
+  if (error && /invoice_registration_number/.test(error.message || '')) {
+    console.warn('[invoices/:id] invoice_registration_number 列未反映のためフォールバック select を使用:', error.message);
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(true, false)).eq('id', req.params.id).single());
+  }
   if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
     console.warn('[invoices/:id] 監査列未反映のためフォールバック select を使用:', error.message);
-    ({ data, error } = await supabase.from('invoices').select(buildSelect(false)).eq('id', req.params.id).single());
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(false, true)).eq('id', req.params.id).single());
+    if (error && /invoice_registration_number/.test(error.message || '')) {
+      console.warn('[invoices/:id] invoice_registration_number 列も未反映のため二重フォールバック:', error.message);
+      ({ data, error } = await supabase.from('invoices').select(buildSelect(false, false)).eq('id', req.params.id).single());
+    }
   }
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: '請求書が見つかりません' });

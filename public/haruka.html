@@ -15468,6 +15468,7 @@ async function printInvoice(id) {
         ${issuer.email ? `<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>` : ''}
         ${issuer.phone ? `<div style="font-size:11px;color:#666;margin-top:1px">TEL：${issuer.phone}</div>` : ''}
         ${(issuer.postal_code || issuer.address) ? `<div style="font-size:11px;color:#666;margin-top:4px">${issuer.postal_code ? `〒${issuer.postal_code}　` : ''}${issuer.address || ''}</div>` : ''}
+        <div style="font-size:11px;color:#666;margin-top:4px">登録番号：${issuer.invoice_registration_number || '—'}</div>
       </div>
     </div>
 
@@ -15528,7 +15529,10 @@ function triggerInvoicePrint() {
 }
 
 function printClientInvoice(inv) {
-  const recipientClient = inv.recipient_client || {};
+  // recipient_client は invoices テーブルの recipient_client_id へのエイリアス JOIN だが、
+  // PostgREST 上の FK 解決がない環境では空になる。クライアント請求書は project_id から
+  // たどれる projects.clients が同じクライアントになるためフォールバックに使う。
+  const recipientClient = inv.recipient_client || inv.projects?.clients || {};
   const issuer = inv.issuer || {};
   const now = new Date();
   const todayStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
@@ -15608,6 +15612,7 @@ function printClientInvoice(inv) {
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求先</div>
         <div style="font-size:17px;font-weight:700">${recipientClient.name||'-'}</div>
         <div style="font-size:13px;margin-top:4px;color:#444">ご担当者様</div>
+        <div style="font-size:11px;color:#666;margin-top:6px">登録番号：${recipientClient.invoice_registration_number || '—'}</div>
       </div>
       <div style="text-align:right;min-width:220px">
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求元</div>
@@ -15616,6 +15621,7 @@ function printClientInvoice(inv) {
         ${issuer.email?`<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>`:''}
         ${issuer.phone?`<div style="font-size:11px;color:#666">TEL：${issuer.phone}</div>`:''}
         ${(issuer.postal_code||issuer.address)?`<div style="font-size:11px;color:#666;margin-top:4px">${issuer.postal_code?`〒${issuer.postal_code}　`:''}${issuer.address||''}</div>`:''}
+        <div style="font-size:11px;color:#666;margin-top:4px">登録番号：${issuer.invoice_registration_number || '—'}</div>
       </div>
     </div>
     <div style="background:#f0fafa;border:2px solid #2BB8B4;border-radius:10px;padding:18px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between">
