@@ -1150,6 +1150,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS camera_model TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tripod_info  TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT;
 
+-- ==================== 適格請求書発行事業者 登録番号（インボイス制度） ====================
+-- (migrations/2026-05-05_invoice_registration_number.sql)
+-- 形式: 「T + 半角数字13桁」。NULL 許容（免税事業者・未登録）。
+-- アプリ層で /^T\d{13}$/ バリデーション。
+ALTER TABLE users   ADD COLUMN IF NOT EXISTS invoice_registration_number TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS invoice_registration_number TEXT;
+
 -- ==================== users クリエイティブ画面の初期表示タブ ====================
 -- (migrations/2026-05-04_users_default_creative_tab.sql)
 -- 値: 'all' / 'video' / 'design' / NULL（NULL はロール準拠フォールバック）
