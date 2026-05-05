@@ -3394,6 +3394,74 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </select>
           <div style="font-size:12px;color:var(--text-muted);margin-top:6px">クリエイティブ画面を開いたときに最初に表示されるタブです（自動の場合: デザイナーはデザイン / それ以外は動画編集）</div>
         </div>
+        <!-- ==================== クリエイティブ画面の初期表示状態（PR #277） ==================== -->
+        <!-- 表示モード / グルーピング / 期間 / 詳細フィルター（4チェック）/ ステータス pill / ボール種別 pill の初期値 -->
+        <!-- 「自動」=NULL = フロントの既定値にフォールバック。それ以外を選ぶとメンバーマスター値が優先 -->
+        <details class="form-group" style="margin-bottom:4px;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--surface)">
+          <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--text)">クリエイティブ画面の初期表示状態（任意）</summary>
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
+            <div>
+              <label class="form-label">表示モード</label>
+              <select class="form-select" id="m-cv-default-view-mode" style="font-size:14px;padding:8px 10px">
+                <option value="">自動（既定: ガント表示）</option>
+                <option value="gantt">ガント表示</option>
+                <option value="list">リスト表示</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">グルーピング（ガント表示）</label>
+              <select class="form-select" id="m-cv-default-group-mode" style="font-size:14px;padding:8px 10px">
+                <option value="">自動（既定: 案件別）</option>
+                <option value="project">案件別</option>
+                <option value="client">クライアント別</option>
+                <option value="assignee">担当者別</option>
+                <option value="team">チーム別</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">期間</label>
+              <select class="form-select" id="m-cv-default-range" style="font-size:14px;padding:8px 10px">
+                <option value="">自動（既定: 1ヶ月）</option>
+                <option value="week">1週</option>
+                <option value="2week">2週</option>
+                <option value="month">1ヶ月</option>
+                <option value="2month">2ヶ月</option>
+              </select>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:13px">
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="m-cv-default-include-ended"> 取引終了クライアント含む</label>
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="m-cv-default-include-delivered"> 納品済み含む</label>
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="m-cv-default-delayed-only"> 遅延のみ</label>
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="m-cv-default-sos-only"> SOSのみ</label>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <label class="form-label" style="margin:0">ステータス（押下されている＝表示）</label>
+                <div style="display:flex;gap:6px">
+                  <button type="button" class="btn btn-xs" onclick="cvDefaultsTogglePillsAll('m-cv-default-statuses-pills', true)">全て選択</button>
+                  <button type="button" class="btn btn-xs" onclick="cvDefaultsTogglePillsAll('m-cv-default-statuses-pills', false)">全て解除</button>
+                </div>
+              </div>
+              <div id="m-cv-default-statuses-pills" class="cv-adv-status-pills" role="group" aria-label="ステータス初期値"></div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">全選択時は「未設定」と同じ扱い（NULLで保存）</div>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <label class="form-label" style="margin:0">ボール種別（押下されている＝表示）</label>
+                <div style="display:flex;gap:6px">
+                  <button type="button" class="btn btn-xs" onclick="cvDefaultsTogglePillsAll('m-cv-default-balls-pills', true)">全て選択</button>
+                  <button type="button" class="btn btn-xs" onclick="cvDefaultsTogglePillsAll('m-cv-default-balls-pills', false)">全て解除</button>
+                </div>
+              </div>
+              <div id="m-cv-default-balls-pills" class="ball-filter" style="margin:0">
+                <button type="button" class="bf bf-e on" data-ball="editor" aria-pressed="true" onclick="cvDefaultsToggleBallPill(this)">編集者</button>
+                <button type="button" class="bf bf-d on" data-ball="D" aria-pressed="true" onclick="cvDefaultsToggleBallPill(this)">D</button>
+                <button type="button" class="bf bf-p on" data-ball="P" aria-pressed="true" onclick="cvDefaultsToggleBallPill(this)">P</button>
+                <button type="button" class="bf bf-c on" data-ball="client" aria-pressed="true" onclick="cvDefaultsToggleBallPill(this)">クライアント</button>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
 
       <!-- Tab 2: 連絡先 -->
@@ -5476,15 +5544,11 @@ let showEndedInCreatives = false;
 let creativesPage = { limit: 50, offset: 0, total: 0 };
 let _searchDebounceTimer = null;
 let _creativesLoadSeq = 0;
-// クリエイティブ画面の表示モード（gantt | list）/ グルーピング / 期間 — localStorage で保持
-let currentCreativeMode  = (typeof localStorage!=='undefined' && localStorage.getItem('cv_mode'))  || 'gantt';
-let currentCreativeGroup = (function(){
-  const allowed = ['project','client','assignee','team'];
-  let v = null;
-  try { v = localStorage.getItem('cv_group') || localStorage.getItem('ganttGroupBy'); } catch(_) {}
-  return allowed.includes(v) ? v : 'project';
-})();
-let currentCreativeRange = (typeof localStorage!=='undefined' && localStorage.getItem('cv_range')) || 'month';
+// クリエイティブ画面の表示モード / グルーピング / 期間 — メンバーマスター（creative_default_*）が唯一の真実（PR #277）。
+// 認証完了後に applyCreativeDefaultsFromUser() で上書きされる。ここではハードコード既定値で初期化。
+let currentCreativeMode  = 'gantt';
+let currentCreativeGroup = 'project';
+let currentCreativeRange = 'month';
 // ガント期間表示の基準日オフセット（baseDate = 今日 + offset。0=今日基準）
 let creativeGanttDateOffset = 0;
 // 詳細フィルター展開状態
@@ -5493,43 +5557,20 @@ let creativeAdvFiltersOpen = false;
 const _CV_STATUS_LIST = ['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
 // ボール種別の選択肢
 const _CV_BALL_LIST = ['editor','D','P','client'];
-// localStorage キー
-const _CV_LS_KEY_STATUSES = 'cv_adv_statuses';
-const _CV_LS_KEY_BALLS    = 'cv_adv_ball_types';
-function _cvLoadStatusesFromLS() {
-  try {
-    const raw = localStorage.getItem(_CV_LS_KEY_STATUSES);
-    if (!raw) return new Set(_CV_STATUS_LIST);
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return new Set(_CV_STATUS_LIST);
-    return new Set(arr.filter(s => _CV_STATUS_LIST.includes(s)));
-  } catch (_) { return new Set(_CV_STATUS_LIST); }
-}
-function _cvLoadBallTypesFromLS() {
-  try {
-    const raw = localStorage.getItem(_CV_LS_KEY_BALLS);
-    if (!raw) return new Set(_CV_BALL_LIST);
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return new Set(_CV_BALL_LIST);
-    return new Set(arr.filter(s => _CV_BALL_LIST.includes(s)));
-  } catch (_) { return new Set(_CV_BALL_LIST); }
-}
-function _cvSaveStatusesToLS() {
-  try { localStorage.setItem(_CV_LS_KEY_STATUSES, JSON.stringify([...cvAdvFilters.statuses])); } catch (_) {}
-}
-function _cvSaveBallTypesToLS() {
-  try { localStorage.setItem(_CV_LS_KEY_BALLS, JSON.stringify([...cvAdvFilters.ballTypes])); } catch (_) {}
-}
-// 詳細フィルターの値（既定値=全選択=フィルタ無効と等価）
+// 詳細フィルターの値 — メンバーマスター（creative_default_*）が唯一の真実（PR #277）。
+// 認証完了後に applyCreativeDefaultsFromUser() で上書きされる。ここではハードコード既定値で初期化。
+// 互換用 no-op（旧コードが呼んでいる箇所が残っていても落ちないよう保持）
+function _cvSaveStatusesToLS() {}
+function _cvSaveBallTypesToLS() {}
 let cvAdvFilters = {
   includeEnded: false,        // 取引終了クライアント含む
-  includeDelivered: false,    // 納品済み含む（既定: false で完了案件は非表示）
+  includeDelivered: false,    // 納品済み含む（PR #276 で既定 false に変更）
   delayedOnly: false,         // 遅延のみ
   sosOnly: false,             // SOSのみ
   // ステータス（複数選択 Set）— 初期値=全押下=全表示
-  statuses: _cvLoadStatusesFromLS(),
+  statuses: new Set(_CV_STATUS_LIST),
   // ボール種別（複数選択 Set: 'editor' | 'D' | 'P' | 'client'）— 初期値=全押下=全表示
-  ballTypes: _cvLoadBallTypesFromLS(),
+  ballTypes: new Set(_CV_BALL_LIST),
 };
 // 後方互換のための status エイリアス（旧コードが配列で参照する場合に備える）
 function _cvAdvStatusArray() { return Array.from(cvAdvFilters.statuses || []); }
@@ -5572,19 +5613,9 @@ async function init() {
       document.dispatchEvent(new CustomEvent('notification:authReady', {
         detail: { userId: currentUser.id }
       }));
-      // クリエイティブ初期ビューを適用
-      const savedView = localStorage.getItem('hfs_cv_default_' + currentUser.id);
-      if (savedView && savedView !== 'all') {
-        currentView = savedView;
-        const btn = document.querySelector(`.ft[onclick="setView(this,'${savedView}')"]`);
-        if (btn) {
-          // 同じセグメント内のみで active を付け替え（他のセグメント=表示形式/グループ/期間 を巻き込まない）
-          const seg = btn.closest('.filter-tabs');
-          if (seg) seg.querySelectorAll('.ft').forEach(b => { b.classList.remove('active'); if (b.hasAttribute('role')) b.setAttribute('aria-checked','false'); });
-          btn.classList.add('active');
-          if (btn.hasAttribute('role')) btn.setAttribute('aria-checked','true');
-        }
-      }
+      // クリエイティブ画面の初期表示状態をメンバーマスターから一括反映（PR #277）
+      // ビュー / 表示モード / グルーピング / 期間 / 詳細フィルター / ステータス pill / ボール種別 pill
+      try { applyCreativeDefaultsFromUser(currentUser); } catch (e) { console.warn('[HFS] applyCreativeDefaultsFromUser failed:', e); }
       // クリエイティブ画面の初期種別タブを適用（default_creative_tab → ロールfallback）
       // 直後の Promise.all で loadCreatives() を呼ぶので、ここでは reload をスキップ
       try {
@@ -6738,6 +6769,141 @@ function pickInitialCreativeTab(user) {
   return 'video';
 }
 
+// ==================== クリエイティブ画面の初期表示状態（PR #277） ====================
+// メンバーマスターに保存された creative_default_* を画面ロード時にグローバル変数 / cvAdvFilters に反映する。
+// NULL（未設定）= 既定値フォールバック。「現在のハードコード既定値」と「メンバーが master で明示指定した値」を区別する。
+function applyCreativeDefaultsFromUser(u) {
+  if (!u) return;
+  // ビュー (all/mine/ball)。DB → 旧 localStorage（後方互換）の順
+  let view = (u.creative_default_view === 'all' || u.creative_default_view === 'mine' || u.creative_default_view === 'ball')
+    ? u.creative_default_view : null;
+  if (!view) {
+    try {
+      const ls = localStorage.getItem('hfs_cv_default_' + u.id);
+      if (ls === 'all' || ls === 'mine' || ls === 'ball') view = ls;
+    } catch(_) {}
+  }
+  if (view && view !== 'all') {
+    currentView = view;
+    const btn = document.querySelector(`.ft[onclick="setView(this,'${view}')"]`);
+    if (btn) {
+      const seg = btn.closest('.filter-tabs');
+      if (seg) seg.querySelectorAll('.ft').forEach(b => { b.classList.remove('active'); if (b.hasAttribute('role')) b.setAttribute('aria-checked','false'); });
+      btn.classList.add('active');
+      if (btn.hasAttribute('role')) btn.setAttribute('aria-checked','true');
+    }
+  }
+  // 表示モード (gantt/list)
+  if (u.creative_default_view_mode === 'gantt' || u.creative_default_view_mode === 'list') {
+    currentCreativeMode = u.creative_default_view_mode;
+  }
+  // グルーピング
+  if (['project','client','assignee','team'].includes(u.creative_default_group_mode)) {
+    currentCreativeGroup = u.creative_default_group_mode;
+  }
+  // 期間
+  if (['week','2week','month','2month'].includes(u.creative_default_range)) {
+    currentCreativeRange = u.creative_default_range;
+  }
+  // 詳細フィルター（boolean: NULL=既定 / true/false=明示指定）
+  const setBool = (key, dbKey) => {
+    if (typeof u[dbKey] === 'boolean') cvAdvFilters[key] = u[dbKey];
+  };
+  setBool('includeEnded',     'creative_default_include_ended');
+  setBool('includeDelivered', 'creative_default_include_delivered');
+  setBool('delayedOnly',      'creative_default_delayed_only');
+  setBool('sosOnly',          'creative_default_sos_only');
+  // ステータス・ボール種別: NULL = 全選択（既定）。配列指定なら master の値を Set に変換
+  const parseArr = (v) => {
+    if (v == null) return null;
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch(_) { return null; } }
+    return Array.isArray(v) ? v : null;
+  };
+  const stArr = parseArr(u.creative_default_statuses);
+  if (Array.isArray(stArr)) cvAdvFilters.statuses = new Set(stArr.filter(s => _CV_STATUS_LIST.includes(s)));
+  const ballArr = parseArr(u.creative_default_ball_types);
+  if (Array.isArray(ballArr)) cvAdvFilters.ballTypes = new Set(ballArr.filter(s => _CV_BALL_LIST.includes(s)));
+}
+
+// ==== メンバーマスター > クリエイティブ画面の初期表示状態フォーム編集ヘルパー ====
+function cvDefaultsTogglePillsAll(boxId, on) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  box.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', !!on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function cvDefaultsToggleBallPill(btn) {
+  if (!btn) return;
+  const wasOn = btn.classList.toggle('on');
+  btn.setAttribute('aria-pressed', wasOn ? 'true' : 'false');
+}
+function cvDefaultsToggleStatusPill(btn) {
+  if (!btn) return;
+  const wasOn = btn.classList.toggle('on');
+  btn.setAttribute('aria-pressed', wasOn ? 'true' : 'false');
+}
+function cvDefaultsRenderStatusPills(selected) {
+  const box = document.getElementById('m-cv-default-statuses-pills');
+  if (!box) return;
+  const sel = (selected == null)
+    ? new Set(_CV_STATUS_LIST)
+    : (selected instanceof Set ? selected : new Set(Array.isArray(selected) ? selected : []));
+  box.innerHTML = _CV_STATUS_LIST.map(s => {
+    const isOn = sel.has(s);
+    return `<button type="button" class="cv-adv-status-pill${isOn ? ' on' : ''}" data-status="${esc(s)}" aria-pressed="${isOn ? 'true' : 'false'}" onclick="cvDefaultsToggleStatusPill(this)">${esc(s)}</button>`;
+  }).join('');
+}
+// メンバー(m)からフォームへ反映。m が null/未設定 = 新規作成 = 既定（全 ON）
+function cvDefaultsApplyToForm(m) {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  setVal('m-cv-default-view-mode',  m?.creative_default_view_mode  || '');
+  setVal('m-cv-default-group-mode', m?.creative_default_group_mode || '');
+  setVal('m-cv-default-range',      m?.creative_default_range      || '');
+  setChk('m-cv-default-include-ended',     m?.creative_default_include_ended);
+  setChk('m-cv-default-include-delivered', m?.creative_default_include_delivered);
+  setChk('m-cv-default-delayed-only',      m?.creative_default_delayed_only);
+  setChk('m-cv-default-sos-only',          m?.creative_default_sos_only);
+  let stArr = m?.creative_default_statuses;
+  if (typeof stArr === 'string') { try { stArr = JSON.parse(stArr); } catch(_) { stArr = null; } }
+  cvDefaultsRenderStatusPills(stArr);
+  let ballArr = m?.creative_default_ball_types;
+  if (typeof ballArr === 'string') { try { ballArr = JSON.parse(ballArr); } catch(_) { ballArr = null; } }
+  const ballBox = document.getElementById('m-cv-default-balls-pills');
+  if (ballBox) {
+    const ballSel = (ballArr == null) ? new Set(_CV_BALL_LIST) : new Set(Array.isArray(ballArr) ? ballArr : []);
+    ballBox.querySelectorAll('button[data-ball]').forEach(b => {
+      const isOn = ballSel.has(b.dataset.ball);
+      b.classList.toggle('on', isOn);
+      b.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+    });
+  }
+}
+// フォームから収集 → API payload 形式（全選択時は NULL に正規化）
+function cvDefaultsCollectFromForm() {
+  const get = (id) => document.getElementById(id);
+  const valOrNull = (id) => { const el = get(id); const v = el?.value || ''; return v === '' ? null : v; };
+  const chk = (id) => !!get(id)?.checked;
+  const stPills = Array.from(document.querySelectorAll('#m-cv-default-statuses-pills .cv-adv-status-pill.on')).map(b => b.dataset.status);
+  const ballPills = Array.from(document.querySelectorAll('#m-cv-default-balls-pills button[data-ball].on')).map(b => b.dataset.ball);
+  // 全選択 = 「未設定 = 既定値フォールバック」と意味的に等価なので NULL で保存
+  const stOut = (stPills.length === _CV_STATUS_LIST.length) ? null : stPills;
+  const ballOut = (ballPills.length === _CV_BALL_LIST.length) ? null : ballPills;
+  return {
+    creative_default_view_mode:         valOrNull('m-cv-default-view-mode'),
+    creative_default_group_mode:        valOrNull('m-cv-default-group-mode'),
+    creative_default_range:             valOrNull('m-cv-default-range'),
+    creative_default_include_ended:     chk('m-cv-default-include-ended'),
+    creative_default_include_delivered: chk('m-cv-default-include-delivered'),
+    creative_default_delayed_only:      chk('m-cv-default-delayed-only'),
+    creative_default_sos_only:          chk('m-cv-default-sos-only'),
+    creative_default_statuses:          stOut,
+    creative_default_ball_types:        ballOut,
+  };
+}
+
 function setCreativeTab(type, opts = {}) {
   if (type !== 'all' && type !== 'video' && type !== 'design') type = 'all';
   const changed = (currentCreativeTab !== type);
@@ -7732,7 +7898,7 @@ function renderCreativeLoadMore() {
 // 表示モード切替（gantt | list）
 function setCreativeMode(mode) {
   currentCreativeMode = (mode === 'list') ? 'list' : 'gantt';
-  try { localStorage.setItem('cv_mode', currentCreativeMode); } catch(_) {}
+  // セッション中の切替のみ。永続化はメンバーマスター（creative_default_view_mode）が担う（PR #277）
   // 2セグメント (ガント / リスト) に active を反映
   const mg = document.getElementById('cv-mode-gantt');
   const ml = document.getElementById('cv-mode-list');
@@ -7775,11 +7941,7 @@ function toggleCreativeGanttLegend() {
 function setCreativeGroup(group) {
   const allowed = ['project','client','assignee','team'];
   currentCreativeGroup = allowed.includes(group) ? group : 'project';
-  try {
-    localStorage.setItem('cv_group', currentCreativeGroup);
-    // 互換キー（指示書名）
-    localStorage.setItem('ganttGroupBy', currentCreativeGroup);
-  } catch(_) {}
+  // セッション中の切替のみ。永続化はメンバーマスター（creative_default_group_mode）が担う（PR #277）
   allowed.forEach(g => {
     const el = document.getElementById('cv-group-' + g);
     if (!el) return;
@@ -7792,7 +7954,7 @@ function setCreativeGroup(group) {
 function setCreativeRange(range) {
   const allowed = ['week','2week','month','2month'];
   currentCreativeRange = allowed.includes(range) ? range : 'month';
-  try { localStorage.setItem('cv_range', currentCreativeRange); } catch(_) {}
+  // セッション中の切替のみ。永続化はメンバーマスター（creative_default_range）が担う（PR #277）
   // 期間サイズ切替時はオフセットをリセット（直感的に「今を見せる」）
   creativeGanttDateOffset = 0;
   _cvUpdateRangeButtonsActive();
@@ -8781,27 +8943,29 @@ function onCvAdvFilterChange() {
   if (typeof renderCreatives === 'function') renderCreatives();
 }
 function resetCvAdvFilters() {
+  // PR #277: 「クリア」はセッション中の変更を破棄してメンバーマスター値（creative_default_*）に戻す。
+  // master が NULL の項目はハードコード既定値（全 OFF / 全 pill 押下）。
   cvAdvFilters = {
     includeEnded:false, includeDelivered:false, delayedOnly:false, sosOnly:false,
     statuses: new Set(_CV_STATUS_LIST),  // 全押下=全表示
     ballTypes: new Set(_CV_BALL_LIST),   // 全押下=全表示
   };
-  ['cv-flt-ended','cv-flt-delivered','cv-flt-delayed','cv-flt-sos'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.checked = false;
+  try { applyCreativeDefaultsFromUser(currentUser); } catch(_) {}
+  // DOM を cvAdvFilters に同期
+  const _flagMap = {'cv-flt-ended':'includeEnded','cv-flt-delivered':'includeDelivered','cv-flt-delayed':'delayedOnly','cv-flt-sos':'sosOnly'};
+  Object.entries(_flagMap).forEach(([id, key]) => {
+    const el = document.getElementById(id); if (el) el.checked = !!cvAdvFilters[key];
   });
-  // ステータス pill を全 ON（初期値=全表示）
   document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill').forEach(b => {
-    b.classList.add('on');
-    b.setAttribute('aria-pressed', 'true');
+    const isOn = cvAdvFilters.statuses.has(b.dataset.status);
+    b.classList.toggle('on', isOn);
+    b.setAttribute('aria-pressed', isOn ? 'true' : 'false');
   });
-  // ボール pill も全 ON
   document.querySelectorAll('#cv-flt-ball-pills button[data-ball]').forEach(b => {
-    b.classList.add('on');
-    b.setAttribute('aria-pressed', 'true');
+    const isOn = cvAdvFilters.ballTypes.has(b.dataset.ball);
+    b.classList.toggle('on', isOn);
+    b.setAttribute('aria-pressed', isOn ? 'true' : 'false');
   });
-  // localStorage 永続化（クリア後の初期値も保存）
-  _cvSaveStatusesToLS();
-  _cvSaveBallTypesToLS();
   if (typeof showEndedInCreatives !== 'undefined' && showEndedInCreatives) {
     showEndedInCreatives = false;
     const btn = document.getElementById('toggle-ended-creatives');
@@ -8815,7 +8979,7 @@ function _cvAdvUpdateBadge() {
   // 適用中件数（既定値と異なる項目をカウント）
   let n = 0;
   if (cvAdvFilters.includeEnded) n++;
-  if (cvAdvFilters.includeDelivered) n++; // 既定 false
+  if (cvAdvFilters.includeDelivered) n++; // 既定 false（PR #276 で変更）
   if (cvAdvFilters.delayedOnly) n++;
   if (cvAdvFilters.sosOnly) n++;
   // ステータス: 全選択 = 非カウント、一部解除（=全数未満）= カウント
@@ -9504,6 +9668,8 @@ function openAddMember() {
   document.getElementById('m-creative-default-view').value = 'all';
   // 初期表示クリエイティブ画面（新規作成時は「自動 = ロール準拠」をデフォルトに）
   if (document.getElementById('m-default-creative-tab')) document.getElementById('m-default-creative-tab').value = '';
+  // クリエイティブ画面の初期表示状態（PR #277）— 新規はすべて未設定（=既定値フォールバック）
+  cvDefaultsApplyToForm(null);
   // 機材・休日（feedback batch 002）
   if (document.getElementById('m-camera-model'))  document.getElementById('m-camera-model').value = '';
   if (document.getElementById('m-tripod-info'))   document.getElementById('m-tripod-info').value = '';
@@ -9554,13 +9720,22 @@ function openEditMember(m) {
     try { initTimeRanges('weekday', wdRanges); } catch(_) {}
     try { initTimeRanges('weekend', weRanges || [{from:10,to:17}]); } catch(_) {}
     setVal('m-note', m.note || '');
-    setVal('m-creative-default-view', localStorage.getItem('hfs_cv_default_' + m.id) || 'all');
+    // クリエイティブ初期ビュー: PR #277 で DB 列 creative_default_view に移行。
+    // 旧 hfs_cv_default_<id> localStorage は後方互換フォールバックとして残す（DB 列が NULL のとき）。
+    {
+      const dbView = (m.creative_default_view === 'all' || m.creative_default_view === 'mine' || m.creative_default_view === 'ball') ? m.creative_default_view : null;
+      let lsView = null;
+      try { const v = localStorage.getItem('hfs_cv_default_' + m.id); if (v === 'all' || v === 'mine' || v === 'ball') lsView = v; } catch(_) {}
+      setVal('m-creative-default-view', dbView || lsView || 'all');
+    }
     // 初期表示クリエイティブ画面（DB の default_creative_tab。NULL なら 'auto' = 空文字）
     {
       const v = m.default_creative_tab;
       const allowed = (v === 'all' || v === 'video' || v === 'design') ? v : '';
       setVal('m-default-creative-tab', allowed);
     }
+    // クリエイティブ画面の初期表示状態（PR #277）— DB 値をフォームに反映
+    cvDefaultsApplyToForm(m);
     setVal('m-bank-name', m.bank_name || '');
     setVal('m-bank-code', m.bank_code || '');
     setVal('m-branch-name', m.branch_name || '');
@@ -9794,6 +9969,11 @@ async function submitMember() {
   // 初期表示クリエイティブ画面: 空文字 = 自動 (NULL 送信)。それ以外は 'all'/'video'/'design'
   const _dctRaw = document.getElementById('m-default-creative-tab')?.value;
   const default_creative_tab = (_dctRaw === 'all' || _dctRaw === 'video' || _dctRaw === 'design') ? _dctRaw : null;
+  // クリエイティブ初期ビュー（all/mine/ball）— PR #277 で DB 列に移行
+  const _viewRaw = document.getElementById('m-creative-default-view')?.value;
+  const creative_default_view = (_viewRaw === 'all' || _viewRaw === 'mine' || _viewRaw === 'ball') ? _viewRaw : null;
+  // クリエイティブ画面の初期表示状態（10列のうち view 以外）
+  const cvDefaultsPayload = cvDefaultsCollectFromForm();
   if (!full_name) { showToast('名前は必須です', 'warn'); return; }
   // 「所属チーム（基本）」が案件チーム（非基本）のままなら警告
   if (team_id) {
@@ -9813,6 +9993,9 @@ async function submitMember() {
     camera_model, tripod_info, lighting_info, holiday_weekdays,
     // クリエイティブ画面の初期表示タブ
     default_creative_tab,
+    // クリエイティブ画面の初期表示状態（PR #277）
+    creative_default_view,
+    ...cvDefaultsPayload,
   };
   let res;
   if (id) {
@@ -9822,8 +10005,8 @@ async function submitMember() {
     res = await apiFetch(`${API}/members`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload, email}) });
   }
   if (res.ok) {
-    const cvView = document.getElementById('m-creative-default-view').value;
-    if (id) localStorage.setItem('hfs_cv_default_' + id, cvView);
+    // PR #277: クリエイティブ初期ビューは DB（creative_default_view）に保存済み。
+    // 旧 localStorage キーは後方互換として残しているが、ここでは新規書き込みしない。
     closeModal('modal-member');
     await loadMembers();
   } else {

@@ -1152,6 +1152,22 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT;
 -- CHECK 制約は付けない（将来タブが増える想定のため柔軟に）。
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_creative_tab TEXT;
 
+-- ==================== users クリエイティブ画面の初期表示状態（フィルター10種） ====================
+-- (migrations/2026-05-05_users_creative_default_filters.sql)
+-- メンバーマスターで「ビュー / 表示モード / グルーピング / 期間 / 詳細フィルター（4チェック）/
+-- ステータス pill / ボール種別 pill」の初期値を持てるようにする。すべて nullable で、
+-- NULL の場合はフロント側のハードコード既定値にフォールバック。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_view              TEXT;     -- 'all' / 'mine' / 'ball'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_view_mode         TEXT;     -- 'gantt' / 'list'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_group_mode        TEXT;     -- 'project' / 'client' / 'assignee' / 'team'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_range             TEXT;     -- 'week' / '2week' / 'month' / '2month'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_include_ended     BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_include_delivered BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_delayed_only      BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_sos_only          BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_statuses          JSONB;    -- 文字列配列（NULL = 全選択）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_ball_types        JSONB;    -- 'editor'/'D'/'P'/'client' の配列（NULL = 全選択）
+
 -- ==================== 案件収支（Project Accounting）— Step A ====================
 -- 詳細は docs/project_accounting_design_ja.md
 -- スタンドアロン migration: migrations/2026-05-02_project_accounting_step_a.sql
