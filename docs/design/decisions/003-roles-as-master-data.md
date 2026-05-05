@@ -89,4 +89,10 @@ ALTER TABLE project_estimate_line_costs
 - **(却下) 文字列コードのみで運用（マスタ無し）** — UI ラベル・並び順・分類が持てない、廃止運用ができない
 
 ## 実装履歴
-（実装が始まったらここに migration ファイルを追記）
+
+- **2026-05-06**: Stage 0 Step 1 — migration `migrations/2026-05-06_roles_master.sql` 追加。
+  - `roles` テーブル新設 + 初期 8 件投入（admin / secretary / producer / director / sub_producer / sub_director / editor / designer）
+  - `user_roles` テーブル新設 + 既存 `users.role` からデータ移行（合成値 `producer_director` は producer + director の 2 行に分解）
+  - `role_permissions.role_id` 列追加 + バックフィル（合成値 `producer_director` の権限行は role_id NULL のまま残し、Step 3 のコード側で和集合解釈）
+  - **このPRはコード変更なし**。dual-read 期間として `users.role` / `role_permissions.role` TEXT は維持。
+  - 続き: Step 2（コードを `user_roles` 経由に切替）→ Step 3（`role_permissions.role_id` 参照に切替）→ Step 4（旧列 DROP）

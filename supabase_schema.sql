@@ -833,6 +833,54 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 );
 CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role);
 
+-- ==================== ロールマスタ（ADR 003 / Stage 0 Step 1） ====================
+-- 詳細: docs/design/decisions/003-roles-as-master-data.md
+-- migration: migrations/2026-05-06_roles_master.sql
+--
+-- users.role TEXT / role_permissions.role TEXT は dual-read 期間として残す。
+-- Stage 0 Step 4 で DROP 予定。
+CREATE TABLE IF NOT EXISTS roles (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code        TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL,
+  category    TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  is_creator  BOOLEAN NOT NULL DEFAULT FALSE,
+  is_internal BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  archived_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_roles_active_sort ON roles(archived_at, sort_order);
+CREATE INDEX IF NOT EXISTS idx_roles_category    ON roles(category);
+
+INSERT INTO roles (code, label, category, sort_order, is_creator, is_internal) VALUES
+  ('admin',        '管理者',             'admin',   10, FALSE, TRUE),
+  ('secretary',    '秘書',               'staff',   20, FALSE, TRUE),
+  ('producer',     'プロデューサー',     'staff',   30, TRUE,  TRUE),
+  ('director',     'ディレクター',       'staff',   40, TRUE,  TRUE),
+  ('sub_producer', 'サブプロデューサー', 'staff',   50, TRUE,  TRUE),
+  ('sub_director', 'サブディレクター',   'staff',   60, TRUE,  TRUE),
+  ('editor',       '編集者',             'creator', 70, TRUE,  TRUE),
+  ('designer',     'デザイナー',         'creator', 80, TRUE,  TRUE)
+ON CONFLICT (code) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS user_roles (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id     UUID NOT NULL REFERENCES roles(id),
+  scope_type  TEXT,
+  scope_id    UUID,
+  granted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, role_id, scope_type, scope_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_roles_user  ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role  ON user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_scope ON user_roles(scope_type, scope_id);
+
+-- role_permissions に role_id 列を追加（dual-read 期間: role TEXT も残す）
+ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id);
+
 -- 初期シード（既存挙動と完全一致）
 INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   -- ダッシュボード
