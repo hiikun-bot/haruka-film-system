@@ -6318,8 +6318,7 @@ function pickInitialProjectFilterTab(user) {
 // 現在のフィルタに従って案件配列を絞り込む。
 // クリエイティブ側のキャパは 'video' / 'design'（=静止画） の 2 値しかないため、
 // 動画カテゴリ以外（image / lp / hp / line / その他）はすべて 'design' タブに統合表示する。
-// 判定は primary_category code 駆動（getProjectCategory()）。未設定の旧案件は
-// PROJECT_TYPE_TO_CATEGORY_CODE 経由で project_type からフォールバックされる。
+// 判定は primary_category code 駆動（getProjectCategory()）。
 // - 'all'    : 全件（カテゴリ未解決でも表示）
 // - 'video'  : primary_category.code === 'video'
 // - 'design' : primary_category.code !== 'video' かつ 解決済み
@@ -6327,11 +6326,9 @@ function filterProjectsByCap(projects, cap) {
   const list = projects || [];
   if (cap === 'all') return list;
   // カテゴリ code を解決：primary_category（API埋め込み）→ primary_category_id（キャッシュ参照）
-  // → project_type 経由のフォールバック（PROJECT_TYPE_TO_CATEGORY_CODE）の順
   const resolveCode = (p) => {
     const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(p) : null;
-    if (cat?.code) return cat.code;
-    return PROJECT_TYPE_TO_CATEGORY_CODE[p?.project_type] || null;
+    return cat?.code || null;
   };
   return list.filter(p => {
     const code = resolveCode(p);
@@ -6393,11 +6390,9 @@ function renderCreativeAddTeamDropdowns() {
 function renderCreativeAddProjectDropdowns() {
   const visible = dedupVisibleProjects(allProjects || []);
   // primary_category code 駆動でカウント。未設定案件は getProjectCategory のフォールバックで分類される。
-  // 万一 _categoriesCache が空の場合は project_type から code を派生して保険にする。
   const _resolveCode = (p) => {
     const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(p) : null;
-    if (cat?.code) return cat.code;
-    return PROJECT_TYPE_TO_CATEGORY_CODE[p?.project_type] || null;
+    return cat?.code || null;
   };
   const counts = {
     video: visible.filter(p => _resolveCode(p) === 'video').length,
@@ -9567,8 +9562,9 @@ async function updateStatus() {
 }
 
 // ==================== 案件種別 × チーム種別 整合性バリデーション ====================
-// projects.project_type ('video'|'design') と teams.team_type ('video'|'design'|'secretary')
-// の組み合わせを検証。秘書チームは横断利用 OK のためスキップ。
+// 案件 primary_category.code ('video'|'design'|'lp'|'hp'|'other'|...) と
+// teams.team_type ('video'|'design'|'secretary') の組み合わせを検証。
+// 秘書チームは横断利用 OK のためスキップ。
 // 戻り値:
 //   null      … 整合（OK / 検証スキップ）
 //   { ... }   … 不整合（呼び出し元で showCreativeMismatchDialog に渡す）
@@ -9577,8 +9573,9 @@ function checkProjectTeamMismatch(projectId, teamId) {
   const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
   const team    = (Array.isArray(allTeams)    ? allTeams    : []).find(t => t.id === teamId);
   if (!project || !team) return null;
-  const pt = project.project_type;
-  const tt = team.team_type;
+  const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(project) : null;
+  const pt  = cat?.code || null;
+  const tt  = team.team_type;
   if (!pt || !tt) return null;             // どちらか未設定なら判定保留
   if (tt === 'secretary') return null;     // 秘書はバイパス
   // LP/HP/other 案件はデザインキャパとして扱うため design チームと一致なら OK
@@ -9591,7 +9588,7 @@ function checkProjectTeamMismatch(projectId, teamId) {
   return {
     projectName: project.name || '（無題）',
     projectType: pt,
-    projectTypeLabel: PT_LABEL[pt] || pt,
+    projectTypeLabel: cat?.name || PT_LABEL[pt] || pt,
     teamName: `${team.team_code || ''}チーム / ${team.team_name || ''}`.trim(),
     teamType: tt,
     teamTypeLabel: TT_LABEL[tt] || tt,
@@ -10506,15 +10503,12 @@ function getCategoryByCode(code) {
   if (!code || !_categoriesCache) return null;
   return _categoriesCache.find(c => c.code === code) || null;
 }
-// project_type → category code の Stage A マッピング（互換用）
-const PROJECT_TYPE_TO_CATEGORY_CODE = { video: 'video', design: 'image', lp: 'lp', hp: 'hp', other: 'image' };
-// project の primary_category を解決（明示 ID 優先 / 無ければ project_type からフォールバック）
+// project の primary_category を解決（明示 ID 優先 / 無ければ video カテゴリにフォールバック）
 function getProjectCategory(project) {
   if (!project) return null;
   if (project.primary_category) return project.primary_category;
   if (project.primary_category_id) return getCategory(project.primary_category_id);
-  const code = PROJECT_TYPE_TO_CATEGORY_CODE[project.project_type] || 'video';
-  return getCategoryByCode(code);
+  return getCategoryByCode('video');
 }
 // 案件モーダル等の <select id="p-primary-category"> を populate する
 function populateCategorySelect(selectEl, selectedId) {
@@ -10531,12 +10525,16 @@ function populateCategorySelect(selectEl, selectedId) {
 }
 
 // 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
-// 未定義/不正値は 'video' にフォールバック。
-// 古いキャッシュや project_type 列が無い古いレコードへの保険として使う。
+// primary_category.code を優先し、未解決時は 'video' にフォールバック。
+// PROJECT_TYPE_VALUES は UI バッジ・フィルタの表示順序定義として残す。
 const PROJECT_TYPE_VALUES = ['video','design','lp','hp','other'];
 function getProjectType(project) {
-  const t = project?.project_type;
-  return PROJECT_TYPE_VALUES.includes(t) ? t : 'video';
+  const cat = getProjectCategory(project);
+  const code = cat?.code;
+  // image / line など design 系の code は 'design' に丸める（既存 UI バッジ互換）
+  if (PROJECT_TYPE_VALUES.includes(code)) return code;
+  if (code === 'image' || code === 'line') return 'design';
+  return 'video';
 }
 
 // クリエイティブのキャパ区分（'video' | 'design'）に正規化。
@@ -10559,8 +10557,8 @@ const PROJECT_TYPE_META = {
 };
 
 // 案件種別バッジHTMLを返す。
-// Stage A: project が primary_category（または primary_category_id）を持っていれば
-// それを優先表示（color/name はマスタ駆動）。無ければ従来の project_type ベース。
+// project が primary_category（または primary_category_id）を持っていれば
+// マスタの color / name を表示。未解決の場合は PROJECT_TYPE_META のフォールバック表示。
 function getProjectTypeBadge(projectOrType) {
   // オブジェクトかつカテゴリ情報があれば優先
   if (projectOrType && typeof projectOrType === 'object') {
@@ -10603,7 +10601,7 @@ function renderProjectFilterChips() {
     const counts = {};
     PROJECT_TYPE_VALUES.forEach(t => { counts[t] = 0; });
     projects.forEach(p => {
-      const t = p?.project_type;
+      const t = getProjectType(p);
       if (t && counts[t] !== undefined) counts[t]++;
     });
     typeBox.innerHTML = PROJECT_TYPE_VALUES.map(t => {
@@ -10658,7 +10656,10 @@ function toggleProjectTagFilter(tag) {
 function applyProjectFilters(list) {
   let out = Array.isArray(list) ? list : [];
   if (projFilterState.types.size) {
-    out = out.filter(p => p?.project_type && projFilterState.types.has(p.project_type));
+    out = out.filter(p => {
+      const t = getProjectType(p);
+      return t && projFilterState.types.has(t);
+    });
   }
   if (projFilterState.tags.size) {
     const wanted = Array.from(projFilterState.tags);
@@ -10826,7 +10827,7 @@ async function openRatesModal(projectId, projectName) {
   buildRatesTable('design', ['静止画1枚'], ['base_fee']);
 
   // 案件種別を判定（'video' | 'design'）
-  // 案件の project_type を優先。フォールバック: ロール判定（デザイナー → design, それ以外 → video）
+  // 案件の primary_category を優先。フォールバック: ロール判定（デザイナー → design, それ以外 → video）
   const projForType = (allProjects || []).find(x => x.id === projectId);
   const projType = projForType
     ? getProjectType(projForType)
@@ -11685,7 +11686,6 @@ function openProjectModal(preClientId) {
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
   // カテゴリ select 初期化（マスタを fetch して populate。デフォルトは 'video' カテゴリ）
-  // 旧 project_type select は削除済み（カテゴリ code から submitProject 時に自動派生）
   loadCategories().then(() => {
     const sel = document.getElementById('p-primary-category');
     if (!sel) return;
@@ -11765,16 +11765,13 @@ function openEditProject(p) {
 
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
-  // 旧 project_type select は削除済み。category select に既存値（または旧 project_type からの推定）を反映するのみ。
-  // カテゴリ select 初期化（マスタを fetch して populate。p.primary_category_id 優先 / 旧 project_type からの推定をフォールバック）
+  // カテゴリ select 初期化（マスタを fetch して populate。p.primary_category_id 優先 / 未設定時は video にフォールバック）
   loadCategories().then(() => {
     const sel = document.getElementById('p-primary-category');
     if (!sel) return;
     populateCategorySelect(sel, p.primary_category_id || null);
     if (!p.primary_category_id) {
-      // 旧データ：project_type → カテゴリ code をマッピングして初期選択
-      const code = PROJECT_TYPE_TO_CATEGORY_CODE[getProjectType(p)] || 'video';
-      const cat = getCategoryByCode(code);
+      const cat = getCategoryByCode('video');
       if (cat) sel.value = cat.id;
     }
   });
@@ -12543,7 +12540,7 @@ async function populateEstimateItemNameDatalist() {
     const proj = _pfData?.project;
     // 品目マスターの category は 'video'|'design' 二値のみ。
     // LP/HP/other は design 寄り扱いに丸める。
-    if (proj && proj.project_type) category = getCreativeCapForProject(proj);
+    if (proj) category = getCreativeCapForProject(proj);
   } catch (_) { /* fallback to all */ }
   const items = await getItemNameMasterForEstimate(category);
   // カテゴリ未指定で全件の場合は重複名を 1 つにまとめる（datalist は単純な候補リスト）
@@ -12597,7 +12594,7 @@ async function openItemMasterPicker() {
   try {
     const proj = _pfData?.project;
     // 品目マスターのタブは 'video'|'design' 二値。LP/HP/other は design 扱い。
-    if (proj && proj.project_type) initialTab = getCreativeCapForProject(proj);
+    if (proj) initialTab = getCreativeCapForProject(proj);
   } catch (_) {}
   _itemMasterPickerState.tab = initialTab;
 
@@ -12818,7 +12815,7 @@ async function onEstimateItemNameChange(idx, value) {
   try {
     const proj = _pfData?.project;
     // 品目マスターは video/design 二値のみ。LP/HP/other は design 扱い。
-    if (proj && proj.project_type) category = getCreativeCapForProject(proj);
+    if (proj) category = getCreativeCapForProject(proj);
   } catch (_) {}
   const items = await getItemNameMasterForEstimate(category);
   const match = (items || []).find(it => it && it.name === value.trim());
@@ -13294,12 +13291,6 @@ async function submitProject() {
   const name = document.getElementById('p-name').value.trim();
   const status = document.getElementById('p-status').value;
   const primary_category_id = (document.getElementById('p-primary-category')?.value || '') || null;
-  // 旧 project_type 列は UI 削除済み。選択中カテゴリの code から派生して送信（互換維持）。
-  // マッピング: video→'video' / image→'design' / lp→'lp' / hp→'hp' / line→'video' (フォールバック) / 不明→'video'
-  const _selectedCategory = primary_category_id ? getCategory(primary_category_id) : null;
-  const _categoryCode = _selectedCategory?.code || '';
-  const CATEGORY_CODE_TO_PROJECT_TYPE = { video: 'video', image: 'design', lp: 'lp', hp: 'hp', line: 'video' };
-  const project_type = CATEGORY_CODE_TO_PROJECT_TYPE[_categoryCode] || 'video';
   const tags = getCurrentTagsInputValues();
   const start_date = document.getElementById('p-start-date').value || null;
   const end_date = document.getElementById('p-end-date').value || null;
@@ -13333,7 +13324,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, project_type, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -16256,20 +16247,21 @@ async function onProjectChange(projectId) {
       const linkedTeams = linkedIds
         .map(id => teamsAll.find(t => t.id === id))
         .filter(Boolean);
-      const projType = proj?.project_type;
-      // 1) project_type と一致する team_type を最優先 / 2) 秘書チーム / 3) なし（未選択）
+      const projCat = (typeof getProjectCategory === 'function') ? getProjectCategory(proj) : null;
+      // 1) primary_category から派生したキャパ ('video'|'design') と一致する team_type を最優先
+      // 2) 秘書チーム / 3) なし（未選択）
       // チームの team_type は 'video'|'design'|'secretary' の 3 値しかないため、
       // LP/HP/other は design キャパに丸めて team を探す。
       let chosen = null;
-      if (projType) {
+      if (projCat) {
         const cap = (typeof getCreativeCapForProject === 'function')
           ? getCreativeCapForProject(proj)
-          : (projType === 'video' ? 'video' : 'design');
+          : (projCat.code === 'video' ? 'video' : 'design');
         chosen = linkedTeams.find(t => t.team_type === cap)
               || linkedTeams.find(t => t.team_type === 'secretary')
               || null;
       } else {
-        // project_type 未設定の案件は従来挙動どおり先頭を選ぶ
+        // primary_category 未設定の案件は従来挙動どおり先頭を選ぶ
         chosen = linkedTeams[0] || null;
       }
       // 現在の team dropdown の選択肢に存在することも確認（cap フィルタで消えていれば選ばない）

@@ -347,20 +347,13 @@ async function normalizeSubDirectorIds(rawIds, { clientId, directorId } = {}) {
 // UI 側で「単価」「見積」ボタンに設定済みかどうかを示すために返す。
 //
 // クエリパラメータ（任意）:
-//   - types: 'video,lp,hp' のようなカンマ区切り。複数 OR 絞り込み。
-//            project_type が NULL のレコードは除外される。
 //   - tags : '急ぎ,季節モノ' のようなカンマ区切り。複数 AND 絞り込み
 //            （指定したタグを「全部」持つ案件のみ）。
 //
 // レスポンスには各案件の tags: string[] を含める（N+1 回避のため一括取得）。
 router.get('/projects', async (req, res) => {
   // --- クエリ正規化 ---
-  const ALLOWED_TYPES = new Set(['video','design','lp','hp','other']);
-  const typesParam = (req.query.types || '').toString().trim();
   const tagsParam  = (req.query.tags  || '').toString().trim();
-  const wantedTypes = typesParam
-    ? typesParam.split(',').map(s => s.trim()).filter(s => ALLOWED_TYPES.has(s))
-    : [];
   const wantedTags = tagsParam
     ? Array.from(new Set(tagsParam.split(',').map(s => s.trim()).filter(Boolean)))
     : [];
@@ -374,11 +367,10 @@ router.get('/projects', async (req, res) => {
     producer:users!projects_producer_id_fkey(id, full_name),
     director:users!projects_director_id_fkey(id, full_name)
   `;
-  let query = supabase
+  const query = supabase
     .from('projects')
     .select(baseSelect)
     .order('created_at', { ascending: false });
-  if (wantedTypes.length) query = query.in('project_type', wantedTypes);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
@@ -492,13 +484,6 @@ router.get('/projects/:id', async (req, res) => {
   res.json({ ...(data || {}), primary_category });
 });
 
-// project_type を新カテゴリ ('video'|'design'|'lp'|'hp'|'other') に正規化。
-// 不正値は 'video' にフォールバック（既存 default 維持）。
-const ALLOWED_PROJECT_TYPES = new Set(['video','design','lp','hp','other']);
-function normalizeProjectType(v) {
-  return ALLOWED_PROJECT_TYPES.has(v) ? v : 'video';
-}
-
 // タグ配列を正規化: 文字列化 → trim → 空除去 → 重複除去 → 長さ上限 32
 function normalizeTags(input) {
   if (!Array.isArray(input)) return [];
@@ -548,13 +533,11 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     chatwork_room_id,
     slack_channel_url,
     deadline_unit, deadline_weekday,
-    project_type,
     primary_category_id,
     sub_director_ids,
     tags
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
-  const normalizedProjectType = normalizeProjectType(project_type);
   const normalizedTags = normalizeTags(tags);
   // サブディレクター: 形式チェック + ユーザー存在/有効チェック（チーム制約は撤廃）
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
@@ -576,7 +559,6 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     is_hidden: false,
     deadline_unit: deadline_unit || 'monthly',
     deadline_weekday: deadline_weekday ?? null,
-    project_type: normalizedProjectType,
     primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
   };
@@ -615,7 +597,6 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     slack_channel_url,
     sync_products, sync_appeal_axes,
     deadline_unit, deadline_weekday,
-    project_type,
     primary_category_id,
     sub_director_ids,
     tags
@@ -638,9 +619,6 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   };
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
-  if (project_type !== undefined) {
-    updateData.project_type = normalizeProjectType(project_type);
-  }
   // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
@@ -795,8 +773,8 @@ router.post('/projects/:id/cycles', requireAuth, requirePermission('project.crea
 // マスタテーブル creative_categories を駆動して、案件・クリエイティブの
 // 種別をハードコード分岐ではなくレコード追加だけで増やせるようにする。
 //
-// 既存の project_type / creative_type / RATE_CREATIVE_TYPES は Stage A の段階では
-// 残す（Stage B/C で削除予定）。
+// 既存の creative_type / RATE_CREATIVE_TYPES は Stage C-3 で削除予定。
+// projects.project_type は Stage C-2 でコード参照を削除済み（DB 列は Step 2 で DROP）。
 //
 // schema-sync 失敗で本番に creative_categories テーブルが無い場合は、
 // 200/空配列で安全フォールバックする（読み出し時のみ）。
