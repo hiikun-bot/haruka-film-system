@@ -300,6 +300,21 @@ async function runSchemaSync() {
       // schema-sync 失敗時の silent skip を防ぐため必ず保険で追加する
       "ALTER TABLE projects ADD COLUMN IF NOT EXISTS sub_director_ids UUID[] DEFAULT '{}'",
       "CREATE INDEX IF NOT EXISTS idx_projects_sub_directors ON projects USING GIN(sub_director_ids)",
+      // クリエイティブファイルへの「いいね」（タイムコード付き）
+      // (migrations/2026-05-05_creative_file_likes.sql)
+      // schema-sync 本体で取りこぼされると /api/creatives/creative-files/:id/likes が
+      // 'public.creative_file_likes not found in schema cache' で 500 を返すため保険で必ず作る
+      `CREATE TABLE IF NOT EXISTS creative_file_likes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        creative_file_id UUID NOT NULL REFERENCES creative_files(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        timecode_sec NUMERIC(10,2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (creative_file_id, user_id, timecode_sec)
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_cfl_creative_file_id ON creative_file_likes(creative_file_id)",
+      "CREATE INDEX IF NOT EXISTS idx_cfl_user_id ON creative_file_likes(user_id)",
+      "CREATE INDEX IF NOT EXISTS idx_cfl_created_at ON creative_file_likes(created_at DESC)",
     ];
     for (const stmt of criticalAlters) {
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
