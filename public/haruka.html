@@ -151,7 +151,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
 .cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
 /* 5列レイアウト: クライアント/案件名 + クリエイティブ名 + 担当(アイコン+略称) + ステータス + 遅延 */
-.cv-g-row-fixed{display:grid;grid-template-columns:122px 150px 60px 100px 56px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);min-height:40px;background:#fff}
+.cv-g-row-fixed{display:grid;grid-template-columns:122px 150px 60px 100px 56px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
 .cv-g-row-fixed:hover{background:#f0fbfa}
 .cv-g-row-fixed.is-late{background:rgba(239,68,68,0.05)}
 .cv-g-row-fixed.is-late:hover{background:rgba(239,68,68,0.09)}
@@ -170,20 +170,26 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-fixed .c-delay.ok{color:var(--em-dark)}
 .cv-g-row-fixed .c-delay.done{color:#7FA68A}
 /* 案件別グループ見出し */
-.cv-g-group-row{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;align-content:center;padding:6px 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4}
+/* 行高さは JS の groupHeadHeight に揃える（タイムライン側の空行と一致させる）。
+   折返しを禁止しないと、ラベルが長いとき左右の行高さがズレてガントが行ズレする。 */
+.cv-g-group-row{display:flex;align-items:center;gap:6px 8px;flex-wrap:nowrap;align-content:center;padding:0 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4;height:40px;box-sizing:border-box;overflow:hidden}
 .cv-g-group-row .gicount{font-weight:400;color:var(--text-muted);font-size:11px}
 /* 担当者別グループ見出し（強化版） */
-.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:6px 12px;gap:5px 10px;border-bottom:1px solid var(--em-light)}
-.cv-g-group-row.is-client{background:linear-gradient(to right,#F5EEFC,#FBF8FE);padding:5px 12px;border-bottom:1px solid #D9C7F2}
-.cv-g-group-row.is-team{background:linear-gradient(to right,#E8F3FB,#F4F9FD);padding:5px 12px;border-bottom:1px solid #C9DDEC}
-.cv-g-group-row .ga-icon{font-size:13px;line-height:1}
+.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:0 12px;gap:5px 10px;border-bottom:1px solid var(--em-light);height:48px}
+.cv-g-group-row.is-client{background:linear-gradient(to right,#F5EEFC,#FBF8FE);padding:0 12px;border-bottom:1px solid #D9C7F2}
+.cv-g-group-row.is-team{background:linear-gradient(to right,#E8F3FB,#F4F9FD);padding:0 12px;border-bottom:1px solid #C9DDEC}
+.cv-g-group-row .ga-icon{font-size:13px;line-height:1;flex:0 0 auto}
+.cv-g-group-row .ga-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-g-group-row.is-assignee .ga-name{font-weight:700;color:var(--text)}
-.cv-g-group-row.is-assignee .ga-team{font-size:11px;color:var(--em-dark);background:#fff;border-radius:6px;padding:2px 7px;font-weight:600}
-.cv-g-group-row.is-assignee .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:500}
+.cv-g-group-row.is-assignee .ga-team{font-size:11px;color:var(--em-dark);background:#fff;border-radius:6px;padding:2px 7px;font-weight:600;flex:0 0 auto;white-space:nowrap}
+.cv-g-group-row.is-assignee .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:500;flex:0 0 auto}
 .cv-g-group-row.is-assignee .ga-stats .gs{padding:2px 7px;border-radius:6px;background:#fff;color:var(--em-dark)}
 .cv-g-group-row.is-assignee .ga-stats .gs.is-late{background:#FBEAEA;color:#A03030;font-weight:700}
 .cv-g-group-row.is-assignee .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
-.cv-g-group-row .ga-stats{display:inline-flex;gap:4px;margin-left:0;font-size:10.5px;font-weight:500;min-width:0;flex:1 1 100%;overflow:hidden}
+/* 担当者別以外（案件別/クライアント別/チーム別）のバッジ列。
+   以前は flex:1 1 100% で 2行目に折返していたが、左右の行高さズレの原因になるため
+   1行右寄せに変更し、はみ出しは省略。 */
+.cv-g-group-row .ga-stats{display:inline-flex;gap:4px;margin-left:auto;font-size:10.5px;font-weight:500;min-width:0;flex:0 1 auto;overflow:hidden;white-space:nowrap}
 .cv-g-group-row .ga-stats .gs{padding:2px 6px;border-radius:6px;background:#fff;color:var(--em-dark);white-space:nowrap}
 .cv-g-group-row .ga-stats .gs.is-draft{background:#FFF4D9;color:#8A5A00;font-weight:700}
 .cv-g-group-row .ga-stats .gs.is-final{background:#FBEAEA;color:#A03030;font-weight:700}
