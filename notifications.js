@@ -15,6 +15,7 @@
 
 const axios = require('axios');
 const supabase = require('./supabase');
+const { createBulkNotifications } = require('./utils/notification');
 
 // =============== Slack URL parser ===============
 function parseSlackChannelUrl(url) {
@@ -577,6 +578,42 @@ ${cwUrlLine2}
     for (const ed of editorAssignees) {
       if (!ed || (actor && ed.id === actor.id)) continue;
       await sendNotif(ed, assigneeSlack, assigneeCw);
+    }
+
+    // 5-b) in-app 通知（通知ベル / notification_logs）
+    // PR #257 で Slack/CW DM は editor/designer/director_as_editor に届くようにしたが、
+    // アプリ内通知ベルは tweets 系と DBトリガー notify_ball_returned からしか発火していなかった。
+    // クライアントチェック中遷移時は ball_holder_id が NULL（クライアント=非ユーザー）になり
+    // notify_ball_returned トリガーは走らないので重複の心配なし。
+    //
+    // 受信者: editorAssignees（編集者・デザイナー・director_as_editor）。actor 自身は除外。
+    // link_url は /creatives/<id> 形式（notification-card.js の activateCard が
+    // この形式を openCreativeDetail() に流してモーダル展開する）。
+    try {
+      const projectName = project?.name || '';
+      const inAppBody = projectName ? `${fileName}（${projectName}）` : fileName;
+      const inAppLink = `/creatives/${detail.id}`;
+      const recipients = editorAssignees.filter(ed => ed && (!actor || ed.id !== actor.id));
+      const rows = recipients.map(ed => ({
+        user_id: ed.id,
+        notification_type: 'creative_status',
+        title: 'クライアントチェックに進みました',
+        body: inAppBody,
+        link_url: inAppLink,
+        meta: {
+          creative_id: detail.id,
+          project_id: detail.project_id || null,
+          file_name: fileName,
+          new_status: 'クライアントチェック中',
+        },
+        sender_id: actor?.id || null,
+      }));
+      if (rows.length > 0) {
+        await createBulkNotifications(rows);
+      }
+    } catch (e) {
+      // 主処理（status 更新・Slack/CW 送信）を止めないように握りつぶす
+      console.warn('[notif] in-app creative_status notify failed:', e?.message || e);
     }
   }
   // 6) → 納品（クリエイター向けにお祝いメッセージ）
