@@ -90,6 +90,85 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ==================== creative_categories (Stage A) ====================
+-- カテゴリマスタ。案件・クリエイティブの種別をハードコード分岐ではなく
+-- マスタテーブルから動的に解決する。詳細は migrations/2026-05-05_creative_categories.sql
+CREATE TABLE IF NOT EXISTS creative_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  render_kind TEXT NOT NULL CHECK (render_kind IN ('video','image','longpage','iframe','pdf')),
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  color TEXT,
+  default_status_template_id UUID,     -- creative_status_templates(id) を後付け FK
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_creative_categories_active_sort
+  ON creative_categories(is_active, sort_order);
+
+-- 工程テンプレ
+CREATE TABLE IF NOT EXISTS creative_status_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID REFERENCES creative_categories(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_creative_status_templates_category
+  ON creative_status_templates(category_id);
+
+-- 工程テンプレ項目
+CREATE TABLE IF NOT EXISTS creative_status_template_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id UUID REFERENCES creative_status_templates(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  sort_order INT NOT NULL,
+  is_milestone BOOLEAN NOT NULL DEFAULT false,
+  default_days INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (template_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_csti_template_sort
+  ON creative_status_template_items(template_id, sort_order);
+
+-- 案件×カテゴリ単価（縦持ち）。Stage A では project_rates / project_director_rates /
+-- project_producer_rates と並走（Stage C で旧テーブル DROP 予定）。
+CREATE TABLE IF NOT EXISTS project_category_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  category_id UUID NOT NULL REFERENCES creative_categories(id) ON DELETE CASCADE,
+  unit_price NUMERIC,
+  director_unit_price NUMERIC,
+  producer_unit_price NUMERIC,
+  rank TEXT,
+  base_fee INTEGER,
+  script_fee INTEGER,
+  ai_fee INTEGER,
+  other_fee INTEGER,
+  other_fee_note TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (project_id, category_id, rank)
+);
+CREATE INDEX IF NOT EXISTS idx_pcr_project ON project_category_rates(project_id);
+CREATE INDEX IF NOT EXISTS idx_pcr_category ON project_category_rates(category_id);
+
+-- projects / creatives へのカラム追加（Stage A）
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS primary_category_id UUID REFERENCES creative_categories(id);
+CREATE INDEX IF NOT EXISTS idx_projects_primary_category
+  ON projects(primary_category_id);
+
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES creative_categories(id);
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS status_code TEXT;
+CREATE INDEX IF NOT EXISTS idx_creatives_category
+  ON creatives(category_id);
+
 -- ==================== project_cycles ====================
 CREATE TABLE IF NOT EXISTS project_cycles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
