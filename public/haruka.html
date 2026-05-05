@@ -1765,6 +1765,75 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         }
       } catch (_) {}
     }
+    // ==================== breadcrumb（パンくず）リングバッファ ====================
+    // ユーザーの直前行動を最大8件記録し、エラー発生時に同梱して原因特定を高速化する。
+    // 設計方針:
+    //   - O(1) 書込み（push + shift のみ）。クリック全捕捉等はしない（ノイズになる）
+    //   - 呼び出し元: openModal / showPage / apiFetch(5xx時のみ)
+    //   - 1要素 ~100B 程度。8件で ~1KB 以下。ペイロードへの影響は無視できる
+    var _breadcrumbs = [];
+    var _BREAD_MAX = 8;
+    function addBreadcrumb(type, data) {
+      try {
+        _breadcrumbs.push({
+          ts: Date.now(),
+          type: String(type || '').slice(0, 30),
+          data: typeof data === 'string' ? data.slice(0, 200) : data,
+        });
+        if (_breadcrumbs.length > _BREAD_MAX) _breadcrumbs.shift();
+      } catch (_) {}
+    }
+    window.__addBreadcrumb = addBreadcrumb;
+    window.__getBreadcrumbs = function() { return _breadcrumbs.slice(); };
+
+    function _collectAutoErrorTrace(extra) {
+      var trace = {};
+      try { trace.filename = extra && extra.filename ? String(extra.filename).slice(0, 500) : null; } catch (_) {}
+      try { trace.lineno = extra && extra.lineno != null ? Number(extra.lineno) : null; } catch (_) {}
+      try { trace.colno = extra && extra.colno != null ? Number(extra.colno) : null; } catch (_) {}
+      try { trace.readyState = document.readyState || null; } catch (_) {}
+      try { trace.visibilityState = document.visibilityState || null; } catch (_) {}
+      try { trace.online = navigator.onLine; } catch (_) {}
+      try { trace.viewport = { w: window.innerWidth || null, h: window.innerHeight || null, dpr: window.devicePixelRatio || null }; } catch (_) {}
+      try { trace.scriptCount = document.scripts ? document.scripts.length : null; } catch (_) {}
+      try {
+        if (document.scripts && document.scripts.length) {
+          var s = document.scripts[document.scripts.length - 1];
+          trace.lastScript = {
+            src: s.src || '[inline]',
+            async: !!s.async,
+            defer: !!s.defer,
+            type: s.type || null,
+          };
+        }
+      } catch (_) {}
+      try {
+        var nav = performance && performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+        if (nav) {
+          trace.navigation = {
+            type: nav.type || null,
+            transferSize: nav.transferSize || 0,
+            encodedBodySize: nav.encodedBodySize || 0,
+            decodedBodySize: nav.decodedBodySize || 0,
+            responseStatus: nav.responseStatus || null,
+            startTime: Math.round(nav.startTime || 0),
+            responseEnd: Math.round(nav.responseEnd || 0),
+            domInteractive: Math.round(nav.domInteractive || 0),
+            domComplete: Math.round(nav.domComplete || 0),
+          };
+        }
+      } catch (_) {}
+      try {
+        // クライアントビルドは /api/build-info から取得した値を優先。フォールバックで meta タグも見る。
+        if (typeof window.__clientBuild === 'string' && window.__clientBuild) {
+          trace.clientBuild = window.__clientBuild;
+        } else {
+          var buildMeta = document.querySelector('meta[name="app-build"], meta[name="commit-sha"], meta[name="railway-git-commit-sha"]');
+          trace.clientBuild = buildMeta ? (buildMeta.getAttribute('content') || null) : null;
+        }
+      } catch (_) {}
+      return trace;
+    }
     function postAutoError(payload) {
       try {
         if (!payload || !payload.message) return;
@@ -1787,6 +1856,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           userAgent: navigator.userAgent,
           statusCode: payload.statusCode || null,
           apiPath: payload.apiPath || null,
+          // ?? を使う理由: lineno === 0 / colno === 0 を null に潰さないため（|| だと 0 が消える）
+          filename: payload.filename ?? null,
+          lineno: payload.lineno ?? null,
+          colno: payload.colno ?? null,
+          trace: _collectAutoErrorTrace(payload),
+          breadcrumbs: (function(){ try { return window.__getBreadcrumbs ? window.__getBreadcrumbs() : []; } catch(_) { return []; } })(),
+          clientBuild: (function(){ try { return window.__clientBuild || null; } catch(_) { return null; } })(),
           // currentUser は haruka.html 内の let 変数なので window 経由では直接見えない。
           // try ブロックで遅延参照（IIFE 評価時には未定義のため）。
           userEmail: (function(){ try { return (typeof currentUser !== 'undefined' && currentUser && currentUser.email) || null; } catch(_) { return null; } })(),
@@ -1811,6 +1887,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           message: e && e.message ? e.message : 'unknown error',
           stack: e && e.error && e.error.stack ? e.error.stack : null,
           url: location.href,
+          filename: e && e.filename ? e.filename : null,
+          lineno: e && e.lineno != null ? e.lineno : null,
+          colno: e && e.colno != null ? e.colno : null,
         });
       } catch (_) {}
     });
@@ -3640,6 +3719,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <label class="form-label">口座名義（カナ）</label>
           <input class="form-input" id="m-account-holder" placeholder="例：タカハシ サトル" style="font-size:15px;padding:12px 14px">
         </div>
+        <!-- インボイス制度: 適格請求書発行事業者 登録番号 (T+13桁) -->
+        <div class="form-group" style="margin-top:20px;margin-bottom:4px">
+          <label class="form-label">適格請求書発行事業者登録番号</label>
+          <input class="form-input" id="m-invoice-registration-number" type="text" placeholder="T1234567890123" maxlength="14" pattern="^T\d{13}$" style="font-size:14px;padding:10px 14px;max-width:240px">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5">インボイス制度の登録番号。先頭「T」+ 数字13桁。未登録の場合は空欄でOK。</div>
+        </div>
         <!-- 請求書用連絡先 -->
         <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
           <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.08em">請求書用 連絡先・住所</div>
@@ -3780,6 +3865,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">映像制作で頻繁に参照する重要情報</span>
             </label>
             <textarea class="form-input" id="cl-persona" rows="4" placeholder="例：30代女性、共働き、家事の時短に関心" style="resize:vertical;width:100%;box-sizing:border-box"></textarea>
+          </div>
+        </div>
+
+        <!-- 請求情報（インボイス制度対応） -->
+        <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA">
+          <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">🧾 請求情報</div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">
+              適格請求書発行事業者登録番号
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">T + 13桁の数字（例：T1234567890123）</span>
+            </label>
+            <input class="form-input" id="cl-invoice-registration-number" type="text"
+              placeholder="T1234567890123" maxlength="14" pattern="^T\d{13}$"
+              style="font-family:ui-monospace,Menlo,monospace;font-size:14px;letter-spacing:0.05em;width:100%;box-sizing:border-box">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">空欄可。インボイス制度対応の請求書で参照されます。</div>
           </div>
         </div>
 
@@ -4247,7 +4347,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
               <label class="form-label">プロデューサー</label>
               <div style="display:flex;align-items:center;gap:8px">
                 <span id="p-producer-avatar" style="flex-shrink:0;display:inline-flex"></span>
-                <select class="form-select" id="p-producer-id" onchange="updateUserSelectAvatar('p-producer-id','p-producer-avatar')" style="flex:1;min-width:0">
+                <select class="form-select" id="p-producer-id" onchange="updateUserSelectAvatar('p-producer-id','p-producer-avatar'); renderProjectSubProducerPicker()" style="flex:1;min-width:0">
                   <option value="">未設定</option>
                 </select>
               </div>
@@ -4260,6 +4360,26 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
                   <option value="">未設定</option>
                 </select>
               </div>
+            </div>
+          </div>
+
+          <!-- サブプロデューサー（複数）— Pチェック依頼可能者 -->
+          <!-- サブディレクターと完全パラレルなUI -->
+          <div class="form-group" style="margin-bottom:0;margin-top:14px">
+            <label class="form-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
+              <span style="display:flex;align-items:center;gap:6px">
+                サブプロデューサー
+                <span style="color:var(--text-muted);font-weight:400;font-size:11px">（Pチェック依頼可能者・任意）</span>
+              </span>
+              <span id="p-sub-producers-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap;font-weight:400"></span>
+            </label>
+            <div style="border:1.5px solid var(--border);border-radius:8px;padding:10px;background:var(--bg-soft, #fafafa)">
+              <div id="p-sub-producers-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <input type="text" id="p-sub-producers-search" placeholder="🔍 名前で検索..." style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
+              <div id="p-sub-producers-list" style="max-height:240px;overflow-y:auto">
+                <div style="padding:8px;color:var(--text-muted);font-size:12px">候補を読み込み中...</div>
+              </div>
+              <div id="p-sub-producers-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
             </div>
           </div>
 
@@ -5631,6 +5751,10 @@ async function apiFetch(input, init = {}) {
     }
   }
 
+  // ビルドバージョン照合: サーバーの X-Server-Build と起動時に保存した __clientBuild が違えば
+  // ユーザーに「新しいバージョンが利用可能」のトーストを 1 度だけ表示する。
+  try { _checkBuildMismatch(res); } catch (_) {}
+
   // 失敗 API をバッファに残す（エラー報告用）。本体のクローンを読んで副作用を出さない。
   if (!res.ok && typeof window.pushApiFailBuffer === 'function') {
     try {
@@ -5641,6 +5765,8 @@ async function apiFetch(input, init = {}) {
       // 5xx は自動エラー通知に流す（4xx はユーザー入力ミス系が多いので除外）
       // /auto-error 自身の失敗で再帰しないようパス除外は postAutoError 側でも実施。
       if (res.status >= 500 && typeof window.__postAutoError === 'function') {
+        // breadcrumb は 5xx のみ記録（成功した API は記録しない、ノイズになる）
+        try { if (window.__addBreadcrumb) window.__addBreadcrumb('api_5xx', `${res.status} ${url}`); } catch (_) {}
         window.__postAutoError({
           kind: 'fetch-5xx',
           message: `HTTP ${res.status} ${res.statusText || ''} ${url}`.trim(),
@@ -5653,6 +5779,37 @@ async function apiFetch(input, init = {}) {
     } catch (_) {}
   }
   return res;
+}
+
+// ==================== ビルドバージョン照合 ====================
+// 起動時に /api/build-info から取得したクライアントビルドと、毎レスポンスの X-Server-Build を比較。
+// 差異があれば 1 度だけトーストを出す（ユーザーに再読み込みを促す）。
+let __versionWarnShown = false;
+function _checkBuildMismatch(res) {
+  if (__versionWarnShown) return;
+  if (!window.__clientBuild) return;
+  const sb = res && res.headers && res.headers.get ? res.headers.get('X-Server-Build') : null;
+  if (!sb) return;
+  if (sb === window.__clientBuild) return;
+  __versionWarnShown = true;
+  try {
+    if (typeof showToast === 'function') {
+      showToast('新しいバージョンが利用可能です。Cmd+Shift+R（Win: Ctrl+Shift+R）で再読み込みしてください。', 'warn', 12000);
+    }
+  } catch (_) {}
+}
+
+async function initBuildVersion() {
+  // 起動時に 1 回だけ叩く軽量エンドポイント。失敗しても黙殺（オフライン等）。
+  try {
+    const r = await fetch('/api/build-info', { credentials: 'same-origin' });
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.build) {
+        window.__clientBuild = d.build;
+      }
+    }
+  } catch (_) { /* swallow */ }
 }
 
 // ==================== エラー報告 ====================
@@ -5824,6 +5981,8 @@ async function loadWorkspaceInfo() {
 }
 
 async function init() {
+  // ビルドバージョン照合のためサーバーの build hash を起動時に取得（軽量エンドポイント、失敗時は黙殺）
+  initBuildVersion();
   loadWorkspaceInfo();
   try {
     const res = await fetch('/auth/me');
@@ -6640,6 +6799,8 @@ function openEditClient(id) {
   document.getElementById('cl-other').value     = c.other_url     || '';
   document.getElementById('cl-slack-channel-url').value = c.slack_channel_url || '';
   document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
+  const invRegEl = document.getElementById('cl-invoice-registration-number');
+  if (invRegEl) invRegEl.value = c.invoice_registration_number || '';
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
   // 削除ボタンの表示制御: admin / secretary のみ。それ以外は完全に非表示。
@@ -6662,7 +6823,7 @@ function openNewClientModal() {
   document.getElementById('cl-persona').value = '';
   document.getElementById('cl-sales-start').value = '';
   document.getElementById('cl-status').value = '提案中';
-  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id']
+  ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id','cl-invoice-registration-number']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
@@ -6683,6 +6844,14 @@ async function submitClient() {
   const status = document.getElementById('cl-status').value;
   if (!name) { showToast('クライアント名は必須です', 'warn'); return; }
   if (!client_code) { showToast('略称（英3文字）は必須です', 'warn'); return; }
+
+  // 適格請求書発行事業者登録番号: 空欄 OR 「T + 13桁数字」
+  const invoiceRegRaw = (document.getElementById('cl-invoice-registration-number')?.value || '').trim();
+  if (invoiceRegRaw && !/^T\d{13}$/.test(invoiceRegRaw)) {
+    showToast('登録番号は「T + 13桁の数字」の形式で入力してください（例：T1234567890123）', 'warn');
+    return;
+  }
+  const invoice_registration_number = invoiceRegRaw || null;
 
   const btn = document.getElementById('cl-submit-btn');
   const origText = btn.textContent;
@@ -6705,6 +6874,7 @@ async function submitClient() {
       other_url:     linkVal('cl-other'),
       slack_channel_url: linkVal('cl-slack-channel-url'),
       chatwork_room_id:  linkVal('cl-chatwork-room-id'),
+      invoice_registration_number,
       team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });
@@ -8051,14 +8221,15 @@ function renderCreatives() {
       || (editorUserId ? teamByMember.get(editorUserId) : null);
     const ball = c.ball_holder || { holder:'不明', type:'unknown' };
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
-    const today = new Date();
-    today.setHours(0,0,0,0);
+    // DATE型("YYYY-MM-DD")を new Date() で渡すと UTC midnight になり JST では1日ズレるため、
+    // ガント側と同じ _cvAtMidnight / _cvDayDiff（暦日差・UTC ベース）に統一する。
+    const today = _cvAtMidnight(new Date());
 
-    const draftDeadline = c.draft_deadline ? new Date(c.draft_deadline) : null;
-    const finalDeadline = c.final_deadline ? new Date(c.final_deadline) : null;
+    const draftDeadline = c.draft_deadline ? _cvAtMidnight(c.draft_deadline) : null;
+    const finalDeadline = c.final_deadline ? _cvAtMidnight(c.final_deadline) : null;
 
-    const draftDiff = draftDeadline ? Math.ceil((draftDeadline - today)/(1000*60*60*24)) : null;
-    const finalDiff = finalDeadline ? Math.ceil((finalDeadline - today)/(1000*60*60*24)) : null;
+    const draftDiff = draftDeadline ? _cvDayDiff(draftDeadline, today) : null;
+    const finalDiff = finalDeadline ? _cvDayDiff(finalDeadline, today) : null;
 
     // 納品済みは作業完了済みなので「超過」「あとN日」等の経過表示はせず、平静の表示にする
     const isDelivered = c.status === '納品';
@@ -9297,7 +9468,7 @@ function _cvApplyAdvFilter(c) {
   // 遅延のみ（rawFinal 確定 & 未納品 & 過去）
   if (f.delayedOnly) {
     const today = _cvAtMidnight(new Date());
-    const fin = c.final_deadline ? _cvAtMidnight(new Date(c.final_deadline)) : null;
+    const fin = c.final_deadline ? _cvAtMidnight(c.final_deadline) : null;
     const delivered = (c.status === '納品');
     if (!fin || delivered || fin >= today) return false;
   }
@@ -9311,9 +9482,16 @@ function cvSpShowAllDelayed() {
 }
 
 function renderAlerts() {
-  const today = new Date();
-  const late = allCreatives.filter(c => c.deadline && c.status !== '納品' && new Date(c.deadline) < today);
+  // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
+  // 現行スキーマに合わせ final_deadline を見て、JST 暦日差で「過去」を判定する。
+  const today = _cvAtMidnight(new Date());
+  const late = allCreatives.filter(c => {
+    if (!c.final_deadline || c.status === '納品') return false;
+    const fin = _cvAtMidnight(c.final_deadline);
+    return _cvDayDiff(fin, today) < 0;
+  });
   const el = document.getElementById('alert-container');
+  if (!el) return;
   if (!late.length) { el.innerHTML=''; return; }
   const names = late.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
@@ -9949,6 +10127,7 @@ function openAddMember() {
   document.getElementById('m-account-type').value = '普通';
   document.getElementById('m-account-number').value = '';
   document.getElementById('m-account-holder').value = '';
+  if (document.getElementById('m-invoice-registration-number')) document.getElementById('m-invoice-registration-number').value = '';
   document.getElementById('m-phone').value = '';
   document.getElementById('m-postal-code').value = '';
   document.getElementById('m-address').value = '';
@@ -10030,6 +10209,7 @@ function openEditMember(m) {
     setVal('m-account-type', m.account_type || '普通');
     setVal('m-account-number', m.account_number || '');
     setVal('m-account-holder', m.account_holder_kana || '');
+    setVal('m-invoice-registration-number', m.invoice_registration_number || '');
     setVal('m-phone', m.phone || '');
     setVal('m-postal-code', m.postal_code || '');
     setVal('m-address', m.address || '');
@@ -10245,6 +10425,12 @@ async function submitMember() {
   const account_type = document.getElementById('m-account-type').value || null;
   const account_number = document.getElementById('m-account-number').value.trim() || null;
   const account_holder_kana = document.getElementById('m-account-holder').value.trim() || null;
+  // インボイス登録番号 (T+13桁)。空欄 OR /^T\d{13}$/ にマッチしないと保存を止める
+  const invoice_registration_number = (document.getElementById('m-invoice-registration-number')?.value.trim()) || null;
+  if (invoice_registration_number && !/^T\d{13}$/.test(invoice_registration_number)) {
+    showToast('適格請求書発行事業者登録番号は「T」+ 数字13桁で入力してください', 'warn');
+    return;
+  }
   const phone = document.getElementById('m-phone').value.trim() || null;
   const postal_code = document.getElementById('m-postal-code').value.trim() || null;
   const address = document.getElementById('m-address').value.trim() || null;
@@ -10275,6 +10461,7 @@ async function submitMember() {
     birthday, hide_birth_year, weekday_hours, weekend_hours, note,
     bank_name, bank_code, branch_name, branch_code,
     account_type, account_number, account_holder_kana,
+    invoice_registration_number,
     phone, postal_code, address,
     // feedback batch 002
     camera_model, tripod_info, lighting_info, holiday_weekdays,
@@ -11008,6 +11195,7 @@ function openModal(id) {
   const el = document.getElementById(id);
   if (!el) { console.warn('[openModal] no element:', id); return; }
   el.classList.add('open');
+  try { if (window.__addBreadcrumb) window.__addBreadcrumb('modal_open', id); } catch (_) {}
 }
 function closeModal(id) {
   const el = document.getElementById(id);
@@ -11269,7 +11457,7 @@ function toggleProjectSubDirector(userId) {
   }
 }
 
-// クライアント変更時 — サブディレクター候補をリフレッシュ
+// クライアント変更時 — サブディレクター/サブプロデューサー候補をリフレッシュ
 function onProjectClientChange() {
   // 検索・フィルタはリセット
   const searchEl = document.getElementById('p-sub-directors-search');
@@ -11277,6 +11465,187 @@ function onProjectClientChange() {
   _psdState.search = '';
   _psdState.roleFilter = '__all__';
   renderProjectSubDirectorPicker();
+  // サブプロデューサーも同様にリセット
+  const ppSearchEl = document.getElementById('p-sub-producers-search');
+  if (ppSearchEl) ppSearchEl.value = '';
+  _pspState.search = '';
+  _pspState.roleFilter = '__all__';
+  renderProjectSubProducerPicker();
+}
+
+// ===== 案件モーダル: サブプロデューサー（複数）ピッカー =====
+// projects.sub_producer_ids（UUID[]）を編集する用のクライアントサイド状態管理。
+// サブディレクターと完全パラレルな実装。プロデューサー本人は除外。
+let _editingProjectSubProducerIds = [];
+let _pspState = {
+  roleFilter: '__all__',
+  search: '',
+  isComposing: false,
+  searchWired: false,
+};
+
+function getProjectSubProducerCandidates() {
+  const producerId = document.getElementById('p-producer-id')?.value || '';
+  const candidates = (allMembers || [])
+    .filter(m => m && m.is_active !== false && m.id && m.id !== producerId)
+    .slice()
+    .sort(typeof dcpCompareUsers === 'function'
+      ? dcpCompareUsers
+      : (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+  return { candidates };
+}
+
+function renderProjectSubProducerPicker() {
+  const list = document.getElementById('p-sub-producers-list');
+  const counter = document.getElementById('p-sub-producers-counter');
+  const warn = document.getElementById('p-sub-producers-warn');
+  const chipsWrap = document.getElementById('p-sub-producers-chips');
+  if (!list) return;
+  const { candidates } = getProjectSubProducerCandidates();
+  const producerId = document.getElementById('p-producer-id')?.value || '';
+
+  const allowedSet = new Set(candidates.map(c => c.id));
+  const dropped = _editingProjectSubProducerIds.filter(id => !allowedSet.has(id) || id === producerId);
+  if (dropped.length) {
+    _editingProjectSubProducerIds = _editingProjectSubProducerIds.filter(id => allowedSet.has(id) && id !== producerId);
+    if (warn) {
+      warn.style.display = '';
+      warn.textContent = `プロデューサー本人と重複した / 無効化された ${dropped.length} 名をサブプロデューサーから外しました。`;
+    }
+  } else if (warn) {
+    warn.style.display = 'none';
+    warn.textContent = '';
+  }
+
+  pspWireSearchInput();
+
+  if (!candidates.length) {
+    if (chipsWrap) chipsWrap.innerHTML = '';
+    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">候補ユーザーがいません</div>';
+    if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中`;
+    return;
+  }
+
+  if (chipsWrap) {
+    const counts = dcpCountByRole(candidates.map(m => ({ role: m.role || '' })));
+    const cur = _pspState.roleFilter || '__all__';
+    chipsWrap.innerHTML = dcpChipDefs(counts).map(c => {
+      const active = (cur === c.value);
+      return `<button type="button" data-role="${esc(c.value)}" onclick="pspSetRoleFilter('${esc(c.value)}')"
+        style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
+               background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
+               color:${active ? '#fff' : 'var(--text)'};
+               font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
+        ${esc(c.label)}(${c.count})
+      </button>`;
+    }).join('');
+  }
+
+  pspRenderList();
+
+  if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+}
+
+function pspRenderList() {
+  const list = document.getElementById('p-sub-producers-list');
+  if (!list) return;
+  const { candidates } = getProjectSubProducerCandidates();
+  const roleFilter = _pspState.roleFilter || '__all__';
+  const search = (_pspState.search || '').trim().toLowerCase();
+
+  let filtered = candidates;
+  if (roleFilter && roleFilter !== '__all__') {
+    if (roleFilter === '__other__') {
+      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
+      filtered = filtered.filter(m => !known.has(m.role || ''));
+    } else {
+      filtered = filtered.filter(m => (m.role || '') === roleFilter);
+    }
+  }
+  if (search) {
+    filtered = filtered.filter(m =>
+      (m.full_name || '').toLowerCase().includes(search) ||
+      (m.nickname || '').toLowerCase().includes(search)
+    );
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px;text-align:center">該当なし</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(m => {
+    const isChecked = _editingProjectSubProducerIds.includes(m.id);
+    const idEsc = esc(m.id);
+    const name = esc(m.full_name || '(名前未設定)');
+    const role = m.role || '';
+    const roleBadge = role
+      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(roleLabel(role))}</span>`
+      : '';
+    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
+      <input type="checkbox" value="${idEsc}" ${isChecked ? 'checked' : ''} onchange="toggleProjectSubProducer('${idEsc}')" style="margin:0;width:16px;height:16px;cursor:pointer">
+      ${avatarHtml(m, 28)}
+      <span style="font-size:13px;font-weight:500;color:var(--text)">${name}</span>
+      ${roleBadge}
+    </label>`;
+  }).join('');
+}
+
+function pspUpdateChipsActive() {
+  const wrap = document.getElementById('p-sub-producers-chips');
+  if (!wrap) return;
+  const cur = _pspState.roleFilter || '__all__';
+  wrap.querySelectorAll('button[data-role]').forEach(btn => {
+    const active = (btn.getAttribute('data-role') === cur);
+    btn.style.background  = active ? 'var(--em-dark, #0d9488)' : '#fff';
+    btn.style.color       = active ? '#fff' : 'var(--text)';
+    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
+    btn.style.fontWeight  = active ? '600' : '500';
+  });
+}
+
+function pspWireSearchInput() {
+  const ipt = document.getElementById('p-sub-producers-search');
+  if (!ipt || _pspState.searchWired) return;
+  _pspState.searchWired = true;
+  ipt.addEventListener('compositionstart', () => { _pspState.isComposing = true; });
+  ipt.addEventListener('compositionend', (ev) => {
+    _pspState.isComposing = false;
+    _pspState.search = ev.target.value;
+    pspRenderList();
+  });
+  ipt.addEventListener('input', (ev) => {
+    if (_pspState.isComposing) return;
+    _pspState.search = ev.target.value;
+    pspRenderList();
+  });
+}
+
+function pspSetRoleFilter(role) {
+  _pspState.roleFilter = role || '__all__';
+  pspUpdateChipsActive();
+  pspRenderList();
+}
+
+function toggleProjectSubProducer(userId) {
+  if (!Array.isArray(_editingProjectSubProducerIds)) _editingProjectSubProducerIds = [];
+  const idx = _editingProjectSubProducerIds.indexOf(userId);
+  if (idx >= 0) {
+    _editingProjectSubProducerIds.splice(idx, 1);
+  } else {
+    _editingProjectSubProducerIds.push(userId);
+  }
+  document.querySelectorAll(`#p-sub-producers-list input[type="checkbox"][value="${CSS.escape(userId)}"]`).forEach(inp => {
+    const label = inp.closest('label');
+    if (label) {
+      label.style.background = _editingProjectSubProducerIds.includes(userId) ? 'var(--em-pale, #ecfdfb)' : '#fff';
+    }
+  });
+  const counter = document.getElementById('p-sub-producers-counter');
+  if (counter) {
+    const { candidates } = getProjectSubProducerCandidates();
+    counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中 / 候補 ${candidates.length} 名`;
+  }
 }
 
 function openProjectModal(preClientId) {
@@ -11324,6 +11693,15 @@ function openProjectModal(preClientId) {
   const subWarn = document.getElementById('p-sub-directors-warn');
   if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
   renderProjectSubDirectorPicker();
+  // サブプロデューサー: 新規は空で初期化
+  _editingProjectSubProducerIds = [];
+  _pspState.search = '';
+  _pspState.roleFilter = '__all__';
+  const ppSearch = document.getElementById('p-sub-producers-search');
+  if (ppSearch) ppSearch.value = '';
+  const ppWarn = document.getElementById('p-sub-producers-warn');
+  if (ppWarn) { ppWarn.style.display = 'none'; ppWarn.textContent = ''; }
+  renderProjectSubProducerPicker();
   // 新規作成時はタブ非表示
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
@@ -11392,6 +11770,15 @@ function openEditProject(p) {
   const subWarn = document.getElementById('p-sub-directors-warn');
   if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
   renderProjectSubDirectorPicker();
+  // サブプロデューサー: DB値を復元
+  _editingProjectSubProducerIds = Array.isArray(p.sub_producer_ids) ? [...p.sub_producer_ids] : [];
+  _pspState.search = '';
+  _pspState.roleFilter = '__all__';
+  const ppSearch = document.getElementById('p-sub-producers-search');
+  if (ppSearch) ppSearch.value = '';
+  const ppWarn = document.getElementById('p-sub-producers-warn');
+  if (ppWarn) { ppWarn.style.display = 'none'; ppWarn.textContent = ''; }
+  renderProjectSubProducerPicker();
 
   // 締め切り設定
   selectDeadlineUnit(p.deadline_unit || 'monthly');
@@ -12903,7 +13290,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], tags })
+    body: JSON.stringify({ client_id, name, status, project_type, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -12918,6 +13305,7 @@ async function submitProject() {
 }
 
 function showPage(name, btn) {
+  try { if (window.__addBreadcrumb) window.__addBreadcrumb('page_change', name); } catch (_) {}
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
   document.querySelectorAll('.nav-btn,.nav-drawer-btn').forEach(b=>b.classList.remove('active'));
@@ -14072,9 +14460,11 @@ async function renderAdminDash(today) {
   const filterMonth = monthSel ? parseInt(monthSel.value) : today.getMonth() + 1; // 0=全月
 
   // フィルター対象のクリエイティブ
+  // DATE("YYYY-MM-DD")を new Date() に渡すと UTC 解釈で JST だと前日にズレ、
+  // 月初/月末が前月扱いになる。ローカル日付パースの _cvAtMidnight に統一する。
   const filteredCreatives = allCreatives.filter(c => {
     if (!c.final_deadline) return false;
-    const d = new Date(c.final_deadline);
+    const d = _cvAtMidnight(c.final_deadline);
     if (d.getFullYear() !== filterYear) return false;
     if (filterMonth !== 0 && d.getMonth() + 1 !== filterMonth) return false;
     return true;
@@ -14190,9 +14580,10 @@ async function renderAdminDash(today) {
   for (let m = 1; m <= 12; m++) monthlyMap[m] = 0;
   allCreatives.filter(c => {
     if (c.status !== '納品' || !c.final_deadline) return false;
-    return new Date(c.final_deadline).getFullYear() === filterYear;
+    // ローカル日付として解釈（UTC解釈による日付ズレを回避）
+    return _cvAtMidnight(c.final_deadline).getFullYear() === filterYear;
   }).forEach(c => {
-    const m = new Date(c.final_deadline).getMonth() + 1;
+    const m = _cvAtMidnight(c.final_deadline).getMonth() + 1;
     monthlyMap[m]++;
   });
   const ctx4 = document.getElementById('chart-monthly').getContext('2d');
@@ -15566,6 +15957,7 @@ async function printInvoice(id) {
         ${issuer.email ? `<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>` : ''}
         ${issuer.phone ? `<div style="font-size:11px;color:#666;margin-top:1px">TEL：${issuer.phone}</div>` : ''}
         ${(issuer.postal_code || issuer.address) ? `<div style="font-size:11px;color:#666;margin-top:4px">${issuer.postal_code ? `〒${issuer.postal_code}　` : ''}${issuer.address || ''}</div>` : ''}
+        <div style="font-size:11px;color:#666;margin-top:4px">登録番号：${issuer.invoice_registration_number || '—'}</div>
       </div>
     </div>
 
@@ -15626,7 +16018,10 @@ function triggerInvoicePrint() {
 }
 
 function printClientInvoice(inv) {
-  const recipientClient = inv.recipient_client || {};
+  // recipient_client は invoices テーブルの recipient_client_id へのエイリアス JOIN だが、
+  // PostgREST 上の FK 解決がない環境では空になる。クライアント請求書は project_id から
+  // たどれる projects.clients が同じクライアントになるためフォールバックに使う。
+  const recipientClient = inv.recipient_client || inv.projects?.clients || {};
   const issuer = inv.issuer || {};
   const now = new Date();
   const todayStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
@@ -15706,6 +16101,7 @@ function printClientInvoice(inv) {
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求先</div>
         <div style="font-size:17px;font-weight:700">${recipientClient.name||'-'}</div>
         <div style="font-size:13px;margin-top:4px;color:#444">ご担当者様</div>
+        <div style="font-size:11px;color:#666;margin-top:6px">登録番号：${recipientClient.invoice_registration_number || '—'}</div>
       </div>
       <div style="text-align:right;min-width:220px">
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求元</div>
@@ -15714,6 +16110,7 @@ function printClientInvoice(inv) {
         ${issuer.email?`<div style="font-size:11px;color:#666;margin-top:2px">${issuer.email}</div>`:''}
         ${issuer.phone?`<div style="font-size:11px;color:#666">TEL：${issuer.phone}</div>`:''}
         ${(issuer.postal_code||issuer.address)?`<div style="font-size:11px;color:#666;margin-top:4px">${issuer.postal_code?`〒${issuer.postal_code}　`:''}${issuer.address||''}</div>`:''}
+        <div style="font-size:11px;color:#666;margin-top:4px">登録番号：${issuer.invoice_registration_number || '—'}</div>
       </div>
     </div>
     <div style="background:#f0fafa;border:2px solid #2BB8B4;border-radius:10px;padding:18px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between">
