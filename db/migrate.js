@@ -205,6 +205,28 @@ async function runSchemaSync() {
       // メンバーごとのクリエイティブ画面の初期表示タブ (migrations/2026-05-04_users_default_creative_tab.sql)
       // 値: 'all' / 'video' / 'design' / NULL（NULL はロール準拠フォールバック）。schema-sync 失敗時の silent skip 防止
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_creative_tab TEXT",
+      // メンバー編集モーダル（5 タブ）の全保存フィールド safety
+      // (migrations/2026-05-05_users_member_edit_fields_safety.sql)
+      // schema-sync が個別 ALTER で失敗した場合に PUT /api/members/:id が
+      // フォールバックで列を silent drop してしまい「保存しても反映されない」現象を防ぐ
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS note TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_dm_id TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS chatwork_dm_id TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_name TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_code TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_name TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_code TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_type TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_number TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_holder_kana TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS postal_code TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS address TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS holiday_weekdays JSONB DEFAULT '[0,6]'::jsonb",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS camera_model TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS tripod_info TEXT",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT",
       // 全体連絡 (announcements) — ダッシュボードに表示される全社向け連絡 + 各メンバーの完了状況
       `CREATE TABLE IF NOT EXISTS announcements (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

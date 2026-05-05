@@ -10371,6 +10371,17 @@ async function submitMember() {
   if (res.ok) {
     // PR #277: クリエイティブ初期ビューは DB（creative_default_view）に保存済み。
     // 旧 localStorage キーは後方互換として残しているが、ここでは新規書き込みしない。
+    // サーバーが silent drop した列があれば警告（本番DBに該当列が無い場合）
+    try {
+      const respJson = await res.clone().json();
+      if (respJson && Array.isArray(respJson._droppedColumns) && respJson._droppedColumns.length > 0) {
+        showToast(
+          '一部のフィールドはDBに保存されませんでした（列未追加）: ' + respJson._droppedColumns.join(', '),
+          'warn'
+        );
+        console.warn('[submitMember] silent drop:', respJson._droppedColumns);
+      }
+    } catch(_) {}
     closeModal('modal-member');
     await loadMembers();
   } else {

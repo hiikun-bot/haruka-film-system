@@ -3538,8 +3538,17 @@ router.get('/members', requireAuth, async (req, res) => {
 
 // メンバー作成
 router.post('/members', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
-  const { email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id,
-          birthday, weekday_hours, weekend_hours, default_creative_tab } = req.body;
+  const {
+    email, full_name, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id,
+    birthday, weekday_hours, weekend_hours, default_creative_tab,
+    // メンバー編集モーダル（5 タブ）の全フィールドを新規追加時にも保存する
+    // — 従来は基本情報のみ受け取って silent drop していた
+    nickname, hide_birth_year, note,
+    bank_name, bank_code, branch_name, branch_code,
+    account_type, account_number, account_holder_kana,
+    phone, postal_code, address,
+    camera_model, tripod_info, lighting_info, holiday_weekdays,
+  } = req.body;
   if (!email || !full_name || !role) return res.status(400).json({ error: 'メール・名前・ロールは必須です' });
   // default_creative_tab のバリデーション ('all' / 'video' / 'design' / null)
   const ALLOWED_DCT = new Set(['all', 'video', 'design']);
@@ -3561,15 +3570,35 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     weekend_hours: weekend_hours || null,
     default_creative_tab: dctValue,
     ...cvDefaults.fields,
+    // 追加フィールド（5 タブ全保存）
+    nickname: nickname || null,
+    hide_birth_year: !!hide_birth_year,
+    note: note || null,
+    bank_name: bank_name || null,
+    bank_code: bank_code || null,
+    branch_name: branch_name || null,
+    branch_code: branch_code || null,
+    account_type: account_type || null,
+    account_number: account_number || null,
+    account_holder_kana: account_holder_kana || null,
+    phone: phone || null,
+    postal_code: postal_code || null,
+    address: address || null,
+    camera_model: camera_model || null,
+    tripod_info: tripod_info || null,
+    lighting_info: lighting_info || null,
+    holiday_weekdays: Array.isArray(holiday_weekdays) ? holiday_weekdays : undefined,
   };
-  let { data, error } = await supabase.from('users').insert(insertPayload).select().single();
-  // 列が無い環境（migration 未適用）でも落ちないよう、不明列を1つずつ落として再試行
-  const isMissingColCreate = (err) => {
+  if (insertPayload.holiday_weekdays === undefined) delete insertPayload.holiday_weekdays;
+
+  // 列が無い環境（migration 未適用 / schema-sync 失敗）でも落ちないよう、
+  // PUT と同じく「missing col を 1 個ずつ落として再試行」する
+  const isMissingColErr = (err) => {
     if (!err) return false;
     const msg = err.message || '';
     return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
   };
-  const extractMissingColCreate = (err) => {
+  const extractMissingCol = (err) => {
     if (!err) return null;
     const msg = err.message || '';
     const m1 = msg.match(/column "?([a-zA-Z_]+)"? does not exist/);
@@ -3578,23 +3607,40 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     if (m2) return m2[1];
     return null;
   };
-  for (let i = 0; i < 12 && isMissingColCreate(error); i++) {
-    const col = extractMissingColCreate(error);
-    if (col && col in insertPayload) {
+  const droppedColumns = [];
+  let attempt = { ...insertPayload };
+  let { data, error } = await supabase.from('users').insert(attempt).select().single();
+  for (let i = 0; i < 12 && isMissingColErr(error); i++) {
+    const col = extractMissingCol(error);
+    if (col && col in attempt) {
       console.warn(`[members:create] ${col} 列なし → fallback で再試行:`, error.message);
-      delete insertPayload[col];
+      delete attempt[col];
+      droppedColumns.push(col);
     } else {
-      // 抽出不可: 既知の追加列をまとめて落として最後の挑戦
       console.warn('[members:create] 列名抽出不可 → 追加カラム一括除外で再試行:', error.message);
+      // creative_default_* (PR #277) + 追加フィールド (PR #269) の和集合
       ['default_creative_tab',
        'creative_default_view','creative_default_view_mode','creative_default_group_mode','creative_default_range',
        'creative_default_include_ended','creative_default_include_delivered','creative_default_delayed_only','creative_default_sos_only',
-       'creative_default_statuses','creative_default_ball_types']
-        .forEach(k => { if (k in insertPayload) delete insertPayload[k]; });
+       'creative_default_statuses','creative_default_ball_types',
+       'nickname','hide_birth_year','note',
+       'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
+       'account_holder_kana','phone','postal_code','address',
+       'camera_model','tripod_info','lighting_info','holiday_weekdays']
+        .forEach(k => {
+          if (k in attempt) {
+            delete attempt[k];
+            if (!droppedColumns.includes(k)) droppedColumns.push(k);
+          }
+        });
     }
-    ({ data, error } = await supabase.from('users').insert(insertPayload).select().single());
+    ({ data, error } = await supabase.from('users').insert(attempt).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
+  if (droppedColumns.length > 0) {
+    console.warn(`[members:create] silent drop された列: ${droppedColumns.join(', ')}`);
+    return res.json({ ...data, _droppedColumns: droppedColumns });
+  }
   res.json(data);
 });
 
@@ -3982,6 +4028,9 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     return null;
   };
   let attempt = { ...updateData };
+  // フォールバックで silent drop した列を追跡し、レスポンスでフロントに通知する
+  // （「保存しても反映されない」が無音で起きないように可視化）
+  const droppedColumns = [];
   let { data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single();
   // 最大 N 回まで「missing col を 1 個ずつ落として再試行」
   for (let i = 0; i < 10 && isMissingColErr(error); i++) {
@@ -3989,21 +4038,32 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     if (col && col in attempt) {
       console.warn(`[members:update] ${col} 列なし → fallback で再保存:`, error.message);
       delete attempt[col];
+      droppedColumns.push(col);
     } else {
       // 列名が抽出できなければ、追加で入れた可能性のある列をまとめて落として最後の挑戦
       console.warn('[members:update] 列名抽出不可 → 追加カラム一括除外で再保存:', error.message);
-      ['hide_birth_year','holiday_weekdays','camera_model','tripod_info','lighting_info',
+      const bulk = ['hide_birth_year','holiday_weekdays','camera_model','tripod_info','lighting_info',
        'default_creative_tab',
        'creative_default_view','creative_default_view_mode','creative_default_group_mode','creative_default_range',
        'creative_default_include_ended','creative_default_include_delivered','creative_default_delayed_only','creative_default_sos_only',
        'creative_default_statuses','creative_default_ball_types',
        'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
-       'account_holder_kana','invoice_registration_number','phone','postal_code','address','nickname','note','birthday']
-        .forEach(k => { if (k in attempt) delete attempt[k]; });
+       'account_holder_kana','invoice_registration_number','phone','postal_code','address','nickname','note','birthday'];
+      bulk.forEach(k => {
+        if (k in attempt) {
+          delete attempt[k];
+          if (!droppedColumns.includes(k)) droppedColumns.push(k);
+        }
+      });
     }
     ({ data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
+  // 列が drop された場合は警告フラグを付ける（フロント側で toast 警告を出せるよう）
+  if (droppedColumns.length > 0) {
+    console.warn(`[members:update] silent drop された列: ${droppedColumns.join(', ')} — 本番DBに該当列が無い可能性があります`);
+    return res.json({ ...data, _droppedColumns: droppedColumns });
+  }
   res.json(data);
 });
 
