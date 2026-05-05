@@ -23691,7 +23691,7 @@ async function submitChangePassword() {
 
 // ===== 管理者によるパスワードリセット =====
 async function resetMemberPassword(userId, userName) {
-  const newPass = prompt(`${userName} さんの新しいパスワードを入力してください（8文字以上）:`);
+  const newPass = prompt(`${userName} さんの新しいパスワードを入力してください\n（8文字以上 / 半角英字・数字・記号 / 全角・スペース不可）:`);
   if (!newPass) return;
   if (newPass.length < 8) { showToast('8文字以上必要です', 'warn'); return; }
   const res = await apiFetch(`${API}/users/${userId}/reset-password`, {
