@@ -3878,9 +3878,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     // feedback batch 002: カメラ機材 / 休日曜日
     camera_model, tripod_info, lighting_info, holiday_weekdays,
     // クリエイティブ画面の初期表示タブ ('all' / 'video' / 'design' / null)
-    default_creative_tab,
-    // インボイス制度: 適格請求書発行事業者の登録番号（T + 半角数字13桁）
-    invoice_registration_number
+    default_creative_tab
   } = req.body;
 
   // default_creative_tab のバリデーション: 'all' / 'video' / 'design' / null のみ許可
