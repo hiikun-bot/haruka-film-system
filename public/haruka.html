@@ -5523,7 +5523,7 @@ function _cvSaveBallTypesToLS() {
 // 詳細フィルターの値（既定値=全選択=フィルタ無効と等価）
 let cvAdvFilters = {
   includeEnded: false,        // 取引終了クライアント含む
-  includeDelivered: true,     // 納品済み含む（既定: true で従来挙動維持）
+  includeDelivered: false,    // 納品済み含む（既定: false で完了案件は非表示）
   delayedOnly: false,         // 遅延のみ
   sosOnly: false,             // SOSのみ
   // ステータス（複数選択 Set）— 初期値=全押下=全表示
@@ -8782,12 +8782,12 @@ function onCvAdvFilterChange() {
 }
 function resetCvAdvFilters() {
   cvAdvFilters = {
-    includeEnded:false, includeDelivered:true, delayedOnly:false, sosOnly:false,
+    includeEnded:false, includeDelivered:false, delayedOnly:false, sosOnly:false,
     statuses: new Set(_CV_STATUS_LIST),  // 全押下=全表示
     ballTypes: new Set(_CV_BALL_LIST),   // 全押下=全表示
   };
   ['cv-flt-ended','cv-flt-delivered','cv-flt-delayed','cv-flt-sos'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.checked = (id === 'cv-flt-delivered');
+    const el = document.getElementById(id); if (el) el.checked = false;
   });
   // ステータス pill を全 ON（初期値=全表示）
   document.querySelectorAll('#cv-flt-status-pills .cv-adv-status-pill').forEach(b => {
@@ -8815,7 +8815,7 @@ function _cvAdvUpdateBadge() {
   // 適用中件数（既定値と異なる項目をカウント）
   let n = 0;
   if (cvAdvFilters.includeEnded) n++;
-  if (!cvAdvFilters.includeDelivered) n++; // 既定 true
+  if (cvAdvFilters.includeDelivered) n++; // 既定 false
   if (cvAdvFilters.delayedOnly) n++;
   if (cvAdvFilters.sosOnly) n++;
   // ステータス: 全選択 = 非カウント、一部解除（=全数未満）= カウント
