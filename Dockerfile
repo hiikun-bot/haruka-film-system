@@ -4,7 +4,7 @@ FROM node:20-slim
 WORKDIR /app
 
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
+RUN --mount=type=cache,id=npm,target=/root/.npm \
     npm ci --omit=dev --prefer-offline --no-audit --fund=false
 
 COPY . .
