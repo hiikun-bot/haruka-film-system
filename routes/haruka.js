@@ -748,6 +748,260 @@ router.post('/projects/:id/cycles', requireAuth, requirePermission('project.crea
   res.json(data);
 });
 
+// ==================== カテゴリマスタ（Stage A 連携） ====================
+//
+// Stage A の migration (2026-05-05_creative_categories.sql) で導入される
+// creative_categories / creative_status_templates / creative_status_template_items
+// に対する読み出し系エンドポイントを creatives 側にも追加する。
+// （projects worktree が同名ルートを持つため、両 worktree のマージ後は
+//   どちらでも動くよう同じ実装・同じシグネチャに揃える。）
+//
+// schema-sync 失敗で本番に creative_categories テーブルが無い場合は、
+// 200/空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingCategoriesTable = (err) =>
+  err && /relation .*creative_categories.* does not exist|could not find the table/i.test(err.message || '');
+
+// GET /api/categories
+//   一覧取得。?include_inactive=1 で is_active=false も返す。
+router.get('/categories', async (req, res) => {
+  const includeInactive = String(req.query.include_inactive || '') === '1';
+  let query = supabase
+    .from('creative_categories')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (!includeInactive) query = query.eq('is_active', true);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      console.warn('[categories] creative_categories table missing. Apply migrations/2026-05-05_creative_categories.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/categories/:id  単件取得
+router.get('/categories/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_categories')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingCategoriesTable(error)) return res.json(null);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || null);
+});
+
+// GET /api/status-templates?category_id=...
+//   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
+router.get('/status-templates', async (req, res) => {
+  const { category_id } = req.query;
+  let query = supabase
+    .from('creative_status_templates')
+    .select('*, items:creative_status_template_items(*)')
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true });
+  if (category_id) query = query.eq('category_id', category_id);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingCategoriesTable(error) || /relation .*creative_status_templates.* does not exist/i.test(error.message || '')) {
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // items を sort_order 昇順に整列して返す
+  const out = (data || []).map(t => ({
+    ...t,
+    items: (t.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+  }));
+  res.json(out);
+});
+
+// GET /api/status-templates/:id 単件取得
+router.get('/status-templates/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_status_templates')
+    .select('*, items:creative_status_template_items(*)')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingCategoriesTable(error)) return res.json(null);
+    return res.status(500).json({ error: error.message });
+  }
+  if (data && data.items) {
+    data.items = data.items.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  }
+  res.json(data || null);
+});
+
+// POST /api/status-templates  新規作成
+//   body: { category_id, name, is_default? }
+router.post('/status-templates', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { category_id, name, is_default } = req.body || {};
+  if (!category_id || !name) {
+    return res.status(400).json({ error: 'category_id / name は必須です' });
+  }
+  // is_default=true 指定時は同カテゴリ内の既存 default を解除
+  if (is_default) {
+    await supabase
+      .from('creative_status_templates')
+      .update({ is_default: false })
+      .eq('category_id', category_id)
+      .eq('is_default', true);
+  }
+  const { data, error } = await supabase
+    .from('creative_status_templates')
+    .insert({ category_id, name: String(name).trim(), is_default: !!is_default })
+    .select()
+    .single();
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_status_templates テーブルが未作成です。migration を適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // is_default=true で作成した場合、creative_categories.default_status_template_id も更新
+  if (is_default) {
+    await supabase
+      .from('creative_categories')
+      .update({ default_status_template_id: data.id, updated_at: new Date().toISOString() })
+      .eq('id', category_id);
+  }
+  res.json(data);
+});
+
+// PUT /api/status-templates/:id 更新
+router.put('/status-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, is_default, category_id } = req.body || {};
+  const update = {};
+  if (name !== undefined) update.name = String(name).trim();
+  if (is_default !== undefined) update.is_default = !!is_default;
+  // 同カテゴリ内で他の default を解除（is_default を true に変える場合のみ）
+  if (is_default === true) {
+    const { data: tpl } = await supabase
+      .from('creative_status_templates')
+      .select('category_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    const cid = category_id || tpl?.category_id;
+    if (cid) {
+      await supabase
+        .from('creative_status_templates')
+        .update({ is_default: false })
+        .eq('category_id', cid)
+        .neq('id', req.params.id);
+    }
+  }
+  const { data, error } = await supabase
+    .from('creative_status_templates')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_status_templates テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  if (is_default === true && data?.category_id) {
+    await supabase
+      .from('creative_categories')
+      .update({ default_status_template_id: data.id, updated_at: new Date().toISOString() })
+      .eq('id', data.category_id);
+  }
+  res.json(data);
+});
+
+// DELETE /api/status-templates/:id 削除（CASCADE で items も消える）
+router.delete('/status-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { error } = await supabase
+    .from('creative_status_templates')
+    .delete()
+    .eq('id', req.params.id);
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_status_templates テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
+});
+
+// POST /api/status-template-items  新規作成
+//   body: { template_id, code, label, sort_order, is_milestone?, default_days? }
+router.post('/status-template-items', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { template_id, code, label, sort_order, is_milestone, default_days } = req.body || {};
+  if (!template_id || !code || !label) {
+    return res.status(400).json({ error: 'template_id / code / label は必須です' });
+  }
+  const insert = {
+    template_id,
+    code: String(code).trim(),
+    label: String(label).trim(),
+    sort_order: Number.isFinite(parseInt(sort_order, 10)) ? parseInt(sort_order, 10) : 0,
+    is_milestone: !!is_milestone,
+    default_days: Number.isFinite(parseInt(default_days, 10)) ? parseInt(default_days, 10) : null,
+  };
+  const { data, error } = await supabase
+    .from('creative_status_template_items')
+    .insert(insert)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_status_template_items テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/status-template-items/:id 更新
+router.put('/status-template-items/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { code, label, sort_order, is_milestone, default_days } = req.body || {};
+  const update = {};
+  if (code !== undefined) update.code = String(code).trim();
+  if (label !== undefined) update.label = String(label).trim();
+  if (sort_order !== undefined) update.sort_order = parseInt(sort_order, 10) || 0;
+  if (is_milestone !== undefined) update.is_milestone = !!is_milestone;
+  if (default_days !== undefined) {
+    update.default_days = Number.isFinite(parseInt(default_days, 10)) ? parseInt(default_days, 10) : null;
+  }
+  const { data, error } = await supabase
+    .from('creative_status_template_items')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_status_template_items テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/status-template-items/:id 削除
+router.delete('/status-template-items/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { error } = await supabase
+    .from('creative_status_template_items')
+    .delete()
+    .eq('id', req.params.id);
+  if (error) {
+    if (isMissingCategoriesTable(error)) {
+      return res.status(503).json({ error: 'creative_status_template_items テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
+});
+
 // ==================== 単価設定 ====================
 
 const RATE_CREATIVE_TYPES = new Set(['video', 'design']);
@@ -1874,11 +2128,15 @@ router.get('/creatives', async (req, res) => {
   const projectsRel = client_id ? 'projects!inner' : 'projects';
   // 後から追加された列（schema-sync が失敗していると本番に存在しない可能性がある）
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
-  const buildSelect = (includeOptional) => `
+  // Stage B: category_id / status_code を追加。
+  // category_id は join できないテーブル（creative_categories）への参照だが、
+  // PostgREST は FK があれば自動で埋め込みできる。schema-sync 失敗時は
+  // optional 列フォールバックと同じ仕組みで category なし版に再試行する。
+  const buildSelect = (includeOptional, includeCategory) => `
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
-    creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
-    ${projectsRel}(id, name, client_id, producer_id, director_id, sheet_url, regulation_url, clients(id, name, status)),
+    creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''}${includeCategory ? ',\n    category_id, status_code,\n    category:category_id(id, code, name, render_kind, color, sort_order, default_status_template_id)' : ''},
+    ${projectsRel}(id, name, client_id, producer_id, director_id, sheet_url, regulation_url, primary_category_id, clients(id, name, status)),
     project_cycles(id, year, month),
     creative_assignments(
       id, role, rank_applied, created_at,
@@ -1886,15 +2144,31 @@ router.get('/creatives', async (req, res) => {
     )
   `;
 
+  // Stage B: category_id でも絞り込めるように。?category_id=<uuid> または
+  // ?category_code=<code> を受け付ける。?tab= は当面 'video'|'design' の prefix LIKE で
+  // 後方互換維持（Stage C で削除予定）。
+  const categoryIdFilter = req.query.category_id || null;
+  let categoryCodeFilterIds = null;
+  if (req.query.category_code && !categoryIdFilter) {
+    const { data: catRow } = await supabase
+      .from('creative_categories')
+      .select('id')
+      .eq('code', String(req.query.category_code).trim())
+      .maybeSingle();
+    if (catRow?.id) categoryCodeFilterIds = catRow.id;
+  }
+
   // フィルタ条件を共通化して、optional 込み → 失敗時 optional 抜きで再試行できるようにする
-  const buildAndApply = (includeOptional) => {
+  const buildAndApply = (includeOptional, includeCategory) => {
     let q = supabase
       .from('creatives')
-      .select(buildSelect(includeOptional), { count: 'exact' })
+      .select(buildSelect(includeOptional, includeCategory), { count: 'exact' })
       .order('final_deadline', { ascending: true, nullsFirst: false });
     if (project_id) q = q.eq('project_id', project_id);
     if (cycle_id)   q = q.eq('cycle_id', cycle_id);
     if (status)     q = q.eq('status', status);
+    if (categoryIdFilter)        q = q.eq('category_id', categoryIdFilter);
+    else if (categoryCodeFilterIds) q = q.eq('category_id', categoryCodeFilterIds);
     if (tabFilter)  q = q.like('creative_type', `${tabFilter}_%`);
     if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
     if (client_id) {
@@ -1918,11 +2192,17 @@ router.get('/creatives', async (req, res) => {
   };
 
   // teams を別クエリで取得（PostgREST の FK 推論に依存しない: 本番DBに FK が無くても動作させるため）
-  let { data, error, count } = await buildAndApply(true);
-  // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
+  // Stage B: 1段階目=optional+category, 失敗時は optional のみ→optionalもダメなら baseline に段階的フォールバック。
+  let { data, error, count } = await buildAndApply(true, true);
+  // schema-sync が失敗していて category 列／FK 推論が効かない場合、category 抜きで再試行
+  if (error && /(column .+ does not exist|relationship.*creative_categories|could not find the relationship|category_id)/i.test(error.message || '')) {
+    console.warn('[creatives] category 列なし → fallback (category なし) で再取得:', error.message);
+    ({ data, error, count } = await buildAndApply(true, false));
+  }
+  // optional 列も無い古いDBへのさらなるフォールバック
   if (error && /column .+ does not exist/.test(error.message || '')) {
     console.warn('[creatives] optional列なし → fallback で再取得:', error.message);
-    ({ data, error, count } = await buildAndApply(false));
+    ({ data, error, count } = await buildAndApply(false, false));
   }
   const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)');
   if (error) return res.status(500).json({ error: error.message });
@@ -2077,12 +2357,12 @@ router.get('/creatives/counts', async (req, res) => {
 
 // クリエイティブ単体取得
 router.get('/creatives/:id', async (req, res) => {
-  const { data, error } = await supabase
-    .from('creatives')
-    .select(`
+  // Stage B: category_id / status_code / category 埋め込みを試行 → 失敗時は category なしで再試行
+  const baseSelect = (withCategory) => `
       *,
+      ${withCategory ? 'category:category_id(id, code, name, render_kind, color, sort_order, default_status_template_id),' : ''}
       projects(
-        id, name, producer_id, director_id, regulation_url,
+        id, name, producer_id, director_id, regulation_url, primary_category_id,
         director:director_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         producer:producer_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         clients(id, name, client_code, status)
@@ -2092,9 +2372,20 @@ router.get('/creatives/:id', async (req, res) => {
         id, role, rank_applied,
         users(id, full_name, nickname, role, team_id, avatar_url)
       )
-    `)
+    `;
+  let { data, error } = await supabase
+    .from('creatives')
+    .select(baseSelect(true))
     .eq('id', req.params.id)
     .maybeSingle();
+  if (error && /(column .+ does not exist|relationship.*creative_categories|could not find the relationship|category_id|primary_category_id)/i.test(error.message || '')) {
+    console.warn('[creatives GET :id] category/ primary_category_id 抜きで再取得:', error.message);
+    ({ data, error } = await supabase
+      .from('creatives')
+      .select(baseSelect(false).replace(', primary_category_id', ''))
+      .eq('id', req.params.id)
+      .maybeSingle());
+  }
   if (error) return res.status(500).json({ error: error.message });
   if (!data) {
     return res.status(404).json({ error: 'このクリエイティブは見つかりません（削除されている可能性があります）' });
@@ -2250,7 +2541,8 @@ router.post('/creatives/bulk', async (req, res) => {
     project_id, creative_type, appeal_type_id,
     count, draft_deadline, final_deadline, note,
     product_id, product_code, media_code, creative_fmt, creative_size,
-    assignee_id, team_id
+    assignee_id, team_id,
+    category_id: bulkCategoryId, // Stage B: 一括登録時のカテゴリ指定
   } = req.body;
   // 訴求軸（appeal_type_id）は任意化: 未確定状態でも一括登録できるようにする
   if (!project_id || !creative_type || !count) {
@@ -2273,6 +2565,15 @@ router.post('/creatives/bulk', async (req, res) => {
   if (appeal_type_id && !appealType) {
     return res.status(400).json({ error: '訴求軸が見つかりません' });
   }
+
+  // Stage B: category_id を解決（明示指定 → 親案件の primary_category_id を継承）
+  let resolvedCategoryId = bulkCategoryId || null;
+  if (!resolvedCategoryId) {
+    try {
+      if (project?.primary_category_id) resolvedCategoryId = project.primary_category_id;
+    } catch (_) { /* primary_category_id 列が無い古いDBは無視 */ }
+  }
+
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
   const usedSeqs = (existingCreatives || []).map(c => {
@@ -2300,12 +2601,20 @@ router.post('/creatives/bulk', async (req, res) => {
       note: note || null, status: '未着手',
       product_id: product_id || null, media_code: media_code || null,
       creative_fmt: creative_fmt || null, creative_size: creative_size || null,
-      team_id: team_id || null };
+      team_id: team_id || null,
+      ...(resolvedCategoryId ? { category_id: resolvedCategoryId } : {}),
+    };
     inserts.push(insert);
     usedSeqs.push(nextSeq);
     nextSeq++;
   }
-  const { data, error } = await supabase.from('creatives').insert(inserts).select();
+  let { data, error } = await supabase.from('creatives').insert(inserts).select();
+  // Stage B: schema-sync 失敗で category_id 列が無い古いDBへのフォールバック
+  if (error && /column .*category_id.* does not exist/i.test(error.message || '')) {
+    console.warn('[creatives bulk] category_id 列なし → fallback で再試行:', error.message);
+    const fallbackInserts = inserts.map(({ category_id, ...rest }) => rest);
+    ({ data, error } = await supabase.from('creatives').insert(fallbackInserts).select());
+  }
   if (error) return res.status(500).json({ error: error.message });
   await supabase.from('projects').update({ seq_counter: Math.max(...usedSeqs) }).eq('id', project_id);
   res.json({ ok: true, count: data.length, creatives: data });
@@ -2318,7 +2627,8 @@ router.post('/creatives', async (req, res) => {
     draft_deadline, final_deadline, script_url, note, appeal_type_id,
     product_id, media_code, creative_fmt, creative_size,
     assignee_id, internal_code, production_date, talent_flag, team_id, memo,
-    client_review_url
+    client_review_url,
+    category_id: bodyCategoryId, status_code: bodyStatusCode,
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
@@ -2331,7 +2641,25 @@ router.post('/creatives', async (req, res) => {
     resolvedTeamId = u?.team_id || null;
   }
 
-  const { data, error } = await supabase.from('creatives').insert({
+  // Stage B: category_id を解決。
+  //   1) body に明示指定 → そのまま採用
+  //   2) なければ親案件の primary_category_id を継承
+  //   3) どちらも無い場合は null（Stage C 後は必須化）
+  let resolvedCategoryId = bodyCategoryId || null;
+  if (!resolvedCategoryId) {
+    try {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('primary_category_id')
+        .eq('id', project_id)
+        .maybeSingle();
+      if (proj?.primary_category_id) resolvedCategoryId = proj.primary_category_id;
+    } catch (_) { /* primary_category_id 列が無い古いDBは無視 */ }
+  }
+
+  // category_id / status_code は schema-sync 失敗時に存在しないことがあるので、
+  // 失敗したら抜いて再試行する（optional 列フォールバック）。
+  const baseInsert = {
     project_id, cycle_id, file_name, creative_type,
     draft_deadline: draft_deadline || null,
     final_deadline: final_deadline || null,
@@ -2349,7 +2677,18 @@ router.post('/creatives', async (req, res) => {
     team_id: resolvedTeamId,
     memo: (memo && String(memo).trim()) ? memo : null,
     client_review_url: (client_review_url && String(client_review_url).trim()) ? client_review_url : null,
-  }).select().single();
+  };
+  const insertWithCategory = {
+    ...baseInsert,
+    ...(resolvedCategoryId ? { category_id: resolvedCategoryId } : {}),
+    ...(bodyStatusCode ? { status_code: String(bodyStatusCode).trim() } : {}),
+  };
+
+  let { data, error } = await supabase.from('creatives').insert(insertWithCategory).select().single();
+  if (error && /column .*(category_id|status_code).* does not exist/i.test(error.message || '')) {
+    console.warn('[creatives POST] category_id/status_code 列なし → fallback で再試行:', error.message);
+    ({ data, error } = await supabase.from('creatives').insert(baseInsert).select().single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録
   if (assignee_id) {
@@ -2378,7 +2717,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_id,
     director_user_ids,
     producer_user_ids,
-    force_delivered_reason
+    force_delivered_reason,
+    // Stage B: カテゴリ駆動への移行用
+    category_id, status_code,
   } = req.body;
 
   // help_flag（SOS）の権限制御:
@@ -2425,6 +2766,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (client_comment !== undefined) updateData.client_comment = client_comment;
   if (editor_comment !== undefined) updateData.editor_comment = editor_comment;
   if (creative_type !== undefined) updateData.creative_type = creative_type;
+  // Stage B: category_id / status_code（schema-sync 失敗時の fallback は updateData 適用後）
+  if (category_id !== undefined) updateData.category_id = category_id || null;
+  if (status_code !== undefined) updateData.status_code = (typeof status_code === 'string' && status_code.trim()) ? status_code.trim() : null;
   if (appeal_type_id !== undefined) updateData.appeal_type_id = appeal_type_id || null;
   if (product_id !== undefined) updateData.product_id = product_id || null;
   if (media_code !== undefined) updateData.media_code = media_code || null;
@@ -2459,12 +2803,25 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     beforeStatus = before?.status || null;
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('creatives')
     .update(updateData)
     .eq('id', req.params.id)
     .select()
     .single();
+  // Stage B: schema-sync 失敗で category_id / status_code 列が無い古いDBへのフォールバック
+  if (error && /column .*(category_id|status_code).* does not exist/i.test(error.message || '')) {
+    console.warn('[creatives PUT] category_id/status_code 列なし → fallback で再試行:', error.message);
+    const fallback = { ...updateData };
+    delete fallback.category_id;
+    delete fallback.status_code;
+    ({ data, error } = await supabase
+      .from('creatives')
+      .update(fallback)
+      .eq('id', req.params.id)
+      .select()
+      .single());
+  }
   if (error) return res.status(500).json({ error: error.message });
 
   // 担当者更新（assignee_id が送られてきた場合）

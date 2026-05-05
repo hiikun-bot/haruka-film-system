@@ -1660,6 +1660,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- カスタム確認モーダル: window.showConfirmDialog を提供（ネイティブ confirm() の代替） -->
 <script src="/js/confirm-dialog.js"></script>
+<!-- Stage B: クリエイティブのプレビュー render_kind 抽象化（カテゴリ駆動）。
+     これらは window.renderCreativePreview / window.renderLongpagePreview /
+     window.registerCreativePreviewRenderer をグローバルに登録する。
+     haruka.html 本体の <script> ブロックより前に読み込む（renderer の登録順は問わない）。 -->
+<script src="/js/creative-preview-renderer.js"></script>
+<script src="/js/creative-preview-longpage.js"></script>
 </head>
 <body>
 <div id="toast-container"></div>
@@ -3027,6 +3033,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </div>
             <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
           </div>
+          <!-- Stage B: カテゴリ select（マスタ未適用環境では非表示） -->
+          <div class="form-group" id="c-category-group" style="margin-bottom:0;display:none">
+            <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span><span style="font-size:11px;color:var(--text-muted);font-weight:400">（案件のメインカテゴリを既定値として継承）</span></label>
+            <select class="form-select" id="c-category-id"></select>
+          </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">クリエイティブ種別</label>
             <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c')">
@@ -3144,6 +3155,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
         <!-- 左カラム -->
         <div style="display:flex;flex-direction:column;gap:14px">
+          <!-- Stage B: カテゴリ select -->
+          <div class="form-group" id="bulk-category-group" style="margin-bottom:0;display:none">
+            <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span></label>
+            <select class="form-select" id="bulk-category-id"></select>
+          </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">クリエイティブ種別</label>
             <select class="form-select" id="bulk-creative-type" onchange="autoSetCreativeFmt('bulk')">
@@ -5908,7 +5924,120 @@ let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMemb
 let creativeTabCounts = { all: 0, video: 0, design: 0 };
 let currentTeamTab = 'video'; // 'video' | 'design' | 'secretary'
 let currentMemberTab = 'video'; // 'video' | 'design'
-let currentCreativeTab = 'all'; // 'all' | 'video' | 'design' — クリエイティブ画面の種別タブ
+// Stage B: クリエイティブ種別タブ。'all' か category_id（UUID）または code（'video'|'image'|...）。
+// マスタ未適用環境（migration 未実施）では従来通り 'all'|'video'|'design' で動作する。
+let currentCreativeTab = 'all';
+
+// ==================== Stage B: カテゴリマスタ ====================
+// /api/categories のクライアント側キャッシュ。projects worktree と同じシグネチャ。
+let _categoriesCache = null;          // null=未取得 / []=取得済み（空も含む）
+let _categoriesCachePromise = null;
+async function loadCategories(force = false) {
+  if (_categoriesCache && !force) return _categoriesCache;
+  if (_categoriesCachePromise && !force) return _categoriesCachePromise;
+  _categoriesCachePromise = (async () => {
+    try {
+      const res = await apiFetch(`${API}/categories`);
+      _categoriesCache = res.ok ? (await res.json() || []) : [];
+    } catch (_) {
+      _categoriesCache = [];
+    }
+    _categoriesCachePromise = null;
+    return _categoriesCache;
+  })();
+  return _categoriesCachePromise;
+}
+function getCategory(id) {
+  if (!id || !_categoriesCache) return null;
+  return _categoriesCache.find(c => c.id === id) || null;
+}
+function getCategoryByCode(code) {
+  if (!code || !_categoriesCache) return null;
+  return _categoriesCache.find(c => c.code === code) || null;
+}
+// project の primary_category を解決（明示 ID 優先 / 無ければ project_type からフォールバック）
+const PROJECT_TYPE_TO_CATEGORY_CODE = { video: 'video', design: 'image', lp: 'lp', hp: 'hp', other: 'image' };
+function getProjectCategory(project) {
+  if (!project) return null;
+  if (project.primary_category) return project.primary_category;
+  if (project.primary_category_id) return getCategory(project.primary_category_id);
+  const code = PROJECT_TYPE_TO_CATEGORY_CODE[project.project_type] || 'video';
+  return getCategoryByCode(code);
+}
+function populateCategorySelect(selectEl, selectedId, opts = {}) {
+  if (!selectEl) return;
+  const cats = (_categoriesCache || []).filter(c => c.is_active !== false);
+  if (!cats.length) {
+    // マスタ未適用 / 空の場合は select 自体を非表示にして UI 崩壊を防ぐ
+    selectEl.innerHTML = '<option value="">（カテゴリ未登録）</option>';
+    if (opts.hideWhenEmpty !== false) {
+      const wrapper = selectEl.closest('.form-group') || selectEl.parentElement;
+      if (wrapper) wrapper.style.display = 'none';
+    }
+    return;
+  }
+  const opts0 = opts.includeBlank !== false ? ['<option value="">未設定</option>'] : [];
+  selectEl.innerHTML = opts0
+    .concat(cats.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`))
+    .join('');
+  if (selectedId) selectEl.value = selectedId;
+  // 表示復活（前回 hide していた場合）
+  const wrapper = selectEl.closest('.form-group') || selectEl.parentElement;
+  if (wrapper && wrapper.style.display === 'none') wrapper.style.display = '';
+}
+
+// ==================== Stage B: 工程テンプレ ====================
+// /api/status-templates?category_id=... のクライアント側キャッシュ
+// _statusTemplatesByCategory[categoryId] = テンプレ配列（最新の 1 回分）
+const _statusTemplatesByCategory = Object.create(null);
+const _statusTemplatesPromise   = Object.create(null);
+async function loadStatusTemplatesForCategory(categoryId, force = false) {
+  if (!categoryId) return [];
+  if (_statusTemplatesByCategory[categoryId] && !force) return _statusTemplatesByCategory[categoryId];
+  if (_statusTemplatesPromise[categoryId] && !force) return _statusTemplatesPromise[categoryId];
+  _statusTemplatesPromise[categoryId] = (async () => {
+    try {
+      const res = await apiFetch(`${API}/status-templates?category_id=${encodeURIComponent(categoryId)}`);
+      _statusTemplatesByCategory[categoryId] = res.ok ? (await res.json() || []) : [];
+    } catch (_) {
+      _statusTemplatesByCategory[categoryId] = [];
+    }
+    _statusTemplatesPromise[categoryId] = null;
+    return _statusTemplatesByCategory[categoryId];
+  })();
+  return _statusTemplatesPromise[categoryId];
+}
+// creative.category の default テンプレから「工程の label 配列」を返す。
+// マスタ未取得・テンプレ未定義の場合は従来の _CV_STATUS_LIST にフォールバック。
+function getStatusOptions(creative) {
+  try {
+    const catId = creative?.category_id || creative?.category?.id;
+    if (!catId) return _CV_STATUS_LIST.slice();
+    const tpls = _statusTemplatesByCategory[catId];
+    if (!tpls || !tpls.length) return _CV_STATUS_LIST.slice();
+    const def = tpls.find(t => t.is_default) || tpls[0];
+    const items = (def?.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    if (!items.length) return _CV_STATUS_LIST.slice();
+    return items.map(it => it.label);
+  } catch (_) {
+    return _CV_STATUS_LIST.slice();
+  }
+}
+// 工程テンプレの「default_days 合計」を返す。マスタ未適用時は legacy _CV_STD_PROD_DAYS の旧値=7
+function getStandardProductionDays(creative, fallback) {
+  try {
+    const catId = creative?.category_id || creative?.category?.id;
+    if (!catId) return fallback;
+    const tpls = _statusTemplatesByCategory[catId];
+    if (!tpls || !tpls.length) return fallback;
+    const def = tpls.find(t => t.is_default) || tpls[0];
+    const items = (def?.items || []);
+    const sum = items.reduce((acc, it) => acc + (Number.isFinite(parseInt(it.default_days, 10)) ? parseInt(it.default_days, 10) : 0), 0);
+    return sum > 0 ? sum : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
 let currentClient = 'all', currentView = 'all', searchText = '', currentAssigneeFilter = '';
 // 複数選択対応: 選択中のクライアントID集合（空 Set = 全件）
 let currentClientIds = new Set();
@@ -6022,7 +6151,17 @@ async function init() {
   }
   applyRoleBasedUI();
   // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
-  await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives()]);
+  // Stage B: loadCategories() を初期化に追加。
+  //   migration 未適用環境でも /api/categories は 200/[] を返すため安全。
+  await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives(), loadCategories()]);
+  // クリエイティブ種別タブを動的に再構築（カテゴリマスタ駆動）。
+  // マスタ未取得時は従来のハードコードタブが残る（initBuildCreativeTabs で no-op）。
+  if (typeof initBuildCreativeTabs === 'function') initBuildCreativeTabs();
+  // 各カテゴリの工程テンプレを先読み（タブ件数 < 10 を想定）
+  try {
+    const cats = (_categoriesCache || []).filter(c => c.is_active !== false);
+    await Promise.all(cats.map(c => loadStatusTemplatesForCategory(c.id)));
+  } catch (_) {}
   loadDashboard();
   applyDeepLinkOnLoad();
 }
@@ -7327,37 +7466,72 @@ function cvDefaultsCollectFromForm() {
 }
 
 function setCreativeTab(type, opts = {}) {
-  if (type !== 'all' && type !== 'video' && type !== 'design') type = 'all';
+  // Stage B: type は 'all' | 'video' | 'design'（旧）または カテゴリ code / id を許容。
+  // 旧3値（all/video/design）以外を渡された場合はカテゴリマスタを参照して妥当性チェック。
+  if (type !== 'all' && type !== 'video' && type !== 'design') {
+    const cats = _categoriesCache || [];
+    const ok = cats.some(c => c.id === type || c.code === type);
+    if (!ok) type = 'all';
+  }
   const changed = (currentCreativeTab !== type);
   currentCreativeTab = type;
-  const aBtn = document.getElementById('cv-tab-all');
-  const vBtn = document.getElementById('cv-tab-video');
-  const dBtn = document.getElementById('cv-tab-design');
-  // クラスベースのアクティブ切替（インラインスタイル上書きを廃止）
-  [aBtn, vBtn, dBtn].forEach(b => {
-    if (!b) return;
+  // 全タブから active を外す
+  document.querySelectorAll('#creative-type-tabs .cv-cat-btn').forEach(b => {
     b.classList.remove('active');
     b.setAttribute('aria-selected', 'false');
   });
-  const map = { all: aBtn, video: vBtn, design: dBtn };
-  const cur = map[type];
+  // 該当タブに active を付ける
+  // ID 形式: cv-tab-all / cv-tab-video / cv-tab-design / cv-tab-{code} / cv-tab-cat-{id}
+  let cur = document.getElementById('cv-tab-' + type);
+  if (!cur) cur = document.getElementById('cv-tab-cat-' + type);
   if (cur) {
     cur.classList.add('active');
     cur.setAttribute('aria-selected', 'true');
   }
   // タブ切替時はサーバーから当該タブのデータを再取得（offset=0）
-  // total もタブ別件数になるので「次の50件を読み込む（残り N 件）」が正確になる
-  // opts.skipReload=true の場合は init 中の重複ロードを避けるため再取得しない
   if (changed) {
     creativesPage.offset = 0;
     if (!opts.skipReload && typeof loadCreatives === 'function') {
-      // 並行起動レース対策は loadCreatives 内の _creativesLoadSeq に委譲
-      // タブ切り替えではカウンタは不変なので skipCounts を渡して再取得を省略
       loadCreatives({ skipCounts: true });
       return;
     }
   }
   if (typeof renderCreatives === 'function') renderCreatives();
+}
+
+// Stage B: カテゴリマスタ駆動でタブを動的構築する。
+//   - 「すべて」「動画」「デザイン」の旧3タブは残す（後方互換 + マスタ未適用時の表示）
+//   - マスタが取れていれば、追加カテゴリ（hp / lp / line など）を末尾に挿入する
+//   - 既に挿入済みのタブ（data-cv-cat 付き）はスキップ
+function initBuildCreativeTabs() {
+  const wrap = document.getElementById('creative-type-tabs');
+  if (!wrap) return;
+  const cats = (_categoriesCache || []).filter(c => c.is_active !== false);
+  if (!cats.length) return;
+  // 旧タブと重複するコード（video / design / image）はマスタタブを生やさない:
+  //   - video / image(=旧design) は旧タブで代替
+  //   - そのほか（hp / lp / line / 将来追加）は新規タブとして生やす
+  const SKIP = new Set(['video', 'image']);
+  cats.forEach(c => {
+    if (SKIP.has(c.code)) return;
+    const id = `cv-tab-${c.code}`;
+    if (document.getElementById(id)) return; // 二重挿入防止
+    const btn = document.createElement('button');
+    btn.id = id;
+    btn.type = 'button';
+    btn.className = 'cv-cat-btn';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', 'false');
+    btn.dataset.cvCat = c.code;
+    btn.dataset.cvCatId = c.id;
+    btn.onclick = () => setCreativeTab(c.code);
+    btn.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px">
+        ${c.color ? `<span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${esc(c.color)}"></span>` : ''}
+        <span>${esc(c.name)}</span>
+      </span>
+      <span class="cv-cat-count" id="cv-tab-${c.code}-count">(0)</span>`;
+    wrap.appendChild(btn);
+  });
 }
 
 function setMemberTab(type) {
@@ -7707,10 +7881,18 @@ async function loadCreatives(opts = {}) {
     : (currentAssigneeFilter || '');
   if (_assigneeIdsParam)                        params.set('assignee_id', _assigneeIdsParam);
   if (searchText)                               params.set('q', searchText);
-  // タブフィルタ（共通/動画/デザイン）はサーバー側で creative_type prefix 絞り込み
-  // → ページネーションの total が現在のタブ専用件数になる（残り N 件表示の正確化）
+  // タブフィルタ:
+  //   - 旧 'video' / 'design' は creative_type prefix で絞る（後方互換）
+  //   - それ以外（カテゴリ code / id）は category_id / category_code でサーバー絞り込み
   if (currentCreativeTab === 'video' || currentCreativeTab === 'design') {
     params.set('tab', currentCreativeTab);
+  } else if (currentCreativeTab && currentCreativeTab !== 'all') {
+    // UUID とコード文字列を判別（簡易: ハイフン4つの長さ判定）
+    if (/^[0-9a-f-]{36}$/i.test(currentCreativeTab)) {
+      params.set('category_id', currentCreativeTab);
+    } else {
+      params.set('category_code', currentCreativeTab);
+    }
   }
   // ダッシュボードや「納品済」表示が壊れないよう、デフォルトで 納品 も含める
   // （API 既定は exclude だが、本フロントは常に include_done=1 を送る）
@@ -8142,13 +8324,21 @@ function renderCreatives() {
     } else if (currentAssigneeFilter) {
       if (!c.creative_assignments?.some(a => a.users?.id === currentAssigneeFilter)) return false;
     }
-    // 種別タブフィルタ（共通=全件 / video=video_* / design=design_*）
-    // カウントはサーバー側 /api/creatives/counts に集約。ここではタブで絞り込むだけ。
+    // 種別タブフィルタ:
+    //   - 'all' / 旧 'video' / 旧 'design' は legacy 挙動（creative_type prefix）
+    //   - それ以外（カテゴリ code / id）は category_id / category.code 一致で絞る
     const _ct = (c.creative_type || '');
     const _isVideoType = /^video_/.test(_ct);
     const _isDesignType = /^design_/.test(_ct);
     if (currentCreativeTab === 'video' && !_isVideoType) return false;
     if (currentCreativeTab === 'design' && !_isDesignType) return false;
+    if (currentCreativeTab && currentCreativeTab !== 'all'
+        && currentCreativeTab !== 'video' && currentCreativeTab !== 'design') {
+      const ccode = c.category?.code || (c.category_id ? (getCategory(c.category_id)?.code) : null);
+      const cid   = c.category_id || c.category?.id || null;
+      const matched = (ccode === currentCreativeTab) || (cid === currentCreativeTab);
+      if (!matched) return false;
+    }
     // ロール別フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
     // creative_type OR 担当者ユーザーのroleで判定（video_shortでもデザイナー担当なら「デザイン」扱い）
     const assigneeForFilter = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
@@ -9719,6 +9909,8 @@ async function createCreative() {
   const origText = btn?.textContent;
   if (btn) { btn.textContent = '追加中...'; btn.disabled = true; }
 
+  // Stage B: category_id を送信（マスタ未適用環境では undefined のまま無視される）
+  const c_category_id = document.getElementById('c-category-id')?.value || null;
   const res = await apiFetch(`${API}/creatives`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -9737,6 +9929,7 @@ async function createCreative() {
       production_date,
       talent_flag,
       memo,
+      category_id: c_category_id,
     })
   });
 
@@ -16244,6 +16437,23 @@ async function onProjectChange(projectId) {
     console.error('[onProjectChange auto team]', e);
   }
 
+  // Stage B: カテゴリ select に案件の primary_category_id を初期セット
+  try {
+    const proj = (allProjects || []).find(p => p.id === projectId);
+    const cats = (_categoriesCache || []).filter(c => c.is_active !== false);
+    if (cats.length > 0) {
+      const sel = document.getElementById('c-category-id');
+      const grp = document.getElementById('c-category-group');
+      if (sel) {
+        // 必須化のため空 option は出さない
+        sel.innerHTML = cats.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`).join('');
+        const defaultCat = getProjectCategory(proj);
+        if (defaultCat?.id) sel.value = defaultCat.id;
+        if (grp) grp.style.display = '';
+      }
+    }
+  } catch (_) {}
+
   const [axesRes, prodRes] = await Promise.all([
     apiFetch(`${API}/projects/${projectId}/effective-appeal-axes`),
     apiFetch(`${API}/projects/${projectId}/effective-products`),
@@ -16480,6 +16690,21 @@ async function onBulkProjectChange(projectId) {
       `<option value="${p.id}">${p.code} - ${p.name}</option>`
     ).join('');
   }
+  // Stage B: 一括モーダルでもカテゴリ select に親案件の primary_category_id を初期セット
+  try {
+    const proj = (allProjects || []).find(p => p.id === projectId);
+    const cats = (_categoriesCache || []).filter(c => c.is_active !== false);
+    if (cats.length > 0) {
+      const bsel = document.getElementById('bulk-category-id');
+      const bgrp = document.getElementById('bulk-category-group');
+      if (bsel) {
+        bsel.innerHTML = cats.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`).join('');
+        const defaultCat = getProjectCategory(proj);
+        if (defaultCat?.id) bsel.value = defaultCat.id;
+        if (bgrp) bgrp.style.display = '';
+      }
+    }
+  } catch (_) {}
   updateBulkPreview();
 }
 
@@ -16535,10 +16760,13 @@ async function bulkPreviewCreative() {
   const teamName      = document.getElementById('bulk-team-id')?.options[document.getElementById('bulk-team-id').selectedIndex]?.text || '—';
   const assigneeName  = document.getElementById('bulk-assignee-id')?.options[document.getElementById('bulk-assignee-id').selectedIndex]?.text || '—';
 
+  // Stage B: bulk にも category_id を含める
+  const bulk_category_id = document.getElementById('bulk-category-id')?.value || null;
   _bulkPayload = { project_id, creative_type, appeal_type_id, count,
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
     product_id, product_code, media_code, creative_fmt, creative_size,
-    assignee_id, team_id };
+    assignee_id, team_id,
+    category_id: bulk_category_id };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
   const origText = btn.textContent;
@@ -20272,7 +20500,42 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
 
-  if (driveFileId) {
+  // ==========================================================
+  // Stage B: カテゴリ駆動レンダラ（render_kind = 'longpage' 等）に
+  // 該当する場合は creative-preview-renderer.js 経由でレンダリングする。
+  // 既存 video / image / iframe は従来通りこの後の if/else で処理する
+  // （render_kind = 'video' | 'image' | 'iframe' | 'pdf' は handled=false で
+  //  後段にフォールバックするブリッジ実装になっている）。
+  // ==========================================================
+  const _fpCreative = (typeof currentCreativeDetail === 'object' && currentCreativeDetail) ? currentCreativeDetail : null;
+  if (typeof window.renderCreativePreview === 'function' && _fpCreative) {
+    const _kindResult = window.renderCreativePreview(_fpCreative, {
+      driveFileId, filename, driveUrl, fileRecordId, creativeType,
+      assigneeRole,
+      dom: { player, ctrlBar, diagnoseArea }
+    });
+    if (_kindResult && _kindResult.handled) {
+      // 後段の if/else をスキップ
+      // — 残りの初期化（コメント類・モーダル表示）は通常パスを共通化するため
+      // この if 内では DOM 構築まで（ロード解除はレンダラ内 or 既存 fpHideLoading 連動）。
+      // フォールバック: 後段の switchPreviewTab/loadFileComments まで通すために
+      // ここで return せず、従来の if/else を「else に該当しない条件」でスキップする。
+      // → 簡潔にするため、変数 _stageBHandled を立て、後段の if (driveFileId) を skip。
+      // 実装: カテゴリ駆動が成功したら以降の生成系を 'noop' として、コメント側の処理に進む。
+      // （後段の if/else 内で DOM を再生成しないよう、driveFileId 分岐を上書き）
+      // — 採用方法: 即時 return せず、後段の if(driveFileId)/else を、
+      //   隠し定数 _stageBHandled が true のときだけ no-op にする。
+      window._stageBPreviewHandled = true;
+    } else {
+      window._stageBPreviewHandled = false;
+    }
+  } else {
+    window._stageBPreviewHandled = false;
+  }
+
+  if (window._stageBPreviewHandled) {
+    // longpage 等のカテゴリ駆動レンダラが DOM を構築済。何もしない。
+  } else if (driveFileId) {
     if (isVideo) {
       player.innerHTML = `<video id="fp-video" src="${API}/files/${driveFileId}/stream" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
       ctrlBar.style.display = '';
