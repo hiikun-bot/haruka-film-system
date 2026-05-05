@@ -16,15 +16,17 @@
 
 // 種別ごとのアイコン絵文字（UI_SPEC 第4章の表）
 const ICON_BY_TYPE = {
-  ball_returned: '⚪',    // 白丸（ボール）
-  global:        '📢', // 📢 拡声器
-  mention:       '@',
-  post_reaction: '❤️', // ❤️
-  post_comment:  '💬', // 💬
-  sos:           '🆘', // 🆘
-  deadline:      '⏰',       // ⏰
-  assignment:    '📋', // 📋
-  invoice:       '📄', // 📄
+  ball_returned:   '⚪',    // 白丸（ボール）
+  global:          '📢', // 📢 拡声器
+  mention:         '@',
+  post_reaction:   '❤️', // ❤️
+  post_comment:    '💬', // 💬
+  sos:             '🆘', // 🆘
+  deadline:        '⏰',       // ⏰
+  assignment:      '📋', // 📋
+  invoice:         '📄', // 📄
+  // クリエイティブのステータス遷移通知（クライアントチェック中など）
+  creative_status: '🎬',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数
