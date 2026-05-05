@@ -23,3 +23,8 @@ tmp/
 # ログ
 *.log
 npm-debug.log*
+
+# PR で merge 待ちの migration SQL を一時的に置く場所（Supabase に手動適用するため）
+# README.md は git 管理する（運用ルール記載）
+pending-migrations/*
+!pending-migrations/README.md
