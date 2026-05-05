@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS projects (
   chatwork_room_id TEXT,
   is_hidden BOOLEAN DEFAULT false,
   seq_counter INTEGER DEFAULT 0,
-  project_type TEXT NOT NULL DEFAULT 'video' CHECK (project_type IN ('video','design','lp','hp','other')),
+  -- project_type 列は migrations/2026-05-06_drop_projects_project_type.sql で DROP 済み。
+  -- 案件カテゴリは primary_category_id (creative_categories) で管理する。
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1966,7 +1967,7 @@ BEGIN
 END $$;
 
 -- ==================== project_tags ====================
--- 案件×タグ の多対多。主カテゴリ (projects.project_type) と併用する補助タグ。
+-- 案件×タグ の多対多。主カテゴリ (projects.primary_category_id) と併用する補助タグ。
 -- migration: 2026-05-05_project_categories_and_tags.sql
 CREATE TABLE IF NOT EXISTS project_tags (
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
