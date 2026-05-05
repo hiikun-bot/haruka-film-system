@@ -1559,6 +1559,8 @@ CREATE INDEX IF NOT EXISTS idx_project_deletion_logs_deleted_at
 -- ============================================================
 
 -- notification_logs（通知本体）
+-- send_mode/scheduled_send_at/delivered_at/cancelled_* は migrations/2026-05-05_notification_scheduled_send.sql で追加。
+-- スコープA（人が能動的に出す通知）の予約配信に使用。システム自動通知は send_mode='immediate' のまま。
 CREATE TABLE IF NOT EXISTS notification_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1570,14 +1572,37 @@ CREATE TABLE IF NOT EXISTS notification_logs (
   is_read BOOLEAN NOT NULL DEFAULT false,
   read_at TIMESTAMPTZ,
   sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  send_mode TEXT NOT NULL DEFAULT 'immediate' CHECK (send_mode IN ('immediate','scheduled')),
+  scheduled_send_at TIMESTAMPTZ NULL,
+  delivered_at TIMESTAMPTZ NULL,
+  cancelled_at TIMESTAMPTZ NULL,
+  cancelled_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 新環境向け: 既存レコードがあれば delivered_at を created_at で埋める（migration と同じバックフィル）
+UPDATE notification_logs
+   SET delivered_at = created_at
+ WHERE delivered_at IS NULL
+   AND cancelled_at IS NULL
+   AND (send_mode IS NULL OR send_mode = 'immediate');
 CREATE INDEX IF NOT EXISTS idx_notification_logs_user_unread
   ON notification_logs(user_id, is_read, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_logs_user_created
   ON notification_logs(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_logs_type
   ON notification_logs(notification_type);
+-- 配信ワーカが「未配信・未キャンセル・予定時刻到来」を引くための部分インデックス
+CREATE INDEX IF NOT EXISTS idx_notification_logs_pending_delivery
+  ON notification_logs (scheduled_send_at)
+  WHERE delivered_at IS NULL AND cancelled_at IS NULL;
+-- 受信者向け一覧用（配信済みのみ）
+CREATE INDEX IF NOT EXISTS idx_notification_logs_user_delivered
+  ON notification_logs (user_id, created_at DESC)
+  WHERE delivered_at IS NOT NULL AND cancelled_at IS NULL;
+-- 差出人視点「自分の予約一覧」用
+CREATE INDEX IF NOT EXISTS idx_notification_logs_sender_pending
+  ON notification_logs (sender_id, scheduled_send_at)
+  WHERE delivered_at IS NULL AND cancelled_at IS NULL;
 
 -- notification_settings（受信ON/OFF設定。Phase 2でUI整備時に活用）
 CREATE TABLE IF NOT EXISTS notification_settings (
