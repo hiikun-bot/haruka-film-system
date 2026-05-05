@@ -15,7 +15,7 @@
 // 提供API（全て読み取り専用）:
 //   - GET /projects             案件収支一覧
 //   - GET /projects/:id         案件詳細（finance_book / estimates / cost_entries / revenue_entries / input_profile）
-//   - GET /projects/:id/similar 類似案件比較（同 project_type + 正規化メトリクス近傍）
+//   - GET /projects/:id/similar 類似案件比較（同 primary_category_id + 正規化メトリクス近傍）
 
 const express = require('express');
 const router  = express.Router();
@@ -236,8 +236,8 @@ router.get('/projects/:id', requireAuth, requireAdmin, async (req, res) => {
 // ---------- GET /projects/:id/similar 類似案件比較 ----------
 //
 // 比較ロジック:
-//   1) 対象案件の input_profile.project_type と normalized_metrics を取得
-//   2) 同じ project_type の他案件を取得
+//   1) 対象案件の input_profile + projects.primary_category_id を取得
+//   2) 同じ primary_category_id の他案件 ID を抽出して input_profile を絞り込む
 //   3) 正規化メトリクス（complexity_score, delivery_days, estimated_person_hours, outsource_ratio）の
 //      ユークリッド距離で近い順にソート
 //   4) 上位 N 件を返す（差分ハイライト用に raw データも同梱）
@@ -262,11 +262,41 @@ router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) 
       });
     }
 
+    // 対象案件の primary_category_id を取得し、同カテゴリの案件 ID 一覧を抽出
+    const { data: targetProject } = await supabase
+      .from('projects')
+      .select('id, primary_category_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    const targetCategoryId = targetProject?.primary_category_id || null;
+    if (!targetCategoryId) {
+      return res.json({
+        project_id: projectId,
+        target_profile: targetProfile,
+        similar: [],
+        note: '対象案件に primary_category_id が設定されていないため類似案件を絞り込めません',
+      });
+    }
+    const { data: sameCategoryProjects, error: sameCatErr } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('primary_category_id', targetCategoryId)
+      .neq('id', projectId);
+    if (sameCatErr) throw new Error(sameCatErr.message);
+    const candidatePids = (sameCategoryProjects || []).map(p => p.id);
+    if (!candidatePids.length) {
+      return res.json({
+        project_id: projectId,
+        target_profile: targetProfile,
+        similar: [],
+        axes: ['complexity_score', 'delivery_days', 'estimated_person_hours', 'outsource_ratio'],
+      });
+    }
+
     const { data: candidates, error } = await supabase
       .from('project_input_profiles')
       .select('*')
-      .eq('project_type', targetProfile.project_type)
-      .neq('project_id', projectId);
+      .in('project_id', candidatePids);
     if (error) throw new Error(error.message);
 
     const targetMetrics = targetProfile.normalized_metrics || {};
@@ -301,7 +331,7 @@ router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) 
     const similarPids = ranked.map(r => r.profile.project_id);
     const [namesRes, booksMap, actualsMap] = await Promise.all([
       similarPids.length
-        ? supabase.from('projects').select('id, name, status, client_id').in('id', similarPids)
+        ? supabase.from('projects').select('id, name, status, client_id, primary_category_id').in('id', similarPids)
         : Promise.resolve({ data: [] }),
       fetchFinanceBooksByProjectIds(similarPids),
       aggregateActualsByProject(similarPids),
@@ -320,7 +350,7 @@ router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) 
         name:              meta.name || null,
         status:            meta.status || null,
         distance:          Number(r.dist.toFixed(4)),
-        project_type:      r.profile.project_type,
+        primary_category_id: meta.primary_category_id || null,
         normalized_metrics: r.profile.normalized_metrics,
         input_payload:      r.profile.input_payload,
         contract_total:    n(book.contract_total),
