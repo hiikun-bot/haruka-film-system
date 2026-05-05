@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS projects (
   chatwork_room_id TEXT,
   is_hidden BOOLEAN DEFAULT false,
   seq_counter INTEGER DEFAULT 0,
-  project_type TEXT NOT NULL DEFAULT 'video' CHECK (project_type IN ('video','design')),
+  project_type TEXT NOT NULL DEFAULT 'video' CHECK (project_type IN ('video','design','lp','hp','other')),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1837,5 +1837,18 @@ BEGIN
     WHEN undefined_object THEN NULL;
   END;
 END $$;
+
+-- ==================== project_tags ====================
+-- 案件×タグ の多対多。主カテゴリ (projects.project_type) と併用する補助タグ。
+-- migration: 2026-05-05_project_categories_and_tags.sql
+CREATE TABLE IF NOT EXISTS project_tags (
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  tag        TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (project_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_project_tags_tag        ON project_tags(tag);
+CREATE INDEX IF NOT EXISTS idx_project_tags_project_id ON project_tags(project_id);
+ALTER TABLE project_tags ENABLE ROW LEVEL SECURITY;
 
 NOTIFY pgrst, 'reload schema';
