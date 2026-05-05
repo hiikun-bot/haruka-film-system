@@ -254,7 +254,40 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-legend-top .lg-bar-overlap{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 0 0 2px rgba(232,155,14,0.30)}
 .cv-g-legend-top .lg-ms{position:static !important;transform:none !important;flex-shrink:0;width:10px;height:10px}
 .cv-g-legend-top .lg-ms.ms-draft{transform:rotate(45deg) !important}
-.cv-g-legend-top .lg-est{margin-left:auto;color:var(--text-faint);font-size:10px}
+.cv-g-legend-top .lg-est{color:var(--text-faint);font-size:10px}
+/* 凡例グループ間の見出し・区切り（CSS未定義だった分の補完） */
+.cv-g-legend-top .lg-group{display:inline-flex;align-items:center;gap:8px;flex-shrink:0}
+.cv-g-legend-top .lg-group-label{font-size:10px;color:var(--text-faint);font-weight:600;letter-spacing:0.04em;margin-right:2px}
+.cv-g-legend-top .lg-divider{display:inline-block;width:1px;height:14px;background:var(--border-light);flex-shrink:0;margin:0 2px}
+/* 凡例の外側ラッパー（トグル開閉） */
+.cv-g-legend-wrap{position:relative}
+/* 凡例バー本体に右側パディング（トグル分の余白確保） */
+.cv-g-legend-wrap .cv-g-legend-top{padding-right:54px}
+/* 凡例トグル — 控えめなテキストリンク調。凡例バー右端にスティッキー配置（横スクロール時も常時表示） */
+.cv-g-legend-toggle{
+  position:absolute;top:50%;right:8px;transform:translateY(-50%);
+  display:inline-flex;align-items:center;gap:3px;
+  flex-shrink:0;
+  padding:2px 7px;height:20px;
+  background:rgba(250,254,253,0.92);
+  border:0.5px solid transparent;
+  border-radius:6px;
+  font-size:10px;color:var(--text-faint);
+  cursor:pointer;line-height:1;
+  transition:all .12s;
+  z-index:10;
+}
+.cv-g-legend-toggle:hover{background:var(--em-pale);color:var(--em-dark);border-color:var(--em-light)}
+.cv-g-legend-toggle .arr{font-size:8px;line-height:1;transition:transform .15s;display:inline-block;color:var(--text-faint)}
+.cv-g-legend-toggle:hover .arr{color:var(--em-dark)}
+.cv-g-legend-wrap.is-collapsed .cv-g-legend-toggle .arr{transform:rotate(-90deg)}
+/* 閉じた状態 — 凡例バーを高さ縮小し、ラベル群を非表示。トグルだけが小さく残る */
+.cv-g-legend-wrap.is-collapsed .cv-g-legend-top{
+  padding:2px 14px;padding-right:54px;gap:0;
+  min-height:24px;
+}
+.cv-g-legend-wrap.is-collapsed .cv-g-legend-top > .lg-group,
+.cv-g-legend-wrap.is-collapsed .cv-g-legend-top > .lg-divider{display:none}
 /* サイドパネル */
 .cv-sp-section{margin-bottom:18px}
 .cv-sp-section h4{font-size:12px;font-weight:600;color:var(--em-dark);margin:0 0 8px;letter-spacing:0.04em;border-bottom:0.5px solid var(--border-light);padding-bottom:4px}
@@ -7723,18 +7756,15 @@ function toggleCreativeMode() {
   setCreativeMode(currentCreativeMode === 'gantt' ? 'list' : 'gantt');
 }
 // 凡例アコーディオンの開閉トグル（再描画なしで DOM 操作、状態は localStorage に保持）
+// is-collapsed クラスで閉じた状態を表現。デフォルト=開（凡例ラベル群表示）。
 function toggleCreativeGanttLegend() {
   const wrap = document.getElementById('cv-g-legend-wrap');
   if (!wrap) return;
-  const willOpen = !wrap.classList.contains('is-open');
-  wrap.classList.toggle('is-open', willOpen);
+  const willCollapse = !wrap.classList.contains('is-collapsed');
+  wrap.classList.toggle('is-collapsed', willCollapse);
   const btn = wrap.querySelector('.cv-g-legend-toggle');
-  if (btn) {
-    btn.setAttribute('aria-expanded', String(willOpen));
-    const lbl = btn.querySelector('span:not(.arr)');
-    if (lbl) lbl.textContent = `凡例を${willOpen ? '隠す' : '表示'}`;
-  }
-  try { localStorage.setItem('cv_legend_open', willOpen ? '1' : '0'); } catch(_) {}
+  if (btn) btn.setAttribute('aria-expanded', String(!willCollapse));
+  try { localStorage.setItem('cv_legend_open', willCollapse ? '0' : '1'); } catch(_) {}
 }
 function setCreativeGroup(group) {
   const allowed = ['project','client','assignee','team'];
@@ -8456,15 +8486,15 @@ function renderCreativesGantt(filtered) {
   const todayIdx = _cvDayDiff(win.today, win.start);
   const todayLeft = (todayIdx >= 0 && todayIdx <= totalDays-1) ? (todayIdx * dayPx + dayPx/2) : -9999;
 
-  // 凡例HTML（アコーディオン形式: デフォルト閉。3グループに視覚的に分離）
+  // 凡例HTML（デフォルト=表示。トグルは凡例バー右端に控えめに配置）
   const legendOpen = (() => {
-    try { return localStorage.getItem('cv_legend_open') === '1'; } catch(_) { return false; }
+    try {
+      const v = localStorage.getItem('cv_legend_open');
+      return v === null ? true : v === '1';  // 未設定なら開く
+    } catch(_) { return true; }
   })();
   const legendHtml = `
-    <div class="cv-g-legend-wrap${legendOpen ? ' is-open' : ''}" id="cv-g-legend-wrap">
-      <button type="button" class="cv-g-legend-toggle" onclick="toggleCreativeGanttLegend()" aria-expanded="${legendOpen}">
-        <span class="arr">▼</span><span>凡例を${legendOpen ? '隠す' : '表示'}</span>
-      </button>
+    <div class="cv-g-legend-wrap${legendOpen ? '' : ' is-collapsed'}" id="cv-g-legend-wrap">
       <div class="cv-g-legend-top">
         <span class="lg-group">
           <span class="lg-group-label">期間バー</span>
@@ -8489,6 +8519,9 @@ function renderCreativesGantt(filtered) {
           <span class="lg-item"><span class="lg-line lg-line-late"></span>遅延</span>
           <span class="lg-item lg-est">薄色＝推定値</span>
         </span>
+        <button type="button" class="cv-g-legend-toggle" onclick="toggleCreativeGanttLegend()" aria-expanded="${legendOpen}" aria-label="凡例の表示切り替え" title="凡例の表示切り替え">
+          <span class="arr">▼</span><span class="cv-g-legend-toggle-lbl">凡例</span>
+        </button>
       </div>
     </div>
   `;
