@@ -4013,6 +4013,35 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div class="modal-title" id="rates-modal-title">単価設定 ― <span id="rates-modal-subtitle">動画クリエイティブ</span><button class="modal-close" onclick="closeModal('modal-rates')">×</button></div>
     <input type="hidden" id="rates-project-id">
 
+    <!-- ============================================================ -->
+    <!-- Stage B: カテゴリ駆動 単価設定（マスタ駆動） -->
+    <!-- カテゴリマスタ (creative_categories) に行を追加すると、ここに -->
+    <!-- 自動的に入力行が増える。コード変更不要。 -->
+    <!-- ============================================================ -->
+    <div id="rates-category-driven-section" style="margin-bottom:24px;display:none">
+      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">
+        カテゴリ別 単価
+        <span style="font-size:10px;color:var(--text-muted);font-weight:400;margin-left:8px">（マスタ駆動 / Stage B）</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="color:var(--text-muted)">
+            <th style="padding:6px 8px;text-align:left;width:120px">カテゴリ</th>
+            <th style="padding:6px 8px;text-align:right">編集者単価（円）</th>
+            <th style="padding:6px 8px;text-align:right">ディレクション費（円）</th>
+            <th style="padding:6px 8px;text-align:right">プロデュース費（円）</th>
+          </tr>
+        </thead>
+        <tbody id="category-rates-body">
+          <!-- カテゴリごとの行を JS で動的生成 -->
+        </tbody>
+      </table>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
+        ※ カテゴリ別の単価は新テーブル <code>project_category_rates</code> に保存されます。<br>
+        ※ 動画・静止画は下記の旧テーブル（A/B/C ランク別）も併用可能（移行期）。Stage C で旧テーブルは廃止予定です。
+      </div>
+    </div>
+
     <!-- 動画セクション -->
     <div id="rates-section-video" style="margin-bottom:20px">
       <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">動画編集者</div>
@@ -10408,6 +10437,29 @@ function canSeeRates() {
 
 let currentRatesProjectId = null;
 
+// Stage B: カテゴリマスタ (creative_categories) のキャッシュ
+//   /api/categories から取得して in-memory に保持。loadCategories() が複数回呼ばれても 1 度しかネットワークアクセスしない。
+let _categoriesCache = null;
+let _categoriesCachePromise = null;
+async function loadCategories() {
+  if (_categoriesCache) return _categoriesCache;
+  if (_categoriesCachePromise) return _categoriesCachePromise;
+  _categoriesCachePromise = (async () => {
+    try {
+      const res = await apiFetch(`${API}/categories`);
+      if (!res.ok) return [];
+      const list = await res.json();
+      _categoriesCache = Array.isArray(list) ? list : [];
+      return _categoriesCache;
+    } catch (e) {
+      console.warn('[loadCategories] failed:', e);
+      _categoriesCache = [];
+      return _categoriesCache;
+    }
+  })();
+  return _categoriesCachePromise;
+}
+
 async function openRatesModal(projectId, projectName) {
   currentRatesProjectId = projectId;
   document.getElementById('rates-project-id').value = projectId;
@@ -10415,6 +10467,9 @@ async function openRatesModal(projectId, projectName) {
   // テーブル行を生成（DOMは両方常に描画する：保存ロジックは両セクションのDOMを参照する）
   buildRatesTable('video', ['動画編集', '台本作成', 'AI生成'], ['base_fee','script_fee','ai_fee']);
   buildRatesTable('design', ['静止画1枚'], ['base_fee']);
+
+  // Stage B: カテゴリ駆動セクションを構築
+  await buildCategoryRatesSection(projectId);
 
   // 案件種別を判定（'video' | 'design'）
   // 案件の project_type を優先。フォールバック: ロール判定（デザイナー → design, それ以外 → video）
@@ -10507,6 +10562,83 @@ function buildRatesTable(type, labels, fields) {
     </tr>`).join('');
 }
 
+// Stage B: カテゴリ駆動 単価入力セクションを構築
+//   - /api/categories からカテゴリマスタを取得し、各カテゴリ 1 行で入力欄を生成
+//   - 既存の単価値は /api/projects/:id/category-rates から取得して prefill
+async function buildCategoryRatesSection(projectId) {
+  const wrap = document.getElementById('rates-category-driven-section');
+  const body = document.getElementById('category-rates-body');
+  if (!wrap || !body) return;
+
+  const categories = await loadCategories();
+  if (!categories.length) {
+    // カテゴリマスタが無い（Stage A migration 未適用）→ セクション非表示
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+
+  // 既存値取得（Stage A 未適用環境では空 / 503 が返り得るので失敗も飲む）
+  let existingByCatId = new Map();
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/category-rates`);
+    if (res.ok) {
+      const rows = await res.json();
+      (rows || []).forEach(r => existingByCatId.set(r.category_id, r));
+    }
+  } catch (e) {
+    console.warn('[buildCategoryRatesSection] load existing failed:', e);
+  }
+
+  // 各カテゴリで 1 行
+  body.innerHTML = categories.map(cat => {
+    const r = existingByCatId.get(cat.id) || {};
+    const colorDot = cat.color
+      ? `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${cat.color};margin-right:6px;vertical-align:middle"></span>`
+      : '';
+    return `
+      <tr style="border-top:1px solid var(--border)" data-category-id="${cat.id}" data-category-code="${cat.code}">
+        <td style="padding:8px;font-weight:600;color:var(--em-dark)">
+          ${colorDot}${cat.name}
+          <div style="font-size:10px;color:var(--text-muted);font-weight:400;margin-top:2px">${cat.code}</div>
+        </td>
+        <td style="padding:6px 8px;text-align:right">
+          <input type="number" class="cr-unit-price" value="${r.unit_price || 0}" min="0"
+            style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+        </td>
+        <td style="padding:6px 8px;text-align:right">
+          <input type="number" class="cr-director-unit-price" value="${r.director_unit_price || 0}" min="0"
+            style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+        </td>
+        <td style="padding:6px 8px;text-align:right">
+          <input type="number" class="cr-producer-unit-price" value="${r.producer_unit_price || 0}" min="0"
+            style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+// Stage B: カテゴリ駆動セクションの値を縦持ち配列に変換
+function collectCategoryRates() {
+  const rows = document.querySelectorAll('#category-rates-body tr[data-category-id]');
+  const result = [];
+  rows.forEach(tr => {
+    const categoryId = tr.dataset.categoryId;
+    if (!categoryId) return;
+    const unit = parseInt(tr.querySelector('.cr-unit-price')?.value || 0, 10) || 0;
+    const dir  = parseInt(tr.querySelector('.cr-director-unit-price')?.value || 0, 10) || 0;
+    const prod = parseInt(tr.querySelector('.cr-producer-unit-price')?.value || 0, 10) || 0;
+    // 全ゼロでも upsert する（明示的に「ゼロにした」を保存できるように）
+    result.push({
+      category_id: categoryId,
+      unit_price: unit,
+      director_unit_price: dir,
+      producer_unit_price: prod,
+    });
+  });
+  return result;
+}
+
 function addRateExtra(type, name = '', fee = 0, id = null) {
   addRateExtraRow(type, name, fee, id);
 }
@@ -10563,7 +10695,10 @@ async function saveRates() {
     producer_fee: parseInt(document.getElementById(`r-${type}-producer_fee`)?.value || 0) || 0,
   }));
 
-  const [ratesRes, extrasRes, dirRes, prodRes] = await Promise.all([
+  // Stage B: カテゴリ駆動 単価（縦持ち）も並行保存
+  const categoryRates = collectCategoryRates();
+
+  const [ratesRes, extrasRes, dirRes, prodRes, catRatesRes] = await Promise.all([
     apiFetch(`${API}/projects/${projectId}/rates/bulk`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -10583,8 +10718,22 @@ async function saveRates() {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ producer_rates: producerRates })
-    })
+    }),
+    // Stage B: 新テーブル（カテゴリ駆動）。カテゴリが無ければ何も送らない
+    categoryRates.length
+      ? apiFetch(`${API}/projects/${projectId}/category-rates`, {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ rates: categoryRates })
+        })
+      : Promise.resolve({ ok: true, json: () => Promise.resolve([]) }),
   ]);
+
+  // catRatesRes は Stage A migration 未適用 (503) では失敗しうるが、旧テーブルが保存されていれば致命ではないので警告で続行
+  if (catRatesRes && !catRatesRes.ok) {
+    const errBody = await catRatesRes.json().catch(()=>({}));
+    console.warn('[saveRates] category-rates 保存失敗（旧テーブル経由は成功している可能性あり）:', errBody);
+  }
 
   if (!ratesRes.ok || !extrasRes.ok || !dirRes.ok || !prodRes.ok) {
     const failedRes = !ratesRes.ok ? ratesRes
@@ -14517,7 +14666,43 @@ async function loadInvoicePreview() {
   };
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+  // Stage B: カテゴリ別の小計バナー（プレビュー上部）
+  const _ctToCatCode = (ct) => {
+    if (!ct) return 'other';
+    const s = String(ct).toLowerCase();
+    if (s.startsWith('video')) return 'video';
+    if (s.startsWith('design')) return 'image';
+    if (s.startsWith('image')) return 'image';
+    if (s.startsWith('lp')) return 'lp';
+    if (s.startsWith('hp')) return 'hp';
+    if (s.startsWith('line')) return 'line';
+    return s;
+  };
+  const _catLabelByCode = { video: '動画', image: '静止画', lp: 'LP', hp: 'HP', line: 'LINE配信', other: 'その他' };
+  const catSummary = new Map();
+  invoicePreviewItems.forEach(it => {
+    const code = _ctToCatCode(it.creative_type);
+    if (!catSummary.has(code)) catSummary.set(code, { count: 0, amount: 0 });
+    const ent = catSummary.get(code);
+    ent.count++;
+    ent.amount += it.total || 0;
+  });
+  const _catOrder = ['video', 'image', 'hp', 'lp', 'line', 'other'];
+  const catSummaryArr = _catOrder.filter(c => catSummary.has(c)).concat(
+    Array.from(catSummary.keys()).filter(c => !_catOrder.includes(c))
+  ).map(c => ({ code: c, label: _catLabelByCode[c] || c, ...catSummary.get(c) }));
+  const catSummaryHTML = (catSummaryArr.length > 1)
+    ? `<div style="margin-bottom:10px;padding:8px 12px;background:#F0FAFA;border:1px solid #B7E2E2;border-radius:6px;font-size:11px;color:#444;display:flex;flex-wrap:wrap;gap:14px">
+        <span style="color:#666;font-weight:600">カテゴリ別:</span>
+        ${catSummaryArr.map(b => `
+          <span><span style="color:#666">${b.label}</span>
+          <span style="margin-left:4px;color:#999">${b.count}件</span>
+          <span style="margin-left:6px;font-weight:600;color:#2BB8B4">¥${(b.amount||0).toLocaleString()}</span></span>`).join('')}
+      </div>`
+    : '';
+
   wrap.innerHTML = `
+  ${catSummaryHTML}
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead>
       <tr style="background:var(--surface);border-bottom:1.5px solid var(--border);position:sticky;top:0;z-index:1">
@@ -15253,6 +15438,69 @@ async function printInvoice(id) {
     }
   }
 
+  // Stage B: カテゴリ別の小計を作る（creative_type prefix から category code に正規化して集計）
+  //   - video_*  → video（動画）
+  //   - design_* → image（静止画）
+  //   - lp_* / hp_* / line_* → 同名カテゴリ
+  //   既存の「動画固定 / デザイン固定」表示をカテゴリループに置換
+  const _ctToCatCode = (ct) => {
+    if (!ct) return 'other';
+    const s = String(ct).toLowerCase();
+    if (s.startsWith('video')) return 'video';
+    if (s.startsWith('design')) return 'image';
+    if (s.startsWith('image')) return 'image';
+    if (s.startsWith('lp')) return 'lp';
+    if (s.startsWith('hp')) return 'hp';
+    if (s.startsWith('line')) return 'line';
+    return s;
+  };
+  const _catLabelByCode = {
+    video: '動画', image: '静止画', lp: 'LP', hp: 'HP', line: 'LINE配信', other: 'その他',
+  };
+  const categoryTotals = new Map(); // catCode -> { count: Set<creativeId>, amount }
+  for (const g of groups) {
+    const ct = g.creative?.creative_type;
+    const code = _ctToCatCode(ct);
+    if (!categoryTotals.has(code)) categoryTotals.set(code, { creativeIds: new Set(), amount: 0 });
+    const ent = categoryTotals.get(code);
+    ent.creativeIds.add(g.creative_id);
+    for (const it of g.items) {
+      const qty = Number(it.quantity) || 0;
+      const up  = Number(it.unit_price) || 0;
+      const amt = (it.total_amount != null) ? it.total_amount : Math.round(qty * up);
+      ent.amount += amt || 0;
+    }
+  }
+  // カテゴリ表示順: video, image, hp, lp, line, other（マスタ駆動の sort_order に近い既知順）
+  const _catOrder = ['video', 'image', 'hp', 'lp', 'line', 'other'];
+  const categoryBreakdown = _catOrder
+    .filter(code => categoryTotals.has(code))
+    .map(code => ({
+      code,
+      label: _catLabelByCode[code] || code,
+      count: categoryTotals.get(code).creativeIds.size,
+      amount: categoryTotals.get(code).amount,
+    }));
+  // _catOrder に無いカテゴリ（将来追加）も末尾に含める
+  for (const [code, ent] of categoryTotals.entries()) {
+    if (_catOrder.includes(code)) continue;
+    categoryBreakdown.push({ code, label: _catLabelByCode[code] || code, count: ent.creativeIds.size, amount: ent.amount });
+  }
+  const categoryBreakdownHTML = (categoryBreakdown.length > 1)
+    ? `
+    <div style="margin-bottom:18px;border:1px solid #e6e6e6;border-radius:6px;padding:10px 14px;background:#fafdfd">
+      <div style="font-size:10px;color:#888;margin-bottom:6px;font-weight:600;letter-spacing:.08em">カテゴリ別 内訳</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px 18px">
+        ${categoryBreakdown.map(b => `
+          <div style="font-size:11px;color:#444">
+            <span style="color:#666">${b.label}</span>
+            <span style="margin-left:6px;color:#999">${b.count}件</span>
+            <span style="margin-left:8px;font-weight:600;color:#2BB8B4">¥${(b.amount||0).toLocaleString()}</span>
+          </div>`).join('')}
+      </div>
+    </div>`
+    : '';
+
   const fmtDate = (raw) => {
     if (!raw) return '';
     const d = new Date(raw);
@@ -15356,6 +15604,8 @@ async function printInvoice(id) {
       <div style="font-size:12px;color:#555">ご請求金額（税込・内税10%）</div>
       <div style="font-size:30px;font-weight:700;color:#2BB8B4">¥${total.toLocaleString()}</div>
     </div>
+
+    ${categoryBreakdownHTML}
 
     <table style="width:100%;border-collapse:collapse;margin-bottom:0;font-size:12px">
       <thead>

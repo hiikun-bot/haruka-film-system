@@ -839,6 +839,350 @@ router.post('/projects/:id/producer-rates', requireAuth, requirePermission('proj
   res.json(data || []);
 });
 
+// ==================== カテゴリマスタ駆動 単価（Stage B） ====================
+// 設計思想（plans/hp-lp-line-enumerated-walrus.md）:
+//   - 案件×カテゴリの単価は project_category_rates に縦持ちで保存する。
+//   - 旧 project_rates / project_director_rates / project_producer_rates は当面 fallback として残し、
+//     新テーブル優先で読む。Stage C で旧テーブル参照を完全削除予定。
+//   - 「カテゴリを追加するときに、コードを 1 行も書かない」ためのマスタ駆動設計。
+//
+// 表現の対応:
+//   旧 creative_type='video'  ⇔ creative_categories.code='video'
+//   旧 creative_type='design' ⇔ creative_categories.code='image'
+//   その他 (lp/hp/line/...)   は新テーブルでのみ表現可能。
+//
+// schema-sync 失敗 / migration 未適用環境（Stage A migration 未適用）への安全フォールバック:
+//   project_category_rates が無い場合は読み出し時に空配列を返す（書き込み時は 503）。
+const isMissingPcrTable = (err) => err && /relation .*project_category_rates.* does not exist|could not find the table/i.test(err.message || '');
+const isMissingCcatTable = (err) => err && /relation .*creative_categories.* does not exist|could not find the table/i.test(err.message || '');
+
+// creative_type prefix → creative_categories.code への正規化
+//   - 'video' / 'video_short' / 'VIDEO' → 'video'
+//   - 'design' / 'design_thumbnail' → 'image'  ← 旧 'design' は image に統合
+//   - 'image' / 'lp' / 'hp' / 'line' → そのまま
+function normalizeToCategoryCode(creativeType) {
+  if (typeof creativeType !== 'string') return null;
+  const s = creativeType.trim().toLowerCase();
+  if (!s) return null;
+  if (s.startsWith('video')) return 'video';
+  if (s.startsWith('design')) return 'image';
+  if (s.startsWith('image')) return 'image';
+  if (s.startsWith('lp')) return 'lp';
+  if (s.startsWith('hp')) return 'hp';
+  if (s.startsWith('line')) return 'line';
+  return s;
+}
+
+// カテゴリマスタを 1 度だけ in-memory にロード（軽量・低頻度）
+// id <-> code の双方向参照に使う。
+let _categoryCacheById = null;     // Map<UUID, {id, code, name, render_kind, sort_order, color}>
+let _categoryCacheByCode = null;   // Map<code, {id, code, ...}>
+let _categoryCacheLoadedAt = 0;
+const _CATEGORY_CACHE_TTL_MS = 30 * 1000; // 30秒キャッシュ
+
+async function loadCategoryCache() {
+  const now = Date.now();
+  if (_categoryCacheById && now - _categoryCacheLoadedAt < _CATEGORY_CACHE_TTL_MS) return;
+  const { data, error } = await supabase
+    .from('creative_categories')
+    .select('id, code, name, render_kind, sort_order, color, is_active')
+    .order('sort_order', { ascending: true });
+  if (error) {
+    if (isMissingCcatTable(error)) {
+      // Stage A migration 未適用 → 空マップでフォールバック（呼び出し側は旧テーブル経由で動作）
+      _categoryCacheById = new Map();
+      _categoryCacheByCode = new Map();
+      _categoryCacheLoadedAt = now;
+      return;
+    }
+    throw new Error(`creative_categories 取得失敗: ${error.message}`);
+  }
+  _categoryCacheById = new Map();
+  _categoryCacheByCode = new Map();
+  for (const c of (data || [])) {
+    _categoryCacheById.set(c.id, c);
+    _categoryCacheByCode.set(c.code, c);
+  }
+  _categoryCacheLoadedAt = now;
+}
+
+async function getCategoryById(id) {
+  await loadCategoryCache();
+  return _categoryCacheById.get(id) || null;
+}
+
+async function getCategoryByCode(code) {
+  await loadCategoryCache();
+  return _categoryCacheByCode.get(code) || null;
+}
+
+async function getAllCategories() {
+  await loadCategoryCache();
+  return Array.from(_categoryCacheById.values())
+    .filter(c => c.is_active !== false)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
+
+// 案件×カテゴリの単価を解決する。
+//   優先順: project_category_rates → 旧 project_rates / project_director_rates / project_producer_rates
+//   返り値: { unit_price, director_unit_price, producer_unit_price, base_fee, script_fee, ai_fee, other_fee }
+//   ※ project_rates は (project_id, creative_type, rank) で複数行あるので、rank も指定できる。
+async function getProjectCategoryRate(projectId, categoryId, opts = {}) {
+  const rank = opts.rank || null;
+  if (!projectId || !categoryId) return null;
+
+  // 1) 新テーブル優先
+  const { data: pcrRows, error: pcrErr } = await supabase
+    .from('project_category_rates')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('category_id', categoryId);
+  if (pcrErr && !isMissingPcrTable(pcrErr)) {
+    console.warn('[getProjectCategoryRate] project_category_rates 取得失敗:', pcrErr.message);
+  }
+  if (pcrRows && pcrRows.length) {
+    // rank が指定されていれば優先、なければ rank=null > 任意の順
+    const exact = pcrRows.find(r => r.rank === rank);
+    const nullRank = pcrRows.find(r => r.rank == null);
+    const any = pcrRows[0];
+    const r = exact || nullRank || any;
+    return {
+      source: 'project_category_rates',
+      unit_price: r.unit_price ?? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)),
+      director_unit_price: r.director_unit_price || 0,
+      producer_unit_price: r.producer_unit_price || 0,
+      base_fee:   r.base_fee   || 0,
+      script_fee: r.script_fee || 0,
+      ai_fee:     r.ai_fee     || 0,
+      other_fee:  r.other_fee  || 0,
+      rank: r.rank,
+    };
+  }
+
+  // 2) フォールバック: 旧テーブル群（category_id → code 経由で creative_type を逆引き）
+  const cat = await getCategoryById(categoryId);
+  if (!cat) return null;
+  // 旧テーブルは creative_type ('video'|'design') しか知らない。
+  // image → design / video → video へ写像、それ以外（lp/hp/line）は旧テーブルに対応行が無い。
+  const legacyType = cat.code === 'video' ? 'video'
+                   : cat.code === 'image' ? 'design'
+                   : null;
+  if (!legacyType) return null;
+
+  const [ratesRes, dirRes, prodRes] = await Promise.all([
+    supabase.from('project_rates').select('*').eq('project_id', projectId).eq('creative_type', legacyType),
+    supabase.from('project_director_rates').select('director_fee').eq('project_id', projectId).eq('creative_type', legacyType).maybeSingle(),
+    supabase.from('project_producer_rates').select('producer_fee').eq('project_id', projectId).eq('creative_type', legacyType).maybeSingle(),
+  ]);
+  const rates = ratesRes.data || [];
+  const r = (rank && rates.find(x => x.rank === rank)) || rates[0] || null;
+  if (!r && !dirRes.data && !prodRes.data) return null;
+  return {
+    source: 'legacy',
+    unit_price: r ? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)) : 0,
+    director_unit_price: dirRes.data?.director_fee || 0,
+    producer_unit_price: prodRes.data?.producer_fee || 0,
+    base_fee:   r?.base_fee   || 0,
+    script_fee: r?.script_fee || 0,
+    ai_fee:     r?.ai_fee     || 0,
+    other_fee:  r?.other_fee  || 0,
+    rank: r?.rank || null,
+  };
+}
+
+// project_id 配下の全カテゴリ単価を一括取得し、Map<category_id, {...}> で返す。
+// invoice 計算系で 1 案件あたり複数 creative を計算するときの N+1 解消。
+async function getProjectCategoryRateMap(projectIds) {
+  if (!projectIds || !projectIds.length) return new Map();
+
+  // Map<`${project_id}:${category_id}`, mergedRow>
+  const result = new Map();
+
+  // 1) 新テーブル
+  const { data: pcrRows, error: pcrErr } = await supabase
+    .from('project_category_rates')
+    .select('*')
+    .in('project_id', projectIds);
+  if (pcrErr && !isMissingPcrTable(pcrErr)) {
+    console.warn('[getProjectCategoryRateMap] project_category_rates 取得失敗:', pcrErr.message);
+  }
+  for (const r of (pcrRows || [])) {
+    const key = `${r.project_id}:${r.category_id}:${r.rank ?? '__null__'}`;
+    result.set(key, {
+      project_id: r.project_id,
+      category_id: r.category_id,
+      rank: r.rank,
+      source: 'project_category_rates',
+      unit_price: r.unit_price ?? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)),
+      director_unit_price: r.director_unit_price || 0,
+      producer_unit_price: r.producer_unit_price || 0,
+      base_fee:   r.base_fee   || 0,
+      script_fee: r.script_fee || 0,
+      ai_fee:     r.ai_fee     || 0,
+      other_fee:  r.other_fee  || 0,
+    });
+  }
+
+  return result;
+}
+
+// GET /api/categories — フロント `loadCategories()` 用にカテゴリ一覧を返す
+router.get('/categories', async (req, res) => {
+  try {
+    const cats = await getAllCategories();
+    res.json(cats);
+  } catch (e) {
+    console.warn('[GET /categories] failed:', e.message);
+    res.json([]); // 失敗時もフロントを止めないため空配列
+  }
+});
+
+// GET /api/projects/:id/category-rates
+//   - project_category_rates から縦持ちで取得
+//   - カテゴリの全行を保証（未設定カテゴリも 0 値で返す）
+router.get('/projects/:id/category-rates', async (req, res) => {
+  const projectId = req.params.id;
+  try {
+    const cats = await getAllCategories();
+    const { data, error } = await supabase
+      .from('project_category_rates')
+      .select('*')
+      .eq('project_id', projectId);
+    if (error && !isMissingPcrTable(error)) {
+      return res.status(500).json({ error: error.message });
+    }
+    const rows = data || [];
+    // カテゴリごとに rank=null の代表行をマージ（フロントは rank 不問の単一フォーム想定）
+    const byCat = new Map();
+    for (const r of rows) {
+      // rank=null を優先、それ以外は最初の行
+      const existing = byCat.get(r.category_id);
+      if (!existing || (existing.rank != null && r.rank == null)) {
+        byCat.set(r.category_id, r);
+      }
+    }
+    const merged = cats.map(cat => {
+      const r = byCat.get(cat.id);
+      return {
+        category_id: cat.id,
+        category_code: cat.code,
+        category_name: cat.name,
+        sort_order: cat.sort_order,
+        unit_price:          r?.unit_price          ?? ((r?.base_fee||0)+(r?.script_fee||0)+(r?.ai_fee||0)+(r?.other_fee||0)),
+        director_unit_price: r?.director_unit_price ?? 0,
+        producer_unit_price: r?.producer_unit_price ?? 0,
+      };
+    });
+    res.json(merged);
+  } catch (e) {
+    console.error('[GET /projects/:id/category-rates] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/projects/:id/category-rates
+//   - body: { rates: [{ category_id, unit_price, director_unit_price, producer_unit_price }, ...] }
+//   - upsert: (project_id, category_id, rank=NULL) UNIQUE
+router.put('/projects/:id/category-rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
+  const projectId = req.params.id;
+  const rates = Array.isArray(req.body?.rates) ? req.body.rates : [];
+  if (!rates.length) return res.json([]);
+
+  // 入力サニタイズ（金額は整数）
+  const sanitized = rates
+    .filter(r => r && r.category_id)
+    .map(r => ({
+      project_id: projectId,
+      category_id: r.category_id,
+      rank: null,
+      unit_price:          Math.max(0, parseInt(r.unit_price, 10) || 0),
+      director_unit_price: Math.max(0, parseInt(r.director_unit_price, 10) || 0),
+      producer_unit_price: Math.max(0, parseInt(r.producer_unit_price, 10) || 0),
+      updated_at: new Date().toISOString(),
+    }));
+
+  if (!sanitized.length) return res.json([]);
+
+  const { data, error } = await supabase
+    .from('project_category_rates')
+    .upsert(sanitized, { onConflict: 'project_id,category_id,rank' })
+    .select();
+  if (error) {
+    if (isMissingPcrTable(error)) {
+      return res.status(503).json({ error: 'project_category_rates テーブルが未作成です。Stage A migration (migrations/2026-05-05_creative_categories.sql) を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/invoice-rates-diff/:projectId
+//   - 旧 project_rates 参照と新 project_category_rates 参照の両方の単価を返し、差分検出に使う。
+//   - Stage B 検証用（Stage C で削除予定）
+router.get('/invoice-rates-diff/:projectId', requireAuth, async (req, res) => {
+  const projectId = req.params.projectId;
+  try {
+    const cats = await getAllCategories();
+    // 新テーブル
+    const { data: pcrRows, error: pcrErr } = await supabase
+      .from('project_category_rates')
+      .select('*')
+      .eq('project_id', projectId);
+    if (pcrErr && !isMissingPcrTable(pcrErr)) {
+      return res.status(500).json({ error: pcrErr.message });
+    }
+    // 旧テーブル
+    const [{ data: oldRates }, { data: oldDir }, { data: oldProd }] = await Promise.all([
+      supabase.from('project_rates').select('*').eq('project_id', projectId),
+      supabase.from('project_director_rates').select('*').eq('project_id', projectId),
+      supabase.from('project_producer_rates').select('*').eq('project_id', projectId),
+    ]);
+
+    const diffs = [];
+    for (const cat of cats) {
+      const legacyType = cat.code === 'video' ? 'video' : cat.code === 'image' ? 'design' : null;
+      // 新テーブル: rank=null 代表
+      const newRow = (pcrRows || []).find(r => r.category_id === cat.id && r.rank == null)
+                  || (pcrRows || []).find(r => r.category_id === cat.id);
+      const newUnitPrice = newRow?.unit_price
+        ?? ((newRow?.base_fee||0)+(newRow?.script_fee||0)+(newRow?.ai_fee||0)+(newRow?.other_fee||0));
+      // 旧テーブル
+      const oldRate = legacyType ? (oldRates || []).find(r => r.creative_type === legacyType) : null;
+      const oldUnitPrice = oldRate
+        ? ((oldRate.base_fee||0)+(oldRate.script_fee||0)+(oldRate.ai_fee||0)+(oldRate.other_fee||0))
+        : null;
+      const oldDirRow = legacyType ? (oldDir || []).find(d => d.creative_type === legacyType) : null;
+      const oldProdRow = legacyType ? (oldProd || []).find(p => p.creative_type === legacyType) : null;
+
+      diffs.push({
+        category_code: cat.code,
+        category_name: cat.name,
+        new: {
+          unit_price: newUnitPrice ?? null,
+          director_unit_price: newRow?.director_unit_price ?? null,
+          producer_unit_price: newRow?.producer_unit_price ?? null,
+        },
+        legacy: {
+          legacy_type: legacyType,
+          unit_price: oldUnitPrice,
+          director_unit_price: oldDirRow?.director_fee ?? null,
+          producer_unit_price: oldProdRow?.producer_fee ?? null,
+        },
+        diff: {
+          unit_price:          (newUnitPrice ?? 0) !== (oldUnitPrice ?? 0),
+          director_unit_price: (newRow?.director_unit_price ?? 0) !== (oldDirRow?.director_fee ?? 0),
+          producer_unit_price: (newRow?.producer_unit_price ?? 0) !== (oldProdRow?.producer_fee ?? 0),
+        },
+      });
+    }
+    const hasAnyDiff = diffs.some(d => d.diff.unit_price || d.diff.director_unit_price || d.diff.producer_unit_price);
+    res.json({ project_id: projectId, has_diff: hasAnyDiff, categories: diffs });
+  } catch (e) {
+    console.error('[invoice-rates-diff] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // クライアント報酬設定 取得
 router.get('/projects/:id/client-fee', async (req, res) => {
   const { data, error } = await supabase
@@ -1205,12 +1549,16 @@ async function aggregateMonthlyRevenue({ year, month }) {
   const ratesByProject = new Map();
   const directorRateByProject = new Map(); // pid -> { video: fee, design: fee }
   const producerRateByProject = new Map(); // pid -> { video: fee, design: fee }
+  // Stage B: 新テーブル（project_category_rates）を pid×categoryCode で参照可能にする
+  // pid -> Map<categoryCode, { unit_price, director_unit_price, producer_unit_price, rows: [...] }>
+  const categoryRateByProject = new Map();
   if (fcProjectIds.length) {
-    const [feesRes, ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
+    const [feesRes, ratesRes, dirRatesRes, prodRatesRes, pcrRes] = await Promise.all([
       supabase.from('project_client_fees').select('*').in('project_id', fcProjectIds),
       supabase.from('project_rates').select('*').in('project_id', fcProjectIds),
       supabase.from('project_director_rates').select('*').in('project_id', fcProjectIds),
       supabase.from('project_producer_rates').select('*').in('project_id', fcProjectIds),
+      supabase.from('project_category_rates').select('*').in('project_id', fcProjectIds),
     ]);
     (feesRes.data || []).forEach(f => clientFeeByProject.set(f.project_id, f));
     (ratesRes.data || []).forEach(r => {
@@ -1239,23 +1587,83 @@ async function aggregateMonthlyRevenue({ year, month }) {
         producerRateByProject.get(p.project_id)[p.creative_type] = p.producer_fee || 0;
       });
     }
+    // Stage B: project_category_rates を category code で索引（カテゴリマスタを引いて category_id → code に変換）
+    if (pcrRes.error) {
+      if (!isMissingPcrTable(pcrRes.error)) {
+        console.warn('[aggregateMonthlyRevenue] project_category_rates load failed:', pcrRes.error.message);
+      }
+    } else {
+      try { await loadCategoryCache(); } catch(e) {}
+      (pcrRes.data || []).forEach(r => {
+        const cat = _categoryCacheById?.get(r.category_id);
+        if (!cat) return;
+        if (!categoryRateByProject.has(r.project_id)) categoryRateByProject.set(r.project_id, new Map());
+        const m = categoryRateByProject.get(r.project_id);
+        // rank=null を代表行として優先
+        const existing = m.get(cat.code);
+        if (!existing || (existing._rank != null && r.rank == null)) {
+          m.set(cat.code, {
+            _rank: r.rank,
+            unit_price: r.unit_price ?? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)),
+            director_unit_price: r.director_unit_price || 0,
+            producer_unit_price: r.producer_unit_price || 0,
+            base_fee: r.base_fee || 0,
+            script_fee: r.script_fee || 0,
+            ai_fee: r.ai_fee || 0,
+            other_fee: r.other_fee || 0,
+          });
+        }
+      });
+    }
   }
+  // Stage B: baseType (video/design) を category code (video/image) に正規化
+  const baseTypeToCategoryCode = (bt) => bt === 'design' ? 'image' : (bt === 'video' ? 'video' : bt);
   const findRate = (pid, baseType, rank) => {
+    // 1) 新テーブル優先
+    const catCode = baseTypeToCategoryCode(baseType);
+    const newMap = categoryRateByProject.get(pid);
+    const newRow = newMap?.get(catCode);
+    if (newRow && (newRow.base_fee || newRow.script_fee || newRow.ai_fee || newRow.other_fee || newRow.unit_price)) {
+      return {
+        creative_type: baseType,
+        rank: newRow._rank,
+        base_fee: newRow.base_fee,
+        script_fee: newRow.script_fee,
+        ai_fee: newRow.ai_fee,
+        other_fee: newRow.other_fee,
+        // base_fee 等が未設定でも unit_price だけセットされている場合は base_fee に流す
+        _new_unit_price: newRow.unit_price || 0,
+      };
+    }
+    // 2) 旧テーブルフォールバック
     const list = ratesByProject.get(pid) || [];
     return list.find(r => r.creative_type === baseType && r.rank === rank)
         || list.find(r => r.creative_type === baseType) || null;
   };
   const findDirectorFee = (pid, baseType) => {
+    // 新テーブル優先
+    const catCode = baseTypeToCategoryCode(baseType);
+    const newRow = categoryRateByProject.get(pid)?.get(catCode);
+    if (newRow && (newRow.director_unit_price || 0) > 0) return newRow.director_unit_price;
     const m = directorRateByProject.get(pid);
     if (!m) return 0;
     return m[baseType] || 0;
   };
   const findProducerFee = (pid, baseType) => {
+    const catCode = baseTypeToCategoryCode(baseType);
+    const newRow = categoryRateByProject.get(pid)?.get(catCode);
+    if (newRow && (newRow.producer_unit_price || 0) > 0) return newRow.producer_unit_price;
     const m = producerRateByProject.get(pid);
     if (!m) return 0;
     return m[baseType] || 0;
   };
-  const calcRateAmount = (rate) => rate ? ((rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0)) : 0;
+  // Stage B: 新テーブル経由で unit_price のみ設定されているケース (_new_unit_price) も拾う
+  const calcRateAmount = (rate) => {
+    if (!rate) return 0;
+    const sumOfFees = (rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0);
+    if (sumOfFees > 0) return sumOfFees;
+    return rate._new_unit_price || 0;
+  };
 
   let forecastRevenue = 0, forecastCost = 0;
   for (const c of (forecastCreatives || [])) {
@@ -1376,13 +1784,16 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   let ratesByProject = new Map();
   let directorRateByProject = new Map(); // pid -> { video, design }
   let producerRateByProject = new Map(); // pid -> { video, design }
+  // Stage B: project_category_rates ベースのマップ（pid -> Map<categoryCode, row>）
+  let categoryRateByProject = new Map();
   let directorUserById = new Map(); // director_id -> user info（director_id が assignees に居ないケースを救う）
   let producerUserById = new Map(); // producer_id -> user info（producer_id が assignees に居ないケースを救う）
   if (projectIds.length > 0) {
-    const [ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
+    const [ratesRes, dirRatesRes, prodRatesRes, pcrRes] = await Promise.all([
       supabase.from('project_rates').select('*').in('project_id', projectIds),
       supabase.from('project_director_rates').select('*').in('project_id', projectIds),
       supabase.from('project_producer_rates').select('*').in('project_id', projectIds),
+      supabase.from('project_category_rates').select('*').in('project_id', projectIds),
     ]);
     for (const r of (ratesRes.data || [])) {
       if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
@@ -1408,6 +1819,33 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         producerRateByProject.get(p.project_id)[p.creative_type] = p.producer_fee || 0;
       });
     }
+    // Stage B: project_category_rates の取り込み（カテゴリマスタ id → code 解決）
+    if (pcrRes.error) {
+      if (!isMissingPcrTable(pcrRes.error)) {
+        console.warn('[aggregateCreatorSummary] project_category_rates load failed:', pcrRes.error.message);
+      }
+    } else {
+      try { await loadCategoryCache(); } catch(e) {}
+      (pcrRes.data || []).forEach(r => {
+        const cat = _categoryCacheById?.get(r.category_id);
+        if (!cat) return;
+        if (!categoryRateByProject.has(r.project_id)) categoryRateByProject.set(r.project_id, new Map());
+        const m = categoryRateByProject.get(r.project_id);
+        const existing = m.get(cat.code);
+        if (!existing || (existing._rank != null && r.rank == null)) {
+          m.set(cat.code, {
+            _rank: r.rank,
+            unit_price: r.unit_price ?? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)),
+            director_unit_price: r.director_unit_price || 0,
+            producer_unit_price: r.producer_unit_price || 0,
+            base_fee: r.base_fee || 0,
+            script_fee: r.script_fee || 0,
+            ai_fee: r.ai_fee || 0,
+            other_fee: r.other_fee || 0,
+          });
+        }
+      });
+    }
     // assignees に居ないディレクター/プロデューサーを救うため両 ID のユーザー情報を一括取得
     const directorIds = Array.from(new Set(
       (creatives || []).map(c => c.projects?.director_id).filter(Boolean)
@@ -1426,25 +1864,51 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
       });
     }
   }
+  // Stage B: baseType (video/design) → category code (video/image)
+  const _baseTypeToCatCode_cs = (bt) => bt === 'design' ? 'image' : (bt === 'video' ? 'video' : bt);
   const findRate = (projectId, baseType, rank) => {
+    // 新テーブル優先
+    const catCode = _baseTypeToCatCode_cs(baseType);
+    const newRow = categoryRateByProject.get(projectId)?.get(catCode);
+    if (newRow && (newRow.base_fee || newRow.script_fee || newRow.ai_fee || newRow.other_fee || newRow.unit_price)) {
+      return {
+        creative_type: baseType,
+        rank: newRow._rank,
+        base_fee:   newRow.base_fee,
+        script_fee: newRow.script_fee,
+        ai_fee:     newRow.ai_fee,
+        other_fee:  newRow.other_fee,
+        _new_unit_price: newRow.unit_price || 0,
+      };
+    }
+    // 旧テーブルフォールバック
     const list = ratesByProject.get(projectId) || [];
     return list.find(r => r.creative_type === baseType && r.rank === rank)
         || list.find(r => r.creative_type === baseType)
         || null;
   };
   const findDirectorFee = (projectId, baseType) => {
+    const catCode = _baseTypeToCatCode_cs(baseType);
+    const newRow = categoryRateByProject.get(projectId)?.get(catCode);
+    if (newRow && (newRow.director_unit_price || 0) > 0) return newRow.director_unit_price;
     const m = directorRateByProject.get(projectId);
     if (!m) return 0;
     return m[baseType] || 0;
   };
   const findProducerFee = (projectId, baseType) => {
+    const catCode = _baseTypeToCatCode_cs(baseType);
+    const newRow = categoryRateByProject.get(projectId)?.get(catCode);
+    if (newRow && (newRow.producer_unit_price || 0) > 0) return newRow.producer_unit_price;
     const m = producerRateByProject.get(projectId);
     if (!m) return 0;
     return m[baseType] || 0;
   };
+  // Stage B: 旧 base_fee+script_fee+ai_fee+other_fee で 0 のときは新テーブル _new_unit_price をフォールバック
   const calcUnitPrice = (rate) => {
     if (!rate) return 0;
-    return (rate.base_fee || 0) + (rate.script_fee || 0) + (rate.ai_fee || 0) + (rate.other_fee || 0);
+    const sum = (rate.base_fee || 0) + (rate.script_fee || 0) + (rate.ai_fee || 0) + (rate.other_fee || 0);
+    if (sum > 0) return sum;
+    return rate._new_unit_price || 0;
   };
 
   // ユーザーごとに集計
@@ -4228,11 +4692,14 @@ router.get('/invoices/preview-items', async (req, res) => {
   let ratesMap = {};
   let directorFeeMap = {}; // `${pid}__${type}` -> fee
   let producerFeeMap = {}; // `${pid}__${type}` -> fee
+  // Stage B: 新テーブル（project_category_rates）からも index を作る
+  let categoryRateMap = {}; // `${pid}__${categoryCode}` -> { unit_price, director_unit_price, producer_unit_price, base_fee, ... }
   if (projectIds.length) {
-    const [ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
+    const [ratesRes, dirRatesRes, prodRatesRes, pcrRes] = await Promise.all([
       supabase.from('project_rates').select('*').in('project_id', projectIds),
       supabase.from('project_director_rates').select('*').in('project_id', projectIds),
       supabase.from('project_producer_rates').select('*').in('project_id', projectIds),
+      supabase.from('project_category_rates').select('*').in('project_id', projectIds),
     ]);
     (ratesRes.data || []).forEach(r => {
       const key = `${r.project_id}__${r.creative_type}__${r.rank}`;
@@ -4256,7 +4723,36 @@ router.get('/invoices/preview-items', async (req, res) => {
         producerFeeMap[`${p.project_id}__${p.creative_type}`] = p.producer_fee || 0;
       });
     }
+    // Stage B: project_category_rates → category code 単位で索引
+    if (pcrRes.error) {
+      if (!isMissingPcrTable(pcrRes.error)) {
+        console.warn('[preview-items] project_category_rates load failed:', pcrRes.error.message);
+      }
+    } else {
+      try { await loadCategoryCache(); } catch(e) {}
+      (pcrRes.data || []).forEach(r => {
+        const cat = _categoryCacheById?.get(r.category_id);
+        if (!cat) return;
+        const key = `${r.project_id}__${cat.code}`;
+        const existing = categoryRateMap[key];
+        // rank=null を代表行として優先
+        if (!existing || (existing._rank != null && r.rank == null)) {
+          categoryRateMap[key] = {
+            _rank: r.rank,
+            unit_price: r.unit_price ?? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)),
+            director_unit_price: r.director_unit_price || 0,
+            producer_unit_price: r.producer_unit_price || 0,
+            base_fee:   r.base_fee   || 0,
+            script_fee: r.script_fee || 0,
+            ai_fee:     r.ai_fee     || 0,
+            other_fee:  r.other_fee  || 0,
+          };
+        }
+      });
+    }
   }
+  // Stage B: baseType (video/design) → category code (video/image) の正規化
+  const _baseTypeToCatCode_pi = (bt) => bt === 'design' ? 'image' : (bt === 'video' ? 'video' : bt);
 
   // ユーザーの現在のランクを取得（rank_appliedがNULLの古いデータ用）
   const { data: currentUser } = await supabase.from('users').select('rank').eq('id', uid).single();
@@ -4284,15 +4780,40 @@ router.get('/invoices/preview-items', async (req, res) => {
     const fallbackKey = `${c.project_id}__${baseType}__null`;
     const anyKey      = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__${baseType}__`));
     const anyProjectKey = Object.keys(ratesMap).find(k => k.startsWith(`${c.project_id}__`));
-    const rate = (assignment ? (ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null) || (anyProjectKey ? ratesMap[anyProjectKey] : null)) : null);
-    const rateObj = rate ? {
-      base_fee:   rate.base_fee   || 0,
-      script_fee: rate.script_fee || 0,
-      ai_fee:     rate.ai_fee     || 0,
-      other_fee:  rate.other_fee  || 0,
-    } : null;
-    const directorFee = isDirector ? (directorFeeMap[`${c.project_id}__${baseType}`] || 0) : 0;
-    const producerFee = isProducer ? (producerFeeMap[`${c.project_id}__${baseType}`] || 0) : 0;
+    // Stage B: 新テーブルを優先して rate を解決
+    const catCode = _baseTypeToCatCode_pi(baseType);
+    const newCatRate = categoryRateMap[`${c.project_id}__${catCode}`] || null;
+    const legacyRate = (assignment ? (ratesMap[rateKey] || ratesMap[fallbackKey] || (anyKey ? ratesMap[anyKey] : null) || (anyProjectKey ? ratesMap[anyProjectKey] : null)) : null);
+    let rateObj = null;
+    if (assignment) {
+      if (newCatRate && (newCatRate.base_fee || newCatRate.script_fee || newCatRate.ai_fee || newCatRate.other_fee || newCatRate.unit_price)) {
+        // 新テーブル: base_fee 系がそろっていればそのまま、そうでなければ unit_price を base_fee として表現
+        const allBreakdownZero = !(newCatRate.base_fee || newCatRate.script_fee || newCatRate.ai_fee || newCatRate.other_fee);
+        rateObj = allBreakdownZero ? {
+          base_fee:   newCatRate.unit_price || 0,
+          script_fee: 0,
+          ai_fee:     0,
+          other_fee:  0,
+        } : {
+          base_fee:   newCatRate.base_fee   || 0,
+          script_fee: newCatRate.script_fee || 0,
+          ai_fee:     newCatRate.ai_fee     || 0,
+          other_fee:  newCatRate.other_fee  || 0,
+        };
+      } else if (legacyRate) {
+        rateObj = {
+          base_fee:   legacyRate.base_fee   || 0,
+          script_fee: legacyRate.script_fee || 0,
+          ai_fee:     legacyRate.ai_fee     || 0,
+          other_fee:  legacyRate.other_fee  || 0,
+        };
+      }
+    }
+    // Stage B: ディレクター・プロデュース費も新テーブル優先
+    const dirFromNew = newCatRate?.director_unit_price || 0;
+    const prodFromNew = newCatRate?.producer_unit_price || 0;
+    const directorFee = isDirector ? (dirFromNew || directorFeeMap[`${c.project_id}__${baseType}`] || 0) : 0;
+    const producerFee = isProducer ? (prodFromNew || producerFeeMap[`${c.project_id}__${baseType}`] || 0) : 0;
     const breakdown = [
       ...(rateObj ? [
         { cost_type: 'base_fee',   label: PREVIEW_COST_TYPE_LABELS.base_fee,   unit_price: rateObj.base_fee   },
@@ -5645,10 +6166,11 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
 
   // 対象案件の単価をまとめて取得
   const projectIds = [...new Set(creatives.map(c => c.project_id))];
-  const [ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
+  const [ratesRes, dirRatesRes, prodRatesRes, pcrRes] = await Promise.all([
     supabase.from('project_rates').select('*').in('project_id', projectIds),
     supabase.from('project_director_rates').select('*').in('project_id', projectIds),
     supabase.from('project_producer_rates').select('*').in('project_id', projectIds),
+    supabase.from('project_category_rates').select('*').in('project_id', projectIds),
   ]);
   const rates = ratesRes.data || [];
   // director_rates / producer_rates は schema-sync 未適用環境でも止めない（fallback: 空）
@@ -5658,15 +6180,65 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   if (prodRatesRes.error && !isMissingPprTable(prodRatesRes.error)) {
     console.warn('[invoices/generate] producer_rates load failed:', prodRatesRes.error.message);
   }
+  if (pcrRes.error && !isMissingPcrTable(pcrRes.error)) {
+    console.warn('[invoices/generate] project_category_rates load failed:', pcrRes.error.message);
+  }
   const dirRates = dirRatesRes.data || [];
   const prodRates = prodRatesRes.data || [];
+  // Stage B: project_category_rates を category code 単位で索引（pid -> Map<catCode, row>）
+  const newCategoryRateByProject = new Map();
+  try { await loadCategoryCache(); } catch(e) {}
+  (pcrRes.data || []).forEach(r => {
+    const cat = _categoryCacheById?.get(r.category_id);
+    if (!cat) return;
+    if (!newCategoryRateByProject.has(r.project_id)) newCategoryRateByProject.set(r.project_id, new Map());
+    const m = newCategoryRateByProject.get(r.project_id);
+    const existing = m.get(cat.code);
+    if (!existing || (existing._rank != null && r.rank == null)) {
+      m.set(cat.code, {
+        _rank: r.rank,
+        unit_price: r.unit_price ?? ((r.base_fee||0)+(r.script_fee||0)+(r.ai_fee||0)+(r.other_fee||0)),
+        director_unit_price: r.director_unit_price || 0,
+        producer_unit_price: r.producer_unit_price || 0,
+        base_fee:   r.base_fee   || 0,
+        script_fee: r.script_fee || 0,
+        ai_fee:     r.ai_fee     || 0,
+        other_fee:  r.other_fee  || 0,
+      });
+    }
+  });
+  const _baseTypeToCatCode_gen = (bt) => bt === 'design' ? 'image' : (bt === 'video' ? 'video' : bt);
   const findDirectorFeeForGenerate = (pid, baseType) => {
+    // 新テーブル優先
+    const newRow = newCategoryRateByProject.get(pid)?.get(_baseTypeToCatCode_gen(baseType));
+    if (newRow && (newRow.director_unit_price || 0) > 0) return newRow.director_unit_price;
     const row = dirRates.find(d => d.project_id === pid && d.creative_type === baseType);
     return row?.director_fee || 0;
   };
   const findProducerFeeForGenerate = (pid, baseType) => {
+    const newRow = newCategoryRateByProject.get(pid)?.get(_baseTypeToCatCode_gen(baseType));
+    if (newRow && (newRow.producer_unit_price || 0) > 0) return newRow.producer_unit_price;
     const row = prodRates.find(d => d.project_id === pid && d.creative_type === baseType);
     return row?.producer_fee || 0;
+  };
+  // Stage B: 編集者単価も新テーブル優先で解決（rank 一致 → 旧 fallback）
+  const findRateForGenerate = (pid, baseType, rank) => {
+    const newRow = newCategoryRateByProject.get(pid)?.get(_baseTypeToCatCode_gen(baseType));
+    if (newRow && (newRow.base_fee || newRow.script_fee || newRow.ai_fee || newRow.other_fee || newRow.unit_price)) {
+      const allZero = !(newRow.base_fee || newRow.script_fee || newRow.ai_fee || newRow.other_fee);
+      return {
+        creative_type: baseType,
+        rank: newRow._rank,
+        // 旧 base_fee 等が未設定なら unit_price を base_fee に流す（既存 invoice_items の構造を変えない）
+        base_fee:   allZero ? (newRow.unit_price || 0) : (newRow.base_fee   || 0),
+        script_fee: allZero ? 0                         : (newRow.script_fee || 0),
+        ai_fee:     allZero ? 0                         : (newRow.ai_fee     || 0),
+        other_fee:  allZero ? 0                         : (newRow.other_fee  || 0),
+      };
+    }
+    return rates?.find(r => r.project_id === pid && r.creative_type === baseType && r.rank === rank)
+        || rates?.find(r => r.project_id === pid && r.creative_type === baseType)
+        || null;
   };
 
   // 請求書番号を自動採番
@@ -5714,15 +6286,13 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const creativeLabel = creative.file_name || '';
     let breakdown;
 
-    // デフォルト単価（project_rates由来）を算出
+    // デフォルト単価（Stage B: project_category_rates 優先 / project_rates フォールバック）
     const baseType = creative.creative_type?.startsWith('video') ? 'video'
                    : creative.creative_type?.startsWith('design') ? 'design'
                    : creative.creative_type;
-    const defaultRate = assignment ? (rates?.find(
-      r => r.project_id === creative.project_id && r.creative_type === baseType && r.rank === assignment.rank_applied
-    ) || rates?.find(
-      r => r.project_id === creative.project_id && r.creative_type === baseType
-    )) : null;
+    const defaultRate = assignment
+      ? findRateForGenerate(creative.project_id, baseType, assignment.rank_applied)
+      : null;
     const defaultDirectorFee = isDirector ? findDirectorFeeForGenerate(creative.project_id, baseType) : 0;
     const defaultProducerFee = isProducer ? findProducerFeeForGenerate(creative.project_id, baseType) : 0;
     const defaultUnitPriceMap = {
