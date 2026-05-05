@@ -120,8 +120,14 @@ function getEffectiveRole(req) {
 }
 
 // ==================== DB駆動の権限チェック ====================
-// role_permissions テーブルをキャッシュし、必要に応じて強制リロード
-let _permsCache = null; // Map<"role|key", boolean>
+// Stage 0 / Step 2 (ADR 003): role_permissions の読み込みを dual-read 化。
+//   - 新: role_permissions.role_id (UUID) → roles JOIN でコードを得る
+//   - 旧: role_permissions.role TEXT (合成値 'producer_director' を含む)
+// 両方を読み、ロールコードと permission_key の組み合わせでキャッシュする。
+// 合成値 'producer_director' の TEXT 行は role_id NULL のまま残っているため、
+// role TEXT 経由でしか引けない。これを producer / director の和集合として
+// 扱うのは utils/roles.js#roleCodesHavePermission 側で吸収する。
+let _permsCache = null; // Map<"code|key", boolean>
 let _permsLoadedAt = 0;
 const PERMS_TTL_MS = 60 * 1000; // 60秒
 
@@ -129,10 +135,21 @@ async function loadPermissions(force = false) {
   if (!force && _permsCache && Date.now() - _permsLoadedAt < PERMS_TTL_MS) return _permsCache;
   try {
     const { data, error } = await supabase
-      .from('role_permissions').select('role, permission_key, allowed');
+      .from('role_permissions').select('role, permission_key, allowed, role_id, roles(code)');
     if (error) throw error;
     const map = new Map();
-    (data || []).forEach(r => map.set(`${r.role}|${r.permission_key}`, !!r.allowed));
+    (data || []).forEach(r => {
+      // role_id 由来のコード（マスタ参照）と、旧 role TEXT 値の両方をキーに登録。
+      // 'producer_director' は roles マスタに無いため、TEXT 値経由で残る。
+      const codeFromId = r.roles && r.roles.code;
+      const codeFromText = r.role;
+      const codes = [codeFromId, codeFromText].filter(Boolean);
+      for (const c of codes) {
+        const key = `${c}|${r.permission_key}`;
+        // 既存が true なら維持（複数行ある場合の OR 集約）
+        if (map.get(key) !== true) map.set(key, !!r.allowed);
+      }
+    });
     _permsCache = map;
     _permsLoadedAt = Date.now();
   } catch(e) {
@@ -146,10 +163,28 @@ function invalidatePermissionsCache() {
   _permsLoadedAt = 0;
 }
 
+/**
+ * ロールコード起点の permission チェック。
+ * - 互換のため、旧 'producer_director' 値が渡された場合は producer + director の
+ *   和集合として解釈する（合成値の TEXT 行が直接 hit する経路も残す）
+ * - admin は常に許可（ロックアウト防止）
+ */
 async function userHasPermission(userRole, key) {
+  if (!userRole || !key) return false;
   if (userRole === 'admin') return true; // ロックアウト防止
   const perms = await loadPermissions();
-  return !!perms.get(`${userRole}|${key}`);
+  // 1) 渡されたコードそのまま（旧 'producer_director' を含む）
+  if (perms.get(`${userRole}|${key}`) === true) return true;
+  // 2) producer_director を持っているユーザーは producer/director 設定も継承
+  if (userRole === 'producer_director') {
+    if (perms.get(`producer|${key}`) === true) return true;
+    if (perms.get(`director|${key}`) === true) return true;
+  }
+  // 3) 逆に producer / director を持つユーザーは合成値の TEXT 行（移行期に残る）も適用
+  if (userRole === 'producer' || userRole === 'director') {
+    if (perms.get(`producer_director|${key}`) === true) return true;
+  }
+  return false;
 }
 
 function requirePermission(key) {

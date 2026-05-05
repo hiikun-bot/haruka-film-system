@@ -7847,11 +7847,25 @@ router.post('/creative-files/:fileId/checklist/toggle', requireAuth, async (req,
 });
 
 // ロール権限取得（全ユーザーがアクセス可能。自身のUIのために必要）
+// Stage 0 / Step 2 (ADR 003): role_id (UUID) と roles.code を JOIN して返す。
+//   後方互換: 旧 role TEXT 列もそのまま返す（フロントは当面 role を読み続ける）。
+//   合成値 'producer_director' の行は role_id NULL のまま残るので、フロントは
+//   role TEXT で識別できる。
 router.get('/role-permissions', requireAuth, async (req, res) => {
   const { data, error } = await supabase
-    .from('role_permissions').select('role, permission_key, allowed');
+    .from('role_permissions')
+    .select('role, permission_key, allowed, role_id, roles(code, label)');
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  // 互換のためフラットに展開（roles.code を role_code として並走）
+  const flat = (data || []).map(r => ({
+    role: r.role,
+    role_id: r.role_id,
+    role_code: r.roles ? r.roles.code : null,
+    role_label: r.roles ? r.roles.label : null,
+    permission_key: r.permission_key,
+    allowed: !!r.allowed,
+  }));
+  res.json(flat);
 });
 
 // 有効なロール／権限キーのホワイトリスト
@@ -7869,6 +7883,10 @@ const VALID_PERMISSION_KEYS = new Set([
 ]);
 
 // ロール権限保存（最高管理者のみ・ホワイトリスト検証あり）
+// Stage 0 / Step 2 (ADR 003): dual-write 化。
+//   - 旧 role TEXT 列に書く（既存の onConflict 'role,permission_key' を維持）
+//   - 同時に roles マスタを引いて role_id を埋める（'producer_director' は roles
+//     マスタに無いので role_id NULL のまま）
 router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res) => {
   const { permissions } = req.body; // [{role, permission_key, allowed}, ...]
   if (!Array.isArray(permissions)) return res.status(400).json({ error: 'permissions配列が必要です' });
@@ -7877,8 +7895,19 @@ router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res)
     if (!VALID_ROLES.has(p.role)) return res.status(400).json({ error: `不正なロール: ${p.role}` });
     if (!VALID_PERMISSION_KEYS.has(p.permission_key)) return res.status(400).json({ error: `不正な権限キー: ${p.permission_key}` });
   }
+  // role_id 解決のため roles マスタを 1 回だけ引く
+  const { data: rolesData, error: rolesErr } = await supabase
+    .from('roles').select('id, code');
+  if (rolesErr) return res.status(500).json({ error: rolesErr.message });
+  const roleIdByCode = new Map((rolesData || []).map(r => [r.code, r.id]));
+
+  const now = new Date().toISOString();
   const rows = permissions.map(p => ({
-    role: p.role, permission_key: p.permission_key, allowed: !!p.allowed, updated_at: new Date().toISOString()
+    role: p.role,
+    role_id: roleIdByCode.get(p.role) || null, // 'producer_director' は null のまま
+    permission_key: p.permission_key,
+    allowed: !!p.allowed,
+    updated_at: now,
   }));
   const { error } = await supabase
     .from('role_permissions').upsert(rows, { onConflict: 'role,permission_key' });
