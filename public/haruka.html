@@ -7965,14 +7965,15 @@ function renderCreatives() {
       || (editorUserId ? teamByMember.get(editorUserId) : null);
     const ball = c.ball_holder || { holder:'不明', type:'unknown' };
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
-    const today = new Date();
-    today.setHours(0,0,0,0);
+    // DATE型("YYYY-MM-DD")を new Date() で渡すと UTC midnight になり JST では1日ズレるため、
+    // ガント側と同じ _cvAtMidnight / _cvDayDiff（暦日差・UTC ベース）に統一する。
+    const today = _cvAtMidnight(new Date());
 
-    const draftDeadline = c.draft_deadline ? new Date(c.draft_deadline) : null;
-    const finalDeadline = c.final_deadline ? new Date(c.final_deadline) : null;
+    const draftDeadline = c.draft_deadline ? _cvAtMidnight(c.draft_deadline) : null;
+    const finalDeadline = c.final_deadline ? _cvAtMidnight(c.final_deadline) : null;
 
-    const draftDiff = draftDeadline ? Math.ceil((draftDeadline - today)/(1000*60*60*24)) : null;
-    const finalDiff = finalDeadline ? Math.ceil((finalDeadline - today)/(1000*60*60*24)) : null;
+    const draftDiff = draftDeadline ? _cvDayDiff(draftDeadline, today) : null;
+    const finalDiff = finalDeadline ? _cvDayDiff(finalDeadline, today) : null;
 
     // 納品済みは作業完了済みなので「超過」「あとN日」等の経過表示はせず、平静の表示にする
     const isDelivered = c.status === '納品';
@@ -9211,7 +9212,7 @@ function _cvApplyAdvFilter(c) {
   // 遅延のみ（rawFinal 確定 & 未納品 & 過去）
   if (f.delayedOnly) {
     const today = _cvAtMidnight(new Date());
-    const fin = c.final_deadline ? _cvAtMidnight(new Date(c.final_deadline)) : null;
+    const fin = c.final_deadline ? _cvAtMidnight(c.final_deadline) : null;
     const delivered = (c.status === '納品');
     if (!fin || delivered || fin >= today) return false;
   }
@@ -9225,9 +9226,16 @@ function cvSpShowAllDelayed() {
 }
 
 function renderAlerts() {
-  const today = new Date();
-  const late = allCreatives.filter(c => c.deadline && c.status !== '納品' && new Date(c.deadline) < today);
+  // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
+  // 現行スキーマに合わせ final_deadline を見て、JST 暦日差で「過去」を判定する。
+  const today = _cvAtMidnight(new Date());
+  const late = allCreatives.filter(c => {
+    if (!c.final_deadline || c.status === '納品') return false;
+    const fin = _cvAtMidnight(c.final_deadline);
+    return _cvDayDiff(fin, today) < 0;
+  });
   const el = document.getElementById('alert-container');
+  if (!el) return;
   if (!late.length) { el.innerHTML=''; return; }
   const names = late.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
@@ -13802,9 +13810,11 @@ async function renderAdminDash(today) {
   const filterMonth = monthSel ? parseInt(monthSel.value) : today.getMonth() + 1; // 0=全月
 
   // フィルター対象のクリエイティブ
+  // DATE("YYYY-MM-DD")を new Date() に渡すと UTC 解釈で JST だと前日にズレ、
+  // 月初/月末が前月扱いになる。ローカル日付パースの _cvAtMidnight に統一する。
   const filteredCreatives = allCreatives.filter(c => {
     if (!c.final_deadline) return false;
-    const d = new Date(c.final_deadline);
+    const d = _cvAtMidnight(c.final_deadline);
     if (d.getFullYear() !== filterYear) return false;
     if (filterMonth !== 0 && d.getMonth() + 1 !== filterMonth) return false;
     return true;
@@ -13920,9 +13930,10 @@ async function renderAdminDash(today) {
   for (let m = 1; m <= 12; m++) monthlyMap[m] = 0;
   allCreatives.filter(c => {
     if (c.status !== '納品' || !c.final_deadline) return false;
-    return new Date(c.final_deadline).getFullYear() === filterYear;
+    // ローカル日付として解釈（UTC解釈による日付ズレを回避）
+    return _cvAtMidnight(c.final_deadline).getFullYear() === filterYear;
   }).forEach(c => {
-    const m = new Date(c.final_deadline).getMonth() + 1;
+    const m = _cvAtMidnight(c.final_deadline).getMonth() + 1;
     monthlyMap[m]++;
   });
   const ctx4 = document.getElementById('chart-monthly').getContext('2d');
