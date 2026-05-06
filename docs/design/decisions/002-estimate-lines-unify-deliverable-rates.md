@@ -121,4 +121,8 @@ Stage 分割で段階適用（[feedback_db_migration_staging.md](../../../.claud
 4. **案件レベルの固定費** — スタジオレンタル等「本数依存しない案件固定費」は line_costs では表現できない → **[ADR 006](006-project-fixed-costs.md)** で別表現を定義
 
 ## 実装履歴
-（実装が始まったらここに migration ファイルを追記）
+
+- 2026-05-06: Stage 1 (migration のみ) — `migrations/2026-05-06_estimate_lines_and_fixed_items.sql`
+  - 新規: `project_estimate_lines` / `project_estimate_line_costs` / `project_fixed_items`
+  - 既存テーブル列追加: `creatives.line_id` / `invoice_items.line_id`
+  - データ移行・コード書き換えは Stage 2 以降で対応

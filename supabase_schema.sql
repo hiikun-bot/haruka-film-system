@@ -1979,4 +1979,90 @@ CREATE INDEX IF NOT EXISTS idx_project_tags_tag        ON project_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_project_tags_project_id ON project_tags(project_id);
 ALTER TABLE project_tags ENABLE ROW LEVEL SECURITY;
 
+-- ==================== project_estimate_lines (ADR 002 + 004 + 005) ====================
+-- 詳細: docs/design/decisions/002-estimate-lines-unify-deliverable-rates.md
+--       docs/design/decisions/004-pricing-extensibility.md
+--       docs/design/decisions/005-estimate-deliverable-lifecycle.md
+-- migration: migrations/2026-05-06_estimate_lines_and_fixed_items.sql
+--
+-- 見積行と deliverable を一本化する縦持ちテーブル（Stage 1 では新設のみ、
+-- 旧 project_rates / project_category_rates / project_director_rates / project_producer_rates /
+-- project_sub_directors / project_sub_producers / project_rate_extras / project_client_fees からの
+-- データ移行は Stage 2 で別 migration で実施）。
+CREATE TABLE IF NOT EXISTS project_estimate_lines (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id         UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  category_id        UUID REFERENCES creative_categories(id),
+  name               TEXT,
+  planned_count      INTEGER NOT NULL DEFAULT 0,
+  client_unit_price  INTEGER NOT NULL DEFAULT 0,
+  sort_order         INTEGER,
+  currency           CHAR(3) NOT NULL DEFAULT 'JPY',
+  tax_included       BOOLEAN NOT NULL DEFAULT TRUE,
+  -- ADR 005: draft|estimated|contracted|in_progress|delivered|cancelled|rejected
+  status             TEXT NOT NULL DEFAULT 'draft',
+  status_changed_at  TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pel_project  ON project_estimate_lines(project_id);
+CREATE INDEX IF NOT EXISTS idx_pel_status   ON project_estimate_lines(status);
+CREATE INDEX IF NOT EXISTS idx_pel_category ON project_estimate_lines(category_id);
+ALTER TABLE project_estimate_lines ENABLE ROW LEVEL SECURITY;
+
+-- ==================== project_estimate_line_costs (ADR 002 + 003 + 004) ====================
+-- 1 line × ロール別コストを縦持ちで保持。role_id は roles マスタ参照（ADR 003）。
+-- pricing_type: fixed_per_unit | percentage | hourly | fixed_total （ADR 004）
+CREATE TABLE IF NOT EXISTS project_estimate_line_costs (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  line_id       UUID NOT NULL REFERENCES project_estimate_lines(id) ON DELETE CASCADE,
+  role_id       UUID NOT NULL REFERENCES roles(id),
+  user_id       UUID REFERENCES users(id),
+  unit_price    INTEGER NOT NULL DEFAULT 0,
+  currency      CHAR(3) NOT NULL DEFAULT 'JPY',
+  pricing_type  TEXT NOT NULL DEFAULT 'fixed_per_unit',
+  percentage    NUMERIC(5,2),
+  actual_hours  NUMERIC(8,2),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (line_id, role_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pelc_line ON project_estimate_line_costs(line_id);
+CREATE INDEX IF NOT EXISTS idx_pelc_role ON project_estimate_line_costs(role_id);
+CREATE INDEX IF NOT EXISTS idx_pelc_user ON project_estimate_line_costs(user_id);
+ALTER TABLE project_estimate_line_costs ENABLE ROW LEVEL SECURITY;
+
+-- ==================== project_fixed_items (ADR 006) ====================
+-- 詳細: docs/design/decisions/006-project-fixed-costs.md
+-- 案件固定費・追加収入（スタジオ/機材/出張/ロケ地代等、本数非依存）。
+CREATE TABLE IF NOT EXISTS project_fixed_items (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  -- 'expense' | 'revenue'
+  item_type       TEXT NOT NULL,
+  -- 'studio' | 'equipment' | 'travel' | 'location' | 'other'
+  category        TEXT,
+  name            TEXT NOT NULL,
+  amount          INTEGER NOT NULL DEFAULT 0,
+  currency        CHAR(3) NOT NULL DEFAULT 'JPY',
+  occurred_on     DATE,
+  paid_to         TEXT,
+  paid_to_user_id UUID REFERENCES users(id),
+  -- 'planned' | 'committed' | 'incurred' | 'cancelled'
+  status          TEXT NOT NULL DEFAULT 'planned',
+  notes           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by      UUID REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_pfi_project ON project_fixed_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_pfi_status  ON project_fixed_items(status);
+ALTER TABLE project_fixed_items ENABLE ROW LEVEL SECURITY;
+
+-- creatives / invoice_items に line_id 列を追加（ADR 002 双方向参照）
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
+CREATE INDEX IF NOT EXISTS idx_creatives_line_id ON creatives(line_id);
+
+ALTER TABLE invoice_items
+  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_line_id ON invoice_items(line_id);
+
 NOTIFY pgrst, 'reload schema';
