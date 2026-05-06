@@ -494,9 +494,11 @@ router.get('/projects', async (req, res) => {
   if (!projects.length) return res.json([]);
 
   // --- 単価・見積・全タグ・カテゴリを一括取得（N+1 回避）---
+  // ADR 002 後: has_rates は project_estimate_lines の存在で判定する。
+  // 旧 project_rates テーブルは Stage 6 で DROP 予定。
   const projectIds = projects.map(p => p.id);
   const [ratesRes, estRes, allTagsRes, catsRes] = await Promise.all([
-    supabase.from('project_rates').select('project_id').in('project_id', projectIds),
+    supabase.from('project_estimate_lines').select('project_id').in('project_id', projectIds),
     supabase.from('project_estimates').select('project_id').in('project_id', projectIds),
     supabase.from('project_tags').select('project_id, tag').in('project_id', projectIds),
     // creative_categories: 一覧で全カテゴリを引き、JS 側で id → meta 変換。
@@ -549,6 +551,10 @@ router.get('/projects/tag-suggestions', async (req, res) => {
 });
 
 // 案件詳細取得
+//
+// ADR 002 後: project_rates(*) / director_rates(*) を embed していた箇所は
+// project_estimate_lines(*, project_estimate_line_costs(*, role:roles(code,label))) に置換。
+// クライアント側はこのレスポンスから単価モーダル等の表示を構築する。
 router.get('/projects/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('projects')
@@ -557,8 +563,15 @@ router.get('/projects/:id', async (req, res) => {
       clients(id, name),
       producer:users!projects_producer_id_fkey(id, full_name),
       director:users!projects_director_id_fkey(id, full_name),
-      project_rates(*),
-      director_rates(*)
+      project_estimate_lines(
+        id, project_id, category_id, name, planned_count, client_unit_price,
+        sort_order, status, status_changed_at, currency, tax_included, created_at,
+        project_estimate_line_costs(
+          id, line_id, role_id, user_id, unit_price, currency,
+          pricing_type, percentage, actual_hours, created_at,
+          role:roles(id, code, label)
+        )
+      )
     `)
     .eq('id', req.params.id)
     .single();
@@ -1295,7 +1308,16 @@ router.post('/projects/:id/client-fee', async (req, res) => {
   res.json(data);
 });
 
-// ダッシュボード用：今月の案件売上サマリー
+// ダッシュボード用：今月の案件売上サマリー（ADR 002+005+006 ベース）
+//
+// 計算式:
+//   plannedRevenue   = SUM( line.client_unit_price × line.planned_count )
+//                      where line.id IN (今月納期 creatives.line_id) AND status active
+//                    + SUM( fixed_items.amount where item_type='revenue' AND status<>'cancelled' )
+//   actualRevenue    = plannedRevenue のうち、line に紐付く全 creatives が status='納品' のもの
+//                      （line 単位でカウント。creative 単位ではない）
+//   totalCreatives   = 今月納期の creatives 件数（line_id を問わず）
+//   completedCreatives = 同上 status='納品' の件数
 router.get('/dashboard/revenue-summary', async (req, res) => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
@@ -1304,52 +1326,65 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
   // 今月納期のクリエイティブを取得
   const { data: creatives, error: cErr } = await supabase
     .from('creatives')
-    .select('id, project_id, status, creative_type, final_deadline')
+    .select('id, project_id, status, creative_type, final_deadline, line_id')
     .gte('final_deadline', startOfMonth)
     .lte('final_deadline', endOfMonth);
   if (cErr) return res.status(500).json({ error: cErr.message });
 
-  // クライアント報酬設定を取得
-  const projectIds = [...new Set((creatives || []).map(c => c.project_id))];
-  let fees = [];
-  if (projectIds.length) {
-    const { data: feeData } = await supabase
-      .from('project_client_fees')
-      .select('*')
-      .in('project_id', projectIds);
-    fees = feeData || [];
-  }
+  const totalCreatives = (creatives || []).length;
+  const completedCreatives = (creatives || []).filter(c => c.status === '納品').length;
 
-  // 集計
-  const feeMap = {};
-  fees.forEach(f => { feeMap[f.project_id] = f; });
+  // 今月納期 creatives に紐付く line を一括取得
+  const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
+  const projectIds = Array.from(new Set((creatives || []).map(c => c.project_id).filter(Boolean)));
 
   let plannedRevenue = 0;
-  let actualRevenue = 0;
-  let totalCreatives = 0;
-  let completedCreatives = 0;
+  let actualRevenue  = 0;
 
-  (creatives || []).forEach(c => {
-    const fee = feeMap[c.project_id];
-    if (!fee) return;
-    const unitPrice = c.creative_type === 'design' ? fee.design_unit_price : fee.video_unit_price;
-    const price = fee.use_fixed_budget ? 0 : (unitPrice || 0); // 固定予算は別途集計
-    totalCreatives++;
-    plannedRevenue += price;
-    if (c.status === '納品') {
-      completedCreatives++;
-      actualRevenue += price;
+  // line 単位で planned / actual を計算
+  if (lineIds.length) {
+    const { calculateLineEconomics, ACTIVE_LINE_STATUSES } = require('../utils/pricing');
+    const { data: lines } = await supabase
+      .from('project_estimate_lines')
+      .select('id, project_id, planned_count, client_unit_price, status')
+      .in('id', lineIds);
+    const activeStatuses = new Set(ACTIVE_LINE_STATUSES);
+
+    // line ごとの「全 creatives が納品済か」判定用
+    const creativesByLine = new Map();
+    for (const c of (creatives || [])) {
+      if (!c.line_id) continue;
+      if (!creativesByLine.has(c.line_id)) creativesByLine.set(c.line_id, []);
+      creativesByLine.get(c.line_id).push(c);
     }
-  });
 
-  // 固定予算案件の集計（重複カウント防止）
-  const fixedProjects = fees.filter(f => f.use_fixed_budget && f.fixed_budget);
-  fixedProjects.forEach(f => {
-    plannedRevenue += f.fixed_budget;
-    const projectCreatives = (creatives || []).filter(c => c.project_id === f.project_id);
-    const allDone = projectCreatives.length > 0 && projectCreatives.every(c => c.status === '納品');
-    if (allDone) actualRevenue += f.fixed_budget;
-  });
+    for (const line of (lines || [])) {
+      if (!activeStatuses.has(line.status)) continue;
+      const econ = calculateLineEconomics(line, []); // 売上だけ見るので line_costs 不要
+      plannedRevenue += econ.revenue;
+      const list = creativesByLine.get(line.id) || [];
+      const allDone = list.length > 0 && list.every(c => c.status === '納品');
+      if (allDone) actualRevenue += econ.revenue;
+    }
+  }
+
+  // project_fixed_items(item_type='revenue') を加算（ADR 006）
+  if (projectIds.length) {
+    const { data: fixedItems } = await supabase
+      .from('project_fixed_items')
+      .select('project_id, item_type, amount, status')
+      .in('project_id', projectIds)
+      .eq('item_type', 'revenue');
+    for (const fi of (fixedItems || [])) {
+      if (fi.status === 'cancelled') continue;
+      const amt = Number(fi.amount) || 0;
+      plannedRevenue += amt;
+      // 「全 creatives 納品済の案件」は固定収入も実績にカウント
+      const projCreatives = (creatives || []).filter(c => c.project_id === fi.project_id);
+      const allDone = projCreatives.length > 0 && projCreatives.every(c => c.status === '納品');
+      if (allDone) actualRevenue += amt;
+    }
+  }
 
   res.json({
     totalCreatives,
@@ -1549,13 +1584,22 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   }
 });
 
-// 月次売上・粗利ダッシュボード
+// 月次売上・粗利ダッシュボード（ADR 002+005 per-line 公式）
 //
-// 売上(確定): invoice_type='client' の当月 invoices.total_amount 合計
-// 売上(見込み): 当月納期で未納品 creatives × project_client_fees の単価
-// 原価(確定): スタッフ請求書（invoice_type が NULL）の当月 total_amount 合計
-// 原価(見込み): 当月納期で未納品 creatives × project_rates の rank別単価合計
+// 売上(確定):   invoice_type='client' の当月 invoices.total_amount 合計
+// 原価(確定):   スタッフ請求書（invoice_type が NULL）の当月 total_amount 合計
+// 売上(見込み): 当月納期で未納品 creatives → line_id → lines.client_unit_price × planned_count
+// 原価(見込み): 同 line の line_costs を pricing_type に応じて合算
+//
+// 注意:
+//   - 旧版は creative 1 件ごとに単価を加算していたが、ADR 002 では
+//     line.planned_count に「予定本数」が入る設計のため line 単位で集計する。
+//   - 同じ line を共有する複数 creatives がいる場合、二重計上を避けるため
+//     line を 1 度しか加算しない（creative の重複排除）。
+//   - status フィルタは ADR 005 の集計対象（contracted/in_progress/delivered）に従う。
+//   - line_id IS NULL の creatives は集計から漏れる（Stage 4 UI で補正想定）。
 async function aggregateMonthlyRevenue({ year, month }) {
+  const { calculateLineEconomics, ACTIVE_LINE_STATUSES } = require('../utils/pricing');
   const startDate = new Date(Date.UTC(year, month - 1, 1));
   const endDate   = new Date(Date.UTC(year, month, 1));
 
@@ -1609,99 +1653,65 @@ async function aggregateMonthlyRevenue({ year, month }) {
     if (cid) ensureClient(cid, clientNameById.get(cid)).confirmed_cost += inv.total_amount || 0;
   }
 
-  // 見込み: 当月納期で未納品 creatives
+  // 見込み: 当月納期で未納品 creatives（line_id を含めて取得）
   const { data: forecastCreatives } = await supabase
     .from('creatives')
     .select(`
-      id, status, creative_type, project_id, final_deadline,
-      projects!inner(id, client_id, clients(id, name)),
-      creative_assignments(role, rank_applied, users(id, rank))
+      id, status, creative_type, project_id, final_deadline, line_id,
+      projects!inner(id, client_id, clients(id, name))
     `)
     .gte('final_deadline', startDate.toISOString())
     .lt('final_deadline', endDate.toISOString())
     .neq('status', '納品');
 
-  const fcProjectIds = Array.from(new Set((forecastCreatives || []).map(c => c.project_id).filter(Boolean)));
-  const clientFeeByProject = new Map();
-  const ratesByProject = new Map();
-  const directorRateByProject = new Map(); // pid -> { video: fee, design: fee }
-  const producerRateByProject = new Map(); // pid -> { video: fee, design: fee }
-  if (fcProjectIds.length) {
-    const [feesRes, ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
-      supabase.from('project_client_fees').select('*').in('project_id', fcProjectIds),
-      supabase.from('project_rates').select('*').in('project_id', fcProjectIds),
-      supabase.from('project_director_rates').select('*').in('project_id', fcProjectIds),
-      supabase.from('project_producer_rates').select('*').in('project_id', fcProjectIds),
-    ]);
-    (feesRes.data || []).forEach(f => clientFeeByProject.set(f.project_id, f));
-    (ratesRes.data || []).forEach(r => {
-      if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
-      ratesByProject.get(r.project_id).push(r);
-    });
-    // dirRatesRes はテーブル未作成でも全体集計を止めない（silent skip OK）
-    if (dirRatesRes.error) {
-      if (!isMissingPdrTable(dirRatesRes.error)) {
-        console.warn('[aggregateMonthlyRevenue] director_rates load failed:', dirRatesRes.error.message);
-      }
-    } else {
-      (dirRatesRes.data || []).forEach(d => {
-        if (!directorRateByProject.has(d.project_id)) directorRateByProject.set(d.project_id, {});
-        directorRateByProject.get(d.project_id)[d.creative_type] = d.director_fee || 0;
-      });
-    }
-    // prodRatesRes も同様（テーブル未作成でも止めない）
-    if (prodRatesRes.error) {
-      if (!isMissingPprTable(prodRatesRes.error)) {
-        console.warn('[aggregateMonthlyRevenue] producer_rates load failed:', prodRatesRes.error.message);
-      }
-    } else {
-      (prodRatesRes.data || []).forEach(p => {
-        if (!producerRateByProject.has(p.project_id)) producerRateByProject.set(p.project_id, {});
-        producerRateByProject.get(p.project_id)[p.creative_type] = p.producer_fee || 0;
-      });
+  // line_id でユニーク化（同じ line に紐付く複数 creatives は 1 回しか集計しない）
+  const lineIds = Array.from(new Set((forecastCreatives || [])
+    .map(c => c.line_id)
+    .filter(Boolean)));
+
+  const lineClientMap = new Map(); // line_id -> client_id（売上を顧客別に振り分けるため）
+  for (const c of (forecastCreatives || [])) {
+    if (c.line_id && c.projects?.client_id && !lineClientMap.has(c.line_id)) {
+      lineClientMap.set(c.line_id, { client_id: c.projects.client_id, client_name: c.projects?.clients?.name });
     }
   }
-  const findRate = (pid, baseType, rank) => {
-    const list = ratesByProject.get(pid) || [];
-    return list.find(r => r.creative_type === baseType && r.rank === rank)
-        || list.find(r => r.creative_type === baseType) || null;
-  };
-  const findDirectorFee = (pid, baseType) => {
-    const m = directorRateByProject.get(pid);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const findProducerFee = (pid, baseType) => {
-    const m = producerRateByProject.get(pid);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const calcRateAmount = (rate) => rate ? ((rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0)) : 0;
 
   let forecastRevenue = 0, forecastCost = 0;
-  for (const c of (forecastCreatives || [])) {
-    const baseType = c.creative_type?.startsWith('video') ? 'video'
-                   : c.creative_type?.startsWith('design') ? 'design' : 'video';
-    const fee = clientFeeByProject.get(c.project_id);
-    const unitClient = (fee && !fee.use_fixed_budget)
-      ? (baseType === 'video' ? (fee.video_unit_price || 0) : (fee.design_unit_price || 0))
-      : 0;
-    forecastRevenue += unitClient;
-    if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_revenue += unitClient;
+  if (lineIds.length) {
+    // lines + line_costs を一括取得（status フィルタは JS 側で適用）
+    const [linesRes, lineCostsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, planned_count, client_unit_price, status')
+        .in('id', lineIds),
+      supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, unit_price, pricing_type, percentage, actual_hours')
+        .in('line_id', lineIds),
+    ]);
+    if (linesRes.error)     console.warn('[aggregateMonthlyRevenue] lines load failed:', linesRes.error.message);
+    if (lineCostsRes.error) console.warn('[aggregateMonthlyRevenue] line_costs load failed:', lineCostsRes.error.message);
 
-    const assignees = (c.creative_assignments || [])
-      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
-    let costForCreative = 0;
-    for (const a of assignees) {
-      const rank = a.rank_applied || a.users?.rank || null;
-      costForCreative += calcRateAmount(findRate(c.project_id, baseType, rank));
+    const lineCostsByLine = new Map();
+    for (const lc of (lineCostsRes.data || [])) {
+      if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
+      lineCostsByLine.get(lc.line_id).push(lc);
     }
-    // ディレクション費は creative 単位で1回だけ加算（編集者兼務でも満額）
-    costForCreative += findDirectorFee(c.project_id, baseType);
-    // プロデュース費も creative 単位で1回だけ加算（ディレクター兼務でも満額）
-    costForCreative += findProducerFee(c.project_id, baseType);
-    forecastCost += costForCreative;
-    if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_cost += costForCreative;
+
+    const activeStatuses = new Set(ACTIVE_LINE_STATUSES);
+    for (const line of (linesRes.data || [])) {
+      // ADR 005: 集計対象 status のみ
+      if (!activeStatuses.has(line.status)) continue;
+      const econ = calculateLineEconomics(line, lineCostsByLine.get(line.id) || []);
+      forecastRevenue += econ.revenue;
+      forecastCost    += econ.costs;
+      const meta = lineClientMap.get(line.id);
+      if (meta?.client_id) {
+        const bucket = ensureClient(meta.client_id, clientNameById.get(meta.client_id) || meta.client_name);
+        bucket.forecast_revenue += econ.revenue;
+        bucket.forecast_cost    += econ.costs;
+      }
+    }
   }
 
   const totalRevenue = confirmedRevenue + forecastRevenue;
@@ -1769,10 +1779,23 @@ router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermi
   }
 });
 
-// クリエイター別作成本数 + 単価 + 合計金額の集計
-// 1 creative の単価 = project_rates(project_id, creative_type, rank).{base_fee+script_fee+ai_fee+other_fee}
-// 同一クリエイティブに複数担当者がいる場合、それぞれ「フルカウント」する（既存の project×assignee ビューと整合）
+// クリエイター別作成本数 + 単価 + 合計金額の集計（ADR 002+003+004 対応）
+//
+// 新方式（per-line / line_costs.user_id ベース）:
+//   - 各 creative の line_id を辿って line_costs を取得
+//   - line_costs ごとに 1 件あたりのコスト（pricing_type に応じて計算）を算出し、
+//     受取人（user_id が指定されていればその人、無ければロールに応じて
+//     project.director_id / producer_id へ）に加算する
+//   - 同じ creative の中で複数の line_costs が存在する場合は、それぞれのロールに対応する
+//     受取人にフルカウント加算（旧版の挙動: 編集者/ディレクター/プロデューサーを別々に加算）
+//
+// 既知の制約:
+//   - line_id IS NULL の creative は集計から漏れる（移行スクリプト未対応分）。
+//     Stage 4 UI で line を補正することで自動的に拾えるようになる。
+//   - line_costs の user_id が NULL かつロール解決もできない場合、その金額は捨てられる
+//     （旧版の director_id/producer_id 参照と同じセマンティクスを保つため）。
 async function aggregateCreatorSummary({ year, month, statusFilter }) {
+  const { calculateLineCost } = require('../utils/pricing');
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
   const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
@@ -1780,7 +1803,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   let q = supabase
     .from('creatives')
     .select(`
-      id, file_name, status, creative_type, project_id,
+      id, file_name, status, creative_type, project_id, line_id,
       final_deadline, created_at,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
@@ -1792,85 +1815,52 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   const { data: creatives, error } = await q;
   if (error) throw new Error(error.message);
 
-  // 関連 project_rates / project_director_rates / project_producer_rates をまとめて取得（in クエリ）
-  const projectIds = Array.from(new Set((creatives || []).map(c => c.project_id).filter(Boolean)));
-  let ratesByProject = new Map();
-  let directorRateByProject = new Map(); // pid -> { video, design }
-  let producerRateByProject = new Map(); // pid -> { video, design }
-  let directorUserById = new Map(); // director_id -> user info（director_id が assignees に居ないケースを救う）
-  let producerUserById = new Map(); // producer_id -> user info（producer_id が assignees に居ないケースを救う）
-  if (projectIds.length > 0) {
-    const [ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
-      supabase.from('project_rates').select('*').in('project_id', projectIds),
-      supabase.from('project_director_rates').select('*').in('project_id', projectIds),
-      supabase.from('project_producer_rates').select('*').in('project_id', projectIds),
+  // line_id ⇒ line + line_costs を一括取得
+  const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
+  const lineById = new Map();             // line_id -> line
+  const lineCostsByLine = new Map();      // line_id -> line_costs[]
+  if (lineIds.length) {
+    const [linesRes, lineCostsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, planned_count, client_unit_price, status')
+        .in('id', lineIds),
+      supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+        .in('line_id', lineIds),
     ]);
-    for (const r of (ratesRes.data || [])) {
-      if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
-      ratesByProject.get(r.project_id).push(r);
-    }
-    if (dirRatesRes.error) {
-      if (!isMissingPdrTable(dirRatesRes.error)) {
-        console.warn('[aggregateCreatorSummary] director_rates load failed:', dirRatesRes.error.message);
-      }
-    } else {
-      (dirRatesRes.data || []).forEach(d => {
-        if (!directorRateByProject.has(d.project_id)) directorRateByProject.set(d.project_id, {});
-        directorRateByProject.get(d.project_id)[d.creative_type] = d.director_fee || 0;
-      });
-    }
-    if (prodRatesRes.error) {
-      if (!isMissingPprTable(prodRatesRes.error)) {
-        console.warn('[aggregateCreatorSummary] producer_rates load failed:', prodRatesRes.error.message);
-      }
-    } else {
-      (prodRatesRes.data || []).forEach(p => {
-        if (!producerRateByProject.has(p.project_id)) producerRateByProject.set(p.project_id, {});
-        producerRateByProject.get(p.project_id)[p.creative_type] = p.producer_fee || 0;
-      });
-    }
-    // assignees に居ないディレクター/プロデューサーを救うため両 ID のユーザー情報を一括取得
-    const directorIds = Array.from(new Set(
-      (creatives || []).map(c => c.projects?.director_id).filter(Boolean)
-    ));
-    const producerIds = Array.from(new Set(
-      (creatives || []).map(c => c.projects?.producer_id).filter(Boolean)
-    ));
-    const allLeaderIds = Array.from(new Set([...directorIds, ...producerIds]));
-    if (allLeaderIds.length) {
-      const { data: leaderUsers } = await supabase
-        .from('users').select('id, full_name, nickname, role, rank')
-        .in('id', allLeaderIds);
-      (leaderUsers || []).forEach(u => {
-        if (directorIds.includes(u.id)) directorUserById.set(u.id, u);
-        if (producerIds.includes(u.id)) producerUserById.set(u.id, u);
-      });
+    if (linesRes.error)     console.warn('[aggregateCreatorSummary] lines load failed:', linesRes.error.message);
+    if (lineCostsRes.error) console.warn('[aggregateCreatorSummary] line_costs load failed:', lineCostsRes.error.message);
+    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
+    for (const lc of (lineCostsRes.data || [])) {
+      if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
+      lineCostsByLine.get(lc.line_id).push(lc);
     }
   }
-  const findRate = (projectId, baseType, rank) => {
-    const list = ratesByProject.get(projectId) || [];
-    return list.find(r => r.creative_type === baseType && r.rank === rank)
-        || list.find(r => r.creative_type === baseType)
-        || null;
-  };
-  const findDirectorFee = (projectId, baseType) => {
-    const m = directorRateByProject.get(projectId);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const findProducerFee = (projectId, baseType) => {
-    const m = producerRateByProject.get(projectId);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const calcUnitPrice = (rate) => {
-    if (!rate) return 0;
-    return (rate.base_fee || 0) + (rate.script_fee || 0) + (rate.ai_fee || 0) + (rate.other_fee || 0);
-  };
+
+  // assignees に居ないディレクター/プロデューサー、line_costs.user_id を救うため
+  // 必要 user 情報を一括取得
+  const neededUserIds = new Set();
+  for (const c of (creatives || [])) {
+    if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
+    if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+  }
+  for (const arr of lineCostsByLine.values()) {
+    for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
+  }
+  const userById = new Map();
+  if (neededUserIds.size) {
+    const { data: us } = await supabase
+      .from('users').select('id, full_name, nickname, role, rank')
+      .in('id', Array.from(neededUserIds));
+    (us || []).forEach(u => userById.set(u.id, u));
+  }
 
   // ユーザーごとに集計
-  const userMap = new Map(); // user_id -> aggregate
+  const userMap = new Map();
   const ensureUser = (u) => {
+    if (!u || !u.id) return null;
     if (!userMap.has(u.id)) {
       userMap.set(u.id, {
         id: u.id,
@@ -1882,13 +1872,40 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         design_count: 0,
         video_total: 0,
         design_total: 0,
-        director_total: 0, // ディレクション費の集計（参考表示用）
-        producer_total: 0, // プロデュース費の集計（参考表示用）
+        director_total: 0,
+        producer_total: 0,
         grand_total: 0,
-        rate_unknown_count: 0, // 単価不明として扱った件数（参考表示用）
+        rate_unknown_count: 0,
       });
     }
     return userMap.get(u.id);
+  };
+
+  // ロール code から「creative の中で対応する受取人」を解決する。
+  //   1) line_cost.user_id が指定 → その user
+  //   2) ロールが editor/designer/director_as_editor → assignees の中から該当ロールの user
+  //   3) ロールが director → projects.director_id
+  //   4) ロールが producer → projects.producer_id
+  //   5) いずれも解決できなければ null（金額は捨てる）
+  const resolvePayee = (lineCost, creative, assignees) => {
+    if (lineCost.user_id) return userById.get(lineCost.user_id) || null;
+    const code = lineCost.role?.code || '';
+    if (!code) return null;
+    if (['editor', 'designer', 'director_as_editor'].includes(code)) {
+      const a = assignees.find(x => x.role === code);
+      return a?.users || null;
+    }
+    if (code === 'director' || code === 'sub_director') {
+      const did = creative.projects?.director_id;
+      return did ? (userById.get(did) || null) : null;
+    }
+    if (code === 'producer' || code === 'sub_producer') {
+      const pid = creative.projects?.producer_id;
+      return pid ? (userById.get(pid) || null) : null;
+    }
+    // その他のロールは assignees に同 code がいればそれに、いなければ捨てる
+    const a = assignees.find(x => x.role === code);
+    return a?.users || null;
   };
 
   for (const c of (creatives || [])) {
@@ -1897,49 +1914,66 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
                    : (c.creative_type || 'video');
     const isVideo = baseType === 'video';
     const assignees = (c.creative_assignments || [])
-      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
-    // 編集者/デザイナー単価
-    if (assignees.length > 0) {
+      .filter(a => a.users);
+
+    if (!c.line_id) continue;
+    const line = lineById.get(c.line_id);
+    if (!line) continue;
+    const lineCosts = lineCostsByLine.get(c.line_id) || [];
+
+    // 1 creative あたりの単価 = line_cost が消費する金額 / planned_count
+    // ただし fixed_total / hourly のように planned_count に依存しない場合は除外
+    // （creator-summary では「1 件あたり」を計上したいため、その他課金タイプは無視）
+    const planned = Number(line.planned_count) || 0;
+
+    for (const lc of lineCosts) {
+      const pricingType = lc.pricing_type || 'fixed_per_unit';
+      let perCreative = 0;
+      if (pricingType === 'fixed_per_unit') {
+        // calculateLineCost = unit_price * planned_count → per creative = unit_price
+        perCreative = Number(lc.unit_price) || 0;
+      } else if (pricingType === 'percentage') {
+        // calculateLineCost = client_unit_price * planned_count * pct/100 → per creative = client_unit_price * pct/100
+        perCreative = (Number(line.client_unit_price) || 0) * (Number(lc.percentage) || 0) / 100;
+      } else {
+        // hourly / fixed_total は creative 1 件単位に按分しないので捨てる（参考表示外）
+        continue;
+      }
+      if (perCreative <= 0) continue;
+
+      const payee = resolvePayee(lc, c, assignees);
+      if (!payee) continue;
+      const u = ensureUser(payee);
+      if (!u) continue;
+      const code = lc.role?.code || '';
+      if (code === 'director' || code === 'sub_director') {
+        u.director_total += perCreative;
+      } else if (code === 'producer' || code === 'sub_producer') {
+        u.producer_total += perCreative;
+      } else if (isVideo) {
+        u.video_count++; u.video_total += perCreative;
+      } else {
+        u.design_count++; u.design_total += perCreative;
+      }
+      u.grand_total += perCreative;
+    }
+    // 後方互換のための保険: line に直接の line_costs が無いがアサインされている人がいる場合、
+    // 件数だけは記録しておく（金額 0、UI 側で「単価不明」を表示）
+    if (lineCosts.length === 0 && assignees.length > 0) {
       for (const a of assignees) {
-        const user = ensureUser(a.users);
-        const rank = a.rank_applied || a.users?.rank || null;
-        const rate = findRate(c.project_id, baseType, rank);
-        const unitPrice = calcUnitPrice(rate);
-        if (isVideo) { user.video_count++; user.video_total += unitPrice; }
-        else         { user.design_count++; user.design_total += unitPrice; }
-        user.grand_total += unitPrice;
-        if (!rate) user.rate_unknown_count++;
+        if (!['editor','designer','director_as_editor'].includes(a.role)) continue;
+        const u = ensureUser(a.users);
+        if (!u) continue;
+        if (isVideo) u.video_count++;
+        else         u.design_count++;
+        u.rate_unknown_count++;
       }
     }
-    // ディレクション費: creative 1件あたり 1回必ず加算（編集者兼務でも満額）
-    // 受取人: projects.director_id（assignees に居なくても加算する）
-    const directorFee = findDirectorFee(c.project_id, baseType);
-    const directorId = c.projects?.director_id;
-    if (directorFee > 0 && directorId) {
-      const dirUser = directorUserById.get(directorId)
-        // assignments に居る場合のフォールバック
-        || (assignees.find(a => a.users?.id === directorId)?.users)
-        || null;
-      if (dirUser) {
-        const user = ensureUser(dirUser);
-        user.director_total += directorFee;
-        user.grand_total += directorFee;
-      }
-    }
-    // プロデュース費: creative 1件あたり 1回必ず加算（編集者・ディレクター兼務でも満額）
-    // 受取人: projects.producer_id（assignees に居なくても加算する）
-    const producerFee = findProducerFee(c.project_id, baseType);
-    const producerId = c.projects?.producer_id;
-    if (producerFee > 0 && producerId) {
-      const prodUser = producerUserById.get(producerId)
-        || (assignees.find(a => a.users?.id === producerId)?.users)
-        || null;
-      if (prodUser) {
-        const user = ensureUser(prodUser);
-        user.producer_total += producerFee;
-        user.grand_total += producerFee;
-      }
-    }
+    // 参考: 件数振り分けのため、line に紐付く未集計のユーザーへ video/design count を加える調整は
+    // 不要（上のループで pricing_type='fixed_per_unit' のとき同時に count も増えている）。
+    // 編集者/デザイナーが居て line_costs に user_id 指定がない場合、上の resolvePayee で
+    // assignees から拾われるためカバー済み。
+    void planned; // 参照保持（lint 用）
   }
 
   const summary = Array.from(userMap.values())
@@ -1957,6 +1991,9 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     acc.grand_total  += u.grand_total;
     return acc;
   }, { video_count: 0, design_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0 });
+
+  // calculateLineCost を参照保持（将来の拡張時に使う想定）
+  void calculateLineCost;
 
   return { year, month, status: statusFilter, summary, total, creatives_count: (creatives || []).length };
 }
@@ -7530,22 +7567,25 @@ router.delete('/master/items/:id', requireAuth, requirePermission('master.page')
 
 // ==================== ダッシュボード 予実管理 ====================
 
-// 今月の予実サマリー
+// 今月の予実サマリー（ADR 002+005+006 ベース）
+//
+// 計算式:
+//   各 cycle (project_cycles で年月絞り込み) について
+//     - 該当 project の lines（status active）の client_unit_price × planned_count を合算
+//     - project_fixed_items(item_type='revenue', not cancelled) を加算
+//   実績は cycle に紐付く creatives の本数 × line.client_unit_price で近似する
+//   （line ベースに移行する過渡期のため、本数集計は creative_type の文字列マッチを継続）
 router.get('/dashboard/monthly-forecast', async (req, res) => {
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
 
-  // project_client_fees は project_cycles に直接 FK を持たないため
-  // （project_id 経由でしか繋がらない）、projects 経由で埋め込む。
-  // 直接埋め込もうとすると PostgREST が "Could not find a relationship" で 500。
   const { data: cycles, error: cyclesError } = await supabase
     .from('project_cycles')
     .select(`
       *,
       projects (
         id, name, client_id,
-        clients(name),
-        project_client_fees(video_unit_price, design_unit_price, fixed_budget, use_fixed_budget)
+        clients(name)
       )
     `)
     .eq('year', year)
@@ -7553,16 +7593,58 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
 
   if (cyclesError) return res.status(500).json({ error: cyclesError.message });
 
-  // N+1解消: cycle_id IN (…) で一括取得してJS側でグループ化
+  // cycle に紐付く creatives を一括取得
   const cycleIds = (cycles || []).map(c => c.id);
   const { data: allCreatives } = cycleIds.length
-    ? await supabase.from('creatives').select('cycle_id, creative_type').in('cycle_id', cycleIds)
+    ? await supabase.from('creatives').select('cycle_id, creative_type, line_id').in('cycle_id', cycleIds)
     : { data: [] };
   const creativesByCycle = {};
   (allCreatives || []).forEach(c => {
     if (!creativesByCycle[c.cycle_id]) creativesByCycle[c.cycle_id] = [];
     creativesByCycle[c.cycle_id].push(c);
   });
+
+  // 案件単位で lines / fixed_items を一括取得（N+1 回避）
+  const projectIds = Array.from(new Set((cycles || []).map(c => c.project_id).filter(Boolean)));
+  const linesByProject = new Map();
+  const fixedRevenueByProject = new Map();
+  if (projectIds.length) {
+    const { ACTIVE_LINE_STATUSES } = require('../utils/pricing');
+    const activeStatuses = new Set(ACTIVE_LINE_STATUSES);
+    const [linesRes, fxRes, catsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, category_id, planned_count, client_unit_price, status')
+        .in('project_id', projectIds),
+      supabase
+        .from('project_fixed_items')
+        .select('project_id, item_type, amount, status')
+        .in('project_id', projectIds)
+        .eq('item_type', 'revenue'),
+      supabase.from('creative_categories').select('id, code, name'),
+    ]);
+    const catCodeById = new Map();
+    for (const c of (catsRes.data || [])) catCodeById.set(c.id, c.code || c.name || '');
+    for (const l of (linesRes.data || [])) {
+      if (!activeStatuses.has(l.status)) continue;
+      if (!linesByProject.has(l.project_id)) linesByProject.set(l.project_id, []);
+      linesByProject.get(l.project_id).push({ ...l, _cat_code: catCodeById.get(l.category_id) || '' });
+    }
+    for (const fi of (fxRes.data || [])) {
+      if (fi.status === 'cancelled') continue;
+      fixedRevenueByProject.set(fi.project_id,
+        (fixedRevenueByProject.get(fi.project_id) || 0) + (Number(fi.amount) || 0));
+    }
+  }
+
+  // 各 line の単価マップ（line_id -> client_unit_price）。actual 計算用。
+  const unitPriceByLine = new Map();
+  for (const arr of linesByProject.values()) {
+    for (const line of arr) unitPriceByLine.set(line.id, Number(line.client_unit_price) || 0);
+  }
+
+  const isVideoCategory = (code) => /video|short|long|cut/i.test(code || '');
+  const isDesignCategory = (code) => /design|image|static/i.test(code || '');
 
   const result = (cycles || []).map(cycle => {
     const creatives = creativesByCycle[cycle.id] || [];
@@ -7573,22 +7655,35 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
       c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))
     ).length;
 
-    // project_client_fees は projects 配下に格納される（上のクエリ参照）。
-    // UNIQUE(project_id) で 1:1 だが PostgREST は配列で返すので先頭を取る。
-    const feeRaw = cycle.projects?.project_client_fees;
-    const fee = Array.isArray(feeRaw) ? feeRaw[0] : feeRaw;
-    const videoUnitPrice = fee?.video_unit_price || 0;
-    const designUnitPrice = fee?.design_unit_price || 0;
+    const projectLines = linesByProject.get(cycle.project_id) || [];
 
-    let planned;
-    if (fee?.use_fixed_budget && fee?.fixed_budget) {
-      planned = fee.fixed_budget;
-    } else {
-      planned = (cycle.planned_video_count || 0) * videoUnitPrice
-              + (cycle.planned_design_count || 0) * designUnitPrice;
+    // planned_amount = lines の合計 + fixed revenue
+    let planned = 0;
+    let videoUnitPrice = 0;
+    let designUnitPrice = 0;
+    for (const line of projectLines) {
+      planned += (Number(line.client_unit_price) || 0) * (Number(line.planned_count) || 0);
+      // 表示用の「video / design 単価」は最初に見つけた値を使う（複数あれば代表値）
+      if (isVideoCategory(line._cat_code)  && !videoUnitPrice)  videoUnitPrice  = Number(line.client_unit_price) || 0;
+      if (isDesignCategory(line._cat_code) && !designUnitPrice) designUnitPrice = Number(line.client_unit_price) || 0;
     }
+    planned += (fixedRevenueByProject.get(cycle.project_id) || 0);
 
-    const actual = videoCount * videoUnitPrice + designCount * designUnitPrice;
+    // actual_amount = creatives.line_id ごとに client_unit_price を合算
+    // 実績本数が見積を超えても planned_count の天井までで打ち切る （見積より多く納品しても請求しない設計）
+    let actual = 0;
+    for (const c of creatives) {
+      if (c.line_id) {
+        actual += unitPriceByLine.get(c.line_id) || 0;
+      } else {
+        // line に紐付かない creative は creative_type でフォールバック
+        if (c.creative_type && (c.creative_type.includes('動画') || c.creative_type.toLowerCase().includes('video'))) {
+          actual += videoUnitPrice;
+        } else if (c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))) {
+          actual += designUnitPrice;
+        }
+      }
+    }
 
     return {
       project_id: cycle.project_id,

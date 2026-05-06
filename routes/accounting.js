@@ -374,135 +374,117 @@ router.get('/projects/:id/similar', requireAuth, requireAdmin, async (req, res) 
 
 // ---------- GET /projects/:id/rate-templates ----------
 // 「📊 単価設定から取込」UI 用。
-// 単価設定モーダル（openRatesModal）が書き込む 3 テーブルすべてから候補を集める:
-//   1. project_rates       — ABC × creative_type × base_fee/script_fee/ai_fee（メイン）
-//   2. project_rate_extras — その他の自由項目
-//   3. project_client_fees — 旧モーダルのデータ（互換性のため残置）
+// ADR 002 後の新スキーマ（project_estimate_lines + project_estimate_line_costs +
+// project_fixed_items）から候補を集める。
+//   - lines.client_unit_price → クライアント単価（カテゴリ単位）
+//   - line_costs              → ロール別単価（producer/director/editor/designer …）
+//   - fixed_items(item_type='expense') → 「その他」自由項目（旧 project_rate_extras）
+//   - fixed_items(item_type='revenue') → 固定予算（旧 project_client_fees.fixed_budget）
+//
+// 旧 5 テーブル参照（project_rates / project_rate_extras / project_client_fees /
+// project_director_rates / project_producer_rates）は廃止。
 router.get('/projects/:id/rate-templates', requireAuth, requireAdmin, async (req, res) => {
   const projectId = req.params.id;
   if (!projectId) return res.status(400).json({ error: 'project id is required' });
 
   try {
-    const [ratesRes, extrasRes, feesRes, dirRatesRes, prodRatesRes] = await Promise.all([
-      supabase.from('project_rates').select('*').eq('project_id', projectId),
-      supabase.from('project_rate_extras').select('*').eq('project_id', projectId),
-      supabase.from('project_client_fees').select('*').eq('project_id', projectId).maybeSingle(),
-      // Issue #192: ディレクション費（テーブル未作成環境では silent skip）
-      supabase.from('project_director_rates').select('*').eq('project_id', projectId),
-      // プロデュース費（テーブル未作成環境では silent skip）
-      supabase.from('project_producer_rates').select('*').eq('project_id', projectId),
-    ]);
-    if (dirRatesRes.error && !/does not exist|could not find the table/i.test(dirRatesRes.error.message || '')) {
-      console.warn('[rate-templates] director_rates load failed:', dirRatesRes.error.message);
+    // 1) 案件の lines を取得（line_costs と category を embed）
+    const { data: lines, error: linesErr } = await supabase
+      .from('project_estimate_lines')
+      .select(`
+        id, project_id, category_id, name, planned_count, client_unit_price,
+        sort_order, status,
+        category:creative_categories(id, code, name),
+        line_costs:project_estimate_line_costs(
+          id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
+          role:roles(id, code, label)
+        )
+      `)
+      .eq('project_id', projectId)
+      .order('sort_order', { ascending: true, nullsFirst: false });
+    if (linesErr) throw new Error(`project_estimate_lines 取得失敗: ${linesErr.message}`);
+
+    // 2) 固定費・固定収入
+    const { data: fixedItems, error: fxErr } = await supabase
+      .from('project_fixed_items')
+      .select('id, item_type, category, name, amount, status')
+      .eq('project_id', projectId);
+    if (fxErr && !/does not exist|could not find the table/i.test(fxErr.message || '')) {
+      console.warn('[rate-templates] project_fixed_items load failed:', fxErr.message);
     }
-    if (prodRatesRes.error && !/does not exist|could not find the table/i.test(prodRatesRes.error.message || '')) {
-      console.warn('[rate-templates] producer_rates load failed:', prodRatesRes.error.message);
-    }
+
+    // カテゴリ code → 単位（本/枚/式）の推定
+    const unitForCategoryCode = (code) => {
+      if (!code) return '式';
+      if (/video|short|long|cut/i.test(code)) return '本';
+      if (/design|image|static/i.test(code)) return '枚';
+      return '式';
+    };
 
     const templates = [];
 
-    // 1. project_rates → ABC × creative_type × 各サブ項目を展開
-    //    動画: 編集 / 台本 / AI生成 を別行に
-    //    デザイン: 静止画1枚 のみ
-    const subCategoryLabel = {
-      video:  { base_fee: '動画編集', script_fee: '台本作成',  ai_fee: 'AI生成（ナレーション含む）' },
-      design: { base_fee: '静止画1枚' },
-    };
-    const unitForType = { video: '本', design: '枚' };
-    const rankOrder = { A: 0, B: 1, C: 2 };
-    const sortedRates = (ratesRes.data || [])
-      .slice()
-      .sort((a, b) => {
-        if (a.creative_type !== b.creative_type) return a.creative_type === 'video' ? -1 : 1;
-        return (rankOrder[a.rank] ?? 99) - (rankOrder[b.rank] ?? 99);
-      });
-    sortedRates.forEach(r => {
-      const labels = subCategoryLabel[r.creative_type] || {};
-      ['base_fee', 'script_fee', 'ai_fee'].forEach(field => {
-        const fee = Number(r[field]) || 0;
-        if (fee <= 0) return;                           // 0 円はスキップ
-        if (!labels[field]) return;                     // design に script/ai は無い
+    // 3) クライアント単価 + ロール別単価を line ごとに展開
+    for (const line of (lines || [])) {
+      const catCode  = line.category?.code  || null;
+      const catLabel = line.category?.name  || (line.name || '(カテゴリ未設定)');
+      const unit     = unitForCategoryCode(catCode);
+      const lineLabel = line.name ? `${catLabel}（${line.name}）` : catLabel;
+
+      // 3-a. クライアント単価
+      const cup = Number(line.client_unit_price) || 0;
+      if (cup > 0) {
         templates.push({
-          source:    'project_rate',
-          category:  r.creative_type,
-          label:     `${labels[field]}（${r.rank}ランク）`,
-          unit:      unitForType[r.creative_type] || '本',
-          unit_price: fee,
-          rank:      r.rank,
-          field,
-        });
-      });
-    });
-
-    // 2. project_rate_extras → 「その他」自由項目
-    (extrasRes.data || []).forEach(ex => {
-      const fee = Number(ex.fee) || 0;
-      if (fee <= 0) return;
-      templates.push({
-        source: 'rate_extra',
-        category: ex.creative_type || 'other',
-        label:    ex.name || '(無題)',
-        unit:     '式',
-        unit_price: fee,
-      });
-    });
-
-    // 2b. project_director_rates → ディレクション費（per-project, per-creative_type）
-    (dirRatesRes.data || []).forEach(d => {
-      const fee = Number(d.director_fee) || 0;
-      if (fee <= 0) return;
-      templates.push({
-        source: 'director_rate',
-        category: d.creative_type,
-        label:    d.creative_type === 'design' ? 'ディレクション費（静止画1枚あたり）' : 'ディレクション費（1本あたり）',
-        unit:     unitForType[d.creative_type] || '本',
-        unit_price: fee,
-        field:    'director_fee',
-      });
-    });
-
-    // 2c. project_producer_rates → プロデュース費（per-project, per-creative_type）
-    (prodRatesRes.data || []).forEach(p => {
-      const fee = Number(p.producer_fee) || 0;
-      if (fee <= 0) return;
-      templates.push({
-        source: 'producer_rate',
-        category: p.creative_type,
-        label:    p.creative_type === 'design' ? 'プロデュース費（静止画1枚あたり）' : 'プロデュース費（1本あたり）',
-        unit:     unitForType[p.creative_type] || '本',
-        unit_price: fee,
-        field:    'producer_fee',
-      });
-    });
-
-    // 3. project_client_fees → 旧モーダルのデータ（残置データを救済）
-    const fees = feesRes.data;
-    if (fees) {
-      if (Number(fees.video_unit_price) > 0) {
-        templates.push({
-          source: 'client_fee',
-          category: 'video',
-          label:    'クライアント単価（動画）',
-          unit:     '本',
-          unit_price: Number(fees.video_unit_price),
+          source:     'line_client_unit_price',
+          line_id:    line.id,
+          category:   catCode,
+          label:      `クライアント単価（${lineLabel}）`,
+          unit,
+          unit_price: cup,
         });
       }
-      if (Number(fees.design_unit_price) > 0) {
+
+      // 3-b. ロール別 line_costs
+      for (const lc of (line.line_costs || [])) {
+        const price = Number(lc.unit_price) || 0;
+        const pricingType = lc.pricing_type || 'fixed_per_unit';
+        // pricing_type=percentage は単価表現にならないためスキップ（取込候補ではない）
+        if (pricingType === 'percentage') continue;
+        if (price <= 0) continue;
+        const roleLabel = lc.role?.label || lc.role?.code || '(ロール未設定)';
         templates.push({
-          source: 'client_fee',
-          category: 'design',
-          label:    'クライアント単価（デザイン）',
-          unit:     '枚',
-          unit_price: Number(fees.design_unit_price),
+          source:     'line_cost',
+          line_id:    line.id,
+          line_cost_id: lc.id,
+          category:   catCode,
+          label:      `${roleLabel}（${lineLabel}）`,
+          unit:       pricingType === 'fixed_total' ? '式' : unit,
+          unit_price: price,
+          role_code:  lc.role?.code || null,
+          pricing_type: pricingType,
         });
       }
-      if (fees.use_fixed_budget && Number(fees.fixed_budget) > 0) {
+    }
+
+    // 4) project_fixed_items → expense は「その他」、revenue は「固定予算」
+    for (const fi of (fixedItems || [])) {
+      const amt = Number(fi.amount) || 0;
+      if (amt <= 0) continue;
+      if (fi.status === 'cancelled') continue;
+      if (fi.item_type === 'expense') {
         templates.push({
-          source: 'client_fee',
-          category: 'fixed',
-          label:    '固定予算（一式）',
-          unit:     '式',
-          unit_price: Number(fees.fixed_budget),
+          source:    'fixed_expense',
+          category:  fi.category || 'other',
+          label:     fi.name || '(無題)',
+          unit:      '式',
+          unit_price: amt,
+        });
+      } else if (fi.item_type === 'revenue') {
+        templates.push({
+          source:    'fixed_revenue',
+          category:  'fixed',
+          label:     fi.name || '固定予算（一式）',
+          unit:      '式',
+          unit_price: amt,
         });
       }
     }
