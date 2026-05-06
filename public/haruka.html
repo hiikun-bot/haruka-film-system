@@ -4208,6 +4208,126 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- 固定費・追加収入（fixed_item）編集モーダル — Stage 4c -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
+<div class="modal-overlay" id="modal-project-fixed-item-edit" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="max-width:600px;width:92vw;padding:22px;border-radius:14px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:3px;height:14px;background:#7C3AED;border-radius:2px"></span>
+        <span id="pfi-edit-title" style="font-size:14px;font-weight:700;color:#5B21B6">経費を追加</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-fixed-item-edit')">×</button>
+    </div>
+    <input type="hidden" id="pfi-edit-id">
+    <input type="hidden" id="pfi-edit-project-id">
+
+    <!-- 種別 -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">種別 <span style="color:#E24B4A">*</span></label>
+      <div style="display:flex;gap:8px">
+        <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="pfi-edit-type" id="pfi-edit-type-expense" value="expense">
+          <span style="color:#A32D2D;font-weight:600">経費</span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="pfi-edit-type" id="pfi-edit-type-revenue" value="revenue">
+          <span style="color:#0F7A56;font-weight:600">追加収入</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- カテゴリ -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">カテゴリ</label>
+      <select class="form-select" id="pfi-edit-category">
+        <option value="">未指定</option>
+        <option value="studio">スタジオ</option>
+        <option value="equipment">機材</option>
+        <option value="travel">出張</option>
+        <option value="location">ロケ地</option>
+        <option value="other">その他</option>
+      </select>
+    </div>
+
+    <!-- 名前 -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">名前 <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" id="pfi-edit-name" placeholder='例: Studio A 2026/05/15'>
+    </div>
+
+    <!-- 金額 + 発生日 -->
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">金額（円）</label>
+        <input class="form-input" id="pfi-edit-amount" type="number" min="0" step="1" value="0">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">発生日 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意）</span></label>
+        <input class="form-input" id="pfi-edit-occurred-on" type="date">
+      </div>
+    </div>
+
+    <!-- 支払先 + 支払先メンバー -->
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">支払先 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（フリーテキスト）</span></label>
+        <input class="form-input" id="pfi-edit-paid-to" placeholder="例: ◯◯スタジオ株式会社">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">支払先メンバー <span style="color:var(--text-muted);font-weight:400;font-size:11px">（内部宛のとき）</span></label>
+        <select class="form-select" id="pfi-edit-paid-to-user-id">
+          <option value="">未指定</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ステータス -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ステータス</label>
+      <select class="form-select" id="pfi-edit-status">
+        <option value="planned">予定</option>
+        <option value="committed">発注確定</option>
+        <option value="incurred">実費発生</option>
+        <option value="cancelled">中止</option>
+      </select>
+    </div>
+
+    <!-- メモ -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">メモ <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意）</span></label>
+      <textarea class="form-input" id="pfi-edit-notes" rows="2" placeholder="補足情報があれば"></textarea>
+    </div>
+
+    <div id="pfi-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-fixed-item-edit')">キャンセル</button>
+      <button class="btn-primary" id="pfi-edit-save-btn" onclick="saveProjectFixedItem()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 固定費・追加収入 削除確認モーダル — Stage 4c -->
+<div class="modal-overlay" id="modal-project-fixed-item-delete" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:440px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#A32D2D;margin-bottom:4px">この項目を削除しますか？</div>
+        <div id="pfi-del-message" style="font-size:12px;color:var(--text);line-height:1.7">
+          この操作は取り消せません。
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="pfi-del-id">
+    <input type="hidden" id="pfi-del-project-id">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-fixed-item-delete')">キャンセル</button>
+      <button class="btn-primary" id="pfi-del-execute-btn" onclick="executeProjectFixedItemDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 案件追加モーダル -->
 <!-- 単価設定モーダル -->
 <div class="modal-overlay" id="modal-rates">
@@ -4592,6 +4712,29 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
       </div>
       <div id="p-lines-list" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
+      </div>
+    </div>
+
+    <!-- ===== 固定費・追加収入（project_fixed_items）Stage 4c ===== -->
+    <!-- ADR 006 (案件固定費) に基づく fixed_items の編集 UI。
+         スタジオ/機材/出張/ロケ地代等の本数非依存の費用 (item_type='expense')
+         および別料金収入 (item_type='revenue') を扱う。
+         旧単価モーダルの「rate-extras」/「fixed_budget」はこの PR では触らず並走。
+         新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
+    <div id="p-fixed-items-section" style="display:none;padding:0 28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:inline-block;width:3px;height:14px;background:#7C3AED;border-radius:2px"></span>
+          <span style="font-size:11px;font-weight:700;color:#5B21B6;letter-spacing:0.12em;text-transform:uppercase">固定費・追加収入</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（スタジオ/機材/出張等の本数非依存の費用・収入）</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" class="btn" id="p-fi-add-expense-btn" onclick="addProjectFixedItem('expense')" style="padding:6px 12px;font-size:12px;white-space:nowrap;border-color:#F09595;color:#A32D2D">+ 経費を追加</button>
+          <button type="button" class="btn" id="p-fi-add-revenue-btn" onclick="addProjectFixedItem('revenue')" style="padding:6px 12px;font-size:12px;white-space:nowrap;border-color:#86C9A8;color:#0F7A56">+ 追加収入を追加</button>
+        </div>
+      </div>
+      <div id="p-fixed-items-list" style="display:flex;flex-direction:column;gap:8px">
         <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
       </div>
     </div>
@@ -12004,6 +12147,9 @@ function openProjectModal(preClientId) {
   // 成果物グループは案件作成後（id 確定後）にしか操作できないので新規作成時は隠す
   const linesSec = document.getElementById('p-lines-section');
   if (linesSec) linesSec.style.display = 'none';
+  // 固定費・追加収入も同様に新規作成時は隠す（Stage 4c）
+  const fiSec = document.getElementById('p-fixed-items-section');
+  if (fiSec) fiSec.style.display = 'none';
   openModal('modal-project');
 }
 
@@ -12112,6 +12258,11 @@ function openEditProject(p) {
   const linesSec = document.getElementById('p-lines-section');
   if (linesSec) linesSec.style.display = '';
   loadProjectLines(p.id);
+
+  // 固定費・追加収入（fixed_items）セクション表示 + ロード（Stage 4c）
+  const fiSec = document.getElementById('p-fixed-items-section');
+  if (fiSec) fiSec.style.display = '';
+  loadProjectFixedItems(p.id);
 
   openModal('modal-project');
 }
@@ -12511,6 +12662,289 @@ async function executeProjectLineDelete() {
     closeModal('modal-project-line-delete');
     showToast('成果物グループを削除しました', 'ok');
     await loadProjectLines(projectId);
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ==================== 固定費・追加収入（project_fixed_items）Stage 4c ====================
+// ADR 006 (案件固定費) に基づく fixed_items CRUD UI。
+// 旧単価モーダルの「rate-extras」/「fixed_budget」UI は触らず並走。
+// 編集は専用の小モーダル `modal-project-fixed-item-edit`（z-index:300）で行う。
+// 削除は `modal-project-fixed-item-delete`（z-index:320）で誤削除防止。
+// 保存後は楽観的更新せず必ず再 fetch して同期する。
+
+const FIXED_ITEM_TYPE_LABELS = {
+  expense: { label: '経費',     icon: '💰', bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+  revenue: { label: '追加収入', icon: '📈', bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+};
+
+const FIXED_ITEM_STATUS_LABELS = {
+  planned:   { label: '予定',     bg: '#F3F4F6', fg: '#4B5563', border: '#E5E7EB' },
+  committed: { label: '発注確定', bg: '#E0F2FE', fg: '#075985', border: '#BAE6FD' },
+  incurred:  { label: '実費発生', bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+  cancelled: { label: '中止',     bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+};
+
+const FIXED_ITEM_CATEGORY_LABELS = {
+  studio:    'スタジオ',
+  equipment: '機材',
+  travel:    '出張',
+  location:  'ロケ地',
+  other:     'その他',
+};
+
+let _projectFixedItemsCache = []; // 現在表示中の案件の fixed_items
+
+function projectFixedItemsCanEdit() {
+  return typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
+}
+
+async function loadProjectFixedItems(projectId) {
+  const listEl = document.getElementById('p-fixed-items-list');
+  if (!listEl || !projectId) return;
+  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>';
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/fixed-items`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(msg) || res.status}</div>`;
+      return;
+    }
+    _projectFixedItemsCache = await res.json() || [];
+    renderProjectFixedItems();
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(e?.message || '')}</div>`;
+  }
+}
+
+function renderProjectFixedItems() {
+  const listEl = document.getElementById('p-fixed-items-list');
+  if (!listEl) return;
+  const canEdit = projectFixedItemsCanEdit();
+  // 「+ 経費を追加」「+ 追加収入を追加」ボタンの権限制御
+  const addExpenseBtn = document.getElementById('p-fi-add-expense-btn');
+  const addRevenueBtn = document.getElementById('p-fi-add-revenue-btn');
+  if (addExpenseBtn) addExpenseBtn.style.display = canEdit ? '' : 'none';
+  if (addRevenueBtn) addRevenueBtn.style.display = canEdit ? '' : 'none';
+
+  if (!_projectFixedItemsCache.length) {
+    listEl.innerHTML = `
+      <div style="color:var(--text-muted);font-size:13px;padding:14px;background:var(--surface);border:1px dashed var(--border);border-radius:10px;text-align:center">
+        まだ固定費・追加収入が登録されていません。「+ 経費を追加」「+ 追加収入を追加」から追加してください。
+      </div>`;
+    return;
+  }
+
+  listEl.innerHTML = _projectFixedItemsCache.map((item) => {
+    const t = FIXED_ITEM_TYPE_LABELS[item.item_type] || FIXED_ITEM_TYPE_LABELS.expense;
+    const s = FIXED_ITEM_STATUS_LABELS[item.status] || FIXED_ITEM_STATUS_LABELS.planned;
+    const catLabel = item.category ? (FIXED_ITEM_CATEGORY_LABELS[item.category] || item.category) : null;
+    const amount = Number(item.amount) || 0;
+    const occurredOn = item.occurred_on
+      ? new Date(item.occurred_on).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' })
+      : null;
+    // 支払先表示（paid_to_user_id があればメンバー名、なければ paid_to フリーテキスト）
+    let paidToLabel = '';
+    if (item.paid_to_user_id) {
+      const m = (typeof allMembers !== 'undefined' && Array.isArray(allMembers))
+        ? allMembers.find(x => x && x.id === item.paid_to_user_id)
+        : null;
+      paidToLabel = m ? `→ ${m.name || m.email || 'メンバー'}` : '→ メンバー';
+    } else if (item.paid_to) {
+      paidToLabel = `→ ${item.paid_to}`;
+    }
+    const isCancelled = item.status === 'cancelled';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--border);border-radius:10px;${isCancelled ? 'opacity:.55' : ''}">
+        <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${t.bg};border:1px solid ${t.border};border-radius:999px;font-size:11px;font-weight:600;color:${t.fg}">
+          <span>${t.icon}</span><span>${esc(t.label)}</span>
+        </div>
+        ${catLabel ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#F3F4F6;border:1px solid #E5E7EB;color:#4B5563;border-radius:999px;font-size:11px;font-weight:500;white-space:nowrap">${esc(catLabel)}</span>` : ''}
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <div style="font-size:13px;line-height:1.4;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || '名称未設定')}</div>
+          <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <strong style="color:var(--text)">¥${amount.toLocaleString()}</strong>
+            ${occurredOn ? ` ・ ${esc(occurredOn)}` : ''}
+            ${paidToLabel ? ` ・ ${esc(paidToLabel)}` : ''}
+          </div>
+        </div>
+        <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${s.bg};border:1px solid ${s.border};color:${s.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
+          ${esc(s.label)}
+        </span>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button type="button" class="btn" onclick="openProjectFixedItemEdit('${esc(item.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+          <button type="button" class="btn" onclick="openProjectFixedItemDeleteConfirm('${esc(item.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 「+ 経費を追加」 / 「+ 追加収入を追加」: 編集モーダルを空状態で開く
+async function addProjectFixedItem(itemType) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) {
+    showToast('案件を保存してから固定費・収入を追加してください', 'warn');
+    return;
+  }
+  prepareProjectFixedItemEditModal(null, projectId, itemType);
+  openModal('modal-project-fixed-item-edit');
+}
+
+// 既存 fixed_item を編集モーダルで開く
+async function openProjectFixedItemEdit(itemId) {
+  const projectId = document.getElementById('p-id').value;
+  const item = _projectFixedItemsCache.find(x => x.id === itemId);
+  if (!item) {
+    showToast('項目が見つかりません', 'warn');
+    await loadProjectFixedItems(projectId);
+    return;
+  }
+  prepareProjectFixedItemEditModal(item, projectId, item.item_type);
+  openModal('modal-project-fixed-item-edit');
+}
+
+// 編集モーダルの初期化（item=null は新規）
+function prepareProjectFixedItemEditModal(item, projectId, defaultItemType) {
+  const titleEl = document.getElementById('pfi-edit-title');
+  const itemType = item ? item.item_type : (defaultItemType || 'expense');
+  if (titleEl) {
+    if (item) {
+      titleEl.textContent = itemType === 'revenue' ? '追加収入を編集' : '経費を編集';
+    } else {
+      titleEl.textContent = itemType === 'revenue' ? '追加収入を追加' : '経費を追加';
+    }
+  }
+  document.getElementById('pfi-edit-id').value = item ? item.id : '';
+  document.getElementById('pfi-edit-project-id').value = projectId;
+  // 種別 (radio)
+  const expenseRadio = document.getElementById('pfi-edit-type-expense');
+  const revenueRadio = document.getElementById('pfi-edit-type-revenue');
+  if (expenseRadio) expenseRadio.checked = (itemType === 'expense');
+  if (revenueRadio) revenueRadio.checked = (itemType === 'revenue');
+  // カテゴリ
+  document.getElementById('pfi-edit-category').value = item?.category || '';
+  // 名前
+  document.getElementById('pfi-edit-name').value = item?.name || '';
+  // 金額
+  document.getElementById('pfi-edit-amount').value = item ? (item.amount ?? 0) : 0;
+  // 発生日
+  document.getElementById('pfi-edit-occurred-on').value = item?.occurred_on || '';
+  // 支払先
+  document.getElementById('pfi-edit-paid-to').value = item?.paid_to || '';
+  // 支払先メンバー (users select を populate)
+  const userSel = document.getElementById('pfi-edit-paid-to-user-id');
+  if (userSel) {
+    const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+    const activeMembers = members.filter(m => m && m.is_active !== false);
+    userSel.innerHTML = '<option value="">未指定</option>' + activeMembers.map(m =>
+      `<option value="${esc(m.id)}">${esc(m.name || m.email || 'メンバー')}</option>`
+    ).join('');
+    userSel.value = item?.paid_to_user_id || '';
+  }
+  // ステータス
+  document.getElementById('pfi-edit-status').value = item?.status || 'planned';
+  // メモ
+  document.getElementById('pfi-edit-notes').value = item?.notes || '';
+
+  const errEl = document.getElementById('pfi-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+}
+
+async function saveProjectFixedItem() {
+  const itemId = document.getElementById('pfi-edit-id').value;
+  const projectId = document.getElementById('pfi-edit-project-id').value;
+  const errEl = document.getElementById('pfi-edit-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const itemType = document.querySelector('input[name="pfi-edit-type"]:checked')?.value || 'expense';
+  const category = document.getElementById('pfi-edit-category').value || null;
+  const name = document.getElementById('pfi-edit-name').value.trim();
+  const amount = Math.max(0, parseInt(document.getElementById('pfi-edit-amount').value, 10) || 0);
+  const occurredOn = document.getElementById('pfi-edit-occurred-on').value || null;
+  const paidTo = document.getElementById('pfi-edit-paid-to').value.trim() || null;
+  const paidToUserId = document.getElementById('pfi-edit-paid-to-user-id').value || null;
+  const status = document.getElementById('pfi-edit-status').value;
+  const notes = document.getElementById('pfi-edit-notes').value.trim() || null;
+
+  if (!name) { showErr('名前を入力してください'); return; }
+
+  const payload = {
+    item_type: itemType,
+    category,
+    name,
+    amount,
+    occurred_on: occurredOn,
+    paid_to: paidTo,
+    paid_to_user_id: paidToUserId,
+    status,
+    notes,
+  };
+
+  const saveBtn = document.getElementById('pfi-edit-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const url = itemId
+      ? `${API}/projects/${projectId}/fixed-items/${itemId}`
+      : `${API}/projects/${projectId}/fixed-items`;
+    const method = itemId ? 'PUT' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showErr(err.error || `保存に失敗しました（${res.status}）`);
+      return;
+    }
+    closeModal('modal-project-fixed-item-edit');
+    showToast(itemId ? '項目を更新しました' : '項目を追加しました', 'ok');
+    await loadProjectFixedItems(projectId);
+  } catch (e) {
+    showErr(`保存に失敗しました: ${e?.message || ''}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function openProjectFixedItemDeleteConfirm(itemId) {
+  const projectId = document.getElementById('p-id').value;
+  const item = _projectFixedItemsCache.find(x => x.id === itemId);
+  if (!item) return;
+  document.getElementById('pfi-del-id').value = itemId;
+  document.getElementById('pfi-del-project-id').value = projectId;
+  const t = FIXED_ITEM_TYPE_LABELS[item.item_type] || FIXED_ITEM_TYPE_LABELS.expense;
+  const amount = Number(item.amount) || 0;
+  document.getElementById('pfi-del-message').innerHTML = `
+    <div style="margin-bottom:6px"><strong>${esc(t.label)}</strong>: ${esc(item.name || '名称未設定')}</div>
+    <div style="color:var(--text-muted)">¥${amount.toLocaleString()}</div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
+      ※ 削除後の復元はできません。
+    </div>`;
+  openModal('modal-project-fixed-item-delete');
+}
+
+async function executeProjectFixedItemDelete() {
+  const itemId = document.getElementById('pfi-del-id').value;
+  const projectId = document.getElementById('pfi-del-project-id').value;
+  if (!itemId || !projectId) return;
+  const btn = document.getElementById('pfi-del-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/fixed-items/${itemId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    closeModal('modal-project-fixed-item-delete');
+    showToast('項目を削除しました', 'ok');
+    await loadProjectFixedItems(projectId);
   } catch (e) {
     showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
   } finally {
