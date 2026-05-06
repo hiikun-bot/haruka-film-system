@@ -20937,7 +20937,7 @@ function fpClickPlayer(e) {
 function fpTogglePlay() {
   const v = document.getElementById('fp-video');
   if (!v) return;
-  v.paused ? v.play() : v.pause();
+  v.paused ? v.play().catch(() => {}) : v.pause();
 }
 
 function fpToggleMute() {
@@ -21195,7 +21195,7 @@ function fpPlayClip(timeSec) {
   const start = Math.max(0, timeSec - 10);
   const end   = timeSec + 10;
   video.currentTime = start;
-  video.play();
+  video.play().catch(() => {});
   _fpClipInterval = setInterval(() => {
     const v = document.getElementById('fp-video');
     if (!v || v.currentTime >= end) {
@@ -21246,7 +21246,7 @@ function fpToggleABLoop() {
       if (vid.currentTime >= _fpAB.b) { vid.currentTime = _fpAB.a; }
     }, 100);
     v.currentTime = _fpAB.a;
-    v.play();
+    v.play().catch(() => {});
   } else {
     // リセット
     _fpABState = 0;
@@ -21931,7 +21931,7 @@ function fpSeekTo(tc) {
   else if (parts.length === 3) secs = parts[0]*3600 + parts[1]*60 + parts[2];
   else secs = parts[0]*60 + parts[1];
   video.currentTime = secs;
-  video.play();
+  video.play().catch(() => {});
 }
 
 function renderComments(list) {
