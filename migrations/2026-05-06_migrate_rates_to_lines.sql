@@ -199,7 +199,7 @@ INSERT INTO project_estimate_line_costs
 SELECT
   pel.id,
   r.id,
-  NULL                                                                       AS user_id,
+  NULL::uuid                                                                 AS user_id,
   COALESCE(pr.base_fee,0)+COALESCE(pr.script_fee,0)
     +COALESCE(pr.ai_fee,0)+COALESCE(pr.other_fee,0)                          AS unit_price,
   'JPY'                                                                      AS currency,
@@ -232,7 +232,7 @@ INSERT INTO project_estimate_line_costs
 SELECT DISTINCT
   pel.id,
   r.id,
-  NULL,
+  NULL::uuid,
   pdr.director_fee,
   'JPY',
   'fixed_per_unit'
@@ -272,7 +272,7 @@ WHERE COALESCE(pdr.director_fee,0) > 0
 INSERT INTO project_estimate_line_costs
   (line_id, role_id, user_id, unit_price, currency, pricing_type)
 SELECT
-  pel.id, r.id, NULL, pdr.director_fee, 'JPY', 'fixed_per_unit'
+  pel.id, r.id, NULL::uuid, pdr.director_fee, 'JPY', 'fixed_per_unit'
 FROM project_director_rates pdr
 JOIN creative_categories cc
   ON cc.code = CASE pdr.creative_type WHEN 'video' THEN 'video' WHEN 'design' THEN 'image' ELSE NULL END
@@ -294,7 +294,7 @@ WHERE COALESCE(pdr.director_fee,0) > 0
 INSERT INTO project_estimate_line_costs
   (line_id, role_id, user_id, unit_price, currency, pricing_type)
 SELECT DISTINCT
-  pel.id, r.id, NULL, ppr.producer_fee, 'JPY', 'fixed_per_unit'
+  pel.id, r.id, NULL::uuid, ppr.producer_fee, 'JPY', 'fixed_per_unit'
 FROM project_producer_rates ppr
 JOIN creative_categories cc
   ON cc.code = CASE ppr.creative_type WHEN 'video' THEN 'video' WHEN 'design' THEN 'image' ELSE NULL END
@@ -331,7 +331,7 @@ WHERE COALESCE(ppr.producer_fee,0) > 0
 INSERT INTO project_estimate_line_costs
   (line_id, role_id, user_id, unit_price, currency, pricing_type)
 SELECT
-  pel.id, r.id, NULL, ppr.producer_fee, 'JPY', 'fixed_per_unit'
+  pel.id, r.id, NULL::uuid, ppr.producer_fee, 'JPY', 'fixed_per_unit'
 FROM project_producer_rates ppr
 JOIN creative_categories cc
   ON cc.code = CASE ppr.creative_type WHEN 'video' THEN 'video' WHEN 'design' THEN 'image' ELSE NULL END
