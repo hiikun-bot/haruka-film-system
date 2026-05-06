@@ -1273,6 +1273,277 @@ router.post('/projects/:id/producer-rates', requireAuth, requirePermission('proj
   res.json(data || []);
 });
 
+// ==================== 見積行 / 成果物グループ（project_estimate_lines）Stage 4a ====================
+// ADR 002 (見積行統合) + ADR 005 (status ライフサイクル) に基づく lines CRUD。
+// このエンドポイント群は Stage 4a の追加であり、旧 rates 系（director-rates / producer-rates / client-fee）
+// は Stage 4d で整理するまで並走する。
+//
+// 権限: 案件編集と同じ project.create_edit を使う（director-rates / producer-rates が
+// project.unit_price_view を使っているのに対し、lines は「成果物グループの構造を編集する」
+// 性質のため、案件本体の編集権限と揃える方が直感に合う）。
+//
+// schema-sync 失敗で本番に project_estimate_lines が無い場合のフォールバックは
+// Stage 4a 時点では行わない（PR #316 で適用済み）。
+
+const LINE_STATUSES = new Set([
+  'draft', 'estimated', 'contracted', 'in_progress', 'delivered', 'cancelled', 'rejected'
+]);
+
+const isMissingPelTable = (err) =>
+  err && /relation .*project_estimate_lines.* does not exist|could not find the table/i.test(err.message || '');
+
+// GET /api/projects/:project_id/lines  一覧取得
+// embed: creative_categories(code, name) を一緒に返す（フロントで category 表示するため）
+router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingPelTable(error)) {
+      console.warn('[lines] project_estimate_lines table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// POST /api/projects/:project_id/lines  新規作成
+router.post('/projects/:project_id/lines', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const {
+    category_id,
+    name,
+    planned_count,
+    client_unit_price,
+    status,
+    sort_order,
+    currency,
+    tax_included
+  } = req.body || {};
+
+  // バリデーション
+  const plannedCount = Math.max(0, parseInt(planned_count, 10) || 0);
+  const unitPrice = Math.max(0, parseInt(client_unit_price, 10) || 0);
+  const lineStatus = status || 'draft';
+  if (!LINE_STATUSES.has(lineStatus)) {
+    return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
+  }
+
+  // category_id 存在チェック（指定された場合のみ）
+  if (category_id) {
+    const { data: cat, error: catErr } = await supabase
+      .from('creative_categories')
+      .select('id')
+      .eq('id', category_id)
+      .maybeSingle();
+    if (catErr) return res.status(500).json({ error: catErr.message });
+    if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+  }
+
+  // sort_order 自動付番（省略時は既存最大 + 10）
+  let resolvedSortOrder = (sort_order === null || sort_order === undefined || sort_order === '')
+    ? null
+    : parseInt(sort_order, 10);
+  if (resolvedSortOrder === null || Number.isNaN(resolvedSortOrder)) {
+    const { data: maxRow } = await supabase
+      .from('project_estimate_lines')
+      .select('sort_order')
+      .eq('project_id', projectId)
+      .order('sort_order', { ascending: false, nullsFirst: false })
+      .limit(1);
+    const currentMax = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+    resolvedSortOrder = currentMax + 10;
+  }
+
+  const insertRow = {
+    project_id: projectId,
+    category_id: category_id || null,
+    name: (typeof name === 'string' && name.trim()) ? name.trim() : null,
+    planned_count: plannedCount,
+    client_unit_price: unitPrice,
+    sort_order: resolvedSortOrder,
+    currency: (typeof currency === 'string' && currency.trim()) ? currency.trim().toUpperCase() : 'JPY',
+    tax_included: tax_included === false ? false : true,
+    status: lineStatus,
+    status_changed_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .insert(insertRow)
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .single();
+  if (error) {
+    if (isMissingPelTable(error)) {
+      return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/projects/:project_id/lines/:line_id  部分更新
+router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const body = req.body || {};
+
+  // 既存 line 取得 + project_id 一致チェック
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, status')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'line が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と line_id が一致しません' });
+  }
+
+  // 部分更新: 送られたフィールドのみ反映
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'category_id')) {
+    if (body.category_id) {
+      const { data: cat, error: catErr } = await supabase
+        .from('creative_categories')
+        .select('id')
+        .eq('id', body.category_id)
+        .maybeSingle();
+      if (catErr) return res.status(500).json({ error: catErr.message });
+      if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+    }
+    updates.category_id = body.category_id || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+    updates.name = (typeof body.name === 'string' && body.name.trim()) ? body.name.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'planned_count')) {
+    updates.planned_count = Math.max(0, parseInt(body.planned_count, 10) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'client_unit_price')) {
+    updates.client_unit_price = Math.max(0, parseInt(body.client_unit_price, 10) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'sort_order')) {
+    const so = parseInt(body.sort_order, 10);
+    updates.sort_order = Number.isNaN(so) ? null : so;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    updates.currency = (typeof body.currency === 'string' && body.currency.trim()) ? body.currency.trim().toUpperCase() : 'JPY';
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'tax_included')) {
+    updates.tax_included = body.tax_included === false ? false : true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    if (!LINE_STATUSES.has(body.status)) {
+      return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    if (body.status !== existing.status) {
+      updates.status = body.status;
+      updates.status_changed_at = new Date().toISOString();
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
+    const { data: row } = await supabase
+      .from('project_estimate_lines')
+      .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+      .eq('id', lineId)
+      .single();
+    return res.json(row);
+  }
+
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .update(updates)
+    .eq('id', lineId)
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/lines/:line_id  削除
+// 紐付く creatives.line_id がある場合は 409 で防ぐ（line_costs は CASCADE で消える）
+router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'line が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と line_id が一致しません' });
+  }
+
+  // 紐付く creatives 件数チェック
+  const { count: creativeCount, error: cntErr } = await supabase
+    .from('creatives')
+    .select('id', { count: 'exact', head: true })
+    .eq('line_id', lineId);
+  if (cntErr) return res.status(500).json({ error: cntErr.message });
+  if ((creativeCount || 0) > 0) {
+    return res.status(409).json({
+      error: `この成果物グループには ${creativeCount} 件のクリエイティブが紐付いているため削除できません。先にクリエイティブを別グループへ移すか削除してください。`,
+      creative_count: creativeCount
+    });
+  }
+
+  const { error: delErr } = await supabase
+    .from('project_estimate_lines')
+    .delete()
+    .eq('id', lineId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
+// PATCH /api/projects/:project_id/lines/reorder  一括並び替え
+// body: { ids: [<line_id_1>, <line_id_2>, ...] } の順で sort_order を 10, 20, 30, ... に再付番
+router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string' && x) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids 配列が必要です' });
+
+  // 案件内の既存 line を取得して、ids がすべて該当案件のものかバリデーション
+  const { data: lines, error: getErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id')
+    .eq('project_id', projectId);
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  const validIdSet = new Set((lines || []).map(l => l.id));
+  const invalid = ids.find(id => !validIdSet.has(id));
+  if (invalid) return res.status(400).json({ error: `line_id ${invalid} はこの案件に属していません` });
+
+  // 1件ずつ update（並び替えは件数少なめのはずなので allow）
+  // 大量行が想定されるようになったら upsert か RPC に移行
+  const errors = [];
+  await Promise.all(ids.map((id, idx) =>
+    supabase
+      .from('project_estimate_lines')
+      .update({ sort_order: (idx + 1) * 10 })
+      .eq('id', id)
+      .then(({ error }) => { if (error) errors.push(error.message); })
+  ));
+  if (errors.length) return res.status(500).json({ error: errors.join(' / ') });
+
+  // 更新後の一覧を返す
+  const { data: updated, error: refErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+  if (refErr) return res.status(500).json({ error: refErr.message });
+  res.json(updated || []);
+});
+
 // クライアント報酬設定 取得
 router.get('/projects/:id/client-fee', async (req, res) => {
   const { data, error } = await supabase
