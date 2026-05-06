@@ -1989,6 +1989,12 @@ ALTER TABLE project_tags ENABLE ROW LEVEL SECURITY;
 -- 旧 project_rates / project_category_rates / project_director_rates / project_producer_rates /
 -- project_sub_directors / project_sub_producers / project_rate_extras / project_client_fees からの
 -- データ移行は Stage 2 で別 migration で実施）。
+-- Stage 2 (2026-05-06_migrate_rates_to_lines.sql) で旧 rates 系から自動バックフィル済み。
+--   - project_rates, project_director_rates, project_producer_rates → lines + line_costs
+--   - project_rate_extras → project_fixed_items(item_type='expense')
+--   - project_client_fees.{video|design}_unit_price → lines.client_unit_price
+--   - project_client_fees.fixed_budget (use_fixed_budget=TRUE) → project_fixed_items(item_type='revenue')
+--   - creatives.line_id は (project_id, category_id) + rank で best-effort バックフィル
 CREATE TABLE IF NOT EXISTS project_estimate_lines (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id         UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
