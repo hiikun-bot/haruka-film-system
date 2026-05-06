@@ -532,6 +532,19 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', targets);
     await sendNotifMulti(targets, slackBody, cwBody);
   }
+  // 4-b) → クライアントチェック後修正（クライアントから戻る → editor + director の両方が修正対象）
+  //    Pチェック後修正と同じパターン。クライアントからの戻りも編集者だけでなくディレクター層にも共有が必要。
+  //    アプリ内通知は ball_holder_id が editor 側に戻ることで notify_ball_returned トリガーが
+  //    自動で発火するため、重複防止のためここでは送らない。
+  //    （旧実装はこの分岐自体が欠落しており Slack/CW DM が一切飛ばないバグだった）
+  else if (newStatus === 'クライアントチェック後修正') {
+    const directorTargets = directorAssignees.length > 0
+      ? directorAssignees
+      : [director].filter(Boolean);
+    const targets = [...editorAssignees, ...directorTargets];
+    const { slackBody, cwBody } = tpl('クライアントチェック後修正依頼', '🔁', targets);
+    await sendNotifMulti(targets, slackBody, cwBody);
+  }
   // 5) → クライアントチェック中（操作した本人にテンプレ案内）
   //    メンション方式によりチームにも見える形になるが、ミス防止のため第三者レビュー可能な
   //    状態は許容する仕様。
