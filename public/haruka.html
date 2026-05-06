@@ -5936,8 +5936,9 @@ async function init() {
       return;
     }
   } catch(e) { console.error('[HFS] /auth/me error:', e); }
-  // ロール権限をDBからロード（hasPermission の準備）
-  await loadRolePermissions();
+  // ロール権限とロールマスタをDBから並行ロード（hasPermission / roleLabel / VIEW AS の準備）
+  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の表示・並び替えに切り替え
+  await Promise.all([loadRolePermissions(), loadRolesMaster()]);
   if (canUseViewAs()) {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
@@ -5964,8 +5965,18 @@ async function applyDeepLinkOnLoad() {
   } catch (e) { console.warn('[deepLink]', e); }
 }
 
+// Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の label を優先。
+// _rolesByCode は loadRolesMaster() でフェッチ後に投入される。未投入時は legacy map を使う。
+// 'producer_director' は roles マスタには存在しない合成値だが、
+// _rebuildRoleConstantsFromMaster() が「プロデューサー兼ディレクター」として補完する。
 function roleLabel(role) {
-  const map = {admin:'管理者',secretary:'秘書',producer:'プロデューサー',producer_director:'P兼D',director:'ディレクター',editor:'編集者',designer:'デザイナー'};
+  if (!role) return '-';
+  if (_rolesByCode && _rolesByCode.has(role)) {
+    const r = _rolesByCode.get(role);
+    if (r && r.label) return r.label;
+  }
+  // フォールバック（roles マスタロード失敗時 / 未知のコード時）
+  const map = {admin:'管理者',secretary:'秘書',producer:'プロデューサー',producer_director:'プロデューサー兼ディレクター',director:'ディレクター',editor:'編集者',designer:'デザイナー',client:'クライアント'};
   return map[role] || role || '-';
 }
 
@@ -7327,10 +7338,18 @@ function setTeamTab(type) {
   renderTeamsList();
 }
 
+// ロール短縮ラベル（メンバーチップ右の P/D/編/デ/管/秘 等）。
+// roles マスタの label 1文字目を既定として使い、code 単位で上書きしたい場合は
+// _ROLE_LABEL_SHORT_OVERRIDES に登録する。Stage 0 / Step 2 PR3 で動的化。
+const _ROLE_LABEL_SHORT_OVERRIDES = {
+  producer:'P', producer_director:'PD', director:'D',
+  editor:'編', designer:'デ', admin:'管', secretary:'秘',
+};
+let ROLE_LABEL_SHORT = { ..._ROLE_LABEL_SHORT_OVERRIDES };
+
 function renderTeamsList() {
   const list = document.getElementById('teams-list');
   if (!list) return;
-  const ROLE_LABEL_SHORT = { producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', admin:'管', secretary:'秘' };
   const filtered = allTeams.filter(t => (t.team_type || 'video') === currentTeamTab);
   if (!filtered.length) { list.innerHTML = '<div class="loading">チームがありません</div>'; return; }
   // 基本チーム（team_code が単一の英字 A〜Z）と案件ごとのチームに分類
@@ -7457,7 +7476,11 @@ async function loadTeams() {
 // メンバー
 let showResigned = false;
 let memberSortBy = 'role';
-const ROLE_SORT_ORDER = { admin:7, secretary:6, producer:5, producer_director:4, director:3, designer:2, editor:1, client:0 };
+// ROLE_SORT_ORDER は roles マスタから動的構築する（Stage 0 / Step 2 PR3, ADR 003）。
+// 起動時 loadRolesMaster() で上書き。失敗時に備えてハードコードを fallback として残す。
+// 合成値 'producer_director' は roles マスタには無いので、producer/director の sort_order の
+// 中間（producer 値そのまま）を後段で割り当てる。'client' は外部ユーザー扱いで 0。
+let ROLE_SORT_ORDER = { admin:7, secretary:6, producer:5, producer_director:4, director:3, designer:2, editor:1, client:0 };
 
 function setMemberSort(type) {
   memberSortBy = type;
@@ -11016,6 +11039,151 @@ function isEffectiveAdmin() {
   return r === 'admin' || r === 'secretary';
 }
 
+// ==================== DB駆動ロールマスタ ====================
+// Stage 0 / Step 2 PR3 (ADR 003: docs/design/decisions/003-roles-as-master-data.md)
+//   起動時 loadRolesMaster() で /api/haruka/roles を取得し、ROLE_SORT_ORDER /
+//   ROLE_RANK / ROLE_LABEL_SHORT / _rolesByCode を上書きする。
+//   - roles マスタには合成値 'producer_director' は **存在しない**
+//   - dual-read 期間中、users.role には 'producer_director' が残るため、
+//     フロントは「producer + director の両方を持つ」ケースを「プロデューサー兼ディレクター」
+//     として表示するよう、フェッチ後に合成値を補完する（rolesByCode 経由）
+let _rolesMasterRows = null;       // /api/haruka/roles レスポンス（archived_at IS NULL のみ）
+let _rolesByCode    = new Map();   // code -> {id, code, label, sort_order, ...}
+
+function _rebuildRoleConstantsFromMaster(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const sortOrder = {};
+  const rank      = {};
+  const labelShort = {};
+  const byCode = new Map();
+  for (const r of rows) {
+    if (!r || !r.code) continue;
+    byCode.set(r.code, r);
+    const so = Number.isFinite(r.sort_order) ? r.sort_order : 0;
+    sortOrder[r.code] = so;
+    rank[r.code]      = so;
+    // 短縮ラベル: 明示オーバーライドがあればそれを使い、無ければ label の 1 文字目
+    if (Object.prototype.hasOwnProperty.call(_ROLE_LABEL_SHORT_OVERRIDES, r.code)) {
+      labelShort[r.code] = _ROLE_LABEL_SHORT_OVERRIDES[r.code];
+    } else if (r.label) {
+      labelShort[r.code] = String(r.label).slice(0, 1);
+    }
+  }
+  // 合成値 'producer_director'（dual-read 期間の users.role 互換）を補完。
+  // sort_order は producer と director の中間（producer 寄り）にする。
+  if (byCode.has('producer') && byCode.has('director')) {
+    const pSo = byCode.get('producer').sort_order ?? 0;
+    const dSo = byCode.get('director').sort_order ?? 0;
+    const pdSo = Math.max(pSo, dSo) - 1; // ハードコード値（producer 5 / director 3 → 4）と互換
+    sortOrder.producer_director = pdSo;
+    rank.producer_director      = pdSo;
+    labelShort.producer_director = _ROLE_LABEL_SHORT_OVERRIDES.producer_director || 'PD';
+    byCode.set('producer_director', {
+      id: null,
+      code: 'producer_director',
+      label: 'プロデューサー兼ディレクター',
+      sort_order: pdSo,
+      category: 'staff',
+      is_creator: byCode.get('director')?.is_creator ?? false,
+      is_internal: true,
+      _synthetic: true, // フロント合成値マーカー（roles マスタには存在しない）
+    });
+  }
+  // 'client' は外部ユーザー扱い: roles マスタに無い場合は 0 で補完（既存挙動）
+  if (!Object.prototype.hasOwnProperty.call(sortOrder, 'client')) {
+    sortOrder.client = 0;
+    rank.client      = 0;
+  }
+  ROLE_SORT_ORDER = sortOrder;
+  ROLE_RANK       = rank;
+  ROLE_LABEL_SHORT = { ..._ROLE_LABEL_SHORT_OVERRIDES, ...labelShort };
+  _rolesByCode = byCode;
+}
+
+async function loadRolesMaster() {
+  try {
+    const res = await apiFetch(`${API}/roles`);
+    if (!res.ok) throw new Error('failed');
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      console.warn('[ROLES] /api/haruka/roles returned empty, keeping fallback');
+      return;
+    }
+    _rolesMasterRows = rows;
+    _rebuildRoleConstantsFromMaster(rows);
+    // VIEW AS ポップオーバー / メンバー編集モーダルの role select / 招待モーダルの role select
+    // を roles マスタ駆動で再構築（DOM が存在する場合のみ）
+    try { renderRolePreviewPopover(); } catch (e) { console.warn('[ROLES] renderRolePreviewPopover failed:', e); }
+    try { renderRoleSelects(); }       catch (e) { console.warn('[ROLES] renderRoleSelects failed:', e); }
+  } catch (e) {
+    console.warn('[ROLES] loadRolesMaster failed, using fallback:', e?.message);
+  }
+}
+
+// 全ロール（合成値 'producer_director' 含む）を sort_order 降順（権限が高い順）で返す。
+// VIEW AS / メンバー編集モーダル / 招待モーダルなど「選択肢」用途に使う。
+function getAllRolesForUI() {
+  if (_rolesByCode && _rolesByCode.size > 0) {
+    const rows = Array.from(_rolesByCode.values());
+    return rows.sort((a, b) => (b.sort_order ?? 0) - (a.sort_order ?? 0));
+  }
+  // フォールバック: 旧ハードコード順
+  const fallback = [
+    { code: 'admin',             label: '管理者',     sort_order: 7 },
+    { code: 'secretary',         label: '秘書',       sort_order: 6 },
+    { code: 'producer',          label: 'プロデューサー', sort_order: 5 },
+    { code: 'producer_director', label: 'プロデューサー兼ディレクター', sort_order: 4 },
+    { code: 'director',          label: 'ディレクター', sort_order: 3 },
+    { code: 'designer',          label: 'デザイナー', sort_order: 2 },
+    { code: 'editor',            label: '編集者',     sort_order: 1 },
+  ];
+  return fallback;
+}
+
+// VIEW AS ポップオーバーのボタン群を roles マスタ駆動で再構築。
+// 現状の 'admin' ボタンは「VIEW AS 解除（実ロールに戻る）」の意味なので、code === 'admin' の
+// 行は onclick で setPreviewRole(null) を呼ぶ特例扱いにする。
+function renderRolePreviewPopover() {
+  const pop = document.getElementById('role-preview-pop');
+  if (!pop) return;
+  const all = getAllRolesForUI();
+  // 'admin' は先頭固定（解除ボタン）。残りは sort_order 降順。
+  const adminRow = all.find(r => r.code === 'admin') || { code: 'admin', label: '管理者' };
+  const rest     = all.filter(r => r.code !== 'admin');
+  const html = [];
+  html.push(`<button class="rpb-btn rpb-active" id="rpb-admin" onclick="setPreviewRole(null)">${esc(adminRow.label || '管理者')}</button>`);
+  for (const r of rest) {
+    const id = `rpb-${r.code}`;
+    html.push(`<button class="rpb-btn" id="${id}" onclick="setPreviewRole('${esc(r.code)}')">${esc(r.label || r.code)}</button>`);
+  }
+  pop.innerHTML = html.join('');
+}
+
+// メンバー追加・編集モーダルの role select / 招待モーダルの role select を再構築。
+// 既存値がある場合は維持。
+function renderRoleSelects() {
+  const all = getAllRolesForUI();
+  // メンバー編集 (#m-role): 全ロール対象
+  const mRole = document.getElementById('m-role');
+  if (mRole) {
+    const prev = mRole.value;
+    const opts = all.map(r => `<option value="${esc(r.code)}">${esc(r.label || r.code)}</option>`).join('');
+    mRole.innerHTML = opts;
+    if (prev) mRole.value = prev;
+  }
+  // 招待モーダル (#inv-role): admin は除外（招待で admin 化はしない既存仕様）
+  const invRole = document.getElementById('inv-role');
+  if (invRole) {
+    const prev = invRole.value || 'editor';
+    const filtered = all.filter(r => r.code !== 'admin');
+    const opts = filtered.map(r => {
+      const sel = (r.code === prev) ? ' selected' : '';
+      return `<option value="${esc(r.code)}"${sel}>${esc(r.label || r.code)}</option>`;
+    }).join('');
+    invRole.innerHTML = opts;
+  }
+}
+
 // ==================== DB駆動ロール権限 ====================
 // 起動時に loadRolePermissions() でロード。失敗時はフォールバックを使用
 let _rolePermsMap = null; // Map<"role|key", boolean>
@@ -11094,9 +11262,13 @@ document.addEventListener('click', (e) => {
 function setPreviewRole(role) {
   previewRole = role;
   // ボタンのアクティブ状態を更新
-  ['admin','secretary','producer','producer_director','director','editor','designer'].forEach(r => {
-    const btn = document.getElementById(`rpb-${r}`);
-    if (btn) btn.classList.toggle('rpb-active', r === (role ?? 'admin'));
+  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタから対象コード一覧を構築。
+  // popover が動的構築されているため、念のため DOM 上の全 .rpb-btn をクリアしてから
+  // 対象 ID のみ rpb-active を付ける。
+  const popButtons = document.querySelectorAll('#role-preview-pop .rpb-btn');
+  const target = role ?? 'admin';
+  popButtons.forEach(btn => {
+    btn.classList.toggle('rpb-active', btn.id === `rpb-${target}`);
   });
   // ヘッダーの「VIEW AS: <現在>」表示を更新
   const cur = document.getElementById('role-preview-current');
@@ -11194,7 +11366,10 @@ function applyRoleBasedUI() {
   }
 }
 
-const ROLE_RANK = { admin:6, producer:5, producer_director:4, director:3, designer:2, editor:1 };
+// ROLE_RANK は roles マスタから動的構築する（Stage 0 / Step 2 PR3, ADR 003）。
+// canEditMember() で「自分より下のランクのメンバーを編集できる」判定に使う。
+// roles.sort_order をそのまま使用（fallback としてハードコードを残す）。
+let ROLE_RANK = { admin:6, producer:5, producer_director:4, director:3, designer:2, editor:1 };
 
 function canSeeMember(m) {
   if (!currentUser) return true;
@@ -16911,15 +17086,35 @@ async function renderUserStatsPage() {
 
 // ==================== ロール権限マトリクス ====================
 // ロール権限マトリクスのメタデータ（編集UI用）
-const ROLE_PERM_ROLES = [
-  { key: 'admin',            label: '管理者',        color: '#C0392B' },
-  { key: 'secretary',        label: '秘書',           color: '#7D3C98' },
-  { key: 'producer',         label: 'プロデューサー', color: '#1A5276' },
-  { key: 'producer_director',label: 'P兼D',           color: '#1A5276' },
-  { key: 'director',         label: 'ディレクター',   color: '#1E8449' },
-  { key: 'editor',           label: '編集者',         color: '#7E5109' },
-  { key: 'designer',         label: 'デザイナー',     color: '#7E5109' },
-];
+// Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動。
+//   - 列順は roles.sort_order 降順（権限が高い順）+ 合成値 'producer_director' を補完
+//   - label は roles.label を優先、無い場合は _LABEL_FALLBACK で補完
+//   - color はロール別に固定の HUE マッピングを用いる（roles マスタには色情報を持たないため）
+const _ROLE_PERM_COLOR = {
+  admin:'#C0392B', secretary:'#7D3C98', producer:'#1A5276',
+  producer_director:'#1A5276', director:'#1E8449',
+  editor:'#7E5109', designer:'#7E5109',
+};
+function _buildRolePermRoles() {
+  const all = (typeof getAllRolesForUI === 'function') ? getAllRolesForUI() : [];
+  if (Array.isArray(all) && all.length > 0) {
+    return all.map(r => ({
+      key: r.code,
+      label: r.label || r.code,
+      color: _ROLE_PERM_COLOR[r.code] || '#555',
+    }));
+  }
+  // フォールバック（旧ハードコード）
+  return [
+    { key:'admin',             label:'管理者',                color:'#C0392B' },
+    { key:'secretary',         label:'秘書',                  color:'#7D3C98' },
+    { key:'producer',          label:'プロデューサー',        color:'#1A5276' },
+    { key:'producer_director', label:'プロデューサー兼ディレクター', color:'#1A5276' },
+    { key:'director',          label:'ディレクター',          color:'#1E8449' },
+    { key:'editor',            label:'編集者',                color:'#7E5109' },
+    { key:'designer',          label:'デザイナー',            color:'#7E5109' },
+  ];
+}
 const ROLE_PERM_LIST = [
   { section:'ダッシュボード', key:'dashboard.sales_summary',     label:'売上サマリー閲覧' },
   { section:'ダッシュボード', key:'dashboard.monthly_forecast',  label:'月次予測閲覧' },
@@ -16968,6 +17163,8 @@ function _renderRolesPageContent() {
     return _rolePermsMap ? !!_rolePermsMap.get(k) : false;
   };
 
+  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動。列順は roles.sort_order 降順。
+  const ROLE_PERM_ROLES = _buildRolePermRoles();
   const headerCells = ROLE_PERM_ROLES.map(r =>
     `<th style="padding:8px 10px;font-size:11px;font-weight:600;white-space:nowrap;color:${r.color};border-bottom:2px solid ${r.color}33;min-width:72px;text-align:center">${r.label}</th>`
   ).join('');
@@ -17029,6 +17226,7 @@ function _enterRolesEditMode() {
   _rolesEditMode = true;
   _rolesDraft = new Map();
   // 現在値をdraftにコピー
+  const ROLE_PERM_ROLES = _buildRolePermRoles();
   ROLE_PERM_ROLES.forEach(r => {
     if (r.key === 'admin') return;
     ROLE_PERM_LIST.forEach(p => {
@@ -23005,10 +23203,19 @@ async function openDCheckPicker({ onSubmit } = {}) {
   openModal('modal-d-check-picker');
 }
 
+// Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の label を優先。
+// 上方に重複定義の roleLabel(role) があり、JS の関数宣言巻き上げで本実装が勝つため、
+// 両方とも roles マスタ参照に統一しておく（dual-read 期間の安全策）。
+// 'producer_director' は合成値で _rolesByCode が「プロデューサー兼ディレクター」として補完する。
 function roleLabel(r) {
+  if (!r) return '';
+  if (_rolesByCode && _rolesByCode.has(r)) {
+    const row = _rolesByCode.get(r);
+    if (row && row.label) return row.label;
+  }
   const map = {
     admin: '管理者', secretary: '秘書', producer: 'プロデューサー',
-    director: 'ディレクター', producer_director: 'P兼D',
+    director: 'ディレクター', producer_director: 'プロデューサー兼ディレクター',
     editor: '編集者', designer: 'デザイナー', client: 'クライアント',
   };
   return map[r] || r || '';

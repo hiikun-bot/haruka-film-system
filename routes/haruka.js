@@ -7998,6 +7998,21 @@ router.post('/creative-files/:fileId/checklist/toggle', requireAuth, async (req,
   res.json(result);
 });
 
+// ロールマスタ取得（全ユーザーがアクセス可能・フロント表示・ソート用）
+// Stage 0 / Step 2 PR3 (ADR 003):
+//   フロント (public/haruka.html) のハードコード ROLE_RANK / ROLE_SORT_ORDER /
+//   ROLE_LABEL_SHORT / VIEW AS ボタン などを roles マスタ駆動に切り替えるための入口。
+//   archived_at IS NULL のみ返す。並び順は sort_order 昇順。
+router.get('/roles', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('roles')
+    .select('id, code, label, category, sort_order, is_creator, is_internal, archived_at')
+    .is('archived_at', null)
+    .order('sort_order', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 // ロール権限取得（全ユーザーがアクセス可能。自身のUIのために必要）
 // Stage 0 / Step 2 (ADR 003): role_id (UUID) と roles.code を JOIN して返す。
 //   後方互換: 旧 role TEXT 列もそのまま返す（フロントは当面 role を読み続ける）。
