@@ -3,6 +3,8 @@ const passport      = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const bcrypt         = require('bcryptjs');
 const supabase       = require('./supabase');
+// Stage 0 / Step 2 (ADR 003): ロール判定を user_roles ベースに置換するためのヘルパ群
+const rolesUtil = require('./utils/roles');
 
 // ==================== セッションのシリアライズ ====================
 passport.serializeUser((user, done) => done(null, user.id));
@@ -52,15 +54,32 @@ function requireAuth(req, res, next) {
   res.redirect('/login.html');
 }
 
-function requireRole(...roles) {
-  return (req, res, next) => {
+/**
+ * Stage 0 / Step 2 (ADR 003): user_roles ベースの requireRole。
+ *
+ * 旧: req.user.role が allowedRoles に含まれるかの単純比較。
+ * 新: ユーザーの "実効ロール集合" (X-View-As 反映) と allowedRoles の集合一致判定。
+ *
+ * 互換ルール:
+ *   - allowedRoles に 'producer_director' を指定した場合、producer + director を
+ *     両方持つユーザーも通す
+ *   - allowedRoles に 'producer' / 'director' を指定した場合、合成値 'producer_director' を
+ *     持つユーザーも通す
+ *   - dual-read fallback: user_roles が空の場合は users.role を 1 ロールとして解釈
+ *
+ * 例: requireRole('admin','secretary') → admin or secretary を持つユーザーのみ通る
+ */
+function requireRole(...allowedRoles) {
+  return async (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
-    // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
-    const effectiveRole = getEffectiveRole(req);
-    if (!roles.includes(effectiveRole)) {
+    try {
+      const codes = await rolesUtil.getEffectiveRoleCodes(req, { isSuperAdminUser });
+      if (rolesUtil.roleCodesMatchAny(codes, allowedRoles)) return next();
       return res.status(403).json({ error: 'この操作の権限がありません' });
+    } catch (e) {
+      console.error('[AUTH] requireRole failed:', e.message);
+      return res.status(500).json({ error: '権限判定に失敗しました' });
     }
-    next();
   };
 }
 
@@ -69,15 +88,31 @@ const ROLES = {
   EDITOR: 'editor', CLIENT: 'client',
 };
 
-const ROLE_LEVEL = { admin: 5, secretary: 4, director: 3, editor: 2, client: 1 };
-
+/**
+ * Stage 0 / Step 2 (ADR 003): user_roles ベースの requireLevel。
+ *
+ * 旧: req.user.role の level と minRole の level を直接比較。
+ * 新: ユーザーが持つ "全ロールの最大 level" と minRole の level を比較。
+ *     producer_director を持つ場合は producer / director の最大 level を取る。
+ *     level マッピングは utils/roles.js#ROLE_LEVEL（マスタ拡張は将来課題）。
+ */
 function requireLevel(minRole) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
-    // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
-    const effectiveRole = getEffectiveRole(req);
-    if ((ROLE_LEVEL[effectiveRole] || 0) >= (ROLE_LEVEL[minRole] || 99)) return next();
-    return res.status(403).json({ error: '権限が不足しています' });
+    try {
+      const codes = await rolesUtil.getEffectiveRoleCodes(req, { isSuperAdminUser });
+      const userMax = rolesUtil.getMaxRoleLevel(codes);
+      const required = rolesUtil.getRoleLevel(minRole);
+      if (required <= 0) {
+        // 未知の minRole は安全側で deny
+        return res.status(500).json({ error: 'ロール level の定義に誤りがあります' });
+      }
+      if (userMax >= required) return next();
+      return res.status(403).json({ error: '権限が不足しています' });
+    } catch (e) {
+      console.error('[AUTH] requireLevel failed:', e.message);
+      return res.status(500).json({ error: '権限判定に失敗しました' });
+    }
   };
 }
 
@@ -97,18 +132,25 @@ function requireSuperAdmin(req, res, next) {
 
 // ==================== VIEW AS（X-View-As ヘッダ）解決 ====================
 // 受け取れる preview ロール一覧。ここに無い文字列は無視（実ロールにフォールバック）。
-const VALID_PREVIEW_ROLES = new Set(['admin','secretary','producer','producer_director','director','editor','designer']);
+//
+// Stage 0 / Step 2 (ADR 003): roles マスタ参照に揃えるため utils/roles.js の
+// VALID_PREVIEW_ROLES と同一集合を保つ。ここはハードコードのまま残すが、
+// utils/roles.js 側と同期している前提（差分が出たら片方を更新したら両方を見直す）。
+const VALID_PREVIEW_ROLES = rolesUtil.VALID_PREVIEW_ROLES;
 
 /**
- * リクエストの "実効ロール" を返す。
+ * リクエストの "実効ロール" を **単一文字列で** 返す（同期API、互換用）。
  *
  * セキュリティ仕様:
  *   - X-View-As ヘッダはリクエスト元が **最高管理者 (isSuperAdminUser)** の場合に限り尊重する。
  *   - それ以外（一般ユーザーが偽造）は完全に無視し、実ユーザーのロールを返す。
  *   - ヘッダ値が VALID_PREVIEW_ROLES に含まれない場合も無視。
  *
- * 監査・ログ用途で「実際に誰がリクエストしたか」を残す場合は req.user.id / req.user.email を直接参照すること。
- * 認可判定（権限チェック・分岐）にはこのヘルパで取得した実効ロールを使う。
+ * 注意:
+ *   - これは **同期版** で、互換のため `req.user.role` (旧 TEXT 列) をそのまま返す。
+ *   - 認可判定の正本は utils/roles.js#getEffectiveRoleCodes (async, user_roles ベース) に移行中。
+ *   - 新規コードは `getEffectiveRolePrimary(req)` (async) または `getEffectiveRoleCodes(req)` を使う。
+ *   - dual-read fallback として残す。Stage 0 Step 3 で users.role 列廃止時にここも書き換える。
  */
 function getEffectiveRole(req) {
   if (!req || !req.user) return null;
@@ -117,6 +159,31 @@ function getEffectiveRole(req) {
     return headerRole;
   }
   return req.user.role;
+}
+
+/**
+ * リクエストの "実効ロール" を **単一プライマリコード** で返す（async版）。
+ *
+ * - user_roles 経由で実ロール集合を取り、`pickPrimaryRoleCode` で互換用の単一値に畳む。
+ * - X-View-As ヘッダは最高管理者のみ尊重（VALID_PREVIEW_ROLES 内のみ）。
+ *   producer_director プレビュー時は ['producer','director'] に展開された後、
+ *   pickPrimaryRoleCode で再度 'producer_director' に戻る（合成値の互換挙動）。
+ *
+ * 利用シーン: 既存の同期版 getEffectiveRole から段階的に置き換える際、
+ *   呼び出し側を await 化できるなら新規コードはこちらを使う。
+ */
+async function getEffectiveRolePrimary(req) {
+  if (!req || !req.user) return null;
+  const codes = await rolesUtil.getEffectiveRoleCodes(req, { isSuperAdminUser });
+  return rolesUtil.pickPrimaryRoleCode(codes);
+}
+
+/**
+ * リクエストの "実効ロール" を **コード配列** で返す（async版、構造体寄り）。
+ * 新規コード推奨API。`{ codes }` の形でラップしたい場合は呼び出し側で。
+ */
+async function getEffectiveRoleCodes(req) {
+  return rolesUtil.getEffectiveRoleCodes(req, { isSuperAdminUser });
 }
 
 // ==================== DB駆動の権限チェック ====================
@@ -191,13 +258,38 @@ function requirePermission(key) {
   return async (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
     try {
-      // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
-      const effectiveRole = getEffectiveRole(req);
-      const ok = await userHasPermission(effectiveRole, key);
+      // Stage 0 Step 2 (ADR 003): user_roles ベースの判定を優先。
+      //   1) X-View-As 反映で実効ロールコード集合を取得
+      //   2) 集合に対して role_permissions(role_id) JOIN ベースで判定
+      //   3) 集合が空（dual-read fallback）の場合は旧 req.user.role での単発判定にフォールバック
+      const codes = await rolesUtil.getEffectiveRoleCodes(req, { isSuperAdminUser });
+      let ok = false;
+      if (codes.length > 0) {
+        ok = await rolesUtil.roleCodesHavePermission(codes, key);
+      } else {
+        const effectiveRole = getEffectiveRole(req); // 旧経路
+        ok = await userHasPermission(effectiveRole, key);
+      }
       if (ok) return next();
       return res.status(403).json({ error: 'この操作の権限がありません' });
     } catch(e) { return res.status(500).json({ error: e.message }); }
   };
 }
 
-module.exports = { passport, requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, isSuperAdminUser, getEffectiveRole, invalidatePermissionsCache, ROLES };
+module.exports = {
+  passport,
+  requireAuth,
+  requireRole,
+  requireLevel,
+  requirePermission,
+  requireSuperAdmin,
+  userHasPermission,
+  isSuperAdminUser,
+  // 互換: 単一文字列を返す同期版（既存呼び出し側との互換のため残す）
+  getEffectiveRole,
+  // 新: user_roles ベースの async ヘルパ群（routes 側を順次置換）
+  getEffectiveRolePrimary,
+  getEffectiveRoleCodes,
+  invalidatePermissionsCache,
+  ROLES,
+};
