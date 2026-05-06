@@ -135,3 +135,9 @@ Stage 分割で段階適用（[feedback_db_migration_staging.md](../../../.claud
   - `creatives.line_id` を (project_id, category_id) + 編集者の rank で best-effort バックフィル
   - 移行マーカは `name` の接尾辞 / `notes` のプレフィックスで識別（冪等性 & ロールバック用）
   - **NOT 移行**: `projects.sub_director_ids` / `projects.sub_producer_ids`（fee 列が無いためデータ無し。サブD/サブP単価は Stage 4 UI で入力する想定）
+- 2026-05-06: data fix migration — `migrations/2026-05-06_finalize_migrated_lines.sql`
+  - Stage 2 で `status='estimated'` / `planned_count=0` のまま挿入された移行 line を、
+    Stage 3 の per-line 公式 (`client_unit_price × planned_count`) と
+    ADR 005 集計フィルタに乗せられるよう実用値に整える
+  - 移行 line の `status` を `in_progress` に進める（移行マーカ付きのみ）
+  - 移行 line の `planned_count` を紐付いた `creatives` 件数で埋める
