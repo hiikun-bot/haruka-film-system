@@ -465,7 +465,7 @@ WHERE pcf.use_fixed_budget = TRUE
 
 -- 7-a) 案件 × カテゴリ で line が 1 件だけのケース
 WITH single_line AS (
-  SELECT pel.project_id, pel.category_id, MIN(pel.id) AS line_id, COUNT(*) AS cnt
+  SELECT pel.project_id, pel.category_id, (array_agg(pel.id))[1] AS line_id, COUNT(*) AS cnt
     FROM project_estimate_lines pel
    GROUP BY pel.project_id, pel.category_id
   HAVING COUNT(*) = 1
