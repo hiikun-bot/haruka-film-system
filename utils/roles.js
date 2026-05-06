@@ -143,6 +143,50 @@ async function getUsersRolesMap(userIds) {
   return result;
 }
 
+// ---------- ロール level マッピング ----------
+// auth.js#requireLevel の比較に使う。roles マスタへの level 列追加は将来課題（別 ADR）。
+// 既存の auth.js の ROLE_LEVEL を踏襲しつつ、新しいロール（producer / producer_director /
+// designer）を補完する。値が大きいほど強い権限。
+//
+// 互換上のメモ:
+//   - 旧 auth.js では admin=5, secretary=4, director=3, editor=2, client=1。
+//   - producer は director と同等の "現場リーダー" として 3 を割り当てる。
+//   - producer_director は producer / director を両方持つ合成ロールなので
+//     その内訳の最大値（=3）と等価。`getMaxLevel` で和集合を取れば自然に同じ値になる。
+//   - designer は editor 相当の制作担当として 2。
+const ROLE_LEVEL = {
+  admin: 5,
+  secretary: 4,
+  producer: 3,
+  producer_director: 3,
+  director: 3,
+  editor: 2,
+  designer: 2,
+  client: 1,
+};
+
+function getRoleLevel(code) {
+  if (!code) return 0;
+  return ROLE_LEVEL[code] || 0;
+}
+
+/**
+ * ロールコード集合の "最大 level" を返す。
+ * producer_director を渡された場合は ['producer','director'] に展開してから最大を取る。
+ */
+function getMaxRoleLevel(codes) {
+  if (!Array.isArray(codes) || codes.length === 0) return 0;
+  let max = 0;
+  for (const c of codes) {
+    if (c === 'producer_director') {
+      max = Math.max(max, getRoleLevel('producer'), getRoleLevel('director'));
+    } else {
+      max = Math.max(max, getRoleLevel(c));
+    }
+  }
+  return max;
+}
+
 // ---------- 実効ロール（X-View-As 対応） ----------
 
 /**
@@ -176,6 +220,57 @@ async function getEffectiveRoleCodes(req, { isSuperAdminUser } = {}) {
   const legacy = req.user.role;
   if (!legacy) return [];
   return _expandPreviewRole(legacy);
+}
+
+/**
+ * ロールコード集合 → 互換用の "単一プライマリコード" を計算。
+ * 既存コード (`req.user.role` を文字列として直接比較する箇所) との互換性のため、
+ * `getEffectiveRole(req)` が引き続き単一文字列を返せるように使う。
+ *
+ * 優先順位:
+ *   1. admin があれば 'admin'
+ *   2. secretary があれば 'secretary'
+ *   3. producer + director を両方持つ → 'producer_director' （合成値の互換）
+ *   4. それ以外は sort_order 昇順の先頭 (= getUserRoleCodes が返す配列の先頭)
+ *   5. 何も無ければ null
+ */
+function pickPrimaryRoleCode(codes) {
+  if (!Array.isArray(codes) || codes.length === 0) return null;
+  if (codes.includes('admin')) return 'admin';
+  if (codes.includes('secretary')) return 'secretary';
+  if (codes.includes('producer') && codes.includes('director')) return 'producer_director';
+  if (codes.includes('producer_director')) return 'producer_director';
+  return codes[0];
+}
+
+/**
+ * 「ロール集合が 期待ロール allowedCodes のいずれかに合致するか」を判定する。
+ * - allowedCodes に 'producer_director' が含まれていて、ユーザーが producer + director
+ *   の両方を持っていれば true
+ * - allowedCodes に 'producer' / 'director' が含まれていて、ユーザーが
+ *   合成値 'producer_director' を持っていれば true（dual-read 互換）
+ * - admin はロックアウト防止のため allowedCodes が空でも常に true にはしない
+ *   （allowedCodes の指定に従う。auth.js#requireRole の従来挙動を維持）
+ */
+function roleCodesMatchAny(userCodes, allowedCodes) {
+  if (!Array.isArray(userCodes) || userCodes.length === 0) return false;
+  if (!Array.isArray(allowedCodes) || allowedCodes.length === 0) return false;
+  // 1) 単純包含
+  for (const c of allowedCodes) {
+    if (userCodes.includes(c)) return true;
+  }
+  // 2) 合成値 producer_director 互換
+  // 2-a) allowedCodes に 'producer_director' があり、ユーザーが producer+director を両方持つ
+  if (allowedCodes.includes('producer_director')
+      && userCodes.includes('producer') && userCodes.includes('director')) {
+    return true;
+  }
+  // 2-b) allowedCodes に producer / director があり、ユーザーが 'producer_director' を持つ
+  if (userCodes.includes('producer_director')
+      && (allowedCodes.includes('producer') || allowedCodes.includes('director'))) {
+    return true;
+  }
+  return false;
 }
 
 // ---------- 権限チェック（role_permissions JOIN ベース） ----------
@@ -277,7 +372,13 @@ module.exports = {
   getUsersRolesMap,
   // 実効ロール（X-View-As）
   getEffectiveRoleCodes,
+  pickPrimaryRoleCode,
+  roleCodesMatchAny,
   VALID_PREVIEW_ROLES,
+  // level
+  ROLE_LEVEL,
+  getRoleLevel,
+  getMaxRoleLevel,
   // 権限
   loadPermissionsByCode,
   invalidatePermissionsCache,
