@@ -4134,6 +4134,80 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- 成果物グループ（line）編集モーダル — Stage 4a -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
+<div class="modal-overlay" id="modal-project-line-edit" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="max-width:560px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+        <span id="pl-edit-title" style="font-size:14px;font-weight:700;color:#0F7A56">成果物グループを追加</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-line-edit')">×</button>
+    </div>
+    <input type="hidden" id="pl-edit-id">
+    <input type="hidden" id="pl-edit-project-id">
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span></label>
+      <select class="form-select" id="pl-edit-category">
+        <option value="">読込中...</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">名前 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・例: フェーズ1ショート）</span></label>
+      <input class="form-input" id="pl-edit-name" placeholder="例: ショートA枠">
+    </div>
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">予定本数</label>
+        <input class="form-input" id="pl-edit-planned-count" type="number" min="0" step="1" value="0">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">クライアント単価（円）</label>
+        <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ステータス</label>
+      <select class="form-select" id="pl-edit-status">
+        <option value="draft">下書き</option>
+        <option value="estimated">見積中</option>
+        <option value="contracted">受注</option>
+        <option value="in_progress">進行中</option>
+        <option value="delivered">納品済</option>
+        <option value="cancelled">取消</option>
+        <option value="rejected">失注</option>
+      </select>
+    </div>
+    <div id="pl-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-line-edit')">キャンセル</button>
+      <button class="btn-primary" id="pl-edit-save-btn" onclick="saveProjectLine()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 成果物グループ削除確認モーダル — Stage 4a -->
+<div class="modal-overlay" id="modal-project-line-delete" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:440px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#A32D2D;margin-bottom:4px">成果物グループを削除しますか？</div>
+        <div id="pl-del-message" style="font-size:12px;color:var(--text);line-height:1.7">
+          この操作は取り消せません。
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="pl-del-id">
+    <input type="hidden" id="pl-del-project-id">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-line-delete')">キャンセル</button>
+      <button class="btn-primary" id="pl-del-execute-btn" onclick="executeProjectLineDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 案件追加モーダル -->
 <!-- 単価設定モーダル -->
 <div class="modal-overlay" id="modal-rates">
@@ -4503,6 +4577,25 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
       </div><!-- /右カラム -->
     </div><!-- /グリッド -->
+
+    <!-- ===== 成果物グループ（project_estimate_lines）Stage 4a ===== -->
+    <!-- ADR 002 + 005 に基づく見積行 / deliverable の編集 UI。
+         旧単価モーダル（rate / director-rates / producer-rates / client-fee）はこの PR では触らず並走。
+         新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
+    <div id="p-lines-section" style="display:none;padding:0 28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+          <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">成果物グループ</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ別の予定本数・クライアント単価・進行ステータス）</span>
+        </div>
+        <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
+      </div>
+      <div id="p-lines-list" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
+      </div>
+    </div>
+
     </div><!-- /p-tab-panel-main -->
 
     <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行）。
@@ -11908,6 +12001,9 @@ function openProjectModal(preClientId) {
   // 新規作成時は削除ボタンを必ず非表示
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = 'none';
+  // 成果物グループは案件作成後（id 確定後）にしか操作できないので新規作成時は隠す
+  const linesSec = document.getElementById('p-lines-section');
+  if (linesSec) linesSec.style.display = 'none';
   openModal('modal-project');
 }
 
@@ -12011,6 +12107,11 @@ function openEditProject(p) {
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = hasPermission('project.delete') ? '' : 'none';
+
+  // 成果物グループ（lines）セクション表示 + ロード（Stage 4a）
+  const linesSec = document.getElementById('p-lines-section');
+  if (linesSec) linesSec.style.display = '';
+  loadProjectLines(p.id);
 
   openModal('modal-project');
 }
@@ -12138,6 +12239,283 @@ function switchProjectTab(tab) {
     }
   });
   if (tab === 'checklist') loadProjectChecklistItems();
+}
+
+// ==================== 成果物グループ（project_estimate_lines）Stage 4a ====================
+// ADR 002 (見積行統合) + ADR 005 (status ライフサイクル) に基づく lines CRUD UI。
+// 旧単価モーダル（rate / director-rates / producer-rates / client-fee）は触らず並走。
+// 編集は専用の小モーダル `modal-project-line-edit`（z-index:300）で行う。
+// 削除は `modal-project-line-delete`（z-index:320）で誤削除防止。
+// 並び替えは ↑↓ ボタン（ドラッグは将来拡張）。サーバの PATCH /lines/reorder で sort_order を再付番。
+// 保存後は楽観的更新せず必ず再 fetch して同期する。
+
+const LINE_STATUS_LABELS = {
+  draft:       { label: '下書き',  bg: '#F3F4F6', fg: '#4B5563', border: '#E5E7EB' },
+  estimated:   { label: '見積中',  bg: '#E0F2FE', fg: '#075985', border: '#BAE6FD' },
+  contracted:  { label: '受注',    bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+  in_progress: { label: '進行中',  bg: '#FEF3C7', fg: '#92400E', border: '#FDE68A' },
+  delivered:   { label: '納品済',  bg: '#D1FAE5', fg: '#065F46', border: '#A7F3D0' },
+  cancelled:   { label: '取消',    bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+  rejected:    { label: '失注',    bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+};
+
+let _projectLinesCache = []; // 現在表示中の案件の lines
+
+function projectLinesCanEdit() {
+  // 案件編集権限を持つユーザーのみ操作可能（サーバー側でも同じ権限でガード）
+  return typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
+}
+
+async function loadProjectLines(projectId) {
+  const listEl = document.getElementById('p-lines-list');
+  if (!listEl || !projectId) return;
+  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>';
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(msg) || res.status}</div>`;
+      return;
+    }
+    _projectLinesCache = await res.json() || [];
+    renderProjectLines();
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(e?.message || '')}</div>`;
+  }
+}
+
+function renderProjectLines() {
+  const listEl = document.getElementById('p-lines-list');
+  if (!listEl) return;
+  const canEdit = projectLinesCanEdit();
+  // 「新規追加」ボタンの権限制御
+  const addBtn = document.getElementById('p-lines-add-btn');
+  if (addBtn) addBtn.style.display = canEdit ? '' : 'none';
+
+  if (!_projectLinesCache.length) {
+    listEl.innerHTML = `
+      <div style="color:var(--text-muted);font-size:13px;padding:14px;background:var(--surface);border:1px dashed var(--border);border-radius:10px;text-align:center">
+        まだ成果物グループが登録されていません。「+ 新規追加」から追加してください。
+      </div>`;
+    return;
+  }
+
+  const total = _projectLinesCache.length;
+  listEl.innerHTML = _projectLinesCache.map((line, idx) => {
+    const cat = line.category || null;
+    const catLabel = cat ? `${esc(cat.name)}` : '<span style="color:var(--text-muted)">カテゴリ未設定</span>';
+    const catColor = cat?.color || '#9CA3AF';
+    const status = LINE_STATUS_LABELS[line.status] || LINE_STATUS_LABELS.draft;
+    const planned = Number(line.planned_count) || 0;
+    const unit = Number(line.client_unit_price) || 0;
+    const subtotal = planned * unit;
+    const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--border);border-radius:10px">
+        <div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+          <button type="button" onclick="moveProjectLine('${esc(line.id)}', -1)" ${idx === 0 || !canEdit ? 'disabled' : ''} title="上へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === 0 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▲</button>
+          <button type="button" onclick="moveProjectLine('${esc(line.id)}', 1)" ${idx === total - 1 || !canEdit ? 'disabled' : ''} title="下へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === total - 1 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▼</button>
+        </div>
+        <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${catColor}1A;border:1px solid ${catColor}55;border-radius:999px;font-size:11px;font-weight:600;color:${catColor === '#9CA3AF' ? '#4B5563' : catColor}">
+          ${catLabel}
+        </div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()} = <strong style="color:var(--text)">¥${subtotal.toLocaleString()}</strong></div>
+        </div>
+        <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${status.bg};border:1px solid ${status.border};color:${status.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
+          ${esc(status.label)}
+        </span>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+          <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ↑↓ ボタンで line を1つ移動 → サーバ PATCH /reorder
+async function moveProjectLine(lineId, delta) {
+  const idx = _projectLinesCache.findIndex(l => l.id === lineId);
+  if (idx < 0) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= _projectLinesCache.length) return;
+  const reordered = [..._projectLinesCache];
+  const [moved] = reordered.splice(idx, 1);
+  reordered.splice(newIdx, 0, moved);
+  const ids = reordered.map(l => l.id);
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/reorder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || '並び替えに失敗しました', 'warn');
+      // 再 fetch で同期
+      await loadProjectLines(projectId);
+      return;
+    }
+    _projectLinesCache = await res.json() || [];
+    renderProjectLines();
+  } catch (e) {
+    showToast(`並び替えに失敗しました: ${e?.message || ''}`, 'warn');
+    await loadProjectLines(projectId);
+  }
+}
+
+// 「+ 新規追加」: 編集モーダルを空状態で開く
+async function addProjectLine() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) {
+    showToast('案件を保存してから成果物グループを追加してください', 'warn');
+    return;
+  }
+  await prepareProjectLineEditModal(null, projectId);
+  openModal('modal-project-line-edit');
+}
+
+// 既存 line を編集モーダルで開く
+async function openProjectLineEdit(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  if (!line) {
+    showToast('成果物グループが見つかりません', 'warn');
+    await loadProjectLines(projectId);
+    return;
+  }
+  await prepareProjectLineEditModal(line, projectId);
+  openModal('modal-project-line-edit');
+}
+
+// 編集モーダルの初期化（line=null は新規）
+async function prepareProjectLineEditModal(line, projectId) {
+  document.getElementById('pl-edit-title').textContent = line ? '成果物グループを編集' : '成果物グループを追加';
+  document.getElementById('pl-edit-id').value = line ? line.id : '';
+  document.getElementById('pl-edit-project-id').value = projectId;
+  document.getElementById('pl-edit-name').value = line?.name || '';
+  document.getElementById('pl-edit-planned-count').value = line ? (line.planned_count ?? 0) : 0;
+  document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
+  document.getElementById('pl-edit-status').value = line?.status || 'draft';
+  const errEl = document.getElementById('pl-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  // カテゴリ select を populate
+  await loadCategories();
+  const sel = document.getElementById('pl-edit-category');
+  if (sel) {
+    populateCategorySelect(sel, line?.category_id || null);
+    if (!line?.category_id) {
+      // デフォルト: 案件本体の primary_category と揃える / なければ video
+      const projCat = document.getElementById('p-primary-category')?.value;
+      if (projCat) sel.value = projCat;
+      else {
+        const videoCat = (typeof getCategoryByCode === 'function') ? getCategoryByCode('video') : null;
+        if (videoCat) sel.value = videoCat.id;
+      }
+    }
+  }
+}
+
+async function saveProjectLine() {
+  const lineId = document.getElementById('pl-edit-id').value;
+  const projectId = document.getElementById('pl-edit-project-id').value;
+  const errEl = document.getElementById('pl-edit-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const categoryId = document.getElementById('pl-edit-category').value;
+  if (!categoryId) { showErr('カテゴリを選択してください'); return; }
+  const name = document.getElementById('pl-edit-name').value.trim();
+  const plannedCount = Math.max(0, parseInt(document.getElementById('pl-edit-planned-count').value, 10) || 0);
+  const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
+  const status = document.getElementById('pl-edit-status').value;
+
+  const payload = {
+    category_id: categoryId,
+    name: name || null,
+    planned_count: plannedCount,
+    client_unit_price: unitPrice,
+    status,
+  };
+
+  const saveBtn = document.getElementById('pl-edit-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const url = lineId
+      ? `${API}/projects/${projectId}/lines/${lineId}`
+      : `${API}/projects/${projectId}/lines`;
+    const method = lineId ? 'PUT' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showErr(err.error || `保存に失敗しました（${res.status}）`);
+      return;
+    }
+    closeModal('modal-project-line-edit');
+    showToast(lineId ? '成果物グループを更新しました' : '成果物グループを追加しました', 'ok');
+    await loadProjectLines(projectId);
+  } catch (e) {
+    showErr(`保存に失敗しました: ${e?.message || ''}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function openProjectLineDeleteConfirm(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  if (!line) return;
+  document.getElementById('pl-del-id').value = lineId;
+  document.getElementById('pl-del-project-id').value = projectId;
+  const cat = line.category;
+  const catName = cat ? cat.name : 'カテゴリ未設定';
+  const nameLabel = line.name ? `「${line.name}」` : '（名称未設定）';
+  const planned = Number(line.planned_count) || 0;
+  const unit = Number(line.client_unit_price) || 0;
+  document.getElementById('pl-del-message').innerHTML = `
+    <div style="margin-bottom:6px"><strong>${esc(catName)}</strong> ${esc(nameLabel)}</div>
+    <div style="color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()}</div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
+      ※ クリエイティブが紐付いている場合は削除できません（先に別グループへ移すか削除してください）。<br>
+      ※ ロール別単価（line_costs）は連動して削除されます。
+    </div>`;
+  openModal('modal-project-line-delete');
+}
+
+async function executeProjectLineDelete() {
+  const lineId = document.getElementById('pl-del-id').value;
+  const projectId = document.getElementById('pl-del-project-id').value;
+  if (!lineId || !projectId) return;
+  const btn = document.getElementById('pl-del-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        showToast(err.error || 'クリエイティブが紐付いているため削除できません', 'warn');
+      } else {
+        showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
+      }
+      return;
+    }
+    closeModal('modal-project-line-delete');
+    showToast('成果物グループを削除しました', 'ok');
+    await loadProjectLines(projectId);
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ==================== 案件収支（Step C） ====================
