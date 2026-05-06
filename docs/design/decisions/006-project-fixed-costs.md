@@ -102,4 +102,8 @@ ADR 002 の利益計算式を以下に拡張：
 - **(却下) 経費は別システムで管理** — 案件粗利の正確性が失われる、二重入力
 
 ## 実装履歴
-（実装が始まったらここに migration ファイルを追記）
+
+- 2026-05-06: Stage 1 (migration のみ) — `migrations/2026-05-06_estimate_lines_and_fixed_items.sql`
+  - 新規テーブル `project_fixed_items` を追加（`item_type` / `category` / `amount` / `status` 等）
+  - INDEX: `idx_pfi_project` / `idx_pfi_status`
+  - 入力 UI・案件粗利集計への組み込みは Stage 3〜4 で実施

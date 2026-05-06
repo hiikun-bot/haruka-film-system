@@ -100,4 +100,9 @@ ALTER TABLE project_estimate_lines
 - **(却下) 別テーブルに分離（project_estimates と project_deliverables）** — JOIN コストと二重管理。同じレコードが状態遷移する方が単純
 
 ## 実装履歴
-（実装が始まったらここに migration ファイルを追記）
+
+- 2026-05-06: Stage 1 (migration のみ) — `migrations/2026-05-06_estimate_lines_and_fixed_items.sql`
+  - `project_estimate_lines.status` (`draft|estimated|contracted|in_progress|delivered|cancelled|rejected`)
+    と `status_changed_at` を新設
+  - status 単独 INDEX `idx_pel_status` 付与
+  - 状態遷移制御・UI 反映は Stage 3〜4 で実施

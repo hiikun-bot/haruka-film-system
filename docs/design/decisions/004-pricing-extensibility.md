@@ -89,4 +89,9 @@ function calculateLineCost(lineCost, line) {
 - **(却下) 通貨対応も最初から完璧に** — オーバーエンジニアリング、当面は JPY 固定で十分
 
 ## 実装履歴
-（実装が始まったらここに migration ファイルを追記）
+
+- 2026-05-06: Stage 1 (migration のみ) — `migrations/2026-05-06_estimate_lines_and_fixed_items.sql`
+  - `project_estimate_lines` に `currency` / `tax_included` 列を新設
+  - `project_estimate_line_costs` に `currency` / `pricing_type` / `percentage` / `actual_hours` 列を新設
+  - `project_fixed_items` に `currency` 列を新設
+  - 計算ロジック側の対応は Stage 3 で実施
