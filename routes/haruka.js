@@ -1544,6 +1544,254 @@ router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermissi
   res.json(updated || []);
 });
 
+// ==================== 案件固定費・追加収入（project_fixed_items）Stage 4c ====================
+// ADR 006 (案件固定費) に基づく fixed_items CRUD。
+// スタジオ/機材/出張/ロケ地代等の本数非依存の費用 (item_type='expense')、
+// および別料金収入 (item_type='revenue') を扱う。
+//
+// 権限: lines と同じ project.create_edit を使う（案件本体の編集権限と統一）。
+//
+// schema-sync 失敗で本番に project_fixed_items が無い場合のフォールバックは
+// PR #316 で適用済みなので Stage 4c 時点では行わない。
+
+const FIXED_ITEM_TYPES = new Set(['expense', 'revenue']);
+const FIXED_ITEM_CATEGORIES = new Set(['studio', 'equipment', 'travel', 'location', 'other']);
+const FIXED_ITEM_STATUSES = new Set(['planned', 'committed', 'incurred', 'cancelled']);
+
+const isMissingPfiTable = (err) =>
+  err && /relation .*project_fixed_items.* does not exist|could not find the table/i.test(err.message || '');
+
+const FIXED_ITEM_SELECT_COLS = 'id, project_id, item_type, category, name, amount, currency, occurred_on, paid_to, paid_to_user_id, status, notes, created_at, created_by';
+
+// GET /api/projects/:project_id/fixed-items  一覧取得
+// status != 'cancelled' を優先表示するため status='cancelled' を最後にソート
+router.get('/projects/:project_id/fixed-items', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
+  const { data, error } = await supabase
+    .from('project_fixed_items')
+    .select(FIXED_ITEM_SELECT_COLS)
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingPfiTable(error)) {
+      console.warn('[fixed-items] project_fixed_items table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // cancelled を末尾、それ以外は created_at 昇順
+  const rows = data || [];
+  rows.sort((a, b) => {
+    const aCancel = a.status === 'cancelled' ? 1 : 0;
+    const bCancel = b.status === 'cancelled' ? 1 : 0;
+    if (aCancel !== bCancel) return aCancel - bCancel;
+    const aT = a.created_at ? Date.parse(a.created_at) : 0;
+    const bT = b.created_at ? Date.parse(b.created_at) : 0;
+    return aT - bT;
+  });
+  res.json(rows);
+});
+
+// POST /api/projects/:project_id/fixed-items  新規作成
+router.post('/projects/:project_id/fixed-items', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const {
+    item_type,
+    category,
+    name,
+    amount,
+    currency,
+    occurred_on,
+    paid_to,
+    paid_to_user_id,
+    status,
+    notes
+  } = req.body || {};
+
+  // バリデーション
+  if (!FIXED_ITEM_TYPES.has(item_type)) {
+    return res.status(400).json({ error: `item_type は ${[...FIXED_ITEM_TYPES].join(' / ')} のいずれかで指定してください` });
+  }
+  const trimmedName = (typeof name === 'string') ? name.trim() : '';
+  if (!trimmedName) {
+    return res.status(400).json({ error: 'name は必須です' });
+  }
+  if (category && !FIXED_ITEM_CATEGORIES.has(category)) {
+    return res.status(400).json({ error: `category は ${[...FIXED_ITEM_CATEGORIES].join(' / ')} のいずれかで指定してください` });
+  }
+  const amt = Math.max(0, parseInt(amount, 10) || 0);
+  const fiStatus = status || 'planned';
+  if (!FIXED_ITEM_STATUSES.has(fiStatus)) {
+    return res.status(400).json({ error: `status は ${[...FIXED_ITEM_STATUSES].join(' / ')} のいずれかで指定してください` });
+  }
+
+  // paid_to_user_id 存在チェック
+  if (paid_to_user_id) {
+    const { data: u, error: uErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', paid_to_user_id)
+      .maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!u) return res.status(400).json({ error: '指定された paid_to_user_id がユーザーに存在しません' });
+  }
+
+  // occurred_on 簡易バリデーション (YYYY-MM-DD or null)
+  let occurredOn = null;
+  if (occurred_on) {
+    if (typeof occurred_on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(occurred_on)) {
+      occurredOn = occurred_on;
+    } else {
+      return res.status(400).json({ error: 'occurred_on は YYYY-MM-DD 形式で指定してください' });
+    }
+  }
+
+  const insertRow = {
+    project_id: projectId,
+    item_type,
+    category: category || null,
+    name: trimmedName,
+    amount: amt,
+    currency: (typeof currency === 'string' && currency.trim()) ? currency.trim().toUpperCase() : 'JPY',
+    occurred_on: occurredOn,
+    paid_to: (typeof paid_to === 'string' && paid_to.trim()) ? paid_to.trim() : null,
+    paid_to_user_id: paid_to_user_id || null,
+    status: fiStatus,
+    notes: (typeof notes === 'string' && notes.trim()) ? notes.trim() : null,
+    created_by: req.user?.id || null,
+  };
+
+  const { data, error } = await supabase
+    .from('project_fixed_items')
+    .insert(insertRow)
+    .select(FIXED_ITEM_SELECT_COLS)
+    .single();
+  if (error) {
+    if (isMissingPfiTable(error)) {
+      return res.status(503).json({ error: 'project_fixed_items テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/projects/:project_id/fixed-items/:item_id  部分更新
+router.put('/projects/:project_id/fixed-items/:item_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, item_id: itemId } = req.params;
+  const body = req.body || {};
+
+  // 既存行の取得 + project_id 一致チェック
+  const { data: existing, error: getErr } = await supabase
+    .from('project_fixed_items')
+    .select('id, project_id')
+    .eq('id', itemId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'fixed_item が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と item_id が一致しません' });
+  }
+
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'item_type')) {
+    if (!FIXED_ITEM_TYPES.has(body.item_type)) {
+      return res.status(400).json({ error: `item_type は ${[...FIXED_ITEM_TYPES].join(' / ')} のいずれかで指定してください` });
+    }
+    updates.item_type = body.item_type;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'category')) {
+    if (body.category && !FIXED_ITEM_CATEGORIES.has(body.category)) {
+      return res.status(400).json({ error: `category は ${[...FIXED_ITEM_CATEGORIES].join(' / ')} のいずれかで指定してください` });
+    }
+    updates.category = body.category || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+    const t = (typeof body.name === 'string') ? body.name.trim() : '';
+    if (!t) return res.status(400).json({ error: 'name は空にできません' });
+    updates.name = t;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'amount')) {
+    updates.amount = Math.max(0, parseInt(body.amount, 10) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    updates.currency = (typeof body.currency === 'string' && body.currency.trim()) ? body.currency.trim().toUpperCase() : 'JPY';
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'occurred_on')) {
+    if (body.occurred_on === null || body.occurred_on === '') {
+      updates.occurred_on = null;
+    } else if (typeof body.occurred_on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.occurred_on)) {
+      updates.occurred_on = body.occurred_on;
+    } else {
+      return res.status(400).json({ error: 'occurred_on は YYYY-MM-DD 形式で指定してください' });
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'paid_to')) {
+    updates.paid_to = (typeof body.paid_to === 'string' && body.paid_to.trim()) ? body.paid_to.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'paid_to_user_id')) {
+    if (body.paid_to_user_id) {
+      const { data: u, error: uErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', body.paid_to_user_id)
+        .maybeSingle();
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      if (!u) return res.status(400).json({ error: '指定された paid_to_user_id がユーザーに存在しません' });
+    }
+    updates.paid_to_user_id = body.paid_to_user_id || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    if (!FIXED_ITEM_STATUSES.has(body.status)) {
+      return res.status(400).json({ error: `status は ${[...FIXED_ITEM_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    updates.status = body.status;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'notes')) {
+    updates.notes = (typeof body.notes === 'string' && body.notes.trim()) ? body.notes.trim() : null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    const { data: row } = await supabase
+      .from('project_fixed_items')
+      .select(FIXED_ITEM_SELECT_COLS)
+      .eq('id', itemId)
+      .single();
+    return res.json(row);
+  }
+
+  const { data, error } = await supabase
+    .from('project_fixed_items')
+    .update(updates)
+    .eq('id', itemId)
+    .select(FIXED_ITEM_SELECT_COLS)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/fixed-items/:item_id  物理削除
+router.delete('/projects/:project_id/fixed-items/:item_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, item_id: itemId } = req.params;
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_fixed_items')
+    .select('id, project_id')
+    .eq('id', itemId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'fixed_item が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と item_id が一致しません' });
+  }
+
+  const { error: delErr } = await supabase
+    .from('project_fixed_items')
+    .delete()
+    .eq('id', itemId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
 // クライアント報酬設定 取得
 router.get('/projects/:id/client-fee', async (req, res) => {
   const { data, error } = await supabase
