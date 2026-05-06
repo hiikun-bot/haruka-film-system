@@ -4208,6 +4208,112 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- 見積行 × ロール別コスト編集モーダル — Stage 4b -->
+<!-- ADR 002 + 003 + 004: roles マスタ駆動、pricing_type で課金方式を選べる -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
+<div class="modal-overlay" id="modal-project-line-cost-edit" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="max-width:560px;width:92vw;padding:22px;border-radius:14px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+        <span id="plc-edit-title" style="font-size:14px;font-weight:700;color:#0F7A56">コストを追加</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-line-cost-edit')">×</button>
+    </div>
+    <input type="hidden" id="plc-edit-id">
+    <input type="hidden" id="plc-edit-project-id">
+    <input type="hidden" id="plc-edit-line-id">
+    <div id="plc-edit-line-summary" style="font-size:11px;color:var(--text-muted);background:var(--surface);border:1px dashed var(--border);border-radius:6px;padding:6px 10px;margin-bottom:10px"></div>
+
+    <!-- ロール -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ロール <span style="color:#E24B4A">*</span></label>
+      <select class="form-select" id="plc-edit-role-id">
+        <option value="">読込中...</option>
+      </select>
+    </div>
+
+    <!-- 担当者（任意） -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">担当者 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意 / 未指定 = ロール固定枠）</span></label>
+      <select class="form-select" id="plc-edit-user-id">
+        <option value="">未指定（ロール固定枠）</option>
+      </select>
+    </div>
+
+    <!-- 単価タイプ -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">単価タイプ <span style="color:#E24B4A">*</span></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="fixed_per_unit" checked>
+          <span>1本あたり固定</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="percentage">
+          <span>クライアント請求の %</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="hourly">
+          <span>時間単価</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="fixed_total">
+          <span>line 全体で固定</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 単価 -->
+    <div class="form-group" id="plc-edit-unit-price-wrap" style="margin-bottom:10px">
+      <label class="form-label" id="plc-edit-unit-price-label">単価（円）</label>
+      <input class="form-input" id="plc-edit-unit-price" type="number" min="0" step="1" value="0">
+    </div>
+
+    <!-- 割合（pricing_type='percentage' のみ表示） -->
+    <div class="form-group" id="plc-edit-percentage-wrap" style="margin-bottom:10px;display:none">
+      <label class="form-label">割合（%） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" id="plc-edit-percentage" type="number" min="0" max="100" step="0.01" value="0">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クライアント請求 (¥単価 × 本数) に対するこの%が原価になる</div>
+    </div>
+
+    <!-- 実工数（pricing_type='hourly' のみ表示） -->
+    <div class="form-group" id="plc-edit-actual-hours-wrap" style="margin-bottom:10px;display:none">
+      <label class="form-label">実工数（時間） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" id="plc-edit-actual-hours" type="number" min="0" step="0.25" value="0">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">単価 × 実工数 が原価になる</div>
+    </div>
+
+    <div id="plc-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-line-cost-edit')">キャンセル</button>
+      <button class="btn-primary" id="plc-edit-save-btn" onclick="saveProjectLineCost()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 見積行 × ロール別コスト 削除確認モーダル — Stage 4b -->
+<div class="modal-overlay" id="modal-project-line-cost-delete" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:440px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#A32D2D;margin-bottom:4px">このコスト行を削除しますか？</div>
+        <div id="plc-del-message" style="font-size:12px;color:var(--text);line-height:1.7">
+          この操作は取り消せません。
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="plc-del-id">
+    <input type="hidden" id="plc-del-project-id">
+    <input type="hidden" id="plc-del-line-id">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-line-cost-delete')">キャンセル</button>
+      <button class="btn-primary" id="plc-del-execute-btn" onclick="executeProjectLineCostDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 固定費・追加収入（fixed_item）編集モーダル — Stage 4c -->
 <!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
 <div class="modal-overlay" id="modal-project-fixed-item-edit" data-no-overlay-close="true" style="z-index:300">
@@ -12411,10 +12517,61 @@ const LINE_STATUS_LABELS = {
 };
 
 let _projectLinesCache = []; // 現在表示中の案件の lines
+// Stage 4b: line ごとの line_costs キャッシュ。{ [line_id]: lineCost[] }
+let _projectLineCostsCache = {};
+// Stage 4b: 開いている line の Set（アコーディオンの開閉状態を保持）
+const _projectLineCostsOpen = new Set();
+
+const PRICING_TYPE_LABELS = {
+  fixed_per_unit: '1本あたり固定',
+  percentage:     'クライアント請求の %',
+  hourly:         '時間単価',
+  fixed_total:    'line 全体で固定',
+};
 
 function projectLinesCanEdit() {
   // 案件編集権限を持つユーザーのみ操作可能（サーバー側でも同じ権限でガード）
   return typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
+}
+
+// utils/pricing.js calculateLineCost と同じロジック（フロント版）
+function calcLineCostFront(lc, line) {
+  if (!lc || !line) return 0;
+  const pt = lc.pricing_type || 'fixed_per_unit';
+  const unit = Number(lc.unit_price) || 0;
+  const pct = Number(lc.percentage) || 0;
+  const hrs = Number(lc.actual_hours) || 0;
+  const cu  = Number(line.client_unit_price) || 0;
+  const pc  = Number(line.planned_count) || 0;
+  switch (pt) {
+    case 'fixed_per_unit': return unit * pc;
+    case 'percentage':     return cu * pc * pct / 100;
+    case 'hourly':         return unit * hrs;
+    case 'fixed_total':    return unit;
+    default: return 0;
+  }
+}
+
+// 単価表示文字列（pricing_type ごと）
+function formatLineCostUnit(lc) {
+  const pt = lc.pricing_type || 'fixed_per_unit';
+  const unit = Number(lc.unit_price) || 0;
+  const pct  = Number(lc.percentage) || 0;
+  const hrs  = Number(lc.actual_hours) || 0;
+  switch (pt) {
+    case 'fixed_per_unit': return `¥${unit.toLocaleString()}/本`;
+    case 'percentage':     return `${pct}%`;
+    case 'hourly':         return `¥${unit.toLocaleString()}/時 × ${hrs}h = ¥${(unit * hrs).toLocaleString()}`;
+    case 'fixed_total':    return `¥${unit.toLocaleString()} (固定)`;
+    default: return '';
+  }
+}
+
+// roles マスタから「コスト割当に使えるロール」を返す（admin 以外、is_creator + staff 系）
+function getCostRoleOptions() {
+  if (typeof getAllRolesForUI !== 'function') return [];
+  const rows = getAllRolesForUI();
+  return rows.filter(r => r && r.code !== 'admin' && r.code !== 'producer_director' && r.code !== 'client');
 }
 
 async function loadProjectLines(projectId) {
@@ -12429,6 +12586,20 @@ async function loadProjectLines(projectId) {
       return;
     }
     _projectLinesCache = await res.json() || [];
+    // Stage 4b: 別案件のキャッシュが残らないよう、現案件の line_id だけ残してクリア
+    {
+      const valid = new Set(_projectLinesCache.map(l => l.id));
+      for (const k of Object.keys(_projectLineCostsCache)) {
+        if (!valid.has(k)) delete _projectLineCostsCache[k];
+      }
+      for (const k of Array.from(_projectLineCostsOpen)) {
+        if (!valid.has(k)) _projectLineCostsOpen.delete(k);
+      }
+    }
+    // Stage 4b: サブテキストの「コスト合計 / 粗利」表示用に line_costs を並列フェッチ
+    // （件数が多い案件で N 並列なので、上限 30 件にする）
+    const lines = _projectLinesCache.slice(0, 30);
+    await Promise.all(lines.map(l => loadLineCosts(l.id, projectId)));
     renderProjectLines();
   } catch (e) {
     listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(e?.message || '')}</div>`;
@@ -12461,29 +12632,140 @@ function renderProjectLines() {
     const unit = Number(line.client_unit_price) || 0;
     const subtotal = planned * unit;
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
+
+    // Stage 4b: コスト集計（キャッシュ済の lineCosts から計算）
+    const lineCosts = _projectLineCostsCache[line.id] || null;
+    const isOpen = _projectLineCostsOpen.has(line.id);
+    let econLine = '';
+    if (Array.isArray(lineCosts)) {
+      const totalCost = lineCosts.reduce((s, lc) => s + calcLineCostFront(lc, line), 0);
+      const profit = subtotal - totalCost;
+      const profitPct = subtotal > 0 ? (profit / subtotal * 100) : 0;
+      const profitColor = profit >= 0 ? '#0F7A56' : '#A32D2D';
+      econLine = `<div style="font-size:11px;color:var(--text-muted);margin-top:1px">
+        コスト合計 <strong style="color:#A32D2D">¥${totalCost.toLocaleString()}</strong>
+        粗利 <strong style="color:${profitColor}">¥${profit.toLocaleString()}</strong>${subtotal > 0 ? ` <span style="color:var(--text-muted)">(${profitPct.toFixed(1)}%)</span>` : ''}
+      </div>`;
+    }
+    const costsCount = Array.isArray(lineCosts) ? lineCosts.length : null;
+    const accordionToggleLabel = costsCount === null
+      ? `${isOpen ? '▼' : '▶'} コスト内訳`
+      : `${isOpen ? '▼' : '▶'} コスト内訳 (${costsCount} 件)`;
+
     return `
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--border);border-radius:10px">
-        <div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
-          <button type="button" onclick="moveProjectLine('${esc(line.id)}', -1)" ${idx === 0 || !canEdit ? 'disabled' : ''} title="上へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === 0 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▲</button>
-          <button type="button" onclick="moveProjectLine('${esc(line.id)}', 1)" ${idx === total - 1 || !canEdit ? 'disabled' : ''} title="下へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === total - 1 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▼</button>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px">
+          <div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+            <button type="button" onclick="moveProjectLine('${esc(line.id)}', -1)" ${idx === 0 || !canEdit ? 'disabled' : ''} title="上へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === 0 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▲</button>
+            <button type="button" onclick="moveProjectLine('${esc(line.id)}', 1)" ${idx === total - 1 || !canEdit ? 'disabled' : ''} title="下へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === total - 1 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▼</button>
+          </div>
+          <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${catColor}1A;border:1px solid ${catColor}55;border-radius:999px;font-size:11px;font-weight:600;color:${catColor === '#9CA3AF' ? '#4B5563' : catColor}">
+            ${catLabel}
+          </div>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+            <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()} = <strong style="color:var(--text)">¥${subtotal.toLocaleString()}</strong></div>
+            ${econLine}
+          </div>
+          <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${status.bg};border:1px solid ${status.border};color:${status.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
+            ${esc(status.label)}
+          </span>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+            <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+          </div>
         </div>
-        <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${catColor}1A;border:1px solid ${catColor}55;border-radius:999px;font-size:11px;font-weight:600;color:${catColor === '#9CA3AF' ? '#4B5563' : catColor}">
-          ${catLabel}
-        </div>
-        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-          <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
-          <div style="font-size:11px;color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()} = <strong style="color:var(--text)">¥${subtotal.toLocaleString()}</strong></div>
-        </div>
-        <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${status.bg};border:1px solid ${status.border};color:${status.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
-          ${esc(status.label)}
-        </span>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
-          <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+        <!-- Stage 4b: コスト内訳アコーディオン -->
+        <div style="border-top:1px dashed var(--border);background:#FAFAF7">
+          <button type="button" onclick="toggleLineCostsAccordion('${esc(line.id)}')" style="width:100%;text-align:left;padding:6px 14px 6px 44px;background:transparent;border:0;cursor:pointer;font-size:11px;color:var(--em-dark);font-weight:600">
+            ${accordionToggleLabel}
+          </button>
+          ${isOpen ? `<div id="plc-list-${esc(line.id)}" style="padding:0 14px 12px 44px">${renderLineCostsBody(line)}</div>` : ''}
         </div>
       </div>
     `;
   }).join('');
+}
+
+// アコーディオンを開閉。開く時は lineCosts を fetch（未取得なら）
+async function toggleLineCostsAccordion(lineId) {
+  if (_projectLineCostsOpen.has(lineId)) {
+    _projectLineCostsOpen.delete(lineId);
+    renderProjectLines();
+    return;
+  }
+  _projectLineCostsOpen.add(lineId);
+  // 一旦再描画（▼ + 「読み込み中」を表示）
+  renderProjectLines();
+  // 未取得 or 再フェッチ
+  await loadLineCosts(lineId);
+  renderProjectLines();
+}
+
+// 指定 line の line_costs を fetch してキャッシュに格納
+async function loadLineCosts(lineId, projectIdOpt) {
+  const projectId = projectIdOpt || document.getElementById('p-id')?.value;
+  if (!projectId || !lineId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/costs`);
+    if (!res.ok) {
+      _projectLineCostsCache[lineId] = [];
+      return;
+    }
+    _projectLineCostsCache[lineId] = await res.json() || [];
+  } catch (e) {
+    _projectLineCostsCache[lineId] = [];
+  }
+}
+
+// アコーディオン中身（cost 行のリスト + 追加ボタン）の HTML を返す
+function renderLineCostsBody(line) {
+  const lineId = line.id;
+  const lineCosts = _projectLineCostsCache[lineId];
+  const canEdit = projectLinesCanEdit();
+
+  if (!Array.isArray(lineCosts)) {
+    return `<div style="font-size:11px;color:var(--text-muted);padding:6px 0">読み込み中...</div>`;
+  }
+
+  if (lineCosts.length === 0) {
+    return `
+      <div style="font-size:11px;color:var(--text-muted);padding:6px 0">コストが未登録です。</div>
+      ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:4px">+ コスト追加</button>` : ''}
+    `;
+  }
+
+  const rows = lineCosts.map(lc => {
+    const role = lc.role || null;
+    const user = lc.user || null;
+    const roleLabel = role?.label || role?.code || 'ロール未設定';
+    const ownerLabel = user
+      ? `${esc(user.name || user.email || 'ユーザー')}`
+      : `<span style="color:var(--text-muted)">(ロール固定)</span>`;
+    const unitText = formatLineCostUnit(lc);
+    const totalCost = calcLineCostFront(lc, line);
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:1px dashed var(--border);font-size:12px">
+        <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600;color:var(--text)">${esc(roleLabel)}</span>
+          <span>${ownerLabel}</span>
+        </div>
+        <div style="text-align:right;flex-shrink:0;font-size:11px;color:var(--text-muted)">
+          <div>${esc(unitText)}</div>
+          <div style="color:#A32D2D;font-weight:600">¥${totalCost.toLocaleString()}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <button type="button" class="btn" onclick="openProjectLineCostEdit('${esc(lineId)}', '${esc(lc.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:3px 8px;font-size:10px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+          <button type="button" class="btn" onclick="openProjectLineCostDeleteConfirm('${esc(lineId)}', '${esc(lc.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:3px 8px;font-size:10px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    ${rows}
+    ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:8px">+ コスト追加</button>` : ''}
+  `;
 }
 
 // ↑↓ ボタンで line を1つ移動 → サーバ PATCH /reorder
@@ -12661,7 +12943,237 @@ async function executeProjectLineDelete() {
     }
     closeModal('modal-project-line-delete');
     showToast('成果物グループを削除しました', 'ok');
+    // 削除した line のコストキャッシュを破棄
+    if (_projectLineCostsCache[lineId]) delete _projectLineCostsCache[lineId];
+    _projectLineCostsOpen.delete(lineId);
     await loadProjectLines(projectId);
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
+// ADR 002 + 003 + 004: roles マスタ駆動、pricing_type で課金方式を切替（4種類）
+// 編集は専用の小モーダル `modal-project-line-cost-edit`（z-index:300）で行う。
+// 削除は `modal-project-line-cost-delete`（z-index:320）で誤削除防止。
+
+// 「+ コスト追加」: 編集モーダルを空状態で開く
+function addProjectLineCost(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) {
+    showToast('案件を保存してから追加してください', 'warn');
+    return;
+  }
+  prepareProjectLineCostEditModal(null, lineId, projectId);
+  openModal('modal-project-line-cost-edit');
+}
+
+// 既存 cost を編集
+function openProjectLineCostEdit(lineId, costId) {
+  const projectId = document.getElementById('p-id').value;
+  const list = _projectLineCostsCache[lineId] || [];
+  const cost = list.find(c => c.id === costId);
+  if (!cost) {
+    showToast('コスト行が見つかりません', 'warn');
+    return;
+  }
+  prepareProjectLineCostEditModal(cost, lineId, projectId);
+  openModal('modal-project-line-cost-edit');
+}
+
+function prepareProjectLineCostEditModal(cost, lineId, projectId) {
+  document.getElementById('plc-edit-title').textContent = cost ? 'コストを編集' : 'コストを追加';
+  document.getElementById('plc-edit-id').value = cost ? cost.id : '';
+  document.getElementById('plc-edit-project-id').value = projectId || '';
+  document.getElementById('plc-edit-line-id').value = lineId || '';
+
+  // line サマリー表示
+  const line = (_projectLinesCache || []).find(l => l.id === lineId);
+  const summaryEl = document.getElementById('plc-edit-line-summary');
+  if (summaryEl && line) {
+    const cat = line.category;
+    const catName = cat ? cat.name : 'カテゴリ未設定';
+    const planned = Number(line.planned_count) || 0;
+    const unit = Number(line.client_unit_price) || 0;
+    summaryEl.textContent = `対象line: ${catName}${line.name ? ' / ' + line.name : ''} (${planned}本 × ¥${unit.toLocaleString()})`;
+  } else if (summaryEl) {
+    summaryEl.textContent = '';
+  }
+
+  // ロール select（合成値 'producer_director' は roles マスタに id を持たないため除外済み）
+  const roleSel = document.getElementById('plc-edit-role-id');
+  if (roleSel) {
+    const roles = getCostRoleOptions().filter(r => r && r.id);
+    roleSel.innerHTML = '<option value="">選択してください</option>' + roles.map(r =>
+      `<option value="${esc(r.id)}">${esc(r.label || r.code)}</option>`
+    ).join('');
+    // 編集時は既存 role_id をセット
+    roleSel.value = (cost && cost.role_id) ? cost.role_id : '';
+  }
+
+  // 担当者 select
+  const userSel = document.getElementById('plc-edit-user-id');
+  if (userSel) {
+    const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+    const activeMembers = members.filter(m => m && m.is_active !== false);
+    userSel.innerHTML = '<option value="">未指定（ロール固定枠）</option>' + activeMembers.map(m =>
+      `<option value="${esc(m.id)}">${esc(m.name || m.email || 'メンバー')}</option>`
+    ).join('');
+    userSel.value = cost?.user_id || '';
+  }
+
+  // 単価タイプ
+  const pt = cost?.pricing_type || 'fixed_per_unit';
+  document.querySelectorAll('input[name="plc-edit-pricing-type"]').forEach(r => {
+    r.checked = (r.value === pt);
+    r.onchange = () => onLineCostPricingTypeChange();
+  });
+
+  // 単価
+  document.getElementById('plc-edit-unit-price').value = cost ? (cost.unit_price ?? 0) : 0;
+  // 割合
+  document.getElementById('plc-edit-percentage').value = cost?.percentage ?? 0;
+  // 実工数
+  document.getElementById('plc-edit-actual-hours').value = cost?.actual_hours ?? 0;
+
+  onLineCostPricingTypeChange();
+
+  const errEl = document.getElementById('plc-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+}
+
+function onLineCostPricingTypeChange() {
+  const pt = document.querySelector('input[name="plc-edit-pricing-type"]:checked')?.value || 'fixed_per_unit';
+  const unitWrap = document.getElementById('plc-edit-unit-price-wrap');
+  const unitLabel = document.getElementById('plc-edit-unit-price-label');
+  const pctWrap = document.getElementById('plc-edit-percentage-wrap');
+  const hrsWrap = document.getElementById('plc-edit-actual-hours-wrap');
+
+  // 単価ラベルの動的切替
+  if (unitLabel) {
+    if (pt === 'fixed_per_unit') unitLabel.textContent = '単価（円・1本あたり）';
+    else if (pt === 'percentage') unitLabel.textContent = '単価（補助・通常 0）';
+    else if (pt === 'hourly') unitLabel.textContent = '時間単価（円/時）';
+    else if (pt === 'fixed_total') unitLabel.textContent = '単価（円・line 全体）';
+  }
+  // percentage の場合は unit_price は使わないが、入力UI上は残しておく（DB列は NOT NULL なので 0 を送る）
+  if (unitWrap) unitWrap.style.display = (pt === 'percentage') ? 'none' : '';
+
+  if (pctWrap) pctWrap.style.display = (pt === 'percentage') ? '' : 'none';
+  if (hrsWrap) hrsWrap.style.display = (pt === 'hourly') ? '' : 'none';
+}
+
+async function saveProjectLineCost() {
+  const costId = document.getElementById('plc-edit-id').value;
+  const projectId = document.getElementById('plc-edit-project-id').value;
+  const lineId = document.getElementById('plc-edit-line-id').value;
+  const errEl = document.getElementById('plc-edit-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const roleId = document.getElementById('plc-edit-role-id').value;
+  if (!roleId) { showErr('ロールを選択してください'); return; }
+  const userId = document.getElementById('plc-edit-user-id').value || null;
+  const pt = document.querySelector('input[name="plc-edit-pricing-type"]:checked')?.value || 'fixed_per_unit';
+  const unitPrice = Math.max(0, parseInt(document.getElementById('plc-edit-unit-price').value, 10) || 0);
+
+  const payload = {
+    role_id: roleId,
+    user_id: userId,
+    pricing_type: pt,
+    unit_price: pt === 'percentage' ? 0 : unitPrice,
+    currency: 'JPY',
+  };
+
+  if (pt === 'percentage') {
+    const p = Number(document.getElementById('plc-edit-percentage').value);
+    if (!Number.isFinite(p) || p < 0 || p > 100) { showErr('割合(%) は 0〜100 で入力してください'); return; }
+    payload.percentage = p;
+    payload.actual_hours = null;
+  } else if (pt === 'hourly') {
+    const h = Number(document.getElementById('plc-edit-actual-hours').value);
+    if (!Number.isFinite(h) || h < 0) { showErr('実工数は 0 以上で入力してください'); return; }
+    payload.actual_hours = h;
+    payload.percentage = null;
+  } else {
+    payload.percentage = null;
+    payload.actual_hours = null;
+  }
+
+  const saveBtn = document.getElementById('plc-edit-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const url = costId
+      ? `${API}/projects/${projectId}/lines/${lineId}/costs/${costId}`
+      : `${API}/projects/${projectId}/lines/${lineId}/costs`;
+    const method = costId ? 'PUT' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        showErr(err.error || '同じロール × 担当者の組み合わせは既に登録されています');
+      } else {
+        showErr(err.error || `保存に失敗しました（${res.status}）`);
+      }
+      return;
+    }
+    closeModal('modal-project-line-cost-edit');
+    showToast(costId ? 'コストを更新しました' : 'コストを追加しました', 'ok');
+    // line_costs を再 fetch して再描画
+    await loadLineCosts(lineId);
+    _projectLineCostsOpen.add(lineId);
+    renderProjectLines();
+  } catch (e) {
+    showErr(`保存に失敗しました: ${e?.message || ''}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function openProjectLineCostDeleteConfirm(lineId, costId) {
+  const projectId = document.getElementById('p-id').value;
+  const list = _projectLineCostsCache[lineId] || [];
+  const cost = list.find(c => c.id === costId);
+  if (!cost) return;
+  document.getElementById('plc-del-id').value = costId;
+  document.getElementById('plc-del-project-id').value = projectId;
+  document.getElementById('plc-del-line-id').value = lineId;
+  const role = cost.role;
+  const user = cost.user;
+  const roleLabel = role?.label || role?.code || 'ロール未設定';
+  const ownerLabel = user ? (user.name || user.email || 'ユーザー') : '(ロール固定)';
+  const unitText = formatLineCostUnit(cost);
+  document.getElementById('plc-del-message').innerHTML = `
+    <div style="margin-bottom:6px"><strong>${esc(roleLabel)}</strong> ${esc(ownerLabel)}</div>
+    <div style="color:var(--text-muted)">${esc(unitText)}</div>
+  `;
+  openModal('modal-project-line-cost-delete');
+}
+
+async function executeProjectLineCostDelete() {
+  const costId = document.getElementById('plc-del-id').value;
+  const projectId = document.getElementById('plc-del-project-id').value;
+  const lineId = document.getElementById('plc-del-line-id').value;
+  if (!costId || !projectId || !lineId) return;
+  const btn = document.getElementById('plc-del-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/costs/${costId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    closeModal('modal-project-line-cost-delete');
+    showToast('コストを削除しました', 'ok');
+    await loadLineCosts(lineId);
+    renderProjectLines();
   } catch (e) {
     showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
   } finally {

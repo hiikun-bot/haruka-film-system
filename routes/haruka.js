@@ -1792,6 +1792,360 @@ router.delete('/projects/:project_id/fixed-items/:item_id', requireAuth, require
   res.json({ ok: true });
 });
 
+// ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
+// ADR 002 (見積行統合) + ADR 003 (roles マスタ) + ADR 004 (pricing_type) に基づく line_costs CRUD。
+// 1 line に対して、複数のロール（プロデューサー/ディレクター/編集者…）のコスト行を縦持ちで保持する。
+//
+// 権限: lines / fixed-items と同じ project.create_edit を使う。
+//
+// 旧 rates 系（director-rates / producer-rates / client-fee）はこの PR では触らず、
+// Stage 4d で整理する予定。
+
+const PRICING_TYPES = new Set(['fixed_per_unit', 'percentage', 'hourly', 'fixed_total']);
+
+const isMissingPelcTable = (err) =>
+  err && /relation .*project_estimate_line_costs.* does not exist|could not find the table/i.test(err.message || '');
+
+// PostgREST の UNIQUE 違反 (Supabase) は code '23505' で返る。
+const isUniqueViolation = (err) => err && (err.code === '23505' || /duplicate key value/i.test(err.message || ''));
+
+const LINE_COST_SELECT_COLS = [
+  'id, line_id, role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours, created_at',
+  'role:roles(id, code, label, category, is_creator, is_internal)',
+  'user:users(id, name, email)'
+].join(', ');
+
+// 内部ヘルパ: line_id が指定 project_id に属するか確認
+async function _verifyLineBelongsToProject(lineId, projectId) {
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (error) return { error: { status: 500, message: error.message } };
+  if (!data) return { error: { status: 404, message: 'line が見つかりません' } };
+  if (data.project_id !== projectId) {
+    return { error: { status: 400, message: 'project_id と line_id が一致しません' } };
+  }
+  return { line: data };
+}
+
+// 内部ヘルパ: pricing_type / percentage / actual_hours / unit_price のバリデーション
+function _validatePricingFields(body, partial = false) {
+  // partial=true は PUT 用。ボディに無いフィールドはチェックしない。
+  const out = {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  if (!partial || has('pricing_type')) {
+    const pt = body.pricing_type || 'fixed_per_unit';
+    if (!PRICING_TYPES.has(pt)) {
+      return { error: `pricing_type は ${[...PRICING_TYPES].join(' / ')} のいずれかで指定してください` };
+    }
+    out.pricing_type = pt;
+  }
+  if (!partial || has('unit_price')) {
+    const up = parseInt(body.unit_price, 10);
+    if (Number.isNaN(up) || up < 0) {
+      return { error: 'unit_price は 0 以上の整数で指定してください' };
+    }
+    out.unit_price = up;
+  }
+  if (!partial || has('currency')) {
+    const cur = (typeof body.currency === 'string' && body.currency.trim())
+      ? body.currency.trim().toUpperCase()
+      : 'JPY';
+    out.currency = cur;
+  }
+  if (has('percentage')) {
+    if (body.percentage === null || body.percentage === '') {
+      out.percentage = null;
+    } else {
+      const p = Number(body.percentage);
+      if (!Number.isFinite(p) || p < 0 || p > 100) {
+        return { error: 'percentage は 0〜100 の数値で指定してください' };
+      }
+      out.percentage = p;
+    }
+  }
+  if (has('actual_hours')) {
+    if (body.actual_hours === null || body.actual_hours === '') {
+      out.actual_hours = null;
+    } else {
+      const h = Number(body.actual_hours);
+      if (!Number.isFinite(h) || h < 0) {
+        return { error: 'actual_hours は 0 以上の数値で指定してください' };
+      }
+      out.actual_hours = h;
+    }
+  }
+  // pricing_type 別の必須チェック（POST もしくは PUT で pricing_type を変更したとき）
+  const effectivePt = out.pricing_type
+    || (partial ? null : 'fixed_per_unit');
+  if (effectivePt === 'percentage') {
+    // percentage 必須
+    const eff = has('percentage') ? out.percentage : (partial ? undefined : null);
+    if (eff === undefined) {
+      // partial で percentage を変更しない場合は許す（既存値を維持）
+    } else if (eff === null || !Number.isFinite(eff)) {
+      return { error: "pricing_type='percentage' のときは percentage (0-100) を指定してください" };
+    }
+  }
+  if (effectivePt === 'hourly') {
+    const eff = has('actual_hours') ? out.actual_hours : (partial ? undefined : null);
+    if (eff === undefined) {
+      // partial で変更しない場合は許す
+    } else if (eff === null || !Number.isFinite(eff)) {
+      return { error: "pricing_type='hourly' のときは actual_hours (>=0) を指定してください" };
+    }
+  }
+  return { values: out };
+}
+
+// GET /api/projects/:project_id/lines/:line_id/costs  一覧取得
+// embed: roles(id, code, label, category, is_creator, is_internal), users(id, name, email)
+router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .select(LINE_COST_SELECT_COLS)
+    .eq('line_id', lineId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingPelcTable(error)) {
+      console.warn('[line-costs] project_estimate_line_costs table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// POST /api/projects/:project_id/lines/:line_id/costs  新規作成
+// body: { role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours }
+router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const body = req.body || {};
+  const { role_id, user_id } = body;
+
+  if (!role_id) return res.status(400).json({ error: 'role_id は必須です' });
+
+  // role_id が roles マスタに存在するか
+  const { data: role, error: roleErr } = await supabase
+    .from('roles')
+    .select('id')
+    .eq('id', role_id)
+    .maybeSingle();
+  if (roleErr) return res.status(500).json({ error: roleErr.message });
+  if (!role) return res.status(400).json({ error: '指定された role_id がマスタに存在しません' });
+
+  // user_id が users に存在するか（指定された場合のみ）
+  if (user_id) {
+    const { data: u, error: uErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', user_id)
+      .maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!u) return res.status(400).json({ error: '指定された user_id がユーザーに存在しません' });
+  }
+
+  const v = _validatePricingFields(body, false);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  const insertRow = {
+    line_id: lineId,
+    role_id,
+    user_id: user_id || null,
+    unit_price: v.values.unit_price ?? 0,
+    currency: v.values.currency || 'JPY',
+    pricing_type: v.values.pricing_type || 'fixed_per_unit',
+    percentage: Object.prototype.hasOwnProperty.call(v.values, 'percentage') ? v.values.percentage : null,
+    actual_hours: Object.prototype.hasOwnProperty.call(v.values, 'actual_hours') ? v.values.actual_hours : null,
+  };
+
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .insert(insertRow)
+    .select(LINE_COST_SELECT_COLS)
+    .single();
+  if (error) {
+    if (isMissingPelcTable(error)) {
+      return res.status(503).json({ error: 'project_estimate_line_costs テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+    }
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({ error: '同じロール×担当者の組み合わせは既に登録されています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/projects/:project_id/lines/:line_id/costs/:cost_id  部分更新
+router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  // 既存 cost 取得 + line_id 一致チェック
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_line_costs')
+    .select('id, line_id, role_id, user_id, pricing_type, percentage, actual_hours')
+    .eq('id', costId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'cost が見つかりません' });
+  if (existing.line_id !== lineId) {
+    return res.status(400).json({ error: 'line_id と cost_id が一致しません' });
+  }
+
+  const body = req.body || {};
+  const updates = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, 'role_id')) {
+    if (!body.role_id) return res.status(400).json({ error: 'role_id は空にできません' });
+    const { data: role, error: roleErr } = await supabase
+      .from('roles')
+      .select('id')
+      .eq('id', body.role_id)
+      .maybeSingle();
+    if (roleErr) return res.status(500).json({ error: roleErr.message });
+    if (!role) return res.status(400).json({ error: '指定された role_id がマスタに存在しません' });
+    updates.role_id = body.role_id;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'user_id')) {
+    if (body.user_id) {
+      const { data: u, error: uErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', body.user_id)
+        .maybeSingle();
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      if (!u) return res.status(400).json({ error: '指定された user_id がユーザーに存在しません' });
+    }
+    updates.user_id = body.user_id || null;
+  }
+
+  // pricing 関連バリデーション（partial）
+  // pricing_type を変更しても percentage/actual_hours は明示的に渡されたときのみ更新する。
+  // 既存の必須チェックは「新 pricing_type に対する既存値が NULL」のとき警告したいので
+  // 既存値とマージしてから判定する。
+  const merged = {
+    pricing_type: Object.prototype.hasOwnProperty.call(body, 'pricing_type') ? body.pricing_type : existing.pricing_type,
+    percentage:   Object.prototype.hasOwnProperty.call(body, 'percentage')   ? body.percentage   : existing.percentage,
+    actual_hours: Object.prototype.hasOwnProperty.call(body, 'actual_hours') ? body.actual_hours : existing.actual_hours,
+    unit_price:   Object.prototype.hasOwnProperty.call(body, 'unit_price')   ? body.unit_price   : undefined,
+    currency:     Object.prototype.hasOwnProperty.call(body, 'currency')     ? body.currency     : undefined,
+  };
+  // pricing_type='percentage' で percentage が NULL/未定義になる更新を防ぐ
+  if (merged.pricing_type === 'percentage') {
+    const p = Number(merged.percentage);
+    if (!Number.isFinite(p) || p < 0 || p > 100) {
+      return res.status(400).json({ error: "pricing_type='percentage' のときは percentage (0-100) を指定してください" });
+    }
+  }
+  if (merged.pricing_type === 'hourly') {
+    const h = Number(merged.actual_hours);
+    if (!Number.isFinite(h) || h < 0) {
+      return res.status(400).json({ error: "pricing_type='hourly' のときは actual_hours (>=0) を指定してください" });
+    }
+  }
+  if (!PRICING_TYPES.has(merged.pricing_type)) {
+    return res.status(400).json({ error: `pricing_type は ${[...PRICING_TYPES].join(' / ')} のいずれかで指定してください` });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'pricing_type')) {
+    updates.pricing_type = body.pricing_type;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'unit_price')) {
+    const up = parseInt(body.unit_price, 10);
+    if (Number.isNaN(up) || up < 0) {
+      return res.status(400).json({ error: 'unit_price は 0 以上の整数で指定してください' });
+    }
+    updates.unit_price = up;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    updates.currency = (typeof body.currency === 'string' && body.currency.trim())
+      ? body.currency.trim().toUpperCase()
+      : 'JPY';
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'percentage')) {
+    if (body.percentage === null || body.percentage === '') {
+      updates.percentage = null;
+    } else {
+      const p = Number(body.percentage);
+      if (!Number.isFinite(p) || p < 0 || p > 100) {
+        return res.status(400).json({ error: 'percentage は 0〜100 の数値で指定してください' });
+      }
+      updates.percentage = p;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'actual_hours')) {
+    if (body.actual_hours === null || body.actual_hours === '') {
+      updates.actual_hours = null;
+    } else {
+      const h = Number(body.actual_hours);
+      if (!Number.isFinite(h) || h < 0) {
+        return res.status(400).json({ error: 'actual_hours は 0 以上の数値で指定してください' });
+      }
+      updates.actual_hours = h;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    const { data: row } = await supabase
+      .from('project_estimate_line_costs')
+      .select(LINE_COST_SELECT_COLS)
+      .eq('id', costId)
+      .single();
+    return res.json(row);
+  }
+
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .update(updates)
+    .eq('id', costId)
+    .select(LINE_COST_SELECT_COLS)
+    .single();
+  if (error) {
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({ error: '同じロール×担当者の組み合わせは既に登録されています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/lines/:line_id/costs/:cost_id  物理削除
+router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_line_costs')
+    .select('id, line_id')
+    .eq('id', costId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'cost が見つかりません' });
+  if (existing.line_id !== lineId) {
+    return res.status(400).json({ error: 'line_id と cost_id が一致しません' });
+  }
+
+  const { error: delErr } = await supabase
+    .from('project_estimate_line_costs')
+    .delete()
+    .eq('id', costId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
 // クライアント報酬設定 取得
 router.get('/projects/:id/client-fee', async (req, res) => {
   const { data, error } = await supabase
