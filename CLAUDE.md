@@ -151,6 +151,13 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - **影響範囲（mobile/PC/両方）を必ず記載**
 - 両方に影響する PR は関連chatのレビューを受ける
 
+### PR タイトルの先頭に `#番号` を付ける（必須）
+- `gh pr create` 直後に返ってきた PR 番号を使い、**必ず** `gh pr edit <N> --title "#<N> <元タイトル>"` でタイトル先頭に番号を追記する
+- 例: `#345 feat(projects): ファイル名テンプレのカスタムトークン key を自動採番化（UX改善）`
+- 理由: Railway のデプロイ一覧 / Slack 等でタイトルが長いと末尾の `(#N)` が truncate されて PR 特定不能になる。先頭にあれば必ず見える
+- squash merge 時に GitHub が末尾にも `(#N)` を再付与するが、重複は許容（先頭が見えることが優先）
+- サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker など）も例外なく従うこと
+
 ### 自動マージ（auto-merge ラベル）
 - PR に `auto-merge` ラベルを付与すると、CI 通過後に **自動で squash merge + ブランチ削除** されます（`.github/workflows/auto-merge.yml`）
 - 仕組み: GitHub の Auto-merge 機能（`gh pr merge --squash --auto --delete-branch`）を有効化するだけで、即マージではない（CI が通るまで待つ）
