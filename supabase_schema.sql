@@ -408,7 +408,8 @@ CREATE TABLE IF NOT EXISTS creative_files (
   drive_file_id TEXT,
   drive_url TEXT,
   uploaded_by UUID REFERENCES users(id),
-  uploaded_at TIMESTAMPTZ DEFAULT now()
+  uploaded_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT creative_files_creative_id_version_unique UNIQUE (creative_id, version)
 );
 
 -- ==================== マスターテーブル群 ====================
