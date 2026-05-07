@@ -8264,8 +8264,7 @@ async function loadCreatives(opts = {}) {
       allCreatives = data;
     }
     populateAssigneeFilter();
-    renderCreatives();
-    renderAlerts();
+    renderCreatives(); // 内部で renderAlerts(filtered) を呼ぶのでここでは不要
   } catch(e) {
     if (seq !== _creativesLoadSeq) return;
     if (!append) allCreatives = [];
@@ -8720,6 +8719,8 @@ function renderCreatives() {
   updateCreativeTabBadges();
   // ガントチャートも同じフィルタ済データで描画（モード切替によらず常に最新化）
   try { renderCreativesGantt(filtered); } catch(e) { console.warn('[gantt] render error:', e); }
+  // 納期遅れアラートもサイドバーと同じフィルタ済セットで件数を出す（矛盾防止）
+  try { renderAlerts(filtered); } catch(e) { console.warn('[alerts] render error:', e); }
 
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
@@ -10007,11 +10008,14 @@ function cvSpShowAllDelayed() {
   toggleCreativeAdvFilters(true);
 }
 
-function renderAlerts() {
+function renderAlerts(rows) {
   // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
   // 現行スキーマに合わせ final_deadline を見て、JST 暦日差で「過去」を判定する。
+  // rows 未指定なら allCreatives（後方互換）。指定時は renderCreatives 側の絞り込み済みリストを使う
+  // — 自分の案件 / 担当者 / クライアント等のフィルタと整合させ、サイドバー (遅延案件) と件数を一致させる
+  const source = Array.isArray(rows) ? rows : allCreatives;
   const today = _cvAtMidnight(new Date());
-  const late = allCreatives.filter(c => {
+  const late = source.filter(c => {
     if (!c.final_deadline || c.status === '納品') return false;
     const fin = _cvAtMidnight(c.final_deadline);
     return _cvDayDiff(fin, today) < 0;
