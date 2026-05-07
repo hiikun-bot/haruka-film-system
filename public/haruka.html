@@ -15564,6 +15564,7 @@ let _annStatusData = null;
 let _annStatusHideDone = false;
 let _annStatusCurrentId = null;
 let _annStatusReminding = false;
+let _annStatusLeaderReminding = false; // ADR 008 Stage 3: リーダーに依頼 送信中フラグ
 
 async function openAnnouncementStatus(id) {
   const res = await apiFetch(`${API}/announcements/${id}/status`);
@@ -15572,8 +15573,100 @@ async function openAnnouncementStatus(id) {
   _annStatusCurrentId = id;
   _annStatusHideDone = false; // 初期値: 全員表示
   _annStatusReminding = false;
+  _annStatusLeaderReminding = false;
   _renderAnnouncementStatus();
   openModal('modal-announcement-status');
+}
+
+// ADR 008 Stage 3: リーダーに依頼 督促DM
+// 各チームのリーダー (g.leader_user_id) 宛に個別DM、リーダー不在チームは秘書チームへエスカレ。
+// 24h以内に同じ受信者へ送信済みなら自動スキップ（force=1で上書き）。
+async function sendAnnouncementLeaderRemind(opts = {}) {
+  if (!_annStatusData || !_annStatusCurrentId) return;
+  if (_annStatusLeaderReminding) return;
+  const force = !!opts.force;
+
+  // 送信先内訳をフロント側で算出（バックエンドと同じロジック）
+  const groups = _annStatusData.groups || [];
+  const leaderTargets = []; // { teamLabel, leaderName, memberCount }
+  const escalationGroups = []; // { teamLabel, memberCount }
+  groups.forEach(g => {
+    const unackedMembers = (g.members || []).filter(m => !m.done_at);
+    if (unackedMembers.length === 0) return;
+    if (g.team_id === null) {
+      // 未所属
+      escalationGroups.push({ teamLabel: '未所属', memberCount: unackedMembers.length });
+      return;
+    }
+    const leaderUserId = g.leader_user_id || g.director_id;
+    if (leaderUserId) {
+      const leaderMember = (g.members || []).find(m => m.user_id === leaderUserId);
+      const teamLabel = `${g.team_code}チーム${g.team_name ? ' / ' + g.team_name : ''}`;
+      leaderTargets.push({
+        teamLabel,
+        leaderName: leaderMember?.full_name || '(不明)',
+        memberCount: unackedMembers.length,
+      });
+    } else {
+      const teamLabel = `${g.team_code}チーム${g.team_name ? ' / ' + g.team_name : ''}`;
+      escalationGroups.push({ teamLabel, memberCount: unackedMembers.length });
+    }
+  });
+
+  const totalLeaderMsgs = leaderTargets.length;
+  const hasEscalation = escalationGroups.length > 0;
+  const totalMsgs = totalLeaderMsgs + (hasEscalation ? 1 : 0);
+
+  if (totalMsgs === 0) {
+    showToast('リーダーに依頼する対象がありません（全員対応済みです）', 'info');
+    return;
+  }
+
+  // 内訳メッセージ
+  const breakdownLines = [];
+  leaderTargets.forEach(t => {
+    breakdownLines.push(`・${t.teamLabel}: ${t.leaderName}さんへ（未対応 ${t.memberCount}名）`);
+  });
+  if (hasEscalation) {
+    const escTotal = escalationGroups.reduce((s, g) => s + g.memberCount, 0);
+    const escTeams = escalationGroups.map(g => g.teamLabel).join(' / ');
+    breakdownLines.push(`・秘書チーム（エスカレ）: ${escTeams}（未対応 ${escTotal}名）`);
+  }
+  const confirmMsg = `${totalMsgs}通のDMを送ります${force ? '（再送モード: 24h以内も上書き）' : ''}：\n\n${breakdownLines.join('\n')}\n\nよろしいですか？`;
+  if (!confirm(confirmMsg)) return;
+
+  _annStatusLeaderReminding = true;
+  _renderAnnouncementStatus();
+  try {
+    const url = `${API}/announcements/${_annStatusCurrentId}/leader-remind${force ? '?force=1' : ''}`;
+    const res = await apiFetch(url, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('エラー: ' + (data.error || '送信失敗'), 'error');
+      return;
+    }
+    const sentCount = data.sent_count || 0;
+    const skippedCount = data.skipped_count || 0;
+    const slackInfo = data.slack_channel_configured ? '' : '（Slack未送信: チャンネル未設定）';
+    let msg = `✅ ${sentCount}通のDMを送信しました${slackInfo}`;
+    if (skippedCount > 0) {
+      msg += `\n（24時間以内に送信済の${skippedCount}通はスキップしました。再送するには「↻ 再送」ボタンを使用）`;
+    }
+    showToast(msg, 'success');
+  } catch (e) {
+    showToast('エラー: ' + (e.message || '送信失敗'), 'error');
+  } finally {
+    _annStatusLeaderReminding = false;
+    _renderAnnouncementStatus();
+  }
+}
+
+// ADR 008 Stage 3: 24h dedup を上書きして再送
+async function sendAnnouncementLeaderRemindForce() {
+  if (!confirm('24時間以内に送信済の宛先にも再送します。続行しますか？')) return;
+  // confirm が二重になる前に true を渡してメイン関数の confirm はそのまま使う
+  // → 内部で「再送モード」の文言が出るので OK
+  return sendAnnouncementLeaderRemind({ force: true });
 }
 
 function toggleAnnouncementStatusHideDone() {
@@ -15714,6 +15807,34 @@ function _renderAnnouncementStatus() {
       ${_annStatusReminding ? '送信中...' : `📣 未対応者に督促 (${unackedTotal})`}
     </button>`;
 
+  // ADR 008 Stage 3: リーダーに依頼 ボタン
+  // M = 未対応者を持つチームのリーダー数 + 秘書チームエスカレ有無
+  let leaderTargetCount = 0;
+  let hasEscalation = false;
+  (groups || []).forEach(g => {
+    const unackedHere = (g.members || []).filter(m => !m.done_at).length;
+    if (unackedHere === 0) return;
+    if (g.team_id === null) {
+      hasEscalation = true;
+      return;
+    }
+    const leaderUserId = g.leader_user_id || g.director_id;
+    if (leaderUserId) leaderTargetCount += 1;
+    else hasEscalation = true;
+  });
+  const leaderMsgCount = leaderTargetCount + (hasEscalation ? 1 : 0);
+  const leaderRemindDisabled = leaderMsgCount === 0 || _annStatusLeaderReminding;
+  const leaderRemindBtn = leaderMsgCount === 0
+    ? ''
+    : `<div style="display:inline-flex;align-items:stretch;gap:0">
+        <button class="btn" onclick="sendAnnouncementLeaderRemind()" ${leaderRemindDisabled ? 'disabled' : ''} style="font-size:11px;padding:5px 12px;background:${_annStatusLeaderReminding ? 'var(--text-muted)' : '#7C5800'};color:#fff;border-color:${_annStatusLeaderReminding ? 'var(--text-muted)' : '#7C5800'};border-top-right-radius:0;border-bottom-right-radius:0;${leaderRemindDisabled ? 'opacity:0.6;cursor:not-allowed' : ''}">
+          ${_annStatusLeaderReminding ? '送信中...' : `👑 リーダーに依頼 (${leaderMsgCount})`}
+        </button>
+        <button class="btn" onclick="sendAnnouncementLeaderRemindForce()" ${leaderRemindDisabled ? 'disabled' : ''} title="24時間以内に送信済の宛先へ再送" style="font-size:11px;padding:5px 8px;background:#fff;color:#7C5800;border:1px solid #7C5800;border-left:0;border-top-left-radius:0;border-bottom-left-radius:0;${leaderRemindDisabled ? 'opacity:0.6;cursor:not-allowed' : ''}">
+          ↻
+        </button>
+      </div>`;
+
   // 全カード非表示時の空メッセージ
   const emptyAllDone = (visibleGroups.length === 0)
     ? `<div style="font-size:13px;color:var(--em-dark);background:var(--em-pale);padding:20px;border-radius:10px;text-align:center;font-weight:600">🎉 全員完了しました${hideDone ? '（完了済を隠しているため未完了者がいません）' : ''}</div>`
@@ -15725,8 +15846,9 @@ function _renderAnnouncementStatus() {
         <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(announcement.title)}</div>
         ${announcement.deadline_at ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">期限: ${new Date(announcement.deadline_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' })}</div>` : ''}
       </div>
-      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
         ${remindBtn}
+        ${leaderRemindBtn}
         ${toggleBtn}
         <div style="font-size:14px;font-weight:700;color:var(--em-dark);background:var(--em-pale);padding:6px 14px;border-radius:8px">
           ${totalDone} / ${totalCount} 完了
