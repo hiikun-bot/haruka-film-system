@@ -1040,247 +1040,22 @@ router.get('/status-templates', async (req, res) => {
   res.json(out);
 });
 
-// ==================== 単価設定 ====================
-
-const RATE_CREATIVE_TYPES = new Set(['video', 'design']);
-const RATE_RANKS = new Set(['A', 'B', 'C']);
-function normalizeRateCreativeType(type) {
-  if (typeof type !== 'string') return '';
-  const normalized = type.trim().toLowerCase();
-  if (normalized.startsWith('video')) return 'video';
-  if (normalized.startsWith('design')) return 'design';
-  return normalized;
-}
-
-// 単価一覧取得
-router.get('/projects/:id/rates', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_rates')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('creative_type')
-    .order('rank');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// 単価一括保存
-router.post('/projects/:id/rates/bulk', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const projectId = req.params.id;
-  const { rates } = req.body;
-  if (!rates || !rates.length) return res.json([]);
-  const rows = rates.map(r => ({
-    project_id: projectId,
-    creative_type: normalizeRateCreativeType(r.creative_type),
-    rank: r.rank,
-    base_fee: r.base_fee || 0,
-    script_fee: r.script_fee || 0,
-    ai_fee: r.ai_fee || 0,
-    other_fee: 0,
-    updated_at: new Date().toISOString()
-  }));
-  const invalid = rows.find(r => !RATE_CREATIVE_TYPES.has(r.creative_type) || !RATE_RANKS.has(r.rank));
-  if (invalid) {
-    return res.status(400).json({ error: '単価種別は video / design、ランクは A / B / C で保存してください' });
-  }
-  const { data, error } = await supabase
-    .from('project_rates')
-    .upsert(rows, { onConflict: 'project_id,creative_type,rank' })
-    .select();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// 単価設定・更新（個別upsert、後方互換）
-router.post('/projects/:id/rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const { rank, base_fee, script_fee, ai_fee, other_fee, other_fee_note } = req.body;
-  const creative_type = normalizeRateCreativeType(req.body.creative_type);
-  if (!creative_type || !rank) return res.status(400).json({ error: '種別・ランクは必須です' });
-  if (!RATE_CREATIVE_TYPES.has(creative_type)) {
-    return res.status(400).json({ error: '単価種別は video / design で保存してください' });
-  }
-  if (!RATE_RANKS.has(rank)) {
-    return res.status(400).json({ error: '単価ランクは A / B / C で保存してください' });
-  }
-  const { data: existing } = await supabase
-    .from('project_rates')
-    .select('id')
-    .eq('project_id', req.params.id)
-    .eq('creative_type', creative_type)
-    .eq('rank', rank)
-    .maybeSingle();
-  let query;
-  if (existing) {
-    query = supabase.from('project_rates')
-      .update({ base_fee: base_fee || 0, script_fee: script_fee || 0, ai_fee: ai_fee || 0, other_fee: other_fee || 0, other_fee_note, updated_at: new Date().toISOString() })
-      .eq('id', existing.id).select().single();
-  } else {
-    query = supabase.from('project_rates')
-      .insert({ project_id: req.params.id, creative_type, rank, base_fee: base_fee || 0, script_fee: script_fee || 0, ai_fee: ai_fee || 0, other_fee: other_fee || 0, other_fee_note, updated_at: new Date().toISOString() })
-      .select().single();
-  }
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// その他単価一覧
-router.get('/projects/:id/rate-extras', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_rate_extras')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('created_at');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// その他単価一括保存（全削除→再挿入）
-router.post('/projects/:id/rate-extras', async (req, res) => {
-  const { extras } = req.body;
-  const projectId = req.params.id;
-  const { error: delError } = await supabase
-    .from('project_rate_extras')
-    .delete()
-    .eq('project_id', projectId);
-  if (delError) return res.status(500).json({ error: delError.message });
-  if (!extras || !extras.length) return res.json([]);
-  const rows = extras.map(e => ({
-    project_id: projectId,
-    creative_type: e.creative_type,
-    name: e.name,
-    fee: e.fee || 0
-  }));
-  const { data, error } = await supabase
-    .from('project_rate_extras')
-    .insert(rows)
-    .select();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// ==================== ディレクション費（project_director_rates） ====================
-// Issue #192:
-// - クリエイティブ 1件あたり 1回必ず加算（編集者と兼務でも満額）
-// - 受取人は projects.director_id（案件のディレクター）
-// - 単価設定モーダルで video/design ごとに 1値だけ保存（rank なし）
-//
-// schema-sync 失敗で本番に project_director_rates が無いケースは silent skip させず、
-// 「テーブル未作成」の場合は 200 / 空配列で安全フォールバックする（読み出し時）。
-// 書き込み時は 503 で失敗を明示し、migration 適用を促す。
-const DIR_RATE_CREATIVE_TYPES = new Set(['video', 'design']);
+// ==================== 旧 rates 系 helpers（Stage 4d 後の互換用） ====================
+// Stage 4d (PR #TBD) で旧単価モーダル UI と CRUD endpoint を全削除した。
+// ただし invoices/preview-items / invoices/generate などの read 経路は
+// Stage 6 で旧テーブル DROP までは引き続き旧テーブルを read 参照する。
+// その fallback で「テーブル未作成」を silent skip するために helper は残す。
 const isMissingPdrTable = (err) => err && /relation .*project_director_rates.* does not exist|could not find the table/i.test(err.message || '');
-
-// ディレクション費 一覧取得
-router.get('/projects/:id/director-rates', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_director_rates')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('creative_type');
-  if (error) {
-    if (isMissingPdrTable(error)) {
-      console.warn('[director-rates] project_director_rates table missing, returning empty array. Apply migrations/2026-05-03_project_director_rates.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(data || []);
-});
-
-// ディレクション費 一括保存（upsert; fee=0 でも UNIQUE 行は維持）
-router.post('/projects/:id/director-rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const projectId = req.params.id;
-  const { director_rates } = req.body;
-  if (!Array.isArray(director_rates) || !director_rates.length) return res.json([]);
-  const rows = director_rates.map(d => ({
-    project_id: projectId,
-    creative_type: normalizeRateCreativeType(d.creative_type),
-    director_fee: Math.max(0, parseInt(d.director_fee, 10) || 0),
-    updated_at: new Date().toISOString(),
-  }));
-  const invalid = rows.find(r => !DIR_RATE_CREATIVE_TYPES.has(r.creative_type));
-  if (invalid) {
-    return res.status(400).json({ error: 'ディレクション費の種別は video / design で保存してください' });
-  }
-  const { data, error } = await supabase
-    .from('project_director_rates')
-    .upsert(rows, { onConflict: 'project_id,creative_type' })
-    .select();
-  if (error) {
-    if (isMissingPdrTable(error)) {
-      return res.status(503).json({ error: 'project_director_rates テーブルが未作成です。migrations/2026-05-03_project_director_rates.sql を本番Supabaseに適用してください。' });
-    }
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(data || []);
-});
-
-// ==================== プロデュース費（project_producer_rates） ====================
-// 完全に project_director_rates と対称設計:
-// - クリエイティブ 1件あたり 1回必ず加算（編集者・ディレクターと兼務でも満額）
-// - 受取人は projects.producer_id（案件のプロデューサー）
-// - 単価設定モーダルで video/design ごとに 1値だけ保存（rank なし）
-//
-// schema-sync 失敗で本番に project_producer_rates が無いケースは silent skip させず、
-// 「テーブル未作成」の場合は 200 / 空配列で安全フォールバックする（読み出し時）。
-// 書き込み時は 503 で失敗を明示し、migration 適用を促す。
-const PROD_RATE_CREATIVE_TYPES = new Set(['video', 'design']);
 const isMissingPprTable = (err) => err && /relation .*project_producer_rates.* does not exist|could not find the table/i.test(err.message || '');
-
-// プロデュース費 一覧取得
-router.get('/projects/:id/producer-rates', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_producer_rates')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('creative_type');
-  if (error) {
-    if (isMissingPprTable(error)) {
-      console.warn('[producer-rates] project_producer_rates table missing, returning empty array. Apply migrations/2026-05-03_project_producer_rates.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(data || []);
-});
-
-// プロデュース費 一括保存（upsert; fee=0 でも UNIQUE 行は維持）
-router.post('/projects/:id/producer-rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const projectId = req.params.id;
-  const { producer_rates } = req.body;
-  if (!Array.isArray(producer_rates) || !producer_rates.length) return res.json([]);
-  const rows = producer_rates.map(p => ({
-    project_id: projectId,
-    creative_type: normalizeRateCreativeType(p.creative_type),
-    producer_fee: Math.max(0, parseInt(p.producer_fee, 10) || 0),
-    updated_at: new Date().toISOString(),
-  }));
-  const invalid = rows.find(r => !PROD_RATE_CREATIVE_TYPES.has(r.creative_type));
-  if (invalid) {
-    return res.status(400).json({ error: 'プロデュース費の種別は video / design で保存してください' });
-  }
-  const { data, error } = await supabase
-    .from('project_producer_rates')
-    .upsert(rows, { onConflict: 'project_id,creative_type' })
-    .select();
-  if (error) {
-    if (isMissingPprTable(error)) {
-      return res.status(503).json({ error: 'project_producer_rates テーブルが未作成です。migrations/2026-05-03_project_producer_rates.sql を本番Supabaseに適用してください。' });
-    }
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(data || []);
-});
 
 // ==================== 見積行 / 成果物グループ（project_estimate_lines）Stage 4a ====================
 // ADR 002 (見積行統合) + ADR 005 (status ライフサイクル) に基づく lines CRUD。
-// このエンドポイント群は Stage 4a の追加であり、旧 rates 系（director-rates / producer-rates / client-fee）
-// は Stage 4d で整理するまで並走する。
+// 旧 rates 系（rates / director-rates / producer-rates / client-fee / rate-extras）の
+// 書き込み endpoint と UI は Stage 4d (PR #TBD) で削除済み。invoices 側の read 経路
+// のみ Stage 6 までは旧テーブルを参照する（並走は終了、削除待ち状態）。
 //
-// 権限: 案件編集と同じ project.create_edit を使う（director-rates / producer-rates が
-// project.unit_price_view を使っているのに対し、lines は「成果物グループの構造を編集する」
-// 性質のため、案件本体の編集権限と揃える方が直感に合う）。
+// 権限: 案件編集と同じ project.create_edit を使う（lines は「成果物グループの構造を
+// 編集する」性質のため、案件本体の編集権限と揃える方が直感に合う）。
 //
 // schema-sync 失敗で本番に project_estimate_lines が無い場合のフォールバックは
 // Stage 4a 時点では行わない（PR #316 で適用済み）。
@@ -1798,8 +1573,8 @@ router.delete('/projects/:project_id/fixed-items/:item_id', requireAuth, require
 //
 // 権限: lines / fixed-items と同じ project.create_edit を使う。
 //
-// 旧 rates 系（director-rates / producer-rates / client-fee）はこの PR では触らず、
-// Stage 4d で整理する予定。
+// 旧 rates 系（director-rates / producer-rates / client-fee）は Stage 4d (PR #TBD) で
+// 削除済み。read 経路は invoices flow が Stage 6 まで参照する。
 
 const PRICING_TYPES = new Set(['fixed_per_unit', 'percentage', 'hourly', 'fixed_total']);
 
@@ -2146,40 +1921,8 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
   res.json({ ok: true });
 });
 
-// クライアント報酬設定 取得
-router.get('/projects/:id/client-fee', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_client_fees')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .single();
-  if (error && error.code !== 'PGRST116') return res.status(500).json({ error: error.message });
-  res.json(data || null);
-});
-
-// クライアント報酬設定 保存（upsert）- スーパーアドミンのみ
-router.post('/projects/:id/client-fee', async (req, res) => {
-  const SUPER_ADMIN_EMAILS = ['hiikun.ascs@gmail.com', 'satoru.takahashi@haruka-film.com'];
-  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) {
-    return res.status(403).json({ error: '報酬設定の変更は最高管理者のみ可能です' });
-  }
-  const { video_unit_price, design_unit_price, fixed_budget, use_fixed_budget, note } = req.body;
-  const { data, error } = await supabase
-    .from('project_client_fees')
-    .upsert({
-      project_id: req.params.id,
-      video_unit_price: video_unit_price || 0,
-      design_unit_price: design_unit_price || 0,
-      fixed_budget: fixed_budget || null,
-      use_fixed_budget: use_fixed_budget || false,
-      note: note || null,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'project_id' })
-    .select()
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
+// 旧 client-fee CRUD endpoint (project_client_fees) は Stage 4d で削除済み。
+// 後継: project_estimate_lines.client_unit_price + project_fixed_items(item_type='revenue')
 
 // ダッシュボード用：今月の案件売上サマリー（ADR 002+005+006 ベース）
 //

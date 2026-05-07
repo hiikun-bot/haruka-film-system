@@ -2213,7 +2213,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       📊 単価設定から取込
       <button class="modal-close" onclick="closeModal('modal-rate-import')">×</button>
     </div>
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">既存の「単価設定」モーダルで設定済みの項目を見積明細に取り込めます</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">案件編集モーダルの「成果物グループ」「固定費・追加収入」で登録済みの項目を見積明細に取り込めます</div>
     <div id="rate-import-list">
       <div style="font-size:13px;color:var(--text-muted);padding:8px 0">読み込み中...</div>
     </div>
@@ -4435,112 +4435,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- 案件追加モーダル -->
-<!-- 単価設定モーダル -->
-<div class="modal-overlay" id="modal-rates">
-  <div class="modal" style="max-width:680px;width:95vw;max-height:90vh;overflow-y:auto">
-    <div class="modal-title" id="rates-modal-title">単価設定 ― <span id="rates-modal-subtitle">動画クリエイティブ</span><button class="modal-close" onclick="closeModal('modal-rates')">×</button></div>
-    <input type="hidden" id="rates-project-id">
-
-    <!-- 動画セクション -->
-    <div id="rates-section-video" style="margin-bottom:20px">
-      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">動画編集者</div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="color:var(--text-muted)">
-            <th style="padding:6px 8px;text-align:left;width:60px">ランク</th>
-            <th style="padding:6px 8px;text-align:right">動画編集（円）</th>
-            <th style="padding:6px 8px;text-align:right">台本作成（円）</th>
-            <th style="padding:6px 8px;text-align:right">AI生成（円）</th>
-          </tr>
-        </thead>
-        <tbody id="video-rates-body">
-          <!-- A/B/C rows injected by JS -->
-        </tbody>
-      </table>
-      <div style="margin-top:12px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（動画）</div>
-        <div id="video-extras-list"></div>
-        <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('video')">＋ その他追加</button>
-      </div>
-      <!-- ディレクター（動画） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">ディレクター</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-video-director_fee" style="color:var(--text-muted);min-width:200px">1本あたりのディレクション費（円）</label>
-          <input type="number" id="r-video-director_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のディレクター（projects.director_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者兼務でも満額）。
-        </div>
-      </div>
-      <!-- プロデューサー（動画） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">プロデューサー</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-video-producer_fee" style="color:var(--text-muted);min-width:200px">1本あたりのディレクション費（円）</label>
-          <input type="number" id="r-video-producer_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のプロデューサー（projects.producer_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者・ディレクター兼務でも満額）。
-        </div>
-      </div>
-    </div>
-
-    <!-- デザインセクション -->
-    <div id="rates-section-design" style="margin-bottom:20px">
-      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">デザイナー</div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="color:var(--text-muted)">
-            <th style="padding:6px 8px;text-align:left;width:60px">ランク</th>
-            <th style="padding:6px 8px;text-align:right">静止画1枚（円）</th>
-          </tr>
-        </thead>
-        <tbody id="design-rates-body">
-          <!-- A/B/C rows injected by JS -->
-        </tbody>
-      </table>
-      <div style="margin-top:12px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（デザイン）</div>
-        <div id="design-extras-list"></div>
-        <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('design')">＋ その他追加</button>
-      </div>
-      <!-- ディレクター（デザイン） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">ディレクター</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-design-director_fee" style="color:var(--text-muted);min-width:200px">1枚あたりのディレクション費（円）</label>
-          <input type="number" id="r-design-director_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のディレクター（projects.director_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者兼務でも満額）。
-        </div>
-      </div>
-      <!-- プロデューサー（デザイン） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">プロデューサー</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-design-producer_fee" style="color:var(--text-muted);min-width:200px">1枚あたりのディレクション費（円）</label>
-          <input type="number" id="r-design-producer_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のプロデューサー（projects.producer_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者・ディレクター兼務でも満額）。
-        </div>
-      </div>
-    </div>
-
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn-primary" onclick="saveRates()">保存する</button>
-      <button class="btn" onclick="closeModal('modal-rates')">キャンセル</button>
-    </div>
-  </div>
-</div>
-
-<!-- 旧クライアント報酬設定モーダルは削除（V2: 報酬ボタン → modal-project-finance に移行） -->
+<!-- 旧単価設定モーダル (modal-rates) は Stage 4d (PR #TBD) で削除済み。
+     後継: 案件編集モーダル「成果物グループ (lines + line_costs)」「固定費・追加収入 (fixed_items)」セクション。
+     旧クライアント報酬設定モーダル (project_client_fees) は V2 リリース時に削除済み。 -->
 
 <div class="modal-overlay" id="modal-project">
   <div class="modal" style="width:92vw;max-width:1020px;height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
@@ -6933,8 +6830,6 @@ async function loadProjects() {
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
-            ${canSeeRates() ? `<button class="btn-sm${p.has_rates?' is-set':''}" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_rates?'単価設定済み':'単価未設定'}" style="color:var(--em-dark)">単価</button>` : ''}
-            ${isTopAdmin() ? `<button class="btn-sm${p.has_estimates?' is-set':''}" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_estimates?'見積作成済み':'見積未作成'}">見積</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
@@ -11174,206 +11069,11 @@ async function executeSheetImport() {
   }
 }
 
-// 単価閲覧権限 ※プレビューロール尊重・DB駆動
-function canSeeRates() {
-  return hasPermission('project.unit_price_view');
-}
-
-// ==================== 単価設定 ====================
-
-let currentRatesProjectId = null;
-
-async function openRatesModal(projectId, projectName) {
-  currentRatesProjectId = projectId;
-  document.getElementById('rates-project-id').value = projectId;
-
-  // テーブル行を生成（DOMは両方常に描画する：保存ロジックは両セクションのDOMを参照する）
-  buildRatesTable('video', ['動画編集', '台本作成', 'AI生成'], ['base_fee','script_fee','ai_fee']);
-  buildRatesTable('design', ['静止画1枚'], ['base_fee']);
-
-  // 案件種別を判定（'video' | 'design'）
-  // 案件の primary_category を優先。フォールバック: ロール判定（デザイナー → design, それ以外 → video）
-  const projForType = (allProjects || []).find(x => x.id === projectId);
-  const projType = projForType
-    ? getProjectType(projForType)
-    : (effectiveRole() === 'designer' ? 'design' : 'video');
-  const isVideo = projType === 'video';
-
-  // タイトル/サブタイトル更新
-  const subtitle = document.getElementById('rates-modal-subtitle');
-  if (subtitle) subtitle.textContent = isVideo ? '動画クリエイティブ' : 'デザインクリエイティブ';
-
-  // セクション表示切替（DOMは残す＝保存ロジックの整合性を保つ）
-  const videoSection  = document.getElementById('rates-section-video');
-  const designSection = document.getElementById('rates-section-design');
-  if (videoSection)  videoSection.style.display  = isVideo ? '' : 'none';
-  if (designSection) designSection.style.display = isVideo ? 'none' : '';
-
-  // データ取得
-  const [ratesRes, extrasRes, dirRes, prodRes] = await Promise.all([
-    apiFetch(`${API}/projects/${projectId}/rates`),
-    apiFetch(`${API}/projects/${projectId}/rate-extras`),
-    apiFetch(`${API}/projects/${projectId}/director-rates`),
-    apiFetch(`${API}/projects/${projectId}/producer-rates`)
-  ]);
-  const rates = ratesRes.ok ? await ratesRes.json() : [];
-  const extras = extrasRes.ok ? await extrasRes.json() : [];
-  const dirRates = dirRes.ok ? await dirRes.json() : [];
-  const prodRates = prodRes.ok ? await prodRes.json() : [];
-
-  // 値をセット
-  rates.forEach(r => {
-    ['base_fee','script_fee','ai_fee'].forEach(field => {
-      const el = document.getElementById(`r-${r.creative_type}-${r.rank}-${field}`);
-      if (el) el.value = r[field] || 0;
-    });
-  });
-
-  // ディレクション費を反映（未設定なら 0）
-  ['video','design'].forEach(t => {
-    const el = document.getElementById(`r-${t}-director_fee`);
-    if (el) el.value = 0;
-  });
-  (dirRates || []).forEach(d => {
-    const el = document.getElementById(`r-${d.creative_type}-director_fee`);
-    if (el) el.value = d.director_fee || 0;
-  });
-
-  // プロデュース費を反映（未設定なら 0）
-  ['video','design'].forEach(t => {
-    const el = document.getElementById(`r-${t}-producer_fee`);
-    if (el) el.value = 0;
-  });
-  (prodRates || []).forEach(p => {
-    const el = document.getElementById(`r-${p.creative_type}-producer_fee`);
-    if (el) el.value = p.producer_fee || 0;
-  });
-
-  // その他をクリアして再描画
-  document.getElementById('video-extras-list').innerHTML = '';
-  document.getElementById('design-extras-list').innerHTML = '';
-  extras.forEach(e => addRateExtraRow(e.creative_type, e.name, e.fee, e.id));
-
-  // 単価モーダルはタブ構造ではないが、案件種別に対応する最初の入力にフォーカスしてヒントとする
-  setTimeout(() => {
-    const firstField = document.getElementById(`r-${projType}-A-base_fee`);
-    if (firstField) firstField.focus();
-  }, 50);
-
-  openModal('modal-rates');
-}
-
-function buildRatesTable(type, labels, fields) {
-  const ranks = ['A','B','C'];
-  const defaultFees = {
-    base_fee:   { A: 3500, B: 3000, C: 2500 },
-    script_fee: { A: 1500, B: 1500, C: 1500 },
-    ai_fee:     { A: 0,    B: 0,    C: 0    },
-  };
-  const body = document.getElementById(`${type}-rates-body`);
-  body.innerHTML = ranks.map(rank => `
-    <tr style="border-top:1px solid var(--border)">
-      <td style="padding:8px;font-weight:600;color:var(--em-dark)">${rank}</td>
-      ${fields.map((f, i) => `
-        <td style="padding:6px 8px;text-align:right">
-          <input type="number" id="r-${type}-${rank}-${f}" value="${(defaultFees[f] || defaultFees.base_fee)[rank]}" min="0"
-            style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </td>`).join('')}
-    </tr>`).join('');
-}
-
-function addRateExtra(type, name = '', fee = 0, id = null) {
-  addRateExtraRow(type, name, fee, id);
-}
-
-function addRateExtraRow(type, name, fee, id) {
-  const container = document.getElementById(`${type}-extras-list`);
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
-  div.dataset.extraid = id || '';
-  div.dataset.type = type;
-  div.innerHTML = `
-    <input type="text" placeholder="名称（例：ナレーション）" value="${name}"
-      style="flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;color:var(--text)">
-    <input type="number" placeholder="単価" value="${fee}" min="0"
-      style="width:100px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-    <span style="font-size:13px;color:var(--text-muted)">円</span>
-    <button class="btn-sm" style="color:#E24B4A" onclick="this.parentElement.remove()">削除</button>`;
-  container.appendChild(div);
-}
-
-async function saveRates() {
-  const projectId = currentRatesProjectId;
-  const ranks = ['A','B','C'];
-
-  const rates = [];
-  ['video','design'].forEach(type => {
-    ranks.forEach(rank => {
-      const base = parseInt(document.getElementById(`r-${type}-${rank}-base_fee`)?.value || 0);
-      const script = parseInt(document.getElementById(`r-${type}-${rank}-script_fee`)?.value || 0);
-      const ai = parseInt(document.getElementById(`r-${type}-${rank}-ai_fee`)?.value || 0);
-      rates.push({ creative_type: type, rank, base_fee: base, script_fee: script, ai_fee: ai });
-    });
-  });
-
-  const extras = [];
-  ['video','design'].forEach(type => {
-    document.querySelectorAll(`#${type}-extras-list > div`).forEach(div => {
-      const inputs = div.querySelectorAll('input');
-      const name = inputs[0].value.trim();
-      const fee = parseInt(inputs[1].value || 0);
-      if (name) extras.push({ creative_type: type, name, fee });
-    });
-  });
-
-  // ディレクション費（per-project, per-creative_type）
-  const directorRates = ['video','design'].map(type => ({
-    creative_type: type,
-    director_fee: parseInt(document.getElementById(`r-${type}-director_fee`)?.value || 0) || 0,
-  }));
-
-  // プロデュース費（per-project, per-creative_type）
-  const producerRates = ['video','design'].map(type => ({
-    creative_type: type,
-    producer_fee: parseInt(document.getElementById(`r-${type}-producer_fee`)?.value || 0) || 0,
-  }));
-
-  const [ratesRes, extrasRes, dirRes, prodRes] = await Promise.all([
-    apiFetch(`${API}/projects/${projectId}/rates/bulk`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ rates })
-    }),
-    apiFetch(`${API}/projects/${projectId}/rate-extras`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ extras })
-    }),
-    apiFetch(`${API}/projects/${projectId}/director-rates`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ director_rates: directorRates })
-    }),
-    apiFetch(`${API}/projects/${projectId}/producer-rates`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ producer_rates: producerRates })
-    })
-  ]);
-
-  if (!ratesRes.ok || !extrasRes.ok || !dirRes.ok || !prodRes.ok) {
-    const failedRes = !ratesRes.ok ? ratesRes
-                    : !extrasRes.ok ? extrasRes
-                    : !dirRes.ok ? dirRes
-                    : prodRes;
-    const err = await failedRes.json().catch(()=>({}));
-    showToast('保存に失敗しました: ' + (err.error || '不明なエラー'), 'error');
-    return;
-  }
-  closeModal('modal-rates');
-  showToast('単価を保存しました', 'success');
-  loadProjects();
-}
+// ==================== 単価設定 (Stage 4d で削除) ====================
+// 旧 openRatesModal / buildRatesTable / addRateExtra / saveRates は Stage 4d (PR #TBD) で削除済み。
+// 後継: 案件編集モーダル「成果物グループ (lines + line_costs)」「固定費・追加収入 (fixed_items)」セクション。
+// canSeeRates() は project 一覧の「単価」ボタン専用のヘルパだったため同 PR で除去。
+// project.unit_price_view 権限キーは roles 管理 UI で残存（権限マスタ自体の整理は別 Stage）。
 
 // 実効ロールが管理者相当かどうか（admin / secretary を含む）
 function isEffectiveAdmin() {
@@ -14445,7 +14145,7 @@ async function openRateImportPicker() {
     const data = res.ok ? await res.json() : { templates: [] };
     const templates = data.templates || [];
     if (templates.length === 0) {
-      list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">単価設定がありません。先に案件カードの「単価」ボタンから単価を設定してください。</div>';
+      list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">単価候補がありません。案件編集モーダルの「成果物グループ」「固定費・追加収入」から見積行・コスト・固定費を登録してください。</div>';
       return;
     }
     list.innerHTML = templates.map((t, idx) => `
@@ -23524,7 +23224,7 @@ function renderCreatorSummaryTable(data) {
   }
   const rows = data.summary.map(u => {
     const noteRate = u.rate_unknown_count > 0
-      ? `<span title="単価が project_rates から見つからなかった件数。プロジェクトの単価設定を確認してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
+      ? `<span title="line に紐付く line_costs（ロール別単価）が見つからなかった件数。案件編集モーダルの「成果物グループ」で line/コストを設定してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
       : '';
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}${noteRate}</td>
