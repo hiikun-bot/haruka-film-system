@@ -5184,7 +5184,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- つぶやき画像ライトボックス（クリックで拡大表示） -->
 <div id="tweet-lightbox" class="tweet-lightbox-overlay" onclick="closeTweetLightbox(event)">
   <button type="button" class="tweet-lightbox-close" onclick="closeTweetLightbox(event)" aria-label="閉じる">×</button>
-  <img id="tweet-lightbox-img" src="" alt="">
+  <!-- src は openTweetLightbox() 時に動的にセット。`src=""` を初期値にすると document の base URL に解決されページHTMLそのものが画像として fetch され、毎ロード resource error を吐く（PR #332 の resource トレースで判明） -->
+  <img id="tweet-lightbox-img" alt="">
 </div>
 
 <!-- つぶやき独立タブ用 投稿FAB（右下固定）— page-tweets が active のときだけ表示 -->
@@ -15977,8 +15978,13 @@ async function renderAdminDash(today) {
     `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${s.cls||''}">${s.val}</div><div class="dash-hero-stat-label">${s.label}</div></div>`
   ).join('');
 
-  // グラフエリア表示
-  document.getElementById('dash-charts').style.display = '';
+  // グラフエリア表示。dash-charts は admin 限定で表示される DOM のため、
+  // 非 admin が dashboard select の onchange を踏んだ場合は null 参照で TypeError になる
+  // （PR #332 ログで unhandledrejection: Cannot read properties of null (reading 'style') を観測）。
+  // chart 描画自体は下で isTopAdmin() ゲートされているので、ここで早期 return して null を触らない。
+  const dashChartsEl = document.getElementById('dash-charts');
+  if (!dashChartsEl) return;
+  dashChartsEl.style.display = '';
 
   // ===== Chart 1: 売上予実（isTopAdmin のみ） =====
   _destroyChart('revenue');

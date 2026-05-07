@@ -738,10 +738,14 @@ function _formatAutoErrorText(payload) {
       `domInteractive=${nav.domInteractive || '-'}`,
       `domComplete=${nav.domComplete || '-'}`,
     ];
-    if (em && (em.name || em.toString || em.messageProp)) {
+    // 自前プロパティ判定にしないと、素の `em.toString` は Object.prototype.toString
+    // (native function) が常に truthy で、resource.error 等 errorMeta 無しケースでも
+    // "function toString() { [native code] }" を吐く（PR #332 デプロイ後に観測）。
+    const emHas = (k) => em && Object.prototype.hasOwnProperty.call(em, k);
+    if (emHas('name') || emHas('toString') || emHas('messageProp')) {
       traceLines.push(
         `error.name=${em.name || '-'}`,
-        `error.toString=${em.toString || '-'}`,
+        `error.toString=${(emHas('toString') ? em.toString : null) || '-'}`,
         `error.messageProp=${em.messageProp || '-'}`,
       );
     }
