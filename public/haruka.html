@@ -5127,12 +5127,36 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="tweets-tab active" data-tab="all"  role="tab" onclick="switchTweetsTab('all')">みんなのつぶやき</button>
         <button class="tweets-tab"        data-tab="mine" role="tab" onclick="switchTweetsTab('mine')">自分のつぶやき・返信</button>
       </div>
-      <div class="tweets-filters">
-        <label>
-          <input type="checkbox" id="tweets-filter-staff-only" onchange="toggleTweetsStaffOnly()">
-          運営のみ表示
+      <div class="tweets-filters" id="tweets-filters" data-active-tab="all">
+        <span class="tweets-filters-label">フィルター:</span>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" id="tweets-filter-all" data-role-group="all" checked onchange="onTweetsFilterChange('all')">
+          全員
         </label>
-        <!-- Phase 2: フォロー中のみ表示は未実装（非表示） -->
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="admin" onchange="onTweetsFilterChange('admin')">
+          管理者
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="secretary" onchange="onTweetsFilterChange('secretary')">
+          秘書
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="producer" onchange="onTweetsFilterChange('producer')">
+          プロデューサー
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="director" onchange="onTweetsFilterChange('director')">
+          ディレクター
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="editor" onchange="onTweetsFilterChange('editor')">
+          エディター
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="designer" onchange="onTweetsFilterChange('designer')">
+          デザイナー
+        </label>
       </div>
     </header>
     <div id="tweets-list" class="tweets-list">
@@ -15554,10 +15578,29 @@ async function deleteTweet(id) {
 //
 // 状態:
 //   _twPageState.tab        — 'all' | 'mine'
-//   _twPageState.staffOnly  — 運営（admin/secretary）の投稿のみ表示
+//   _twPageState.staffOnly  — 後方互換用（旧フィルターと等価）
+//   _twPageState.roleGroups — 選択中ロールグループ Set: 'admin' | 'secretary' |
+//                             'producer' | 'director' | 'editor' | 'designer'
+//                             空の場合は「全員」扱い（フィルターなし）
 //   _twPageOpenComments     — コメント欄を開いている tweet_id の集合
-const _twPageState = { tab: 'all', staffOnly: false };
+const _twPageState = {
+  tab: 'all',
+  staffOnly: false,
+  roleGroups: new Set(),
+};
 const _twPageOpenComments = new Set();
+const _TW_FILTER_LS_KEY = 'haruka.tweets.roleFilters.v1';
+// ロールグループ → users.role 値の対応
+//   producer は producer / producer_director の両方を対象（兼任カバー）
+//   director は director / producer_director の両方を対象
+const _TW_ROLE_GROUP_MAP = {
+  admin:     ['admin'],
+  secretary: ['secretary'],
+  producer:  ['producer', 'producer_director'],
+  director:  ['director', 'producer_director'],
+  editor:    ['editor'],
+  designer:  ['designer'],
+};
 
 // ロール → 表示ラベル/CSSクラス（リベシティ「トラ会員」相当のピル）
 const _twRoleBadgeMap = {
@@ -15581,22 +15624,103 @@ function switchTweetsTab(tab) {
   document.querySelectorAll('.tweets-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
+  // フィルター UI は all タブだけに出す（mine では non-display）
+  const filtersEl = document.getElementById('tweets-filters');
+  if (filtersEl) filtersEl.dataset.activeTab = tab;
   loadTweetsPage();
 }
 
-function toggleTweetsStaffOnly() {
-  const cb = document.getElementById('tweets-filter-staff-only');
-  _twPageState.staffOnly = !!(cb && cb.checked);
+// フィルターチェックボックスの変更ハンドラ
+//   group: 'all' | 'admin' | 'secretary' | 'producer' | 'director' | 'editor' | 'designer'
+function onTweetsFilterChange(group) {
+  const allCb  = document.getElementById('tweets-filter-all');
+  const groupCbs = Array.from(document.querySelectorAll('#tweets-filters input[data-role-group]:not([data-role-group="all"])'));
+  if (group === 'all') {
+    // 「全員」ON にしたら個別チェックを全部 OFF。
+    // 「全員」OFF にしたら個別選択モードに入る（個別は触らない）
+    if (allCb && allCb.checked) {
+      groupCbs.forEach(cb => { cb.checked = false; });
+    } else if (allCb && !allCb.checked) {
+      // 全員 OFF + 個別ゼロのままだと UX 的に何も起きないため、特に強制しない
+      // → loadTweetsPage 側で空集合は「全員」扱いにフォールバック
+    }
+  } else {
+    // 個別ロールにチェックを入れたら「全員」を OFF
+    if (allCb && allCb.checked) allCb.checked = false;
+  }
+
+  // 状態を再計算
+  const selected = new Set();
+  groupCbs.forEach(cb => { if (cb.checked) selected.add(cb.dataset.roleGroup); });
+  _twPageState.roleGroups = selected;
+  // 互換: いずれの個別ロールも未選択なら staffOnly=false（旧チェックボックス相当の動作なし）
+  _twPageState.staffOnly = false;
+
+  // 何も選んでいなければ「全員」ON 扱いに自動復帰
+  if (selected.size === 0 && allCb) allCb.checked = true;
+
+  // 選択状態を localStorage に保存
+  try {
+    localStorage.setItem(_TW_FILTER_LS_KEY, JSON.stringify({
+      all: !!(allCb && allCb.checked),
+      groups: Array.from(selected),
+    }));
+  } catch {}
+
   loadTweetsPage();
+}
+
+// 起動時にチェック状態を復元
+function restoreTweetsFilterFromStorage() {
+  let saved = null;
+  try {
+    const raw = localStorage.getItem(_TW_FILTER_LS_KEY);
+    if (raw) saved = JSON.parse(raw);
+  } catch {}
+  const allCb = document.getElementById('tweets-filter-all');
+  const groupCbs = Array.from(document.querySelectorAll('#tweets-filters input[data-role-group]:not([data-role-group="all"])'));
+  if (!allCb) return;
+
+  const selected = new Set();
+  if (saved && Array.isArray(saved.groups) && saved.groups.length > 0 && !saved.all) {
+    allCb.checked = false;
+    groupCbs.forEach(cb => {
+      const on = saved.groups.includes(cb.dataset.roleGroup);
+      cb.checked = on;
+      if (on) selected.add(cb.dataset.roleGroup);
+    });
+  } else {
+    allCb.checked = true;
+    groupCbs.forEach(cb => { cb.checked = false; });
+  }
+  _twPageState.roleGroups = selected;
 }
 
 async function loadTweetsPage() {
   const el = document.getElementById('tweets-list');
   if (!el) return;
 
+  // フィルター UI が初期化されていなければ復元（初回呼び出し時に実行される）
+  if (!_twPageState._filterRestored) {
+    restoreTweetsFilterFromStorage();
+    _twPageState._filterRestored = true;
+  }
+
   const params = new URLSearchParams();
-  if (_twPageState.tab === 'mine')   params.set('mine', '1');
-  if (_twPageState.staffOnly)        params.set('staff_only', '1');
+  if (_twPageState.tab === 'mine') params.set('mine', '1');
+  // mine タブではロールフィルターを無視（自分のつぶやきは全件表示）
+  if (_twPageState.tab !== 'mine' && _twPageState.roleGroups && _twPageState.roleGroups.size > 0) {
+    // ロールグループ → users.role 値の集合に展開
+    const roles = new Set();
+    _twPageState.roleGroups.forEach(g => {
+      const arr = _TW_ROLE_GROUP_MAP[g] || [];
+      arr.forEach(r => roles.add(r));
+    });
+    if (roles.size > 0) params.set('roles', Array.from(roles).join(','));
+  } else if (_twPageState.staffOnly) {
+    // 後方互換: 旧 staff_only=1 経路は残す（過去URLで来た場合に動く）
+    params.set('staff_only', '1');
+  }
   const qs = params.toString();
   const url = qs ? `${API}/tweets?${qs}` : `${API}/tweets`;
 
@@ -15616,8 +15740,17 @@ async function loadTweetsPage() {
     return;
   }
 
-  // 念のためフロント側でも staff_only フィルター（API 未対応時のフォールバック）
-  if (_twPageState.staffOnly) {
+  // 念のためフロント側でも staff_only / roles フィルター（API 未対応時のフォールバック）
+  if (_twPageState.tab !== 'mine' && _twPageState.roleGroups && _twPageState.roleGroups.size > 0) {
+    const roles = new Set();
+    _twPageState.roleGroups.forEach(g => {
+      const arr = _TW_ROLE_GROUP_MAP[g] || [];
+      arr.forEach(r => roles.add(r));
+    });
+    if (roles.size > 0) {
+      list = list.filter(t => roles.has(t?.users?.role));
+    }
+  } else if (_twPageState.staffOnly) {
     list = list.filter(t => _twIsStaffRole(t?.users?.role));
   }
 
@@ -15642,7 +15775,7 @@ function renderTweetCard(t) {
   const canDelete = (t.user_id === myId) || canMod;
 
   const av = u.avatar_url
-    ? `<div class="tweet-avatar"><img src="${esc(u.avatar_url)}" alt=""></div>`
+    ? `<div class="tweet-avatar"><img src="${esc(u.avatar_url)}" alt="" loading="lazy" decoding="async"></div>`
     : `<div class="tweet-avatar">${esc((u.full_name || '?').charAt(0))}</div>`;
 
   const roleInfo = _twRoleBadgeMap[u.role];
@@ -15696,7 +15829,7 @@ function renderTweetCard(t) {
   // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
 
   const imageHtml = t.image_data
-    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" onclick="openTweetLightbox(this.src)"></div>`
+    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)"></div>`
     : '';
 
   return `<article class="tweet-card ${t.is_pinned ? 'pinned' : ''}" data-tweet-id="${t.id}">
