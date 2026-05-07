@@ -32,10 +32,44 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const TAX_RATE = 0.10;
 
+// ==================== ビルド ID ====================
+// クライアント (`/api/build-info` + `X-Server-Build` ヘッダ) から参照される。
+// Railway のビルド時環境変数があればそれを優先。なければ起動時に git から取得。
+// git も失敗したら起動時刻を fallback として使い、いずれも module-level でキャッシュ。
+const BUILD_ID = (() => {
+  const fromEnv = process.env.RAILWAY_GIT_COMMIT_SHA
+               || process.env.GIT_COMMIT_SHA
+               || process.env.COMMIT_SHA
+               || process.env.GIT_COMMIT
+               || process.env.SOURCE_VERSION;
+  if (fromEnv) return String(fromEnv).slice(0, 12);
+  try {
+    const { execSync } = require('child_process');
+    const sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    if (sha) return sha;
+  } catch (_) { /* git 取れなければ次の fallback */ }
+  return Date.now().toString();
+})();
+console.log(`[build] BUILD_ID = ${BUILD_ID}`);
+
 // ==================== ミドルウェア ====================
 // ミドルウェア: リクエストとレスポンスの間で処理を挟む仕組み
 
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentials: true }));
+
+// すべてのレスポンスに X-Server-Build ヘッダを付与（クライアント側のバージョン照合用）
+app.use((req, res, next) => {
+  res.setHeader('X-Server-Build', BUILD_ID);
+  next();
+});
+
+// クライアント (haruka.html) が起動時に呼ぶ軽量エンドポイント。
+// 認証不要（ヘッダ値と同じ build しか返さない）。404 ノイズを止めるための実装。
+// セッション/認証 middleware より前に登録して負荷を避ける。
+app.get('/api/build-info', (req, res) => {
+  res.json({ build: BUILD_ID });
+});
 
 // セッション設定
 // セッション: ログイン状態をサーバー側で管理する仕組み
