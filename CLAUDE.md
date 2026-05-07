@@ -19,6 +19,37 @@
 
 ## 開発の進め方ルール（必ず守ること）
 
+### ⭐ 設計判断は docs/design/ に集約（必要時だけ読む）
+スレッドごとに設計判断がバラつく問題を防ぐため、ドメイン設計の議論・判断は [docs/design/](docs/design/) を単一の正としている。
+
+**読むべきタイミング（それ以外は読まない）**
+- スキーマ変更・新テーブル・新概念を扱うとき
+- 「どこに列を足すか」「どのテーブルが正か」迷ったとき
+- 設計の方針を聞かれたとき・複数案で迷ったとき
+
+**読まなくて良いケース**: バグ修正、UI微調整、文言変更、既存機能の軽い拡張
+
+**ADR インデックス（pinpoint で該当ファイルだけ読む）**
+| 触る領域・キーワード | 読むファイル |
+|---|---|
+| 商品 / 訴求軸 / appeal_axes / products / ファイル名生成 | [decisions/001](docs/design/decisions/001-creative-first-product-appeal.md) |
+| 見積明細 / 単価 / rates / 粗利 / deliverable / project_*_rates | [decisions/002](docs/design/decisions/002-estimate-lines-unify-deliverable-rates.md) |
+| ロール / users.role / 権限 / roles マスタ | [decisions/003](docs/design/decisions/003-roles-as-master-data.md) |
+| 通貨 / 課金タイプ / 時間単価 / %歩合 | [decisions/004](docs/design/decisions/004-pricing-extensibility.md) |
+| 見積ステータス / 契約状態 / 却下 / 進行管理 | [decisions/005](docs/design/decisions/005-estimate-deliverable-lifecycle.md) |
+| 案件固定費 / スタジオ / 機材 / 経費 / project_client_fees | [decisions/006](docs/design/decisions/006-project-fixed-costs.md) |
+| ファイル名テンプレート / filename_templates / トークン / 案件別命名規約 | [decisions/007](docs/design/decisions/007-filename-templates.md) |
+| 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
+| ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
+| 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
+| ADR Status遷移 / migration 連携 / レビュー期限 | [lifecycle.md](docs/design/lifecycle.md) |
+| ADR の書き方・運用ルール | [README.md](docs/design/README.md) |
+
+**運用**
+- 設計議論をしたら `docs/design/` に追記。memory・CLAUDE.md には書かない
+- 矛盾を見つけたら実装を止めてユーザーに報告
+- 新規判断は `decisions/NNN-<topic>.md` を ADR 形式（Status / Context / Decision / Consequences / Alternatives）で作成
+
 ### 原則
 - ユーザーから開発依頼が来たら、**機能単位に分解してサブエージェントに並行で振る**
 - 各エージェントは対応する worktree フォルダで作業させる
@@ -48,8 +79,10 @@
 | 通知（Phase 1） | `notification_logs` / `notification_settings` | `routes/notifications.js` + `utils/notification.js` | `public/js/notification-bell.js` / `notification-panel.js` / `notification-realtime.js` / `notification-card.js` | リベシティ風 5エンドポイント。Realtime購読あり |
 | 通知（旧設計の遺物） | `posts` / `post_reactions` / `post_comments` | なし | なし | migration `2026-05-03_notification_phase1.sql` で作成されたが**未使用**。Phase 1 段階4 で `tweets` 拡張に方針変更したため塩漬け |
 | クリエイティブ | `creatives` / `creative_assignments` / `creative_versions` | `routes/haruka.js` の `/api/creatives/*` | `public/haruka.html` クリエイティブタブ | `ball_holder_id` がボール保持者キャッシュ |
-| 案件 | `projects` / `project_director_rates` / `project_producer_rates` / `project_deletion_logs` | `routes/haruka.js` | `public/haruka.html` 案件タブ | 単価モーダルにディレクター/プロデューサー費セクションあり |
-| クライアント・商材 | `clients` / `products` / `appeal_axes` | `routes/haruka.js` | `public/haruka.html` クライアントタブ・商材マスター画面 | |
+| 案件 | `projects` / `project_deletion_logs` | `routes/haruka.js` | `public/haruka.html` 案件タブ | 旧単価モーダル (`modal-rates` / director-rates / producer-rates / client-fee) は Stage 4d (PR #TBD) で削除済。単価編集はすべて案件編集モーダルの「成果物グループ」「固定費・追加収入」セクションへ |
+| 案件カテゴリ (Stage A) | `creative_categories` / `creative_status_templates` / `creative_status_template_items` / `project_category_rates` | `routes/haruka.js` の `/api/categories/*` `/api/status-templates` | `public/haruka.html` の **設定タブ「🏷️ カテゴリ管理」** + 案件モーダルの category select | カテゴリ追加だけで UI/DB が拡張される設計（PR #TBD・Stage A）。Stage B/C で旧 `project_type` / `RATE_CREATIVE_TYPES` 削除予定 |
+| 案件 line / 単価 (Stage 1+) | `project_estimate_lines` / `project_estimate_line_costs` / `project_fixed_items` | `routes/haruka.js` の `/api/projects/:id/lines` (Stage 4a) / `/api/projects/:id/lines/:line_id/costs` (Stage 4b) / `/api/projects/:id/fixed-items` (Stage 4c) / `utils/pricing.js` | `public/haruka.html` 案件編集モーダル「成果物グループ」セクション（line_costs アコーディオン含む・Stage 4a/4b）+「固定費・追加収入」セクション（Stage 4c） | ADR 002+003+004+005+006。lines は見積行 兼 deliverable。`status IN ('contracted','in_progress','delivered')` のみ集計対象。line_costs は role_id 必須（roles マスタ）、pricing_type で 4 課金方式（fixed_per_unit/percentage/hourly/fixed_total）。**Stage 4d (PR #TBD) で旧単価モーダルと旧 rates / director-rates / producer-rates / client-fee の write endpoint を削除済**。旧テーブル本体 (`project_rates` / `project_director_rates` / `project_producer_rates` / `project_client_fees` / `project_rate_extras`) の DROP は Stage 6 で実施。invoices flow (`/invoices/preview-items`, `/invoices/generate`) のみ Stage 6 まで旧テーブルを read 参照する |
+| クライアント・商材 | `clients` / `products` / `appeal_axes` (削除予定) | `routes/haruka.js` | `public/haruka.html` クライアントタブ | **Stage C で products / appeal_axes / project_products / project_appeal_axes 系を完全削除予定**。Stage A では商材/訴求軸タブ・マスター画面の HTML を非表示化済み |
 | メンバー | `users` / `user_stats` / `teams` / `team_members` | `routes/haruka.js` | `public/haruka.html` メンバータブ | `users.role` で admin/secretary/producer/producer_director/director/editor/designer |
 | 請求 | `invoices` / `client_invoices` | `routes/haruka.js` の `/api/invoices/*` `/api/client-invoice/*` | `public/haruka.html` 請求タブ | `migrations/2026-04-28_invoice_items_step1.sql` 進行中 |
 | 自動エラー通知 | - | `routes/haruka.js` の `/api/error-report` | `public/js/auto-error-report.js` | 500/uncaught/window.onerror を Slack 投稿（PR #197）|
@@ -117,6 +150,13 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - PR テンプレート（`.github/pull_request_template.md`）に従って記述
 - **影響範囲（mobile/PC/両方）を必ず記載**
 - 両方に影響する PR は関連chatのレビューを受ける
+
+### PR タイトルの先頭に `#番号` を付ける（必須）
+- `gh pr create` 直後に返ってきた PR 番号を使い、**必ず** `gh pr edit <N> --title "#<N> <元タイトル>"` でタイトル先頭に番号を追記する
+- 例: `#345 feat(projects): ファイル名テンプレのカスタムトークン key を自動採番化（UX改善）`
+- 理由: Railway のデプロイ一覧 / Slack 等でタイトルが長いと末尾の `(#N)` が truncate されて PR 特定不能になる。先頭にあれば必ず見える
+- squash merge 時に GitHub が末尾にも `(#N)` を再付与するが、重複は許容（先頭が見えることが優先）
+- サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker など）も例外なく従うこと
 
 ### 自動マージ（auto-merge ラベル）
 - PR に `auto-merge` ラベルを付与すると、CI 通過後に **自動で squash merge + ブランチ削除** されます（`.github/workflows/auto-merge.yml`）
