@@ -1059,27 +1059,54 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
 const isMissingFilenameTemplatesTable = (err) =>
   err && /relation .*filename_templates.* does not exist|could not find the table/i.test(err.message || '');
 
+// flag トークンの source ホワイトリスト（v1 は talent_flag のみ）。
+// 増やす際は creatives テーブル側に対応する boolean 列があり、buildFilenameTokenValues / フロントUI も追従する必要あり。
+const ALLOWED_FILENAME_FLAG_SOURCES = new Set(['talent_flag']);
+
 // tokens のサーバー側バリデーション（DB CHECK と二重）
 //   - 配列で要素が 1 件以上
 //   - serial / project_name / version の3キーが含まれる
 //   - serial が配列の先頭
-//   - 各要素は { kind: "system"|"custom", key, label?, default? } の形
+//   - 各要素は { kind: "system"|"custom"|"flag", key, ... } の形
+//   - flag は { source: ALLOWED_FILENAME_FLAG_SOURCES, on_value: string, off_value: string }
+//   - 同一 source の flag トークンは1テンプレに1個まで
 function validateFilenameTemplateTokens(tokens) {
   if (!Array.isArray(tokens) || tokens.length === 0) {
     return { ok: false, error: 'tokens は 1 件以上の配列で指定してください' };
   }
+  const flagSourcesSeen = new Set();
   for (const t of tokens) {
     if (!t || typeof t !== 'object') {
       return { ok: false, error: 'tokens の各要素はオブジェクトである必要があります' };
     }
-    if (t.kind !== 'system' && t.kind !== 'custom') {
-      return { ok: false, error: `tokens.kind は "system" / "custom" のいずれか（受信: ${t.kind}）` };
+    if (t.kind !== 'system' && t.kind !== 'custom' && t.kind !== 'flag') {
+      return { ok: false, error: `tokens.kind は "system" / "custom" / "flag" のいずれか（受信: ${t.kind}）` };
     }
     if (typeof t.key !== 'string' || !t.key.trim()) {
       return { ok: false, error: 'tokens.key は必須の文字列です' };
     }
+    if (t.kind === 'flag') {
+      if (typeof t.source !== 'string' || !ALLOWED_FILENAME_FLAG_SOURCES.has(t.source)) {
+        return { ok: false, error: `flag トークンの source は ${[...ALLOWED_FILENAME_FLAG_SOURCES].map(s => `"${s}"`).join(' / ')} のみ対応しています（受信: ${t.source}）` };
+      }
+      if (typeof t.on_value !== 'string' || typeof t.off_value !== 'string') {
+        return { ok: false, error: 'flag トークンには on_value / off_value（文字列）が必須です' };
+      }
+      if (flagSourcesSeen.has(t.source)) {
+        return { ok: false, error: `同一の flag source "${t.source}" を持つトークンは1テンプレに1個までです` };
+      }
+      flagSourcesSeen.add(t.source);
+    }
   }
   const keys = tokens.map(t => t.key);
+  // key の重複チェック（custom / flag は自動採番されるが、手動指定時の事故防止）
+  const keySet = new Set();
+  for (const k of keys) {
+    if (keySet.has(k)) {
+      return { ok: false, error: `tokens.key "${k}" が重複しています` };
+    }
+    keySet.add(k);
+  }
   for (const required of ['serial', 'project_name', 'version']) {
     if (!keys.includes(required)) {
       return { ok: false, error: `必須トークン "${required}" が含まれていません` };
@@ -1278,6 +1305,9 @@ async function resolveProjectFilenameTemplate(project) {
 
 // system トークンの値マップを組み立てる（bulk-preview / bulk / generate-filename 共通）
 // seqStr7 / dateStr / version / etc. は呼び出し側で計算済みのものを渡す
+// flag トークン用に '__flag__<source>': boolean も同じ map に詰める。
+//   - bulk-preview / bulk: req.body.talent_flag
+//   - 個別 generate-filename: req.body.talent_flag（個別作成は creative 側で持つ）
 function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr, version }) {
   const productCode = body?.product_code || null;
   const mediaCode   = body?.media_code   || null;
@@ -1294,6 +1324,8 @@ function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr,
     size:         sizeCode || '',
     format:       fmtCode || '',
     media:        mediaCode || '',
+    // flag 値（v1: talent_flag のみ）
+    __flag__talent_flag: !!(body && body.talent_flag === true),
   };
 }
 
@@ -3481,7 +3513,7 @@ router.post('/creatives/bulk', async (req, res) => {
     project_id, creative_type, appeal_type_id,
     count, draft_deadline, final_deadline, note,
     product_id, product_code, media_code, creative_fmt, creative_size,
-    assignee_id, team_id
+    assignee_id, team_id, talent_flag
   } = req.body;
   // 訴求軸（appeal_type_id）は任意化: 未確定状態でも一括登録できるようにする
   if (!project_id || !creative_type || !count) {
@@ -3546,6 +3578,7 @@ router.post('/creatives/bulk', async (req, res) => {
       note: note || null, status: '未着手',
       product_id: product_id || null, media_code: media_code || null,
       creative_fmt: creative_fmt || null, creative_size: creative_size || null,
+      talent_flag: talent_flag === true,
       team_id: team_id || null };
     inserts.push(insert);
     usedSeqs.push(nextSeq);

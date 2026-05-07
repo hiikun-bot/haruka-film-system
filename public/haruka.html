@@ -3403,13 +3403,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         </div>
       </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:10px 0 4px">10 本を一括登録します</div>
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:8px;padding-top:14px;border-top:0.5px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" id="bulk-continuous-mode" style="width:16px;height:16px;cursor:pointer">
-          <label for="bulk-continuous-mode" style="font-size:13px;color:var(--text-muted);cursor:pointer">連続登録モード</label>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;padding-top:14px;border-top:0.5px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:16px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+            <input type="checkbox" id="bulk-talent-flag" style="width:15px;height:15px;cursor:pointer" onchange="updateBulkPreview()">
+            <span>🎬 芸能人・インフルエンサー起用</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+            <input type="checkbox" id="bulk-continuous-mode" style="width:16px;height:16px;cursor:pointer">
+            <span>連続登録モード</span>
+          </label>
         </div>
-        <button class="btn-primary" onclick="bulkPreviewCreative()">一括登録する</button>
-        <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="btn-primary" onclick="bulkPreviewCreative()">一括登録する</button>
+          <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+        </div>
       </div>
     </div>
 
@@ -4906,7 +4914,14 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             <div id="p-filename-overrides-list" style="display:flex;flex-direction:column;gap:8px"></div>
           </div>
           <div style="background:#F0F8F4;border:1px solid #C9E5D6;border-radius:8px;padding:10px 12px;font-size:12px;color:#0F7A56;line-height:1.6">
-            <div style="font-size:10px;color:#5b8a73;margin-bottom:3px;letter-spacing:0.06em">プレビュー</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:3px">
+              <div style="font-size:10px;color:#5b8a73;letter-spacing:0.06em">プレビュー</div>
+              <div id="p-filename-flag-toggle-wrap" style="display:none;align-items:center;gap:4px;font-size:10px;color:#5b8a73">
+                <span>フラグ:</span>
+                <button type="button" id="p-filename-flag-on" class="btn-sm" onclick="toggleProjFilenamePreviewFlag(true)" style="font-size:10px;padding:1px 7px">ON</button>
+                <button type="button" id="p-filename-flag-off" class="btn-sm" onclick="toggleProjFilenamePreviewFlag(false)" style="font-size:10px;padding:1px 7px">OFF</button>
+              </div>
+            </div>
             <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
           </div>
         </div>
@@ -14849,10 +14864,17 @@ async function toggleHideProject(id, current) {
 // state（モーダル単位で保持）
 const _projFilenameState = {
   templates: [],          // /api/filename-templates の結果キャッシュ
-  overrides: {},          // 入力中の filename_token_overrides （key -> { label, value }）
+  overrides: {},          // 入力中の filename_token_overrides （key -> { label, value }（custom）/ { on_value, off_value, label }（flag））
+  previewFlagOn: true,    // 案件モーダルのプレビュー: flag トークンを ON 状態で見るかどうか
 };
 
-// renderFilename のフロント版（utils/filename.js と同等のロジック・約30行）
+function toggleProjFilenamePreviewFlag(on) {
+  _projFilenameState.previewFlagOn = !!on;
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
+// renderFilename のフロント版（utils/filename.js と同等のロジック）
 // サンプル値でプレビュー表示するために使う
 function renderFilenameClient(template, tokenValues, overrides) {
   if (!template || !Array.isArray(template.tokens)) return '';
@@ -14870,16 +14892,27 @@ function renderFilenameClient(template, tokenValues, overrides) {
       if (tok.default != null && String(tok.default).trim() !== '') return String(tok.default).trim();
       return '';
     }
+    if (tok.kind === 'flag') {
+      const ov = safeOverrides[tok.key] || {};
+      const onV  = ov.on_value  != null ? ov.on_value  : tok.on_value;
+      const offV = ov.off_value != null ? ov.off_value : tok.off_value;
+      const source = tok.source || 'talent_flag';
+      const flagOn = tokenValues['__flag__' + source] === true;
+      const out = flagOn ? onV : offV;
+      return out != null ? String(out).trim() : '';
+    }
     return '';
   }).filter(Boolean);
   return parts.join(sep);
 }
 
 // プレビュー用のサンプル system 値（FN_SYSTEM_TOKENS の sample を参考に）
+// flag 値はプレビュー切替トグルから _projFilenameState.previewFlagOn を読む（デフォルト ON）
 function _projFilenameSampleValues() {
   const projectName = (document.getElementById('p-name')?.value || '').trim() || 'サンプル案件';
   const today = new Date();
   const yymmdd = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  const flagOn = _projFilenameState.previewFlagOn !== false; // 未指定はデフォルト ON
   return {
     serial: '0000001',
     project_name: projectName,
@@ -14891,6 +14924,7 @@ function _projFilenameSampleValues() {
     size: '1:1',
     format: '30s',
     media: 'TVCM',
+    __flag__talent_flag: flagOn,
   };
 }
 
@@ -14937,23 +14971,42 @@ function _projFilenameSelectedTemplate() {
   return (_projFilenameState.templates || []).find(t => t.id === id) || null;
 }
 
-// custom トークンの override 入力欄を生成
+// custom / flag トークンの override 入力欄を生成
 function renderProjectFilenameOverrides() {
   const wrap = document.getElementById('p-filename-overrides-wrap');
   const list = document.getElementById('p-filename-overrides-list');
   if (!wrap || !list) return;
   const tpl = _projFilenameSelectedTemplate();
-  const customTokens = tpl ? (tpl.tokens || []).filter(t => t && t.kind === 'custom') : [];
-  if (!customTokens.length) {
+  const editableTokens = tpl ? (tpl.tokens || []).filter(t => t && (t.kind === 'custom' || t.kind === 'flag')) : [];
+  if (!editableTokens.length) {
     wrap.style.display = 'none';
     list.innerHTML = '';
     return;
   }
   wrap.style.display = '';
   const overrides = _projFilenameState.overrides || {};
-  list.innerHTML = customTokens.map(tok => {
+  list.innerHTML = editableTokens.map(tok => {
     const ov = overrides[tok.key] || {};
     const labelVal = ov.label != null ? ov.label : (tok.label || tok.key);
+    if (tok.kind === 'flag') {
+      const onVal  = ov.on_value  != null ? ov.on_value  : (tok.on_value  || '');
+      const offVal = ov.off_value != null ? ov.off_value : (tok.off_value || '');
+      const sourceLabel = tok.source === 'talent_flag' ? '🎬 芸能人' : esc(tok.source || '');
+      return `
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg-soft, #fafafa);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px">
+          <div style="font-size:11px;color:var(--text-muted);min-width:64px;display:flex;align-items:center;gap:4px">
+            <span style="font-size:9px;color:#fff;background:#F59E0B;padding:1px 5px;border-radius:6px">FLAG</span>
+            <span>${esc(tok.key)}</span>
+          </div>
+          <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="label" value="${esc(labelVal)}" placeholder="ラベル" style="flex:1;min-width:100px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+          <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="on_value" value="${esc(onVal)}" placeholder="ON 値" title="ON 時の値" style="flex:1;min-width:90px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+          <span style="color:var(--text-muted);font-size:11px">/</span>
+          <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="off_value" value="${esc(offVal)}" placeholder="OFF 値" title="OFF 時の値" style="flex:1;min-width:90px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+          <span title="連動: ${esc(tok.source || 'talent_flag')}" style="font-size:10px;color:var(--text-muted);background:#FFF7E6;border:1px solid #F5C97A;padding:2px 6px;border-radius:8px;white-space:nowrap">${sourceLabel}</span>
+        </div>
+      `;
+    }
+    // custom
     const valueVal = ov.value != null ? ov.value : (tok.default || '');
     return `
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg-soft, #fafafa);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px">
@@ -14978,6 +15031,17 @@ function updateProjectFilenamePreview() {
   const tpl = _projFilenameSelectedTemplate();
   const previewEl = document.getElementById('p-filename-preview');
   if (!previewEl) return;
+  // flag トークンの有無で ON/OFF トグルの表示を切替
+  const toggleWrap = document.getElementById('p-filename-flag-toggle-wrap');
+  const hasFlag = !!(tpl && (tpl.tokens || []).some(t => t && t.kind === 'flag'));
+  if (toggleWrap) toggleWrap.style.display = hasFlag ? 'inline-flex' : 'none';
+  // ON/OFF ボタンのアクティブ状態
+  const onBtn  = document.getElementById('p-filename-flag-on');
+  const offBtn = document.getElementById('p-filename-flag-off');
+  const isOn = _projFilenameState.previewFlagOn !== false;
+  if (onBtn)  onBtn.style.cssText  = `font-size:10px;padding:1px 7px;${isOn ? 'background:#F59E0B;color:#fff;border-color:#F59E0B' : ''}`;
+  if (offBtn) offBtn.style.cssText = `font-size:10px;padding:1px 7px;${!isOn ? 'background:#0F7A56;color:#fff;border-color:#0F7A56' : ''}`;
+
   if (!tpl) { previewEl.textContent = '—'; return; }
   const values = _projFilenameSampleValues();
   const fn = renderFilenameClient(tpl, values, _projFilenameState.overrides);
@@ -18181,11 +18245,13 @@ async function generateFileName() {
   const creative_fmt  = document.getElementById('c-creative-fmt')?.value || null;
   const creative_size = document.getElementById('c-creative-size')?.value || null;
   const production_date = new Date().toISOString().slice(0, 10);
+  // ADR 007: flag トークン（talent_flag）連動。チェック有無を generate-filename にも渡す
+  const talent_flag = document.getElementById('c-talent-flag')?.checked || false;
 
   const res = await apiFetch(`${API}/projects/${projectId}/generate-filename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appeal_type_id: appealTypeId, product_code, media_code, creative_fmt, creative_size, production_date })
+    body: JSON.stringify({ appeal_type_id: appealTypeId, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag })
   });
   if (res.ok) {
     const data = await res.json();
@@ -18412,10 +18478,13 @@ async function bulkPreviewCreative() {
   const teamName      = document.getElementById('bulk-team-id')?.options[document.getElementById('bulk-team-id').selectedIndex]?.text || '—';
   const assigneeName  = document.getElementById('bulk-assignee-id')?.options[document.getElementById('bulk-assignee-id').selectedIndex]?.text || '—';
 
+  // ADR 007: bulk 単位で talent_flag を1値持たせる（同一 bulk 内全件に適用）
+  const talent_flag = document.getElementById('bulk-talent-flag')?.checked || false;
+
   _bulkPayload = { project_id, creative_type, appeal_type_id, count,
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
     product_id, product_code, media_code, creative_fmt, creative_size,
-    assignee_id, team_id };
+    assignee_id, team_id, talent_flag };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
   const origText = btn.textContent;
@@ -20880,6 +20949,7 @@ const _fnTplState = {
   draft: null,               // 編集中テンプレの draft オブジェクト
   draggingIndex: null,       // ビルダー内 D&D 中の index
   draggingPaletteKey: null,  // パレットからのドラッグ中 key
+  previewFlagOn: true,       // プレビュー上で flag トークンを ON 状態として描画するか
 };
 
 // システム標準トークン定義（ADR 007 表）
@@ -20984,23 +21054,71 @@ async function renderFilenameTemplatesPage() {
       <div id="fn-tpl-editor" style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:18px"></div>
     </div>
 
-    <!-- カスタムトークン追加モーダル -->
+    <!-- カスタム / フラグ トークン追加モーダル -->
     <div id="fn-custom-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
-      <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:92vw">
-        <div style="font-size:16px;font-weight:700;margin-bottom:14px">カスタムトークンを追加</div>
+      <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:92vw;max-height:90vh;overflow:auto">
+        <div style="font-size:16px;font-weight:700;margin-bottom:14px">トークンを追加</div>
+
+        <!-- 種類ラジオ -->
+        <div class="form-group" style="margin-bottom:14px">
+          <label class="form-label">種類</label>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
+              <input type="radio" name="fn-custom-kind" value="custom" checked onchange="onFnCustomKindChange()" style="margin-top:3px">
+              <span>
+                <span style="font-weight:600">テキスト</span>
+                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（固定値1つ・案件側で上書き可）</span>
+              </span>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
+              <input type="radio" name="fn-custom-kind" value="flag" onchange="onFnCustomKindChange()" style="margin-top:3px">
+              <span>
+                <span style="font-weight:600">フラグ</span>
+                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（クリエイティブの ON/OFF で 2 値切替）</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
         <div class="form-group">
           <label class="form-label">表示ラベル <span style="color:#E24B4A">*</span></label>
           <input class="form-input" id="fn-custom-label" placeholder="例: 芸能人有無">
         </div>
-        <div class="form-group">
-          <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
-          <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
+
+        <!-- テキスト型: default 値 -->
+        <div id="fn-custom-fields-text">
+          <div class="form-group">
+            <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
+            <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
+          </div>
         </div>
+
+        <!-- フラグ型: ON値 / OFF値 / 連動先 -->
+        <div id="fn-custom-fields-flag" style="display:none">
+          <div class="form-group">
+            <label class="form-label">ON 時の値 <span style="color:#E24B4A">*</span></label>
+            <input class="form-input" id="fn-custom-on-value" placeholder="例: 上地有">
+          </div>
+          <div class="form-group">
+            <label class="form-label">OFF 時の値 <span style="color:#E24B4A">*</span></label>
+            <input class="form-input" id="fn-custom-off-value" placeholder="例: 上地無">
+          </div>
+          <div class="form-group">
+            <label class="form-label">連動するフラグ</label>
+            <select class="form-select" id="fn-custom-source" disabled>
+              <option value="talent_flag" selected>🎬 芸能人・インフルエンサー起用 (talent_flag)</option>
+            </select>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              v1 では talent_flag のみ対応。クリエイティブの「🎬 芸能人」チェックと連動します。
+            </div>
+          </div>
+        </div>
+
         <details style="margin-top:10px">
           <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">▸ 上級設定（key を指定する）</summary>
           <div style="margin-top:8px">
             <label class="form-label">key（任意・空欄なら自動採番）</label>
-            <input class="form-input" id="fn-custom-key" placeholder="自動 (c_1, c_2, ...)" style="font-family:monospace">
+            <input class="form-input" id="fn-custom-key" placeholder="自動 (c_1 / f_1, ...)" style="font-family:monospace">
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
               別テンプレでも同じ key を使うと、案件側 override で値が連動します。
             </div>
@@ -21093,9 +21211,40 @@ function _renderFnTplEditor() {
     const pinFirst = !!(sysDef && sysDef.pinFirst);
     const labelHtml = `<span style="font-weight:600">${esc(t.label || t.key)}</span>
                        <span style="color:var(--text-muted);font-family:monospace;font-size:10px;margin-left:6px">[${esc(t.key)}]</span>`;
-    const kindBadge = t.kind === 'custom'
-      ? '<span style="font-size:10px;color:#fff;background:#A06CD5;padding:1px 6px;border-radius:8px;margin-left:6px">CUSTOM</span>'
-      : (required ? '<span style="font-size:10px;color:#fff;background:#E24B4A;padding:1px 6px;border-radius:8px;margin-left:6px">必須</span>' : '');
+    let kindBadge = '';
+    if (t.kind === 'custom') {
+      kindBadge = '<span style="font-size:10px;color:#fff;background:#A06CD5;padding:1px 6px;border-radius:8px;margin-left:6px">CUSTOM</span>';
+    } else if (t.kind === 'flag') {
+      kindBadge = '<span style="font-size:10px;color:#fff;background:#F59E0B;padding:1px 6px;border-radius:8px;margin-left:6px">FLAG</span>';
+    } else if (required) {
+      kindBadge = '<span style="font-size:10px;color:#fff;background:#E24B4A;padding:1px 6px;border-radius:8px;margin-left:6px">必須</span>';
+    }
+    // flag トークンの右側 inline 入力（ON値・OFF値）
+    let inlineInputs = '';
+    if (t.kind === 'custom') {
+      inlineInputs = `
+        <input class="form-input" style="width:120px;font-size:12px;padding:4px 8px"
+          value="${esc(t.default || '')}"
+          placeholder="default 値"
+          onchange="updateFnCustomDefault(${idx}, this.value)">
+      `;
+    } else if (t.kind === 'flag') {
+      const sourceLabel = t.source === 'talent_flag' ? '🎬 芸能人' : esc(t.source || '');
+      inlineInputs = `
+        <span title="連動: ${esc(t.source || 'talent_flag')}" style="font-size:10px;color:var(--text-muted);background:#FFF7E6;border:1px solid #F5C97A;padding:2px 6px;border-radius:8px;white-space:nowrap">${sourceLabel}</span>
+        <input class="form-input" style="width:96px;font-size:12px;padding:4px 8px"
+          value="${esc(t.on_value || '')}"
+          placeholder="ON 値"
+          title="ON 時の値"
+          onchange="updateFnFlagValue(${idx}, 'on_value', this.value)">
+        <span style="color:var(--text-muted);font-size:10px">/</span>
+        <input class="form-input" style="width:96px;font-size:12px;padding:4px 8px"
+          value="${esc(t.off_value || '')}"
+          placeholder="OFF 値"
+          title="OFF 時の値"
+          onchange="updateFnFlagValue(${idx}, 'off_value', this.value)">
+      `;
+    }
     return `
       <li class="fn-builder-item"
           draggable="${pinFirst ? 'false' : 'true'}"
@@ -21104,22 +21253,17 @@ function _renderFnTplEditor() {
           ondragover="onFnBuilderDragOver(event,${idx})"
           ondrop="onFnBuilderDrop(event,${idx})"
           ondragend="onFnDragEnd()"
-          style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);
-                 border:1px solid var(--border);border-radius:10px;margin-bottom:6px;
+          style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);
+                 border:1px solid var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap;
                  cursor:${pinFirst ? 'default' : 'grab'};${pinFirst ? 'opacity:0.95' : ''}">
         <span style="color:var(--text-muted);font-size:14px;width:18px;text-align:center">
           ${pinFirst ? '🔒' : '⋮⋮'}
         </span>
         <span style="flex-shrink:0;color:var(--text-muted);font-family:monospace;font-size:11px;width:24px;text-align:right">${idx + 1}.</span>
-        <div style="flex:1;font-size:13px">
+        <div style="flex:1;font-size:13px;min-width:120px">
           ${labelHtml}${kindBadge}
         </div>
-        ${t.kind === 'custom' ? `
-          <input class="form-input" style="width:120px;font-size:12px;padding:4px 8px"
-            value="${esc(t.default || '')}"
-            placeholder="default 値"
-            onchange="updateFnCustomDefault(${idx}, this.value)">
-        ` : ''}
+        ${inlineInputs}
         ${(required || pinFirst) ? '' : `
           <button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px"
             onclick="removeFnBuilderToken(${idx})">削除</button>
@@ -21186,7 +21330,18 @@ function _renderFnTplEditor() {
 
     <!-- プレビュー -->
     <div style="background:var(--em-pale);border-radius:10px;padding:12px 14px">
-      <div style="font-size:11px;font-weight:600;color:var(--em-dark);margin-bottom:4px">プレビュー</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
+        <div style="font-size:11px;font-weight:600;color:var(--em-dark)">プレビュー</div>
+        ${(d.tokens || []).some(t => t.kind === 'flag') ? `
+          <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--em-dark)">
+            <span>フラグ:</span>
+            <button type="button" class="btn-sm" onclick="_fnTogglePreviewFlag(true)"
+              style="font-size:11px;padding:2px 8px;${_fnTplState.previewFlagOn ? 'background:#F59E0B;color:#fff;border-color:#F59E0B' : ''}">ON</button>
+            <button type="button" class="btn-sm" onclick="_fnTogglePreviewFlag(false)"
+              style="font-size:11px;padding:2px 8px;${!_fnTplState.previewFlagOn ? 'background:var(--em-dark);color:#fff;border-color:var(--em-dark)' : ''}">OFF</button>
+          </div>
+        ` : ''}
+      </div>
       <div id="fn-preview" style="font-family:monospace;font-size:14px;color:var(--text-main);word-break:break-all">
         ${esc(previewStr)}
       </div>
@@ -21195,16 +21350,28 @@ function _renderFnTplEditor() {
 }
 
 // プレビュー文字列を生成（ダミー値）
+// flag トークンは _fnTplState.previewFlagOn が true なら on_value、false なら off_value を出す。
 function _fnRenderPreview(draft) {
+  const flagOn = !!(_fnTplState && _fnTplState.previewFlagOn);
   const parts = (draft.tokens || []).map(t => {
     if (t.kind === 'system') {
       const sys = _fnSystemTokenDef(t.key);
       return sys ? sys.sample : t.key;
     }
+    if (t.kind === 'flag') {
+      const v = flagOn ? t.on_value : t.off_value;
+      return (v != null && String(v).trim() !== '') ? String(v).trim() : `[${t.key}]`;
+    }
     // custom
     return (t.default || '').toString().trim() || `[${t.key}]`;
   }).filter(p => p !== '' && p != null);
   return parts.join(draft.separator || '');
+}
+
+// プレビュー切替トグル: ON/OFF
+function _fnTogglePreviewFlag(on) {
+  _fnTplState.previewFlagOn = !!on;
+  _renderFnTplEditor();
 }
 
 function _fnRefreshPreview() {
@@ -21320,11 +21487,46 @@ function updateFnCustomDefault(idx, value) {
   _fnRefreshPreview();
 }
 
-// ---- カスタムトークン追加モーダル ----
+// flag トークンの ON値 / OFF値 を inline 編集
+function updateFnFlagValue(idx, field, value) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const t = d.tokens[idx];
+  if (!t || t.kind !== 'flag') return;
+  if (field !== 'on_value' && field !== 'off_value') return;
+  t[field] = value;
+  _fnRefreshPreview();
+}
+
+// ---- カスタム / フラグ トークン追加モーダル ----
+function _fnGetCustomKindFromRadio() {
+  const r = document.querySelector('input[name="fn-custom-kind"]:checked');
+  return r ? r.value : 'custom';
+}
+
+function onFnCustomKindChange() {
+  const kind = _fnGetCustomKindFromRadio();
+  const textFields = document.getElementById('fn-custom-fields-text');
+  const flagFields = document.getElementById('fn-custom-fields-flag');
+  if (textFields) textFields.style.display = kind === 'custom' ? '' : 'none';
+  if (flagFields) flagFields.style.display = kind === 'flag' ? '' : 'none';
+  // key プレースホルダの目安を更新
+  const keyInput = document.getElementById('fn-custom-key');
+  if (keyInput) keyInput.placeholder = kind === 'flag' ? '自動 (f_1, f_2, ...)' : '自動 (c_1, c_2, ...)';
+}
+
 function openFnCustomModal() {
   document.getElementById('fn-custom-key').value = '';
   document.getElementById('fn-custom-label').value = '';
   document.getElementById('fn-custom-default').value = '';
+  const onInput  = document.getElementById('fn-custom-on-value');
+  const offInput = document.getElementById('fn-custom-off-value');
+  if (onInput)  onInput.value  = '';
+  if (offInput) offInput.value = '';
+  // 種類ラジオを「テキスト」に戻す
+  const customRadio = document.querySelector('input[name="fn-custom-kind"][value="custom"]');
+  if (customRadio) customRadio.checked = true;
+  onFnCustomKindChange();
   // 上級設定 details を毎回閉じた状態で開く
   const det = document.querySelector('#fn-custom-modal details');
   if (det) det.open = false;
@@ -21339,26 +21541,44 @@ function closeFnCustomModal() {
   const m = document.getElementById('fn-custom-modal');
   if (m) m.style.display = 'none';
 }
-// テンプレ内の既存 token の key と衝突しない c_N 形式の key を採番
-function _autoGenerateFnCustomKey(existingKeys) {
+// テンプレ内の既存 token の key と衝突しない c_N / f_N 形式の key を採番
+//   prefix: 'c' (custom) / 'f' (flag)
+function _autoGenerateFnCustomKey(existingKeys, prefix) {
+  const p = prefix === 'f' ? 'f' : 'c';
   const used = new Set(existingKeys);
   // システムトークンの key とも被らないように
   for (const s of (typeof FN_SYSTEM_TOKENS !== 'undefined' ? FN_SYSTEM_TOKENS : [])) {
     used.add(s.key);
   }
   let n = 1;
-  while (used.has('c_' + n)) n++;
-  return 'c_' + n;
+  while (used.has(p + '_' + n)) n++;
+  return p + '_' + n;
 }
 function confirmAddFnCustomToken() {
   const d = _fnTplState.draft;
   if (!d) return;
+  const kind = _fnGetCustomKindFromRadio();
   const manualKey = document.getElementById('fn-custom-key').value.trim();
   const label = document.getElementById('fn-custom-label').value.trim();
-  const def = document.getElementById('fn-custom-default').value;
   if (!label) {
     showToast('表示ラベルは必須です', 'warn');
     return;
+  }
+  // フラグ専用入力のチェック
+  let onValue = '', offValue = '', source = 'talent_flag';
+  if (kind === 'flag') {
+    onValue  = document.getElementById('fn-custom-on-value').value;
+    offValue = document.getElementById('fn-custom-off-value').value;
+    if (onValue == null || onValue === '' || offValue == null || offValue === '') {
+      showToast('ON 値 / OFF 値はどちらも必須です', 'warn');
+      return;
+    }
+    source = document.getElementById('fn-custom-source').value || 'talent_flag';
+    // 同一 source の flag が既にあれば拒否
+    if (d.tokens.some(t => t.kind === 'flag' && t.source === source)) {
+      showToast(`同じ連動先 (${source}) の flag トークンは既に存在します`, 'warn');
+      return;
+    }
   }
   let key;
   if (manualKey) {
@@ -21377,11 +21597,16 @@ function confirmAddFnCustomToken() {
     }
     key = manualKey;
   } else {
-    // 自動採番
+    // 自動採番（custom: c_N, flag: f_N）
     const existingKeys = d.tokens.map(t => t.key);
-    key = _autoGenerateFnCustomKey(existingKeys);
+    key = _autoGenerateFnCustomKey(existingKeys, kind === 'flag' ? 'f' : 'c');
   }
-  d.tokens.push({ kind: 'custom', key, label, default: def || '' });
+  if (kind === 'flag') {
+    d.tokens.push({ kind: 'flag', key, label, source, on_value: onValue, off_value: offValue });
+  } else {
+    const def = document.getElementById('fn-custom-default').value;
+    d.tokens.push({ kind: 'custom', key, label, default: def || '' });
+  }
   closeFnCustomModal();
   _renderFnTplEditor();
 }
