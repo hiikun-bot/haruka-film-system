@@ -2064,6 +2064,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       try {
         var reason = e && e.reason;
         var msg = reason && reason.message ? reason.message : String(reason);
+
+        // 既知のメディア関連 promise rejection は Slack 通知から除外する。
+        // <video>.play() / requestFullscreen() / requestPictureInPicture() などは
+        // ・src が 404 / 未対応形式 → DOMException "The element has no supported sources."
+        // ・別の play 呼び出しで前のが中断 → "The play() request was interrupted ..."
+        // ・autoplay policy → NotAllowedError
+        // ・モーダル閉じで video が DOM から消えた直後の race
+        // のように UX 上は致命でなく、video の error イベントで fpShowLoadingError を
+        // 出してユーザーには既知のローディング失敗として見せている。Slack で再度通知すると
+        // 真のバグ通知が埋もれるため、このカテゴリは握りつぶす（コンソール warn は残す）。
+        if (typeof msg === 'string' && /element has no supported sources|The play\(\) request was interrupted|MEDIA_ERR_|NotAllowedError.*play|fullscreen|picture-in-picture/i.test(msg)) {
+          try { console.warn('[auto-error] suppressed known media rejection:', msg); } catch (_) {}
+          return;
+        }
+
         postAutoError({
           kind: 'unhandledrejection',
           message: msg,
@@ -22066,7 +22081,15 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         v.addEventListener('loadeddata',    () => fpHideLoading());
         v.addEventListener('waiting',       () => fpShowLoading('バッファリング中...'));
         v.addEventListener('playing',       () => fpHideLoading());
-        v.addEventListener('error',         () => fpShowLoadingError('動画の読み込みに失敗しました'));
+        v.addEventListener('error', () => {
+          // MediaError.code: 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED
+          // 4 は src 自体が 404 / Content-Type 違い / コーデック未対応のいずれか。
+          // 将来同じ事象が再発したときに切り分けできるよう breadcrumb に残す（Slack には抑制済み）。
+          var code = (v.error && v.error.code) || null;
+          var srcUrl = v.currentSrc || v.src || '(unknown)';
+          try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error', { code: code, src: String(srcUrl).slice(0,180) }); } catch (_) {}
+          fpShowLoadingError(code === 4 ? '動画形式に対応していません' : '動画の読み込みに失敗しました');
+        });
         v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
       }, 100);
     } else if (isImage) {
