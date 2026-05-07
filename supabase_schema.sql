@@ -170,6 +170,26 @@ ALTER TABLE creatives
 CREATE INDEX IF NOT EXISTS idx_creatives_category
   ON creatives(category_id);
 
+-- ==================== filename_templates (ADR 007 Stage 1) ====================
+-- 案件別ファイル名テンプレート。設定タブで管理し、案件側で選択 + override する。
+-- 詳細: docs/design/decisions/007-filename-templates.md
+--       migrations/2026-05-07_filename_templates.sql
+CREATE TABLE IF NOT EXISTS filename_templates (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT NOT NULL,
+  separator     TEXT NOT NULL DEFAULT '_',
+  tokens        JSONB NOT NULL DEFAULT '[]'::jsonb,
+  is_default    BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS filename_template_id UUID REFERENCES filename_templates(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS filename_token_overrides JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_projects_filename_template_id
+  ON projects(filename_template_id);
+
 -- ==================== project_cycles ====================
 CREATE TABLE IF NOT EXISTS project_cycles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
