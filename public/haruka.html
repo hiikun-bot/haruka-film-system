@@ -4880,6 +4880,30 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- ファイル名テンプレート (ADR 007 Stage 2) -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">📁 ファイル名テンプレート</span>
+            <span style="font-size:11px;color:var(--text-muted);font-weight:400">（提出ファイル名の命名規約）</span>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">テンプレ</label>
+            <select class="form-select" id="p-filename-template-id" onchange="onProjectFilenameTemplateChange()">
+              <option value="">読込中...</option>
+            </select>
+          </div>
+          <!-- カスタムトークン上書き欄（custom kind を含むテンプレ時のみ表示） -->
+          <div id="p-filename-overrides-wrap" style="display:none;margin-bottom:10px">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">カスタム要素の上書き（案件固有の値）</div>
+            <div id="p-filename-overrides-list" style="display:flex;flex-direction:column;gap:8px"></div>
+          </div>
+          <div style="background:#F0F8F4;border:1px solid #C9E5D6;border-radius:8px;padding:10px 12px;font-size:12px;color:#0F7A56;line-height:1.6">
+            <div style="font-size:10px;color:#5b8a73;margin-bottom:3px;letter-spacing:0.06em">プレビュー</div>
+            <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
+          </div>
+        </div>
+
       </div><!-- /右カラム -->
     </div><!-- /グリッド -->
 
@@ -12168,6 +12192,8 @@ function openProjectModal(preClientId) {
   // 固定費・追加収入も同様に新規作成時は隠す（Stage 4c）
   const fiSec = document.getElementById('p-fixed-items-section');
   if (fiSec) fiSec.style.display = 'none';
+  // ADR 007: ファイル名テンプレ UI を初期化（新規は default テンプレを表示）
+  initProjectFilenameTemplateUI(null);
   openModal('modal-project');
 }
 
@@ -12281,6 +12307,9 @@ function openEditProject(p) {
   const fiSec = document.getElementById('p-fixed-items-section');
   if (fiSec) fiSec.style.display = '';
   loadProjectFixedItems(p.id);
+
+  // ADR 007: ファイル名テンプレ UI を初期化
+  initProjectFilenameTemplateUI(p);
 
   openModal('modal-project');
 }
@@ -14696,6 +14725,168 @@ async function toggleHideProject(id, current) {
   await loadProjects();
 }
 
+// ===== 案件モーダル: ファイル名テンプレート (ADR 007 Stage 2) =====
+//
+// /api/filename-templates から一覧を取得し、案件モーダル内 select を populate する。
+// 選択中テンプレに含まれる kind: "custom" のトークンだけ override 入力欄を動的生成し、
+// ライブプレビュー（renderFilename と同じロジック）を更新する。
+//
+// state（モーダル単位で保持）
+const _projFilenameState = {
+  templates: [],          // /api/filename-templates の結果キャッシュ
+  overrides: {},          // 入力中の filename_token_overrides （key -> { label, value }）
+};
+
+// renderFilename のフロント版（utils/filename.js と同等のロジック・約30行）
+// サンプル値でプレビュー表示するために使う
+function renderFilenameClient(template, tokenValues, overrides) {
+  if (!template || !Array.isArray(template.tokens)) return '';
+  const sep = typeof template.separator === 'string' ? template.separator : '_';
+  const safeOverrides = overrides && typeof overrides === 'object' ? overrides : {};
+  const parts = template.tokens.map(tok => {
+    if (!tok || !tok.key) return '';
+    if (tok.kind === 'system') {
+      const v = tokenValues[tok.key];
+      return v != null ? String(v).trim() : '';
+    }
+    if (tok.kind === 'custom') {
+      const ov = safeOverrides[tok.key];
+      if (ov && ov.value != null && String(ov.value).trim() !== '') return String(ov.value).trim();
+      if (tok.default != null && String(tok.default).trim() !== '') return String(tok.default).trim();
+      return '';
+    }
+    return '';
+  }).filter(Boolean);
+  return parts.join(sep);
+}
+
+// プレビュー用のサンプル system 値（FN_SYSTEM_TOKENS の sample を参考に）
+function _projFilenameSampleValues() {
+  const projectName = (document.getElementById('p-name')?.value || '').trim() || 'サンプル案件';
+  const today = new Date();
+  const yymmdd = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  return {
+    serial: '0000001',
+    project_name: projectName,
+    version: 'v1',
+    date_yymmdd: yymmdd,
+    client_code: 'CLT',
+    product: 'ドラム',
+    appeal_axis: 'BRAND',
+    size: '1:1',
+    format: '30s',
+    media: 'TVCM',
+  };
+}
+
+async function loadProjectFilenameTemplates() {
+  try {
+    const res = await apiFetch(`${API}/filename-templates`);
+    if (!res.ok) { _projFilenameState.templates = []; return; }
+    _projFilenameState.templates = await res.json();
+  } catch (_) {
+    _projFilenameState.templates = [];
+  }
+}
+
+// テンプレ select を populate して、現在選択中の id を反映
+function populateProjectFilenameTemplateSelect(currentId) {
+  const sel = document.getElementById('p-filename-template-id');
+  if (!sel) return;
+  const list = _projFilenameState.templates || [];
+  if (list.length === 0) {
+    sel.innerHTML = '<option value="">（テンプレ未登録 — 設定タブから作成）</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  const opts = ['<option value="">（未設定）</option>'];
+  for (const t of list) {
+    const star = t.is_default ? ' ★' : '';
+    opts.push(`<option value="${esc(t.id)}">${esc(t.name)}${star}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  // currentId があればそれを、なければ default を初期選択
+  if (currentId && list.some(t => t.id === currentId)) {
+    sel.value = currentId;
+  } else {
+    const def = list.find(t => t.is_default);
+    sel.value = def ? def.id : '';
+  }
+}
+
+// 選択中テンプレ取得
+function _projFilenameSelectedTemplate() {
+  const id = document.getElementById('p-filename-template-id')?.value || '';
+  if (!id) return null;
+  return (_projFilenameState.templates || []).find(t => t.id === id) || null;
+}
+
+// custom トークンの override 入力欄を生成
+function renderProjectFilenameOverrides() {
+  const wrap = document.getElementById('p-filename-overrides-wrap');
+  const list = document.getElementById('p-filename-overrides-list');
+  if (!wrap || !list) return;
+  const tpl = _projFilenameSelectedTemplate();
+  const customTokens = tpl ? (tpl.tokens || []).filter(t => t && t.kind === 'custom') : [];
+  if (!customTokens.length) {
+    wrap.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  const overrides = _projFilenameState.overrides || {};
+  list.innerHTML = customTokens.map(tok => {
+    const ov = overrides[tok.key] || {};
+    const labelVal = ov.label != null ? ov.label : (tok.label || tok.key);
+    const valueVal = ov.value != null ? ov.value : (tok.default || '');
+    return `
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg-soft, #fafafa);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px">
+        <div style="font-size:11px;color:var(--text-muted);min-width:64px">${esc(tok.key)}</div>
+        <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="label" value="${esc(labelVal)}" placeholder="ラベル" style="flex:1;min-width:120px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+        <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="value" value="${esc(valueVal)}" placeholder="値（例：上地無）" style="flex:1;min-width:120px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+      </div>
+    `;
+  }).join('');
+}
+
+function updateProjectFilenameOverrideFromInput(el) {
+  const key = el.getAttribute('data-fn-ovr-key');
+  const field = el.getAttribute('data-fn-ovr-field');
+  if (!key || !field) return;
+  if (!_projFilenameState.overrides[key]) _projFilenameState.overrides[key] = {};
+  _projFilenameState.overrides[key][field] = el.value;
+  updateProjectFilenamePreview();
+}
+
+function updateProjectFilenamePreview() {
+  const tpl = _projFilenameSelectedTemplate();
+  const previewEl = document.getElementById('p-filename-preview');
+  if (!previewEl) return;
+  if (!tpl) { previewEl.textContent = '—'; return; }
+  const values = _projFilenameSampleValues();
+  const fn = renderFilenameClient(tpl, values, _projFilenameState.overrides);
+  previewEl.textContent = fn || '—';
+}
+
+function onProjectFilenameTemplateChange() {
+  // テンプレ切替時は overrides は維持（同じ key なら使い回せる）
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
+// 案件モーダル open 時の初期化（新規 / 編集 共通）
+async function initProjectFilenameTemplateUI(project) {
+  await loadProjectFilenameTemplates();
+  const currentId = project?.filename_template_id || null;
+  _projFilenameState.overrides = (project?.filename_token_overrides && typeof project.filename_token_overrides === 'object')
+    ? JSON.parse(JSON.stringify(project.filename_token_overrides))
+    : {};
+  populateProjectFilenameTemplateSelect(currentId);
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
 async function submitProject() {
   const id = document.getElementById('p-id').value;
   const client_id = document.getElementById('p-client-id').value;
@@ -14727,6 +14918,10 @@ async function submitProject() {
 
   if (!client_id || !name) { showToast('クライアントと案件名は必須です', 'warn'); return; }
 
+  // ADR 007: ファイル名テンプレ（編集モードのみ。新規作成時は POST で別途追従するため除外）
+  const filename_template_id = document.getElementById('p-filename-template-id')?.value || null;
+  const filename_token_overrides = (_projFilenameState && _projFilenameState.overrides) ? _projFilenameState.overrides : {};
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -14735,7 +14930,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -20642,7 +20837,7 @@ async function renderFilenameTemplatesPage() {
     <div style="margin-bottom:18px">
       <div style="font-size:18px;font-weight:700;color:var(--text-main)">📁 ファイル名テンプレート</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
-        提出用ファイル名の命名規約。案件モーダルからこのテンプレを選択して使います（案件モーダル側UIは Stage 2 で実装予定）。
+        提出用ファイル名の命名規約。案件モーダル「📁 ファイル名テンプレート」から各案件で選択 + カスタム要素の上書きができます。
       </div>
     </div>
 
