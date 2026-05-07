@@ -1457,7 +1457,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 }
 
 /* ===== お知らせカード: 大きい完了 CTA ボタン ===== */
-.ann-cta-row{margin-top:14px;display:flex;justify-content:center}
+.ann-cta-row{margin-top:14px;display:flex;justify-content:flex-start}
 .ann-cta-pending{
   width:100%;max-width:520px;
   background:linear-gradient(135deg, #2ECC71 0%, #27AE60 100%);
@@ -14953,7 +14953,7 @@ async function loadAnnouncements() {
       ? `<div class="ann-cta-row"><button class="ann-cta-done" onclick="undoAnnouncementAck('${a.id}')">✅ 完了済み <span style="opacity:0.7;font-weight:500">(タップで取消)</span></button></div>`
       : `<div class="ann-cta-row"><button class="ann-cta-pending" onclick="doAnnouncementAck('${a.id}')">
           <span class="ann-cta-icon">👇</span>
-          <span>確認したらタップして完了！<span class="ann-cta-sub">未対応のままだと通知が続きます</span></span>
+          <span>対応完了したらタップ！<span class="ann-cta-sub">未対応のままだと通知が続きます</span></span>
         </button></div>`;
     const statusBtn = canPost
       ? `<button class="btn" onclick="openAnnouncementStatus('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px">対応状況</button>`
