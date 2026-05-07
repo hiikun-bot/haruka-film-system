@@ -6250,6 +6250,350 @@ router.post('/announcements/:id/remind', requireAuth, requirePermission('member.
   res.json({ success: true, remindedCount: unacked.length, slackPosted });
 });
 
+// ============================================================
+// ADR 008 Stage 3: 「リーダーに依頼」督促DM
+// ============================================================
+// 各チームのリーダー (team_members.leader_rank='leader') 宛に個別DMを送る。
+// - リーダー1人 = DM 1通（自チームの未対応者一覧をメンションで列挙）
+// - リーダー不在チーム / 未所属の未対応者 → 秘書チーム (teams.team_type='secretary') へ
+//   まとめて 1通エスカレ
+// - 全員対応済みのチームはスキップ
+// - 24h dedup: 同じ announcement × 同じ受信者 へ 24h 以内に送信済みなら、
+//   force=1 が指定されない限りスキップ
+// 通知の媒体: 既存 announcement remind と同じ Slack channel + in-app notification_logs
+// （個別DMは「Slack channel に <@user_id> メンション付きで投稿」する形で実現する。
+//  プロジェクトの既存パターン参照: notifications.js の sendNotif）
+//
+// 既存の /announcements/:id/remind とは別系統で動く（並走可）。
+router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const annId = req.params.id;
+  const force = req.query.force === '1' || req.body?.force === true;
+
+  // announcement 取得
+  const { data: ann, error: aErr } = await supabase.from('announcements')
+    .select('id, title, deadline_at, is_active')
+    .eq('id', annId).maybeSingle();
+  if (aErr) return res.status(500).json({ error: aErr.message });
+  if (!ann) return res.status(404).json({ error: '連絡が見つかりません' });
+
+  // 全アクティブメンバー（team_id 含む）
+  const { data: members, error: mErr } = await supabase.from('users')
+    .select('id, full_name, role, slack_dm_id, team_id, is_active')
+    .eq('is_active', true);
+  if (mErr) return res.status(500).json({ error: mErr.message });
+
+  // 完了済 user_id
+  const { data: acks, error: kErr } = await supabase.from('announcement_acks')
+    .select('user_id, done_at').eq('announcement_id', annId);
+  if (kErr) return res.status(500).json({ error: kErr.message });
+  const doneSet = new Set((acks || []).filter(a => a.done_at).map(a => a.user_id));
+
+  // 未対応者
+  const unacked = (members || []).filter(m => !doneSet.has(m.id));
+  if (unacked.length === 0) {
+    return res.status(400).json({ error: '全員対応済みです' });
+  }
+
+  // チーム情報（team_type, team_code, team_name）
+  const { data: teams, error: tErr } = await supabase.from('teams')
+    .select('id, team_code, team_name, team_type, director_id').order('team_code');
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  const teamById = new Map((teams || []).map(t => [t.id, t]));
+  const secretaryTeamIds = new Set((teams || []).filter(t => t.team_type === 'secretary').map(t => t.id));
+
+  // 「基本チーム」= team_code が単一の英大文字 (announcement status と同じ仕様)
+  const isBasicTeam = (code) => typeof code === 'string' && /^[A-Z]$/.test(code);
+  const basicTeamIdSet = new Set((teams || []).filter(t => isBasicTeam(t.team_code)).map(t => t.id));
+
+  // team_members.leader_rank='leader' Map (migration 未適用環境では空 Map のままにする)
+  const teamLeaderMap = new Map(); // team_id -> leader user_id
+  try {
+    const { data: tmRows, error: tmErr } = await supabase
+      .from('team_members')
+      .select('team_id, user_id, leader_rank')
+      .eq('leader_rank', 'leader');
+    if (!tmErr && Array.isArray(tmRows)) {
+      tmRows.forEach(r => {
+        if (r.team_id && r.user_id) teamLeaderMap.set(r.team_id, r.user_id);
+      });
+    } else if (tmErr) {
+      console.warn('[leader-remind] team_members leader_rank fetch skipped:', tmErr.message);
+    }
+  } catch (e) {
+    console.warn('[leader-remind] team_members leader_rank fetch error:', e.message);
+  }
+
+  // ユーザーをチームごとに振り分け
+  const unackedByTeam = new Map(); // team_id -> [members]
+  const unackedNoTeam = []; // 基本チームに属さない未対応者
+  unacked.forEach(u => {
+    if (u.team_id && basicTeamIdSet.has(u.team_id)) {
+      if (!unackedByTeam.has(u.team_id)) unackedByTeam.set(u.team_id, []);
+      unackedByTeam.get(u.team_id).push(u);
+    } else {
+      unackedNoTeam.push(u);
+    }
+  });
+
+  // 秘書チームメンバー（leader 不在チーム / 未所属メンバーのエスカレ先）
+  // 秘書ロール（users.role='secretary'）または team_type='secretary' チーム所属者を秘書扱い
+  const secretaryMembers = (members || []).filter(m =>
+    m.role === 'secretary' || (m.team_id && secretaryTeamIds.has(m.team_id))
+  );
+  // 秘書本人が未対応の場合でも、エスカレ DM は受け取る側として送る（セルフ宛も可）。
+  // ただし重複は user_id でユニーク化。
+
+  // リーダー宛 / 秘書宛 の送信タスクを組み立てる
+  // 各タスク: { recipientUserId, members: [unacked...], teamLabel, kind }
+  const tasks = [];
+  // 1) リーダーが居るチーム
+  for (const [teamId, ms] of unackedByTeam.entries()) {
+    if (ms.length === 0) continue;
+    const leaderUserId = teamLeaderMap.get(teamId);
+    const team = teamById.get(teamId);
+    const teamLabel = team
+      ? `${team.team_code}チーム${team.team_name ? ' / ' + team.team_name : ''}`
+      : '';
+    if (leaderUserId) {
+      tasks.push({
+        recipientUserId: leaderUserId,
+        members: ms,
+        teamLabel,
+        teamId,
+        escalation: false,
+      });
+    } else {
+      // リーダー不在 → 秘書宛にまとめる（あとで集約）
+      // 一旦ここでは「秘書送信用バッファ」として保持
+      tasks.push({
+        recipientUserId: null, // 後で秘書全員に展開
+        members: ms,
+        teamLabel,
+        teamId,
+        escalation: true,
+      });
+    }
+  }
+  // 2) 未所属の未対応者
+  if (unackedNoTeam.length > 0) {
+    tasks.push({
+      recipientUserId: null,
+      members: unackedNoTeam,
+      teamLabel: '未所属',
+      teamId: null,
+      escalation: true,
+    });
+  }
+
+  // 24h dedup チェック: notification_logs に同 announcement × 同 user × kind='leader_remind' / 'leader_remind_escalation'
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const recipientCandidates = new Set();
+  tasks.forEach(t => {
+    if (t.recipientUserId) recipientCandidates.add(t.recipientUserId);
+  });
+  // エスカレ宛は秘書全員 → 受信者集合に追加
+  if (tasks.some(t => t.escalation)) {
+    secretaryMembers.forEach(m => recipientCandidates.add(m.id));
+  }
+  const dedupSkipSet = new Set(); // 直近24h で送信済の (recipientUserId)
+  if (!force && recipientCandidates.size > 0) {
+    try {
+      const { data: recent, error: rErr } = await supabase
+        .from('notification_logs')
+        .select('user_id, notification_type, meta, created_at')
+        .in('user_id', Array.from(recipientCandidates))
+        .in('notification_type', ['leader_remind', 'leader_remind_escalation'])
+        .gte('created_at', since);
+      if (!rErr && Array.isArray(recent)) {
+        recent.forEach(row => {
+          const annIdInMeta = row.meta && row.meta.announcement_id;
+          if (annIdInMeta === annId) dedupSkipSet.add(row.user_id);
+        });
+      } else if (rErr) {
+        console.warn('[leader-remind] dedup check failed:', rErr.message);
+      }
+    } catch (e) {
+      console.warn('[leader-remind] dedup check error:', e.message);
+    }
+  }
+
+  // Slack channel URL（既存 broadcast_slack_channel_url を使う）
+  let slackChannelUrl = null;
+  try {
+    const { data: setting } = await supabase.from('system_settings')
+      .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
+    slackChannelUrl = setting?.value || null;
+  } catch (e) {
+    console.warn('[leader-remind] system_settings fetch failed:', e.message);
+  }
+
+  // 期限残日数
+  const remainDaysText = ann.deadline_at
+    ? (() => {
+        const ms = new Date(ann.deadline_at).getTime() - Date.now();
+        const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
+        return days >= 0 ? `（残り${days}日）` : `（${Math.abs(days)}日超過）`;
+      })()
+    : '';
+  const deadlineText = ann.deadline_at
+    ? new Date(ann.deadline_at).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
+
+  // メンバー行を組み立て: slack_dm_id があれば <@id>、無ければ名前
+  const memberMention = (m) => m.slack_dm_id ? `<@${m.slack_dm_id}> さん` : `${m.full_name || '(名前未設定)'} さん`;
+
+  // Slack 投稿: 1リーダー = 1メッセージ（チャンネルに投稿しつつ <@リーダー> メンションでDM相当）
+  // 個別 user_id への DM は Slack 仕様上、bot との会話を開いていない場合うまく届かないため、
+  // 既存パターンに合わせて「broadcast_slack_channel_url に <@リーダー> 付きで投稿」する。
+  // 結果として「リーダー宛の個別お声がけ」として可視化される。
+  const buildLeaderText = (recipient, ms, teamLabel) => {
+    const lines = [];
+    const headerName = recipient && recipient.slack_dm_id ? `<@${recipient.slack_dm_id}>` : (recipient?.full_name || '');
+    lines.push(`${headerName} お疲れさまです 🙏`);
+    lines.push(`\`【リーダーへ依頼】「${ann.title}」\` に未対応のメンバーがいます。`);
+    if (deadlineText) lines.push(`期限: ${deadlineText} ${remainDaysText}`);
+    if (teamLabel) lines.push(`対象: ${teamLabel}`);
+    lines.push('');
+    ms.forEach(m => lines.push(`・${memberMention(m)}`));
+    lines.push('');
+    lines.push('お声がけお願いします 🙇‍♂️');
+    return lines.join('\n');
+  };
+  const buildEscalationText = (recipients, escalationGroups) => {
+    // recipients = 秘書メンバー配列、escalationGroups = [{ teamLabel, members }]
+    const lines = [];
+    if (recipients.length > 0) {
+      const head = recipients.filter(r => r.slack_dm_id).map(r => `<@${r.slack_dm_id}>`).join(' ');
+      if (head) lines.push(`${head} お疲れさまです 🙏`);
+    }
+    lines.push(`\`【未所属/リーダー不在 督促依頼】「${ann.title}」\``);
+    if (deadlineText) lines.push(`期限: ${deadlineText} ${remainDaysText}`);
+    lines.push('');
+    escalationGroups.forEach(g => {
+      lines.push(`▼ ${g.teamLabel}`);
+      g.members.forEach(m => lines.push(`・${memberMention(m)}`));
+    });
+    lines.push('');
+    lines.push('リーダー不在のため、秘書チームから直接お声がけお願いします 🙇‍♂️');
+    return lines.join('\n');
+  };
+
+  // 実行
+  const sentLog = []; // { recipient_user_id, members: [user_id], escalation }
+  const skippedLog = []; // { recipient_user_id, reason }
+  const dmRowsForLog = []; // notification_logs に書き込む行
+
+  // === Phase 1: リーダー直送 ===
+  const leaderTasks = tasks.filter(t => !t.escalation && t.recipientUserId);
+  for (const task of leaderTasks) {
+    if (dedupSkipSet.has(task.recipientUserId)) {
+      skippedLog.push({ recipient_user_id: task.recipientUserId, reason: 'dedup_24h' });
+      continue;
+    }
+    const recipient = (members || []).find(m => m.id === task.recipientUserId) || null;
+    const text = buildLeaderText(recipient, task.members, task.teamLabel);
+    if (slackChannelUrl) {
+      try {
+        const r = await notif.sendSlackChannel(slackChannelUrl, text);
+        if (!r.ok) console.warn('[leader-remind] slack push failed:', r.reason);
+      } catch (e) {
+        console.warn('[leader-remind] slack push error:', e.message);
+      }
+    }
+    sentLog.push({
+      recipient_user_id: task.recipientUserId,
+      team_id: task.teamId,
+      team_label: task.teamLabel,
+      member_count: task.members.length,
+      escalation: false,
+    });
+    dmRowsForLog.push({
+      user_id: task.recipientUserId,
+      notification_type: 'leader_remind',
+      title: 'リーダー督促依頼',
+      body: `${task.teamLabel}: ${task.members.length}名が未対応`,
+      link_url: null,
+      meta: {
+        announcement_id: annId,
+        team_id: task.teamId,
+        team_label: task.teamLabel,
+        member_ids: task.members.map(m => m.id),
+        member_names: task.members.map(m => m.full_name),
+      },
+      sender_id: req.user.id,
+    });
+  }
+
+  // === Phase 2: 秘書チームへエスカレ（1メッセージにまとめる） ===
+  const escalationTasks = tasks.filter(t => t.escalation);
+  if (escalationTasks.length > 0) {
+    // 受信側秘書（dedup を考慮）
+    const escalationRecipients = secretaryMembers.filter(m => !dedupSkipSet.has(m.id));
+    const escalationSkipped = secretaryMembers.filter(m => dedupSkipSet.has(m.id));
+    escalationSkipped.forEach(m => skippedLog.push({ recipient_user_id: m.id, reason: 'dedup_24h' }));
+
+    if (escalationRecipients.length > 0) {
+      const escalationGroups = escalationTasks.map(t => ({ teamLabel: t.teamLabel, members: t.members }));
+      const text = buildEscalationText(escalationRecipients, escalationGroups);
+      if (slackChannelUrl) {
+        try {
+          const r = await notif.sendSlackChannel(slackChannelUrl, text);
+          if (!r.ok) console.warn('[leader-remind] slack escalation push failed:', r.reason);
+        } catch (e) {
+          console.warn('[leader-remind] slack escalation push error:', e.message);
+        }
+      }
+      const totalEscMembers = escalationGroups.reduce((s, g) => s + g.members.length, 0);
+      sentLog.push({
+        recipient_user_ids: escalationRecipients.map(m => m.id),
+        team_label: '秘書チーム（エスカレ）',
+        member_count: totalEscMembers,
+        escalation: true,
+      });
+      escalationRecipients.forEach(r => {
+        dmRowsForLog.push({
+          user_id: r.id,
+          notification_type: 'leader_remind_escalation',
+          title: 'リーダー不在チームの督促依頼',
+          body: `${escalationGroups.length}グループ・${totalEscMembers}名が未対応`,
+          link_url: null,
+          meta: {
+            announcement_id: annId,
+            escalation: true,
+            groups: escalationGroups.map(g => ({
+              team_label: g.teamLabel,
+              member_ids: g.members.map(m => m.id),
+              member_names: g.members.map(m => m.full_name),
+            })),
+          },
+          sender_id: req.user.id,
+        });
+      });
+    } else if (secretaryMembers.length === 0) {
+      console.warn('[leader-remind] 秘書メンバーが居ないためエスカレ未送信');
+    }
+  }
+
+  // notification_logs 一括 INSERT
+  if (dmRowsForLog.length > 0) {
+    try {
+      const { createBulkNotifications } = require('../utils/notification');
+      await createBulkNotifications(dmRowsForLog);
+    } catch (e) {
+      console.warn('[leader-remind] notification insert failed:', e.message);
+    }
+  }
+
+  res.json({
+    success: true,
+    sent: sentLog,
+    skipped: skippedLog,
+    sent_count: sentLog.length,
+    skipped_count: skippedLog.length,
+    slack_channel_configured: !!slackChannelUrl,
+  });
+});
+
 // 対応状況（投稿者向け: 完了済みメンバー / 未完了メンバー）
 router.get('/announcements/:id/status', requireAuth, requirePermission('member.list'), async (req, res) => {
   const { data: ann, error: aErr } = await supabase.from('announcements')
