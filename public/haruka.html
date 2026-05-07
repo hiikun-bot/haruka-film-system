@@ -3731,6 +3731,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             </select>
           </div>
         </div>
+        <!-- ADR 008 Stage 2: リーダー / サブリーダー設定（役職とは独立した業務上の連絡窓口） -->
+        <div class="form-row" style="margin-bottom:0">
+          <div class="form-group" id="m-leader-rank-group">
+            <label class="form-label">リーダー <span style="font-size:11px;color:var(--text-muted);font-weight:400">（役職とは別の業務窓口）</span></label>
+            <select class="form-select" id="m-leader-rank" style="font-size:14px;padding:10px 12px">
+              <option value="">なし</option>
+              <option value="leader">👑 リーダー</option>
+              <option value="sub_leader">🥈 サブリーダー</option>
+            </select>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4">
+              リーダーは1チーム1人まで（既存リーダーは置き換えられます）。サブリーダーは複数人OK。
+            </div>
+          </div>
+          <div class="form-group">
+            <!-- 列幅維持用の空セル -->
+          </div>
+        </div>
         <div class="form-group" style="margin-bottom:4px">
           <label class="form-label">誕生日</label>
           <input class="form-input" id="m-birthday" type="date" style="font-size:14px;padding:10px 14px">
@@ -8190,7 +8207,12 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:center"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
-          <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${m.nickname}）</span>` : ''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}</td>
+          <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${m.nickname}）</span>` : ''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
+            // ADR 008 Stage 2: leader_rank バッジ（ロールチップとは別の業務窓口表示）
+            m.leader_rank === 'leader' ? ' <span style="font-size:10px;background:#FFE082;color:#7C5800;padding:1px 6px;border-radius:6px;font-weight:600">👑 リーダー</span>'
+            : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
+            : ''
+          }</td>
           <td style="padding:8px 12px;text-align:center">${mkBar(m.weekday_hours,'var(--em)','平日')}</td>
           <td style="padding:8px 12px;text-align:center">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<span style="font-size:11px;color:#bbb">休み</span>'}</td>
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
@@ -10663,6 +10685,8 @@ function openAddMember() {
   document.getElementById('m-role').value = 'editor';
   document.getElementById('m-job-type').value = 'video';
   document.getElementById('m-rank').value = '';
+  // ADR 008 Stage 2: 新規追加時はリーダー設定なし
+  if (document.getElementById('m-leader-rank')) document.getElementById('m-leader-rank').value = '';
   // 基本チーム（A〜Z単一英字）のみを候補にする
   populateMemberTeamSelect(null);
   document.getElementById('m-slack').value = '';
@@ -10723,6 +10747,8 @@ function openEditMember(m) {
     setVal('m-role', m.role || 'editor');
     setVal('m-job-type', m.job_type || 'video');
     setVal('m-rank', m.rank || '');
+    // ADR 008 Stage 2: 既存の leader_rank を select に反映（'leader' / 'sub_leader' / null）
+    setVal('m-leader-rank', (m.leader_rank === 'leader' || m.leader_rank === 'sub_leader') ? m.leader_rank : '');
     // 基本チーム（A〜Z単一英字）のみを候補にする。案件チームが入っていれば legacy option を追加
     try { populateMemberTeamSelect(m.team_id || null); } catch(e) { console.error('[openEditMember] populateMemberTeamSelect:', e); }
     setVal('m-slack', m.slack_dm_id || '');
@@ -11034,6 +11060,7 @@ async function submitMember() {
     // PR #277: クリエイティブ初期ビューは DB（creative_default_view）に保存済み。
     // 旧 localStorage キーは後方互換として残しているが、ここでは新規書き込みしない。
     // サーバーが silent drop した列があれば警告（本番DBに該当列が無い場合）
+    let savedUserId = id || null;
     try {
       const respJson = await res.clone().json();
       if (respJson && Array.isArray(respJson._droppedColumns) && respJson._droppedColumns.length > 0) {
@@ -11043,7 +11070,34 @@ async function submitMember() {
         );
         console.warn('[submitMember] silent drop:', respJson._droppedColumns);
       }
+      // 新規作成時は POST レスポンスに id が入っているのでそれを拾う
+      if (!savedUserId && respJson && respJson.id) savedUserId = respJson.id;
     } catch(_) {}
+    // ADR 008 Stage 2: leader_rank 更新（team_members 経由）— team_id が選択済みのときのみ
+    try {
+      const leaderRankRaw = document.getElementById('m-leader-rank')?.value || '';
+      const leaderRank = (leaderRankRaw === 'leader' || leaderRankRaw === 'sub_leader') ? leaderRankRaw : null;
+      if (savedUserId && team_id) {
+        const lrRes = await apiFetch(`${API}/teams/${team_id}/members/${savedUserId}/leader-rank`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leader_rank: leaderRank })
+        });
+        if (!lrRes.ok) {
+          // 権限不足（team.manage 未保有）等で失敗しても保存自体は成功扱い
+          const lrErr = await lrRes.json().catch(() => ({}));
+          if (lrRes.status !== 403) {
+            console.warn('[submitMember] leader-rank update failed:', lrErr.error || lrRes.status);
+            showToast('リーダー設定の更新に失敗しました: ' + (lrErr.error || lrRes.status), 'warn');
+          }
+        }
+      } else if (savedUserId && !team_id && leaderRank) {
+        // チーム未所属で leader 設定しようとした場合は警告（保存は成功）
+        showToast('所属チームを設定してからリーダー指定してください', 'warn');
+      }
+    } catch (e) {
+      console.warn('[submitMember] leader-rank step error:', e);
+    }
     closeModal('modal-member');
     await loadMembers();
   } else {
@@ -15551,7 +15605,11 @@ function _renderAnnouncementStatus() {
     const statusIcon = isDone
       ? `<span style="font-size:14px;flex-shrink:0" title="${m.done_at ? new Date(m.done_at).toLocaleString('ja-JP',{ month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : ''}">✅</span>`
       : `<span style="font-size:14px;flex-shrink:0">⏳</span>`;
-    const leaderBadge = leaderType === 'director' ? '<span style="font-size:9px;background:#FFE082;color:#7C5800;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0">👑 リーダー</span>'
+    // ADR 008 Stage 2: leader / sub_leader / producer / (legacy) director を区別
+    // 'director' は Stage 1 までの命名（leader_user_id ヒット時のフラグ）。Stage 2 で 'leader' エイリアスを併用。
+    const leaderBadge = (leaderType === 'leader' || leaderType === 'director')
+      ? '<span style="font-size:9px;background:#FFE082;color:#7C5800;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0">👑 リーダー</span>'
+      : leaderType === 'sub_leader' ? '<span style="font-size:9px;background:#BBDEFB;color:#0D47A1;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0">🥈 サブリーダー</span>'
       : leaderType === 'producer' ? '<span style="font-size:9px;background:#B3E5FC;color:#01579B;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0">PD</span>'
       : '';
     return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:0.5px solid var(--border-light)">
@@ -15583,11 +15641,14 @@ function _renderAnnouncementStatus() {
     const teamLabel = g.team_id
       ? `${esc(g.team_code)}チーム${g.team_name ? ' / ' + esc(g.team_name) : ''}`
       : '未所属';
+    // ADR 008 Stage 2: sub_leader_user_ids 配列（複数可）でサブリーダー判定
+    const subLeaderSet = new Set(Array.isArray(g.sub_leader_user_ids) ? g.sub_leader_user_ids : []);
     const memberRows = g.members.map(m => {
-      // ADR 008 Stage 1: g.leader_user_id（team_members.leader_rank='leader' 優先 / director_id フォールバック）
+      // ADR 008 Stage 1/2: g.leader_user_id（team_members.leader_rank='leader' 優先 / director_id フォールバック）
       // を「リーダー」バッジ判定に使う。バックエンドが古い場合は director_id にフォールバック。
       const leaderUserId = g.leader_user_id || g.director_id;
-      const leaderType = (m.user_id === leaderUserId) ? 'director'
+      const leaderType = (m.user_id === leaderUserId) ? 'leader'
+        : subLeaderSet.has(m.user_id) ? 'sub_leader'
         : (m.user_id === g.producer_id) ? 'producer'
         : null;
       return renderMemberRow(m, leaderType);
