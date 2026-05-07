@@ -20985,10 +20985,6 @@ async function renderFilenameTemplatesPage() {
       <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:92vw">
         <div style="font-size:16px;font-weight:700;margin-bottom:14px">カスタムトークンを追加</div>
         <div class="form-group">
-          <label class="form-label">key（英数字・案件側 override で使う識別子）<span style="color:#E24B4A">*</span></label>
-          <input class="form-input" id="fn-custom-key" placeholder="例: celebrity" style="font-family:monospace">
-        </div>
-        <div class="form-group">
           <label class="form-label">表示ラベル <span style="color:#E24B4A">*</span></label>
           <input class="form-input" id="fn-custom-label" placeholder="例: 芸能人有無">
         </div>
@@ -20996,6 +20992,16 @@ async function renderFilenameTemplatesPage() {
           <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
           <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
         </div>
+        <details style="margin-top:10px">
+          <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">▸ 上級設定（key を指定する）</summary>
+          <div style="margin-top:8px">
+            <label class="form-label">key（任意・空欄なら自動採番）</label>
+            <input class="form-input" id="fn-custom-key" placeholder="自動 (c_1, c_2, ...)" style="font-family:monospace">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              別テンプレでも同じ key を使うと、案件側 override で値が連動します。
+            </div>
+          </div>
+        </details>
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
           <button class="btn" onclick="closeFnCustomModal()">キャンセル</button>
           <button class="btn-primary" onclick="confirmAddFnCustomToken()">追加</button>
@@ -21315,34 +21321,61 @@ function openFnCustomModal() {
   document.getElementById('fn-custom-key').value = '';
   document.getElementById('fn-custom-label').value = '';
   document.getElementById('fn-custom-default').value = '';
+  // 上級設定 details を毎回閉じた状態で開く
+  const det = document.querySelector('#fn-custom-modal details');
+  if (det) det.open = false;
   document.getElementById('fn-custom-modal').style.display = 'flex';
+  // ラベル入力欄にフォーカス（key 入力をスキップして直接ラベル入力できるよう）
+  setTimeout(() => {
+    const labelInput = document.getElementById('fn-custom-label');
+    if (labelInput) labelInput.focus();
+  }, 50);
 }
 function closeFnCustomModal() {
   const m = document.getElementById('fn-custom-modal');
   if (m) m.style.display = 'none';
 }
+// テンプレ内の既存 token の key と衝突しない c_N 形式の key を採番
+function _autoGenerateFnCustomKey(existingKeys) {
+  const used = new Set(existingKeys);
+  // システムトークンの key とも被らないように
+  for (const s of (typeof FN_SYSTEM_TOKENS !== 'undefined' ? FN_SYSTEM_TOKENS : [])) {
+    used.add(s.key);
+  }
+  let n = 1;
+  while (used.has('c_' + n)) n++;
+  return 'c_' + n;
+}
 function confirmAddFnCustomToken() {
   const d = _fnTplState.draft;
   if (!d) return;
-  const key = document.getElementById('fn-custom-key').value.trim();
+  const manualKey = document.getElementById('fn-custom-key').value.trim();
   const label = document.getElementById('fn-custom-label').value.trim();
   const def = document.getElementById('fn-custom-default').value;
-  if (!key || !label) {
-    showToast('key と表示ラベルは必須です', 'warn');
+  if (!label) {
+    showToast('表示ラベルは必須です', 'warn');
     return;
   }
-  if (!/^[a-z0-9_]+$/i.test(key)) {
-    showToast('key は英数字とアンダースコアのみ使用できます', 'warn');
-    return;
-  }
-  // システムトークンの key と被らないように
-  if (FN_SYSTEM_TOKENS.some(s => s.key === key)) {
-    showToast(`"${key}" はシステムトークンの key と被るため使えません`, 'warn');
-    return;
-  }
-  if (d.tokens.some(t => t.key === key)) {
-    showToast(`"${key}" は既に追加されています`, 'warn');
-    return;
+  let key;
+  if (manualKey) {
+    // 上級設定で手動指定された場合
+    if (!/^[a-z0-9_]+$/i.test(manualKey)) {
+      showToast('key は英数字とアンダースコアのみ使用できます', 'warn');
+      return;
+    }
+    if (FN_SYSTEM_TOKENS.some(s => s.key === manualKey)) {
+      showToast(`"${manualKey}" はシステムトークンの key と被るため使えません`, 'warn');
+      return;
+    }
+    if (d.tokens.some(t => t.key === manualKey)) {
+      showToast(`同じ key "${manualKey}" が既に使われています`, 'warn');
+      return;
+    }
+    key = manualKey;
+  } else {
+    // 自動採番
+    const existingKeys = d.tokens.map(t => t.key);
+    key = _autoGenerateFnCustomKey(existingKeys);
   }
   d.tokens.push({ kind: 'custom', key, label, default: def || '' });
   closeFnCustomModal();
