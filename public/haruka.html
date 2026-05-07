@@ -110,10 +110,15 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .bf-c.on{background:#FAEEDA;color:#854F0B;border-color:#EF9F27}
 
 /* アラートバー */
-.alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px}
+.alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
 .alert-dot{width:8px;height:8px;border-radius:50%;background:#E24B4A;flex-shrink:0}
 .alert-text{color:#A32D2D;font-weight:500}
-.alert-names{color:#A32D2D}
+.alert-names{color:#A32D2D;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.alert-chip{background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 8px;color:#A32D2D;cursor:pointer;font-size:12px;line-height:1.5;display:inline-flex;align-items:center;gap:4px;transition:background .12s}
+.alert-chip:hover{background:#FFE7E7}
+.alert-chip small{color:#B86A6A;font-size:11px}
+.alert-filter-btn{margin-left:auto;background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 10px;color:#A32D2D;cursor:pointer;font-size:12px;font-weight:500}
+.alert-filter-btn:hover{background:#FFE7E7}
 
 /* サマリーカード */
 .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}
@@ -9926,11 +9931,16 @@ function renderAlerts() {
   const el = document.getElementById('alert-container');
   if (!el) return;
   if (!late.length) { el.innerHTML=''; return; }
-  const names = late.map(c => {
+  const chips = late.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
-    return `${e?.users?.full_name||'?'}（${c.projects?.clients?.name||'?'}）`;
-  }).join('、');
-  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ：</span><span class="alert-names">${names}</span></div>`;
+    const person = e?.users?.full_name || '?';
+    const client = c.projects?.clients?.name || '?';
+    const raw = c.file_name || '';
+    const shortName = raw.length > 22 ? `${raw.slice(0,8)}…${raw.slice(-10)}` : raw;
+    const title = `${person}（${client}）${raw ? ' / ' + raw : ''}`;
+    return `<span class="alert-chip" onclick="openCreativeDetail('${c.id}')" title="${esc(title)}">${esc(person)}<small>（${esc(client)}）</small>${shortName?` <small>${esc(shortName)}</small>`:''}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ ${late.length}件：</span><span class="alert-names">${chips}</span><button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button></div>`;
 }
 
 function setClient(btn, id) {
