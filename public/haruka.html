@@ -15636,6 +15636,32 @@ function updateTweetCounter() {
   }
 }
 
+// アスペクト比を保持して maxW × maxH に収めるリサイズ（クロップしない）
+function resizeImageContainToBlob(file, maxW, maxH, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const sw = img.width, sh = img.height;
+        const scale = Math.min(maxW / sw, maxH / sh, 1); // 拡大はしない
+        const dw = Math.max(1, Math.round(sw * scale));
+        const dh = Math.max(1, Math.round(sh * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = dw;
+        canvas.height = dh;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, dw, dh);
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('画像変換に失敗しました')), 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('画像読み込みに失敗しました'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('ファイル読み込みに失敗しました'));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function processTweetImageFile(file) {
   if (!file) return;
   const status = document.getElementById('tw-image-status');
@@ -15649,11 +15675,11 @@ async function processTweetImageFile(file) {
   }
   status.textContent = '画像処理中...';
   try {
-    // 長辺 1024px / JPEG 0.85 にリサイズ
-    const blob = await resizeImageToBlob(file, 1024, 1024, 0.85);
+    // 長辺 1024px / JPEG 0.85 にリサイズ（アスペクト比保持・クロップなし）
+    const blob = await resizeImageContainToBlob(file, 1024, 1024, 0.85);
     if (blob.size > 500 * 1024) {
-      // さらに圧縮: 800px / 0.75
-      const blob2 = await resizeImageToBlob(file, 800, 800, 0.75);
+      // さらに圧縮: 長辺 800px / 0.75
+      const blob2 = await resizeImageContainToBlob(file, 800, 800, 0.75);
       if (blob2.size > 500 * 1024) {
         showToast('画像サイズが大きすぎます。別の写真を選んでください', 'warn');
         status.textContent = '';
