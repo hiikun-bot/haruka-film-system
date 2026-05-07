@@ -717,6 +717,9 @@ function _formatAutoErrorText(payload) {
     const nav = trace.navigation || {};
     const lastScript = trace.lastScript || {};
     const vp = trace.viewport || {};
+    const ps = trace.pageshow || {};
+    const em = trace.errorMeta || {};
+    const rt = trace.resourceTarget || {};
     const traceLines = [
       `readyState=${trace.readyState || '-'}`,
       `visibility=${trace.visibilityState || '-'}`,
@@ -725,6 +728,8 @@ function _formatAutoErrorText(payload) {
       `scriptCount=${trace.scriptCount || '-'}`,
       `lastScript=${lastScript.src || '-'}`,
       `navType=${nav.type || '-'}`,
+      `pageshow.persisted=${ps.persisted ?? '-'}`,
+      `msSincePageshow=${ps.msSincePageshow ?? '-'}`,
       `transfer=${nav.transferSize || 0}`,
       `encoded=${nav.encodedBodySize || 0}`,
       `decoded=${nav.decodedBodySize || 0}`,
@@ -733,8 +738,39 @@ function _formatAutoErrorText(payload) {
       `domInteractive=${nav.domInteractive || '-'}`,
       `domComplete=${nav.domComplete || '-'}`,
     ];
+    if (em && (em.name || em.toString || em.messageProp)) {
+      traceLines.push(
+        `error.name=${em.name || '-'}`,
+        `error.toString=${em.toString || '-'}`,
+        `error.messageProp=${em.messageProp || '-'}`,
+      );
+    }
+    if (rt && (rt.tagName || rt.src || rt.href)) {
+      traceLines.push(
+        `resource.tag=<${rt.tagName || '?'}>`,
+        `resource.src=${rt.src || rt.href || rt.currentSrc || '-'}`,
+        `resource.id=${rt.id || '-'}`,
+        `resource.crossOrigin=${rt.crossOrigin || '-'}`,
+      );
+    }
     lines.push('*原因特定トレース*:');
     lines.push('```' + _truncate(traceLines.join('\n'), 1800) + '```');
+
+    // ソーススナップショット: window.onerror が報告した lineno/colno の実際の中身。
+    // 「2433:84 が </div> に見える」系の謎エラーを実体で特定するための切り札。
+    if (trace.sourceSnippet && typeof trace.sourceSnippet === 'object') {
+      const ss = trace.sourceSnippet;
+      const ssLines = [
+        `totalLines=${ss.totalLines || '-'}`,
+        `lineLen=${ss.lineLen || '-'}`,
+        `col=${ss.col || '-'}`,
+        `prevLine: ${ss.prevLine || ''}`,
+        `THIS:     ${ss.excerpt || ''}`,
+        `nextLine: ${ss.nextLine || ''}`,
+      ];
+      lines.push('*該当行スナップショット*:');
+      lines.push('```' + _truncate(ssLines.join('\n'), 1500) + '```');
+    }
   }
   // breadcrumbs: ユーザーの直前行動（最大 8 件、新→古の順で表示）
   if (Array.isArray(breadcrumbs) && breadcrumbs.length) {

@@ -1786,6 +1786,60 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     window.__addBreadcrumb = addBreadcrumb;
     window.__getBreadcrumbs = function() { return _breadcrumbs.slice(); };
 
+    // ===== bfcache (back/forward cache) 追跡 =====
+    // navType=back_forward でエラーが多発したため、pageshow.persisted と
+    // 復帰からの経過時間を毎エラーに同梱する。
+    var _lastPageshow = { ts: null, persisted: null };
+    try {
+      window.addEventListener('pageshow', function(ev) {
+        try {
+          _lastPageshow = { ts: Date.now(), persisted: !!(ev && ev.persisted) };
+          // 復帰時にもブレッドクラムへ残す
+          if (typeof addBreadcrumb === 'function') {
+            addBreadcrumb('pageshow', { persisted: _lastPageshow.persisted });
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+
+    // window.onerror が報告した lineno/colno は document の絶対行番号（インライン script を含む）。
+    // 該当行を 200字でスナップショットし、column 位置にマーカーを入れて返す。
+    // 「2433:84 が </div> に見える」系の謎エラーは、このスナップショットで実態を即特定できる。
+    function _extractLineSnippet(filename, lineno, colno) {
+      try {
+        if (lineno == null) return null;
+        // filename がページ本体（同オリジン haruka.html）以外なら現在の document からは取れない
+        if (filename) {
+          try {
+            var u = new URL(String(filename), location.href);
+            if (u.origin !== location.origin) return null;
+            if (!/\/haruka\.html(\?|$|#)/.test(u.pathname + u.search)) return null;
+          } catch (_) { /* URL parse 失敗時は試みる */ }
+        }
+        var html = document.documentElement && document.documentElement.outerHTML;
+        if (!html) return null;
+        var lines = html.split('\n');
+        var idx = Number(lineno) - 1;
+        if (idx < 0 || idx >= lines.length) return null;
+        var line = lines[idx] || '';
+        var col = colno != null ? Number(colno) : 0;
+        var start = Math.max(0, col - 80);
+        var end = Math.min(line.length, col + 80);
+        return {
+          totalLines: lines.length,
+          lineLen: line.length,
+          col: col,
+          // 該当行 ±80 文字。前後に省略マーカー
+          excerpt: (start > 0 ? '…' : '') + line.slice(start, end) + (end < line.length ? '…' : ''),
+          // ±1 行も付ける（インライン script の境界が分かるように）
+          prevLine: (lines[idx - 1] || '').slice(0, 200),
+          nextLine: (lines[idx + 1] || '').slice(0, 200),
+        };
+      } catch (_) {
+        return null;
+      }
+    }
+
     function _collectAutoErrorTrace(extra) {
       var trace = {};
       try { trace.filename = extra && extra.filename ? String(extra.filename).slice(0, 500) : null; } catch (_) {}
@@ -1806,6 +1860,29 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             type: s.type || null,
           };
         }
+      } catch (_) {}
+      // bfcache 復帰関連
+      try {
+        trace.pageshow = {
+          persisted: _lastPageshow.persisted,
+          msSincePageshow: _lastPageshow.ts ? (Date.now() - _lastPageshow.ts) : null,
+        };
+      } catch (_) {}
+      // 該当行のソーススナップショット（謎の lineno:colno を実体で特定する）
+      try {
+        trace.sourceSnippet = _extractLineSnippet(
+          extra && extra.filename,
+          extra && extra.lineno,
+          extra && extra.colno
+        );
+      } catch (_) {}
+      // window.onerror が渡してきた error オブジェクトの追加情報
+      try {
+        if (extra && extra.errorMeta) trace.errorMeta = extra.errorMeta;
+      } catch (_) {}
+      // resource load エラー（<img>, <script> 読込失敗）の場合のターゲット情報
+      try {
+        if (extra && extra.resourceTarget) trace.resourceTarget = extra.resourceTarget;
       } catch (_) {}
       try {
         var nav = performance && performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
@@ -1880,8 +1957,49 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     // 全グローバルから参照できるようにしておく（apiFetch から fetch 5xx 検知に使う）
     window.__postAutoError = postAutoError;
 
+    // useCapture=true で resource load エラー（<img>/<script>/<link>）も捕捉する。
+    // bubble だけだと resource エラーは window まで上がらず、原因不明の Script error. の正体が掴めない。
     window.addEventListener('error', function(e) {
       try {
+        // resource load 失敗（e.target が Element）と script error を区別
+        var isResource = !!(e && e.target && e.target !== window && e.target.nodeType === 1);
+        if (isResource) {
+          var t = e.target;
+          postAutoError({
+            kind: 'resource.error',
+            message: '[resource load failed] <' + (t.tagName || '?').toLowerCase() + '> ' +
+                     (t.src || t.href || t.currentSrc || '(no src)'),
+            stack: null,
+            url: location.href,
+            filename: t.src || t.href || null,
+            lineno: null,
+            colno: null,
+            resourceTarget: {
+              tagName: (t.tagName || '').toLowerCase(),
+              src: t.src || null,
+              href: t.href || null,
+              currentSrc: t.currentSrc || null,
+              id: t.id || null,
+              className: typeof t.className === 'string' ? t.className.slice(0, 200) : null,
+              crossOrigin: t.crossOrigin || null,
+            },
+          });
+          return;
+        }
+        // script error 側： e.error から取れる詳細を全部足す
+        var errMeta = null;
+        try {
+          var er = e && e.error;
+          if (er) {
+            errMeta = {
+              name: er.name || (er.constructor && er.constructor.name) || null,
+              // toString() は "Script error." も含めて確実に文字列化する
+              toString: (function() { try { return String(er); } catch (_) { return null; } })(),
+              // エラー内に message が別途あるケース（ErrorEvent.message と差分があれば気付ける）
+              messageProp: er.message || null,
+            };
+          }
+        } catch (_) {}
         postAutoError({
           kind: 'window.onerror',
           message: e && e.message ? e.message : 'unknown error',
@@ -1890,9 +2008,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           filename: e && e.filename ? e.filename : null,
           lineno: e && e.lineno != null ? e.lineno : null,
           colno: e && e.colno != null ? e.colno : null,
+          errorMeta: errMeta,
         });
       } catch (_) {}
-    });
+    }, true);
     window.addEventListener('unhandledrejection', function(e) {
       try {
         var reason = e && e.reason;
