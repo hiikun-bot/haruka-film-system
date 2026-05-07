@@ -15784,7 +15784,10 @@ function openTweetCompose() {
   _twImageDataUrl = null;
   document.getElementById('tw-body').value = '';
   document.getElementById('tw-image-input').value = '';
-  document.getElementById('tw-image-preview').innerHTML = TWEET_IMAGE_PLACEHOLDER;
+  const preview = document.getElementById('tw-image-preview');
+  preview.innerHTML = TWEET_IMAGE_PLACEHOLDER;
+  // 空状態はプレースホルダ用に正方形枠に戻す
+  preview.style.aspectRatio = '1 / 1';
   document.getElementById('tw-image-status').textContent = '';
   updateTweetCounter();
   openModal('modal-tweet-compose');
@@ -15832,7 +15835,16 @@ async function processTweetImageFile(file) {
       r.onerror = reject;
       r.readAsDataURL(_twImageBlob);
     });
-    document.getElementById('tw-image-preview').innerHTML = `<img src="${_twImageDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block">`;
+    // 画像の自然な縦横比に枠を合わせる（max-height:280px は CSS 側で残るので縦長は枠で頭打ち）
+    const dims = await new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+      im.onerror = () => resolve({ w: 1, h: 1 });
+      im.src = _twImageDataUrl;
+    });
+    const preview = document.getElementById('tw-image-preview');
+    preview.style.aspectRatio = `${dims.w} / ${dims.h}`;
+    preview.innerHTML = `<img src="${_twImageDataUrl}" style="width:100%;height:100%;object-fit:contain;display:block">`;
     status.textContent = `画像準備OK (${(_twImageBlob.size / 1024).toFixed(0)} KB)`;
   } catch (err) {
     console.error(err);
