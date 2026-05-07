@@ -38,6 +38,7 @@
 | 通貨 / 課金タイプ / 時間単価 / %歩合 | [decisions/004](docs/design/decisions/004-pricing-extensibility.md) |
 | 見積ステータス / 契約状態 / 却下 / 進行管理 | [decisions/005](docs/design/decisions/005-estimate-deliverable-lifecycle.md) |
 | 案件固定費 / スタジオ / 機材 / 経費 / project_client_fees | [decisions/006](docs/design/decisions/006-project-fixed-costs.md) |
+| ファイル名テンプレート / filename_templates / トークン / 案件別命名規約 | [decisions/007](docs/design/decisions/007-filename-templates.md) |
 | 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
 | ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
 | 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
