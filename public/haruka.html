@@ -4642,7 +4642,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <!-- タブナビ（編集時のみ） -->
     <div id="p-tab-nav" style="display:none;padding:0 28px;border-bottom:1px solid var(--border);flex-shrink:0">
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
-      <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行） -->
+      <!-- ADR 001: 商材/訴求軸は creative-first 設計のため案件モーダルにも候補リスト管理タブを残す -->
+      <button id="p-tab-btn-products" onclick="switchProjectTab('products')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">📦 商材</button>
+      <button id="p-tab-btn-appeal-axes" onclick="switchProjectTab('appeal-axes')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">🎯 訴求軸</button>
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
       <!-- 「💰 収支」タブは廃止。報酬ボタンから modal-project-finance を直接開く -->
     </div>
@@ -4955,14 +4957,92 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     </div><!-- /p-tab-panel-main -->
 
-    <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行）。
-         旧 #p-tab-panel-sync は削除済み。関連JSは Stage C で削除予定。 -->
-    <!-- Stage A: 旧トグル参照を残すコードのために最小限の hidden stub を残す -->
+    <!-- ADR 001: 案件は "候補リストの管理" のみ。creativeモーダル側で 1つを選ぶ UI を提供。 -->
+
+    <!-- 旧 #p-tab-panel-sync は削除済み。submitProject() が値を読まないよう非表示で残す -->
     <div id="p-tab-panel-sync" style="display:none"></div>
-    <input type="checkbox" id="p-sync-products" style="display:none">
-    <input type="checkbox" id="p-sync-axes" style="display:none">
-    <div id="p-products-override" style="display:none"></div>
-    <div id="p-axes-override" style="display:none"></div>
+
+    <!-- パネル：📦 商材 -->
+    <div id="p-tab-panel-products" style="display:none;padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+        <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材</span>
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:500" id="p-sync-products-desc">クライアントの商材マスターを参照します</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">OFF にするとこの案件専用の商材リストを管理できます</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+            <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+            <div onclick="toggleProjectSync('products')" style="cursor:pointer">
+              <input type="checkbox" id="p-sync-products" style="display:none">
+              <div id="p-sync-products-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                <div id="p-sync-products-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="p-products-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の商材</span>
+          <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-products-list" style="margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="pp-code" placeholder="コード" style="width:90px;font-size:12px;font-family:monospace">
+            <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
+            <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
+            <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 14px" onclick="addProjectProduct()">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- パネル：🎯 訴求軸 -->
+    <div id="p-tab-panel-appeal-axes" style="display:none;padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+        <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">訴求軸</span>
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:500" id="p-sync-axes-desc">クライアントの訴求軸マスターを参照します</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">OFF にするとこの案件専用の訴求軸リストを管理できます</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+            <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+            <div onclick="toggleProjectSync('axes')" style="cursor:pointer">
+              <input type="checkbox" id="p-sync-axes" style="display:none">
+              <div id="p-sync-axes-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                <div id="p-sync-axes-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="p-axes-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の訴求軸</span>
+          <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-axes-list" style="margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="pa-code" placeholder="コード" style="width:90px;font-size:12px;font-family:monospace">
+            <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
+            <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
+            <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 14px" onclick="addProjectAxis()">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- パネル：案件チェックリスト -->
     <div id="p-tab-panel-checklist" style="display:none;padding:24px 28px">
@@ -12201,6 +12281,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
   document.getElementById('p-tab-panel-sync').style.display = 'none';
+  const _ppPanel = document.getElementById('p-tab-panel-products'); if (_ppPanel) _ppPanel.style.display = 'none';
+  const _paPanel = document.getElementById('p-tab-panel-appeal-axes'); if (_paPanel) _paPanel.style.display = 'none';
+  const _pcPanel = document.getElementById('p-tab-panel-checklist'); if (_pcPanel) _pcPanel.style.display = 'none';
   // 新規作成時は削除ボタンを必ず非表示
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = 'none';
@@ -12441,8 +12524,8 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  // 'sync' タブは Stage A で削除済み。'main' と 'checklist' のみ。
-  const tabs = ['main', 'checklist'];
+  // ADR 001: products / appeal-axes は creative-first 設計のためタブ復活。
+  const tabs = ['main', 'products', 'appeal-axes', 'checklist'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -12455,6 +12538,16 @@ function switchProjectTab(tab) {
     }
   });
   if (tab === 'checklist') loadProjectChecklistItems();
+  // 商材/訴求軸タブを開いたとき、独自設定モードならリスト再描画
+  if (tab === 'products') {
+    const projectId = document.getElementById('p-id').value;
+    const overrideOn = document.getElementById('p-products-override').style.display !== 'none';
+    if (projectId && overrideOn) renderProjectProducts(projectId);
+  } else if (tab === 'appeal-axes') {
+    const projectId = document.getElementById('p-id').value;
+    const overrideOn = document.getElementById('p-axes-override').style.display !== 'none';
+    if (projectId && overrideOn) renderProjectAxes(projectId);
+  }
 }
 
 // ==================== 成果物グループ（project_estimate_lines）Stage 4a ====================
