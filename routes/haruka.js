@@ -1587,7 +1587,9 @@ const isUniqueViolation = (err) => err && (err.code === '23505' || /duplicate ke
 const LINE_COST_SELECT_COLS = [
   'id, line_id, role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours, created_at',
   'role:roles(id, code, label, category, is_creator, is_internal)',
-  'user:users(id, name, email)'
+  // users テーブルの表示名は full_name（schema 8行目）。`name` は存在せず、PostgREST embed が
+  // `column users_1.name does not exist` で 500 を吐いていた（2026-05-07 22:42 観測）
+  'user:users(id, full_name, email)'
 ].join(', ');
 
 // 内部ヘルパ: line_id が指定 project_id に属するか確認
@@ -1676,7 +1678,7 @@ function _validatePricingFields(body, partial = false) {
 }
 
 // GET /api/projects/:project_id/lines/:line_id/costs  一覧取得
-// embed: roles(id, code, label, category, is_creator, is_internal), users(id, name, email)
+// embed: roles(id, code, label, category, is_creator, is_internal), users(id, full_name, email)
 router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
