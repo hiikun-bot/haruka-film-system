@@ -11,6 +11,7 @@ const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('..
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
+const { renderFilename } = require('../utils/filename');
 const {
   getUserRoleCodes,
   userHasRole,
@@ -641,7 +642,8 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
-    tags
+    tags,
+    filename_template_id, filename_token_overrides
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const normalizedTags = normalizeTags(tags);
@@ -668,6 +670,15 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
   };
+  // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
+  if (filename_template_id !== undefined && filename_template_id !== null && filename_template_id !== '') {
+    insertPayload.filename_template_id = filename_template_id;
+  }
+  if (filename_token_overrides !== undefined) {
+    insertPayload.filename_token_overrides = filename_token_overrides && typeof filename_token_overrides === 'object'
+      ? filename_token_overrides
+      : {};
+  }
   let { data, error } = await supabase
     .from('projects')
     .insert(insertPayload)
@@ -684,6 +695,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const { primary_category_id: _omit2, ...fallback2 } = insertPayload;
     const retry2 = await supabase.from('projects').insert(fallback2).select().single();
     data = retry2.data; error = retry2.error;
+  }
+  // ADR 007 Stage 1 migration 未適用ガード
+  if (error && /filename_template_id|filename_token_overrides/i.test(error.message || '')) {
+    const { filename_template_id: _o3a, filename_token_overrides: _o3b, ...fallback3 } = insertPayload;
+    const retry3 = await supabase.from('projects').insert(fallback3).select().single();
+    data = retry3.data; error = retry3.error;
   }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
@@ -705,7 +722,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
-    tags
+    tags,
+    filename_template_id, filename_token_overrides
   } = req.body;
   const updateData = {
     name, status,
@@ -725,6 +743,16 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   };
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
+  // ADR 007: ファイル名テンプレ選択 + custom トークン上書き（部分更新で巻き込み消失しないよう、明示時のみ反映）
+  if (filename_template_id !== undefined) {
+    updateData.filename_template_id = filename_template_id || null;
+  }
+  if (filename_token_overrides !== undefined) {
+    // 受け取った値をそのまま JSONB として保存（{} 等を含めても問題なし）
+    updateData.filename_token_overrides = filename_token_overrides && typeof filename_token_overrides === 'object'
+      ? filename_token_overrides
+      : {};
+  }
   // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
@@ -762,6 +790,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { primary_category_id: _omit2, ...fallback2 } = updateData;
     const retry2 = await supabase.from('projects').update(fallback2).eq('id', req.params.id).select().single();
     data = retry2.data; error = retry2.error;
+  }
+  // ADR 007 Stage 1 migration 未適用ガード
+  if (error && /filename_template_id|filename_token_overrides/i.test(error.message || '')) {
+    const { filename_template_id: _o3a, filename_token_overrides: _o3b, ...fallback3 } = updateData;
+    const retry3 = await supabase.from('projects').update(fallback3).eq('id', req.params.id).select().single();
+    data = retry3.data; error = retry3.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -1014,6 +1048,254 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
   }
   res.json({ ok: true });
 });
+
+// ==================== filename_templates (ADR 007 Stage 1) ====================
+// 案件別ファイル名テンプレ。設定タブで管理（CRUD）し、Stage 2 で案件モーダル
+// と routes/haruka.js の bulk-preview / bulk / 個別作成からテンプレ参照に
+// 切り替える。Stage 1 では「マスタ管理 + 列追加」のみ。
+//
+// schema-sync 失敗で本番に filename_templates テーブルが無い場合は、
+// 200/空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingFilenameTemplatesTable = (err) =>
+  err && /relation .*filename_templates.* does not exist|could not find the table/i.test(err.message || '');
+
+// tokens のサーバー側バリデーション（DB CHECK と二重）
+//   - 配列で要素が 1 件以上
+//   - serial / project_name / version の3キーが含まれる
+//   - serial が配列の先頭
+//   - 各要素は { kind: "system"|"custom", key, label?, default? } の形
+function validateFilenameTemplateTokens(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) {
+    return { ok: false, error: 'tokens は 1 件以上の配列で指定してください' };
+  }
+  for (const t of tokens) {
+    if (!t || typeof t !== 'object') {
+      return { ok: false, error: 'tokens の各要素はオブジェクトである必要があります' };
+    }
+    if (t.kind !== 'system' && t.kind !== 'custom') {
+      return { ok: false, error: `tokens.kind は "system" / "custom" のいずれか（受信: ${t.kind}）` };
+    }
+    if (typeof t.key !== 'string' || !t.key.trim()) {
+      return { ok: false, error: 'tokens.key は必須の文字列です' };
+    }
+  }
+  const keys = tokens.map(t => t.key);
+  for (const required of ['serial', 'project_name', 'version']) {
+    if (!keys.includes(required)) {
+      return { ok: false, error: `必須トークン "${required}" が含まれていません` };
+    }
+  }
+  if (keys[0] !== 'serial') {
+    return { ok: false, error: '"serial" は配列の先頭でなければなりません' };
+  }
+  return { ok: true };
+}
+
+// 区切り文字の許可リスト（UI でも同じ選択肢を出す）
+const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
+
+// GET /api/filename-templates  一覧（is_default が先頭、その後 name 昇順）
+router.get('/filename-templates', async (_req, res) => {
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .select('*')
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true });
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/filename-templates/:id  単件
+router.get('/filename-templates/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) return res.json(null);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || null);
+});
+
+// POST /api/filename-templates  新規（admin/secretary 権限想定）
+router.post('/filename-templates', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, separator, tokens, is_default } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name は必須です' });
+  }
+  const sep = (separator === undefined || separator === null) ? '_' : String(separator);
+  if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
+    return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
+  }
+  const v = validateFilenameTemplateTokens(tokens);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  const insert = {
+    name: name.trim(),
+    separator: sep,
+    tokens,
+    is_default: !!is_default,
+  };
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .insert(insert)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migrations/2026-05-07_filename_templates.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/filename-templates/:id  更新
+router.put('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, separator, tokens, is_default } = req.body || {};
+  const update = {};
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name は空にできません' });
+    }
+    update.name = name.trim();
+  }
+  if (separator !== undefined) {
+    const sep = String(separator);
+    if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
+      return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
+    }
+    update.separator = sep;
+  }
+  if (tokens !== undefined) {
+    const v = validateFilenameTemplateTokens(tokens);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    update.tokens = tokens;
+  }
+  if (is_default !== undefined) update.is_default = !!is_default;
+  if (Object.keys(update).length === 0) {
+    return res.status(400).json({ error: '更新するフィールドがありません' });
+  }
+  // updated_at はトリガで自動更新される
+
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migration を適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/filename-templates/:id
+//   - is_default のテンプレは削除不可
+//   - projects.filename_template_id で参照中の場合は 409
+router.delete('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const id = req.params.id;
+  // 自身が default かチェック
+  const { data: target, error: getErr } = await supabase
+    .from('filename_templates')
+    .select('id, is_default, name')
+    .eq('id', id)
+    .maybeSingle();
+  if (getErr) {
+    if (isMissingFilenameTemplatesTable(getErr)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: getErr.message });
+  }
+  if (!target) return res.status(404).json({ error: 'テンプレートが見つかりません' });
+  if (target.is_default) {
+    return res.status(409).json({ error: 'デフォルトテンプレートは削除できません。先に別テンプレを is_default=true に設定してください。' });
+  }
+  // 参照チェック（projects）
+  const { count: usedCount, error: refErr } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('filename_template_id', id);
+  if (refErr && !/column .*filename_template_id.* does not exist/i.test(refErr.message || '')) {
+    return res.status(500).json({ error: refErr.message });
+  }
+  if ((usedCount || 0) > 0) {
+    return res.status(409).json({
+      error: `このテンプレートは案件 ${usedCount} 件で使用中のため削除できません。先に他テンプレへ振り替えてください。`
+    });
+  }
+  const { error } = await supabase.from('filename_templates').delete().eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ---- Stage 2: テンプレ解決ヘルパ ----
+// project から filename_template_id / filename_token_overrides を読み出し、
+// 紐づく filename_templates レコードを返す。テンプレ未設定なら is_default=true を引く。
+// 取得失敗時は null を返し、呼び出し側でハードコードフォールバックする。
+//
+// 戻り値: { template, overrides } | null
+async function resolveProjectFilenameTemplate(project) {
+  if (!project) return null;
+  // schema-sync 失敗で列が無い場合に備え、両方とも optional として扱う
+  const overrides = (project.filename_token_overrides && typeof project.filename_token_overrides === 'object')
+    ? project.filename_token_overrides
+    : {};
+  let template = null;
+  if (project.filename_template_id) {
+    const { data, error } = await supabase
+      .from('filename_templates')
+      .select('*')
+      .eq('id', project.filename_template_id)
+      .maybeSingle();
+    if (!error && data) template = data;
+    if (error && isMissingFilenameTemplatesTable(error)) return null;
+  }
+  if (!template) {
+    const { data, error } = await supabase
+      .from('filename_templates')
+      .select('*')
+      .eq('is_default', true)
+      .order('created_at', { ascending: true })
+      .limit(1);
+    if (error && isMissingFilenameTemplatesTable(error)) return null;
+    if (!error && data && data.length) template = data[0];
+  }
+  if (!template) return null;
+  return { template, overrides };
+}
+
+// system トークンの値マップを組み立てる（bulk-preview / bulk / generate-filename 共通）
+// seqStr7 / dateStr / version / etc. は呼び出し側で計算済みのものを渡す
+function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr, version }) {
+  const productCode = body?.product_code || null;
+  const mediaCode   = body?.media_code   || null;
+  const fmtCode     = body?.creative_fmt || null;
+  const sizeCode    = body?.creative_size || null;
+  return {
+    serial:       seqStr7 || '',
+    project_name: project?.name || '',
+    version:      version || '',
+    date_yymmdd:  dateStr || '',
+    client_code:  project?.clients?.client_code || '',
+    product:      productCode || '',
+    appeal_axis:  appealType?.code || '',
+    size:         sizeCode || '',
+    format:       fmtCode || '',
+    media:        mediaCode || '',
+  };
+}
 
 // GET /api/status-templates?category_id=...
 //   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
@@ -1587,7 +1869,9 @@ const isUniqueViolation = (err) => err && (err.code === '23505' || /duplicate ke
 const LINE_COST_SELECT_COLS = [
   'id, line_id, role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours, created_at',
   'role:roles(id, code, label, category, is_creator, is_internal)',
-  'user:users(id, name, email)'
+  // users テーブルの表示名は full_name（schema 8行目）。`name` は存在せず、PostgREST embed が
+  // `column users_1.name does not exist` で 500 を吐いていた（2026-05-07 22:42 観測）
+  'user:users(id, full_name, email)'
 ].join(', ');
 
 // 内部ヘルパ: line_id が指定 project_id に属するか確認
@@ -1676,7 +1960,7 @@ function _validatePricingFields(body, partial = false) {
 }
 
 // GET /api/projects/:project_id/lines/:line_id/costs  一覧取得
-// embed: roles(id, code, label, category, is_creator, is_internal), users(id, name, email)
+// embed: roles(id, code, label, category, is_creator, is_internal), users(id, full_name, email)
 router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
@@ -3137,7 +3421,10 @@ router.post('/creatives/bulk-preview', async (req, res) => {
     return res.status(400).json({ error: '案件・種別・本数は必須です' });
   }
   const { data: project } = await supabase
-    .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
+    .from('projects')
+    .select('*, clients(id, name, client_code)')
+    .eq('id', project_id)
+    .single();
   let appealType = null;
   if (appeal_type_id) {
     const { data: at } = await supabase
@@ -3146,6 +3433,9 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   }
   if (!project) return res.status(400).json({ error: '案件が見つかりません' });
   if (appeal_type_id && !appealType) return res.status(400).json({ error: '訴求軸が見つかりません' });
+
+  // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
+  const tplResolved = await resolveProjectFilenameTemplate(project);
 
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
@@ -3164,10 +3454,19 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
     const seqStr7 = String(nextSeq).padStart(7, '0');
-    const appealCode = appealType ? appealType.code : '';
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
-      .map(p => (p||'').toString().trim()).filter(Boolean);
-    const fileName = parts.join('_');
+    let fileName;
+    if (tplResolved) {
+      const tokenValues = buildFilenameTokenValues({
+        project, appealType, body: req.body, seqStr7, dateStr, version: '',
+      });
+      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+    } else {
+      // 既存ハードコード仕様にフォールバック (silent skip / migration 未適用ガード)
+      const appealCode = appealType ? appealType.code : '';
+      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
+        .map(p => (p||'').toString().trim()).filter(Boolean);
+      fileName = parts.join('_');
+    }
     previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
     usedSeqs.push(nextSeq);
     nextSeq++;
@@ -3192,7 +3491,10 @@ router.post('/creatives/bulk', async (req, res) => {
     return res.status(400).json({ error: '本数は1〜100の間で指定してください' });
   }
   const { data: project } = await supabase
-    .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
+    .from('projects')
+    .select('*, clients(id, name, client_code)')
+    .eq('id', project_id)
+    .single();
   let appealType = null;
   if (appeal_type_id) {
     const { data: at } = await supabase
@@ -3205,6 +3507,10 @@ router.post('/creatives/bulk', async (req, res) => {
   if (appeal_type_id && !appealType) {
     return res.status(400).json({ error: '訴求軸が見つかりません' });
   }
+
+  // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
+  const tplResolved = await resolveProjectFilenameTemplate(project);
+
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
   const usedSeqs = (existingCreatives || []).map(c => {
@@ -3222,10 +3528,18 @@ router.post('/creatives/bulk', async (req, res) => {
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
     const seqStr7 = String(nextSeq).padStart(7, '0');
-    const appealCode = appealType ? appealType.code : '';
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
-      .map(p => (p||'').toString().trim()).filter(Boolean);
-    const fileName = parts.join('_');
+    let fileName;
+    if (tplResolved) {
+      const tokenValues = buildFilenameTokenValues({
+        project, appealType, body: req.body, seqStr7, dateStr, version: '',
+      });
+      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+    } else {
+      const appealCode = appealType ? appealType.code : '';
+      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
+        .map(p => (p||'').toString().trim()).filter(Boolean);
+      fileName = parts.join('_');
+    }
     const insert = { project_id, file_name: fileName, creative_type,
       appeal_type_id: appeal_type_id || null,
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
@@ -7442,11 +7756,21 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     return `${yy}${mm}${dd}`;
   })();
 
-  // 新ファイル名: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{7桁seq}
-  const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
-    .map(p => (p || '').toString().trim())
-    .filter(Boolean);
-  const newFileName = parts.join('_');
+  // ADR 007: ファイル名テンプレ解決
+  const tplResolved = await resolveProjectFilenameTemplate(project);
+  let newFileName;
+  if (tplResolved) {
+    const tokenValues = buildFilenameTokenValues({
+      project, appealType, body: req.body, seqStr7, dateStr, version: 'v1',
+    });
+    newFileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+  } else {
+    // ハードコードフォールバック: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{7桁seq}
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+      .map(p => (p || '').toString().trim())
+      .filter(Boolean);
+    newFileName = parts.join('_');
+  }
 
   res.json({
     file_name: newFileName,

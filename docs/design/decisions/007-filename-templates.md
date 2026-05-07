@@ -52,7 +52,7 @@ projects.filename_token_overrides jsonb
 
 ### tokens (JSONB) のスキーマ
 
-各要素は `{ kind, key?, label?, default? }` の形:
+各要素は `{ kind, key?, label?, default?, on_value?, off_value?, source? }` の形:
 
 ```json
 [
@@ -60,10 +60,23 @@ projects.filename_token_overrides jsonb
   { "kind": "system", "key": "project_name",  "label": "案件名" },
   { "kind": "system", "key": "size",          "label": "サイズ" },
   { "kind": "system", "key": "product",       "label": "商品" },
-  { "kind": "custom", "key": "celebrity",     "label": "芸能人有無", "default": "上地無" },
+  { "kind": "custom", "key": "c_1",           "label": "ハッシュタグ", "default": "" },
+  { "kind": "flag",   "key": "f_1",           "label": "芸能人有無",
+    "source": "talent_flag", "on_value": "上地有", "off_value": "上地無" },
   { "kind": "system", "key": "version",       "label": "バージョン" }
 ]
 ```
+
+### トークン種別（kind）
+
+| kind     | 意味                                        | 値の解決                                                |
+|----------|---------------------------------------------|---------------------------------------------------------|
+| `system` | システム既定の組み込みトークン              | 後述の値マップ                                          |
+| `custom` | 案件ごとに値を上書きするテキストトークン    | `overrides[key].value ?? token.default ?? ""`           |
+| `flag`   | creative の boolean 列を 2値で表現          | source 列が true なら `on_value`、false なら `off_value`|
+
+`flag` の `source` は **creatives テーブルの boolean 列名** を指す（v1 では `talent_flag` のみサポート）。
+将来的に他のフラグ列を追加する場合はサーバー側のホワイトリストを更新する。
 
 ### システム標準トークン（`kind: "system"`）
 
@@ -82,9 +95,20 @@ projects.filename_token_overrides jsonb
 
 ### カスタムトークン（`kind: "custom"`）
 
-- テンプレート定義時に任意の `key`（例: `celebrity` / `region` / `season`）と `label`、`default` を設定
+- テンプレート定義時に任意の `key`（自動採番 `c_1`/`c_2` …）と `label`、`default` を設定
 - 案件側で `projects.filename_token_overrides[key].value` で値を上書き
-- `label` も上書き可（あるる案件は "上地有/上地無"、別案件は "孫正義" 等）
+- `label` も上書き可
+
+### フラグトークン（`kind: "flag"`）
+
+- creative ごとに boolean を切り替え、ファイル名の該当部分が ON値/OFF値で自動切替されるトークン
+- v1 でサポートする `source`: **`talent_flag`** のみ（`creatives.talent_flag` の boolean 列。creative モーダル「🎬 芸能人」チェックボックスと同一）
+- テンプレ定義時: `on_value` / `off_value` を入力（例: ON値 = `上地有` / OFF値 = `上地無`）
+- 案件側 override: `projects.filename_token_overrides[key]` で `on_value` / `off_value` / `label` を上書き可
+  - 例) あるる案件: `{ "f_1": { "on_value": "上地有", "off_value": "上地無" } }`
+  - 例) 別案件: `{ "f_1": { "on_value": "孫正義有", "off_value": "孫正義無" } }`
+- 値解決: `creatives.talent_flag === true` なら `on_value`、それ以外なら `off_value`
+- 1テンプレ内の **同一 source の flag トークンは1個まで**（v1 制約。複数 boolean 列を扱う必要が出たら拡張）
 
 ### 必須トークン制約
 

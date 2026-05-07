@@ -667,11 +667,23 @@ function _gcAutoErrorMap() {
   }
 }
 
-function _autoErrorSignature({ kind, message, url }) {
+// Slack 通知の dedupe signature。message / apiPath に含まれる UUID や
+// 数値 ID を `:id` に正規化してから比較することで、同じ原因のエラーが
+// 「リソース ID 違いで N 通来る」現象を防ぐ。
+// 例: PR #338 デプロイ前に `column users_1.name does not exist` が
+// 5 本の line_id 分 Slack に流れた事故 (#TBD) の再発防止。
+function _normalizeIdsInPath(s) {
+  if (!s) return s;
+  return String(s)
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
+    .replace(/\/\d{3,}(?=\/|$|\?)/g, '/:id');
+}
+function _autoErrorSignature({ kind, message, url, apiPath }) {
   const k = String(kind || '').slice(0, 64);
-  const m = String(message || '').slice(0, 200);
+  const m = _normalizeIdsInPath(String(message || '')).slice(0, 200);
   const u = String(url || '').slice(0, 200);
-  return `${k}::${m}::${u}`;
+  const a = _normalizeIdsInPath(String(apiPath || '')).slice(0, 200);
+  return `${k}::${m}::${a}::${u}`;
 }
 
 function _truncate(s, max) {

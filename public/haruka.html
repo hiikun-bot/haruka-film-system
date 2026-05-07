@@ -110,10 +110,15 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .bf-c.on{background:#FAEEDA;color:#854F0B;border-color:#EF9F27}
 
 /* アラートバー */
-.alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px}
+.alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
 .alert-dot{width:8px;height:8px;border-radius:50%;background:#E24B4A;flex-shrink:0}
 .alert-text{color:#A32D2D;font-weight:500}
-.alert-names{color:#A32D2D}
+.alert-names{color:#A32D2D;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.alert-chip{background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 8px;color:#A32D2D;cursor:pointer;font-size:12px;line-height:1.5;display:inline-flex;align-items:center;gap:4px;transition:background .12s}
+.alert-chip:hover{background:#FFE7E7}
+.alert-chip small{color:#B86A6A;font-size:11px}
+.alert-filter-btn{margin-left:auto;background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 10px;color:#A32D2D;cursor:pointer;font-size:12px;font-weight:500}
+.alert-filter-btn:hover{background:#FFE7E7}
 
 /* サマリーカード */
 .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}
@@ -2064,6 +2069,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       try {
         var reason = e && e.reason;
         var msg = reason && reason.message ? reason.message : String(reason);
+
+        // 既知のメディア関連 promise rejection は Slack 通知から除外する。
+        // <video>.play() / requestFullscreen() / requestPictureInPicture() などは
+        // ・src が 404 / 未対応形式 → DOMException "The element has no supported sources."
+        // ・別の play 呼び出しで前のが中断 → "The play() request was interrupted ..."
+        // ・autoplay policy → NotAllowedError
+        // ・モーダル閉じで video が DOM から消えた直後の race
+        // のように UX 上は致命でなく、video の error イベントで fpShowLoadingError を
+        // 出してユーザーには既知のローディング失敗として見せている。Slack で再度通知すると
+        // 真のバグ通知が埋もれるため、このカテゴリは握りつぶす（コンソール warn は残す）。
+        if (typeof msg === 'string' && /element has no supported sources|The play\(\) request was interrupted|MEDIA_ERR_|NotAllowedError.*play|fullscreen|picture-in-picture/i.test(msg)) {
+          try { console.warn('[auto-error] suppressed known media rejection:', msg); } catch (_) {}
+          return;
+        }
+
         postAutoError({
           kind: 'unhandledrejection',
           message: msg,
@@ -4622,7 +4642,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <!-- タブナビ（編集時のみ） -->
     <div id="p-tab-nav" style="display:none;padding:0 28px;border-bottom:1px solid var(--border);flex-shrink:0">
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
-      <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行） -->
+      <!-- ADR 001: 商材/訴求軸は creative-first 設計のため案件モーダルにも候補リスト管理タブを残す -->
+      <button id="p-tab-btn-products" onclick="switchProjectTab('products')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">📦 商材</button>
+      <button id="p-tab-btn-appeal-axes" onclick="switchProjectTab('appeal-axes')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">🎯 訴求軸</button>
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
       <!-- 「💰 収支」タブは廃止。報酬ボタンから modal-project-finance を直接開く -->
     </div>
@@ -4865,6 +4887,30 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- ファイル名テンプレート (ADR 007 Stage 2) -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">📁 ファイル名テンプレート</span>
+            <span style="font-size:11px;color:var(--text-muted);font-weight:400">（提出ファイル名の命名規約）</span>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">テンプレ</label>
+            <select class="form-select" id="p-filename-template-id" onchange="onProjectFilenameTemplateChange()">
+              <option value="">読込中...</option>
+            </select>
+          </div>
+          <!-- カスタムトークン上書き欄（custom kind を含むテンプレ時のみ表示） -->
+          <div id="p-filename-overrides-wrap" style="display:none;margin-bottom:10px">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">カスタム要素の上書き（案件固有の値）</div>
+            <div id="p-filename-overrides-list" style="display:flex;flex-direction:column;gap:8px"></div>
+          </div>
+          <div style="background:#F0F8F4;border:1px solid #C9E5D6;border-radius:8px;padding:10px 12px;font-size:12px;color:#0F7A56;line-height:1.6">
+            <div style="font-size:10px;color:#5b8a73;margin-bottom:3px;letter-spacing:0.06em">プレビュー</div>
+            <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
+          </div>
+        </div>
+
       </div><!-- /右カラム -->
     </div><!-- /グリッド -->
 
@@ -4911,14 +4957,92 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
     </div><!-- /p-tab-panel-main -->
 
-    <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行）。
-         旧 #p-tab-panel-sync は削除済み。関連JSは Stage C で削除予定。 -->
-    <!-- Stage A: 旧トグル参照を残すコードのために最小限の hidden stub を残す -->
+    <!-- ADR 001: 案件は "候補リストの管理" のみ。creativeモーダル側で 1つを選ぶ UI を提供。 -->
+
+    <!-- 旧 #p-tab-panel-sync は削除済み。submitProject() が値を読まないよう非表示で残す -->
     <div id="p-tab-panel-sync" style="display:none"></div>
-    <input type="checkbox" id="p-sync-products" style="display:none">
-    <input type="checkbox" id="p-sync-axes" style="display:none">
-    <div id="p-products-override" style="display:none"></div>
-    <div id="p-axes-override" style="display:none"></div>
+
+    <!-- パネル：📦 商材 -->
+    <div id="p-tab-panel-products" style="display:none;padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+        <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材</span>
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:500" id="p-sync-products-desc">クライアントの商材マスターを参照します</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">OFF にするとこの案件専用の商材リストを管理できます</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+            <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+            <div onclick="toggleProjectSync('products')" style="cursor:pointer">
+              <input type="checkbox" id="p-sync-products" style="display:none">
+              <div id="p-sync-products-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                <div id="p-sync-products-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="p-products-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の商材</span>
+          <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-products-list" style="margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="pp-code" placeholder="コード" style="width:90px;font-size:12px;font-family:monospace">
+            <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
+            <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
+            <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 14px" onclick="addProjectProduct()">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- パネル：🎯 訴求軸 -->
+    <div id="p-tab-panel-appeal-axes" style="display:none;padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+        <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">訴求軸</span>
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:500" id="p-sync-axes-desc">クライアントの訴求軸マスターを参照します</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">OFF にするとこの案件専用の訴求軸リストを管理できます</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+            <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+            <div onclick="toggleProjectSync('axes')" style="cursor:pointer">
+              <input type="checkbox" id="p-sync-axes" style="display:none">
+              <div id="p-sync-axes-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                <div id="p-sync-axes-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="p-axes-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の訴求軸</span>
+          <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-axes-list" style="margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="pa-code" placeholder="コード" style="width:90px;font-size:12px;font-family:monospace">
+            <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
+            <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
+            <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 14px" onclick="addProjectAxis()">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- パネル：案件チェックリスト -->
     <div id="p-tab-panel-checklist" style="display:none;padding:24px 28px">
@@ -5077,10 +5201,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           汎用マスター
         </div>
-        <!-- 商材マスター・訴求軸マスターは Stage A で削除（カテゴリマスタ駆動に移行） -->
         <div class="master-nav-item" onclick="selectMasterNav('categories')" id="mnav-categories"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           🏷️ カテゴリ管理
+        </div>
+        <!-- ADR 001 整合: 商材・訴求軸マスタ UI を復活（creative-first 設計で残す方針） -->
+        <div class="master-nav-item" onclick="selectMasterNav('products')" id="mnav-products"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📦 商材マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('appeal_axes')" id="mnav-appeal_axes"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          🎯 訴求軸マスター
+        </div>
+        <!-- ADR 007 Stage 1: ファイル名テンプレート管理（命名規約） -->
+        <div class="master-nav-item" onclick="selectMasterNav('filename_templates')" id="mnav-filename_templates"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📁 ファイル名テンプレート
         </div>
         <div class="master-nav-item" onclick="selectMasterNav('checklist')" id="mnav-checklist"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
@@ -8127,8 +8264,7 @@ async function loadCreatives(opts = {}) {
       allCreatives = data;
     }
     populateAssigneeFilter();
-    renderCreatives();
-    renderAlerts();
+    renderCreatives(); // 内部で renderAlerts(filtered) を呼ぶのでここでは不要
   } catch(e) {
     if (seq !== _creativesLoadSeq) return;
     if (!append) allCreatives = [];
@@ -8583,6 +8719,8 @@ function renderCreatives() {
   updateCreativeTabBadges();
   // ガントチャートも同じフィルタ済データで描画（モード切替によらず常に最新化）
   try { renderCreativesGantt(filtered); } catch(e) { console.warn('[gantt] render error:', e); }
+  // 納期遅れアラートもサイドバーと同じフィルタ済セットで件数を出す（矛盾防止）
+  try { renderAlerts(filtered); } catch(e) { console.warn('[alerts] render error:', e); }
 
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
@@ -9870,11 +10008,14 @@ function cvSpShowAllDelayed() {
   toggleCreativeAdvFilters(true);
 }
 
-function renderAlerts() {
+function renderAlerts(rows) {
   // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
   // 現行スキーマに合わせ final_deadline を見て、JST 暦日差で「過去」を判定する。
+  // rows 未指定なら allCreatives（後方互換）。指定時は renderCreatives 側の絞り込み済みリストを使う
+  // — 自分の案件 / 担当者 / クライアント等のフィルタと整合させ、サイドバー (遅延案件) と件数を一致させる
+  const source = Array.isArray(rows) ? rows : allCreatives;
   const today = _cvAtMidnight(new Date());
-  const late = allCreatives.filter(c => {
+  const late = source.filter(c => {
     if (!c.final_deadline || c.status === '納品') return false;
     const fin = _cvAtMidnight(c.final_deadline);
     return _cvDayDiff(fin, today) < 0;
@@ -9882,11 +10023,16 @@ function renderAlerts() {
   const el = document.getElementById('alert-container');
   if (!el) return;
   if (!late.length) { el.innerHTML=''; return; }
-  const names = late.map(c => {
+  const chips = late.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
-    return `${e?.users?.full_name||'?'}（${c.projects?.clients?.name||'?'}）`;
-  }).join('、');
-  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ：</span><span class="alert-names">${names}</span></div>`;
+    const person = e?.users?.full_name || '?';
+    const client = c.projects?.clients?.name || '?';
+    const raw = c.file_name || '';
+    const shortName = raw.length > 22 ? `${raw.slice(0,8)}…${raw.slice(-10)}` : raw;
+    const title = `${person}（${client}）${raw ? ' / ' + raw : ''}`;
+    return `<span class="alert-chip" onclick="openCreativeDetail('${c.id}')" title="${esc(title)}">${esc(person)}<small>（${esc(client)}）</small>${shortName?` <small>${esc(shortName)}</small>`:''}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ ${late.length}件：</span><span class="alert-names">${chips}</span><button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button></div>`;
 }
 
 function setClient(btn, id) {
@@ -12139,6 +12285,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
   document.getElementById('p-tab-panel-sync').style.display = 'none';
+  const _ppPanel = document.getElementById('p-tab-panel-products'); if (_ppPanel) _ppPanel.style.display = 'none';
+  const _paPanel = document.getElementById('p-tab-panel-appeal-axes'); if (_paPanel) _paPanel.style.display = 'none';
+  const _pcPanel = document.getElementById('p-tab-panel-checklist'); if (_pcPanel) _pcPanel.style.display = 'none';
   // 新規作成時は削除ボタンを必ず非表示
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = 'none';
@@ -12148,6 +12297,8 @@ function openProjectModal(preClientId) {
   // 固定費・追加収入も同様に新規作成時は隠す（Stage 4c）
   const fiSec = document.getElementById('p-fixed-items-section');
   if (fiSec) fiSec.style.display = 'none';
+  // ADR 007: ファイル名テンプレ UI を初期化（新規は default テンプレを表示）
+  initProjectFilenameTemplateUI(null);
   openModal('modal-project');
 }
 
@@ -12262,6 +12413,9 @@ function openEditProject(p) {
   if (fiSec) fiSec.style.display = '';
   loadProjectFixedItems(p.id);
 
+  // ADR 007: ファイル名テンプレ UI を初期化
+  initProjectFilenameTemplateUI(p);
+
   openModal('modal-project');
 }
 
@@ -12374,8 +12528,8 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  // 'sync' タブは Stage A で削除済み。'main' と 'checklist' のみ。
-  const tabs = ['main', 'checklist'];
+  // ADR 001: products / appeal-axes は creative-first 設計のためタブ復活。
+  const tabs = ['main', 'products', 'appeal-axes', 'checklist'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -12388,6 +12542,16 @@ function switchProjectTab(tab) {
     }
   });
   if (tab === 'checklist') loadProjectChecklistItems();
+  // 商材/訴求軸タブを開いたとき、独自設定モードならリスト再描画
+  if (tab === 'products') {
+    const projectId = document.getElementById('p-id').value;
+    const overrideOn = document.getElementById('p-products-override').style.display !== 'none';
+    if (projectId && overrideOn) renderProjectProducts(projectId);
+  } else if (tab === 'appeal-axes') {
+    const projectId = document.getElementById('p-id').value;
+    const overrideOn = document.getElementById('p-axes-override').style.display !== 'none';
+    if (projectId && overrideOn) renderProjectAxes(projectId);
+  }
 }
 
 // ==================== 成果物グループ（project_estimate_lines）Stage 4a ====================
@@ -12632,7 +12796,7 @@ function renderLineCostsBody(line) {
     const user = lc.user || null;
     const roleLabel = role?.label || role?.code || 'ロール未設定';
     const ownerLabel = user
-      ? `${esc(user.name || user.email || 'ユーザー')}`
+      ? `${esc(user.full_name || user.email || 'ユーザー')}`
       : `<span style="color:var(--text-muted)">(ロール固定)</span>`;
     const unitText = formatLineCostUnit(lc);
     const totalCost = calcLineCostFront(lc, line);
@@ -13039,7 +13203,7 @@ function openProjectLineCostDeleteConfirm(lineId, costId) {
   const role = cost.role;
   const user = cost.user;
   const roleLabel = role?.label || role?.code || 'ロール未設定';
-  const ownerLabel = user ? (user.name || user.email || 'ユーザー') : '(ロール固定)';
+  const ownerLabel = user ? (user.full_name || user.email || 'ユーザー') : '(ロール固定)';
   const unitText = formatLineCostUnit(cost);
   document.getElementById('plc-del-message').innerHTML = `
     <div style="margin-bottom:6px"><strong>${esc(roleLabel)}</strong> ${esc(ownerLabel)}</div>
@@ -14676,6 +14840,168 @@ async function toggleHideProject(id, current) {
   await loadProjects();
 }
 
+// ===== 案件モーダル: ファイル名テンプレート (ADR 007 Stage 2) =====
+//
+// /api/filename-templates から一覧を取得し、案件モーダル内 select を populate する。
+// 選択中テンプレに含まれる kind: "custom" のトークンだけ override 入力欄を動的生成し、
+// ライブプレビュー（renderFilename と同じロジック）を更新する。
+//
+// state（モーダル単位で保持）
+const _projFilenameState = {
+  templates: [],          // /api/filename-templates の結果キャッシュ
+  overrides: {},          // 入力中の filename_token_overrides （key -> { label, value }）
+};
+
+// renderFilename のフロント版（utils/filename.js と同等のロジック・約30行）
+// サンプル値でプレビュー表示するために使う
+function renderFilenameClient(template, tokenValues, overrides) {
+  if (!template || !Array.isArray(template.tokens)) return '';
+  const sep = typeof template.separator === 'string' ? template.separator : '_';
+  const safeOverrides = overrides && typeof overrides === 'object' ? overrides : {};
+  const parts = template.tokens.map(tok => {
+    if (!tok || !tok.key) return '';
+    if (tok.kind === 'system') {
+      const v = tokenValues[tok.key];
+      return v != null ? String(v).trim() : '';
+    }
+    if (tok.kind === 'custom') {
+      const ov = safeOverrides[tok.key];
+      if (ov && ov.value != null && String(ov.value).trim() !== '') return String(ov.value).trim();
+      if (tok.default != null && String(tok.default).trim() !== '') return String(tok.default).trim();
+      return '';
+    }
+    return '';
+  }).filter(Boolean);
+  return parts.join(sep);
+}
+
+// プレビュー用のサンプル system 値（FN_SYSTEM_TOKENS の sample を参考に）
+function _projFilenameSampleValues() {
+  const projectName = (document.getElementById('p-name')?.value || '').trim() || 'サンプル案件';
+  const today = new Date();
+  const yymmdd = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  return {
+    serial: '0000001',
+    project_name: projectName,
+    version: 'v1',
+    date_yymmdd: yymmdd,
+    client_code: 'CLT',
+    product: 'ドラム',
+    appeal_axis: 'BRAND',
+    size: '1:1',
+    format: '30s',
+    media: 'TVCM',
+  };
+}
+
+async function loadProjectFilenameTemplates() {
+  try {
+    const res = await apiFetch(`${API}/filename-templates`);
+    if (!res.ok) { _projFilenameState.templates = []; return; }
+    _projFilenameState.templates = await res.json();
+  } catch (_) {
+    _projFilenameState.templates = [];
+  }
+}
+
+// テンプレ select を populate して、現在選択中の id を反映
+function populateProjectFilenameTemplateSelect(currentId) {
+  const sel = document.getElementById('p-filename-template-id');
+  if (!sel) return;
+  const list = _projFilenameState.templates || [];
+  if (list.length === 0) {
+    sel.innerHTML = '<option value="">（テンプレ未登録 — 設定タブから作成）</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  const opts = ['<option value="">（未設定）</option>'];
+  for (const t of list) {
+    const star = t.is_default ? ' ★' : '';
+    opts.push(`<option value="${esc(t.id)}">${esc(t.name)}${star}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  // currentId があればそれを、なければ default を初期選択
+  if (currentId && list.some(t => t.id === currentId)) {
+    sel.value = currentId;
+  } else {
+    const def = list.find(t => t.is_default);
+    sel.value = def ? def.id : '';
+  }
+}
+
+// 選択中テンプレ取得
+function _projFilenameSelectedTemplate() {
+  const id = document.getElementById('p-filename-template-id')?.value || '';
+  if (!id) return null;
+  return (_projFilenameState.templates || []).find(t => t.id === id) || null;
+}
+
+// custom トークンの override 入力欄を生成
+function renderProjectFilenameOverrides() {
+  const wrap = document.getElementById('p-filename-overrides-wrap');
+  const list = document.getElementById('p-filename-overrides-list');
+  if (!wrap || !list) return;
+  const tpl = _projFilenameSelectedTemplate();
+  const customTokens = tpl ? (tpl.tokens || []).filter(t => t && t.kind === 'custom') : [];
+  if (!customTokens.length) {
+    wrap.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  const overrides = _projFilenameState.overrides || {};
+  list.innerHTML = customTokens.map(tok => {
+    const ov = overrides[tok.key] || {};
+    const labelVal = ov.label != null ? ov.label : (tok.label || tok.key);
+    const valueVal = ov.value != null ? ov.value : (tok.default || '');
+    return `
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg-soft, #fafafa);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px">
+        <div style="font-size:11px;color:var(--text-muted);min-width:64px">${esc(tok.key)}</div>
+        <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="label" value="${esc(labelVal)}" placeholder="ラベル" style="flex:1;min-width:120px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+        <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="value" value="${esc(valueVal)}" placeholder="値（例：上地無）" style="flex:1;min-width:120px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+      </div>
+    `;
+  }).join('');
+}
+
+function updateProjectFilenameOverrideFromInput(el) {
+  const key = el.getAttribute('data-fn-ovr-key');
+  const field = el.getAttribute('data-fn-ovr-field');
+  if (!key || !field) return;
+  if (!_projFilenameState.overrides[key]) _projFilenameState.overrides[key] = {};
+  _projFilenameState.overrides[key][field] = el.value;
+  updateProjectFilenamePreview();
+}
+
+function updateProjectFilenamePreview() {
+  const tpl = _projFilenameSelectedTemplate();
+  const previewEl = document.getElementById('p-filename-preview');
+  if (!previewEl) return;
+  if (!tpl) { previewEl.textContent = '—'; return; }
+  const values = _projFilenameSampleValues();
+  const fn = renderFilenameClient(tpl, values, _projFilenameState.overrides);
+  previewEl.textContent = fn || '—';
+}
+
+function onProjectFilenameTemplateChange() {
+  // テンプレ切替時は overrides は維持（同じ key なら使い回せる）
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
+// 案件モーダル open 時の初期化（新規 / 編集 共通）
+async function initProjectFilenameTemplateUI(project) {
+  await loadProjectFilenameTemplates();
+  const currentId = project?.filename_template_id || null;
+  _projFilenameState.overrides = (project?.filename_token_overrides && typeof project.filename_token_overrides === 'object')
+    ? JSON.parse(JSON.stringify(project.filename_token_overrides))
+    : {};
+  populateProjectFilenameTemplateSelect(currentId);
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
 async function submitProject() {
   const id = document.getElementById('p-id').value;
   const client_id = document.getElementById('p-client-id').value;
@@ -14707,6 +15033,10 @@ async function submitProject() {
 
   if (!client_id || !name) { showToast('クライアントと案件名は必須です', 'warn'); return; }
 
+  // ADR 007: ファイル名テンプレ（編集モードのみ。新規作成時は POST で別途追従するため除外）
+  const filename_template_id = document.getElementById('p-filename-template-id')?.value || null;
+  const filename_token_overrides = (_projFilenameState && _projFilenameState.overrides) ? _projFilenameState.overrides : {};
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -14715,7 +15045,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -18301,8 +18631,8 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  // 'products'/'appeal_axes' は Stage A で削除済み。'categories' を追加。
-  ['generic','general','categories','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
+  ['generic','general','categories','products','appeal_axes','filename_templates','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -18318,6 +18648,12 @@ function selectMasterNav(type) {
     renderGeneralMasterPage();
   } else if (type === 'categories') {
     renderCategoriesMasterPage();
+  } else if (type === 'products') {
+    renderProductsMasterPage();
+  } else if (type === 'appeal_axes') {
+    renderAppealAxesMasterPage();
+  } else if (type === 'filename_templates') {
+    renderFilenameTemplatesPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
@@ -20518,6 +20854,616 @@ async function deleteCategory(id) {
   showToast('削除しました', 'success');
 }
 
+// ==================== ファイル名テンプレート (ADR 007 Stage 1) ====================
+// マスター画面の「📁 ファイル名テンプレート」セクション。
+// /api/filename-templates の CRUD を行う。
+//
+// UI:
+//   - 左: テンプレ一覧（★ default マーク、行クリックで右に編集パネル）+ 「新規作成」
+//   - 右: 編集パネル
+//       - 名前 input
+//       - セパレータ select (_ / - / なし)
+//       - パレット: ドラッグ可能なシステム/カスタムトークンチップ
+//       - ビルダー: D&D 並べ替え可能なトークンリスト
+//       - プレビュー: ダミー値で生成例
+//       - 保存 / キャンセル
+//
+// 必須トークン: serial / project_name / version。serial は先頭固定。
+// custom トークンは追加時に key/label/default を入力。
+//
+// Stage 2 で案件モーダルから選択 + override 入力 + bulk/preview の関数置き換え。
+
+// ファイル名テンプレ用の状態
+const _fnTplState = {
+  list: [],                  // 一覧キャッシュ
+  selectedId: null,          // 編集中テンプレ ID (null = 新規)
+  draft: null,               // 編集中テンプレの draft オブジェクト
+  draggingIndex: null,       // ビルダー内 D&D 中の index
+  draggingPaletteKey: null,  // パレットからのドラッグ中 key
+};
+
+// システム標準トークン定義（ADR 007 表）
+// label はユーザー編集可だが、ここでは初期表示用のラベル
+const FN_SYSTEM_TOKENS = [
+  { key: 'serial',       label: '連番',         required: true,  pinFirst: true,  sample: '007' },
+  { key: 'project_name', label: '案件名',       required: true,                   sample: 'あるる' },
+  { key: 'version',      label: 'バージョン',   required: true,                   sample: 'v1' },
+  { key: 'date_yymmdd',  label: '制作日',       sample: '260507' },
+  { key: 'client_code',  label: 'クライアント', sample: 'CLT001' },
+  { key: 'product',      label: '商品',         sample: 'ドラム' },
+  { key: 'appeal_axis',  label: '訴求軸',       sample: 'BRAND' },
+  { key: 'size',         label: 'サイズ',       sample: '1:1' },
+  { key: 'format',       label: 'FMT',          sample: '30s' },
+  { key: 'media',        label: '媒体',         sample: 'TVCM' },
+];
+
+function _fnSystemTokenDef(key) {
+  return FN_SYSTEM_TOKENS.find(t => t.key === key) || null;
+}
+
+// 編集中テンプレが「未保存変更あり」かを雑に判定（ID単位の比較は行わない・seed 対比は省略）
+function _fnTplDraftFromTemplate(tpl) {
+  if (!tpl) {
+    // 新規: 必須3トークンだけ入った最小テンプレ
+    return {
+      id: null,
+      name: '',
+      separator: '_',
+      tokens: [
+        { kind: 'system', key: 'serial',       label: '連番' },
+        { kind: 'system', key: 'project_name', label: '案件名' },
+        { kind: 'system', key: 'version',      label: 'バージョン' },
+      ],
+      is_default: false,
+    };
+  }
+  return {
+    id: tpl.id,
+    name: tpl.name || '',
+    separator: tpl.separator ?? '_',
+    tokens: Array.isArray(tpl.tokens) ? JSON.parse(JSON.stringify(tpl.tokens)) : [],
+    is_default: !!tpl.is_default,
+  };
+}
+
+async function renderFilenameTemplatesPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  let list = [];
+  try {
+    const res = await apiFetch(`${API}/filename-templates`);
+    list = res.ok ? await res.json() : [];
+  } catch (e) { list = []; }
+  _fnTplState.list = list;
+
+  // 初回表示時、何も選択していなければ default テンプレ or 先頭を選択
+  if (!_fnTplState.selectedId && list.length) {
+    const def = list.find(t => t.is_default) || list[0];
+    _fnTplState.selectedId = def.id;
+    _fnTplState.draft = _fnTplDraftFromTemplate(def);
+  } else if (_fnTplState.selectedId) {
+    // 既存編集中の id が一覧から消えていたら一覧先頭にフォールバック
+    const found = list.find(t => t.id === _fnTplState.selectedId);
+    if (found) {
+      _fnTplState.draft = _fnTplState.draft || _fnTplDraftFromTemplate(found);
+    } else if (list.length) {
+      _fnTplState.selectedId = list[0].id;
+      _fnTplState.draft = _fnTplDraftFromTemplate(list[0]);
+    }
+  }
+
+  content.innerHTML = `
+    <div style="margin-bottom:18px">
+      <div style="font-size:18px;font-weight:700;color:var(--text-main)">📁 ファイル名テンプレート</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+        提出用ファイル名の命名規約。案件モーダル「📁 ファイル名テンプレート」から各案件で選択 + カスタム要素の上書きができます。
+      </div>
+    </div>
+
+    ${list.length === 0 ? `
+      <div style="background:#FFF8E1;border:1px solid #F59E0B;border-radius:10px;padding:20px;color:#92400E;font-size:13px;line-height:1.7;margin-bottom:16px">
+        ⚠️ ファイル名テンプレが 1 件もありません。<br>
+        本番Supabase に <code>migrations/2026-05-07_filename_templates.sql</code> が適用されているか確認してください。<br>
+        migration が適用済みなら、「＋ 新規作成」から最初の1件を作ってください。
+      </div>
+    ` : ''}
+
+    <div style="display:flex;gap:20px;align-items:flex-start;min-height:480px">
+      <!-- 左: 一覧 + 新規作成 -->
+      <div style="width:260px;flex-shrink:0;background:var(--white);border:0.5px solid var(--border);border-radius:12px;overflow:hidden">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);background:var(--em-pale);font-size:12px;font-weight:600;color:var(--em-dark)">
+          テンプレート一覧
+        </div>
+        <div id="fn-tpl-list" style="max-height:480px;overflow:auto"></div>
+        <div style="padding:10px 12px;border-top:1px solid var(--border)">
+          <button class="btn-primary" style="width:100%" onclick="newFilenameTemplate()">＋ 新規作成</button>
+        </div>
+      </div>
+
+      <!-- 右: 編集パネル -->
+      <div id="fn-tpl-editor" style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:18px"></div>
+    </div>
+
+    <!-- カスタムトークン追加モーダル -->
+    <div id="fn-custom-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:92vw">
+        <div style="font-size:16px;font-weight:700;margin-bottom:14px">カスタムトークンを追加</div>
+        <div class="form-group">
+          <label class="form-label">表示ラベル <span style="color:#E24B4A">*</span></label>
+          <input class="form-input" id="fn-custom-label" placeholder="例: 芸能人有無">
+        </div>
+        <div class="form-group">
+          <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
+          <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
+        </div>
+        <details style="margin-top:10px">
+          <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">▸ 上級設定（key を指定する）</summary>
+          <div style="margin-top:8px">
+            <label class="form-label">key（任意・空欄なら自動採番）</label>
+            <input class="form-input" id="fn-custom-key" placeholder="自動 (c_1, c_2, ...)" style="font-family:monospace">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              別テンプレでも同じ key を使うと、案件側 override で値が連動します。
+            </div>
+          </div>
+        </details>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+          <button class="btn" onclick="closeFnCustomModal()">キャンセル</button>
+          <button class="btn-primary" onclick="confirmAddFnCustomToken()">追加</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  _renderFnTplList();
+  _renderFnTplEditor();
+}
+
+function _renderFnTplList() {
+  const wrap = document.getElementById('fn-tpl-list');
+  if (!wrap) return;
+  const list = _fnTplState.list;
+  if (list.length === 0) {
+    wrap.innerHTML = `<div style="padding:20px;color:var(--text-muted);font-size:12px;text-align:center">テンプレなし</div>`;
+    return;
+  }
+  wrap.innerHTML = list.map(t => {
+    const active = t.id === _fnTplState.selectedId;
+    return `
+      <div onclick="selectFilenameTemplate('${t.id}')"
+        style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;
+               background:${active ? 'var(--em-pale)' : 'transparent'};
+               border-left:3px solid ${active ? 'var(--em-dark)' : 'transparent'}">
+        <div style="font-size:13px;font-weight:${active ? '700' : '500'};color:${active ? 'var(--em-dark)' : 'var(--text-main)'}">
+          ${t.is_default ? '<span title="デフォルト" style="color:#F59E0B;margin-right:4px">★</span>' : ''}${esc(t.name)}
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-family:monospace">
+          ${(t.tokens || []).length} 個 / sep="${esc(t.separator || '')}"
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectFilenameTemplate(id) {
+  const tpl = _fnTplState.list.find(t => t.id === id);
+  if (!tpl) return;
+  _fnTplState.selectedId = id;
+  _fnTplState.draft = _fnTplDraftFromTemplate(tpl);
+  _renderFnTplList();
+  _renderFnTplEditor();
+}
+
+function newFilenameTemplate() {
+  _fnTplState.selectedId = null;
+  _fnTplState.draft = _fnTplDraftFromTemplate(null);
+  _renderFnTplList();
+  _renderFnTplEditor();
+}
+
+function _renderFnTplEditor() {
+  const wrap = document.getElementById('fn-tpl-editor');
+  if (!wrap) return;
+  const d = _fnTplState.draft;
+  if (!d) {
+    wrap.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:40px">左から選択するか「＋ 新規作成」してください</div>`;
+    return;
+  }
+  const isNew = !d.id;
+  const usedKeys = new Set(d.tokens.map(t => t.key));
+
+  // パレット: 未使用システム + カスタム追加ボタン + 既存カスタム key（重複禁止のため、未使用のみ）
+  const paletteSystem = FN_SYSTEM_TOKENS
+    .filter(s => !usedKeys.has(s.key))
+    .map(s => `
+      <div class="fn-palette-chip" draggable="true"
+        ondragstart="onFnPaletteDragStart(event,'${s.key}','system')"
+        ondragend="onFnDragEnd()"
+        onclick="addFnTokenFromPalette('${s.key}','system')"
+        style="padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;
+               font-size:12px;cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:4px">
+        <span>＋</span>${esc(s.label)}
+        <span style="color:var(--text-muted);font-family:monospace;font-size:10px">[${s.key}]</span>
+      </div>
+    `).join('');
+
+  // ビルダー
+  const builder = d.tokens.map((t, idx) => {
+    const sysDef = t.kind === 'system' ? _fnSystemTokenDef(t.key) : null;
+    const required = !!(sysDef && sysDef.required);
+    const pinFirst = !!(sysDef && sysDef.pinFirst);
+    const labelHtml = `<span style="font-weight:600">${esc(t.label || t.key)}</span>
+                       <span style="color:var(--text-muted);font-family:monospace;font-size:10px;margin-left:6px">[${esc(t.key)}]</span>`;
+    const kindBadge = t.kind === 'custom'
+      ? '<span style="font-size:10px;color:#fff;background:#A06CD5;padding:1px 6px;border-radius:8px;margin-left:6px">CUSTOM</span>'
+      : (required ? '<span style="font-size:10px;color:#fff;background:#E24B4A;padding:1px 6px;border-radius:8px;margin-left:6px">必須</span>' : '');
+    return `
+      <li class="fn-builder-item"
+          draggable="${pinFirst ? 'false' : 'true'}"
+          data-index="${idx}"
+          ondragstart="onFnBuilderDragStart(event,${idx})"
+          ondragover="onFnBuilderDragOver(event,${idx})"
+          ondrop="onFnBuilderDrop(event,${idx})"
+          ondragend="onFnDragEnd()"
+          style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);
+                 border:1px solid var(--border);border-radius:10px;margin-bottom:6px;
+                 cursor:${pinFirst ? 'default' : 'grab'};${pinFirst ? 'opacity:0.95' : ''}">
+        <span style="color:var(--text-muted);font-size:14px;width:18px;text-align:center">
+          ${pinFirst ? '🔒' : '⋮⋮'}
+        </span>
+        <span style="flex-shrink:0;color:var(--text-muted);font-family:monospace;font-size:11px;width:24px;text-align:right">${idx + 1}.</span>
+        <div style="flex:1;font-size:13px">
+          ${labelHtml}${kindBadge}
+        </div>
+        ${t.kind === 'custom' ? `
+          <input class="form-input" style="width:120px;font-size:12px;padding:4px 8px"
+            value="${esc(t.default || '')}"
+            placeholder="default 値"
+            onchange="updateFnCustomDefault(${idx}, this.value)">
+        ` : ''}
+        ${(required || pinFirst) ? '' : `
+          <button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px"
+            onclick="removeFnBuilderToken(${idx})">削除</button>
+        `}
+      </li>
+    `;
+  }).join('');
+
+  // プレビュー
+  const previewStr = _fnRenderPreview(d);
+
+  wrap.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="font-size:15px;font-weight:700;color:var(--text-main)">
+        ${isNew ? '新規テンプレート' : 'テンプレート編集'}
+      </div>
+      <div style="display:flex;gap:8px">
+        ${!isNew ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="deleteFilenameTemplate('${d.id}')">削除</button>` : ''}
+        <button class="btn" onclick="cancelFilenameTemplate()">キャンセル</button>
+        <button class="btn-primary" onclick="saveFilenameTemplate()">保存</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 200px;gap:14px;margin-bottom:14px">
+      <div class="form-group" style="margin:0">
+        <label class="form-label">名前 <span style="color:#E24B4A">*</span></label>
+        <input class="form-input" id="fn-edit-name" value="${esc(d.name)}"
+          oninput="_fnTplState.draft.name=this.value;_fnRefreshPreview()" placeholder="例: あるる系">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">セパレータ</label>
+        <select class="form-select" id="fn-edit-sep" onchange="_fnTplState.draft.separator=this.value;_fnRefreshPreview()">
+          <option value="_" ${d.separator === '_' ? 'selected' : ''}>_  (アンダースコア)</option>
+          <option value="-" ${d.separator === '-' ? 'selected' : ''}>-  (ハイフン)</option>
+          <option value=""  ${d.separator === ''  ? 'selected' : ''}>（区切りなし）</option>
+        </select>
+      </div>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:16px;cursor:pointer">
+      <input type="checkbox" id="fn-edit-default" ${d.is_default ? 'checked' : ''}
+        onchange="_fnTplState.draft.is_default=this.checked">
+      <span>このテンプレを新規案件のデフォルトにする</span>
+    </label>
+
+    <!-- パレット -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">
+        パレット（クリックまたはドラッグして下のビルダーへ追加）
+      </div>
+      <div id="fn-palette" style="display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#FAFAFA;border:1px dashed var(--border);border-radius:8px;min-height:48px">
+        ${paletteSystem || '<span style="font-size:12px;color:var(--text-muted)">未使用のシステムトークンはありません</span>'}
+        <button class="btn-sm" onclick="openFnCustomModal()" style="font-size:11px;padding:4px 10px">＋ カスタムトークン</button>
+      </div>
+    </div>
+
+    <!-- ビルダー -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">
+        ビルダー（ドラッグ&ドロップで並べ替え。serial は先頭固定）
+      </div>
+      <ul id="fn-builder" style="list-style:none;margin:0;padding:0">${builder}</ul>
+    </div>
+
+    <!-- プレビュー -->
+    <div style="background:var(--em-pale);border-radius:10px;padding:12px 14px">
+      <div style="font-size:11px;font-weight:600;color:var(--em-dark);margin-bottom:4px">プレビュー</div>
+      <div id="fn-preview" style="font-family:monospace;font-size:14px;color:var(--text-main);word-break:break-all">
+        ${esc(previewStr)}
+      </div>
+    </div>
+  `;
+}
+
+// プレビュー文字列を生成（ダミー値）
+function _fnRenderPreview(draft) {
+  const parts = (draft.tokens || []).map(t => {
+    if (t.kind === 'system') {
+      const sys = _fnSystemTokenDef(t.key);
+      return sys ? sys.sample : t.key;
+    }
+    // custom
+    return (t.default || '').toString().trim() || `[${t.key}]`;
+  }).filter(p => p !== '' && p != null);
+  return parts.join(draft.separator || '');
+}
+
+function _fnRefreshPreview() {
+  const el = document.getElementById('fn-preview');
+  if (el && _fnTplState.draft) el.textContent = _fnRenderPreview(_fnTplState.draft);
+}
+
+// ---- D&D ハンドラ ----
+function onFnPaletteDragStart(ev, key, kind) {
+  _fnTplState.draggingPaletteKey = { key, kind };
+  _fnTplState.draggingIndex = null;
+  ev.dataTransfer.effectAllowed = 'copy';
+  try { ev.dataTransfer.setData('text/plain', key); } catch (_) {}
+}
+
+function onFnBuilderDragStart(ev, idx) {
+  _fnTplState.draggingIndex = idx;
+  _fnTplState.draggingPaletteKey = null;
+  ev.dataTransfer.effectAllowed = 'move';
+  try { ev.dataTransfer.setData('text/plain', String(idx)); } catch (_) {}
+}
+
+function onFnBuilderDragOver(ev, _idx) {
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = _fnTplState.draggingPaletteKey ? 'copy' : 'move';
+}
+
+function onFnBuilderDrop(ev, dropIdx) {
+  ev.preventDefault();
+  const d = _fnTplState.draft;
+  if (!d) return;
+  // パレットからの追加
+  if (_fnTplState.draggingPaletteKey) {
+    addFnTokenFromPalette(_fnTplState.draggingPaletteKey.key, _fnTplState.draggingPaletteKey.kind, dropIdx);
+    _fnTplState.draggingPaletteKey = null;
+    return;
+  }
+  // ビルダー内並べ替え
+  const fromIdx = _fnTplState.draggingIndex;
+  if (fromIdx == null || fromIdx === dropIdx) return;
+  // serial(先頭固定) を動かそうとしている、または先頭に他を入れようとしているならガード
+  const sysDefFrom = d.tokens[fromIdx] && d.tokens[fromIdx].kind === 'system'
+    ? _fnSystemTokenDef(d.tokens[fromIdx].key) : null;
+  if (sysDefFrom && sysDefFrom.pinFirst) return;
+  if (dropIdx === 0) {
+    showToast('serial が先頭でなければなりません', 'warn');
+    return;
+  }
+  const moved = d.tokens.splice(fromIdx, 1)[0];
+  // splice で配列が縮んでいるので dropIdx を補正
+  const adjIdx = dropIdx > fromIdx ? dropIdx - 1 : dropIdx;
+  d.tokens.splice(adjIdx, 0, moved);
+  _fnTplState.draggingIndex = null;
+  _renderFnTplEditor();
+}
+
+function onFnDragEnd() {
+  _fnTplState.draggingIndex = null;
+  _fnTplState.draggingPaletteKey = null;
+}
+
+// パレットからの追加（ドロップ位置 idx 省略時は末尾）
+function addFnTokenFromPalette(key, kind, atIdx) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  if (d.tokens.some(t => t.key === key)) {
+    showToast(`トークン "${key}" は既に追加されています`, 'warn');
+    return;
+  }
+  let token;
+  if (kind === 'system') {
+    const sys = _fnSystemTokenDef(key);
+    if (!sys) return;
+    token = { kind: 'system', key, label: sys.label };
+  } else {
+    return; // custom はモーダル経由で追加するためここでは扱わない
+  }
+  // serial は強制的に先頭、それ以外は serial の直後以降に
+  if (key === 'serial') {
+    d.tokens.unshift(token);
+  } else if (atIdx == null || atIdx === 0) {
+    // 先頭に置こうとしたら 1 番目に補正
+    d.tokens.splice(1, 0, token);
+  } else {
+    d.tokens.splice(atIdx, 0, token);
+  }
+  _renderFnTplEditor();
+}
+
+function removeFnBuilderToken(idx) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const t = d.tokens[idx];
+  if (!t) return;
+  // 必須トークン（serial / project_name / version）は削除不可
+  if (t.kind === 'system') {
+    const sys = _fnSystemTokenDef(t.key);
+    if (sys && sys.required) {
+      showToast('必須トークンは削除できません', 'warn');
+      return;
+    }
+  }
+  d.tokens.splice(idx, 1);
+  _renderFnTplEditor();
+}
+
+function updateFnCustomDefault(idx, value) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const t = d.tokens[idx];
+  if (!t) return;
+  t.default = value;
+  _fnRefreshPreview();
+}
+
+// ---- カスタムトークン追加モーダル ----
+function openFnCustomModal() {
+  document.getElementById('fn-custom-key').value = '';
+  document.getElementById('fn-custom-label').value = '';
+  document.getElementById('fn-custom-default').value = '';
+  // 上級設定 details を毎回閉じた状態で開く
+  const det = document.querySelector('#fn-custom-modal details');
+  if (det) det.open = false;
+  document.getElementById('fn-custom-modal').style.display = 'flex';
+  // ラベル入力欄にフォーカス（key 入力をスキップして直接ラベル入力できるよう）
+  setTimeout(() => {
+    const labelInput = document.getElementById('fn-custom-label');
+    if (labelInput) labelInput.focus();
+  }, 50);
+}
+function closeFnCustomModal() {
+  const m = document.getElementById('fn-custom-modal');
+  if (m) m.style.display = 'none';
+}
+// テンプレ内の既存 token の key と衝突しない c_N 形式の key を採番
+function _autoGenerateFnCustomKey(existingKeys) {
+  const used = new Set(existingKeys);
+  // システムトークンの key とも被らないように
+  for (const s of (typeof FN_SYSTEM_TOKENS !== 'undefined' ? FN_SYSTEM_TOKENS : [])) {
+    used.add(s.key);
+  }
+  let n = 1;
+  while (used.has('c_' + n)) n++;
+  return 'c_' + n;
+}
+function confirmAddFnCustomToken() {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const manualKey = document.getElementById('fn-custom-key').value.trim();
+  const label = document.getElementById('fn-custom-label').value.trim();
+  const def = document.getElementById('fn-custom-default').value;
+  if (!label) {
+    showToast('表示ラベルは必須です', 'warn');
+    return;
+  }
+  let key;
+  if (manualKey) {
+    // 上級設定で手動指定された場合
+    if (!/^[a-z0-9_]+$/i.test(manualKey)) {
+      showToast('key は英数字とアンダースコアのみ使用できます', 'warn');
+      return;
+    }
+    if (FN_SYSTEM_TOKENS.some(s => s.key === manualKey)) {
+      showToast(`"${manualKey}" はシステムトークンの key と被るため使えません`, 'warn');
+      return;
+    }
+    if (d.tokens.some(t => t.key === manualKey)) {
+      showToast(`同じ key "${manualKey}" が既に使われています`, 'warn');
+      return;
+    }
+    key = manualKey;
+  } else {
+    // 自動採番
+    const existingKeys = d.tokens.map(t => t.key);
+    key = _autoGenerateFnCustomKey(existingKeys);
+  }
+  d.tokens.push({ kind: 'custom', key, label, default: def || '' });
+  closeFnCustomModal();
+  _renderFnTplEditor();
+}
+
+// ---- 保存・キャンセル・削除 ----
+function cancelFilenameTemplate() {
+  if (!_fnTplState.selectedId) {
+    // 新規作成中 → 一覧から最初のテンプレに戻る
+    if (_fnTplState.list.length) {
+      const def = _fnTplState.list.find(t => t.is_default) || _fnTplState.list[0];
+      selectFilenameTemplate(def.id);
+    } else {
+      _fnTplState.draft = null;
+      _renderFnTplEditor();
+    }
+    return;
+  }
+  // 編集中 → 元に戻す（再フェッチで draft を作り直す）
+  const tpl = _fnTplState.list.find(t => t.id === _fnTplState.selectedId);
+  _fnTplState.draft = _fnTplDraftFromTemplate(tpl || null);
+  _renderFnTplEditor();
+}
+
+async function saveFilenameTemplate() {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  if (!d.name || !d.name.trim()) {
+    showToast('名前は必須です', 'warn');
+    return;
+  }
+  // サーバー側でも検証されるが、UI でも事前チェック
+  const keys = (d.tokens || []).map(t => t.key);
+  for (const k of ['serial', 'project_name', 'version']) {
+    if (!keys.includes(k)) {
+      showToast(`必須トークン "${k}" が含まれていません`, 'warn');
+      return;
+    }
+  }
+  if (keys[0] !== 'serial') {
+    showToast('serial が先頭でなければなりません', 'warn');
+    return;
+  }
+
+  const payload = {
+    name: d.name.trim(),
+    separator: d.separator ?? '_',
+    tokens: d.tokens,
+    is_default: !!d.is_default,
+  };
+  const isNew = !d.id;
+  const url = isNew ? `${API}/filename-templates` : `${API}/filename-templates/${d.id}`;
+  const res = await apiFetch(url, {
+    method: isNew ? 'POST' : 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('保存失敗: ' + (e?.error || res.status), 'error');
+    return;
+  }
+  const saved = await res.json();
+  _fnTplState.selectedId = saved.id;
+  // 一覧再取得
+  await renderFilenameTemplatesPage();
+  showToast('保存しました', 'success');
+}
+
+async function deleteFilenameTemplate(id) {
+  if (!confirm('このテンプレートを削除しますか？\n（参照中の案件がある場合は削除できません）')) return;
+  const res = await apiFetch(`${API}/filename-templates/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('削除失敗: ' + (e?.error || res.status), 'error');
+    return;
+  }
+  _fnTplState.selectedId = null;
+  _fnTplState.draft = null;
+  await renderFilenameTemplatesPage();
+  showToast('削除しました', 'success');
+}
+
 async function renderProductsMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
@@ -22066,7 +23012,15 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         v.addEventListener('loadeddata',    () => fpHideLoading());
         v.addEventListener('waiting',       () => fpShowLoading('バッファリング中...'));
         v.addEventListener('playing',       () => fpHideLoading());
-        v.addEventListener('error',         () => fpShowLoadingError('動画の読み込みに失敗しました'));
+        v.addEventListener('error', () => {
+          // MediaError.code: 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED
+          // 4 は src 自体が 404 / Content-Type 違い / コーデック未対応のいずれか。
+          // 将来同じ事象が再発したときに切り分けできるよう breadcrumb に残す（Slack には抑制済み）。
+          var code = (v.error && v.error.code) || null;
+          var srcUrl = v.currentSrc || v.src || '(unknown)';
+          try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error', { code: code, src: String(srcUrl).slice(0,180) }); } catch (_) {}
+          fpShowLoadingError(code === 4 ? '動画形式に対応していません' : '動画の読み込みに失敗しました');
+        });
         v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
       }, 100);
     } else if (isImage) {
