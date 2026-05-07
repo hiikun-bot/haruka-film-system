@@ -51,8 +51,113 @@ function applyDeliveredFilter(q) {
 }
 
 // ============================================================
+// post_reaction の集約: 同一受信者・同一送信者で 24h 以内のリアクション通知を 1 カードに束ねる。
+//
+// 戻り値: 集約済み通知配列（時系列降順）。集約された通知は次の追加フィールドを持つ:
+//   aggregated:        true
+//   aggregated_ids:    [string]    元 notification_logs.id の集合
+//   aggregated_count:  number       元行数
+//   reaction_emojis:   [string]    発生した絵文字（unique 順序保持）
+//   tweet_ids:         [string]    関わったつぶやき ID の集合（unique）
+//   latest_tweet_id:   string|null 最新つぶやき ID（クリック先）
+//
+// 集約条件:
+//   - notification_type === 'post_reaction'
+//   - sender_id が同一
+//   - 連続する 2 行が 24 時間以内（最新側との差分で判定）
+//   - 既存のソート（created_at DESC）を維持し、グループ全体を最新行の位置に置く
+//
+// 既読判定: グループ内の全行が is_read=true のときだけ既読バッジ。1 つでも未読なら未読扱い。
+// ============================================================
+const REACTION_EMOJI_MAP = {
+  good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
+};
+const REACTION_AGGREGATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function aggregatePostReactionNotifications(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  // rows は created_at DESC 前提
+  const result = [];
+  let i = 0;
+  while (i < rows.length) {
+    const row = rows[i];
+    if (row.notification_type !== 'post_reaction' || !row.sender_id) {
+      result.push(row);
+      i += 1;
+      continue;
+    }
+    // 同 sender_id・post_reaction を 24h 以内まで取り込む
+    const group = [row];
+    let j = i + 1;
+    const headTime = new Date(row.created_at).getTime();
+    while (j < rows.length) {
+      const cand = rows[j];
+      if (cand.notification_type !== 'post_reaction') break;
+      if (cand.sender_id !== row.sender_id) break;
+      const candTime = new Date(cand.created_at).getTime();
+      if (Number.isFinite(headTime) && Number.isFinite(candTime) &&
+          headTime - candTime > REACTION_AGGREGATE_WINDOW_MS) break;
+      group.push(cand);
+      j += 1;
+    }
+    if (group.length === 1) {
+      result.push(row);
+    } else {
+      // 集約カードを生成
+      const emojis = [];
+      const seenEmoji = new Set();
+      const tweetIds = [];
+      const seenTweet = new Set();
+      let anyUnread = false;
+      let earliestReadAt = null;
+      for (const g of group) {
+        const rt = g.meta?.reaction_type;
+        const emoji = REACTION_EMOJI_MAP[rt];
+        if (emoji && !seenEmoji.has(emoji)) {
+          seenEmoji.add(emoji);
+          emojis.push(emoji);
+        }
+        const tId = g.meta?.tweet_id;
+        if (tId && !seenTweet.has(tId)) {
+          seenTweet.add(tId);
+          tweetIds.push(tId);
+        }
+        if (!g.is_read) anyUnread = true;
+        if (g.read_at) {
+          if (!earliestReadAt || g.read_at < earliestReadAt) earliestReadAt = g.read_at;
+        }
+      }
+      const head = group[0]; // 最新行
+      const latestTweetId = head.meta?.tweet_id || (tweetIds[0] || null);
+      const senderLabel = head.meta?.sender_name || null;
+      const aggregatedTitle = senderLabel
+        ? `${senderLabel}さんが あなたのつぶやきにリアクション (${group.length}件)`
+        : `あなたのつぶやきへのリアクション (${group.length}件)`;
+      result.push({
+        ...head,
+        // 表示用に title / body を上書き（元の単一行用文言から差し替え）
+        title: aggregatedTitle,
+        body: emojis.join(' '),
+        is_read: !anyUnread,
+        read_at: anyUnread ? null : (earliestReadAt || head.read_at || null),
+        link_url: latestTweetId ? `/haruka.html?tweet=${latestTweetId}` : head.link_url,
+        aggregated: true,
+        aggregated_ids: group.map(g => g.id),
+        aggregated_count: group.length,
+        reaction_emojis: emojis,
+        tweet_ids: tweetIds,
+        latest_tweet_id: latestTweetId,
+      });
+    }
+    i = j;
+  }
+  return result;
+}
+
+// ============================================================
 // GET /api/notifications
 //   自分宛の通知を時系列降順で返す。配信済みのみ。
+//   post_reaction はクライアント表示用に sender_id 単位で集約する（DB は変更しない）。
 // ============================================================
 router.get('/', async (req, res) => {
   const userId = req.user.id;
@@ -83,13 +188,18 @@ router.get('/', async (req, res) => {
     (senders || []).forEach(u => senderNameById.set(u.id, u.nickname || u.full_name || ''));
   }
 
-  const notifications = (data || []).map(n => ({
+  const enriched = (data || []).map(n => ({
     ...n,
     sender_name: n.sender_id ? (senderNameById.get(n.sender_id) || null) : null,
   }));
 
-  const total = count ?? notifications.length;
-  const has_more = (offset + notifications.length) < total;
+  // post_reaction を集約（DB は変更しない・レスポンス時集約のみ）
+  const notifications = aggregatePostReactionNotifications(enriched);
+
+  // total / has_more はページング用なので元行数ベース（集約前）で返す。
+  // 集約は同ページ内の表示崩しを抑える目的で、ページ境界をまたぐ集約は行わない。
+  const total = count ?? enriched.length;
+  const has_more = (offset + enriched.length) < total;
 
   res.json({ notifications, total, has_more });
 });
@@ -141,6 +251,36 @@ router.patch('/:id/read', async (req, res) => {
     .single();
   if (updErr) return res.status(500).json({ error: updErr.message });
   res.json(updated);
+});
+
+// ============================================================
+// PATCH /api/notifications/bulk-read
+//   集約カード用: ID 配列をまとめて既読化する。
+//   body: { ids: [string, ...] }
+//
+//   集約カードクリック時、含まれる元 notification_logs.id を全部既読化するために使う。
+// ============================================================
+router.patch('/bulk-read', async (req, res) => {
+  const userId = req.user.id;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  if (!ids || ids.length === 0) {
+    return res.status(400).json({ error: 'ids は必須です（空でない配列）' });
+  }
+  if (ids.length > 200) {
+    return res.status(400).json({ error: 'ids は最大 200 件まで' });
+  }
+  // 自分宛・配信済み・未キャンセルのみを既読化（権限漏れ防止）
+  const { data, error } = await supabase
+    .from('notification_logs')
+    .update({ is_read: true, read_at: new Date().toISOString() })
+    .in('id', ids)
+    .eq('user_id', userId)
+    .eq('is_read', false)
+    .not('delivered_at', 'is', null)
+    .is('cancelled_at', null)
+    .select('id');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ updated_count: (data || []).length });
 });
 
 // ============================================================
