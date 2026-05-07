@@ -11,12 +11,13 @@ const accountingRouter = accountingEnabled ? require('./routes/accounting') : nu
 const supabase = require('./supabase');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const crypto = require('crypto');
 const axios = require('axios');
 const path = require('path');
 
 const { members, projects, projectMemos, editorRanks, projectRates, deliveries, comments, knowledge, invoices, assets, videoComments, users, invitations, uid } = require('./db/db');
-const { passport: passportInstance, requireAuth, requireLevel, requirePermission, ROLES } = require('./auth');
+const { passport: passportInstance, requireAuth, requireLevel, requirePermission, isSuperAdminUser, ROLES } = require('./auth');
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -56,6 +57,20 @@ console.log(`[build] BUILD_ID = ${BUILD_ID}`);
 // ==================== ミドルウェア ====================
 // ミドルウェア: リクエストとレスポンスの間で処理を挟む仕組み
 
+// 壊さない範囲のセキュリティヘッダのみ。CSP は既存のインライン script/style を割るため
+// 本 PR では入れない（report-only 含めて段階導入は別 PR で扱う）。
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
+  // HSTS は Railway 経由で常時 HTTPS のため有効化したいが、独自ドメイン側で
+  // HTTPS 切れに弱いユーザーが残る可能性があるので別 PR で扱う
+  strictTransportSecurity: false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  frameguard: { action: 'deny' },
+}));
+
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentials: true }));
 
 // すべてのレスポンスに X-Server-Build ヘッダを付与（クライアント側のバージョン照合用）
@@ -73,14 +88,21 @@ app.get('/api/build-info', (req, res) => {
 
 // セッション設定
 // セッション: ログイン状態をサーバー側で管理する仕組み
+// 本番では SESSION_SECRET 必須。未設定で起動するとフォールバック値で署名されてしまうため即時失敗させる。
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (process.env.NODE_ENV === 'production' && !SESSION_SECRET) {
+  console.error('[FATAL] SESSION_SECRET is required in production. Refusing to start.');
+  process.exit(1);
+}
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
-  secret: process.env.SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
+  secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production', // 本番ではHTTPS必須
     httpOnly: true, // JavaScriptからCookieを読めないようにしてXSS対策
+    sameSite: 'lax', // 通常の遷移ログインを壊さずに CSRF 耐性を底上げ
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7日間
   },
 }));
@@ -110,8 +132,13 @@ function getClientIP(req) {
   return normalizeIP(req.ip || req.connection?.remoteAddress || '');
 }
 
-// 自分のIPを確認するためのデバッグエンドポイント（認証不要）
+// 自分のIPを確認するためのデバッグエンドポイント。
+// 認証不要だった頃は AUTO_LOGIN_IPS / AUTO_LOGIN_EMAIL 等の内部設定を未認証で返していたため、
+// 最高管理者（admin かつ SUPER_ADMIN_EMAILS）以外は 404 扱いに変更。
 app.get('/auth/debug-ip', async (req, res) => {
+  if (!req.isAuthenticated?.() || !isSuperAdminUser(req.user)) {
+    return res.status(404).json({ error: 'Not Found' });
+  }
   const ip = getClientIP(req);
   const cookieOff = !!(req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie));
   let user_lookup = null;
