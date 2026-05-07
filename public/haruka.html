@@ -12632,7 +12632,7 @@ function renderLineCostsBody(line) {
     const user = lc.user || null;
     const roleLabel = role?.label || role?.code || 'ロール未設定';
     const ownerLabel = user
-      ? `${esc(user.name || user.email || 'ユーザー')}`
+      ? `${esc(user.full_name || user.email || 'ユーザー')}`
       : `<span style="color:var(--text-muted)">(ロール固定)</span>`;
     const unitText = formatLineCostUnit(lc);
     const totalCost = calcLineCostFront(lc, line);
@@ -13039,7 +13039,7 @@ function openProjectLineCostDeleteConfirm(lineId, costId) {
   const role = cost.role;
   const user = cost.user;
   const roleLabel = role?.label || role?.code || 'ロール未設定';
-  const ownerLabel = user ? (user.name || user.email || 'ユーザー') : '(ロール固定)';
+  const ownerLabel = user ? (user.full_name || user.email || 'ユーザー') : '(ロール固定)';
   const unitText = formatLineCostUnit(cost);
   document.getElementById('plc-del-message').innerHTML = `
     <div style="margin-bottom:6px"><strong>${esc(roleLabel)}</strong> ${esc(ownerLabel)}</div>
