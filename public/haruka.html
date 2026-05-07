@@ -15784,7 +15784,10 @@ function openTweetCompose() {
   _twImageDataUrl = null;
   document.getElementById('tw-body').value = '';
   document.getElementById('tw-image-input').value = '';
-  document.getElementById('tw-image-preview').innerHTML = TWEET_IMAGE_PLACEHOLDER;
+  const preview = document.getElementById('tw-image-preview');
+  preview.innerHTML = TWEET_IMAGE_PLACEHOLDER;
+  // 空状態はプレースホルダ用に正方形枠に戻す
+  preview.style.aspectRatio = '1 / 1';
   document.getElementById('tw-image-status').textContent = '';
   updateTweetCounter();
   openModal('modal-tweet-compose');
@@ -15797,6 +15800,32 @@ function updateTweetCounter() {
     counter.textContent = `${len} / 280`;
     counter.style.color = len > 260 ? '#C0392B' : 'var(--text-muted)';
   }
+}
+
+// アスペクト比を保持して maxW × maxH に収めるリサイズ（クロップしない）
+function resizeImageContainToBlob(file, maxW, maxH, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const sw = img.width, sh = img.height;
+        const scale = Math.min(maxW / sw, maxH / sh, 1); // 拡大はしない
+        const dw = Math.max(1, Math.round(sw * scale));
+        const dh = Math.max(1, Math.round(sh * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = dw;
+        canvas.height = dh;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, dw, dh);
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('画像変換に失敗しました')), 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('画像読み込みに失敗しました'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('ファイル読み込みに失敗しました'));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function processTweetImageFile(file) {
@@ -15812,11 +15841,11 @@ async function processTweetImageFile(file) {
   }
   status.textContent = '画像処理中...';
   try {
-    // 長辺 1024px / JPEG 0.85 にリサイズ
-    const blob = await resizeImageToBlob(file, 1024, 1024, 0.85);
+    // 長辺 1024px / JPEG 0.85 にリサイズ（アスペクト比保持・クロップなし）
+    const blob = await resizeImageContainToBlob(file, 1024, 1024, 0.85);
     if (blob.size > 500 * 1024) {
-      // さらに圧縮: 800px / 0.75
-      const blob2 = await resizeImageToBlob(file, 800, 800, 0.75);
+      // さらに圧縮: 長辺 800px / 0.75
+      const blob2 = await resizeImageContainToBlob(file, 800, 800, 0.75);
       if (blob2.size > 500 * 1024) {
         showToast('画像サイズが大きすぎます。別の写真を選んでください', 'warn');
         status.textContent = '';
@@ -15832,7 +15861,16 @@ async function processTweetImageFile(file) {
       r.onerror = reject;
       r.readAsDataURL(_twImageBlob);
     });
-    document.getElementById('tw-image-preview').innerHTML = `<img src="${_twImageDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block">`;
+    // 画像の自然な縦横比に枠を合わせる（max-height:280px は CSS 側で残るので縦長は枠で頭打ち）
+    const dims = await new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+      im.onerror = () => resolve({ w: 1, h: 1 });
+      im.src = _twImageDataUrl;
+    });
+    const preview = document.getElementById('tw-image-preview');
+    preview.style.aspectRatio = `${dims.w} / ${dims.h}`;
+    preview.innerHTML = `<img src="${_twImageDataUrl}" style="width:100%;height:100%;object-fit:contain;display:block">`;
     status.textContent = `画像準備OK (${(_twImageBlob.size / 1024).toFixed(0)} KB)`;
   } catch (err) {
     console.error(err);
