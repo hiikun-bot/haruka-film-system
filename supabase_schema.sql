@@ -2091,4 +2091,15 @@ ALTER TABLE invoice_items
   ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_line_id ON invoice_items(line_id);
 
+-- ==================== team_members.leader_rank（ADR 008 Stage 1）====================
+-- チームリーダーを役職（users.role）から独立した「業務上の連絡窓口」として持つ。
+-- 'leader' は 1 チーム最大 1 人、'sub_leader' は複数可、NULL = 一般メンバー。
+ALTER TABLE team_members
+  ADD COLUMN IF NOT EXISTS leader_rank text
+  CHECK (leader_rank IS NULL OR leader_rank IN ('leader', 'sub_leader'));
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_team_members_leader
+  ON team_members(team_id) WHERE leader_rank = 'leader';
+CREATE INDEX IF NOT EXISTS idx_team_members_team_leader_rank
+  ON team_members(team_id, leader_rank) WHERE leader_rank IS NOT NULL;
+
 NOTIFY pgrst, 'reload schema';
