@@ -4977,6 +4977,32 @@ router.get('/members', requireAuth, async (req, res) => {
       if (idx >= 0) Object.assign(data[idx], self);
     }
   }
+  // ADR 008 Stage 2: team_members.leader_rank を enrichments で付与（team_id ベースのみ）
+  // メンバー一覧のリーダー/サブリーダーバッジ表示と編集用select の初期値に使う。
+  // 1 メンバーは複数 team_members 行を持ちうるが、ここでは users.team_id（基本チーム）のみを参照する。
+  if (Array.isArray(data) && data.length > 0) {
+    try {
+      const { data: tmRows, error: tmErr } = await supabase
+        .from('team_members')
+        .select('team_id, user_id, leader_rank')
+        .not('leader_rank', 'is', null);
+      if (!tmErr && Array.isArray(tmRows)) {
+        // (team_id, user_id) -> leader_rank の Map
+        const key = (t, u) => `${t}::${u}`;
+        const lrMap = new Map();
+        tmRows.forEach(r => {
+          if (r.team_id && r.user_id) lrMap.set(key(r.team_id, r.user_id), r.leader_rank);
+        });
+        data.forEach(m => {
+          m.leader_rank = (m.team_id ? lrMap.get(key(m.team_id, m.id)) : null) || null;
+        });
+      } else if (tmErr) {
+        console.warn('[members] leader_rank enrich skipped:', tmErr.message);
+      }
+    } catch (e) {
+      console.warn('[members] leader_rank enrich error:', e.message);
+    }
+  }
   res.json(data);
 });
 
@@ -6242,17 +6268,25 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
   if (tErr) return res.status(500).json({ error: tErr.message });
 
   // ADR 008 Stage 1: team_members.leader_rank='leader' でリーダー判定（director_id にフォールバック）
+  // ADR 008 Stage 2: sub_leader も同時に集めてバッジ表示用に返す
   // migration 未適用環境では leader_rank 列が存在せず select が落ちる可能性があるため、
   // try/catch でラップして欠損時は空 Map にする（既存挙動を壊さない）。
   const teamLeaderMap = new Map(); // team_id -> leader user_id
+  const teamSubLeadersMap = new Map(); // team_id -> Set<sub_leader user_id>
   try {
     const { data: tmRows, error: tmErr } = await supabase
       .from('team_members')
       .select('team_id, user_id, leader_rank')
-      .eq('leader_rank', 'leader');
+      .not('leader_rank', 'is', null);
     if (!tmErr && Array.isArray(tmRows)) {
       tmRows.forEach(r => {
-        if (r.team_id && r.user_id) teamLeaderMap.set(r.team_id, r.user_id);
+        if (!r.team_id || !r.user_id) return;
+        if (r.leader_rank === 'leader') {
+          teamLeaderMap.set(r.team_id, r.user_id);
+        } else if (r.leader_rank === 'sub_leader') {
+          if (!teamSubLeadersMap.has(r.team_id)) teamSubLeadersMap.set(r.team_id, new Set());
+          teamSubLeadersMap.get(r.team_id).add(r.user_id);
+        }
       });
     } else if (tmErr) {
       // leader_rank 列未追加 / team_members 未作成の環境でも 500 にしない
@@ -6312,6 +6346,7 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
     .map(t => {
       // leader_user_id 優先順位: team_members.leader_rank='leader' → teams.director_id
       const leaderUserId = teamLeaderMap.get(t.id) || t.director_id || null;
+      const subLeaderIds = Array.from(teamSubLeadersMap.get(t.id) || []);
       const sorted = sortTeamMembers(byTeam.get(t.id), t, leaderUserId);
       return {
         team_id: t.id,
@@ -6320,6 +6355,7 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
         director_id: t.director_id, // 後方互換のため残す
         producer_id: t.producer_id,
         leader_user_id: leaderUserId, // ADR 008 Stage 1: バッジ判定はこれを優先
+        sub_leader_user_ids: subLeaderIds, // ADR 008 Stage 2: 🥈 サブリーダーバッジ用
         members: sorted,
         done_count: sorted.filter(m => m.done_at).length,
         total_count: sorted.length,
@@ -6341,6 +6377,7 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
       director_id: null,
       producer_id: null,
       leader_user_id: null,
+      sub_leader_user_ids: [],
       members: sortedNoTeam,
       done_count: sortedNoTeam.filter(m => m.done_at).length,
       total_count: sortedNoTeam.length,
@@ -7915,6 +7952,68 @@ router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (r
   }
 
   res.json(data);
+});
+
+// ADR 008 Stage 2: チームメンバーの leader_rank（リーダー / サブリーダー）更新
+// PUT /api/teams/:team_id/members/:user_id/leader-rank
+//   body: { leader_rank: 'leader' | 'sub_leader' | null }
+//
+// 'leader' を指定する場合、同チームに既存 leader が居れば「置き換え方式」で
+// 既存 leader を NULL に落としてから対象を leader にする（uniq_team_members_leader 違反回避）。
+// team_members 行が存在しない場合は同時に INSERT する（メンバー編集モーダル経由で
+// team_id を変更したばかりで team_members 行が未作成のケース対応）。
+router.put('/teams/:team_id/members/:user_id/leader-rank', requireAuth, requirePermission('team.manage'), async (req, res) => {
+  const { team_id, user_id } = req.params;
+  const { leader_rank } = req.body || {};
+  if (leader_rank !== null && leader_rank !== 'leader' && leader_rank !== 'sub_leader') {
+    return res.status(400).json({ error: 'leader_rank は leader / sub_leader / null のいずれかにしてください' });
+  }
+  // チーム存在確認
+  const { data: team, error: tErr } = await supabase
+    .from('teams').select('id').eq('id', team_id).maybeSingle();
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!team) return res.status(404).json({ error: 'チームが見つかりません' });
+
+  // 'leader' を割り当てる場合は既存 leader を先に NULL に落として置き換える
+  if (leader_rank === 'leader') {
+    const { error: clearErr } = await supabase
+      .from('team_members')
+      .update({ leader_rank: null })
+      .eq('team_id', team_id)
+      .eq('leader_rank', 'leader')
+      .neq('user_id', user_id);
+    if (clearErr) {
+      // leader_rank 列未追加環境への defensive fallback（migration 未適用時に 500 を返さない）
+      console.warn('[leader-rank PUT] clear existing leader failed:', clearErr.message);
+      return res.status(500).json({ error: clearErr.message });
+    }
+  }
+
+  // 対象 team_members 行を upsert（無ければ作る、あれば leader_rank だけ更新）
+  // upsert は (team_id, user_id) 複合 PK を想定。SELECT → INSERT/UPDATE で 2 段階に分けて実装。
+  const { data: existing, error: exErr } = await supabase
+    .from('team_members')
+    .select('team_id, user_id')
+    .eq('team_id', team_id)
+    .eq('user_id', user_id)
+    .maybeSingle();
+  if (exErr) return res.status(500).json({ error: exErr.message });
+
+  if (existing) {
+    const { error: upErr } = await supabase
+      .from('team_members')
+      .update({ leader_rank })
+      .eq('team_id', team_id)
+      .eq('user_id', user_id);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+  } else {
+    const { error: insErr } = await supabase
+      .from('team_members')
+      .insert({ team_id, user_id, leader_rank });
+    if (insErr) return res.status(500).json({ error: insErr.message });
+  }
+
+  res.json({ ok: true, team_id, user_id, leader_rank });
 });
 
 // チーム削除（admin/secretary/producer/PD のみ）
