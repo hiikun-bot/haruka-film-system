@@ -70,6 +70,10 @@ export function formatRelativeTime(iso) {
 }
 
 // 1件をHTML文字列で返す
+//
+// 集約カード（aggregated=true）:
+//   ・data-aggregated-ids にカンマ区切りで含まれる元 notification_logs.id を持つ
+//   ・クリック時は PATCH /api/notifications/bulk-read で一括既読化
 export function renderNotificationCard(n) {
   const isUnread = !n.is_read;
   const iconChar = ICON_BY_TYPE[n.notification_type] || '🔔'; // 🔔 fallback
@@ -80,17 +84,25 @@ export function renderNotificationCard(n) {
     ? n.sender_name
     : 'システム通知';
   const timeLabel = formatRelativeTime(n.created_at);
+  const aggregated = !!n.aggregated;
+  const aggregatedIds = Array.isArray(n.aggregated_ids) ? n.aggregated_ids : [];
+  const aggregatedAttr = aggregated && aggregatedIds.length
+    ? ` data-aggregated-ids="${escapeHtml(aggregatedIds.join(','))}"`
+    : '';
+  const countBadge = aggregated && n.aggregated_count > 1
+    ? `<span class="notification-card-aggregated-count" aria-label="集約された通知件数">×${escapeHtml(String(n.aggregated_count))}</span>`
+    : '';
 
   return `
     <article
-      class="notification-card ${isUnread ? 'unread' : 'read'}"
+      class="notification-card ${isUnread ? 'unread' : 'read'}${aggregated ? ' aggregated' : ''}"
       data-notification-id="${escapeHtml(n.id)}"
       data-link-url="${escapeHtml(n.link_url || '')}"
-      data-notification-type="${escapeHtml(n.notification_type || '')}"
+      data-notification-type="${escapeHtml(n.notification_type || '')}"${aggregatedAttr}
       tabindex="0"
       role="button"
       aria-label="${escapeHtml(n.title || '通知')}（${isUnread ? '未読' : '既読'}）">
-      <div class="notification-card-icon ${typeClass}" aria-hidden="true">${iconChar}</div>
+      <div class="notification-card-icon ${typeClass}" aria-hidden="true">${iconChar}${countBadge}</div>
       <div class="notification-card-main">
         <div class="notification-card-row">
           <div class="notification-card-title">${escapeHtml(n.title || '')}</div>
@@ -142,18 +154,48 @@ async function activateCard(cardEl, options = {}) {
   const id = cardEl.dataset.notificationId;
   const linkUrl = cardEl.dataset.linkUrl || '';
   const wasUnread = cardEl.classList.contains('unread');
+  const aggregatedIdsRaw = cardEl.dataset.aggregatedIds || '';
+  const aggregatedIds = aggregatedIdsRaw
+    ? aggregatedIdsRaw.split(',').filter(Boolean)
+    : [];
 
   // 既読化（未読時のみ）
-  if (wasUnread && id) {
+  if (wasUnread) {
     try {
-      const res = await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
-        method: 'PATCH',
-        credentials: 'same-origin',
-      });
-      if (res.ok) {
+      let ok = false;
+      let readCount = 1;
+      if (aggregatedIds.length > 0) {
+        // 集約カード: 含まれる全 ID をまとめて既読化
+        const res = await fetch('/api/notifications/bulk-read', {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: aggregatedIds }),
+        });
+        ok = res.ok;
+        if (ok) {
+          try {
+            const json = await res.json();
+            if (json && typeof json.updated_count === 'number') {
+              readCount = json.updated_count || aggregatedIds.length;
+            } else {
+              readCount = aggregatedIds.length;
+            }
+          } catch { readCount = aggregatedIds.length; }
+        }
+      } else if (id) {
+        const res = await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+        });
+        ok = res.ok;
+      }
+      if (ok) {
         markCardAsRead(cardEl);
-        // バッジ -1 を伝える（notification-bell.js が拾う）
-        document.dispatchEvent(new CustomEvent('notification:read', { detail: { id } }));
+        // バッジ更新を伝える（集約カードでは一括分の delta を渡す）
+        document.dispatchEvent(new CustomEvent('notification:read', {
+          detail: { id, count: readCount, aggregatedIds },
+        }));
       }
     } catch (e) {
       console.warn('[notification-card] 既読化失敗', e);

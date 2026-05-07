@@ -5978,6 +5978,18 @@ const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 router.get('/tweets', requireAuth, async (req, res) => {
   const mine = req.query.mine === '1' || req.query.mine === 'true';
   const staffOnly = req.query.staff_only === '1' || req.query.staff_only === 'true';
+  // roles=admin,secretary,producer,producer_director,director,editor,designer
+  //   フロントの roleGroups → users.role 値の集合（producer_director を含む）
+  //   後方互換: staff_only=1 は roles=admin,secretary に変換
+  const ALLOWED_ROLES = new Set([
+    'admin', 'secretary', 'producer', 'producer_director', 'director', 'editor', 'designer',
+  ]);
+  let rolesFilter = String(req.query.roles || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+    .filter(r => ALLOWED_ROLES.has(r));
+  if (rolesFilter.length === 0 && staffOnly) {
+    rolesFilter = ['admin', 'secretary'];
+  }
 
   let q = supabase
     .from('tweets')
@@ -5987,22 +5999,25 @@ router.get('/tweets', requireAuth, async (req, res) => {
     .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
 
-  // 運営のみフィルター: admin / secretary が投稿したもの
-  // user_roles JOIN roles ベースで staff の user_id を取得（dual-read: 旧 users.role も並走）
-  if (staffOnly) {
-    const staffSet = new Set();
-    // 1) user_roles 経由
-    const { data: ur } = await supabase
-      .from('user_roles').select('user_id, roles(code)').in('roles.code', ['admin','secretary']);
-    (ur || []).forEach(r => { if (r.roles) staffSet.add(r.user_id); });
-    // 2) dual-read: 旧 users.role も拾う（user_roles 未反映ユーザーをカバー）
-    const { data: legacyStaff, error: sErr } = await supabase
-      .from('users').select('id').in('role', ['admin', 'secretary']);
+  // ロール絞り込み（運営のみ / 個別ロール）:
+  //   user_roles JOIN roles ベースで対象 user_id 集合を取得（dual-read: 旧 users.role も並走）
+  if (rolesFilter.length > 0) {
+    const roleSet = new Set();
+    // user_roles 経由（合成値 'producer_director' は roles マスタに無いため除外して引く）
+    const codesForJoin = rolesFilter.filter(c => c !== 'producer_director');
+    if (codesForJoin.length > 0) {
+      const { data: ur } = await supabase
+        .from('user_roles').select('user_id, roles(code)').in('roles.code', codesForJoin);
+      (ur || []).forEach(r => { if (r.roles) roleSet.add(r.user_id); });
+    }
+    // dual-read: 旧 users.role 列も拾う（'producer_director' を含む全コード）
+    const { data: legacyRole, error: sErr } = await supabase
+      .from('users').select('id').in('role', rolesFilter);
     if (sErr) return res.status(500).json({ error: sErr.message });
-    (legacyStaff || []).forEach(u => staffSet.add(u.id));
-    const staffIds = Array.from(staffSet);
-    if (staffIds.length === 0) return res.json([]);
-    q = q.in('user_id', staffIds);
+    (legacyRole || []).forEach(u => roleSet.add(u.id));
+    const ids = Array.from(roleSet);
+    if (ids.length === 0) return res.json([]);
+    q = q.in('user_id', ids);
   }
 
   // 自分のつぶやき・返信フィルター:
@@ -6011,45 +6026,41 @@ router.get('/tweets', requireAuth, async (req, res) => {
   //   3) 自分がコメントに参加した投稿（tweet_comments を引いて tweet_id 集合を作る）
   if (mine) {
     const meId = req.user.id;
-    const { data: myComments, error: cErr } = await supabase
-      .from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null);
-    if (cErr) return res.status(500).json({ error: cErr.message });
-    const commentedTweetIds = Array.from(new Set((myComments || []).map(c => c.tweet_id))).filter(Boolean);
+    const nowIso = new Date().toISOString();
 
-    // PostgREST .or() 内で配列 contains / in の両方を OR したいが、構文が複雑になるため
-    // 「自分の投稿 + メンション対象 + コメント参加対象」を別個に取得して merge する。
-    const queries = [];
-
-    // (a) 自分の投稿 + メンション対象
-    queries.push(
+    // (a) 自分の投稿 + メンション対象  (b) 自分が参加したコメントの tweet 集合
+    //     を並列取得（これまでは (a)+(b) が逐次だった分の round trip を 1 段削減）。
+    const [myCommentsRes, ownAndMentionRes] = await Promise.all([
+      supabase.from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null),
       supabase.from('tweets')
         .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
-        .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
-        .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`)
-    );
+        .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
+        .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`),
+    ]);
+    if (myCommentsRes.error) return res.status(500).json({ error: myCommentsRes.error.message });
+    if (ownAndMentionRes.error) return res.status(500).json({ error: ownAndMentionRes.error.message });
 
-    // (b) コメント参加対象
-    if (commentedTweetIds.length > 0) {
-      queries.push(
-        supabase.from('tweets')
-          .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
-          .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
-          .in('id', commentedTweetIds)
-      );
-    }
+    const commentedTweetIds = Array.from(new Set((myCommentsRes.data || []).map(c => c.tweet_id))).filter(Boolean);
 
-    const results = await Promise.all(queries);
     const merged = new Map();
-    for (const r of results) {
-      if (r.error) return res.status(500).json({ error: r.error.message });
-      for (const t of (r.data || [])) merged.set(t.id, t);
+    for (const t of (ownAndMentionRes.data || [])) merged.set(t.id, t);
+
+    // (c) コメント参加対象 — 取得したコメント tweet_id があるときだけ追加クエリ
+    if (commentedTweetIds.length > 0) {
+      const { data: commentTweets, error: ctErr } = await supabase.from('tweets')
+        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
+        .in('id', commentedTweetIds);
+      if (ctErr) return res.status(500).json({ error: ctErr.message });
+      for (const t of (commentTweets || [])) if (!merged.has(t.id)) merged.set(t.id, t);
     }
 
     let list = Array.from(merged.values());
 
-    // staff_only 併用時のフィルター
-    if (staffOnly) {
-      list = list.filter(t => ['admin', 'secretary'].includes(t.users?.role));
+    // ロール絞り込み（roles=... or 後方互換 staff_only=1）併用時のフィルター
+    if (rolesFilter.length > 0) {
+      const allowed = new Set(rolesFilter);
+      list = list.filter(t => allowed.has(t.users?.role));
     }
 
     list.sort((a, b) => {
