@@ -4069,10 +4069,14 @@ router.delete('/creatives', requireAuth, async (req, res) => {
 
 // アップロード済みファイル一覧
 router.get('/creatives/:id/files', async (req, res) => {
+  // version DESC を最優先にし、同 version 内では uploaded_at DESC で並べる。
+  // version は creative_files にしか存在しない一意な世代番号なので、
+  // これにより最新世代が常に先頭に来る（V1 重複事故が発生していても識別容易）。
   const { data, error } = await supabase
     .from('creative_files')
     .select('*')
     .eq('creative_id', req.params.id)
+    .order('version', { ascending: false })
     .order('uploaded_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -4081,22 +4085,40 @@ router.get('/creatives/:id/files', async (req, res) => {
 // ファイルアップロード（Google Drive）
 router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => {
   const creativeId = req.params.id;
-  const { width, height, generated_name } = req.body;
+  const { width, height } = req.body;
+  let { generated_name } = req.body;
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'ファイルが選択されていません' });
 
-  // バージョン採番: フロントから明示的に有効な version が指定されない場合、
-  // 既存 creative_files の MAX(version) + 1 を採番する（既存ファイル削除や手動編集でズレるのを防ぐ）
-  let version = parseInt(req.body.version, 10);
-  if (!version || version < 1) {
-    const { data: maxRow } = await supabase
-      .from('creative_files')
-      .select('version')
-      .eq('creative_id', creativeId)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    version = (maxRow?.version || 0) + 1;
+  // バージョン採番: フロント送信値は信用しない（同一モーダルで2連続アップロードや
+  // race 時に V1 が重複保存される事故があったため、サーバ側で必ず MAX(version)+1 を採番する）。
+  // フロントの cd-version-num はあくまで表示用ヒント。
+  const requestedVersion = parseInt(req.body.version, 10);
+  const { data: maxRow } = await supabase
+    .from('creative_files')
+    .select('version')
+    .eq('creative_id', creativeId)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const version = (maxRow?.version || 0) + 1;
+  if (requestedVersion && requestedVersion !== version) {
+    console.info(
+      `[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId})`
+    );
+  } else {
+    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId})`);
+  }
+
+  // generated_name に埋め込まれた _vN を確定 version で上書きする。
+  // 例: フロントが "cool_v1.mp4" を送ってきても、サーバ採番が 3 なら "cool_v3.mp4" にする。
+  // _vN パターンが無ければそのまま使う（保険）。
+  if (generated_name) {
+    const replaced = generated_name.replace(/_v\d+(\.[^.]+)$/, `_v${version}$1`);
+    if (replaced !== generated_name) {
+      console.info(`[creatives/upload] generated_name rewritten: ${generated_name} → ${replaced}`);
+    }
+    generated_name = replaced;
   }
 
   // クリエイティブ + 案件情報を取得
@@ -4261,7 +4283,8 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   }
   if (fErr) return res.status(500).json({ error: fErr.message });
 
-  res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });
+  // version はサーバ側採番が真。フロントはこの値を使ってトースト等を表示する。
+  res.json({ ok: true, file: fileRecord, version, drive_url: driveUrl, drive_error: driveError });
 
   // faststart プレビュー版生成は非同期（fire-and-forget）。
   // res.json() 後に setImmediate で起動 → ユーザーのアップロード待ち時間を増やさない。
