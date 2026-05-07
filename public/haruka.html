@@ -8683,7 +8683,15 @@ function renderCreatives() {
   // タブ別カウント（共通/動画/デザイン）はサーバー側 /api/creatives/counts から取得した
   // creativeTabCounts を参照する。allCreatives は現在のタブの行しか持たないため、
   // ここで計算するとタブを跨いだ件数が正しく出ない（バグ #237 系の原因）。
-  const filtered = allCreatives.filter(c => {
+  // ────────────────────────────────────────────────────────────────
+  // 警告系（納期遅れアラート・サイドバー）と作業エリア（ガント本体・リスト）で
+  // 「自分の案件 / 自分のボール」だけは適用範囲を分ける:
+  //   - 警告は管理者やPMが「他人の遅延も見落とさないように」全体スコープで集計したい
+  //   - 作業エリアは編集者などが「自分の作業に集中できるように」絞り込みたい
+  // baseFiltered = 「自分の案件/自分のボール」以外の全フィルタ適用済（警告系で使う）
+  // filtered     = baseFiltered にビュー絞り込み (mine/ball) を追加（作業エリアで使う）
+  // ────────────────────────────────────────────────────────────────
+  const baseFiltered = allCreatives.filter(c => {
     // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
     if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
     // クライアント複数選択フィルタ（OR）
@@ -8718,6 +8726,12 @@ function renderCreatives() {
     const isDesign = c.creative_type?.startsWith('design') || assigneeUserRole === 'designer';
     if (_role === 'designer' && !isDesign) return false;
     if (_role === 'editor' && isDesign) return false;
+    // 詳細フィルター（ステータス/SOS/納品済み/遅延のみ）
+    if (typeof _cvApplyAdvFilter === 'function' && !_cvApplyAdvFilter(c)) return false;
+    return true;
+  });
+  // ビュー絞り込み（自分の案件/自分のボール）— 作業エリア用フィルタ
+  const _passesViewFilter = (c) => {
     if (currentView === 'mine') {
       // 自分の案件 = 以下のいずれかに該当する場合
       //   1) 自分が編集者/デザイナー/director-as-editor として creative にアサインされている
@@ -8742,10 +8756,9 @@ function renderCreatives() {
       else if (bh.type === 'all') hasBall = (!!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId)) || isProducerLike;
       if (!hasBall) return false;
     }
-    // 詳細フィルター（ステータス/SOS/納品済み/遅延のみ）
-    if (typeof _cvApplyAdvFilter === 'function' && !_cvApplyAdvFilter(c)) return false;
     return true;
-  });
+  };
+  const filtered = baseFiltered.filter(_passesViewFilter);
 
   // 件数表示: ページング後の総件数(creativesPage.total) があればそちらを参照
   const totalLabel = (creativesPage.total > 0)
@@ -8754,10 +8767,10 @@ function renderCreatives() {
   document.getElementById('creative-count').textContent = totalLabel;
   // 種別タブのカウントバッジは サーバー側 /api/creatives/counts の結果から更新
   updateCreativeTabBadges();
-  // ガントチャートも同じフィルタ済データで描画（モード切替によらず常に最新化）
-  try { renderCreativesGantt(filtered); } catch(e) { console.warn('[gantt] render error:', e); }
-  // 納期遅れアラートもサイドバーと同じフィルタ済セットで件数を出す（矛盾防止）
-  try { renderAlerts(filtered); } catch(e) { console.warn('[alerts] render error:', e); }
+  // ガントチャートは「ビュー絞り込み込み(filtered)」で本体描画、サイドバーは「ビュー絞り込み無し(baseFiltered)」で集計
+  try { renderCreativesGantt(filtered, baseFiltered); } catch(e) { console.warn('[gantt] render error:', e); }
+  // 納期遅れアラートは baseFiltered で集計（自分の案件/自分のボール ON 時も他人の遅延を見落とさない）
+  try { renderAlerts(baseFiltered); } catch(e) { console.warn('[alerts] render error:', e); }
 
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
@@ -9276,10 +9289,14 @@ function _cvActualEndFor(r) {
 }
 
 // ガント本体描画
-function renderCreativesGantt(filtered) {
+function renderCreativesGantt(filtered, warningSource) {
+  // warningSource: サイドバー集計用の "ビュー絞り込み (自分の案件/自分のボール) 適用前" の集合。
+  // 未指定なら filtered を流用（後方互換）。指定時はサイドバーだけ広いスコープで集計し、
+  // 「自分の案件 ON でも他人の遅延がサイドバーには映る」を実現する。
   const main = document.getElementById('cv-gantt-main');
   const side = document.getElementById('cv-gantt-sidepanel');
   if (!main) return;
+  const sidebarSource = Array.isArray(warningSource) ? warningSource : (filtered || []);
   const win = _cvRangeWindow();
   const totalDays = _cvDayDiff(win.end, win.start) + 1;
   // 1日あたり px 幅: 期間に応じて伸縮
@@ -9295,7 +9312,25 @@ function renderCreativesGantt(filtered) {
     main.innerHTML = `
       <div class="cv-g-toolbar"><span>該当なし</span></div>
       <div style="padding:48px;text-align:center;color:var(--text-muted)">該当するクリエイティブがありません</div>`;
-    if (side) side.innerHTML = _cvSidePanelHtml([]);
+    // 「自分の案件」ON で 0 件でも、他メンバーの遅延を拾えるようサイドバーは sidebarSource で集計
+    if (side) {
+      const teamByIdEarly = new Map(allTeams.map(t => [t.id, t]));
+      const teamByMemberEarly = new Map();
+      allTeams.forEach(t => (t.team_members || []).forEach(tm => {
+        if (!teamByMemberEarly.has(tm.user_id)) teamByMemberEarly.set(tm.user_id, t);
+      }));
+      const earlyRows = (sidebarSource || []).map(c => {
+        const info = _cvRowInfo(c);
+        const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+        const editorUser = editor?.users || null;
+        const homeTeamId = editorUser?.team_id;
+        const team = (c.team_id ? teamByIdEarly.get(c.team_id) : null)
+          || (homeTeamId ? teamByIdEarly.get(homeTeamId) : null)
+          || (editorUser?.id ? teamByMemberEarly.get(editorUser.id) : null);
+        return { c, info, editorUser, team };
+      });
+      side.innerHTML = _cvSidePanelHtml(earlyRows);
+    }
     // 期間ラベル（操作バー右）
     _cvUpdateGanttPeriodLabel(win);
     return;
@@ -9339,7 +9374,7 @@ function renderCreativesGantt(filtered) {
   }
 
   // 行ごとにメタ情報を集約
-  const rows = filtered.map(c => {
+  const _buildRow = (c) => {
     const info = _cvRowInfo(c);
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
     const editorUser = editor?.users || null;
@@ -9348,7 +9383,10 @@ function renderCreativesGantt(filtered) {
       || (homeTeamId ? teamById.get(homeTeamId) : null)
       || (editorUser?.id ? teamByMember.get(editorUser.id) : null);
     return { c, info, editorUser, team };
-  });
+  };
+  const rows = filtered.map(_buildRow);
+  // 警告サイドバー用は "ビュー絞り込み無し" の集合で集計（自分の案件 ON でも他人の遅延が見える）
+  const warningRows = (sidebarSource === filtered) ? rows : sidebarSource.map(_buildRow);
 
   // 並び順: 遅延 → 締切が近い順 → クライアント名
   rows.sort((a, b) => {
@@ -9735,7 +9773,7 @@ function renderCreativesGantt(filtered) {
     </div>
   `;
 
-  if (side) side.innerHTML = _cvSidePanelHtml(rows);
+  if (side) side.innerHTML = _cvSidePanelHtml(warningRows);
   // 期間ラベル（操作バー右）
   _cvUpdateGanttPeriodLabel(win);
   // ツールバー高さ実測 → sticky オフセット更新
