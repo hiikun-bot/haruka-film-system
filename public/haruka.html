@@ -5121,10 +5121,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           汎用マスター
         </div>
-        <!-- 商材マスター・訴求軸マスターは Stage A で削除（カテゴリマスタ駆動に移行） -->
         <div class="master-nav-item" onclick="selectMasterNav('categories')" id="mnav-categories"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           🏷️ カテゴリ管理
+        </div>
+        <!-- ADR 001 整合: 商材・訴求軸マスタ UI を復活（creative-first 設計で残す方針） -->
+        <div class="master-nav-item" onclick="selectMasterNav('products')" id="mnav-products"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📦 商材マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('appeal_axes')" id="mnav-appeal_axes"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          🎯 訴求軸マスター
         </div>
         <!-- ADR 007 Stage 1: ファイル名テンプレート管理（命名規約） -->
         <div class="master-nav-item" onclick="selectMasterNav('filename_templates')" id="mnav-filename_templates"
@@ -18526,8 +18534,8 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  // 'products'/'appeal_axes' は Stage A で削除済み。'categories' を追加。
-  ['generic','general','categories','filename_templates','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
+  ['generic','general','categories','products','appeal_axes','filename_templates','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -18543,6 +18551,10 @@ function selectMasterNav(type) {
     renderGeneralMasterPage();
   } else if (type === 'categories') {
     renderCategoriesMasterPage();
+  } else if (type === 'products') {
+    renderProductsMasterPage();
+  } else if (type === 'appeal_axes') {
+    renderAppealAxesMasterPage();
   } else if (type === 'filename_templates') {
     renderFilenameTemplatesPage();
   } else if (type === 'checklist') {
