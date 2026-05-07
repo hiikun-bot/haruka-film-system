@@ -1015,6 +1015,197 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
   res.json({ ok: true });
 });
 
+// ==================== filename_templates (ADR 007 Stage 1) ====================
+// 案件別ファイル名テンプレ。設定タブで管理（CRUD）し、Stage 2 で案件モーダル
+// と routes/haruka.js の bulk-preview / bulk / 個別作成からテンプレ参照に
+// 切り替える。Stage 1 では「マスタ管理 + 列追加」のみ。
+//
+// schema-sync 失敗で本番に filename_templates テーブルが無い場合は、
+// 200/空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingFilenameTemplatesTable = (err) =>
+  err && /relation .*filename_templates.* does not exist|could not find the table/i.test(err.message || '');
+
+// tokens のサーバー側バリデーション（DB CHECK と二重）
+//   - 配列で要素が 1 件以上
+//   - serial / project_name / version の3キーが含まれる
+//   - serial が配列の先頭
+//   - 各要素は { kind: "system"|"custom", key, label?, default? } の形
+function validateFilenameTemplateTokens(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) {
+    return { ok: false, error: 'tokens は 1 件以上の配列で指定してください' };
+  }
+  for (const t of tokens) {
+    if (!t || typeof t !== 'object') {
+      return { ok: false, error: 'tokens の各要素はオブジェクトである必要があります' };
+    }
+    if (t.kind !== 'system' && t.kind !== 'custom') {
+      return { ok: false, error: `tokens.kind は "system" / "custom" のいずれか（受信: ${t.kind}）` };
+    }
+    if (typeof t.key !== 'string' || !t.key.trim()) {
+      return { ok: false, error: 'tokens.key は必須の文字列です' };
+    }
+  }
+  const keys = tokens.map(t => t.key);
+  for (const required of ['serial', 'project_name', 'version']) {
+    if (!keys.includes(required)) {
+      return { ok: false, error: `必須トークン "${required}" が含まれていません` };
+    }
+  }
+  if (keys[0] !== 'serial') {
+    return { ok: false, error: '"serial" は配列の先頭でなければなりません' };
+  }
+  return { ok: true };
+}
+
+// 区切り文字の許可リスト（UI でも同じ選択肢を出す）
+const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
+
+// GET /api/filename-templates  一覧（is_default が先頭、その後 name 昇順）
+router.get('/filename-templates', async (_req, res) => {
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .select('*')
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true });
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/filename-templates/:id  単件
+router.get('/filename-templates/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) return res.json(null);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || null);
+});
+
+// POST /api/filename-templates  新規（admin/secretary 権限想定）
+router.post('/filename-templates', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, separator, tokens, is_default } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name は必須です' });
+  }
+  const sep = (separator === undefined || separator === null) ? '_' : String(separator);
+  if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
+    return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
+  }
+  const v = validateFilenameTemplateTokens(tokens);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  const insert = {
+    name: name.trim(),
+    separator: sep,
+    tokens,
+    is_default: !!is_default,
+  };
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .insert(insert)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migrations/2026-05-07_filename_templates.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/filename-templates/:id  更新
+router.put('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, separator, tokens, is_default } = req.body || {};
+  const update = {};
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name は空にできません' });
+    }
+    update.name = name.trim();
+  }
+  if (separator !== undefined) {
+    const sep = String(separator);
+    if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
+      return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
+    }
+    update.separator = sep;
+  }
+  if (tokens !== undefined) {
+    const v = validateFilenameTemplateTokens(tokens);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    update.tokens = tokens;
+  }
+  if (is_default !== undefined) update.is_default = !!is_default;
+  if (Object.keys(update).length === 0) {
+    return res.status(400).json({ error: '更新するフィールドがありません' });
+  }
+  // updated_at はトリガで自動更新される
+
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migration を適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/filename-templates/:id
+//   - is_default のテンプレは削除不可
+//   - projects.filename_template_id で参照中の場合は 409
+router.delete('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const id = req.params.id;
+  // 自身が default かチェック
+  const { data: target, error: getErr } = await supabase
+    .from('filename_templates')
+    .select('id, is_default, name')
+    .eq('id', id)
+    .maybeSingle();
+  if (getErr) {
+    if (isMissingFilenameTemplatesTable(getErr)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: getErr.message });
+  }
+  if (!target) return res.status(404).json({ error: 'テンプレートが見つかりません' });
+  if (target.is_default) {
+    return res.status(409).json({ error: 'デフォルトテンプレートは削除できません。先に別テンプレを is_default=true に設定してください。' });
+  }
+  // 参照チェック（projects）
+  const { count: usedCount, error: refErr } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('filename_template_id', id);
+  if (refErr && !/column .*filename_template_id.* does not exist/i.test(refErr.message || '')) {
+    return res.status(500).json({ error: refErr.message });
+  }
+  if ((usedCount || 0) > 0) {
+    return res.status(409).json({
+      error: `このテンプレートは案件 ${usedCount} 件で使用中のため削除できません。先に他テンプレへ振り替えてください。`
+    });
+  }
+  const { error } = await supabase.from('filename_templates').delete().eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // GET /api/status-templates?category_id=...
 //   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
 router.get('/status-templates', async (req, res) => {
