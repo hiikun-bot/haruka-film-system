@@ -2264,7 +2264,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div class="form-group">
       <label class="form-label">写真 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
       <div id="tw-image-preview" style="width:100%;aspect-ratio:1/1;max-height:280px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px;text-align:center;padding:8px;transition:border-color .15s,background-color .15s" onclick="document.getElementById('tw-image-input').click()" ondragover="onTweetImageDragOver(event)" ondragenter="onTweetImageDragOver(event)" ondragleave="onTweetImageDragLeave(event)" ondrop="onTweetImageDrop(event)">
-        写真を選択 / ドラッグ&ドロップ / タップで撮影（任意）
+        写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意）
       </div>
       <input type="file" id="tw-image-input" accept="image/*" capture="environment" style="display:none" onchange="onTweetImageSelected(event)">
       <div id="tw-image-status" style="font-size:11px;color:var(--text-muted)"></div>
@@ -15611,7 +15611,7 @@ const TWEET_REACTIONS = [
 // deleteTweetComment() / addTweetReaction() / removeTweetReaction() / openTweetImage() /
 // likeTweet() / unlikeTweet() は削除した（独立タブ側の *Page / *FromCard 系を使う）。
 
-const TWEET_IMAGE_PLACEHOLDER = '写真を選択 / ドラッグ&ドロップ / タップで撮影（任意）';
+const TWEET_IMAGE_PLACEHOLDER = '写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意）';
 
 function openTweetCompose() {
   _twImageBlob = null;
@@ -15740,6 +15740,25 @@ async function onTweetImageDrop(e) {
   if (input) input.value = '';
   await processTweetImageFile(file);
 }
+
+// クリップボード貼り付けで画像を添付（つぶやき投稿モーダルが開いている間のみ有効）
+document.addEventListener('paste', async (e) => {
+  const modal = document.getElementById('modal-tweet-compose');
+  if (!modal || !modal.classList.contains('open')) return;
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  let imageFile = null;
+  for (const item of items) {
+    if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+      imageFile = item.getAsFile();
+      if (imageFile) break;
+    }
+  }
+  if (!imageFile) return;
+  e.preventDefault();
+  const input = document.getElementById('tw-image-input');
+  if (input) input.value = '';
+  await processTweetImageFile(imageFile);
+});
 
 async function submitTweet() {
   const body = document.getElementById('tw-body').value.trim();
