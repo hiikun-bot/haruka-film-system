@@ -21073,7 +21073,7 @@ async function renderFilenameTemplatesPage() {
       <div id="fn-tpl-editor" style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:18px"></div>
     </div>
 
-    <!-- カスタム / フラグ トークン追加モーダル -->
+    <!-- トークン追加モーダル（マスター引用 / フラグ / テキスト の 3 択） -->
     <div id="fn-custom-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
       <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:92vw;max-height:90vh;overflow:auto">
         <div style="font-size:16px;font-weight:700;margin-bottom:14px">トークンを追加</div>
@@ -21083,10 +21083,10 @@ async function renderFilenameTemplatesPage() {
           <label class="form-label">種類</label>
           <div style="display:flex;flex-direction:column;gap:6px">
             <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
-              <input type="radio" name="fn-custom-kind" value="custom" checked onchange="onFnCustomKindChange()" style="margin-top:3px">
+              <input type="radio" name="fn-custom-kind" value="master_ref" checked onchange="onFnCustomKindChange()" style="margin-top:3px">
               <span>
-                <span style="font-weight:600">テキスト</span>
-                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（固定値1つ・案件側で上書き可）</span>
+                <span style="font-weight:600">マスター引用</span>
+                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（既存マスタの値を引く）</span>
               </span>
             </label>
             <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
@@ -21096,16 +21096,34 @@ async function renderFilenameTemplatesPage() {
                 <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（クリエイティブの ON/OFF で 2 値切替）</span>
               </span>
             </label>
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
+              <input type="radio" name="fn-custom-kind" value="custom" onchange="onFnCustomKindChange()" style="margin-top:3px">
+              <span>
+                <span style="font-weight:600">テキスト</span>
+                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（固定値1つ・案件側で上書き可）</span>
+              </span>
+            </label>
           </div>
         </div>
 
-        <div class="form-group">
+        <!-- マスター引用型: 引用元マスタピッカー -->
+        <div id="fn-custom-fields-master">
+          <div class="form-group">
+            <label class="form-label">引用元マスタ <span style="color:#E24B4A">*</span></label>
+            <select class="form-select" id="fn-custom-master-key"></select>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              既にビルダーに追加済みのマスタは選択肢に出ません。
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group" id="fn-custom-label-group" style="display:none">
           <label class="form-label">表示ラベル <span style="color:#E24B4A">*</span></label>
           <input class="form-input" id="fn-custom-label" placeholder="例: 芸能人有無">
         </div>
 
         <!-- テキスト型: default 値 -->
-        <div id="fn-custom-fields-text">
+        <div id="fn-custom-fields-text" style="display:none">
           <div class="form-group">
             <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
             <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
@@ -21133,7 +21151,7 @@ async function renderFilenameTemplatesPage() {
           </div>
         </div>
 
-        <details style="margin-top:10px">
+        <details id="fn-custom-advanced" style="margin-top:10px;display:none">
           <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">▸ 上級設定（key を指定する）</summary>
           <div style="margin-top:8px">
             <label class="form-label">key（任意・空欄なら自動採番）</label>
@@ -21335,7 +21353,7 @@ function _renderFnTplEditor() {
       </div>
       <div id="fn-palette" style="display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#FAFAFA;border:1px dashed var(--border);border-radius:8px;min-height:48px">
         ${paletteSystem || '<span style="font-size:12px;color:var(--text-muted)">未使用のシステムトークンはありません</span>'}
-        <button class="btn-sm" onclick="openFnCustomModal()" style="font-size:11px;padding:4px 10px">＋ カスタムトークン</button>
+        <button class="btn-sm" onclick="openFnCustomModal()" style="font-size:11px;padding:4px 10px">＋ トークンを追加</button>
       </div>
     </div>
 
@@ -21517,21 +21535,49 @@ function updateFnFlagValue(idx, field, value) {
   _fnRefreshPreview();
 }
 
-// ---- カスタム / フラグ トークン追加モーダル ----
+// ---- マスター引用 / フラグ / テキスト トークン追加モーダル ----
 function _fnGetCustomKindFromRadio() {
   const r = document.querySelector('input[name="fn-custom-kind"]:checked');
-  return r ? r.value : 'custom';
+  return r ? r.value : 'master_ref';
 }
 
 function onFnCustomKindChange() {
   const kind = _fnGetCustomKindFromRadio();
+  const masterFields = document.getElementById('fn-custom-fields-master');
   const textFields = document.getElementById('fn-custom-fields-text');
   const flagFields = document.getElementById('fn-custom-fields-flag');
-  if (textFields) textFields.style.display = kind === 'custom' ? '' : 'none';
-  if (flagFields) flagFields.style.display = kind === 'flag' ? '' : 'none';
+  const labelGroup = document.getElementById('fn-custom-label-group');
+  const advanced = document.getElementById('fn-custom-advanced');
+  if (masterFields) masterFields.style.display = kind === 'master_ref' ? '' : 'none';
+  if (textFields)   textFields.style.display   = kind === 'custom'     ? '' : 'none';
+  if (flagFields)   flagFields.style.display   = kind === 'flag'       ? '' : 'none';
+  // master_ref はラベル/key の手動指定不要（system token は固定定義）
+  if (labelGroup) labelGroup.style.display = kind === 'master_ref' ? 'none' : '';
+  if (advanced)   advanced.style.display   = kind === 'master_ref' ? 'none' : '';
   // key プレースホルダの目安を更新
   const keyInput = document.getElementById('fn-custom-key');
   if (keyInput) keyInput.placeholder = kind === 'flag' ? '自動 (f_1, f_2, ...)' : '自動 (c_1, c_2, ...)';
+}
+
+// マスター引用ピッカーの選択肢を組み立て
+//   - required: true（serial / project_name / version）は除外
+//   - 既にビルダーに追加済みの system トークンは除外
+function _fnPopulateMasterRefPicker() {
+  const sel = document.getElementById('fn-custom-master-key');
+  if (!sel) return;
+  const d = _fnTplState.draft;
+  const usedKeys = new Set((d && d.tokens || []).filter(t => t.kind === 'system').map(t => t.key));
+  const opts = FN_SYSTEM_TOKENS
+    .filter(s => !s.required && !usedKeys.has(s.key))
+    .map(s => `<option value="${esc(s.key)}">${esc(s.label)} (${esc(s.key)})</option>`)
+    .join('');
+  if (!opts) {
+    sel.innerHTML = `<option value="">追加可能なマスタはありません</option>`;
+    sel.disabled = true;
+  } else {
+    sel.innerHTML = opts;
+    sel.disabled = false;
+  }
 }
 
 function openFnCustomModal() {
@@ -21542,18 +21588,20 @@ function openFnCustomModal() {
   const offInput = document.getElementById('fn-custom-off-value');
   if (onInput)  onInput.value  = '';
   if (offInput) offInput.value = '';
-  // 種類ラジオを「テキスト」に戻す
-  const customRadio = document.querySelector('input[name="fn-custom-kind"][value="custom"]');
-  if (customRadio) customRadio.checked = true;
+  // 種類ラジオを「マスター引用」に戻す
+  const masterRadio = document.querySelector('input[name="fn-custom-kind"][value="master_ref"]');
+  if (masterRadio) masterRadio.checked = true;
+  // マスター引用ピッカーを組み立て
+  _fnPopulateMasterRefPicker();
   onFnCustomKindChange();
   // 上級設定 details を毎回閉じた状態で開く
   const det = document.querySelector('#fn-custom-modal details');
   if (det) det.open = false;
   document.getElementById('fn-custom-modal').style.display = 'flex';
-  // ラベル入力欄にフォーカス（key 入力をスキップして直接ラベル入力できるよう）
+  // 既定の master_ref モードでは select にフォーカス、それ以外はラベル入力欄
   setTimeout(() => {
-    const labelInput = document.getElementById('fn-custom-label');
-    if (labelInput) labelInput.focus();
+    const sel = document.getElementById('fn-custom-master-key');
+    if (sel && !sel.disabled) sel.focus();
   }, 50);
 }
 function closeFnCustomModal() {
@@ -21577,6 +21625,22 @@ function confirmAddFnCustomToken() {
   const d = _fnTplState.draft;
   if (!d) return;
   const kind = _fnGetCustomKindFromRadio();
+  // マスター引用: 既存 system トークンの追加（パレットからのドラッグと等価）
+  if (kind === 'master_ref') {
+    const sel = document.getElementById('fn-custom-master-key');
+    const pickedKey = sel ? sel.value : '';
+    if (!pickedKey) {
+      showToast('引用元マスタを選択してください', 'warn');
+      return;
+    }
+    if (d.tokens.some(t => t.key === pickedKey)) {
+      showToast(`"${pickedKey}" は既に追加されています`, 'warn');
+      return;
+    }
+    closeFnCustomModal();
+    addFnTokenFromPalette(pickedKey, 'system');
+    return;
+  }
   const manualKey = document.getElementById('fn-custom-key').value.trim();
   const label = document.getElementById('fn-custom-label').value.trim();
   if (!label) {
