@@ -25526,11 +25526,15 @@ async function executeUpload() {
       try {
         const data = JSON.parse(xhr.responseText);
         if (xhr.status === 200) {
+          // version はサーバ側採番が真（V1 重複事故防止のためフロント値は無視される）。
+          // フロントが v1 を送っていてもサーバが v3 を採番していたら "v3 として保存しました" と表示する。
+          const confirmedVersion = data.version || data.file?.version || version;
+          const versionLabel = `v${confirmedVersion}`;
           if (data.drive_url) {
-            statusEl.textContent = 'アップロード完了！';
+            statusEl.textContent = `アップロード完了！（${versionLabel} として保存しました）`;
             statusEl.style.color = 'var(--em-dark)';
           } else {
-            statusEl.textContent = `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
+            statusEl.textContent = `DB記録完了（${versionLabel} / Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
             statusEl.style.color = '#d97706';
           }
           await loadCreativeFiles(currentCreativeDetail.id);
