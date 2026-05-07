@@ -110,10 +110,15 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .bf-c.on{background:#FAEEDA;color:#854F0B;border-color:#EF9F27}
 
 /* アラートバー */
-.alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px}
+.alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
 .alert-dot{width:8px;height:8px;border-radius:50%;background:#E24B4A;flex-shrink:0}
 .alert-text{color:#A32D2D;font-weight:500}
-.alert-names{color:#A32D2D}
+.alert-names{color:#A32D2D;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.alert-chip{background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 8px;color:#A32D2D;cursor:pointer;font-size:12px;line-height:1.5;display:inline-flex;align-items:center;gap:4px;transition:background .12s}
+.alert-chip:hover{background:#FFE7E7}
+.alert-chip small{color:#B86A6A;font-size:11px}
+.alert-filter-btn{margin-left:auto;background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 10px;color:#A32D2D;cursor:pointer;font-size:12px;font-weight:500}
+.alert-filter-btn:hover{background:#FFE7E7}
 
 /* サマリーカード */
 .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}
@@ -1456,6 +1461,54 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   @page { margin: 12mm; size: A4; }
 }
 
+/* ===== お知らせカード: 大きい完了 CTA ボタン ===== */
+.ann-cta-row{margin-top:14px;display:flex;justify-content:flex-start}
+.ann-cta-pending{
+  width:100%;max-width:520px;
+  background:linear-gradient(135deg, #2ECC71 0%, #27AE60 100%);
+  color:#fff;border:none;border-radius:12px;
+  padding:16px 22px;font-size:16px;font-weight:700;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;
+  box-shadow:0 4px 14px rgba(46,204,113,0.35);
+  animation:annCtaPulse 1.6s ease-in-out infinite, annCtaWiggle 3.2s ease-in-out infinite;
+  transform-origin:center;transition:transform .15s ease, box-shadow .15s ease;
+  letter-spacing:0.02em;
+}
+.ann-cta-pending:hover{
+  transform:scale(1.03);box-shadow:0 6px 20px rgba(46,204,113,0.5);
+  animation-play-state:paused;
+}
+.ann-cta-pending:active{transform:scale(0.98)}
+.ann-cta-pending .ann-cta-icon{font-size:22px;display:inline-block;animation:annCtaPoint 1.2s ease-in-out infinite}
+.ann-cta-pending .ann-cta-sub{display:block;font-size:11px;font-weight:500;opacity:0.95;margin-top:2px}
+.ann-cta-done{
+  width:100%;max-width:520px;
+  background:#F0FAF4;color:#27AE60;border:1.5px solid #2ECC71;border-radius:10px;
+  padding:10px 16px;font-size:13px;font-weight:600;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:background .15s ease;
+}
+.ann-cta-done:hover{background:#E1F5E9}
+@keyframes annCtaPulse{
+  0%,100%{box-shadow:0 4px 14px rgba(46,204,113,0.35)}
+  50%{box-shadow:0 6px 22px rgba(46,204,113,0.65), 0 0 0 6px rgba(46,204,113,0.15)}
+}
+@keyframes annCtaWiggle{
+  0%,86%,100%{transform:rotate(0deg)}
+  88%{transform:rotate(-1.2deg)}
+  91%{transform:rotate(1.2deg)}
+  94%{transform:rotate(-0.8deg)}
+  97%{transform:rotate(0.8deg)}
+}
+@keyframes annCtaPoint{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-3px)}
+}
+@media (max-width:768px){
+  .ann-cta-pending{font-size:15px;padding:14px 18px}
+  .ann-cta-pending .ann-cta-icon{font-size:20px}
+}
+
 /* ===== トースト通知 ===== */
 #toast-container {
   position: fixed; bottom: 24px; right: 24px;
@@ -1786,6 +1839,60 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     window.__addBreadcrumb = addBreadcrumb;
     window.__getBreadcrumbs = function() { return _breadcrumbs.slice(); };
 
+    // ===== bfcache (back/forward cache) 追跡 =====
+    // navType=back_forward でエラーが多発したため、pageshow.persisted と
+    // 復帰からの経過時間を毎エラーに同梱する。
+    var _lastPageshow = { ts: null, persisted: null };
+    try {
+      window.addEventListener('pageshow', function(ev) {
+        try {
+          _lastPageshow = { ts: Date.now(), persisted: !!(ev && ev.persisted) };
+          // 復帰時にもブレッドクラムへ残す
+          if (typeof addBreadcrumb === 'function') {
+            addBreadcrumb('pageshow', { persisted: _lastPageshow.persisted });
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+
+    // window.onerror が報告した lineno/colno は document の絶対行番号（インライン script を含む）。
+    // 該当行を 200字でスナップショットし、column 位置にマーカーを入れて返す。
+    // 「2433:84 が </div> に見える」系の謎エラーは、このスナップショットで実態を即特定できる。
+    function _extractLineSnippet(filename, lineno, colno) {
+      try {
+        if (lineno == null) return null;
+        // filename がページ本体（同オリジン haruka.html）以外なら現在の document からは取れない
+        if (filename) {
+          try {
+            var u = new URL(String(filename), location.href);
+            if (u.origin !== location.origin) return null;
+            if (!/\/haruka\.html(\?|$|#)/.test(u.pathname + u.search)) return null;
+          } catch (_) { /* URL parse 失敗時は試みる */ }
+        }
+        var html = document.documentElement && document.documentElement.outerHTML;
+        if (!html) return null;
+        var lines = html.split('\n');
+        var idx = Number(lineno) - 1;
+        if (idx < 0 || idx >= lines.length) return null;
+        var line = lines[idx] || '';
+        var col = colno != null ? Number(colno) : 0;
+        var start = Math.max(0, col - 80);
+        var end = Math.min(line.length, col + 80);
+        return {
+          totalLines: lines.length,
+          lineLen: line.length,
+          col: col,
+          // 該当行 ±80 文字。前後に省略マーカー
+          excerpt: (start > 0 ? '…' : '') + line.slice(start, end) + (end < line.length ? '…' : ''),
+          // ±1 行も付ける（インライン script の境界が分かるように）
+          prevLine: (lines[idx - 1] || '').slice(0, 200),
+          nextLine: (lines[idx + 1] || '').slice(0, 200),
+        };
+      } catch (_) {
+        return null;
+      }
+    }
+
     function _collectAutoErrorTrace(extra) {
       var trace = {};
       try { trace.filename = extra && extra.filename ? String(extra.filename).slice(0, 500) : null; } catch (_) {}
@@ -1806,6 +1913,29 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             type: s.type || null,
           };
         }
+      } catch (_) {}
+      // bfcache 復帰関連
+      try {
+        trace.pageshow = {
+          persisted: _lastPageshow.persisted,
+          msSincePageshow: _lastPageshow.ts ? (Date.now() - _lastPageshow.ts) : null,
+        };
+      } catch (_) {}
+      // 該当行のソーススナップショット（謎の lineno:colno を実体で特定する）
+      try {
+        trace.sourceSnippet = _extractLineSnippet(
+          extra && extra.filename,
+          extra && extra.lineno,
+          extra && extra.colno
+        );
+      } catch (_) {}
+      // window.onerror が渡してきた error オブジェクトの追加情報
+      try {
+        if (extra && extra.errorMeta) trace.errorMeta = extra.errorMeta;
+      } catch (_) {}
+      // resource load エラー（<img>, <script> 読込失敗）の場合のターゲット情報
+      try {
+        if (extra && extra.resourceTarget) trace.resourceTarget = extra.resourceTarget;
       } catch (_) {}
       try {
         var nav = performance && performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
@@ -1880,8 +2010,49 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     // 全グローバルから参照できるようにしておく（apiFetch から fetch 5xx 検知に使う）
     window.__postAutoError = postAutoError;
 
+    // useCapture=true で resource load エラー（<img>/<script>/<link>）も捕捉する。
+    // bubble だけだと resource エラーは window まで上がらず、原因不明の Script error. の正体が掴めない。
     window.addEventListener('error', function(e) {
       try {
+        // resource load 失敗（e.target が Element）と script error を区別
+        var isResource = !!(e && e.target && e.target !== window && e.target.nodeType === 1);
+        if (isResource) {
+          var t = e.target;
+          postAutoError({
+            kind: 'resource.error',
+            message: '[resource load failed] <' + (t.tagName || '?').toLowerCase() + '> ' +
+                     (t.src || t.href || t.currentSrc || '(no src)'),
+            stack: null,
+            url: location.href,
+            filename: t.src || t.href || null,
+            lineno: null,
+            colno: null,
+            resourceTarget: {
+              tagName: (t.tagName || '').toLowerCase(),
+              src: t.src || null,
+              href: t.href || null,
+              currentSrc: t.currentSrc || null,
+              id: t.id || null,
+              className: typeof t.className === 'string' ? t.className.slice(0, 200) : null,
+              crossOrigin: t.crossOrigin || null,
+            },
+          });
+          return;
+        }
+        // script error 側： e.error から取れる詳細を全部足す
+        var errMeta = null;
+        try {
+          var er = e && e.error;
+          if (er) {
+            errMeta = {
+              name: er.name || (er.constructor && er.constructor.name) || null,
+              // toString() は "Script error." も含めて確実に文字列化する
+              toString: (function() { try { return String(er); } catch (_) { return null; } })(),
+              // エラー内に message が別途あるケース（ErrorEvent.message と差分があれば気付ける）
+              messageProp: er.message || null,
+            };
+          }
+        } catch (_) {}
         postAutoError({
           kind: 'window.onerror',
           message: e && e.message ? e.message : 'unknown error',
@@ -1890,13 +2061,29 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           filename: e && e.filename ? e.filename : null,
           lineno: e && e.lineno != null ? e.lineno : null,
           colno: e && e.colno != null ? e.colno : null,
+          errorMeta: errMeta,
         });
       } catch (_) {}
-    });
+    }, true);
     window.addEventListener('unhandledrejection', function(e) {
       try {
         var reason = e && e.reason;
         var msg = reason && reason.message ? reason.message : String(reason);
+
+        // 既知のメディア関連 promise rejection は Slack 通知から除外する。
+        // <video>.play() / requestFullscreen() / requestPictureInPicture() などは
+        // ・src が 404 / 未対応形式 → DOMException "The element has no supported sources."
+        // ・別の play 呼び出しで前のが中断 → "The play() request was interrupted ..."
+        // ・autoplay policy → NotAllowedError
+        // ・モーダル閉じで video が DOM から消えた直後の race
+        // のように UX 上は致命でなく、video の error イベントで fpShowLoadingError を
+        // 出してユーザーには既知のローディング失敗として見せている。Slack で再度通知すると
+        // 真のバグ通知が埋もれるため、このカテゴリは握りつぶす（コンソール warn は残す）。
+        if (typeof msg === 'string' && /element has no supported sources|The play\(\) request was interrupted|MEDIA_ERR_|NotAllowedError.*play|fullscreen|picture-in-picture/i.test(msg)) {
+          try { console.warn('[auto-error] suppressed known media rejection:', msg); } catch (_) {}
+          return;
+        }
+
         postAutoError({
           kind: 'unhandledrejection',
           message: msg,
@@ -2213,7 +2400,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       📊 単価設定から取込
       <button class="modal-close" onclick="closeModal('modal-rate-import')">×</button>
     </div>
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">既存の「単価設定」モーダルで設定済みの項目を見積明細に取り込めます</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">案件編集モーダルの「成果物グループ」「固定費・追加収入」で登録済みの項目を見積明細に取り込めます</div>
     <div id="rate-import-list">
       <div style="font-size:13px;color:var(--text-muted);padding:8px 0">読み込み中...</div>
     </div>
@@ -2997,7 +3184,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- クリエイティブ追加モーダル -->
-<div class="modal-overlay" id="modal-creative">
+<div class="modal-overlay" id="modal-creative" style="z-index:310">
   <div class="modal" style="width:96vw;max-width:1400px;height:88vh;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden;box-sizing:border-box">
     <!-- ヘッダー固定 -->
     <div style="padding:20px 24px 0;flex-shrink:0">
@@ -4134,113 +4321,310 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
-<!-- 案件追加モーダル -->
-<!-- 単価設定モーダル -->
-<div class="modal-overlay" id="modal-rates">
-  <div class="modal" style="max-width:680px;width:95vw;max-height:90vh;overflow-y:auto">
-    <div class="modal-title" id="rates-modal-title">単価設定 ― <span id="rates-modal-subtitle">動画クリエイティブ</span><button class="modal-close" onclick="closeModal('modal-rates')">×</button></div>
-    <input type="hidden" id="rates-project-id">
-
-    <!-- 動画セクション -->
-    <div id="rates-section-video" style="margin-bottom:20px">
-      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">動画編集者</div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="color:var(--text-muted)">
-            <th style="padding:6px 8px;text-align:left;width:60px">ランク</th>
-            <th style="padding:6px 8px;text-align:right">動画編集（円）</th>
-            <th style="padding:6px 8px;text-align:right">台本作成（円）</th>
-            <th style="padding:6px 8px;text-align:right">AI生成（円）</th>
-          </tr>
-        </thead>
-        <tbody id="video-rates-body">
-          <!-- A/B/C rows injected by JS -->
-        </tbody>
-      </table>
-      <div style="margin-top:12px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（動画）</div>
-        <div id="video-extras-list"></div>
-        <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('video')">＋ その他追加</button>
+<!-- 成果物グループ（line）編集モーダル — Stage 4a -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
+<div class="modal-overlay" id="modal-project-line-edit" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="max-width:560px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+        <span id="pl-edit-title" style="font-size:14px;font-weight:700;color:#0F7A56">成果物グループを追加</span>
       </div>
-      <!-- ディレクター（動画） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">ディレクター</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-video-director_fee" style="color:var(--text-muted);min-width:200px">1本あたりのディレクション費（円）</label>
-          <input type="number" id="r-video-director_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のディレクター（projects.director_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者兼務でも満額）。
-        </div>
+      <button class="modal-close" onclick="closeModal('modal-project-line-edit')">×</button>
+    </div>
+    <input type="hidden" id="pl-edit-id">
+    <input type="hidden" id="pl-edit-project-id">
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span></label>
+      <select class="form-select" id="pl-edit-category">
+        <option value="">読込中...</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">名前 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・例: フェーズ1ショート）</span></label>
+      <input class="form-input" id="pl-edit-name" placeholder="例: ショートA枠">
+    </div>
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">予定本数</label>
+        <input class="form-input" id="pl-edit-planned-count" type="number" min="0" step="1" value="0">
       </div>
-      <!-- プロデューサー（動画） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">プロデューサー</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-video-producer_fee" style="color:var(--text-muted);min-width:200px">1本あたりのディレクション費（円）</label>
-          <input type="number" id="r-video-producer_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のプロデューサー（projects.producer_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者・ディレクター兼務でも満額）。
-        </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">クライアント単価（円）</label>
+        <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
       </div>
     </div>
-
-    <!-- デザインセクション -->
-    <div id="rates-section-design" style="margin-bottom:20px">
-      <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">デザイナー</div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="color:var(--text-muted)">
-            <th style="padding:6px 8px;text-align:left;width:60px">ランク</th>
-            <th style="padding:6px 8px;text-align:right">静止画1枚（円）</th>
-          </tr>
-        </thead>
-        <tbody id="design-rates-body">
-          <!-- A/B/C rows injected by JS -->
-        </tbody>
-      </table>
-      <div style="margin-top:12px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">その他（デザイン）</div>
-        <div id="design-extras-list"></div>
-        <button class="btn-sm" style="margin-top:6px" onclick="addRateExtra('design')">＋ その他追加</button>
-      </div>
-      <!-- ディレクター（デザイン） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">ディレクター</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-design-director_fee" style="color:var(--text-muted);min-width:200px">1枚あたりのディレクション費（円）</label>
-          <input type="number" id="r-design-director_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のディレクター（projects.director_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者兼務でも満額）。
-        </div>
-      </div>
-      <!-- プロデューサー（デザイン） -->
-      <div style="margin-top:18px">
-        <div style="font-size:13px;font-weight:600;color:var(--em-dark);letter-spacing:.06em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">プロデューサー</div>
-        <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-          <label for="r-design-producer_fee" style="color:var(--text-muted);min-width:200px">1枚あたりのディレクション費（円）</label>
-          <input type="number" id="r-design-producer_fee" value="0" min="0"
-            style="width:140px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
-          ※ 案件のプロデューサー（projects.producer_id）が受け取る前提。クリエイティブごとに必ず1回加算（編集者・ディレクター兼務でも満額）。
-        </div>
-      </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ステータス</label>
+      <select class="form-select" id="pl-edit-status">
+        <option value="draft">下書き</option>
+        <option value="estimated">見積中</option>
+        <option value="contracted">受注</option>
+        <option value="in_progress">進行中</option>
+        <option value="delivered">納品済</option>
+        <option value="cancelled">取消</option>
+        <option value="rejected">失注</option>
+      </select>
     </div>
-
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn-primary" onclick="saveRates()">保存する</button>
-      <button class="btn" onclick="closeModal('modal-rates')">キャンセル</button>
+    <div id="pl-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-line-edit')">キャンセル</button>
+      <button class="btn-primary" id="pl-edit-save-btn" onclick="saveProjectLine()">保存</button>
     </div>
   </div>
 </div>
 
-<!-- 旧クライアント報酬設定モーダルは削除（V2: 報酬ボタン → modal-project-finance に移行） -->
+<!-- 成果物グループ削除確認モーダル — Stage 4a -->
+<div class="modal-overlay" id="modal-project-line-delete" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:440px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#A32D2D;margin-bottom:4px">成果物グループを削除しますか？</div>
+        <div id="pl-del-message" style="font-size:12px;color:var(--text);line-height:1.7">
+          この操作は取り消せません。
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="pl-del-id">
+    <input type="hidden" id="pl-del-project-id">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-line-delete')">キャンセル</button>
+      <button class="btn-primary" id="pl-del-execute-btn" onclick="executeProjectLineDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 見積行 × ロール別コスト編集モーダル — Stage 4b -->
+<!-- ADR 002 + 003 + 004: roles マスタ駆動、pricing_type で課金方式を選べる -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
+<div class="modal-overlay" id="modal-project-line-cost-edit" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="max-width:560px;width:92vw;padding:22px;border-radius:14px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+        <span id="plc-edit-title" style="font-size:14px;font-weight:700;color:#0F7A56">コストを追加</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-line-cost-edit')">×</button>
+    </div>
+    <input type="hidden" id="plc-edit-id">
+    <input type="hidden" id="plc-edit-project-id">
+    <input type="hidden" id="plc-edit-line-id">
+    <div id="plc-edit-line-summary" style="font-size:11px;color:var(--text-muted);background:var(--surface);border:1px dashed var(--border);border-radius:6px;padding:6px 10px;margin-bottom:10px"></div>
+
+    <!-- ロール -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ロール <span style="color:#E24B4A">*</span></label>
+      <select class="form-select" id="plc-edit-role-id">
+        <option value="">読込中...</option>
+      </select>
+    </div>
+
+    <!-- 担当者（任意） -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">担当者 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意 / 未指定 = ロール固定枠）</span></label>
+      <select class="form-select" id="plc-edit-user-id">
+        <option value="">未指定（ロール固定枠）</option>
+      </select>
+    </div>
+
+    <!-- 単価タイプ -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">単価タイプ <span style="color:#E24B4A">*</span></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="fixed_per_unit" checked>
+          <span>1本あたり固定</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="percentage">
+          <span>クライアント請求の %</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="hourly">
+          <span>時間単価</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+          <input type="radio" name="plc-edit-pricing-type" value="fixed_total">
+          <span>line 全体で固定</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 単価 -->
+    <div class="form-group" id="plc-edit-unit-price-wrap" style="margin-bottom:10px">
+      <label class="form-label" id="plc-edit-unit-price-label">単価（円）</label>
+      <input class="form-input" id="plc-edit-unit-price" type="number" min="0" step="1" value="0">
+    </div>
+
+    <!-- 割合（pricing_type='percentage' のみ表示） -->
+    <div class="form-group" id="plc-edit-percentage-wrap" style="margin-bottom:10px;display:none">
+      <label class="form-label">割合（%） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" id="plc-edit-percentage" type="number" min="0" max="100" step="0.01" value="0">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クライアント請求 (¥単価 × 本数) に対するこの%が原価になる</div>
+    </div>
+
+    <!-- 実工数（pricing_type='hourly' のみ表示） -->
+    <div class="form-group" id="plc-edit-actual-hours-wrap" style="margin-bottom:10px;display:none">
+      <label class="form-label">実工数（時間） <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" id="plc-edit-actual-hours" type="number" min="0" step="0.25" value="0">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">単価 × 実工数 が原価になる</div>
+    </div>
+
+    <div id="plc-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-line-cost-edit')">キャンセル</button>
+      <button class="btn-primary" id="plc-edit-save-btn" onclick="saveProjectLineCost()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 見積行 × ロール別コスト 削除確認モーダル — Stage 4b -->
+<div class="modal-overlay" id="modal-project-line-cost-delete" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:440px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#A32D2D;margin-bottom:4px">このコスト行を削除しますか？</div>
+        <div id="plc-del-message" style="font-size:12px;color:var(--text);line-height:1.7">
+          この操作は取り消せません。
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="plc-del-id">
+    <input type="hidden" id="plc-del-project-id">
+    <input type="hidden" id="plc-del-line-id">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-line-cost-delete')">キャンセル</button>
+      <button class="btn-primary" id="plc-del-execute-btn" onclick="executeProjectLineCostDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 固定費・追加収入（fixed_item）編集モーダル — Stage 4c -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
+<div class="modal-overlay" id="modal-project-fixed-item-edit" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="max-width:600px;width:92vw;padding:22px;border-radius:14px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:3px;height:14px;background:#7C3AED;border-radius:2px"></span>
+        <span id="pfi-edit-title" style="font-size:14px;font-weight:700;color:#5B21B6">経費を追加</span>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-fixed-item-edit')">×</button>
+    </div>
+    <input type="hidden" id="pfi-edit-id">
+    <input type="hidden" id="pfi-edit-project-id">
+
+    <!-- 種別 -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">種別 <span style="color:#E24B4A">*</span></label>
+      <div style="display:flex;gap:8px">
+        <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="pfi-edit-type" id="pfi-edit-type-expense" value="expense">
+          <span style="color:#A32D2D;font-weight:600">経費</span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="pfi-edit-type" id="pfi-edit-type-revenue" value="revenue">
+          <span style="color:#0F7A56;font-weight:600">追加収入</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- カテゴリ -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">カテゴリ</label>
+      <select class="form-select" id="pfi-edit-category">
+        <option value="">未指定</option>
+        <option value="studio">スタジオ</option>
+        <option value="equipment">機材</option>
+        <option value="travel">出張</option>
+        <option value="location">ロケ地</option>
+        <option value="other">その他</option>
+      </select>
+    </div>
+
+    <!-- 名前 -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">名前 <span style="color:#E24B4A">*</span></label>
+      <input class="form-input" id="pfi-edit-name" placeholder='例: Studio A 2026/05/15'>
+    </div>
+
+    <!-- 金額 + 発生日 -->
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">金額（円）</label>
+        <input class="form-input" id="pfi-edit-amount" type="number" min="0" step="1" value="0">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">発生日 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意）</span></label>
+        <input class="form-input" id="pfi-edit-occurred-on" type="date">
+      </div>
+    </div>
+
+    <!-- 支払先 + 支払先メンバー -->
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">支払先 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（フリーテキスト）</span></label>
+        <input class="form-input" id="pfi-edit-paid-to" placeholder="例: ◯◯スタジオ株式会社">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">支払先メンバー <span style="color:var(--text-muted);font-weight:400;font-size:11px">（内部宛のとき）</span></label>
+        <select class="form-select" id="pfi-edit-paid-to-user-id">
+          <option value="">未指定</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ステータス -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ステータス</label>
+      <select class="form-select" id="pfi-edit-status">
+        <option value="planned">予定</option>
+        <option value="committed">発注確定</option>
+        <option value="incurred">実費発生</option>
+        <option value="cancelled">中止</option>
+      </select>
+    </div>
+
+    <!-- メモ -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">メモ <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意）</span></label>
+      <textarea class="form-input" id="pfi-edit-notes" rows="2" placeholder="補足情報があれば"></textarea>
+    </div>
+
+    <div id="pfi-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-fixed-item-edit')">キャンセル</button>
+      <button class="btn-primary" id="pfi-edit-save-btn" onclick="saveProjectFixedItem()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 固定費・追加収入 削除確認モーダル — Stage 4c -->
+<div class="modal-overlay" id="modal-project-fixed-item-delete" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:440px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">⚠️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#A32D2D;margin-bottom:4px">この項目を削除しますか？</div>
+        <div id="pfi-del-message" style="font-size:12px;color:var(--text);line-height:1.7">
+          この操作は取り消せません。
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="pfi-del-id">
+    <input type="hidden" id="pfi-del-project-id">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-fixed-item-delete')">キャンセル</button>
+      <button class="btn-primary" id="pfi-del-execute-btn" onclick="executeProjectFixedItemDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 案件追加モーダル -->
+<!-- 旧単価設定モーダル (modal-rates) は Stage 4d (PR #TBD) で削除済み。
+     後継: 案件編集モーダル「成果物グループ (lines + line_costs)」「固定費・追加収入 (fixed_items)」セクション。
+     旧クライアント報酬設定モーダル (project_client_fees) は V2 リリース時に削除済み。 -->
 
 <div class="modal-overlay" id="modal-project">
   <div class="modal" style="width:92vw;max-width:1020px;height:92vh;display:flex;flex-direction:column;padding:0;border-radius:16px;overflow:hidden">
@@ -4258,7 +4642,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <!-- タブナビ（編集時のみ） -->
     <div id="p-tab-nav" style="display:none;padding:0 28px;border-bottom:1px solid var(--border);flex-shrink:0">
       <button id="p-tab-btn-main" onclick="switchProjectTab('main')" style="padding:10px 20px;font-size:13px;font-weight:600;background:none;border:none;border-bottom:2px solid var(--em);color:var(--em-dark);cursor:pointer;margin-bottom:-1px">基本情報</button>
-      <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行） -->
+      <!-- ADR 001: 商材/訴求軸は creative-first 設計のため案件モーダルにも候補リスト管理タブを残す -->
+      <button id="p-tab-btn-products" onclick="switchProjectTab('products')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">📦 商材</button>
+      <button id="p-tab-btn-appeal-axes" onclick="switchProjectTab('appeal-axes')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">🎯 訴求軸</button>
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
       <!-- 「💰 収支」タブは廃止。報酬ボタンから modal-project-finance を直接開く -->
     </div>
@@ -4501,18 +4887,162 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           </div>
         </div>
 
+        <!-- ファイル名テンプレート (ADR 007 Stage 2) -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+            <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+            <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">📁 ファイル名テンプレート</span>
+            <span style="font-size:11px;color:var(--text-muted);font-weight:400">（提出ファイル名の命名規約）</span>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">テンプレ</label>
+            <select class="form-select" id="p-filename-template-id" onchange="onProjectFilenameTemplateChange()">
+              <option value="">読込中...</option>
+            </select>
+          </div>
+          <!-- カスタムトークン上書き欄（custom kind を含むテンプレ時のみ表示） -->
+          <div id="p-filename-overrides-wrap" style="display:none;margin-bottom:10px">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">カスタム要素の上書き（案件固有の値）</div>
+            <div id="p-filename-overrides-list" style="display:flex;flex-direction:column;gap:8px"></div>
+          </div>
+          <div style="background:#F0F8F4;border:1px solid #C9E5D6;border-radius:8px;padding:10px 12px;font-size:12px;color:#0F7A56;line-height:1.6">
+            <div style="font-size:10px;color:#5b8a73;margin-bottom:3px;letter-spacing:0.06em">プレビュー</div>
+            <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
+          </div>
+        </div>
+
       </div><!-- /右カラム -->
     </div><!-- /グリッド -->
+
+    <!-- ===== 成果物グループ（project_estimate_lines）Stage 4a ===== -->
+    <!-- ADR 002 + 005 に基づく見積行 / deliverable の編集 UI。
+         旧単価モーダル（rate / director-rates / producer-rates / client-fee）はこの PR では触らず並走。
+         新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
+    <div id="p-lines-section" style="display:none;padding:0 28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
+          <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">成果物グループ</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ別の予定本数・クライアント単価・進行ステータス）</span>
+        </div>
+        <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
+      </div>
+      <div id="p-lines-list" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
+      </div>
+    </div>
+
+    <!-- ===== 固定費・追加収入（project_fixed_items）Stage 4c ===== -->
+    <!-- ADR 006 (案件固定費) に基づく fixed_items の編集 UI。
+         スタジオ/機材/出張/ロケ地代等の本数非依存の費用 (item_type='expense')
+         および別料金収入 (item_type='revenue') を扱う。
+         旧単価モーダルの「rate-extras」/「fixed_budget」はこの PR では触らず並走。
+         新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
+    <div id="p-fixed-items-section" style="display:none;padding:0 28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:inline-block;width:3px;height:14px;background:#7C3AED;border-radius:2px"></span>
+          <span style="font-size:11px;font-weight:700;color:#5B21B6;letter-spacing:0.12em;text-transform:uppercase">固定費・追加収入</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（スタジオ/機材/出張等の本数非依存の費用・収入）</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" class="btn" id="p-fi-add-expense-btn" onclick="addProjectFixedItem('expense')" style="padding:6px 12px;font-size:12px;white-space:nowrap;border-color:#F09595;color:#A32D2D">+ 経費を追加</button>
+          <button type="button" class="btn" id="p-fi-add-revenue-btn" onclick="addProjectFixedItem('revenue')" style="padding:6px 12px;font-size:12px;white-space:nowrap;border-color:#86C9A8;color:#0F7A56">+ 追加収入を追加</button>
+        </div>
+      </div>
+      <div id="p-fixed-items-list" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
+      </div>
+    </div>
+
     </div><!-- /p-tab-panel-main -->
 
-    <!-- 商材・訴求軸タブは Stage A で削除（カテゴリマスタ駆動に移行）。
-         旧 #p-tab-panel-sync は削除済み。関連JSは Stage C で削除予定。 -->
-    <!-- Stage A: 旧トグル参照を残すコードのために最小限の hidden stub を残す -->
+    <!-- ADR 001: 案件は "候補リストの管理" のみ。creativeモーダル側で 1つを選ぶ UI を提供。 -->
+
+    <!-- 旧 #p-tab-panel-sync は削除済み。submitProject() が値を読まないよう非表示で残す -->
     <div id="p-tab-panel-sync" style="display:none"></div>
-    <input type="checkbox" id="p-sync-products" style="display:none">
-    <input type="checkbox" id="p-sync-axes" style="display:none">
-    <div id="p-products-override" style="display:none"></div>
-    <div id="p-axes-override" style="display:none"></div>
+
+    <!-- パネル：📦 商材 -->
+    <div id="p-tab-panel-products" style="display:none;padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+        <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">商材</span>
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:500" id="p-sync-products-desc">クライアントの商材マスターを参照します</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">OFF にするとこの案件専用の商材リストを管理できます</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+            <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+            <div onclick="toggleProjectSync('products')" style="cursor:pointer">
+              <input type="checkbox" id="p-sync-products" style="display:none">
+              <div id="p-sync-products-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                <div id="p-sync-products-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="p-products-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の商材</span>
+          <button class="btn-sm" onclick="copyProductsFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-products-list" style="margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="pp-code" placeholder="コード" style="width:90px;font-size:12px;font-family:monospace">
+            <input class="form-input" id="pp-name" placeholder="名称" style="flex:1;font-size:12px">
+            <input class="form-input" id="pp-note" placeholder="備考" style="flex:1;font-size:12px">
+            <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 14px" onclick="addProjectProduct()">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- パネル：🎯 訴求軸 -->
+    <div id="p-tab-panel-appeal-axes" style="display:none;padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <span style="display:inline-block;width:3px;height:14px;background:#F59E0B;border-radius:2px"></span>
+        <span style="font-size:11px;font-weight:700;color:#92400E;letter-spacing:0.12em;text-transform:uppercase">訴求軸</span>
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:500" id="p-sync-axes-desc">クライアントの訴求軸マスターを参照します</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">OFF にするとこの案件専用の訴求軸リストを管理できます</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+            <span style="font-size:11px;color:var(--text-muted)">独自設定</span>
+            <div onclick="toggleProjectSync('axes')" style="cursor:pointer">
+              <input type="checkbox" id="p-sync-axes" style="display:none">
+              <div id="p-sync-axes-track" style="width:36px;height:20px;border-radius:10px;background:#ccc;position:relative;transition:background .2s">
+                <div id="p-sync-axes-thumb" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="p-axes-override" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:500;color:var(--text-muted)">案件独自の訴求軸</span>
+          <button class="btn-sm" onclick="copyAxesFromClient()">クライアントからコピー</button>
+        </div>
+        <div id="p-axes-list" style="margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:8px">新規追加</div>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="pa-code" placeholder="コード" style="width:90px;font-size:12px;font-family:monospace">
+            <input class="form-input" id="pa-name" placeholder="名称" style="flex:1;font-size:12px">
+            <input class="form-input" id="pa-note" placeholder="備考" style="flex:1;font-size:12px">
+            <button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 14px" onclick="addProjectAxis()">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- パネル：案件チェックリスト -->
     <div id="p-tab-panel-checklist" style="display:none;padding:24px 28px">
@@ -4671,10 +5201,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           汎用マスター
         </div>
-        <!-- 商材マスター・訴求軸マスターは Stage A で削除（カテゴリマスタ駆動に移行） -->
         <div class="master-nav-item" onclick="selectMasterNav('categories')" id="mnav-categories"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           🏷️ カテゴリ管理
+        </div>
+        <!-- ADR 001 整合: 商材・訴求軸マスタ UI を復活（creative-first 設計で残す方針） -->
+        <div class="master-nav-item" onclick="selectMasterNav('products')" id="mnav-products"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📦 商材マスター
+        </div>
+        <div class="master-nav-item" onclick="selectMasterNav('appeal_axes')" id="mnav-appeal_axes"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          🎯 訴求軸マスター
+        </div>
+        <!-- ADR 007 Stage 1: ファイル名テンプレート管理（命名規約） -->
+        <div class="master-nav-item" onclick="selectMasterNav('filename_templates')" id="mnav-filename_templates"
+          style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📁 ファイル名テンプレート
         </div>
         <div class="master-nav-item" onclick="selectMasterNav('checklist')" id="mnav-checklist"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
@@ -4785,12 +5328,36 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         <button class="tweets-tab active" data-tab="all"  role="tab" onclick="switchTweetsTab('all')">みんなのつぶやき</button>
         <button class="tweets-tab"        data-tab="mine" role="tab" onclick="switchTweetsTab('mine')">自分のつぶやき・返信</button>
       </div>
-      <div class="tweets-filters">
-        <label>
-          <input type="checkbox" id="tweets-filter-staff-only" onchange="toggleTweetsStaffOnly()">
-          運営のみ表示
+      <div class="tweets-filters" id="tweets-filters" data-active-tab="all">
+        <span class="tweets-filters-label">フィルター:</span>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" id="tweets-filter-all" data-role-group="all" checked onchange="onTweetsFilterChange('all')">
+          全員
         </label>
-        <!-- Phase 2: フォロー中のみ表示は未実装（非表示） -->
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="admin" onchange="onTweetsFilterChange('admin')">
+          管理者
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="secretary" onchange="onTweetsFilterChange('secretary')">
+          秘書
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="producer" onchange="onTweetsFilterChange('producer')">
+          プロデューサー
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="director" onchange="onTweetsFilterChange('director')">
+          ディレクター
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="editor" onchange="onTweetsFilterChange('editor')">
+          エディター
+        </label>
+        <label class="tweets-filter-chip">
+          <input type="checkbox" data-role-group="designer" onchange="onTweetsFilterChange('designer')">
+          デザイナー
+        </label>
       </div>
     </header>
     <div id="tweets-list" class="tweets-list">
@@ -4802,7 +5369,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- つぶやき画像ライトボックス（クリックで拡大表示） -->
 <div id="tweet-lightbox" class="tweet-lightbox-overlay" onclick="closeTweetLightbox(event)">
   <button type="button" class="tweet-lightbox-close" onclick="closeTweetLightbox(event)" aria-label="閉じる">×</button>
-  <img id="tweet-lightbox-img" src="" alt="">
+  <!-- src は openTweetLightbox() 時に動的にセット。`src=""` を初期値にすると document の base URL に解決されページHTMLそのものが画像として fetch され、毎ロード resource error を吐く（PR #332 の resource トレースで判明） -->
+  <img id="tweet-lightbox-img" alt="">
 </div>
 
 <!-- つぶやき独立タブ用 投稿FAB（右下固定）— page-tweets が active のときだけ表示 -->
@@ -4813,7 +5381,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </button>
 
 <!-- クリエイティブ修正モーダル -->
-<div class="modal-overlay" id="modal-creative-edit">
+<div class="modal-overlay" id="modal-creative-edit" style="z-index:310">
   <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:15px;font-weight:700;color:var(--text)">クリエイティブ修正</div>
@@ -4993,7 +5561,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </div>
 
 <!-- クリエイティブ詳細モーダル -->
-<div class="modal-overlay" id="modal-creative-detail">
+<div class="modal-overlay" id="modal-creative-detail" style="z-index:310">
   <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
 
     <!-- ヘッダー（固定） -->
@@ -6591,8 +7159,6 @@ async function loadProjects() {
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
-            ${canSeeRates() ? `<button class="btn-sm${p.has_rates?' is-set':''}" onclick="event.stopPropagation();openRatesModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_rates?'単価設定済み':'単価未設定'}" style="color:var(--em-dark)">単価</button>` : ''}
-            ${isTopAdmin() ? `<button class="btn-sm${p.has_estimates?' is-set':''}" onclick="event.stopPropagation();openProjectFinanceModal('${p.id}','${p.name.replace(/'/g,"\\'")}')" title="${p.has_estimates?'見積作成済み':'見積未作成'}">見積</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
@@ -7698,8 +8264,7 @@ async function loadCreatives(opts = {}) {
       allCreatives = data;
     }
     populateAssigneeFilter();
-    renderCreatives();
-    renderAlerts();
+    renderCreatives(); // 内部で renderAlerts(filtered) を呼ぶのでここでは不要
   } catch(e) {
     if (seq !== _creativesLoadSeq) return;
     if (!append) allCreatives = [];
@@ -8154,6 +8719,8 @@ function renderCreatives() {
   updateCreativeTabBadges();
   // ガントチャートも同じフィルタ済データで描画（モード切替によらず常に最新化）
   try { renderCreativesGantt(filtered); } catch(e) { console.warn('[gantt] render error:', e); }
+  // 納期遅れアラートもサイドバーと同じフィルタ済セットで件数を出す（矛盾防止）
+  try { renderAlerts(filtered); } catch(e) { console.warn('[alerts] render error:', e); }
 
   if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
@@ -9441,11 +10008,14 @@ function cvSpShowAllDelayed() {
   toggleCreativeAdvFilters(true);
 }
 
-function renderAlerts() {
+function renderAlerts(rows) {
   // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
   // 現行スキーマに合わせ final_deadline を見て、JST 暦日差で「過去」を判定する。
+  // rows 未指定なら allCreatives（後方互換）。指定時は renderCreatives 側の絞り込み済みリストを使う
+  // — 自分の案件 / 担当者 / クライアント等のフィルタと整合させ、サイドバー (遅延案件) と件数を一致させる
+  const source = Array.isArray(rows) ? rows : allCreatives;
   const today = _cvAtMidnight(new Date());
-  const late = allCreatives.filter(c => {
+  const late = source.filter(c => {
     if (!c.final_deadline || c.status === '納品') return false;
     const fin = _cvAtMidnight(c.final_deadline);
     return _cvDayDiff(fin, today) < 0;
@@ -9453,11 +10023,16 @@ function renderAlerts() {
   const el = document.getElementById('alert-container');
   if (!el) return;
   if (!late.length) { el.innerHTML=''; return; }
-  const names = late.map(c => {
+  const chips = late.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
-    return `${e?.users?.full_name||'?'}（${c.projects?.clients?.name||'?'}）`;
-  }).join('、');
-  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ：</span><span class="alert-names">${names}</span></div>`;
+    const person = e?.users?.full_name || '?';
+    const client = c.projects?.clients?.name || '?';
+    const raw = c.file_name || '';
+    const shortName = raw.length > 22 ? `${raw.slice(0,8)}…${raw.slice(-10)}` : raw;
+    const title = `${person}（${client}）${raw ? ' / ' + raw : ''}`;
+    return `<span class="alert-chip" onclick="openCreativeDetail('${c.id}')" title="${esc(title)}">${esc(person)}<small>（${esc(client)}）</small>${shortName?` <small>${esc(shortName)}</small>`:''}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ ${late.length}件：</span><span class="alert-names">${chips}</span><button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button></div>`;
 }
 
 function setClient(btn, id) {
@@ -10832,206 +11407,11 @@ async function executeSheetImport() {
   }
 }
 
-// 単価閲覧権限 ※プレビューロール尊重・DB駆動
-function canSeeRates() {
-  return hasPermission('project.unit_price_view');
-}
-
-// ==================== 単価設定 ====================
-
-let currentRatesProjectId = null;
-
-async function openRatesModal(projectId, projectName) {
-  currentRatesProjectId = projectId;
-  document.getElementById('rates-project-id').value = projectId;
-
-  // テーブル行を生成（DOMは両方常に描画する：保存ロジックは両セクションのDOMを参照する）
-  buildRatesTable('video', ['動画編集', '台本作成', 'AI生成'], ['base_fee','script_fee','ai_fee']);
-  buildRatesTable('design', ['静止画1枚'], ['base_fee']);
-
-  // 案件種別を判定（'video' | 'design'）
-  // 案件の primary_category を優先。フォールバック: ロール判定（デザイナー → design, それ以外 → video）
-  const projForType = (allProjects || []).find(x => x.id === projectId);
-  const projType = projForType
-    ? getProjectType(projForType)
-    : (effectiveRole() === 'designer' ? 'design' : 'video');
-  const isVideo = projType === 'video';
-
-  // タイトル/サブタイトル更新
-  const subtitle = document.getElementById('rates-modal-subtitle');
-  if (subtitle) subtitle.textContent = isVideo ? '動画クリエイティブ' : 'デザインクリエイティブ';
-
-  // セクション表示切替（DOMは残す＝保存ロジックの整合性を保つ）
-  const videoSection  = document.getElementById('rates-section-video');
-  const designSection = document.getElementById('rates-section-design');
-  if (videoSection)  videoSection.style.display  = isVideo ? '' : 'none';
-  if (designSection) designSection.style.display = isVideo ? 'none' : '';
-
-  // データ取得
-  const [ratesRes, extrasRes, dirRes, prodRes] = await Promise.all([
-    apiFetch(`${API}/projects/${projectId}/rates`),
-    apiFetch(`${API}/projects/${projectId}/rate-extras`),
-    apiFetch(`${API}/projects/${projectId}/director-rates`),
-    apiFetch(`${API}/projects/${projectId}/producer-rates`)
-  ]);
-  const rates = ratesRes.ok ? await ratesRes.json() : [];
-  const extras = extrasRes.ok ? await extrasRes.json() : [];
-  const dirRates = dirRes.ok ? await dirRes.json() : [];
-  const prodRates = prodRes.ok ? await prodRes.json() : [];
-
-  // 値をセット
-  rates.forEach(r => {
-    ['base_fee','script_fee','ai_fee'].forEach(field => {
-      const el = document.getElementById(`r-${r.creative_type}-${r.rank}-${field}`);
-      if (el) el.value = r[field] || 0;
-    });
-  });
-
-  // ディレクション費を反映（未設定なら 0）
-  ['video','design'].forEach(t => {
-    const el = document.getElementById(`r-${t}-director_fee`);
-    if (el) el.value = 0;
-  });
-  (dirRates || []).forEach(d => {
-    const el = document.getElementById(`r-${d.creative_type}-director_fee`);
-    if (el) el.value = d.director_fee || 0;
-  });
-
-  // プロデュース費を反映（未設定なら 0）
-  ['video','design'].forEach(t => {
-    const el = document.getElementById(`r-${t}-producer_fee`);
-    if (el) el.value = 0;
-  });
-  (prodRates || []).forEach(p => {
-    const el = document.getElementById(`r-${p.creative_type}-producer_fee`);
-    if (el) el.value = p.producer_fee || 0;
-  });
-
-  // その他をクリアして再描画
-  document.getElementById('video-extras-list').innerHTML = '';
-  document.getElementById('design-extras-list').innerHTML = '';
-  extras.forEach(e => addRateExtraRow(e.creative_type, e.name, e.fee, e.id));
-
-  // 単価モーダルはタブ構造ではないが、案件種別に対応する最初の入力にフォーカスしてヒントとする
-  setTimeout(() => {
-    const firstField = document.getElementById(`r-${projType}-A-base_fee`);
-    if (firstField) firstField.focus();
-  }, 50);
-
-  openModal('modal-rates');
-}
-
-function buildRatesTable(type, labels, fields) {
-  const ranks = ['A','B','C'];
-  const defaultFees = {
-    base_fee:   { A: 3500, B: 3000, C: 2500 },
-    script_fee: { A: 1500, B: 1500, C: 1500 },
-    ai_fee:     { A: 0,    B: 0,    C: 0    },
-  };
-  const body = document.getElementById(`${type}-rates-body`);
-  body.innerHTML = ranks.map(rank => `
-    <tr style="border-top:1px solid var(--border)">
-      <td style="padding:8px;font-weight:600;color:var(--em-dark)">${rank}</td>
-      ${fields.map((f, i) => `
-        <td style="padding:6px 8px;text-align:right">
-          <input type="number" id="r-${type}-${rank}-${f}" value="${(defaultFees[f] || defaultFees.base_fee)[rank]}" min="0"
-            style="width:100%;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-        </td>`).join('')}
-    </tr>`).join('');
-}
-
-function addRateExtra(type, name = '', fee = 0, id = null) {
-  addRateExtraRow(type, name, fee, id);
-}
-
-function addRateExtraRow(type, name, fee, id) {
-  const container = document.getElementById(`${type}-extras-list`);
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
-  div.dataset.extraid = id || '';
-  div.dataset.type = type;
-  div.innerHTML = `
-    <input type="text" placeholder="名称（例：ナレーション）" value="${name}"
-      style="flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;color:var(--text)">
-    <input type="number" placeholder="単価" value="${fee}" min="0"
-      style="width:100px;text-align:right;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;color:var(--text)">
-    <span style="font-size:13px;color:var(--text-muted)">円</span>
-    <button class="btn-sm" style="color:#E24B4A" onclick="this.parentElement.remove()">削除</button>`;
-  container.appendChild(div);
-}
-
-async function saveRates() {
-  const projectId = currentRatesProjectId;
-  const ranks = ['A','B','C'];
-
-  const rates = [];
-  ['video','design'].forEach(type => {
-    ranks.forEach(rank => {
-      const base = parseInt(document.getElementById(`r-${type}-${rank}-base_fee`)?.value || 0);
-      const script = parseInt(document.getElementById(`r-${type}-${rank}-script_fee`)?.value || 0);
-      const ai = parseInt(document.getElementById(`r-${type}-${rank}-ai_fee`)?.value || 0);
-      rates.push({ creative_type: type, rank, base_fee: base, script_fee: script, ai_fee: ai });
-    });
-  });
-
-  const extras = [];
-  ['video','design'].forEach(type => {
-    document.querySelectorAll(`#${type}-extras-list > div`).forEach(div => {
-      const inputs = div.querySelectorAll('input');
-      const name = inputs[0].value.trim();
-      const fee = parseInt(inputs[1].value || 0);
-      if (name) extras.push({ creative_type: type, name, fee });
-    });
-  });
-
-  // ディレクション費（per-project, per-creative_type）
-  const directorRates = ['video','design'].map(type => ({
-    creative_type: type,
-    director_fee: parseInt(document.getElementById(`r-${type}-director_fee`)?.value || 0) || 0,
-  }));
-
-  // プロデュース費（per-project, per-creative_type）
-  const producerRates = ['video','design'].map(type => ({
-    creative_type: type,
-    producer_fee: parseInt(document.getElementById(`r-${type}-producer_fee`)?.value || 0) || 0,
-  }));
-
-  const [ratesRes, extrasRes, dirRes, prodRes] = await Promise.all([
-    apiFetch(`${API}/projects/${projectId}/rates/bulk`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ rates })
-    }),
-    apiFetch(`${API}/projects/${projectId}/rate-extras`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ extras })
-    }),
-    apiFetch(`${API}/projects/${projectId}/director-rates`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ director_rates: directorRates })
-    }),
-    apiFetch(`${API}/projects/${projectId}/producer-rates`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ producer_rates: producerRates })
-    })
-  ]);
-
-  if (!ratesRes.ok || !extrasRes.ok || !dirRes.ok || !prodRes.ok) {
-    const failedRes = !ratesRes.ok ? ratesRes
-                    : !extrasRes.ok ? extrasRes
-                    : !dirRes.ok ? dirRes
-                    : prodRes;
-    const err = await failedRes.json().catch(()=>({}));
-    showToast('保存に失敗しました: ' + (err.error || '不明なエラー'), 'error');
-    return;
-  }
-  closeModal('modal-rates');
-  showToast('単価を保存しました', 'success');
-  loadProjects();
-}
+// ==================== 単価設定 (Stage 4d で削除) ====================
+// 旧 openRatesModal / buildRatesTable / addRateExtra / saveRates は Stage 4d (PR #TBD) で削除済み。
+// 後継: 案件編集モーダル「成果物グループ (lines + line_costs)」「固定費・追加収入 (fixed_items)」セクション。
+// canSeeRates() は project 一覧の「単価」ボタン専用のヘルパだったため同 PR で除去。
+// project.unit_price_view 権限キーは roles 管理 UI で残存（権限マスタ自体の整理は別 Stage）。
 
 // 実効ロールが管理者相当かどうか（admin / secretary を含む）
 function isEffectiveAdmin() {
@@ -11905,9 +12285,20 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
   document.getElementById('p-tab-panel-sync').style.display = 'none';
+  const _ppPanel = document.getElementById('p-tab-panel-products'); if (_ppPanel) _ppPanel.style.display = 'none';
+  const _paPanel = document.getElementById('p-tab-panel-appeal-axes'); if (_paPanel) _paPanel.style.display = 'none';
+  const _pcPanel = document.getElementById('p-tab-panel-checklist'); if (_pcPanel) _pcPanel.style.display = 'none';
   // 新規作成時は削除ボタンを必ず非表示
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = 'none';
+  // 成果物グループは案件作成後（id 確定後）にしか操作できないので新規作成時は隠す
+  const linesSec = document.getElementById('p-lines-section');
+  if (linesSec) linesSec.style.display = 'none';
+  // 固定費・追加収入も同様に新規作成時は隠す（Stage 4c）
+  const fiSec = document.getElementById('p-fixed-items-section');
+  if (fiSec) fiSec.style.display = 'none';
+  // ADR 007: ファイル名テンプレ UI を初期化（新規は default テンプレを表示）
+  initProjectFilenameTemplateUI(null);
   openModal('modal-project');
 }
 
@@ -12011,6 +12402,19 @@ function openEditProject(p) {
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
   const pDelBtn = document.getElementById('p-delete-btn');
   if (pDelBtn) pDelBtn.style.display = hasPermission('project.delete') ? '' : 'none';
+
+  // 成果物グループ（lines）セクション表示 + ロード（Stage 4a）
+  const linesSec = document.getElementById('p-lines-section');
+  if (linesSec) linesSec.style.display = '';
+  loadProjectLines(p.id);
+
+  // 固定費・追加収入（fixed_items）セクション表示 + ロード（Stage 4c）
+  const fiSec = document.getElementById('p-fixed-items-section');
+  if (fiSec) fiSec.style.display = '';
+  loadProjectFixedItems(p.id);
+
+  // ADR 007: ファイル名テンプレ UI を初期化
+  initProjectFilenameTemplateUI(p);
 
   openModal('modal-project');
 }
@@ -12124,8 +12528,8 @@ function selectDeadlineWeekday(day) {
 }
 
 function switchProjectTab(tab) {
-  // 'sync' タブは Stage A で削除済み。'main' と 'checklist' のみ。
-  const tabs = ['main', 'checklist'];
+  // ADR 001: products / appeal-axes は creative-first 設計のためタブ復活。
+  const tabs = ['main', 'products', 'appeal-axes', 'checklist'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -12138,6 +12542,982 @@ function switchProjectTab(tab) {
     }
   });
   if (tab === 'checklist') loadProjectChecklistItems();
+  // 商材/訴求軸タブを開いたとき、独自設定モードならリスト再描画
+  if (tab === 'products') {
+    const projectId = document.getElementById('p-id').value;
+    const overrideOn = document.getElementById('p-products-override').style.display !== 'none';
+    if (projectId && overrideOn) renderProjectProducts(projectId);
+  } else if (tab === 'appeal-axes') {
+    const projectId = document.getElementById('p-id').value;
+    const overrideOn = document.getElementById('p-axes-override').style.display !== 'none';
+    if (projectId && overrideOn) renderProjectAxes(projectId);
+  }
+}
+
+// ==================== 成果物グループ（project_estimate_lines）Stage 4a ====================
+// ADR 002 (見積行統合) + ADR 005 (status ライフサイクル) に基づく lines CRUD UI。
+// 旧単価モーダル（rate / director-rates / producer-rates / client-fee）は触らず並走。
+// 編集は専用の小モーダル `modal-project-line-edit`（z-index:300）で行う。
+// 削除は `modal-project-line-delete`（z-index:320）で誤削除防止。
+// 並び替えは ↑↓ ボタン（ドラッグは将来拡張）。サーバの PATCH /lines/reorder で sort_order を再付番。
+// 保存後は楽観的更新せず必ず再 fetch して同期する。
+
+const LINE_STATUS_LABELS = {
+  draft:       { label: '下書き',  bg: '#F3F4F6', fg: '#4B5563', border: '#E5E7EB' },
+  estimated:   { label: '見積中',  bg: '#E0F2FE', fg: '#075985', border: '#BAE6FD' },
+  contracted:  { label: '受注',    bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+  in_progress: { label: '進行中',  bg: '#FEF3C7', fg: '#92400E', border: '#FDE68A' },
+  delivered:   { label: '納品済',  bg: '#D1FAE5', fg: '#065F46', border: '#A7F3D0' },
+  cancelled:   { label: '取消',    bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+  rejected:    { label: '失注',    bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+};
+
+let _projectLinesCache = []; // 現在表示中の案件の lines
+// Stage 4b: line ごとの line_costs キャッシュ。{ [line_id]: lineCost[] }
+let _projectLineCostsCache = {};
+// Stage 4b: 開いている line の Set（アコーディオンの開閉状態を保持）
+const _projectLineCostsOpen = new Set();
+
+const PRICING_TYPE_LABELS = {
+  fixed_per_unit: '1本あたり固定',
+  percentage:     'クライアント請求の %',
+  hourly:         '時間単価',
+  fixed_total:    'line 全体で固定',
+};
+
+function projectLinesCanEdit() {
+  // 案件編集権限を持つユーザーのみ操作可能（サーバー側でも同じ権限でガード）
+  return typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
+}
+
+// utils/pricing.js calculateLineCost と同じロジック（フロント版）
+function calcLineCostFront(lc, line) {
+  if (!lc || !line) return 0;
+  const pt = lc.pricing_type || 'fixed_per_unit';
+  const unit = Number(lc.unit_price) || 0;
+  const pct = Number(lc.percentage) || 0;
+  const hrs = Number(lc.actual_hours) || 0;
+  const cu  = Number(line.client_unit_price) || 0;
+  const pc  = Number(line.planned_count) || 0;
+  switch (pt) {
+    case 'fixed_per_unit': return unit * pc;
+    case 'percentage':     return cu * pc * pct / 100;
+    case 'hourly':         return unit * hrs;
+    case 'fixed_total':    return unit;
+    default: return 0;
+  }
+}
+
+// 単価表示文字列（pricing_type ごと）
+function formatLineCostUnit(lc) {
+  const pt = lc.pricing_type || 'fixed_per_unit';
+  const unit = Number(lc.unit_price) || 0;
+  const pct  = Number(lc.percentage) || 0;
+  const hrs  = Number(lc.actual_hours) || 0;
+  switch (pt) {
+    case 'fixed_per_unit': return `¥${unit.toLocaleString()}/本`;
+    case 'percentage':     return `${pct}%`;
+    case 'hourly':         return `¥${unit.toLocaleString()}/時 × ${hrs}h = ¥${(unit * hrs).toLocaleString()}`;
+    case 'fixed_total':    return `¥${unit.toLocaleString()} (固定)`;
+    default: return '';
+  }
+}
+
+// roles マスタから「コスト割当に使えるロール」を返す（admin 以外、is_creator + staff 系）
+function getCostRoleOptions() {
+  if (typeof getAllRolesForUI !== 'function') return [];
+  const rows = getAllRolesForUI();
+  return rows.filter(r => r && r.code !== 'admin' && r.code !== 'producer_director' && r.code !== 'client');
+}
+
+async function loadProjectLines(projectId) {
+  const listEl = document.getElementById('p-lines-list');
+  if (!listEl || !projectId) return;
+  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>';
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(msg) || res.status}</div>`;
+      return;
+    }
+    _projectLinesCache = await res.json() || [];
+    // Stage 4b: 別案件のキャッシュが残らないよう、現案件の line_id だけ残してクリア
+    {
+      const valid = new Set(_projectLinesCache.map(l => l.id));
+      for (const k of Object.keys(_projectLineCostsCache)) {
+        if (!valid.has(k)) delete _projectLineCostsCache[k];
+      }
+      for (const k of Array.from(_projectLineCostsOpen)) {
+        if (!valid.has(k)) _projectLineCostsOpen.delete(k);
+      }
+    }
+    // Stage 4b: サブテキストの「コスト合計 / 粗利」表示用に line_costs を並列フェッチ
+    // （件数が多い案件で N 並列なので、上限 30 件にする）
+    const lines = _projectLinesCache.slice(0, 30);
+    await Promise.all(lines.map(l => loadLineCosts(l.id, projectId)));
+    renderProjectLines();
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(e?.message || '')}</div>`;
+  }
+}
+
+function renderProjectLines() {
+  const listEl = document.getElementById('p-lines-list');
+  if (!listEl) return;
+  const canEdit = projectLinesCanEdit();
+  // 「新規追加」ボタンの権限制御
+  const addBtn = document.getElementById('p-lines-add-btn');
+  if (addBtn) addBtn.style.display = canEdit ? '' : 'none';
+
+  if (!_projectLinesCache.length) {
+    listEl.innerHTML = `
+      <div style="color:var(--text-muted);font-size:13px;padding:14px;background:var(--surface);border:1px dashed var(--border);border-radius:10px;text-align:center">
+        まだ成果物グループが登録されていません。「+ 新規追加」から追加してください。
+      </div>`;
+    return;
+  }
+
+  const total = _projectLinesCache.length;
+  listEl.innerHTML = _projectLinesCache.map((line, idx) => {
+    const cat = line.category || null;
+    const catLabel = cat ? `${esc(cat.name)}` : '<span style="color:var(--text-muted)">カテゴリ未設定</span>';
+    const catColor = cat?.color || '#9CA3AF';
+    const status = LINE_STATUS_LABELS[line.status] || LINE_STATUS_LABELS.draft;
+    const planned = Number(line.planned_count) || 0;
+    const unit = Number(line.client_unit_price) || 0;
+    const subtotal = planned * unit;
+    const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
+
+    // Stage 4b: コスト集計（キャッシュ済の lineCosts から計算）
+    const lineCosts = _projectLineCostsCache[line.id] || null;
+    const isOpen = _projectLineCostsOpen.has(line.id);
+    let econLine = '';
+    if (Array.isArray(lineCosts)) {
+      const totalCost = lineCosts.reduce((s, lc) => s + calcLineCostFront(lc, line), 0);
+      const profit = subtotal - totalCost;
+      const profitPct = subtotal > 0 ? (profit / subtotal * 100) : 0;
+      const profitColor = profit >= 0 ? '#0F7A56' : '#A32D2D';
+      econLine = `<div style="font-size:11px;color:var(--text-muted);margin-top:1px">
+        コスト合計 <strong style="color:#A32D2D">¥${totalCost.toLocaleString()}</strong>
+        粗利 <strong style="color:${profitColor}">¥${profit.toLocaleString()}</strong>${subtotal > 0 ? ` <span style="color:var(--text-muted)">(${profitPct.toFixed(1)}%)</span>` : ''}
+      </div>`;
+    }
+    const costsCount = Array.isArray(lineCosts) ? lineCosts.length : null;
+    const accordionToggleLabel = costsCount === null
+      ? `${isOpen ? '▼' : '▶'} コスト内訳`
+      : `${isOpen ? '▼' : '▶'} コスト内訳 (${costsCount} 件)`;
+
+    return `
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px">
+          <div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+            <button type="button" onclick="moveProjectLine('${esc(line.id)}', -1)" ${idx === 0 || !canEdit ? 'disabled' : ''} title="上へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === 0 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▲</button>
+            <button type="button" onclick="moveProjectLine('${esc(line.id)}', 1)" ${idx === total - 1 || !canEdit ? 'disabled' : ''} title="下へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === total - 1 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▼</button>
+          </div>
+          <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${catColor}1A;border:1px solid ${catColor}55;border-radius:999px;font-size:11px;font-weight:600;color:${catColor === '#9CA3AF' ? '#4B5563' : catColor}">
+            ${catLabel}
+          </div>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+            <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()} = <strong style="color:var(--text)">¥${subtotal.toLocaleString()}</strong></div>
+            ${econLine}
+          </div>
+          <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${status.bg};border:1px solid ${status.border};color:${status.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
+            ${esc(status.label)}
+          </span>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+            <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+          </div>
+        </div>
+        <!-- Stage 4b: コスト内訳アコーディオン -->
+        <div style="border-top:1px dashed var(--border);background:#FAFAF7">
+          <button type="button" onclick="toggleLineCostsAccordion('${esc(line.id)}')" style="width:100%;text-align:left;padding:6px 14px 6px 44px;background:transparent;border:0;cursor:pointer;font-size:11px;color:var(--em-dark);font-weight:600">
+            ${accordionToggleLabel}
+          </button>
+          ${isOpen ? `<div id="plc-list-${esc(line.id)}" style="padding:0 14px 12px 44px">${renderLineCostsBody(line)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// アコーディオンを開閉。開く時は lineCosts を fetch（未取得なら）
+async function toggleLineCostsAccordion(lineId) {
+  if (_projectLineCostsOpen.has(lineId)) {
+    _projectLineCostsOpen.delete(lineId);
+    renderProjectLines();
+    return;
+  }
+  _projectLineCostsOpen.add(lineId);
+  // 一旦再描画（▼ + 「読み込み中」を表示）
+  renderProjectLines();
+  // 未取得 or 再フェッチ
+  await loadLineCosts(lineId);
+  renderProjectLines();
+}
+
+// 指定 line の line_costs を fetch してキャッシュに格納
+async function loadLineCosts(lineId, projectIdOpt) {
+  const projectId = projectIdOpt || document.getElementById('p-id')?.value;
+  if (!projectId || !lineId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/costs`);
+    if (!res.ok) {
+      _projectLineCostsCache[lineId] = [];
+      return;
+    }
+    _projectLineCostsCache[lineId] = await res.json() || [];
+  } catch (e) {
+    _projectLineCostsCache[lineId] = [];
+  }
+}
+
+// アコーディオン中身（cost 行のリスト + 追加ボタン）の HTML を返す
+function renderLineCostsBody(line) {
+  const lineId = line.id;
+  const lineCosts = _projectLineCostsCache[lineId];
+  const canEdit = projectLinesCanEdit();
+
+  if (!Array.isArray(lineCosts)) {
+    return `<div style="font-size:11px;color:var(--text-muted);padding:6px 0">読み込み中...</div>`;
+  }
+
+  if (lineCosts.length === 0) {
+    return `
+      <div style="font-size:11px;color:var(--text-muted);padding:6px 0">コストが未登録です。</div>
+      ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:4px">+ コスト追加</button>` : ''}
+    `;
+  }
+
+  const rows = lineCosts.map(lc => {
+    const role = lc.role || null;
+    const user = lc.user || null;
+    const roleLabel = role?.label || role?.code || 'ロール未設定';
+    const ownerLabel = user
+      ? `${esc(user.full_name || user.email || 'ユーザー')}`
+      : `<span style="color:var(--text-muted)">(ロール固定)</span>`;
+    const unitText = formatLineCostUnit(lc);
+    const totalCost = calcLineCostFront(lc, line);
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:1px dashed var(--border);font-size:12px">
+        <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600;color:var(--text)">${esc(roleLabel)}</span>
+          <span>${ownerLabel}</span>
+        </div>
+        <div style="text-align:right;flex-shrink:0;font-size:11px;color:var(--text-muted)">
+          <div>${esc(unitText)}</div>
+          <div style="color:#A32D2D;font-weight:600">¥${totalCost.toLocaleString()}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <button type="button" class="btn" onclick="openProjectLineCostEdit('${esc(lineId)}', '${esc(lc.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:3px 8px;font-size:10px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+          <button type="button" class="btn" onclick="openProjectLineCostDeleteConfirm('${esc(lineId)}', '${esc(lc.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:3px 8px;font-size:10px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    ${rows}
+    ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:8px">+ コスト追加</button>` : ''}
+  `;
+}
+
+// ↑↓ ボタンで line を1つ移動 → サーバ PATCH /reorder
+async function moveProjectLine(lineId, delta) {
+  const idx = _projectLinesCache.findIndex(l => l.id === lineId);
+  if (idx < 0) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= _projectLinesCache.length) return;
+  const reordered = [..._projectLinesCache];
+  const [moved] = reordered.splice(idx, 1);
+  reordered.splice(newIdx, 0, moved);
+  const ids = reordered.map(l => l.id);
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/reorder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || '並び替えに失敗しました', 'warn');
+      // 再 fetch で同期
+      await loadProjectLines(projectId);
+      return;
+    }
+    _projectLinesCache = await res.json() || [];
+    renderProjectLines();
+  } catch (e) {
+    showToast(`並び替えに失敗しました: ${e?.message || ''}`, 'warn');
+    await loadProjectLines(projectId);
+  }
+}
+
+// 「+ 新規追加」: 編集モーダルを空状態で開く
+async function addProjectLine() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) {
+    showToast('案件を保存してから成果物グループを追加してください', 'warn');
+    return;
+  }
+  await prepareProjectLineEditModal(null, projectId);
+  openModal('modal-project-line-edit');
+}
+
+// 既存 line を編集モーダルで開く
+async function openProjectLineEdit(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  if (!line) {
+    showToast('成果物グループが見つかりません', 'warn');
+    await loadProjectLines(projectId);
+    return;
+  }
+  await prepareProjectLineEditModal(line, projectId);
+  openModal('modal-project-line-edit');
+}
+
+// 編集モーダルの初期化（line=null は新規）
+async function prepareProjectLineEditModal(line, projectId) {
+  document.getElementById('pl-edit-title').textContent = line ? '成果物グループを編集' : '成果物グループを追加';
+  document.getElementById('pl-edit-id').value = line ? line.id : '';
+  document.getElementById('pl-edit-project-id').value = projectId;
+  document.getElementById('pl-edit-name').value = line?.name || '';
+  document.getElementById('pl-edit-planned-count').value = line ? (line.planned_count ?? 0) : 0;
+  document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
+  document.getElementById('pl-edit-status').value = line?.status || 'draft';
+  const errEl = document.getElementById('pl-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  // カテゴリ select を populate
+  await loadCategories();
+  const sel = document.getElementById('pl-edit-category');
+  if (sel) {
+    populateCategorySelect(sel, line?.category_id || null);
+    if (!line?.category_id) {
+      // デフォルト: 案件本体の primary_category と揃える / なければ video
+      const projCat = document.getElementById('p-primary-category')?.value;
+      if (projCat) sel.value = projCat;
+      else {
+        const videoCat = (typeof getCategoryByCode === 'function') ? getCategoryByCode('video') : null;
+        if (videoCat) sel.value = videoCat.id;
+      }
+    }
+  }
+}
+
+async function saveProjectLine() {
+  const lineId = document.getElementById('pl-edit-id').value;
+  const projectId = document.getElementById('pl-edit-project-id').value;
+  const errEl = document.getElementById('pl-edit-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const categoryId = document.getElementById('pl-edit-category').value;
+  if (!categoryId) { showErr('カテゴリを選択してください'); return; }
+  const name = document.getElementById('pl-edit-name').value.trim();
+  const plannedCount = Math.max(0, parseInt(document.getElementById('pl-edit-planned-count').value, 10) || 0);
+  const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
+  const status = document.getElementById('pl-edit-status').value;
+
+  const payload = {
+    category_id: categoryId,
+    name: name || null,
+    planned_count: plannedCount,
+    client_unit_price: unitPrice,
+    status,
+  };
+
+  const saveBtn = document.getElementById('pl-edit-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const url = lineId
+      ? `${API}/projects/${projectId}/lines/${lineId}`
+      : `${API}/projects/${projectId}/lines`;
+    const method = lineId ? 'PUT' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showErr(err.error || `保存に失敗しました（${res.status}）`);
+      return;
+    }
+    closeModal('modal-project-line-edit');
+    showToast(lineId ? '成果物グループを更新しました' : '成果物グループを追加しました', 'ok');
+    await loadProjectLines(projectId);
+  } catch (e) {
+    showErr(`保存に失敗しました: ${e?.message || ''}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function openProjectLineDeleteConfirm(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  if (!line) return;
+  document.getElementById('pl-del-id').value = lineId;
+  document.getElementById('pl-del-project-id').value = projectId;
+  const cat = line.category;
+  const catName = cat ? cat.name : 'カテゴリ未設定';
+  const nameLabel = line.name ? `「${line.name}」` : '（名称未設定）';
+  const planned = Number(line.planned_count) || 0;
+  const unit = Number(line.client_unit_price) || 0;
+  document.getElementById('pl-del-message').innerHTML = `
+    <div style="margin-bottom:6px"><strong>${esc(catName)}</strong> ${esc(nameLabel)}</div>
+    <div style="color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()}</div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
+      ※ クリエイティブが紐付いている場合は削除できません（先に別グループへ移すか削除してください）。<br>
+      ※ ロール別単価（line_costs）は連動して削除されます。
+    </div>`;
+  openModal('modal-project-line-delete');
+}
+
+async function executeProjectLineDelete() {
+  const lineId = document.getElementById('pl-del-id').value;
+  const projectId = document.getElementById('pl-del-project-id').value;
+  if (!lineId || !projectId) return;
+  const btn = document.getElementById('pl-del-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        showToast(err.error || 'クリエイティブが紐付いているため削除できません', 'warn');
+      } else {
+        showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
+      }
+      return;
+    }
+    closeModal('modal-project-line-delete');
+    showToast('成果物グループを削除しました', 'ok');
+    // 削除した line のコストキャッシュを破棄
+    if (_projectLineCostsCache[lineId]) delete _projectLineCostsCache[lineId];
+    _projectLineCostsOpen.delete(lineId);
+    await loadProjectLines(projectId);
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
+// ADR 002 + 003 + 004: roles マスタ駆動、pricing_type で課金方式を切替（4種類）
+// 編集は専用の小モーダル `modal-project-line-cost-edit`（z-index:300）で行う。
+// 削除は `modal-project-line-cost-delete`（z-index:320）で誤削除防止。
+
+// 「+ コスト追加」: 編集モーダルを空状態で開く
+function addProjectLineCost(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) {
+    showToast('案件を保存してから追加してください', 'warn');
+    return;
+  }
+  prepareProjectLineCostEditModal(null, lineId, projectId);
+  openModal('modal-project-line-cost-edit');
+}
+
+// 既存 cost を編集
+function openProjectLineCostEdit(lineId, costId) {
+  const projectId = document.getElementById('p-id').value;
+  const list = _projectLineCostsCache[lineId] || [];
+  const cost = list.find(c => c.id === costId);
+  if (!cost) {
+    showToast('コスト行が見つかりません', 'warn');
+    return;
+  }
+  prepareProjectLineCostEditModal(cost, lineId, projectId);
+  openModal('modal-project-line-cost-edit');
+}
+
+function prepareProjectLineCostEditModal(cost, lineId, projectId) {
+  document.getElementById('plc-edit-title').textContent = cost ? 'コストを編集' : 'コストを追加';
+  document.getElementById('plc-edit-id').value = cost ? cost.id : '';
+  document.getElementById('plc-edit-project-id').value = projectId || '';
+  document.getElementById('plc-edit-line-id').value = lineId || '';
+
+  // line サマリー表示
+  const line = (_projectLinesCache || []).find(l => l.id === lineId);
+  const summaryEl = document.getElementById('plc-edit-line-summary');
+  if (summaryEl && line) {
+    const cat = line.category;
+    const catName = cat ? cat.name : 'カテゴリ未設定';
+    const planned = Number(line.planned_count) || 0;
+    const unit = Number(line.client_unit_price) || 0;
+    summaryEl.textContent = `対象line: ${catName}${line.name ? ' / ' + line.name : ''} (${planned}本 × ¥${unit.toLocaleString()})`;
+  } else if (summaryEl) {
+    summaryEl.textContent = '';
+  }
+
+  // ロール select（合成値 'producer_director' は roles マスタに id を持たないため除外済み）
+  const roleSel = document.getElementById('plc-edit-role-id');
+  if (roleSel) {
+    const roles = getCostRoleOptions().filter(r => r && r.id);
+    roleSel.innerHTML = '<option value="">選択してください</option>' + roles.map(r =>
+      `<option value="${esc(r.id)}">${esc(r.label || r.code)}</option>`
+    ).join('');
+    // 編集時は既存 role_id をセット
+    roleSel.value = (cost && cost.role_id) ? cost.role_id : '';
+  }
+
+  // 担当者 select
+  const userSel = document.getElementById('plc-edit-user-id');
+  if (userSel) {
+    const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+    const activeMembers = members.filter(m => m && m.is_active !== false);
+    userSel.innerHTML = '<option value="">未指定（ロール固定枠）</option>' + activeMembers.map(m =>
+      `<option value="${esc(m.id)}">${esc(m.name || m.email || 'メンバー')}</option>`
+    ).join('');
+    userSel.value = cost?.user_id || '';
+  }
+
+  // 単価タイプ
+  const pt = cost?.pricing_type || 'fixed_per_unit';
+  document.querySelectorAll('input[name="plc-edit-pricing-type"]').forEach(r => {
+    r.checked = (r.value === pt);
+    r.onchange = () => onLineCostPricingTypeChange();
+  });
+
+  // 単価
+  document.getElementById('plc-edit-unit-price').value = cost ? (cost.unit_price ?? 0) : 0;
+  // 割合
+  document.getElementById('plc-edit-percentage').value = cost?.percentage ?? 0;
+  // 実工数
+  document.getElementById('plc-edit-actual-hours').value = cost?.actual_hours ?? 0;
+
+  onLineCostPricingTypeChange();
+
+  const errEl = document.getElementById('plc-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+}
+
+function onLineCostPricingTypeChange() {
+  const pt = document.querySelector('input[name="plc-edit-pricing-type"]:checked')?.value || 'fixed_per_unit';
+  const unitWrap = document.getElementById('plc-edit-unit-price-wrap');
+  const unitLabel = document.getElementById('plc-edit-unit-price-label');
+  const pctWrap = document.getElementById('plc-edit-percentage-wrap');
+  const hrsWrap = document.getElementById('plc-edit-actual-hours-wrap');
+
+  // 単価ラベルの動的切替
+  if (unitLabel) {
+    if (pt === 'fixed_per_unit') unitLabel.textContent = '単価（円・1本あたり）';
+    else if (pt === 'percentage') unitLabel.textContent = '単価（補助・通常 0）';
+    else if (pt === 'hourly') unitLabel.textContent = '時間単価（円/時）';
+    else if (pt === 'fixed_total') unitLabel.textContent = '単価（円・line 全体）';
+  }
+  // percentage の場合は unit_price は使わないが、入力UI上は残しておく（DB列は NOT NULL なので 0 を送る）
+  if (unitWrap) unitWrap.style.display = (pt === 'percentage') ? 'none' : '';
+
+  if (pctWrap) pctWrap.style.display = (pt === 'percentage') ? '' : 'none';
+  if (hrsWrap) hrsWrap.style.display = (pt === 'hourly') ? '' : 'none';
+}
+
+async function saveProjectLineCost() {
+  const costId = document.getElementById('plc-edit-id').value;
+  const projectId = document.getElementById('plc-edit-project-id').value;
+  const lineId = document.getElementById('plc-edit-line-id').value;
+  const errEl = document.getElementById('plc-edit-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const roleId = document.getElementById('plc-edit-role-id').value;
+  if (!roleId) { showErr('ロールを選択してください'); return; }
+  const userId = document.getElementById('plc-edit-user-id').value || null;
+  const pt = document.querySelector('input[name="plc-edit-pricing-type"]:checked')?.value || 'fixed_per_unit';
+  const unitPrice = Math.max(0, parseInt(document.getElementById('plc-edit-unit-price').value, 10) || 0);
+
+  const payload = {
+    role_id: roleId,
+    user_id: userId,
+    pricing_type: pt,
+    unit_price: pt === 'percentage' ? 0 : unitPrice,
+    currency: 'JPY',
+  };
+
+  if (pt === 'percentage') {
+    const p = Number(document.getElementById('plc-edit-percentage').value);
+    if (!Number.isFinite(p) || p < 0 || p > 100) { showErr('割合(%) は 0〜100 で入力してください'); return; }
+    payload.percentage = p;
+    payload.actual_hours = null;
+  } else if (pt === 'hourly') {
+    const h = Number(document.getElementById('plc-edit-actual-hours').value);
+    if (!Number.isFinite(h) || h < 0) { showErr('実工数は 0 以上で入力してください'); return; }
+    payload.actual_hours = h;
+    payload.percentage = null;
+  } else {
+    payload.percentage = null;
+    payload.actual_hours = null;
+  }
+
+  const saveBtn = document.getElementById('plc-edit-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const url = costId
+      ? `${API}/projects/${projectId}/lines/${lineId}/costs/${costId}`
+      : `${API}/projects/${projectId}/lines/${lineId}/costs`;
+    const method = costId ? 'PUT' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        showErr(err.error || '同じロール × 担当者の組み合わせは既に登録されています');
+      } else {
+        showErr(err.error || `保存に失敗しました（${res.status}）`);
+      }
+      return;
+    }
+    closeModal('modal-project-line-cost-edit');
+    showToast(costId ? 'コストを更新しました' : 'コストを追加しました', 'ok');
+    // line_costs を再 fetch して再描画
+    await loadLineCosts(lineId);
+    _projectLineCostsOpen.add(lineId);
+    renderProjectLines();
+  } catch (e) {
+    showErr(`保存に失敗しました: ${e?.message || ''}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function openProjectLineCostDeleteConfirm(lineId, costId) {
+  const projectId = document.getElementById('p-id').value;
+  const list = _projectLineCostsCache[lineId] || [];
+  const cost = list.find(c => c.id === costId);
+  if (!cost) return;
+  document.getElementById('plc-del-id').value = costId;
+  document.getElementById('plc-del-project-id').value = projectId;
+  document.getElementById('plc-del-line-id').value = lineId;
+  const role = cost.role;
+  const user = cost.user;
+  const roleLabel = role?.label || role?.code || 'ロール未設定';
+  const ownerLabel = user ? (user.full_name || user.email || 'ユーザー') : '(ロール固定)';
+  const unitText = formatLineCostUnit(cost);
+  document.getElementById('plc-del-message').innerHTML = `
+    <div style="margin-bottom:6px"><strong>${esc(roleLabel)}</strong> ${esc(ownerLabel)}</div>
+    <div style="color:var(--text-muted)">${esc(unitText)}</div>
+  `;
+  openModal('modal-project-line-cost-delete');
+}
+
+async function executeProjectLineCostDelete() {
+  const costId = document.getElementById('plc-del-id').value;
+  const projectId = document.getElementById('plc-del-project-id').value;
+  const lineId = document.getElementById('plc-del-line-id').value;
+  if (!costId || !projectId || !lineId) return;
+  const btn = document.getElementById('plc-del-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/costs/${costId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    closeModal('modal-project-line-cost-delete');
+    showToast('コストを削除しました', 'ok');
+    await loadLineCosts(lineId);
+    renderProjectLines();
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ==================== 固定費・追加収入（project_fixed_items）Stage 4c ====================
+// ADR 006 (案件固定費) に基づく fixed_items CRUD UI。
+// 旧単価モーダルの「rate-extras」/「fixed_budget」UI は触らず並走。
+// 編集は専用の小モーダル `modal-project-fixed-item-edit`（z-index:300）で行う。
+// 削除は `modal-project-fixed-item-delete`（z-index:320）で誤削除防止。
+// 保存後は楽観的更新せず必ず再 fetch して同期する。
+
+const FIXED_ITEM_TYPE_LABELS = {
+  expense: { label: '経費',     icon: '💰', bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+  revenue: { label: '追加収入', icon: '📈', bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+};
+
+const FIXED_ITEM_STATUS_LABELS = {
+  planned:   { label: '予定',     bg: '#F3F4F6', fg: '#4B5563', border: '#E5E7EB' },
+  committed: { label: '発注確定', bg: '#E0F2FE', fg: '#075985', border: '#BAE6FD' },
+  incurred:  { label: '実費発生', bg: '#DCFCE7', fg: '#166534', border: '#BBF7D0' },
+  cancelled: { label: '中止',     bg: '#FEE2E2', fg: '#991B1B', border: '#FECACA' },
+};
+
+const FIXED_ITEM_CATEGORY_LABELS = {
+  studio:    'スタジオ',
+  equipment: '機材',
+  travel:    '出張',
+  location:  'ロケ地',
+  other:     'その他',
+};
+
+let _projectFixedItemsCache = []; // 現在表示中の案件の fixed_items
+
+function projectFixedItemsCanEdit() {
+  return typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
+}
+
+async function loadProjectFixedItems(projectId) {
+  const listEl = document.getElementById('p-fixed-items-list');
+  if (!listEl || !projectId) return;
+  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>';
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/fixed-items`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(msg) || res.status}</div>`;
+      return;
+    }
+    _projectFixedItemsCache = await res.json() || [];
+    renderProjectFixedItems();
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(e?.message || '')}</div>`;
+  }
+}
+
+function renderProjectFixedItems() {
+  const listEl = document.getElementById('p-fixed-items-list');
+  if (!listEl) return;
+  const canEdit = projectFixedItemsCanEdit();
+  // 「+ 経費を追加」「+ 追加収入を追加」ボタンの権限制御
+  const addExpenseBtn = document.getElementById('p-fi-add-expense-btn');
+  const addRevenueBtn = document.getElementById('p-fi-add-revenue-btn');
+  if (addExpenseBtn) addExpenseBtn.style.display = canEdit ? '' : 'none';
+  if (addRevenueBtn) addRevenueBtn.style.display = canEdit ? '' : 'none';
+
+  if (!_projectFixedItemsCache.length) {
+    listEl.innerHTML = `
+      <div style="color:var(--text-muted);font-size:13px;padding:14px;background:var(--surface);border:1px dashed var(--border);border-radius:10px;text-align:center">
+        まだ固定費・追加収入が登録されていません。「+ 経費を追加」「+ 追加収入を追加」から追加してください。
+      </div>`;
+    return;
+  }
+
+  listEl.innerHTML = _projectFixedItemsCache.map((item) => {
+    const t = FIXED_ITEM_TYPE_LABELS[item.item_type] || FIXED_ITEM_TYPE_LABELS.expense;
+    const s = FIXED_ITEM_STATUS_LABELS[item.status] || FIXED_ITEM_STATUS_LABELS.planned;
+    const catLabel = item.category ? (FIXED_ITEM_CATEGORY_LABELS[item.category] || item.category) : null;
+    const amount = Number(item.amount) || 0;
+    const occurredOn = item.occurred_on
+      ? new Date(item.occurred_on).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' })
+      : null;
+    // 支払先表示（paid_to_user_id があればメンバー名、なければ paid_to フリーテキスト）
+    let paidToLabel = '';
+    if (item.paid_to_user_id) {
+      const m = (typeof allMembers !== 'undefined' && Array.isArray(allMembers))
+        ? allMembers.find(x => x && x.id === item.paid_to_user_id)
+        : null;
+      paidToLabel = m ? `→ ${m.name || m.email || 'メンバー'}` : '→ メンバー';
+    } else if (item.paid_to) {
+      paidToLabel = `→ ${item.paid_to}`;
+    }
+    const isCancelled = item.status === 'cancelled';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--border);border-radius:10px;${isCancelled ? 'opacity:.55' : ''}">
+        <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${t.bg};border:1px solid ${t.border};border-radius:999px;font-size:11px;font-weight:600;color:${t.fg}">
+          <span>${t.icon}</span><span>${esc(t.label)}</span>
+        </div>
+        ${catLabel ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#F3F4F6;border:1px solid #E5E7EB;color:#4B5563;border-radius:999px;font-size:11px;font-weight:500;white-space:nowrap">${esc(catLabel)}</span>` : ''}
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <div style="font-size:13px;line-height:1.4;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || '名称未設定')}</div>
+          <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <strong style="color:var(--text)">¥${amount.toLocaleString()}</strong>
+            ${occurredOn ? ` ・ ${esc(occurredOn)}` : ''}
+            ${paidToLabel ? ` ・ ${esc(paidToLabel)}` : ''}
+          </div>
+        </div>
+        <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${s.bg};border:1px solid ${s.border};color:${s.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
+          ${esc(s.label)}
+        </span>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button type="button" class="btn" onclick="openProjectFixedItemEdit('${esc(item.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
+          <button type="button" class="btn" onclick="openProjectFixedItemDeleteConfirm('${esc(item.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 「+ 経費を追加」 / 「+ 追加収入を追加」: 編集モーダルを空状態で開く
+async function addProjectFixedItem(itemType) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) {
+    showToast('案件を保存してから固定費・収入を追加してください', 'warn');
+    return;
+  }
+  prepareProjectFixedItemEditModal(null, projectId, itemType);
+  openModal('modal-project-fixed-item-edit');
+}
+
+// 既存 fixed_item を編集モーダルで開く
+async function openProjectFixedItemEdit(itemId) {
+  const projectId = document.getElementById('p-id').value;
+  const item = _projectFixedItemsCache.find(x => x.id === itemId);
+  if (!item) {
+    showToast('項目が見つかりません', 'warn');
+    await loadProjectFixedItems(projectId);
+    return;
+  }
+  prepareProjectFixedItemEditModal(item, projectId, item.item_type);
+  openModal('modal-project-fixed-item-edit');
+}
+
+// 編集モーダルの初期化（item=null は新規）
+function prepareProjectFixedItemEditModal(item, projectId, defaultItemType) {
+  const titleEl = document.getElementById('pfi-edit-title');
+  const itemType = item ? item.item_type : (defaultItemType || 'expense');
+  if (titleEl) {
+    if (item) {
+      titleEl.textContent = itemType === 'revenue' ? '追加収入を編集' : '経費を編集';
+    } else {
+      titleEl.textContent = itemType === 'revenue' ? '追加収入を追加' : '経費を追加';
+    }
+  }
+  document.getElementById('pfi-edit-id').value = item ? item.id : '';
+  document.getElementById('pfi-edit-project-id').value = projectId;
+  // 種別 (radio)
+  const expenseRadio = document.getElementById('pfi-edit-type-expense');
+  const revenueRadio = document.getElementById('pfi-edit-type-revenue');
+  if (expenseRadio) expenseRadio.checked = (itemType === 'expense');
+  if (revenueRadio) revenueRadio.checked = (itemType === 'revenue');
+  // カテゴリ
+  document.getElementById('pfi-edit-category').value = item?.category || '';
+  // 名前
+  document.getElementById('pfi-edit-name').value = item?.name || '';
+  // 金額
+  document.getElementById('pfi-edit-amount').value = item ? (item.amount ?? 0) : 0;
+  // 発生日
+  document.getElementById('pfi-edit-occurred-on').value = item?.occurred_on || '';
+  // 支払先
+  document.getElementById('pfi-edit-paid-to').value = item?.paid_to || '';
+  // 支払先メンバー (users select を populate)
+  const userSel = document.getElementById('pfi-edit-paid-to-user-id');
+  if (userSel) {
+    const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+    const activeMembers = members.filter(m => m && m.is_active !== false);
+    userSel.innerHTML = '<option value="">未指定</option>' + activeMembers.map(m =>
+      `<option value="${esc(m.id)}">${esc(m.name || m.email || 'メンバー')}</option>`
+    ).join('');
+    userSel.value = item?.paid_to_user_id || '';
+  }
+  // ステータス
+  document.getElementById('pfi-edit-status').value = item?.status || 'planned';
+  // メモ
+  document.getElementById('pfi-edit-notes').value = item?.notes || '';
+
+  const errEl = document.getElementById('pfi-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+}
+
+async function saveProjectFixedItem() {
+  const itemId = document.getElementById('pfi-edit-id').value;
+  const projectId = document.getElementById('pfi-edit-project-id').value;
+  const errEl = document.getElementById('pfi-edit-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = ''; } };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const itemType = document.querySelector('input[name="pfi-edit-type"]:checked')?.value || 'expense';
+  const category = document.getElementById('pfi-edit-category').value || null;
+  const name = document.getElementById('pfi-edit-name').value.trim();
+  const amount = Math.max(0, parseInt(document.getElementById('pfi-edit-amount').value, 10) || 0);
+  const occurredOn = document.getElementById('pfi-edit-occurred-on').value || null;
+  const paidTo = document.getElementById('pfi-edit-paid-to').value.trim() || null;
+  const paidToUserId = document.getElementById('pfi-edit-paid-to-user-id').value || null;
+  const status = document.getElementById('pfi-edit-status').value;
+  const notes = document.getElementById('pfi-edit-notes').value.trim() || null;
+
+  if (!name) { showErr('名前を入力してください'); return; }
+
+  const payload = {
+    item_type: itemType,
+    category,
+    name,
+    amount,
+    occurred_on: occurredOn,
+    paid_to: paidTo,
+    paid_to_user_id: paidToUserId,
+    status,
+    notes,
+  };
+
+  const saveBtn = document.getElementById('pfi-edit-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const url = itemId
+      ? `${API}/projects/${projectId}/fixed-items/${itemId}`
+      : `${API}/projects/${projectId}/fixed-items`;
+    const method = itemId ? 'PUT' : 'POST';
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showErr(err.error || `保存に失敗しました（${res.status}）`);
+      return;
+    }
+    closeModal('modal-project-fixed-item-edit');
+    showToast(itemId ? '項目を更新しました' : '項目を追加しました', 'ok');
+    await loadProjectFixedItems(projectId);
+  } catch (e) {
+    showErr(`保存に失敗しました: ${e?.message || ''}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function openProjectFixedItemDeleteConfirm(itemId) {
+  const projectId = document.getElementById('p-id').value;
+  const item = _projectFixedItemsCache.find(x => x.id === itemId);
+  if (!item) return;
+  document.getElementById('pfi-del-id').value = itemId;
+  document.getElementById('pfi-del-project-id').value = projectId;
+  const t = FIXED_ITEM_TYPE_LABELS[item.item_type] || FIXED_ITEM_TYPE_LABELS.expense;
+  const amount = Number(item.amount) || 0;
+  document.getElementById('pfi-del-message').innerHTML = `
+    <div style="margin-bottom:6px"><strong>${esc(t.label)}</strong>: ${esc(item.name || '名称未設定')}</div>
+    <div style="color:var(--text-muted)">¥${amount.toLocaleString()}</div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
+      ※ 削除後の復元はできません。
+    </div>`;
+  openModal('modal-project-fixed-item-delete');
+}
+
+async function executeProjectFixedItemDelete() {
+  const itemId = document.getElementById('pfi-del-id').value;
+  const projectId = document.getElementById('pfi-del-project-id').value;
+  if (!itemId || !projectId) return;
+  const btn = document.getElementById('pfi-del-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/fixed-items/${itemId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    closeModal('modal-project-fixed-item-delete');
+    showToast('項目を削除しました', 'ok');
+    await loadProjectFixedItems(projectId);
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ==================== 案件収支（Step C） ====================
@@ -13121,7 +14501,7 @@ async function openRateImportPicker() {
     const data = res.ok ? await res.json() : { templates: [] };
     const templates = data.templates || [];
     if (templates.length === 0) {
-      list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">単価設定がありません。先に案件カードの「単価」ボタンから単価を設定してください。</div>';
+      list.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">単価候補がありません。案件編集モーダルの「成果物グループ」「固定費・追加収入」から見積行・コスト・固定費を登録してください。</div>';
       return;
     }
     list.innerHTML = templates.map((t, idx) => `
@@ -13460,6 +14840,168 @@ async function toggleHideProject(id, current) {
   await loadProjects();
 }
 
+// ===== 案件モーダル: ファイル名テンプレート (ADR 007 Stage 2) =====
+//
+// /api/filename-templates から一覧を取得し、案件モーダル内 select を populate する。
+// 選択中テンプレに含まれる kind: "custom" のトークンだけ override 入力欄を動的生成し、
+// ライブプレビュー（renderFilename と同じロジック）を更新する。
+//
+// state（モーダル単位で保持）
+const _projFilenameState = {
+  templates: [],          // /api/filename-templates の結果キャッシュ
+  overrides: {},          // 入力中の filename_token_overrides （key -> { label, value }）
+};
+
+// renderFilename のフロント版（utils/filename.js と同等のロジック・約30行）
+// サンプル値でプレビュー表示するために使う
+function renderFilenameClient(template, tokenValues, overrides) {
+  if (!template || !Array.isArray(template.tokens)) return '';
+  const sep = typeof template.separator === 'string' ? template.separator : '_';
+  const safeOverrides = overrides && typeof overrides === 'object' ? overrides : {};
+  const parts = template.tokens.map(tok => {
+    if (!tok || !tok.key) return '';
+    if (tok.kind === 'system') {
+      const v = tokenValues[tok.key];
+      return v != null ? String(v).trim() : '';
+    }
+    if (tok.kind === 'custom') {
+      const ov = safeOverrides[tok.key];
+      if (ov && ov.value != null && String(ov.value).trim() !== '') return String(ov.value).trim();
+      if (tok.default != null && String(tok.default).trim() !== '') return String(tok.default).trim();
+      return '';
+    }
+    return '';
+  }).filter(Boolean);
+  return parts.join(sep);
+}
+
+// プレビュー用のサンプル system 値（FN_SYSTEM_TOKENS の sample を参考に）
+function _projFilenameSampleValues() {
+  const projectName = (document.getElementById('p-name')?.value || '').trim() || 'サンプル案件';
+  const today = new Date();
+  const yymmdd = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  return {
+    serial: '0000001',
+    project_name: projectName,
+    version: 'v1',
+    date_yymmdd: yymmdd,
+    client_code: 'CLT',
+    product: 'ドラム',
+    appeal_axis: 'BRAND',
+    size: '1:1',
+    format: '30s',
+    media: 'TVCM',
+  };
+}
+
+async function loadProjectFilenameTemplates() {
+  try {
+    const res = await apiFetch(`${API}/filename-templates`);
+    if (!res.ok) { _projFilenameState.templates = []; return; }
+    _projFilenameState.templates = await res.json();
+  } catch (_) {
+    _projFilenameState.templates = [];
+  }
+}
+
+// テンプレ select を populate して、現在選択中の id を反映
+function populateProjectFilenameTemplateSelect(currentId) {
+  const sel = document.getElementById('p-filename-template-id');
+  if (!sel) return;
+  const list = _projFilenameState.templates || [];
+  if (list.length === 0) {
+    sel.innerHTML = '<option value="">（テンプレ未登録 — 設定タブから作成）</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  const opts = ['<option value="">（未設定）</option>'];
+  for (const t of list) {
+    const star = t.is_default ? ' ★' : '';
+    opts.push(`<option value="${esc(t.id)}">${esc(t.name)}${star}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  // currentId があればそれを、なければ default を初期選択
+  if (currentId && list.some(t => t.id === currentId)) {
+    sel.value = currentId;
+  } else {
+    const def = list.find(t => t.is_default);
+    sel.value = def ? def.id : '';
+  }
+}
+
+// 選択中テンプレ取得
+function _projFilenameSelectedTemplate() {
+  const id = document.getElementById('p-filename-template-id')?.value || '';
+  if (!id) return null;
+  return (_projFilenameState.templates || []).find(t => t.id === id) || null;
+}
+
+// custom トークンの override 入力欄を生成
+function renderProjectFilenameOverrides() {
+  const wrap = document.getElementById('p-filename-overrides-wrap');
+  const list = document.getElementById('p-filename-overrides-list');
+  if (!wrap || !list) return;
+  const tpl = _projFilenameSelectedTemplate();
+  const customTokens = tpl ? (tpl.tokens || []).filter(t => t && t.kind === 'custom') : [];
+  if (!customTokens.length) {
+    wrap.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  const overrides = _projFilenameState.overrides || {};
+  list.innerHTML = customTokens.map(tok => {
+    const ov = overrides[tok.key] || {};
+    const labelVal = ov.label != null ? ov.label : (tok.label || tok.key);
+    const valueVal = ov.value != null ? ov.value : (tok.default || '');
+    return `
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--bg-soft, #fafafa);border:0.5px solid var(--border);border-radius:8px;padding:8px 10px">
+        <div style="font-size:11px;color:var(--text-muted);min-width:64px">${esc(tok.key)}</div>
+        <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="label" value="${esc(labelVal)}" placeholder="ラベル" style="flex:1;min-width:120px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+        <input class="form-input" data-fn-ovr-key="${esc(tok.key)}" data-fn-ovr-field="value" value="${esc(valueVal)}" placeholder="値（例：上地無）" style="flex:1;min-width:120px;font-size:13px;padding:6px 10px" oninput="updateProjectFilenameOverrideFromInput(this)">
+      </div>
+    `;
+  }).join('');
+}
+
+function updateProjectFilenameOverrideFromInput(el) {
+  const key = el.getAttribute('data-fn-ovr-key');
+  const field = el.getAttribute('data-fn-ovr-field');
+  if (!key || !field) return;
+  if (!_projFilenameState.overrides[key]) _projFilenameState.overrides[key] = {};
+  _projFilenameState.overrides[key][field] = el.value;
+  updateProjectFilenamePreview();
+}
+
+function updateProjectFilenamePreview() {
+  const tpl = _projFilenameSelectedTemplate();
+  const previewEl = document.getElementById('p-filename-preview');
+  if (!previewEl) return;
+  if (!tpl) { previewEl.textContent = '—'; return; }
+  const values = _projFilenameSampleValues();
+  const fn = renderFilenameClient(tpl, values, _projFilenameState.overrides);
+  previewEl.textContent = fn || '—';
+}
+
+function onProjectFilenameTemplateChange() {
+  // テンプレ切替時は overrides は維持（同じ key なら使い回せる）
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
+// 案件モーダル open 時の初期化（新規 / 編集 共通）
+async function initProjectFilenameTemplateUI(project) {
+  await loadProjectFilenameTemplates();
+  const currentId = project?.filename_template_id || null;
+  _projFilenameState.overrides = (project?.filename_token_overrides && typeof project.filename_token_overrides === 'object')
+    ? JSON.parse(JSON.stringify(project.filename_token_overrides))
+    : {};
+  populateProjectFilenameTemplateSelect(currentId);
+  renderProjectFilenameOverrides();
+  updateProjectFilenamePreview();
+}
+
 async function submitProject() {
   const id = document.getElementById('p-id').value;
   const client_id = document.getElementById('p-client-id').value;
@@ -13491,6 +15033,10 @@ async function submitProject() {
 
   if (!client_id || !name) { showToast('クライアントと案件名は必須です', 'warn'); return; }
 
+  // ADR 007: ファイル名テンプレ（編集モードのみ。新規作成時は POST で別途追従するため除外）
+  const filename_template_id = document.getElementById('p-filename-template-id')?.value || null;
+  const filename_token_overrides = (_projFilenameState && _projFilenameState.overrides) ? _projFilenameState.overrides : {};
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -13499,7 +15045,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -13733,9 +15279,12 @@ async function loadAnnouncements() {
         : `<div style="width:18px;height:18px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0">${esc((pu.full_name || '?').charAt(0))}</div>`;
       posterAvatar = `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;color:var(--text-muted);vertical-align:middle">${av}<span>${esc(pu.full_name)}</span></span>`;
     }
-    const ackBtn = done
-      ? `<button class="btn" onclick="undoAnnouncementAck('${a.id}')" style="font-size:11px;padding:3px 10px;background:var(--em-pale);color:var(--em-dark);border-color:var(--em-dark)">✅ 完了済 (取消)</button>`
-      : `<button class="btn" onclick="doAnnouncementAck('${a.id}')" style="font-size:11px;padding:3px 10px;background:var(--em-dark);color:#fff;border-color:var(--em-dark)">完了 ✅</button>`;
+    const ctaBlock = done
+      ? `<div class="ann-cta-row"><button class="ann-cta-done" onclick="undoAnnouncementAck('${a.id}')">✅ 完了済み <span style="opacity:0.7;font-weight:500">(タップで取消)</span></button></div>`
+      : `<div class="ann-cta-row"><button class="ann-cta-pending" onclick="doAnnouncementAck('${a.id}')">
+          <span class="ann-cta-icon">👇</span>
+          <span>対応完了したらタップ！<span class="ann-cta-sub">未対応のままだと通知が続きます</span></span>
+        </button></div>`;
     const statusBtn = canPost
       ? `<button class="btn" onclick="openAnnouncementStatus('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px">対応状況</button>`
       : '';
@@ -13744,6 +15293,9 @@ async function loadAnnouncements() {
       : '';
     const closeBtn = canPost
       ? `<button class="btn" onclick="closeAnnouncement('${a.id}')" style="font-size:11px;padding:3px 10px;margin-left:6px;color:#999">終了</button>`
+      : '';
+    const adminBtns = (statusBtn || editBtn || closeBtn)
+      ? `<div style="display:flex;gap:0;flex-shrink:0">${statusBtn}${editBtn}${closeBtn}</div>`
       : '';
     const bodyHtml = a.body
       ? `<div style="font-size:13px;color:var(--text);margin-top:8px;white-space:pre-wrap;line-height:1.6">${esc(a.body)}</div>`
@@ -13754,8 +15306,9 @@ async function loadAnnouncements() {
           <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${posterAvatar}</div>
           ${deadlineBlock}
           ${bodyHtml}
+          ${ctaBlock}
         </div>
-        <div style="display:flex;gap:0;flex-shrink:0">${ackBtn}${statusBtn}${editBtn}${closeBtn}</div>
+        ${adminBtns}
       </div>
     </div>`;
   }).join('');
@@ -14230,10 +15783,29 @@ async function deleteTweet(id) {
 //
 // 状態:
 //   _twPageState.tab        — 'all' | 'mine'
-//   _twPageState.staffOnly  — 運営（admin/secretary）の投稿のみ表示
+//   _twPageState.staffOnly  — 後方互換用（旧フィルターと等価）
+//   _twPageState.roleGroups — 選択中ロールグループ Set: 'admin' | 'secretary' |
+//                             'producer' | 'director' | 'editor' | 'designer'
+//                             空の場合は「全員」扱い（フィルターなし）
 //   _twPageOpenComments     — コメント欄を開いている tweet_id の集合
-const _twPageState = { tab: 'all', staffOnly: false };
+const _twPageState = {
+  tab: 'all',
+  staffOnly: false,
+  roleGroups: new Set(),
+};
 const _twPageOpenComments = new Set();
+const _TW_FILTER_LS_KEY = 'haruka.tweets.roleFilters.v1';
+// ロールグループ → users.role 値の対応
+//   producer は producer / producer_director の両方を対象（兼任カバー）
+//   director は director / producer_director の両方を対象
+const _TW_ROLE_GROUP_MAP = {
+  admin:     ['admin'],
+  secretary: ['secretary'],
+  producer:  ['producer', 'producer_director'],
+  director:  ['director', 'producer_director'],
+  editor:    ['editor'],
+  designer:  ['designer'],
+};
 
 // ロール → 表示ラベル/CSSクラス（リベシティ「トラ会員」相当のピル）
 const _twRoleBadgeMap = {
@@ -14257,22 +15829,103 @@ function switchTweetsTab(tab) {
   document.querySelectorAll('.tweets-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
+  // フィルター UI は all タブだけに出す（mine では non-display）
+  const filtersEl = document.getElementById('tweets-filters');
+  if (filtersEl) filtersEl.dataset.activeTab = tab;
   loadTweetsPage();
 }
 
-function toggleTweetsStaffOnly() {
-  const cb = document.getElementById('tweets-filter-staff-only');
-  _twPageState.staffOnly = !!(cb && cb.checked);
+// フィルターチェックボックスの変更ハンドラ
+//   group: 'all' | 'admin' | 'secretary' | 'producer' | 'director' | 'editor' | 'designer'
+function onTweetsFilterChange(group) {
+  const allCb  = document.getElementById('tweets-filter-all');
+  const groupCbs = Array.from(document.querySelectorAll('#tweets-filters input[data-role-group]:not([data-role-group="all"])'));
+  if (group === 'all') {
+    // 「全員」ON にしたら個別チェックを全部 OFF。
+    // 「全員」OFF にしたら個別選択モードに入る（個別は触らない）
+    if (allCb && allCb.checked) {
+      groupCbs.forEach(cb => { cb.checked = false; });
+    } else if (allCb && !allCb.checked) {
+      // 全員 OFF + 個別ゼロのままだと UX 的に何も起きないため、特に強制しない
+      // → loadTweetsPage 側で空集合は「全員」扱いにフォールバック
+    }
+  } else {
+    // 個別ロールにチェックを入れたら「全員」を OFF
+    if (allCb && allCb.checked) allCb.checked = false;
+  }
+
+  // 状態を再計算
+  const selected = new Set();
+  groupCbs.forEach(cb => { if (cb.checked) selected.add(cb.dataset.roleGroup); });
+  _twPageState.roleGroups = selected;
+  // 互換: いずれの個別ロールも未選択なら staffOnly=false（旧チェックボックス相当の動作なし）
+  _twPageState.staffOnly = false;
+
+  // 何も選んでいなければ「全員」ON 扱いに自動復帰
+  if (selected.size === 0 && allCb) allCb.checked = true;
+
+  // 選択状態を localStorage に保存
+  try {
+    localStorage.setItem(_TW_FILTER_LS_KEY, JSON.stringify({
+      all: !!(allCb && allCb.checked),
+      groups: Array.from(selected),
+    }));
+  } catch {}
+
   loadTweetsPage();
+}
+
+// 起動時にチェック状態を復元
+function restoreTweetsFilterFromStorage() {
+  let saved = null;
+  try {
+    const raw = localStorage.getItem(_TW_FILTER_LS_KEY);
+    if (raw) saved = JSON.parse(raw);
+  } catch {}
+  const allCb = document.getElementById('tweets-filter-all');
+  const groupCbs = Array.from(document.querySelectorAll('#tweets-filters input[data-role-group]:not([data-role-group="all"])'));
+  if (!allCb) return;
+
+  const selected = new Set();
+  if (saved && Array.isArray(saved.groups) && saved.groups.length > 0 && !saved.all) {
+    allCb.checked = false;
+    groupCbs.forEach(cb => {
+      const on = saved.groups.includes(cb.dataset.roleGroup);
+      cb.checked = on;
+      if (on) selected.add(cb.dataset.roleGroup);
+    });
+  } else {
+    allCb.checked = true;
+    groupCbs.forEach(cb => { cb.checked = false; });
+  }
+  _twPageState.roleGroups = selected;
 }
 
 async function loadTweetsPage() {
   const el = document.getElementById('tweets-list');
   if (!el) return;
 
+  // フィルター UI が初期化されていなければ復元（初回呼び出し時に実行される）
+  if (!_twPageState._filterRestored) {
+    restoreTweetsFilterFromStorage();
+    _twPageState._filterRestored = true;
+  }
+
   const params = new URLSearchParams();
-  if (_twPageState.tab === 'mine')   params.set('mine', '1');
-  if (_twPageState.staffOnly)        params.set('staff_only', '1');
+  if (_twPageState.tab === 'mine') params.set('mine', '1');
+  // mine タブではロールフィルターを無視（自分のつぶやきは全件表示）
+  if (_twPageState.tab !== 'mine' && _twPageState.roleGroups && _twPageState.roleGroups.size > 0) {
+    // ロールグループ → users.role 値の集合に展開
+    const roles = new Set();
+    _twPageState.roleGroups.forEach(g => {
+      const arr = _TW_ROLE_GROUP_MAP[g] || [];
+      arr.forEach(r => roles.add(r));
+    });
+    if (roles.size > 0) params.set('roles', Array.from(roles).join(','));
+  } else if (_twPageState.staffOnly) {
+    // 後方互換: 旧 staff_only=1 経路は残す（過去URLで来た場合に動く）
+    params.set('staff_only', '1');
+  }
   const qs = params.toString();
   const url = qs ? `${API}/tweets?${qs}` : `${API}/tweets`;
 
@@ -14292,8 +15945,17 @@ async function loadTweetsPage() {
     return;
   }
 
-  // 念のためフロント側でも staff_only フィルター（API 未対応時のフォールバック）
-  if (_twPageState.staffOnly) {
+  // 念のためフロント側でも staff_only / roles フィルター（API 未対応時のフォールバック）
+  if (_twPageState.tab !== 'mine' && _twPageState.roleGroups && _twPageState.roleGroups.size > 0) {
+    const roles = new Set();
+    _twPageState.roleGroups.forEach(g => {
+      const arr = _TW_ROLE_GROUP_MAP[g] || [];
+      arr.forEach(r => roles.add(r));
+    });
+    if (roles.size > 0) {
+      list = list.filter(t => roles.has(t?.users?.role));
+    }
+  } else if (_twPageState.staffOnly) {
     list = list.filter(t => _twIsStaffRole(t?.users?.role));
   }
 
@@ -14318,7 +15980,7 @@ function renderTweetCard(t) {
   const canDelete = (t.user_id === myId) || canMod;
 
   const av = u.avatar_url
-    ? `<div class="tweet-avatar"><img src="${esc(u.avatar_url)}" alt=""></div>`
+    ? `<div class="tweet-avatar"><img src="${esc(u.avatar_url)}" alt="" loading="lazy" decoding="async"></div>`
     : `<div class="tweet-avatar">${esc((u.full_name || '?').charAt(0))}</div>`;
 
   const roleInfo = _twRoleBadgeMap[u.role];
@@ -14372,7 +16034,7 @@ function renderTweetCard(t) {
   // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
 
   const imageHtml = t.image_data
-    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" onclick="openTweetLightbox(this.src)"></div>`
+    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)"></div>`
     : '';
 
   return `<article class="tweet-card ${t.is_pinned ? 'pinned' : ''}" data-tweet-id="${t.id}">
@@ -14701,8 +16363,13 @@ async function renderAdminDash(today) {
     `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${s.cls||''}">${s.val}</div><div class="dash-hero-stat-label">${s.label}</div></div>`
   ).join('');
 
-  // グラフエリア表示
-  document.getElementById('dash-charts').style.display = '';
+  // グラフエリア表示。dash-charts は admin 限定で表示される DOM のため、
+  // 非 admin が dashboard select の onchange を踏んだ場合は null 参照で TypeError になる
+  // （PR #332 ログで unhandledrejection: Cannot read properties of null (reading 'style') を観測）。
+  // chart 描画自体は下で isTopAdmin() ゲートされているので、ここで早期 return して null を触らない。
+  const dashChartsEl = document.getElementById('dash-charts');
+  if (!dashChartsEl) return;
+  dashChartsEl.style.display = '';
 
   // ===== Chart 1: 売上予実（isTopAdmin のみ） =====
   _destroyChart('revenue');
@@ -16964,8 +18631,8 @@ function selectMasterNav(type) {
   if (type !== 'generic') { currentCategoryId = null; masterItemEditingId = null; masterCatEditingId = null; }
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
-  // 'products'/'appeal_axes' は Stage A で削除済み。'categories' を追加。
-  ['generic','general','categories','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
+  ['generic','general','categories','products','appeal_axes','filename_templates','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -16981,6 +18648,12 @@ function selectMasterNav(type) {
     renderGeneralMasterPage();
   } else if (type === 'categories') {
     renderCategoriesMasterPage();
+  } else if (type === 'products') {
+    renderProductsMasterPage();
+  } else if (type === 'appeal_axes') {
+    renderAppealAxesMasterPage();
+  } else if (type === 'filename_templates') {
+    renderFilenameTemplatesPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
@@ -19181,6 +20854,616 @@ async function deleteCategory(id) {
   showToast('削除しました', 'success');
 }
 
+// ==================== ファイル名テンプレート (ADR 007 Stage 1) ====================
+// マスター画面の「📁 ファイル名テンプレート」セクション。
+// /api/filename-templates の CRUD を行う。
+//
+// UI:
+//   - 左: テンプレ一覧（★ default マーク、行クリックで右に編集パネル）+ 「新規作成」
+//   - 右: 編集パネル
+//       - 名前 input
+//       - セパレータ select (_ / - / なし)
+//       - パレット: ドラッグ可能なシステム/カスタムトークンチップ
+//       - ビルダー: D&D 並べ替え可能なトークンリスト
+//       - プレビュー: ダミー値で生成例
+//       - 保存 / キャンセル
+//
+// 必須トークン: serial / project_name / version。serial は先頭固定。
+// custom トークンは追加時に key/label/default を入力。
+//
+// Stage 2 で案件モーダルから選択 + override 入力 + bulk/preview の関数置き換え。
+
+// ファイル名テンプレ用の状態
+const _fnTplState = {
+  list: [],                  // 一覧キャッシュ
+  selectedId: null,          // 編集中テンプレ ID (null = 新規)
+  draft: null,               // 編集中テンプレの draft オブジェクト
+  draggingIndex: null,       // ビルダー内 D&D 中の index
+  draggingPaletteKey: null,  // パレットからのドラッグ中 key
+};
+
+// システム標準トークン定義（ADR 007 表）
+// label はユーザー編集可だが、ここでは初期表示用のラベル
+const FN_SYSTEM_TOKENS = [
+  { key: 'serial',       label: '連番',         required: true,  pinFirst: true,  sample: '007' },
+  { key: 'project_name', label: '案件名',       required: true,                   sample: 'あるる' },
+  { key: 'version',      label: 'バージョン',   required: true,                   sample: 'v1' },
+  { key: 'date_yymmdd',  label: '制作日',       sample: '260507' },
+  { key: 'client_code',  label: 'クライアント', sample: 'CLT001' },
+  { key: 'product',      label: '商品',         sample: 'ドラム' },
+  { key: 'appeal_axis',  label: '訴求軸',       sample: 'BRAND' },
+  { key: 'size',         label: 'サイズ',       sample: '1:1' },
+  { key: 'format',       label: 'FMT',          sample: '30s' },
+  { key: 'media',        label: '媒体',         sample: 'TVCM' },
+];
+
+function _fnSystemTokenDef(key) {
+  return FN_SYSTEM_TOKENS.find(t => t.key === key) || null;
+}
+
+// 編集中テンプレが「未保存変更あり」かを雑に判定（ID単位の比較は行わない・seed 対比は省略）
+function _fnTplDraftFromTemplate(tpl) {
+  if (!tpl) {
+    // 新規: 必須3トークンだけ入った最小テンプレ
+    return {
+      id: null,
+      name: '',
+      separator: '_',
+      tokens: [
+        { kind: 'system', key: 'serial',       label: '連番' },
+        { kind: 'system', key: 'project_name', label: '案件名' },
+        { kind: 'system', key: 'version',      label: 'バージョン' },
+      ],
+      is_default: false,
+    };
+  }
+  return {
+    id: tpl.id,
+    name: tpl.name || '',
+    separator: tpl.separator ?? '_',
+    tokens: Array.isArray(tpl.tokens) ? JSON.parse(JSON.stringify(tpl.tokens)) : [],
+    is_default: !!tpl.is_default,
+  };
+}
+
+async function renderFilenameTemplatesPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  let list = [];
+  try {
+    const res = await apiFetch(`${API}/filename-templates`);
+    list = res.ok ? await res.json() : [];
+  } catch (e) { list = []; }
+  _fnTplState.list = list;
+
+  // 初回表示時、何も選択していなければ default テンプレ or 先頭を選択
+  if (!_fnTplState.selectedId && list.length) {
+    const def = list.find(t => t.is_default) || list[0];
+    _fnTplState.selectedId = def.id;
+    _fnTplState.draft = _fnTplDraftFromTemplate(def);
+  } else if (_fnTplState.selectedId) {
+    // 既存編集中の id が一覧から消えていたら一覧先頭にフォールバック
+    const found = list.find(t => t.id === _fnTplState.selectedId);
+    if (found) {
+      _fnTplState.draft = _fnTplState.draft || _fnTplDraftFromTemplate(found);
+    } else if (list.length) {
+      _fnTplState.selectedId = list[0].id;
+      _fnTplState.draft = _fnTplDraftFromTemplate(list[0]);
+    }
+  }
+
+  content.innerHTML = `
+    <div style="margin-bottom:18px">
+      <div style="font-size:18px;font-weight:700;color:var(--text-main)">📁 ファイル名テンプレート</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+        提出用ファイル名の命名規約。案件モーダル「📁 ファイル名テンプレート」から各案件で選択 + カスタム要素の上書きができます。
+      </div>
+    </div>
+
+    ${list.length === 0 ? `
+      <div style="background:#FFF8E1;border:1px solid #F59E0B;border-radius:10px;padding:20px;color:#92400E;font-size:13px;line-height:1.7;margin-bottom:16px">
+        ⚠️ ファイル名テンプレが 1 件もありません。<br>
+        本番Supabase に <code>migrations/2026-05-07_filename_templates.sql</code> が適用されているか確認してください。<br>
+        migration が適用済みなら、「＋ 新規作成」から最初の1件を作ってください。
+      </div>
+    ` : ''}
+
+    <div style="display:flex;gap:20px;align-items:flex-start;min-height:480px">
+      <!-- 左: 一覧 + 新規作成 -->
+      <div style="width:260px;flex-shrink:0;background:var(--white);border:0.5px solid var(--border);border-radius:12px;overflow:hidden">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);background:var(--em-pale);font-size:12px;font-weight:600;color:var(--em-dark)">
+          テンプレート一覧
+        </div>
+        <div id="fn-tpl-list" style="max-height:480px;overflow:auto"></div>
+        <div style="padding:10px 12px;border-top:1px solid var(--border)">
+          <button class="btn-primary" style="width:100%" onclick="newFilenameTemplate()">＋ 新規作成</button>
+        </div>
+      </div>
+
+      <!-- 右: 編集パネル -->
+      <div id="fn-tpl-editor" style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:18px"></div>
+    </div>
+
+    <!-- カスタムトークン追加モーダル -->
+    <div id="fn-custom-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:92vw">
+        <div style="font-size:16px;font-weight:700;margin-bottom:14px">カスタムトークンを追加</div>
+        <div class="form-group">
+          <label class="form-label">表示ラベル <span style="color:#E24B4A">*</span></label>
+          <input class="form-input" id="fn-custom-label" placeholder="例: 芸能人有無">
+        </div>
+        <div class="form-group">
+          <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
+          <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
+        </div>
+        <details style="margin-top:10px">
+          <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">▸ 上級設定（key を指定する）</summary>
+          <div style="margin-top:8px">
+            <label class="form-label">key（任意・空欄なら自動採番）</label>
+            <input class="form-input" id="fn-custom-key" placeholder="自動 (c_1, c_2, ...)" style="font-family:monospace">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              別テンプレでも同じ key を使うと、案件側 override で値が連動します。
+            </div>
+          </div>
+        </details>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+          <button class="btn" onclick="closeFnCustomModal()">キャンセル</button>
+          <button class="btn-primary" onclick="confirmAddFnCustomToken()">追加</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  _renderFnTplList();
+  _renderFnTplEditor();
+}
+
+function _renderFnTplList() {
+  const wrap = document.getElementById('fn-tpl-list');
+  if (!wrap) return;
+  const list = _fnTplState.list;
+  if (list.length === 0) {
+    wrap.innerHTML = `<div style="padding:20px;color:var(--text-muted);font-size:12px;text-align:center">テンプレなし</div>`;
+    return;
+  }
+  wrap.innerHTML = list.map(t => {
+    const active = t.id === _fnTplState.selectedId;
+    return `
+      <div onclick="selectFilenameTemplate('${t.id}')"
+        style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;
+               background:${active ? 'var(--em-pale)' : 'transparent'};
+               border-left:3px solid ${active ? 'var(--em-dark)' : 'transparent'}">
+        <div style="font-size:13px;font-weight:${active ? '700' : '500'};color:${active ? 'var(--em-dark)' : 'var(--text-main)'}">
+          ${t.is_default ? '<span title="デフォルト" style="color:#F59E0B;margin-right:4px">★</span>' : ''}${esc(t.name)}
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-family:monospace">
+          ${(t.tokens || []).length} 個 / sep="${esc(t.separator || '')}"
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectFilenameTemplate(id) {
+  const tpl = _fnTplState.list.find(t => t.id === id);
+  if (!tpl) return;
+  _fnTplState.selectedId = id;
+  _fnTplState.draft = _fnTplDraftFromTemplate(tpl);
+  _renderFnTplList();
+  _renderFnTplEditor();
+}
+
+function newFilenameTemplate() {
+  _fnTplState.selectedId = null;
+  _fnTplState.draft = _fnTplDraftFromTemplate(null);
+  _renderFnTplList();
+  _renderFnTplEditor();
+}
+
+function _renderFnTplEditor() {
+  const wrap = document.getElementById('fn-tpl-editor');
+  if (!wrap) return;
+  const d = _fnTplState.draft;
+  if (!d) {
+    wrap.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:40px">左から選択するか「＋ 新規作成」してください</div>`;
+    return;
+  }
+  const isNew = !d.id;
+  const usedKeys = new Set(d.tokens.map(t => t.key));
+
+  // パレット: 未使用システム + カスタム追加ボタン + 既存カスタム key（重複禁止のため、未使用のみ）
+  const paletteSystem = FN_SYSTEM_TOKENS
+    .filter(s => !usedKeys.has(s.key))
+    .map(s => `
+      <div class="fn-palette-chip" draggable="true"
+        ondragstart="onFnPaletteDragStart(event,'${s.key}','system')"
+        ondragend="onFnDragEnd()"
+        onclick="addFnTokenFromPalette('${s.key}','system')"
+        style="padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;
+               font-size:12px;cursor:grab;user-select:none;display:inline-flex;align-items:center;gap:4px">
+        <span>＋</span>${esc(s.label)}
+        <span style="color:var(--text-muted);font-family:monospace;font-size:10px">[${s.key}]</span>
+      </div>
+    `).join('');
+
+  // ビルダー
+  const builder = d.tokens.map((t, idx) => {
+    const sysDef = t.kind === 'system' ? _fnSystemTokenDef(t.key) : null;
+    const required = !!(sysDef && sysDef.required);
+    const pinFirst = !!(sysDef && sysDef.pinFirst);
+    const labelHtml = `<span style="font-weight:600">${esc(t.label || t.key)}</span>
+                       <span style="color:var(--text-muted);font-family:monospace;font-size:10px;margin-left:6px">[${esc(t.key)}]</span>`;
+    const kindBadge = t.kind === 'custom'
+      ? '<span style="font-size:10px;color:#fff;background:#A06CD5;padding:1px 6px;border-radius:8px;margin-left:6px">CUSTOM</span>'
+      : (required ? '<span style="font-size:10px;color:#fff;background:#E24B4A;padding:1px 6px;border-radius:8px;margin-left:6px">必須</span>' : '');
+    return `
+      <li class="fn-builder-item"
+          draggable="${pinFirst ? 'false' : 'true'}"
+          data-index="${idx}"
+          ondragstart="onFnBuilderDragStart(event,${idx})"
+          ondragover="onFnBuilderDragOver(event,${idx})"
+          ondrop="onFnBuilderDrop(event,${idx})"
+          ondragend="onFnDragEnd()"
+          style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);
+                 border:1px solid var(--border);border-radius:10px;margin-bottom:6px;
+                 cursor:${pinFirst ? 'default' : 'grab'};${pinFirst ? 'opacity:0.95' : ''}">
+        <span style="color:var(--text-muted);font-size:14px;width:18px;text-align:center">
+          ${pinFirst ? '🔒' : '⋮⋮'}
+        </span>
+        <span style="flex-shrink:0;color:var(--text-muted);font-family:monospace;font-size:11px;width:24px;text-align:right">${idx + 1}.</span>
+        <div style="flex:1;font-size:13px">
+          ${labelHtml}${kindBadge}
+        </div>
+        ${t.kind === 'custom' ? `
+          <input class="form-input" style="width:120px;font-size:12px;padding:4px 8px"
+            value="${esc(t.default || '')}"
+            placeholder="default 値"
+            onchange="updateFnCustomDefault(${idx}, this.value)">
+        ` : ''}
+        ${(required || pinFirst) ? '' : `
+          <button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px"
+            onclick="removeFnBuilderToken(${idx})">削除</button>
+        `}
+      </li>
+    `;
+  }).join('');
+
+  // プレビュー
+  const previewStr = _fnRenderPreview(d);
+
+  wrap.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="font-size:15px;font-weight:700;color:var(--text-main)">
+        ${isNew ? '新規テンプレート' : 'テンプレート編集'}
+      </div>
+      <div style="display:flex;gap:8px">
+        ${!isNew ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="deleteFilenameTemplate('${d.id}')">削除</button>` : ''}
+        <button class="btn" onclick="cancelFilenameTemplate()">キャンセル</button>
+        <button class="btn-primary" onclick="saveFilenameTemplate()">保存</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 200px;gap:14px;margin-bottom:14px">
+      <div class="form-group" style="margin:0">
+        <label class="form-label">名前 <span style="color:#E24B4A">*</span></label>
+        <input class="form-input" id="fn-edit-name" value="${esc(d.name)}"
+          oninput="_fnTplState.draft.name=this.value;_fnRefreshPreview()" placeholder="例: あるる系">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">セパレータ</label>
+        <select class="form-select" id="fn-edit-sep" onchange="_fnTplState.draft.separator=this.value;_fnRefreshPreview()">
+          <option value="_" ${d.separator === '_' ? 'selected' : ''}>_  (アンダースコア)</option>
+          <option value="-" ${d.separator === '-' ? 'selected' : ''}>-  (ハイフン)</option>
+          <option value=""  ${d.separator === ''  ? 'selected' : ''}>（区切りなし）</option>
+        </select>
+      </div>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:16px;cursor:pointer">
+      <input type="checkbox" id="fn-edit-default" ${d.is_default ? 'checked' : ''}
+        onchange="_fnTplState.draft.is_default=this.checked">
+      <span>このテンプレを新規案件のデフォルトにする</span>
+    </label>
+
+    <!-- パレット -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">
+        パレット（クリックまたはドラッグして下のビルダーへ追加）
+      </div>
+      <div id="fn-palette" style="display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#FAFAFA;border:1px dashed var(--border);border-radius:8px;min-height:48px">
+        ${paletteSystem || '<span style="font-size:12px;color:var(--text-muted)">未使用のシステムトークンはありません</span>'}
+        <button class="btn-sm" onclick="openFnCustomModal()" style="font-size:11px;padding:4px 10px">＋ カスタムトークン</button>
+      </div>
+    </div>
+
+    <!-- ビルダー -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">
+        ビルダー（ドラッグ&ドロップで並べ替え。serial は先頭固定）
+      </div>
+      <ul id="fn-builder" style="list-style:none;margin:0;padding:0">${builder}</ul>
+    </div>
+
+    <!-- プレビュー -->
+    <div style="background:var(--em-pale);border-radius:10px;padding:12px 14px">
+      <div style="font-size:11px;font-weight:600;color:var(--em-dark);margin-bottom:4px">プレビュー</div>
+      <div id="fn-preview" style="font-family:monospace;font-size:14px;color:var(--text-main);word-break:break-all">
+        ${esc(previewStr)}
+      </div>
+    </div>
+  `;
+}
+
+// プレビュー文字列を生成（ダミー値）
+function _fnRenderPreview(draft) {
+  const parts = (draft.tokens || []).map(t => {
+    if (t.kind === 'system') {
+      const sys = _fnSystemTokenDef(t.key);
+      return sys ? sys.sample : t.key;
+    }
+    // custom
+    return (t.default || '').toString().trim() || `[${t.key}]`;
+  }).filter(p => p !== '' && p != null);
+  return parts.join(draft.separator || '');
+}
+
+function _fnRefreshPreview() {
+  const el = document.getElementById('fn-preview');
+  if (el && _fnTplState.draft) el.textContent = _fnRenderPreview(_fnTplState.draft);
+}
+
+// ---- D&D ハンドラ ----
+function onFnPaletteDragStart(ev, key, kind) {
+  _fnTplState.draggingPaletteKey = { key, kind };
+  _fnTplState.draggingIndex = null;
+  ev.dataTransfer.effectAllowed = 'copy';
+  try { ev.dataTransfer.setData('text/plain', key); } catch (_) {}
+}
+
+function onFnBuilderDragStart(ev, idx) {
+  _fnTplState.draggingIndex = idx;
+  _fnTplState.draggingPaletteKey = null;
+  ev.dataTransfer.effectAllowed = 'move';
+  try { ev.dataTransfer.setData('text/plain', String(idx)); } catch (_) {}
+}
+
+function onFnBuilderDragOver(ev, _idx) {
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = _fnTplState.draggingPaletteKey ? 'copy' : 'move';
+}
+
+function onFnBuilderDrop(ev, dropIdx) {
+  ev.preventDefault();
+  const d = _fnTplState.draft;
+  if (!d) return;
+  // パレットからの追加
+  if (_fnTplState.draggingPaletteKey) {
+    addFnTokenFromPalette(_fnTplState.draggingPaletteKey.key, _fnTplState.draggingPaletteKey.kind, dropIdx);
+    _fnTplState.draggingPaletteKey = null;
+    return;
+  }
+  // ビルダー内並べ替え
+  const fromIdx = _fnTplState.draggingIndex;
+  if (fromIdx == null || fromIdx === dropIdx) return;
+  // serial(先頭固定) を動かそうとしている、または先頭に他を入れようとしているならガード
+  const sysDefFrom = d.tokens[fromIdx] && d.tokens[fromIdx].kind === 'system'
+    ? _fnSystemTokenDef(d.tokens[fromIdx].key) : null;
+  if (sysDefFrom && sysDefFrom.pinFirst) return;
+  if (dropIdx === 0) {
+    showToast('serial が先頭でなければなりません', 'warn');
+    return;
+  }
+  const moved = d.tokens.splice(fromIdx, 1)[0];
+  // splice で配列が縮んでいるので dropIdx を補正
+  const adjIdx = dropIdx > fromIdx ? dropIdx - 1 : dropIdx;
+  d.tokens.splice(adjIdx, 0, moved);
+  _fnTplState.draggingIndex = null;
+  _renderFnTplEditor();
+}
+
+function onFnDragEnd() {
+  _fnTplState.draggingIndex = null;
+  _fnTplState.draggingPaletteKey = null;
+}
+
+// パレットからの追加（ドロップ位置 idx 省略時は末尾）
+function addFnTokenFromPalette(key, kind, atIdx) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  if (d.tokens.some(t => t.key === key)) {
+    showToast(`トークン "${key}" は既に追加されています`, 'warn');
+    return;
+  }
+  let token;
+  if (kind === 'system') {
+    const sys = _fnSystemTokenDef(key);
+    if (!sys) return;
+    token = { kind: 'system', key, label: sys.label };
+  } else {
+    return; // custom はモーダル経由で追加するためここでは扱わない
+  }
+  // serial は強制的に先頭、それ以外は serial の直後以降に
+  if (key === 'serial') {
+    d.tokens.unshift(token);
+  } else if (atIdx == null || atIdx === 0) {
+    // 先頭に置こうとしたら 1 番目に補正
+    d.tokens.splice(1, 0, token);
+  } else {
+    d.tokens.splice(atIdx, 0, token);
+  }
+  _renderFnTplEditor();
+}
+
+function removeFnBuilderToken(idx) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const t = d.tokens[idx];
+  if (!t) return;
+  // 必須トークン（serial / project_name / version）は削除不可
+  if (t.kind === 'system') {
+    const sys = _fnSystemTokenDef(t.key);
+    if (sys && sys.required) {
+      showToast('必須トークンは削除できません', 'warn');
+      return;
+    }
+  }
+  d.tokens.splice(idx, 1);
+  _renderFnTplEditor();
+}
+
+function updateFnCustomDefault(idx, value) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const t = d.tokens[idx];
+  if (!t) return;
+  t.default = value;
+  _fnRefreshPreview();
+}
+
+// ---- カスタムトークン追加モーダル ----
+function openFnCustomModal() {
+  document.getElementById('fn-custom-key').value = '';
+  document.getElementById('fn-custom-label').value = '';
+  document.getElementById('fn-custom-default').value = '';
+  // 上級設定 details を毎回閉じた状態で開く
+  const det = document.querySelector('#fn-custom-modal details');
+  if (det) det.open = false;
+  document.getElementById('fn-custom-modal').style.display = 'flex';
+  // ラベル入力欄にフォーカス（key 入力をスキップして直接ラベル入力できるよう）
+  setTimeout(() => {
+    const labelInput = document.getElementById('fn-custom-label');
+    if (labelInput) labelInput.focus();
+  }, 50);
+}
+function closeFnCustomModal() {
+  const m = document.getElementById('fn-custom-modal');
+  if (m) m.style.display = 'none';
+}
+// テンプレ内の既存 token の key と衝突しない c_N 形式の key を採番
+function _autoGenerateFnCustomKey(existingKeys) {
+  const used = new Set(existingKeys);
+  // システムトークンの key とも被らないように
+  for (const s of (typeof FN_SYSTEM_TOKENS !== 'undefined' ? FN_SYSTEM_TOKENS : [])) {
+    used.add(s.key);
+  }
+  let n = 1;
+  while (used.has('c_' + n)) n++;
+  return 'c_' + n;
+}
+function confirmAddFnCustomToken() {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const manualKey = document.getElementById('fn-custom-key').value.trim();
+  const label = document.getElementById('fn-custom-label').value.trim();
+  const def = document.getElementById('fn-custom-default').value;
+  if (!label) {
+    showToast('表示ラベルは必須です', 'warn');
+    return;
+  }
+  let key;
+  if (manualKey) {
+    // 上級設定で手動指定された場合
+    if (!/^[a-z0-9_]+$/i.test(manualKey)) {
+      showToast('key は英数字とアンダースコアのみ使用できます', 'warn');
+      return;
+    }
+    if (FN_SYSTEM_TOKENS.some(s => s.key === manualKey)) {
+      showToast(`"${manualKey}" はシステムトークンの key と被るため使えません`, 'warn');
+      return;
+    }
+    if (d.tokens.some(t => t.key === manualKey)) {
+      showToast(`同じ key "${manualKey}" が既に使われています`, 'warn');
+      return;
+    }
+    key = manualKey;
+  } else {
+    // 自動採番
+    const existingKeys = d.tokens.map(t => t.key);
+    key = _autoGenerateFnCustomKey(existingKeys);
+  }
+  d.tokens.push({ kind: 'custom', key, label, default: def || '' });
+  closeFnCustomModal();
+  _renderFnTplEditor();
+}
+
+// ---- 保存・キャンセル・削除 ----
+function cancelFilenameTemplate() {
+  if (!_fnTplState.selectedId) {
+    // 新規作成中 → 一覧から最初のテンプレに戻る
+    if (_fnTplState.list.length) {
+      const def = _fnTplState.list.find(t => t.is_default) || _fnTplState.list[0];
+      selectFilenameTemplate(def.id);
+    } else {
+      _fnTplState.draft = null;
+      _renderFnTplEditor();
+    }
+    return;
+  }
+  // 編集中 → 元に戻す（再フェッチで draft を作り直す）
+  const tpl = _fnTplState.list.find(t => t.id === _fnTplState.selectedId);
+  _fnTplState.draft = _fnTplDraftFromTemplate(tpl || null);
+  _renderFnTplEditor();
+}
+
+async function saveFilenameTemplate() {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  if (!d.name || !d.name.trim()) {
+    showToast('名前は必須です', 'warn');
+    return;
+  }
+  // サーバー側でも検証されるが、UI でも事前チェック
+  const keys = (d.tokens || []).map(t => t.key);
+  for (const k of ['serial', 'project_name', 'version']) {
+    if (!keys.includes(k)) {
+      showToast(`必須トークン "${k}" が含まれていません`, 'warn');
+      return;
+    }
+  }
+  if (keys[0] !== 'serial') {
+    showToast('serial が先頭でなければなりません', 'warn');
+    return;
+  }
+
+  const payload = {
+    name: d.name.trim(),
+    separator: d.separator ?? '_',
+    tokens: d.tokens,
+    is_default: !!d.is_default,
+  };
+  const isNew = !d.id;
+  const url = isNew ? `${API}/filename-templates` : `${API}/filename-templates/${d.id}`;
+  const res = await apiFetch(url, {
+    method: isNew ? 'POST' : 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('保存失敗: ' + (e?.error || res.status), 'error');
+    return;
+  }
+  const saved = await res.json();
+  _fnTplState.selectedId = saved.id;
+  // 一覧再取得
+  await renderFilenameTemplatesPage();
+  showToast('保存しました', 'success');
+}
+
+async function deleteFilenameTemplate(id) {
+  if (!confirm('このテンプレートを削除しますか？\n（参照中の案件がある場合は削除できません）')) return;
+  const res = await apiFetch(`${API}/filename-templates/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('削除失敗: ' + (e?.error || res.status), 'error');
+    return;
+  }
+  _fnTplState.selectedId = null;
+  _fnTplState.draft = null;
+  await renderFilenameTemplatesPage();
+  showToast('削除しました', 'success');
+}
+
 async function renderProductsMasterPage() {
   const content = document.getElementById('master-content');
   content.innerHTML = '<div class="loading">読み込み中...</div>';
@@ -20729,7 +23012,15 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         v.addEventListener('loadeddata',    () => fpHideLoading());
         v.addEventListener('waiting',       () => fpShowLoading('バッファリング中...'));
         v.addEventListener('playing',       () => fpHideLoading());
-        v.addEventListener('error',         () => fpShowLoadingError('動画の読み込みに失敗しました'));
+        v.addEventListener('error', () => {
+          // MediaError.code: 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED
+          // 4 は src 自体が 404 / Content-Type 違い / コーデック未対応のいずれか。
+          // 将来同じ事象が再発したときに切り分けできるよう breadcrumb に残す（Slack には抑制済み）。
+          var code = (v.error && v.error.code) || null;
+          var srcUrl = v.currentSrc || v.src || '(unknown)';
+          try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error', { code: code, src: String(srcUrl).slice(0,180) }); } catch (_) {}
+          fpShowLoadingError(code === 4 ? '動画形式に対応していません' : '動画の読み込みに失敗しました');
+        });
         v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
       }, 100);
     } else if (isImage) {
@@ -20937,7 +23228,7 @@ function fpClickPlayer(e) {
 function fpTogglePlay() {
   const v = document.getElementById('fp-video');
   if (!v) return;
-  v.paused ? v.play() : v.pause();
+  v.paused ? v.play().catch(() => {}) : v.pause();
 }
 
 function fpToggleMute() {
@@ -21195,7 +23486,7 @@ function fpPlayClip(timeSec) {
   const start = Math.max(0, timeSec - 10);
   const end   = timeSec + 10;
   video.currentTime = start;
-  video.play();
+  video.play().catch(() => {});
   _fpClipInterval = setInterval(() => {
     const v = document.getElementById('fp-video');
     if (!v || v.currentTime >= end) {
@@ -21246,7 +23537,7 @@ function fpToggleABLoop() {
       if (vid.currentTime >= _fpAB.b) { vid.currentTime = _fpAB.a; }
     }, 100);
     v.currentTime = _fpAB.a;
-    v.play();
+    v.play().catch(() => {});
   } else {
     // リセット
     _fpABState = 0;
@@ -21931,7 +24222,7 @@ function fpSeekTo(tc) {
   else if (parts.length === 3) secs = parts[0]*3600 + parts[1]*60 + parts[2];
   else secs = parts[0]*60 + parts[1];
   video.currentTime = secs;
-  video.play();
+  video.play().catch(() => {});
 }
 
 function renderComments(list) {
@@ -22200,7 +24491,7 @@ function renderCreatorSummaryTable(data) {
   }
   const rows = data.summary.map(u => {
     const noteRate = u.rate_unknown_count > 0
-      ? `<span title="単価が project_rates から見つからなかった件数。プロジェクトの単価設定を確認してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
+      ? `<span title="line に紐付く line_costs（ロール別単価）が見つからなかった件数。案件編集モーダルの「成果物グループ」で line/コストを設定してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
       : '';
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}${noteRate}</td>
@@ -24189,11 +26480,15 @@ async function executeUpload() {
       try {
         const data = JSON.parse(xhr.responseText);
         if (xhr.status === 200) {
+          // version はサーバ側採番が真（V1 重複事故防止のためフロント値は無視される）。
+          // フロントが v1 を送っていてもサーバが v3 を採番していたら "v3 として保存しました" と表示する。
+          const confirmedVersion = data.version || data.file?.version || version;
+          const versionLabel = `v${confirmedVersion}`;
           if (data.drive_url) {
-            statusEl.textContent = 'アップロード完了！';
+            statusEl.textContent = `アップロード完了！（${versionLabel} として保存しました）`;
             statusEl.style.color = 'var(--em-dark)';
           } else {
-            statusEl.textContent = `DB記録完了（Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
+            statusEl.textContent = `DB記録完了（${versionLabel} / Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
             statusEl.style.color = '#d97706';
           }
           await loadCreativeFiles(currentCreativeDetail.id);

@@ -11,6 +11,7 @@ const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('..
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
+const { renderFilename } = require('../utils/filename');
 const {
   getUserRoleCodes,
   userHasRole,
@@ -494,9 +495,11 @@ router.get('/projects', async (req, res) => {
   if (!projects.length) return res.json([]);
 
   // --- 単価・見積・全タグ・カテゴリを一括取得（N+1 回避）---
+  // ADR 002 後: has_rates は project_estimate_lines の存在で判定する。
+  // 旧 project_rates テーブルは Stage 6 で DROP 予定。
   const projectIds = projects.map(p => p.id);
   const [ratesRes, estRes, allTagsRes, catsRes] = await Promise.all([
-    supabase.from('project_rates').select('project_id').in('project_id', projectIds),
+    supabase.from('project_estimate_lines').select('project_id').in('project_id', projectIds),
     supabase.from('project_estimates').select('project_id').in('project_id', projectIds),
     supabase.from('project_tags').select('project_id, tag').in('project_id', projectIds),
     // creative_categories: 一覧で全カテゴリを引き、JS 側で id → meta 変換。
@@ -549,6 +552,10 @@ router.get('/projects/tag-suggestions', async (req, res) => {
 });
 
 // 案件詳細取得
+//
+// ADR 002 後: project_rates(*) / director_rates(*) を embed していた箇所は
+// project_estimate_lines(*, project_estimate_line_costs(*, role:roles(code,label))) に置換。
+// クライアント側はこのレスポンスから単価モーダル等の表示を構築する。
 router.get('/projects/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('projects')
@@ -557,8 +564,15 @@ router.get('/projects/:id', async (req, res) => {
       clients(id, name),
       producer:users!projects_producer_id_fkey(id, full_name),
       director:users!projects_director_id_fkey(id, full_name),
-      project_rates(*),
-      director_rates(*)
+      project_estimate_lines(
+        id, project_id, category_id, name, planned_count, client_unit_price,
+        sort_order, status, status_changed_at, currency, tax_included, created_at,
+        project_estimate_line_costs(
+          id, line_id, role_id, user_id, unit_price, currency,
+          pricing_type, percentage, actual_hours, created_at,
+          role:roles(id, code, label)
+        )
+      )
     `)
     .eq('id', req.params.id)
     .single();
@@ -628,7 +642,8 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
-    tags
+    tags,
+    filename_template_id, filename_token_overrides
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const normalizedTags = normalizeTags(tags);
@@ -655,6 +670,15 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
   };
+  // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
+  if (filename_template_id !== undefined && filename_template_id !== null && filename_template_id !== '') {
+    insertPayload.filename_template_id = filename_template_id;
+  }
+  if (filename_token_overrides !== undefined) {
+    insertPayload.filename_token_overrides = filename_token_overrides && typeof filename_token_overrides === 'object'
+      ? filename_token_overrides
+      : {};
+  }
   let { data, error } = await supabase
     .from('projects')
     .insert(insertPayload)
@@ -671,6 +695,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const { primary_category_id: _omit2, ...fallback2 } = insertPayload;
     const retry2 = await supabase.from('projects').insert(fallback2).select().single();
     data = retry2.data; error = retry2.error;
+  }
+  // ADR 007 Stage 1 migration 未適用ガード
+  if (error && /filename_template_id|filename_token_overrides/i.test(error.message || '')) {
+    const { filename_template_id: _o3a, filename_token_overrides: _o3b, ...fallback3 } = insertPayload;
+    const retry3 = await supabase.from('projects').insert(fallback3).select().single();
+    data = retry3.data; error = retry3.error;
   }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
@@ -692,7 +722,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
-    tags
+    tags,
+    filename_template_id, filename_token_overrides
   } = req.body;
   const updateData = {
     name, status,
@@ -712,6 +743,16 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   };
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
+  // ADR 007: ファイル名テンプレ選択 + custom トークン上書き（部分更新で巻き込み消失しないよう、明示時のみ反映）
+  if (filename_template_id !== undefined) {
+    updateData.filename_template_id = filename_template_id || null;
+  }
+  if (filename_token_overrides !== undefined) {
+    // 受け取った値をそのまま JSONB として保存（{} 等を含めても問題なし）
+    updateData.filename_token_overrides = filename_token_overrides && typeof filename_token_overrides === 'object'
+      ? filename_token_overrides
+      : {};
+  }
   // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
@@ -749,6 +790,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { primary_category_id: _omit2, ...fallback2 } = updateData;
     const retry2 = await supabase.from('projects').update(fallback2).eq('id', req.params.id).select().single();
     data = retry2.data; error = retry2.error;
+  }
+  // ADR 007 Stage 1 migration 未適用ガード
+  if (error && /filename_template_id|filename_token_overrides/i.test(error.message || '')) {
+    const { filename_template_id: _o3a, filename_token_overrides: _o3b, ...fallback3 } = updateData;
+    const retry3 = await supabase.from('projects').update(fallback3).eq('id', req.params.id).select().single();
+    data = retry3.data; error = retry3.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -1002,6 +1049,254 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
   res.json({ ok: true });
 });
 
+// ==================== filename_templates (ADR 007 Stage 1) ====================
+// 案件別ファイル名テンプレ。設定タブで管理（CRUD）し、Stage 2 で案件モーダル
+// と routes/haruka.js の bulk-preview / bulk / 個別作成からテンプレ参照に
+// 切り替える。Stage 1 では「マスタ管理 + 列追加」のみ。
+//
+// schema-sync 失敗で本番に filename_templates テーブルが無い場合は、
+// 200/空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingFilenameTemplatesTable = (err) =>
+  err && /relation .*filename_templates.* does not exist|could not find the table/i.test(err.message || '');
+
+// tokens のサーバー側バリデーション（DB CHECK と二重）
+//   - 配列で要素が 1 件以上
+//   - serial / project_name / version の3キーが含まれる
+//   - serial が配列の先頭
+//   - 各要素は { kind: "system"|"custom", key, label?, default? } の形
+function validateFilenameTemplateTokens(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) {
+    return { ok: false, error: 'tokens は 1 件以上の配列で指定してください' };
+  }
+  for (const t of tokens) {
+    if (!t || typeof t !== 'object') {
+      return { ok: false, error: 'tokens の各要素はオブジェクトである必要があります' };
+    }
+    if (t.kind !== 'system' && t.kind !== 'custom') {
+      return { ok: false, error: `tokens.kind は "system" / "custom" のいずれか（受信: ${t.kind}）` };
+    }
+    if (typeof t.key !== 'string' || !t.key.trim()) {
+      return { ok: false, error: 'tokens.key は必須の文字列です' };
+    }
+  }
+  const keys = tokens.map(t => t.key);
+  for (const required of ['serial', 'project_name', 'version']) {
+    if (!keys.includes(required)) {
+      return { ok: false, error: `必須トークン "${required}" が含まれていません` };
+    }
+  }
+  if (keys[0] !== 'serial') {
+    return { ok: false, error: '"serial" は配列の先頭でなければなりません' };
+  }
+  return { ok: true };
+}
+
+// 区切り文字の許可リスト（UI でも同じ選択肢を出す）
+const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
+
+// GET /api/filename-templates  一覧（is_default が先頭、その後 name 昇順）
+router.get('/filename-templates', async (_req, res) => {
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .select('*')
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true });
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/filename-templates/:id  単件
+router.get('/filename-templates/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) return res.json(null);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || null);
+});
+
+// POST /api/filename-templates  新規（admin/secretary 権限想定）
+router.post('/filename-templates', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, separator, tokens, is_default } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name は必須です' });
+  }
+  const sep = (separator === undefined || separator === null) ? '_' : String(separator);
+  if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
+    return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
+  }
+  const v = validateFilenameTemplateTokens(tokens);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  const insert = {
+    name: name.trim(),
+    separator: sep,
+    tokens,
+    is_default: !!is_default,
+  };
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .insert(insert)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migrations/2026-05-07_filename_templates.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/filename-templates/:id  更新
+router.put('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const { name, separator, tokens, is_default } = req.body || {};
+  const update = {};
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name は空にできません' });
+    }
+    update.name = name.trim();
+  }
+  if (separator !== undefined) {
+    const sep = String(separator);
+    if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
+      return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
+    }
+    update.separator = sep;
+  }
+  if (tokens !== undefined) {
+    const v = validateFilenameTemplateTokens(tokens);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    update.tokens = tokens;
+  }
+  if (is_default !== undefined) update.is_default = !!is_default;
+  if (Object.keys(update).length === 0) {
+    return res.status(400).json({ error: '更新するフィールドがありません' });
+  }
+  // updated_at はトリガで自動更新される
+
+  const { data, error } = await supabase
+    .from('filename_templates')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) {
+    if (isMissingFilenameTemplatesTable(error)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migration を適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/filename-templates/:id
+//   - is_default のテンプレは削除不可
+//   - projects.filename_template_id で参照中の場合は 409
+router.delete('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const id = req.params.id;
+  // 自身が default かチェック
+  const { data: target, error: getErr } = await supabase
+    .from('filename_templates')
+    .select('id, is_default, name')
+    .eq('id', id)
+    .maybeSingle();
+  if (getErr) {
+    if (isMissingFilenameTemplatesTable(getErr)) {
+      return res.status(503).json({ error: 'filename_templates テーブルが未作成です。' });
+    }
+    return res.status(500).json({ error: getErr.message });
+  }
+  if (!target) return res.status(404).json({ error: 'テンプレートが見つかりません' });
+  if (target.is_default) {
+    return res.status(409).json({ error: 'デフォルトテンプレートは削除できません。先に別テンプレを is_default=true に設定してください。' });
+  }
+  // 参照チェック（projects）
+  const { count: usedCount, error: refErr } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('filename_template_id', id);
+  if (refErr && !/column .*filename_template_id.* does not exist/i.test(refErr.message || '')) {
+    return res.status(500).json({ error: refErr.message });
+  }
+  if ((usedCount || 0) > 0) {
+    return res.status(409).json({
+      error: `このテンプレートは案件 ${usedCount} 件で使用中のため削除できません。先に他テンプレへ振り替えてください。`
+    });
+  }
+  const { error } = await supabase.from('filename_templates').delete().eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ---- Stage 2: テンプレ解決ヘルパ ----
+// project から filename_template_id / filename_token_overrides を読み出し、
+// 紐づく filename_templates レコードを返す。テンプレ未設定なら is_default=true を引く。
+// 取得失敗時は null を返し、呼び出し側でハードコードフォールバックする。
+//
+// 戻り値: { template, overrides } | null
+async function resolveProjectFilenameTemplate(project) {
+  if (!project) return null;
+  // schema-sync 失敗で列が無い場合に備え、両方とも optional として扱う
+  const overrides = (project.filename_token_overrides && typeof project.filename_token_overrides === 'object')
+    ? project.filename_token_overrides
+    : {};
+  let template = null;
+  if (project.filename_template_id) {
+    const { data, error } = await supabase
+      .from('filename_templates')
+      .select('*')
+      .eq('id', project.filename_template_id)
+      .maybeSingle();
+    if (!error && data) template = data;
+    if (error && isMissingFilenameTemplatesTable(error)) return null;
+  }
+  if (!template) {
+    const { data, error } = await supabase
+      .from('filename_templates')
+      .select('*')
+      .eq('is_default', true)
+      .order('created_at', { ascending: true })
+      .limit(1);
+    if (error && isMissingFilenameTemplatesTable(error)) return null;
+    if (!error && data && data.length) template = data[0];
+  }
+  if (!template) return null;
+  return { template, overrides };
+}
+
+// system トークンの値マップを組み立てる（bulk-preview / bulk / generate-filename 共通）
+// seqStr7 / dateStr / version / etc. は呼び出し側で計算済みのものを渡す
+function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr, version }) {
+  const productCode = body?.product_code || null;
+  const mediaCode   = body?.media_code   || null;
+  const fmtCode     = body?.creative_fmt || null;
+  const sizeCode    = body?.creative_size || null;
+  return {
+    serial:       seqStr7 || '',
+    project_name: project?.name || '',
+    version:      version || '',
+    date_yymmdd:  dateStr || '',
+    client_code:  project?.clients?.client_code || '',
+    product:      productCode || '',
+    appeal_axis:  appealType?.code || '',
+    size:         sizeCode || '',
+    format:       fmtCode || '',
+    media:        mediaCode || '',
+  };
+}
+
 // GET /api/status-templates?category_id=...
 //   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
 router.get('/status-templates', async (req, res) => {
@@ -1027,204 +1322,46 @@ router.get('/status-templates', async (req, res) => {
   res.json(out);
 });
 
-// ==================== 単価設定 ====================
-
-const RATE_CREATIVE_TYPES = new Set(['video', 'design']);
-const RATE_RANKS = new Set(['A', 'B', 'C']);
-function normalizeRateCreativeType(type) {
-  if (typeof type !== 'string') return '';
-  const normalized = type.trim().toLowerCase();
-  if (normalized.startsWith('video')) return 'video';
-  if (normalized.startsWith('design')) return 'design';
-  return normalized;
-}
-
-// 単価一覧取得
-router.get('/projects/:id/rates', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_rates')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('creative_type')
-    .order('rank');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// 単価一括保存
-router.post('/projects/:id/rates/bulk', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const projectId = req.params.id;
-  const { rates } = req.body;
-  if (!rates || !rates.length) return res.json([]);
-  const rows = rates.map(r => ({
-    project_id: projectId,
-    creative_type: normalizeRateCreativeType(r.creative_type),
-    rank: r.rank,
-    base_fee: r.base_fee || 0,
-    script_fee: r.script_fee || 0,
-    ai_fee: r.ai_fee || 0,
-    other_fee: 0,
-    updated_at: new Date().toISOString()
-  }));
-  const invalid = rows.find(r => !RATE_CREATIVE_TYPES.has(r.creative_type) || !RATE_RANKS.has(r.rank));
-  if (invalid) {
-    return res.status(400).json({ error: '単価種別は video / design、ランクは A / B / C で保存してください' });
-  }
-  const { data, error } = await supabase
-    .from('project_rates')
-    .upsert(rows, { onConflict: 'project_id,creative_type,rank' })
-    .select();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// 単価設定・更新（個別upsert、後方互換）
-router.post('/projects/:id/rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const { rank, base_fee, script_fee, ai_fee, other_fee, other_fee_note } = req.body;
-  const creative_type = normalizeRateCreativeType(req.body.creative_type);
-  if (!creative_type || !rank) return res.status(400).json({ error: '種別・ランクは必須です' });
-  if (!RATE_CREATIVE_TYPES.has(creative_type)) {
-    return res.status(400).json({ error: '単価種別は video / design で保存してください' });
-  }
-  if (!RATE_RANKS.has(rank)) {
-    return res.status(400).json({ error: '単価ランクは A / B / C で保存してください' });
-  }
-  const { data: existing } = await supabase
-    .from('project_rates')
-    .select('id')
-    .eq('project_id', req.params.id)
-    .eq('creative_type', creative_type)
-    .eq('rank', rank)
-    .maybeSingle();
-  let query;
-  if (existing) {
-    query = supabase.from('project_rates')
-      .update({ base_fee: base_fee || 0, script_fee: script_fee || 0, ai_fee: ai_fee || 0, other_fee: other_fee || 0, other_fee_note, updated_at: new Date().toISOString() })
-      .eq('id', existing.id).select().single();
-  } else {
-    query = supabase.from('project_rates')
-      .insert({ project_id: req.params.id, creative_type, rank, base_fee: base_fee || 0, script_fee: script_fee || 0, ai_fee: ai_fee || 0, other_fee: other_fee || 0, other_fee_note, updated_at: new Date().toISOString() })
-      .select().single();
-  }
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// その他単価一覧
-router.get('/projects/:id/rate-extras', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_rate_extras')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('created_at');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// その他単価一括保存（全削除→再挿入）
-router.post('/projects/:id/rate-extras', async (req, res) => {
-  const { extras } = req.body;
-  const projectId = req.params.id;
-  const { error: delError } = await supabase
-    .from('project_rate_extras')
-    .delete()
-    .eq('project_id', projectId);
-  if (delError) return res.status(500).json({ error: delError.message });
-  if (!extras || !extras.length) return res.json([]);
-  const rows = extras.map(e => ({
-    project_id: projectId,
-    creative_type: e.creative_type,
-    name: e.name,
-    fee: e.fee || 0
-  }));
-  const { data, error } = await supabase
-    .from('project_rate_extras')
-    .insert(rows)
-    .select();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// ==================== ディレクション費（project_director_rates） ====================
-// Issue #192:
-// - クリエイティブ 1件あたり 1回必ず加算（編集者と兼務でも満額）
-// - 受取人は projects.director_id（案件のディレクター）
-// - 単価設定モーダルで video/design ごとに 1値だけ保存（rank なし）
-//
-// schema-sync 失敗で本番に project_director_rates が無いケースは silent skip させず、
-// 「テーブル未作成」の場合は 200 / 空配列で安全フォールバックする（読み出し時）。
-// 書き込み時は 503 で失敗を明示し、migration 適用を促す。
-const DIR_RATE_CREATIVE_TYPES = new Set(['video', 'design']);
+// ==================== 旧 rates 系 helpers（Stage 4d 後の互換用） ====================
+// Stage 4d (PR #TBD) で旧単価モーダル UI と CRUD endpoint を全削除した。
+// ただし invoices/preview-items / invoices/generate などの read 経路は
+// Stage 6 で旧テーブル DROP までは引き続き旧テーブルを read 参照する。
+// その fallback で「テーブル未作成」を silent skip するために helper は残す。
 const isMissingPdrTable = (err) => err && /relation .*project_director_rates.* does not exist|could not find the table/i.test(err.message || '');
-
-// ディレクション費 一覧取得
-router.get('/projects/:id/director-rates', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_director_rates')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('creative_type');
-  if (error) {
-    if (isMissingPdrTable(error)) {
-      console.warn('[director-rates] project_director_rates table missing, returning empty array. Apply migrations/2026-05-03_project_director_rates.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(data || []);
-});
-
-// ディレクション費 一括保存（upsert; fee=0 でも UNIQUE 行は維持）
-router.post('/projects/:id/director-rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const projectId = req.params.id;
-  const { director_rates } = req.body;
-  if (!Array.isArray(director_rates) || !director_rates.length) return res.json([]);
-  const rows = director_rates.map(d => ({
-    project_id: projectId,
-    creative_type: normalizeRateCreativeType(d.creative_type),
-    director_fee: Math.max(0, parseInt(d.director_fee, 10) || 0),
-    updated_at: new Date().toISOString(),
-  }));
-  const invalid = rows.find(r => !DIR_RATE_CREATIVE_TYPES.has(r.creative_type));
-  if (invalid) {
-    return res.status(400).json({ error: 'ディレクション費の種別は video / design で保存してください' });
-  }
-  const { data, error } = await supabase
-    .from('project_director_rates')
-    .upsert(rows, { onConflict: 'project_id,creative_type' })
-    .select();
-  if (error) {
-    if (isMissingPdrTable(error)) {
-      return res.status(503).json({ error: 'project_director_rates テーブルが未作成です。migrations/2026-05-03_project_director_rates.sql を本番Supabaseに適用してください。' });
-    }
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(data || []);
-});
-
-// ==================== プロデュース費（project_producer_rates） ====================
-// 完全に project_director_rates と対称設計:
-// - クリエイティブ 1件あたり 1回必ず加算（編集者・ディレクターと兼務でも満額）
-// - 受取人は projects.producer_id（案件のプロデューサー）
-// - 単価設定モーダルで video/design ごとに 1値だけ保存（rank なし）
-//
-// schema-sync 失敗で本番に project_producer_rates が無いケースは silent skip させず、
-// 「テーブル未作成」の場合は 200 / 空配列で安全フォールバックする（読み出し時）。
-// 書き込み時は 503 で失敗を明示し、migration 適用を促す。
-const PROD_RATE_CREATIVE_TYPES = new Set(['video', 'design']);
 const isMissingPprTable = (err) => err && /relation .*project_producer_rates.* does not exist|could not find the table/i.test(err.message || '');
 
-// プロデュース費 一覧取得
-router.get('/projects/:id/producer-rates', async (req, res) => {
+// ==================== 見積行 / 成果物グループ（project_estimate_lines）Stage 4a ====================
+// ADR 002 (見積行統合) + ADR 005 (status ライフサイクル) に基づく lines CRUD。
+// 旧 rates 系（rates / director-rates / producer-rates / client-fee / rate-extras）の
+// 書き込み endpoint と UI は Stage 4d (PR #TBD) で削除済み。invoices 側の read 経路
+// のみ Stage 6 までは旧テーブルを参照する（並走は終了、削除待ち状態）。
+//
+// 権限: 案件編集と同じ project.create_edit を使う（lines は「成果物グループの構造を
+// 編集する」性質のため、案件本体の編集権限と揃える方が直感に合う）。
+//
+// schema-sync 失敗で本番に project_estimate_lines が無い場合のフォールバックは
+// Stage 4a 時点では行わない（PR #316 で適用済み）。
+
+const LINE_STATUSES = new Set([
+  'draft', 'estimated', 'contracted', 'in_progress', 'delivered', 'cancelled', 'rejected'
+]);
+
+const isMissingPelTable = (err) =>
+  err && /relation .*project_estimate_lines.* does not exist|could not find the table/i.test(err.message || '');
+
+// GET /api/projects/:project_id/lines  一覧取得
+// embed: creative_categories(code, name) を一緒に返す（フロントで category 表示するため）
+router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
   const { data, error } = await supabase
-    .from('project_producer_rates')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .order('creative_type');
+    .from('project_estimate_lines')
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
   if (error) {
-    if (isMissingPprTable(error)) {
-      console.warn('[producer-rates] project_producer_rates table missing, returning empty array. Apply migrations/2026-05-03_project_producer_rates.sql');
+    if (isMissingPelTable(error)) {
+      console.warn('[lines] project_estimate_lines table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
       return res.json([]);
     }
     return res.status(500).json({ error: error.message });
@@ -1232,70 +1369,855 @@ router.get('/projects/:id/producer-rates', async (req, res) => {
   res.json(data || []);
 });
 
-// プロデュース費 一括保存（upsert; fee=0 でも UNIQUE 行は維持）
-router.post('/projects/:id/producer-rates', requireAuth, requirePermission('project.unit_price_view'), async (req, res) => {
-  const projectId = req.params.id;
-  const { producer_rates } = req.body;
-  if (!Array.isArray(producer_rates) || !producer_rates.length) return res.json([]);
-  const rows = producer_rates.map(p => ({
-    project_id: projectId,
-    creative_type: normalizeRateCreativeType(p.creative_type),
-    producer_fee: Math.max(0, parseInt(p.producer_fee, 10) || 0),
-    updated_at: new Date().toISOString(),
-  }));
-  const invalid = rows.find(r => !PROD_RATE_CREATIVE_TYPES.has(r.creative_type));
-  if (invalid) {
-    return res.status(400).json({ error: 'プロデュース費の種別は video / design で保存してください' });
+// POST /api/projects/:project_id/lines  新規作成
+router.post('/projects/:project_id/lines', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const {
+    category_id,
+    name,
+    planned_count,
+    client_unit_price,
+    status,
+    sort_order,
+    currency,
+    tax_included
+  } = req.body || {};
+
+  // バリデーション
+  const plannedCount = Math.max(0, parseInt(planned_count, 10) || 0);
+  const unitPrice = Math.max(0, parseInt(client_unit_price, 10) || 0);
+  const lineStatus = status || 'draft';
+  if (!LINE_STATUSES.has(lineStatus)) {
+    return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
   }
+
+  // category_id 存在チェック（指定された場合のみ）
+  if (category_id) {
+    const { data: cat, error: catErr } = await supabase
+      .from('creative_categories')
+      .select('id')
+      .eq('id', category_id)
+      .maybeSingle();
+    if (catErr) return res.status(500).json({ error: catErr.message });
+    if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+  }
+
+  // sort_order 自動付番（省略時は既存最大 + 10）
+  let resolvedSortOrder = (sort_order === null || sort_order === undefined || sort_order === '')
+    ? null
+    : parseInt(sort_order, 10);
+  if (resolvedSortOrder === null || Number.isNaN(resolvedSortOrder)) {
+    const { data: maxRow } = await supabase
+      .from('project_estimate_lines')
+      .select('sort_order')
+      .eq('project_id', projectId)
+      .order('sort_order', { ascending: false, nullsFirst: false })
+      .limit(1);
+    const currentMax = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+    resolvedSortOrder = currentMax + 10;
+  }
+
+  const insertRow = {
+    project_id: projectId,
+    category_id: category_id || null,
+    name: (typeof name === 'string' && name.trim()) ? name.trim() : null,
+    planned_count: plannedCount,
+    client_unit_price: unitPrice,
+    sort_order: resolvedSortOrder,
+    currency: (typeof currency === 'string' && currency.trim()) ? currency.trim().toUpperCase() : 'JPY',
+    tax_included: tax_included === false ? false : true,
+    status: lineStatus,
+    status_changed_at: new Date().toISOString(),
+  };
+
   const { data, error } = await supabase
-    .from('project_producer_rates')
-    .upsert(rows, { onConflict: 'project_id,creative_type' })
-    .select();
+    .from('project_estimate_lines')
+    .insert(insertRow)
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .single();
   if (error) {
-    if (isMissingPprTable(error)) {
-      return res.status(503).json({ error: 'project_producer_rates テーブルが未作成です。migrations/2026-05-03_project_producer_rates.sql を本番Supabaseに適用してください。' });
+    if (isMissingPelTable(error)) {
+      return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/projects/:project_id/lines/:line_id  部分更新
+router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const body = req.body || {};
+
+  // 既存 line 取得 + project_id 一致チェック
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, status')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'line が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と line_id が一致しません' });
+  }
+
+  // 部分更新: 送られたフィールドのみ反映
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'category_id')) {
+    if (body.category_id) {
+      const { data: cat, error: catErr } = await supabase
+        .from('creative_categories')
+        .select('id')
+        .eq('id', body.category_id)
+        .maybeSingle();
+      if (catErr) return res.status(500).json({ error: catErr.message });
+      if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+    }
+    updates.category_id = body.category_id || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+    updates.name = (typeof body.name === 'string' && body.name.trim()) ? body.name.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'planned_count')) {
+    updates.planned_count = Math.max(0, parseInt(body.planned_count, 10) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'client_unit_price')) {
+    updates.client_unit_price = Math.max(0, parseInt(body.client_unit_price, 10) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'sort_order')) {
+    const so = parseInt(body.sort_order, 10);
+    updates.sort_order = Number.isNaN(so) ? null : so;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    updates.currency = (typeof body.currency === 'string' && body.currency.trim()) ? body.currency.trim().toUpperCase() : 'JPY';
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'tax_included')) {
+    updates.tax_included = body.tax_included === false ? false : true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    if (!LINE_STATUSES.has(body.status)) {
+      return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    if (body.status !== existing.status) {
+      updates.status = body.status;
+      updates.status_changed_at = new Date().toISOString();
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
+    const { data: row } = await supabase
+      .from('project_estimate_lines')
+      .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+      .eq('id', lineId)
+      .single();
+    return res.json(row);
+  }
+
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .update(updates)
+    .eq('id', lineId)
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/lines/:line_id  削除
+// 紐付く creatives.line_id がある場合は 409 で防ぐ（line_costs は CASCADE で消える）
+router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'line が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と line_id が一致しません' });
+  }
+
+  // 紐付く creatives 件数チェック
+  const { count: creativeCount, error: cntErr } = await supabase
+    .from('creatives')
+    .select('id', { count: 'exact', head: true })
+    .eq('line_id', lineId);
+  if (cntErr) return res.status(500).json({ error: cntErr.message });
+  if ((creativeCount || 0) > 0) {
+    return res.status(409).json({
+      error: `この成果物グループには ${creativeCount} 件のクリエイティブが紐付いているため削除できません。先にクリエイティブを別グループへ移すか削除してください。`,
+      creative_count: creativeCount
+    });
+  }
+
+  const { error: delErr } = await supabase
+    .from('project_estimate_lines')
+    .delete()
+    .eq('id', lineId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
+// PATCH /api/projects/:project_id/lines/reorder  一括並び替え
+// body: { ids: [<line_id_1>, <line_id_2>, ...] } の順で sort_order を 10, 20, 30, ... に再付番
+router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string' && x) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids 配列が必要です' });
+
+  // 案件内の既存 line を取得して、ids がすべて該当案件のものかバリデーション
+  const { data: lines, error: getErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id')
+    .eq('project_id', projectId);
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  const validIdSet = new Set((lines || []).map(l => l.id));
+  const invalid = ids.find(id => !validIdSet.has(id));
+  if (invalid) return res.status(400).json({ error: `line_id ${invalid} はこの案件に属していません` });
+
+  // 1件ずつ update（並び替えは件数少なめのはずなので allow）
+  // 大量行が想定されるようになったら upsert か RPC に移行
+  const errors = [];
+  await Promise.all(ids.map((id, idx) =>
+    supabase
+      .from('project_estimate_lines')
+      .update({ sort_order: (idx + 1) * 10 })
+      .eq('id', id)
+      .then(({ error }) => { if (error) errors.push(error.message); })
+  ));
+  if (errors.length) return res.status(500).json({ error: errors.join(' / ') });
+
+  // 更新後の一覧を返す
+  const { data: updated, error: refErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+  if (refErr) return res.status(500).json({ error: refErr.message });
+  res.json(updated || []);
+});
+
+// ==================== 案件固定費・追加収入（project_fixed_items）Stage 4c ====================
+// ADR 006 (案件固定費) に基づく fixed_items CRUD。
+// スタジオ/機材/出張/ロケ地代等の本数非依存の費用 (item_type='expense')、
+// および別料金収入 (item_type='revenue') を扱う。
+//
+// 権限: lines と同じ project.create_edit を使う（案件本体の編集権限と統一）。
+//
+// schema-sync 失敗で本番に project_fixed_items が無い場合のフォールバックは
+// PR #316 で適用済みなので Stage 4c 時点では行わない。
+
+const FIXED_ITEM_TYPES = new Set(['expense', 'revenue']);
+const FIXED_ITEM_CATEGORIES = new Set(['studio', 'equipment', 'travel', 'location', 'other']);
+const FIXED_ITEM_STATUSES = new Set(['planned', 'committed', 'incurred', 'cancelled']);
+
+const isMissingPfiTable = (err) =>
+  err && /relation .*project_fixed_items.* does not exist|could not find the table/i.test(err.message || '');
+
+const FIXED_ITEM_SELECT_COLS = 'id, project_id, item_type, category, name, amount, currency, occurred_on, paid_to, paid_to_user_id, status, notes, created_at, created_by';
+
+// GET /api/projects/:project_id/fixed-items  一覧取得
+// status != 'cancelled' を優先表示するため status='cancelled' を最後にソート
+router.get('/projects/:project_id/fixed-items', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
+  const { data, error } = await supabase
+    .from('project_fixed_items')
+    .select(FIXED_ITEM_SELECT_COLS)
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingPfiTable(error)) {
+      console.warn('[fixed-items] project_fixed_items table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // cancelled を末尾、それ以外は created_at 昇順
+  const rows = data || [];
+  rows.sort((a, b) => {
+    const aCancel = a.status === 'cancelled' ? 1 : 0;
+    const bCancel = b.status === 'cancelled' ? 1 : 0;
+    if (aCancel !== bCancel) return aCancel - bCancel;
+    const aT = a.created_at ? Date.parse(a.created_at) : 0;
+    const bT = b.created_at ? Date.parse(b.created_at) : 0;
+    return aT - bT;
+  });
+  res.json(rows);
+});
+
+// POST /api/projects/:project_id/fixed-items  新規作成
+router.post('/projects/:project_id/fixed-items', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const {
+    item_type,
+    category,
+    name,
+    amount,
+    currency,
+    occurred_on,
+    paid_to,
+    paid_to_user_id,
+    status,
+    notes
+  } = req.body || {};
+
+  // バリデーション
+  if (!FIXED_ITEM_TYPES.has(item_type)) {
+    return res.status(400).json({ error: `item_type は ${[...FIXED_ITEM_TYPES].join(' / ')} のいずれかで指定してください` });
+  }
+  const trimmedName = (typeof name === 'string') ? name.trim() : '';
+  if (!trimmedName) {
+    return res.status(400).json({ error: 'name は必須です' });
+  }
+  if (category && !FIXED_ITEM_CATEGORIES.has(category)) {
+    return res.status(400).json({ error: `category は ${[...FIXED_ITEM_CATEGORIES].join(' / ')} のいずれかで指定してください` });
+  }
+  const amt = Math.max(0, parseInt(amount, 10) || 0);
+  const fiStatus = status || 'planned';
+  if (!FIXED_ITEM_STATUSES.has(fiStatus)) {
+    return res.status(400).json({ error: `status は ${[...FIXED_ITEM_STATUSES].join(' / ')} のいずれかで指定してください` });
+  }
+
+  // paid_to_user_id 存在チェック
+  if (paid_to_user_id) {
+    const { data: u, error: uErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', paid_to_user_id)
+      .maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!u) return res.status(400).json({ error: '指定された paid_to_user_id がユーザーに存在しません' });
+  }
+
+  // occurred_on 簡易バリデーション (YYYY-MM-DD or null)
+  let occurredOn = null;
+  if (occurred_on) {
+    if (typeof occurred_on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(occurred_on)) {
+      occurredOn = occurred_on;
+    } else {
+      return res.status(400).json({ error: 'occurred_on は YYYY-MM-DD 形式で指定してください' });
+    }
+  }
+
+  const insertRow = {
+    project_id: projectId,
+    item_type,
+    category: category || null,
+    name: trimmedName,
+    amount: amt,
+    currency: (typeof currency === 'string' && currency.trim()) ? currency.trim().toUpperCase() : 'JPY',
+    occurred_on: occurredOn,
+    paid_to: (typeof paid_to === 'string' && paid_to.trim()) ? paid_to.trim() : null,
+    paid_to_user_id: paid_to_user_id || null,
+    status: fiStatus,
+    notes: (typeof notes === 'string' && notes.trim()) ? notes.trim() : null,
+    created_by: req.user?.id || null,
+  };
+
+  const { data, error } = await supabase
+    .from('project_fixed_items')
+    .insert(insertRow)
+    .select(FIXED_ITEM_SELECT_COLS)
+    .single();
+  if (error) {
+    if (isMissingPfiTable(error)) {
+      return res.status(503).json({ error: 'project_fixed_items テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PUT /api/projects/:project_id/fixed-items/:item_id  部分更新
+router.put('/projects/:project_id/fixed-items/:item_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, item_id: itemId } = req.params;
+  const body = req.body || {};
+
+  // 既存行の取得 + project_id 一致チェック
+  const { data: existing, error: getErr } = await supabase
+    .from('project_fixed_items')
+    .select('id, project_id')
+    .eq('id', itemId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'fixed_item が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と item_id が一致しません' });
+  }
+
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'item_type')) {
+    if (!FIXED_ITEM_TYPES.has(body.item_type)) {
+      return res.status(400).json({ error: `item_type は ${[...FIXED_ITEM_TYPES].join(' / ')} のいずれかで指定してください` });
+    }
+    updates.item_type = body.item_type;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'category')) {
+    if (body.category && !FIXED_ITEM_CATEGORIES.has(body.category)) {
+      return res.status(400).json({ error: `category は ${[...FIXED_ITEM_CATEGORIES].join(' / ')} のいずれかで指定してください` });
+    }
+    updates.category = body.category || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+    const t = (typeof body.name === 'string') ? body.name.trim() : '';
+    if (!t) return res.status(400).json({ error: 'name は空にできません' });
+    updates.name = t;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'amount')) {
+    updates.amount = Math.max(0, parseInt(body.amount, 10) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    updates.currency = (typeof body.currency === 'string' && body.currency.trim()) ? body.currency.trim().toUpperCase() : 'JPY';
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'occurred_on')) {
+    if (body.occurred_on === null || body.occurred_on === '') {
+      updates.occurred_on = null;
+    } else if (typeof body.occurred_on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.occurred_on)) {
+      updates.occurred_on = body.occurred_on;
+    } else {
+      return res.status(400).json({ error: 'occurred_on は YYYY-MM-DD 形式で指定してください' });
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'paid_to')) {
+    updates.paid_to = (typeof body.paid_to === 'string' && body.paid_to.trim()) ? body.paid_to.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'paid_to_user_id')) {
+    if (body.paid_to_user_id) {
+      const { data: u, error: uErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', body.paid_to_user_id)
+        .maybeSingle();
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      if (!u) return res.status(400).json({ error: '指定された paid_to_user_id がユーザーに存在しません' });
+    }
+    updates.paid_to_user_id = body.paid_to_user_id || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    if (!FIXED_ITEM_STATUSES.has(body.status)) {
+      return res.status(400).json({ error: `status は ${[...FIXED_ITEM_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    updates.status = body.status;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'notes')) {
+    updates.notes = (typeof body.notes === 'string' && body.notes.trim()) ? body.notes.trim() : null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    const { data: row } = await supabase
+      .from('project_fixed_items')
+      .select(FIXED_ITEM_SELECT_COLS)
+      .eq('id', itemId)
+      .single();
+    return res.json(row);
+  }
+
+  const { data, error } = await supabase
+    .from('project_fixed_items')
+    .update(updates)
+    .eq('id', itemId)
+    .select(FIXED_ITEM_SELECT_COLS)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/fixed-items/:item_id  物理削除
+router.delete('/projects/:project_id/fixed-items/:item_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, item_id: itemId } = req.params;
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_fixed_items')
+    .select('id, project_id')
+    .eq('id', itemId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'fixed_item が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と item_id が一致しません' });
+  }
+
+  const { error: delErr } = await supabase
+    .from('project_fixed_items')
+    .delete()
+    .eq('id', itemId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
+// ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
+// ADR 002 (見積行統合) + ADR 003 (roles マスタ) + ADR 004 (pricing_type) に基づく line_costs CRUD。
+// 1 line に対して、複数のロール（プロデューサー/ディレクター/編集者…）のコスト行を縦持ちで保持する。
+//
+// 権限: lines / fixed-items と同じ project.create_edit を使う。
+//
+// 旧 rates 系（director-rates / producer-rates / client-fee）は Stage 4d (PR #TBD) で
+// 削除済み。read 経路は invoices flow が Stage 6 まで参照する。
+
+const PRICING_TYPES = new Set(['fixed_per_unit', 'percentage', 'hourly', 'fixed_total']);
+
+const isMissingPelcTable = (err) =>
+  err && /relation .*project_estimate_line_costs.* does not exist|could not find the table/i.test(err.message || '');
+
+// PostgREST の UNIQUE 違反 (Supabase) は code '23505' で返る。
+const isUniqueViolation = (err) => err && (err.code === '23505' || /duplicate key value/i.test(err.message || ''));
+
+const LINE_COST_SELECT_COLS = [
+  'id, line_id, role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours, created_at',
+  'role:roles(id, code, label, category, is_creator, is_internal)',
+  // users テーブルの表示名は full_name（schema 8行目）。`name` は存在せず、PostgREST embed が
+  // `column users_1.name does not exist` で 500 を吐いていた（2026-05-07 22:42 観測）
+  'user:users(id, full_name, email)'
+].join(', ');
+
+// 内部ヘルパ: line_id が指定 project_id に属するか確認
+async function _verifyLineBelongsToProject(lineId, projectId) {
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (error) return { error: { status: 500, message: error.message } };
+  if (!data) return { error: { status: 404, message: 'line が見つかりません' } };
+  if (data.project_id !== projectId) {
+    return { error: { status: 400, message: 'project_id と line_id が一致しません' } };
+  }
+  return { line: data };
+}
+
+// 内部ヘルパ: pricing_type / percentage / actual_hours / unit_price のバリデーション
+function _validatePricingFields(body, partial = false) {
+  // partial=true は PUT 用。ボディに無いフィールドはチェックしない。
+  const out = {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  if (!partial || has('pricing_type')) {
+    const pt = body.pricing_type || 'fixed_per_unit';
+    if (!PRICING_TYPES.has(pt)) {
+      return { error: `pricing_type は ${[...PRICING_TYPES].join(' / ')} のいずれかで指定してください` };
+    }
+    out.pricing_type = pt;
+  }
+  if (!partial || has('unit_price')) {
+    const up = parseInt(body.unit_price, 10);
+    if (Number.isNaN(up) || up < 0) {
+      return { error: 'unit_price は 0 以上の整数で指定してください' };
+    }
+    out.unit_price = up;
+  }
+  if (!partial || has('currency')) {
+    const cur = (typeof body.currency === 'string' && body.currency.trim())
+      ? body.currency.trim().toUpperCase()
+      : 'JPY';
+    out.currency = cur;
+  }
+  if (has('percentage')) {
+    if (body.percentage === null || body.percentage === '') {
+      out.percentage = null;
+    } else {
+      const p = Number(body.percentage);
+      if (!Number.isFinite(p) || p < 0 || p > 100) {
+        return { error: 'percentage は 0〜100 の数値で指定してください' };
+      }
+      out.percentage = p;
+    }
+  }
+  if (has('actual_hours')) {
+    if (body.actual_hours === null || body.actual_hours === '') {
+      out.actual_hours = null;
+    } else {
+      const h = Number(body.actual_hours);
+      if (!Number.isFinite(h) || h < 0) {
+        return { error: 'actual_hours は 0 以上の数値で指定してください' };
+      }
+      out.actual_hours = h;
+    }
+  }
+  // pricing_type 別の必須チェック（POST もしくは PUT で pricing_type を変更したとき）
+  const effectivePt = out.pricing_type
+    || (partial ? null : 'fixed_per_unit');
+  if (effectivePt === 'percentage') {
+    // percentage 必須
+    const eff = has('percentage') ? out.percentage : (partial ? undefined : null);
+    if (eff === undefined) {
+      // partial で percentage を変更しない場合は許す（既存値を維持）
+    } else if (eff === null || !Number.isFinite(eff)) {
+      return { error: "pricing_type='percentage' のときは percentage (0-100) を指定してください" };
+    }
+  }
+  if (effectivePt === 'hourly') {
+    const eff = has('actual_hours') ? out.actual_hours : (partial ? undefined : null);
+    if (eff === undefined) {
+      // partial で変更しない場合は許す
+    } else if (eff === null || !Number.isFinite(eff)) {
+      return { error: "pricing_type='hourly' のときは actual_hours (>=0) を指定してください" };
+    }
+  }
+  return { values: out };
+}
+
+// GET /api/projects/:project_id/lines/:line_id/costs  一覧取得
+// embed: roles(id, code, label, category, is_creator, is_internal), users(id, full_name, email)
+router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .select(LINE_COST_SELECT_COLS)
+    .eq('line_id', lineId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingPelcTable(error)) {
+      console.warn('[line-costs] project_estimate_line_costs table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
+      return res.json([]);
     }
     return res.status(500).json({ error: error.message });
   }
   res.json(data || []);
 });
 
-// クライアント報酬設定 取得
-router.get('/projects/:id/client-fee', async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_client_fees')
-    .select('*')
-    .eq('project_id', req.params.id)
-    .single();
-  if (error && error.code !== 'PGRST116') return res.status(500).json({ error: error.message });
-  res.json(data || null);
-});
+// POST /api/projects/:project_id/lines/:line_id/costs  新規作成
+// body: { role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours }
+router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
 
-// クライアント報酬設定 保存（upsert）- スーパーアドミンのみ
-router.post('/projects/:id/client-fee', async (req, res) => {
-  const SUPER_ADMIN_EMAILS = ['hiikun.ascs@gmail.com', 'satoru.takahashi@haruka-film.com'];
-  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) {
-    return res.status(403).json({ error: '報酬設定の変更は最高管理者のみ可能です' });
+  const body = req.body || {};
+  const { role_id, user_id } = body;
+
+  if (!role_id) return res.status(400).json({ error: 'role_id は必須です' });
+
+  // role_id が roles マスタに存在するか
+  const { data: role, error: roleErr } = await supabase
+    .from('roles')
+    .select('id')
+    .eq('id', role_id)
+    .maybeSingle();
+  if (roleErr) return res.status(500).json({ error: roleErr.message });
+  if (!role) return res.status(400).json({ error: '指定された role_id がマスタに存在しません' });
+
+  // user_id が users に存在するか（指定された場合のみ）
+  if (user_id) {
+    const { data: u, error: uErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', user_id)
+      .maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!u) return res.status(400).json({ error: '指定された user_id がユーザーに存在しません' });
   }
-  const { video_unit_price, design_unit_price, fixed_budget, use_fixed_budget, note } = req.body;
+
+  const v = _validatePricingFields(body, false);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  const insertRow = {
+    line_id: lineId,
+    role_id,
+    user_id: user_id || null,
+    unit_price: v.values.unit_price ?? 0,
+    currency: v.values.currency || 'JPY',
+    pricing_type: v.values.pricing_type || 'fixed_per_unit',
+    percentage: Object.prototype.hasOwnProperty.call(v.values, 'percentage') ? v.values.percentage : null,
+    actual_hours: Object.prototype.hasOwnProperty.call(v.values, 'actual_hours') ? v.values.actual_hours : null,
+  };
+
   const { data, error } = await supabase
-    .from('project_client_fees')
-    .upsert({
-      project_id: req.params.id,
-      video_unit_price: video_unit_price || 0,
-      design_unit_price: design_unit_price || 0,
-      fixed_budget: fixed_budget || null,
-      use_fixed_budget: use_fixed_budget || false,
-      note: note || null,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'project_id' })
-    .select()
+    .from('project_estimate_line_costs')
+    .insert(insertRow)
+    .select(LINE_COST_SELECT_COLS)
     .single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    if (isMissingPelcTable(error)) {
+      return res.status(503).json({ error: 'project_estimate_line_costs テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+    }
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({ error: '同じロール×担当者の組み合わせは既に登録されています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
   res.json(data);
 });
 
-// ダッシュボード用：今月の案件売上サマリー
+// PUT /api/projects/:project_id/lines/:line_id/costs/:cost_id  部分更新
+router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  // 既存 cost 取得 + line_id 一致チェック
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_line_costs')
+    .select('id, line_id, role_id, user_id, pricing_type, percentage, actual_hours')
+    .eq('id', costId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'cost が見つかりません' });
+  if (existing.line_id !== lineId) {
+    return res.status(400).json({ error: 'line_id と cost_id が一致しません' });
+  }
+
+  const body = req.body || {};
+  const updates = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, 'role_id')) {
+    if (!body.role_id) return res.status(400).json({ error: 'role_id は空にできません' });
+    const { data: role, error: roleErr } = await supabase
+      .from('roles')
+      .select('id')
+      .eq('id', body.role_id)
+      .maybeSingle();
+    if (roleErr) return res.status(500).json({ error: roleErr.message });
+    if (!role) return res.status(400).json({ error: '指定された role_id がマスタに存在しません' });
+    updates.role_id = body.role_id;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'user_id')) {
+    if (body.user_id) {
+      const { data: u, error: uErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', body.user_id)
+        .maybeSingle();
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      if (!u) return res.status(400).json({ error: '指定された user_id がユーザーに存在しません' });
+    }
+    updates.user_id = body.user_id || null;
+  }
+
+  // pricing 関連バリデーション（partial）
+  // pricing_type を変更しても percentage/actual_hours は明示的に渡されたときのみ更新する。
+  // 既存の必須チェックは「新 pricing_type に対する既存値が NULL」のとき警告したいので
+  // 既存値とマージしてから判定する。
+  const merged = {
+    pricing_type: Object.prototype.hasOwnProperty.call(body, 'pricing_type') ? body.pricing_type : existing.pricing_type,
+    percentage:   Object.prototype.hasOwnProperty.call(body, 'percentage')   ? body.percentage   : existing.percentage,
+    actual_hours: Object.prototype.hasOwnProperty.call(body, 'actual_hours') ? body.actual_hours : existing.actual_hours,
+    unit_price:   Object.prototype.hasOwnProperty.call(body, 'unit_price')   ? body.unit_price   : undefined,
+    currency:     Object.prototype.hasOwnProperty.call(body, 'currency')     ? body.currency     : undefined,
+  };
+  // pricing_type='percentage' で percentage が NULL/未定義になる更新を防ぐ
+  if (merged.pricing_type === 'percentage') {
+    const p = Number(merged.percentage);
+    if (!Number.isFinite(p) || p < 0 || p > 100) {
+      return res.status(400).json({ error: "pricing_type='percentage' のときは percentage (0-100) を指定してください" });
+    }
+  }
+  if (merged.pricing_type === 'hourly') {
+    const h = Number(merged.actual_hours);
+    if (!Number.isFinite(h) || h < 0) {
+      return res.status(400).json({ error: "pricing_type='hourly' のときは actual_hours (>=0) を指定してください" });
+    }
+  }
+  if (!PRICING_TYPES.has(merged.pricing_type)) {
+    return res.status(400).json({ error: `pricing_type は ${[...PRICING_TYPES].join(' / ')} のいずれかで指定してください` });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'pricing_type')) {
+    updates.pricing_type = body.pricing_type;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'unit_price')) {
+    const up = parseInt(body.unit_price, 10);
+    if (Number.isNaN(up) || up < 0) {
+      return res.status(400).json({ error: 'unit_price は 0 以上の整数で指定してください' });
+    }
+    updates.unit_price = up;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    updates.currency = (typeof body.currency === 'string' && body.currency.trim())
+      ? body.currency.trim().toUpperCase()
+      : 'JPY';
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'percentage')) {
+    if (body.percentage === null || body.percentage === '') {
+      updates.percentage = null;
+    } else {
+      const p = Number(body.percentage);
+      if (!Number.isFinite(p) || p < 0 || p > 100) {
+        return res.status(400).json({ error: 'percentage は 0〜100 の数値で指定してください' });
+      }
+      updates.percentage = p;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'actual_hours')) {
+    if (body.actual_hours === null || body.actual_hours === '') {
+      updates.actual_hours = null;
+    } else {
+      const h = Number(body.actual_hours);
+      if (!Number.isFinite(h) || h < 0) {
+        return res.status(400).json({ error: 'actual_hours は 0 以上の数値で指定してください' });
+      }
+      updates.actual_hours = h;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    const { data: row } = await supabase
+      .from('project_estimate_line_costs')
+      .select(LINE_COST_SELECT_COLS)
+      .eq('id', costId)
+      .single();
+    return res.json(row);
+  }
+
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .update(updates)
+    .eq('id', costId)
+    .select(LINE_COST_SELECT_COLS)
+    .single();
+  if (error) {
+    if (isUniqueViolation(error)) {
+      return res.status(409).json({ error: '同じロール×担当者の組み合わせは既に登録されています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/lines/:line_id/costs/:cost_id  物理削除
+router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_estimate_line_costs')
+    .select('id, line_id')
+    .eq('id', costId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'cost が見つかりません' });
+  if (existing.line_id !== lineId) {
+    return res.status(400).json({ error: 'line_id と cost_id が一致しません' });
+  }
+
+  const { error: delErr } = await supabase
+    .from('project_estimate_line_costs')
+    .delete()
+    .eq('id', costId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
+// 旧 client-fee CRUD endpoint (project_client_fees) は Stage 4d で削除済み。
+// 後継: project_estimate_lines.client_unit_price + project_fixed_items(item_type='revenue')
+
+// ダッシュボード用：今月の案件売上サマリー（ADR 002+005+006 ベース）
+//
+// 計算式:
+//   plannedRevenue   = SUM( line.client_unit_price × line.planned_count )
+//                      where line.id IN (今月納期 creatives.line_id) AND status active
+//                    + SUM( fixed_items.amount where item_type='revenue' AND status<>'cancelled' )
+//   actualRevenue    = plannedRevenue のうち、line に紐付く全 creatives が status='納品' のもの
+//                      （line 単位でカウント。creative 単位ではない）
+//   totalCreatives   = 今月納期の creatives 件数（line_id を問わず）
+//   completedCreatives = 同上 status='納品' の件数
 router.get('/dashboard/revenue-summary', async (req, res) => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
@@ -1304,52 +2226,65 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
   // 今月納期のクリエイティブを取得
   const { data: creatives, error: cErr } = await supabase
     .from('creatives')
-    .select('id, project_id, status, creative_type, final_deadline')
+    .select('id, project_id, status, creative_type, final_deadline, line_id')
     .gte('final_deadline', startOfMonth)
     .lte('final_deadline', endOfMonth);
   if (cErr) return res.status(500).json({ error: cErr.message });
 
-  // クライアント報酬設定を取得
-  const projectIds = [...new Set((creatives || []).map(c => c.project_id))];
-  let fees = [];
-  if (projectIds.length) {
-    const { data: feeData } = await supabase
-      .from('project_client_fees')
-      .select('*')
-      .in('project_id', projectIds);
-    fees = feeData || [];
-  }
+  const totalCreatives = (creatives || []).length;
+  const completedCreatives = (creatives || []).filter(c => c.status === '納品').length;
 
-  // 集計
-  const feeMap = {};
-  fees.forEach(f => { feeMap[f.project_id] = f; });
+  // 今月納期 creatives に紐付く line を一括取得
+  const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
+  const projectIds = Array.from(new Set((creatives || []).map(c => c.project_id).filter(Boolean)));
 
   let plannedRevenue = 0;
-  let actualRevenue = 0;
-  let totalCreatives = 0;
-  let completedCreatives = 0;
+  let actualRevenue  = 0;
 
-  (creatives || []).forEach(c => {
-    const fee = feeMap[c.project_id];
-    if (!fee) return;
-    const unitPrice = c.creative_type === 'design' ? fee.design_unit_price : fee.video_unit_price;
-    const price = fee.use_fixed_budget ? 0 : (unitPrice || 0); // 固定予算は別途集計
-    totalCreatives++;
-    plannedRevenue += price;
-    if (c.status === '納品') {
-      completedCreatives++;
-      actualRevenue += price;
+  // line 単位で planned / actual を計算
+  if (lineIds.length) {
+    const { calculateLineEconomics, ACTIVE_LINE_STATUSES } = require('../utils/pricing');
+    const { data: lines } = await supabase
+      .from('project_estimate_lines')
+      .select('id, project_id, planned_count, client_unit_price, status')
+      .in('id', lineIds);
+    const activeStatuses = new Set(ACTIVE_LINE_STATUSES);
+
+    // line ごとの「全 creatives が納品済か」判定用
+    const creativesByLine = new Map();
+    for (const c of (creatives || [])) {
+      if (!c.line_id) continue;
+      if (!creativesByLine.has(c.line_id)) creativesByLine.set(c.line_id, []);
+      creativesByLine.get(c.line_id).push(c);
     }
-  });
 
-  // 固定予算案件の集計（重複カウント防止）
-  const fixedProjects = fees.filter(f => f.use_fixed_budget && f.fixed_budget);
-  fixedProjects.forEach(f => {
-    plannedRevenue += f.fixed_budget;
-    const projectCreatives = (creatives || []).filter(c => c.project_id === f.project_id);
-    const allDone = projectCreatives.length > 0 && projectCreatives.every(c => c.status === '納品');
-    if (allDone) actualRevenue += f.fixed_budget;
-  });
+    for (const line of (lines || [])) {
+      if (!activeStatuses.has(line.status)) continue;
+      const econ = calculateLineEconomics(line, []); // 売上だけ見るので line_costs 不要
+      plannedRevenue += econ.revenue;
+      const list = creativesByLine.get(line.id) || [];
+      const allDone = list.length > 0 && list.every(c => c.status === '納品');
+      if (allDone) actualRevenue += econ.revenue;
+    }
+  }
+
+  // project_fixed_items(item_type='revenue') を加算（ADR 006）
+  if (projectIds.length) {
+    const { data: fixedItems } = await supabase
+      .from('project_fixed_items')
+      .select('project_id, item_type, amount, status')
+      .in('project_id', projectIds)
+      .eq('item_type', 'revenue');
+    for (const fi of (fixedItems || [])) {
+      if (fi.status === 'cancelled') continue;
+      const amt = Number(fi.amount) || 0;
+      plannedRevenue += amt;
+      // 「全 creatives 納品済の案件」は固定収入も実績にカウント
+      const projCreatives = (creatives || []).filter(c => c.project_id === fi.project_id);
+      const allDone = projCreatives.length > 0 && projCreatives.every(c => c.status === '納品');
+      if (allDone) actualRevenue += amt;
+    }
+  }
 
   res.json({
     totalCreatives,
@@ -1549,13 +2484,22 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   }
 });
 
-// 月次売上・粗利ダッシュボード
+// 月次売上・粗利ダッシュボード（ADR 002+005 per-line 公式）
 //
-// 売上(確定): invoice_type='client' の当月 invoices.total_amount 合計
-// 売上(見込み): 当月納期で未納品 creatives × project_client_fees の単価
-// 原価(確定): スタッフ請求書（invoice_type が NULL）の当月 total_amount 合計
-// 原価(見込み): 当月納期で未納品 creatives × project_rates の rank別単価合計
+// 売上(確定):   invoice_type='client' の当月 invoices.total_amount 合計
+// 原価(確定):   スタッフ請求書（invoice_type が NULL）の当月 total_amount 合計
+// 売上(見込み): 当月納期で未納品 creatives → line_id → lines.client_unit_price × planned_count
+// 原価(見込み): 同 line の line_costs を pricing_type に応じて合算
+//
+// 注意:
+//   - 旧版は creative 1 件ごとに単価を加算していたが、ADR 002 では
+//     line.planned_count に「予定本数」が入る設計のため line 単位で集計する。
+//   - 同じ line を共有する複数 creatives がいる場合、二重計上を避けるため
+//     line を 1 度しか加算しない（creative の重複排除）。
+//   - status フィルタは ADR 005 の集計対象（contracted/in_progress/delivered）に従う。
+//   - line_id IS NULL の creatives は集計から漏れる（Stage 4 UI で補正想定）。
 async function aggregateMonthlyRevenue({ year, month }) {
+  const { calculateLineEconomics, ACTIVE_LINE_STATUSES } = require('../utils/pricing');
   const startDate = new Date(Date.UTC(year, month - 1, 1));
   const endDate   = new Date(Date.UTC(year, month, 1));
 
@@ -1609,99 +2553,65 @@ async function aggregateMonthlyRevenue({ year, month }) {
     if (cid) ensureClient(cid, clientNameById.get(cid)).confirmed_cost += inv.total_amount || 0;
   }
 
-  // 見込み: 当月納期で未納品 creatives
+  // 見込み: 当月納期で未納品 creatives（line_id を含めて取得）
   const { data: forecastCreatives } = await supabase
     .from('creatives')
     .select(`
-      id, status, creative_type, project_id, final_deadline,
-      projects!inner(id, client_id, clients(id, name)),
-      creative_assignments(role, rank_applied, users(id, rank))
+      id, status, creative_type, project_id, final_deadline, line_id,
+      projects!inner(id, client_id, clients(id, name))
     `)
     .gte('final_deadline', startDate.toISOString())
     .lt('final_deadline', endDate.toISOString())
     .neq('status', '納品');
 
-  const fcProjectIds = Array.from(new Set((forecastCreatives || []).map(c => c.project_id).filter(Boolean)));
-  const clientFeeByProject = new Map();
-  const ratesByProject = new Map();
-  const directorRateByProject = new Map(); // pid -> { video: fee, design: fee }
-  const producerRateByProject = new Map(); // pid -> { video: fee, design: fee }
-  if (fcProjectIds.length) {
-    const [feesRes, ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
-      supabase.from('project_client_fees').select('*').in('project_id', fcProjectIds),
-      supabase.from('project_rates').select('*').in('project_id', fcProjectIds),
-      supabase.from('project_director_rates').select('*').in('project_id', fcProjectIds),
-      supabase.from('project_producer_rates').select('*').in('project_id', fcProjectIds),
-    ]);
-    (feesRes.data || []).forEach(f => clientFeeByProject.set(f.project_id, f));
-    (ratesRes.data || []).forEach(r => {
-      if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
-      ratesByProject.get(r.project_id).push(r);
-    });
-    // dirRatesRes はテーブル未作成でも全体集計を止めない（silent skip OK）
-    if (dirRatesRes.error) {
-      if (!isMissingPdrTable(dirRatesRes.error)) {
-        console.warn('[aggregateMonthlyRevenue] director_rates load failed:', dirRatesRes.error.message);
-      }
-    } else {
-      (dirRatesRes.data || []).forEach(d => {
-        if (!directorRateByProject.has(d.project_id)) directorRateByProject.set(d.project_id, {});
-        directorRateByProject.get(d.project_id)[d.creative_type] = d.director_fee || 0;
-      });
-    }
-    // prodRatesRes も同様（テーブル未作成でも止めない）
-    if (prodRatesRes.error) {
-      if (!isMissingPprTable(prodRatesRes.error)) {
-        console.warn('[aggregateMonthlyRevenue] producer_rates load failed:', prodRatesRes.error.message);
-      }
-    } else {
-      (prodRatesRes.data || []).forEach(p => {
-        if (!producerRateByProject.has(p.project_id)) producerRateByProject.set(p.project_id, {});
-        producerRateByProject.get(p.project_id)[p.creative_type] = p.producer_fee || 0;
-      });
+  // line_id でユニーク化（同じ line に紐付く複数 creatives は 1 回しか集計しない）
+  const lineIds = Array.from(new Set((forecastCreatives || [])
+    .map(c => c.line_id)
+    .filter(Boolean)));
+
+  const lineClientMap = new Map(); // line_id -> client_id（売上を顧客別に振り分けるため）
+  for (const c of (forecastCreatives || [])) {
+    if (c.line_id && c.projects?.client_id && !lineClientMap.has(c.line_id)) {
+      lineClientMap.set(c.line_id, { client_id: c.projects.client_id, client_name: c.projects?.clients?.name });
     }
   }
-  const findRate = (pid, baseType, rank) => {
-    const list = ratesByProject.get(pid) || [];
-    return list.find(r => r.creative_type === baseType && r.rank === rank)
-        || list.find(r => r.creative_type === baseType) || null;
-  };
-  const findDirectorFee = (pid, baseType) => {
-    const m = directorRateByProject.get(pid);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const findProducerFee = (pid, baseType) => {
-    const m = producerRateByProject.get(pid);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const calcRateAmount = (rate) => rate ? ((rate.base_fee||0)+(rate.script_fee||0)+(rate.ai_fee||0)+(rate.other_fee||0)) : 0;
 
   let forecastRevenue = 0, forecastCost = 0;
-  for (const c of (forecastCreatives || [])) {
-    const baseType = c.creative_type?.startsWith('video') ? 'video'
-                   : c.creative_type?.startsWith('design') ? 'design' : 'video';
-    const fee = clientFeeByProject.get(c.project_id);
-    const unitClient = (fee && !fee.use_fixed_budget)
-      ? (baseType === 'video' ? (fee.video_unit_price || 0) : (fee.design_unit_price || 0))
-      : 0;
-    forecastRevenue += unitClient;
-    if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_revenue += unitClient;
+  if (lineIds.length) {
+    // lines + line_costs を一括取得（status フィルタは JS 側で適用）
+    const [linesRes, lineCostsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, planned_count, client_unit_price, status')
+        .in('id', lineIds),
+      supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, unit_price, pricing_type, percentage, actual_hours')
+        .in('line_id', lineIds),
+    ]);
+    if (linesRes.error)     console.warn('[aggregateMonthlyRevenue] lines load failed:', linesRes.error.message);
+    if (lineCostsRes.error) console.warn('[aggregateMonthlyRevenue] line_costs load failed:', lineCostsRes.error.message);
 
-    const assignees = (c.creative_assignments || [])
-      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
-    let costForCreative = 0;
-    for (const a of assignees) {
-      const rank = a.rank_applied || a.users?.rank || null;
-      costForCreative += calcRateAmount(findRate(c.project_id, baseType, rank));
+    const lineCostsByLine = new Map();
+    for (const lc of (lineCostsRes.data || [])) {
+      if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
+      lineCostsByLine.get(lc.line_id).push(lc);
     }
-    // ディレクション費は creative 単位で1回だけ加算（編集者兼務でも満額）
-    costForCreative += findDirectorFee(c.project_id, baseType);
-    // プロデュース費も creative 単位で1回だけ加算（ディレクター兼務でも満額）
-    costForCreative += findProducerFee(c.project_id, baseType);
-    forecastCost += costForCreative;
-    if (c.projects?.client_id) ensureClient(c.projects.client_id, c.projects?.clients?.name).forecast_cost += costForCreative;
+
+    const activeStatuses = new Set(ACTIVE_LINE_STATUSES);
+    for (const line of (linesRes.data || [])) {
+      // ADR 005: 集計対象 status のみ
+      if (!activeStatuses.has(line.status)) continue;
+      const econ = calculateLineEconomics(line, lineCostsByLine.get(line.id) || []);
+      forecastRevenue += econ.revenue;
+      forecastCost    += econ.costs;
+      const meta = lineClientMap.get(line.id);
+      if (meta?.client_id) {
+        const bucket = ensureClient(meta.client_id, clientNameById.get(meta.client_id) || meta.client_name);
+        bucket.forecast_revenue += econ.revenue;
+        bucket.forecast_cost    += econ.costs;
+      }
+    }
   }
 
   const totalRevenue = confirmedRevenue + forecastRevenue;
@@ -1769,10 +2679,23 @@ router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermi
   }
 });
 
-// クリエイター別作成本数 + 単価 + 合計金額の集計
-// 1 creative の単価 = project_rates(project_id, creative_type, rank).{base_fee+script_fee+ai_fee+other_fee}
-// 同一クリエイティブに複数担当者がいる場合、それぞれ「フルカウント」する（既存の project×assignee ビューと整合）
+// クリエイター別作成本数 + 単価 + 合計金額の集計（ADR 002+003+004 対応）
+//
+// 新方式（per-line / line_costs.user_id ベース）:
+//   - 各 creative の line_id を辿って line_costs を取得
+//   - line_costs ごとに 1 件あたりのコスト（pricing_type に応じて計算）を算出し、
+//     受取人（user_id が指定されていればその人、無ければロールに応じて
+//     project.director_id / producer_id へ）に加算する
+//   - 同じ creative の中で複数の line_costs が存在する場合は、それぞれのロールに対応する
+//     受取人にフルカウント加算（旧版の挙動: 編集者/ディレクター/プロデューサーを別々に加算）
+//
+// 既知の制約:
+//   - line_id IS NULL の creative は集計から漏れる（移行スクリプト未対応分）。
+//     Stage 4 UI で line を補正することで自動的に拾えるようになる。
+//   - line_costs の user_id が NULL かつロール解決もできない場合、その金額は捨てられる
+//     （旧版の director_id/producer_id 参照と同じセマンティクスを保つため）。
 async function aggregateCreatorSummary({ year, month, statusFilter }) {
+  const { calculateLineCost } = require('../utils/pricing');
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
   const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
@@ -1780,7 +2703,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   let q = supabase
     .from('creatives')
     .select(`
-      id, file_name, status, creative_type, project_id,
+      id, file_name, status, creative_type, project_id, line_id,
       final_deadline, created_at,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
@@ -1792,85 +2715,52 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   const { data: creatives, error } = await q;
   if (error) throw new Error(error.message);
 
-  // 関連 project_rates / project_director_rates / project_producer_rates をまとめて取得（in クエリ）
-  const projectIds = Array.from(new Set((creatives || []).map(c => c.project_id).filter(Boolean)));
-  let ratesByProject = new Map();
-  let directorRateByProject = new Map(); // pid -> { video, design }
-  let producerRateByProject = new Map(); // pid -> { video, design }
-  let directorUserById = new Map(); // director_id -> user info（director_id が assignees に居ないケースを救う）
-  let producerUserById = new Map(); // producer_id -> user info（producer_id が assignees に居ないケースを救う）
-  if (projectIds.length > 0) {
-    const [ratesRes, dirRatesRes, prodRatesRes] = await Promise.all([
-      supabase.from('project_rates').select('*').in('project_id', projectIds),
-      supabase.from('project_director_rates').select('*').in('project_id', projectIds),
-      supabase.from('project_producer_rates').select('*').in('project_id', projectIds),
+  // line_id ⇒ line + line_costs を一括取得
+  const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
+  const lineById = new Map();             // line_id -> line
+  const lineCostsByLine = new Map();      // line_id -> line_costs[]
+  if (lineIds.length) {
+    const [linesRes, lineCostsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, planned_count, client_unit_price, status')
+        .in('id', lineIds),
+      supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+        .in('line_id', lineIds),
     ]);
-    for (const r of (ratesRes.data || [])) {
-      if (!ratesByProject.has(r.project_id)) ratesByProject.set(r.project_id, []);
-      ratesByProject.get(r.project_id).push(r);
-    }
-    if (dirRatesRes.error) {
-      if (!isMissingPdrTable(dirRatesRes.error)) {
-        console.warn('[aggregateCreatorSummary] director_rates load failed:', dirRatesRes.error.message);
-      }
-    } else {
-      (dirRatesRes.data || []).forEach(d => {
-        if (!directorRateByProject.has(d.project_id)) directorRateByProject.set(d.project_id, {});
-        directorRateByProject.get(d.project_id)[d.creative_type] = d.director_fee || 0;
-      });
-    }
-    if (prodRatesRes.error) {
-      if (!isMissingPprTable(prodRatesRes.error)) {
-        console.warn('[aggregateCreatorSummary] producer_rates load failed:', prodRatesRes.error.message);
-      }
-    } else {
-      (prodRatesRes.data || []).forEach(p => {
-        if (!producerRateByProject.has(p.project_id)) producerRateByProject.set(p.project_id, {});
-        producerRateByProject.get(p.project_id)[p.creative_type] = p.producer_fee || 0;
-      });
-    }
-    // assignees に居ないディレクター/プロデューサーを救うため両 ID のユーザー情報を一括取得
-    const directorIds = Array.from(new Set(
-      (creatives || []).map(c => c.projects?.director_id).filter(Boolean)
-    ));
-    const producerIds = Array.from(new Set(
-      (creatives || []).map(c => c.projects?.producer_id).filter(Boolean)
-    ));
-    const allLeaderIds = Array.from(new Set([...directorIds, ...producerIds]));
-    if (allLeaderIds.length) {
-      const { data: leaderUsers } = await supabase
-        .from('users').select('id, full_name, nickname, role, rank')
-        .in('id', allLeaderIds);
-      (leaderUsers || []).forEach(u => {
-        if (directorIds.includes(u.id)) directorUserById.set(u.id, u);
-        if (producerIds.includes(u.id)) producerUserById.set(u.id, u);
-      });
+    if (linesRes.error)     console.warn('[aggregateCreatorSummary] lines load failed:', linesRes.error.message);
+    if (lineCostsRes.error) console.warn('[aggregateCreatorSummary] line_costs load failed:', lineCostsRes.error.message);
+    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
+    for (const lc of (lineCostsRes.data || [])) {
+      if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
+      lineCostsByLine.get(lc.line_id).push(lc);
     }
   }
-  const findRate = (projectId, baseType, rank) => {
-    const list = ratesByProject.get(projectId) || [];
-    return list.find(r => r.creative_type === baseType && r.rank === rank)
-        || list.find(r => r.creative_type === baseType)
-        || null;
-  };
-  const findDirectorFee = (projectId, baseType) => {
-    const m = directorRateByProject.get(projectId);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const findProducerFee = (projectId, baseType) => {
-    const m = producerRateByProject.get(projectId);
-    if (!m) return 0;
-    return m[baseType] || 0;
-  };
-  const calcUnitPrice = (rate) => {
-    if (!rate) return 0;
-    return (rate.base_fee || 0) + (rate.script_fee || 0) + (rate.ai_fee || 0) + (rate.other_fee || 0);
-  };
+
+  // assignees に居ないディレクター/プロデューサー、line_costs.user_id を救うため
+  // 必要 user 情報を一括取得
+  const neededUserIds = new Set();
+  for (const c of (creatives || [])) {
+    if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
+    if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+  }
+  for (const arr of lineCostsByLine.values()) {
+    for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
+  }
+  const userById = new Map();
+  if (neededUserIds.size) {
+    const { data: us } = await supabase
+      .from('users').select('id, full_name, nickname, role, rank')
+      .in('id', Array.from(neededUserIds));
+    (us || []).forEach(u => userById.set(u.id, u));
+  }
 
   // ユーザーごとに集計
-  const userMap = new Map(); // user_id -> aggregate
+  const userMap = new Map();
   const ensureUser = (u) => {
+    if (!u || !u.id) return null;
     if (!userMap.has(u.id)) {
       userMap.set(u.id, {
         id: u.id,
@@ -1882,13 +2772,40 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         design_count: 0,
         video_total: 0,
         design_total: 0,
-        director_total: 0, // ディレクション費の集計（参考表示用）
-        producer_total: 0, // プロデュース費の集計（参考表示用）
+        director_total: 0,
+        producer_total: 0,
         grand_total: 0,
-        rate_unknown_count: 0, // 単価不明として扱った件数（参考表示用）
+        rate_unknown_count: 0,
       });
     }
     return userMap.get(u.id);
+  };
+
+  // ロール code から「creative の中で対応する受取人」を解決する。
+  //   1) line_cost.user_id が指定 → その user
+  //   2) ロールが editor/designer/director_as_editor → assignees の中から該当ロールの user
+  //   3) ロールが director → projects.director_id
+  //   4) ロールが producer → projects.producer_id
+  //   5) いずれも解決できなければ null（金額は捨てる）
+  const resolvePayee = (lineCost, creative, assignees) => {
+    if (lineCost.user_id) return userById.get(lineCost.user_id) || null;
+    const code = lineCost.role?.code || '';
+    if (!code) return null;
+    if (['editor', 'designer', 'director_as_editor'].includes(code)) {
+      const a = assignees.find(x => x.role === code);
+      return a?.users || null;
+    }
+    if (code === 'director' || code === 'sub_director') {
+      const did = creative.projects?.director_id;
+      return did ? (userById.get(did) || null) : null;
+    }
+    if (code === 'producer' || code === 'sub_producer') {
+      const pid = creative.projects?.producer_id;
+      return pid ? (userById.get(pid) || null) : null;
+    }
+    // その他のロールは assignees に同 code がいればそれに、いなければ捨てる
+    const a = assignees.find(x => x.role === code);
+    return a?.users || null;
   };
 
   for (const c of (creatives || [])) {
@@ -1897,49 +2814,66 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
                    : (c.creative_type || 'video');
     const isVideo = baseType === 'video';
     const assignees = (c.creative_assignments || [])
-      .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role));
-    // 編集者/デザイナー単価
-    if (assignees.length > 0) {
+      .filter(a => a.users);
+
+    if (!c.line_id) continue;
+    const line = lineById.get(c.line_id);
+    if (!line) continue;
+    const lineCosts = lineCostsByLine.get(c.line_id) || [];
+
+    // 1 creative あたりの単価 = line_cost が消費する金額 / planned_count
+    // ただし fixed_total / hourly のように planned_count に依存しない場合は除外
+    // （creator-summary では「1 件あたり」を計上したいため、その他課金タイプは無視）
+    const planned = Number(line.planned_count) || 0;
+
+    for (const lc of lineCosts) {
+      const pricingType = lc.pricing_type || 'fixed_per_unit';
+      let perCreative = 0;
+      if (pricingType === 'fixed_per_unit') {
+        // calculateLineCost = unit_price * planned_count → per creative = unit_price
+        perCreative = Number(lc.unit_price) || 0;
+      } else if (pricingType === 'percentage') {
+        // calculateLineCost = client_unit_price * planned_count * pct/100 → per creative = client_unit_price * pct/100
+        perCreative = (Number(line.client_unit_price) || 0) * (Number(lc.percentage) || 0) / 100;
+      } else {
+        // hourly / fixed_total は creative 1 件単位に按分しないので捨てる（参考表示外）
+        continue;
+      }
+      if (perCreative <= 0) continue;
+
+      const payee = resolvePayee(lc, c, assignees);
+      if (!payee) continue;
+      const u = ensureUser(payee);
+      if (!u) continue;
+      const code = lc.role?.code || '';
+      if (code === 'director' || code === 'sub_director') {
+        u.director_total += perCreative;
+      } else if (code === 'producer' || code === 'sub_producer') {
+        u.producer_total += perCreative;
+      } else if (isVideo) {
+        u.video_count++; u.video_total += perCreative;
+      } else {
+        u.design_count++; u.design_total += perCreative;
+      }
+      u.grand_total += perCreative;
+    }
+    // 後方互換のための保険: line に直接の line_costs が無いがアサインされている人がいる場合、
+    // 件数だけは記録しておく（金額 0、UI 側で「単価不明」を表示）
+    if (lineCosts.length === 0 && assignees.length > 0) {
       for (const a of assignees) {
-        const user = ensureUser(a.users);
-        const rank = a.rank_applied || a.users?.rank || null;
-        const rate = findRate(c.project_id, baseType, rank);
-        const unitPrice = calcUnitPrice(rate);
-        if (isVideo) { user.video_count++; user.video_total += unitPrice; }
-        else         { user.design_count++; user.design_total += unitPrice; }
-        user.grand_total += unitPrice;
-        if (!rate) user.rate_unknown_count++;
+        if (!['editor','designer','director_as_editor'].includes(a.role)) continue;
+        const u = ensureUser(a.users);
+        if (!u) continue;
+        if (isVideo) u.video_count++;
+        else         u.design_count++;
+        u.rate_unknown_count++;
       }
     }
-    // ディレクション費: creative 1件あたり 1回必ず加算（編集者兼務でも満額）
-    // 受取人: projects.director_id（assignees に居なくても加算する）
-    const directorFee = findDirectorFee(c.project_id, baseType);
-    const directorId = c.projects?.director_id;
-    if (directorFee > 0 && directorId) {
-      const dirUser = directorUserById.get(directorId)
-        // assignments に居る場合のフォールバック
-        || (assignees.find(a => a.users?.id === directorId)?.users)
-        || null;
-      if (dirUser) {
-        const user = ensureUser(dirUser);
-        user.director_total += directorFee;
-        user.grand_total += directorFee;
-      }
-    }
-    // プロデュース費: creative 1件あたり 1回必ず加算（編集者・ディレクター兼務でも満額）
-    // 受取人: projects.producer_id（assignees に居なくても加算する）
-    const producerFee = findProducerFee(c.project_id, baseType);
-    const producerId = c.projects?.producer_id;
-    if (producerFee > 0 && producerId) {
-      const prodUser = producerUserById.get(producerId)
-        || (assignees.find(a => a.users?.id === producerId)?.users)
-        || null;
-      if (prodUser) {
-        const user = ensureUser(prodUser);
-        user.producer_total += producerFee;
-        user.grand_total += producerFee;
-      }
-    }
+    // 参考: 件数振り分けのため、line に紐付く未集計のユーザーへ video/design count を加える調整は
+    // 不要（上のループで pricing_type='fixed_per_unit' のとき同時に count も増えている）。
+    // 編集者/デザイナーが居て line_costs に user_id 指定がない場合、上の resolvePayee で
+    // assignees から拾われるためカバー済み。
+    void planned; // 参照保持（lint 用）
   }
 
   const summary = Array.from(userMap.values())
@@ -1957,6 +2891,9 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     acc.grand_total  += u.grand_total;
     return acc;
   }, { video_count: 0, design_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0 });
+
+  // calculateLineCost を参照保持（将来の拡張時に使う想定）
+  void calculateLineCost;
 
   return { year, month, status: statusFilter, summary, total, creatives_count: (creatives || []).length };
 }
@@ -2484,7 +3421,10 @@ router.post('/creatives/bulk-preview', async (req, res) => {
     return res.status(400).json({ error: '案件・種別・本数は必須です' });
   }
   const { data: project } = await supabase
-    .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
+    .from('projects')
+    .select('*, clients(id, name, client_code)')
+    .eq('id', project_id)
+    .single();
   let appealType = null;
   if (appeal_type_id) {
     const { data: at } = await supabase
@@ -2493,6 +3433,9 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   }
   if (!project) return res.status(400).json({ error: '案件が見つかりません' });
   if (appeal_type_id && !appealType) return res.status(400).json({ error: '訴求軸が見つかりません' });
+
+  // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
+  const tplResolved = await resolveProjectFilenameTemplate(project);
 
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
@@ -2511,10 +3454,19 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
     const seqStr7 = String(nextSeq).padStart(7, '0');
-    const appealCode = appealType ? appealType.code : '';
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
-      .map(p => (p||'').toString().trim()).filter(Boolean);
-    const fileName = parts.join('_');
+    let fileName;
+    if (tplResolved) {
+      const tokenValues = buildFilenameTokenValues({
+        project, appealType, body: req.body, seqStr7, dateStr, version: '',
+      });
+      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+    } else {
+      // 既存ハードコード仕様にフォールバック (silent skip / migration 未適用ガード)
+      const appealCode = appealType ? appealType.code : '';
+      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
+        .map(p => (p||'').toString().trim()).filter(Boolean);
+      fileName = parts.join('_');
+    }
     previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
     usedSeqs.push(nextSeq);
     nextSeq++;
@@ -2539,7 +3491,10 @@ router.post('/creatives/bulk', async (req, res) => {
     return res.status(400).json({ error: '本数は1〜100の間で指定してください' });
   }
   const { data: project } = await supabase
-    .from('projects').select('*, clients(id, name, client_code)').eq('id', project_id).single();
+    .from('projects')
+    .select('*, clients(id, name, client_code)')
+    .eq('id', project_id)
+    .single();
   let appealType = null;
   if (appeal_type_id) {
     const { data: at } = await supabase
@@ -2552,6 +3507,10 @@ router.post('/creatives/bulk', async (req, res) => {
   if (appeal_type_id && !appealType) {
     return res.status(400).json({ error: '訴求軸が見つかりません' });
   }
+
+  // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
+  const tplResolved = await resolveProjectFilenameTemplate(project);
+
   const { data: existingCreatives } = await supabase
     .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
   const usedSeqs = (existingCreatives || []).map(c => {
@@ -2569,10 +3528,18 @@ router.post('/creatives/bulk', async (req, res) => {
   for (let i = 0; i < count; i++) {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
     const seqStr7 = String(nextSeq).padStart(7, '0');
-    const appealCode = appealType ? appealType.code : '';
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
-      .map(p => (p||'').toString().trim()).filter(Boolean);
-    const fileName = parts.join('_');
+    let fileName;
+    if (tplResolved) {
+      const tokenValues = buildFilenameTokenValues({
+        project, appealType, body: req.body, seqStr7, dateStr, version: '',
+      });
+      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+    } else {
+      const appealCode = appealType ? appealType.code : '';
+      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
+        .map(p => (p||'').toString().trim()).filter(Boolean);
+      fileName = parts.join('_');
+    }
     const insert = { project_id, file_name: fileName, creative_type,
       appeal_type_id: appeal_type_id || null,
       draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
@@ -3416,10 +4383,14 @@ router.delete('/creatives', requireAuth, async (req, res) => {
 
 // アップロード済みファイル一覧
 router.get('/creatives/:id/files', async (req, res) => {
+  // version DESC を最優先にし、同 version 内では uploaded_at DESC で並べる。
+  // version は creative_files にしか存在しない一意な世代番号なので、
+  // これにより最新世代が常に先頭に来る（V1 重複事故が発生していても識別容易）。
   const { data, error } = await supabase
     .from('creative_files')
     .select('*')
     .eq('creative_id', req.params.id)
+    .order('version', { ascending: false })
     .order('uploaded_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -3428,22 +4399,40 @@ router.get('/creatives/:id/files', async (req, res) => {
 // ファイルアップロード（Google Drive）
 router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => {
   const creativeId = req.params.id;
-  const { width, height, generated_name } = req.body;
+  const { width, height } = req.body;
+  let { generated_name } = req.body;
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'ファイルが選択されていません' });
 
-  // バージョン採番: フロントから明示的に有効な version が指定されない場合、
-  // 既存 creative_files の MAX(version) + 1 を採番する（既存ファイル削除や手動編集でズレるのを防ぐ）
-  let version = parseInt(req.body.version, 10);
-  if (!version || version < 1) {
-    const { data: maxRow } = await supabase
-      .from('creative_files')
-      .select('version')
-      .eq('creative_id', creativeId)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    version = (maxRow?.version || 0) + 1;
+  // バージョン採番: フロント送信値は信用しない（同一モーダルで2連続アップロードや
+  // race 時に V1 が重複保存される事故があったため、サーバ側で必ず MAX(version)+1 を採番する）。
+  // フロントの cd-version-num はあくまで表示用ヒント。
+  const requestedVersion = parseInt(req.body.version, 10);
+  const { data: maxRow } = await supabase
+    .from('creative_files')
+    .select('version')
+    .eq('creative_id', creativeId)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const version = (maxRow?.version || 0) + 1;
+  if (requestedVersion && requestedVersion !== version) {
+    console.info(
+      `[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId})`
+    );
+  } else {
+    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId})`);
+  }
+
+  // generated_name に埋め込まれた _vN を確定 version で上書きする。
+  // 例: フロントが "cool_v1.mp4" を送ってきても、サーバ採番が 3 なら "cool_v3.mp4" にする。
+  // _vN パターンが無ければそのまま使う（保険）。
+  if (generated_name) {
+    const replaced = generated_name.replace(/_v\d+(\.[^.]+)$/, `_v${version}$1`);
+    if (replaced !== generated_name) {
+      console.info(`[creatives/upload] generated_name rewritten: ${generated_name} → ${replaced}`);
+    }
+    generated_name = replaced;
   }
 
   // クリエイティブ + 案件情報を取得
@@ -3608,7 +4597,8 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   }
   if (fErr) return res.status(500).json({ error: fErr.message });
 
-  res.json({ ok: true, file: fileRecord, drive_url: driveUrl, drive_error: driveError });
+  // version はサーバ側採番が真。フロントはこの値を使ってトースト等を表示する。
+  res.json({ ok: true, file: fileRecord, version, drive_url: driveUrl, drive_error: driveError });
 
   // faststart プレビュー版生成は非同期（fire-and-forget）。
   // res.json() 後に setImmediate で起動 → ユーザーのアップロード待ち時間を増やさない。
@@ -5325,6 +6315,18 @@ const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 router.get('/tweets', requireAuth, async (req, res) => {
   const mine = req.query.mine === '1' || req.query.mine === 'true';
   const staffOnly = req.query.staff_only === '1' || req.query.staff_only === 'true';
+  // roles=admin,secretary,producer,producer_director,director,editor,designer
+  //   フロントの roleGroups → users.role 値の集合（producer_director を含む）
+  //   後方互換: staff_only=1 は roles=admin,secretary に変換
+  const ALLOWED_ROLES = new Set([
+    'admin', 'secretary', 'producer', 'producer_director', 'director', 'editor', 'designer',
+  ]);
+  let rolesFilter = String(req.query.roles || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+    .filter(r => ALLOWED_ROLES.has(r));
+  if (rolesFilter.length === 0 && staffOnly) {
+    rolesFilter = ['admin', 'secretary'];
+  }
 
   let q = supabase
     .from('tweets')
@@ -5334,22 +6336,25 @@ router.get('/tweets', requireAuth, async (req, res) => {
     .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
 
-  // 運営のみフィルター: admin / secretary が投稿したもの
-  // user_roles JOIN roles ベースで staff の user_id を取得（dual-read: 旧 users.role も並走）
-  if (staffOnly) {
-    const staffSet = new Set();
-    // 1) user_roles 経由
-    const { data: ur } = await supabase
-      .from('user_roles').select('user_id, roles(code)').in('roles.code', ['admin','secretary']);
-    (ur || []).forEach(r => { if (r.roles) staffSet.add(r.user_id); });
-    // 2) dual-read: 旧 users.role も拾う（user_roles 未反映ユーザーをカバー）
-    const { data: legacyStaff, error: sErr } = await supabase
-      .from('users').select('id').in('role', ['admin', 'secretary']);
+  // ロール絞り込み（運営のみ / 個別ロール）:
+  //   user_roles JOIN roles ベースで対象 user_id 集合を取得（dual-read: 旧 users.role も並走）
+  if (rolesFilter.length > 0) {
+    const roleSet = new Set();
+    // user_roles 経由（合成値 'producer_director' は roles マスタに無いため除外して引く）
+    const codesForJoin = rolesFilter.filter(c => c !== 'producer_director');
+    if (codesForJoin.length > 0) {
+      const { data: ur } = await supabase
+        .from('user_roles').select('user_id, roles(code)').in('roles.code', codesForJoin);
+      (ur || []).forEach(r => { if (r.roles) roleSet.add(r.user_id); });
+    }
+    // dual-read: 旧 users.role 列も拾う（'producer_director' を含む全コード）
+    const { data: legacyRole, error: sErr } = await supabase
+      .from('users').select('id').in('role', rolesFilter);
     if (sErr) return res.status(500).json({ error: sErr.message });
-    (legacyStaff || []).forEach(u => staffSet.add(u.id));
-    const staffIds = Array.from(staffSet);
-    if (staffIds.length === 0) return res.json([]);
-    q = q.in('user_id', staffIds);
+    (legacyRole || []).forEach(u => roleSet.add(u.id));
+    const ids = Array.from(roleSet);
+    if (ids.length === 0) return res.json([]);
+    q = q.in('user_id', ids);
   }
 
   // 自分のつぶやき・返信フィルター:
@@ -5358,45 +6363,41 @@ router.get('/tweets', requireAuth, async (req, res) => {
   //   3) 自分がコメントに参加した投稿（tweet_comments を引いて tweet_id 集合を作る）
   if (mine) {
     const meId = req.user.id;
-    const { data: myComments, error: cErr } = await supabase
-      .from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null);
-    if (cErr) return res.status(500).json({ error: cErr.message });
-    const commentedTweetIds = Array.from(new Set((myComments || []).map(c => c.tweet_id))).filter(Boolean);
+    const nowIso = new Date().toISOString();
 
-    // PostgREST .or() 内で配列 contains / in の両方を OR したいが、構文が複雑になるため
-    // 「自分の投稿 + メンション対象 + コメント参加対象」を別個に取得して merge する。
-    const queries = [];
-
-    // (a) 自分の投稿 + メンション対象
-    queries.push(
+    // (a) 自分の投稿 + メンション対象  (b) 自分が参加したコメントの tweet 集合
+    //     を並列取得（これまでは (a)+(b) が逐次だった分の round trip を 1 段削減）。
+    const [myCommentsRes, ownAndMentionRes] = await Promise.all([
+      supabase.from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null),
       supabase.from('tweets')
         .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
-        .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
-        .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`)
-    );
+        .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
+        .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`),
+    ]);
+    if (myCommentsRes.error) return res.status(500).json({ error: myCommentsRes.error.message });
+    if (ownAndMentionRes.error) return res.status(500).json({ error: ownAndMentionRes.error.message });
 
-    // (b) コメント参加対象
-    if (commentedTweetIds.length > 0) {
-      queries.push(
-        supabase.from('tweets')
-          .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
-          .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
-          .in('id', commentedTweetIds)
-      );
-    }
+    const commentedTweetIds = Array.from(new Set((myCommentsRes.data || []).map(c => c.tweet_id))).filter(Boolean);
 
-    const results = await Promise.all(queries);
     const merged = new Map();
-    for (const r of results) {
-      if (r.error) return res.status(500).json({ error: r.error.message });
-      for (const t of (r.data || [])) merged.set(t.id, t);
+    for (const t of (ownAndMentionRes.data || [])) merged.set(t.id, t);
+
+    // (c) コメント参加対象 — 取得したコメント tweet_id があるときだけ追加クエリ
+    if (commentedTweetIds.length > 0) {
+      const { data: commentTweets, error: ctErr } = await supabase.from('tweets')
+        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
+        .in('id', commentedTweetIds);
+      if (ctErr) return res.status(500).json({ error: ctErr.message });
+      for (const t of (commentTweets || [])) if (!merged.has(t.id)) merged.set(t.id, t);
     }
 
     let list = Array.from(merged.values());
 
-    // staff_only 併用時のフィルター
-    if (staffOnly) {
-      list = list.filter(t => ['admin', 'secretary'].includes(t.users?.role));
+    // ロール絞り込み（roles=... or 後方互換 staff_only=1）併用時のフィルター
+    if (rolesFilter.length > 0) {
+      const allowed = new Set(rolesFilter);
+      list = list.filter(t => allowed.has(t.users?.role));
     }
 
     list.sort((a, b) => {
@@ -6755,11 +7756,21 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     return `${yy}${mm}${dd}`;
   })();
 
-  // 新ファイル名: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{7桁seq}
-  const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
-    .map(p => (p || '').toString().trim())
-    .filter(Boolean);
-  const newFileName = parts.join('_');
+  // ADR 007: ファイル名テンプレ解決
+  const tplResolved = await resolveProjectFilenameTemplate(project);
+  let newFileName;
+  if (tplResolved) {
+    const tokenValues = buildFilenameTokenValues({
+      project, appealType, body: req.body, seqStr7, dateStr, version: 'v1',
+    });
+    newFileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+  } else {
+    // ハードコードフォールバック: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{7桁seq}
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+      .map(p => (p || '').toString().trim())
+      .filter(Boolean);
+    newFileName = parts.join('_');
+  }
 
   res.json({
     file_name: newFileName,
@@ -7530,22 +8541,25 @@ router.delete('/master/items/:id', requireAuth, requirePermission('master.page')
 
 // ==================== ダッシュボード 予実管理 ====================
 
-// 今月の予実サマリー
+// 今月の予実サマリー（ADR 002+005+006 ベース）
+//
+// 計算式:
+//   各 cycle (project_cycles で年月絞り込み) について
+//     - 該当 project の lines（status active）の client_unit_price × planned_count を合算
+//     - project_fixed_items(item_type='revenue', not cancelled) を加算
+//   実績は cycle に紐付く creatives の本数 × line.client_unit_price で近似する
+//   （line ベースに移行する過渡期のため、本数集計は creative_type の文字列マッチを継続）
 router.get('/dashboard/monthly-forecast', async (req, res) => {
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
 
-  // project_client_fees は project_cycles に直接 FK を持たないため
-  // （project_id 経由でしか繋がらない）、projects 経由で埋め込む。
-  // 直接埋め込もうとすると PostgREST が "Could not find a relationship" で 500。
   const { data: cycles, error: cyclesError } = await supabase
     .from('project_cycles')
     .select(`
       *,
       projects (
         id, name, client_id,
-        clients(name),
-        project_client_fees(video_unit_price, design_unit_price, fixed_budget, use_fixed_budget)
+        clients(name)
       )
     `)
     .eq('year', year)
@@ -7553,16 +8567,58 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
 
   if (cyclesError) return res.status(500).json({ error: cyclesError.message });
 
-  // N+1解消: cycle_id IN (…) で一括取得してJS側でグループ化
+  // cycle に紐付く creatives を一括取得
   const cycleIds = (cycles || []).map(c => c.id);
   const { data: allCreatives } = cycleIds.length
-    ? await supabase.from('creatives').select('cycle_id, creative_type').in('cycle_id', cycleIds)
+    ? await supabase.from('creatives').select('cycle_id, creative_type, line_id').in('cycle_id', cycleIds)
     : { data: [] };
   const creativesByCycle = {};
   (allCreatives || []).forEach(c => {
     if (!creativesByCycle[c.cycle_id]) creativesByCycle[c.cycle_id] = [];
     creativesByCycle[c.cycle_id].push(c);
   });
+
+  // 案件単位で lines / fixed_items を一括取得（N+1 回避）
+  const projectIds = Array.from(new Set((cycles || []).map(c => c.project_id).filter(Boolean)));
+  const linesByProject = new Map();
+  const fixedRevenueByProject = new Map();
+  if (projectIds.length) {
+    const { ACTIVE_LINE_STATUSES } = require('../utils/pricing');
+    const activeStatuses = new Set(ACTIVE_LINE_STATUSES);
+    const [linesRes, fxRes, catsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, category_id, planned_count, client_unit_price, status')
+        .in('project_id', projectIds),
+      supabase
+        .from('project_fixed_items')
+        .select('project_id, item_type, amount, status')
+        .in('project_id', projectIds)
+        .eq('item_type', 'revenue'),
+      supabase.from('creative_categories').select('id, code, name'),
+    ]);
+    const catCodeById = new Map();
+    for (const c of (catsRes.data || [])) catCodeById.set(c.id, c.code || c.name || '');
+    for (const l of (linesRes.data || [])) {
+      if (!activeStatuses.has(l.status)) continue;
+      if (!linesByProject.has(l.project_id)) linesByProject.set(l.project_id, []);
+      linesByProject.get(l.project_id).push({ ...l, _cat_code: catCodeById.get(l.category_id) || '' });
+    }
+    for (const fi of (fxRes.data || [])) {
+      if (fi.status === 'cancelled') continue;
+      fixedRevenueByProject.set(fi.project_id,
+        (fixedRevenueByProject.get(fi.project_id) || 0) + (Number(fi.amount) || 0));
+    }
+  }
+
+  // 各 line の単価マップ（line_id -> client_unit_price）。actual 計算用。
+  const unitPriceByLine = new Map();
+  for (const arr of linesByProject.values()) {
+    for (const line of arr) unitPriceByLine.set(line.id, Number(line.client_unit_price) || 0);
+  }
+
+  const isVideoCategory = (code) => /video|short|long|cut/i.test(code || '');
+  const isDesignCategory = (code) => /design|image|static/i.test(code || '');
 
   const result = (cycles || []).map(cycle => {
     const creatives = creativesByCycle[cycle.id] || [];
@@ -7573,22 +8629,35 @@ router.get('/dashboard/monthly-forecast', async (req, res) => {
       c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))
     ).length;
 
-    // project_client_fees は projects 配下に格納される（上のクエリ参照）。
-    // UNIQUE(project_id) で 1:1 だが PostgREST は配列で返すので先頭を取る。
-    const feeRaw = cycle.projects?.project_client_fees;
-    const fee = Array.isArray(feeRaw) ? feeRaw[0] : feeRaw;
-    const videoUnitPrice = fee?.video_unit_price || 0;
-    const designUnitPrice = fee?.design_unit_price || 0;
+    const projectLines = linesByProject.get(cycle.project_id) || [];
 
-    let planned;
-    if (fee?.use_fixed_budget && fee?.fixed_budget) {
-      planned = fee.fixed_budget;
-    } else {
-      planned = (cycle.planned_video_count || 0) * videoUnitPrice
-              + (cycle.planned_design_count || 0) * designUnitPrice;
+    // planned_amount = lines の合計 + fixed revenue
+    let planned = 0;
+    let videoUnitPrice = 0;
+    let designUnitPrice = 0;
+    for (const line of projectLines) {
+      planned += (Number(line.client_unit_price) || 0) * (Number(line.planned_count) || 0);
+      // 表示用の「video / design 単価」は最初に見つけた値を使う（複数あれば代表値）
+      if (isVideoCategory(line._cat_code)  && !videoUnitPrice)  videoUnitPrice  = Number(line.client_unit_price) || 0;
+      if (isDesignCategory(line._cat_code) && !designUnitPrice) designUnitPrice = Number(line.client_unit_price) || 0;
     }
+    planned += (fixedRevenueByProject.get(cycle.project_id) || 0);
 
-    const actual = videoCount * videoUnitPrice + designCount * designUnitPrice;
+    // actual_amount = creatives.line_id ごとに client_unit_price を合算
+    // 実績本数が見積を超えても planned_count の天井までで打ち切る （見積より多く納品しても請求しない設計）
+    let actual = 0;
+    for (const c of creatives) {
+      if (c.line_id) {
+        actual += unitPriceByLine.get(c.line_id) || 0;
+      } else {
+        // line に紐付かない creative は creative_type でフォールバック
+        if (c.creative_type && (c.creative_type.includes('動画') || c.creative_type.toLowerCase().includes('video'))) {
+          actual += videoUnitPrice;
+        } else if (c.creative_type && (c.creative_type.includes('デザイン') || c.creative_type.toLowerCase().includes('design'))) {
+          actual += designUnitPrice;
+        }
+      }
+    }
 
     return {
       project_id: cycle.project_id,

@@ -80,26 +80,53 @@
 /* フィルター */
 .tweets-filters {
   display: flex;
-  gap: 16px;
+  gap: 8px 12px;
   align-items: center;
   flex-wrap: wrap;
   font-size: 13px;
   color: #374151;
 }
 
-.tweets-filters label {
+.tweets-filters .tweets-filters-label {
+  font-weight: 600;
+  color: #374151;
+  margin-right: 4px;
+}
+
+.tweets-filters label,
+.tweets-filter-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
   user-select: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.tweets-filter-chip:hover {
+  background: #F3F4F6;
+}
+
+.tweets-filter-chip:has(input:checked) {
+  background: rgba(62, 207, 202, 0.12);
+  border-color: #3ECFCA;
+  color: #0F766E;
 }
 
 .tweets-filters input[type="checkbox"] {
   accent-color: #3ECFCA;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   cursor: pointer;
+}
+
+/* mine タブ時はフィルターを非表示 */
+.tweets-filters[data-active-tab="mine"] {
+  display: none;
 }
 
 /* ---------- リスト ---------- */

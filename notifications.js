@@ -532,6 +532,19 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', targets);
     await sendNotifMulti(targets, slackBody, cwBody);
   }
+  // 4-b) → クライアントチェック後修正（クライアントから戻る → editor + director の両方が修正対象）
+  //    Pチェック後修正と同じパターン。クライアントからの戻りも編集者だけでなくディレクター層にも共有が必要。
+  //    アプリ内通知は ball_holder_id が editor 側に戻ることで notify_ball_returned トリガーが
+  //    自動で発火するため、重複防止のためここでは送らない。
+  //    （旧実装はこの分岐自体が欠落しており Slack/CW DM が一切飛ばないバグだった）
+  else if (newStatus === 'クライアントチェック後修正') {
+    const directorTargets = directorAssignees.length > 0
+      ? directorAssignees
+      : [director].filter(Boolean);
+    const targets = [...editorAssignees, ...directorTargets];
+    const { slackBody, cwBody } = tpl('クライアントチェック後修正依頼', '🔁', targets);
+    await sendNotifMulti(targets, slackBody, cwBody);
+  }
   // 5) → クライアントチェック中（操作した本人にテンプレ案内）
   //    メンション方式によりチームにも見える形になるが、ミス防止のため第三者レビュー可能な
   //    状態は許容する仕様。
@@ -654,11 +667,23 @@ function _gcAutoErrorMap() {
   }
 }
 
-function _autoErrorSignature({ kind, message, url }) {
+// Slack 通知の dedupe signature。message / apiPath に含まれる UUID や
+// 数値 ID を `:id` に正規化してから比較することで、同じ原因のエラーが
+// 「リソース ID 違いで N 通来る」現象を防ぐ。
+// 例: PR #338 デプロイ前に `column users_1.name does not exist` が
+// 5 本の line_id 分 Slack に流れた事故 (#TBD) の再発防止。
+function _normalizeIdsInPath(s) {
+  if (!s) return s;
+  return String(s)
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
+    .replace(/\/\d{3,}(?=\/|$|\?)/g, '/:id');
+}
+function _autoErrorSignature({ kind, message, url, apiPath }) {
   const k = String(kind || '').slice(0, 64);
-  const m = String(message || '').slice(0, 200);
+  const m = _normalizeIdsInPath(String(message || '')).slice(0, 200);
   const u = String(url || '').slice(0, 200);
-  return `${k}::${m}::${u}`;
+  const a = _normalizeIdsInPath(String(apiPath || '')).slice(0, 200);
+  return `${k}::${m}::${a}::${u}`;
 }
 
 function _truncate(s, max) {
@@ -704,6 +729,9 @@ function _formatAutoErrorText(payload) {
     const nav = trace.navigation || {};
     const lastScript = trace.lastScript || {};
     const vp = trace.viewport || {};
+    const ps = trace.pageshow || {};
+    const em = trace.errorMeta || {};
+    const rt = trace.resourceTarget || {};
     const traceLines = [
       `readyState=${trace.readyState || '-'}`,
       `visibility=${trace.visibilityState || '-'}`,
@@ -712,6 +740,8 @@ function _formatAutoErrorText(payload) {
       `scriptCount=${trace.scriptCount || '-'}`,
       `lastScript=${lastScript.src || '-'}`,
       `navType=${nav.type || '-'}`,
+      `pageshow.persisted=${ps.persisted ?? '-'}`,
+      `msSincePageshow=${ps.msSincePageshow ?? '-'}`,
       `transfer=${nav.transferSize || 0}`,
       `encoded=${nav.encodedBodySize || 0}`,
       `decoded=${nav.decodedBodySize || 0}`,
@@ -720,8 +750,43 @@ function _formatAutoErrorText(payload) {
       `domInteractive=${nav.domInteractive || '-'}`,
       `domComplete=${nav.domComplete || '-'}`,
     ];
+    // 自前プロパティ判定にしないと、素の `em.toString` は Object.prototype.toString
+    // (native function) が常に truthy で、resource.error 等 errorMeta 無しケースでも
+    // "function toString() { [native code] }" を吐く（PR #332 デプロイ後に観測）。
+    const emHas = (k) => em && Object.prototype.hasOwnProperty.call(em, k);
+    if (emHas('name') || emHas('toString') || emHas('messageProp')) {
+      traceLines.push(
+        `error.name=${em.name || '-'}`,
+        `error.toString=${(emHas('toString') ? em.toString : null) || '-'}`,
+        `error.messageProp=${em.messageProp || '-'}`,
+      );
+    }
+    if (rt && (rt.tagName || rt.src || rt.href)) {
+      traceLines.push(
+        `resource.tag=<${rt.tagName || '?'}>`,
+        `resource.src=${rt.src || rt.href || rt.currentSrc || '-'}`,
+        `resource.id=${rt.id || '-'}`,
+        `resource.crossOrigin=${rt.crossOrigin || '-'}`,
+      );
+    }
     lines.push('*原因特定トレース*:');
     lines.push('```' + _truncate(traceLines.join('\n'), 1800) + '```');
+
+    // ソーススナップショット: window.onerror が報告した lineno/colno の実際の中身。
+    // 「2433:84 が </div> に見える」系の謎エラーを実体で特定するための切り札。
+    if (trace.sourceSnippet && typeof trace.sourceSnippet === 'object') {
+      const ss = trace.sourceSnippet;
+      const ssLines = [
+        `totalLines=${ss.totalLines || '-'}`,
+        `lineLen=${ss.lineLen || '-'}`,
+        `col=${ss.col || '-'}`,
+        `prevLine: ${ss.prevLine || ''}`,
+        `THIS:     ${ss.excerpt || ''}`,
+        `nextLine: ${ss.nextLine || ''}`,
+      ];
+      lines.push('*該当行スナップショット*:');
+      lines.push('```' + _truncate(ssLines.join('\n'), 1500) + '```');
+    }
   }
   // breadcrumbs: ユーザーの直前行動（最大 8 件、新→古の順で表示）
   if (Array.isArray(breadcrumbs) && breadcrumbs.length) {

@@ -1,8 +1,9 @@
-const CACHE_NAME = 'haruka-film-v1';
+const CACHE_NAME = 'haruka-film-v2';
 
 // キャッシュするスタティックリソース（アプリシェル）
+// 注意: /haruka.html は認証必須ページのため SW キャッシュ対象から除外する
+// （未ログイン時に addAll が失敗し SW install ごと壊れる事故を防ぐ）
 const STATIC_ASSETS = [
-  '/haruka.html',
   '/HARUKA%20FILM%20%E3%83%AD%E3%82%B4.png',
   '/manifest.json',
   'https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap',
@@ -47,11 +48,11 @@ self.addEventListener('fetch', event => {
     return; // APIはそのまま通す
   }
 
-  // HTMLファイル: ネットワーク優先（最新を取得、失敗時はキャッシュ）
+  // HTMLファイル: ネットワークのみ（認証必須のためキャッシュにフォールバックしない）
+  // 古い SW v1 が /haruka.html をキャッシュしていたため、シークレットモードでないと
+  // 動作しない不具合があった。v2 では navigate を一切キャッシュ介在させない。
   if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match('/haruka.html'))
-    );
+    event.respondWith(fetch(event.request));
     return;
   }
 

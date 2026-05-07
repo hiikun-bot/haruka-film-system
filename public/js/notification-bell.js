@@ -115,7 +115,11 @@ window.notificationBell = {
 };
 
 // イベント駆動で他モジュールから操作される
-document.addEventListener('notification:read',    () => incrementBadge(-1));
+//   notification:read の detail.count が指定されていれば（集約カードの一括既読等）その分減らす
+document.addEventListener('notification:read', (e) => {
+  const c = Number(e?.detail?.count);
+  incrementBadge(Number.isFinite(c) && c > 0 ? -c : -1);
+});
 document.addEventListener('notification:readAll', () => setBadgeCount(0));
 document.addEventListener('notification:incoming', () => {
   incrementBadge(1);

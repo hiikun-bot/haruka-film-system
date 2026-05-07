@@ -121,4 +121,23 @@ Stage 分割で段階適用（[feedback_db_migration_staging.md](../../../.claud
 4. **案件レベルの固定費** — スタジオレンタル等「本数依存しない案件固定費」は line_costs では表現できない → **[ADR 006](006-project-fixed-costs.md)** で別表現を定義
 
 ## 実装履歴
-（実装が始まったらここに migration ファイルを追記）
+
+- 2026-05-06: Stage 1 (migration のみ) — `migrations/2026-05-06_estimate_lines_and_fixed_items.sql`
+  - 新規: `project_estimate_lines` / `project_estimate_line_costs` / `project_fixed_items`
+  - 既存テーブル列追加: `creatives.line_id` / `invoice_items.line_id`
+  - データ移行・コード書き換えは Stage 2 以降で対応
+- 2026-05-06: Stage 2 (data migration) — `migrations/2026-05-06_migrate_rates_to_lines.sql`
+  - `project_rates` (rank A/B/C × video/design) → `project_estimate_lines` + `project_estimate_line_costs`(role=editor/designer)
+  - `project_director_rates` / `project_producer_rates` → `project_estimate_line_costs`(role=director/producer)。rank 不在のため同 (project, category) の全 lines に同額をコピー
+  - `project_rate_extras` → `project_fixed_items(item_type='expense', category='other')`
+  - `project_client_fees.{video|design}_unit_price` → 既存 lines の `client_unit_price` を UPDATE（無ければ新規 line 作成）
+  - `project_client_fees.fixed_budget` (use_fixed_budget=TRUE) → `project_fixed_items(item_type='revenue')`
+  - `creatives.line_id` を (project_id, category_id) + 編集者の rank で best-effort バックフィル
+  - 移行マーカは `name` の接尾辞 / `notes` のプレフィックスで識別（冪等性 & ロールバック用）
+  - **NOT 移行**: `projects.sub_director_ids` / `projects.sub_producer_ids`（fee 列が無いためデータ無し。サブD/サブP単価は Stage 4 UI で入力する想定）
+- 2026-05-06: data fix migration — `migrations/2026-05-06_finalize_migrated_lines.sql`
+  - Stage 2 で `status='estimated'` / `planned_count=0` のまま挿入された移行 line を、
+    Stage 3 の per-line 公式 (`client_unit_price × planned_count`) と
+    ADR 005 集計フィルタに乗せられるよう実用値に整える
+  - 移行 line の `status` を `in_progress` に進める（移行マーカ付きのみ）
+  - 移行 line の `planned_count` を紐付いた `creatives` 件数で埋める
