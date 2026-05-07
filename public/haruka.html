@@ -15584,7 +15584,10 @@ function _renderAnnouncementStatus() {
       ? `${esc(g.team_code)}チーム${g.team_name ? ' / ' + esc(g.team_name) : ''}`
       : '未所属';
     const memberRows = g.members.map(m => {
-      const leaderType = (m.user_id === g.director_id) ? 'director'
+      // ADR 008 Stage 1: g.leader_user_id（team_members.leader_rank='leader' 優先 / director_id フォールバック）
+      // を「リーダー」バッジ判定に使う。バックエンドが古い場合は director_id にフォールバック。
+      const leaderUserId = g.leader_user_id || g.director_id;
+      const leaderType = (m.user_id === leaderUserId) ? 'director'
         : (m.user_id === g.producer_id) ? 'producer'
         : null;
       return renderMemberRow(m, leaderType);

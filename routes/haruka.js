@@ -6241,6 +6241,27 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
     .select('id, team_code, team_name, director_id, producer_id').order('team_code');
   if (tErr) return res.status(500).json({ error: tErr.message });
 
+  // ADR 008 Stage 1: team_members.leader_rank='leader' でリーダー判定（director_id にフォールバック）
+  // migration 未適用環境では leader_rank 列が存在せず select が落ちる可能性があるため、
+  // try/catch でラップして欠損時は空 Map にする（既存挙動を壊さない）。
+  const teamLeaderMap = new Map(); // team_id -> leader user_id
+  try {
+    const { data: tmRows, error: tmErr } = await supabase
+      .from('team_members')
+      .select('team_id, user_id, leader_rank')
+      .eq('leader_rank', 'leader');
+    if (!tmErr && Array.isArray(tmRows)) {
+      tmRows.forEach(r => {
+        if (r.team_id && r.user_id) teamLeaderMap.set(r.team_id, r.user_id);
+      });
+    } else if (tmErr) {
+      // leader_rank 列未追加 / team_members 未作成の環境でも 500 にしない
+      console.warn('[announcement status] team_members leader_rank fetch skipped:', tmErr.message);
+    }
+  } catch (e) {
+    console.warn('[announcement status] team_members leader_rank fetch error:', e.message);
+  }
+
   const ackMap = new Map((acks || []).map(a => [a.user_id, a.done_at]));
   const baseMember = (m) => ({
     user_id: m.id,
@@ -6267,13 +6288,14 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
     else noTeam.push(baseMember(m));
   });
 
-  // 各チーム内の並び: ディレクター → プロデューサー → 残り（名前順）
+  // 各チーム内の並び: リーダー → プロデューサー → 残り（名前順）
+  // ADR 008 Stage 1: leader_user_id（team_members.leader_rank='leader' があれば優先 / 無ければ director_id）
   const ROLE_RANK = { admin: 0, secretary: 1, producer: 2, producer_director: 2, director: 3, designer: 4, editor: 5 };
-  function sortTeamMembers(arr, team) {
+  function sortTeamMembers(arr, team, leaderUserId) {
     return arr.slice().sort((a, b) => {
-      const aIsDir = a.user_id === team.director_id;
-      const bIsDir = b.user_id === team.director_id;
-      if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+      const aIsLeader = a.user_id === leaderUserId;
+      const bIsLeader = b.user_id === leaderUserId;
+      if (aIsLeader !== bIsLeader) return aIsLeader ? -1 : 1;
       const aIsProd = a.user_id === team.producer_id;
       const bIsProd = b.user_id === team.producer_id;
       if (aIsProd !== bIsProd) return aIsProd ? -1 : 1;
@@ -6288,13 +6310,16 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
   const groups = basicTeams
     .filter(t => (byTeam.get(t.id) || []).length > 0)
     .map(t => {
-      const sorted = sortTeamMembers(byTeam.get(t.id), t);
+      // leader_user_id 優先順位: team_members.leader_rank='leader' → teams.director_id
+      const leaderUserId = teamLeaderMap.get(t.id) || t.director_id || null;
+      const sorted = sortTeamMembers(byTeam.get(t.id), t, leaderUserId);
       return {
         team_id: t.id,
         team_code: t.team_code,
         team_name: t.team_name,
-        director_id: t.director_id,
+        director_id: t.director_id, // 後方互換のため残す
         producer_id: t.producer_id,
+        leader_user_id: leaderUserId, // ADR 008 Stage 1: バッジ判定はこれを優先
         members: sorted,
         done_count: sorted.filter(m => m.done_at).length,
         total_count: sorted.length,
@@ -6315,6 +6340,7 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
       team_name: '',
       director_id: null,
       producer_id: null,
+      leader_user_id: null,
       members: sortedNoTeam,
       done_count: sortedNoTeam.filter(m => m.done_at).length,
       total_count: sortedNoTeam.length,
