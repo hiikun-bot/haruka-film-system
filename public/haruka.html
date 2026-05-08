@@ -16060,7 +16060,8 @@ function closeTweetLightbox(e) {
   const overlay = document.getElementById('tweet-lightbox');
   const img = document.getElementById('tweet-lightbox-img');
   if (overlay) overlay.classList.remove('show');
-  if (img) img.src = '';
+  // img.src = '' は現在のページURLを再取得しに行き <img> リソースエラーを誘発するため removeAttribute を使う
+  if (img) img.removeAttribute('src');
   document.removeEventListener('keydown', _twLightboxKeyHandler);
 }
 
