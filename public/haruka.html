@@ -161,18 +161,18 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-fixed{position:sticky;left:0;background:#fff;border-right:0.5px solid var(--border);z-index:5}
 .cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
 .cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
-/* 5列レイアウト: クライアント/案件名 + クリエイティブ名 + 担当(アイコン+略称) + ステータス + 遅延 */
-.cv-g-row-fixed{display:grid;grid-template-columns:122px 164px 60px 100px 76px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
+/* 5列レイアウト（全モード共通）: クライアントコード/案件 + クリエイティブ名 + 担当(アバター) + ステータス + 遅延 */
+.cv-g-row-fixed{display:grid;grid-template-columns:50px 256px 40px 100px 76px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
 .cv-g-row-fixed:hover{background:#f0fbfa}
 .cv-g-row-fixed.is-late{background:rgba(239,68,68,0.05)}
 .cv-g-row-fixed.is-late:hover{background:rgba(239,68,68,0.09)}
-.cv-g-row-fixed > .c{padding:6px 10px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv-g-row-fixed .c-client{font-weight:500;color:var(--em-dark);line-height:1.25;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.cv-g-row-fixed .c-client small{display:block;font-weight:400;color:var(--text-muted);font-size:10px}
+.cv-g-row-fixed > .c{padding:6px 8px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.cv-g-row-fixed .c-client{font-weight:600;color:var(--em-dark);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;padding:6px 6px 6px 10px;letter-spacing:0.02em}
+.cv-g-row-fixed .c-client small{display:block;font-weight:400;color:var(--text-muted);font-size:9px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;font-size:12px;font-weight:500;letter-spacing:-0.01em}
 .cv-g-row-fixed .c-name:hover{color:var(--text);background:var(--em-pale);border-radius:4px}
-.cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:4px;justify-content:flex-start}
-.cv-g-row-fixed .c-assignee .team-mini{font-size:10px;color:var(--em-dark);background:var(--em-pale);border-radius:4px;padding:1px 4px;font-weight:600}
+.cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:4px;justify-content:center;padding:2px 4px}
+.cv-g-row-fixed .c-assignee .cv-g-unassigned{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#eee;color:#888;font-size:11px;font-weight:600}
 .cv-g-row-fixed .c-status{overflow:hidden;min-width:0}
 .cv-g-row-fixed .c-status .status-chip{font-size:10px;padding:2px 6px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .cv-g-row-fixed .c-delay{font-size:11px;font-weight:600;text-align:right;padding-right:12px}
@@ -180,33 +180,23 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-fixed .c-delay.warn{color:#E89B0E}
 .cv-g-row-fixed .c-delay.ok{color:var(--em-dark)}
 .cv-g-row-fixed .c-delay.done{color:#7FA68A}
-/* 案件別グループ見出し */
-/* 行高さは JS の groupHeadHeight に揃える（タイムライン側の空行と一致させる）。
-   折返しを禁止しないと、ラベルが長いとき左右の行高さがズレてガントが行ズレする。 */
-.cv-g-group-row{display:flex;align-items:center;gap:6px 8px;flex-wrap:nowrap;align-content:center;padding:0 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4;height:40px;box-sizing:border-box;overflow:hidden}
-.cv-g-group-row .gicount{font-weight:400;color:var(--text-muted);font-size:11px}
-/* 担当者別グループ見出し（強化版） */
-.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);padding:0 12px;gap:5px 10px;border-bottom:1px solid var(--em-light);height:48px}
-.cv-g-group-row.is-client{background:linear-gradient(to right,#F5EEFC,#FBF8FE);padding:0 12px;border-bottom:1px solid #D9C7F2}
-.cv-g-group-row.is-team{background:linear-gradient(to right,#E8F3FB,#F4F9FD);padding:0 12px;border-bottom:1px solid #C9DDEC}
-.cv-g-group-row .ga-icon{font-size:13px;line-height:1;flex:0 0 auto}
-.cv-g-group-row .ga-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv-g-group-row.is-assignee .ga-name{font-weight:700;color:var(--text)}
-.cv-g-group-row.is-assignee .ga-team{font-size:11px;color:var(--em-dark);background:#fff;border-radius:6px;padding:2px 7px;font-weight:600;flex:0 0 auto;white-space:nowrap}
-.cv-g-group-row.is-assignee .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:500;flex:0 0 auto}
-.cv-g-group-row.is-assignee .ga-stats .gs{padding:2px 7px;border-radius:6px;background:#fff;color:var(--em-dark)}
-.cv-g-group-row.is-assignee .ga-stats .gs.is-late{background:#FBEAEA;color:#A03030;font-weight:700}
-.cv-g-group-row.is-assignee .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
-/* 担当者別以外（案件別/クライアント別/チーム別）のバッジ列。
-   以前は flex:1 1 100% で 2行目に折返していたが、左右の行高さズレの原因になるため
-   1行右寄せに変更し、はみ出しは省略。 */
-.cv-g-group-row .ga-stats{display:inline-flex;gap:4px;margin-left:auto;font-size:10.5px;font-weight:500;min-width:0;flex:0 1 auto;overflow:hidden;white-space:nowrap}
-.cv-g-group-row .ga-stats .gs{padding:2px 6px;border-radius:6px;background:#fff;color:var(--em-dark);white-space:nowrap}
-.cv-g-group-row .ga-stats .gs.is-draft{background:#FFF4D9;color:#8A5A00;font-weight:700}
-.cv-g-group-row .ga-stats .gs.is-final{background:#FBEAEA;color:#A03030;font-weight:700}
-.cv-g-group-row .ga-stats .gs.is-late{background:#FBEAEA;color:#A03030;font-weight:700}
-.cv-g-group-row .ga-stats .gs.is-today{background:#FFF4D9;color:#8A5A00;font-weight:700}
-.cv-g-group-row .ga-stats .gs.is-load{background:#FAEEDA;color:#854F0B;font-weight:700}
+/* グループ見出し — 全モードで 40px 1行コンパクト表示 */
+.cv-g-group-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;padding:0 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4;height:40px;box-sizing:border-box;overflow:hidden}
+.cv-g-group-row.is-assignee{background:linear-gradient(to right,#CFEEEC,#E5F7F6);border-bottom:1px solid var(--em-light)}
+.cv-g-group-row.is-project{background:linear-gradient(to right,#FFF6E5,#FFFBF2);border-bottom:1px solid #F0DFB6}
+.cv-g-group-row.is-client{background:linear-gradient(to right,#F5EEFC,#FBF8FE);border-bottom:1px solid #D9C7F2}
+.cv-g-group-row.is-team{background:linear-gradient(to right,#E8F3FB,#F4F9FD);border-bottom:1px solid #C9DDEC}
+.cv-g-group-row .ga-icon{font-size:14px;line-height:1;flex:0 0 auto}
+.cv-g-group-row .ga-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;color:var(--text)}
+/* チーム色●（決定的に色付け）+ コードチップ */
+.cv-g-group-row .team-color-dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.08)}
+.cv-g-group-row .ga-team-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--em-dark);background:#fff;border-radius:6px;padding:2px 7px;flex:0 0 auto;white-space:nowrap}
+.cv-g-group-row .ga-team-chip .team-color-dot{width:8px;height:8px}
+.cv-g-group-row .ga-team-code{font-size:11px;font-weight:700;color:var(--em-dark);background:#fff;border-radius:6px;padding:1px 6px;flex:0 0 auto;letter-spacing:0.02em}
+/* 件数 + アラート集約 */
+.cv-g-group-row .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:600;flex:0 0 auto;align-items:center}
+.cv-g-group-row .ga-stats .ga-count{color:var(--text-muted);font-weight:500;font-size:11px}
+.cv-g-group-row .ga-stats .ga-alert{background:#FBEAEA;color:#A03030;font-weight:700;border-radius:6px;padding:2px 7px;font-size:11px;letter-spacing:0.02em}
 /* タイムライン部 */
 .cv-g-timeline-head{position:sticky;top:0;display:flex;background:var(--em-pale);border-bottom:0.5px solid var(--border);z-index:5;height:34px}
 .cv-g-tl-day{flex:0 0 auto;border-right:0.5px solid var(--border-light);color:var(--em-dark);text-align:center;padding-top:3px;line-height:1.15;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;overflow:hidden}
@@ -345,7 +335,8 @@ tr.row-help td{background:#FFFBF2}
   .cv-g-scroll{max-height:calc(100vh - 140px)}
 }
 @media (max-width:768px){
-  .cv-g-row-fixed{grid-template-columns:100px 116px 50px 90px 74px}
+  /* モバイルでは c-name を圧縮（その他は微縮）して 422px に収める。新レイアウト統一版。 */
+  .cv-g-row-fixed{grid-template-columns:40px 196px 36px 86px 64px}
 }
 
 /* ─── クリエイティブ コンパクトツールバー（最大2行） ─── */
@@ -9770,14 +9761,20 @@ function renderCreativesGantt(filtered, warningSource) {
       label = teamLabel;
       meta = { kind: 'team', team: team || null };
     } else {
-      const cli = r.c.projects?.clients?.name || '不明クライアント';
+      const cliObj = r.c.projects?.clients;
+      const cli = cliObj?.name || '不明クライアント';
       const proj = r.c.projects?.name || '案件未設定';
-      key = `${r.c.projects?.id || 'none'}::${r.c.projects?.clients?.id || 'none'}`;
+      key = `${r.c.projects?.id || 'none'}::${cliObj?.id || 'none'}`;
       label = `${cli} / ${proj}`;
-      meta = { kind: 'project' };
+      meta = { kind: 'project', client: cliObj || null, projectName: proj, team: r.team };
     }
     if (!groups.has(key)) groups.set(key, { label, items: [], meta });
-    groups.get(key).items.push(r);
+    const grp = groups.get(key);
+    grp.items.push(r);
+    // project meta: 代表チームを補完（最初に見つかった team を保持）
+    if (grp.meta && grp.meta.kind === 'project' && !grp.meta.team && r.team) {
+      grp.meta.team = r.team;
+    }
   });
 
   // ── 共通ロジック: 1行のタイムライン描画（案件別/担当者別 共通）
@@ -9886,12 +9883,15 @@ function renderCreativesGantt(filtered, warningSource) {
     return s || '';
   };
 
-  // 固定列（左）の HTML — assignee は アイコン+チーム略称（ホバーで氏名）
+  // 固定列（左）の HTML — 全グルーピングモードで同じレイアウト
+  // c-client は「クライアントコード（または名先頭3文字）/ 案件名」、c-assignee はアバターのみ。
   const renderFixedRow = (r) => {
     const { c, info, editorUser, team } = r;
-    const clientName = c.projects?.clients?.name || '-';
+    const cliObj = c.projects?.clients;
+    const clientName = cliObj?.name || '-';
     const projName = c.projects?.name || '';
-    const teamLabel = _cvTeamShort(team);
+    const clientCode = (cliObj?.client_code && String(cliObj.client_code).trim())
+      || (clientName ? clientName.slice(0, 3) : '-');
     // ホバー時のラベル: 「フルネーム（ニックネーム） / 〇〇チーム」 形式。フルネームが取れない場合はニックネームのみ。
     let personLabel = '';
     if (editorUser) {
@@ -9906,35 +9906,27 @@ function renderCreativesGantt(filtered, warningSource) {
       const code = team.team_code || '';
       const name = team.team_name || '';
       const baseRaw = name || code;
-      // baseRaw が既に「チーム」で終わるなら追加しない
       if (/チーム$/.test(baseRaw)) return name && code && name !== code ? `${code} / ${name}` : baseRaw;
       if (code && name && name !== code) return `${code} / ${name}チーム`;
       return `${baseRaw}チーム`;
     })();
     const teamSuffix = _teamFullLabel ? ` / ${_teamFullLabel}` : '';
     const fullNameTitle = editorUser ? `${personLabel}${teamSuffix}`.trim() : '未アサイン';
-    // チーム略称チップは「担当者別」グルーピング時のみ表示する（他モードでは冗長 or グループ見出しに含まれているため）。
-    const teamChipHtml = (showRowTeamChip && teamLabel)
-      ? `<span class="team-mini" title="${esc(fullNameTitle)}">${esc(teamLabel)}</span>`
-      : '';
-    const unassignedTeamChip = (showRowTeamChip && teamLabel)
-      ? `<span class="team-mini">${esc(teamLabel)}</span>`
-      : '';
+    // 担当者列はアバターのみ。チーム色●チップは廃止（チームはグループヘッダーで表示）。
     const assignee = editorUser
-      ? `${(typeof avatarHtml === 'function' ? avatarHtml(editorUser, 22, { title: fullNameTitle }) : '')}${teamChipHtml}`
-      : `<span class="team-mini" title="未アサイン" style="background:#eee;color:#888">未</span>${unassignedTeamChip}`;
-    // クリエイティブ名の表示: 長すぎるファイル名は中央省略。
-    // 担当列のチーム略称を省く（=c-name 列が広い）モードではより多くの文字を残す。
+      ? (typeof avatarHtml === 'function' ? avatarHtml(editorUser, 24, { title: fullNameTitle }) : '')
+      : `<span class="cv-g-unassigned" title="未アサイン">未</span>`;
+    // クリエイティブ名の表示: 長すぎるファイル名は中央省略。c-name は 256px 幅。
     const rawName = c.file_name || '';
-    const nameMax = showRowTeamChip ? 19 : 23;
-    const headLen = showRowTeamChip ? 7 : 10;
-    const tailLen = showRowTeamChip ? 9 : 11;
+    const nameMax = 28;
+    const headLen = 12;
+    const tailLen = 14;
     const displayName = (rawName.length > nameMax)
       ? `${rawName.slice(0, headLen)}…${rawName.slice(-tailLen)}`
       : rawName;
     return `
       <div class="cv-g-row-fixed ${info.isLate?'is-late':''}" data-id="${c.id}" style="grid-template-columns:${fixedColTpl}">
-        <div class="c c-client" title="${esc(clientName)}${projName?` / ${esc(projName)}`:''}">${esc(clientName)}${projName?`<small>${esc(projName)}</small>`:''}</div>
+        <div class="c c-client" title="${esc(clientName)}${projName?` / ${esc(projName)}`:''}">${esc(clientCode)}${projName?`<small>${esc(projName)}</small>`:''}</div>
         <div class="c c-name" title="${esc(rawName)}" onclick="openCreativeDetail('${c.id}')">${esc(displayName)}</div>
         <div class="c c-assignee" title="${esc(fullNameTitle)}">${assignee}</div>
         <div class="c c-status" title="${esc(c.status || '')}"><span class="status-chip ${statusClass(c.status)}">${esc(statusShortLabel(c.status))}</span></div>
@@ -9947,15 +9939,10 @@ function renderCreativesGantt(filtered, warningSource) {
     return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
   };
 
-  // 固定列の枠（5列）
-  // groupBy が「担当者別」のときは行ごとにチーム略称チップを出すので 担当列を 60px 確保。
-  // それ以外（案件別/クライアント別/チーム別）はチームチップを省略し、
-  // 余った 20px をクリエイティブ名カラムに回してファイル名 truncate を緩和する。
-  // 「遅延」列は 76px 確保（"予定通り" など5文字を省略なし表示できる幅）。
-  const showRowTeamChip = (currentCreativeGroup === 'assignee');
-  const fixedColTpl = showRowTeamChip
-    ? `122px 164px 60px 100px 76px`
-    : `122px 184px 40px 100px 76px`;
+  // 固定列の枠（5列）— 全グルーピングモードで同じレイアウト。
+  // c-client(50px) はクライアントコード/案件名、c-name(256px) はファイル名、
+  // c-assignee(40px) はアバターのみ、c-status(100px)、c-delay(76px)。合計 522px。
+  const fixedColTpl = `50px 256px 40px 100px 76px`;
   const FIXED_W = 522; // 合計幅は不変（左固定領域のレイアウト崩れを避ける）
 
   // チーム表記の重複「〜チームチーム」を防ぐヘルパ。team_name が既に「チーム」で終わっていればそのまま使う。
@@ -9970,18 +9957,43 @@ function renderCreativesGantt(filtered, warningSource) {
     return '';
   };
 
-  // グループ見出し（担当者別は強化版 / クライアント・チーム別も対応）
+  // チームコード抽出（短縮表記）。team_code が無い場合は team_name 先頭3文字。
+  const formatTeamCode = (team) => {
+    if (!team) return '';
+    if (team.team_code) return String(team.team_code).toUpperCase();
+    let n = team.team_name || '';
+    n = n.replace(/チーム$/, '');
+    return n.length > 3 ? n.slice(0, 3) : n;
+  };
+  // チーム識別キーから決定的な HSL 色を生成（同じチームは常に同じ色）。
+  const teamDotColor = (team) => {
+    if (!team) return '#cbd5e1';
+    const seed = String(team.team_code || team.team_name || team.id || '');
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+    const hue = Math.abs(h) % 360;
+    return `hsl(${hue}, 60%, 55%)`;
+  };
+  // チーム色●チップ（ホバーでフルラベル）。team が無ければ空文字。
+  const teamDotChip = (team) => {
+    if (!team) return '';
+    const color = teamDotColor(team);
+    const code = formatTeamCode(team);
+    const fullLabel = formatTeamLabel(team);
+    return `<span class="ga-team-chip" title="${esc(fullLabel)}"><span class="team-color-dot" style="background:${color}"></span>${esc(code)}</span>`;
+  };
+
+  // グループ見出し — アイコン中心の1行コンパクト表示（全モード40px固定）
   const renderGroupHeader = (g) => {
     const stats = _cvGroupStats(g.items, win.today);
-    // ゼロ件バッジは出さない（要件 #2）
-    const chips = [];
-    chips.push(`<span class="gs">${stats.total}件</span>`);
-    if (stats.draftSoon > 0) chips.push(`<span class="gs is-draft">初稿7日:${stats.draftSoon}</span>`);
-    if (stats.finalSoon > 0) chips.push(`<span class="gs is-final">納品7日:${stats.finalSoon}</span>`);
-    if (stats.late > 0) chips.push(`<span class="gs is-late">遅延:${stats.late}</span>`);
-    if (stats.today > 0) chips.push(`<span class="gs is-today">本日:${stats.today}</span>`);
-    if (stats.loadAttention > 0) chips.push(`<span class="gs is-load">重なり:${stats.loadAttention}</span>`);
-    const statsHtml = `<span class="ga-stats">${chips.join('')}</span>`;
+    const alertSum = (stats.draftSoon || 0) + (stats.finalSoon || 0)
+                   + (stats.late || 0) + (stats.today || 0) + (stats.loadAttention || 0);
+    const alertTitle = `初稿7日:${stats.draftSoon} 納品7日:${stats.finalSoon} 遅延:${stats.late} 本日:${stats.today} 重なり:${stats.loadAttention}`;
+    const countHtml = `<span class="ga-count">${stats.total}件</span>`;
+    const alertHtml = alertSum > 0
+      ? `<span class="ga-alert" title="${esc(alertTitle)}">⚠${alertSum}</span>`
+      : '';
+    const statsHtml = `<span class="ga-stats">${countHtml}${alertHtml}</span>`;
 
     const meta = g.meta || {};
     if (meta.kind === 'assignee') {
@@ -9999,33 +10011,51 @@ function renderCreativesGantt(filtered, warningSource) {
         groupTitle = teamLabel ? `${pl} / ${teamLabel}` : pl;
       }
       const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 24, { title: groupTitle }) : '')
-                   : `<span style="display:inline-flex;width:24px;height:24px;border-radius:50%;background:#ddd;align-items:center;justify-content:center;font-size:11px;color:#888" title="未アサイン">未</span>`;
+                   : `<span class="cv-g-unassigned" style="width:24px;height:24px;font-size:11px" title="未アサイン">未</span>`;
       const dispName = u ? (u.full_name || u.nickname || '名無し') : '未アサイン';
       return `<div class="cv-g-group-row is-assignee" style="width:${FIXED_W}px">
         ${av}
         <span class="ga-name">${esc(dispName)}</span>
-        ${teamLabel ? `<span class="ga-team">${esc(teamLabel)}</span>` : ''}
+        ${teamDotChip(team)}
+        ${statsHtml}
+      </div>`;
+    }
+    if (meta.kind === 'project') {
+      const cliName = meta.client?.name || '不明クライアント';
+      const projName = meta.projectName || '案件未設定';
+      const team = meta.team;
+      return `<div class="cv-g-group-row is-project" style="width:${FIXED_W}px">
+        <span class="ga-icon" aria-hidden="true">🎬</span>
+        <span class="ga-name" title="${esc(cliName)} ・ ${esc(projName)}">${esc(cliName)} ・ ${esc(projName)}</span>
+        ${teamDotChip(team)}
         ${statsHtml}
       </div>`;
     }
     if (meta.kind === 'client') {
+      const cliName = meta.client?.name || g.label || '';
       return `<div class="cv-g-group-row is-client" style="width:${FIXED_W}px">
         <span class="ga-icon" aria-hidden="true">🏷</span>
-        <span class="ga-name">${esc(g.label)}</span>
+        <span class="ga-name" title="${esc(cliName)}">${esc(cliName)}</span>
         ${statsHtml}
       </div>`;
     }
     if (meta.kind === 'team') {
+      const team = meta.team;
+      const teamName = team?.team_name || g.label || 'チーム未設定';
+      const code = formatTeamCode(team);
+      const color = teamDotColor(team);
+      const fullLabel = formatTeamLabel(team) || teamName;
       return `<div class="cv-g-group-row is-team" style="width:${FIXED_W}px">
-        <span class="ga-icon" aria-hidden="true">👥</span>
-        <span class="ga-name">${esc(g.label)}</span>
+        <span class="team-color-dot" style="background:${color}" title="${esc(fullLabel)}"></span>
+        ${code ? `<span class="ga-team-code">${esc(code)}</span>` : ''}
+        <span class="ga-name" title="${esc(fullLabel)}">${esc(teamName)}</span>
         ${statsHtml}
       </div>`;
     }
-    return `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span class="ga-name">${esc(g.label)}</span>${statsHtml}</div>`;
+    return `<div class="cv-g-group-row" style="width:${FIXED_W}px"><span class="ga-name" title="${esc(g.label)}">${esc(g.label)}</span>${statsHtml}</div>`;
   };
-  // グループヘッダー高さ（担当者別: 大きめ、その他: 標準）
-  const groupHeadHeight = (currentCreativeGroup === 'assignee') ? 48 : 40;
+  // グループヘッダー高さ — 全モード40pxで統一
+  const groupHeadHeight = 40;
 
   // 行をグループ単位で構築（左列・タイムライン共通の renderTimelineRow を使用）
   let fixedHtml = '';
