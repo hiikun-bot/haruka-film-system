@@ -9552,15 +9552,19 @@ function _validateBbox(bbox) {
 }
 
 // ファイルのコメント一覧
+//
+// レスポンスには parent_comment_id を含む（フロント側でツリー化する flat 設計）。
+// migration 未適用環境では parent_comment_id 列が無いため、同じ _isMissingCfcColumn
+// フォールバックで列指定取得に切り替える。
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   let { data, error } = await supabase
     .from('creative_file_comments')
     .select('*, users(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
-  // bbox 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
+  // bbox / parent_comment_id 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
   if (_isMissingCfcColumn(error)) {
-    console.warn('[creative-file-comments] bbox列なし疑い → 明示列指定で再取得:', error.message);
+    console.warn('[creative-file-comments] 列欠損疑い → 明示列指定で再取得:', error.message);
     ({ data, error } = await supabase
       .from('creative_file_comments')
       .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users(id, full_name, role, avatar_url)')
@@ -9571,12 +9575,34 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   res.json(await enrichCommentCategories(data));
 });
 
-// コメント追加
+// コメント追加（返信対応）
+//
+// parent_comment_id を受け取った場合は返信扱い:
+//   ・親コメントが同じ creative_file_id に属することを検証（クロスファイル参照防止）
+//   ・通知は親コメント投稿者に飛ばす（自分自身への返信は除外）
+// parent_comment_id が無い場合は新規ルートコメント:
+//   ・通知は creative_assignments の編集者全員に飛ばす（自分自身は除外）
 router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { comment, timecode, is_knowledge, category_id, bbox } = req.body;
+  const { comment, timecode, is_knowledge, category_id, bbox, parent_comment_id } = req.body;
   if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
   const bboxCheck = _validateBbox(bbox);
   if (!bboxCheck.ok) return res.status(400).json({ error: bboxCheck.error });
+
+  // 返信の場合: 親コメントが同じファイルに属することを確認
+  let parentComment = null;
+  if (parent_comment_id) {
+    const { data: parent, error: pErr } = await supabase
+      .from('creative_file_comments')
+      .select('id, creative_file_id, user_id, comment')
+      .eq('id', parent_comment_id)
+      .maybeSingle();
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    if (!parent) return res.status(400).json({ error: '返信先のコメントが見つかりません' });
+    if (parent.creative_file_id !== req.params.fid) {
+      return res.status(400).json({ error: '返信先のコメントが別ファイルに属しています' });
+    }
+    parentComment = parent;
+  }
 
   const basePayload = {
     creative_file_id: req.params.fid,
@@ -9586,6 +9612,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     is_knowledge: !!is_knowledge,
     category_id: category_id || null,
   };
+  if (parent_comment_id) basePayload.parent_comment_id = parent_comment_id;
   const fullPayload = bboxCheck.value
     ? { ...basePayload, bbox: bboxCheck.value }
     : basePayload;
@@ -9595,17 +9622,102 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     .insert(fullPayload)
     .select('*, users(id, full_name, role, avatar_url)')
     .single();
-  // bbox 列が未追加の環境では bbox を外して再試行（500を返さない）
-  if (_isMissingCfcColumn(error) && bboxCheck.value) {
-    console.warn('[creative-file-comments] bbox列なし → bbox を外して再試行:', error.message);
+  // bbox / parent_comment_id 列が未追加の環境では順番にフォールバック（500を返さない）
+  if (_isMissingCfcColumn(error)) {
+    console.warn('[creative-file-comments] 列欠損 → 列を外して再試行:', error.message);
+    // まず parent_comment_id を外す（migration 未適用ケース）
+    const fallbackPayload = { ...fullPayload };
+    delete fallbackPayload.parent_comment_id;
     ({ data, error } = await supabase
       .from('creative_file_comments')
-      .insert(basePayload)
+      .insert(fallbackPayload)
       .select('*, users(id, full_name, role, avatar_url)')
       .single());
+    // それでもダメなら bbox も外す
+    if (_isMissingCfcColumn(error) && bboxCheck.value) {
+      ({ data, error } = await supabase
+        .from('creative_file_comments')
+        .insert(basePayload)
+        .select('*, users(id, full_name, role, avatar_url)')
+        .single());
+    }
   }
   if (error) return res.status(500).json({ error: error.message });
   const [enriched] = await enrichCommentCategories([data]);
+
+  // 通知発火（主処理は止めない — 失敗は console.warn）
+  // 返信なら親コメント投稿者へ、新規なら担当者全員へ
+  (async () => {
+    try {
+      const senderId = req.user?.id || null;
+      const senderName = req.user?.nickname || req.user?.full_name || '誰か';
+      const excerpt = (data.comment || '').length > 80
+        ? data.comment.slice(0, 80) + '…'
+        : (data.comment || '');
+
+      // creative_id を引きにいく（link_url / 通知タイトル用）
+      const { data: cf } = await supabase
+        .from('creative_files')
+        .select('creative_id, creatives(id, file_name)')
+        .eq('id', req.params.fid)
+        .maybeSingle();
+      const creativeId = cf?.creative_id || null;
+      const creativeName = cf?.creatives?.file_name || null;
+      const linkUrl = creativeId ? `/haruka.html?creative=${creativeId}` : '/haruka.html';
+
+      if (parentComment && parentComment.user_id && parentComment.user_id !== senderId) {
+        // 返信通知 → 親コメント投稿者へ
+        await createNotification({
+          userId: parentComment.user_id,
+          type: 'post_comment',
+          title: `${senderName}さんがあなたのコメントに返信しました`,
+          body: excerpt,
+          linkUrl,
+          meta: {
+            creative_id: creativeId,
+            creative_file_id: req.params.fid,
+            comment_id: data.id,
+            parent_comment_id: parentComment.id,
+            kind: 'creative_file_comment_reply',
+          },
+          senderId,
+        });
+      } else if (!parent_comment_id && creativeId) {
+        // 新規コメント通知 → creative_assignments の担当者全員へ（自分は除外）
+        const { data: assignees } = await supabase
+          .from('creative_assignments')
+          .select('user_id')
+          .eq('creative_id', creativeId);
+        const recipientIds = Array.from(new Set(
+          (assignees || [])
+            .map(a => a.user_id)
+            .filter(uid => uid && uid !== senderId)
+        ));
+        if (recipientIds.length > 0) {
+          const titleBase = creativeName
+            ? `${senderName}さんが「${creativeName}」にコメントしました`
+            : `${senderName}さんがクリエイティブにコメントしました`;
+          await Promise.all(recipientIds.map(uid => createNotification({
+            userId: uid,
+            type: 'post_comment',
+            title: titleBase,
+            body: excerpt,
+            linkUrl,
+            meta: {
+              creative_id: creativeId,
+              creative_file_id: req.params.fid,
+              comment_id: data.id,
+              kind: 'creative_file_comment_new',
+            },
+            senderId,
+          })));
+        }
+      }
+    } catch (e) {
+      console.warn('[creative-file-comments] 通知発火失敗:', e.message);
+    }
+  })();
+
   res.json(enriched);
 });
 
