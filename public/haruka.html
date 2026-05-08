@@ -25460,43 +25460,42 @@ function _renderFpCommentHtml(c, isReply) {
   // 引用ボタン: 親/返信どちらにも表示。クリックで「連絡・確認事項」textarea にコメントを Markdown 引用ブロックで挿入
   const quoteBtn =
     `<button onclick="quoteCommentToEditorReply('${c.id}')" class="fp-quote-btn" title="連絡・確認事項に引用">💬 引用</button>`;
-  // 役職バッジ（誰がディレクター/編集者なのか視覚的にわかるように）
-  const roleInfo = (() => {
+  // 役職を avatar の title (ホバー) に含めて、ヘッダーから名前/ロールバッジを取り除いても誰のコメントか分かるようにする
+  const roleLabel = (() => {
     const r = c.users?.role;
     switch(r) {
-      case 'admin': return { label: '管理者', bg: '#6b7280', fg: '#f9fafb' };
-      case 'secretary': return { label: '事務', bg: '#6b7280', fg: '#f9fafb' };
-      case 'producer': return { label: 'プロデューサー', bg: '#2563eb', fg: '#eff6ff' };
-      case 'producer_director': return { label: 'P/D', bg: '#2563eb', fg: '#eff6ff' };
-      case 'director': return { label: 'ディレクター', bg: '#f59e0b', fg: '#78350f' };
-      case 'editor': return { label: '編集者', bg: '#3ECFCA', fg: '#064e4d' };
-      case 'designer': return { label: 'デザイナー', bg: '#a855f7', fg: '#faf5ff' };
-      default: return null;
+      case 'admin': return '管理者';
+      case 'secretary': return '事務';
+      case 'producer': return 'プロデューサー';
+      case 'producer_director': return 'P/D';
+      case 'director': return 'ディレクター';
+      case 'editor': return '編集者';
+      case 'designer': return 'デザイナー';
+      default: return '';
     }
   })();
-  const roleBadge = roleInfo
-    ? `<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:${roleInfo.bg};color:${roleInfo.fg};white-space:nowrap;letter-spacing:0.02em">${roleInfo.label}</span>`
-    : '';
+  const userObj = c.users || { full_name: '不明' };
+  const avatarTitle = roleLabel
+    ? `${userObj.full_name || '不明'}（${roleLabel}）`
+    : (userObj.full_name || '不明');
   const itemStyle = isReply
     ? `margin:8px 0 0 18px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:2px solid #3ECFCA;border-top:0.5px solid var(--border);border-right:0.5px solid var(--border);border-bottom:0.5px solid var(--border)`
     : `margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s`;
   return `
     <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" data-parent-id="${c.parent_comment_id || ''}" style="${itemStyle}">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0">
           ${tcBadge}
           ${bboxBadge}
-          ${avatarHtml(c.users || { full_name: '不明' }, isReply ? 32 : 40)}
-          <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
-          ${roleBadge}
+          ${avatarHtml(userObj, isReply ? 28 : 32, { title: avatarTitle })}
           ${knowledgeBadge}
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;min-width:0">
           ${quoteBtn}
           ${replyBtn}
-          <span style="font-size:10px;color:var(--text-muted)">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-          ${c.user_id === currentUser?.id ? `<button onclick="startEditComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:12px;padding:0;line-height:1" title="編集">✏️</button>` : ''}
-          ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1" title="削除">✕</button>` : ''}
+          <span style="font-size:10px;color:var(--text-muted);white-space:nowrap">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+          ${c.user_id === currentUser?.id ? `<button onclick="startEditComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:12px;padding:0;line-height:1;flex-shrink:0" title="編集">✏️</button>` : ''}
+          ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1;flex-shrink:0" title="削除">✕</button>` : ''}
         </div>
       </div>
       <div id="fp-comment-text-${c.id}" style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
