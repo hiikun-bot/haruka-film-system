@@ -2445,6 +2445,12 @@ window.showPage = window.showPage || function(name, btn) {
         <input id="vle-related-url" class="form-input" placeholder="https://...">
       </div>
     </div>
+    <div class="form-group" id="vle-is-hidden-wrap">
+      <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px">
+        <input type="checkbox" id="vle-is-hidden">
+        非表示にする（全員から見えなくする）
+      </label>
+    </div>
     <div class="modal-footer">
       <button id="vle-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteVerupEntry()">削除</button>
       <button class="btn" onclick="closeModal('modal-verup-editor')">キャンセル</button>
@@ -29200,7 +29206,9 @@ function _verupEsc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function _verupIsAdmin() {
-  return (currentUser?.role === 'admin') || (typeof isSuperAdmin === 'function' && isSuperAdmin());
+  // VIEW AS でロール切替中は previewRole 基準で判定（実 admin が designer 視点中なら false）
+  const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+  return role === 'admin';
 }
 function _verupFmtDate(s) {
   if (!s) return '';
@@ -29240,6 +29248,7 @@ async function loadVerupUnreadCount() {
 
 async function openVerupModal() {
   openModal('modal-verup');
+  // 「新規追加」ボタンは admin のみ
   const addBtn = document.getElementById('verup-add-btn');
   const isAdmin = _verupIsAdmin();
   if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
@@ -29270,7 +29279,11 @@ function renderVerupList() {
   const onlyUnread = document.getElementById('verup-filter-unread')?.checked || false;
   const isAdmin = _verupIsAdmin();
 
+  // 非 admin（VIEW AS で別ロール視点中の admin も含む）は is_hidden を見せない。
+  // バックエンドの API は実ユーザーの role で判定するため、VIEW AS 中の admin にも
+  // is_hidden=true が返ってくる。プレビューの整合性のためフロントで除外する。
   let rows = _verupCache.slice();
+  if (!isAdmin) rows = rows.filter(r => !r.is_hidden);
   if (fcat) rows = rows.filter(r => r.category === fcat);
   if (fimp) rows = rows.filter(r => r.importance === fimp);
   if (onlyUnread) rows = rows.filter(r => !r.is_read);
@@ -29293,6 +29306,8 @@ function renderVerupList() {
     const impColor = VERUP_IMPORTANCE_COLOR[r.importance] || '#6B7280';
     const importantBadge = r.importance === 'high'
       ? `<span style="background:${impColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_verupEsc(impLabel)}</span>` : '';
+    const hiddenBadge = r.is_hidden
+      ? `<span style="background:#9CA3AF;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">非表示</span>` : '';
     const unreadDot = !r.is_read
       ? `<span style="display:inline-block;width:8px;height:8px;background:#E24B4A;border-radius:50%;margin-right:6px;vertical-align:middle" title="未読"></span>` : '';
     const tagsHtml = (r.tags || []).map(t => `<span style="background:#EEF2F7;color:#374151;padding:2px 8px;border-radius:10px;font-size:11px">#${_verupEsc(t)}</span>`).join(' ');
@@ -29309,7 +29324,9 @@ function renderVerupList() {
       ? `<a href="${_verupEsc(r.related_url)}" target="_blank" rel="noopener" style="font-size:11px;color:#3B82F6">関連リンク ↗</a>` : '';
     const editBtn = isAdmin
       ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='editVerupEntry(${JSON.stringify(r.id)})'>編集</button>` : '';
-    const adminBtns = editBtn;
+    const hideBtn = isAdmin
+      ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='toggleVerupVisibility(${JSON.stringify(r.id)}, ${!r.is_hidden})'>${r.is_hidden ? '表示する' : '非表示にする'}</button>` : '';
+    const adminBtns = `${editBtn} ${hideBtn}`;
 
     return `
     <div data-vid="${_verupEsc(r.id)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;background:${r.is_read ? '#fff' : '#F0FDFA'};transition:background .2s">
@@ -29317,6 +29334,7 @@ function renderVerupList() {
         ${unreadDot}
         <span style="background:${catColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_verupEsc(catLabel)}</span>
         ${importantBadge}
+        ${hiddenBadge}
         <span style="font-family:monospace;font-size:11px;color:var(--text-muted)">${_verupRevisionLabel(r.revision_no)}${r.version_label ? ' / ' + _verupEsc(r.version_label) : ''}</span>
         <span style="font-size:11px;color:var(--text-muted)">${_verupEsc(_verupFmtDate(r.released_at))}</span>
         <span style="flex:1"></span>
@@ -29359,6 +29377,27 @@ async function markAllVerupRead() {
   } catch (_) {}
 }
 
+async function toggleVerupVisibility(id, nextHidden) {
+  if (!_verupIsAdmin()) return;
+  try {
+    const res = await fetch(`/api/haruka/version-logs/${encodeURIComponent(id)}/visibility`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_hidden: !!nextHidden })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '更新に失敗しました');
+      return;
+    }
+    const updated = await res.json();
+    const idx = _verupCache.findIndex(r => r.id === id);
+    if (idx >= 0) _verupCache[idx] = { ..._verupCache[idx], ...updated };
+    renderVerupList();
+    loadVerupUnreadCount();
+  } catch (e) { alert(e.message); }
+}
+
 function openVerupEditor() {
   if (!_verupIsAdmin()) return;
   document.getElementById('verup-editor-title').textContent = '新規追加';
@@ -29376,6 +29415,7 @@ function openVerupEditor() {
   document.getElementById('vle-use-case').value = '';
   document.getElementById('vle-tags').value = '';
   document.getElementById('vle-related-url').value = '';
+  document.getElementById('vle-is-hidden').checked = false;
   document.querySelectorAll('#vle-target-roles input[type=checkbox]').forEach(cb => { cb.checked = (cb.value === 'all'); });
   document.getElementById('vle-delete-btn').style.display = 'none';
   openModal('modal-verup-editor');
@@ -29402,6 +29442,7 @@ function editVerupEntry(id) {
   document.getElementById('vle-use-case').value = r.use_case || '';
   document.getElementById('vle-tags').value = (r.tags || []).join(', ');
   document.getElementById('vle-related-url').value = r.related_url || '';
+  document.getElementById('vle-is-hidden').checked = !!r.is_hidden;
   const tr = new Set(r.target_roles || ['all']);
   document.querySelectorAll('#vle-target-roles input[type=checkbox]').forEach(cb => { cb.checked = tr.has(cb.value); });
   document.getElementById('vle-delete-btn').style.display = '';
@@ -29428,6 +29469,7 @@ async function submitVerupEntry() {
     target_roles: target_roles.length ? target_roles : ['all'],
     tags,
     related_url: document.getElementById('vle-related-url').value.trim() || null,
+    is_hidden: document.getElementById('vle-is-hidden').checked,
   };
   if (!payload.screen || !payload.feature || !payload.description) {
     alert('画面 / 機能 / 修正の要約は必須です');
