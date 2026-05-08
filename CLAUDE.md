@@ -164,6 +164,15 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - ブランチ保護でCI通過必須にしている場合、CIが通った瞬間にマージされる
 - 解除したいときは `auto-merge` ラベルを外す、または `gh pr merge <PR> --disable-auto` で解除
 
+### Verup情報（必須）— ユーザー向け改訂履歴の自動掲載
+- すべての PR は **PR本文の `## 🆙 Verup情報` セクションを記入**して出すこと（テンプレに含まれている）
+- `main` にマージされた瞬間に `.github/workflows/version-log-from-merged-pr.yml` が走り、Supabase の `version_logs` に INSERT される。**ヘッダーの🆙アイコン → Verup情報 一覧** で誰でも見える状態になる
+- 必須フィールド: `画面 / 機能 / 修正`（空欄だと自動登録されない）
+- 任意: `変更前 / 変更後 / 便利なシーン / 種別 / 重要度 / 対象ロール / タグ / バージョン`
+- **掲載したくない PR**（refactor / 内部整理 / chore / dep-bump 等）はセクションごと丸ごと削除するか、`skip-verup` ラベルを付与する
+- **書き方の指針**: ユーザー目線で書く。「リファクタしました」ではなく「クリック1回で〇〇できるようになった」のように、何が便利になったかを書く
+- サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker 等）も例外なく Verup情報セクションを記入すること
+
 ### DB migration を含む PR（必読）
 - `migrations/**` または `supabase_schema.sql` を変更する PR は、CI が **`needs-db-migration` ラベルを自動付与** します（`.github/workflows/migration-reminder.yml`）
 - このラベルが付いている PR は、**本番Supabaseで適用 → `db-migration-applied` ラベルを手動付与** して初めて `migration-applied` チェックが pass します
