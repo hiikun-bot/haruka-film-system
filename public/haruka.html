@@ -2281,6 +2281,137 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   </div>
 </div>
 
+<!-- ==================== Verup情報モーダル ==================== -->
+<div class="modal-overlay" id="modal-verup">
+  <div class="modal-card" style="width:min(960px,95vw);max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-title">
+      🆙 Verup情報（システム改訂履歴）
+      <button class="modal-close" onclick="closeModal('modal-verup')">×</button>
+    </div>
+    <div id="verup-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0 10px;border-bottom:1px solid var(--border);margin-bottom:10px">
+      <input id="verup-search" class="form-input" placeholder="🔍 画面 / 機能 / タグで検索" style="flex:1;min-width:180px;max-width:260px" oninput="renderVerupList()">
+      <select id="verup-filter-category" class="form-input" style="width:auto" onchange="renderVerupList()">
+        <option value="">すべての種別</option>
+        <option value="feature">新機能</option>
+        <option value="improvement">改善</option>
+        <option value="bugfix">バグ修正</option>
+        <option value="spec_change">仕様変更</option>
+      </select>
+      <select id="verup-filter-importance" class="form-input" style="width:auto" onchange="renderVerupList()">
+        <option value="">すべての重要度</option>
+        <option value="high">重要</option>
+        <option value="normal">通常</option>
+        <option value="low">軽微</option>
+      </select>
+      <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="verup-filter-unread" onchange="renderVerupList()">未読のみ</label>
+      <label id="verup-filter-hidden-wrap" style="font-size:12px;display:none;align-items:center;gap:4px"><input type="checkbox" id="verup-filter-hidden" onchange="renderVerupList()">非表示も表示</label>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="markAllVerupRead()" title="表示中の項目をすべて既読にする">既読にする</button>
+      <button id="verup-add-btn" class="btn-primary" onclick="openVerupEditor()" style="display:none">＋ 新規追加</button>
+    </div>
+    <div id="verup-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px">
+      <div style="text-align:center;color:var(--text-muted);padding:24px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Verup情報: 編集サブモーダル（admin） -->
+<div class="modal-overlay" id="modal-verup-editor">
+  <div class="modal-card" style="width:min(720px,95vw);max-height:90vh;overflow-y:auto">
+    <div class="modal-title">
+      <span id="verup-editor-title">新規追加</span>
+      <button class="modal-close" onclick="closeModal('modal-verup-editor')">×</button>
+    </div>
+    <input type="hidden" id="vle-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">バージョン番号 <span style="color:var(--text-muted);font-size:11px">（例: v1.4.2 / 任意）</span></label>
+        <input id="vle-version-label" class="form-input" placeholder="v1.4.2">
+      </div>
+      <div class="form-group">
+        <label class="form-label">日時</label>
+        <input id="vle-released-at" class="form-input" type="datetime-local">
+      </div>
+      <div class="form-group">
+        <label class="form-label">画面 <span style="color:#C0392B">*</span></label>
+        <input id="vle-screen" class="form-input" placeholder="例) 案件 / クリエイティブ / 請求 など">
+      </div>
+      <div class="form-group">
+        <label class="form-label">機能 <span style="color:#C0392B">*</span></label>
+        <input id="vle-feature" class="form-input" placeholder="例) ファイル名テンプレート">
+      </div>
+      <div class="form-group">
+        <label class="form-label">種別</label>
+        <select id="vle-category" class="form-input">
+          <option value="feature">新機能</option>
+          <option value="improvement" selected>改善</option>
+          <option value="bugfix">バグ修正</option>
+          <option value="spec_change">仕様変更</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">重要度</label>
+        <select id="vle-importance" class="form-input">
+          <option value="high">重要</option>
+          <option value="normal" selected>通常</option>
+          <option value="low">軽微</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">対象ロール</label>
+      <div id="vle-target-roles" style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px">
+        <label><input type="checkbox" value="all" checked> 全員</label>
+        <label><input type="checkbox" value="admin"> 管理者</label>
+        <label><input type="checkbox" value="secretary"> 秘書</label>
+        <label><input type="checkbox" value="producer"> プロデューサー</label>
+        <label><input type="checkbox" value="director"> ディレクター</label>
+        <label><input type="checkbox" value="editor"> 編集者</label>
+        <label><input type="checkbox" value="designer"> デザイナー</label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">修正の要約 <span style="color:#C0392B">*</span></label>
+      <textarea id="vle-description" class="form-input" rows="2" placeholder="何がどう変わったかを1-2行で"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">変更前 <span style="color:var(--text-muted);font-size:11px">（任意）</span></label>
+        <textarea id="vle-before" class="form-input" rows="3" placeholder="例) ファイル名テンプレが固定だった"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">変更後 <span style="color:var(--text-muted);font-size:11px">（任意）</span></label>
+        <textarea id="vle-after" class="form-input" rows="3" placeholder="例) 案件ごとにテンプレ編集可能"></textarea>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">便利なシーン <span style="color:var(--text-muted);font-size:11px">（任意）</span></label>
+      <textarea id="vle-use-case" class="form-input" rows="2" placeholder="例) 代理店ごとに命名規約が違うとき"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">タグ <span style="color:var(--text-muted);font-size:11px">（カンマ区切り）</span></label>
+        <input id="vle-tags" class="form-input" placeholder="ファイル名, 動画">
+      </div>
+      <div class="form-group">
+        <label class="form-label">関連リンク <span style="color:var(--text-muted);font-size:11px">（任意）</span></label>
+        <input id="vle-related-url" class="form-input" placeholder="https://...">
+      </div>
+    </div>
+    <div class="form-group">
+      <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px">
+        <input type="checkbox" id="vle-is-hidden">
+        非表示にする（一般メンバーには見せない）
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button id="vle-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteVerupEntry()">削除</button>
+      <button class="btn" onclick="closeModal('modal-verup-editor')">キャンセル</button>
+      <button class="btn-primary" onclick="submitVerupEntry()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== 案件収支 V2: 見積エディタモーダル（明細テーブル） ==================== -->
 <!-- z-index 300: 親（modal-project z-index:200）の上に重ねる -->
 <div class="modal-overlay" id="modal-finance-estimate-editor" data-no-overlay-close="true" style="z-index:300">
@@ -2610,6 +2741,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm6.5-6V11c0-3.36-1.79-6.17-5-6.86V3.5a1.5 1.5 0 0 0-3 0v.64C7.29 4.83 5.5 7.64 5.5 11v5L4 17.5V18h16v-.5L18.5 16z"/>
         </svg>
         <span id="notification-badge" class="bell-badge" hidden>0</span>
+      </button>
+      <!-- Verup情報（システム改訂履歴） — ベルの左隣 -->
+      <button
+        type="button"
+        id="verup-toggle"
+        class="bell-button"
+        aria-label="Verup情報"
+        title="Verup情報（システム改訂履歴）"
+        onclick="openVerupModal()">
+        <svg class="bell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" style="width:22px;height:22px">
+          <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zM8 12h8v2H8v-2zm0 4h8v2H8v-2zm0-8h5v2H8V8z"/>
+        </svg>
+        <span id="verup-badge" class="bell-badge" hidden>0</span>
       </button>
       <div class="user-av" id="user-av" onclick="openMyProfile()" title="プロフィール編集">HK</div>
       <span class="user-name" id="user-name" onclick="openMyProfile()" title="プロフィール編集" style="cursor:pointer">読み込み中</span>
@@ -27877,6 +28021,315 @@ function copyInviteMsg() {
 }
 
 // ===== 旧クライアント報酬設定の関数群（V2 で modal-project-finance に統合済み）削除 =====
+
+// ==================== Verup情報（システム改訂履歴） ====================
+let _verupCache = [];
+let _verupLoading = false;
+
+const VERUP_CATEGORY_LABEL = { feature: '✨ 新機能', improvement: '🔧 改善', bugfix: '🐛 バグ修正', spec_change: '📐 仕様変更' };
+const VERUP_CATEGORY_COLOR = { feature: '#1A9E9A', improvement: '#3B82F6', bugfix: '#E24B4A', spec_change: '#9333EA' };
+const VERUP_IMPORTANCE_LABEL = { high: '重要', normal: '通常', low: '軽微' };
+const VERUP_IMPORTANCE_COLOR = { high: '#E24B4A', normal: '#6B7280', low: '#9CA3AF' };
+const VERUP_ROLE_LABEL = { all: '全員', admin: '管理者', secretary: '秘書', producer: 'プロデューサー', director: 'ディレクター', editor: '編集者', designer: 'デザイナー' };
+
+function _verupEsc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function _verupIsAdmin() {
+  return (currentUser?.role === 'admin') || (typeof isSuperAdmin === 'function' && isSuperAdmin());
+}
+function _verupFmtDate(s) {
+  if (!s) return '';
+  try {
+    const d = new Date(s);
+    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  } catch(_) { return s; }
+}
+
+async function loadVerupUnreadCount() {
+  try {
+    const res = await fetch('/api/haruka/version-logs/unread-count');
+    if (!res.ok) return;
+    const json = await res.json();
+    const badge = document.getElementById('verup-badge');
+    const btn = document.getElementById('verup-toggle');
+    if (!badge || !btn) return;
+    const n = Number(json.count || 0);
+    if (n > 0) {
+      badge.textContent = n > 99 ? '99+' : String(n);
+      badge.hidden = false;
+      btn.classList.add('has-unread');
+    } else {
+      badge.hidden = true;
+      btn.classList.remove('has-unread');
+    }
+  } catch (_) {}
+}
+
+async function openVerupModal() {
+  openModal('modal-verup');
+  // admin のみ「新規追加」「非表示も表示」フィルタを露出
+  const addBtn = document.getElementById('verup-add-btn');
+  const hiddenWrap = document.getElementById('verup-filter-hidden-wrap');
+  const isAdmin = _verupIsAdmin();
+  if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
+  if (hiddenWrap) hiddenWrap.style.display = isAdmin ? 'inline-flex' : 'none';
+  await loadVerupList();
+}
+
+async function loadVerupList() {
+  if (_verupLoading) return;
+  _verupLoading = true;
+  try {
+    const res = await fetch('/api/haruka/version-logs');
+    if (!res.ok) throw new Error('一覧の取得に失敗しました');
+    _verupCache = await res.json();
+    renderVerupList();
+  } catch (e) {
+    document.getElementById('verup-list').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B">${_verupEsc(e.message)}</div>`;
+  } finally {
+    _verupLoading = false;
+  }
+}
+
+function renderVerupList() {
+  const list = document.getElementById('verup-list');
+  if (!list) return;
+  const search = (document.getElementById('verup-search')?.value || '').trim().toLowerCase();
+  const fcat = document.getElementById('verup-filter-category')?.value || '';
+  const fimp = document.getElementById('verup-filter-importance')?.value || '';
+  const onlyUnread = document.getElementById('verup-filter-unread')?.checked || false;
+  const showHidden = document.getElementById('verup-filter-hidden')?.checked || false;
+  const isAdmin = _verupIsAdmin();
+
+  let rows = _verupCache.slice();
+  if (!showHidden) rows = rows.filter(r => !r.is_hidden);
+  if (fcat) rows = rows.filter(r => r.category === fcat);
+  if (fimp) rows = rows.filter(r => r.importance === fimp);
+  if (onlyUnread) rows = rows.filter(r => !r.is_read);
+  if (search) {
+    rows = rows.filter(r => {
+      const hay = [r.screen, r.feature, r.description, r.before_text, r.after_text, r.use_case, r.version_label, ...(r.tags || [])].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(search);
+    });
+  }
+
+  if (rows.length === 0) {
+    list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する履歴はありません</div>`;
+    return;
+  }
+
+  list.innerHTML = rows.map(r => {
+    const catLabel = VERUP_CATEGORY_LABEL[r.category] || r.category;
+    const catColor = VERUP_CATEGORY_COLOR[r.category] || '#6B7280';
+    const impLabel = VERUP_IMPORTANCE_LABEL[r.importance] || '';
+    const impColor = VERUP_IMPORTANCE_COLOR[r.importance] || '#6B7280';
+    const importantBadge = r.importance === 'high'
+      ? `<span style="background:${impColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_verupEsc(impLabel)}</span>` : '';
+    const hiddenBadge = r.is_hidden
+      ? `<span style="background:#9CA3AF;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px">非表示</span>` : '';
+    const unreadDot = !r.is_read
+      ? `<span style="display:inline-block;width:8px;height:8px;background:#E24B4A;border-radius:50%;margin-right:6px;vertical-align:middle" title="未読"></span>` : '';
+    const tagsHtml = (r.tags || []).map(t => `<span style="background:#EEF2F7;color:#374151;padding:2px 8px;border-radius:10px;font-size:11px">#${_verupEsc(t)}</span>`).join(' ');
+    const rolesHtml = (r.target_roles || ['all']).map(rc => `<span style="font-size:10px;color:var(--text-muted)">${_verupEsc(VERUP_ROLE_LABEL[rc] || rc)}</span>`).join(' / ');
+    const beforeAfter = (r.before_text || r.after_text) ? `
+      <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:stretch;margin-top:8px">
+        <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;padding:8px;font-size:12px;color:#7F1D1D"><div style="font-size:10px;font-weight:700;color:#991B1B;margin-bottom:4px">変更前</div>${_verupEsc(r.before_text || '—').replace(/\n/g,'<br>')}</div>
+        <div style="display:flex;align-items:center;justify-content:center;color:#9CA3AF;font-size:18px">→</div>
+        <div style="background:#ECFDF5;border:1px solid #A7F3D0;border-radius:6px;padding:8px;font-size:12px;color:#064E3B"><div style="font-size:10px;font-weight:700;color:#065F46;margin-bottom:4px">変更後</div>${_verupEsc(r.after_text || '—').replace(/\n/g,'<br>')}</div>
+      </div>` : '';
+    const useCase = r.use_case
+      ? `<div style="margin-top:8px;background:#FFFBEB;border-left:3px solid #F59E0B;padding:6px 10px;font-size:12px;color:#78350F">💡 ${_verupEsc(r.use_case).replace(/\n/g,'<br>')}</div>` : '';
+    const relatedLink = r.related_url
+      ? `<a href="${_verupEsc(r.related_url)}" target="_blank" rel="noopener" style="font-size:11px;color:#3B82F6">関連リンク ↗</a>` : '';
+    const adminBtns = isAdmin ? `
+      <button class="btn" style="padding:2px 8px;font-size:11px" onclick='editVerupEntry(${JSON.stringify(r.id)})'>編集</button>
+      <button class="btn" style="padding:2px 8px;font-size:11px" onclick='toggleVerupVisibility(${JSON.stringify(r.id)}, ${!r.is_hidden})'>${r.is_hidden ? '表示する' : '非表示にする'}</button>
+    ` : '';
+
+    return `
+    <div data-vid="${_verupEsc(r.id)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;background:${r.is_read ? '#fff' : '#F0FDFA'};transition:background .2s">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px">
+        ${unreadDot}
+        <span style="background:${catColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_verupEsc(catLabel)}</span>
+        ${importantBadge}
+        ${hiddenBadge}
+        <span style="font-family:monospace;font-size:11px;color:var(--text-muted)">#${r.revision_no}${r.version_label ? ' / ' + _verupEsc(r.version_label) : ''}</span>
+        <span style="font-size:11px;color:var(--text-muted)">${_verupEsc(_verupFmtDate(r.released_at))}</span>
+        <span style="flex:1"></span>
+        ${!r.is_read ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='markVerupRead(${JSON.stringify(r.id)})'>既読</button>` : ''}
+        ${adminBtns}
+      </div>
+      <div style="font-weight:700;font-size:14px;margin-bottom:2px">${_verupEsc(r.screen)} <span style="color:var(--text-muted);font-weight:400">/</span> ${_verupEsc(r.feature)}</div>
+      <div style="font-size:13px;line-height:1.55;color:#1F2937">${_verupEsc(r.description).replace(/\n/g,'<br>')}</div>
+      ${beforeAfter}
+      ${useCase}
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px">
+        ${tagsHtml}
+        ${tagsHtml && (rolesHtml || relatedLink) ? '<span style="color:#D1D5DB">|</span>' : ''}
+        ${rolesHtml ? `<span style="font-size:11px;color:var(--text-muted)">対象: ${rolesHtml}</span>` : ''}
+        ${rolesHtml && relatedLink ? '<span style="color:#D1D5DB">|</span>' : ''}
+        ${relatedLink}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function markVerupRead(id) {
+  try {
+    const res = await fetch(`/api/haruka/version-logs/${encodeURIComponent(id)}/read`, { method: 'POST' });
+    if (!res.ok) return;
+    const row = _verupCache.find(r => r.id === id);
+    if (row) row.is_read = true;
+    renderVerupList();
+    loadVerupUnreadCount();
+  } catch (_) {}
+}
+
+async function markAllVerupRead() {
+  try {
+    const res = await fetch('/api/haruka/version-logs/read-all', { method: 'POST' });
+    if (!res.ok) return;
+    _verupCache.forEach(r => { r.is_read = true; });
+    renderVerupList();
+    loadVerupUnreadCount();
+  } catch (_) {}
+}
+
+async function toggleVerupVisibility(id, nextHidden) {
+  if (!_verupIsAdmin()) return;
+  try {
+    const res = await fetch(`/api/haruka/version-logs/${encodeURIComponent(id)}/visibility`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_hidden: !!nextHidden })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '更新に失敗しました');
+      return;
+    }
+    const updated = await res.json();
+    const idx = _verupCache.findIndex(r => r.id === id);
+    if (idx >= 0) _verupCache[idx] = { ..._verupCache[idx], ...updated };
+    renderVerupList();
+  } catch (e) { alert(e.message); }
+}
+
+function openVerupEditor() {
+  if (!_verupIsAdmin()) return;
+  document.getElementById('verup-editor-title').textContent = '新規追加';
+  document.getElementById('vle-id').value = '';
+  document.getElementById('vle-version-label').value = '';
+  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  document.getElementById('vle-released-at').value = now.toISOString().slice(0,16);
+  document.getElementById('vle-screen').value = '';
+  document.getElementById('vle-feature').value = '';
+  document.getElementById('vle-category').value = 'improvement';
+  document.getElementById('vle-importance').value = 'normal';
+  document.getElementById('vle-description').value = '';
+  document.getElementById('vle-before').value = '';
+  document.getElementById('vle-after').value = '';
+  document.getElementById('vle-use-case').value = '';
+  document.getElementById('vle-tags').value = '';
+  document.getElementById('vle-related-url').value = '';
+  document.getElementById('vle-is-hidden').checked = false;
+  document.querySelectorAll('#vle-target-roles input[type=checkbox]').forEach(cb => { cb.checked = (cb.value === 'all'); });
+  document.getElementById('vle-delete-btn').style.display = 'none';
+  openModal('modal-verup-editor');
+}
+
+function editVerupEntry(id) {
+  if (!_verupIsAdmin()) return;
+  const r = _verupCache.find(x => x.id === id);
+  if (!r) return;
+  document.getElementById('verup-editor-title').textContent = `編集 #${r.revision_no}`;
+  document.getElementById('vle-id').value = r.id;
+  document.getElementById('vle-version-label').value = r.version_label || '';
+  if (r.released_at) {
+    const d = new Date(r.released_at); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    document.getElementById('vle-released-at').value = d.toISOString().slice(0,16);
+  }
+  document.getElementById('vle-screen').value = r.screen || '';
+  document.getElementById('vle-feature').value = r.feature || '';
+  document.getElementById('vle-category').value = r.category || 'improvement';
+  document.getElementById('vle-importance').value = r.importance || 'normal';
+  document.getElementById('vle-description').value = r.description || '';
+  document.getElementById('vle-before').value = r.before_text || '';
+  document.getElementById('vle-after').value = r.after_text || '';
+  document.getElementById('vle-use-case').value = r.use_case || '';
+  document.getElementById('vle-tags').value = (r.tags || []).join(', ');
+  document.getElementById('vle-related-url').value = r.related_url || '';
+  document.getElementById('vle-is-hidden').checked = !!r.is_hidden;
+  const tr = new Set(r.target_roles || ['all']);
+  document.querySelectorAll('#vle-target-roles input[type=checkbox]').forEach(cb => { cb.checked = tr.has(cb.value); });
+  document.getElementById('vle-delete-btn').style.display = '';
+  openModal('modal-verup-editor');
+}
+
+async function submitVerupEntry() {
+  if (!_verupIsAdmin()) return;
+  const id = document.getElementById('vle-id').value || null;
+  const target_roles = Array.from(document.querySelectorAll('#vle-target-roles input[type=checkbox]:checked')).map(cb => cb.value);
+  const tags = (document.getElementById('vle-tags').value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const releasedRaw = document.getElementById('vle-released-at').value;
+  const payload = {
+    version_label: document.getElementById('vle-version-label').value.trim() || null,
+    released_at: releasedRaw ? new Date(releasedRaw).toISOString() : new Date().toISOString(),
+    screen: document.getElementById('vle-screen').value.trim(),
+    feature: document.getElementById('vle-feature').value.trim(),
+    category: document.getElementById('vle-category').value,
+    importance: document.getElementById('vle-importance').value,
+    description: document.getElementById('vle-description').value.trim(),
+    before_text: document.getElementById('vle-before').value.trim() || null,
+    after_text: document.getElementById('vle-after').value.trim() || null,
+    use_case: document.getElementById('vle-use-case').value.trim() || null,
+    target_roles: target_roles.length ? target_roles : ['all'],
+    tags,
+    related_url: document.getElementById('vle-related-url').value.trim() || null,
+    is_hidden: document.getElementById('vle-is-hidden').checked,
+  };
+  if (!payload.screen || !payload.feature || !payload.description) {
+    alert('画面 / 機能 / 修正の要約は必須です');
+    return;
+  }
+  try {
+    const url = id ? `/api/haruka/version-logs/${encodeURIComponent(id)}` : '/api/haruka/version-logs';
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '保存に失敗しました');
+      return;
+    }
+    closeModal('modal-verup-editor');
+    await loadVerupList();
+    loadVerupUnreadCount();
+  } catch (e) { alert(e.message); }
+}
+
+async function deleteVerupEntry() {
+  if (!_verupIsAdmin()) return;
+  const id = document.getElementById('vle-id').value;
+  if (!id) return;
+  if (!confirm('この履歴を削除します。よろしいですか？')) return;
+  try {
+    const res = await fetch(`/api/haruka/version-logs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '削除に失敗しました');
+      return;
+    }
+    closeModal('modal-verup-editor');
+    await loadVerupList();
+    loadVerupUnreadCount();
+  } catch (e) { alert(e.message); }
+}
+
+// 初回ロード後に未読数を取得（init() の最後で呼ばれる）
+window.addEventListener('load', () => {
+  setTimeout(() => { loadVerupUnreadCount(); }, 1500);
+});
 
 init();
 
