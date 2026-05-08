@@ -21429,16 +21429,6 @@ async function renderFilenameTemplatesPage() {
           </div>
         </div>
 
-        <details id="fn-custom-advanced" style="margin-top:10px;display:none">
-          <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">▸ 上級設定（key を指定する）</summary>
-          <div style="margin-top:8px">
-            <label class="form-label">key（任意・空欄なら自動採番）</label>
-            <input class="form-input" id="fn-custom-key" placeholder="自動 (c_1 / f_1, ...)" style="font-family:monospace">
-            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-              別テンプレでも同じ key を使うと、案件側 override で値が連動します。
-            </div>
-          </div>
-        </details>
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
           <button class="btn" onclick="closeFnCustomModal()">キャンセル</button>
           <button class="btn-primary" onclick="confirmAddFnCustomToken()">追加</button>
@@ -21825,16 +21815,11 @@ function onFnCustomKindChange() {
   const textFields = document.getElementById('fn-custom-fields-text');
   const flagFields = document.getElementById('fn-custom-fields-flag');
   const labelGroup = document.getElementById('fn-custom-label-group');
-  const advanced = document.getElementById('fn-custom-advanced');
   if (masterFields) masterFields.style.display = kind === 'master_ref' ? '' : 'none';
   if (textFields)   textFields.style.display   = kind === 'custom'     ? '' : 'none';
   if (flagFields)   flagFields.style.display   = kind === 'flag'       ? '' : 'none';
-  // master_ref はラベル/key の手動指定不要（system token は固定定義）
+  // master_ref はラベルの手動指定不要（system token は固定定義）
   if (labelGroup) labelGroup.style.display = kind === 'master_ref' ? 'none' : '';
-  if (advanced)   advanced.style.display   = kind === 'master_ref' ? 'none' : '';
-  // key プレースホルダの目安を更新
-  const keyInput = document.getElementById('fn-custom-key');
-  if (keyInput) keyInput.placeholder = kind === 'flag' ? '自動 (f_1, f_2, ...)' : '自動 (c_1, c_2, ...)';
 }
 
 // マスター引用ピッカーの選択肢を組み立て
@@ -21859,7 +21844,6 @@ function _fnPopulateMasterRefPicker() {
 }
 
 function openFnCustomModal() {
-  document.getElementById('fn-custom-key').value = '';
   document.getElementById('fn-custom-label').value = '';
   document.getElementById('fn-custom-default').value = '';
   const onInput  = document.getElementById('fn-custom-on-value');
@@ -21872,9 +21856,6 @@ function openFnCustomModal() {
   // マスター引用ピッカーを組み立て
   _fnPopulateMasterRefPicker();
   onFnCustomKindChange();
-  // 上級設定 details を毎回閉じた状態で開く
-  const det = document.querySelector('#fn-custom-modal details');
-  if (det) det.open = false;
   document.getElementById('fn-custom-modal').style.display = 'flex';
   // 既定の master_ref モードでは select にフォーカス、それ以外はラベル入力欄
   setTimeout(() => {
@@ -21919,7 +21900,6 @@ function confirmAddFnCustomToken() {
     addFnTokenFromPalette(pickedKey, 'system');
     return;
   }
-  const manualKey = document.getElementById('fn-custom-key').value.trim();
   const label = document.getElementById('fn-custom-label').value.trim();
   if (!label) {
     showToast('表示ラベルは必須です', 'warn');
@@ -21941,27 +21921,9 @@ function confirmAddFnCustomToken() {
       return;
     }
   }
-  let key;
-  if (manualKey) {
-    // 上級設定で手動指定された場合
-    if (!/^[a-z0-9_]+$/i.test(manualKey)) {
-      showToast('key は英数字とアンダースコアのみ使用できます', 'warn');
-      return;
-    }
-    if (FN_SYSTEM_TOKENS.some(s => s.key === manualKey)) {
-      showToast(`"${manualKey}" はシステムトークンの key と被るため使えません`, 'warn');
-      return;
-    }
-    if (d.tokens.some(t => t.key === manualKey)) {
-      showToast(`同じ key "${manualKey}" が既に使われています`, 'warn');
-      return;
-    }
-    key = manualKey;
-  } else {
-    // 自動採番（custom: c_N, flag: f_N）
-    const existingKeys = d.tokens.map(t => t.key);
-    key = _autoGenerateFnCustomKey(existingKeys, kind === 'flag' ? 'f' : 'c');
-  }
+  // key は常に自動採番（custom: c_N, flag: f_N）
+  const existingKeys = d.tokens.map(t => t.key);
+  const key = _autoGenerateFnCustomKey(existingKeys, kind === 'flag' ? 'f' : 'c');
   if (kind === 'flag') {
     d.tokens.push({ kind: 'flag', key, label, source, on_value: onValue, off_value: offValue });
   } else {
