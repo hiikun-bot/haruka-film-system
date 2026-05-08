@@ -2925,6 +2925,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         rank: u.rank || null,
         video_count: 0,
         design_count: 0,
+        director_count: 0,
         video_total: 0,
         design_total: 0,
         director_total: 0,
@@ -3011,6 +3012,12 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
       if (code === 'director' || code === 'sub_director') {
         u.director_total += perCreative;
         u.grand_total   += perCreative;
+        // 同 creative 内で同 user の director_count を二重カウントしない
+        const ck = `${payee.id}|director`;
+        if (!countedKey.has(ck)) {
+          countedKey.add(ck);
+          u.director_count++;
+        }
       } else if (code === 'producer' || code === 'sub_producer') {
         u.producer_total += perCreative;
         u.grand_total    += perCreative;
@@ -3050,13 +3057,14 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   const total = summary.reduce((acc, u) => {
     acc.video_count += u.video_count;
     acc.design_count += u.design_count;
+    acc.director_count += u.director_count || 0;
     acc.video_total  += u.video_total;
     acc.design_total += u.design_total;
     acc.director_total += u.director_total || 0;
     acc.producer_total += u.producer_total || 0;
     acc.grand_total  += u.grand_total;
     return acc;
-  }, { video_count: 0, design_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0 });
+  }, { video_count: 0, design_count: 0, director_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0 });
 
   // calculateLineCost を参照保持（将来の拡張時に使う想定）
   void calculateLineCost;
@@ -3095,7 +3103,7 @@ router.post('/analytics/creator-summary/export-sheet', requireAuth, requirePermi
       statusFilter: (req.body?.status ?? req.query.status) === 'all' ? 'all' : 'delivered',
     });
     const statusLabel = data.status === 'delivered' ? '納品のみ' : '全件';
-    const headers = ['クリエイター', '役割', 'ランク', '動画本数', '動画金額', 'デザイン枚数', 'デザイン金額', '合計金額'];
+    const headers = ['クリエイター', '役割', 'ランク', '動画本数', '動画金額', 'デザイン枚数', 'デザイン金額', 'ディレクション本数', 'ディレクション金額', '合計金額'];
     const dataRows = data.summary.map(u => [
       u.full_name + (u.nickname ? ` (${u.nickname})` : ''),
       u.role || '-',
@@ -3104,15 +3112,18 @@ router.post('/analytics/creator-summary/export-sheet', requireAuth, requirePermi
       u.video_total,
       u.design_count,
       u.design_total,
+      u.director_count || 0,
+      u.director_total || 0,
       u.grand_total,
     ]);
     const totalRow = ['合計', '', '',
       data.total.video_count, data.total.video_total,
       data.total.design_count, data.total.design_total,
+      data.total.director_count || 0, data.total.director_total || 0,
       data.total.grand_total];
     const sheetRows = [
       [`HARUKA FILM 分析: クリエイター別作成本数 (${year}年${month}月 / ${statusLabel})`],
-      [`動画合計 ${data.total.video_count}本 / デザイン合計 ${data.total.design_count}枚 / 合計金額 ¥${data.total.grand_total.toLocaleString()}`],
+      [`動画合計 ${data.total.video_count}本 / デザイン合計 ${data.total.design_count}枚 / ディレクション ${data.total.director_count || 0}件 / 合計金額 ¥${data.total.grand_total.toLocaleString()}`],
       [],
       headers,
       ...dataRows,

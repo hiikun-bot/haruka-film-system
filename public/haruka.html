@@ -26048,6 +26048,7 @@ function renderCreatorSummaryTable(data) {
     <div style="background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象クリエイティブ</span> <strong>${data.creatives_count ?? 0}件</strong></div>
     <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">動画</span> <strong>${data.total.video_count}本 / ${yen(data.total.video_total)}</strong></div>
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.total.design_count}枚 / ${yen(data.total.design_total)}</strong></div>
+    <div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">ディレクション</span> <strong>${data.total.director_count || 0}件 / ${yen(data.total.director_total || 0)}</strong></div>
     <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total)}</strong></div>
   `;
   const wrap = document.getElementById('an-table-content');
@@ -26067,10 +26068,12 @@ function renderCreatorSummaryTable(data) {
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.video_total > 0 ? yen(u.video_total) : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#b45309">${u.design_count > 0 ? `🎨${u.design_count}` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.design_total > 0 ? yen(u.design_total) : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#6d28d9">${(u.director_count || 0) > 0 ? `🎬${u.director_count}` : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${(u.director_total || 0) > 0 ? yen(u.director_total) : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total)}</td>
     </tr>`;
   }).join('');
-  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:760px">
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:920px">
     <thead>
       <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
         <th style="padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">クリエイター</th>
@@ -26080,6 +26083,8 @@ function renderCreatorSummaryTable(data) {
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">動画金額</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">デザイン枚数</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">デザイン金額</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ディレクション本数</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ディレクション金額</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;background:var(--em);color:#fff">合計金額</th>
       </tr>
     </thead>
@@ -26091,6 +26096,8 @@ function renderCreatorSummaryTable(data) {
         <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.video_total)}</td>
         <td style="padding:11px 12px;text-align:right;font-size:13px;color:#b45309">🎨${data.total.design_count}</td>
         <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.design_total)}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:13px;color:#6d28d9">🎬${data.total.director_count || 0}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.director_total || 0)}</td>
         <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.total.grand_total)}</td>
       </tr>
     </tbody>
