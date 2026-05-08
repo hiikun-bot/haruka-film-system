@@ -162,7 +162,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
 .cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
 /* 5列レイアウト: クライアント/案件名 + クリエイティブ名 + 担当(アイコン+略称) + ステータス + 遅延 */
-.cv-g-row-fixed{display:grid;grid-template-columns:122px 150px 60px 100px 56px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
+.cv-g-row-fixed{display:grid;grid-template-columns:122px 164px 60px 100px 76px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
 .cv-g-row-fixed:hover{background:#f0fbfa}
 .cv-g-row-fixed.is-late{background:rgba(239,68,68,0.05)}
 .cv-g-row-fixed.is-late:hover{background:rgba(239,68,68,0.09)}
@@ -345,7 +345,7 @@ tr.row-help td{background:#FFFBF2}
   .cv-g-scroll{max-height:calc(100vh - 140px)}
 }
 @media (max-width:768px){
-  .cv-g-row-fixed{grid-template-columns:100px 130px 50px 90px 60px}
+  .cv-g-row-fixed{grid-template-columns:100px 116px 50px 90px 74px}
 }
 
 /* ─── クリエイティブ コンパクトツールバー（最大2行） ─── */
@@ -9926,9 +9926,9 @@ function renderCreativesGantt(filtered, warningSource) {
     // クリエイティブ名の表示: 長すぎるファイル名は中央省略。
     // 担当列のチーム略称を省く（=c-name 列が広い）モードではより多くの文字を残す。
     const rawName = c.file_name || '';
-    const nameMax = showRowTeamChip ? 22 : 26;
-    const headLen = showRowTeamChip ? 8 : 11;
-    const tailLen = showRowTeamChip ? 10 : 12;
+    const nameMax = showRowTeamChip ? 19 : 23;
+    const headLen = showRowTeamChip ? 7 : 10;
+    const tailLen = showRowTeamChip ? 9 : 11;
     const displayName = (rawName.length > nameMax)
       ? `${rawName.slice(0, headLen)}…${rawName.slice(-tailLen)}`
       : rawName;
@@ -9951,10 +9951,11 @@ function renderCreativesGantt(filtered, warningSource) {
   // groupBy が「担当者別」のときは行ごとにチーム略称チップを出すので 担当列を 60px 確保。
   // それ以外（案件別/クライアント別/チーム別）はチームチップを省略し、
   // 余った 20px をクリエイティブ名カラムに回してファイル名 truncate を緩和する。
+  // 「遅延」列は 76px 確保（"予定通り" など5文字を省略なし表示できる幅）。
   const showRowTeamChip = (currentCreativeGroup === 'assignee');
   const fixedColTpl = showRowTeamChip
-    ? `122px 184px 60px 100px 56px`
-    : `122px 204px 40px 100px 56px`;
+    ? `122px 164px 60px 100px 76px`
+    : `122px 184px 40px 100px 76px`;
   const FIXED_W = 522; // 合計幅は不変（左固定領域のレイアウト崩れを避ける）
 
   // チーム表記の重複「〜チームチーム」を防ぐヘルパ。team_name が既に「チーム」で終わっていればそのまま使う。
