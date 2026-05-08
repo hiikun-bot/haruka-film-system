@@ -5341,7 +5341,11 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
           <div>
             <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象月</div>
-            <input type="month" id="an-month" class="form-input" style="font-size:13px;padding:8px 10px">
+            <div style="display:flex;align-items:stretch;gap:6px">
+              <button type="button" class="btn" id="an-month-prev" onclick="shiftAnalyticsMonth(-1)" title="前月" aria-label="前月" style="font-size:13px;padding:0 10px;height:38px;min-width:34px;display:flex;align-items:center;justify-content:center">◀</button>
+              <input type="month" id="an-month" class="form-input" style="font-size:13px;padding:8px 10px;height:38px">
+              <button type="button" class="btn" id="an-month-next" onclick="shiftAnalyticsMonth(1)" title="次月" aria-label="次月" style="font-size:13px;padding:0 10px;height:38px;min-width:34px;display:flex;align-items:center;justify-content:center">▶</button>
+            </div>
           </div>
           <div id="an-client-wrap">
             <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">クライアント</div>
@@ -25806,6 +25810,30 @@ function renderKnowledgeCards(list, compact) {
 // ==================== 分析・集計ページ ====================
 let _analyticsLastResult = null;
 let _analyticsView = 'monthly-revenue'; // 'monthly-revenue' | 'creator-summary' | 'project-assignee'
+
+function shiftAnalyticsMonth(delta) {
+  const monthEl = document.getElementById('an-month');
+  if (!monthEl) return;
+  // 値が空なら当月を起点に
+  let baseY, baseM;
+  if (monthEl.value && /^\d{4}-\d{2}$/.test(monthEl.value)) {
+    const [y, m] = monthEl.value.split('-').map(Number);
+    baseY = y; baseM = m;
+  } else {
+    const now = new Date();
+    baseY = now.getFullYear();
+    baseM = now.getMonth() + 1;
+  }
+  // new Date(year, month-1+delta, 1) で境界を自動処理
+  const d = new Date(baseY, (baseM - 1) + delta, 1);
+  const ny = d.getFullYear();
+  const nm = String(d.getMonth() + 1).padStart(2, '0');
+  monthEl.value = `${ny}-${nm}`;
+  // 一度も集計していなければ値だけ更新（loadAnalytics は呼ばない）
+  if (_analyticsLastResult !== null) {
+    loadAnalytics();
+  }
+}
 
 function initAnalyticsPage() {
   // 当月をデフォルトセット
