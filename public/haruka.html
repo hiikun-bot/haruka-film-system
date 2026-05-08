@@ -948,6 +948,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   box-shadow:0 1px 3px rgba(252,211,77,.5);
   animation:kn-newPulse 2.4s ease-in-out infinite;
 }
+.kn-card-tc{
+  display:inline-flex;align-items:center;
+  font-size:11px;font-weight:700;letter-spacing:.03em;
+  padding:2px 6px;border-radius:4px;
+  background:#1f2937;color:#fbbf24;
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+}
 @keyframes kn-newPulse{
   0%,100%{box-shadow:0 1px 3px rgba(252,211,77,.5)}
   50%{box-shadow:0 1px 8px rgba(252,211,77,.85)}
@@ -25828,14 +25835,16 @@ function _knRenderCardChunk(list) {
     const driveUrl    = c.creative_files?.drive_url || '';
     const creativeType = c.creative_files?.creatives?.creative_type || '';
     const fileRecordId = c.creative_files?.id || '';
+    const timecode = c.timecode || '';
     return `
       <div class="kn-card" data-cat-color="${catColor}" data-id="${esc(c.id)}"
-        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}')">
+        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}','${esc(timecode)}')">
         <button class="kn-card-fav ${isFav?'on':''}" title="お気に入り" onclick="knToggleFavorite('${esc(c.id)}', event)">${isFav?'⭐':'☆'}</button>
         <div class="kn-card-head">
           ${isUnread ? '<span class="kn-unread-dot" title="未読"></span>' : ''}
           ${cat ? `<span class="kn-card-cat">${esc(cat.name)}</span>` : ''}
           ${isNew ? '<span class="kn-badge-new">✨ NEW</span>' : ''}
+          ${timecode ? `<span class="kn-card-tc" title="この時間にジャンプ">⏱ ${esc(timecode)}</span>` : ''}
         </div>
         <div class="kn-card-project">${esc(project || '—')}</div>
         <div class="kn-card-filename">${esc(filename)}</div>
@@ -25869,20 +25878,24 @@ function _knRenderTableChunk(list) {
     const driveUrl    = c.creative_files?.drive_url || '';
     const creativeType = c.creative_files?.creatives?.creative_type || '';
     const fileRecordId = c.creative_files?.id || '';
+    const timecode = c.timecode || '';
     const dateStr = new Date(c.created_at).toLocaleDateString('ja-JP');
     return `
       <tr class="${isUnread?'kn-row-unread':''}" data-id="${esc(c.id)}"
-        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}')">
+        onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}','${esc(timecode)}')">
         <td>${isUnread ? '<span class="kn-unread-dot" title="未読"></span>' : ''}</td>
         <td style="white-space:nowrap">${esc(dateStr)} ${isNew?'<span class="kn-badge-new" style="margin-left:4px">NEW</span>':''}</td>
         <td>${cat ? `<span class="kn-row-cat" data-cat-color="${catColor}">${esc(cat.name)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(project || '—')}</td>
-        <td style="max-width:200px;font-family:ui-monospace,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis">${esc(filename)}</td>
+        <td style="max-width:200px;font-family:ui-monospace,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis">
+          ${esc(filename)}
+          ${timecode ? `<div style="font-size:10px;color:#92400e;margin-top:2px">⏱ ${esc(timecode)}</div>` : ''}
+        </td>
         <td style="white-space:nowrap"><span class="kn-card-author"><span class="kn-avatar kn-avatar-table">${avatarInner}</span>${esc(author)}</span></td>
         <td><div class="kn-row-comment">${esc(c.comment || '')}</div></td>
         <td>
           <span class="kn-row-act" onclick="event.stopPropagation()">
-            <button title="プレビュー" onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}')">👁️</button>
+            <button title="プレビュー" onclick="knOpenItem('${esc(c.id)}','${esc(driveFileId)}','${esc(filename)}','${esc(fileRecordId)}','${esc(driveUrl)}','${esc(creativeType)}','${esc(timecode)}')">👁️</button>
             <button class="${isFav?'on':''}" title="お気に入り" onclick="knToggleFavorite('${esc(c.id)}', event)">${isFav?'⭐':'☆'}</button>
           </span>
         </td>
@@ -25891,12 +25904,27 @@ function _knRenderTableChunk(list) {
   tbody.insertAdjacentHTML('beforeend', html);
 }
 
-function knOpenItem(id, driveFileId, filename, fileRecordId, driveUrl, creativeType) {
+function knOpenItem(id, driveFileId, filename, fileRecordId, driveUrl, creativeType, timecode) {
   // 既読マーク
   knMarkRead(id);
   // プレビュー起動（既存ロジック流用）
   if (typeof openFilePreview === 'function' && fileRecordId) {
     openFilePreview(driveFileId || null, filename, driveUrl || '', fileRecordId, creativeType || '', '');
+  }
+  // 動画コメントなら timecode の位置にシーク
+  if (timecode) {
+    const start = Date.now();
+    const tryAttach = () => {
+      const v = document.getElementById('fp-video');
+      if (!v) {
+        if (Date.now() - start < 5000) return setTimeout(tryAttach, 100);
+        return;
+      }
+      const seek = () => { try { fpSeekTo(timecode); } catch(_) {} };
+      if (v.readyState >= 1) seek();
+      else v.addEventListener('loadedmetadata', seek, { once: true });
+    };
+    tryAttach();
   }
   // UIに既読を即時反映
   const card = document.querySelector(`.kn-card[data-id="${CSS.escape(String(id))}"]`);
