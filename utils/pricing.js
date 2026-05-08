@@ -131,10 +131,166 @@ function indexLineCostsByLine(lineCosts) {
   return map;
 }
 
+// =====================================================
+// 請求書向け: 1 creative × 1 ロールの単価解決ヘルパ（Stage 5）
+// =====================================================
+// 旧 project_rates / director_rates / producer_rates の代わりに、
+// project_estimate_lines + project_estimate_line_costs から
+// 「この creative にこの user (= role) で請求するときの単価」を引く。
+//
+// Stage 5 (PR #TBD) で旧テーブル read 経路は撤去。Stage 6 で旧テーブル DROP 予定。
+//
+// 設計上の制約:
+//   - 旧 project_rates が持っていた cost_type 4 分割 (base_fee/script_fee/ai_fee/other_fee) は
+//     新スキーマでは role 単位の単一 unit_price に統合されている。
+//     よって invoice_items.cost_type の 'script_fee' / 'ai_fee' / 'other_fee' は
+//     新スキーマからは生成されない。editor/designer の line_cost は cost_type='base_fee' に丸める。
+//   - line.status が ACTIVE_LINE_STATUSES に含まれない line は集計対象外（ADR 005）。
+//   - assignment.rank_applied での line 選別: line.name に 'Aランク'/'Bランク'/'Cランク' が含まれていれば
+//     優先マッチ（旧 project_rates の rank A/B/C を踏襲）。
+
+/**
+ * 旧 cost_type と roles.code のマッピング。
+ *
+ * 旧スキーマ (project_rates / project_director_rates / project_producer_rates) では
+ * editor/designer の単価は base_fee/script_fee/ai_fee/other_fee の 4 分割で持っていた。
+ * 新スキーマでは role 単位の単一 unit_price なので、editor/designer の line_cost は
+ * 'base_fee' に丸めて invoice_items.cost_type に保存する。
+ * director/producer はそのまま。
+ */
+const ROLE_TO_INVOICE_COST_TYPE = {
+  editor:    'base_fee',
+  designer:  'base_fee',
+  director:  'director_fee',
+  producer:  'producer_fee',
+  // sub_director / sub_producer は invoice_items.cost_type の ALLOWED にないため、
+  // 当面は base_fee 扱いにフォールバック（必要なら ALLOWED 拡張時に対応）。
+  sub_director: 'base_fee',
+  sub_producer: 'base_fee',
+};
+
+function roleCodeToInvoiceCostType(roleCode) {
+  return ROLE_TO_INVOICE_COST_TYPE[roleCode] || 'other_fee';
+}
+
+/**
+ * 与えられた creative + 担当ロール (assignment.role / 'director' / 'producer') に対して、
+ * project_estimate_lines / project_estimate_line_costs から「この 1 本にいくら払うか」を返す。
+ *
+ * @param {object} args
+ * @param {object} args.creative          - { id, project_id, line_id?, category_id?, creative_type?, ... }
+ * @param {string} args.roleCode          - 'editor' | 'designer' | 'director' | 'producer' | ...
+ * @param {string|null} args.rankApplied  - 'A' | 'B' | 'C' | null（line 選別用）
+ * @param {object} args.linesByProject    - Map<project_id, line[]>（line には category 情報含む）
+ * @param {object} args.lineCostsByLine   - { [line_id]: line_cost[] }（role embed: { roles: { code } }）
+ * @param {string[]} [args.activeStatuses] - 集計対象 status（既定 ACTIVE_LINE_STATUSES）
+ * @returns {{ unit_price: number, line_id: string|null, line_cost_id: string|null }} 見つからなければ unit_price=0
+ */
+function resolveCreativeRoleCost({
+  creative,
+  roleCode,
+  rankApplied,
+  linesByProject,
+  lineCostsByLine,
+  activeStatuses,
+} = {}) {
+  if (!creative || !roleCode) return { unit_price: 0, line_id: null, line_cost_id: null };
+  const allowed = new Set(Array.isArray(activeStatuses) && activeStatuses.length ? activeStatuses : ACTIVE_LINE_STATUSES);
+
+  // 1) 候補 line の解決
+  //    優先順位: creative.line_id (直接) > project + category 一致 > project 一致のみ
+  const projLines = (linesByProject && linesByProject.get && linesByProject.get(creative.project_id))
+    || (linesByProject && linesByProject[creative.project_id])
+    || [];
+  let candidates = [];
+  if (creative.line_id) {
+    const direct = projLines.find(l => l && l.id === creative.line_id);
+    if (direct) candidates = [direct];
+  }
+  if (!candidates.length && creative.category_id) {
+    candidates = projLines.filter(l => l && l.category_id === creative.category_id);
+  }
+  if (!candidates.length) {
+    // creative_type → category code でフォールバック（旧データ救済: video_short → video, design_* → image）
+    const ct = creative.creative_type || '';
+    const wantCatCode = ct.startsWith('video') ? 'video' : ct.startsWith('design') ? 'image' : null;
+    if (wantCatCode) {
+      candidates = projLines.filter(l => l && l.category && l.category.code === wantCatCode);
+    }
+  }
+  if (!candidates.length) {
+    candidates = projLines.slice(); // 最後の手段：プロジェクト内の全 line
+  }
+
+  // 2) status フィルタ
+  candidates = candidates.filter(l => allowed.has(l.status));
+  if (!candidates.length) return { unit_price: 0, line_id: null, line_cost_id: null };
+
+  // 3) rank マッチを優先順位の先頭に持ってくる（rank が無ければそのまま）
+  if (rankApplied) {
+    const rankMarker = `${rankApplied}ランク`;
+    const idx = candidates.findIndex(l => (l.name || '').includes(rankMarker));
+    if (idx > 0) {
+      const [rankMatch] = candidates.splice(idx, 1);
+      candidates.unshift(rankMatch);
+    }
+  }
+
+  // 4) 候補 line を順番に見て、roleCode の line_cost を持つ最初の line を採用
+  //    (director/producer の line_cost が rank A の line にしかない、というケースを救うため)
+  //
+  // 注: 請求は 1 creative = 1 unit 単位なので「per-unit 価格」を返す（line 全体ではない）。
+  //   - fixed_per_unit: そのまま unit_price
+  //   - percentage    : client_unit_price × percentage / 100
+  //   - hourly        : 時間単価は per-unit に意味があるとすれば「1 本あたり実工数 = actual_hours / planned_count」
+  //                     とみなして unit_price × (actual_hours / planned_count) を返す。
+  //                     planned_count<=0 の場合は 0（invoice では本数=0 で請求しない前提）。
+  //   - fixed_total   : line 全体固定額。1 本あたりに案分するため fixed_total / planned_count を返す。
+  //                     planned_count<=0 の場合は 0。
+  for (const line of candidates) {
+    const costs = (lineCostsByLine && lineCostsByLine[line.id]) || [];
+    const lc = costs.find(c => {
+      const code = c?.role?.code || c?.roles?.code || c?.role_code;
+      return code === roleCode;
+    });
+    if (!lc) continue;
+    const pricingType = lc.pricing_type || 'fixed_per_unit';
+    const unitPriceLc  = Number(lc.unit_price)   || 0;
+    const percentage   = Number(lc.percentage)   || 0;
+    const actualHours  = Number(lc.actual_hours) || 0;
+    const clientUnit   = Number(line.client_unit_price) || 0;
+    const plannedCount = Number(line.planned_count)     || 0;
+    let perUnit = 0;
+    switch (pricingType) {
+      case 'fixed_per_unit':
+        perUnit = unitPriceLc;
+        break;
+      case 'percentage':
+        perUnit = clientUnit * percentage / 100;
+        break;
+      case 'hourly':
+        perUnit = plannedCount > 0 ? unitPriceLc * actualHours / plannedCount : 0;
+        break;
+      case 'fixed_total':
+        perUnit = plannedCount > 0 ? unitPriceLc / plannedCount : 0;
+        break;
+      default:
+        perUnit = 0;
+    }
+    // 請求金額は整数（円）に丸める。0.5 切り上げ。
+    perUnit = Math.round(perUnit);
+    return { unit_price: perUnit, line_id: line.id, line_cost_id: lc.id || null };
+  }
+
+  return { unit_price: 0, line_id: null, line_cost_id: null };
+}
+
 module.exports = {
   ACTIVE_LINE_STATUSES,
   calculateLineCost,
   calculateLineEconomics,
   calculateProjectEconomics,
   indexLineCostsByLine,
+  roleCodeToInvoiceCostType,
+  resolveCreativeRoleCost,
 };
