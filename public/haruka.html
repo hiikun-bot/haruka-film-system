@@ -8275,9 +8275,14 @@ async function loadCreatives(opts = {}) {
   if (currentCreativeTab === 'video' || currentCreativeTab === 'design') {
     params.set('tab', currentCreativeTab);
   }
-  // ダッシュボードや「納品済」表示が壊れないよう、デフォルトで 納品 も含める
-  // （API 既定は exclude だが、本フロントは常に include_done=1 を送る）
-  params.set('include_done', '1');
+  // 納品済は「納品済も表示」トグル ON のときだけサーバーから取得する。
+  // 旧設計は常に include_done=1 を送って 50件枠に納品済が大量に入り、
+  // active な遅延クリエイティブ (例: 笹谷さんの 4/30 締切 2件) が page 2 にこぼれて
+  // 警告系（アラート/サイドバー）に出ない silent miss を起こしていた（2026-05-08 確認）。
+  // 既定 includeDelivered=false なので、active 12件 < 50件 で 1ページに収まる。
+  if (cvAdvFilters?.includeDelivered) {
+    params.set('include_done', '1');
+  }
   // タブカウンタも並列に再取得（append/タブ切り替えのときは省略）
   if (!append && !skipCounts) {
     loadCreativeTabCounts();
@@ -9975,6 +9980,8 @@ function toggleCvStatusPill(btn) {
   onCvAdvFilterChange();
 }
 function onCvAdvFilterChange() {
+  // includeDelivered は server side フィルタも切り替えるため、変更検知用に prev を保持
+  const _prevIncludeDelivered = cvAdvFilters.includeDelivered;
   cvAdvFilters.includeEnded     = !!document.getElementById('cv-flt-ended')?.checked;
   cvAdvFilters.includeDelivered = !!document.getElementById('cv-flt-delivered')?.checked;
   cvAdvFilters.delayedOnly      = !!document.getElementById('cv-flt-delayed')?.checked;
@@ -9996,6 +10003,15 @@ function onCvAdvFilterChange() {
     if (typeof loadClients === 'function') loadClients();
   }
   _cvAdvUpdateBadge();
+  // includeDelivered が切り替わったら server fetch 自体を再実行（include_done パラメータが変わるため）。
+  // 既定 false の場合 server が納品を除外し、active 12件だけが allCreatives に入る → 警告漏れ防止。
+  if (_prevIncludeDelivered !== cvAdvFilters.includeDelivered) {
+    if (typeof loadCreatives === 'function') {
+      creativesPage.offset = 0;
+      loadCreatives();
+      return; // loadCreatives 内で renderCreatives される
+    }
+  }
   if (typeof renderCreatives === 'function') renderCreatives();
 }
 function resetCvAdvFilters() {
