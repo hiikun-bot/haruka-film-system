@@ -471,6 +471,55 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       const cwFallback = fbCw.replace('[/info]', note + '[/info]');
       await sendChannelMention(slackFallback, cwFallback);
     }
+
+    // 1-e) in-app 通知（通知ベル / notification_logs）
+    //   背景:
+    //     アプリ内通知ベルは notify_ball_returned (DB トリガー) が
+    //     creatives.ball_holder_id 列の変化で1件だけ INSERT する仕組み。
+    //     ball_holder_id は単一 UUID なので「最初のディレクターだけ」しか
+    //     bell 通知を受け取れず、複数ディレクター指定時に2人目以降が
+    //     アプリ内通知を取りこぼす不具合があった (#TBD)。
+    //   修正:
+    //     dCheckTargets 全員に対して明示的に notification_logs を INSERT。
+    //     notification_type='creative_status' を使い（クライアントチェック中遷移と同じ枠組み）、
+    //     trigger 由来の 'ball_returned' 行とは型が違うので bell 上で重複を意識せずに済む。
+    //     actor 自身は除外（操作者は本人なので通知不要）。
+    //   冪等性:
+    //     Slack/CW DM はメッセージなので冪等は気にしない（同じ操作で2回 PUT すれば
+    //     2回投稿されるが、それは正しい挙動）。bell も同様にステータス変更ごとに1件追加で良い。
+    try {
+      const projectName = project?.name || '';
+      const inAppBody = projectName ? `${fileName}（${projectName}）` : fileName;
+      const inAppLink = `/creatives/${detail.id}`;
+      const recipients = dCheckTargets.filter(u => u && u.id && (!actor || u.id !== actor.id));
+      // 同一ユーザー重複を除去（director 兼任 + 秘書 CC 等）
+      const seenIds = new Set();
+      const rows = [];
+      for (const u of recipients) {
+        if (seenIds.has(u.id)) continue;
+        seenIds.add(u.id);
+        rows.push({
+          user_id: u.id,
+          notification_type: 'creative_status',
+          title: 'Dチェック依頼',
+          body: inAppBody,
+          link_url: inAppLink,
+          meta: {
+            creative_id: detail.id,
+            project_id: detail.project_id || null,
+            file_name: fileName,
+            new_status: 'Dチェック',
+          },
+          sender_id: actor?.id || null,
+        });
+      }
+      if (rows.length > 0) {
+        await createBulkNotifications(rows);
+      }
+    } catch (e) {
+      // 主処理（Slack/CW DM 送信）を止めないように握りつぶす
+      console.warn('[notif] in-app Dチェック notify failed:', e?.message || e);
+    }
   }
   // 2) → Pチェック
   //    PR (this PR) で複数プロデューサー（creative_assignments.role='producer'）対応。
@@ -511,6 +560,42 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       const slackFallback = fbSlack + note;
       const cwFallback = fbCw.replace('[/info]', note + '[/info]');
       await sendChannelMention(slackFallback, cwFallback);
+    }
+
+    // 2-e) in-app 通知（通知ベル / notification_logs）
+    //   Dチェック (1-e) と同じ理由: ball_holder_id ベースのトリガーは1人にしか
+    //   届かないため、Pチェックでも複数プロデューサー指定時に2人目以降が
+    //   アプリ内通知を取りこぼす。明示的に全員へ INSERT する。
+    try {
+      const projectName = project?.name || '';
+      const inAppBody = projectName ? `${fileName}（${projectName}）` : fileName;
+      const inAppLink = `/creatives/${detail.id}`;
+      const recipients = pCheckTargets.filter(u => u && u.id && (!actor || u.id !== actor.id));
+      const seenIds = new Set();
+      const rows = [];
+      for (const u of recipients) {
+        if (seenIds.has(u.id)) continue;
+        seenIds.add(u.id);
+        rows.push({
+          user_id: u.id,
+          notification_type: 'creative_status',
+          title: 'Pチェック依頼',
+          body: inAppBody,
+          link_url: inAppLink,
+          meta: {
+            creative_id: detail.id,
+            project_id: detail.project_id || null,
+            file_name: fileName,
+            new_status: 'Pチェック',
+          },
+          sender_id: actor?.id || null,
+        });
+      }
+      if (rows.length > 0) {
+        await createBulkNotifications(rows);
+      }
+    } catch (e) {
+      console.warn('[notif] in-app Pチェック notify failed:', e?.message || e);
     }
   }
   // 3) → Dチェック後修正（ボールが製作者側に戻る）
