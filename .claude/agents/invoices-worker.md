@@ -25,6 +25,17 @@ tools: Read, Edit, Write, Bash, Grep, Glob
    - **ラベル必須**: `scope:feature-invoices`, `auto-merge`
    - 種別ラベルも付与
    - PR本文に影響範囲・Test plan を記載
+   - **🆙 Verup情報セクション必須**（main マージで自動的に Verup情報一覧へ登録される。refactor/chore で掲載不要なら `skip-verup` ラベル）。テンプレ:
+     ```
+     ## 🆙 Verup情報
+     - 種別: feature       # feature / improvement / bugfix / spec_change
+     - 重要度: normal       # high / normal / low
+     - 画面: 請求
+     - 機能: <短い機能名>
+     - 修正: <ユーザー目線で1-2行。「リファクタした」ではなく「○○できるようになった」>
+     - 対象ロール: all      # all / admin / secretary / producer / director / editor / designer
+     - タグ: <関連キーワード>
+     ```
 
 # 触らないこと
 - mobile 専用CSS / HTML
