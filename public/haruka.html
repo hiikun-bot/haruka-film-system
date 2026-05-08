@@ -25503,6 +25503,18 @@ function _renderFpCommentHtml(c, isReply) {
   `;
 }
 
+// "HH:MM:SS:FF" / "HH:MM:SS" / "MM:SS" 形式の timecode を秒数に変換。
+// 値が無い・パース失敗時は Infinity を返し、ソート時に末尾へ追いやる。
+function fpTimecodeToSec(tc) {
+  if (!tc || typeof tc !== 'string') return Infinity;
+  const parts = tc.split(':').map(Number);
+  if (parts.some(n => isNaN(n))) return Infinity;
+  if (parts.length === 4) return parts[0]*3600 + parts[1]*60 + parts[2] + parts[3]/30;
+  if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+  if (parts.length === 2) return parts[0]*60 + parts[1];
+  return Infinity;
+}
+
 // flat な list を「親 → 返信群（インデント）」のツリー HTML にする。
 // _fpComments には flat 配列をそのまま入れて、ツリー化はレンダ時に行う。
 function renderComments(list) {
@@ -25518,9 +25530,20 @@ function renderComments(list) {
       (repliesByParent[c.parent_comment_id] = repliesByParent[c.parent_comment_id] || []).push(c);
     }
   });
-  // ルートコメントだけ抽出して描画。各ルート直下に返信ブロックを差し込む。
-  const html = list
+  // ルートコメントを timecode 昇順（無しは末尾）でソート。同タイムコードは created_at 昇順で安定化。
+  // 返信は親直下に GET 側の created_at 順で並ぶ（ツリー化の都合上ここでは触らない）。
+  const roots = list
     .filter(c => !c.parent_comment_id)
+    .slice()
+    .sort((a, b) => {
+      const sa = fpTimecodeToSec(a.timecode);
+      const sb = fpTimecodeToSec(b.timecode);
+      if (sa !== sb) return sa - sb;
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return ta - tb;
+    });
+  const html = roots
     .map(parent => {
       const replies = repliesByParent[parent.id] || [];
       const repliesHtml = replies.map(r => _renderFpCommentHtml(r, true)).join('');
@@ -25537,7 +25560,8 @@ function renderComments(list) {
     })
     .join('');
   el.innerHTML = html;
-  el.scrollTop = el.scrollHeight;
+  // タイムコード昇順で並ぶので、先頭（早いタイムコード）から見えるよう先頭にスクロール。
+  el.scrollTop = 0;
 }
 
 // Frame.io レビューコメントを「連絡・確認事項」textarea (#cd-editor-reply) に挿入する。
