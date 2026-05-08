@@ -683,3 +683,40 @@
     height: 52px;
   }
 }
+
+/* ==================== 本文インライン編集 ==================== */
+.tweet-edited-mark {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.tw-edit-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.5;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  resize: vertical;
+  min-height: 64px;
+  background: #fff;
+}
+.tw-edit-textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+.tw-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.tw-edit-counter {
+  margin-right: auto;
+  font-size: 11px;
+  color: #94a3b8;
+}
+

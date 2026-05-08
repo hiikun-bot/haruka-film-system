@@ -1172,6 +1172,9 @@ CREATE INDEX IF NOT EXISTS idx_tweet_likes_user ON tweet_likes(user_id);
 ALTER TABLE tweets ADD COLUMN IF NOT EXISTS mentioned_user_ids UUID[] DEFAULT '{}';
 ALTER TABLE tweets ADD COLUMN IF NOT EXISTS reaction_count INT NOT NULL DEFAULT 0;
 ALTER TABLE tweets ADD COLUMN IF NOT EXISTS comment_count  INT NOT NULL DEFAULT 0;
+-- 本文編集機能（PATCH /api/tweets/:id）の編集タイムスタンプ。
+-- NULL = 未編集。値が入っていれば UI 側で「（編集済み）」を表示する。
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_tweets_mentioned ON tweets USING GIN(mentioned_user_ids);
 
 CREATE TABLE IF NOT EXISTS tweet_reactions (

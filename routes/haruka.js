@@ -6773,7 +6773,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // FK ヒント `users!user_id` を明示。段階4 migration で tweet_reactions / tweet_comments
     // が users への FK を持ったことで PostgREST が relationship を一意に解決できなくなる
     // ため、tweets.user_id を介した埋め込みであることを明示する。
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
 
   // ロール絞り込み（運営のみ / 個別ロール）:
@@ -6810,7 +6810,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     const [myCommentsRes, ownAndMentionRes] = await Promise.all([
       supabase.from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null),
       supabase.from('tweets')
-        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`),
     ]);
@@ -6825,7 +6825,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // (c) コメント参加対象 — 取得したコメント tweet_id があるときだけ追加クエリ
     if (commentedTweetIds.length > 0) {
       const { data: commentTweets, error: ctErr } = await supabase.from('tweets')
-        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .in('id', commentedTweetIds);
       if (ctErr) return res.status(500).json({ error: ctErr.message });
@@ -6950,7 +6950,7 @@ router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => 
       image_data: dataUrl,
       mentioned_user_ids: mentionedIds,
     })
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, mentioned_user_ids, reaction_count, comment_count')
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
@@ -6981,6 +6981,58 @@ router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => 
     like_count: 0,
     my_liked: false,
   });
+});
+
+// 本文編集（投稿者本人のみ。画像・ピン留めは触らない）
+//   メンションは抽出し直して mentioned_user_ids を更新するが、
+//   再投稿の度にスパム通知が飛ばないよう、編集時は新規メンション分のみ通知する。
+router.patch('/tweets/:id', requireAuth, async (req, res) => {
+  const body = String(req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: '本文を入力してください' });
+  if (body.length > TWEET_BODY_MAX) {
+    return res.status(400).json({ error: `本文は ${TWEET_BODY_MAX} 字以内にしてください` });
+  }
+
+  const { data: existing, error: tErr } = await supabase.from('tweets')
+    .select('id, user_id, body, mentioned_user_ids').eq('id', req.params.id).maybeSingle();
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!existing) return res.status(404).json({ error: 'つぶやきが見つかりません' });
+  if (existing.user_id !== req.user.id) {
+    return res.status(403).json({ error: '自分の投稿のみ編集できます' });
+  }
+
+  const newMentionedIds = await extractMentions(body);
+  const oldSet = new Set(existing.mentioned_user_ids || []);
+
+  const { data, error } = await supabase.from('tweets')
+    .update({ body, mentioned_user_ids: newMentionedIds, edited_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // 編集で追加された新規メンションだけ通知
+  const senderName = req.user.nickname || req.user.full_name || '誰か';
+  const excerpt = body.length > 50 ? body.slice(0, 50) + '…' : body;
+  for (const uid of (newMentionedIds || [])) {
+    if (uid === req.user.id) continue;
+    if (oldSet.has(uid)) continue;
+    createNotification({
+      userId: uid,
+      type: 'mention',
+      title: `${senderName}さんがあなたをメンションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${data.id}`,
+      meta: {
+        tweet_id: data.id,
+        mentioned_by_name: senderName,
+        post_excerpt: excerpt,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] mention(edit) 通知失敗:', e.message));
+  }
+
+  res.json(data);
 });
 
 // 削除（投稿者本人 OR admin / secretary）
