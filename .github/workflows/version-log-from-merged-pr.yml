@@ -1,0 +1,35 @@
+name: Verup情報を自動登録（PRマージ時）
+
+# main にマージされた PR の本文から「## 🆙 Verup情報」セクションを抽出し、
+# Supabase の version_logs テーブルに INSERT する。
+# - セクションが無い PR / placeholder のみの PR / skip-verup ラベル付き PR はスキップ
+# - SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が未設定なら何もせず終了（CI は緑のまま）
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  post-version-log:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Post Verup情報 to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node .github/scripts/post-version-log.js
