@@ -10044,6 +10044,245 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
   res.json({ ok: true, data });
 });
 
+// ==================== Verup情報（システム改訂履歴） ====================
+// 設計: docs (該当ADR未作成) — 管理者が画面から追加・編集できる changelog。
+//   - 一覧はログイン中ユーザーの role で target_roles を絞る（'all' は全員）
+//   - is_hidden=true は admin のみ閲覧可
+//   - revision_no は POST 時にサーバー側で max+1 を採番
+//   - 既読は version_log_reads(user_id, version_log_id) にレコードがあれば既読扱い
+const VERSION_LOG_CATEGORIES = ['feature', 'improvement', 'bugfix', 'spec_change'];
+const VERSION_LOG_IMPORTANCES = ['high', 'normal', 'low'];
+
+function normalizeVersionLogPayload(body) {
+  const out = {};
+  if (body.version_label !== undefined) out.version_label = body.version_label || null;
+  if (body.released_at !== undefined && body.released_at) out.released_at = new Date(body.released_at).toISOString();
+  if (body.screen !== undefined) out.screen = String(body.screen || '').trim();
+  if (body.feature !== undefined) out.feature = String(body.feature || '').trim();
+  if (body.description !== undefined) out.description = String(body.description || '').trim();
+  if (body.before_text !== undefined) out.before_text = body.before_text || null;
+  if (body.after_text !== undefined) out.after_text = body.after_text || null;
+  if (body.use_case !== undefined) out.use_case = body.use_case || null;
+  if (body.category !== undefined) {
+    const c = String(body.category || '').trim();
+    out.category = VERSION_LOG_CATEGORIES.includes(c) ? c : 'improvement';
+  }
+  if (body.importance !== undefined) {
+    const i = String(body.importance || '').trim();
+    out.importance = VERSION_LOG_IMPORTANCES.includes(i) ? i : 'normal';
+  }
+  if (body.target_roles !== undefined) {
+    const arr = Array.isArray(body.target_roles) ? body.target_roles : [];
+    out.target_roles = arr.length ? arr.map(String) : ['all'];
+  }
+  if (body.tags !== undefined) {
+    const arr = Array.isArray(body.tags) ? body.tags : [];
+    out.tags = arr.map(s => String(s).trim()).filter(Boolean);
+  }
+  if (body.related_url !== undefined) out.related_url = body.related_url || null;
+  if (body.is_hidden !== undefined) out.is_hidden = !!body.is_hidden;
+  return out;
+}
+
+async function buildVersionLogVisibility(req) {
+  const isAdmin = await requesterHasAnyRole(req, ['admin']);
+  return { isAdmin };
+}
+
+router.get('/version-logs', requireAuth, async (req, res) => {
+  try {
+    const { isAdmin } = await buildVersionLogVisibility(req);
+    let q = supabase.from('version_logs').select('*').order('revision_no', { ascending: false });
+    if (!isAdmin) q = q.eq('is_hidden', false);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    let myRoleCodes = await getRequesterRoleCodes(req);
+    if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
+
+    const userId = req.user?.id;
+    let readSet = new Set();
+    if (userId) {
+      const { data: reads } = await supabase
+        .from('version_log_reads').select('version_log_id').eq('user_id', userId);
+      readSet = new Set((reads || []).map(r => r.version_log_id));
+    }
+
+    const filtered = (data || []).filter(row => {
+      if (isAdmin) return true; // admin は role 制限を受けない
+      const tr = row.target_roles || ['all'];
+      if (tr.includes('all')) return true;
+      return tr.some(r => myRoleCodes.includes(r));
+    }).map(row => ({ ...row, is_read: readSet.has(row.id) }));
+
+    res.json(filtered);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/version-logs/unread-count', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.json({ count: 0 });
+
+    const { data: logs, error } = await supabase
+      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+    if (error) return res.status(500).json({ error: error.message });
+
+    let myRoleCodes = await getRequesterRoleCodes(req);
+    if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
+
+    const visibleIds = (logs || [])
+      .filter(l => {
+        const tr = l.target_roles || ['all'];
+        if (tr.includes('all')) return true;
+        return tr.some(r => myRoleCodes.includes(r));
+      })
+      .map(l => l.id);
+
+    if (visibleIds.length === 0) return res.json({ count: 0 });
+
+    const { data: reads } = await supabase
+      .from('version_log_reads').select('version_log_id').eq('user_id', userId).in('version_log_id', visibleIds);
+    const readSet = new Set((reads || []).map(r => r.version_log_id));
+    const unread = visibleIds.filter(id => !readSet.has(id)).length;
+    res.json({ count: unread });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/version-logs', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ追加できます' });
+
+    const payload = normalizeVersionLogPayload(req.body || {});
+    if (!payload.screen || !payload.feature || !payload.description) {
+      return res.status(400).json({ error: '画面 / 機能 / 修正内容は必須です' });
+    }
+
+    const { data: maxRow } = await supabase
+      .from('version_logs').select('revision_no').order('revision_no', { ascending: false }).limit(1).maybeSingle();
+    const nextNo = (maxRow?.revision_no || 0) + 1;
+
+    const insertRow = {
+      revision_no: nextNo,
+      version_label: payload.version_label ?? null,
+      released_at: payload.released_at || new Date().toISOString(),
+      screen: payload.screen,
+      feature: payload.feature,
+      description: payload.description,
+      before_text: payload.before_text ?? null,
+      after_text: payload.after_text ?? null,
+      use_case: payload.use_case ?? null,
+      category: payload.category || 'improvement',
+      importance: payload.importance || 'normal',
+      target_roles: payload.target_roles || ['all'],
+      tags: payload.tags || [],
+      related_url: payload.related_url ?? null,
+      is_hidden: payload.is_hidden || false,
+      created_by: req.user?.id || null,
+    };
+
+    const { data, error } = await supabase.from('version_logs').insert(insertRow).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/version-logs/:id', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ編集できます' });
+
+    const payload = normalizeVersionLogPayload(req.body || {});
+    payload.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('version_logs').update(payload).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/version-logs/:id', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ削除できます' });
+    const { error } = await supabase.from('version_logs').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 既読化（既存があれば 200 OK でスキップ）
+router.post('/version-logs/:id/read', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'unauth' });
+    const { error } = await supabase
+      .from('version_log_reads')
+      .upsert({ user_id: userId, version_log_id: req.params.id, read_at: new Date().toISOString() },
+              { onConflict: 'user_id,version_log_id' });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 全件既読化（自分の見えるものすべて）
+router.post('/version-logs/read-all', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'unauth' });
+
+    const { data: logs } = await supabase
+      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+    let myRoleCodes = await getRequesterRoleCodes(req);
+    if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
+
+    const ids = (logs || [])
+      .filter(l => {
+        const tr = l.target_roles || ['all'];
+        if (tr.includes('all')) return true;
+        return tr.some(r => myRoleCodes.includes(r));
+      }).map(l => l.id);
+
+    if (ids.length === 0) return res.json({ ok: true, count: 0 });
+    const rows = ids.map(id => ({ user_id: userId, version_log_id: id, read_at: new Date().toISOString() }));
+    const { error } = await supabase.from('version_log_reads').upsert(rows, { onConflict: 'user_id,version_log_id' });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, count: ids.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 表示/非表示切替（admin のみ）
+router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ切替できます' });
+    const is_hidden = !!req.body?.is_hidden;
+    const { data, error } = await supabase
+      .from('version_logs').update({ is_hidden, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
 // 用途:
 //   const harukaRouter = require('./routes/haruka');                 // ルーター本体
