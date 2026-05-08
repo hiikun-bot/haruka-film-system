@@ -3168,6 +3168,186 @@ router.get('/analytics/creator-summary', requireAuth, requirePermission('analyti
   }
 });
 
+// 1 ユーザーが特定の年月に関わった creative の明細
+// （/creator-summary 表で行クリック時に展開する内訳モーダル用）
+//
+// データロード部は aggregateCreatorSummary とほぼ同じ。
+// computeCreatorCreativeBreakdown を共有することで「集計値 = 明細合計」が自動的に保証される。
+async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
+  const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+  const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+  const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
+
+  let q = supabase
+    .from('creatives')
+    .select(`
+      id, file_name, status, creative_type, project_id, line_id,
+      final_deadline, created_at,
+      projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
+      creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
+    `)
+    .gte(dateColForFilter, startDate.toISOString())
+    .lt(dateColForFilter, endDate.toISOString());
+  if (statusFilter === 'delivered') q = q.eq('status', '納品');
+
+  const { data: creatives, error } = await q;
+  if (error) throw new Error(error.message);
+
+  const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
+  const lineById = new Map();
+  const lineCostsByLine = new Map();
+  if (lineIds.length) {
+    const [linesRes, lineCostsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, planned_count, client_unit_price, status')
+        .in('id', lineIds),
+      supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+        .in('line_id', lineIds),
+    ]);
+    if (linesRes.error)     console.warn('[aggregateCreatorDetail] lines load failed:', linesRes.error.message);
+    if (lineCostsRes.error) console.warn('[aggregateCreatorDetail] line_costs load failed:', lineCostsRes.error.message);
+    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
+    for (const lc of (lineCostsRes.data || [])) {
+      if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
+      lineCostsByLine.get(lc.line_id).push(lc);
+    }
+  }
+
+  const neededUserIds = new Set([userId]);
+  for (const c of (creatives || [])) {
+    if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
+    if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+  }
+  for (const arr of lineCostsByLine.values()) {
+    for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
+  }
+  const userById = new Map();
+  if (neededUserIds.size) {
+    const { data: us } = await supabase
+      .from('users').select('id, full_name, nickname, role, rank')
+      .in('id', Array.from(neededUserIds));
+    (us || []).forEach(u => userById.set(u.id, u));
+  }
+
+  const resolvePayee = (lineCost, creative, assignees) => {
+    if (lineCost.user_id) return userById.get(lineCost.user_id) || null;
+    const code = lineCost.role?.code || '';
+    if (!code) return null;
+    if (['editor', 'designer', 'director_as_editor'].includes(code)) {
+      const a = assignees.find(x => x.role === code);
+      return a?.users || null;
+    }
+    if (code === 'director' || code === 'sub_director') {
+      const did = creative.projects?.director_id;
+      return did ? (userById.get(did) || null) : null;
+    }
+    if (code === 'producer' || code === 'sub_producer') {
+      const pid = creative.projects?.producer_id;
+      return pid ? (userById.get(pid) || null) : null;
+    }
+    const a = assignees.find(x => x.role === code);
+    return a?.users || null;
+  };
+
+  const items = [];
+  const totals = {
+    video_count: 0, design_count: 0, director_count: 0,
+    video_total: 0, design_total: 0, director_total: 0,
+    grand_total: 0,
+  };
+
+  for (const c of (creatives || [])) {
+    const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee);
+    const slot = perUser.get(userId);
+    if (!slot) continue;
+
+    const rowAmount = slot.totals.video_amount + slot.totals.design_amount
+                    + slot.totals.director_amount + slot.totals.producer_amount;
+
+    items.push({
+      creative_id: c.id,
+      file_name: c.file_name || '(無題)',
+      creative_type: c.creative_type || null,
+      base_type: slot.base_type,
+      status: c.status || null,
+      final_deadline: c.final_deadline || null,
+      project: {
+        id: c.projects?.id || null,
+        name: c.projects?.name || '(不明)',
+        client_id: c.projects?.client_id || null,
+        client_name: c.projects?.clients?.name || '(不明)',
+      },
+      roles: slot.roles,
+      breakdown: slot.breakdown,
+      rate_unknown: slot.rate_unknown,
+      counted: slot.counted,
+      row_total: rowAmount,
+    });
+
+    totals.video_total    += slot.totals.video_amount;
+    totals.design_total   += slot.totals.design_amount;
+    totals.director_total += slot.totals.director_amount;
+    totals.grand_total    += rowAmount;
+    if (slot.counted.video)    totals.video_count++;
+    if (slot.counted.design)   totals.design_count++;
+    if (slot.counted.director) totals.director_count++;
+  }
+
+  // 案件名 → final_deadline → file_name の昇順
+  items.sort((a, b) => {
+    const pcmp = (a.project.name || '').localeCompare(b.project.name || '', 'ja');
+    if (pcmp !== 0) return pcmp;
+    const da = a.final_deadline || '';
+    const db = b.final_deadline || '';
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.file_name || '').localeCompare(b.file_name || '', 'ja');
+  });
+
+  const userBase = userById.get(userId) || null;
+
+  return {
+    user: userBase ? {
+      id: userBase.id,
+      full_name: userBase.full_name || '(不明)',
+      nickname: userBase.nickname || null,
+      role: userBase.role || '-',
+      rank: userBase.rank || null,
+    } : { id: userId, full_name: '(不明)', nickname: null, role: '-', rank: null },
+    year, month,
+    status: statusFilter,
+    status_label: statusFilter === 'delivered' ? '納品のみ' : '全件',
+    items,
+    totals,
+  };
+}
+
+// クリエイター明細 GET（クリエイター行クリックで開く内訳モーダル用）
+router.get('/analytics/creator-detail', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  const userId = (req.query.user_id || '').toString().trim();
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です' });
+  }
+  if (!userId) {
+    return res.status(400).json({ error: 'user_id は必須です' });
+  }
+  try {
+    const result = await aggregateCreatorDetail({
+      year, month,
+      statusFilter: req.query.status === 'all' ? 'all' : 'delivered',
+      userId,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[analytics/creator-detail]', e);
+    res.status(500).json({ error: e.message || '明細の取得に失敗しました' });
+  }
+});
+
 // スプレッドシート出力
 router.post('/analytics/creator-summary/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
   const year = parseInt(req.body?.year ?? req.query.year, 10);

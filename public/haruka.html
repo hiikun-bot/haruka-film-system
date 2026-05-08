@@ -2296,6 +2296,38 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </div>
 
+<!-- 分析タブ: クリエイター別作成本数 → クリエイター行クリック時の明細モーダル -->
+<!-- 行は openCreatorDetail() で動的生成 -->
+<style>
+  .creator-cell-clickable:hover { background: var(--em-pale); }
+  #modal-creator-detail .creator-detail-role-chip {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 5px;
+    margin-right: 3px;
+    margin-bottom: 2px;
+    font-weight: 600;
+    line-height: 1.6;
+  }
+  #modal-creator-detail .role-chip-editor      { background: #DBEAFE; color: #1E40AF; }
+  #modal-creator-detail .role-chip-designer    { background: #FED7AA; color: #9A3412; }
+  #modal-creator-detail .role-chip-director,
+  #modal-creator-detail .role-chip-sub_director{ background: #EDE9FE; color: #5B21B6; }
+  #modal-creator-detail .role-chip-director_as_editor { background: #DCFCE7; color: #166534; }
+  #modal-creator-detail .role-chip-other       { background: #F1F5F9; color: #334155; }
+</style>
+<div class="modal-overlay" id="modal-creator-detail">
+  <div class="modal-card" style="width:min(1100px,96vw);max-height:88vh;overflow:auto">
+    <div class="modal-title" id="cdet-title">📋 クリエイター別 内訳<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button></div>
+    <div id="cdet-summary" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+    <div id="cdet-content" style="font-size:13px"></div>
+    <div class="modal-footer" style="margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-creator-detail')">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- つぶやき: 投稿モーダル -->
 <div class="modal-overlay" id="modal-tweet-compose">
   <div class="modal-card" style="width:520px">
@@ -26062,7 +26094,7 @@ function renderCreatorSummaryTable(data) {
       ? `<span title="line に紐付く line_costs（ロール別単価）が見つからなかった件数。案件編集モーダルの「成果物グループ」で line/コストを設定してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
       : '';
     return `<tr style="border-bottom:1px solid var(--border-light)">
-      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}${noteRate}</td>
+      <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-align:center">${esc(u.rank || '-')}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#0369a1">${u.video_count > 0 ? `📹${u.video_count}` : '—'}</td>
@@ -26103,6 +26135,139 @@ function renderCreatorSummaryTable(data) {
       </tr>
     </tbody>
   </table>`;
+}
+
+// ==================== クリエイター別 明細モーダル ====================
+//
+// 「クリエイター別作成本数」表で クリエイター名セルをクリックしたときに、
+// そのユーザーがその月に関わった creative の内訳を表示する。
+// API: GET /api/analytics/creator-detail?year&month&user_id&status
+// ロジックは routes/haruka.js の computeCreatorCreativeBreakdown と完全共有しているので
+// 「summary 行の合計 = モーダル内 row_total の合計」が自動的に一致する。
+async function openCreatorDetail(userId) {
+  if (!userId || !_analyticsLastResult) {
+    showToast('集計データが読み込まれていません', 'warn');
+    return;
+  }
+  const year = _analyticsLastResult.year;
+  const month = _analyticsLastResult.month;
+  const status = _analyticsLastResult.status === 'all' ? 'all' : 'delivered';
+
+  // モーダルを「読み込み中…」で先に開く（体感レスポンス改善）
+  const titleEl = document.getElementById('cdet-title');
+  const sumEl   = document.getElementById('cdet-summary');
+  const cntEl   = document.getElementById('cdet-content');
+  titleEl.innerHTML = `📋 内訳 (${year}年${month}月) — 読み込み中…<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
+  sumEl.innerHTML = '';
+  cntEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">読み込み中…</div>';
+  openModal('modal-creator-detail');
+
+  let data;
+  try {
+    const res = await apiFetch(`${API}/analytics/creator-detail?year=${year}&month=${month}&user_id=${encodeURIComponent(userId)}&status=${status}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      cntEl.innerHTML = `<div style="padding:20px;text-align:center;color:#B91C1C">取得失敗: ${esc(translateError(err.error || 'unknown'))}</div>`;
+      return;
+    }
+    data = await res.json();
+  } catch (e) {
+    cntEl.innerHTML = `<div style="padding:20px;text-align:center;color:#B91C1C">通信エラー: ${esc(e.message || '')}</div>`;
+    return;
+  }
+
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const u = data.user;
+  const uname = u.full_name + (u.nickname ? ` (${u.nickname})` : '');
+  titleEl.innerHTML = `📋 ${esc(uname)} — ${data.year}年${data.month}月 ${esc(data.status_label)}<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
+
+  // 上部サマリーチップ（renderCreatorSummaryTable と同じ色味）
+  sumEl.innerHTML = `
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">動画</span> <strong>${data.totals.video_count}本 / ${yen(data.totals.video_total)}</strong></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.totals.design_count}枚 / ${yen(data.totals.design_total)}</strong></div>
+    <div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">ディレクション</span> <strong>${data.totals.director_count}件 / ${yen(data.totals.director_total)}</strong></div>
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">合計</span> <strong style="font-size:13px;color:var(--em-dark)">${yen(data.totals.grand_total)}</strong></div>
+    <div style="background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">明細件数</span> <strong>${data.items.length}件</strong></div>
+  `;
+
+  if (!data.items.length) {
+    cntEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する creative がありません</div>';
+    return;
+  }
+
+  // 役割 → chip クラス
+  const roleChipClass = (code) => {
+    if (code === 'editor') return 'role-chip-editor';
+    if (code === 'designer') return 'role-chip-designer';
+    if (code === 'director' || code === 'sub_director') return 'role-chip-' + code;
+    if (code === 'director_as_editor') return 'role-chip-director_as_editor';
+    return 'role-chip-other';
+  };
+  const roleLabel = (code) => {
+    const map = {
+      editor: '編集',
+      designer: 'デザイン',
+      director: 'ディレクター',
+      sub_director: 'サブディレクター',
+      director_as_editor: '監督兼編集',
+      producer: 'プロデューサー',
+      sub_producer: 'サブプロデューサー',
+    };
+    return map[code] || (code || '-');
+  };
+  const baseTypeLabel = (b) => b === 'design' ? '🎨 デザイン' : '📹 動画';
+
+  // breakdown は producer/sub_producer も含めて API から返ってくるが、
+  // UI は「動画/デザイン/ディレクション」の文脈なので producer 系は明細表示から除外。
+  // ※ producer 金額は本数に乗らないので非表示で問題ない（将来拡張時にここを外す）
+  const breakdownRender = (b, isRateUnknown) => {
+    if (isRateUnknown && (!b || !b.length)) {
+      return '<span style="color:#B91C1C;font-size:11px">単価未設定</span>';
+    }
+    const visible = (b || []).filter(x => x.role_code !== 'producer' && x.role_code !== 'sub_producer');
+    if (!visible.length) return '<span style="color:var(--text-muted);font-size:11px">—</span>';
+    return visible.map(x => `<div style="font-size:11px;line-height:1.5"><span style="color:var(--text-muted)">${esc(roleLabel(x.role_code))}:</span> ¥${Number(x.amount).toLocaleString()}</div>`).join('');
+  };
+
+  const rows = data.items.map(it => {
+    // UI に出すロールは editor/designer/director/sub_director/director_as_editor のみ
+    const visibleRoles = (it.roles || []).filter(c =>
+      ['editor', 'designer', 'director', 'sub_director', 'director_as_editor'].includes(c)
+    );
+    const roleChips = visibleRoles.length
+      ? visibleRoles.map(c => `<span class="creator-detail-role-chip ${roleChipClass(c)}">${esc(roleLabel(c))}</span>`).join('')
+      : '<span style="color:var(--text-muted);font-size:11px">—</span>';
+    const rateUnknownBadge = it.rate_unknown
+      ? '<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C;margin-left:4px">単価不明</span>'
+      : '';
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 10px;font-size:12px;vertical-align:top">${esc(it.project.name)}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${esc(it.project.client_name)}</div></td>
+      <td style="padding:8px 10px;font-size:12px;vertical-align:top;word-break:break-all">${esc(it.file_name)}${rateUnknownBadge}</td>
+      <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;vertical-align:top">${esc(baseTypeLabel(it.base_type))}</td>
+      <td style="padding:8px 10px;vertical-align:top">${roleChips}</td>
+      <td style="padding:8px 10px;vertical-align:top">${breakdownRender(it.breakdown, it.rate_unknown)}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:600;white-space:nowrap;vertical-align:top;color:var(--em-dark)">${it.row_total > 0 ? yen(it.row_total) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  cntEl.innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:760px">
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">案件 / クライアント</th>
+        <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">クリエイティブ</th>
+        <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">種別</th>
+        <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">役割</th>
+        <th style="padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">金額内訳</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;background:var(--em);color:#fff">行合計</th>
+      </tr>
+    </thead>
+    <tbody>${rows}
+      <tr style="border-top:2px solid var(--em);background:var(--em-pale);font-weight:700">
+        <td colspan="5" style="padding:11px 12px;text-align:right;font-size:12px;color:var(--em-dark)">合計</td>
+        <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.totals.grand_total)}</td>
+      </tr>
+    </tbody>
+  </table></div>`;
 }
 
 function renderAnalyticsTable(data) {
