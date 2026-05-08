@@ -147,22 +147,18 @@ async function main() {
   const versionLabel = pickKey(fields, 'バージョン', 'version_label', 'version') || null;
   const relatedUrl = pickKey(fields, '関連リンク', 'related_url') || PR_URL || null;
 
-  // revision_no は max+1
+  // revision_no は GitHub の PR 番号と一致させる（Slack 通知や PR タイトルと突合できるように）
   const headers = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,
     Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
     'Content-Type': 'application/json',
   };
-  const maxRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/version_logs?select=revision_no&order=revision_no.desc&limit=1`,
-    { headers }
-  );
-  if (!maxRes.ok) {
-    console.error('[verup] failed to fetch max revision_no:', maxRes.status, await maxRes.text());
+  const prNo = parseInt(PR_NUMBER, 10);
+  if (!Number.isFinite(prNo) || prNo <= 0) {
+    console.error('[verup] PR_NUMBER missing or invalid — cannot derive revision_no:', PR_NUMBER);
     process.exit(1);
   }
-  const maxRows = await maxRes.json();
-  const nextNo = (maxRows[0]?.revision_no || 0) + 1;
+  const nextNo = prNo;
 
   const row = {
     revision_no: nextNo,
@@ -182,17 +178,38 @@ async function main() {
     is_hidden: false,
   };
 
-  const insRes = await fetch(`${SUPABASE_URL}/rest/v1/version_logs`, {
+  let insRes = await fetch(`${SUPABASE_URL}/rest/v1/version_logs`, {
     method: 'POST',
     headers: { ...headers, Prefer: 'return=representation' },
     body: JSON.stringify(row),
   });
+
+  // revision_no が既に使われている（手動エントリ等と衝突）場合は max+1 にフォールバック
+  if (insRes.status === 409) {
+    console.warn(`[verup] revision_no=${nextNo} already exists — falling back to max+1`);
+    const maxRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/version_logs?select=revision_no&order=revision_no.desc&limit=1`,
+      { headers }
+    );
+    if (!maxRes.ok) {
+      console.error('[verup] failed to fetch max revision_no for fallback:', maxRes.status, await maxRes.text());
+      process.exit(1);
+    }
+    const maxRows = await maxRes.json();
+    row.revision_no = (maxRows[0]?.revision_no || 0) + 1;
+    insRes = await fetch(`${SUPABASE_URL}/rest/v1/version_logs`, {
+      method: 'POST',
+      headers: { ...headers, Prefer: 'return=representation' },
+      body: JSON.stringify(row),
+    });
+  }
+
   if (!insRes.ok) {
     console.error('[verup] insert failed:', insRes.status, await insRes.text());
     process.exit(1);
   }
   const inserted = await insRes.json();
-  console.log(`[verup] inserted version_log #${nextNo} for PR #${PR_NUMBER}`);
+  console.log(`[verup] inserted version_log #${row.revision_no} for PR #${PR_NUMBER}`);
   console.log(JSON.stringify(inserted[0] || inserted, null, 2));
 }
 

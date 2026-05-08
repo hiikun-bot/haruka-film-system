@@ -29216,6 +29216,14 @@ function _verupFmtDate(s) {
     return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   } catch(_) { return s; }
 }
+// revision_no >= 1,000,000 は画面からの手動追加（PR番号と衝突しない領域）。表示は M-N にする
+const VERUP_MANUAL_OFFSET = 1000000;
+function _verupRevisionLabel(no) {
+  const n = Number(no);
+  if (!Number.isFinite(n)) return `#${no}`;
+  if (n >= VERUP_MANUAL_OFFSET) return `#M-${n - VERUP_MANUAL_OFFSET}`;
+  return `#${n}`;
+}
 
 async function loadVerupUnreadCount() {
   try {
@@ -29327,7 +29335,7 @@ function renderVerupList() {
         <span style="background:${catColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_verupEsc(catLabel)}</span>
         ${importantBadge}
         ${hiddenBadge}
-        <span style="font-family:monospace;font-size:11px;color:var(--text-muted)">#${r.revision_no}${r.version_label ? ' / ' + _verupEsc(r.version_label) : ''}</span>
+        <span style="font-family:monospace;font-size:11px;color:var(--text-muted)">${_verupRevisionLabel(r.revision_no)}${r.version_label ? ' / ' + _verupEsc(r.version_label) : ''}</span>
         <span style="font-size:11px;color:var(--text-muted)">${_verupEsc(_verupFmtDate(r.released_at))}</span>
         <span style="flex:1"></span>
         ${!r.is_read ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='markVerupRead(${JSON.stringify(r.id)})'>既読</button>` : ''}
@@ -29417,7 +29425,7 @@ function editVerupEntry(id) {
   if (!_verupIsAdmin()) return;
   const r = _verupCache.find(x => x.id === id);
   if (!r) return;
-  document.getElementById('verup-editor-title').textContent = `編集 #${r.revision_no}`;
+  document.getElementById('verup-editor-title').textContent = `編集 ${_verupRevisionLabel(r.revision_no)}`;
   document.getElementById('vle-id').value = r.id;
   document.getElementById('vle-version-label').value = r.version_label || '';
   if (r.released_at) {
