@@ -718,8 +718,16 @@ ${cwUrlLine2}
   //    PR #67 で削除されていたが、クリエイターは「クライアントOKが出たかどうか」を
   //    把握する手段がほぼ唯一この通知のため復活。assignees（担当者全員）に送る。
   else if (newStatus === '納品') {
-    const slackBody = `🎉 クライアントOK！納品完了\nファイル: ${slackName}\nお疲れ様でした！クライアントから承認をいただき納品となりました ☺️✨`;
-    const cwBody = `[info][title]🎉 クライアントOK！納品完了[/title]ファイル: ${fileName}${cwUrlLine}\nお疲れ様でした！\nクライアントから承認をいただき納品となりました ☺️✨[/info]`;
+    const trimmedComment = (comment && String(comment).trim()) ? String(comment).trim() : '';
+    // クライアントの承認コメントが付いていれば本文に含める（無ければコメント行ごと省略）
+    const slackCommentBlock = trimmedComment
+      ? `\n*クライアントコメント*:\n> ${trimmedComment.replace(/\n/g, '\n> ')}`
+      : '';
+    const cwCommentBlock = trimmedComment
+      ? `\nクライアントコメント:\n${trimmedComment}`
+      : '';
+    const slackBody = `🎉 クライアントOK！納品完了\nファイル: ${slackName}${slackCommentBlock}\nお疲れ様でした！クライアントから承認をいただき納品となりました ☺️✨`;
+    const cwBody = `[info][title]🎉 クライアントOK！納品完了[/title]ファイル: ${fileName}${cwUrlLine}${cwCommentBlock}\nお疲れ様でした！\nクライアントから承認をいただき納品となりました ☺️✨[/info]`;
     // 担当者全員（editor・designer）に1メッセージで通知
     await sendNotifMulti(editorAssignees, slackBody, cwBody);
   }
