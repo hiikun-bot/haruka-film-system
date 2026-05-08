@@ -68,11 +68,11 @@ jobs:
         run: |
           set -e
           DATA=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json title,body,number,url,author,labels,merged,baseRefName)
-          MERGED=$(echo "$DATA" | jq -r '.merged')
+            --json title,body,number,url,author,labels,state,baseRefName)
+          STATE=$(echo "$DATA" | jq -r '.state')
           BASE=$(echo "$DATA"  | jq -r '.baseRefName')
-          if [ "$MERGED" != "true" ] || [ "$BASE" != "main" ]; then
-            echo "PR #$PR_NUMBER は main へのマージ済みではない（merged=$MERGED base=$BASE） → スキップ"
+          if [ "$STATE" != "MERGED" ] || [ "$BASE" != "main" ]; then
+            echo "PR #$PR_NUMBER は main へのマージ済みではない（state=$STATE base=$BASE） → スキップ"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
