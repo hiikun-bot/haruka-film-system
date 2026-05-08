@@ -3211,6 +3211,29 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
     </div>
+
+    <!-- ===== 全案件マイルストーンガント（L2 / ADR 010 Phase 1b） ===== -->
+    <details id="all-projects-gantt-section" ontoggle="toggleAllProjectsGantt()" style="margin-bottom:14px;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:8px 14px">
+      <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--em-dark);padding:6px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>📊 進行中案件ガント（クリックで展開）</span>
+        <span style="font-size:11px;color:var(--text-muted);font-weight:400">— 各案件の納期・マイルストーンを横断俯瞰</span>
+      </summary>
+      <div style="padding-top:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <label style="font-size:11px;color:var(--text-muted)">カテゴリ</label>
+          <select id="all-projects-gantt-category-filter" onchange="loadAllProjectsGantt()" class="form-input" style="width:140px;padding:4px 8px;font-size:12px">
+            <option value="">全て</option>
+            <option value="lp">LP</option>
+            <option value="hp">HP</option>
+          </select>
+          <button type="button" class="btn-sm" onclick="loadAllProjectsGantt()" style="font-size:11px">再読み込み</button>
+        </div>
+        <div id="all-projects-gantt-container">
+          <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">展開すると読み込みます</div>
+        </div>
+      </div>
+    </details>
+
     <div id="projects-list" class="loading">読み込み中...</div>
   </div>
 </div>
@@ -5166,6 +5189,64 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
       <div id="p-fixed-items-list" style="display:flex;flex-direction:column;gap:8px">
         <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
+      </div>
+    </div>
+
+    <!-- ===== 工程表（project_tasks）ADR 010 Phase 1b ===== -->
+    <!-- LP/HP 等カテゴリ横断のフェーズ・タスク・マイルストーン管理。
+         クリエイティブ単位の進捗管理（creative_status_templates）とは別概念。
+         新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
+    <div id="p-schedule-section" style="display:none;padding:0 28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:inline-block;width:3px;height:14px;background:#2563EB;border-radius:2px"></span>
+          <span style="font-size:11px;font-weight:700;color:#1E40AF;letter-spacing:0.12em;text-transform:uppercase">📋 工程表</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（フェーズ・タスク・マイルストーン）</span>
+        </div>
+      </div>
+
+      <!-- 案件開始日 + テンプレ適用 -->
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--em-pale);border-radius:8px">
+        <label style="font-size:12px;color:var(--text-muted);white-space:nowrap">案件開始日</label>
+        <input type="date" id="p-scheduled-start-date" class="form-input" style="width:140px;padding:5px 8px;font-size:13px">
+        <span style="width:1px;height:18px;background:var(--border)"></span>
+        <label style="font-size:12px;color:var(--text-muted);white-space:nowrap">テンプレ</label>
+        <select id="p-active-template" class="form-input" style="min-width:200px;padding:5px 8px;font-size:13px">
+          <option value="">テンプレ選択...</option>
+        </select>
+        <button type="button" class="btn-primary" onclick="applyPhaseTemplate()" style="padding:5px 12px;font-size:12px;white-space:nowrap">テンプレから生成</button>
+      </div>
+
+      <!-- コンパクトガント帯 -->
+      <div id="p-schedule-compact-gantt" style="margin-bottom:14px;padding:10px 12px;background:#fff;border:0.5px solid var(--border);border-radius:8px;overflow-x:auto"></div>
+
+      <!-- タスクテーブル -->
+      <div style="border:0.5px solid var(--border);border-radius:8px;overflow:hidden;background:#fff">
+        <table id="p-schedule-tasks-table" style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead style="background:#F8FAFC">
+            <tr>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:32px">No</th>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border)">タスク</th>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:120px">担当</th>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:110px">開始</th>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:100px">元日程</th>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:110px">新日程</th>
+              <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:36px">✅</th>
+              <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border)">備考</th>
+              <th style="padding:8px 6px;text-align:center;font-weight:600;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border);width:36px"></th>
+            </tr>
+          </thead>
+          <tbody id="p-schedule-tasks-tbody">
+            <tr><td colspan="9" style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px">
+        <div style="font-size:11px;color:var(--text-muted)">
+          ●自社 ★クライアント ◆打ち合わせ ■マイルストーン
+        </div>
+        <button type="button" class="btn" onclick="addProjectTask()" style="padding:6px 14px;font-size:12px">＋ タスク追加</button>
       </div>
     </div>
 
@@ -12939,6 +13020,9 @@ function openProjectModal(preClientId) {
   // 固定費・追加収入も同様に新規作成時は隠す（Stage 4c）
   const fiSec = document.getElementById('p-fixed-items-section');
   if (fiSec) fiSec.style.display = 'none';
+  // 工程表（ADR 010 Phase 1b）も新規作成時は隠す
+  const schedSec = document.getElementById('p-schedule-section');
+  if (schedSec) schedSec.style.display = 'none';
   // ADR 007: ファイル名テンプレ UI を初期化（新規は default テンプレを表示）
   initProjectFilenameTemplateUI(null);
   openModal('modal-project');
@@ -13054,6 +13138,11 @@ function openEditProject(p) {
   const fiSec = document.getElementById('p-fixed-items-section');
   if (fiSec) fiSec.style.display = '';
   loadProjectFixedItems(p.id);
+
+  // 工程表（project_tasks）セクション表示 + ロード（ADR 010 Phase 1b）
+  const schedSec = document.getElementById('p-schedule-section');
+  if (schedSec) schedSec.style.display = '';
+  loadProjectSchedule(p);
 
   // ADR 007: ファイル名テンプレ UI を初期化
   initProjectFilenameTemplateUI(p);
@@ -14159,6 +14248,449 @@ async function executeProjectFixedItemDelete() {
     showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+// ==================== 工程表（project_tasks）ADR 010 Phase 1b ====================
+// 案件編集モーダル内「📋 工程表」セクション（L1）と、案件タブ上部「全案件マイルストーンガント」（L2）。
+// L3/L4 は Phase 2 で別途実装。
+
+let _pScheduleTasks = [];
+let _pScheduleProjectId = null;
+
+const TASK_ASSIGNEE_LABEL = {
+  us:        { icon: '●', color: '#6B7280', label: '自社' },
+  client:    { icon: '★', color: '#DC2626', label: 'クライアント' },
+  meeting:   { icon: '◆', color: '#2563EB', label: '打ち合わせ' },
+  milestone: { icon: '■', color: '#111827', label: 'マイルストーン' },
+};
+
+async function loadProjectSchedule(p) {
+  const projectId = (p && p.id) || document.getElementById('p-id')?.value;
+  if (!projectId) return;
+  _pScheduleProjectId = projectId;
+
+  const startInput = document.getElementById('p-scheduled-start-date');
+  if (startInput) {
+    startInput.value = (p && p.scheduled_start_date) ? String(p.scheduled_start_date).slice(0, 10) : '';
+    startInput.onchange = async () => {
+      const val = startInput.value || null;
+      try {
+        const res = await apiFetch(`${API}/projects/${projectId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scheduled_start_date: val }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          showToast(`開始日の保存に失敗: ${err.error || res.status}`, 'warn');
+        }
+      } catch (e) {
+        showToast(`開始日の保存に失敗: ${e.message || ''}`, 'warn');
+      }
+    };
+  }
+
+  await populatePhaseTemplateSelect(p);
+  await reloadProjectTasks(projectId);
+}
+
+async function populatePhaseTemplateSelect(p) {
+  const sel = document.getElementById('p-active-template');
+  if (!sel) return;
+  const categoryId = (p && p.primary_category_id) || null;
+  let url = `${API}/phase-templates`;
+  if (categoryId) url += `?category_id=${encodeURIComponent(categoryId)}`;
+  try {
+    const res = await apiFetch(url);
+    const templates = res.ok ? await res.json() : [];
+    const opts = ['<option value="">テンプレ選択...</option>']
+      .concat(templates.map(t => `<option value="${t.id}">${esc(t.name)}${t.is_default ? '（既定）' : ''}</option>`));
+    sel.innerHTML = opts.join('');
+    if (p && p.active_phase_template_id) sel.value = p.active_phase_template_id;
+  } catch (_) {
+    sel.innerHTML = '<option value="">（テンプレ取得失敗）</option>';
+  }
+}
+
+async function reloadProjectTasks(projectId) {
+  projectId = projectId || _pScheduleProjectId;
+  if (!projectId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/tasks`);
+    _pScheduleTasks = res.ok ? await res.json() : [];
+  } catch (_) {
+    _pScheduleTasks = [];
+  }
+  renderProjectScheduleTasks();
+  renderProjectScheduleCompactGantt();
+}
+
+function renderProjectScheduleTasks() {
+  const tbody = document.getElementById('p-schedule-tasks-tbody');
+  if (!tbody) return;
+  const tasks = _pScheduleTasks || [];
+  if (!tasks.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">まだタスクがありません。「テンプレから生成」または「＋ タスク追加」から作成してください。</td></tr>';
+    return;
+  }
+  const userOpts = (allMembers || []).filter(m => m.is_active !== false)
+    .map(m => `<option value="${m.id}">${esc(m.full_name || '')}</option>`).join('');
+
+  const rows = tasks.map((t, idx) => {
+    const isPhase = !!t.is_phase_header;
+    const isMs = !!t.is_milestone;
+    const at = t.assignee_type || 'us';
+    const aLabel = TASK_ASSIGNEE_LABEL[at] || TASK_ASSIGNEE_LABEL.us;
+    const childPrefix = (t.parent_task_id && !isPhase) ? '<span style="color:#9CA3AF;margin-right:4px">└</span>' : '';
+    const phaseStyle = isPhase ? 'background:#F3F4F6;font-weight:700' : '';
+    const msStyle = (isMs && !isPhase) ? 'background:#FEF2F2' : '';
+    const rowStyle = `border-bottom:1px solid #F3F4F6;${phaseStyle}${msStyle}`;
+    const titleIcon = isMs ? '<span style="color:#DC2626;font-weight:700;margin-right:4px">◆</span>' : '';
+
+    const orig = t.original_end_date ? String(t.original_end_date).slice(0,10) : '';
+    const curr = t.current_end_date ? String(t.current_end_date).slice(0,10) : '';
+    const dateDiffer = orig && curr && orig !== curr;
+    const origCell = orig
+      ? `<span style="${dateDiffer ? 'text-decoration:line-through;color:#9CA3AF' : 'color:#9CA3AF'};font-size:11px">${orig}</span>`
+      : '<span style="color:#D1D5DB;font-size:11px">—</span>';
+
+    // 担当者 select の selected を反映
+    const userSelectHtml = at === 'us'
+      ? `<select onchange="updateTaskField('${t.id}', 'assignee_user_id', this.value || null)" style="border:none;background:transparent;font-size:10px;max-width:80px">
+           <option value="">未設定</option>
+           ${(allMembers || []).filter(m => m.is_active !== false).map(m =>
+              `<option value="${m.id}"${m.id === t.assignee_user_id ? ' selected' : ''}>${esc(m.full_name || '')}</option>`
+           ).join('')}
+         </select>`
+      : '';
+
+    return `
+      <tr data-task-id="${t.id}" style="${rowStyle}">
+        <td style="padding:6px 10px;color:var(--text-muted);font-size:11px">${idx + 1}</td>
+        <td style="padding:6px 10px">
+          ${childPrefix}${titleIcon}<input type="text" value="${esc(t.title || '')}"
+            onchange="updateTaskField('${t.id}', 'title', this.value)"
+            style="border:none;background:transparent;font-size:12px;width:100%;${isPhase ? 'font-weight:700' : ''};${isMs ? 'color:#DC2626' : ''}">
+        </td>
+        <td style="padding:6px 10px">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="color:${aLabel.color};font-size:13px;font-weight:700" title="${aLabel.label}">${aLabel.icon}</span>
+            <select onchange="updateTaskField('${t.id}', 'assignee_type', this.value)"
+              style="border:none;background:transparent;font-size:11px;padding:0 2px">
+              <option value="us"${at==='us'?' selected':''}>自社</option>
+              <option value="client"${at==='client'?' selected':''}>客</option>
+              <option value="meeting"${at==='meeting'?' selected':''}>打合</option>
+              <option value="milestone"${at==='milestone'?' selected':''}>M</option>
+            </select>
+            ${userSelectHtml}
+          </div>
+        </td>
+        <td style="padding:6px 10px">
+          <input type="date" value="${t.start_date ? String(t.start_date).slice(0,10) : ''}"
+            onchange="updateTaskField('${t.id}', 'start_date', this.value || null)"
+            style="border:none;background:transparent;font-size:11px;width:100%">
+        </td>
+        <td style="padding:6px 10px">${origCell}</td>
+        <td style="padding:6px 10px">
+          <input type="date" value="${curr}"
+            onchange="updateTaskField('${t.id}', 'current_end_date', this.value || null)"
+            style="border:none;background:transparent;font-size:11px;width:100%;${dateDiffer ? 'font-weight:700;color:#DC2626' : ''}">
+        </td>
+        <td style="padding:6px 10px;text-align:center">
+          <input type="checkbox" ${t.is_done ? 'checked' : ''} onchange="updateTaskField('${t.id}', 'is_done', this.checked)">
+        </td>
+        <td style="padding:6px 10px">
+          <input type="text" value="${esc(t.note || '')}" placeholder="備考"
+            onchange="updateTaskField('${t.id}', 'note', this.value || null)"
+            style="border:none;background:transparent;font-size:11px;width:100%">
+        </td>
+        <td style="padding:6px 4px;text-align:center">
+          <button type="button" onclick="deleteProjectTask('${t.id}')" title="削除"
+            style="border:none;background:transparent;cursor:pointer;color:#9CA3AF;font-size:12px;padding:2px 4px">🗑️</button>
+        </td>
+      </tr>
+    `;
+  });
+  tbody.innerHTML = rows.join('');
+}
+
+function renderProjectScheduleCompactGantt() {
+  const container = document.getElementById('p-schedule-compact-gantt');
+  if (!container) return;
+  const tasks = (_pScheduleTasks || []).filter(t => !t.is_phase_header);
+  if (!tasks.length) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0;text-align:center">タスクがあるとガントが表示されます</div>';
+    return;
+  }
+  const dates = [];
+  tasks.forEach(t => {
+    if (t.start_date) dates.push(new Date(t.start_date + 'T00:00:00').getTime());
+    if (t.current_end_date) dates.push(new Date(t.current_end_date + 'T00:00:00').getTime());
+  });
+  if (!dates.length) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0;text-align:center">日付が設定されたタスクがありません</div>';
+    return;
+  }
+  dates.sort((a, b) => a - b);
+  const minMs = dates[0];
+  const maxMs = dates[dates.length - 1];
+  const totalMs = Math.max(maxMs - minMs, 1);
+  const today = Date.now();
+
+  const fmtDate = (ms) => {
+    const d = new Date(ms);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+
+  const headerHtml = `
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:6px">
+      <span>${fmtDate(minMs)}</span>
+      <span>${fmtDate((minMs + maxMs) / 2)}</span>
+      <span>${fmtDate(maxMs)}</span>
+    </div>
+  `;
+
+  const barHtml = `
+    <div style="position:relative;height:14px;background:#F3F4F6;border-radius:7px">
+      <div style="position:absolute;left:0;right:0;top:50%;height:2px;background:#D1D5DB;transform:translateY(-50%)"></div>
+      ${tasks.filter(t => t.is_milestone && t.current_end_date).map(t => {
+        const ms = new Date(t.current_end_date + 'T00:00:00').getTime();
+        const pct = ((ms - minMs) / totalMs) * 100;
+        const isLate = !t.is_done && ms < today;
+        const color = isLate ? '#DC2626' : (t.is_done ? '#10B981' : '#1E40AF');
+        return `<div title="${esc(t.title)} (${String(t.current_end_date).slice(0,10)})"
+          style="position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);color:${color};font-size:14px;font-weight:700;cursor:default">◆</div>`;
+      }).join('')}
+      ${(today >= minMs && today <= maxMs) ? `
+        <div title="今日" style="position:absolute;left:${((today - minMs) / totalMs) * 100}%;top:0;bottom:0;width:1.5px;background:#DC2626"></div>
+      ` : ''}
+    </div>
+  `;
+
+  container.innerHTML = headerHtml + barHtml;
+}
+
+async function updateTaskField(taskId, field, value) {
+  if (!_pScheduleProjectId) return;
+  const t = (_pScheduleTasks || []).find(x => x.id === taskId);
+  if (t) t[field] = value;
+  const body = { [field]: value };
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`保存に失敗: ${err.error || res.status}`, 'warn');
+      reloadProjectTasks(_pScheduleProjectId);
+      return;
+    }
+    const updated = await res.json();
+    const idx = (_pScheduleTasks || []).findIndex(x => x.id === taskId);
+    if (idx >= 0) _pScheduleTasks[idx] = updated;
+    if (['current_end_date', 'is_done', 'assignee_type'].includes(field)) {
+      renderProjectScheduleTasks();
+      renderProjectScheduleCompactGantt();
+    }
+  } catch (e) {
+    showToast(`保存に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+async function addProjectTask() {
+  if (!_pScheduleProjectId) {
+    showToast('案件を保存してからタスクを追加してください', 'warn');
+    return;
+  }
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '新規タスク', assignee_type: 'us' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`追加に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    }
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`追加に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+async function deleteProjectTask(taskId) {
+  if (!_pScheduleProjectId) return;
+  if (!confirm('このタスクを削除しますか？（子タスクも一緒に削除されます）')) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/${taskId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`削除に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    }
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`削除に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+async function applyPhaseTemplate() {
+  if (!_pScheduleProjectId) {
+    showToast('案件を保存してからテンプレを適用してください', 'warn');
+    return;
+  }
+  const sel = document.getElementById('p-active-template');
+  const startInput = document.getElementById('p-scheduled-start-date');
+  if (!sel || !sel.value) {
+    showToast('テンプレを選択してください', 'warn');
+    return;
+  }
+  const startDate = startInput && startInput.value ? startInput.value : null;
+  if (!startDate) {
+    if (!confirm('案件開始日が未設定です。日付なしでテンプレを生成しますか？\n（後でタスクごとに日付を設定する必要があります）')) return;
+  }
+  if ((_pScheduleTasks || []).length > 0) {
+    if (!confirm('既存のタスクを残したまま、テンプレのタスクを追記します。続けますか？')) return;
+  }
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/from-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: sel.value, start_date: startDate }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`生成に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    }
+    const data = await res.json();
+    showToast(`${data.inserted_count || 0} 件のタスクを追加しました`, 'ok');
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`生成に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+// ==================== 全案件マイルストーンガント（L2） ====================
+let _allProjectsGanttLoaded = false;
+
+async function loadAllProjectsGantt() {
+  const container = document.getElementById('all-projects-gantt-container');
+  if (!container) return;
+  container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中...</div>';
+  const filterEl = document.getElementById('all-projects-gantt-category-filter');
+  const categoryParam = (filterEl && filterEl.value) ? `&category=${encodeURIComponent(filterEl.value)}` : '';
+  try {
+    const res = await apiFetch(`${API}/projects/schedule-overview?status=in_progress${categoryParam}`);
+    const projects = res.ok ? await res.json() : [];
+    renderAllProjectsGantt(projects);
+    _allProjectsGanttLoaded = true;
+  } catch (e) {
+    container.innerHTML = `<div style="padding:14px;text-align:center;color:#DC2626;font-size:12px">読み込みエラー: ${esc(e.message || '')}</div>`;
+  }
+}
+
+function renderAllProjectsGantt(projects) {
+  const container = document.getElementById('all-projects-gantt-container');
+  if (!container) return;
+  if (!projects || !projects.length) {
+    container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">表示できる案件がありません（進行中・カテゴリフィルタを確認してください）</div>';
+    return;
+  }
+  // 横軸: 今月から +12ヶ月
+  const today = new Date();
+  const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const endMonth = new Date(today.getFullYear(), today.getMonth() + 12, 0);
+  const startMs = startMonth.getTime();
+  const endMs = endMonth.getTime();
+  const totalMs = endMs - startMs;
+  const todayMs = today.getTime();
+
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const m = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    months.push({ y: m.getFullYear(), m: m.getMonth() + 1, ms: m.getTime() });
+  }
+  const monthHeaderHtml = months.map(mm => {
+    const pct = ((mm.ms - startMs) / totalMs) * 100;
+    return `<div style="position:absolute;left:${pct}%;top:0;bottom:0;border-left:1px dashed #E5E7EB"></div>
+      <div style="position:absolute;left:${pct}%;top:0;font-size:10px;color:#6B7280;padding:2px 4px">${mm.y % 100}/${mm.m}</div>`;
+  }).join('');
+
+  const rowsHtml = projects.map(p => {
+    const lateMs = p.milestones.filter(m => !m.is_done && new Date(m.current_end_date + 'T00:00:00').getTime() < todayMs).length;
+    const lateBadge = lateMs > 0 ? `<span style="display:inline-block;background:#DC2626;color:#fff;border-radius:8px;padding:0 6px;font-size:10px;margin-left:6px">🔴 ${lateMs}</span>` : '';
+
+    let barHtml = '';
+    if (p.min_date && p.max_date) {
+      const sMs = new Date(p.min_date + 'T00:00:00').getTime();
+      const eMs = new Date(p.max_date + 'T00:00:00').getTime();
+      const left = Math.max(0, ((sMs - startMs) / totalMs) * 100);
+      const right = Math.min(100, ((eMs - startMs) / totalMs) * 100);
+      const width = Math.max(0.5, right - left);
+      barHtml = `<div style="position:absolute;left:${left}%;width:${width}%;top:50%;transform:translateY(-50%);height:6px;background:#BFDBFE;border-radius:3px"></div>`;
+    }
+    const msHtml = p.milestones.map(m => {
+      const ms = new Date(m.current_end_date + 'T00:00:00').getTime();
+      if (ms < startMs || ms > endMs) return '';
+      const pct = ((ms - startMs) / totalMs) * 100;
+      const isLate = !m.is_done && ms < todayMs;
+      const color = isLate ? '#DC2626' : (m.is_done ? '#10B981' : '#1E40AF');
+      const tooltip = `${m.title} (${String(m.current_end_date).slice(0,10)})${m.is_done ? ' ✅' : ''}${isLate ? ' 🔴遅延' : ''}`;
+      return `<div title="${esc(tooltip)}" style="position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);color:${color};font-size:14px;font-weight:700;cursor:default">◆</div>`;
+    }).join('');
+
+    return `
+      <div style="display:grid;grid-template-columns:200px 1fr;border-bottom:0.5px solid #F3F4F6">
+        <div style="padding:8px 10px;font-size:12px;border-right:0.5px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          <a href="javascript:void(0)" onclick="openEditProjectById('${p.id}')" style="color:var(--em-dark);text-decoration:none;font-weight:500" title="${esc(p.name)}">${esc(p.name)}</a>
+          ${lateBadge}
+        </div>
+        <div style="position:relative;height:32px">
+          ${barHtml}
+          ${msHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div style="position:relative;border:0.5px solid var(--border);border-radius:8px;background:#fff;overflow-x:auto">
+      <div style="display:grid;grid-template-columns:200px 1fr;border-bottom:1px solid var(--border);background:#F9FAFB">
+        <div style="padding:8px 10px;font-size:11px;font-weight:600;color:var(--text-muted)">案件名</div>
+        <div style="position:relative;height:24px">${monthHeaderHtml}</div>
+      </div>
+      <div style="position:relative">
+        ${rowsHtml}
+      </div>
+    </div>
+    <div style="margin-top:6px;font-size:10px;color:var(--text-muted)">◆マイルストーン / 🔴遅延 / 緑=完了 / 青バー=進行中の期間</div>
+  `;
+}
+
+function toggleAllProjectsGantt() {
+  const det = document.getElementById('all-projects-gantt-section');
+  if (!det) return;
+  setTimeout(() => {
+    try { localStorage.setItem('haruka_all_projects_gantt_open', det.open ? '1' : '0'); } catch (_) {}
+    if (det.open && !_allProjectsGanttLoaded) {
+      loadAllProjectsGantt();
+    }
+  }, 0);
+}
+
+function initAllProjectsGanttState() {
+  const det = document.getElementById('all-projects-gantt-section');
+  if (!det) return;
+  let open = '0';
+  try { open = localStorage.getItem('haruka_all_projects_gantt_open') || '0'; } catch (_) {}
+  if (open === '1') {
+    det.open = true;
+    if (!_allProjectsGanttLoaded) loadAllProjectsGantt();
   }
 }
 
@@ -15759,7 +16291,7 @@ function showPage(name, btn) {
   if(btn && !btn.dataset.page) btn.classList.add('active'); // 後方互換
   closeNavDrawer();
   if(name==='dashboard') loadDashboard();
-  if(name==='projects') loadProjects();
+  if(name==='projects') { loadProjects(); initAllProjectsGanttState(); }
   if(name==='members') loadMembers();
   if(name==='teams') loadTeams();
   if(name==='invoices') loadInvoices();
