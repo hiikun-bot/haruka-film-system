@@ -16438,6 +16438,66 @@ async function deleteTweet(id) {
   }
 }
 
+// つぶやき本文のインライン編集 — 投稿者のみ。本文を textarea に差し替え、保存/キャンセル ボタンを出す。
+function startEditTweet(id) {
+  const bodyEl = document.getElementById(`tw-body-${id}`);
+  if (!bodyEl) return;
+  if (bodyEl.dataset.editing === '1') return;
+  const original = bodyEl.dataset.originalBody || bodyEl.textContent || '';
+  bodyEl.dataset.editing = '1';
+  bodyEl.innerHTML = `
+    <textarea id="tw-edit-textarea-${id}" class="tw-edit-textarea" maxlength="280" rows="3">${esc(original)}</textarea>
+    <div class="tw-edit-actions">
+      <span class="tw-edit-counter" id="tw-edit-counter-${id}">${original.length} / 280</span>
+      <button type="button" class="btn" onclick="cancelEditTweet('${id}')">キャンセル</button>
+      <button type="button" class="btn btn-primary" id="tw-edit-save-${id}" onclick="saveEditTweet('${id}')">保存</button>
+    </div>
+  `;
+  const ta = document.getElementById(`tw-edit-textarea-${id}`);
+  const counter = document.getElementById(`tw-edit-counter-${id}`);
+  if (ta) {
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.addEventListener('input', () => {
+      if (counter) counter.textContent = `${ta.value.length} / 280`;
+    });
+  }
+}
+
+function cancelEditTweet(id) {
+  const bodyEl = document.getElementById(`tw-body-${id}`);
+  if (!bodyEl) return;
+  const original = bodyEl.dataset.originalBody || '';
+  bodyEl.dataset.editing = '';
+  bodyEl.textContent = original;
+}
+
+async function saveEditTweet(id) {
+  const ta = document.getElementById(`tw-edit-textarea-${id}`);
+  const saveBtn = document.getElementById(`tw-edit-save-${id}`);
+  if (!ta) return;
+  const body = ta.value.trim();
+  if (!body) { showToast('本文を入力してください', 'warn'); return; }
+  if (body.length > 280) { showToast('本文は 280 字以内にしてください', 'warn'); return; }
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  try {
+    const res = await apiFetch(`${API}/tweets/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '更新失敗'), 'error');
+      return;
+    }
+    showToast('更新しました', 'success');
+    if (typeof loadTweetsPage === 'function') loadTweetsPage();
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
+  }
+}
+
 // ==================== つぶやき独立タブ（リベシティ風タイムライン） ====================
 //
 // ダッシュボード内 loadTweets() とは別画面。同じ API を使うため、
@@ -16652,8 +16712,15 @@ function renderTweetCard(t) {
 
   const pinBadge = t.is_pinned ? '<span class="tweet-pin-badge">📌 ピン</span>' : '';
 
+  const canEdit = (t.user_id === myId);
+  const editBtn = canEdit
+    ? `<button class="tweet-menu-btn" onclick="startEditTweet('${t.id}')" title="編集">✏️</button>`
+    : '';
   const deleteBtn = canDelete
     ? `<button class="tweet-menu-btn" onclick="deleteTweet('${t.id}')" title="削除">🗑️</button>`
+    : '';
+  const editedMark = t.edited_at
+    ? '<span class="tweet-edited-mark" title="編集済み">（編集済み）</span>'
     : '';
 
   // リアクションサマリ — 押された種別だけ表示（リベシティ踏襲）
@@ -16708,12 +16775,14 @@ function renderTweetCard(t) {
           ${roleBadge}
           ${pinBadge}
           <span class="tweet-time">${_twTimeAgo(t.created_at)}</span>
+          ${editedMark}
         </div>
       </div>
+      ${editBtn}
       ${deleteBtn}
     </div>
     ${imageHtml}
-    <div class="tweet-body">${esc(t.body)}</div>
+    <div class="tweet-body" id="tw-body-${t.id}" data-original-body="${esc(t.body)}">${esc(t.body)}</div>
     <div class="tweet-footer">
       <div class="tweet-reaction-summary">${summaryPills}</div>
       ${addReactionWrap}
