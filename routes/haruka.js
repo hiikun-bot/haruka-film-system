@@ -10702,7 +10702,7 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
 //   - revision_no は GitHub の PR 番号と一致させる運用に統一（CI: post-version-log.js）。
 //     画面からの手動追加は PR 番号と衝突しないよう MANUAL_REVISION_OFFSET (1,000,000) を加算する。
 //   - 既読は version_log_reads(user_id, version_log_id) にレコードがあれば既読扱い
-//   - 非表示（is_hidden=true）は admin が全体から隠す機能。admin のみ参照・操作可
+//   - 「全体非表示」機能は廃止（各ユーザーが自分で既読にすれば一覧から消えるため不要）
 const MANUAL_REVISION_OFFSET = 1000000;
 const VERSION_LOG_CATEGORIES = ['feature', 'improvement', 'bugfix', 'spec_change'];
 const VERSION_LOG_IMPORTANCES = ['high', 'normal', 'low'];
@@ -10734,16 +10734,14 @@ function normalizeVersionLogPayload(body) {
     out.tags = arr.map(s => String(s).trim()).filter(Boolean);
   }
   if (body.related_url !== undefined) out.related_url = body.related_url || null;
-  if (body.is_hidden !== undefined) out.is_hidden = !!body.is_hidden;
   return out;
 }
 
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
     const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    let q = supabase.from('version_logs').select('*').order('revision_no', { ascending: false });
-    if (!isAdmin) q = q.eq('is_hidden', false);
-    const { data, error } = await q;
+    const { data, error } = await supabase
+      .from('version_logs').select('*').order('revision_no', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
@@ -10776,7 +10774,7 @@ router.get('/version-logs/unread-count', requireAuth, async (req, res) => {
     if (!userId) return res.json({ count: 0 });
 
     const { data: logs, error } = await supabase
-      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+      .from('version_logs').select('id, target_roles');
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
@@ -10837,7 +10835,6 @@ router.post('/version-logs', requireAuth, async (req, res) => {
       target_roles: payload.target_roles || ['all'],
       tags: payload.tags || [],
       related_url: payload.related_url ?? null,
-      is_hidden: payload.is_hidden || false,
       created_by: req.user?.id || null,
     };
 
@@ -10901,7 +10898,7 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'unauth' });
 
     const { data: logs } = await supabase
-      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+      .from('version_logs').select('id, target_roles');
     let myRoleCodes = await getRequesterRoleCodes(req);
     if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
 
@@ -10917,22 +10914,6 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
     const { error } = await supabase.from('version_log_reads').upsert(rows, { onConflict: 'user_id,version_log_id' });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true, count: ids.length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 表示/非表示切替（admin のみ）— 非表示にすると全ユーザーから見えなくなる
-router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
-  try {
-    const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    if (!isAdmin) return res.status(403).json({ error: '管理者のみ切替できます' });
-    const is_hidden = !!req.body?.is_hidden;
-    const { data, error } = await supabase
-      .from('version_logs').update({ is_hidden, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
