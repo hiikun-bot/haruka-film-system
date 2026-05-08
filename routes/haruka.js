@@ -9324,6 +9324,176 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   res.json(await enrichCommentCategories(data));
 });
 
+// ==================== ナレッジ：動画視聴 ====================
+// 勉強会・障害対応・チーム事例・バズ動画など、URL ベースの動画ライブラリ。
+// 投稿は全員可、削除は投稿者本人 or admin。再生回数 (view_count) は admin のみ集計付与。
+
+// URL から YouTube videoId を抽出（標準 / shorts / youtu.be / 共有パラメータ対応）
+function extractYouTubeId(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+      const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/);
+      if (m) return m[1];
+    }
+  } catch (_) { /* invalid URL */ }
+  return null;
+}
+
+function deriveAutoThumbnail(url) {
+  const ytId = extractYouTubeId(url);
+  if (ytId) return `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
+  return null;
+}
+
+// カテゴリ一覧
+router.get('/learning-video-categories', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('learning_video_categories')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// カテゴリ追加（admin のみ）
+router.post('/learning-video-categories', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) {
+    return res.status(403).json({ error: '権限がありません（admin のみ）' });
+  }
+  const { name, sort_order } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'name は必須です' });
+  const { data, error } = await supabase
+    .from('learning_video_categories')
+    .insert({ name: String(name).trim(), sort_order: Number(sort_order) || 0 })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// カテゴリ削除（admin のみ）
+router.delete('/learning-video-categories/:id', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) {
+    return res.status(403).json({ error: '権限がありません（admin のみ）' });
+  }
+  const { error } = await supabase
+    .from('learning_video_categories')
+    .delete()
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 動画一覧（admin のみ view_count を付与）
+router.get('/learning-videos', requireAuth, async (req, res) => {
+  const { category_id, q } = req.query;
+  let query = supabase
+    .from('learning_videos')
+    .select('*, learning_video_categories(id, name), poster:posted_by(id, full_name, avatar_url, role)')
+    .eq('is_archived', false)
+    .order('created_at', { ascending: false });
+  if (category_id) query = query.eq('category_id', category_id);
+  if (q) query = query.ilike('title', `%${q}%`);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const isAdmin = await requesterHasAnyRole(req, ['admin']);
+  let countMap = {};
+  if (isAdmin && (data || []).length > 0) {
+    const ids = data.map(d => d.id);
+    const { data: views } = await supabase
+      .from('learning_video_views')
+      .select('video_id')
+      .in('video_id', ids);
+    (views || []).forEach(v => { countMap[v.video_id] = (countMap[v.video_id] || 0) + 1; });
+  }
+  const enriched = (data || []).map(v => ({
+    ...v,
+    view_count: isAdmin ? (countMap[v.id] || 0) : null,
+  }));
+  res.json(enriched);
+});
+
+// 動画追加（全員可）
+router.post('/learning-videos', requireAuth, async (req, res) => {
+  const { title, url, thumbnail_url, description, category_id } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'title は必須です' });
+  if (!url || !String(url).trim())   return res.status(400).json({ error: 'url は必須です' });
+  try { new URL(url); } catch (_) { return res.status(400).json({ error: 'url の形式が不正です' }); }
+
+  const finalThumb = thumbnail_url && String(thumbnail_url).trim()
+    ? String(thumbnail_url).trim()
+    : deriveAutoThumbnail(url);
+
+  const { data, error } = await supabase
+    .from('learning_videos')
+    .insert({
+      title: String(title).trim(),
+      url: String(url).trim(),
+      thumbnail_url: finalThumb,
+      description: description ? String(description).trim() : null,
+      category_id: category_id || null,
+      posted_by: req.user.id,
+    })
+    .select('*, learning_video_categories(id, name), poster:posted_by(id, full_name, avatar_url, role)')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 動画更新（投稿者 or admin）
+router.put('/learning-videos/:id', requireAuth, async (req, res) => {
+  const { data: existing, error: e1 } = await supabase
+    .from('learning_videos').select('id, posted_by').eq('id', req.params.id).single();
+  if (e1) return res.status(404).json({ error: '動画が見つかりません' });
+  const isAdmin = await requesterHasAnyRole(req, ['admin']);
+  if (existing.posted_by !== req.user.id && !isAdmin) {
+    return res.status(403).json({ error: '権限がありません' });
+  }
+  const { title, url, thumbnail_url, description, category_id } = req.body || {};
+  const patch = { updated_at: new Date().toISOString() };
+  if (title !== undefined)         patch.title = String(title).trim();
+  if (url !== undefined)           patch.url = String(url).trim();
+  if (thumbnail_url !== undefined) patch.thumbnail_url = thumbnail_url ? String(thumbnail_url).trim() : null;
+  if (description !== undefined)   patch.description = description ? String(description).trim() : null;
+  if (category_id !== undefined)   patch.category_id = category_id || null;
+  const { data, error } = await supabase
+    .from('learning_videos').update(patch).eq('id', req.params.id)
+    .select('*, learning_video_categories(id, name), poster:posted_by(id, full_name, avatar_url, role)')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 動画削除（投稿者 or admin）
+router.delete('/learning-videos/:id', requireAuth, async (req, res) => {
+  const { data: existing, error: e1 } = await supabase
+    .from('learning_videos').select('id, posted_by').eq('id', req.params.id).single();
+  if (e1) return res.status(404).json({ error: '動画が見つかりません' });
+  const isAdmin = await requesterHasAnyRole(req, ['admin']);
+  if (existing.posted_by !== req.user.id && !isAdmin) {
+    return res.status(403).json({ error: '権限がありません' });
+  }
+  const { error } = await supabase.from('learning_videos').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 再生ログ記録（カードクリック時に呼ぶ。誰でも POST 可、集計は admin のみ閲覧）
+router.post('/learning-videos/:id/view', requireAuth, async (req, res) => {
+  const { error } = await supabase
+    .from('learning_video_views')
+    .insert({ video_id: req.params.id, user_id: req.user.id });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // ==================== Premiere Pro マーカー出力 ====================
 // タイムコード文字列（HH:MM:SS:FF or MM:SS or HH:MM:SS）を秒数に変換
 function _tcToSeconds(tc) {
