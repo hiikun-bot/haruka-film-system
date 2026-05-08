@@ -10697,11 +10697,11 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
 });
 
 // ==================== Verup情報（システム改訂履歴） ====================
-// 設計: docs (該当ADR未作成) — 管理者が画面から追加・編集できる changelog。
+// 設計: 管理者が画面から追加・編集できる changelog。
 //   - 一覧はログイン中ユーザーの role で target_roles を絞る（'all' は全員）
-//   - is_hidden=true は admin のみ閲覧可
 //   - revision_no は POST 時にサーバー側で max+1 を採番
 //   - 既読は version_log_reads(user_id, version_log_id) にレコードがあれば既読扱い
+//   - 「非表示」機能は廃止（各ユーザーが既読にすれば消えるため不要）
 const VERSION_LOG_CATEGORIES = ['feature', 'improvement', 'bugfix', 'spec_change'];
 const VERSION_LOG_IMPORTANCES = ['high', 'normal', 'low'];
 
@@ -10732,23 +10732,13 @@ function normalizeVersionLogPayload(body) {
     out.tags = arr.map(s => String(s).trim()).filter(Boolean);
   }
   if (body.related_url !== undefined) out.related_url = body.related_url || null;
-  if (body.is_hidden !== undefined) out.is_hidden = !!body.is_hidden;
   return out;
-}
-
-async function buildVersionLogVisibility(req) {
-  // 非表示エントリは super_admin（hiikun.ascs / satoru.takahashi）のみ閲覧可。
-  // 通常 admin にも見せない（管理者向け改善などを他管理者から隠せるように）。
-  const isSuperAdmin = isSuperAdminUser(req.user);
-  return { isAdmin: isSuperAdmin };
 }
 
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
-    const { isAdmin } = await buildVersionLogVisibility(req);
-    let q = supabase.from('version_logs').select('*').order('revision_no', { ascending: false });
-    if (!isAdmin) q = q.eq('is_hidden', false);
-    const { data, error } = await q;
+    const { data, error } = await supabase
+      .from('version_logs').select('*').order('revision_no', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
@@ -10763,7 +10753,6 @@ router.get('/version-logs', requireAuth, async (req, res) => {
     }
 
     const filtered = (data || []).filter(row => {
-      if (isAdmin) return true; // admin は role 制限を受けない
       const tr = row.target_roles || ['all'];
       if (tr.includes('all')) return true;
       return tr.some(r => myRoleCodes.includes(r));
@@ -10781,7 +10770,7 @@ router.get('/version-logs/unread-count', requireAuth, async (req, res) => {
     if (!userId) return res.json({ count: 0 });
 
     const { data: logs, error } = await supabase
-      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+      .from('version_logs').select('id, target_roles');
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
@@ -10813,8 +10802,6 @@ router.post('/version-logs', requireAuth, async (req, res) => {
     if (!isAdmin) return res.status(403).json({ error: '管理者のみ追加できます' });
 
     const payload = normalizeVersionLogPayload(req.body || {});
-    // 非表示フラグは super_admin のみ書き込み可（他 admin は触れない）
-    if (!isSuperAdminUser(req.user)) delete payload.is_hidden;
     if (!payload.screen || !payload.feature || !payload.description) {
       return res.status(400).json({ error: '画面 / 機能 / 修正内容は必須です' });
     }
@@ -10838,7 +10825,6 @@ router.post('/version-logs', requireAuth, async (req, res) => {
       target_roles: payload.target_roles || ['all'],
       tags: payload.tags || [],
       related_url: payload.related_url ?? null,
-      is_hidden: payload.is_hidden || false,
       created_by: req.user?.id || null,
     };
 
@@ -10856,8 +10842,6 @@ router.put('/version-logs/:id', requireAuth, async (req, res) => {
     if (!isAdmin) return res.status(403).json({ error: '管理者のみ編集できます' });
 
     const payload = normalizeVersionLogPayload(req.body || {});
-    // 非表示フラグは super_admin のみ書き込み可（他 admin は触れない）
-    if (!isSuperAdminUser(req.user)) delete payload.is_hidden;
     payload.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -10904,7 +10888,7 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'unauth' });
 
     const { data: logs } = await supabase
-      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+      .from('version_logs').select('id, target_roles');
     let myRoleCodes = await getRequesterRoleCodes(req);
     if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
 
@@ -10920,20 +10904,6 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
     const { error } = await supabase.from('version_log_reads').upsert(rows, { onConflict: 'user_id,version_log_id' });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true, count: ids.length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 表示/非表示切替（最高管理者のみ）
-router.post('/version-logs/:id/visibility', requireAuth, requireSuperAdmin, async (req, res) => {
-  try {
-    const is_hidden = !!req.body?.is_hidden;
-    const { data, error } = await supabase
-      .from('version_logs').update({ is_hidden, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
