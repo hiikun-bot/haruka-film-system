@@ -5372,6 +5372,9 @@ window.showPage = window.showPage || function(name, btn) {
 
 <style>
 .an-menu-btn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:13px;padding:9px 10px;border:none;border-radius:7px;background:transparent;color:var(--text);cursor:pointer;margin-bottom:3px;transition:background .15s}
+/* Frame.io レビューパネルの返信ボタン: ティールアウトライン → ホバーで塗り */
+.fp-reply-btn{background:transparent;color:#3ECFCA;border:0.5px solid #3ECFCA;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;line-height:1.2;transition:background .15s,color .15s}
+.fp-reply-btn:hover{background:#3ECFCA;color:#0a0a0a}
 .an-menu-btn:hover{background:rgba(255,255,255,0.6)}
 .an-menu-btn.an-menu-active{background:var(--em);color:#fff;font-weight:600}
 @media(max-width:768px){
@@ -25263,7 +25266,7 @@ function _renderFpCommentHtml(c, isReply) {
   const knowledgeBadge = (!isReply && c.is_knowledge)
     ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : '';
   const replyBtn = isReply ? '' :
-    `<button onclick="fpToggleReplyForm('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:11px;padding:0;line-height:1" title="返信">↩ 返信</button>`;
+    `<button onclick="fpToggleReplyForm('${c.id}')" class="fp-reply-btn" title="返信">↩ 返信</button>`;
   const itemStyle = isReply
     ? `margin:8px 0 0 18px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:2px solid #3ECFCA;border-top:0.5px solid var(--border);border-right:0.5px solid var(--border);border-bottom:0.5px solid var(--border)`
     : `margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s`;
