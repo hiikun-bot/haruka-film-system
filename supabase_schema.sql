@@ -2120,4 +2120,96 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_team_members_leader
 CREATE INDEX IF NOT EXISTS idx_team_members_team_leader_rank
   ON team_members(team_id, leader_rank) WHERE leader_rank IS NOT NULL;
 
+-- ==================== 案件スケジュール / フェーズ・タスク（ADR 010 Phase 1）====================
+-- 詳細: docs/design/decisions/010-project-schedule-tasks.md
+-- migration: migrations/2026-05-09_project_schedule_phase1.sql（本番適用済み PR #413）
+-- 案件単位の工程・タスク・マイルストーン管理。クリエイティブ単位の進捗管理
+-- (creative_status_templates) とは分離する。
+
+CREATE TABLE IF NOT EXISTS project_phase_templates (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id     UUID NOT NULL REFERENCES creative_categories(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  description     TEXT,
+  is_default      BOOLEAN NOT NULL DEFAULT false,
+  is_active       BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_phase_templates_category
+  ON project_phase_templates(category_id) WHERE is_active;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_phase_templates_category_name
+  ON project_phase_templates(category_id, name);
+ALTER TABLE project_phase_templates ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS project_phase_template_items (
+  id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id                     UUID NOT NULL REFERENCES project_phase_templates(id) ON DELETE CASCADE,
+  parent_item_id                  UUID REFERENCES project_phase_template_items(id) ON DELETE CASCADE,
+  is_phase_header                 BOOLEAN NOT NULL DEFAULT false,
+  title                           TEXT NOT NULL,
+  default_offset_days_from_start  INT,
+  default_duration_days           INT,
+  default_assignee_type           TEXT NOT NULL DEFAULT 'us'
+    CHECK (default_assignee_type IN ('us','client','meeting','milestone')),
+  is_milestone                    BOOLEAN NOT NULL DEFAULT false,
+  default_priority                TEXT NOT NULL DEFAULT 'normal'
+    CHECK (default_priority IN ('low','normal','high')),
+  default_note                    TEXT,
+  sort_order                      INT NOT NULL DEFAULT 0,
+  created_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_phase_template_items_template
+  ON project_phase_template_items(template_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_project_phase_template_items_parent
+  ON project_phase_template_items(parent_item_id) WHERE parent_item_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_phase_template_items_sort
+  ON project_phase_template_items(template_id, sort_order);
+ALTER TABLE project_phase_template_items ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS project_tasks (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id         UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  parent_task_id     UUID REFERENCES project_tasks(id) ON DELETE CASCADE,
+  is_phase_header    BOOLEAN NOT NULL DEFAULT false,
+  title              TEXT NOT NULL,
+  start_date         DATE,
+  original_end_date  DATE,        -- 元日程（変更前）
+  current_end_date   DATE,        -- 新日程（現在予定）
+  assignee_type      TEXT NOT NULL DEFAULT 'us'
+    CHECK (assignee_type IN ('us','client','meeting','milestone')),
+  assignee_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+  is_milestone       BOOLEAN NOT NULL DEFAULT false,
+  is_done            BOOLEAN NOT NULL DEFAULT false,
+  done_at            TIMESTAMPTZ,
+  priority           TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low','normal','high')),
+  note               TEXT,
+  sort_order         INT NOT NULL DEFAULT 0,
+  template_item_id   UUID REFERENCES project_phase_template_items(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_project
+  ON project_tasks(project_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_assignee
+  ON project_tasks(assignee_user_id)
+  WHERE assignee_user_id IS NOT NULL AND NOT is_done;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_milestone
+  ON project_tasks(current_end_date)
+  WHERE is_milestone AND NOT is_done;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_parent
+  ON project_tasks(parent_task_id) WHERE parent_task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_assignee_due
+  ON project_tasks(assignee_user_id, current_end_date)
+  WHERE assignee_user_id IS NOT NULL AND NOT is_done;
+ALTER TABLE project_tasks ENABLE ROW LEVEL SECURITY;
+
+-- projects に列追加: 工程表の起点 / 適用中テンプレ
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS scheduled_start_date DATE;
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS active_phase_template_id UUID
+  REFERENCES project_phase_templates(id) ON DELETE SET NULL;
+
 NOTIFY pgrst, 'reload schema';
