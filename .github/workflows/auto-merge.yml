@@ -12,6 +12,13 @@ name: Auto-merge
 #   needs-db-migration ラベル付与より先に auto-merge が走り、guard が初回 pass を返した
 #   状態でマージされて本番DB未適用のままRailwayへデプロイされた。
 #   その再発防止のため、auto-merge.yml 自身がラベル状態とPRファイルを直接確認する。
+#
+# Verup ワークフロー連動（重要）:
+#   `gh pr merge --auto` を GITHUB_TOKEN で実行すると、その後の自動マージで生成される
+#   `pull_request: closed` / `push: main` イベントは GitHub の仕様により
+#   下流ワークフロー（Verup情報自動登録など）を一切起動しない。
+#   そのため、`BOT_TOKEN` シークレット（Personal Access Token / GitHub App token）が
+#   設定されていればそれを優先使用する。未設定時は従来どおり GITHUB_TOKEN にフォールバック。
 
 on:
   pull_request:
@@ -47,7 +54,8 @@ jobs:
 
       - name: PR の auto-merge を有効化（migration ガード付き）
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # BOT_TOKEN が設定されていれば優先使用（下流ワークフロー連動のため）。未設定なら GITHUB_TOKEN。
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |

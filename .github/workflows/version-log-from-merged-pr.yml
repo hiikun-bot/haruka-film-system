@@ -4,14 +4,27 @@ name: Verup情報を自動登録（PRマージ時）
 # Supabase の version_logs テーブルに INSERT する。
 # - セクションが無い PR / placeholder のみの PR / skip-verup ラベル付き PR はスキップ
 # - SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が未設定なら何もせず終了（CI は緑のまま）
+#
+# トリガー:
+#   - pull_request: closed → main マージ時にリアルタイム発火（auto-merge.yml が BOT_TOKEN を
+#     使っている場合のみ起動。GITHUB_TOKEN だと GitHub の仕様で下流workflowが起動しない）
+#   - workflow_dispatch    → 取りこぼし PR の手動 backfill 用（PR番号を入力）
 
 on:
   pull_request:
     types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Backfill する PR 番号（例: 376）'
+        required: true
+        type: string
 
 jobs:
   post-version-log:
-    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,14 +35,44 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Resolve PR fields (workflow_dispatch のみ)
+        id: resolve
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -e
+          DATA=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json title,body,number,url,author,labels,merged,baseRefName)
+          MERGED=$(echo "$DATA" | jq -r '.merged')
+          BASE=$(echo "$DATA"  | jq -r '.baseRefName')
+          if [ "$MERGED" != "true" ] || [ "$BASE" != "main" ]; then
+            echo "PR #$PR_NUMBER は main へのマージ済みではない（merged=$MERGED base=$BASE） → スキップ"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "pr_title<<__EOF__"
+            echo "$DATA" | jq -r '.title'
+            echo "__EOF__"
+            echo "pr_body<<__EOF__"
+            echo "$DATA" | jq -r '.body'
+            echo "__EOF__"
+            echo "pr_url=$(echo "$DATA" | jq -r '.url')"
+            echo "pr_author=$(echo "$DATA" | jq -r '.author.login')"
+            echo "pr_labels=$(echo "$DATA" | jq -r '[.labels[].name] | join(",")')"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Post Verup情報 to Supabase
+        if: github.event_name == 'pull_request' || steps.resolve.outputs.skip != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_TITLE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_title || github.event.pull_request.title }}
+          PR_BODY: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_body || github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+          PR_URL: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_url || github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_author || github.event.pull_request.user.login }}
+          PR_LABELS: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_labels || join(github.event.pull_request.labels.*.name, ',') }}
         run: node .github/scripts/post-version-log.js
