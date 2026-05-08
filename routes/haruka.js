@@ -3064,8 +3064,11 @@ router.get('/creatives', async (req, res) => {
     client_id, assignee_id, q, include_done,
   } = req.query;
 
-  // ページング (default 50 / max 200)
-  const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 50, 1), 200);
+  // ページング (default 50 / max 500)
+  // max 200 → 500 に拡張: フロントは allCreatives を「全件」前提でサイドバー警告/ダッシュボード/案件詳細件数 を集計しているため、
+  // page 2 以降にこぼれた遅延が silent に集計から消える事故が起きる（#347/#355/#359）。
+  // active が 500 を超えるケースは現状想定外、超えたら server side aggregate endpoint へ移行する。
+  const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 50, 1), 500);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   // タブフィルタ: creative_type の prefix で粗く絞り込む

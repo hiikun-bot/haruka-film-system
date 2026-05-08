@@ -6720,7 +6720,11 @@ function _saveAssigneeIds() {
 }
 let showEndedInCreatives = false;
 // 一覧 API のページング状態
-let creativesPage = { limit: 50, offset: 0, total: 0 };
+// limit を 50 → 500 に拡張（2026-05-08）
+// allCreatives を「全件」前提でサイドバー警告 / ダッシュボード / 案件詳細件数 等が集計しているが、
+// page 2 以降の active が silent に集計から消えるバグの根本対処（#347 / #355 / #359 系）。
+// 500 超のスケールに到達したら server side aggregate endpoint へ移行する。
+let creativesPage = { limit: 500, offset: 0, total: 0 };
 let _searchDebounceTimer = null;
 let _creativesLoadSeq = 0;
 // クリエイティブ画面の表示モード / グルーピング / 期間 — メンバーマスター（creative_default_*）が唯一の真実（PR #277）。
