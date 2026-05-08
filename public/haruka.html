@@ -5871,7 +5871,9 @@ window.showPage = window.showPage || function(name, btn) {
 </div>
 
 <!-- クリエイティブ詳細モーダル -->
-<div class="modal-overlay" id="modal-creative-detail" style="z-index:310">
+<!-- data-no-overlay-close="true": メモ・連絡確認事項・コメントを入力中に背景クリックで消えるのを防ぐ -->
+<!-- Esc キー / × ボタン / 「閉じる」ボタンも、入力 dirty なときは confirm を出してから閉じる -->
+<div class="modal-overlay" id="modal-creative-detail" data-no-overlay-close="true" style="z-index:310">
   <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
 
     <!-- ヘッダー（固定） -->
@@ -12183,10 +12185,32 @@ function openModal(id) {
   el.classList.add('open');
   try { if (window.__addBreadcrumb) window.__addBreadcrumb('modal_open', id); } catch (_) {}
 }
+// クリエイティブ詳細モーダルを「保存後の正規ルート」で閉じるときに立てるフラグ
+// （dirty 判定の confirm をスキップするため）
+let __cdSkipDirtyCheck = false;
+
 function closeModal(id) {
   const el = document.getElementById(id);
   if (!el) return;
+  // クリエイティブ詳細モーダル限定: 入力中（dirty）なら confirm で確認
+  // 「閉じる」ボタン / × ボタン から呼ばれる場合も対象
+  // 正規アクション（saveCreativeDetail 等）成功時は __cdSkipDirtyCheck = true でバイパスする
+  if (
+    id === 'modal-creative-detail'
+    && !__cdSkipDirtyCheck
+    && typeof __isCreativeDetailDirty === 'function'
+    && __isCreativeDetailDirty()
+  ) {
+    const ok = window.confirm('入力中の内容があります。閉じてもよろしいですか？\n（自動下書きは保存されているので次回開いたときに復元されます）');
+    if (!ok) return;
+  }
   el.classList.remove('open');
+  // 詳細モーダルを閉じたら状態クリア
+  if (id === 'modal-creative-detail') {
+    __cdSkipDirtyCheck = false;
+    __cdDraftCurrentId = null;
+    __cdInitialSnapshot = null;
+  }
 }
 
 // 背景クリック / Esc キーでモーダルを閉じる（PC で「グレーになって動かない」状態の脱出口）
@@ -12206,7 +12230,137 @@ document.addEventListener('keydown', (e) => {
   const opens = document.querySelectorAll('.modal-overlay.open');
   if (!opens.length) return;
   // 一番最後に開かれたもの（DOM 上は同じだが上位 z-index 想定）を閉じる
-  opens[opens.length - 1].classList.remove('open');
+  const top = opens[opens.length - 1];
+  // クリエイティブ詳細モーダル限定: 入力中（dirty）なら confirm で確認
+  // 「グレーになって動かない」状態の脱出口は維持しつつ、誤操作で入力消失を防ぐ
+  if (top.id === 'modal-creative-detail' && typeof __isCreativeDetailDirty === 'function' && __isCreativeDetailDirty()) {
+    const ok = window.confirm('入力中の内容があります。閉じてもよろしいですか？\n（自動下書きは保存されているので次回開いたときに復元されます）');
+    if (!ok) return;
+  }
+  top.classList.remove('open');
+  // 詳細モーダルを閉じたら状態クリア（closeModal 経由でないので手動で）
+  if (top.id === 'modal-creative-detail') {
+    __cdSkipDirtyCheck = false;
+    __cdDraftCurrentId = null;
+    __cdInitialSnapshot = null;
+  }
+});
+
+// =============================================================================
+// クリエイティブ詳細モーダル: 入力中データの保護（A案 + 軽量自動下書き）
+// =============================================================================
+// 設計:
+// - 背景クリックでは閉じない（data-no-overlay-close="true" で対応済み）
+// - Esc キー / 「閉じる」ボタン / × ボタンは入力 dirty なときだけ confirm（脱出口は維持）
+// - メモ / 連絡確認事項 / コメント / ディレクターからの指示 を debounce 500ms で
+//   localStorage に下書き保存。次回 openCreativeDetail で復元
+// - 正規アクション（saveCreativeDetail / saveCreativeDetailMemo / forceDeliver / adminJumpStatus）
+//   成功時に下書きを削除し、__cdSkipDirtyCheck=true で confirm をバイパスして閉じる
+// =============================================================================
+const CD_DRAFT_FIELDS = ['cd-memo', 'cd-editor-reply', 'cd-comment-field', 'cd-director-note'];
+const CD_DRAFT_KEY_PREFIX = 'creative-detail-draft-';
+let __cdInitialSnapshot = null;  // open 時点のサーバー値スナップショット（dirty 判定用）
+let __cdDraftSaveTimer = null;
+let __cdDraftCurrentId = null;
+
+function __cdSnapshotCurrent() {
+  const out = {};
+  for (const id of CD_DRAFT_FIELDS) {
+    const el = document.getElementById(id);
+    out[id] = el ? (el.value || '') : '';
+  }
+  return out;
+}
+
+function __isCreativeDetailDirty() {
+  // 詳細モーダルが開いている時のみ評価
+  const modal = document.getElementById('modal-creative-detail');
+  if (!modal || !modal.classList.contains('open')) return false;
+  if (!__cdInitialSnapshot) return false;
+  const cur = __cdSnapshotCurrent();
+  for (const id of CD_DRAFT_FIELDS) {
+    if ((cur[id] || '') !== (__cdInitialSnapshot[id] || '')) return true;
+  }
+  return false;
+}
+
+function __cdDraftKey(id) {
+  return CD_DRAFT_KEY_PREFIX + id;
+}
+
+function __cdSaveDraftNow() {
+  if (!__cdDraftCurrentId) return;
+  try {
+    if (!__isCreativeDetailDirty()) {
+      // dirty でなくなったら（例: ユーザーが手で初期値に戻した）下書きも消す
+      localStorage.removeItem(__cdDraftKey(__cdDraftCurrentId));
+      return;
+    }
+    const snap = __cdSnapshotCurrent();
+    localStorage.setItem(__cdDraftKey(__cdDraftCurrentId), JSON.stringify({
+      saved_at: new Date().toISOString(),
+      fields: snap,
+    }));
+  } catch (e) {
+    // localStorage 上限などは無視（保険なので致命的ではない）
+    console.warn('[creative-detail-draft] save failed:', e);
+  }
+}
+
+function __cdScheduleDraftSave() {
+  if (__cdDraftSaveTimer) clearTimeout(__cdDraftSaveTimer);
+  __cdDraftSaveTimer = setTimeout(__cdSaveDraftNow, 500);
+}
+
+function __cdClearDraft(id) {
+  try {
+    const targetId = id || __cdDraftCurrentId;
+    if (!targetId) return;
+    localStorage.removeItem(__cdDraftKey(targetId));
+  } catch (_) {}
+}
+
+// 詳細モーダルを開いた直後に呼ぶ: 初期スナップショット取得 + 下書き復元
+// openCreativeDetail() の最後（openModal 直後）で呼び出される
+function __cdAfterOpen(creativeId) {
+  __cdDraftCurrentId = creativeId;
+  __cdSkipDirtyCheck = false;
+  __cdInitialSnapshot = __cdSnapshotCurrent();
+  // 下書き復元
+  try {
+    const raw = localStorage.getItem(__cdDraftKey(creativeId));
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const fields = parsed?.fields || {};
+    let restored = false;
+    for (const fid of CD_DRAFT_FIELDS) {
+      const el = document.getElementById(fid);
+      if (!el) continue;
+      const draftVal = fields[fid] || '';
+      const initVal = __cdInitialSnapshot[fid] || '';
+      // サーバーの最新値と異なる下書きがあるときだけ書き戻す
+      if (draftVal && draftVal !== initVal) {
+        el.value = draftVal;
+        restored = true;
+      }
+    }
+    if (restored && typeof showToast === 'function') {
+      const savedAt = parsed?.saved_at ? new Date(parsed.saved_at) : null;
+      const tsLabel = savedAt && !isNaN(savedAt) ? savedAt.toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit', month: '2-digit', day: '2-digit' }) : '';
+      showToast(tsLabel ? `入力途中の下書きを復元しました（${tsLabel}）` : '入力途中の下書きを復元しました', 'info');
+    }
+  } catch (e) {
+    console.warn('[creative-detail-draft] restore failed:', e);
+  }
+}
+
+// 入力リスナー登録（DOMContentLoaded 後に1回だけ）
+document.addEventListener('DOMContentLoaded', () => {
+  for (const fid of CD_DRAFT_FIELDS) {
+    const el = document.getElementById(fid);
+    if (!el) continue;
+    el.addEventListener('input', __cdScheduleDraftSave);
+  }
 });
 
 let showCompleted = false;
@@ -23258,6 +23412,9 @@ async function openCreativeDetail(id) {
   refreshCreativeEditHistory(id).catch(() => {});
 
   openModal('modal-creative-detail');
+  // 入力保護: 初期スナップショット取得 + localStorage 下書き復元
+  // openModal の直後に呼ぶ（モーダルが open になってからでないと dirty 判定が動かない）
+  try { __cdAfterOpen(id); } catch (e) { console.warn('[creative-detail-draft] afterOpen failed:', e); }
 }
 
 function updateCreativeStepIndicator(status) {
@@ -23575,6 +23732,8 @@ async function adminJumpStatus(targetStatus, stepLabel) {
     let msg = `ステータスを ${cur} → ${targetStatus} に変更しました`;
     if (j.deleted_invoice_items > 0) msg += `（下書き請求書明細 ${j.deleted_invoice_items} 件を削除）`;
     showToast(msg, 'success');
+    try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
+    __cdSkipDirtyCheck = true;
     closeModal('modal-creative-detail');
     await loadCreatives();
   } else {
@@ -23606,6 +23765,8 @@ async function forceDeliver() {
   });
   if (res.ok) {
     showToast('納品完了モードで「納品」にしました', 'success');
+    try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
+    __cdSkipDirtyCheck = true;
     closeModal('modal-creative-detail');
     await loadCreatives();
   } else {
@@ -23640,8 +23801,12 @@ async function directToClientCheck() {
   const res = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
-  if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
-  else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
+  if (res.ok) {
+    try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
+    __cdSkipDirtyCheck = true;
+    closeModal('modal-creative-detail');
+    await loadCreatives();
+  } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
 async function skipToClientCheck() {
@@ -23698,8 +23863,12 @@ async function advanceCreativeStatus() {
         director_comment: document.getElementById('cd-comment-field').value.trim() || null,
       }),
     });
-    if (res.ok) { closeModal('modal-creative-detail'); await loadCreatives(); }
-    else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
+    if (res.ok) {
+      try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
+      __cdSkipDirtyCheck = true;
+      closeModal('modal-creative-detail');
+      await loadCreatives();
+    } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
     return;
   }
 
@@ -28679,6 +28848,9 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) {
+    // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
+    try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
+    __cdSkipDirtyCheck = true;
     closeModal('modal-creative-detail');
     await loadCreatives();
   } else {
@@ -28707,6 +28879,10 @@ async function saveCreativeDetailMemo() {
     const cached = allCreatives.find(x => x.id === id);
     if (cached) cached.memo = memo;
     if (typeof renderCreatives === 'function') renderCreatives();
+    // 初期スナップショットの memo を更新して、メモ保存後に dirty 扱いにならないようにする
+    if (__cdInitialSnapshot) __cdInitialSnapshot['cd-memo'] = memo || '';
+    // 他フィールドが dirty なままなら下書きは残す（次回 input 時に再 save）
+    try { __cdSaveDraftNow(); } catch (_) {}
     showToast('メモを保存しました', 'success');
   } catch (err) {
     showToast('メモの保存に失敗: ' + (err?.message || err), 'error');
