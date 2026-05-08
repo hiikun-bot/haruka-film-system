@@ -2109,4 +2109,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_team_members_leader
 CREATE INDEX IF NOT EXISTS idx_team_members_team_leader_rank
   ON team_members(team_id, leader_rank) WHERE leader_rank IS NOT NULL;
 
+-- ==================== ADR 009: 納品時の担当者スナップショット ====================
+-- 案件途中で director_id / producer_id を変えても、過去納品済みクリエイティブの
+-- 件数・取り分・請求金額が遡及変化しないよう、納品時点の担当者を creatives に固定する。
+-- 詳細: docs/design/decisions/009-creative-completion-snapshot.md
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS delivered_director_ids UUID[],
+  ADD COLUMN IF NOT EXISTS delivered_producer_ids UUID[],
+  ADD COLUMN IF NOT EXISTS delivered_snapshot_at  TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_creatives_delivered_director_ids
+  ON creatives USING GIN (delivered_director_ids);
+CREATE INDEX IF NOT EXISTS idx_creatives_delivered_producer_ids
+  ON creatives USING GIN (delivered_producer_ids);
+
 NOTIFY pgrst, 'reload schema';
