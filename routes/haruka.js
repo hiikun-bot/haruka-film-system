@@ -2385,6 +2385,221 @@ router.get('/projects/schedule-overview', requireAuth, async (req, res) => {
   res.json(out);
 });
 
+// ==================== 案件スケジュール Phase 2 — ダッシュボード / マイタスク ====================
+// ADR 010 Phase 2: L3「今週の山場」 / L4「マイタスク」用の集約 API。
+// 既存の project_tasks インデックス（idx_project_tasks_milestone /
+// idx_project_tasks_assignee_due）を活用し、N+1 を避けるため projects は 1 回だけ JOIN する。
+
+// 共通ユーティリティ: YYYY-MM-DD の現地日付を返す（タイムゾーンずれ防止のため Asia/Tokyo 固定）。
+function _todayStrJST() {
+  const now = new Date();
+  // toLocaleDateString("sv-SE") は "YYYY-MM-DD" 形式
+  return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+}
+
+// 今週日曜日(その日の終わり)の YYYY-MM-DD を返す。週開始は月曜とし「今週」=「月〜日」。
+function _thisSundayStrJST() {
+  const todayStr = _todayStrJST();
+  const today = new Date(`${todayStr}T00:00:00+09:00`);
+  // getDay(): 0=Sun, 1=Mon, ... 6=Sat
+  const dow = today.getDay();
+  // 月曜起点: dow が日曜(0)なら今日が日曜＝当日、それ以外は (7 - dow) 日後
+  const daysUntilSun = dow === 0 ? 0 : (7 - dow);
+  const sun = new Date(today);
+  sun.setDate(sun.getDate() + daysUntilSun);
+  return sun.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+}
+
+// GET /api/dashboard/upcoming-milestones?days=14
+// 今日〜+days 日の未完了マイルストーン + 遅延中マイルストーンを返す（全案件、経営視点）
+router.get('/dashboard/upcoming-milestones', requireAuth, async (req, res) => {
+  const daysParam = parseInt(req.query.days, 10);
+  const days = Number.isFinite(daysParam) && daysParam > 0 && daysParam <= 90 ? daysParam : 14;
+
+  const todayStr = _todayStrJST();
+  const horizon = new Date(`${todayStr}T00:00:00+09:00`);
+  horizon.setDate(horizon.getDate() + days);
+  const horizonStr = horizon.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
+  // 直近マイルストーン: today <= current_end_date <= today+days, NOT is_done, is_milestone
+  const { data: upcomingTasks, error: upErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, title, current_end_date, original_end_date, is_milestone, is_done, assignee_type, project:projects(id, name, is_hidden)')
+    .eq('is_milestone', true)
+    .eq('is_done', false)
+    .gte('current_end_date', todayStr)
+    .lte('current_end_date', horizonStr)
+    .order('current_end_date', { ascending: true });
+  if (upErr) {
+    if (isMissingTasksTable(upErr)) {
+      return res.json({ upcoming: [], overdue: [] });
+    }
+    return res.status(500).json({ error: upErr.message });
+  }
+
+  // 遅延中: current_end_date < today, NOT is_done, is_milestone
+  const { data: overdueTasks, error: ovErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, title, current_end_date, original_end_date, is_milestone, is_done, assignee_type, project:projects(id, name, is_hidden)')
+    .eq('is_milestone', true)
+    .eq('is_done', false)
+    .lt('current_end_date', todayStr)
+    .not('current_end_date', 'is', null)
+    .order('current_end_date', { ascending: true });
+  if (ovErr) {
+    if (isMissingTasksTable(ovErr)) {
+      return res.json({ upcoming: [], overdue: [] });
+    }
+    return res.status(500).json({ error: ovErr.message });
+  }
+
+  const shapeRow = (t, isOverdue) => ({
+    task_id: t.id,
+    project_id: t.project_id,
+    project_name: t.project?.name || '',
+    title: t.title,
+    current_end_date: t.current_end_date,
+    original_end_date: t.original_end_date,
+    is_overdue: isOverdue,
+    is_milestone: true,
+    assignee_type: t.assignee_type,
+  });
+
+  // 非表示案件（is_hidden=true）は除外
+  const upcoming = (upcomingTasks || [])
+    .filter(t => t.project && !t.project.is_hidden)
+    .map(t => shapeRow(t, false));
+  const overdue = (overdueTasks || [])
+    .filter(t => t.project && !t.project.is_hidden)
+    .map(t => shapeRow(t, true));
+
+  res.json({ upcoming, overdue });
+});
+
+// 内部ヘルパ: 自分のタスクを取得（my-tasks / my-tasks/count で共有）
+async function _fetchMyOpenTasks(userId) {
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, title, current_end_date, original_end_date, assignee_type, is_milestone, is_done, sort_order, project:projects(id, name, is_hidden)')
+    .eq('assignee_user_id', userId)
+    .eq('is_done', false)
+    .order('current_end_date', { ascending: true, nullsFirst: false });
+  if (error) {
+    if (isMissingTasksTable(error)) return { tasks: [] };
+    return { error };
+  }
+  // 非表示案件は除外
+  const tasks = (data || []).filter(t => t.project && !t.project.is_hidden);
+  return { tasks };
+}
+
+// GET /api/my-tasks  認証ユーザー自身のタスクを 3 区分（today/thisWeek/later）で返す
+router.get('/my-tasks', requireAuth, async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: '認証が必要です' });
+
+  const { tasks, error } = await _fetchMyOpenTasks(userId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const todayStr = _todayStrJST();
+  const sundayStr = _thisSundayStrJST();
+
+  const today = [];
+  const thisWeek = [];
+  const later = [];
+
+  const shape = (t) => ({
+    task_id: t.id,
+    project_id: t.project_id,
+    project_name: t.project?.name || '',
+    title: t.title,
+    current_end_date: t.current_end_date,
+    original_end_date: t.original_end_date,
+    assignee_type: t.assignee_type,
+    is_milestone: t.is_milestone,
+  });
+
+  for (const t of tasks) {
+    const d = t.current_end_date;
+    if (!d) {
+      later.push(shape(t));
+    } else if (d <= todayStr) {
+      today.push(shape(t));
+    } else if (d <= sundayStr) {
+      thisWeek.push(shape(t));
+    } else {
+      later.push(shape(t));
+    }
+  }
+
+  res.json({ today, thisWeek, later });
+});
+
+// GET /api/my-tasks/count  ヘッダーアイコンのバッジ用（軽量）
+// today: 今日以前の期日かつ未完了 / overdue: 期日超過の未完了 / total: 全未完了
+router.get('/my-tasks/count', requireAuth, async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: '認証が必要です' });
+
+  const { tasks, error } = await _fetchMyOpenTasks(userId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const todayStr = _todayStrJST();
+  let todayCount = 0;
+  let overdueCount = 0;
+  for (const t of tasks) {
+    const d = t.current_end_date;
+    if (!d) continue;
+    if (d < todayStr) {
+      overdueCount += 1;
+      todayCount += 1; // overdue も「今日対応すべき」に含める
+    } else if (d === todayStr) {
+      todayCount += 1;
+    }
+  }
+  res.json({ today: todayCount, overdue: overdueCount, total: tasks.length });
+});
+
+// PATCH /api/my-tasks/:task_id/done  自分のタスクの完了/未完了を切り替える（権限緩和ルート）
+// 既存の /api/projects/:id/tasks/:tid PATCH は project.create_edit が必須で editor/designer
+// が自タスクを完了できない問題があるため、assignee 本人に限り is_done のみトグル可能にする。
+router.patch('/my-tasks/:task_id/done', requireAuth, async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: '認証が必要です' });
+  const taskId = req.params.task_id;
+  const newDone = !!(req.body && req.body.is_done);
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_tasks')
+    .select('id, assignee_user_id, is_done')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (getErr) {
+    if (isMissingTasksTable(getErr)) return res.status(404).json({ error: 'task が見つかりません' });
+    return res.status(500).json({ error: getErr.message });
+  }
+  if (!existing) return res.status(404).json({ error: 'task が見つかりません' });
+  if (existing.assignee_user_id !== userId) {
+    return res.status(403).json({ error: '自分が担当のタスクのみ完了/未完了を変更できます' });
+  }
+
+  const update = {
+    is_done: newDone,
+    updated_at: new Date().toISOString(),
+  };
+  if (newDone && !existing.is_done) update.done_at = new Date().toISOString();
+  if (!newDone && existing.is_done) update.done_at = null;
+
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .update(update)
+    .eq('id', taskId)
+    .select('id, is_done, done_at, updated_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
 // ADR 002 (見積行統合) + ADR 003 (roles マスタ) + ADR 004 (pricing_type) に基づく line_costs CRUD。
 // 1 line に対して、複数のロール（プロデューサー/ディレクター/編集者…）のコスト行を縦持ちで保持する。

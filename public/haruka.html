@@ -19,6 +19,7 @@
 <!-- 通知UI（Phase 1 段階2） -->
 <link rel="stylesheet" href="/css/notification.css">
 <link rel="stylesheet" href="/css/tweets-page.css">
+<link rel="stylesheet" href="/css/my-tasks.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
 :root{
@@ -2798,6 +2799,20 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
     <div class="header-user">
+      <!-- マイタスクアイコン（Phase 2 L4）— 通知ベルの左隣に配置 -->
+      <button
+        type="button"
+        id="my-tasks-icon"
+        class="bell-button"
+        aria-label="マイタスク"
+        aria-expanded="false"
+        aria-controls="my-tasks-panel"
+        title="マイタスク">
+        <svg class="bell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+        </svg>
+        <span id="my-tasks-badge" class="bell-badge" hidden>0</span>
+      </button>
       <!-- 通知ベル（Phase 1 段階2）— ユーザーアバターの左隣に配置 -->
       <button
         type="button"
@@ -2869,6 +2884,42 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </aside>
 
+<!-- マイタスクパネル（Phase 2 L4）— 右からスライドイン -->
+<div id="my-tasks-overlay" class="notification-overlay" aria-hidden="true"></div>
+<aside
+  id="my-tasks-panel"
+  class="notification-panel"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="my-tasks-panel-title"
+  aria-hidden="true">
+  <header class="notification-panel-head">
+    <h2 id="my-tasks-panel-title" class="notification-panel-title">✅ マイタスク</h2>
+    <div class="notification-panel-actions">
+      <button
+        type="button"
+        id="my-tasks-panel-close"
+        class="notification-action-btn close"
+        aria-label="マイタスクパネルを閉じる"
+        title="閉じる">✕</button>
+    </div>
+  </header>
+  <div class="my-tasks-tabs" role="tablist" aria-label="マイタスク区分">
+    <button type="button" class="my-tasks-tab active" role="tab" data-tab="today" aria-selected="true">
+      今日 <span class="my-tasks-tab-count" id="my-tasks-count-today">0</span>
+    </button>
+    <button type="button" class="my-tasks-tab" role="tab" data-tab="thisWeek" aria-selected="false">
+      今週 <span class="my-tasks-tab-count" id="my-tasks-count-thisWeek">0</span>
+    </button>
+    <button type="button" class="my-tasks-tab" role="tab" data-tab="later" aria-selected="false">
+      それ以降 <span class="my-tasks-tab-count" id="my-tasks-count-later">0</span>
+    </button>
+  </div>
+  <div id="my-tasks-body" class="notification-panel-body">
+    <div class="notification-loading">読み込み中…</div>
+  </div>
+</aside>
+
 <!-- ナビゲーションドロワー（モバイル） -->
 <div id="nav-drawer" class="nav-drawer">
   <div class="nav-drawer-overlay" onclick="closeNavDrawer()"></div>
@@ -2919,6 +2970,27 @@ window.showPage = window.showPage || function(name, btn) {
   <div id="dash-today" style="margin-bottom:14px"></div>
   <!-- 誕生日（全ロール共通） -->
   <div id="dash-birthdays" style="margin-bottom:14px"></div>
+  <!-- スケジュール Phase 2: 今週の山場 + あなたのタスク -->
+  <div class="dashboard-card-row" id="dash-schedule-row">
+    <section class="dashboard-card" id="dash-upcoming-milestones">
+      <h3>🎯 今週の山場</h3>
+      <div id="dash-overdue-alert" class="alert-warning" style="display:none">
+        <div class="alert-warning-head">
+          <span>⚠️ 遅延中</span>
+          <span id="dash-overdue-count"></span>
+        </div>
+        <ul id="dash-overdue-list"></ul>
+      </div>
+      <div id="dash-milestones-by-day"></div>
+    </section>
+    <section class="dashboard-card" id="dash-my-tasks">
+      <h3>
+        ✅ あなたのタスク
+        <a class="card-action" href="javascript:void(0)" onclick="window.myTasksPanel?.openPanel()">もっと見る →</a>
+      </h3>
+      <div id="dash-my-tasks-body"></div>
+    </section>
+  </div>
   <!-- 年月フィルター（adminのみ） -->
   <div id="dash-filter" style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
     <select id="dash-filter-year" class="form-select" style="width:100px" onchange="onDashFilterChange()"></select>
@@ -16418,6 +16490,8 @@ function loadDashboard() {
   renderTodayDeadlines(today);
   // 全ロール共通: 誕生日セクション
   loadDashboardBirthdays();
+  // 案件スケジュール Phase 2: 今週の山場 + あなたのタスク（L3 / L4）
+  if (window.myTasksPanel?.refreshDashboard) window.myTasksPanel.refreshDashboard();
   // つぶやきは独立タブ（#page-tweets）に集約（PR #209）。ダッシュボード内表示は廃止。
 
   if (['admin','secretary','producer','producer_director'].includes(role)) {
@@ -30288,6 +30362,7 @@ if ('serviceWorker' in navigator) {
 <script type="module" src="/js/notification-card.js"></script>
 <script type="module" src="/js/notification-bell.js"></script>
 <script type="module" src="/js/notification-panel.js"></script>
+<script src="/js/my-tasks-panel.js"></script>
 <script type="module" src="/js/notification-realtime.js"></script>
 </body>
 </html>
