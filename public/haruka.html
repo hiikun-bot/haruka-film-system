@@ -25301,10 +25301,11 @@ function _renderFpCommentHtml(c, isReply) {
         <div style="display:flex;align-items:center;gap:8px">
           ${replyBtn}
           <span style="font-size:10px;color:var(--text-muted)">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+          ${c.user_id === currentUser?.id ? `<button onclick="startEditComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:12px;padding:0;line-height:1" title="編集">✏️</button>` : ''}
           ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1" title="削除">✕</button>` : ''}
         </div>
       </div>
-      <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
+      <div id="fp-comment-text-${c.id}" style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
     </div>
   `;
 }
@@ -25392,6 +25393,68 @@ async function submitReplyComment(parentId) {
     }
   } finally {
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '投稿'; }
+  }
+}
+
+// コメント編集（投稿者本人のみ）。本文 div をその場で textarea に差し替え、保存/キャンセルボタンを出す。
+function startEditComment(id) {
+  const textEl = document.getElementById(`fp-comment-text-${id}`);
+  if (!textEl) return;
+  if (textEl.dataset.editing === '1') return; // 既に編集中
+  const currentText = textEl.textContent;
+  textEl.dataset.editing = '1';
+  textEl.dataset.original = currentText;
+  textEl.innerHTML = `
+    <textarea id="fp-edit-textarea-${id}" style="width:100%;min-height:60px;padding:8px;background:#0a0a0a;color:#e5e5e5;border:0.5px solid #3ECFCA;border-radius:6px;font-size:13px;line-height:1.6;resize:vertical;font-family:inherit;box-sizing:border-box">${esc(currentText)}</textarea>
+    <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px">
+      <button onclick="cancelEditComment('${id}')" style="background:transparent;color:#9ca3af;border:0.5px solid #3f3f46;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">キャンセル</button>
+      <button onclick="submitEditComment('${id}')" style="background:#3ECFCA;color:#0a0a0a;border:none;border-radius:6px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer">保存</button>
+    </div>
+  `;
+  document.getElementById(`fp-edit-textarea-${id}`)?.focus();
+}
+
+function cancelEditComment(id) {
+  const textEl = document.getElementById(`fp-comment-text-${id}`);
+  if (!textEl) return;
+  const original = textEl.dataset.original || '';
+  textEl.textContent = original;
+  delete textEl.dataset.editing;
+  delete textEl.dataset.original;
+}
+
+async function submitEditComment(id) {
+  const ta = document.getElementById(`fp-edit-textarea-${id}`);
+  if (!ta) return;
+  const newText = ta.value.trim();
+  if (!newText) { alert('コメントを入力してください'); return; }
+  const submitBtn = document.querySelector(`button[onclick="submitEditComment('${id}')"]`);
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/creative-file-comments/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: newText }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || '編集に失敗しました');
+    }
+    // 再描画（ファイル全体のコメントを reload）
+    if (currentPreviewFileId && typeof loadFileComments === 'function') {
+      await loadFileComments(currentPreviewFileId);
+    } else {
+      // 最低限：本文だけ書き換え
+      const textEl = document.getElementById(`fp-comment-text-${id}`);
+      if (textEl) {
+        textEl.textContent = newText;
+        delete textEl.dataset.editing;
+        delete textEl.dataset.original;
+      }
+    }
+  } catch (e) {
+    alert(e.message);
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 

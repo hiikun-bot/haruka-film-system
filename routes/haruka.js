@@ -9732,6 +9732,30 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   res.json(enriched);
 });
 
+// コメント編集（投稿者本人のみ）
+router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
+  const userId = req.user?.id;
+  const { comment } = req.body || {};
+  if (!comment || typeof comment !== 'string' || !comment.trim()) {
+    return res.status(400).json({ error: 'comment は必須です' });
+  }
+  const { data: existing } = await supabase
+    .from('creative_file_comments')
+    .select('user_id')
+    .eq('id', req.params.id)
+    .single();
+  if (!existing) return res.status(404).json({ error: 'コメントが見つかりません' });
+  if (existing.user_id !== userId) return res.status(403).json({ error: '自分の投稿のみ編集できます' });
+  const { data, error } = await supabase
+    .from('creative_file_comments')
+    .update({ comment: comment.trim() })
+    .eq('id', req.params.id)
+    .select('*, users(id, full_name, role, avatar_url)')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // コメント削除（自分のコメントのみ / admin は全件）
 router.delete('/creative-file-comments/:id', requireAuth, async (req, res) => {
   const userId = req.user?.id;
