@@ -25876,6 +25876,11 @@ function renderMonthlyRevenueTable(data) {
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">原価(確定+見込)</span> <strong style="font-size:14px">${yen(data.total.cost)}</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">確定 ${yen(data.confirmed.cost)} / 見込 ${yen(data.forecast.cost)}</div></div>
     <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">粗利</span> <strong style="font-size:14px">${yen(data.total.gross_profit)}</strong></div>
     <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">粗利率</span> <strong style="font-size:14px;color:${marginColor}">${pct(data.total.gross_margin)}</strong></div>
+    ${data.forecast_rescue && data.forecast_rescue.null_line_creatives > 0 ? `
+      <div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:10px 14px;font-size:11px;color:#991B1B" title="line（成果物グループ）が未設定の creative を、同案件の代表 line 単価で按分加算しています。category 紐付けが取れない creative は救済不能なので除外しました（厳密値は案件編集モーダルで line を埋めてください）">
+        <strong>line 未設定 creatives</strong> ${data.forecast_rescue.null_line_creatives}件
+        <span style="margin-left:6px">（救済 ${data.forecast_rescue.rescued} / 救済不能 ${data.forecast_rescue.unrecovered}）</span>
+      </div>` : ''}
   `;
   const wrap = document.getElementById('an-table-content');
   if (!data.by_client.length) {
