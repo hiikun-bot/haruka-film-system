@@ -1139,9 +1139,15 @@ CREATE TABLE IF NOT EXISTS announcement_acks (
   announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   done_at TIMESTAMPTZ DEFAULT now(),
+  -- 代理完了 (admin/secretary が他メンバーの代わりに完了マークした場合に set)
+  proxy_acked_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  proxy_acked_at TIMESTAMPTZ,
   PRIMARY KEY (announcement_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_announcement_acks_user ON announcement_acks(user_id);
+CREATE INDEX IF NOT EXISTS idx_announcement_acks_proxy_by
+  ON announcement_acks(proxy_acked_by_user_id)
+  WHERE proxy_acked_by_user_id IS NOT NULL;
 
 -- ==================== つぶやき機能（社内タイムライン）====================
 -- 写真（任意） + 短いコメント + ❤️ いいね のミニ社内 SNS。
