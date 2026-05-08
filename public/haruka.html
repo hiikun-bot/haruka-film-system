@@ -23333,9 +23333,22 @@ async function advanceCreativeStatus() {
   // （シンプルな confirm は他の遷移先のみで使用）
   if (target === 'Dチェック') {
     openDCheckPicker({
-      onSubmit: async (directorUserIds) => {
-        // 複数選択対応: director_user_ids（配列）でサーバへ
-        await saveCreativeDetail(target, { director_user_ids: Array.isArray(directorUserIds) ? directorUserIds : [] });
+      onSubmit: async (firstArg, secondArg) => {
+        let directorUserIds, additionalReviewerIds;
+        if (Array.isArray(firstArg)) {
+          directorUserIds = firstArg;
+          additionalReviewerIds = Array.isArray(secondArg) ? secondArg : [];
+        } else if (firstArg && typeof firstArg === 'object') {
+          directorUserIds = Array.isArray(firstArg.directorUserIds) ? firstArg.directorUserIds : [];
+          additionalReviewerIds = Array.isArray(firstArg.additionalReviewerIds) ? firstArg.additionalReviewerIds : [];
+        } else {
+          directorUserIds = [];
+          additionalReviewerIds = [];
+        }
+        await saveCreativeDetail(target, {
+          director_user_ids: directorUserIds,
+          additional_reviewer_ids: additionalReviewerIds,
+        });
       },
     });
     return;
@@ -23345,8 +23358,13 @@ async function advanceCreativeStatus() {
   // （Dチェックピッカーと同仕様：複数選択・案件P固定・サブP/秘書/その他）
   if (target === 'Pチェック') {
     openPCheckPicker({
-      onSubmit: async (producerUserIds) => {
-        await saveCreativeDetail(target, { producer_user_ids: Array.isArray(producerUserIds) ? producerUserIds : [] });
+      onSubmit: async (firstArg) => {
+        const producerUserIds = Array.isArray(firstArg)
+          ? firstArg
+          : (firstArg && typeof firstArg === 'object' && Array.isArray(firstArg.producerUserIds))
+            ? firstArg.producerUserIds
+            : [];
+        await saveCreativeDetail(target, { producer_user_ids: producerUserIds });
       },
     });
     return;
