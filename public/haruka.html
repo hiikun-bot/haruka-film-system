@@ -2352,7 +2352,6 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="low">軽微</option>
       </select>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="verup-filter-unread" onchange="renderVerupList()">未読のみ</label>
-      <label id="verup-filter-hidden-wrap" style="font-size:12px;display:none;align-items:center;gap:4px"><input type="checkbox" id="verup-filter-hidden" onchange="renderVerupList()">非表示も表示</label>
       <span style="flex:1"></span>
       <button class="btn" onclick="markAllVerupRead()" title="表示中の項目をすべて既読にする">既読にする</button>
       <button id="verup-add-btn" class="btn-primary" onclick="openVerupEditor()" style="display:none">＋ 新規追加</button>
@@ -29207,7 +29206,9 @@ function _verupEsc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function _verupIsAdmin() {
-  return (currentUser?.role === 'admin') || (typeof isSuperAdmin === 'function' && isSuperAdmin());
+  // VIEW AS でロール切替中は previewRole 基準で判定（実 admin が designer 視点中なら false）
+  const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+  return role === 'admin';
 }
 function _verupFmtDate(s) {
   if (!s) return '';
@@ -29247,12 +29248,10 @@ async function loadVerupUnreadCount() {
 
 async function openVerupModal() {
   openModal('modal-verup');
-  // 「新規追加」ボタンと「非表示も表示」フィルタは admin のみ
+  // 「新規追加」ボタンは admin のみ
   const addBtn = document.getElementById('verup-add-btn');
-  const hiddenWrap = document.getElementById('verup-filter-hidden-wrap');
   const isAdmin = _verupIsAdmin();
   if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
-  if (hiddenWrap) hiddenWrap.style.display = isAdmin ? 'inline-flex' : 'none';
   await loadVerupList();
 }
 
@@ -29278,12 +29277,13 @@ function renderVerupList() {
   const fcat = document.getElementById('verup-filter-category')?.value || '';
   const fimp = document.getElementById('verup-filter-importance')?.value || '';
   const onlyUnread = document.getElementById('verup-filter-unread')?.checked || false;
-  const showHidden = document.getElementById('verup-filter-hidden')?.checked || false;
   const isAdmin = _verupIsAdmin();
 
+  // 非 admin（VIEW AS で別ロール視点中の admin も含む）は is_hidden を見せない。
+  // バックエンドの API は実ユーザーの role で判定するため、VIEW AS 中の admin にも
+  // is_hidden=true が返ってくる。プレビューの整合性のためフロントで除外する。
   let rows = _verupCache.slice();
-  // 非表示は admin が「非表示も表示」をONにしたときだけ見える
-  if (!showHidden) rows = rows.filter(r => !r.is_hidden);
+  if (!isAdmin) rows = rows.filter(r => !r.is_hidden);
   if (fcat) rows = rows.filter(r => r.category === fcat);
   if (fimp) rows = rows.filter(r => r.importance === fimp);
   if (onlyUnread) rows = rows.filter(r => !r.is_read);
