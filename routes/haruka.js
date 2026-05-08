@@ -2266,8 +2266,8 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
   let actualRevenue  = 0;
 
   // line 単位で planned / actual を計算
+  const { calculateLineEconomics, ACTIVE_LINE_STATUSES } = require('../utils/pricing');
   if (lineIds.length) {
-    const { calculateLineEconomics, ACTIVE_LINE_STATUSES } = require('../utils/pricing');
     const { data: lines } = await supabase
       .from('project_estimate_lines')
       .select('id, project_id, planned_count, client_unit_price, status')
@@ -2289,6 +2289,50 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
       const list = creativesByLine.get(line.id) || [];
       const allDone = list.length > 0 && list.every(c => c.status === '納品');
       if (allDone) actualRevenue += econ.revenue;
+    }
+  }
+
+  // line_id NULL の creative を per-unit 単価で救済（同 project 同 creative_type の代表 line を借りる）
+  const nullLineCreatives = (creatives || []).filter(c => !c.line_id);
+  if (nullLineCreatives.length) {
+    const rescueProjectIds = Array.from(new Set(nullLineCreatives.map(c => c.project_id).filter(Boolean)));
+    const [linesAllRes, catsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, category_id, planned_count, client_unit_price, status')
+        .in('project_id', rescueProjectIds),
+      supabase.from('creative_categories').select('id, code, name'),
+    ]);
+    const allLines = linesAllRes.data || [];
+    const catCodeById = new Map();
+    for (const cc of (catsRes.data || [])) catCodeById.set(cc.id, cc.code || cc.name || '');
+
+    const isVideoCategory  = (code) => /video|short|long|cut/i.test(code || '');
+    const isDesignCategory = (code) => /design|image|static/i.test(code || '');
+    const creativeTypeBucket = (ct) => {
+      if (!ct) return 'video';
+      if (ct.startsWith('design') || ct.includes('デザイン')) return 'design';
+      return 'video';
+    };
+
+    const activeStatuses2 = new Set(ACTIVE_LINE_STATUSES);
+    const repByKey = new Map();
+    for (const line of allLines) {
+      if (!activeStatuses2.has(line.status)) continue;
+      const code = catCodeById.get(line.category_id) || '';
+      const type = isVideoCategory(code) ? 'video' : isDesignCategory(code) ? 'design' : null;
+      if (!type) continue;
+      const key = `${line.project_id}|${type}`;
+      if (repByKey.has(key)) continue;
+      repByKey.set(key, Number(line.client_unit_price) || 0);
+    }
+
+    for (const c of nullLineCreatives) {
+      const type = creativeTypeBucket(c.creative_type);
+      const rev  = repByKey.get(`${c.project_id}|${type}`) || 0;
+      if (!rev) continue;
+      plannedRevenue += rev;
+      if (c.status === '納品') actualRevenue += rev;
     }
   }
 
@@ -2638,6 +2682,88 @@ async function aggregateMonthlyRevenue({ year, month }) {
     }
   }
 
+  // ========== line_id NULL の creative を救済（per-creative の代表単価で按分） ==========
+  // 旧データや Stage 4 UI で line を埋めていない creative は line_id NULL のまま。
+  // これらを silent drop すると見込み売上・原価が過小になるので、同じ project 内の
+  // 同 creative_type の line を「代表 line」として per-unit の単価/原価を借用して加算する。
+  const nullLineCreatives = (forecastCreatives || []).filter(c => !c.line_id);
+  let rescued_count = 0, unrecovered_count = 0;
+  if (nullLineCreatives.length) {
+    const rescueProjectIds = Array.from(new Set(nullLineCreatives.map(c => c.project_id).filter(Boolean)));
+    const [linesAllRes, catsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, category_id, planned_count, client_unit_price, status')
+        .in('project_id', rescueProjectIds),
+      supabase.from('creative_categories').select('id, code, name'),
+    ]);
+    const allLines = linesAllRes.data || [];
+    const allLineIds = allLines.map(l => l.id);
+    let allLineCosts = [];
+    if (allLineIds.length) {
+      const lcRes = await supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, unit_price, pricing_type, percentage, actual_hours')
+        .in('line_id', allLineIds);
+      allLineCosts = lcRes.data || [];
+    }
+
+    const catCodeById = new Map();
+    for (const c of (catsRes.data || [])) catCodeById.set(c.id, c.code || c.name || '');
+
+    const lineCostsByLineAll = new Map();
+    for (const lc of allLineCosts) {
+      if (!lineCostsByLineAll.has(lc.line_id)) lineCostsByLineAll.set(lc.line_id, []);
+      lineCostsByLineAll.get(lc.line_id).push(lc);
+    }
+
+    // creative_type / category_code の文字列正規化（monthly-forecast と揃える）
+    const isVideoCategory = (code) => /video|short|long|cut/i.test(code || '');
+    const isDesignCategory = (code) => /design|image|static/i.test(code || '');
+    const creativeTypeBucket = (ct) => {
+      if (!ct) return 'video';
+      if (ct.startsWith('design') || ct.includes('デザイン')) return 'design';
+      return 'video';
+    };
+
+    // (project_id|type) → { revenue, cost } per unit（最初に見つかった active line を採用）
+    const repByKey = new Map();
+    const activeStatuses2 = new Set(ACTIVE_LINE_STATUSES);
+    for (const line of allLines) {
+      if (!activeStatuses2.has(line.status)) continue;
+      const code = catCodeById.get(line.category_id) || '';
+      const type = isVideoCategory(code) ? 'video' : isDesignCategory(code) ? 'design' : null;
+      if (!type) continue;
+      const key = `${line.project_id}|${type}`;
+      if (repByKey.has(key)) continue;
+      const revPerUnit = Number(line.client_unit_price) || 0;
+      let costPerUnit = 0;
+      for (const lc of lineCostsByLineAll.get(line.id) || []) {
+        const pt = lc.pricing_type || 'fixed_per_unit';
+        if (pt === 'fixed_per_unit') costPerUnit += Number(lc.unit_price) || 0;
+        else if (pt === 'percentage') costPerUnit += revPerUnit * (Number(lc.percentage) || 0) / 100;
+        // hourly / fixed_total は 1 件按分できないので捨てる（既存の line_id ありロジックも同じ姿勢）
+      }
+      repByKey.set(key, { revenue: revPerUnit, cost: costPerUnit });
+    }
+
+    for (const c of nullLineCreatives) {
+      const type = creativeTypeBucket(c.creative_type);
+      const key = `${c.project_id}|${type}`;
+      const rep = repByKey.get(key);
+      if (!rep) { unrecovered_count++; continue; }
+      forecastRevenue += rep.revenue;
+      forecastCost    += rep.cost;
+      rescued_count++;
+      const cid = c.projects?.client_id;
+      if (cid) {
+        const bucket = ensureClient(cid, clientNameById.get(cid) || c.projects?.clients?.name);
+        bucket.forecast_revenue += rep.revenue;
+        bucket.forecast_cost    += rep.cost;
+      }
+    }
+  }
+
   const totalRevenue = confirmedRevenue + forecastRevenue;
   const totalCost    = confirmedCost + forecastCost;
   const grossProfit  = totalRevenue - totalCost;
@@ -2656,6 +2782,11 @@ async function aggregateMonthlyRevenue({ year, month }) {
     forecast:  { revenue: forecastRevenue,  cost: forecastCost,  gross_profit: forecastRevenue - forecastCost },
     total:     { revenue: totalRevenue, cost: totalCost, gross_profit: grossProfit, gross_margin: grossMargin },
     by_client: byClient,
+    forecast_rescue: {
+      null_line_creatives: nullLineCreatives.length,
+      rescued: rescued_count,
+      unrecovered: unrecovered_count,
+    },
   };
 }
 
