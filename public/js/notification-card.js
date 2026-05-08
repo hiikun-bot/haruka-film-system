@@ -27,6 +27,8 @@ const ICON_BY_TYPE = {
   invoice:         '📄', // 📄
   // クリエイティブのステータス遷移通知（クライアントチェック中など）
   creative_status: '🎬',
+  // クリエイティブ新規登録通知（admin / secretary 向け）
+  creative_registered: '🎬',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数

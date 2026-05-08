@@ -3642,6 +3642,47 @@ router.post('/creatives', async (req, res) => {
   }
   // 新規作成時も ball_holder_id を初期化（担当者付きで作られた場合は初期通知が飛ぶ）
   syncBallHolderId(data.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+
+  // admin / secretary に「クリエイティブ登録通知」を発火（登録者本人は除外）
+  // 主処理は止めない — 通知失敗は console.warn で握りつぶす
+  (async () => {
+    try {
+      const { createBulkNotifications } = require('../utils/notification');
+      const senderId = req.user?.id || null;
+      const senderName = req.user?.nickname || req.user?.full_name || null;
+
+      const { data: recipients, error: recErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('is_active', true)
+        .in('role', ['admin', 'secretary']);
+      if (recErr) {
+        console.warn('[creative_registered] 受信者取得失敗:', recErr.message);
+        return;
+      }
+
+      const targets = (recipients || []).filter(u => u.id !== senderId);
+      if (targets.length === 0) return;
+
+      const title = senderName
+        ? `${senderName}さんがクリエイティブを登録しました`
+        : 'クリエイティブが登録されました';
+
+      const rows = targets.map(u => ({
+        user_id: u.id,
+        notification_type: 'creative_registered',
+        title,
+        body: data.file_name || null,
+        link_url: `/haruka.html?creative=${data.id}`,
+        meta: { creative_id: data.id, project_id: data.project_id },
+        sender_id: senderId,
+      }));
+      await createBulkNotifications(rows);
+    } catch (e) {
+      console.warn('[creative_registered] 通知発火失敗:', e.message);
+    }
+  })();
+
   res.json(data);
 });
 

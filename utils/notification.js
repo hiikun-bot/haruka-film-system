@@ -31,16 +31,22 @@ const supabase = require('../supabase');
 
 // notification_settings の {type}_enabled 列名対応表。
 // type が settings 列に対応していないものは「常時ON扱い」（settings 確認をスキップ）
+//
+// 通知タイプ追加手順:
+//   1) migration で notification_settings に <type>_enabled BOOLEAN DEFAULT true 列を追加
+//   2) この表に { <type>: '<type>_enabled' } を追記
+//   3) public/js/notification-card.js の ICON_BY_TYPE にアイコン絵文字を追加
 const TYPE_TO_SETTING_COL = {
-  ball_returned:  'ball_returned_enabled',
-  global:         'global_enabled',
-  mention:        'mention_enabled',
-  post_reaction:  'post_reaction_enabled',
-  post_comment:   'post_comment_enabled',
-  sos:            'sos_enabled',
-  deadline:       'deadline_enabled',
-  assignment:     'assignment_enabled',
-  invoice:        'invoice_enabled',
+  ball_returned:        'ball_returned_enabled',
+  global:               'global_enabled',
+  mention:              'mention_enabled',
+  post_reaction:        'post_reaction_enabled',
+  post_comment:         'post_comment_enabled',
+  sos:                  'sos_enabled',
+  deadline:             'deadline_enabled',
+  assignment:           'assignment_enabled',
+  invoice:              'invoice_enabled',
+  creative_registered:  'creative_registered_enabled',
 };
 
 // JST(UTC+9) のオフセットミリ秒
