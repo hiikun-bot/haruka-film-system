@@ -25438,7 +25438,9 @@ function fpSeekTo(tc) {
   else if (parts.length === 3) secs = parts[0]*3600 + parts[1]*60 + parts[2];
   else secs = parts[0]*60 + parts[1];
   video.currentTime = secs;
-  video.play().catch(() => {});
+  // タイムコードクリックではシークのみ。自動再生はせず一時停止状態を保つ
+  // （ユーザーが内容を確認する前に勝手に再生されるのを防ぐ）
+  try { video.pause(); } catch(_) {}
 }
 
 // コメント1件の HTML 文字列を生成（親/返信 共用）。
