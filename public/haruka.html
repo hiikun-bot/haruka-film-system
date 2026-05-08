@@ -162,14 +162,12 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-fixed.is-header{background:var(--em-pale);z-index:7}
 .cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
 /* 5列レイアウト（全モード共通）: クライアントコード/案件 + クリエイティブ名 + 担当(アバター) + ステータス + 遅延 */
-.cv-g-row-fixed{display:grid;grid-template-columns:50px 256px 40px 100px 76px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
+.cv-g-row-fixed{display:grid;grid-template-columns:306px 40px 100px 76px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
 .cv-g-row-fixed:hover{background:#f0fbfa}
 .cv-g-row-fixed.is-late{background:rgba(239,68,68,0.05)}
 .cv-g-row-fixed.is-late:hover{background:rgba(239,68,68,0.09)}
 .cv-g-row-fixed > .c{padding:6px 8px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.cv-g-row-fixed .c-client{font-weight:600;color:var(--em-dark);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;padding:6px 6px 6px 10px;letter-spacing:0.02em}
-.cv-g-row-fixed .c-client small{display:block;font-weight:400;color:var(--text-muted);font-size:9px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;font-size:12px;font-weight:500;letter-spacing:-0.01em}
+.cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;font-size:12px;font-weight:500;letter-spacing:-0.01em;padding-left:10px}
 .cv-g-row-fixed .c-name:hover{color:var(--text);background:var(--em-pale);border-radius:4px}
 .cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:4px;justify-content:center;padding:2px 4px}
 .cv-g-row-fixed .c-assignee .cv-g-unassigned{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#eee;color:#888;font-size:11px;font-weight:600}
@@ -335,8 +333,8 @@ tr.row-help td{background:#FFFBF2}
   .cv-g-scroll{max-height:calc(100vh - 140px)}
 }
 @media (max-width:768px){
-  /* モバイルでは c-name を圧縮（その他は微縮）して 422px に収める。新レイアウト統一版。 */
-  .cv-g-row-fixed{grid-template-columns:40px 196px 36px 86px 64px}
+  /* モバイルは c-client 列を廃して c-name を最大化（236px）。合計 422px。 */
+  .cv-g-row-fixed{grid-template-columns:236px 36px 86px 64px}
 }
 
 /* ─── クリエイティブ コンパクトツールバー（最大2行） ─── */
@@ -10003,15 +10001,13 @@ function renderCreativesGantt(filtered, warningSource) {
     return label;
   };
 
-  // 固定列（左）の HTML — 全グルーピングモードで同じレイアウト
-  // c-client は「クライアントコード（または名先頭3文字）/ 案件名」、c-assignee はアバターのみ。
+  // 固定列（左）の HTML — 全グルーピングモードで同じレイアウト（4列：ファイル名/担当/ステータス/遅延）
+  // c-client 列は廃止（PR #420）。クライアント/案件/担当はファイル名セルの title に集約してホバー表示。
   const renderFixedRow = (r) => {
     const { c, info, editorUser, team } = r;
     const cliObj = c.projects?.clients;
     const clientName = cliObj?.name || '-';
     const projName = c.projects?.name || '';
-    const clientCode = (cliObj?.client_code && String(cliObj.client_code).trim())
-      || (clientName ? clientName.slice(0, 3) : '-');
     // ホバー時のラベル: 「フルネーム（ニックネーム） / 〇〇チーム」 形式。フルネームが取れない場合はニックネームのみ。
     let personLabel = '';
     if (editorUser) {
@@ -10036,18 +10032,24 @@ function renderCreativesGantt(filtered, warningSource) {
     const assignee = editorUser
       ? (typeof avatarHtml === 'function' ? avatarHtml(editorUser, 24, { title: fullNameTitle }) : '')
       : `<span class="cv-g-unassigned" title="未アサイン">未</span>`;
-    // クリエイティブ名の表示: 長すぎるファイル名は中央省略。c-name は 256px 幅。
+    // クリエイティブ名の表示: 長すぎるファイル名は中央省略。c-name は 306px 幅。
+    // 実測フォント（12px）で半角換算 36文字程度まで収まる。日本語混在を考慮し閾値はやや控えめに。
     const rawName = c.file_name || '';
-    const nameMax = 28;
-    const headLen = 12;
-    const tailLen = 14;
+    const nameMax = 34;
+    const headLen = 16;
+    const tailLen = 16;
     const displayName = (rawName.length > nameMax)
       ? `${rawName.slice(0, headLen)}…${rawName.slice(-tailLen)}`
       : rawName;
+    // ファイル名セルのツールチップ: ファイル名フル / クライアント・案件 / 担当者
+    const nameTitle = [
+      rawName,
+      `${clientName}${projName ? ` / ${projName}` : ''}`,
+      `担当: ${editorUser ? (personLabel || '名無し') : '未割当'}`
+    ].join('\n');
     return `
       <div class="cv-g-row-fixed ${info.isLate?'is-late':''}" data-id="${c.id}" style="grid-template-columns:${fixedColTpl}">
-        <div class="c c-client" title="${esc(clientName)}${projName?` / ${esc(projName)}`:''}">${esc(clientCode)}${projName?`<small>${esc(projName)}</small>`:''}</div>
-        <div class="c c-name" title="${esc(rawName)}" onclick="openCreativeDetail('${c.id}')">${esc(displayName)}</div>
+        <div class="c c-name" title="${esc(nameTitle)}" onclick="openCreativeDetail('${c.id}')">${esc(displayName)}</div>
         <div class="c c-assignee" title="${esc(fullNameTitle)}">${assignee}</div>
         <div class="c c-status" title="${esc(c.status || '')}"><span class="status-chip ${statusClass(c.status)}">${esc(statusShortLabel(c.status))}</span></div>
         <div class="c c-delay ${info.delayClass}" title="${esc(info.delayLabel)}">${esc(info.delayLabel)}</div>
@@ -10059,10 +10061,10 @@ function renderCreativesGantt(filtered, warningSource) {
     return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
   };
 
-  // 固定列の枠（5列）— 全グルーピングモードで同じレイアウト。
-  // c-client(50px) はクライアントコード/案件名、c-name(256px) はファイル名、
-  // c-assignee(40px) はアバターのみ、c-status(100px)、c-delay(76px)。合計 522px。
-  const fixedColTpl = `50px 256px 40px 100px 76px`;
+  // 固定列の枠（4列）— 全グルーピングモードで同じレイアウト。
+  // c-name(306px) はファイル名、c-assignee(40px) はアバターのみ、c-status(100px)、c-delay(76px)。合計 522px。
+  // PR #420: c-client 列を廃止し、ファイル名セルにホバーツールチップでクライアント/案件/担当者を集約。
+  const fixedColTpl = `306px 40px 100px 76px`;
   const FIXED_W = 522; // 合計幅は不変（左固定領域のレイアウト崩れを避ける）
 
   // チーム表記の重複「〜チームチーム」を防ぐヘルパ。team_name が既に「チーム」で終わっていればそのまま使う。
@@ -10242,9 +10244,8 @@ function renderCreativesGantt(filtered, warningSource) {
     <div class="cv-g-scroll">
       <div class="cv-g-grid" style="grid-template-columns:${FIXED_W}px ${tlWidth}px">
         <div class="cv-g-fixed is-header" style="display:grid;grid-template-columns:${fixedColTpl};position:sticky;left:0;top:0;z-index:8;background:var(--em-pale);border-bottom:0.5px solid var(--border)">
-          <div class="cv-g-head-left" style="position:static">クライアント／案件</div>
-          <div class="cv-g-head-left" style="position:static">クリエイティブ名</div>
-          <div class="cv-g-head-left" style="position:static">担当</div>
+          <div class="cv-g-head-left" style="position:static;padding-left:10px">クリエイティブ名</div>
+          <div class="cv-g-head-left" style="position:static;text-align:center">担当</div>
           <div class="cv-g-head-left" style="position:static">ステータス</div>
           <div class="cv-g-head-left" style="position:static;text-align:right;padding-right:12px">遅延</div>
         </div>
