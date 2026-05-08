@@ -6847,6 +6847,22 @@ async function applyDeepLinkOnLoad() {
       }, 300);
       return;
     }
+    const videoId = params.get('video');
+    if (videoId) {
+      // ナレッジページ → 動画視聴モードへ遷移してから再生モーダルを開く
+      setTimeout(async () => {
+        try {
+          if (typeof showPage === 'function') {
+            const navBtn = document.querySelector('.nav-btn[data-page="knowledge"]');
+            showPage('knowledge', navBtn || null);
+          }
+          if (typeof setKnowledgeMode === 'function') setKnowledgeMode('videos');
+          if (typeof loadLearningVideosPage === 'function') await loadLearningVideosPage();
+          if (typeof openVideoPlayer === 'function') openVideoPlayer(videoId);
+        } catch (e) { console.warn('[deepLink video]', e); }
+      }, 300);
+      return;
+    }
     const creativeId = params.get('creative');
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {
@@ -26790,11 +26806,12 @@ async function openVideoPlayer(videoId) {
     <span>投稿: ${esc(poster)}</span>
     <span>${esc(date)}</span>
     ${viewLine}
-    ${canEdit ? `
-      <span style="margin-left:auto;display:flex;gap:6px">
+    <span style="margin-left:auto;display:flex;gap:6px">
+      <button class="btn" id="kv-share-btn-${esc(v.id)}" onclick="copyVideoShareLink('${esc(v.id)}')" style="font-size:12px;padding:4px 10px;color:var(--em-dark)" title="共有用リンクをコピー">🔗 共有</button>
+      ${canEdit ? `
         <button class="btn" onclick="openVideoComposer('${esc(v.id)}')" style="font-size:12px;padding:4px 10px">編集</button>
-        <button class="btn" onclick="deleteLearningVideo('${esc(v.id)}')" style="font-size:12px;padding:4px 10px;color:#E24B4A">削除</button>
-      </span>` : ''}
+        <button class="btn" onclick="deleteLearningVideo('${esc(v.id)}')" style="font-size:12px;padding:4px 10px;color:#E24B4A">削除</button>` : ''}
+    </span>
   `;
   document.getElementById('kv-player-description').textContent = v.description || '';
   openModal('modal-learning-video-player');
@@ -26805,6 +26822,24 @@ function closeVideoPlayer() {
   // iframe / video を破棄して再生を確実に止める
   const frame = document.getElementById('kv-player-frame');
   if (frame) frame.innerHTML = '';
+}
+
+// 共有リンクをクリップボードへコピー（誰でも実行可能）。
+// 受け取った URL を開くと applyDeepLinkOnLoad() が ?video=<id> を拾って自動再生する。
+async function copyVideoShareLink(videoId) {
+  const url = `${location.origin}${location.pathname}?video=${encodeURIComponent(videoId)}`;
+  const btn = document.getElementById(`kv-share-btn-${videoId}`);
+  const restore = () => { if (btn) { btn.textContent = '🔗 共有'; btn.disabled = false; } };
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { btn.textContent = '✅ コピー済み'; btn.disabled = true; }
+    showToast('共有リンクをコピーしました', 'success');
+    setTimeout(restore, 2000);
+  } catch (e) {
+    // clipboard API が使えない環境向けフォールバック: prompt で手動コピー
+    try { window.prompt('この URL をコピーして共有してください', url); } catch (_) {}
+    showToast('クリップボード API が使えないため URL を表示しました', 'info');
+  }
 }
 
 function kvExtractYouTubeId(url) {
