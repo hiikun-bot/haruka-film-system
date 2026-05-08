@@ -17100,16 +17100,51 @@ function onDashFilterChange() {
   renderAdminDash(today);
 }
 
+// Dashboard 用のクリエイティブキャッシュ（納品済も含めた全件）
+// allCreatives は #359 以降 既定で 納品除外なので、月次集計には別途 include_done=1 のフェッチが必要。
+let _dashboardCreatives = null;
+let _dashboardCreativesLoadedAt = 0;
+async function _loadDashboardCreatives({ force = false } = {}) {
+  // 60秒以内の再呼び出しはキャッシュを返す（年/月セレクト切替で再フェッチを避ける）
+  const now = Date.now();
+  if (!force && _dashboardCreatives && (now - _dashboardCreativesLoadedAt) < 60_000) {
+    return _dashboardCreatives;
+  }
+  const params = new URLSearchParams();
+  params.set('include_done', '1');
+  params.set('limit', '500');
+  try {
+    const res = await apiFetch(`${API}/creatives?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    _dashboardCreatives = Array.isArray(json?.data) ? json.data : [];
+    _dashboardCreativesLoadedAt = now;
+  } catch (e) {
+    console.warn('[dashboard] creatives fetch failed, falling back to allCreatives', e);
+    _dashboardCreatives = (typeof allCreatives !== 'undefined') ? allCreatives.slice() : [];
+  }
+  return _dashboardCreatives;
+}
+function _invalidateDashboardCreatives() {
+  _dashboardCreatives = null;
+  _dashboardCreativesLoadedAt = 0;
+}
+
 async function renderAdminDash(today) {
   const yearSel = document.getElementById('dash-filter-year');
   const monthSel = document.getElementById('dash-filter-month');
   const filterYear = yearSel ? parseInt(yearSel.value) : today.getFullYear();
   const filterMonth = monthSel ? parseInt(monthSel.value) : today.getMonth() + 1; // 0=全月
 
+  // ダッシュボードの月次集計（納品本数 / 月別納品 / 完了率 / ステータス円グラフ）には
+  // 納品済のクリエイティブが必須だが、allCreatives は #359 以降 既定で納品除外。
+  // → dashboard 用に include_done=1 で再フェッチ（60秒キャッシュ付き）
+  const dashCreatives = await _loadDashboardCreatives();
+
   // フィルター対象のクリエイティブ
   // DATE("YYYY-MM-DD")を new Date() に渡すと UTC 解釈で JST だと前日にズレ、
   // 月初/月末が前月扱いになる。ローカル日付パースの _cvAtMidnight に統一する。
-  const filteredCreatives = allCreatives.filter(c => {
+  const filteredCreatives = dashCreatives.filter(c => {
     if (!c.final_deadline) return false;
     const d = _cvAtMidnight(c.final_deadline);
     if (d.getFullYear() !== filterYear) return false;
@@ -17126,9 +17161,9 @@ async function renderAdminDash(today) {
 
   // ヒーロー統計
   const active = allProjects.filter(p => !p.is_hidden && p.status !== '完了');
-  const inProg = allCreatives.filter(c => c.status !== '納品');
+  const inProg = dashCreatives.filter(c => c.status !== '納品');
   const weekly = inProg.filter(c => { const d=_dashDiff(c.final_deadline,today); return d!==null&&d>=0&&d<=7; });
-  const sos = allCreatives.filter(c => c.help_flag);
+  const sos = dashCreatives.filter(c => c.help_flag);
 
   document.getElementById('dash-hero-stats').innerHTML = [
     {val:active.length, label:'進行中案件'},
@@ -17230,7 +17265,7 @@ async function renderAdminDash(today) {
   _destroyChart('monthly');
   const monthlyMap = {};
   for (let m = 1; m <= 12; m++) monthlyMap[m] = 0;
-  allCreatives.filter(c => {
+  dashCreatives.filter(c => {
     if (c.status !== '納品' || !c.final_deadline) return false;
     // ローカル日付として解釈（UTC解釈による日付ズレを回避）
     return _cvAtMidnight(c.final_deadline).getFullYear() === filterYear;
