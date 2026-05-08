@@ -24428,10 +24428,11 @@ function fpRenderCommentMarkers(comments) {
     return;
   }
   container.innerHTML = '';
-  // タイムコードを持つコメントのみ、秒単位でグルーピング
+  // タイムコードを持つルートコメント（返信は親に従うのでドット非表示）のみ、秒単位でグルーピング
   const byTime = {};
   comments.forEach(c => {
     if (!c.timecode) return;
+    if (c.parent_comment_id) return; // 返信はマーカー出さない
     const parts = c.timecode.split(':').map(Number);
     let sec = 0;
     if (parts.length === 4) sec = parts[0]*3600 + parts[1]*60 + parts[2] + parts[3]/30;
@@ -25171,6 +25172,7 @@ function fpRenderBboxOverlays() {
   // 表示上は常に2px相当に保つ（拡大時のもさつき防止＆fit時の視認性確保）
   const borderW = Math.max(1, 2 / (_fpZoom.scale || 1));
   _fpComments.forEach(c => {
+    if (c && c.parent_comment_id) return; // 返信は親 bbox を継承する想定なので overlay 出さない
     const b = c && c.bbox;
     if (!b || typeof b !== 'object') return;
     if (typeof b.x !== 'number' || typeof b.y !== 'number' || typeof b.w !== 'number' || typeof b.h !== 'number') return;
@@ -25248,31 +25250,128 @@ function fpSeekTo(tc) {
   video.play().catch(() => {});
 }
 
-function renderComments(list) {
-  const el = document.getElementById('fp-comments-list');
-  if (!list.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">まだコメントがありません</div>';
-    return;
-  }
-  el.innerHTML = list.map(c => `
-    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" style="margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s">
+// コメント1件の HTML 文字列を生成（親/返信 共用）。
+//   isReply=true のときは:
+//     ・タイムコード/bbox バッジは出さない（親に従う表示）
+//     ・「↩ 返信」ボタンは出さない（返信への返信はサポートしない）
+//     ・左に縦線 + インデント
+function _renderFpCommentHtml(c, isReply) {
+  const tcBadge = (!isReply && c.timecode)
+    ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : '';
+  const bboxBadge = (!isReply && c.bbox)
+    ? `<span onclick="fpHighlightBbox('${c.id}')" style="background:rgba(245,197,24,0.18);color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #f5c518" title="クリックで画像上の範囲をハイライト">📍 範囲</span>` : '';
+  const knowledgeBadge = (!isReply && c.is_knowledge)
+    ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : '';
+  const replyBtn = isReply ? '' :
+    `<button onclick="fpToggleReplyForm('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:11px;padding:0;line-height:1" title="返信">↩ 返信</button>`;
+  const itemStyle = isReply
+    ? `margin:8px 0 0 18px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:2px solid #3ECFCA;border-top:0.5px solid var(--border);border-right:0.5px solid var(--border);border-bottom:0.5px solid var(--border)`
+    : `margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s`;
+  return `
+    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" data-parent-id="${c.parent_comment_id || ''}" style="${itemStyle}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          ${c.timecode ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : ''}
-          ${c.bbox ? `<span onclick="fpHighlightBbox('${c.id}')" style="background:rgba(245,197,24,0.18);color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #f5c518" title="クリックで画像上の範囲をハイライト">📍 範囲</span>` : ''}
-          ${avatarHtml(c.users || { full_name: '不明' }, 40)}
+          ${tcBadge}
+          ${bboxBadge}
+          ${avatarHtml(c.users || { full_name: '不明' }, isReply ? 32 : 40)}
           <span style="font-size:11px;font-weight:600;color:var(--em-dark)">${esc(c.users?.full_name || '不明')}</span>
-          ${c.is_knowledge ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : ''}
+          ${knowledgeBadge}
         </div>
-        <div style="display:flex;align-items:center;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${replyBtn}
           <span style="font-size:10px;color:var(--text-muted)">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
           ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1" title="削除">✕</button>` : ''}
         </div>
       </div>
       <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
     </div>
-  `).join('');
+  `;
+}
+
+// flat な list を「親 → 返信群（インデント）」のツリー HTML にする。
+// _fpComments には flat 配列をそのまま入れて、ツリー化はレンダ時に行う。
+function renderComments(list) {
+  const el = document.getElementById('fp-comments-list');
+  if (!list.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">まだコメントがありません</div>';
+    return;
+  }
+  // 親 ID → 返信配列 のマップを作成（created_at 昇順は GET 側で保証済み）
+  const repliesByParent = {};
+  list.forEach(c => {
+    if (c.parent_comment_id) {
+      (repliesByParent[c.parent_comment_id] = repliesByParent[c.parent_comment_id] || []).push(c);
+    }
+  });
+  // ルートコメントだけ抽出して描画。各ルート直下に返信ブロックを差し込む。
+  const html = list
+    .filter(c => !c.parent_comment_id)
+    .map(parent => {
+      const replies = repliesByParent[parent.id] || [];
+      const repliesHtml = replies.map(r => _renderFpCommentHtml(r, true)).join('');
+      const replyFormHtml = `
+        <div id="fp-reply-form-${parent.id}" data-parent-id="${parent.id}" style="display:none;margin:8px 0 0 18px;padding:8px;background:#1e1e22;border-radius:6px;border:0.5px solid #3f3f46">
+          <textarea id="fp-reply-text-${parent.id}" rows="2" placeholder="このコメントに返信..." style="width:100%;font-size:12px;font-family:'Noto Sans JP',sans-serif;border:1px solid #3f3f46;border-radius:6px;padding:6px 8px;resize:vertical;outline:none;box-sizing:border-box;background:#2a2a2e;color:#e4e4e7"></textarea>
+          <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px">
+            <button onclick="fpToggleReplyForm('${parent.id}')" style="background:transparent;color:#9ca3af;border:0.5px solid #3f3f46;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">キャンセル</button>
+            <button onclick="submitReplyComment('${parent.id}')" style="background:#3ECFCA;color:#0a0a0a;border:none;border-radius:6px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer">投稿</button>
+          </div>
+        </div>
+      `;
+      return _renderFpCommentHtml(parent, false) + repliesHtml + replyFormHtml;
+    })
+    .join('');
+  el.innerHTML = html;
   el.scrollTop = el.scrollHeight;
+}
+
+// 返信フォームの開閉。同じ親に対して開いていれば閉じる、閉じていれば開く。
+// 他の親の返信フォームが開いていれば閉じる（同時に1つだけ開く方針）。
+function fpToggleReplyForm(parentId) {
+  const target = document.getElementById('fp-reply-form-' + parentId);
+  if (!target) return;
+  // 他の開いているフォームを閉じる
+  document.querySelectorAll('[id^="fp-reply-form-"]').forEach(el => {
+    if (el.id !== ('fp-reply-form-' + parentId)) el.style.display = 'none';
+  });
+  const isOpen = target.style.display !== 'none' && target.style.display !== '';
+  target.style.display = isOpen ? 'none' : '';
+  if (!isOpen) {
+    const ta = document.getElementById('fp-reply-text-' + parentId);
+    if (ta) ta.focus();
+  }
+}
+
+// 返信投稿。タイムコード/bbox/カテゴリは親から継承するため指定しない。
+async function submitReplyComment(parentId) {
+  if (!currentPreviewFileId) return;
+  const ta = document.getElementById('fp-reply-text-' + parentId);
+  const text = ta ? ta.value.trim() : '';
+  if (!text) return;
+  // 投稿ボタン取得（同じフォーム内の最後のボタンが「投稿」）
+  const form = document.getElementById('fp-reply-form-' + parentId);
+  const submitBtn = form ? form.querySelector('button[onclick^="submitReplyComment"]') : null;
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '送信中...'; }
+  try {
+    const res = await apiFetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        comment: text,
+        parent_comment_id: parentId,
+        // タイムコード/bbox/カテゴリは親に従う仕様 → サーバへは送らない
+      }),
+    });
+    if (res.ok) {
+      if (ta) ta.value = '';
+      await loadFileComments(currentPreviewFileId);
+    } else {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + translateError(e?.error), 'error');
+    }
+  } finally {
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '投稿'; }
+  }
 }
 
 async function submitFileComment() {

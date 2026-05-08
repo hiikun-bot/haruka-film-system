@@ -466,11 +466,19 @@ CREATE TABLE IF NOT EXISTS creative_file_comments (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 返信スレッド構造（migrations/2026-05-08_creative_file_comments_threading.sql）
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS parent_comment_id UUID
+  REFERENCES creative_file_comments(id) ON DELETE CASCADE;
+
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
 CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
   ON creative_file_comments ((bbox IS NOT NULL))
   WHERE bbox IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_parent_comment_id
+  ON creative_file_comments(parent_comment_id)
+  WHERE parent_comment_id IS NOT NULL;
 
 -- ==================== creative_file_likes ====================
 -- タイムコード別いいね（routes/haruka.js の /creative-files/:id/likes 系で使用）
