@@ -25354,7 +25354,10 @@ function renderComments(list) {
   el.scrollTop = el.scrollHeight;
 }
 
-// Frame.io レビューコメントを「連絡・確認事項」textarea (#cd-editor-reply) に Markdown-style 引用ブロックで挿入する。
+// Frame.io レビューコメントを「連絡・確認事項」textarea (#cd-editor-reply) に挿入する。
+// フォーマットは「タイムコード（あれば）→ コメント本文 → 空行」のシンプル構成。
+// 投稿者名・役職・> プレフィックスは付けない（PR #393 で簡素化）。
+// 返信コメント（parent_comment_id あり）を引用したときは、自身の timecode/bbox は無いので親から継承する。
 // パネルは閉じない（連続引用したいユースケース）。textarea にフォーカス済みならカーソル位置に挿入、未フォーカス & 既存内容ありなら末尾追記して書きかけを破壊しない。
 function quoteCommentToEditorReply(commentId) {
   // _fpComments は同スクリプト内で let 宣言されたグローバルキャッシュ（fpRenderComments / renderComments で更新される）
@@ -25371,26 +25374,19 @@ function quoteCommentToEditorReply(commentId) {
     return;
   }
 
-  // 役職ラベル（PR #390 の roleInfo マッピングと揃える。共通化はせずシンプル優先）
-  const roleLabel = (() => {
-    const r = comment.users?.role;
-    switch(r) {
-      case 'admin': return '管理者';
-      case 'secretary': return '事務';
-      case 'producer': return 'プロデューサー';
-      case 'producer_director': return 'P/D';
-      case 'director': return 'ディレクター';
-      case 'editor': return '編集者';
-      case 'designer': return 'デザイナー';
-      default: return '';
+  // 返信は親のタイムコード/bbox を継承
+  let timecode = comment.timecode;
+  let hasBbox = !!comment.bbox;
+  if (comment.parent_comment_id && !timecode && !hasBbox) {
+    const parent = list.find(x => x && x.id === comment.parent_comment_id);
+    if (parent) {
+      timecode = parent.timecode;
+      hasBbox = !!parent.bbox;
     }
-  })();
+  }
 
-  const name = comment.users?.full_name || '不明';
-  const tcLabel = comment.timecode ? ` [${comment.timecode}]` : (comment.bbox ? ' [📍 範囲指定]' : '');
-  const roleSuffix = roleLabel ? ` (${roleLabel})` : '';
-  const lines = (comment.comment || '').split('\n').map(l => `> ${l}`).join('\n');
-  const block = `> ${name}${roleSuffix}${tcLabel}\n${lines}\n\n`;
+  const headerLine = timecode ? `${timecode}\n` : (hasBbox ? '[範囲指定]\n' : '');
+  const block = `${headerLine}${comment.comment || ''}\n\n`;
 
   // textarea のカーソル位置に挿入。未フォーカス & 既存内容ありなら末尾追記
   const start = ta.selectionStart;
