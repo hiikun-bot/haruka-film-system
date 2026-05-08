@@ -723,8 +723,41 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     primary_category_id,
     sub_director_ids,
     tags,
-    filename_template_id, filename_token_overrides
+    filename_template_id, filename_token_overrides,
+    scheduled_start_date, active_phase_template_id
   } = req.body;
+  // ADR 010 Phase 1b: 工程表セクションだけが値を送る部分更新（schedule 列のみ）
+  // のときは name/status を強制 NULL 化してしまわないよう、最小 UPDATE で済ませる
+  {
+    const _scheduleOnlyKeys = ['scheduled_start_date', 'active_phase_template_id'];
+    const _bodyKeys = Object.keys(req.body || {});
+    const isPartialScheduleOnly =
+      _bodyKeys.length > 0 &&
+      _bodyKeys.every(k => _scheduleOnlyKeys.includes(k));
+    if (isPartialScheduleOnly) {
+      const partial = { updated_at: new Date().toISOString() };
+      if (Object.prototype.hasOwnProperty.call(req.body, 'scheduled_start_date')) {
+        partial.scheduled_start_date = scheduled_start_date || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'active_phase_template_id')) {
+        partial.active_phase_template_id = active_phase_template_id || null;
+      }
+      const { data: pdata, error: perror } = await supabase
+        .from('projects')
+        .update(partial)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+      if (perror) {
+        if (/column .+ does not exist/i.test(perror.message || '')) {
+          console.warn('[projects PUT partial schedule] 列未適用:', perror.message);
+          return res.status(400).json({ error: 'projects.scheduled_start_date / active_phase_template_id 列が未適用です' });
+        }
+        return res.status(500).json({ error: perror.message });
+      }
+      return res.json(pdata);
+    }
+  }
   const updateData = {
     name, status,
     producer_id: producer_id || null,
@@ -743,6 +776,9 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   };
   if (sync_products !== undefined) updateData.sync_products = sync_products;
   if (sync_appeal_axes !== undefined) updateData.sync_appeal_axes = sync_appeal_axes;
+  // ADR 010 Phase 1b: 工程表の開始日 / 適用テンプレ（明示時のみ反映）
+  if (scheduled_start_date !== undefined) updateData.scheduled_start_date = scheduled_start_date || null;
+  if (active_phase_template_id !== undefined) updateData.active_phase_template_id = active_phase_template_id || null;
   // ADR 007: ファイル名テンプレ選択 + custom トークン上書き（部分更新で巻き込み消失しないよう、明示時のみ反映）
   if (filename_template_id !== undefined) {
     updateData.filename_template_id = filename_template_id || null;
@@ -796,6 +832,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { filename_template_id: _o3a, filename_token_overrides: _o3b, ...fallback3 } = updateData;
     const retry3 = await supabase.from('projects').update(fallback3).eq('id', req.params.id).select().single();
     data = retry3.data; error = retry3.error;
+  }
+  // ADR 010 Phase 1 migration 未適用ガード（schema-sync 失敗時）
+  if (error && /scheduled_start_date|active_phase_template_id/i.test(error.message || '')) {
+    const { scheduled_start_date: _o4a, active_phase_template_id: _o4b, ...fallback4 } = updateData;
+    const retry4 = await supabase.from('projects').update(fallback4).eq('id', req.params.id).select().single();
+    data = retry4.data; error = retry4.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -1871,6 +1913,476 @@ router.delete('/projects/:project_id/fixed-items/:item_id', requireAuth, require
     .eq('id', itemId);
   if (delErr) return res.status(500).json({ error: delErr.message });
   res.json({ ok: true });
+});
+
+// ==================== 案件スケジュール / フェーズ・タスク（ADR 010 Phase 1b）====================
+// ADR 010 (案件スケジュール / フェーズ・タスク管理) に基づく project_tasks /
+// project_phase_templates / project_phase_template_items の API。
+//
+// migration: migrations/2026-05-09_project_schedule_phase1.sql (本番適用済み PR #413)
+// 関連列: projects.scheduled_start_date, projects.active_phase_template_id
+//
+// 権限: タスクの編集は project.create_edit を使う（案件本体と同じ）。
+
+const TASK_ASSIGNEE_TYPES = new Set(['us', 'client', 'meeting', 'milestone']);
+const TASK_PRIORITIES = new Set(['low', 'normal', 'high']);
+
+const isMissingTasksTable = (err) =>
+  err && /relation .*project_tasks.* does not exist|could not find the table/i.test(err.message || '');
+const isMissingPhaseTemplateTable = (err) =>
+  err && /relation .*project_phase_template.* does not exist|could not find the table/i.test(err.message || '');
+
+const TASK_SELECT_COLS = [
+  'id, project_id, parent_task_id, is_phase_header, title,',
+  'start_date, original_end_date, current_end_date,',
+  'assignee_type, assignee_user_id, is_milestone, is_done, done_at,',
+  'priority, note, sort_order, template_item_id, created_at, updated_at,',
+  'assignee:users!project_tasks_assignee_user_id_fkey(id, full_name, nickname, avatar_url)'
+].join(' ');
+
+// GET /api/phase-templates?category_id=:id  カテゴリのアクティブなテンプレ一覧
+router.get('/phase-templates', requireAuth, async (req, res) => {
+  const { category_id } = req.query;
+  let query = supabase
+    .from('project_phase_templates')
+    .select('id, category_id, name, description, is_default, is_active, created_at, updated_at')
+    .eq('is_active', true)
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true });
+  if (category_id) query = query.eq('category_id', category_id);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingPhaseTemplateTable(error)) {
+      console.warn('[phase-templates] project_phase_templates table missing. Apply migrations/2026-05-09_project_schedule_phase1.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/phase-templates/:template_id/items  雛形のタスク項目（sort_order 順）
+router.get('/phase-templates/:template_id/items', requireAuth, async (req, res) => {
+  const { template_id: templateId } = req.params;
+  const { data, error } = await supabase
+    .from('project_phase_template_items')
+    .select('id, template_id, parent_item_id, is_phase_header, title, default_offset_days_from_start, default_duration_days, default_assignee_type, is_milestone, default_priority, default_note, sort_order')
+    .eq('template_id', templateId)
+    .order('sort_order', { ascending: true });
+  if (error) {
+    if (isMissingPhaseTemplateTable(error)) return res.json([]);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// GET /api/projects/:project_id/tasks  案件タスク一覧（sort_order 順）
+router.get('/projects/:project_id/tasks', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .select(TASK_SELECT_COLS)
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingTasksTable(error)) {
+      console.warn('[tasks] project_tasks table missing. Apply migrations/2026-05-09_project_schedule_phase1.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// 内部ヘルパ: タスク本体のバリデーション（POST/PATCH 共通）
+function _validateTaskFields(body, partial = false) {
+  const out = {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  if (!partial || has('title')) {
+    const t = (typeof body.title === 'string' ? body.title : '').trim();
+    if (!t) return { error: 'title は必須です' };
+    out.title = t;
+  }
+  if (has('is_phase_header')) out.is_phase_header = !!body.is_phase_header;
+  if (has('parent_task_id')) out.parent_task_id = body.parent_task_id || null;
+  if (has('start_date')) out.start_date = body.start_date || null;
+  if (has('current_end_date')) out.current_end_date = body.current_end_date || null;
+  if (has('original_end_date')) out.original_end_date = body.original_end_date || null;
+  if (has('assignee_type')) {
+    const at = body.assignee_type || 'us';
+    if (!TASK_ASSIGNEE_TYPES.has(at)) {
+      return { error: `assignee_type は ${[...TASK_ASSIGNEE_TYPES].join(' / ')} のいずれか` };
+    }
+    out.assignee_type = at;
+  }
+  if (has('assignee_user_id')) out.assignee_user_id = body.assignee_user_id || null;
+  if (has('is_milestone')) out.is_milestone = !!body.is_milestone;
+  if (has('priority')) {
+    const pr = body.priority || 'normal';
+    if (!TASK_PRIORITIES.has(pr)) {
+      return { error: `priority は ${[...TASK_PRIORITIES].join(' / ')} のいずれか` };
+    }
+    out.priority = pr;
+  }
+  if (has('note')) out.note = body.note || null;
+  if (has('sort_order')) {
+    const so = parseInt(body.sort_order, 10);
+    if (!Number.isNaN(so)) out.sort_order = so;
+  }
+  return { values: out };
+}
+
+// POST /api/projects/:project_id/tasks  単発追加
+router.post('/projects/:project_id/tasks', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const v = _validateTaskFields(req.body || {}, false);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  let sortOrder = v.values.sort_order;
+  if (sortOrder === undefined || sortOrder === null || Number.isNaN(sortOrder)) {
+    const { data: maxRow } = await supabase
+      .from('project_tasks')
+      .select('sort_order')
+      .eq('project_id', projectId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    sortOrder = ((maxRow && maxRow.sort_order) || 0) + 10;
+  }
+
+  const insert = {
+    project_id: projectId,
+    is_phase_header: v.values.is_phase_header || false,
+    parent_task_id: v.values.parent_task_id || null,
+    title: v.values.title,
+    start_date: v.values.start_date || null,
+    current_end_date: v.values.current_end_date || null,
+    original_end_date: v.values.original_end_date || null,
+    assignee_type: v.values.assignee_type || 'us',
+    assignee_user_id: v.values.assignee_user_id || null,
+    is_milestone: v.values.is_milestone || false,
+    priority: v.values.priority || 'normal',
+    note: v.values.note || null,
+    sort_order: sortOrder,
+  };
+
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .insert(insert)
+    .select(TASK_SELECT_COLS)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json(data);
+});
+
+// PATCH /api/projects/:project_id/tasks/reorder  並び替え（一括 UPDATE）
+router.patch('/projects/:project_id/tasks/reorder', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string' && x) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids 配列が必要です' });
+
+  const { data: tasks, error: getErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id')
+    .eq('project_id', projectId);
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  const validIds = new Set((tasks || []).map(t => t.id));
+  const invalid = ids.find(id => !validIds.has(id));
+  if (invalid) return res.status(400).json({ error: `task_id ${invalid} はこの案件に属していません` });
+
+  const errors = [];
+  await Promise.all(ids.map((id, idx) =>
+    supabase
+      .from('project_tasks')
+      .update({ sort_order: (idx + 1) * 10, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .then(({ error }) => { if (error) errors.push(error.message); })
+  ));
+  if (errors.length) return res.status(500).json({ error: errors.join(' / ') });
+  res.json({ ok: true });
+});
+
+// PATCH /api/projects/:project_id/tasks/:task_id  インライン編集
+// is_done を true に変える時 done_at を now() に、false に戻す時 NULL に。
+// current_end_date 変更時、original_end_date が NULL なら現在値を保存。
+router.patch('/projects/:project_id/tasks/:task_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, task_id: taskId } = req.params;
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, current_end_date, original_end_date, is_done')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'task が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と task_id が一致しません' });
+  }
+
+  const v = _validateTaskFields(req.body || {}, true);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  const update = { ...v.values, updated_at: new Date().toISOString() };
+
+  const body = req.body || {};
+  if (Object.prototype.hasOwnProperty.call(body, 'is_done')) {
+    const newDone = !!body.is_done;
+    update.is_done = newDone;
+    if (newDone && !existing.is_done) {
+      update.done_at = new Date().toISOString();
+    } else if (!newDone && existing.is_done) {
+      update.done_at = null;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'current_end_date')) {
+    const newCurr = body.current_end_date || null;
+    const prevCurr = existing.current_end_date || null;
+    if (prevCurr && newCurr !== prevCurr && !existing.original_end_date) {
+      if (!Object.prototype.hasOwnProperty.call(body, 'original_end_date')) {
+        update.original_end_date = prevCurr;
+      }
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .update(update)
+    .eq('id', taskId)
+    .select(TASK_SELECT_COLS)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:project_id/tasks/:task_id  削除（CASCADE で子も消える）
+router.delete('/projects/:project_id/tasks/:task_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, task_id: taskId } = req.params;
+  const { data: existing, error: getErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: 'task が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と task_id が一致しません' });
+  }
+  const { error: delErr } = await supabase
+    .from('project_tasks')
+    .delete()
+    .eq('id', taskId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
+});
+
+// POST /api/projects/:project_id/tasks/from-template  テンプレからタスク一括生成
+// body: { template_id, start_date }
+// 既存タスクは温存（追記モード）。一括 INSERT で N+1 を回避。
+router.post('/projects/:project_id/tasks/from-template', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const { template_id: templateId, start_date: startDate } = req.body || {};
+  if (!templateId) return res.status(400).json({ error: 'template_id が必要です' });
+
+  const { data: items, error: itemsErr } = await supabase
+    .from('project_phase_template_items')
+    .select('id, template_id, parent_item_id, is_phase_header, title, default_offset_days_from_start, default_duration_days, default_assignee_type, is_milestone, default_priority, default_note, sort_order')
+    .eq('template_id', templateId)
+    .order('sort_order', { ascending: true });
+  if (itemsErr) return res.status(500).json({ error: itemsErr.message });
+  if (!items || items.length === 0) {
+    return res.status(404).json({ error: 'テンプレが見つからないか、items が空です' });
+  }
+
+  const { data: maxRow } = await supabase
+    .from('project_tasks')
+    .select('sort_order')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const baseSort = ((maxRow && maxRow.sort_order) || 0);
+
+  const computeDate = (offsetDays) => {
+    if (!startDate || offsetDays === null || offsetDays === undefined) return null;
+    const d = new Date(startDate + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() + Number(offsetDays));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const rows = items.map((it, idx) => {
+    const offset = it.default_offset_days_from_start;
+    const duration = it.default_duration_days;
+    const sStart = computeDate(offset);
+    const sEnd = (sStart && duration !== null && duration !== undefined)
+      ? computeDate(Number(offset || 0) + Number(duration || 0))
+      : sStart;
+    return {
+      project_id: projectId,
+      parent_task_id: null,
+      is_phase_header: !!it.is_phase_header,
+      title: it.title,
+      start_date: sStart,
+      current_end_date: sEnd,
+      original_end_date: null,
+      assignee_type: it.default_assignee_type || 'us',
+      is_milestone: !!it.is_milestone,
+      priority: it.default_priority || 'normal',
+      note: it.default_note || null,
+      sort_order: baseSort + (idx + 1) * 10,
+      template_item_id: it.id,
+    };
+  });
+
+  // 一括 INSERT（PostgREST は配列 INSERT に対応 / N+1 解消）
+  const { data: inserted, error: insErr } = await supabase
+    .from('project_tasks')
+    .insert(rows)
+    .select('id, template_item_id');
+  if (insErr) return res.status(500).json({ error: insErr.message });
+
+  const itemIdToTaskId = new Map();
+  (inserted || []).forEach(r => {
+    if (r.template_item_id) itemIdToTaskId.set(r.template_item_id, r.id);
+  });
+
+  const childUpdates = items
+    .filter(it => it.parent_item_id)
+    .map(it => ({
+      taskId: itemIdToTaskId.get(it.id),
+      parentTaskId: itemIdToTaskId.get(it.parent_item_id),
+    }))
+    .filter(x => x.taskId && x.parentTaskId);
+
+  if (childUpdates.length) {
+    const errs = [];
+    await Promise.all(childUpdates.map(({ taskId, parentTaskId }) =>
+      supabase
+        .from('project_tasks')
+        .update({ parent_task_id: parentTaskId, updated_at: new Date().toISOString() })
+        .eq('id', taskId)
+        .then(({ error }) => { if (error) errs.push(error.message); })
+    ));
+    if (errs.length) return res.status(500).json({ error: errs.join(' / ') });
+  }
+
+  const projectUpdate = { active_phase_template_id: templateId };
+  if (startDate) projectUpdate.scheduled_start_date = startDate;
+  const { error: projUpdErr } = await supabase
+    .from('projects')
+    .update(projectUpdate)
+    .eq('id', projectId);
+  if (projUpdErr) {
+    if (/column .+ does not exist/i.test(projUpdErr.message || '')) {
+      console.warn('[tasks/from-template] projects 列未適用。タスク生成は成功。', projUpdErr.message);
+    } else {
+      console.warn('[tasks/from-template] project update failed:', projUpdErr.message);
+    }
+  }
+
+  res.status(201).json({ ok: true, inserted_count: rows.length });
+});
+
+// GET /api/projects/schedule-overview  全案件マイルストーンガント用集計（L2）
+// 各案件の id, name, primary_category_id, scheduled_start_date, milestones[], min/max date
+// query: status (default 'in_progress'), category (csv, code)
+router.get('/projects/schedule-overview', requireAuth, async (req, res) => {
+  const statusParam = (req.query.status || 'in_progress').toString();
+  let projQuery = supabase
+    .from('projects')
+    .select('id, name, status, client_id, primary_category_id, scheduled_start_date, active_phase_template_id, is_hidden')
+    .eq('is_hidden', false);
+  if (statusParam !== 'all') {
+    projQuery = projQuery.eq('status', '進行中');
+  }
+  const { data: projects, error: projErr } = await projQuery;
+  if (projErr) {
+    if (/column .+ does not exist/i.test(projErr.message || '')) {
+      console.warn('[schedule-overview] projects 列未適用:', projErr.message);
+      return res.json([]);
+    }
+    return res.status(500).json({ error: projErr.message });
+  }
+
+  let projs = projects || [];
+
+  const categoryParam = req.query.category;
+  if (categoryParam) {
+    const codes = String(categoryParam).split(',').map(s => s.trim()).filter(Boolean);
+    if (codes.length) {
+      const { data: cats } = await supabase
+        .from('creative_categories')
+        .select('id, code')
+        .in('code', codes);
+      const allowedIds = new Set((cats || []).map(c => c.id));
+      projs = projs.filter(p => allowedIds.has(p.primary_category_id));
+    }
+  }
+
+  if (projs.length === 0) return res.json([]);
+
+  // 全案件のタスクを 1 クエリで取得（N+1 解消）
+  const projectIds = projs.map(p => p.id);
+  const { data: tasks, error: tasksErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, title, current_end_date, original_end_date, start_date, is_milestone, is_done, sort_order')
+    .in('project_id', projectIds)
+    .order('sort_order', { ascending: true });
+  if (tasksErr) {
+    if (isMissingTasksTable(tasksErr)) {
+      return res.json(projs.map(p => ({ ...p, milestones: [], min_date: null, max_date: null, task_count: 0 })));
+    }
+    return res.status(500).json({ error: tasksErr.message });
+  }
+
+  const byProject = new Map();
+  (tasks || []).forEach(t => {
+    if (!byProject.has(t.project_id)) byProject.set(t.project_id, []);
+    byProject.get(t.project_id).push(t);
+  });
+
+  const out = projs.map(p => {
+    const ts = byProject.get(p.id) || [];
+    const milestones = ts
+      .filter(t => t.is_milestone && t.current_end_date)
+      .map(t => ({
+        id: t.id,
+        title: t.title,
+        current_end_date: t.current_end_date,
+        original_end_date: t.original_end_date,
+        is_done: t.is_done,
+      }))
+      .sort((a, b) => String(a.current_end_date).localeCompare(String(b.current_end_date)));
+
+    const dates = [];
+    ts.forEach(t => {
+      if (t.start_date) dates.push(t.start_date);
+      if (t.current_end_date) dates.push(t.current_end_date);
+    });
+    if (p.scheduled_start_date) dates.push(p.scheduled_start_date);
+    dates.sort();
+    const minDate = dates[0] || null;
+    const maxDate = dates[dates.length - 1] || null;
+
+    return {
+      id: p.id,
+      name: p.name,
+      status: p.status,
+      primary_category_id: p.primary_category_id,
+      scheduled_start_date: p.scheduled_start_date,
+      milestones,
+      min_date: minDate,
+      max_date: maxDate,
+      task_count: ts.length,
+    };
+  });
+
+  res.json(out);
 });
 
 // ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
