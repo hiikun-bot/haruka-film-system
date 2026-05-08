@@ -10699,9 +10699,11 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
 // ==================== Verup情報（システム改訂履歴） ====================
 // 設計: 管理者が画面から追加・編集できる changelog。
 //   - 一覧はログイン中ユーザーの role で target_roles を絞る（'all' は全員）
-//   - revision_no は POST 時にサーバー側で max+1 を採番
+//   - revision_no は GitHub の PR 番号と一致させる運用に統一（CI: post-version-log.js）。
+//     画面からの手動追加は PR 番号と衝突しないよう MANUAL_REVISION_OFFSET (1,000,000) を加算する。
 //   - 既読は version_log_reads(user_id, version_log_id) にレコードがあれば既読扱い
 //   - 非表示（is_hidden=true）は admin が全体から隠す機能。admin のみ参照・操作可
+const MANUAL_REVISION_OFFSET = 1000000;
 const VERSION_LOG_CATEGORIES = ['feature', 'improvement', 'bugfix', 'spec_change'];
 const VERSION_LOG_IMPORTANCES = ['high', 'normal', 'low'];
 
@@ -10810,9 +10812,15 @@ router.post('/version-logs', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '画面 / 機能 / 修正内容は必須です' });
     }
 
+    // 手動追加分は PR 番号と衝突しないよう MANUAL_REVISION_OFFSET 以上の領域を使う
     const { data: maxRow } = await supabase
-      .from('version_logs').select('revision_no').order('revision_no', { ascending: false }).limit(1).maybeSingle();
-    const nextNo = (maxRow?.revision_no || 0) + 1;
+      .from('version_logs')
+      .select('revision_no')
+      .gte('revision_no', MANUAL_REVISION_OFFSET)
+      .order('revision_no', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextNo = (maxRow?.revision_no || MANUAL_REVISION_OFFSET) + 1;
 
     const insertRow = {
       revision_no: nextNo,
