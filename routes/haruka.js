@@ -6361,7 +6361,7 @@ router.post('/announcements/:id/remind', requireAuth, requirePermission('member.
       notification_type: 'announcement_remind',
       title: '未対応の通知があります',
       body: ann.title,
-      link_url: null,
+      link_url: `/haruka.html?announcement=${annId}`,
       meta: { announcement_id: annId },
       sender_id: req.user.id,
     }));
@@ -6652,7 +6652,7 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
       notification_type: 'leader_remind',
       title: 'リーダー督促依頼',
       body: `${task.teamLabel}: ${task.members.length}名が未対応`,
-      link_url: null,
+      link_url: `/haruka.html?announcement=${annId}`,
       meta: {
         announcement_id: annId,
         team_id: task.teamId,
@@ -6696,7 +6696,7 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
           notification_type: 'leader_remind_escalation',
           title: 'リーダー不在チームの督促依頼',
           body: `${escalationGroups.length}グループ・${totalEscMembers}名が未対応`,
-          link_url: null,
+          link_url: `/haruka.html?announcement=${annId}`,
           meta: {
             announcement_id: annId,
             escalation: true,
