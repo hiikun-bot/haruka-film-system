@@ -7068,7 +7068,9 @@ router.get('/tweets', requireAuth, async (req, res) => {
       if (!!a.is_pinned !== !!b.is_pinned) return a.is_pinned ? -1 : 1;
       return new Date(b.created_at) - new Date(a.created_at);
     });
-    list = list.slice(0, 50);
+    // hardcoded slice(0, 50) → 200 に拡張（2026-05-08）
+    // ページネーション UI が無く、active tweet 総数 > 50 の状況で 51件目以降が silent に消えていた
+    list = list.slice(0, 200);
 
     if (!list.length) return res.json([]);
 
@@ -7104,10 +7106,12 @@ router.get('/tweets', requireAuth, async (req, res) => {
   }
 
   // 通常の一覧
+  // hardcoded .limit(50) → 200 に拡張（2026-05-08）
+  // ページネーション UI が無く、active tweet 総数 > 50 で 51件目以降が永遠に見えない silent miss だった
   const { data: list, error } = await q
     .order('is_pinned', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(200);
   if (error) return res.status(500).json({ error: error.message });
   if (!list || list.length === 0) return res.json([]);
   const ids = list.map(t => t.id);
