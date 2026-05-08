@@ -5442,28 +5442,48 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div class="toolbar" style="position:sticky;top:60px;z-index:99">
     <div class="toolbar-row" style="flex-wrap:wrap;gap:10px;align-items:center">
       <span style="font-size:14px;font-weight:600;color:var(--text)">📚 ナレッジ</span>
-      <!-- 動画/デザインタブ -->
+      <!-- 上位モード: 添削指導 / 動画視聴 -->
       <div style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
-        <button id="kn-tab-video" onclick="setKnowledgeTab('video')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🎬 動画</button>
-        <button id="kn-tab-design" onclick="setKnowledgeTab('design')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">🎨 デザイン</button>
+        <button id="kn-mode-tutoring" onclick="setKnowledgeMode('tutoring')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">📝 添削指導</button>
+        <button id="kn-mode-videos" onclick="setKnowledgeMode('videos')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">🎬 動画視聴</button>
       </div>
-      <!-- 表示モード切替 -->
-      <div id="kn-view-toggle" style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
-        <button id="kn-view-card" onclick="setKnowledgeView('card')" style="padding:5px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🖼️ カード</button>
-        <button id="kn-view-table" onclick="setKnowledgeView('table')" style="padding:5px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">📋 テーブル</button>
+
+      <!-- 添削指導モードのツールバー要素 -->
+      <div id="kn-toolbar-tutoring" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <!-- 動画/デザインタブ -->
+        <div style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
+          <button id="kn-tab-video" onclick="setKnowledgeTab('video')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🎬 動画</button>
+          <button id="kn-tab-design" onclick="setKnowledgeTab('design')" style="padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">🎨 デザイン</button>
+        </div>
+        <!-- 表示モード切替 -->
+        <div id="kn-view-toggle" style="display:flex;background:var(--em-pale);border-radius:10px;padding:3px;gap:3px">
+          <button id="kn-view-card" onclick="setKnowledgeView('card')" style="padding:5px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--em);color:#fff">🖼️ カード</button>
+          <button id="kn-view-table" onclick="setKnowledgeView('table')" style="padding:5px 12px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:var(--em-dark)">📋 テーブル</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select class="form-select" id="kn-filter-category" onchange="loadKnowledgePage()" style="width:200px;font-size:13px">
+            <option value="">すべてのカテゴリー</option>
+            <option value="__new__">✨ NEW のみ（7日以内）</option>
+            <option value="__fav__">⭐ お気に入りのみ</option>
+          </select>
+          <input class="form-input" id="kn-filter-text" placeholder="🔍 コメント・ファイル・投稿者で検索..." oninput="loadKnowledgePageDebounced()" style="width:240px;font-size:13px">
+        </div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select class="form-select" id="kn-filter-category" onchange="loadKnowledgePage()" style="width:200px;font-size:13px">
+
+      <!-- 動画視聴モードのツールバー要素（初期は非表示） -->
+      <div id="kn-toolbar-videos" style="display:none;gap:10px;align-items:center;flex-wrap:wrap">
+        <select class="form-select" id="kv-filter-category" onchange="loadLearningVideosPage()" style="width:180px;font-size:13px">
           <option value="">すべてのカテゴリー</option>
-          <option value="__new__">✨ NEW のみ（7日以内）</option>
-          <option value="__fav__">⭐ お気に入りのみ</option>
         </select>
-        <input class="form-input" id="kn-filter-text" placeholder="🔍 コメント・ファイル・投稿者で検索..." oninput="loadKnowledgePageDebounced()" style="width:240px;font-size:13px">
+        <input class="form-input" id="kv-filter-text" placeholder="🔍 タイトルで検索..." oninput="loadLearningVideosPageDebounced()" style="width:220px;font-size:13px">
+        <button class="btn btn-primary" onclick="openVideoComposer()" style="font-size:13px;padding:6px 14px">＋ 動画を投稿</button>
       </div>
+
       <span id="kn-count-badge" class="count-badge" style="margin-left:auto">0 件</span>
     </div>
   </div>
-  <div style="padding:20px 24px">
+  <!-- 添削指導モードのコンテンツ -->
+  <div id="kn-body-tutoring" style="padding:20px 24px">
     <!-- カード表示 -->
     <div id="kn-grid" class="kn-grid" style="display:none"></div>
     <!-- テーブル表示 -->
@@ -5488,6 +5508,66 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     <div id="kn-status" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px"></div>
     <!-- 無限スクロール用 sentinel -->
     <div id="kn-scroll-sentinel" style="height:1px"></div>
+  </div>
+
+  <!-- 動画視聴モードのコンテンツ -->
+  <div id="kn-body-videos" style="display:none;padding:20px 24px">
+    <div id="kv-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px"></div>
+    <div id="kv-status" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px"></div>
+  </div>
+</div>
+
+<!-- 動画投稿モーダル -->
+<div class="modal-overlay" id="modal-learning-video" data-no-overlay-close="true">
+  <div class="modal-card" style="width:560px;max-width:95vw">
+    <div class="modal-title">
+      <span id="kv-modal-title">🎬 動画を投稿</span>
+      <button class="modal-close" onclick="closeVideoComposer()">×</button>
+    </div>
+    <input type="hidden" id="kv-edit-id" value="">
+    <div class="form-group">
+      <label class="form-label">動画 URL <span style="color:#C0392B">*</span></label>
+      <input class="form-input" id="kv-input-url" placeholder="https://www.youtube.com/watch?v=..." oninput="kvOnUrlChange()">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">YouTube / Vimeo / その他 URL なんでも OK</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">タイトル <span style="color:#C0392B">*</span></label>
+      <input class="form-input" id="kv-input-title" placeholder="例: 障害対応の進め方 (2026/05 勉強会)">
+    </div>
+    <div class="form-group">
+      <label class="form-label">カテゴリ</label>
+      <select class="form-select" id="kv-input-category">
+        <option value="">未分類</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">サムネイル URL（任意）</label>
+      <input class="form-input" id="kv-input-thumbnail" placeholder="未入力なら YouTube は自動取得 / 他はプレースホルダ" oninput="kvUpdateThumbPreview(this.value)">
+      <div id="kv-thumb-preview" style="margin-top:8px;display:none">
+        <img id="kv-thumb-preview-img" alt="" style="max-width:100%;max-height:160px;border-radius:8px;border:0.5px solid var(--border)">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">メモ・説明（任意）</label>
+      <textarea class="form-input" id="kv-input-description" rows="3" placeholder="どんな動画？なぜ役に立つ？" style="resize:vertical;font-family:inherit"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeVideoComposer()">キャンセル</button>
+      <button class="btn-primary" id="kv-submit-btn" onclick="submitVideoComposer()">投稿する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 動画再生モーダル -->
+<div class="modal-overlay" id="modal-learning-video-player">
+  <div class="modal-card" style="width:920px;max-width:96vw">
+    <div class="modal-title">
+      <span id="kv-player-title">動画</span>
+      <button class="modal-close" onclick="closeVideoPlayer()">×</button>
+    </div>
+    <div id="kv-player-frame" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden"></div>
+    <div id="kv-player-meta" style="margin-top:12px;font-size:13px;color:var(--text-muted);display:flex;gap:12px;align-items:center;flex-wrap:wrap"></div>
+    <div id="kv-player-description" style="margin-top:8px;font-size:13px;color:var(--text);white-space:pre-wrap"></div>
   </div>
 </div>
 
@@ -25830,6 +25910,328 @@ function knOpenItem(id, driveFileId, filename, fileRecordId, driveUrl, creativeT
     const dot = row.querySelector('.kn-unread-dot');
     if (dot) dot.remove();
   }
+}
+
+// ==================== ナレッジ：動画視聴モード ====================
+// チームに役立つ動画 (勉強会・障害対応事例・バズ動画 等) を URL 単位で集約。
+// learning_videos / learning_video_views / learning_video_categories を参照。
+// 投稿は全員可、削除は本人 or admin、再生回数は admin のみ閲覧可（API 側で view_count に null を返す）。
+
+let _kvMode = 'tutoring'; // 'tutoring' | 'videos'
+let _kvCategoriesCache = null;
+let _kvAllData = [];
+let _kvDebounceTimer = null;
+
+function setKnowledgeMode(mode) {
+  _kvMode = (mode === 'videos') ? 'videos' : 'tutoring';
+  // 上位タブのスタイル
+  ['tutoring','videos'].forEach(m => {
+    const btn = document.getElementById(`kn-mode-${m}`);
+    if (!btn) return;
+    const active = m === _kvMode;
+    btn.style.background = active ? 'var(--em)' : 'transparent';
+    btn.style.color = active ? '#fff' : 'var(--em-dark)';
+  });
+  // ツールバー要素の出し分け
+  const tBar = document.getElementById('kn-toolbar-tutoring');
+  const vBar = document.getElementById('kn-toolbar-videos');
+  if (tBar) tBar.style.display = _kvMode === 'tutoring' ? '' : 'none';
+  if (vBar) vBar.style.display = _kvMode === 'videos'   ? 'flex' : 'none';
+  // ボディの出し分け
+  const tBody = document.getElementById('kn-body-tutoring');
+  const vBody = document.getElementById('kn-body-videos');
+  if (tBody) tBody.style.display = _kvMode === 'tutoring' ? '' : 'none';
+  if (vBody) vBody.style.display = _kvMode === 'videos'   ? '' : 'none';
+  // データロード
+  if (_kvMode === 'videos') {
+    initLearningVideosPage();
+  } else {
+    // 添削指導側に戻ったら通常初期化
+    if (!_knAllData.length) initKnowledgePage();
+  }
+}
+
+async function loadLearningVideoCategories(force) {
+  if (!force && _kvCategoriesCache) return _kvCategoriesCache;
+  const res = await apiFetch(`${API}/learning-video-categories`);
+  _kvCategoriesCache = res.ok ? (await res.json()) : [];
+  return _kvCategoriesCache;
+}
+
+async function initLearningVideosPage() {
+  const cats = await loadLearningVideoCategories();
+  // フィルタ select
+  const filterSel = document.getElementById('kv-filter-category');
+  if (filterSel) {
+    filterSel.innerHTML = '<option value="">すべてのカテゴリー</option>' +
+      cats.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  }
+  // 投稿モーダルの select
+  const inputSel = document.getElementById('kv-input-category');
+  if (inputSel) {
+    inputSel.innerHTML = '<option value="">未分類</option>' +
+      cats.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  }
+  loadLearningVideosPage();
+}
+
+function loadLearningVideosPageDebounced() {
+  clearTimeout(_kvDebounceTimer);
+  _kvDebounceTimer = setTimeout(() => loadLearningVideosPage(), 200);
+}
+
+async function loadLearningVideosPage() {
+  const grid = document.getElementById('kv-grid');
+  const status = document.getElementById('kv-status');
+  if (grid) grid.innerHTML = '';
+  if (status) { status.style.display = ''; status.textContent = '読み込み中...'; }
+  const params = new URLSearchParams();
+  const cat = document.getElementById('kv-filter-category')?.value;
+  const q   = document.getElementById('kv-filter-text')?.value?.trim();
+  if (cat) params.set('category_id', cat);
+  if (q)   params.set('q', q);
+  const res = await apiFetch(`${API}/learning-videos?${params}`);
+  if (!res.ok) {
+    if (status) { status.style.display=''; status.innerHTML = '<div style="color:#E24B4A">取得失敗</div>'; }
+    return;
+  }
+  _kvAllData = await res.json();
+  renderLearningVideos();
+  // 件数バッジ流用
+  const cb = document.getElementById('kn-count-badge');
+  if (cb) cb.textContent = `${_kvAllData.length} 件`;
+}
+
+function renderLearningVideos() {
+  const grid = document.getElementById('kv-grid');
+  const status = document.getElementById('kv-status');
+  if (!grid) return;
+  if (!_kvAllData.length) {
+    grid.style.display = 'none';
+    if (status) {
+      status.style.display='';
+      status.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">
+        <div style="font-size:32px;margin-bottom:8px">📺</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px">まだ動画がありません</div>
+        <div style="font-size:12px">右上の「＋ 動画を投稿」から URL を貼って追加できます</div>
+      </div>`;
+    }
+    return;
+  }
+  if (status) status.style.display='none';
+  grid.style.display = 'grid';
+  grid.innerHTML = _kvAllData.map(v => {
+    const thumb = v.thumbnail_url || '';
+    const cat = v.learning_video_categories?.name || '';
+    const poster = v.poster?.full_name || '不明';
+    const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
+    const viewBadge = (v.view_count !== null && v.view_count !== undefined)
+      ? `<span title="再生回数（管理者のみ表示）" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text-muted)">👁 ${v.view_count}</span>`
+      : '';
+    return `
+      <div class="kv-card" data-id="${esc(v.id)}" onclick="openVideoPlayer('${esc(v.id)}')" style="cursor:pointer;background:var(--white);border-radius:12px;border:0.5px solid var(--border);overflow:hidden;transition:transform .12s,box-shadow .12s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 16px rgba(0,0,0,0.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+        <div style="position:relative;aspect-ratio:16/9;background:#0f172a;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:32px">
+          ${thumb ? `<img src="${esc(thumb)}" alt="" style="width:100%;height:100%;object-fit:cover" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'🎬',style:'font-size:42px;color:#64748b'}))">` : '🎬'}
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;background:rgba(0,0,0,0.35)" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">
+            <div style="width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,0.92);display:flex;align-items:center;justify-content:center;font-size:24px;color:#0f172a">▶</div>
+          </div>
+        </div>
+        <div style="padding:10px 12px">
+          <div style="font-size:13px;font-weight:600;color:var(--text);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:36px">${esc(v.title)}</div>
+          <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--text-muted)">
+            ${cat ? `<span style="background:var(--em-pale);color:var(--em-dark);padding:1px 6px;border-radius:4px;font-weight:600">${esc(cat)}</span>` : ''}
+            <span>${esc(poster)}</span>
+            <span>${esc(date)}</span>
+            ${viewBadge}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ---------- 投稿モーダル ----------
+function openVideoComposer(videoId) {
+  document.getElementById('kv-edit-id').value = videoId || '';
+  document.getElementById('kv-modal-title').textContent = videoId ? '🎬 動画を編集' : '🎬 動画を投稿';
+  document.getElementById('kv-submit-btn').textContent = videoId ? '更新する' : '投稿する';
+  if (videoId) {
+    const v = _kvAllData.find(x => x.id === videoId);
+    if (v) {
+      document.getElementById('kv-input-url').value = v.url || '';
+      document.getElementById('kv-input-title').value = v.title || '';
+      document.getElementById('kv-input-category').value = v.category_id || '';
+      document.getElementById('kv-input-thumbnail').value = v.thumbnail_url || '';
+      document.getElementById('kv-input-description').value = v.description || '';
+      kvUpdateThumbPreview(v.thumbnail_url);
+    }
+  } else {
+    document.getElementById('kv-input-url').value = '';
+    document.getElementById('kv-input-title').value = '';
+    document.getElementById('kv-input-category').value = '';
+    document.getElementById('kv-input-thumbnail').value = '';
+    document.getElementById('kv-input-description').value = '';
+    kvUpdateThumbPreview(null);
+  }
+  openModal('modal-learning-video');
+}
+
+function closeVideoComposer() {
+  closeModal('modal-learning-video');
+}
+
+// URL 変更時に YouTube サムネイルを自動推定して preview
+function kvOnUrlChange() {
+  const url = document.getElementById('kv-input-url').value.trim();
+  const manual = document.getElementById('kv-input-thumbnail').value.trim();
+  if (manual) { kvUpdateThumbPreview(manual); return; }
+  const auto = kvDeriveYoutubeThumb(url);
+  kvUpdateThumbPreview(auto);
+}
+
+function kvDeriveYoutubeThumb(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    let id = null;
+    if (host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+    else if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (u.pathname === '/watch') id = u.searchParams.get('v');
+      else { const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/); if (m) id = m[1]; }
+    }
+    return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
+  } catch (_) { return null; }
+}
+
+function kvUpdateThumbPreview(url) {
+  const wrap = document.getElementById('kv-thumb-preview');
+  const img = document.getElementById('kv-thumb-preview-img');
+  if (!wrap || !img) return;
+  if (url) {
+    img.src = url;
+    wrap.style.display = '';
+  } else {
+    img.src = '';
+    wrap.style.display = 'none';
+  }
+}
+
+async function submitVideoComposer() {
+  const id = document.getElementById('kv-edit-id').value;
+  const url = document.getElementById('kv-input-url').value.trim();
+  const title = document.getElementById('kv-input-title').value.trim();
+  const category_id = document.getElementById('kv-input-category').value || null;
+  const thumbnail_url = document.getElementById('kv-input-thumbnail').value.trim() || null;
+  const description = document.getElementById('kv-input-description').value.trim() || null;
+  if (!url) { showToast('URL を入力してください', 'error'); return; }
+  if (!title) { showToast('タイトルを入力してください', 'error'); return; }
+  const btn = document.getElementById('kv-submit-btn');
+  btn.disabled = true;
+  try {
+    const endpoint = id ? `${API}/learning-videos/${id}` : `${API}/learning-videos`;
+    const method = id ? 'PUT' : 'POST';
+    const res = await apiFetch(endpoint, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, url, category_id, thumbnail_url, description })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast(e.error || '保存に失敗しました', 'error');
+      return;
+    }
+    showToast(id ? '更新しました' : '投稿しました', 'success');
+    closeVideoComposer();
+    loadLearningVideosPage();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- 再生モーダル ----------
+async function openVideoPlayer(videoId) {
+  const v = _kvAllData.find(x => x.id === videoId);
+  if (!v) return;
+  // 再生ログ記録（ベストエフォート、失敗しても再生は続ける）
+  apiFetch(`${API}/learning-videos/${videoId}/view`, { method: 'POST' }).catch(() => {});
+
+  document.getElementById('kv-player-title').textContent = v.title;
+  const frame = document.getElementById('kv-player-frame');
+  const ytId = kvExtractYouTubeId(v.url);
+  if (ytId) {
+    frame.style.aspectRatio = '16/9';
+    frame.innerHTML = `<iframe src="https://www.youtube.com/embed/${esc(ytId)}?autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen style="width:100%;height:100%;border:0"></iframe>`;
+  } else {
+    // 直接動画ファイルなら video タグ、それ以外はリンクで誘導
+    const looksDirect = /\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(v.url);
+    if (looksDirect) {
+      frame.style.aspectRatio = '16/9';
+      frame.innerHTML = `<video src="${esc(v.url)}" controls autoplay style="width:100%;height:100%;background:#000"></video>`;
+    } else {
+      frame.style.aspectRatio = '';
+      frame.style.height = 'auto';
+      frame.innerHTML = `<div style="padding:32px;text-align:center;color:#cbd5f5;background:#0f172a">
+        <div style="font-size:32px;margin-bottom:8px">🔗</div>
+        <a href="${esc(v.url)}" target="_blank" rel="noopener" style="color:#7dd3fc;font-size:14px;word-break:break-all">${esc(v.url)}</a>
+        <div style="margin-top:8px;font-size:12px;color:#94a3b8">この URL は埋め込み再生に対応していないため、新規タブで開いてください</div>
+      </div>`;
+    }
+  }
+  // メタ情報
+  const meta = document.getElementById('kv-player-meta');
+  const cat = v.learning_video_categories?.name || '';
+  const poster = v.poster?.full_name || '不明';
+  const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
+  const viewLine = (v.view_count !== null && v.view_count !== undefined)
+    ? `<span title="管理者のみ表示">👁 再生 ${v.view_count} 回</span>` : '';
+  const canEdit = (window.currentUser && (window.currentUser.id === v.posted_by || window.currentUser.role === 'admin'));
+  meta.innerHTML = `
+    ${cat ? `<span style="background:var(--em-pale);color:var(--em-dark);padding:2px 8px;border-radius:4px;font-weight:600">${esc(cat)}</span>` : ''}
+    <span>投稿: ${esc(poster)}</span>
+    <span>${esc(date)}</span>
+    ${viewLine}
+    ${canEdit ? `
+      <span style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn" onclick="openVideoComposer('${esc(v.id)}')" style="font-size:12px;padding:4px 10px">編集</button>
+        <button class="btn" onclick="deleteLearningVideo('${esc(v.id)}')" style="font-size:12px;padding:4px 10px;color:#E24B4A">削除</button>
+      </span>` : ''}
+  `;
+  document.getElementById('kv-player-description').textContent = v.description || '';
+  openModal('modal-learning-video-player');
+}
+
+function closeVideoPlayer() {
+  closeModal('modal-learning-video-player');
+  // iframe / video を破棄して再生を確実に止める
+  const frame = document.getElementById('kv-player-frame');
+  if (frame) frame.innerHTML = '';
+}
+
+function kvExtractYouTubeId(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+      const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/);
+      if (m) return m[1];
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function deleteLearningVideo(videoId) {
+  if (!confirm('この動画を削除しますか？')) return;
+  const res = await apiFetch(`${API}/learning-videos/${videoId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.error || '削除に失敗しました', 'error');
+    return;
+  }
+  showToast('削除しました', 'success');
+  closeVideoPlayer();
+  loadLearningVideosPage();
 }
 
 async function handleUploadFileSelect(input) {
