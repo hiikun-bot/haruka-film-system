@@ -25890,9 +25890,10 @@ function shiftAnalyticsMonth(delta) {
 }
 
 function initAnalyticsPage() {
-  // 当月をデフォルトセット
+  // 前月をデフォルトセット（請求書は月締め後に確認することが多いため）
   const now = new Date();
-  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const ym = `${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}`;
   const monthEl = document.getElementById('an-month');
   if (monthEl && !monthEl.value) monthEl.value = ym;
   // クライアント select を埋める（既存 allClients を流用）
