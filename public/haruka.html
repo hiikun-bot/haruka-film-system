@@ -25602,6 +25602,7 @@ function renderCreatorSummaryTable(data) {
   sumEl.innerHTML = `
     <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間</span> <strong>${data.year}年${data.month}月</strong></div>
     <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象</span> <strong>${data.status === 'delivered' ? '納品のみ' : '全件'}</strong></div>
+    <div style="background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象クリエイティブ</span> <strong>${data.creatives_count ?? 0}件</strong></div>
     <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">動画</span> <strong>${data.total.video_count}本 / ${yen(data.total.video_total)}</strong></div>
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.total.design_count}枚 / ${yen(data.total.design_total)}</strong></div>
     <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total)}</strong></div>

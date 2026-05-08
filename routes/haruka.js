@@ -2832,6 +2832,17 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     return a?.users || null;
   };
 
+  // 集計ロジックの設計（PR #TBD で silent skip 撲滅）:
+  //   - **本数カウント** は creative_assignments を正とする。
+  //     editor / designer / director_as_editor 1 ロールあたり creative 1 件で +1。
+  //     line_id が NULL / line が見つからない / line_costs が hourly や fixed_total しか
+  //     無い、といった理由で「金額が確定できない」場合でも本数だけは確実に拾う。
+  //   - **金額分配** は従来通り line_costs ベース。fixed_per_unit / percentage 以外は
+  //     1 件あたりに按分できないので金額側だけ捨てる（本数は捨てない）。
+  //   - 同一 (creative, user) を複数の line_cost が credit しても本数は +1 まで。
+  //     これにより「2 つの editor 系 line_cost」で本数が水増しされる過去バグを抑止。
+  //   - 編集者/デザイナーが line_cost / assignees のどちらでも見つかった場合、本数は
+  //     1 件・金額は line_cost を加算。assignees にしか居ないなら rate_unknown を立てる。
   for (const c of (creatives || [])) {
     const baseType = c.creative_type?.startsWith('video') ? 'video'
                    : c.creative_type?.startsWith('design') ? 'design'
@@ -2840,27 +2851,23 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     const assignees = (c.creative_assignments || [])
       .filter(a => a.users);
 
-    if (!c.line_id) continue;
-    const line = lineById.get(c.line_id);
-    if (!line) continue;
-    const lineCosts = lineCostsByLine.get(c.line_id) || [];
+    const line = c.line_id ? lineById.get(c.line_id) : null;
+    const lineCosts = c.line_id ? (lineCostsByLine.get(c.line_id) || []) : [];
 
-    // 1 creative あたりの単価 = line_cost が消費する金額 / planned_count
-    // ただし fixed_total / hourly のように planned_count に依存しない場合は除外
-    // （creator-summary では「1 件あたり」を計上したいため、その他課金タイプは無視）
-    const planned = Number(line.planned_count) || 0;
+    // この creative 内で「本数 +1」「金額加算」したペア（user_id|video|design）を覚えておく
+    const countedKey = new Set();
+    const moneyCreditedKey = new Set();
 
+    // 1) 金額分配（line_costs ベース。fixed_per_unit / percentage のみ）
     for (const lc of lineCosts) {
       const pricingType = lc.pricing_type || 'fixed_per_unit';
       let perCreative = 0;
       if (pricingType === 'fixed_per_unit') {
-        // calculateLineCost = unit_price * planned_count → per creative = unit_price
         perCreative = Number(lc.unit_price) || 0;
       } else if (pricingType === 'percentage') {
-        // calculateLineCost = client_unit_price * planned_count * pct/100 → per creative = client_unit_price * pct/100
-        perCreative = (Number(line.client_unit_price) || 0) * (Number(lc.percentage) || 0) / 100;
+        perCreative = (Number(line?.client_unit_price) || 0) * (Number(lc.percentage) || 0) / 100;
       } else {
-        // hourly / fixed_total は creative 1 件単位に按分しないので捨てる（参考表示外）
+        // hourly / fixed_total は 1 件単位に按分しないので金額側のみ捨てる（本数は下で拾う）
         continue;
       }
       if (perCreative <= 0) continue;
@@ -2872,32 +2879,36 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
       const code = lc.role?.code || '';
       if (code === 'director' || code === 'sub_director') {
         u.director_total += perCreative;
+        u.grand_total   += perCreative;
       } else if (code === 'producer' || code === 'sub_producer') {
         u.producer_total += perCreative;
-      } else if (isVideo) {
-        u.video_count++; u.video_total += perCreative;
+        u.grand_total    += perCreative;
       } else {
-        u.design_count++; u.design_total += perCreative;
-      }
-      u.grand_total += perCreative;
-    }
-    // 後方互換のための保険: line に直接の line_costs が無いがアサインされている人がいる場合、
-    // 件数だけは記録しておく（金額 0、UI 側で「単価不明」を表示）
-    if (lineCosts.length === 0 && assignees.length > 0) {
-      for (const a of assignees) {
-        if (!['editor','designer','director_as_editor'].includes(a.role)) continue;
-        const u = ensureUser(a.users);
-        if (!u) continue;
-        if (isVideo) u.video_count++;
-        else         u.design_count++;
-        u.rate_unknown_count++;
+        // editor / designer / director_as_editor / その他 → 本数対象
+        if (isVideo) u.video_total  += perCreative;
+        else         u.design_total += perCreative;
+        u.grand_total += perCreative;
+        const ck = `${payee.id}|${isVideo ? 'video' : 'design'}`;
+        moneyCreditedKey.add(ck);
+        if (!countedKey.has(ck)) {
+          countedKey.add(ck);
+          if (isVideo) u.video_count++; else u.design_count++;
+        }
       }
     }
-    // 参考: 件数振り分けのため、line に紐付く未集計のユーザーへ video/design count を加える調整は
-    // 不要（上のループで pricing_type='fixed_per_unit' のとき同時に count も増えている）。
-    // 編集者/デザイナーが居て line_costs に user_id 指定がない場合、上の resolvePayee で
-    // assignees から拾われるためカバー済み。
-    void planned; // 参照保持（lint 用）
+
+    // 2) 本数カウントの保険: assignees に居るが上で金額 credit されなかった
+    //    editor / designer / director_as_editor を本数だけ拾う（rate_unknown 付き）
+    for (const a of assignees) {
+      if (!['editor','designer','director_as_editor'].includes(a.role)) continue;
+      const u = ensureUser(a.users);
+      if (!u) continue;
+      const ck = `${a.users.id}|${isVideo ? 'video' : 'design'}`;
+      if (countedKey.has(ck)) continue;
+      countedKey.add(ck);
+      if (isVideo) u.video_count++; else u.design_count++;
+      if (!moneyCreditedKey.has(ck)) u.rate_unknown_count++;
+    }
   }
 
   const summary = Array.from(userMap.values())
