@@ -2103,6 +2103,47 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 })();
 </script>
 
+<script>
+// ===== showPage トランケーション セーフティネット =====
+// 巨大インライン script (≈ 6100〜28900 行) の中に function showPage が定義されているため、
+// HTTP レスポンスがその script を流し終える前に切れると（ユーザーの低速回線で responseEnd
+// に届かず分断、Railway の応答途中切断など）showPage が未定義のままになり、
+// 先頭の onclick="showPage('xxx',this)" が ReferenceError で落ちる。
+// 早い段階で window.showPage を「最低限のページ切替えスタブ」として置いておけば、
+// ・ページが完走した場合: 後続の `function showPage(...) {}` が global を上書き（hoisting）
+// ・トランケーション時:   このスタブのまま。最低限ナビは動かしつつ「不完全」をユーザーに通知
+// このブロックは早期 inline 内に置く必要があり、外部 JS では遅すぎる（取得前に click される）。
+window.showPage = window.showPage || function(name, btn) {
+  try {
+    document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+    var target = document.getElementById('page-' + name);
+    if (target) target.classList.add('active');
+    document.querySelectorAll('.nav-btn,.nav-drawer-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.nav-btn[data-page="' + name + '"],.nav-drawer-btn[data-page="' + name + '"]').forEach(function(b) { b.classList.add('active'); });
+  } catch (_) {}
+  // スタブが呼ばれた時点で本来の showPage に上書きされていない = メイン script が完走していない。
+  // ユーザーへリロードを促し、Slack にも一度だけ通知する。
+  try {
+    if (!window.__showPageStubReported) {
+      window.__showPageStubReported = true;
+      if (typeof window.__postAutoError === 'function') {
+        window.__postAutoError({
+          kind: 'showPage.stub.invoked',
+          message: 'showPage stub fired — main inline script likely truncated before function declaration',
+          url: location.href,
+        });
+      }
+      // toast 関数もまだ無い可能性があるので素のバナー DOM を出す
+      var bar = document.createElement('div');
+      bar.textContent = 'ページの読み込みが不完全です。再読み込みしてください。';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#A32D2D;color:#fff;padding:10px 16px;text-align:center;font-size:13px;font-weight:600;cursor:pointer';
+      bar.onclick = function() { try { location.reload(); } catch (_) {} };
+      document.body.appendChild(bar);
+    }
+  } catch (_) {}
+};
+</script>
+
 <!-- 請求書印刷プレビューモーダル -->
 <div class="modal-overlay" id="modal-invoice-print">
   <div style="max-width:820px;width:95vw;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
