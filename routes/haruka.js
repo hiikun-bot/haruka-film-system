@@ -6119,13 +6119,22 @@ router.delete('/announcements/:id', requireAuth, requirePermission('member.list'
   res.json({ ok: true });
 });
 
-// 完了をマーク
+// 完了をマーク（本人）
 router.post('/announcements/:id/ack', requireAuth, async (req, res) => {
+  const now = new Date().toISOString();
+  // 本人が押した場合は proxy_* を明示的に NULL にする
+  // (過去に代理で完了 → 本人が改めて押した というケースで履歴が残るのは設計上 OK だが、
+  //  「現状 = 本人完了」を表現するため上書き NULL する)
   const { error } = await supabase.from('announcement_acks')
-    .upsert({ announcement_id: req.params.id, user_id: req.user.id, done_at: new Date().toISOString() },
-            { onConflict: 'announcement_id,user_id' });
+    .upsert({
+      announcement_id: req.params.id,
+      user_id: req.user.id,
+      done_at: now,
+      proxy_acked_by_user_id: null,
+      proxy_acked_at: null,
+    }, { onConflict: 'announcement_id,user_id' });
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true, done_at: new Date().toISOString() });
+  res.json({ ok: true, done_at: now });
 });
 
 // 完了を取り消し
@@ -6134,6 +6143,51 @@ router.delete('/announcements/:id/ack', requireAuth, async (req, res) => {
     .delete().eq('announcement_id', req.params.id).eq('user_id', req.user.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
+});
+
+// 代理完了 (admin / secretary 限定)
+// body: { user_id } - 代理で完了させたいユーザー
+// 履歴: announcement_acks.proxy_acked_by_user_id / proxy_acked_at に押した管理者を記録
+// 一度本人または代理で完了済みのものに対しては no-op (既に done_at あり) として 200 で返す
+router.post('/announcements/:id/proxy-ack', requireAuth, async (req, res) => {
+  const myRole = req.user?.role;
+  if (myRole !== 'admin' && myRole !== 'secretary') {
+    return res.status(403).json({ error: '代理完了は管理者または秘書のみ実行できます' });
+  }
+  const targetUserId = req.body?.user_id;
+  if (!targetUserId) return res.status(400).json({ error: 'user_id は必須です' });
+  if (targetUserId === req.user.id) {
+    return res.status(400).json({ error: '自分自身を代理完了することはできません（通常の完了ボタンを使ってください）' });
+  }
+
+  // 既に完了済みなら no-op
+  const { data: existing, error: exErr } = await supabase.from('announcement_acks')
+    .select('user_id, done_at, proxy_acked_by_user_id, proxy_acked_at')
+    .eq('announcement_id', req.params.id)
+    .eq('user_id', targetUserId)
+    .maybeSingle();
+  if (exErr) return res.status(500).json({ error: exErr.message });
+  if (existing && existing.done_at) {
+    return res.json({ ok: true, already_done: true, done_at: existing.done_at });
+  }
+
+  // ターゲットユーザーが存在することを確認（FK エラーを早期に検出）
+  const { data: targetUser, error: uErr } = await supabase.from('users')
+    .select('id, full_name, is_active').eq('id', targetUserId).maybeSingle();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+  if (!targetUser) return res.status(404).json({ error: '対象ユーザーが見つかりません' });
+
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('announcement_acks')
+    .upsert({
+      announcement_id: req.params.id,
+      user_id: targetUserId,
+      done_at: now,
+      proxy_acked_by_user_id: req.user.id,
+      proxy_acked_at: now,
+    }, { onConflict: 'announcement_id,user_id' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, done_at: now, proxy_acked_by_user_id: req.user.id, proxy_acked_at: now });
 });
 
 // 未対応者への督促（同じ announcement に対する再督促は 5分間レート制限）
@@ -6617,9 +6671,42 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
   const { data: members, error: mErr } = await supabase.from('users')
     .select('id, full_name, role, avatar_url, team_id').eq('is_active', true).order('full_name');
   if (mErr) return res.status(500).json({ error: mErr.message });
-  const { data: acks, error: kErr } = await supabase.from('announcement_acks')
-    .select('user_id, done_at').eq('announcement_id', req.params.id);
+  // proxy_acked_by_user_id / proxy_acked_at は migration 未適用環境では存在しないので
+  // try/catch で明示的にフォールバック select する（schema-sync silent skip 対策 / MEMORY 参照）
+  let acks = [];
+  let kErr = null;
+  {
+    const r = await supabase.from('announcement_acks')
+      .select('user_id, done_at, proxy_acked_by_user_id, proxy_acked_at')
+      .eq('announcement_id', req.params.id);
+    if (r.error) {
+      // 列が無いケース: 旧 select で再試行
+      console.warn('[announcement status] proxy_* select failed, retrying without proxy cols:', r.error.message);
+      const r2 = await supabase.from('announcement_acks')
+        .select('user_id, done_at')
+        .eq('announcement_id', req.params.id);
+      if (r2.error) { kErr = r2.error; }
+      else { acks = r2.data || []; }
+    } else {
+      acks = r.data || [];
+    }
+  }
   if (kErr) return res.status(500).json({ error: kErr.message });
+
+  // 代理完了者の名前解決（バッチ 1 query）
+  const proxyByIds = Array.from(new Set((acks || [])
+    .map(a => a.proxy_acked_by_user_id).filter(Boolean)));
+  const proxyByMap = new Map();
+  if (proxyByIds.length > 0) {
+    const { data: proxyUsers, error: puErr } = await supabase.from('users')
+      .select('id, full_name').in('id', proxyByIds);
+    if (puErr) {
+      console.warn('[announcement status] proxy user name fetch failed:', puErr.message);
+    } else {
+      (proxyUsers || []).forEach(u => proxyByMap.set(u.id, u.full_name || ''));
+    }
+  }
+
   // チーム情報を取得（director_id/producer_id でリーダー判定。team_code 昇順で表示）
   const { data: teams, error: tErr } = await supabase.from('teams')
     .select('id, team_code, team_name, director_id, producer_id').order('team_code');
@@ -6654,15 +6741,22 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
     console.warn('[announcement status] team_members leader_rank fetch error:', e.message);
   }
 
-  const ackMap = new Map((acks || []).map(a => [a.user_id, a.done_at]));
-  const baseMember = (m) => ({
-    user_id: m.id,
-    full_name: m.full_name,
-    role: m.role,
-    avatar_url: m.avatar_url,
-    team_id: m.team_id,
-    done_at: ackMap.get(m.id) || null,
-  });
+  const ackMap = new Map((acks || []).map(a => [a.user_id, a]));
+  const baseMember = (m) => {
+    const a = ackMap.get(m.id);
+    const proxyId = a?.proxy_acked_by_user_id || null;
+    return {
+      user_id: m.id,
+      full_name: m.full_name,
+      role: m.role,
+      avatar_url: m.avatar_url,
+      team_id: m.team_id,
+      done_at: a?.done_at || null,
+      proxy_acked_by_user_id: proxyId,
+      proxy_acked_by_name: proxyId ? (proxyByMap.get(proxyId) || null) : null,
+      proxy_acked_at: a?.proxy_acked_at || null,
+    };
+  };
 
   // 「基本チーム」= team_code が単一の英大文字 (A〜Z) のチーム。
   // それ以外（cWX、RYO 等の案件付随チーム）はカード化せず、所属メンバーは
