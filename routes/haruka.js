@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, userHasPermission, getEffectiveRole, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -10737,8 +10737,10 @@ function normalizeVersionLogPayload(body) {
 }
 
 async function buildVersionLogVisibility(req) {
-  const isAdmin = await requesterHasAnyRole(req, ['admin']);
-  return { isAdmin };
+  // 非表示エントリは super_admin（hiikun.ascs / satoru.takahashi）のみ閲覧可。
+  // 通常 admin にも見せない（管理者向け改善などを他管理者から隠せるように）。
+  const isSuperAdmin = isSuperAdminUser(req.user);
+  return { isAdmin: isSuperAdmin };
 }
 
 router.get('/version-logs', requireAuth, async (req, res) => {
@@ -10811,6 +10813,8 @@ router.post('/version-logs', requireAuth, async (req, res) => {
     if (!isAdmin) return res.status(403).json({ error: '管理者のみ追加できます' });
 
     const payload = normalizeVersionLogPayload(req.body || {});
+    // 非表示フラグは super_admin のみ書き込み可（他 admin は触れない）
+    if (!isSuperAdminUser(req.user)) delete payload.is_hidden;
     if (!payload.screen || !payload.feature || !payload.description) {
       return res.status(400).json({ error: '画面 / 機能 / 修正内容は必須です' });
     }
@@ -10852,6 +10856,8 @@ router.put('/version-logs/:id', requireAuth, async (req, res) => {
     if (!isAdmin) return res.status(403).json({ error: '管理者のみ編集できます' });
 
     const payload = normalizeVersionLogPayload(req.body || {});
+    // 非表示フラグは super_admin のみ書き込み可（他 admin は触れない）
+    if (!isSuperAdminUser(req.user)) delete payload.is_hidden;
     payload.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -10919,11 +10925,9 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
   }
 });
 
-// 表示/非表示切替（admin のみ）
-router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
+// 表示/非表示切替（最高管理者のみ）
+router.post('/version-logs/:id/visibility', requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    if (!isAdmin) return res.status(403).json({ error: '管理者のみ切替できます' });
     const is_hidden = !!req.body?.is_hidden;
     const { data, error } = await supabase
       .from('version_logs').update({ is_hidden, updated_at: new Date().toISOString() })

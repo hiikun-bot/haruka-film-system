@@ -2446,7 +2446,7 @@ window.showPage = window.showPage || function(name, btn) {
         <input id="vle-related-url" class="form-input" placeholder="https://...">
       </div>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="vle-is-hidden-wrap">
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px">
         <input type="checkbox" id="vle-is-hidden">
         非表示にする（一般メンバーには見せない）
@@ -29239,12 +29239,13 @@ async function loadVerupUnreadCount() {
 
 async function openVerupModal() {
   openModal('modal-verup');
-  // admin のみ「新規追加」「非表示も表示」フィルタを露出
+  // 「新規追加」は admin、「非表示も表示」フィルタは super_admin のみ露出
   const addBtn = document.getElementById('verup-add-btn');
   const hiddenWrap = document.getElementById('verup-filter-hidden-wrap');
   const isAdmin = _verupIsAdmin();
+  const canHide = isSuperAdmin();
   if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
-  if (hiddenWrap) hiddenWrap.style.display = isAdmin ? 'inline-flex' : 'none';
+  if (hiddenWrap) hiddenWrap.style.display = canHide ? 'inline-flex' : 'none';
   await loadVerupList();
 }
 
@@ -29272,6 +29273,7 @@ function renderVerupList() {
   const onlyUnread = document.getElementById('verup-filter-unread')?.checked || false;
   const showHidden = document.getElementById('verup-filter-hidden')?.checked || false;
   const isAdmin = _verupIsAdmin();
+  const canHide = isSuperAdmin();
 
   let rows = _verupCache.slice();
   if (!showHidden) rows = rows.filter(r => !r.is_hidden);
@@ -29313,10 +29315,11 @@ function renderVerupList() {
       ? `<div style="margin-top:8px;background:#FFFBEB;border-left:3px solid #F59E0B;padding:6px 10px;font-size:12px;color:#78350F">💡 ${_verupEsc(r.use_case).replace(/\n/g,'<br>')}</div>` : '';
     const relatedLink = r.related_url
       ? `<a href="${_verupEsc(r.related_url)}" target="_blank" rel="noopener" style="font-size:11px;color:#3B82F6">関連リンク ↗</a>` : '';
-    const adminBtns = isAdmin ? `
-      <button class="btn" style="padding:2px 8px;font-size:11px" onclick='editVerupEntry(${JSON.stringify(r.id)})'>編集</button>
-      <button class="btn" style="padding:2px 8px;font-size:11px" onclick='toggleVerupVisibility(${JSON.stringify(r.id)}, ${!r.is_hidden})'>${r.is_hidden ? '表示する' : '非表示にする'}</button>
-    ` : '';
+    const editBtn = isAdmin
+      ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='editVerupEntry(${JSON.stringify(r.id)})'>編集</button>` : '';
+    const hideBtn = canHide
+      ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='toggleVerupVisibility(${JSON.stringify(r.id)}, ${!r.is_hidden})'>${r.is_hidden ? '表示する' : '非表示にする'}</button>` : '';
+    const adminBtns = `${editBtn} ${hideBtn}`;
 
     return `
     <div data-vid="${_verupEsc(r.id)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;background:${r.is_read ? '#fff' : '#F0FDFA'};transition:background .2s">
@@ -29368,7 +29371,7 @@ async function markAllVerupRead() {
 }
 
 async function toggleVerupVisibility(id, nextHidden) {
-  if (!_verupIsAdmin()) return;
+  if (!isSuperAdmin()) return;
   try {
     const res = await fetch(`/api/haruka/version-logs/${encodeURIComponent(id)}/visibility`, {
       method: 'POST',
@@ -29389,6 +29392,9 @@ async function toggleVerupVisibility(id, nextHidden) {
 
 function openVerupEditor() {
   if (!_verupIsAdmin()) return;
+  // 非表示チェックボックスは super_admin のみ操作可
+  const hideWrap = document.getElementById('vle-is-hidden-wrap');
+  if (hideWrap) hideWrap.style.display = isSuperAdmin() ? '' : 'none';
   document.getElementById('verup-editor-title').textContent = '新規追加';
   document.getElementById('vle-id').value = '';
   document.getElementById('vle-version-label').value = '';
@@ -29412,6 +29418,9 @@ function openVerupEditor() {
 
 function editVerupEntry(id) {
   if (!_verupIsAdmin()) return;
+  // 非表示チェックボックスは super_admin のみ操作可
+  const hideWrap = document.getElementById('vle-is-hidden-wrap');
+  if (hideWrap) hideWrap.style.display = isSuperAdmin() ? '' : 'none';
   const r = _verupCache.find(x => x.id === id);
   if (!r) return;
   document.getElementById('verup-editor-title').textContent = `編集 #${r.revision_no}`;
