@@ -10701,7 +10701,7 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
 //   - 一覧はログイン中ユーザーの role で target_roles を絞る（'all' は全員）
 //   - revision_no は POST 時にサーバー側で max+1 を採番
 //   - 既読は version_log_reads(user_id, version_log_id) にレコードがあれば既読扱い
-//   - 「非表示」機能は廃止（各ユーザーが既読にすれば消えるため不要）
+//   - 非表示（is_hidden=true）は admin が全体から隠す機能。admin のみ参照・操作可
 const VERSION_LOG_CATEGORIES = ['feature', 'improvement', 'bugfix', 'spec_change'];
 const VERSION_LOG_IMPORTANCES = ['high', 'normal', 'low'];
 
@@ -10732,13 +10732,16 @@ function normalizeVersionLogPayload(body) {
     out.tags = arr.map(s => String(s).trim()).filter(Boolean);
   }
   if (body.related_url !== undefined) out.related_url = body.related_url || null;
+  if (body.is_hidden !== undefined) out.is_hidden = !!body.is_hidden;
   return out;
 }
 
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('version_logs').select('*').order('revision_no', { ascending: false });
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    let q = supabase.from('version_logs').select('*').order('revision_no', { ascending: false });
+    if (!isAdmin) q = q.eq('is_hidden', false);
+    const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
@@ -10753,6 +10756,7 @@ router.get('/version-logs', requireAuth, async (req, res) => {
     }
 
     const filtered = (data || []).filter(row => {
+      if (isAdmin) return true; // admin は role 制限を受けない
       const tr = row.target_roles || ['all'];
       if (tr.includes('all')) return true;
       return tr.some(r => myRoleCodes.includes(r));
@@ -10770,7 +10774,7 @@ router.get('/version-logs/unread-count', requireAuth, async (req, res) => {
     if (!userId) return res.json({ count: 0 });
 
     const { data: logs, error } = await supabase
-      .from('version_logs').select('id, target_roles');
+      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
@@ -10825,6 +10829,7 @@ router.post('/version-logs', requireAuth, async (req, res) => {
       target_roles: payload.target_roles || ['all'],
       tags: payload.tags || [],
       related_url: payload.related_url ?? null,
+      is_hidden: payload.is_hidden || false,
       created_by: req.user?.id || null,
     };
 
@@ -10888,7 +10893,7 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'unauth' });
 
     const { data: logs } = await supabase
-      .from('version_logs').select('id, target_roles');
+      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
     let myRoleCodes = await getRequesterRoleCodes(req);
     if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
 
@@ -10904,6 +10909,22 @@ router.post('/version-logs/read-all', requireAuth, async (req, res) => {
     const { error } = await supabase.from('version_log_reads').upsert(rows, { onConflict: 'user_id,version_log_id' });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true, count: ids.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 表示/非表示切替（admin のみ）— 非表示にすると全ユーザーから見えなくなる
+router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ切替できます' });
+    const is_hidden = !!req.body?.is_hidden;
+    const { data, error } = await supabase
+      .from('version_logs').update({ is_hidden, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
