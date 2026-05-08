@@ -5375,6 +5375,9 @@ window.showPage = window.showPage || function(name, btn) {
 /* Frame.io レビューパネルの返信ボタン: ティールアウトライン → ホバーで塗り */
 .fp-reply-btn{background:transparent;color:#3ECFCA;border:0.5px solid #3ECFCA;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;line-height:1.2;transition:background .15s,color .15s}
 .fp-reply-btn:hover{background:#3ECFCA;color:#0a0a0a}
+/* Frame.io レビューパネルの引用ボタン: 連絡・確認事項 textarea にコメントを引用挿入する。amber トーンで返信と区別 */
+.fp-quote-btn{background:transparent;color:#f59e0b;border:0.5px solid #f59e0b;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;line-height:1.2;transition:background .15s,color .15s}
+.fp-quote-btn:hover{background:#f59e0b;color:#0a0a0a}
 .an-menu-btn:hover{background:rgba(255,255,255,0.6)}
 .an-menu-btn.an-menu-active{background:var(--em);color:#fff;font-weight:600}
 @media(max-width:768px){
@@ -25267,6 +25270,9 @@ function _renderFpCommentHtml(c, isReply) {
     ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 ナレッジ</span>' : '';
   const replyBtn = isReply ? '' :
     `<button onclick="fpToggleReplyForm('${c.id}')" class="fp-reply-btn" title="返信">↩ 返信</button>`;
+  // 引用ボタン: 親/返信どちらにも表示。クリックで「連絡・確認事項」textarea にコメントを Markdown 引用ブロックで挿入
+  const quoteBtn =
+    `<button onclick="quoteCommentToEditorReply('${c.id}')" class="fp-quote-btn" title="連絡・確認事項に引用">💬 引用</button>`;
   // 役職バッジ（誰がディレクター/編集者なのか視覚的にわかるように）
   const roleInfo = (() => {
     const r = c.users?.role;
@@ -25299,6 +25305,7 @@ function _renderFpCommentHtml(c, isReply) {
           ${knowledgeBadge}
         </div>
         <div style="display:flex;align-items:center;gap:8px">
+          ${quoteBtn}
           ${replyBtn}
           <span style="font-size:10px;color:var(--text-muted)">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
           ${c.user_id === currentUser?.id ? `<button onclick="startEditComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:12px;padding:0;line-height:1" title="編集">✏️</button>` : ''}
@@ -25345,6 +25352,65 @@ function renderComments(list) {
     .join('');
   el.innerHTML = html;
   el.scrollTop = el.scrollHeight;
+}
+
+// Frame.io レビューコメントを「連絡・確認事項」textarea (#cd-editor-reply) に Markdown-style 引用ブロックで挿入する。
+// パネルは閉じない（連続引用したいユースケース）。textarea にフォーカス済みならカーソル位置に挿入、未フォーカス & 既存内容ありなら末尾追記して書きかけを破壊しない。
+function quoteCommentToEditorReply(commentId) {
+  // _fpComments は同スクリプト内で let 宣言されたグローバルキャッシュ（fpRenderComments / renderComments で更新される）
+  const list = (typeof _fpComments !== 'undefined' && Array.isArray(_fpComments)) ? _fpComments : [];
+  const comment = list.find(x => x && x.id === commentId);
+  if (!comment) {
+    if (typeof showToast === 'function') showToast('コメント情報が取得できませんでした', 'warn');
+    else alert('コメント情報が取得できませんでした');
+    return;
+  }
+  const ta = document.getElementById('cd-editor-reply');
+  if (!ta) {
+    if (typeof showToast === 'function') showToast('連絡・確認事項の入力欄が見つかりません', 'warn');
+    return;
+  }
+
+  // 役職ラベル（PR #390 の roleInfo マッピングと揃える。共通化はせずシンプル優先）
+  const roleLabel = (() => {
+    const r = comment.users?.role;
+    switch(r) {
+      case 'admin': return '管理者';
+      case 'secretary': return '事務';
+      case 'producer': return 'プロデューサー';
+      case 'producer_director': return 'P/D';
+      case 'director': return 'ディレクター';
+      case 'editor': return '編集者';
+      case 'designer': return 'デザイナー';
+      default: return '';
+    }
+  })();
+
+  const name = comment.users?.full_name || '不明';
+  const tcLabel = comment.timecode ? ` [${comment.timecode}]` : (comment.bbox ? ' [📍 範囲指定]' : '');
+  const roleSuffix = roleLabel ? ` (${roleLabel})` : '';
+  const lines = (comment.comment || '').split('\n').map(l => `> ${l}`).join('\n');
+  const block = `> ${name}${roleSuffix}${tcLabel}\n${lines}\n\n`;
+
+  // textarea のカーソル位置に挿入。未フォーカス & 既存内容ありなら末尾追記
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  if (start === 0 && end === 0 && ta.value.length > 0 && document.activeElement !== ta) {
+    ta.value = (ta.value.endsWith('\n') ? ta.value : ta.value + '\n') + block;
+  } else {
+    const before = ta.value.substring(0, start);
+    const after = ta.value.substring(end);
+    ta.value = before + block + after;
+    const newPos = start + block.length;
+    ta.selectionStart = newPos;
+    ta.selectionEnd = newPos;
+  }
+
+  // textarea にフォーカス + スクロール（Frame.io パネルは閉じない）
+  ta.focus();
+  ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  if (typeof showToast === 'function') showToast('引用を挿入しました', 'success');
 }
 
 // 返信フォームの開閉。同じ親に対して開いていれば閉じる、閉じていれば開く。
