@@ -6343,6 +6343,20 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
   // 秘書本人が未対応の場合でも、エスカレ DM は受け取る側として送る（セルフ宛も可）。
   // ただし重複は user_id でユニーク化。
 
+  // ADR 008 Stage 3: 「未所属/リーダー不在」のエスカレ先は秘書チームのリーダー1人のみ。
+  // 秘書チーム全員にメンションすると通知過多になるため、teamLeaderMap で
+  // team_type='secretary' のチームのリーダー (team_members.leader_rank='leader')
+  // を抽出する。リーダーが居ない場合のみフォールバックで秘書メンバー全員に送る。
+  const secretaryLeaderIds = new Set();
+  for (const [teamId, leaderUserId] of teamLeaderMap.entries()) {
+    if (secretaryTeamIds.has(teamId) && leaderUserId) {
+      secretaryLeaderIds.add(leaderUserId);
+    }
+  }
+  const secretaryEscalationRecipients = secretaryLeaderIds.size > 0
+    ? (members || []).filter(m => secretaryLeaderIds.has(m.id))
+    : secretaryMembers; // 秘書チームにリーダー指定が無い環境向けの後方互換
+
   // リーダー宛 / 秘書宛 の送信タスクを組み立てる
   // 各タスク: { recipientUserId, members: [unacked...], teamLabel, kind }
   const tasks = [];
@@ -6391,9 +6405,9 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
   tasks.forEach(t => {
     if (t.recipientUserId) recipientCandidates.add(t.recipientUserId);
   });
-  // エスカレ宛は秘書全員 → 受信者集合に追加
+  // エスカレ宛は秘書チームのリーダー（不在時のみフォールバックで秘書全員）→ 受信者集合に追加
   if (tasks.some(t => t.escalation)) {
-    secretaryMembers.forEach(m => recipientCandidates.add(m.id));
+    secretaryEscalationRecipients.forEach(m => recipientCandidates.add(m.id));
   }
   const dedupSkipSet = new Set(); // 直近24h で送信済の (recipientUserId)
   if (!force && recipientCandidates.size > 0) {
@@ -6527,9 +6541,9 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
   // === Phase 2: 秘書チームへエスカレ（1メッセージにまとめる） ===
   const escalationTasks = tasks.filter(t => t.escalation);
   if (escalationTasks.length > 0) {
-    // 受信側秘書（dedup を考慮）
-    const escalationRecipients = secretaryMembers.filter(m => !dedupSkipSet.has(m.id));
-    const escalationSkipped = secretaryMembers.filter(m => dedupSkipSet.has(m.id));
+    // 受信側秘書（dedup を考慮）。秘書チームのリーダー1人のみ（不在時はフォールバック）。
+    const escalationRecipients = secretaryEscalationRecipients.filter(m => !dedupSkipSet.has(m.id));
+    const escalationSkipped = secretaryEscalationRecipients.filter(m => dedupSkipSet.has(m.id));
     escalationSkipped.forEach(m => skippedLog.push({ recipient_user_id: m.id, reason: 'dedup_24h' }));
 
     if (escalationRecipients.length > 0) {
@@ -6569,8 +6583,8 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
           sender_id: req.user.id,
         });
       });
-    } else if (secretaryMembers.length === 0) {
-      console.warn('[leader-remind] 秘書メンバーが居ないためエスカレ未送信');
+    } else if (secretaryEscalationRecipients.length === 0) {
+      console.warn('[leader-remind] 秘書チームのリーダー（およびフォールバックの秘書メンバー）が居ないためエスカレ未送信');
     }
   }
 
