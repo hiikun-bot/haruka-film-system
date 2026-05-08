@@ -6111,11 +6111,83 @@ router.patch('/announcements/:id', requireAuth, requirePermission('member.list')
 });
 
 // 終了（is_active=false）
+// 終了時に Slack チャンネルへ「感謝メッセージ + 代理完了されたメンバーへの個別メンション」を投稿する。
+// Slack 投稿に失敗してもアプリは止めない（既存パターン同様 try/catch + console.warn）。
 router.delete('/announcements/:id', requireAuth, requirePermission('member.list'), async (req, res) => {
+  const annId = req.params.id;
   const { error } = await supabase.from('announcements')
     .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq('id', req.params.id);
+    .eq('id', annId);
   if (error) return res.status(500).json({ error: error.message });
+
+  // Slack 投稿（感謝メッセージ + 代理完了メンバーへのメンション）
+  try {
+    const { data: setting } = await supabase.from('system_settings')
+      .select('value').eq('key', 'broadcast_slack_channel_url').maybeSingle();
+    const url = setting?.value;
+    if (url) {
+      // タイトル取得
+      const { data: ann, error: aErr } = await supabase.from('announcements')
+        .select('id, title').eq('id', annId).maybeSingle();
+      if (aErr) {
+        console.warn('[announcement close] title fetch failed:', aErr.message);
+      }
+      const title = ann?.title || '';
+
+      // 代理完了されたユーザー id を集める
+      // proxy_acked_by_user_id 列が無い環境では空配列扱い（schema-sync silent skip 対策 / MEMORY 参照）
+      let proxyAckedUserIds = [];
+      {
+        const r = await supabase.from('announcement_acks')
+          .select('user_id, proxy_acked_by_user_id')
+          .eq('announcement_id', annId)
+          .not('proxy_acked_by_user_id', 'is', null);
+        if (r.error) {
+          console.warn('[announcement close] proxy_acked_by_user_id select failed, treating as empty:', r.error.message);
+        } else {
+          proxyAckedUserIds = Array.from(new Set((r.data || [])
+            .map(a => a.user_id).filter(Boolean)));
+        }
+      }
+
+      // 対象ユーザーの slack_dm_id / full_name を取得
+      let proxyUsers = [];
+      if (proxyAckedUserIds.length > 0) {
+        const { data: us, error: uErr } = await supabase.from('users')
+          .select('id, full_name, slack_dm_id').in('id', proxyAckedUserIds);
+        if (uErr) {
+          console.warn('[announcement close] proxy user fetch failed:', uErr.message);
+        } else {
+          proxyUsers = us || [];
+        }
+      }
+
+      // メッセージ組み立て
+      const lines = [];
+      lines.push('`✅ 全体連絡を終了しました`');
+      if (title) lines.push(`\`${title}\``);
+      lines.push('');
+      lines.push('ご対応ありがとうございました 🙏');
+      lines.push('また次回もご協力お願いします。');
+      if (proxyUsers.length > 0) {
+        lines.push('');
+        lines.push('▼以下の方は代理で完了させていただきました');
+        proxyUsers.forEach(u => {
+          const mention = u.slack_dm_id ? `<@${u.slack_dm_id}>` : (u.full_name || '(名前未設定)');
+          lines.push(`${mention} こちらで完了しました`);
+        });
+      }
+      const text = lines.join('\n');
+
+      const r = await notif.sendSlackChannel(url, text);
+      if (!r.ok) {
+        console.warn('[announcement close] slack post failed:', r.reason || 'unknown');
+      }
+    }
+  } catch (e) {
+    console.warn('[announcement close] slack push failed:', e.message);
+  }
+
   res.json({ ok: true });
 });
 
