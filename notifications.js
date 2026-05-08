@@ -444,6 +444,16 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       ? directorAssignees.slice()
       : [director].filter(Boolean);
 
+    // 1-a-2) リバイスからの再提出 (Dチェック後修正 → Dチェック) では、
+    //   案件ディレクター (projects.director_id) も必ず宛先に含める。
+    //   背景: 「連絡・確認事項」(editor → director) の宛先は案件ディレクター
+    //   であるべき (#TBD)。Dチェック assignment が案件D 以外（サブD・秘書 等）
+    //   になっているケースで、案件D に編集者からの返信が届かない不具合があった。
+    //   重複は sendNotifMulti / notification_logs INSERT 側で id ベース除外される。
+    if (oldStatus === 'Dチェック後修正' && director) {
+      dCheckTargets.push(director);
+    }
+
     // 1-b) 秘書 CC（ENV フラグで有効化、デフォルト OFF）
     //   ディレクター宛と「同じ1メッセージ」にまとめてTOメンションするため、
     //   先に秘書を取得してから sendNotifMulti で一括送信する。

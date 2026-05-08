@@ -23250,16 +23250,23 @@ function updateCreativeCommentLabel(status) {
       try {
         const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
         const assignee = (Array.isArray(assigns) ? assigns : []).find(a => a && ['editor','designer','director_as_editor'].includes(a.role)) || null;
-        const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
-        let toName = (dirAssign && dirAssign.users && dirAssign.users.full_name) || null;
-        if (!toName && assignee && assignee.users) {
-          const u = assignee.users || {};
-          const teamsArr = Array.isArray(allTeams) ? allTeams : [];
-          const byTeamId = (u.team_id && teamsArr.find(t => t && t.id === u.team_id)) || null;
-          const byMember = teamsArr.find(t => t && Array.isArray(t.team_members) && t.team_members.some(tm => tm && tm.user_id === u.id)) || null;
-          toName = (byTeamId && byTeamId.director && byTeamId.director.full_name)
-            || (byMember && byMember.director && byMember.director.full_name)
-            || null;
+        // 「連絡・確認事項」の宛先 (To) は **必ず案件 (projects.director_id) のディレクター** を使う。
+        // - 旧実装では creative_assignments.role='director'（= Dチェックの担当）→ 編集担当の所属チーム
+        //   director_id の順に解決していたため、案件のディレクターと「中尾→池田」のように
+        //   実態（中尾→塚田＝案件D）と乖離する不具合があった。
+        // - 案件D は openCreativeDetail() で currentCreativeDetail.projects.director_id に積まれている。
+        //   名前解決は allMembers から行う（クリエイティブ詳細SELECTに director の full_name は乗っていないため）。
+        const projectDirectorId = currentCreativeDetail?.projects?.director_id || null;
+        const membersArr = Array.isArray(allMembers) ? allMembers : [];
+        const projDirUser = projectDirectorId
+          ? (membersArr.find(m => m && m.id === projectDirectorId) || null)
+          : null;
+        let toName = (projDirUser && projDirUser.full_name) || null;
+        // 案件にディレクターが未設定のケースのみ、最後の砦として Dチェック担当を表示する
+        // （担当チームのリーダーへのフォールバックは行わない・PR #371）
+        if (!toName) {
+          const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
+          toName = (dirAssign && dirAssign.users && dirAssign.users.full_name) || null;
         }
         const fromName = (assignee && assignee.users && assignee.users.full_name) || null;
         if (fromName || toName) {
