@@ -26536,7 +26536,7 @@ function setKnowledgeMode(mode) {
   // ツールバー要素の出し分け
   const tBar = document.getElementById('kn-toolbar-tutoring');
   const vBar = document.getElementById('kn-toolbar-videos');
-  if (tBar) tBar.style.display = _kvMode === 'tutoring' ? '' : 'none';
+  if (tBar) tBar.style.display = _kvMode === 'tutoring' ? 'flex' : 'none';
   if (vBar) vBar.style.display = _kvMode === 'videos'   ? 'flex' : 'none';
   // ボディの出し分け
   const tBody = document.getElementById('kn-body-tutoring');
