@@ -6785,6 +6785,15 @@ async function init() {
 async function applyDeepLinkOnLoad() {
   try {
     const params = new URLSearchParams(window.location.search);
+    const announcementId = params.get('announcement');
+    if (announcementId && typeof openAnnouncementStatus === 'function') {
+      // データ・DOM 準備のため少し遅延
+      setTimeout(() => {
+        try { openAnnouncementStatus(announcementId); }
+        catch (e) { console.warn('[deepLink announcement]', e); }
+      }, 300);
+      return;
+    }
     const creativeId = params.get('creative');
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {

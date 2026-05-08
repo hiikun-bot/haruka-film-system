@@ -211,7 +211,13 @@ async function activateCard(cardEl, options = {}) {
   //   ・/creatives/<id> 形式は既存の openCreativeDetail() を呼んでモーダル展開
   //   ・それ以外の社内パスは普通に location.href で遷移
   //   ・グローバル通知は通知詳細モーダル（未実装）。とりあえずアラート相当の処理を後で差し替え
-  if (!linkUrl) return;
+  if (!linkUrl) {
+    // レガシー or link_url 未設定の通知: 既読化のみ完了して終了。
+    // 既に既読化は済んでいるので、せめてパネルを閉じることで「クリックしても何も起きない」
+    // という体感をなくす（PR #TBD: 全体連絡督促系の link_url 修正と合わせて）
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    return;
+  }
 
   const creativeMatch = /^\/creatives\/([^/?#]+)/.exec(linkUrl);
   if (creativeMatch && typeof window.openCreativeDetail === 'function') {
