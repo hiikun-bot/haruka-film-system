@@ -32,6 +32,13 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: read
+
+# 同じ PR 内で重複起動を許さない（cancel-in-progress: true で古い run を即停止）。
+# PR 単位のグループにすることで他PRの auto-merge は並列に動ける。
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   enable-auto-merge:
@@ -42,6 +49,20 @@ jobs:
       github.event_name == 'check_suite' ||
       github.event_name == 'workflow_run'
     steps:
+      - name: 🛑 無限ループ検出ガード（直近5分で50回超なら強制停止）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          SINCE=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/auto-merge.yml/runs?per_page=100" \
+            --jq "[.workflow_runs[] | select(.created_at > \"$SINCE\")] | length")
+          echo "直近5分の auto-merge 実行数: $COUNT"
+          if [ "$COUNT" -gt 50 ]; then
+            echo "::error::🚨 ループ検出: 直近5分で ${COUNT} 回実行された → 強制停止します。Actions タブで該当 workflow を Disable してから原因調査してください。"
+            exit 1
+          fi
+
       - name: auto-merge ラベルがなければ作成
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
