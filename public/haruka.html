@@ -9879,11 +9879,18 @@ function renderCreativesGantt(filtered, warningSource) {
     return segments.join('');
   };
 
-  // ガントの固定列ステータスは幅 100px しかないため長いラベルだけ短縮表示する（業務ロジックは元値のまま）
+  // ガントの固定列ステータスは幅 100px しかないため長いラベルを短縮表示する（業務ロジックは元値のまま）。
+  //  1) 「クライアント〜」系は「CL〜」に短縮（既存仕様）
+  //  2) 全角/半角カッコ以降を削除（例: 「制作中（初稿提出前）」→「制作中」）。
+  //     括弧書きはチーム内向けの補足なのでガント上では省略しても識別可能。
+  // 元のフルテキストはセル側 title 属性（c-status の title）でホバー表示される。
   const statusShortLabel = (s) => {
-    if (s === 'クライアントチェック中') return 'CLチェック中';
-    if (s === 'クライアントチェック後修正') return 'CLチェック後修正';
-    return s || '';
+    if (!s) return '';
+    let label = s;
+    if (label === 'クライアントチェック中') label = 'CLチェック中';
+    else if (label === 'クライアントチェック後修正') label = 'CLチェック後修正';
+    label = label.replace(/[（(].*$/, '').trim();
+    return label;
   };
 
   // 固定列（左）の HTML — assignee は アイコン+チーム略称（ホバーで氏名）
