@@ -10013,14 +10013,20 @@ function renderCreatives() {
     // カウントはサーバー側 /api/creatives/counts に集約。ここではタブで絞り込むだけ。
     const _ct = (c.creative_type || '');
     const _isVideoType = /^video_/.test(_ct);
-    const _isDesignType = /^design_/.test(_ct);
+    // design_% に加えて lp / hp / line（プレフィックス無し）もデザイン扱い
+    const _isDesignType = /^design_/.test(_ct) || _ct === 'lp' || _ct === 'hp' || _ct === 'line';
     if (currentCreativeTab === 'video' && !_isVideoType) return false;
     if (currentCreativeTab === 'design' && !_isDesignType) return false;
     // ロール別フィルター（designer=デザインのみ、editor=動画のみ、P以上は全表示）
     // creative_type OR 担当者ユーザーのroleで判定（video_shortでもデザイナー担当なら「デザイン」扱い）
     const assigneeForFilter = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
     const assigneeUserRole = assigneeForFilter?.users?.role;
-    const isDesign = c.creative_type?.startsWith('design') || assigneeUserRole === 'designer';
+    // LP / HP / LINE もデザイン扱い（プレフィックス無しで保存されているため明示的に列挙）
+    const isDesign = c.creative_type?.startsWith('design')
+      || c.creative_type === 'lp'
+      || c.creative_type === 'hp'
+      || c.creative_type === 'line'
+      || assigneeUserRole === 'designer';
     if (_role === 'designer' && !isDesign) return false;
     if (_role === 'editor' && isDesign) return false;
     // 詳細フィルター（ステータス/SOS/納品済み/遅延のみ）
