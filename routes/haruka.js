@@ -3571,7 +3571,8 @@ router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermi
 //   counted: { video: 0|1, design: 0|1, director: 0|1 },  // この creative での本数貢献（最大 1）
 //   totals: { video_amount, design_amount, director_amount, producer_amount },
 //   breakdown: Array<{ role_code, role_label, amount, pricing_type, source }>,
-//   rate_unknown: boolean,                  // assignees にいるが line_cost で credit されなかった
+//   rate_unknown: boolean,                  // assignees / projects.director_id にはいるが
+//                                           // line_cost で金額 credit されなかった
 //   roles: string[]                          // この creative 上でこの user が credit された role_code 配列
 // }>
 //
@@ -3581,7 +3582,9 @@ router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermi
 //   lineCostsByLine   : Map<line_id, line_cost[]>
 //   resolvePayee      : (lineCost, creative, assignees) => user | null
 //                        (aggregateCreatorSummary の userById に依存するため、外側から渡す)
-function computeCreatorCreativeBreakdown(creative, lineById, lineCostsByLine, resolvePayee) {
+//   userById          : Map<user_id, user>
+//                        director_id 等を user オブジェクトに展開するため。省略時は director 保険無効。
+function computeCreatorCreativeBreakdown(creative, lineById, lineCostsByLine, resolvePayee, userById) {
   const baseType = creative.creative_type?.startsWith('video') ? 'video'
                  : creative.creative_type?.startsWith('design') ? 'design'
                  : (creative.creative_type || 'video');
@@ -3609,7 +3612,7 @@ function computeCreatorCreativeBreakdown(creative, lineById, lineCostsByLine, re
         breakdown: [],
         rate_unknown: false,
         roles: [],
-        _moneyCredited: { video: false, design: false },  // rate_unknown 判定用（外には出さない）
+        _moneyCredited: { video: false, design: false, director: false },  // rate_unknown 判定用（外には出さない）
       });
     }
     return result.get(user.id);
@@ -3649,6 +3652,7 @@ function computeCreatorCreativeBreakdown(creative, lineById, lineCostsByLine, re
       slot.totals.director_amount += perCreative;
       // 同 creative 内で同 user の director_count は最大 1
       slot.counted.director = 1;
+      slot._moneyCredited.director = true;
     } else if (code === 'producer' || code === 'sub_producer') {
       slot.totals.producer_amount += perCreative;
       // producer_count は今回 UI に出さないが、本数フラグは将来用に立てておかない
@@ -3680,6 +3684,34 @@ function computeCreatorCreativeBreakdown(creative, lineById, lineCostsByLine, re
       if (isVideo) slot.counted.video = 1;
       else         slot.counted.design = 1;
       slot.rate_unknown = true;
+    }
+  }
+
+  // 3) ディレクション本数の保険:
+  //    line_cost に director / sub_director 行が登録されておらず金額 credit が走らなかった
+  //    case でも、projects.director_id が設定されていれば director_count を +1 する。
+  //    金額は不明なので加算しない（rate_unknown を立てて UI で「単価未設定」を示す）。
+  //    ユーザー要望: 「単価未設定でも納品済の業務量はカウントしたい」
+  //    ※ 同じ仕組みで producer 用も将来追加可能（producer_id ベース・今回は対象外）。
+  const directorId = creative.projects?.director_id;
+  if (directorId && userById) {
+    const dirUser = userById.get(directorId);
+    if (dirUser) {
+      const slot = ensure(dirUser);
+      if (slot && !slot._moneyCredited.director) {
+        slot.counted.director = 1;
+        slot.rate_unknown = true;
+        if (!slot.roles.includes('director')) slot.roles.push('director');
+        // 明細モーダルで「ここでディレクション計上された」と分かるよう
+        // inferred の breakdown 行を 1 件足す（金額 0）
+        slot.breakdown.push({
+          role_code: 'director',
+          role_label: 'ディレクター(単価未設定)',
+          amount: 0,
+          pricing_type: null,
+          source: 'inferred',
+        });
+      }
     }
   }
 
@@ -3835,7 +3867,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   // 単一の creative に対する 1 ユーザーあたりの内訳算出は
   // computeCreatorCreativeBreakdown() に切り出している（/creator-detail と共有）。
   for (const c of (creatives || [])) {
-    const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee);
+    const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     for (const b of perUser.values()) {
       const u = ensureUser(b.user);
       if (!u) continue;
@@ -3987,7 +4019,7 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
   };
 
   for (const c of (creatives || [])) {
-    const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee);
+    const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     const slot = perUser.get(userId);
     if (!slot) continue;
 

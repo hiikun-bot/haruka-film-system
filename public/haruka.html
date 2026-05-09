@@ -27702,8 +27702,14 @@ function renderCreatorSummaryTable(data) {
   }
   const rows = data.summary.map(u => {
     const noteRate = u.rate_unknown_count > 0
-      ? `<span title="line に紐付く line_costs（ロール別単価）が見つからなかった件数。案件編集モーダルの「成果物グループ」で line/コストを設定してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
+      ? `<span title="単価が未設定のため金額計算できなかった本数（業務量はカウント済）。例: line_cost にロール行が無い / director の単価行が無い 等。案件編集モーダルの「成果物グループ」で line / line_cost を設定してください。" style="margin-left:4px;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">単価不明 ${u.rate_unknown_count}</span>`
       : '';
+    // ディレクション金額セル: 本数はあるが金額が 0 の場合は「単価未設定」と明示
+    const directorAmountCell = (u.director_total || 0) > 0
+      ? yen(u.director_total)
+      : ((u.director_count || 0) > 0
+          ? `<span title="単価未設定のため金額未集計（本数はカウント済）" style="color:var(--text-muted)">— <small style="font-size:10px">(単価未設定)</small></span>`
+          : '—');
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
@@ -27713,7 +27719,7 @@ function renderCreatorSummaryTable(data) {
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#b45309">${u.design_count > 0 ? `🎨${u.design_count}` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.design_total > 0 ? yen(u.design_total) : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#6d28d9">${(u.director_count || 0) > 0 ? `🎬${u.director_count}` : '—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${(u.director_total || 0) > 0 ? yen(u.director_total) : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${directorAmountCell}</td>
       <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total)}</td>
     </tr>`;
   }).join('');
