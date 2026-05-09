@@ -5568,6 +5568,17 @@ window.showPage = window.showPage || function(name, btn) {
 #cd-round-dots .cd-round-dot.active{ background:var(--em-dark); transform:scale(1.25); }
 #cd-round-prev[disabled],#cd-round-next[disabled]{ opacity:.35; cursor:not-allowed; }
 
+/* PR #(round-3layer): 左右カラムを「ヘッダー / ボディ(可変) / フッター(成果物)」の 3 層構造化。
+   - 親の grid は align-items:stretch（インライン）で左右カラムの高さを揃える
+   - 各カラムは flex-direction:column。 body=flex:1, footer=margin-top:auto で下端に張り付く
+   - 結果として、左右で「成果物ファイル(footer)」の位置が水平に必ず揃う */
+.cd-round-col{
+  display:flex; flex-direction:column;
+  min-height:0; /* flex 子の overflow を効かせるため */
+}
+.cd-round-col-header{ flex:0 0 auto; }
+.cd-round-col-body  { flex:1 1 auto; }
+.cd-round-col-footer{ flex:0 0 auto; margin-top:auto; }
 /* PR #(round-header-split): 左右独立ヘッダー
    - 左右カラム上部に独立した cd-round-col-header を置き、視覚的に左右を分離
    - 右カラムには border-left で縦の細いセパレーターを表示（PCのみ） */
@@ -5618,11 +5629,15 @@ window.showPage = window.showPage || function(name, btn) {
    - 縦線は出さず、padding も解除
    - 順序は: 左ヘッダー → 左本体 → 右ヘッダー → 右本体（ヘッダーが本体の上にぴったり付くように） */
 @media (max-width:768px){
-  #cd-round-grid{ grid-template-columns:1fr !important; }
+  #cd-round-grid{ grid-template-columns:1fr !important; align-items:start !important; }
   #cd-modal-body.cd-2col-mode{ width:auto !important; }
   .cd-round-col-right{ border-left:none; padding-left:0; border-top:1px solid #e0e0e0; padding-top:14px; margin-top:4px; }
   #cd-round-left-col{ order:1; }
   #cd-round-right-col{ order:2; }
+  /* スマホは 1 カラム積み上げ。各カラム内は素直な縦並びで OK なので flex を解除し、
+     左右で footer の位置を揃える必要も無い（縦並びのため） */
+  .cd-round-col{ display:block; }
+  .cd-round-col-footer{ margin-top:0; }
 }
 
 .an-menu-btn:hover{background:rgba(255,255,255,0.6)}
@@ -6230,25 +6245,32 @@ window.showPage = window.showPage || function(name, btn) {
            ヘッダーは左右独立（PR #426 後）：左カラム上部に「前回」ヘッダー（ラウンド種別+日時+◀▶+●○）、
            右カラム上部に「今回」ヘッダー（ステータス+日時）を置き、視覚的に左右分離する。 -->
       <div id="cd-round-compare" style="display:none;margin-bottom:18px">
-        <!-- 2カラムグリッド: 左=過去ラウンド、右=現在の入力フォーム（JS で右側に元のフォーム要素を移動） -->
-        <div id="cd-round-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+        <!-- 2カラムグリッド: 左=過去ラウンド、右=現在の入力フォーム（JS で右側に元のフォーム要素を移動）
+             PR #(round-3layer): 各カラムを「ヘッダー / ボディ(可変) / フッター(成果物)」の 3 層構造にする。
+             grid + align-items:stretch で左右の高さを揃え、各カラム内 flex-direction:column +
+             margin-top:auto により フッター(成果物カード) が下端に貼り付き、左右で水平に揃う。 -->
+        <div id="cd-round-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch">
           <!-- 左カラム: 過去ラウンド表示（読み取り専用） -->
           <div id="cd-round-left-col" class="cd-round-col cd-round-col-left" style="min-width:0">
             <!-- 左ヘッダー（cdRenderRoundCompare() で動的描画） -->
             <div id="cd-round-left-header" class="cd-round-col-header"></div>
-            <!-- 左本体（過去ラウンドの指摘・提出物） -->
-            <div id="cd-round-left" style="background:#fafafa;border:0.5px solid var(--border);border-radius:10px;padding:14px 14px 14px;min-height:100px;overflow:hidden;min-width:0">
+            <!-- 左本体（過去ラウンドの指摘・コメント） -->
+            <div id="cd-round-left" class="cd-round-col-body" style="background:#fafafa;border:0.5px solid var(--border);border-radius:10px;padding:14px 14px 14px;min-height:100px;overflow:hidden;min-width:0">
               <!-- cdRenderRoundCompare() で動的描画 -->
             </div>
+            <!-- 左フッター（過去ラウンドの提出物カード）。flex の margin-top:auto で下端固定 -->
+            <div id="cd-round-left-footer" class="cd-round-col-footer" style="min-width:0"></div>
           </div>
           <!-- 右カラム: 現在の入力フォーム。JS で既存のコメント/連絡/upload セクションをこの中へ move する。 -->
           <div id="cd-round-right-col" class="cd-round-col cd-round-col-right" style="min-width:0">
             <!-- 右ヘッダー（cdRenderRoundCompare() で動的描画） -->
             <div id="cd-round-right-header" class="cd-round-col-header"></div>
             <!-- 右本体（既存フォーム要素の差し込み先） -->
-            <div id="cd-round-right">
+            <div id="cd-round-right" class="cd-round-col-body">
               <!-- ここに #cd-comment-section / #cd-editor-reply-group / #cd-director-note-group / #cd-upload-section を移動 -->
             </div>
+            <!-- 右フッター（今回ラウンドの成果物カード／アップロード待ちプレースホルダ） -->
+            <div id="cd-round-right-footer" class="cd-round-col-footer" style="min-width:0"></div>
           </div>
         </div>
       </div>
@@ -12708,6 +12730,11 @@ function closeModal(id) {
       if (wrap) wrap.style.display = 'none';
       // 右カラム下部に差し込んだ「今回の成果物」カードを除去（次回 open に持ち越さない）
       document.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+      // PR #(round-3layer): 3 層フッター（左/右）の中身も次回 open に持ち越さない
+      const _lf = document.getElementById('cd-round-left-footer');
+      if (_lf) _lf.innerHTML = '';
+      const _rf = document.getElementById('cd-round-right-footer');
+      if (_rf) _rf.innerHTML = '';
       _cdFilesCache = [];
     } catch (_) {}
   }
@@ -24593,6 +24620,11 @@ function cdRenderRoundCompare() {
     _cdMoveRightColumnElements(false);
     // 右カラムに差し込んだ「今回の成果物」カードを除去
     document.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+    // PR #(round-3layer): 左/右フッターも掃除しておく（次回 enable 時に再描画される）
+    const lf = document.getElementById('cd-round-left-footer');
+    if (lf) lf.innerHTML = '';
+    const rf = document.getElementById('cd-round-right-footer');
+    if (rf) rf.innerHTML = '';
     // 1カラム時は元の「アップロード済みファイル」一覧をそのまま見せる
     if (filesSection && Array.isArray(_cdFilesCache) && _cdFilesCache.length > 0) {
       filesSection.style.display = '';
@@ -24623,31 +24655,42 @@ function cdRenderRoundCompare() {
     rightHeader.innerHTML = _cdRenderRoundRightHeader(c);
   }
 
-  // 左カラム本体描画（過去ラウンドの指摘 + 提出物カード）
+  // 左カラム本体描画（過去ラウンドの指摘・コメントのみ）。提出物カードはフッターへ。
   const left = document.getElementById('cd-round-left');
   if (left) {
     if (N === 0) {
       left.innerHTML = `<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（修正・再提出が行われると、ここに前回の指摘と提出メモが残ります）</span></div>`;
     } else {
       const round = allRounds[_cdRoundIndex];
-      left.innerHTML = _cdRoundEntryHtml(round) + _cdRenderRoundLeftFileCard(round);
+      left.innerHTML = _cdRoundEntryHtml(round);
+    }
+  }
+  // 左カラムフッター（過去ラウンドの提出物カード）。flex:margin-top:auto で下端に張り付く。
+  // ラウンド切り替え（◀▶）時もここが差し替わって左右の高さ揃いを維持する。
+  const leftFooter = document.getElementById('cd-round-left-footer');
+  if (leftFooter) {
+    if (N === 0) {
+      leftFooter.innerHTML = '';
+    } else {
+      const round = allRounds[_cdRoundIndex];
+      leftFooter.innerHTML = _cdRenderRoundLeftFileCard(round);
     }
   }
 
   // 2カラムモードでは下部の `#cd-files-section`（縦並び）を畳んで、
-  // 代わりに「今回の成果物」を右カラム下部に挿し込む。
+  // 代わりに「今回の成果物」を右カラムのフッターに挿し込む。
+  // PR #(round-3layer) 以前は body (#cd-round-right) の末尾に append していたが、
+  // それだと body が縦に伸びて 左右で footer 位置がズレる原因になっていた。
   if (filesSection) filesSection.style.display = 'none';
-  const right = document.getElementById('cd-round-right');
-  if (right) {
-    // 既存の差し込みを除去して再描画（冪等）
-    right.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+  // 既存の body 内差し込みが残っていれば撤去（PR #(round-3layer) 以前の遺物対策・冪等）
+  const rightBody = document.getElementById('cd-round-right');
+  if (rightBody) {
+    rightBody.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+  }
+  const rightFooter = document.getElementById('cd-round-right-footer');
+  if (rightFooter) {
     const html = _cdRenderRoundRightFileCard();
-    if (html) {
-      const wrapEl = document.createElement('div');
-      wrapEl.dataset.cdRoundRightFile = '1';
-      wrapEl.innerHTML = html;
-      right.appendChild(wrapEl);
-    }
+    rightFooter.innerHTML = html ? `<div data-cd-round-right-file="1">${html}</div>` : '';
   }
 }
 
