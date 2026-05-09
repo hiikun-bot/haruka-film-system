@@ -142,6 +142,76 @@ UI の主要 ID と振る舞い:
 ### スキーマ拡張に伴うリスク
 - `creative_version_history` 既存行（人手で `POST /creative-versions` から登録した行があれば）には `editor_comment` / `round_stage` / `creative_file_id` / `recorded_by` が NULL のまま残る。UI 側で NULL 許容して描画する。
 
+## 補足: バージョン番号採番ルール（2026-05-09 / 代表 髙橋指示）
+
+**`creative_files.version` ＝ ラウンド番号（version_num）と等しい。**
+
+ラウンドごとのやりとり 1往復につき 1 つ番号が進む。1 つのラウンド中の試行錯誤（アップロード → 取り消し → 再アップロード）ではバージョンは進まない。
+
+### 採番ロジック（POST `/api/creatives/:id/upload`）
+
+```
+M = creative_files の MAX(version)  -- そのクリエイティブの現在の最大 version
+if M = 0:                                       version = 1
+elif M がスナップショット済 (=提出済):           version = M + 1   (次ラウンドへ)
+elif M が未スナップショット (=未提出/取消し再アップ): version = M       (同ラウンド維持)
+```
+
+具体例（V1 提出 → D指摘 → V2 アップ → 取消 → 再 V2 アップ → V2 提出）:
+1. 制作中 / files=[] → V1 アップ。M=0 → version=1
+2. Dチェック移行（snapshot は再提出時に作るので V1 はまだ未 snapshot）
+3. Dチェック後修正へ（V1 はまだ未 snapshot）
+
+   ⚠ ここで再採番すると M=1 / 未 snapshot → version=1 衝突になりうる。これを避けるために、
+   再提出 (=Dチェックへ status 遷移) 時に snapshot を確定する従来仕様に準拠する。
+4. V2 アップ。M=1 / V1 は次の `Dチェック` 遷移時に snapshot されるが、まだここでは未 snapshot。
+   → 上記ロジックだと version=1 衝突する。
+
+   **回避**: V2 アップロードは「Dチェック後修正」status 中に起きる。再採番ロジックは MAX を
+   ベースにしているので、V1 の status 遷移より先に snapshot を作っておくか、または
+   「未 snapshot だが status が後修正 → 次のラウンド扱い」とする補正が必要。
+
+実装上は **「V1 が `creative_files` 上に最大 1 行しか無い」かつ「creative_version_history 全体が
+空」** のケースでの V2 採番が問題になる。この場合 `_cdComputeNextVersion()` のフロント計算と
+サーバ採番が一致するため、サーバ側でも snapshot が空であれば `M+1` を採用する（= 修正ラウンド
+入りでバージョンを進める従来挙動を残す）か、あるいは Dチェック→D後修正 遷移時にも軽い
+snapshot を作る…という拡張余地がある。
+
+ただし、運用上は **「V1 提出後の D後修正→V2 アップ」フローでは Dチェック → D後修正 の遷移時に
+すでに `creatives.director_comment`（指摘文）が書かれており、UI の左カラムは "ライブ仮想ラウンド"
+として描画される。このときの V2 アップロードは creative_files の MAX(version)=1 で、`creative_version_history`
+にはまだ V1 の snapshot が無い**（snapshot は再提出時に確定するため）。
+
+#### 実装の単純解（採用）
+
+`creative_version_history` テーブルがそもそも空の状態（過去ラウンド 0 件）であっても、
+**`creatives.status` が後修正系であれば「すでに 1 ラウンド経過している」とみなし version+1 を返す**
+追加分岐を入れる。すなわち:
+
+```
+if M = 0:                                       version = 1
+elif M がスナップショット済 (=提出済):           version = M + 1
+elif (M が未スナップショット) かつ (status が後修正系):
+                                               version = M + 1   (追加分岐)
+elif M が未スナップショット (それ以外):           version = M       (取消→再アップ等の同ラウンド維持)
+```
+
+→ 後修正中の V2 初アップは version=2 で正しく入り、その V2 を取り消して再アップしても
+status は後修正のままなので version=2 のまま、と整合する。
+
+### 取り消しボタンの表示条件（厳格化）
+
+旧: ステータスが「制作中」系 かつ 最新ファイル → 取り消し可
+新: **当該ファイルが creative_version_history に未 snapshot** かつ 最新ファイル → 取り消し可
+
+これにより：
+- V1 を一度 Dチェックへ提出した後は、ステータスが何であれ V1 は取り消せない
+- V2 を Dチェックへ提出した後は V2 も取り消せない（Dチェック後修正に戻ってきても）
+- 現ラウンドの未提出版（=直近アップで snapshot 未登録）のみ取り消せる
+
+DB 側の DELETE エンドポイントの 409 ガード（`creative_version_history` に snapshot 行があれば拒否）と
+UI 表示条件が完全に一致するため、ユーザーが見るボタンと実行可能性が一致する。
+
 ## Alternatives Considered
 
 ### A. 別テーブル `creative_rounds` を新設

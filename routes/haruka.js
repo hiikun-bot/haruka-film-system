@@ -5897,9 +5897,25 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'ファイルが選択されていません' });
 
-  // バージョン採番: フロント送信値は信用しない（同一モーダルで2連続アップロードや
-  // race 時に V1 が重複保存される事故があったため、サーバ側で必ず MAX(version)+1 を採番する）。
-  // フロントの cd-version-num はあくまで表示用ヒント。
+  // バージョン採番（ラウンド番号方式・代表 髙橋指示 / ADR 011 補足）:
+  //
+  //   旧: MAX(version)+1 で素直にカウントアップ
+  //   新: 「Vはそのラリーのやりとりでしかカウントアップしない」
+  //       → version_num = "現在のラウンド番号"
+  //       → ラウンド = 提出物 と それに対する指摘 のペア = creative_version_history の1行
+  //
+  // 導出ルール（フロントは信用しない・サーバ単一ソース）:
+  //   M = creative_files の MAX(version)
+  //   ・M = 0 (まだ何も無い)                              → 新規 = 1
+  //   ・M がスナップショット済み (= 提出済) → 次ラウンドへ進む = M + 1
+  //   ・M がまだスナップショット無し (= 未提出/取り消し→再アップ) → 現ラウンド維持 = M
+  //
+  // 取り消し→再アップの流れ:
+  //   1) UI が DELETE /api/creatives/:cid/files/:fid を先に叩く（route 6120 の安全装置で
+  //      最新バージョン かつ snapshot 未登録 のみ DELETE 可能）
+  //   2) この POST が来た時点で creative_files から該当行は消えている → MAX(version) は M-1
+  //   3) M-1 はスナップショット済(提出済) → assignedVersion = (M-1)+1 = M
+  //   → 同じバージョン番号で再アップロードされる（V2 取り消し→再アップ → V2 のまま、V3 にはならない）
   const requestedVersion = parseInt(req.body.version, 10);
   const { data: maxRow } = await supabase
     .from('creative_files')
@@ -5908,13 +5924,84 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
     .order('version', { ascending: false })
     .limit(1)
     .maybeSingle();
-  const version = (maxRow?.version || 0) + 1;
+  const M = maxRow?.version || 0;
+  let version;
+  if (M === 0) {
+    version = 1;
+  } else {
+    // M が snapshot 済か確認
+    let snapForMCount = 0;
+    try {
+      const { data: snapRows } = await supabase
+        .from('creative_version_history')
+        .select('id')
+        .eq('creative_id', creativeId)
+        .eq('version_num', M)
+        .limit(1);
+      snapForMCount = (snapRows && snapRows.length) || 0;
+    } catch (e) {
+      // creative_version_history テーブルが無い環境（旧 DB）は
+      // 旧挙動 (MAX+1) にフォールバック。
+      console.warn('[creatives/upload] cvh check failed → fallback to MAX+1:', e?.message || e);
+      snapForMCount = 1;
+    }
+    if (snapForMCount > 0) {
+      version = M + 1; // M が提出済 → 次ラウンドへ
+    } else {
+      // M が未提出 (snapshot 無し) のとき:
+      //   - 通常: 同ラウンド維持 (= 取り消し→再アップで version=M のまま)
+      //   - ただし「後修正 status」中で初めて修正版をアップする場合は次ラウンドへ進める。
+      //     理由: snapshot は「修正→再チェック」遷移時に確定するため、Dチェック→D後修正
+      //     の遷移時点では V1 は未 snapshot。この間に V2 をアップすると単純な「未 snapshot」
+      //     判定では V1 と衝突する (version=1 採番) ので、status を見て補正する。
+      //     ADR 011 補足セクション参照。
+      const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+      let creativeStatus = null;
+      try {
+        const { data: cRow } = await supabase
+          .from('creatives')
+          .select('status')
+          .eq('id', creativeId)
+          .maybeSingle();
+        creativeStatus = cRow?.status || null;
+      } catch (_) { /* 取れなくても続行 */ }
+      if (creativeStatus && REVISION_STATUSES.includes(creativeStatus)) {
+        version = M + 1; // 後修正中の初アップ → 次ラウンドへ
+      } else {
+        version = M;     // 同ラウンド維持（取消→再アップ等）
+      }
+    }
+  }
   if (requestedVersion && requestedVersion !== version) {
     console.info(
-      `[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId})`
+      `[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId}, M=${M})`
     );
   } else {
-    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId})`);
+    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId}, M=${M})`);
+  }
+
+  // 安全装置: 同一ラウンド (=同一 version) で未提出の creative_files 行がまだ残っているケース
+  // （UI ガードを通らずサーバへ直接 POST が来た / DELETE 失敗で取り残されたゴミ等）。
+  // 残っていると同じ version_num で複数行できて _cdRoundsCache の整合が壊れるため、
+  // best-effort で削除してから新しい行を INSERT する。Drive 側の orphan は許容（ロギングのみ）。
+  if (version === M && M > 0) {
+    try {
+      const { data: stale } = await supabase
+        .from('creative_files')
+        .select('id, drive_file_id, faststart_drive_file_id')
+        .eq('creative_id', creativeId)
+        .eq('version', version);
+      if (stale && stale.length > 0) {
+        console.warn(`[creatives/upload] same-round stale rows detected (version=${version}, count=${stale.length}) → cleanup`);
+        const ids = stale.map(r => r.id);
+        // 子テーブル best-effort（CASCADE 環境では no-op）
+        try { await supabase.from('creative_file_comments').delete().in('creative_file_id', ids); } catch (_) {}
+        try { await supabase.from('creative_file_likes').delete().in('creative_file_id', ids); } catch (_) {}
+        await supabase.from('creative_files').delete().in('id', ids);
+      }
+    } catch (e) {
+      console.warn('[creatives/upload] same-round cleanup failed (続行):', e?.message || e);
+    }
   }
 
   // generated_name に埋め込まれた _vN を確定 version で上書きする。
