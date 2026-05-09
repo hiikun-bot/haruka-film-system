@@ -3780,10 +3780,11 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- 案件（全幅） -->
       <div class="form-group">
         <label class="form-label">案件</label>
+        <!-- 一括登録は動画 / 静止画案件のみ対象（LP/HP/LINE/その他は単発作業中心のため個別登録に集約） -->
         <div id="bulk-project-cap-tabs" class="creative-add-cap-tabs" data-scope="bulk" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-          <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
-          <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
-          <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
+          <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddBulkCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
+          <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddBulkCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
+          <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddBulkCapTab('all')">合計 <span class="cap-count" data-cap-count="all">0</span></button>
         </div>
         <input type="search" id="bulk-project-search" class="form-input project-tile-search" placeholder="🔍 案件名・クライアント名で絞り込み" oninput="onCreativeAddProjectSearchInput('bulk', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
         <div id="bulk-project-tiles" class="project-tile-grid" data-scope="bulk"></div>
@@ -7684,8 +7685,10 @@ function dedupVisibleProjects(projects) {
 }
 
 // ==================== クリエイティブ追加モーダル: 案件ドロップダウンの職種フィルタ ====================
-// 'all' | 'video' | 'design'。モーダルを開くたびに pickInitialProjectFilterTab() で初期値を決める。
+// 個別登録タブ: 'all' | 'video' | 'design'。モーダルを開くたびに pickInitialProjectFilterTab() で初期値を決める。
+// 一括登録タブ: 'all' | 'video' | 'design' （ただし design = image のみ、all = video + image。LP/HP/LINE/その他は除外）
 let _creativeAddProjectFilter = 'all';
+let _creativeAddBulkProjectFilter = 'all';
 
 // 初期トグル選定: job_type 連動 → default_creative_tab → 'all'
 function pickInitialProjectFilterTab(user) {
@@ -7718,6 +7721,25 @@ function filterProjectsByCap(projects, cap) {
     if (cap === 'video')  return code === 'video';
     if (cap === 'design') return !!code && code !== 'video';
     return true;
+  });
+}
+
+// 一括登録タブ専用フィルタ。LP/HP/LINE/その他は単発作業中心のため一括登録から除外する。
+// 'video'  : primary_category.code === 'video'
+// 'design' : primary_category.code === 'image' のみ（個別タブと違い lp/hp/line/その他は含めない）
+// 'all'    : video + image の合算
+function filterProjectsByBulkCap(projects, cap) {
+  const list = projects || [];
+  const resolveCode = (p) => {
+    const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(p) : null;
+    return cat?.code || null;
+  };
+  return list.filter(p => {
+    const code = resolveCode(p);
+    if (code !== 'video' && code !== 'image') return false;
+    if (cap === 'video')  return code === 'video';
+    if (cap === 'design') return code === 'image';
+    return true; // 'all' = video + image
   });
 }
 
@@ -7820,60 +7842,82 @@ function renderCreativeAddProjectDropdowns() {
     const cat = (typeof getProjectCategory === 'function') ? getProjectCategory(p) : null;
     return cat?.code || null;
   };
-  const counts = {
+
+  // ===== 個別登録タブ用カウント（従来通り：video / video以外全部 / 全件） =====
+  const singleCounts = {
     video: visible.filter(p => _resolveCode(p) === 'video').length,
     // design (=静止画) タブには video 以外（image / lp / hp / line / その他）を集計
     design: visible.filter(p => { const c = _resolveCode(p); return !!c && c !== 'video'; }).length,
     all: visible.length,
   };
-  // カウント更新
-  document.querySelectorAll('.creative-add-cap-tabs .cap-count').forEach(el => {
-    const k = el.getAttribute('data-cap-count');
-    if (counts[k] !== undefined) el.textContent = counts[k];
+  // ===== 一括登録タブ用カウント（動画 / 静止画(image) / 合計(video+image) のみ。LP/HP/LINE/その他は除外） =====
+  const bulkCounts = {
+    video: visible.filter(p => _resolveCode(p) === 'video').length,
+    design: visible.filter(p => _resolveCode(p) === 'image').length,
+    all: visible.filter(p => { const c = _resolveCode(p); return c === 'video' || c === 'image'; }).length,
+  };
+
+  // 個別タブ chips: data-scope="single"（未指定もここに含めて旧仕様互換にする）
+  document.querySelectorAll('.creative-add-cap-tabs').forEach(tabsEl => {
+    const scope = tabsEl.getAttribute('data-scope') || 'single';
+    const counts = scope === 'bulk' ? bulkCounts : singleCounts;
+    const activeFilter = scope === 'bulk' ? _creativeAddBulkProjectFilter : _creativeAddProjectFilter;
+    tabsEl.querySelectorAll('.cap-count').forEach(el => {
+      const k = el.getAttribute('data-cap-count');
+      if (counts[k] !== undefined) el.textContent = counts[k];
+    });
+    tabsEl.querySelectorAll('.cap-toggle').forEach(btn => {
+      const c = btn.getAttribute('data-cap');
+      if (c === activeFilter) btn.classList.add('is-active');
+      else btn.classList.remove('is-active');
+    });
   });
-  // active 状態
-  document.querySelectorAll('.creative-add-cap-tabs .cap-toggle').forEach(btn => {
-    const c = btn.getAttribute('data-cap');
-    if (c === _creativeAddProjectFilter) btn.classList.add('is-active');
-    else btn.classList.remove('is-active');
-  });
 
-  // フィルタを適用してタイル / hidden select option を再生成
-  const filtered = filterProjectsByCap(visible, _creativeAddProjectFilter);
-
-  // hidden <select> は全フィルタ後（検索無視）の選択肢を持つ。
-  // - goToCreativeStep2 が select.options[selectedIndex].text からラベルを取るため
-  // - 検索で絞り込んだ後に「クリアしたら戻る」UX を保つため
-  const optionsHtml = filtered.map(p =>
-    `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`
-  ).join('');
-  const emptyOptHtml = `<option value="">該当する案件がありません</option>`;
-
-  ['c-project-id', 'bulk-project-id'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    const prev = sel.value;
-    sel.innerHTML = filtered.length ? optionsHtml : emptyOptHtml;
-    // 直前の選択を維持できるなら維持。無ければ先頭選択。
-    if (prev && filtered.some(p => p.id === prev)) {
-      sel.value = prev;
-    } else if (filtered.length) {
-      sel.value = filtered[0].id;
+  // ===== 個別登録タブ select（hidden 互換: goToCreativeStep2 が options[selectedIndex].text を参照） =====
+  const singleFiltered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+  const singleSel = document.getElementById('c-project-id');
+  if (singleSel) {
+    const prev = singleSel.value;
+    singleSel.innerHTML = singleFiltered.length
+      ? singleFiltered.map(p => `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`).join('')
+      : `<option value="">該当する案件がありません</option>`;
+    if (prev && singleFiltered.some(p => p.id === prev)) {
+      singleSel.value = prev;
+    } else if (singleFiltered.length) {
+      singleSel.value = singleFiltered[0].id;
     }
-  });
+  }
 
-  // タイルグリッドを描画（scope ごとに検索キーワードを適用）
+  // ===== 一括登録タブ select（LP/HP/LINE/その他は除外） =====
+  const bulkFiltered = filterProjectsByBulkCap(visible, _creativeAddBulkProjectFilter);
+  const bulkSel = document.getElementById('bulk-project-id');
+  if (bulkSel) {
+    const prev = bulkSel.value;
+    bulkSel.innerHTML = bulkFiltered.length
+      ? bulkFiltered.map(p => `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`).join('')
+      : `<option value="">一括登録できる案件がありません（動画・静止画案件のみ対応）</option>`;
+    if (prev && bulkFiltered.some(p => p.id === prev)) {
+      bulkSel.value = prev;
+    } else if (bulkFiltered.length) {
+      bulkSel.value = bulkFiltered[0].id;
+    }
+  }
+
+  // タイルグリッドを描画（scope ごとに「scope 専用 filtered + 専用検索キーワード」を適用）
   const renderTiles = (scope) => {
     const grid = document.getElementById(scope === 'bulk' ? 'bulk-project-tiles' : 'c-project-tiles');
     if (!grid) return;
     const sel = document.getElementById(scope === 'bulk' ? 'bulk-project-id' : 'c-project-id');
     const selectedId = sel?.value || '';
     const keyword = scope === 'bulk' ? _creativeAddBulkProjectSearch : _creativeAddProjectSearch;
-    const list = _filterProjectsBySearch(filtered, keyword);
+    const scopeFiltered = scope === 'bulk' ? bulkFiltered : singleFiltered;
+    const list = _filterProjectsBySearch(scopeFiltered, keyword);
     if (!list.length) {
       const msg = keyword
         ? '検索キーワードに一致する案件がありません'
-        : '該当する案件がありません';
+        : (scope === 'bulk'
+          ? '一括登録できる案件がありません（動画・静止画案件のみ対応）'
+          : '該当する案件がありません');
       grid.innerHTML = `<div class="project-tile-empty">${esc(msg)}</div>`;
       return;
     }
@@ -7915,31 +7959,39 @@ function _bindCreativeAddProjectTileDelegation() {
 // 初期化（DOMContentLoaded を待たずに即時 bind 可能。listener 自体は document に付くだけ）
 _bindCreativeAddProjectTileDelegation();
 
-// トグルクリックハンドラ。フィルタを切り替えて両ドロップダウンを再描画し、
-// 選択案件が変わった場合は訴求軸・担当者・商材も連動して更新する。
+// 個別登録タブのトグルクリックハンドラ。個別タブ select だけ再描画する。
+// （以前は bulk select も同時に切り替えていたが、bulk タブは独立した cap tab・filter を持つように変更）
 async function setCreativeAddCapTab(cap) {
   if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
   if (_creativeAddProjectFilter === cap) return;
   _creativeAddProjectFilter = cap;
 
   const prevSingle = document.getElementById('c-project-id')?.value || '';
-  const prevBulk   = document.getElementById('bulk-project-id')?.value || '';
   renderCreativeAddProjectDropdowns();
   const nextSingle = document.getElementById('c-project-id')?.value || '';
-  const nextBulk   = document.getElementById('bulk-project-id')?.value || '';
 
-  // 案件選択が変わったらフォームの依存項目を再ロード
-  const tasks = [];
   if (nextSingle && nextSingle !== prevSingle && typeof onProjectChange === 'function') {
-    tasks.push(onProjectChange(nextSingle));
+    await onProjectChange(nextSingle);
   }
-  if (nextBulk && nextBulk !== prevBulk && typeof onBulkProjectChange === 'function') {
-    tasks.push(onBulkProjectChange(nextBulk));
-  }
-  if (tasks.length) await Promise.all(tasks);
 
   // チーム候補が変わった可能性があるので担当者セレクトも追従
   if (typeof updateAssigneeSelect === 'function') updateAssigneeSelect();
+}
+
+// 一括登録タブ専用のトグルクリックハンドラ。LP/HP/LINE/その他は除外された絞り込みで bulk select を再描画する。
+async function setCreativeAddBulkCapTab(cap) {
+  if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
+  if (_creativeAddBulkProjectFilter === cap) return;
+  _creativeAddBulkProjectFilter = cap;
+
+  const prevBulk = document.getElementById('bulk-project-id')?.value || '';
+  renderCreativeAddProjectDropdowns();
+  const nextBulk = document.getElementById('bulk-project-id')?.value || '';
+
+  if (nextBulk && nextBulk !== prevBulk && typeof onBulkProjectChange === 'function') {
+    await onBulkProjectChange(nextBulk);
+  }
+
   if (typeof updateBulkAssigneeSelect === 'function') updateBulkAssigneeSelect();
 }
 
@@ -20737,6 +20789,10 @@ async function openCreateCreative() {
   // 案件ドロップダウンの職種フィルタ初期値を user の job_type / default_creative_tab から決定し、
   // 個別/一括 両方のドロップダウンを再構築する（カウント・active も同時更新）
   _creativeAddProjectFilter = pickInitialProjectFilterTab(currentUser);
+  // 一括登録は LP/HP/LINE/その他を含まないので 'all' (=video+image 合算) を初期値にする。
+  // ただしユーザーが video / design 専門なら個別タブと同じ初期値を採用する。
+  const initialBulkTab = pickInitialProjectFilterTab(currentUser);
+  _creativeAddBulkProjectFilter = (initialBulkTab === 'video' || initialBulkTab === 'design') ? initialBulkTab : 'all';
   // タイル絞り込みの検索キーワードはモーダルを開くたびにクリア
   _creativeAddProjectSearch = '';
   _creativeAddBulkProjectSearch = '';
