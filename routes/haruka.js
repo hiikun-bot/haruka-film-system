@@ -5233,6 +5233,52 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   }
   if (error) return res.status(500).json({ error: error.message });
 
+  // ADR 011 補足: 全ステータス遷移を creative_status_transitions に audit log として記録。
+  //   通常 PUT 経由で status が変わったすべてのケースを 1 行 1 record で残す。
+  //   - ラウンド比較 UI の正確な時刻表示 (Dチェック/D後修正/Pチェック等の移行時刻)
+  //   - 平均サイクルタイム集計 / 遅延検知 / 案件採算分析の基盤
+  //   schema-sync 未適用環境では INSERT が落ちるが warn のみで本処理は止めない。
+  if (
+    updateData.status !== undefined &&
+    beforeRow &&
+    beforeRow.status !== updateData.status
+  ) {
+    try {
+      // version_at_change: そのとき creative_files に存在する最大 version。
+      //   ラウンド比較 UI で「いつ V2 が Dチェックに進んだか」等の追跡用。
+      let versionAtChange = null;
+      try {
+        const { data: latestFileForCst } = await supabase
+          .from('creative_files')
+          .select('version')
+          .eq('creative_id', req.params.id)
+          .order('version', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        versionAtChange = latestFileForCst?.version ?? null;
+      } catch (_) { /* 取得失敗は null のまま */ }
+
+      const { error: cstErr } = await supabase
+        .from('creative_status_transitions')
+        .insert({
+          creative_id: req.params.id,
+          from_status: beforeRow.status,
+          to_status:   updateData.status,
+          changed_by:  req.user?.id || null,
+          changed_at:  new Date().toISOString(),
+          director_comment_at_change: beforeRow.director_comment ?? null,
+          client_comment_at_change:   beforeRow.client_comment   ?? null,
+          editor_comment_at_change:   beforeRow.editor_comment   ?? null,
+          version_at_change: versionAtChange,
+        });
+      if (cstErr) {
+        console.warn('[creative_status_transitions] insert failed:', cstErr.message);
+      }
+    } catch (cstBlockErr) {
+      console.warn('[creative_status_transitions] block failed:', cstBlockErr?.message || cstBlockErr);
+    }
+  }
+
   // ADR 011: ラウンド snapshot 自動 INSERT
   // 修正済 → 再チェック への遷移時に「指摘＋それに対する次の提出」をペアで frozen 保存。
   // creative_version_history テーブルに 1 行 INSERT。失敗しても fire-and-forget（メイン更新は完了している）。
@@ -5829,8 +5875,12 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
   if (!newStatus) return res.status(400).json({ error: 'status は必須です' });
   if (!r)         return res.status(400).json({ error: '理由は必須です' });
 
+  // ADR 011 補足: 遷移 audit log のためコメント3種も同時取得しておく。
   const { data: creative, error: cErr } = await supabase
-    .from('creatives').select('id, status').eq('id', req.params.id).maybeSingle();
+    .from('creatives')
+    .select('id, status, director_comment, client_comment, editor_comment')
+    .eq('id', req.params.id)
+    .maybeSingle();
   if (cErr) return res.status(500).json({ error: cErr.message });
   if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
 
@@ -5899,6 +5949,43 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     changed_by: req.user?.id || null,
     deleted_invoice_item_ids: deletedItemIds.length ? deletedItemIds : null,
   });
+
+  // ADR 011 補足: creative_status_transitions にも同じ遷移を audit log として記録。
+  //   creative_status_audit は管理者強制変更専用 (reason 必須・請求書チェックあり) だが、
+  //   transitions は通常運用と管理者操作の両方を「同じ table」で時系列に取れるようにする。
+  //   ラウンド比較 UI / サイクルタイム集計 / 遅延検知バッチで参照される。
+  try {
+    let versionAtChange = null;
+    try {
+      const { data: latestFileForCst } = await supabase
+        .from('creative_files')
+        .select('version')
+        .eq('creative_id', req.params.id)
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      versionAtChange = latestFileForCst?.version ?? null;
+    } catch (_) { /* 取得失敗は null のまま */ }
+
+    const { error: cstErr } = await supabase
+      .from('creative_status_transitions')
+      .insert({
+        creative_id: req.params.id,
+        from_status: creative.status,
+        to_status:   newStatus,
+        changed_by:  req.user?.id || null,
+        changed_at:  new Date().toISOString(),
+        director_comment_at_change: creative.director_comment ?? null,
+        client_comment_at_change:   creative.client_comment   ?? null,
+        editor_comment_at_change:   creative.editor_comment   ?? null,
+        version_at_change: versionAtChange,
+      });
+    if (cstErr) {
+      console.warn('[creative_status_transitions] admin insert failed:', cstErr.message);
+    }
+  } catch (cstBlockErr) {
+    console.warn('[creative_status_transitions] admin block failed:', cstBlockErr?.message || cstBlockErr);
+  }
 
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期）
   if (newStatus === 'クライアントチェック中' && creative.status !== 'クライアントチェック中') {
