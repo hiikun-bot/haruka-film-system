@@ -6360,9 +6360,14 @@ window.showPage = window.showPage || function(name, btn) {
           </div>
           <!-- アップロードプログレスバー -->
           <div id="cd-upload-progress-wrap" style="display:none;margin-top:10px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-              <span id="cd-upload-progress-label" style="font-size:12px;color:var(--text-muted)">サーバーへ送信中...</span>
-              <span id="cd-upload-progress-pct" style="font-size:12px;font-weight:600;color:var(--em-dark)"></span>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;gap:8px">
+              <span id="cd-upload-progress-label" style="font-size:12px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">サーバーへ送信中...</span>
+              <span id="cd-upload-progress-pct" style="font-size:12px;font-weight:600;color:var(--em-dark);flex-shrink:0"></span>
+              <button type="button" id="cd-upload-cancel-btn" onclick="cancelUpload()"
+                style="flex-shrink:0;background:#fff;border:1px solid #E24B4A;color:#E24B4A;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;line-height:1.4;white-space:nowrap"
+                onmouseenter="this.style.background='#FEEAEA'"
+                onmouseleave="this.style.background='#fff'"
+                title="アップロードを中断する">✕ キャンセル</button>
             </div>
             <div style="background:var(--border);border-radius:6px;height:8px;overflow:hidden">
               <div id="cd-upload-progress-bar" style="height:100%;background:var(--primary);border-radius:6px;width:0%;transition:width .3s ease"></div>
@@ -24552,6 +24557,31 @@ function _cdRenderRoundLeftFileCard(round) {
 //
 // この判定により、ドロップ → executeUpload() → loadCreativeFiles() → cdRenderRoundCompare()
 // の再描画チェーンで、新しい v2/v3 カードが右カラムフッターへ自動的に差し込まれる。
+// 「アップロード取り消し」ボタンの HTML を組み立てる共通ヘルパー。
+// 提出前 (= ラウンド snapshot に乗る前) のバージョンに対してのみ表示する。
+//
+// 表示条件は呼び出し側で判定済（呼ばれた時点で「提出前の最新版」が確定している前提）。
+// ここではボタン HTML だけ返す。
+function _cdRenderUndoUploadBtn(creativeId, file, version) {
+  if (!creativeId || !file?.id) return '';
+  const verLabel = version != null ? `バージョン${version}` : 'このバージョン';
+  // onclick の引数は JSON.stringify で安全にシリアライズ → esc() で HTML 属性へ。
+  // 既存の _cdRenderFileCard 内 checkBtnClick と同じ方式（UUID/ファイル名に " が混じっても壊れない）。
+  const onclickJs = `cancelLatestUpload(${JSON.stringify(creativeId)}, ${JSON.stringify(file.id)}, ${JSON.stringify(version || '')})`;
+  return `
+  <div style="padding:6px 14px 10px;background:rgba(99,102,241,0.04);border-top:0.5px dashed var(--border)">
+    <button type="button"
+      data-cd-undo-upload="${esc(file.id)}"
+      onclick="${esc(onclickJs)}"
+      style="background:#fff;border:1px solid #E24B4A;color:#E24B4A;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;width:100%;letter-spacing:0.02em;transition:background .15s"
+      onmouseenter="this.style.background='#FEEAEA'"
+      onmouseleave="this.style.background='#fff'"
+      title="${esc(verLabel + 'を取り消す（提出前のみ可能）')}">
+      ↩ アップロードを取り消す
+    </button>
+  </div>`;
+}
+
 function _cdRenderRoundRightFileCard() {
   const c = currentCreativeDetail;
   if (!c) return '';
@@ -24587,16 +24617,23 @@ function _cdRenderRoundRightFileCard() {
       </div>`;
     }
     // 次バージョン既アップロード: 新ファイルを「今回の成果物」として表示
+    // この状態 = ラウンド snapshot にまだ載っていない＝提出前なので、取り消しボタンを出す。
     const verLabel = `バージョン ${latestVer}`;
     return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
       <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
       ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn: true })}
+      ${_cdRenderUndoUploadBtn(c.id, latest, latestVer)}
     </div>`;
   }
+  // 制作中（初稿提出前）: 最新ファイル = 提出前の v1。取り消し可能。
+  // それ以外（Dチェック / Pチェック / CL確認 / 納品 等）: 既に提出済なので取り消し不可。
+  const PRE_SUBMIT_STATUSES = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
+  const isPreSubmit = PRE_SUBMIT_STATUSES.includes(c.status || '');
   const verLabel = `バージョン ${latest.version || files.length}`;
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
     <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
     ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn: false })}
+    ${isPreSubmit ? _cdRenderUndoUploadBtn(c.id, latest, latest.version || files.length) : ''}
   </div>`;
 }
 
@@ -25606,6 +25643,10 @@ function _cdRenderFileCard(f, opts) {
   const verLabel  = opts?.verLabel || `バージョン ${f.version || ''}`;
   const isLatest  = !!opts?.isLatest;
   const hideCheckBtn = !!opts?.hideCheckBtn;
+  // 提出前のバージョンに対して [↩ アップロード取り消し] ボタンを追加するかどうか。
+  // 呼び出し側で「最新 & 提出前」を判定したうえで true にする。
+  const showUndoBtn = !!opts?.showUndoBtn;
+  const undoVer    = opts?.undoVer;
 
   const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
   const canPreview  = !!driveFileId;
@@ -25656,6 +25697,7 @@ function _cdRenderFileCard(f, opts) {
         ${checkBtnLabel}
       </button>`}
     </div>
+    ${showUndoBtn && currentCreativeDetail?.id ? _cdRenderUndoUploadBtn(currentCreativeDetail.id, f, undoVer != null ? undoVer : f.version) : ''}
   </div>`;
 }
 
@@ -25689,6 +25731,10 @@ async function loadCreativeFiles(creativeId) {
   // 1カラム時の縦並び（既存挙動）。
   // 2カラム時は cdRenderRoundCompare() がこのリストを空にして左右カラムへ振り分ける。
   if (section) section.style.display = '';
+  // 提出前ステータス（初稿提出前 等）かつ最新ファイル → アップロード取り消しボタンを表示する。
+  // それ以外（Dチェック / Pチェック / CL確認 / 納品 等）は既に提出済なので非表示。
+  const PRE_SUBMIT_STATUSES_LIST = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
+  const isPreSubmitForUndo = PRE_SUBMIT_STATUSES_LIST.includes(currentCreativeDetail?.status || '');
   list.innerHTML = displayFiles.map((f, i) => {
     let verLabel, isLatest;
     if (isCLMode && files.length > 1) {
@@ -25699,7 +25745,8 @@ async function loadCreativeFiles(creativeId) {
       verLabel = `バージョン ${verNum}`;
       isLatest = i === 0;
     }
-    return _cdRenderFileCard(f, { verLabel, isLatest, hideCheckBtn });
+    const showUndoBtn = isLatest && isPreSubmitForUndo;
+    return _cdRenderFileCard(f, { verLabel, isLatest, hideCheckBtn, showUndoBtn, undoVer: f.version });
   }).join('');
 
   // 2カラムモードへ移譲（左=過去ラウンドのファイル / 右=最新ファイル）
@@ -30186,6 +30233,11 @@ function updateGeneratedFilename() {
   document.getElementById('cd-generated-filename').textContent = generated;
 }
 
+// 進行中のアップロード XHR ハンドル（cancelUpload() で abort するため module-level に保持）
+let _cdActiveUploadXhr = null;
+// ユーザーが [✕ キャンセル] を押した瞬間 true。xhr.onerror / onabort 共通の判定に使う。
+let _cdUploadCancelled = false;
+
 async function executeUpload() {
   if (!uploadFileData || !currentCreativeDetail) return;
   const { file, width, height } = uploadFileData;
@@ -30198,10 +30250,13 @@ async function executeUpload() {
   const progressBar    = document.getElementById('cd-upload-progress-bar');
   const progressPct    = document.getElementById('cd-upload-progress-pct');
   const progressLabel  = document.getElementById('cd-upload-progress-label');
+  const cancelBtn      = document.getElementById('cd-upload-cancel-btn');
   const uploadBtn      = document.getElementById('cd-manual-upload-btn');
 
   statusEl.textContent = '';
   uploadBtn.disabled = true;
+  if (cancelBtn) cancelBtn.disabled = false;
+  _cdUploadCancelled = false;
   progressWrap.style.display = '';
   progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%;transition:width .3s ease';
   progressLabel.textContent = 'サーバーへ送信中...';
@@ -30216,6 +30271,7 @@ async function executeUpload() {
 
   await new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
+    _cdActiveUploadXhr = xhr;
 
     // フェーズ1: クライアント → サーバー（リアル進捗）
     xhr.upload.onprogress = (e) => {
@@ -30235,6 +30291,7 @@ async function executeUpload() {
     };
 
     xhr.onload = async () => {
+      _cdActiveUploadXhr = null;
       progressWrap.style.display = 'none';
       uploadBtn.disabled = false;
       progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
@@ -30277,7 +30334,32 @@ async function executeUpload() {
       resolve();
     };
 
+    // ユーザーが [✕ キャンセル] を押した時の経路。
+    // xhr.abort() → onabort（標準ブラウザ）。Safari 等では onerror に流れる場合もあるので
+    // _cdUploadCancelled フラグで両方を共通ハンドルする。
+    const handleAbort = () => {
+      _cdActiveUploadXhr = null;
+      progressWrap.style.display = 'none';
+      uploadBtn.disabled = false;
+      progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
+      // ドロップゾーンを初期化してもう一度ファイル選択できるようにする
+      document.getElementById('cd-upload-input').value = '';
+      document.getElementById('cd-upload-preview').style.display = 'none';
+      const zone = document.getElementById('cd-drop-zone');
+      if (zone) {
+        const label = zone.querySelector('div:nth-child(2)');
+        if (label) label.textContent = 'ドラッグ＆ドロップ、またはクリックして選択';
+      }
+      uploadFileData = null;
+      statusEl.textContent = 'アップロードをキャンセルしました';
+      statusEl.style.color = 'var(--text-muted)';
+      resolve();
+    };
+    xhr.onabort = handleAbort;
+
     xhr.onerror = () => {
+      if (_cdUploadCancelled) { handleAbort(); return; }
+      _cdActiveUploadXhr = null;
       progressWrap.style.display = 'none';
       uploadBtn.disabled = false;
       statusEl.textContent = 'ネットワークエラー';
@@ -30288,6 +30370,65 @@ async function executeUpload() {
     xhr.open('POST', `${API}/creatives/${currentCreativeDetail.id}/upload`);
     xhr.send(formData);
   });
+}
+
+// アップロード進行中の [✕ キャンセル] ボタンのハンドラ。
+// xhr.abort() で通信を中断 → executeUpload() 内の onabort 経路で UI 復元される。
+// サーバーはまだ creative_files INSERT に到達していないので DB 側のゴミは残らない。
+// (一括 multipart 受信完了後に INSERT する設計なので、abort 時点では何も書かれていない)
+function cancelUpload() {
+  const cancelBtn = document.getElementById('cd-upload-cancel-btn');
+  if (cancelBtn) cancelBtn.disabled = true;
+  _cdUploadCancelled = true;
+  if (_cdActiveUploadXhr) {
+    try { _cdActiveUploadXhr.abort(); } catch (_) {}
+  }
+}
+
+// アップロード完了後・提出前の [↩ 取り消す] ボタンのハンドラ。
+// 「最新バージョン」のみ取り消し可能。creative_files DELETE + Drive 削除 (best-effort)。
+// 取り消し後は loadCreativeFiles() でキャッシュ更新 → cdRenderRoundCompare() で再描画。
+async function cancelLatestUpload(creativeId, fileId, version) {
+  if (!creativeId || !fileId) return;
+  const ok = window.confirm(`アップロードしたバージョン${version || ''}を取り消しますか？\nこの操作は元に戻せません。`);
+  if (!ok) return;
+
+  // 二重押下防止: 押されたボタンを disable
+  const btn = document.querySelector(`[data-cd-undo-upload="${fileId}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '取り消し中...';
+    btn.style.opacity = '0.6';
+    btn.style.cursor = 'wait';
+  }
+
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/files/${fileId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('取り消しに失敗しました: ' + (e?.error || res.status), 'error');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '↩ アップロードを取り消す';
+        btn.style.opacity = '1';
+        btn.style.cursor = 'pointer';
+      }
+      return;
+    }
+    showToast(`バージョン${version || ''}を取り消しました`, 'success');
+    // 進捗バーを完全に隠してドロップゾーンを再活性化
+    const statusEl = document.getElementById('cd-upload-status');
+    if (statusEl) statusEl.textContent = '';
+    await loadCreativeFiles(creativeId);
+  } catch (err) {
+    showToast('取り消しに失敗しました: ' + (err?.message || err), 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '↩ アップロードを取り消す';
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+    }
+  }
 }
 
 async function loadVersionHistory_DISABLED(creativeId) {

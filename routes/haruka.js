@@ -6105,6 +6105,99 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   }
 });
 
+// DELETE /api/creatives/:cid/files/:fid
+// 「アップロード取り消し」用エンドポイント。アップロード直後に間違いに気づいたユーザーが
+// 確定提出（Dチェックへ提出 等）する前にバージョンを丸ごと取り消すために使う。
+//
+// 安全装置:
+//   - 取り消せるのは「最新バージョン」のみ。中間バージョンの削除は許可しない（履歴整合性のため）。
+//   - そのバージョンが既に creative_version_history に snapshot されていたら拒否（=提出済）。
+//
+// 副作用:
+//   - Drive 上の原本ファイル + faststart プレビュー版を best-effort で削除（失敗しても DB 削除は続行）
+//   - creative_files DELETE → 関連する creative_file_comments / likes / checklist は ON DELETE CASCADE 想定。
+//     CASCADE 未設定のレガシー DB でもメイン取り消しは成功させたいので、子テーブル削除は best-effort。
+router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
+  const { cid, fid } = req.params;
+  try {
+    // 1) 対象ファイルを取得
+    const { data: target, error: tErr } = await supabase
+      .from('creative_files')
+      .select('id, creative_id, version, drive_file_id, faststart_drive_file_id, generated_name')
+      .eq('id', fid)
+      .eq('creative_id', cid)
+      .maybeSingle();
+    if (tErr) return res.status(500).json({ error: tErr.message });
+    if (!target) return res.status(404).json({ error: '対象ファイルが見つかりません' });
+
+    // 2) 最新バージョンか確認
+    const { data: maxRow } = await supabase
+      .from('creative_files')
+      .select('version')
+      .eq('creative_id', cid)
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const maxVer = maxRow?.version || 0;
+    if ((target.version || 0) !== maxVer) {
+      return res.status(409).json({ error: '最新バージョンのみ取り消せます（中間バージョンは取り消し不可）' });
+    }
+
+    // 3) 既に snapshot 済 (=提出済) なら拒否
+    try {
+      const { data: snap } = await supabase
+        .from('creative_version_history')
+        .select('id')
+        .eq('creative_id', cid)
+        .eq('version_num', target.version)
+        .limit(1);
+      if (snap && snap.length > 0) {
+        return res.status(409).json({ error: 'このバージョンは既に提出済のため取り消せません' });
+      }
+    } catch (_) {
+      // creative_version_history テーブルが無い環境はスキップ（snapshot 概念がない＝提出判定不可なので続行）
+    }
+
+    // 4) Drive 上のファイル削除（best-effort）
+    let driveError = null;
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      try {
+        const drive = await getDriveService();
+        const toDelete = [target.drive_file_id, target.faststart_drive_file_id].filter(Boolean);
+        for (const driveFileId of toDelete) {
+          try {
+            await drive.files.delete({ fileId: driveFileId, supportsAllDrives: true });
+            driveLog('info', `Drive ファイル削除OK`, { driveFileId });
+          } catch (delErr) {
+            driveLog('warn', `Drive ファイル削除失敗 (続行): ${delErr.message}`, { driveFileId });
+            driveError = delErr.message;
+          }
+        }
+      } catch (e) {
+        driveLog('warn', `Drive サービス取得失敗 (DB 削除のみ続行): ${e.message}`);
+        driveError = e.message;
+      }
+    }
+
+    // 5) 子テーブルを best-effort で削除（CASCADE が無い環境でも残骸を残さない）
+    try { await supabase.from('creative_file_comments').delete().eq('creative_file_id', fid); } catch (_) {}
+    try { await supabase.from('creative_file_likes').delete().eq('creative_file_id', fid); } catch (_) {}
+
+    // 6) creative_files 本体を削除
+    const { error: dErr } = await supabase
+      .from('creative_files')
+      .delete()
+      .eq('id', fid)
+      .eq('creative_id', cid);
+    if (dErr) return res.status(500).json({ error: dErr.message });
+
+    res.json({ ok: true, deleted_version: target.version, drive_error: driveError });
+  } catch (e) {
+    console.error('[creatives/files DELETE] failed:', e);
+    res.status(500).json({ error: e?.message || 'unknown error' });
+  }
+});
+
 // Google Drive ファイルストリーミングプロキシ（Range リクエスト対応・動画シーク可能）
 //
 // 高速化:
