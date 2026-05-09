@@ -2633,20 +2633,20 @@ window.showPage = window.showPage || function(name, btn) {
 
 <!-- ==================== バグ報告: 一覧モーダル ==================== -->
 <div class="modal-overlay" id="modal-bug-report-list">
-  <div class="modal-card" style="width:min(1000px,95vw);max-height:90vh;display:flex;flex-direction:column">
+  <div class="modal-card" style="width:min(1400px,98vw);max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title">
-      🦋 バグ報告（対応依頼）
+      🦋 バグ報告（管理）
       <button class="modal-close" onclick="closeModal('modal-bug-report-list')">×</button>
     </div>
     <div id="bug-report-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0 10px;border-bottom:1px solid var(--border);margin-bottom:10px">
-      <input id="bug-report-search" class="form-input" placeholder="🔍 タイトル / 説明で検索" style="flex:1;min-width:180px;max-width:260px" oninput="renderBugReportList()">
+      <input id="bug-report-search" class="form-input" placeholder="🔍 タイトル / 詳細で検索" style="flex:1;min-width:180px;max-width:260px" oninput="renderBugReportList()">
       <select id="bug-report-filter-status" class="form-input" style="width:auto" onchange="renderBugReportList()">
         <option value="">すべての状態</option>
-        <option value="open" selected>🟥 未対応 (open)</option>
-        <option value="in_progress">🟦 対応中 (in_progress)</option>
-        <option value="resolved">🟩 解決 (resolved)</option>
-        <option value="wont_fix">⬜ 対応しない (wont_fix)</option>
-        <option value="duplicate">🔁 重複 (duplicate)</option>
+        <option value="open" selected>🟥 未対応</option>
+        <option value="in_progress">🟦 対応中</option>
+        <option value="resolved">🟩 解決</option>
+        <option value="wont_fix">⬜ 対応しない</option>
+        <option value="duplicate">🔁 重複</option>
       </select>
       <select id="bug-report-filter-severity" class="form-input" style="width:auto" onchange="renderBugReportList()">
         <option value="">すべての重要度</option>
@@ -2658,11 +2658,12 @@ window.showPage = window.showPage || function(name, btn) {
       <select id="bug-report-filter-assignee" class="form-input" style="width:auto" onchange="renderBugReportList()" title="対応者で絞り込み">
         <option value="">すべての対応者</option>
       </select>
+      <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-urgent" onchange="renderBugReportList()">🚨 至急のみ</label>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-mine" onchange="renderBugReportList()">自分の報告のみ</label>
       <span style="flex:1"></span>
       <button class="btn-primary" onclick="openBugReportModal()">＋ 新規報告</button>
     </div>
-    <div id="bug-report-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px">
+    <div id="bug-report-list" style="overflow:auto;flex:1">
       <div style="padding:24px;text-align:center;color:var(--text-muted)">読み込み中…</div>
     </div>
   </div>
@@ -2677,43 +2678,31 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <input type="hidden" id="br-id">
     <div style="overflow-y:auto;flex:1;padding-right:4px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group">
-          <label class="form-label">タイトル <span style="color:#C0392B">*</span></label>
-          <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200">
-        </div>
-        <div class="form-group">
-          <label class="form-label">画面（任意）</label>
-          <input id="br-screen-label" class="form-input" placeholder="例) クリエイティブ詳細 / 案件一覧 / 請求 など" maxlength="100">
-        </div>
-        <div class="form-group">
-          <label class="form-label">重要度</label>
-          <select id="br-severity" class="form-input">
-            <option value="low">🟢 低（こうなったら嬉しい）</option>
-            <option value="normal" selected>🟡 通常（あれば嬉しい）</option>
-            <option value="high">🔴 高（困っている）</option>
-            <option value="critical">🚨 致命的（業務が止まる）</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">対応者（任意）</label>
-          <select id="br-assignee" class="form-input">
+
+      <!-- ① 対応者 + 匿名チェック -->
+      <div class="form-group">
+        <label class="form-label">対応者</label>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+          <select id="br-assignee" class="form-input" style="flex:1;min-width:200px">
             <option value="">— 未割当 —</option>
           </select>
+          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#F3F4F6;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap" id="br-anonymous-wrap">
+            <input type="checkbox" id="br-is-anonymous">
+            <span>🕵️ 匿名で報告</span>
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+          ※ 匿名で報告した場合、個人のバグ報告統計（自分の報告履歴）には集計されません
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">詳細・再現手順</label>
-        <textarea id="br-description" class="form-input" rows="4" placeholder="例) 案件一覧で『保存』を押したが画面が真っ白になった。手順: 1. 案件タブを開く 2. 行をクリック 3. 保存"></textarea>
-      </div>
 
-      <!-- スクリーンショット領域 -->
+      <!-- ② スクリーンショット（Ctrl+V 推奨） -->
       <div class="form-group">
-        <label class="form-label">スクリーンショット <span style="color:var(--text-muted);font-size:11px">（任意・貼り付け Ctrl+V / ドラッグ&ドロップ / ファイル選択）</span></label>
+        <label class="form-label">スクリーンショット <span style="color:var(--text-muted);font-size:11px">（Ctrl+V で貼り付け / ドラッグ&ドロップ / クリックで選択）</span></label>
         <div id="br-screenshot-dropzone"
-          style="border:2px dashed #D1D5DB;border-radius:8px;padding:14px;text-align:center;background:#FAFAFA;color:#6B7280;font-size:12px;cursor:pointer"
+          style="border:2px dashed #D1D5DB;border-radius:8px;padding:18px;text-align:center;background:#FAFAFA;color:#6B7280;font-size:13px;cursor:pointer;transition:border-color .15s,background-color .15s"
           onclick="document.getElementById('br-screenshot-file').click()">
-          📎 ここをクリックして画像を選択 / Ctrl+V で貼り付け / 画像をドラッグ&ドロップ
+          📎 ここをクリックして画像を選択 / <strong>Ctrl+V で貼り付け</strong> / 画像をドラッグ&ドロップ
           <input type="file" id="br-screenshot-file" accept="image/*" style="display:none" onchange="bugReportHandleFile(this.files && this.files[0])">
         </div>
         <!-- canvas 編集エリア（画像読み込み時のみ表示） -->
@@ -2734,15 +2723,42 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
 
-      <!-- 匿名チェック -->
-      <div class="form-group" id="br-anonymous-wrap">
-        <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#F3F4F6;padding:8px 12px;border-radius:6px;cursor:pointer">
-          <input type="checkbox" id="br-is-anonymous">
-          <span>🕵️ 匿名で報告する <span style="color:var(--text-muted);font-size:11px">（誰が報告したかは記録されません。日時のみ残ります）</span></span>
-        </label>
+      <!-- ③ タイトル -->
+      <div class="form-group">
+        <label class="form-label">タイトル（症状） <span style="color:#C0392B">*</span></label>
+        <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200">
       </div>
 
-      <!-- 編集時のみ表示: ステータス・削除 -->
+      <!-- ④ 詳細 + テンプレ挿入ボタン -->
+      <div class="form-group">
+        <label class="form-label">詳細（フリーフォーマット）</label>
+        <textarea id="br-description" class="form-input" rows="6" placeholder="気になっていること、いつから起きているか、どのくらいの頻度か など、自由に書いてください"></textarea>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+          <button type="button" class="btn" onclick="bugReportInsertTemplate('steps')" style="font-size:11px;padding:4px 10px">📋 再現手順テンプレを挿入</button>
+          <button type="button" class="btn" onclick="bugReportInsertTemplate('env')" style="font-size:11px;padding:4px 10px">📋 環境テンプレを挿入</button>
+        </div>
+      </div>
+
+      <!-- ⑤ 重要度 + 至急対応 -->
+      <div class="form-group">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+          <div style="flex:1;min-width:200px">
+            <label class="form-label" style="font-size:11px">重要度</label>
+            <select id="br-severity" class="form-input">
+              <option value="low">🟢 低（こうなったら嬉しい）</option>
+              <option value="normal" selected>🟡 通常（あれば嬉しい）</option>
+              <option value="high">🔴 高（困っている）</option>
+              <option value="critical">🚨 致命的（業務が止まる）</option>
+            </select>
+          </div>
+          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#FEF2F2;border:1px solid #FECACA;color:#7F1D1D;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;align-self:flex-end">
+            <input type="checkbox" id="br-is-urgent">
+            <span>🚨 至急対応</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 編集時のみ表示: ステータス・メタ情報 -->
       <div id="br-edit-only" style="display:none">
         <div class="form-group">
           <label class="form-label">対応ステータス</label>
@@ -34380,6 +34396,17 @@ function _brRebuildAssigneeFilter() {
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
+// 経過時間ラベル（"2h" / "3d" / "解決まで1.2d" など）
+function _brElapsedLabel(r) {
+  const created = new Date(r.created_at).getTime();
+  const end = r.resolved_at ? new Date(r.resolved_at).getTime() : Date.now();
+  const ms = Math.max(0, end - created);
+  const h = ms / (1000 * 60 * 60);
+  const d = h / 24;
+  const label = h < 24 ? `${h.toFixed(0)}h` : `${d.toFixed(1)}d`;
+  return r.resolved_at ? `→${label}` : label;
+}
+
 function renderBugReportList() {
   const list = document.getElementById('bug-report-list');
   if (!list) return;
@@ -34387,6 +34414,7 @@ function renderBugReportList() {
   const fStatus = document.getElementById('bug-report-filter-status')?.value || '';
   const fSev = document.getElementById('bug-report-filter-severity')?.value || '';
   const fAss = document.getElementById('bug-report-filter-assignee')?.value || '';
+  const onlyUrgent = document.getElementById('bug-report-filter-urgent')?.checked || false;
   const onlyMine = document.getElementById('bug-report-filter-mine')?.checked || false;
   const myId = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
 
@@ -34395,54 +34423,78 @@ function renderBugReportList() {
   if (fSev) rows = rows.filter(r => r.severity === fSev);
   if (fAss === '__none__') rows = rows.filter(r => !r.assignee_user_id);
   else if (fAss) rows = rows.filter(r => r.assignee_user_id === fAss);
+  if (onlyUrgent) rows = rows.filter(r => r.is_urgent);
   if (onlyMine) rows = myId ? rows.filter(r => r.reporter_user_id === myId) : [];
   if (search) {
     rows = rows.filter(r => {
-      const hay = [r.title, r.description, r.screen_label, _brUserLabel(r.reporter), _brUserLabel(r.assignee)].filter(Boolean).join(' ').toLowerCase();
+      const hay = [r.title, r.description, _brUserLabel(r.reporter), _brUserLabel(r.assignee)].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(search);
     });
   }
+  // 至急 → 未解決 の順で上に
+  rows.sort((a, b) => {
+    if (!!a.is_urgent !== !!b.is_urgent) return a.is_urgent ? -1 : 1;
+    const aOpen = (a.status === 'open' || a.status === 'in_progress') ? 0 : 1;
+    const bOpen = (b.status === 'open' || b.status === 'in_progress') ? 0 : 1;
+    if (aOpen !== bOpen) return aOpen - bOpen;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
 
   if (rows.length === 0) {
     list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted)">該当するバグ報告はありません</div>`;
     return;
   }
 
-  list.innerHTML = rows.map(r => {
+  const head = `
+    <thead style="position:sticky;top:0;background:#F9FAFB;z-index:1">
+      <tr style="font-size:11px;color:#6B7280;border-bottom:1px solid var(--border)">
+        <th style="padding:8px 6px;text-align:center;width:36px">🚨</th>
+        <th style="padding:8px 6px;text-align:left;width:90px">状態</th>
+        <th style="padding:8px 6px;text-align:left;width:80px">重要度</th>
+        <th style="padding:8px 6px;text-align:left">タイトル</th>
+        <th style="padding:8px 6px;text-align:left;width:120px">報告者</th>
+        <th style="padding:8px 6px;text-align:left;width:120px">対応者</th>
+        <th style="padding:8px 6px;text-align:left;width:120px">報告日時</th>
+        <th style="padding:8px 6px;text-align:right;width:60px">経過</th>
+        <th style="padding:8px 6px;text-align:center;width:60px">スクショ</th>
+      </tr>
+    </thead>`;
+
+  const body = rows.map(r => {
     const sevColor = BUG_SEVERITY_COLOR[r.severity] || '#6B7280';
     const sevLabel = BUG_SEVERITY_LABEL[r.severity] || r.severity;
     const stColor = BUG_STATUS_COLOR[r.status] || '#6B7280';
     const stLabel = BUG_STATUS_LABEL[r.status] || r.status;
     const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
-    const assigneeLabel = r.assignee ? `👤 ${_brEsc(_brUserLabel(r.assignee))}` : '<span style="color:var(--text-muted)">未割当</span>';
-    const screen = r.screen_label ? `<span style="background:#EEF2F7;color:#374151;padding:2px 8px;border-radius:10px;font-size:11px">${_brEsc(r.screen_label)}</span>` : '';
-    const desc = r.description ? `<div style="font-size:12px;color:#4B5563;margin-top:4px;white-space:pre-wrap;line-height:1.5;max-height:60px;overflow:hidden">${_brEsc(r.description)}</div>` : '';
+    const assigneeLabel = r.assignee ? `👤 ${_brEsc(_brUserLabel(r.assignee))}` : '<span style="color:#9CA3AF">未割当</span>';
+    const rowBg = r.is_urgent ? '#FEF2F2' : '#fff';
+    const thumb = r.screenshot_data_url
+      ? `<img src="${_brEsc(r.screenshot_data_url)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #E5E7EB" loading="lazy">`
+      : '<span style="color:#D1D5DB;font-size:18px">—</span>';
+    // PR #479: 改善済バッジ + Verup#バッジ
     const improvedBadge = r.improved_at
-      ? `<span style="background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">✅ 改善済</span>`
+      ? `<span style="background:#10B981;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap">✅</span>`
       : '';
     const verupBadge = r.improvement_log
-      ? `<span style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700" title="${_brEsc((r.improvement_log.screen||'') + ' / ' + (r.improvement_log.feature||''))}">🆙 #${_brEsc(String(r.improvement_log.revision_no))}</span>`
+      ? `<span style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap" title="${_brEsc((r.improvement_log.screen||'') + ' / ' + (r.improvement_log.feature||''))}">🆙 #${_brEsc(String(r.improvement_log.revision_no))}</span>`
       : '';
+    const stCell = `<span style="background:${stColor};color:#fff;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap">${_brEsc(stLabel)}</span>${improvedBadge ? ' ' + improvedBadge : ''}${verupBadge ? ' ' + verupBadge : ''}`;
+    const id = JSON.stringify(r.id);
     return `
-    <div data-brid="${_brEsc(r.id)}" style="border:1px solid var(--border);border-left:4px solid ${stColor};border-radius:8px;padding:10px 12px;background:#fff;cursor:pointer" onclick='openBugReportModal({ id: ${JSON.stringify(r.id)} })'>
-      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="background:${stColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_brEsc(stLabel)}</span>
-        <span style="background:${sevColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_brEsc(sevLabel)}</span>
-        ${improvedBadge}
-        ${verupBadge}
-        ${screen}
-        <span style="flex:1"></span>
-        <span style="font-size:11px;color:var(--text-muted)">${_brEsc(_brFmtDate(r.created_at))}</span>
-      </div>
-      <div style="font-weight:700;font-size:14px;color:#111827">${_brEsc(r.title)}</div>
-      ${desc}
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;font-size:11px;color:#6B7280">
-        <span>📣 報告: ${_brEsc(reporterLabel)}</span>
-        <span>${assigneeLabel}</span>
-        ${r.url ? `<span title="${_brEsc(r.url)}">🔗 ${_brEsc(r.url.replace(/^https?:\/\/[^/]+/, ''))}</span>` : ''}
-      </div>
-    </div>`;
+      <tr data-brid="${_brEsc(r.id)}" style="border-bottom:1px solid #F3F4F6;background:${rowBg};cursor:pointer" onclick='openBugReportModal({ id: ${id} })' onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background='${rowBg}'">
+        <td style="padding:8px 6px;text-align:center;font-size:14px">${r.is_urgent ? '🚨' : ''}</td>
+        <td style="padding:8px 6px;font-size:11px">${stCell}</td>
+        <td style="padding:8px 6px;font-size:11px"><span style="background:${sevColor};color:#fff;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap">${_brEsc(sevLabel)}</span></td>
+        <td style="padding:8px 6px;font-size:13px;color:#111827;font-weight:600">${_brEsc(r.title)}</td>
+        <td style="padding:8px 6px;font-size:12px;color:#374151">${_brEsc(reporterLabel)}</td>
+        <td style="padding:8px 6px;font-size:12px;color:#374151">${assigneeLabel}</td>
+        <td style="padding:8px 6px;font-size:11px;color:#6B7280;white-space:nowrap">${_brEsc(_brFmtDate(r.created_at))}</td>
+        <td style="padding:8px 6px;font-size:11px;color:#6B7280;text-align:right;white-space:nowrap">${_brElapsedLabel(r)}</td>
+        <td style="padding:8px 6px;text-align:center">${thumb}</td>
+      </tr>`;
   }).join('');
+
+  list.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">${head}<tbody>${body}</tbody></table>`;
 }
 
 // 新規 or 編集モーダルを開く
@@ -34468,11 +34520,13 @@ async function openBugReportModal(options = {}) {
   // フォーム初期化
   document.getElementById('br-id').value = '';
   document.getElementById('br-title').value = options.title || '';
-  document.getElementById('br-screen-label').value = '';
   document.getElementById('br-severity').value = 'normal';
-  document.getElementById('br-assignee').value = '';
+  // 対応者の初期値: ログイン中のユーザー（自分が対応者として動く想定）
+  const myId = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : '';
+  document.getElementById('br-assignee').value = myId || '';
   document.getElementById('br-description').value = options.description || '';
   document.getElementById('br-is-anonymous').checked = false;
+  document.getElementById('br-is-urgent').checked = false;
   document.getElementById('br-status').value = 'open';
   document.getElementById('br-edit-only').style.display = 'none';
   document.getElementById('br-delete-btn').style.display = 'none';
@@ -34495,12 +34549,13 @@ async function openBugReportModal(options = {}) {
       _bugReportEditing = r;
       document.getElementById('br-id').value = r.id;
       document.getElementById('br-title').value = r.title || '';
-      document.getElementById('br-screen-label').value = r.screen_label || '';
       document.getElementById('br-severity').value = r.severity || 'normal';
       document.getElementById('br-assignee').value = r.assignee_user_id || '';
       document.getElementById('br-description').value = r.description || '';
       document.getElementById('br-is-anonymous').checked = !!r.is_anonymous;
-      document.getElementById('br-anonymous-wrap').style.display = 'none'; // 編集時は匿名チェックを変えさせない
+      document.getElementById('br-is-urgent').checked = !!r.is_urgent;
+      // 編集時は匿名チェックを変えさせない（後付け匿名化は不可）
+      document.getElementById('br-anonymous-wrap').style.display = 'none';
       document.getElementById('br-status').value = r.status || 'open';
       document.getElementById('br-edit-only').style.display = '';
       // 削除と改善済みチェックは admin のみ
@@ -34542,22 +34597,63 @@ async function openBugReportModal(options = {}) {
   } else {
     document.getElementById('bug-report-modal-title').textContent = '🦋 バグ報告 — 新規';
     document.getElementById('br-anonymous-wrap').style.display = '';
-    // 現在のページURLを記録（送信時にbrowser_infoに含める）
   }
 
   bugReportSetTool('rect');
   openModal('modal-bug-report');
 }
 
+// 詳細欄に再現手順 / 環境 のテンプレを挿入（カーソル位置 or 末尾に）
+function bugReportInsertTemplate(kind) {
+  const ta = document.getElementById('br-description');
+  if (!ta) return;
+  const templates = {
+    steps: '\n\n【再現手順】\n1. \n2. \n3. \n\n【期待する挙動】\n\n\n【実際の挙動】\n',
+    env: '\n\n【環境】\n- ブラウザ: \n- OS: \n- 画面サイズ: \n- 再現頻度: 毎回 / ときどき / 一度だけ\n',
+  };
+  const tpl = templates[kind] || '';
+  if (!tpl) return;
+  // カーソル位置に挿入（フォーカスが当たっていれば）
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  const before = ta.value.slice(0, start);
+  const after = ta.value.slice(end);
+  ta.value = before + tpl + after;
+  // 挿入後のカーソル位置を末尾に
+  const newPos = (before + tpl).length;
+  ta.focus();
+  try { ta.setSelectionRange(newPos, newPos); } catch (_) {}
+}
+
 // ===== スクリーンショット ハンドリング =====
+// つぶやき機能と同様に resizeImageContainToBlob で長辺1600pxにリサイズしてから canvas にロード。
+// data URL のまま生 png を抱えると数MB→十数MBになるため、JPEG q=0.85 で軽量化する。
 async function bugReportHandleFile(file) {
   if (!file) return;
-  if (!/^image\//.test(file.type)) { alert('画像ファイルを選んでください'); return; }
-  const reader = new FileReader();
-  reader.onload = async () => {
-    await bugReportLoadImageFromDataUrl(reader.result);
-  };
-  reader.readAsDataURL(file);
+  if (!file.type || !file.type.startsWith('image/')) {
+    showToast('画像ファイルを選んでください', 'warn');
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showToast('20MB を超える画像は選べません', 'warn');
+    return;
+  }
+  try {
+    // 長辺 1600px / JPEG q=0.85 にリサイズ
+    const blob = (typeof resizeImageContainToBlob === 'function')
+      ? await resizeImageContainToBlob(file, 1600, 1600, 0.85)
+      : file;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+    await bugReportLoadImageFromDataUrl(dataUrl);
+  } catch (e) {
+    console.error('[bug-report] image processing failed:', e);
+    showToast('画像の処理に失敗しました', 'error');
+  }
 }
 
 function bugReportLoadImageFromDataUrl(dataUrl) {
@@ -34704,25 +34800,45 @@ function _brSetupCanvasEvents() {
 function _brSetupDropzone() {
   const dz = document.getElementById('br-screenshot-dropzone');
   if (!dz) return;
-  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.style.background = '#EEF2FF'; });
-  dz.addEventListener('dragleave', () => { dz.style.background = '#FAFAFA'; });
+  // つぶやき機能の DnD と同じパターン: dragover で preventDefault + dropEffect=copy
+  dz.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    dz.style.borderColor = '#3B82F6';
+    dz.style.background = '#EEF2FF';
+  });
+  dz.addEventListener('dragenter', (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+  });
+  dz.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && dz.contains(e.relatedTarget)) return;
+    dz.style.borderColor = '#D1D5DB';
+    dz.style.background = '#FAFAFA';
+  });
   dz.addEventListener('drop', (e) => {
     e.preventDefault();
+    dz.style.borderColor = '#D1D5DB';
     dz.style.background = '#FAFAFA';
     const file = e.dataTransfer?.files?.[0];
     if (file) bugReportHandleFile(file);
   });
-  // モーダルが開いている時の paste をキャッチ
-  document.addEventListener('paste', (e) => {
+  // つぶやき機能と同じく classList.contains('open') で判定（display:flex 判定だと openModal の実装と合わない）
+  document.addEventListener('paste', async (e) => {
     const modal = document.getElementById('modal-bug-report');
-    if (!modal || modal.style.display !== 'flex') return;
-    const items = e.clipboardData?.items || [];
-    for (const it of items) {
-      if (it.type && it.type.startsWith('image/')) {
-        const file = it.getAsFile();
-        if (file) { bugReportHandleFile(file); e.preventDefault(); break; }
+    if (!modal || !modal.classList.contains('open')) return;
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    let imageFile = null;
+    for (const item of items) {
+      if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+        imageFile = item.getAsFile();
+        if (imageFile) break;
       }
     }
+    if (!imageFile) return;
+    e.preventDefault();
+    await bugReportHandleFile(imageFile);
   });
 }
 
@@ -34753,8 +34869,8 @@ async function submitBugReport() {
   const payload = {
     title,
     description: document.getElementById('br-description').value.trim() || null,
-    screen_label: document.getElementById('br-screen-label').value.trim() || null,
     severity: document.getElementById('br-severity').value,
+    is_urgent: document.getElementById('br-is-urgent').checked,
     assignee_user_id: document.getElementById('br-assignee').value || null,
   };
   if (screenshotDataUrl !== null || !id) {
