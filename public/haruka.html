@@ -24443,11 +24443,21 @@ function _cdRoundEntryHtml(round) {
   const blocks = [];
 
   if (round.editor_comment) {
-    blocks.push(`<div class="cd-round-block">
-      <div class="cd-round-label">編集者の提出時メモ・連絡事項</div>
-      ${editorFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${editorFromToHtml}</div>` : ''}
-      <div class="cd-round-text">${esc(round.editor_comment)}</div>
-    </div>`);
+    // 動画なし提出のラウンドでは editor_comment の先頭 1 行が "[動画なし] 理由..." の
+    // プレフィックスになっている。このラベル＋理由は左カラムフッターの placeholder カード
+    // 側で既に表示されるため、ここでは重複を避けるためプレフィックス行を取り除いて
+    // 編集者の追加メモ部分だけを残す。プレフィックス以外のメモが空ならブロック自体を出さない。
+    let editorCommentDisplay = String(round.editor_comment || '');
+    if (/^\s*\[動画なし\]/.test(editorCommentDisplay)) {
+      editorCommentDisplay = editorCommentDisplay.replace(/^\s*\[動画なし\][^\n]*\n?/, '').trim();
+    }
+    if (editorCommentDisplay) {
+      blocks.push(`<div class="cd-round-block">
+        <div class="cd-round-label">編集者の提出時メモ・連絡事項</div>
+        ${editorFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${editorFromToHtml}</div>` : ''}
+        <div class="cd-round-text">${esc(editorCommentDisplay)}</div>
+      </div>`);
+    }
   }
   if (reviewerComment) {
     blocks.push(`<div class="cd-round-block">
@@ -24505,6 +24515,28 @@ function _cdBuildLiveRound(creative) {
 function _cdRenderRoundLeftFileCard(round) {
   if (!round) return '';
   const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+
+  // 動画なし提出のラウンドは creative_file_id=null かつ editor_comment が "[動画なし]" で
+  // 始まる（routes/haruka.js 側で固定プレフィックス付き保存）。
+  // 該当ラウンドはファイルカードのフォールバック検索を行わず、プレースホルダを返す。
+  // これによりラウンド比較UIの左右フッター3層構造（タグ/ファイル/底辺）の高さが揃う。
+  // 代表 髙橋指示（2026-05-09 補足・ADR 011）。
+  const editorComment = (round && typeof round.editor_comment === 'string') ? round.editor_comment : '';
+  const isFileless = !round.creative_file_id && /^\s*\[動画なし\]/.test(editorComment);
+  if (isFileless) {
+    // 理由部分だけ抽出（"[動画なし] xxx" の "xxx"）。理由が無ければ "理由未入力" 表示。
+    const m = editorComment.match(/^\s*\[動画なし\][ \t　]*([^\n]*)/);
+    const reasonRaw = (m && m[1]) ? m[1].trim() : '';
+    const reason = reasonRaw || '理由未入力';
+    const verLabel = round.version_num ? `バージョン ${round.version_num}` : '今回ラウンド';
+    return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
+      <div style="background:#FFFBEB;border:1px dashed #F59E0B;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:88px;justify-content:center">
+        <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
+        <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
+      </div>
+    </div>`;
+  }
 
   let f = null;
 
@@ -25554,6 +25586,92 @@ async function skipToClientCheck() {
   await saveCreativeDetail('クライアントチェック中');
 }
 
+// 動画ファイル未アップロード状態で工程を次に進めるための確認ダイアログ。
+// 代表 髙橋指示（2026-05-09）: クライアント直接やり取り済み / 口頭で完結 / 素材待ち 等の
+// ケースで、動画なしでも工程だけを進めたい運用がある。理由入力は任意。
+//
+// 戻り値: Promise<{ ok: boolean, reason: string }>
+//   - キャンセル / 背景クリック / Esc → { ok:false, reason:'' }
+//   - [動画なしで進む] → { ok:true, reason:<入力テキスト> }
+function showFilelessProgressDialog(target) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'haruka-confirm-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;color:var(--text,#1a6b68);border:0.5px solid var(--border,#A8EDEA);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.28);width:480px;max-width:calc(100vw - 32px);padding:22px 24px 18px';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:16px;font-weight:600;color:var(--text,#1a6b68);margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:12px';
+    const titleText = document.createElement('span');
+    titleText.textContent = '動画ファイルなしで進めますか？';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '×';
+    closeBtn.style.cssText = 'background:none;border:none;font-size:20px;line-height:1;cursor:pointer;color:var(--text-muted,#5ABDB9);padding:0 4px';
+    title.appendChild(titleText);
+    title.appendChild(closeBtn);
+
+    const msg = document.createElement('div');
+    msg.style.cssText = 'font-size:13.5px;line-height:1.65;color:var(--text,#1a6b68);margin:0 0 14px;white-space:pre-wrap';
+    msg.textContent = `動画ファイルがアップロードされていません。\nこのまま「${target}」に進みますか？`;
+
+    const reasonLabel = document.createElement('label');
+    reasonLabel.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--em-dark,#2BB8B4);letter-spacing:0.04em;margin:6px 0 6px';
+    reasonLabel.textContent = '理由（任意・例: クライアント直接やり取り済み / 口頭で完結 / 素材待ち）';
+
+    const textarea = document.createElement('textarea');
+    textarea.rows = 3;
+    textarea.placeholder = '例: クライアントへ Slack DM で直接共有済み';
+    textarea.style.cssText = 'width:100%;font-size:13px;padding:8px 10px;border:0.5px solid var(--border,#A8EDEA);border-radius:8px;resize:vertical;font-family:inherit;line-height:1.5;color:var(--text,#1a6b68);background:#fff;box-sizing:border-box';
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;padding-top:14px;margin-top:14px;border-top:0.5px solid var(--border,#A8EDEA)';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'キャンセル';
+    cancelBtn.style.cssText = 'font-size:13px;padding:8px 18px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border,#A8EDEA);background:transparent;color:var(--em-dark,#2BB8B4);font-weight:500';
+
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.textContent = '動画なしで進む';
+    okBtn.style.cssText = 'font-size:14px;padding:9px 22px;border-radius:8px;cursor:pointer;border:none;background:#f59e0b;color:#fff;font-weight:600';
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(okBtn);
+
+    box.appendChild(title);
+    box.appendChild(msg);
+    box.appendChild(reasonLabel);
+    box.appendChild(textarea);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    setTimeout(() => { try { textarea.focus(); } catch (_) {} }, 0);
+
+    let settled = false;
+    function cleanup(result) {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      try { overlay.remove(); } catch (_) {}
+      resolve(result);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape' || e.key === 'Esc') { e.preventDefault(); cleanup({ ok:false, reason:'' }); }
+    }
+    document.addEventListener('keydown', onKey, true);
+
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup({ ok:false, reason:'' }); });
+    closeBtn.addEventListener('click', () => cleanup({ ok:false, reason:'' }));
+    cancelBtn.addEventListener('click', () => cleanup({ ok:false, reason:'' }));
+    okBtn.addEventListener('click', () => cleanup({ ok:true, reason: textarea.value.trim() }));
+  });
+}
+
 async function advanceCreativeStatus() {
   if (!currentCreativeDetail) return;
   const target = document.getElementById('cd-next-step-btn')?.dataset?.target;
@@ -25590,15 +25708,24 @@ async function advanceCreativeStatus() {
     return;
   }
 
-  // 制作中→Dチェック は納品ファイルのアップロードが必須
+  // 制作中→Dチェック は通常 納品ファイルのアップロードが必須。
+  // 代表 髙橋指示（2026-05-09 補足・ADR 011）: 動画なしでも工程を進められるよう、
+  // ファイルが未アップロードのときは「動画なしで進めますか？」確認ダイアログに切替。
+  // 動画ありのときは従来通り（uploadFileData が pending なら executeUpload で送信）。
+  let _filelessExtra = null; // saveCreativeDetail に渡す追加 body
   if (currentCreativeDetail.status === '制作中（初稿提出前）') {
     const filesSection = document.getElementById('cd-files-section');
     const hasUploaded = filesSection && filesSection.style.display !== 'none';
     if (!hasUploaded && !uploadFileData) {
-      showToast('Dチェックに進むには、先に納品ファイルをアップロードしてください。', 'warn');
+      // ファイルゼロ → 動画なし確認
+      const r = await showFilelessProgressDialog(target);
+      if (!r.ok) return;
+      _filelessExtra = { fileless_progression: true, fileless_reason: r.reason };
+    } else if (!hasUploaded && uploadFileData) {
+      // 編集者がドロップ済みでまだ executeUpload してないケース → 通常アップロード送信
+      await executeUpload();
       return;
     }
-    if (!hasUploaded && uploadFileData) { await executeUpload(); return; }
   }
 
   // チェック段階の承認: ディレクターコメント必須
@@ -25622,6 +25749,26 @@ async function advanceCreativeStatus() {
       showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
       replyField?.focus();
       return;
+    }
+    // 動画なし再提出（代表 髙橋指示・2026-05-09 補足）:
+    //   修正版ファイルが未アップロード（snapshot 済みの最大ラウンド以下のファイルしか無い）状態で
+    //   再チェックへ進めようとした場合、確認ダイアログを出して fileless フラグを送る。
+    //   _cdCanUndoUpload(latest) が true → 「未提出の最新版が存在＝新ファイルアップ済み」と
+    //   等価なので、これを使って判定。pending な uploadFileData がある場合も「動画あり」扱い。
+    if (!_filelessExtra) { // 既に制作中フローで設定されている場合はスキップ
+      const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+      const latest = files[0] || null;
+      const hasNewRevisionFile = latest ? _cdCanUndoUpload(latest) : false;
+      const hasPending = !!uploadFileData;
+      if (!hasNewRevisionFile && !hasPending) {
+        const r = await showFilelessProgressDialog(target);
+        if (!r.ok) return;
+        _filelessExtra = { fileless_progression: true, fileless_reason: r.reason };
+      } else if (!hasNewRevisionFile && hasPending) {
+        // ドロップ済みでまだ送信していない → 通常アップロード送信フローに戻す
+        await executeUpload();
+        return;
+      }
     }
   }
 
@@ -25660,6 +25807,7 @@ async function advanceCreativeStatus() {
         await saveCreativeDetail(target, {
           director_user_ids: directorUserIds,
           additional_reviewer_ids: additionalReviewerIds,
+          ...(_filelessExtra || {}),
         });
       },
     });
@@ -25676,7 +25824,10 @@ async function advanceCreativeStatus() {
           : (firstArg && typeof firstArg === 'object' && Array.isArray(firstArg.producerUserIds))
             ? firstArg.producerUserIds
             : [];
-        await saveCreativeDetail(target, { producer_user_ids: producerUserIds });
+        await saveCreativeDetail(target, {
+          producer_user_ids: producerUserIds,
+          ...(_filelessExtra || {}),
+        });
       },
     });
     return;
@@ -25688,7 +25839,7 @@ async function advanceCreativeStatus() {
     message: `「${target}」に${isApprove ? '承認して進め' : '進め'}ますか？`,
     okLabel: isApprove ? '承認して進める' : '進める',
   }))) return;
-  await saveCreativeDetail(target);
+  await saveCreativeDetail(target, _filelessExtra || undefined);
 }
 
 async function backToDCheck() {

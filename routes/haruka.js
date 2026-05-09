@@ -5047,7 +5047,13 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_id,
     director_user_ids,
     producer_user_ids,
-    force_delivered_reason
+    force_delivered_reason,
+    // 動画ファイル無しで工程を進める場合のフラグ（代表 髙橋指示・2026-05-09 補足）。
+    // 例: クライアント直接やり取り済み、口頭で完結、素材待ち 等。
+    // フラグが立っていてもサーバ側はファイル必須バリデーションを一切持っていないため、
+    // 受け取って snapshot にプレフィックス付きで残すだけで OK。
+    fileless_progression,
+    fileless_reason
   } = req.body;
 
   // help_flag（SOS）の権限制御:
@@ -5172,8 +5178,42 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         .order('version', { ascending: false })
         .limit(1)
         .maybeSingle();
-      const versionNum = latestFile?.version || 1;
-      const fileId     = latestFile?.id || null;
+
+      // 動画なし提出（代表 髙橋指示・2026-05-09 補足）:
+      //   ・creative_file_id は NULL を保存する
+      //   ・version_num は「次のラウンド番号」を採番:
+      //       - 既存 snapshot が無ければ M+1（M=最新ファイル version、無ければ 0）→ 1 から開始
+      //       - 既存 snapshot がある場合: max(snapshot.version_num) + 1
+      //   ・editor_comment にプレフィックス [動画なし] を付与（理由は任意）
+      let versionNum;
+      let fileId;
+      let snapshotEditorComment = editorCommentSnapshot;
+      if (fileless_progression) {
+        // 既存 snapshot の最大 version_num を取得
+        let maxSnap = 0;
+        try {
+          const { data: snapRows } = await supabase
+            .from('creative_version_history')
+            .select('version_num')
+            .eq('creative_id', req.params.id)
+            .order('version_num', { ascending: false })
+            .limit(1);
+          maxSnap = (snapRows && snapRows[0] && Number(snapRows[0].version_num)) || 0;
+        } catch (_) { /* 列欠損環境は 0 のまま */ }
+        const M = Number(latestFile?.version) || 0;
+        const baseline = Math.max(maxSnap, M);
+        versionNum = baseline + 1;
+        fileId = null;
+        // editor_comment に [動画なし] プレフィックス（理由が空でもタグだけは残す）
+        const reason = (typeof fileless_reason === 'string' ? fileless_reason : '').trim();
+        const tag = reason ? `[動画なし] ${reason}` : '[動画なし]';
+        snapshotEditorComment = editorCommentSnapshot
+          ? `${tag}\n${editorCommentSnapshot}`
+          : tag;
+      } else {
+        versionNum = latestFile?.version || 1;
+        fileId     = latestFile?.id || null;
+      }
 
       // 同一 (creative_id, version_num, round_stage) の二重 INSERT を回避（連打対策）
       const { data: existing } = await supabase
@@ -5191,7 +5231,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
             version_num:       versionNum,
             director_comment:  beforeRow.director_comment || null,
             client_comment:    beforeRow.client_comment   || null,
-            editor_comment:    editorCommentSnapshot,
+            editor_comment:    snapshotEditorComment,
             round_stage:       trans.stage,
             creative_file_id:  fileId,
             recorded_by:       req.user?.id || null,
