@@ -106,21 +106,53 @@ superseded_by: null
 - `tabs` マップに従い、`creative_type === "動画"` の creative は「動画管理」タブへ、`"静止画"` は「静止画管理」タブへ書き込む
 - 案件単位で 1 スプレッドシート、その中に複数タブ
 
+### Schema (新規)
+
+本番DBの調査結果、`creative_versions` テーブルは**存在しなかった**（CLAUDE.md の機能地図には記載があったが実体なし / silent skip パターン）。
+Phase 0 で以下のテーブルを新設する：
+
+```sql
+CREATE TABLE creative_versions (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id   uuid NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  version_number int NOT NULL,           -- 0=初稿, 1=修正1回目, 2=修正2回目, ...
+  preview_url   text,                    -- 該当バージョンのプレビュー URL
+  editor_comment text,                   -- そのバージョンの編集者コメント
+  director_comment text,                 -- そのバージョンのディレクター修正点
+  client_comment text,                   -- そのバージョンのクライアント/あるる修正指示
+  editor_comment_updated_at timestamptz, -- 双方向同期の競合検出
+  director_comment_updated_at timestamptz,
+  client_comment_updated_at timestamptz,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(creative_id, version_number)
+);
+CREATE INDEX idx_creative_versions_creative_id ON creative_versions(creative_id);
+```
+
+#### 既存 `creatives` 列との関係
+
+- 既存 `creatives.editor_comment` / `director_comment` / `client_comment` は **v0（初稿）の値**として残し、`creative_versions` の `version_number=0` 行と二重持ちしない
+- 移行: 既存 `creatives` 行から `version_number=0` の `creative_versions` 行を seed する migration を1本含める（Phase 0 内）
+- バージョン1以降の追加は新規 INSERT
+- 既存 `creatives.*_comment_updated_at` 列は `creative_versions` 側にも同名で持つ（双方向同期の競合検出に必要）
+
 ## Consequences
 
 - ✅ シート ⇔ システムの不整合・連番ズレが構造的に解消される
 - ✅ クライアントごとの列ばらつき・命名ばらつきをマッピング上書きで吸収できる
 - ✅ 修正サイクル数の上限を運用で柔軟に変えられる（max_versions の数値変更だけ）
 - ✅ 動画 / 静止画の分離が明示的になる
+- ✅ `creative_versions` を新設することで、修正履歴の正規化（v0 / v1 / v2 ... を行として持つ）が同期設計と同時に実現できる
 - ⚠️ 双方向同期の実装が重い（競合検出 UI、シート側の変更検知、トランザクション）→ Phase 分けで段階的にリリース
-- ⚠️ `creative_versions` に不足列（URL / status / memo 等）があれば追加が必要（Phase 0 で調査中）
+- ⚠️ `creative_versions` テーブルは**本番DBに存在しない**ことが判明（CLAUDE.md の機能地図には記載があったが幻 / silent skip パターン）。Phase 0 の migration 適用が他全 Phase の前提。**最初に通す**
 - ⚠️ クライアント別 JSON は GUI ではなくテキスト編集前提（v1）。誤編集対策として JSON Schema バリデーションを入れる
 
 ## Phase 分割
 
 | Phase | 内容 | 備考 |
 |---|---|---|
-| Phase 0 | `creative_versions` 列調査 | 双方向同期に必要な列（URL / status / memo / 編集者 / updated_at）の充足確認 |
+| Phase 0 | `creative_versions` テーブル新設 + 既存 `creatives` から v0 行を seed する migration | **他全 Phase の前提**。本番DB調査の結果、`creative_versions` テーブルは存在しなかったため新設が必要 |
 | Phase 1 | マスタマッピング 1 本 + 片方向同期（→シート）+ 修正サイクル可変 + 動画/静止画タブ | まず「シートを綺麗に出せる」ところまで |
 | Phase 2 | 双方向同期（シート → システム）+ 競合 UI | from_sheet / two_way 列を実際に取り込む |
 | Phase 3 | クライアント別マッピング上書き | `clients` モーダルに JSON エディタ追加 |
