@@ -8544,8 +8544,18 @@ function renderTeamsList() {
   const renderTeamCard = (t, isBasic) => {
     const origIdx = allTeams.indexOf(t);
     const tmIds = new Set((t.team_members || []).map(tm => tm.user_id));
+    // このチームの (user_id -> leader_rank) を team_members から直接引く（メンバー側の m.leader_rank は基本チーム1つ分しか持たないため、
+    // 別チームのカードを描画するときに正しい leader バッジ順位にならない可能性があるため）
+    const lrInThisTeam = new Map((t.team_members || []).map(tm => [tm.user_id, tm.leader_rank]));
+    const lpForCard = (uid) => {
+      const r = lrInThisTeam.get(uid);
+      return r === 'leader' ? 0 : r === 'sub_leader' ? 1 : 2;
+    };
     const teamMembers = allMembers.filter(m => tmIds.has(m.id) && m.is_active !== false)
-      .sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0));
+      .sort((a,b) =>
+        (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0)
+        || (lpForCard(a.id) - lpForCard(b.id))
+        || (a.full_name||'').localeCompare(b.full_name||'','ja'));
     const memberCount = teamMembers.length;
     const memberChips = teamMembers.map(m => {
       const canEdit = canEditMember(m);
@@ -8755,6 +8765,17 @@ function renderMemberList() {
     countEl.textContent = resignedCount > 0 ? `在籍 ${activeCount}名 / 退職済 ${resignedCount}名` : `${activeCount}名`;
   }
   // ソート
+  // ロール内のリーダー優先キー: leader (0) → sub_leader (1) → 通常 (2)
+  // team_members.leader_rank は team_id ベースで enrich されるが、
+  // 1メンバーが複数チームに所属し片方だけリーダーの場合も「いずれかでリーダーなら true」扱い (leader_ranks 配列を見る)。
+  const leaderPriorityOf = (m) => {
+    const ranks = [];
+    if (m.leader_rank) ranks.push(m.leader_rank);
+    if (Array.isArray(m.leader_ranks)) m.leader_ranks.forEach(r => r && ranks.push(r));
+    if (ranks.includes('leader')) return 0;
+    if (ranks.includes('sub_leader')) return 1;
+    return 2;
+  };
   // 1) ヘッダクリックによる列ソートが指定されていればそちらを優先
   if (memberHeaderSort) {
     const dirMul = memberHeaderSort.dir === 'desc' ? -1 : 1;
@@ -8784,16 +8805,25 @@ function renderMemberList() {
         }
       }
       if (primary !== 0) return primary;
-      // 2次ソートは常に氏名昇順（安定化のため）
+      // 2次ソート: ロール列ソート時は「同ロール内でリーダー優先」をまず適用
+      // （他列ソートでは見た目への影響が小さいので、この後の氏名順より前に常時適用しても可）
+      const lp = leaderPriorityOf(a) - leaderPriorityOf(b);
+      if (lp !== 0) return lp;
+      // 3次ソートは常に氏名昇順（安定化のため）
       return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
     });
   } else if (memberSortBy === 'role') {
-    visibleMembers.sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0) || (a.full_name||'').localeCompare(b.full_name||'','ja'));
+    visibleMembers.sort((a,b) =>
+      (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0)
+      || (leaderPriorityOf(a) - leaderPriorityOf(b))
+      || (a.full_name||'').localeCompare(b.full_name||'','ja'));
   } else if (memberSortBy === 'team') {
     visibleMembers.sort((a,b) => {
       const ta = allTeams.find(t=>t.id===a.team_id)?.team_code || 'Z';
       const tb = allTeams.find(t=>t.id===b.team_id)?.team_code || 'Z';
-      return ta.localeCompare(tb) || (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0);
+      return ta.localeCompare(tb)
+        || (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0)
+        || (leaderPriorityOf(a) - leaderPriorityOf(b));
     });
   }
   if (!visibleMembers.length) {
