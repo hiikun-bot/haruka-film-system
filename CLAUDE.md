@@ -169,7 +169,8 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - すべての PR は **PR本文の `## 🆙 Verup情報` セクションを記入**して出すこと（テンプレに含まれている）
 - `main` にマージされた瞬間に `.github/workflows/version-log-from-merged-pr.yml` が走り、Supabase の `version_logs` に INSERT される。**ヘッダーの🆙アイコン → Verup情報 一覧** で誰でも見える状態になる
 - 必須フィールド: `画面 / 機能 / 修正`（空欄だと自動登録されない）
-- 任意: `変更前 / 変更後 / 便利なシーン / 種別 / 重要度 / 対象ロール / タグ / バージョン`
+- 任意: `変更前 / 変更後 / 便利なシーン / 種別 / 重要度 / 対象ロール / タグ / バージョン / 報告者`
+- **`報告者:` 欄の運用**: 指示の冒頭などに「報告者：◯◯」と**明示された時だけ**記入する。指定が無ければ空欄でよい（≠ハル本人と推測して埋めない）。値は `users.nickname` か `users.full_name`（スペース有無どちらも可）と完全一致する文字列のみ — 略称・愛称・苗字だけは silent に null になる。後追いで紐付けたい場合は Verup情報モーダルの「編集」から admin が手動でセット可能
 - **掲載したくない PR**（refactor / 内部整理 / chore / dep-bump 等）はセクションごと丸ごと削除するか、`skip-verup` ラベルを付与する
 - **書き方の指針**: ユーザー目線で書く。「リファクタしました」ではなく「クリック1回で〇〇できるようになった」のように、何が便利になったかを書く
 - サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker 等）も例外なく Verup情報セクションを記入すること
