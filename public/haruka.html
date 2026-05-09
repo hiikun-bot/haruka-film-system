@@ -3831,6 +3831,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
           <button type="button" class="tm-filter-role" data-value="" onclick="setTeamMemberFilter('role','')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">全員</button>
           <button type="button" class="tm-filter-role" data-value="admin" onclick="setTeamMemberFilter('role','admin')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">管理者</button>
+          <button type="button" class="tm-filter-role" data-value="secretary" onclick="setTeamMemberFilter('role','secretary')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">秘書</button>
           <button type="button" class="tm-filter-role" data-value="producer" onclick="setTeamMemberFilter('role','producer')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">P</button>
           <button type="button" class="tm-filter-role" data-value="producer_director" onclick="setTeamMemberFilter('role','producer_director')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">PD</button>
           <button type="button" class="tm-filter-role" data-value="director" onclick="setTeamMemberFilter('role','director')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">D</button>
@@ -11002,8 +11003,10 @@ function openTeamModal(team) {
     b.style.color = isAll ? 'var(--em-dark)' : 'var(--text-muted)';
     b.style.borderColor = isAll ? 'var(--em-dark)' : 'var(--border)';
   });
-  const existingMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
-  buildTeamMemberList(existingMemberIds);
+  // 選択状態は _tmSelectedIds (Set) を単一の真実とする。
+  // フィルター切替・検索・再描画でチェックが消えないよう DOM ではなく state で保持する。
+  _tmSelectedIds = new Set((team?.team_members || []).map(tm => tm.user_id));
+  buildTeamMemberList();
 
   // 削除ボタン: 編集モードかつ team.delete 権限保有時のみ表示
   const tDelBtn = document.getElementById('t-delete-btn');
@@ -11031,8 +11034,10 @@ async function deleteCurrentTeam() {
 
 // フィルター状態
 let _tmFilterRole = '', _tmFilterRank = '';
+// 選択中メンバーID（Set）— フィルター/検索/再描画で消えないよう state で保持
+let _tmSelectedIds = new Set();
 
-function buildTeamMemberList(memberIdSet) {
+function buildTeamMemberList() {
   const search = document.getElementById('t-member-search').value.toLowerCase();
   const container = document.getElementById('t-member-list');
   const active = allMembers.filter(m => m.is_active !== false);
@@ -11047,10 +11052,10 @@ function buildTeamMemberList(memberIdSet) {
     container.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:13px">該当するメンバーがいません</div>';
   } else {
     container.innerHTML = filtered.map((m, i) => {
-      const inTeam = memberIdSet instanceof Set ? memberIdSet.has(m.id) : false;
+      const inTeam = _tmSelectedIds.has(m.id);
       const isLast = i === filtered.length - 1;
       return `<label style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;${isLast?'':'border-bottom:1px solid var(--border);'}user-select:none">
-        <input type="checkbox" class="t-member-check" value="${m.id}" ${inTeam ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0" onchange="updateTeamMemberCount()">
+        <input type="checkbox" class="t-member-check" value="${m.id}" ${inTeam ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0" onchange="onTeamMemberCheckToggle(this)">
         ${avatarHtml(m, 28)}
         <span style="font-size:13px;flex:1">${m.full_name}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">（${m.nickname}）</span>` : ''}</span>
         <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:4px">${ROLE_SHORT[m.role] || m.role}</span>
@@ -11061,10 +11066,17 @@ function buildTeamMemberList(memberIdSet) {
   updateTeamMemberCount();
 }
 
+// チェックボックス操作で state(_tmSelectedIds) を更新する。DOM の checked だけに頼らない。
+function onTeamMemberCheckToggle(input) {
+  if (!input || !input.value) return;
+  if (input.checked) _tmSelectedIds.add(input.value);
+  else _tmSelectedIds.delete(input.value);
+  updateTeamMemberCount();
+}
+
 function filterTeamMembers() {
-  // 現在チェック済みIDを保持して再描画
-  const checkedIds = new Set(Array.from(document.querySelectorAll('.t-member-check:checked')).map(c => c.value));
-  buildTeamMemberList(checkedIds);
+  // _tmSelectedIds は state で保持されているので何もせず再描画するだけで OK
+  buildTeamMemberList();
 }
 
 function setTeamMemberFilter(type, value) {
@@ -11087,19 +11099,37 @@ function setTeamMemberFilter(type, value) {
 }
 
 function updateTeamMemberCount() {
-  const checks = document.querySelectorAll('.t-member-check');
-  const checked = document.querySelectorAll('.t-member-check:checked');
+  // 表示中（フィルター後）の checkbox 数と、その中で checked のものを数える。
+  // 選択数は _tmSelectedIds（全体のうち選ばれている人数）も併記したいが、
+  // UI 互換のため 既存表示「N 名選択中 / 全 M 名」は表示中ベースのまま維持。
+  // ただし「すべて選択」ボタンの判定も DOM ベースで OK（state は onTeamMemberCheckToggle と toggleAllTeamMembers で常に同期）。
+  const visibleChecks = document.querySelectorAll('.t-member-check');
+  const visibleCheckedCount = document.querySelectorAll('.t-member-check:checked').length;
+  const totalSelected = _tmSelectedIds.size;
   const countEl = document.getElementById('t-member-count');
   const toggleBtn = document.getElementById('t-member-toggle-all');
-  if (countEl) countEl.textContent = `${checked.length} 名選択中 / 全 ${checks.length} 名`;
-  if (toggleBtn) toggleBtn.textContent = checked.length === checks.length ? 'すべて解除' : 'すべて選択';
+  if (countEl) {
+    // フィルター中で隠れている選択を分かるよう、合計選択数も表示する。
+    const hiddenSelected = totalSelected - visibleCheckedCount;
+    const suffix = (hiddenSelected > 0) ? `<span style="margin-left:6px;color:var(--text-muted)">（うち非表示 ${hiddenSelected} 名）</span>` : '';
+    countEl.innerHTML = `${totalSelected} 名選択中 / 全 ${visibleChecks.length} 名${suffix}`;
+  }
+  if (toggleBtn) toggleBtn.textContent = (visibleChecks.length > 0 && visibleCheckedCount === visibleChecks.length) ? 'すべて解除' : 'すべて選択';
 }
 
 function toggleAllTeamMembers() {
+  // 現在表示中（フィルター後）の checkbox に対してまとめて on/off。
+  // state(_tmSelectedIds) も同期させる。
   const checks = document.querySelectorAll('.t-member-check');
-  const checked = document.querySelectorAll('.t-member-check:checked');
-  const toCheck = checked.length < checks.length;
-  checks.forEach(c => c.checked = toCheck);
+  if (!checks.length) return;
+  const checkedCount = document.querySelectorAll('.t-member-check:checked').length;
+  const toCheck = checkedCount < checks.length;
+  checks.forEach(c => {
+    c.checked = toCheck;
+    if (!c.value) return;
+    if (toCheck) _tmSelectedIds.add(c.value);
+    else _tmSelectedIds.delete(c.value);
+  });
   updateTeamMemberCount();
 }
 
@@ -11110,7 +11140,9 @@ async function saveTeam() {
   const team_type = document.getElementById('t-type').value;
   const director_id = document.getElementById('t-director').value || null;
   const producer_id = document.getElementById('t-producer').value || null;
-  const member_ids = Array.from(document.querySelectorAll('.t-member-check:checked')).map(c => c.value);
+  // 選択中メンバーは state(_tmSelectedIds) を真とする。
+  // フィルターで非表示の checkbox は DOM に存在しないため、querySelectorAll('.t-member-check:checked') では拾えない。
+  const member_ids = Array.from(_tmSelectedIds);
   if (!team_name) { showToast('チーム名は必須です', 'warn'); return; }
 
   if (id) {
