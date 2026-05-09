@@ -11156,11 +11156,24 @@ async function showCreativeMismatchDialog(info) {
 
 async function createCreative() {
   const project_id = document.getElementById('c-project-id').value;
-  const creative_type = document.getElementById('c-creative-type').value;
-  const cat = (typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(creative_type) : null;
+  // 実効カテゴリは案件カテゴリ駆動（getEffectiveCreativeCategory）。
+  // - 動画案件: kind select の値を見て video / design を分岐
+  // - 非動画案件 (LP/HP/LINE/その他): 案件カテゴリで決まる
+  const cat = (typeof getEffectiveCreativeCategory === 'function')
+    ? getEffectiveCreativeCategory()
+    : ((typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(document.getElementById('c-creative-type').value) : null);
   const isLine = (cat === 'line');
   const isLpOrHp = (cat === 'lp' || cat === 'hp');
   const isVideoOrDesign = (cat === 'video' || cat === 'design');
+  // creative_type の決定:
+  // - 動画案件: kind select の値をそのまま使う (video_short / video_long / design_*)
+  // - LP/HP/LINE 案件: 案件カテゴリ code (lp/hp/line) を creative_type に転写
+  //   （後方互換のため、また creatives 一覧での見た目バッジ用に）
+  // - その他: kind select の値（既定 video_short）を送る
+  let creative_type = document.getElementById('c-creative-type').value;
+  if (cat === 'lp')   creative_type = 'lp';
+  if (cat === 'hp')   creative_type = 'hp';
+  if (cat === 'line') creative_type = 'line';
 
   // ファイル名: LINE はタイトルをそのまま採用 / それ以外はファイル名フィールド
   let file_name = '';
@@ -20228,10 +20241,9 @@ let _autoFileNameDone = false;
 // 全フィールドが揃ったら一度だけ自動生成
 async function tryAutoGenerateFileName() {
   if (_autoFileNameDone) return;
-  const type = document.getElementById('c-creative-type')?.value || '';
-  const cat = (typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(type) : null;
-  // LP/HP/LINE は別系統のファイル名（商材/訴求軸を要求しない）。ここでは何もしない。
-  if (cat === 'lp' || cat === 'hp' || cat === 'line') return;
+  const cat = (typeof getEffectiveCreativeCategory === 'function') ? getEffectiveCreativeCategory() : null;
+  // LP/HP/LINE/その他は別系統のファイル名（商材/訴求軸を要求しない）。ここでは何もしない。
+  if (cat === 'lp' || cat === 'hp' || cat === 'line' || cat === 'other') return;
   const projectId    = document.getElementById('c-project-id')?.value;
   const appealTypeId = document.getElementById('c-appeal-type')?.value;
   const productId    = document.getElementById('c-product-id')?.value;
@@ -20252,9 +20264,8 @@ async function autoGenerateFileName() {
 
 // ファイル名自動生成
 async function generateFileName() {
-  // LP/HP は専用ロジックへ分岐
-  const type = document.getElementById('c-creative-type')?.value || '';
-  const cat = (typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(type) : null;
+  // LP/HP は専用ロジックへ分岐（実効カテゴリは案件カテゴリ駆動）
+  const cat = (typeof getEffectiveCreativeCategory === 'function') ? getEffectiveCreativeCategory() : null;
   if (cat === 'lp' || cat === 'hp') {
     generateLpHpFilename(cat);
     return;
@@ -20355,23 +20366,63 @@ function updateCreativeStep1NextBtn() {
 }
 
 // 種別文字列 → カテゴリ判定
+// 注: PR #443 で追加された 'hp' / 'lp' / 'line' は撤回された（設計上、案件カテゴリ
+// (creative_categories) 側で扱うため重複だった）。
+// 既存DBレコードの後方互換のため、レガシーな lp/hp/line 値の判定だけは残しておく。
 function getCreativeTypeCategory(type) {
   const t = String(type || '');
   if (t.startsWith('video')) return 'video';
   if (t.startsWith('design')) return 'design';
+  // 後方互換: 過去に登録されたレガシー値があればそのまま判定する（編集モーダル等で参照）
   if (t === 'lp' || t.startsWith('lp_')) return 'lp';
   if (t === 'hp' || t.startsWith('hp_')) return 'hp';
   if (t === 'line' || t.startsWith('line_')) return 'line';
   return 'other';
 }
 
+// 追加モーダルで使う「実効カテゴリ」を解決する。
+// 案件カテゴリ (creative_categories.code) を最優先し、動画案件のときだけ
+// クリエイティブ種別 select の値を反映する。
+//   - 案件カテゴリが 'lp'/'hp'/'line' → 'lp'/'hp'/'line'
+//   - 案件カテゴリが 'image'         → 'design'
+//   - 案件カテゴリが 'other'         → 'other'
+//   - 案件カテゴリが 'video' / 未解決 → kind select の値で 'video'/'design' を判定
+function getEffectiveCreativeCategory() {
+  const projectId = document.getElementById('c-project-id')?.value || '';
+  const project = projectId
+    ? (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId)
+    : null;
+  const projCat = project ? (typeof getProjectCategory === 'function' ? getProjectCategory(project) : null) : null;
+  const code = projCat?.code || '';
+  if (code === 'lp') return 'lp';
+  if (code === 'hp') return 'hp';
+  if (code === 'line') return 'line';
+  if (code === 'image') return 'design';
+  if (code === 'other') return 'other';
+  // 'video' or 未解決 → kind select の値で判定
+  const kind = document.getElementById('c-creative-type')?.value || 'video_short';
+  return getCreativeTypeCategory(kind);
+}
+
+// クリエイティブ種別 select を表示するか（=動画系案件のときだけ表示）。
+// LP/HP/LINE/その他案件では「ショート動画/ロング動画」等の細分類は意味を持たないため非表示。
+function isCreativeKindSelectorVisible() {
+  const projectId = document.getElementById('c-project-id')?.value || '';
+  if (!projectId) return true; // 案件未選択なら一旦表示しておく
+  const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+  const cat = project ? (typeof getProjectCategory === 'function' ? getProjectCategory(project) : null) : null;
+  const code = cat?.code || 'video';
+  return code === 'video';
+}
+
 // 種別ごとのフィールド表示制御
-function applyCreativeTypeVisibility(type) {
-  const cat = getCreativeTypeCategory(type);
+// 引数は使わない（後方互換のため受け取りだけ残す）。実効カテゴリは案件カテゴリ＋kind から都度解決する。
+function applyCreativeTypeVisibility(_typeArg) {
+  const cat = getEffectiveCreativeCategory();
 
   // 種別ごとの表示テーブル
   // video / design  : product, media_fmt, size, appeal, filename, talent
-  // lp / hp         : filename(簡易) のみ。商材/媒体/FMT/サイズ/訴求軸/talent は非表示
+  // lp / hp / other : filename(簡易) のみ。商材/媒体/FMT/サイズ/訴求軸/talent は非表示
   // line            : title のみ。商材/媒体/FMT/サイズ/訴求軸/filename/talent は非表示
   const isVideoOrDesign = (cat === 'video' || cat === 'design');
   const isLpOrHp = (cat === 'lp' || cat === 'hp');
@@ -20382,6 +20433,9 @@ function applyCreativeTypeVisibility(type) {
       el.style.display = show ? '' : 'none';
     });
   };
+
+  // クリエイティブ種別 select 自体: 動画案件のみ表示。LP/HP/LINE/その他は非表示
+  setShow('#tab-single [data-creative-field="creative_type"]', isCreativeKindSelectorVisible());
 
   setShow('#tab-single [data-creative-field="product"]', isVideoOrDesign);
   setShow('#tab-single [data-creative-field="media_fmt"]', isVideoOrDesign);
