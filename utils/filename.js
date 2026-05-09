@@ -26,17 +26,30 @@
  * @param {object} template  filename_templates の 1 行 ({ separator, tokens })
  * @param {object} tokenValues  system トークンの実値マップ + flag 値（'__flag__<source>': boolean）
  * @param {object} overrides  custom / flag トークンの上書き (projects.filename_token_overrides)
+ * @param {object} [opts]  追加オプション
+ * @param {number} [opts.serialDigits]  ADR 008 Phase 4: serial トークンのゼロパディング桁数 (1〜10)
+ *   呼び出し側で tokenValues.serial を「桁数調整済み文字列」で渡している場合は無視可。
+ *   serial の値が数字のみで構成されていて、かつ opts.serialDigits が指定されたときだけ
+ *   ここで再 padStart する。
  * @returns {string} 組み立て済みファイル名（空欄は詰める）
  */
-function renderFilename(template, tokenValues = {}, overrides = {}) {
+function renderFilename(template, tokenValues = {}, overrides = {}, opts = {}) {
   if (!template || !Array.isArray(template.tokens)) return '';
   const sep = typeof template.separator === 'string' ? template.separator : '_';
   const safeOverrides = overrides && typeof overrides === 'object' ? overrides : {};
+  const serialDigits = Number.isInteger(opts.serialDigits) && opts.serialDigits >= 1 && opts.serialDigits <= 10
+    ? opts.serialDigits
+    : null;
   const parts = template.tokens.map((tok) => {
     if (!tok || typeof tok !== 'object' || !tok.key) return '';
     if (tok.kind === 'system') {
       const v = tokenValues[tok.key];
-      return v != null ? String(v).trim() : '';
+      if (v == null) return '';
+      const s = String(v).trim();
+      if (tok.key === 'serial' && serialDigits != null && /^\d+$/.test(s)) {
+        return s.padStart(serialDigits, '0');
+      }
+      return s;
     }
     if (tok.kind === 'custom') {
       const ov = safeOverrides[tok.key];
