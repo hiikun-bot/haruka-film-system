@@ -11457,17 +11457,40 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     console.warn('[creative_status_transitions] fetch block failed:', e?.message || e);
   }
 
-  // round_stage → 引き継ぎ遷移定義
-  const HANDOFF_BY_STAGE = {
+  // round_stage → 引き継ぎ遷移定義（承認系）+ 修正依頼系
+  // (PR #(revision-request-handoff) / 髙橋指示 2026-05-09):
+  //   従来は承認系（Dチェック→Pチェック など）だけを表示していたが、
+  //   修正依頼系（Dチェック→Dチェック後修正 など）も同じ仕組みでラウンド比較に紐付ける。
+  //   修正依頼系の合流先は元の round_stage と同じ（差し戻しなので next stage は無い）が、
+  //   handoff key としては別スロット ('d_to_d_revise' / 'p_to_p_revise' / 'cl_to_cl_revise') に分ける。
+  const HANDOFF_BY_STAGE_APPROVE = {
     'd_check':  { from: 'Dチェック',                 to: 'Pチェック',                  next: 'd_to_p',          commentField: 'director_comment_at_change' },
     'p_check':  { from: 'Pチェック',                 to: 'クライアントチェック中',     next: 'p_to_cl',         commentField: 'director_comment_at_change' },
     'cl_check': { from: 'クライアントチェック中',     to: '納品',                       next: 'cl_to_delivered', commentField: 'client_comment_at_change'   },
   };
-  // transition.to_status から逆算して、紐付け対象の round_stage を求める
+  const HANDOFF_BY_STAGE_REVISE = {
+    'd_check':  { from: 'Dチェック',                 to: 'Dチェック後修正',            next: 'd_to_d_revise',   commentField: 'director_comment_at_change' },
+    'p_check':  { from: 'Pチェック',                 to: 'Pチェック後修正',            next: 'p_to_p_revise',   commentField: 'director_comment_at_change' },
+    'cl_check': { from: 'クライアントチェック中',     to: 'クライアントチェック後修正', next: 'cl_to_cl_revise', commentField: 'client_comment_at_change'   },
+  };
+  // transition.to_status から逆算して、紐付け対象の round_stage と種別を求める
   const TRANSITION_TO_FROM_STAGE = {
-    'Pチェック':              'd_check',
-    'クライアントチェック中': 'p_check',
-    '納品':                   'cl_check',
+    // 承認系
+    'Pチェック':                   'd_check',
+    'クライアントチェック中':      'p_check',
+    '納品':                        'cl_check',
+    // 修正依頼系
+    'Dチェック後修正':             'd_check',
+    'Pチェック後修正':             'p_check',
+    'クライアントチェック後修正':  'cl_check',
+  };
+  const TRANSITION_KIND = {
+    'Pチェック':                   'approve',
+    'クライアントチェック中':      'approve',
+    '納品':                        'approve',
+    'Dチェック後修正':             'revise',
+    'Pチェック後修正':             'revise',
+    'クライアントチェック後修正':  'revise',
   };
 
   // 先に rounds 出力配列を作る（handoff_to_next は後段で埋める）
@@ -11496,7 +11519,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   for (const tr of transitions) {
     const fromStage = TRANSITION_TO_FROM_STAGE[tr.to_status];
     if (!fromStage) continue;
-    const def = HANDOFF_BY_STAGE[fromStage];
+    const kind = TRANSITION_KIND[tr.to_status];
+    if (!kind) continue;
+    const def = (kind === 'revise' ? HANDOFF_BY_STAGE_REVISE : HANDOFF_BY_STAGE_APPROVE)[fromStage];
     if (!def) continue;
     if (tr.from_status !== def.from || tr.to_status !== def.to) continue; // 異常 from→to を弾く
     const trTime = tr.changed_at ? Date.parse(tr.changed_at) : NaN;
@@ -11513,12 +11538,16 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     }
     if (!target) continue; // snapshot 無し → 後段の「孤児 handoff」処理で仮想ラウンド化
     // 同 round に複数 transition が当たる場合は最後（最新）の判断で上書き。
+    // 注: 承認 transition と修正依頼 transition が同じ round に紐づく事は通常ない
+    //   （承認したら次 stage に進むので、その snapshot 後に発生する transition は別 round 用）。
+    //   よって kind の混在による上書き競合は実用上発生しない。
     usedTransitionIds.add(tr.id);
     const comment = tr[def.commentField] ?? null;
     target.handoff_to_next = {
-      stage:       def.next, // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered'
+      stage:       def.next, // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered' | 'd_to_d_revise' | 'p_to_p_revise' | 'cl_to_cl_revise'
       from_status: tr.from_status,
       to_status:   tr.to_status,
+      kind, // 'approve' | 'revise' — フロントで色/アイコン/ラベル切替に使う
       comment,
       changed_at:  tr.changed_at,
       changed_by:  tr.changed_by,
@@ -11535,9 +11564,14 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   //   version_num は version_at_change（その時点の最新ファイル version）を採用し、
   //   ソート (version_num asc, created_at asc) で正しい位置に並ぶようにする。
   const HANDOFF_TRANSITIONS_TO_STAGE = {
-    'Dチェック→Pチェック':                 { stage: 'd_to_p',          synthetic_stage: 'd_check_handoff',  commentField: 'director_comment_at_change' },
-    'Pチェック→クライアントチェック中':     { stage: 'p_to_cl',         synthetic_stage: 'p_check_handoff',  commentField: 'director_comment_at_change' },
-    'クライアントチェック中→納品':          { stage: 'cl_to_delivered', synthetic_stage: 'cl_check_handoff', commentField: 'client_comment_at_change'   },
+    // 承認系
+    'Dチェック→Pチェック':                          { stage: 'd_to_p',          kind: 'approve', synthetic_stage: 'd_check_handoff',  commentField: 'director_comment_at_change' },
+    'Pチェック→クライアントチェック中':              { stage: 'p_to_cl',         kind: 'approve', synthetic_stage: 'p_check_handoff',  commentField: 'director_comment_at_change' },
+    'クライアントチェック中→納品':                   { stage: 'cl_to_delivered', kind: 'approve', synthetic_stage: 'cl_check_handoff', commentField: 'client_comment_at_change'   },
+    // 修正依頼系（PR #(revision-request-handoff)）: snapshot が無い直行ケースでも修正依頼コメントを表示
+    'Dチェック→Dチェック後修正':                    { stage: 'd_to_d_revise',   kind: 'revise',  synthetic_stage: 'd_check_handoff',  commentField: 'director_comment_at_change' },
+    'Pチェック→Pチェック後修正':                    { stage: 'p_to_p_revise',   kind: 'revise',  synthetic_stage: 'p_check_handoff',  commentField: 'director_comment_at_change' },
+    'クライアントチェック中→クライアントチェック後修正': { stage: 'cl_to_cl_revise', kind: 'revise',  synthetic_stage: 'cl_check_handoff', commentField: 'client_comment_at_change'   },
   };
   for (const t of transitions) {
     if (usedTransitionIds.has(t.id)) continue;
@@ -11563,6 +11597,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         stage:       def.stage,
         from_status: t.from_status,
         to_status:   t.to_status,
+        kind:        def.kind,
         comment,
         changed_at:  t.changed_at,
         changed_by:  t.changed_by,

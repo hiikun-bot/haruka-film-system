@@ -25148,10 +25148,20 @@ function _cdRoundEntryHtml(round) {
   //   left カラム本文の冒頭に出ることで「過去ラウンドで何が承認されて次工程に進んだか」を一目で確認できる。
   const handoff = round.handoff_to_next;
   if (handoff && handoff.comment && String(handoff.comment).trim()) {
+    // 承認系 + 修正依頼系（PR #(revision-request-handoff) / 髙橋指示 2026-05-09）
+    //   修正依頼系は元の担当者(編集者)に差し戻されるので To = users.editor。
+    //   D→D後修正: ディレクターが編集者に差し戻し
+    //   P→P後修正: プロデューサーが編集者に差し戻し
+    //   CL→CL後修正: クライアントの指摘を編集者へ（From はクライアントなので解決不能 → fallback ラベル）
     const HANDOFF_FROMTO = {
+      // 承認系
       'd_to_p':          { from: users.director, to: users.producer, fromFb: 'ディレクター',   toFb: 'プロデューサー' },
       'p_to_cl':         { from: users.producer, to: null,           fromFb: 'プロデューサー', toFb: 'クライアント'   },
       'cl_to_delivered': { from: null,           to: users.editor,   fromFb: 'クライアント',   toFb: '担当者'         },
+      // 修正依頼系
+      'd_to_d_revise':   { from: users.director, to: users.editor,   fromFb: 'ディレクター',   toFb: '担当者'         },
+      'p_to_p_revise':   { from: users.producer, to: users.editor,   fromFb: 'プロデューサー', toFb: '担当者'         },
+      'cl_to_cl_revise': { from: null,           to: users.editor,   fromFb: 'クライアント',   toFb: '担当者'         },
     };
     const ft = HANDOFF_FROMTO[handoff.stage] || null;
     const handoffFromToHtml = ft
@@ -25159,11 +25169,15 @@ function _cdRoundEntryHtml(round) {
       : '';
     const labelFrom = handoff.from_status || '';
     const labelTo   = handoff.to_status   || '';
+    const isRevise = handoff.kind === 'revise';
     const handoffLabel = (labelFrom && labelTo)
-      ? `${labelFrom} → ${labelTo} 承認・引き継ぎコメント`
-      : '次工程への承認・引き継ぎコメント';
-    const handoffBlockHtml = `<div class="cd-round-block cd-round-handoff" style="border-left:3px solid var(--em-dark);padding-left:10px;background:#F0FDF4">
-      <div class="cd-round-label" style="color:var(--em-dark)">✅ ${esc(handoffLabel)}</div>
+      ? `${labelFrom} → ${labelTo} ${isRevise ? '修正依頼コメント' : '承認・引き継ぎコメント'}`
+      : (isRevise ? '修正依頼コメント' : '次工程への承認・引き継ぎコメント');
+    const icon        = isRevise ? '🔄' : '✅';
+    const accentColor = isRevise ? '#F59E0B' : 'var(--em-dark)';
+    const bgColor     = isRevise ? '#FFFBEB' : '#F0FDF4';
+    const handoffBlockHtml = `<div class="cd-round-block cd-round-handoff" style="border-left:3px solid ${accentColor};padding-left:10px;background:${bgColor}">
+      <div class="cd-round-label" style="color:${accentColor}">${icon} ${esc(handoffLabel)}</div>
       ${handoffFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${handoffFromToHtml}</div>` : ''}
       <div class="cd-round-text">${esc(String(handoff.comment))}</div>
     </div>`;
