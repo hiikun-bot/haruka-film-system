@@ -5134,9 +5134,24 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (talent_flag !== undefined) updateData.talent_flag = talent_flag;
   if (note !== undefined) updateData.note = note;
   if (revision_count !== undefined) updateData.revision_count = revision_count;
-  if (director_comment !== undefined) updateData.director_comment = director_comment;
-  if (client_comment !== undefined) updateData.client_comment = client_comment;
-  if (editor_comment !== undefined) updateData.editor_comment = editor_comment;
+  // ADR 011 補足 (2026-05-09 v2): コメント書き込みごとに _updated_at を同時セット。
+  //   ・本体 creatives.{director,client,editor}_comment_updated_at を now() で更新する。
+  //   ・snapshot 確定時に beforeRow.director_comment_updated_at をコピー保存することで、
+  //     過去ラウンドの指摘時刻と編集者の提出時刻を別々に表示できる。
+  //   ・列が migration 未適用の本番に対しては後段で fallback（schema-sync 失敗時の安全網）。
+  const _commentNowIso = new Date().toISOString();
+  if (director_comment !== undefined) {
+    updateData.director_comment = director_comment;
+    updateData.director_comment_updated_at = _commentNowIso;
+  }
+  if (client_comment !== undefined) {
+    updateData.client_comment = client_comment;
+    updateData.client_comment_updated_at = _commentNowIso;
+  }
+  if (editor_comment !== undefined) {
+    updateData.editor_comment = editor_comment;
+    updateData.editor_comment_updated_at = _commentNowIso;
+  }
   if (creative_type !== undefined) updateData.creative_type = creative_type;
   if (appeal_type_id !== undefined) updateData.appeal_type_id = appeal_type_id || null;
   if (product_id !== undefined) updateData.product_id = product_id || null;
@@ -5166,24 +5181,56 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 
   // ステータス変更を検知するため、更新前の値を取得
   // ADR 011: ラウンドsnapshot確定のため、コメント3種も同時に取得する。
+  // ADR 011 補足 (2026-05-09 v2): director/client/editor_comment_updated_at も取得して
+  //   snapshot 行の director_commented_at / client_commented_at へコピーする。
+  //   これにより「過去にディレクターが指摘を書いた時刻」と「今回編集者が再提出した時刻」を
+  //   別々に保存・表示できる（PR #446 v1 では beforeRow.updated_at を使っていたが、
+  //   ステータス遷移時刻 ≠ 指摘書き込み時刻 のためズレることがあった）。
   let beforeStatus = null;
   let beforeRow = null;
   if (updateData.status !== undefined) {
-    const { data: before } = await supabase
+    let beforeQuery = await supabase
       .from('creatives')
-      .select('status, director_comment, editor_comment, client_comment')
+      .select('status, director_comment, editor_comment, client_comment, updated_at, director_comment_updated_at, client_comment_updated_at, editor_comment_updated_at')
       .eq('id', req.params.id)
       .maybeSingle();
+    if (beforeQuery.error) {
+      const msg = beforeQuery.error.message || '';
+      if (/comment_updated_at/.test(msg) || /column .+ does not exist/.test(msg)) {
+        // 列欠損環境フォールバック: 旧スキーマで再取得
+        beforeQuery = await supabase
+          .from('creatives')
+          .select('status, director_comment, editor_comment, client_comment, updated_at')
+          .eq('id', req.params.id)
+          .maybeSingle();
+      }
+    }
+    const before = beforeQuery.data;
     beforeStatus = before?.status || null;
     beforeRow = before || null;
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('creatives')
     .update(updateData)
     .eq('id', req.params.id)
     .select()
     .single();
+  if (error) {
+    // 新列 (director/client/editor _comment_updated_at) が schema-sync 未適用の環境用フォールバック。
+    // 列欠損が原因なら _updated_at 系を抜いて再 UPDATE → 本体更新は成功させる。
+    const msg = error.message || '';
+    const isMissingNewCol = /comment_updated_at/.test(msg);
+    if (isMissingNewCol) {
+      const { director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e, ...legacyUpdate } = updateData;
+      ({ data, error } = await supabase
+        .from('creatives')
+        .update(legacyUpdate)
+        .eq('id', req.params.id)
+        .select()
+        .single());
+    }
+  }
   if (error) return res.status(500).json({ error: error.message });
 
   // ADR 011: ラウンド snapshot 自動 INSERT
@@ -5262,21 +5309,52 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         .eq('round_stage', trans.stage)
         .limit(1);
       if (!existing || existing.length === 0) {
-        const { error: histErr } = await supabase
+        // タイムスタンプ分離 (PR #446 v2 / ADR 011 補足 2026-05-09):
+        //   ・editor_submitted_at   = いま再提出ボタンが押された時刻（= snapshot 確定時刻）
+        //   ・director_commented_at = beforeRow.director_comment_updated_at
+        //                             （ディレクターが指摘コメントを書いた過去の時刻）
+        //   ・client_commented_at   = beforeRow.client_comment_updated_at
+        //                             （クライアントが指摘コメントを書いた過去の時刻）
+        //   v1 では beforeRow.updated_at（ステータス遷移時刻）を使っていたが、
+        //   それだと editor 再提出と director 指摘が同時刻に見える事故が出ていた
+        //   （ユーザー報告: V3 提出ラウンドで両方 17:44）。
+        //   v2 ではコメント書き込み時刻を creatives 本体に持たせ、それをコピーする。
+        //   _updated_at 列が NULL（=migration 直後の既存データ）の場合のみ
+        //   beforeRow.updated_at にフォールバックする。
+        const nowIso = new Date().toISOString();
+        const directorCommentedAt = beforeRow?.director_comment_updated_at || beforeRow?.updated_at || null;
+        const clientCommentedAt   = beforeRow?.client_comment_updated_at   || beforeRow?.updated_at || null;
+        const insertPayload = {
+          creative_id:           req.params.id,
+          version_num:           versionNum,
+          director_comment:      beforeRow.director_comment || null,
+          client_comment:        beforeRow.client_comment   || null,
+          editor_comment:        snapshotEditorComment,
+          round_stage:           trans.stage,
+          creative_file_id:      fileId,
+          recorded_by:           req.user?.id || null,
+          editor_submitted_at:   nowIso,
+          director_commented_at: directorCommentedAt,
+          client_commented_at:   clientCommentedAt,
+        };
+        let { error: histErr } = await supabase
           .from('creative_version_history')
-          .insert({
-            creative_id:       req.params.id,
-            version_num:       versionNum,
-            director_comment:  beforeRow.director_comment || null,
-            client_comment:    beforeRow.client_comment   || null,
-            editor_comment:    snapshotEditorComment,
-            round_stage:       trans.stage,
-            creative_file_id:  fileId,
-            recorded_by:       req.user?.id || null,
-          });
+          .insert(insertPayload);
         if (histErr) {
-          // schema-sync 未適用環境でも本処理は止めない（列欠損は warn のみ）
-          console.warn('[creative_version_history] snapshot insert failed:', histErr.message);
+          // 新列 (editor_submitted_at / director_commented_at / client_commented_at) が
+          // schema-sync 未適用の環境でも本処理は止めない。新列を抜いて再試行 → それでも
+          // ダメなら warn のみ。
+          const msg = histErr.message || '';
+          const isMissingNewCol = /editor_submitted_at|director_commented_at|client_commented_at/.test(msg);
+          if (isMissingNewCol) {
+            const { editor_submitted_at: _e, director_commented_at: _d, client_commented_at: _cc, ...legacy } = insertPayload;
+            const retry = await supabase.from('creative_version_history').insert(legacy);
+            if (retry.error) {
+              console.warn('[creative_version_history] snapshot insert failed (after fallback):', retry.error.message);
+            }
+          } else {
+            console.warn('[creative_version_history] snapshot insert failed:', histErr.message);
+          }
         }
       }
     }
