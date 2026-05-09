@@ -529,6 +529,96 @@ tr.row-help td{background:#FFFBF2}
 }
 .cap-toggle.is-active .cap-count{ background:rgba(255,255,255,0.55); }
 
+/* クリエイティブ追加モーダル: 案件タイルピッカー
+   ドロップダウンより一覧視認性が高い。検索ボックス+グリッド+空状態をセットで提供。 */
+.project-tile-search{
+  width:100%;
+  box-sizing:border-box;
+  border:1px solid var(--border, #d8dde2);
+  border-radius:6px;
+  outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.project-tile-search:focus{
+  border-color:var(--em, #2db8a6);
+  box-shadow:0 0 0 2px rgba(45,184,166,0.12);
+}
+.project-tile-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));
+  gap:10px;
+  max-height:50vh;
+  overflow-y:auto;
+  padding:4px;
+  border:1px solid var(--border, #e1e5ea);
+  border-radius:8px;
+  background:#fafbfc;
+  min-height:120px;
+}
+.project-tile{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  padding:10px 12px;
+  background:#fff;
+  border:1px solid var(--border, #d8dde2);
+  border-radius:8px;
+  cursor:pointer;
+  transition:border-color .12s, box-shadow .12s, background .12s;
+  min-height:64px;
+  box-sizing:border-box;
+  text-align:left;
+}
+.project-tile:hover{
+  border-color:var(--em, #2db8a6);
+  box-shadow:0 1px 4px rgba(0,0,0,0.06);
+}
+.project-tile.is-selected{
+  border-color:var(--em, #2db8a6);
+  background:var(--em-pale, #e6f7f4);
+  box-shadow:0 0 0 1px var(--em, #2db8a6) inset;
+}
+.project-tile .pt-client{
+  font-size:11px;
+  color:var(--text-muted, #6b7480);
+  line-height:1.3;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.project-tile .pt-name{
+  font-size:13px;
+  font-weight:600;
+  color:var(--text, #2a3138);
+  line-height:1.35;
+  word-break:break-word;
+  /* 案件名は最大2行まで表示。3行目以降は省略 */
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.project-tile .pt-badge{
+  position:absolute;
+  top:6px;
+  right:6px;
+}
+.project-tile .pt-badge .badge-project-type{
+  font-size:10px;
+  padding:1px 6px;
+  border-radius:10px;
+  display:inline-block;
+  line-height:1.4;
+}
+.project-tile-grid .project-tile-empty{
+  grid-column:1 / -1;
+  text-align:center;
+  padding:32px 12px;
+  color:var(--text-muted, #6b7480);
+  font-size:13px;
+}
+
 /* クリエイティブ追加モーダル Step 2 のフォームグリッド
    通常: 2 カラム grid
    .cv-form-grid--single: LP/HP/LINE/その他案件向けに中央寄せ 1 カラム化
@@ -3543,13 +3633,16 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- ===== Step 1: 案件選択 ===== -->
       <div id="creative-step-1">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">① 案件を選択してください</div>
-        <div class="form-group" style="margin-bottom:0;max-width:720px">
-          <div id="c-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <div class="form-group" style="margin-bottom:0">
+          <div id="c-project-cap-tabs" class="creative-add-cap-tabs" data-scope="single" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
             <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
             <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
             <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
           </div>
-          <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="font-size:14px;padding:10px 12px"></select>
+          <input type="search" id="c-project-search" class="form-input project-tile-search" placeholder="🔍 案件名・クライアント名で絞り込み" oninput="onCreativeAddProjectSearchInput('single', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
+          <div id="c-project-tiles" class="project-tile-grid" data-scope="single"></div>
+          <!-- 既存ロジック互換: 案件IDの真の保持元（goToCreativeStep2 等で参照される） -->
+          <select id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="display:none" aria-hidden="true"></select>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
           <div></div>
@@ -3687,12 +3780,15 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- 案件（全幅） -->
       <div class="form-group">
         <label class="form-label">案件</label>
-        <div id="bulk-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <div id="bulk-project-cap-tabs" class="creative-add-cap-tabs" data-scope="bulk" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
           <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
           <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
           <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
         </div>
-        <select class="form-select" id="bulk-project-id" onchange="onBulkProjectChange(this.value)"></select>
+        <input type="search" id="bulk-project-search" class="form-input project-tile-search" placeholder="🔍 案件名・クライアント名で絞り込み" oninput="onCreativeAddProjectSearchInput('bulk', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
+        <div id="bulk-project-tiles" class="project-tile-grid" data-scope="bulk"></div>
+        <!-- 既存ロジック互換: 案件IDの真の保持元 -->
+        <select id="bulk-project-id" onchange="onBulkProjectChange(this.value)" style="display:none" aria-hidden="true"></select>
       </div>
       <!-- 2カラムグリッド -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
@@ -7672,8 +7768,51 @@ function renderCreativeAddTeamDropdowns() {
   }
 }
 
-// クリエイティブ追加モーダルの「個別登録」「一括登録」両方の案件ドロップダウンと
+// 案件タイルの絞り込み検索キーワード（個別 / 一括で別管理）
+let _creativeAddProjectSearch = '';
+let _creativeAddBulkProjectSearch = '';
+
+// 検索キーワード入力ハンドラ。state を更新してタイルだけ再描画（カウント等は変わらない）
+function onCreativeAddProjectSearchInput(scope, value) {
+  const v = (value || '').trim().toLowerCase();
+  if (scope === 'bulk') {
+    if (_creativeAddBulkProjectSearch === v) return;
+    _creativeAddBulkProjectSearch = v;
+  } else {
+    if (_creativeAddProjectSearch === v) return;
+    _creativeAddProjectSearch = v;
+  }
+  renderCreativeAddProjectDropdowns();
+}
+
+// タイル 1 枚分の HTML。クライアント名 / 案件名 / カテゴリバッジを表示。
+function _projectTileHtml(p, isSelected) {
+  const client = (p.clients?.name) || '';
+  const name = p.name || '(無題)';
+  const badge = (typeof getProjectTypeBadge === 'function') ? getProjectTypeBadge(p) : '';
+  const sel = isSelected ? ' is-selected' : '';
+  // data-pid を読み取り、クリックで選択状態を更新する。
+  return `<button type="button" class="project-tile${sel}" data-pid="${esc(p.id)}" title="${esc(client)} / ${esc(name)}">`
+    + (badge ? `<span class="pt-badge">${badge}</span>` : '')
+    + `<span class="pt-client">${esc(client)}</span>`
+    + `<span class="pt-name">${esc(name)}</span>`
+    + `</button>`;
+}
+
+// 検索キーワードで案件配列を絞り込む。クライアント名 / 案件名の部分一致。
+function _filterProjectsBySearch(projects, keyword) {
+  if (!keyword) return projects;
+  const k = keyword.toLowerCase();
+  return projects.filter(p => {
+    const client = ((p.clients?.name) || '').toLowerCase();
+    const name = (p.name || '').toLowerCase();
+    return client.includes(k) || name.includes(k);
+  });
+}
+
+// クリエイティブ追加モーダルの「個別登録」「一括登録」両方の案件タイルと
 // 職種トグルのカウント・activeステートを再構築する。
+// （内部互換のため hidden な <select> も同期して、goToCreativeStep2 等の既存ロジックを温存。）
 function renderCreativeAddProjectDropdowns() {
   const visible = dedupVisibleProjects(allProjects || []);
   // primary_category code 駆動でカウント。未設定案件は getProjectCategory のフォールバックで分類される。
@@ -7699,18 +7838,22 @@ function renderCreativeAddProjectDropdowns() {
     else btn.classList.remove('is-active');
   });
 
-  // フィルタを適用してドロップダウン option を再生成
+  // フィルタを適用してタイル / hidden select option を再生成
   const filtered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+
+  // hidden <select> は全フィルタ後（検索無視）の選択肢を持つ。
+  // - goToCreativeStep2 が select.options[selectedIndex].text からラベルを取るため
+  // - 検索で絞り込んだ後に「クリアしたら戻る」UX を保つため
   const optionsHtml = filtered.map(p =>
-    `<option value="${p.id}">${p.clients?.name || ''} / ${p.name}</option>`
+    `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`
   ).join('');
-  const emptyHtml = `<option value="">該当する案件がありません</option>`;
+  const emptyOptHtml = `<option value="">該当する案件がありません</option>`;
 
   ['c-project-id', 'bulk-project-id'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const prev = sel.value;
-    sel.innerHTML = filtered.length ? optionsHtml : emptyHtml;
+    sel.innerHTML = filtered.length ? optionsHtml : emptyOptHtml;
     // 直前の選択を維持できるなら維持。無ければ先頭選択。
     if (prev && filtered.some(p => p.id === prev)) {
       sel.value = prev;
@@ -7719,9 +7862,58 @@ function renderCreativeAddProjectDropdowns() {
     }
   });
 
+  // タイルグリッドを描画（scope ごとに検索キーワードを適用）
+  const renderTiles = (scope) => {
+    const grid = document.getElementById(scope === 'bulk' ? 'bulk-project-tiles' : 'c-project-tiles');
+    if (!grid) return;
+    const sel = document.getElementById(scope === 'bulk' ? 'bulk-project-id' : 'c-project-id');
+    const selectedId = sel?.value || '';
+    const keyword = scope === 'bulk' ? _creativeAddBulkProjectSearch : _creativeAddProjectSearch;
+    const list = _filterProjectsBySearch(filtered, keyword);
+    if (!list.length) {
+      const msg = keyword
+        ? '検索キーワードに一致する案件がありません'
+        : '該当する案件がありません';
+      grid.innerHTML = `<div class="project-tile-empty">${esc(msg)}</div>`;
+      return;
+    }
+    grid.innerHTML = list.map(p => _projectTileHtml(p, p.id === selectedId)).join('');
+  };
+  renderTiles('single');
+  renderTiles('bulk');
+
   // 案件タブと連動して team dropdown も再構築（秘書チームは横断で残る）
   renderCreativeAddTeamDropdowns();
 }
+
+// タイルクリック時のハンドラ（イベント委譲で 1 度だけ bind）
+function _bindCreativeAddProjectTileDelegation() {
+  if (window.__creativeAddTileBound) return;
+  window.__creativeAddTileBound = true;
+  document.addEventListener('click', (ev) => {
+    const tile = ev.target?.closest?.('.project-tile');
+    if (!tile) return;
+    const grid = tile.closest('.project-tile-grid');
+    if (!grid) return;
+    const scope = grid.getAttribute('data-scope') || 'single';
+    const pid = tile.getAttribute('data-pid') || '';
+    const sel = document.getElementById(scope === 'bulk' ? 'bulk-project-id' : 'c-project-id');
+    if (!sel || !pid) return;
+    if (sel.value === pid) {
+      // 既選択タイルの再クリック → 個別登録は Step2 に進む（UX 短縮）。一括登録はそのまま。
+      if (scope === 'single' && typeof goToCreativeStep2 === 'function') goToCreativeStep2();
+      return;
+    }
+    sel.value = pid;
+    // change を発火させて既存の onProjectChange / onBulkProjectChange をトリガ
+    sel.dispatchEvent(new Event('change'));
+    // is-selected 状態のみ即時反映（onChange の後段で render が呼ばれるが視覚遅延を避ける）
+    grid.querySelectorAll('.project-tile.is-selected').forEach(el => el.classList.remove('is-selected'));
+    tile.classList.add('is-selected');
+  });
+}
+// 初期化（DOMContentLoaded を待たずに即時 bind 可能。listener 自体は document に付くだけ）
+_bindCreativeAddProjectTileDelegation();
 
 // トグルクリックハンドラ。フィルタを切り替えて両ドロップダウンを再描画し、
 // 選択案件が変わった場合は訴求軸・担当者・商材も連動して更新する。
@@ -20545,6 +20737,13 @@ async function openCreateCreative() {
   // 案件ドロップダウンの職種フィルタ初期値を user の job_type / default_creative_tab から決定し、
   // 個別/一括 両方のドロップダウンを再構築する（カウント・active も同時更新）
   _creativeAddProjectFilter = pickInitialProjectFilterTab(currentUser);
+  // タイル絞り込みの検索キーワードはモーダルを開くたびにクリア
+  _creativeAddProjectSearch = '';
+  _creativeAddBulkProjectSearch = '';
+  const _searchSingle = document.getElementById('c-project-search');
+  const _searchBulk = document.getElementById('bulk-project-search');
+  if (_searchSingle) _searchSingle.value = '';
+  if (_searchBulk) _searchBulk.value = '';
   renderCreativeAddProjectDropdowns();
   const lastDay = getLastDayOfMonth();
   const draftDay = getDefaultDraftDeadline(lastDay);
