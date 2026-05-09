@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS creatives (
   talent_flag BOOLEAN DEFAULT false,
   note TEXT,
   revision_count INTEGER DEFAULT 0,
+  client_revision_count INTEGER DEFAULT 0,
   is_payable BOOLEAN DEFAULT false,
   special_payable BOOLEAN DEFAULT false,
   special_payable_reason TEXT,

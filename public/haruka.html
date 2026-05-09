@@ -6222,12 +6222,11 @@ window.showPage = window.showPage || function(name, btn) {
                ball_holder.type === 'done' / 'unknown' / 値なし のときは非表示（空欄を出さない） -->
           <span id="cd-ball-holder" style="display:none;color:var(--text-muted)"></span>
           <span id="cd-revision-count-badge" style="display:none;font-size:11px;background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 8px;font-weight:600"></span>
+          <span id="cd-client-revision-count-badge" style="display:none;font-size:11px;background:#fce7f3;color:#9d174d;border-radius:4px;padding:1px 8px;font-weight:600"></span>
         </div>
-        <!-- Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示） -->
-        <!-- 第三者から「いま誰にボールがあるか」を一目で分かるようにするための UI。
-             creative_assignments[role='director'] を全部列挙する。
-             保存先は PR #218（複数Dチェック担当者対応）と同じ。 -->
-        <div id="cd-d-checkers" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--text-muted);align-items:center;flex-wrap:wrap;gap:8px"></div>
+        <!-- Dチェック担当者一覧は撤去（ボール表示で代替）。
+             ヘッダーの ball-dot + ball-name で「いま誰にボールがあるか」が見えるため重複情報だった。
+             creative_assignments[role='director'] のデータ自体は保存処理・status遷移・通知で引き続き使用する。 -->
       </div>
 
       <!-- 納期表示 -->
@@ -25379,8 +25378,22 @@ async function openCreativeDetail(id) {
       return;
     }
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
+    // editor / director の場合は具体ユーザーが特定できる → アバターを併記して誰にボールがあるか視認しやすくする
+    // producer / client / all は generic ロール表現（特定ユーザー不在）なのでドットのみ維持
+    let holderAvatar = '';
+    if (bh.type === 'editor') {
+      const a = (c.creative_assignments || []).find(x => ['editor','designer','director_as_editor'].includes(x.role) && x.users);
+      if (a?.users) holderAvatar = avatarHtml(a.users, 22);
+    } else if (bh.type === 'director') {
+      const dirs = (c.creative_assignments || []).filter(x => x.role === 'director' && x.users);
+      const u = (bh.user_id && dirs.find(d => d.users.id === bh.user_id)?.users)
+             || dirs[0]?.users
+             || c.projects?.director
+             || null;
+      if (u) holderAvatar = avatarHtml(u, 22);
+    }
     el.style.display = '';
-    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span><span class="ball-name">${esc(bh.holder)}</span></span>`;
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${holderAvatar}<span class="ball-name">${esc(bh.holder)}</span></span>`;
   })();
   // Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示）
   // - データソース: creative_assignments[role='director']（PR #218 で複数選択対応済み）
@@ -25417,12 +25430,19 @@ async function openCreativeDetail(id) {
     }).join('');
     el.innerHTML = `<span style="font-weight:600;color:var(--text)">Dチェック担当:</span>${chips}`;
   })();
-  // 修正回数バッジ
+  // 修正回数バッジ（D/P）
   const revBadge = document.getElementById('cd-revision-count-badge');
   if (revBadge) {
     const cnt = c.revision_count || 0;
     if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
     else revBadge.style.display = 'none';
+  }
+  // CL 修正回数バッジ（クライアントチェック後修正の遷移回数）
+  const clRevBadge = document.getElementById('cd-client-revision-count-badge');
+  if (clRevBadge) {
+    const cnt = c.client_revision_count || 0;
+    if (cnt > 0) { clRevBadge.textContent = `CL修正 ${cnt}回`; clRevBadge.style.display = ''; }
+    else clRevBadge.style.display = 'none';
   }
 
   // 納期バー
@@ -31662,8 +31682,16 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   }
   if (overrideStatus) {
     body.status = overrideStatus;
-    if (REVISION_STATUSES.includes(overrideStatus)) {
-      body.revision_count = (currentCreativeDetail.revision_count || 0) + 1;
+    const prevStatus = currentCreativeDetail.status;
+    // 重複ガード: 直前と同じ後修正ステータスへの再保存ではカウントを増やさない
+    if (overrideStatus !== prevStatus) {
+      if (overrideStatus === 'Dチェック後修正' || overrideStatus === 'Pチェック後修正') {
+        // D/P 修正: 既存の revision_count を +1
+        body.revision_count = (currentCreativeDetail.revision_count || 0) + 1;
+      } else if (overrideStatus === 'クライアントチェック後修正') {
+        // CL 修正: 別カウント (client_revision_count) を +1（ADR なし／2026-05-09）
+        body.client_revision_count = (currentCreativeDetail.client_revision_count || 0) + 1;
+      }
     }
   }
   // Dチェック遷移時の担当者上書き（modal で選んだ user_id を creative_assignments role='director' に反映）

@@ -5078,7 +5078,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   const {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url, client_review_url,
-    help_flag, talent_flag, note, revision_count,
+    help_flag, talent_flag, note, revision_count, client_revision_count,
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
@@ -5134,6 +5134,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (talent_flag !== undefined) updateData.talent_flag = talent_flag;
   if (note !== undefined) updateData.note = note;
   if (revision_count !== undefined) updateData.revision_count = revision_count;
+  if (client_revision_count !== undefined) updateData.client_revision_count = client_revision_count;
   if (director_comment !== undefined) updateData.director_comment = director_comment;
   if (client_comment !== undefined) updateData.client_comment = client_comment;
   if (editor_comment !== undefined) updateData.editor_comment = editor_comment;
