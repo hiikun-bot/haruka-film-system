@@ -3693,7 +3693,7 @@ window.showPage = window.showPage || function(name, btn) {
               </div>
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label">クリエイティブFMT</label>
-                <select class="form-select" id="c-creative-fmt" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
+                <select class="form-select" id="c-creative-fmt" onchange="tryAutoGenerateFileName()"><option value="">選択してください</option></select>
               </div>
             </div>
             <div class="form-group" style="margin-bottom:0" data-creative-field="size">
@@ -3820,7 +3820,7 @@ window.showPage = window.showPage || function(name, btn) {
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">クリエイティブFMT</label>
-              <select class="form-select" id="bulk-creative-fmt"><option value="">（任意）</option></select>
+              <select class="form-select" id="bulk-creative-fmt"><option value="">選択してください</option></select>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -26404,7 +26404,7 @@ async function directToClientCheck() {
   if (!_crUrlDirect) {
     const ok = await showConfirmDialog({
       title: 'クライアント確認URLが未設定です',
-      message: '通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
+      message: '通知本文に「URL未設定」という仮の文字が自動で入ります。\n送信前に実際のURLに書き換えてください。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
       okLabel: 'このまま進める',
     });
     if (!ok) { document.getElementById('cd-client-review-url')?.focus(); return; }
@@ -26445,7 +26445,7 @@ async function skipToClientCheck() {
   if (!_crUrlSkip) {
     const ok = await showConfirmDialog({
       title: 'クライアント確認URLが未設定です',
-      message: '通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
+      message: '通知本文に「URL未設定」という仮の文字が自動で入ります。\n送信前に実際のURLに書き換えてください。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
       okLabel: 'このまま進める',
     });
     if (!ok) { document.getElementById('cd-client-review-url')?.focus(); return; }
@@ -26651,7 +26651,7 @@ async function advanceCreativeStatus() {
     if (!url) {
       const ok = await showConfirmDialog({
         title: 'クライアント確認URLが未設定です',
-        message: '通知本文には「URL未設定」のプレースホルダが入ります（送信前に手動で追記してください）。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
+        message: '通知本文に「URL未設定」という仮の文字が自動で入ります。\n送信前に実際のURLに書き換えてください。\n\nこのまま進めますか？\n（キャンセルすると入力欄に戻ります）',
         okLabel: 'このまま進める',
       });
       if (!ok) {
