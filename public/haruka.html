@@ -24566,8 +24566,34 @@ function _cdResolveRoundLeftFile(round) {
   return f;
 }
 
-function _cdRenderRoundLeftFileCard(round) {
+// 「右カラムにアップロード取り消しボタンが出るとき、左カラムの末尾にも
+//  同じ寸法の不可視 placeholder を入れて、左右の最下部メインボタン位置と
+//  中段点線位置を完全に揃える」ためのスペーサー HTML を返す（代表 髙橋指示・
+//  ADR 011 補足: "ここの横のラインもあわせたい / ボタンの位置を左右あわせる
+//  ことで美しいUIとなる"）。
+//
+//  寸法・スタイルは _cdRenderUndoUploadBtn() の外側ラッパー + 内側ボタンと
+//  完全に一致させる:
+//    ・外側 div: padding:6px 14px 10px / border-top:0.5px dashed var(--border)
+//    ・内側 button 相当: padding:6px 12px / font-size:12px / line-height
+//  visibility:hidden で領域だけ確保 / aria-hidden / pointer-events:none で
+//  タブフォーカスもクリックも拾わない。
+function _cdRenderUndoSpacer() {
+  return `
+  <div aria-hidden="true" style="padding:6px 14px 10px;background:rgba(99,102,241,0.04);border-top:0.5px dashed var(--border);pointer-events:none">
+    <button type="button" tabindex="-1"
+      style="visibility:hidden;background:#fff;border:1px solid #E24B4A;color:#E24B4A;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;width:100%;letter-spacing:0.02em">
+      ↩ アップロードを取り消す
+    </button>
+  </div>`;
+}
+
+function _cdRenderRoundLeftFileCard(round, options) {
   if (!round) return '';
+
+  // 右カラムに取り消しボタンが出るときは、左末尾にも同寸スペーサーを足して
+  // 中段点線とメインボタンの Y 座標を左右で揃える（代表 髙橋指示）。
+  const mirrorUndoSpacer = !!(options && options.mirrorUndoSpacer);
 
   // 動画なし提出のラウンドは creative_file_id=null かつ editor_comment が "[動画なし]" で
   // 始まる（routes/haruka.js 側で固定プレフィックス付き保存）。
@@ -24588,7 +24614,7 @@ function _cdRenderRoundLeftFileCard(round) {
         <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
         <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
       </div>
-    </div>`;
+    </div>${mirrorUndoSpacer ? _cdRenderUndoSpacer() : ''}`;
   }
 
   // (1)〜(5) のフォールバック解決は共通ヘルパーへ集約（dedup と完全一致させる）。
@@ -24599,7 +24625,7 @@ function _cdRenderRoundLeftFileCard(round) {
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
     <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
     ${_cdRenderFileCard(f, { verLabel: `バージョン ${verNum}`, isLatest: false, hideCheckBtn: true })}
-  </div>`;
+  </div>${mirrorUndoSpacer ? _cdRenderUndoSpacer() : ''}`;
 }
 
 // ラウンド右カラムに表示する「今回の成果物カード」HTML を返す。
@@ -24958,6 +24984,33 @@ function cdRenderRoundCompare() {
       left.innerHTML = _cdRoundEntryHtml(round);
     }
   }
+  // 右カラムに取り消しボタンが出るかを先に判定し、左フッター描画にフラグで渡す。
+  // これで左末尾にも同寸の不可視 placeholder が入り、中段の点線と最下部の
+  // 「バージョンXを確認・コメントを見る」ボタン位置が左右で完全一致する
+  // （代表 髙橋指示 / ADR 011 補足: "ここの横のラインもあわせたい /
+  //   ボタンの位置を左右あわせることで美しいUIとなる"）。
+  //
+  // 判定ルール:
+  //   ・dedup で右カラム自体が消える (= sameId/sameVer) → 左にスペーサー不要
+  //   ・「修正版アップロードしてください」 placeholder → undo 無し → 不要
+  //   ・最新ファイル latest があり _cdCanUndoUpload(latest) が true → 必要
+  //   ・動画なし提出ラウンド (左が黄色カード) でも、右が通常通り出て undo 出るなら必要
+  let willShowUndo = false;
+  if (currentRound) {
+    const _filesForUndo = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    const _latest = _filesForUndo[0] || null;
+    if (_latest) {
+      const _leftFile = _cdResolveRoundLeftFile(currentRound);
+      const _sameId  = _leftFile && _leftFile.id && _latest.id && _leftFile.id === _latest.id;
+      const _sameVer = _leftFile && (_leftFile.version != null && _latest.version != null
+                       && Number(_leftFile.version) === Number(_latest.version));
+      const _dedupHidesRight = !!(_sameId || _sameVer);
+      if (!_dedupHidesRight) {
+        willShowUndo = _cdCanUndoUpload(_latest);
+      }
+    }
+  }
+
   // 左カラムフッター（過去ラウンドの提出物カード）。flex:margin-top:auto で下端に張り付く。
   // ラウンド切り替え（◀▶）時もここが差し替わって左右の高さ揃いを維持する。
   const leftFooter = document.getElementById('cd-round-left-footer');
@@ -24966,7 +25019,7 @@ function cdRenderRoundCompare() {
       leftFooter.innerHTML = '';
     } else {
       const round = allRounds[_cdRoundIndex];
-      leftFooter.innerHTML = _cdRenderRoundLeftFileCard(round);
+      leftFooter.innerHTML = _cdRenderRoundLeftFileCard(round, { mirrorUndoSpacer: willShowUndo });
     }
   }
 
