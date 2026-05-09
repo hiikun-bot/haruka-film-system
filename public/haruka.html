@@ -30387,47 +30387,93 @@ function cancelUpload() {
 
 // アップロード完了後・提出前の [↩ 取り消す] ボタンのハンドラ。
 // 「最新バージョン」のみ取り消し可能。creative_files DELETE + Drive 削除 (best-effort)。
-// 取り消し後は loadCreativeFiles() でキャッシュ更新 → cdRenderRoundCompare() で再描画。
+// 取り消し後はキャッシュを丸ごと作り直し、関係する全 UI を再描画する:
+//   1) _cdFilesCache / _cdRoundsCache を強制再フェッチ（ブラウザ HTTP cache 回避のため cache-busting query を付与）
+//   2) cdRenderRoundCompare() で右カラム「今回の成果物」カードを差し替え
+//   3) updateCreativeCommentLabel() でアップロードセクションタイトルを再評価
+//   4) ドロップゾーン / 進捗バー / プレビューを初期状態へ戻す
+//   5) Dチェック移行確認バー (cd-dcheck-confirm) を閉じる
+// 同じ undo ボタンが複数 DOM に出現しているケース (1col + 2col 並走の遺物) も
+// querySelectorAll で全部 disable する。
 async function cancelLatestUpload(creativeId, fileId, version) {
   if (!creativeId || !fileId) return;
   const ok = window.confirm(`アップロードしたバージョン${version || ''}を取り消しますか？\nこの操作は元に戻せません。`);
   if (!ok) return;
 
-  // 二重押下防止: 押されたボタンを disable
-  const btn = document.querySelector(`[data-cd-undo-upload="${fileId}"]`);
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '取り消し中...';
-    btn.style.opacity = '0.6';
-    btn.style.cursor = 'wait';
-  }
+  // 二重押下防止: 同じ file id を指す全ての undo ボタンを disable
+  const allBtns = Array.from(document.querySelectorAll(`[data-cd-undo-upload="${CSS.escape(fileId)}"]`));
+  const setBusy = () => {
+    allBtns.forEach(b => {
+      b.disabled = true;
+      b.textContent = '取り消し中...';
+      b.style.opacity = '0.6';
+      b.style.cursor = 'wait';
+    });
+  };
+  const restoreBtn = () => {
+    allBtns.forEach(b => {
+      b.disabled = false;
+      b.textContent = '↩ アップロードを取り消す';
+      b.style.opacity = '1';
+      b.style.cursor = 'pointer';
+    });
+  };
+  setBusy();
 
   try {
     const res = await apiFetch(`${API}/creatives/${creativeId}/files/${fileId}`, { method: 'DELETE' });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
-      showToast('取り消しに失敗しました: ' + (e?.error || res.status), 'error');
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = '↩ アップロードを取り消す';
-        btn.style.opacity = '1';
-        btn.style.cursor = 'pointer';
-      }
+      // 409: 既に提出済 / 中間バージョン → サーバーが返す日本語エラーをそのまま見せる
+      const msg = e?.error || `HTTP ${res.status}`;
+      showToast('取り消しに失敗しました: ' + msg, 'error');
+      restoreBtn();
       return;
     }
     showToast(`バージョン${version || ''}を取り消しました`, 'success');
-    // 進捗バーを完全に隠してドロップゾーンを再活性化
+
+    // ---- ここから UI 全更新 ----
+    // (a) キャッシュを即時クリア。GET 完了前でも他の描画が走った時に古い state を見せない
+    _cdFilesCache = [];
+    currentUploadedFileCount = 0;
+
+    // (b) 進捗・ステータスメッセージをリセット
     const statusEl = document.getElementById('cd-upload-status');
-    if (statusEl) statusEl.textContent = '';
+    if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; }
+    const progressWrap = document.getElementById('cd-upload-progress-wrap');
+    if (progressWrap) progressWrap.style.display = 'none';
+    const progressBar = document.getElementById('cd-upload-progress-bar');
+    if (progressBar) progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
+
+    // (c) ドロップゾーン / プレビュー / 入力をクリア（再アップロード可能な状態に）
+    const inputEl = document.getElementById('cd-upload-input');
+    if (inputEl) inputEl.value = '';
+    const previewEl = document.getElementById('cd-upload-preview');
+    if (previewEl) previewEl.style.display = 'none';
+    uploadFileData = null;
+
+    // (d) 「Dチェックを行いますか？」バーを必ず閉じる（提出前に取り消したので意味を失う）
+    const dcheckBar = document.getElementById('cd-dcheck-confirm');
+    if (dcheckBar) dcheckBar.style.display = 'none';
+
+    // (e) ファイル一覧を強制再取得（cache-busting で 304/メモリキャッシュを回避）
+    //     loadCreativeFiles() 内で _cdFilesCache 再代入 + cdRenderRoundCompare() が走る
     await loadCreativeFiles(creativeId);
+
+    // (f) 念のため右カラムも明示再描画（loadCreativeFiles が 0件でも必ず通るが、二重呼び出しは安全）
+    try { cdRenderRoundCompare(); } catch (e2) { console.warn('[cancel-upload] re-render failed:', e2); }
+
+    // (g) アップロードセクションのラベルを現在のステータスで再評価
+    if (currentCreativeDetail) {
+      try { updateCreativeCommentLabel(currentCreativeDetail.status); } catch (_) {}
+    }
+
+    // (h) version 入力欄を「次にアップロードすべき version」に戻す
+    const verInput = document.getElementById('cd-version-num');
+    if (verInput) verInput.value = String((currentUploadedFileCount || 0) + 1);
   } catch (err) {
     showToast('取り消しに失敗しました: ' + (err?.message || err), 'error');
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '↩ アップロードを取り消す';
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-    }
+    restoreBtn();
   }
 }
 
