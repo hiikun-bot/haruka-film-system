@@ -4679,7 +4679,7 @@ router.get('/creatives/:id', async (req, res) => {
     .select(`
       *,
       projects(
-        id, name, producer_id, director_id, regulation_url,
+        id, name, producer_id, director_id, regulation_url, primary_category_id,
         director:director_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         producer:producer_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         clients(id, name, client_code, status)
@@ -4695,6 +4695,49 @@ router.get('/creatives/:id', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   if (!data) {
     return res.status(404).json({ error: 'このクリエイティブは見つかりません（削除されている可能性があります）' });
+  }
+
+  // primary_category（カテゴリ別チェブロン用）+ status_template_items を埋め込む。
+  // LP/HP/LINE 等の専用工程をフロント側で描画するために使う。
+  // schema-sync 未適用 / テーブル無し環境でもフローは止めない（フォールバックで video/image 既存挙動）。
+  if (data && data.projects?.primary_category_id) {
+    try {
+      const { data: catData } = await supabase
+        .from('creative_categories')
+        .select('id, code, name, color')
+        .eq('id', data.projects.primary_category_id)
+        .maybeSingle();
+      data.projects.primary_category = catData || null;
+
+      // LP / HP / LINE 用の status_template_items を一緒に返す。
+      // video / image 用は既存ハードコード STEPS で描画されるため不要。
+      const code = catData?.code;
+      if (code && ['lp', 'hp', 'line'].includes(code)) {
+        const { data: tpls } = await supabase
+          .from('creative_status_templates')
+          .select('id, name, is_default, items:creative_status_template_items(code, label, sort_order, is_milestone)')
+          .eq('category_id', catData.id)
+          .order('is_default', { ascending: false })
+          .order('name', { ascending: true });
+        const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0] || null;
+        if (tpl) {
+          const items = (tpl.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          data.status_template_items = items;
+          data.status_template_id = tpl.id;
+          // status_code が NULL の場合は first item の code を表示用フォールバックとして埋める
+          // （DB は触らず、レスポンス上のみ。Backfill migration で本体は埋まる）
+          if (!data.status_code && items.length) {
+            data.status_code = items[0].code;
+          }
+        } else {
+          data.status_template_items = [];
+        }
+      }
+    } catch (e) {
+      console.warn('[creatives/:id] primary_category / status_template embed 失敗:', e.message);
+      data.projects.primary_category = null;
+      data.status_template_items = [];
+    }
   }
 
   // teams を別クエリで取得（FK 不要にするため PostgREST の埋め込みは使わない）
@@ -4997,7 +5040,37 @@ router.post('/creatives', async (req, res) => {
     resolvedTeamId = u?.team_id || null;
   }
 
-  const { data, error } = await supabase.from('creatives').insert({
+  // LP / HP / LINE カテゴリの案件の場合、初期 status_code を default テンプレの最小 sort_order の code に設定する。
+  // 動画 / 静止画 は status_code を入れない（既存の status 駆動を維持）。
+  // schema-sync 未適用 / テーブル無し環境では try/catch で握りつぶす。
+  let initialStatusCode = null;
+  try {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('primary_category_id')
+      .eq('id', project_id)
+      .maybeSingle();
+    if (proj?.primary_category_id) {
+      const { data: cat } = await supabase
+        .from('creative_categories')
+        .select('id, code')
+        .eq('id', proj.primary_category_id)
+        .maybeSingle();
+      if (cat?.code && ['lp', 'hp', 'line'].includes(cat.code)) {
+        const { data: tpls } = await supabase
+          .from('creative_status_templates')
+          .select('id, is_default, items:creative_status_template_items(code, sort_order)')
+          .eq('category_id', cat.id);
+        const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0];
+        const items = (tpl?.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+        if (items.length) initialStatusCode = items[0].code;
+      }
+    }
+  } catch (e) {
+    console.warn('[creatives:create] initial status_code 解決失敗:', e.message);
+  }
+
+  const insertPayload = {
     project_id, cycle_id, file_name, creative_type,
     draft_deadline: draft_deadline || null,
     final_deadline: final_deadline || null,
@@ -5015,7 +5088,16 @@ router.post('/creatives', async (req, res) => {
     team_id: resolvedTeamId,
     memo: (memo && String(memo).trim()) ? memo : null,
     client_review_url: (client_review_url && String(client_review_url).trim()) ? client_review_url : null,
-  }).select().single();
+  };
+  if (initialStatusCode) insertPayload.status_code = initialStatusCode;
+
+  let { data, error } = await supabase.from('creatives').insert(insertPayload).select().single();
+  // schema-sync 失敗で status_code 列がまだ無い場合のフォールバック
+  if (error && /status_code/i.test(error.message || '') && initialStatusCode) {
+    const { status_code: _omit, ...fallback } = insertPayload;
+    const retry = await supabase.from('creatives').insert(fallback).select().single();
+    data = retry.data; error = retry.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録
   if (assignee_id) {
@@ -6036,6 +6118,97 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     deleted_invoice_items: deletedItemIds.length,
     affected_invoices: affectedInvoiceIds.length,
     creative: updated,
+  });
+});
+
+// =====================================================
+// LP / HP / LINE 専用: テンプレ駆動の status_code 進行 / 戻し
+// =====================================================
+// 動画 / 静止画 系（status 駆動・既存ハードコード STEPS）には影響を与えない。
+// `creatives.projects.primary_category.code` が lp/hp/line のもののみ対象。
+// それ以外のカテゴリで叩かれた場合は 400 を返す。
+
+async function _resolveCategoryAndItems(creativeId) {
+  const { data: creative } = await supabase
+    .from('creatives')
+    .select('id, status_code, project_id, projects(id, primary_category_id)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (!creative) return { error: { status: 404, message: 'クリエイティブが見つかりません' } };
+  const catId = creative.projects?.primary_category_id;
+  if (!catId) return { error: { status: 400, message: 'カテゴリが未設定です' } };
+  const { data: cat } = await supabase
+    .from('creative_categories')
+    .select('id, code')
+    .eq('id', catId)
+    .maybeSingle();
+  if (!cat?.code || !['lp', 'hp', 'line'].includes(cat.code)) {
+    return { error: { status: 400, message: 'このエンドポイントは LP / HP / LINE 専用です' } };
+  }
+  const { data: tpls } = await supabase
+    .from('creative_status_templates')
+    .select('id, is_default, items:creative_status_template_items(code, label, sort_order, is_milestone)')
+    .eq('category_id', cat.id);
+  const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0] || null;
+  const items = ((tpl?.items) || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  if (!items.length) return { error: { status: 500, message: '工程テンプレが空です' } };
+  return { creative, category: cat, items };
+}
+
+// 次のステップへ進める（LP/HP/LINE 専用）
+router.post('/creatives/:id/advance-template-status', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const r = await _resolveCategoryAndItems(req.params.id);
+  if (r.error) return res.status(r.error.status).json({ error: r.error.message });
+  const { creative, items } = r;
+
+  const currentCode = creative.status_code || items[0].code;
+  const idx = items.findIndex(i => i.code === currentCode);
+  if (idx < 0) return res.status(400).json({ error: '現在の status_code がテンプレに存在しません' });
+  const next = items[idx + 1];
+  if (!next) return res.status(400).json({ error: '既に最終ステップです' });
+
+  const { data: updated, error: uErr } = await supabase
+    .from('creatives')
+    .update({ status_code: next.code, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select('id, status_code')
+    .single();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+
+  res.json({
+    ok: true,
+    status_code: updated.status_code,
+    label: next.label,
+    is_milestone: !!next.is_milestone,
+    is_final: idx + 1 === items.length - 1,
+  });
+});
+
+// 前のステップへ戻す（管理者のみ・LP/HP/LINE 専用）
+router.post('/creatives/:id/back-template-status', requireAuth, async (req, res) => {
+  if (getEffectiveRole(req) !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r = await _resolveCategoryAndItems(req.params.id);
+  if (r.error) return res.status(r.error.status).json({ error: r.error.message });
+  const { creative, items } = r;
+
+  const currentCode = creative.status_code || items[0].code;
+  const idx = items.findIndex(i => i.code === currentCode);
+  if (idx <= 0) return res.status(400).json({ error: '既に最初のステップです' });
+  const prev = items[idx - 1];
+
+  const { data: updated, error: uErr } = await supabase
+    .from('creatives')
+    .update({ status_code: prev.code, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select('id, status_code')
+    .single();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+
+  res.json({
+    ok: true,
+    status_code: updated.status_code,
+    label: prev.label,
+    is_milestone: !!prev.is_milestone,
   });
 });
 
