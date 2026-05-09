@@ -4007,6 +4007,12 @@ window.showPage = window.showPage || function(name, btn) {
             <input class="form-input" id="bulk-count" type="number" min="1" max="100" value="10" oninput="updateBulkPreview()">
             <div style="font-size:12px;color:var(--text-muted);margin-top:4px">最大100本まで一括登録できます</div>
           </div>
+          <!-- ADR 008 Phase 4: 連番起点（任意上書き） -->
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">連番起点 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・空欄で案件設定）</span></label>
+            <input class="form-input" id="bulk-serial-start" type="number" min="1" placeholder="（案件の「次のファイル名連番」を使用）" style="font-family:monospace">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.5">シート側で先行採番されている時はここで起点を合わせるとズレが直ります。</div>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">初稿提出日</label>
@@ -5512,6 +5518,35 @@ window.showPage = window.showPage || function(name, btn) {
             </div>
             <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
           </div>
+
+          <!-- ADR 008 Phase 4: 上級設定（連番カスタマイズ） -->
+          <details style="margin-top:10px;border:1px dashed #C9E5D6;border-radius:8px;padding:8px 12px;background:#FAFEFD">
+            <summary style="cursor:pointer;font-size:12px;font-weight:600;color:#0F7A56;outline:none">
+              ⚙️ 上級設定（連番カスタマイズ）
+            </summary>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">次のファイル名連番</label>
+                <input class="form-input" id="p-next-filename-serial" type="number" min="1" step="1" placeholder="1" style="font-family:monospace;font-size:13px">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:11px">連番桁数</label>
+                <select class="form-select" id="p-serial-digits" style="font-family:monospace;font-size:13px">
+                  <option value="1">1（例: 1）</option>
+                  <option value="2">2（例: 01）</option>
+                  <option value="3" selected>3（例: 001）</option>
+                  <option value="4">4（例: 0001）</option>
+                  <option value="5">5（例: 00001）</option>
+                  <option value="6">6（例: 000001）</option>
+                  <option value="7">7（例: 0000001）</option>
+                </select>
+              </div>
+            </div>
+            <div style="font-size:11px;color:#5b8a73;margin-top:8px;line-height:1.6">
+              シート側で先行採番されている場合、ここで起点を合わせると一括登録の連番がシートと揃います。
+              桁数を変えると次回以降の生成ファイル名のゼロパディング桁数が変わります。
+            </div>
+          </details>
         </div>
 
         <!-- ADR 008 Phase 1: クリエイティブ管理シート同期 -->
@@ -6514,7 +6549,18 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- 基本情報バナー -->
       <div style="background:var(--em-pale);border-radius:10px;padding:12px 16px;margin-bottom:18px">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-          <div style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;margin-bottom:6px;word-break:break-all;flex:1" id="cd-filename"></div>
+          <!-- ADR 008 Phase 4: file_name は編集可能 input。focusout で PUT。変更時 Slack 通知。 -->
+          <div style="flex:1;min-width:0">
+            <input type="text" id="cd-filename"
+                   data-original=""
+                   onfocus="this.dataset.editing='1';this.style.borderColor='var(--em)'"
+                   onblur="onCreativeFileNameBlur(this)"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                   style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;word-break:break-all;width:100%;background:transparent;border:1px dashed transparent;border-radius:6px;padding:4px 8px;outline:none"
+                   onmouseover="if(this.dataset.editing!=='1')this.style.borderColor='var(--border)'"
+                   onmouseout="if(this.dataset.editing!=='1')this.style.borderColor='transparent'"
+                   title="クリックでファイル名を編集できます（変更時 Slack 通知）">
+          </div>
           <!-- 事後修正モード起動ボタン（権限ありのみ表示） -->
           <button id="cd-postedit-btn"
                   onclick="openCreativePostEdit()"
@@ -13981,6 +14027,9 @@ function openProjectModal(preClientId) {
   // ADR 008 Phase 1: 新規時は同期 URL 空、結果表示も非表示
   { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = ''; }
   { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
+  // ADR 008 Phase 4: 連番カスタマイズ初期値
+  { const _nfs = document.getElementById('p-next-filename-serial'); if (_nfs) _nfs.value = ''; }
+  { const _sd = document.getElementById('p-serial-digits'); if (_sd) _sd.value = '3'; }
   selectDeadlineUnit('monthly');
   document.getElementById('p-deadline-weekday').value = '';
   // サブディレクター: 新規は空で初期化
@@ -14087,6 +14136,13 @@ function openEditProject(p) {
   // ADR 008 Phase 1: クリエイティブ管理シート同期 URL 復元
   { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = p.creatives_export_sheet_url || ''; }
   { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
+  // ADR 008 Phase 4: 連番カスタマイズ復元
+  {
+    const _nfs = document.getElementById('p-next-filename-serial');
+    if (_nfs) _nfs.value = (p.next_filename_serial != null && p.next_filename_serial !== '') ? String(p.next_filename_serial) : '';
+    const _sd = document.getElementById('p-serial-digits');
+    if (_sd) _sd.value = (p.serial_digits != null && p.serial_digits !== '') ? String(p.serial_digits) : '3';
+  }
 
   // サブディレクター: DB値を復元（クライアント外IDが残っていれば render 側で警告クリア）
   _editingProjectSubDirectorIds = Array.isArray(p.sub_director_ids) ? [...p.sub_director_ids] : [];
@@ -17275,6 +17331,11 @@ async function submitProject() {
   // ADR 007: ファイル名テンプレ（編集モードのみ。新規作成時は POST で別途追従するため除外）
   const filename_template_id = document.getElementById('p-filename-template-id')?.value || null;
   const filename_token_overrides = (_projFilenameState && _projFilenameState.overrides) ? _projFilenameState.overrides : {};
+  // ADR 008 Phase 4: 連番カスタマイズ
+  const _nfsRaw = document.getElementById('p-next-filename-serial')?.value;
+  const next_filename_serial = (_nfsRaw != null && String(_nfsRaw).trim() !== '') ? Number(_nfsRaw) : undefined;
+  const _sdRaw = document.getElementById('p-serial-digits')?.value;
+  const serial_digits = (_sdRaw != null && String(_sdRaw).trim() !== '') ? Number(_sdRaw) : undefined;
 
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（編集時に明示送信、新規時は空）
   const creatives_export_sheet_url = document.getElementById('p-creatives-export-sheet-url')?.value.trim() || null;
@@ -17287,7 +17348,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -21352,10 +21413,17 @@ async function bulkPreviewCreative() {
   // ADR 007: bulk 単位で talent_flag を1値持たせる（同一 bulk 内全件に適用）
   const talent_flag = document.getElementById('bulk-talent-flag')?.checked || false;
 
+  // ADR 008 Phase 4: serial_start（任意上書き）
+  const _serialStartRaw = document.getElementById('bulk-serial-start')?.value;
+  const serial_start = (_serialStartRaw != null && String(_serialStartRaw).trim() !== '')
+    ? Number(_serialStartRaw)
+    : undefined;
+
   _bulkPayload = { project_id, creative_type, appeal_type_id, count,
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
     product_id, product_code, media_code, creative_fmt, creative_size,
-    assignee_id, team_id, talent_flag };
+    assignee_id, team_id, talent_flag,
+    serial_start };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
   const origText = btn.textContent;
@@ -26469,6 +26537,44 @@ function cdRoundJump(idx) {
   cdRenderRoundCompare();
 }
 
+// ADR 008 Phase 4: ファイル名 input の focusout 時に PUT /api/creatives/:id 送信。
+//   変更前後の値が異なる場合のみ送信。サーバ側で Slack 通知（fire-and-forget）が走る。
+async function onCreativeFileNameBlur(el) {
+  if (!el) return;
+  el.dataset.editing = '';
+  el.style.borderColor = 'transparent';
+  const id = el.dataset.creativeId || (currentCreativeDetail && currentCreativeDetail.id);
+  const before = el.dataset.original || '';
+  const after = (el.value || '').trim();
+  if (!id) return;
+  if (after === before) return;
+  if (!after) {
+    showToast('ファイル名は空にできません', 'warn');
+    el.value = before;
+    return;
+  }
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_name: after })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('ファイル名の更新に失敗しました: ' + (e?.error || res.status), 'error');
+      el.value = before;
+      return;
+    }
+    el.dataset.original = after;
+    if (currentCreativeDetail) currentCreativeDetail.file_name = after;
+    showToast('ファイル名を更新しました（Slack に通知）', 'success');
+    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch(_) {}
+  } catch (e) {
+    showToast('ファイル名の更新に失敗しました', 'error');
+    el.value = before;
+  }
+}
+
 // ==================== ADR 012: カテゴリ別フィールド可視性 ====================
 // 詳細モーダルの builtin DOM (data-field-key) を visible/hidden 切り替え + ラベル上書き。
 // custom フィールドは #cd-custom-fields に動的生成（既存値は GET /custom-fields で populate）。
@@ -26638,7 +26744,17 @@ async function openCreativeDetail(id) {
   currentCreativeDetail = c;
 
   // 基本情報
-  document.getElementById('cd-filename').textContent = c.file_name;
+  // ADR 008 Phase 4: cd-filename は input に変更済み。value + data-original で編集前値を保持。
+  {
+    const fnEl = document.getElementById('cd-filename');
+    if (fnEl) {
+      fnEl.value = c.file_name || '';
+      fnEl.dataset.original = c.file_name || '';
+      fnEl.dataset.creativeId = c.id;
+      fnEl.dataset.editing = '';
+      fnEl.style.borderColor = 'transparent';
+    }
+  }
   const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass(c.status)}">${c.status}</span>`;
   document.getElementById('cd-project-name').textContent = c.projects?.name || '-';

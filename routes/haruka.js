@@ -731,7 +731,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     tags,
     filename_template_id, filename_token_overrides,
     scheduled_start_date, active_phase_template_id,
-    creatives_export_sheet_url
+    // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL
+    creatives_export_sheet_url,
+    // ADR 008 Phase 4: ファイル名連番カスタマイズ
+    next_filename_serial, serial_digits
   } = req.body;
   // ADR 010 Phase 1b: 工程表セクションだけが値を送る部分更新（schedule 列のみ）
   // のときは name/status を強制 NULL 化してしまわないよう、最小 UPDATE で済ませる
@@ -796,6 +799,19 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
       ? filename_token_overrides
       : {};
   }
+  // ADR 008 Phase 4: 次のファイル名連番（任意上書き） / 連番桁数
+  if (next_filename_serial !== undefined) {
+    const n = Number(next_filename_serial);
+    if (Number.isFinite(n) && n >= 1 && n <= 1_000_000) {
+      updateData.next_filename_serial = Math.floor(n);
+    }
+  }
+  if (serial_digits !== undefined) {
+    const d = Number(serial_digits);
+    if (Number.isInteger(d) && d >= 1 && d <= 10) {
+      updateData.serial_digits = d;
+    }
+  }
   // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
@@ -855,6 +871,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { scheduled_start_date: _o4a, active_phase_template_id: _o4b, ...fallback4 } = updateData;
     const retry4 = await supabase.from('projects').update(fallback4).eq('id', req.params.id).select().single();
     data = retry4.data; error = retry4.error;
+  }
+  // ADR 008 Phase 4 migration 未適用ガード（schema-sync 失敗時）
+  if (error && /next_filename_serial|serial_digits/i.test(error.message || '')) {
+    const { next_filename_serial: _o5a, serial_digits: _o5b, ...fallback5 } = updateData;
+    const retry5 = await supabase.from('projects').update(fallback5).eq('id', req.params.id).select().single();
+    data = retry5.data; error = retry5.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -5121,10 +5143,30 @@ router.get('/creatives/:id', async (req, res) => {
   res.json(data);
 });
 
+// ADR 008 Phase 4: 案件の連番起点 / 桁数を読み出すヘルパ。
+//   既存案件で migration 未適用 / 列欠損のときは null を返し、呼び出し側で旧仕様にフォールバック。
+async function resolveProjectSerialConfig(project) {
+  const startRaw = project?.next_filename_serial;
+  const digitsRaw = project?.serial_digits;
+  const start = Number.isFinite(Number(startRaw)) && Number(startRaw) >= 1 ? Math.floor(Number(startRaw)) : null;
+  const digits = Number.isInteger(Number(digitsRaw)) && Number(digitsRaw) >= 1 && Number(digitsRaw) <= 10
+    ? Number(digitsRaw)
+    : null;
+  return { start, digits };
+}
+
 // 一括登録プレビュー（DBには保存しない）
+//
+// ADR 008 Phase 4 (2026-05-09):
+//   採番方式を「既存 internal_code/file_name から最小未使用番号を割り当て」→
+//   「projects.next_filename_serial を起点に count 個進める」に変更。
+//   - 欠番再利用は行わない（シート側連番とのズレを生まない）
+//   - 起点は req.body.serial_start で上書き可能（フロントの bulk モーダルで明示）
+//   - serial 桁数は projects.serial_digits（既定 3 桁）
+//   - migration 未適用環境では従来の最小未使用方式にフォールバック
 router.post('/creatives/bulk-preview', async (req, res) => {
   const { project_id, creative_type, appeal_type_id, count, draft_deadline, final_deadline,
-          product_code, media_code, creative_fmt, creative_size } = req.body;
+          product_code, media_code, creative_fmt, creative_size, serial_start } = req.body;
   // 訴求軸（appeal_type_id）は任意化: 未確定状態でもプレビュー可（ファイル名は空欄部分を詰めて生成される）
   if (!project_id || !creative_type || !count) {
     return res.status(400).json({ error: '案件・種別・本数は必須です' });
@@ -5146,51 +5188,69 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
   const tplResolved = await resolveProjectFilenameTemplate(project);
 
-  const { data: existingCreatives } = await supabase
-    .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
-  const usedSeqs = (existingCreatives || []).map(c => {
-    if (c.internal_code) { const m = c.internal_code.match(/^(\d{3})_/); if (m) return Number(m[1]); }
-    const fn = c.file_name || '';
-    const m7 = fn.match(/_(\d{7})$/); if (m7) return Number(m7[1]);
-    const m3 = fn.match(/^(\d{3})_/); return m3 ? Number(m3[1]) : null;
-  }).filter(n => n !== null);
+  // ADR 008 Phase 4: 連番起点 & 桁数
+  const { start: cfgStart, digits: cfgDigits } = await resolveProjectSerialConfig(project);
+  const serialDigits = cfgDigits || 3;
+  const overrideStart = (() => {
+    const n = Number(serial_start);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
+  })();
+  let startSeq = overrideStart || cfgStart;
+
+  // 旧仕様フォールバック: next_filename_serial 列が無い環境
+  if (!startSeq) {
+    const { data: existingCreatives } = await supabase
+      .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
+    const usedSeqs = (existingCreatives || []).map(c => {
+      if (c.internal_code) { const m = c.internal_code.match(/^(\d{3})_/); if (m) return Number(m[1]); }
+      const fn = c.file_name || '';
+      const m7 = fn.match(/_(\d{7})$/); if (m7) return Number(m7[1]);
+      const m3 = fn.match(/^(\d{3})_/); return m3 ? Number(m3[1]) : null;
+    }).filter(n => n !== null);
+    let n = 1;
+    while (usedSeqs.includes(n)) n++;
+    startSeq = n;
+  }
 
   const today = new Date();
   const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
 
   const previews = [];
-  let nextSeq = 1;
+  let nextSeq = startSeq;
   for (let i = 0; i < count; i++) {
-    while (usedSeqs.includes(nextSeq)) nextSeq++;
-    const seqStr7 = String(nextSeq).padStart(7, '0');
+    const seqStr = String(nextSeq).padStart(serialDigits, '0');
     let fileName;
     if (tplResolved) {
       const tokenValues = buildFilenameTokenValues({
-        project, appealType, body: req.body, seqStr7, dateStr, version: '',
+        project, appealType, body: req.body, seqStr7: seqStr, dateStr, version: '',
       });
-      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides, { serialDigits });
     } else {
-      // 既存ハードコード仕様にフォールバック (silent skip / migration 未適用ガード)
       const appealCode = appealType ? appealType.code : '';
-      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
+      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr]
         .map(p => (p||'').toString().trim()).filter(Boolean);
       fileName = parts.join('_');
     }
     previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
-    usedSeqs.push(nextSeq);
     nextSeq++;
   }
-  res.json({ previews });
+  res.json({ previews, serial_start: startSeq, next_serial_after: startSeq + count, serial_digits: serialDigits });
 });
 
 // クリエイティブ作成
 // 一括登録
+//
+// ADR 008 Phase 4 (2026-05-09):
+//   採番方式は bulk-preview と同じく projects.next_filename_serial 起点。
+//   完了時に projects.next_filename_serial = 起点 + count に同期更新する。
+//   serial_start (req.body) で起点を上書き可能（フロント bulk モーダルで指定）。
 router.post('/creatives/bulk', async (req, res) => {
   const {
     project_id, creative_type, appeal_type_id,
     count, draft_deadline, final_deadline, note,
     product_id, product_code, media_code, creative_fmt, creative_size,
-    assignee_id, team_id, talent_flag
+    assignee_id, team_id, talent_flag,
+    serial_start
   } = req.body;
   // 訴求軸（appeal_type_id）は任意化: 未確定状態でも一括登録できるようにする
   if (!project_id || !creative_type || !count) {
@@ -5220,32 +5280,46 @@ router.post('/creatives/bulk', async (req, res) => {
   // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
   const tplResolved = await resolveProjectFilenameTemplate(project);
 
-  const { data: existingCreatives } = await supabase
-    .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
-  const usedSeqs = (existingCreatives || []).map(c => {
-    if (c.internal_code) { const m = c.internal_code.match(/^(\d{3})_/); if (m) return Number(m[1]); }
-    const fn = c.file_name || '';
-    const m7 = fn.match(/_(\d{7})$/); if (m7) return Number(m7[1]);
-    const m3 = fn.match(/^(\d{3})_/); return m3 ? Number(m3[1]) : null;
-  }).filter(n => n !== null);
+  // ADR 008 Phase 4: 連番起点 & 桁数
+  const { start: cfgStart, digits: cfgDigits } = await resolveProjectSerialConfig(project);
+  const serialDigits = cfgDigits || 3;
+  const overrideStart = (() => {
+    const n = Number(serial_start);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
+  })();
+  let startSeq = overrideStart || cfgStart;
+
+  // 旧仕様フォールバック: next_filename_serial 列が無い環境
+  if (!startSeq) {
+    const { data: existingCreatives } = await supabase
+      .from('creatives').select('internal_code, file_name, appeal_type_id').eq('project_id', project_id);
+    const usedSeqsLegacy = (existingCreatives || []).map(c => {
+      if (c.internal_code) { const m = c.internal_code.match(/^(\d{3})_/); if (m) return Number(m[1]); }
+      const fn = c.file_name || '';
+      const m7 = fn.match(/_(\d{7})$/); if (m7) return Number(m7[1]);
+      const m3 = fn.match(/^(\d{3})_/); return m3 ? Number(m3[1]) : null;
+    }).filter(n => n !== null);
+    let n = 1;
+    while (usedSeqsLegacy.includes(n)) n++;
+    startSeq = n;
+  }
 
   const today = new Date();
   const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
 
   const inserts = [];
-  let nextSeq = 1;
+  let nextSeq = startSeq;
   for (let i = 0; i < count; i++) {
-    while (usedSeqs.includes(nextSeq)) nextSeq++;
-    const seqStr7 = String(nextSeq).padStart(7, '0');
+    const seqStr = String(nextSeq).padStart(serialDigits, '0');
     let fileName;
     if (tplResolved) {
       const tokenValues = buildFilenameTokenValues({
-        project, appealType, body: req.body, seqStr7, dateStr, version: '',
+        project, appealType, body: req.body, seqStr7: seqStr, dateStr, version: '',
       });
-      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+      fileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides, { serialDigits });
     } else {
       const appealCode = appealType ? appealType.code : '';
-      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr7]
+      const parts = [dateStr, product_code, media_code, creative_fmt, appealCode, creative_size, seqStr]
         .map(p => (p||'').toString().trim()).filter(Boolean);
       fileName = parts.join('_');
     }
@@ -5258,13 +5332,26 @@ router.post('/creatives/bulk', async (req, res) => {
       talent_flag: talent_flag === true,
       team_id: team_id || null };
     inserts.push(insert);
-    usedSeqs.push(nextSeq);
     nextSeq++;
   }
   const { data, error } = await supabase.from('creatives').insert(inserts).select();
   if (error) return res.status(500).json({ error: error.message });
-  await supabase.from('projects').update({ seq_counter: Math.max(...usedSeqs) }).eq('id', project_id);
-  res.json({ ok: true, count: data.length, creatives: data });
+
+  // 採番起点を進める（ADR 008 Phase 4）
+  // - next_filename_serial 列があれば advancedTo (= startSeq + count) に進める
+  // - seq_counter 列は Phase 5 で削除予定だが、互換のため advancedTo - 1 で同期更新する
+  const advancedTo = startSeq + count;
+  try {
+    const updatePayload = { next_filename_serial: advancedTo, seq_counter: advancedTo - 1 };
+    const { error: upErr } = await supabase.from('projects').update(updatePayload).eq('id', project_id);
+    if (upErr && /next_filename_serial/i.test(upErr.message || '')) {
+      await supabase.from('projects').update({ seq_counter: advancedTo - 1 }).eq('id', project_id);
+    }
+  } catch (e) {
+    console.warn('[bulk] advance serial failed:', e?.message || e);
+  }
+
+  res.json({ ok: true, count: data.length, creatives: data, next_serial_after: advancedTo, serial_digits: serialDigits });
 });
 
 // 個別登録
@@ -5508,6 +5595,20 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   // 納品完了時に支払い可能フラグを自動オン
   if (status === '納品') updateData.is_payable = true;
 
+  // ADR 008 Phase 4: file_name 変更検知用に before の file_name と project を取得しておく。
+  //   変更があれば後段で Slack 通知（fire-and-forget）。
+  let beforeFileName = null;
+  let beforeProjectIdForSlack = null;
+  if (updateData.file_name !== undefined) {
+    const { data: bf } = await supabase
+      .from('creatives')
+      .select('file_name, project_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    beforeFileName = bf?.file_name ?? null;
+    beforeProjectIdForSlack = bf?.project_id ?? null;
+  }
+
   // ステータス変更を検知するため、更新前の値を取得
   // ADR 011: ラウンドsnapshot確定のため、コメント3種も同時に取得する。
   // ADR 011 補足 (2026-05-09 v2): director/client/editor_comment_updated_at も取得して
@@ -5561,6 +5662,70 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
   if (error) return res.status(500).json({ error: error.message });
+
+  // ADR 008 Phase 4: file_name 変更を Slack に通知（fire-and-forget）
+  //   - 監査ログテーブルは作らず、Slack への通知のみで運用開始
+  //   - 通知先は案件 slack_channel_url > system_settings.broadcast_slack_channel_url の順
+  //   - 通知失敗は無視（DB UPDATE は成功させる）
+  if (
+    updateData.file_name !== undefined &&
+    typeof updateData.file_name === 'string' &&
+    beforeFileName !== null &&
+    beforeFileName !== updateData.file_name
+  ) {
+    (async () => {
+      try {
+        const notif = require('../notifications');
+        let projectName = '(不明)';
+        let projectSlackUrl = null;
+        if (beforeProjectIdForSlack) {
+          const { data: proj } = await supabase
+            .from('projects')
+            .select('name, slack_channel_url')
+            .eq('id', beforeProjectIdForSlack)
+            .maybeSingle();
+          if (proj) {
+            projectName = proj.name || projectName;
+            projectSlackUrl = proj.slack_channel_url || null;
+          }
+        }
+        let actorName = '(不明)';
+        if (req.user?.id) {
+          const { data: u } = await supabase
+            .from('users')
+            .select('full_name, nickname')
+            .eq('id', req.user.id)
+            .maybeSingle();
+          actorName = u?.nickname || u?.full_name || actorName;
+        }
+        let slackUrl = projectSlackUrl;
+        if (!slackUrl) {
+          const { data: setting } = await supabase
+            .from('system_settings')
+            .select('value')
+            .eq('key', 'broadcast_slack_channel_url')
+            .maybeSingle();
+          slackUrl = setting?.value || null;
+        }
+        if (!slackUrl) {
+          console.warn('[creative file_name change] no slack channel configured (project + broadcast 両方未設定)');
+          return;
+        }
+        const text =
+          `📝 クリエイティブのファイル名が変更されました\n` +
+          `案件: ${projectName}\n` +
+          `変更者: ${actorName}\n` +
+          `変更前: \`${beforeFileName}\`\n` +
+          `変更後: \`${updateData.file_name}\``;
+        const r = await notif.sendSlackChannel(slackUrl, text);
+        if (!r.ok) {
+          console.warn('[creative file_name change] slack push failed:', r.reason);
+        }
+      } catch (e) {
+        console.warn('[creative file_name change] slack push error:', e?.message || e);
+      }
+    })();
+  }
 
   // ADR 011 補足: 全ステータス遷移を creative_status_transitions に audit log として記録。
   //   通常 PUT 経由で status が変わったすべてのケースを 1 行 1 record で残す。
@@ -10770,14 +10935,20 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     })
     .filter(n => n !== null);
 
-  let nextSeq = 1;
-  while (usedSeqs.includes(nextSeq)) nextSeq++;
+  // ADR 008 Phase 4: 連番起点（projects.next_filename_serial）優先、無ければ最小未使用
+  const { start: cfgStart, digits: cfgDigits } = await resolveProjectSerialConfig(project);
+  const serialDigits = cfgDigits || 3;
+  let nextSeq = cfgStart;
+  if (!nextSeq) {
+    nextSeq = 1;
+    while (usedSeqs.includes(nextSeq)) nextSeq++;
+  }
 
   // 訴求タイプの連番
   const nextAppealSeq = (allCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length + 1;
 
   const seqStr3 = String(nextSeq).padStart(3, '0');
-  const seqStr7 = String(nextSeq).padStart(7, '0');
+  const seqStr  = String(nextSeq).padStart(serialDigits, '0');
   const appealSeqStr = String(nextAppealSeq).padStart(2, '0');
 
   // 内部コード（旧命名規約）
@@ -10797,12 +10968,12 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
   let newFileName;
   if (tplResolved) {
     const tokenValues = buildFilenameTokenValues({
-      project, appealType, body: req.body, seqStr7, dateStr, version: 'v1',
+      project, appealType, body: req.body, seqStr7: seqStr, dateStr, version: 'v1',
     });
-    newFileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides);
+    newFileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides, { serialDigits });
   } else {
-    // ハードコードフォールバック: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{7桁seq}
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr7]
+    // ハードコードフォールバック: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{seq(serial_digits)}
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr]
       .map(p => (p || '').toString().trim())
       .filter(Boolean);
     newFileName = parts.join('_');

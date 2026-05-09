@@ -192,6 +192,22 @@ ALTER TABLE projects
 CREATE INDEX IF NOT EXISTS idx_projects_filename_template_id
   ON projects(filename_template_id);
 
+-- ADR 008 Phase 4: ファイル名連番のカスタマイズと桁数設定
+-- migrations/2026-05-09_phase4_filename_serial.sql
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS next_filename_serial INT NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS serial_digits INT NOT NULL DEFAULT 3;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'projects_serial_digits_range'
+  ) THEN
+    ALTER TABLE projects
+      ADD CONSTRAINT projects_serial_digits_range
+      CHECK (serial_digits BETWEEN 1 AND 10);
+  END IF;
+END$$;
+
 -- ==================== project_cycles ====================
 CREATE TABLE IF NOT EXISTS project_cycles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
