@@ -5258,6 +5258,23 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         versionAtChange = latestFileForCst?.version ?? null;
       } catch (_) { /* 取得失敗は null のまま */ }
 
+      // PR #(d-to-p-handoff-comment): 同 PUT で status と director_comment / client_comment を
+      // 同時送信する UI フロー（saveCreativeDetail）に対応するため、updateData 側に新しい
+      // コメントが入っていればそれを優先する。
+      //   例: Dチェック→Pチェックで「OK次へ」を書きながら status 遷移するケース。
+      //   beforeRow.director_comment は OLD 値（前ラウンドの指摘内容）なので、
+      //   それを audit log に残すと「Dチェック→Pチェック の引き継ぎ承認コメント」が
+      //   前ラウンドの指摘に化ける。代表 髙橋 報告のラウンド比較UIバグの根本原因。
+      const directorCommentAtChange = (updateData.director_comment !== undefined)
+        ? (updateData.director_comment ?? null)
+        : (beforeRow.director_comment ?? null);
+      const clientCommentAtChange = (updateData.client_comment !== undefined)
+        ? (updateData.client_comment ?? null)
+        : (beforeRow.client_comment ?? null);
+      const editorCommentAtChange = (updateData.editor_comment !== undefined)
+        ? (updateData.editor_comment ?? null)
+        : (beforeRow.editor_comment ?? null);
+
       const { error: cstErr } = await supabase
         .from('creative_status_transitions')
         .insert({
@@ -5266,9 +5283,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
           to_status:   updateData.status,
           changed_by:  req.user?.id || null,
           changed_at:  new Date().toISOString(),
-          director_comment_at_change: beforeRow.director_comment ?? null,
-          client_comment_at_change:   beforeRow.client_comment   ?? null,
-          editor_comment_at_change:   beforeRow.editor_comment   ?? null,
+          director_comment_at_change: directorCommentAtChange,
+          client_comment_at_change:   clientCommentAtChange,
+          editor_comment_at_change:   editorCommentAtChange,
           version_at_change: versionAtChange,
         });
       if (cstErr) {
@@ -11403,10 +11420,137 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       .in('id', fileIds);
     filesById = Object.fromEntries((files || []).map(f => [f.id, f]));
   }
-  const result = (data || []).map(r => ({
-    ...r,
-    file: r.creative_file_id ? (filesById[r.creative_file_id] || null) : null,
-  }));
+
+  // 引き継ぎ承認コメント (handoff_to_next) を creative_status_transitions から付与
+  // (PR #(d-to-p-handoff-comment) / 代表 髙橋指示・2026-05-09):
+  //   各 round_stage にとっての「次工程への承認・引き継ぎ遷移」を探し、
+  //   そのときディレクター/プロデューサー/クライアントが書いたコメントを
+  //   round.handoff_to_next として埋め込む。フロントは round_stage が
+  //   d_check/p_check/cl_check の round 本文の一番上に「Dチェック→Pチェック 承認」
+  //   等のラベルとともに表示する（ラウンド比較UI）。
+  //
+  //   stage → 引き継ぎ遷移 (from_status → to_status):
+  //     d_check  → 'Dチェック' → 'Pチェック'
+  //     p_check  → 'Pチェック' → 'クライアントチェック中'
+  //     cl_check → 'クライアントチェック中' → '納品'
+  //
+  //   コメント取得元:
+  //     d_to_p / p_to_cl: director_comment_at_change（director_comment は
+  //                       D/P が共有する単一フィールド）
+  //     cl_to_delivered : client_comment_at_change
+  //
+  //   対応する snapshot round は「changed_at > round.created_at」の最早の transition。
+  //   schema 未適用環境（creative_status_transitions テーブル無し）でも本処理は止めない。
+  let transitions = [];
+  try {
+    const { data: trans, error: transErr } = await supabase
+      .from('creative_status_transitions')
+      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, version_at_change')
+      .eq('creative_id', req.params.id)
+      .order('changed_at', { ascending: true });
+    if (!transErr && Array.isArray(trans)) {
+      transitions = trans;
+    } else if (transErr) {
+      console.warn('[creative_status_transitions] fetch failed:', transErr.message);
+    }
+  } catch (e) {
+    console.warn('[creative_status_transitions] fetch block failed:', e?.message || e);
+  }
+
+  const HANDOFF_BY_STAGE = {
+    'd_check':  { from: 'Dチェック',                 to: 'Pチェック',                  next: 'd_to_p',          commentField: 'director_comment_at_change' },
+    'p_check':  { from: 'Pチェック',                 to: 'クライアントチェック中',     next: 'p_to_cl',         commentField: 'director_comment_at_change' },
+    'cl_check': { from: 'クライアントチェック中',     to: '納品',                       next: 'cl_to_delivered', commentField: 'client_comment_at_change'   },
+  };
+
+  const usedTransitionIds = new Set();
+  const result = (data || []).map(r => {
+    const out = {
+      ...r,
+      file: r.creative_file_id ? (filesById[r.creative_file_id] || null) : null,
+      handoff_to_next: null,
+    };
+    const def = HANDOFF_BY_STAGE[r.round_stage];
+    if (def) {
+      // round.created_at より後で from→to が一致する最早の transition を採用
+      const roundTime = r.created_at ? Date.parse(r.created_at) : 0;
+      const match = transitions
+        .filter(t => t.from_status === def.from && t.to_status === def.to)
+        .filter(t => !usedTransitionIds.has(t.id))
+        .filter(t => !roundTime || (t.changed_at && Date.parse(t.changed_at) > roundTime))
+        .sort((a, b) => (a.changed_at || '').localeCompare(b.changed_at || ''))[0];
+      if (match) {
+        usedTransitionIds.add(match.id);
+        const comment = match[def.commentField] || null;
+        // コメントが空でも「いつ承認されたか」だけは出せると有用なので transition は返す。
+        // フロント側で comment が空のときは表示抑制する。
+        out.handoff_to_next = {
+          stage: def.next,                  // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered'
+          from_status: match.from_status,
+          to_status:   match.to_status,
+          comment,
+          changed_at:  match.changed_at,
+          changed_by:  match.changed_by,
+        };
+      }
+    }
+    return out;
+  });
+
+  // 孤児 handoff を仮想ラウンドとして追加 (PR #(d-to-p-handoff-comment)):
+  //   修正なし直行ケース（制作中→Dチェック→Pチェック など、d_check スナップショット無し）
+  //   でも引き継ぎ承認コメントを表示するために、対応する snapshot に紐付かない transition を
+  //   「コメントだけのラウンド」として返す。
+  //   editor_comment / director_comment / client_comment は NULL（編集者の提出メモも reviewer 指摘も無い）。
+  //   handoff_to_next にだけ情報を入れることで、フロント `_cdRoundEntryHtml` が
+  //   引き継ぎ承認ブロックのみを描画する。
+  //   version_num は version_at_change（その時点の最新ファイル version）を採用し、
+  //   ソート (version_num asc, created_at asc) で正しい位置に並ぶようにする。
+  const HANDOFF_TRANSITIONS_TO_STAGE = {
+    'Dチェック→Pチェック':                 { stage: 'd_to_p',          synthetic_stage: 'd_check_handoff',  commentField: 'director_comment_at_change' },
+    'Pチェック→クライアントチェック中':     { stage: 'p_to_cl',         synthetic_stage: 'p_check_handoff',  commentField: 'director_comment_at_change' },
+    'クライアントチェック中→納品':          { stage: 'cl_to_delivered', synthetic_stage: 'cl_check_handoff', commentField: 'client_comment_at_change'   },
+  };
+  for (const t of transitions) {
+    if (usedTransitionIds.has(t.id)) continue;
+    const key = `${t.from_status}→${t.to_status}`;
+    const def = HANDOFF_TRANSITIONS_TO_STAGE[key];
+    if (!def) continue;
+    const comment = t[def.commentField] || null;
+    if (!comment || !String(comment).trim()) continue; // 空コメントの孤児は出さない
+    result.push({
+      id:               `handoff-${t.id}`,
+      creative_id:      req.params.id,
+      version_num:      t.version_at_change ?? null,
+      director_comment: null,
+      client_comment:   null,
+      editor_comment:   null,
+      round_stage:      def.synthetic_stage,
+      creative_file_id: null,
+      recorded_by:      null,
+      created_at:       t.changed_at,
+      file:             null,
+      _synthetic_handoff: true,
+      handoff_to_next: {
+        stage:       def.stage,
+        from_status: t.from_status,
+        to_status:   t.to_status,
+        comment,
+        changed_at:  t.changed_at,
+        changed_by:  t.changed_by,
+      },
+    });
+  }
+
+  // 並び順を再保証（snapshot + 孤児 handoff の混在ソート）:
+  //   version_num asc (NULL は末尾) → created_at asc。
+  result.sort((a, b) => {
+    const av = a.version_num == null ? Infinity : Number(a.version_num);
+    const bv = b.version_num == null ? Infinity : Number(b.version_num);
+    if (av !== bv) return av - bv;
+    return (a.created_at || '').localeCompare(b.created_at || '');
+  });
+
   res.json(result);
 });
 
