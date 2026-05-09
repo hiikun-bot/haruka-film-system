@@ -1826,6 +1826,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     max-width: 95vw !important;
   }
 }
+/* PR ADR 012-related: temporarily hide bulk creative registration UI. Logic/JS/HTML retained. */
+#tab-bulk-btn,
+#creative-step1-bulk-link {
+  display: none !important;
+}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- カスタム確認モーダル: window.showConfirmDialog を提供（ネイティブ confirm() の代替） -->
@@ -3618,6 +3623,7 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- ヘッダー固定 -->
     <div style="padding:20px 24px 0;flex-shrink:0">
       <div class="modal-title" style="margin-bottom:16px">クリエイティブ追加<button class="modal-close" onclick="cancelCreativeModal()">×</button></div>
+      <!-- ADR 012-related: bulk tab is temporarily hidden via CSS (#tab-bulk-btn). Logic/JS/HTML retained for future restore. -->
       <div id="creative-tab-bar" style="display:flex;gap:4px;border-bottom:0.5px solid var(--border);padding-bottom:0">
         <button id="tab-single-btn" onclick="switchCreativeTab('single')" style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--em-dark);font-weight:500;border-bottom:2px solid var(--em);cursor:pointer">個別登録</button>
         <button id="tab-bulk-btn" onclick="switchCreativeTab('bulk')" style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer">一括登録</button>
@@ -3647,6 +3653,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
           <div>
             <!-- 動画/静止画案件を選んでいる時だけ表示。クリックで一括登録タブに切替（案件は引き継ぎ） -->
+            <!-- ADR 012-related: temporarily hidden via CSS (#creative-step1-bulk-link). Logic retained. -->
             <button type="button" id="creative-step1-bulk-link" onclick="goToBulkFromSingle()" style="display:none;background:none;border:none;color:var(--em-dark);font-size:12px;cursor:pointer;padding:4px 0;text-decoration:underline">→ 複数本まとめて登録（一括登録）</button>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
