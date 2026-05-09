@@ -4761,7 +4761,12 @@ router.get('/creatives', async (req, res) => {
     if (project_id) q = q.eq('project_id', project_id);
     if (cycle_id)   q = q.eq('cycle_id', cycle_id);
     if (status)     q = q.eq('status', status);
-    if (tabFilter)  q = q.like('creative_type', `${tabFilter}_%`);
+    if (tabFilter === 'video') {
+      q = q.like('creative_type', 'video_%');
+    } else if (tabFilter === 'design') {
+      // design_% に加えて lp / hp / line（プレフィックス無し）も含める
+      q = q.or('creative_type.like.design_%,creative_type.eq.lp,creative_type.eq.hp,creative_type.eq.line');
+    }
     if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
     if (client_id) {
       // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
@@ -4904,7 +4909,14 @@ router.get('/creatives/counts', async (req, res) => {
     if (project_id) q2 = q2.eq('project_id', project_id);
     if (cycle_id)   q2 = q2.eq('cycle_id', cycle_id);
     if (status)     q2 = q2.eq('status', status);
-    if (typePrefix) q2 = q2.like('creative_type', `${typePrefix}_%`);
+    if (typePrefix === 'video') {
+      q2 = q2.like('creative_type', 'video_%');
+    } else if (typePrefix === 'design') {
+      // design_% に加えて lp / hp / line（プレフィックス無し）も含める
+      q2 = q2.or('creative_type.like.design_%,creative_type.eq.lp,creative_type.eq.hp,creative_type.eq.line');
+    } else if (typePrefix) {
+      q2 = q2.like('creative_type', `${typePrefix}_%`);
+    }
     if (!(include_done === '1' || include_done === 'true')) q2 = q2.neq('status', '納品');
     if (client_id) {
       const ids = String(client_id).split(',').map(s => s.trim()).filter(Boolean);
