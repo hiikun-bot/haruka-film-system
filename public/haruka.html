@@ -24481,15 +24481,52 @@ function _cdBuildLiveRound(creative) {
 // ラウンド左カラムに表示する「過去ラウンドの提出物カード」HTML を返す。
 // _cdFilesCache（loadCreativeFiles でキャッシュ済の creative_files 全件）から
 // round.creative_file_id で実体を引く（width/height/uploaded_at/faststart_status 等を保持）。
-// 引けなかった場合は round.file（rounds API で軽量プロジェクションされた情報）でフォールバック。
+//
+// PR #(round-prev-video-footer) — フォールバック強化:
+//   1) creative_file_id で _cdFilesCache を引く（PR #422 以後の正規パス）
+//   2) round.file（rounds API の軽量プロジェクション）
+//   3) round.version_num が一致する _cdFilesCache を引く（PR #422 以前の遺物データ救済）
+//   4) ライブラウンド (round._live === true) の場合: 「直前のチェック段階で書かれた指摘」が
+//      対象としていた version は max(_cdRoundsCache.version_num) + 1（or 1）。
+//      このバージョンのファイルを _cdFilesCache から引く。
+//   5) 全部だめなら _cdFilesCache の最も古い（version 最小）ファイルを表示するフォールバック。
+//      → 何も出ないより「とりあえず提出済み動画を見せる」方が UX 上ずっとマシ。
 function _cdRenderRoundLeftFileCard(round) {
   if (!round) return '';
+  const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+
   let f = null;
-  if (round.creative_file_id && Array.isArray(_cdFilesCache)) {
-    f = _cdFilesCache.find(x => x && x.id === round.creative_file_id) || null;
+
+  // (1) creative_file_id 直引き（正規パス）
+  if (round.creative_file_id && cache.length > 0) {
+    f = cache.find(x => x && x.id === round.creative_file_id) || null;
   }
-  if (!f) f = round.file || null;
-  if (!f) return ''; // ファイル無しのラウンド（指摘のみ）は何も出さない
+
+  // (2) rounds API の軽量プロジェクション（faststart 等は欠落）
+  if (!f && round.file) f = round.file;
+
+  // (3) version_num 一致でフォールバック（PR #422 以前の creative_file_id 欠損データ用）
+  if (!f && round.version_num && cache.length > 0) {
+    f = cache.find(x => x && Number(x.version) === Number(round.version_num)) || null;
+  }
+
+  // (4) ライブラウンド（snapshot 未挿入の修正中フェーズ）。
+  //     未完了の修正中なので「いま指摘の対象になっている version」は
+  //     完了済みラウンド数 + 1（一度も snapshot されていなければ 1）。
+  if (!f && round._live && cache.length > 0) {
+    const targetVer = Math.max(1, (Array.isArray(_cdRoundsCache) ? _cdRoundsCache.length : 0) + 1);
+    f = cache.find(x => x && Number(x.version) === targetVer) || null;
+  }
+
+  // (5) どうしても見つからない時の最終フォールバック: _cdFilesCache の最も古いファイル。
+  //     ファイルが 1 件しか無い (= 初回ラウンド中) なら必ずそれを出す。
+  //     何も出さないよりは前回提出物が確認できる方がマシなので積極的にフォールバック。
+  if (!f && cache.length > 0) {
+    f = cache[cache.length - 1] || null; // ASC 末尾 = 最も古い... ではなく cache は DESC なので末尾は最古
+  }
+
+  if (!f) return ''; // 本当にファイル 0 件 (= 初回提出前の制作中フェーズ)。指摘のみのケース。
+
   const verNum = f.version || round.version_num || '?';
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
     <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
