@@ -14065,6 +14065,7 @@ function normalizeBugReportPayload(body, { isCreate }) {
     const v = String(body.severity || '').trim();
     out.severity = BUG_REPORT_SEVERITIES.includes(v) ? v : 'normal';
   }
+  if (body.is_urgent !== undefined) out.is_urgent = !!body.is_urgent;
   if (body.status !== undefined) {
     const v = String(body.status || '').trim();
     out.status = BUG_REPORT_STATUSES.includes(v) ? v : 'open';
@@ -14129,6 +14130,7 @@ router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async 
       url: payload.url ?? null,
       screen_label: payload.screen_label ?? null,
       severity: payload.severity || 'normal',
+      is_urgent: !!payload.is_urgent,
       status: 'open',
       assignee_user_id: payload.assignee_user_id ?? null,
       screenshot_data_url: payload.screenshot_data_url ?? null,
@@ -14151,7 +14153,7 @@ router.get('/bug-reports', requireAuth, async (req, res) => {
     const { status, assignee_user_id, mine } = req.query;
     let q = supabase
       .from('bug_reports')
-      .select('id, is_anonymous, title, description, url, screen_label, severity, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, improved_at, improved_by_user_id, improvement_version_log_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description )')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description )')
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
