@@ -4183,6 +4183,190 @@ router.post('/analytics/creative-by-assignee/export-sheet', requireAuth, require
   }
 });
 
+// ==================== 単価未設定チェッカー ====================
+// GET /api/analytics/cost-coverage
+// 役割: project_estimate_lines のうち、director / editor / designer のロール単価行 (line_cost)
+// が一度も登録されていない line を一覧化する。請求書と集計のズレ（PR #416 で発覚した
+// director_count = 0 件問題）を月初に潰すための管理画面用 API。
+//
+// 判定:
+//   - 対象 line: status IN ('contracted','in_progress','delivered')
+//   - director 欠落: line_costs に role.code IN ('director','sub_director') が 0 行
+//                    AND projects.director_id IS NOT NULL
+//   - editor  欠落: line.category.render_kind === 'video'  AND line_costs に
+//                    role.code IN ('editor','director_as_editor') が 0 行
+//   - designer 欠落: line.category.render_kind IN ('image','longpage','iframe','pdf')
+//                     AND line_costs に role.code === 'designer' が 0 行
+//
+// 並び順: recent_delivered_count DESC NULLS LAST, last_delivered DESC NULLS LAST
+// パフォーマンス: lines / line_costs / projects / creatives を一括取得し JS 側で結合（N+1 回避）。
+//
+// TODO: 将来的に producer / sub_producer も同じ仕組みで追加可能（projects.producer_id ベース）。
+router.get('/analytics/cost-coverage', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  try {
+    // 1) 対象 line を一括取得（active 系 status のみ）
+    const ACTIVE_LINE_STATUSES = ['contracted', 'in_progress', 'delivered'];
+    const { data: lines, error: linesErr } = await supabase
+      .from('project_estimate_lines')
+      .select(`
+        id, project_id, name, planned_count, client_unit_price, status,
+        category:creative_categories(id, code, name, render_kind),
+        project:projects!inner(
+          id, name, status, director_id, is_hidden,
+          client:clients(id, name)
+        )
+      `)
+      .in('status', ACTIVE_LINE_STATUSES);
+    if (linesErr) {
+      if (isMissingPelTable && isMissingPelTable(linesErr)) {
+        return res.json({ missing: { director: [], editor: [], designer: [] },
+          summary: { total_active_lines: 0, director_missing: 0, editor_missing: 0, designer_missing: 0 } });
+      }
+      return res.status(500).json({ error: linesErr.message });
+    }
+
+    // 非表示案件は除外（hidden な案件で警告を出しても直す動機が無い）
+    const filteredLines = (lines || []).filter(l => l.project && l.project.is_hidden !== true);
+    const lineIds = filteredLines.map(l => l.id);
+
+    // 2) line_costs を一括取得（role embed 込み）
+    let costsByLine = new Map();
+    if (lineIds.length) {
+      const { data: costs, error: costsErr } = await supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, role_id, role:roles(id, code, label)')
+        .in('line_id', lineIds);
+      if (costsErr) {
+        console.warn('[cost-coverage] line_costs load failed:', costsErr.message);
+      } else {
+        for (const c of (costs || [])) {
+          if (!costsByLine.has(c.line_id)) costsByLine.set(c.line_id, []);
+          costsByLine.get(c.line_id).push(c);
+        }
+      }
+    }
+
+    // 3) director_id の名前解決
+    const directorIds = Array.from(new Set(filteredLines
+      .map(l => l.project?.director_id).filter(Boolean)));
+    const userById = new Map();
+    if (directorIds.length) {
+      const { data: us } = await supabase
+        .from('users').select('id, full_name, nickname')
+        .in('id', directorIds);
+      (us || []).forEach(u => userById.set(u.id, u));
+    }
+
+    // 4) 直近3ヶ月の納品 creative を line ごとに集計（優先度ソート用）
+    //    final_deadline ベース（statusFilter='delivered' と整合）
+    const now = new Date();
+    const threeMonthsAgo = new Date(now);
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const recentByLine = new Map(); // line_id -> { count, last_delivered }
+    if (lineIds.length) {
+      const { data: creatives, error: creErr } = await supabase
+        .from('creatives')
+        .select('id, line_id, final_deadline, status')
+        .in('line_id', lineIds)
+        .eq('status', '納品')
+        .gte('final_deadline', threeMonthsAgo.toISOString().slice(0, 10));
+      if (creErr) {
+        console.warn('[cost-coverage] creatives load failed:', creErr.message);
+      } else {
+        for (const c of (creatives || [])) {
+          if (!c.line_id) continue;
+          const slot = recentByLine.get(c.line_id) || { count: 0, last_delivered: null };
+          slot.count += 1;
+          if (!slot.last_delivered || (c.final_deadline && c.final_deadline > slot.last_delivered)) {
+            slot.last_delivered = c.final_deadline;
+          }
+          recentByLine.set(c.line_id, slot);
+        }
+      }
+    }
+
+    // 5) 各 line を判定して 3 つのバケツに振り分け
+    const missing = { director: [], editor: [], designer: [] };
+    const VIDEO_KIND = new Set(['video']);
+    const DESIGN_KIND = new Set(['image', 'longpage', 'iframe', 'pdf']);
+
+    for (const line of filteredLines) {
+      const costs = costsByLine.get(line.id) || [];
+      const codes = new Set(costs.map(c => c.role?.code).filter(Boolean));
+      const recent = recentByLine.get(line.id) || { count: 0, last_delivered: null };
+      const renderKind = line.category?.render_kind || null;
+
+      const baseRow = {
+        line_id: line.id,
+        project_id: line.project?.id || null,
+        project_name: line.project?.name || '(不明)',
+        client_name: line.project?.client?.name || '(不明)',
+        client_id: line.project?.client?.id || null,
+        line_name: line.name || null,
+        line_unit_price: Number(line.client_unit_price) || 0,
+        line_status: line.status,
+        line_category: line.category?.name || null,
+        line_render_kind: renderKind,
+        recent_delivered_count: recent.count,
+        last_delivered: recent.last_delivered,
+      };
+
+      // director 欠落判定
+      const directorId = line.project?.director_id;
+      if (directorId) {
+        const hasDirector = codes.has('director') || codes.has('sub_director');
+        if (!hasDirector) {
+          const dUser = userById.get(directorId);
+          missing.director.push({
+            ...baseRow,
+            director_name: dUser ? (dUser.full_name || dUser.nickname || null) : null,
+          });
+        }
+      }
+
+      // editor / designer 欠落判定（render_kind ベース。render_kind 未設定の line は判定対象外）
+      if (renderKind && VIDEO_KIND.has(renderKind)) {
+        const hasEditor = codes.has('editor') || codes.has('director_as_editor');
+        if (!hasEditor) {
+          missing.editor.push({ ...baseRow, director_name: null });
+        }
+      } else if (renderKind && DESIGN_KIND.has(renderKind)) {
+        const hasDesigner = codes.has('designer');
+        if (!hasDesigner) {
+          missing.designer.push({ ...baseRow, director_name: null });
+        }
+      }
+    }
+
+    // 6) 並び順: recent_delivered_count DESC NULLS LAST, last_delivered DESC NULLS LAST
+    const sorter = (a, b) => {
+      const ac = a.recent_delivered_count || 0;
+      const bc = b.recent_delivered_count || 0;
+      if (ac !== bc) return bc - ac;
+      const ad = a.last_delivered || '';
+      const bd = b.last_delivered || '';
+      if (ad !== bd) return ad < bd ? 1 : -1;
+      return (a.client_name || '').localeCompare(b.client_name || '', 'ja');
+    };
+    missing.director.sort(sorter);
+    missing.editor.sort(sorter);
+    missing.designer.sort(sorter);
+
+    res.json({
+      missing,
+      summary: {
+        total_active_lines: filteredLines.length,
+        director_missing: missing.director.length,
+        editor_missing: missing.editor.length,
+        designer_missing: missing.designer.length,
+      },
+    });
+  } catch (e) {
+    console.error('[analytics/cost-coverage]', e);
+    res.status(500).json({ error: e.message || '単価未設定チェックに失敗しました' });
+  }
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
