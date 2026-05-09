@@ -26458,13 +26458,14 @@ async function skipToClientCheck() {
   await saveCreativeDetail('クライアントチェック中');
 }
 
-// 動画ファイル未アップロード状態で工程を次に進めるための確認ダイアログ。
+// ファイル未アップロード状態で工程を次に進めるための確認ダイアログ。
 // 代表 髙橋指示（2026-05-09）: クライアント直接やり取り済み / 口頭で完結 / 素材待ち 等の
-// ケースで、動画なしでも工程だけを進めたい運用がある。理由入力は任意。
+// ケースで、ファイルなしでも工程だけを進めたい運用がある。理由入力は任意。
+// 動画・静止画どちらのクリエイティブでも使うため、文言は「ファイル」で統一。
 //
 // 戻り値: Promise<{ ok: boolean, reason: string }>
 //   - キャンセル / 背景クリック / Esc → { ok:false, reason:'' }
-//   - [動画なしで進む] → { ok:true, reason:<入力テキスト> }
+//   - [ファイルなしで進む] → { ok:true, reason:<入力テキスト> }
 function showFilelessProgressDialog(target) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -26477,7 +26478,7 @@ function showFilelessProgressDialog(target) {
     const title = document.createElement('div');
     title.style.cssText = 'font-size:16px;font-weight:600;color:var(--text,#1a6b68);margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:12px';
     const titleText = document.createElement('span');
-    titleText.textContent = '動画ファイルなしで進めますか？';
+    titleText.textContent = 'ファイルなしで進めますか？';
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.textContent = '×';
@@ -26487,7 +26488,7 @@ function showFilelessProgressDialog(target) {
 
     const msg = document.createElement('div');
     msg.style.cssText = 'font-size:13.5px;line-height:1.65;color:var(--text,#1a6b68);margin:0 0 14px;white-space:pre-wrap';
-    msg.textContent = `動画ファイルがアップロードされていません。\nこのまま「${target}」に進みますか？`;
+    msg.textContent = `ファイルがアップロードされていません。\nこのまま「${target}」に進みますか？`;
 
     const reasonLabel = document.createElement('label');
     reasonLabel.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--em-dark,#2BB8B4);letter-spacing:0.04em;margin:6px 0 6px';
@@ -26508,7 +26509,7 @@ function showFilelessProgressDialog(target) {
 
     const okBtn = document.createElement('button');
     okBtn.type = 'button';
-    okBtn.textContent = '動画なしで進む';
+    okBtn.textContent = 'ファイルなしで進む';
     okBtn.style.cssText = 'font-size:14px;padding:9px 22px;border-radius:8px;cursor:pointer;border:none;background:#f59e0b;color:#fff;font-weight:600';
 
     footer.appendChild(cancelBtn);
