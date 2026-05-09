@@ -724,7 +724,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     sub_director_ids,
     tags,
     filename_template_id, filename_token_overrides,
-    scheduled_start_date, active_phase_template_id
+    scheduled_start_date, active_phase_template_id,
+    creatives_export_sheet_url
   } = req.body;
   // ADR 010 Phase 1b: 工程表セクションだけが値を送る部分更新（schedule 列のみ）
   // のときは name/status を強制 NULL 化してしまわないよう、最小 UPDATE で済ませる
@@ -793,6 +794,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
   }
+  // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（明示時のみ反映）
+  if (creatives_export_sheet_url !== undefined) {
+    updateData.creatives_export_sheet_url = creatives_export_sheet_url || null;
+  }
   // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
   // フィールドが渡ってきた時のみ正規化して反映する。
   if (sub_director_ids !== undefined) {
@@ -833,6 +838,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const retry3 = await supabase.from('projects').update(fallback3).eq('id', req.params.id).select().single();
     data = retry3.data; error = retry3.error;
   }
+  // ADR 008 Phase 1 migration 未適用ガード
+  if (error && /creatives_export_sheet_url/i.test(error.message || '')) {
+    const { creatives_export_sheet_url: _oExp, ...fallbackExp } = updateData;
+    const retryExp = await supabase.from('projects').update(fallbackExp).eq('id', req.params.id).select().single();
+    data = retryExp.data; error = retryExp.error;
+  }
   // ADR 010 Phase 1 migration 未適用ガード（schema-sync 失敗時）
   if (error && /scheduled_start_date|active_phase_template_id/i.test(error.message || '')) {
     const { scheduled_start_date: _o4a, active_phase_template_id: _o4b, ...fallback4 } = updateData;
@@ -850,6 +861,22 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     resolvedTags = normalizedTags;
   }
   res.json(resolvedTags !== undefined ? { ...(data || {}), tags: resolvedTags } : data);
+});
+
+// ==================== ADR 008 Phase 1: クリエイティブ管理シート同期 ====================
+// 案件単位で creatives + creative_versions を Google Sheets に片方向同期する。
+// 同期先 URL が未設定なら system_settings.creatives_export_master_template_url を
+// コピーして自動で割り当てる。マッピングは system_settings.creatives_export_mapping_json
+// で上書き可能（未設定なら DEFAULT_MAPPING）。
+router.post('/projects/:id/sync-sheet', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  try {
+    const { syncToSheet } = require('../utils/sheets-export');
+    const result = await syncToSheet(req.params.id, req.user?.id);
+    res.json(result);
+  } catch (e) {
+    console.error('[POST /projects/:id/sync-sheet]', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
 });
 
 // 案件削除（admin/secretary/producer/PD のみ）

@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS projects (
   seq_counter INTEGER DEFAULT 0,
   -- project_type 列は migrations/2026-05-06_drop_projects_project_type.sql で DROP 済み。
   -- 案件カテゴリは primary_category_id (creative_categories) で管理する。
+  -- ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（migrations/2026-05-09_phase1_creatives_export.sql）
+  creatives_export_sheet_url TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
