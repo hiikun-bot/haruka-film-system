@@ -5498,6 +5498,10 @@ window.showPage = window.showPage || function(name, btn) {
       <button class="an-menu-btn" data-view="project-assignee" onclick="switchAnalyticsView('project-assignee')">
         <span style="font-size:14px">📋</span><span>案件×担当者集計</span>
       </button>
+      <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">データ品質</div>
+      <button class="an-menu-btn" data-view="cost-coverage" onclick="switchAnalyticsView('cost-coverage')">
+        <span style="font-size:14px">⚠️</span><span>単価未設定チェッカー</span>
+      </button>
       <div style="font-size:10px;color:var(--text-muted);margin:14px 6px 0;line-height:1.5">
         他の集計は順次追加予定<br>
         （月次推移・チーム別・納期遵守率 等）
@@ -5536,7 +5540,8 @@ window.showPage = window.showPage || function(name, btn) {
               <option value="all">全件（作業中含む）</option>
             </select>
           </div>
-          <button class="btn-primary" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
+          <button class="btn-primary" id="an-load-btn" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
+          <button class="btn" id="an-reload-coverage-btn" onclick="loadCostCoverage()" style="font-size:13px;padding:8px 16px;height:38px;display:none">🔄 再チェック</button>
           <button class="btn" id="an-sheet-btn" onclick="exportAnalyticsToSheet()" style="font-size:13px;padding:8px 16px;height:38px">📊 スプレッドシート出力</button>
         </div>
       </div>
@@ -27370,21 +27375,47 @@ function switchAnalyticsView(view, skipReset) {
   const descEl = document.getElementById('an-view-desc');
   const clientWrap = document.getElementById('an-client-wrap');
   const statusFilterWrap = document.getElementById('an-status-filter')?.parentElement;
+  // 月セレクタとスプレッドシート出力ボタンは cost-coverage では非表示
+  const monthWrap   = document.getElementById('an-month')?.closest('div')?.parentElement;
+  const sheetBtn    = document.getElementById('an-sheet-btn');
+  const loadBtn     = document.getElementById('an-load-btn');
+  const reloadBtn   = document.getElementById('an-reload-coverage-btn');
   if (view === 'monthly-revenue') {
     if (titleEl) titleEl.textContent = '💰 月次売上・粗利';
     if (descEl)  descEl.textContent  = '当月の売上（確定+見込み）/原価/粗利/粗利率をクライアント別に集計します。';
     if (clientWrap) clientWrap.style.display = 'none';
     if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
   } else if (view === 'creator-summary') {
     if (titleEl) titleEl.textContent = '👤 クリエイター別作成本数';
     if (descEl)  descEl.textContent  = 'クリエイターごとの動画/デザイン本数と単価・合計金額を集計します。';
     if (clientWrap) clientWrap.style.display = 'none';
     if (statusFilterWrap) statusFilterWrap.style.display = '';
+    if (monthWrap) monthWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
+  } else if (view === 'cost-coverage') {
+    if (titleEl) titleEl.textContent = '⚠️ 単価未設定チェッカー';
+    if (descEl)  descEl.textContent  = '各 line に各ロール（director / editor / designer）の単価が設定されているかチェックします。請求書と集計のズレを防ぎます。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = 'none';
+    if (sheetBtn)  sheetBtn.style.display  = 'none';
+    if (loadBtn)   loadBtn.style.display   = 'none';
+    if (reloadBtn) reloadBtn.style.display = '';
   } else {
     if (titleEl) titleEl.textContent = '📋 案件×担当者集計';
     if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。';
     if (clientWrap) clientWrap.style.display = '';
     if (statusFilterWrap) statusFilterWrap.style.display = '';
+    if (monthWrap) monthWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
   }
   if (!skipReset) {
     document.getElementById('an-summary').innerHTML = '';
@@ -27392,9 +27423,17 @@ function switchAnalyticsView(view, skipReset) {
       '<div style="padding:24px;text-align:center;color:var(--text-muted)">「集計」ボタンを押すと結果が表示されます。</div>';
     _analyticsLastResult = null;
   }
+  // cost-coverage は対象月不要なので即ロード
+  if (view === 'cost-coverage') {
+    loadCostCoverage();
+  }
 }
 
 async function loadAnalytics() {
+  // cost-coverage は月不要なので専用ロードに委譲
+  if (_analyticsView === 'cost-coverage') {
+    return loadCostCoverage();
+  }
   const ym = document.getElementById('an-month').value;
   if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
   const [year, month] = ym.split('-');
@@ -27426,6 +27465,117 @@ async function loadAnalytics() {
   if (_analyticsView === 'monthly-revenue') renderMonthlyRevenueTable(data);
   else if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
   else renderAnalyticsTable(data);
+}
+
+// =============== 単価未設定チェッカー ===============
+// PR #(cost-coverage): line_costs に director / editor / designer ロール行が
+// 欠けている line を一覧化し、案件編集モーダルへワンクリックで遷移する管理画面。
+let _costCoverageData = null;
+let _costCoverageRole = 'director'; // 'director' | 'editor' | 'designer'
+
+async function loadCostCoverage() {
+  const wrap = document.getElementById('an-table-content');
+  wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">チェック中...</div>';
+  document.getElementById('an-summary').innerHTML = '';
+  const res = await apiFetch(`${API}/analytics/cost-coverage`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#E24B4A">エラー: ${esc(e?.error || res.status)}</div>`;
+    return;
+  }
+  const data = await res.json();
+  _costCoverageData = data;
+  renderCostCoverage();
+}
+
+function setCostCoverageRole(role) {
+  _costCoverageRole = role;
+  renderCostCoverage();
+}
+
+function renderCostCoverage() {
+  const data = _costCoverageData;
+  if (!data) return;
+  const sumEl = document.getElementById('an-summary');
+  const wrap = document.getElementById('an-table-content');
+  const s = data.summary || {};
+
+  // サマリーチップ + ロール切替ボタン
+  const chip = (label, count, color, role) => {
+    const active = (_costCoverageRole === role);
+    const bg = count > 0 ? color.bg : '#F1F5F9';
+    const fg = count > 0 ? color.fg : '#64748B';
+    const border = active ? color.activeBorder : '1px solid transparent';
+    return `<button onclick="setCostCoverageRole('${role}')" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:${bg};border:${border};border-radius:8px;padding:9px 14px;font-size:12px;cursor:pointer;${active ? 'box-shadow:0 0 0 2px rgba(0,0,0,0.05)' : ''}">
+      <span style="color:${fg};font-size:11px">${label}</span>
+      <strong style="color:${fg};font-size:15px">${count}件</strong>
+    </button>`;
+  };
+  sumEl.innerHTML = `
+    ${chip('⚠️ ディレクター単価 未設定', s.director_missing || 0,
+       { bg:'#FEF2F2', fg:'#991B1B', activeBorder:'2px solid #DC2626' }, 'director')}
+    ${chip('⚠️ 編集者単価 未設定', s.editor_missing || 0,
+       { bg:'#FEF3C7', fg:'#92400E', activeBorder:'2px solid #D97706' }, 'editor')}
+    ${chip('⚠️ デザイナー単価 未設定', s.designer_missing || 0,
+       { bg:'#EDE9FE', fg:'#5B21B6', activeBorder:'2px solid #7C3AED' }, 'designer')}
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text-muted);align-self:center">
+      対象 active line: <strong style="color:var(--text);font-size:13px">${s.total_active_lines || 0}件</strong>
+    </div>
+  `;
+
+  // テーブル本体
+  const rows = (data.missing && data.missing[_costCoverageRole]) || [];
+  if (s.director_missing === 0 && s.editor_missing === 0 && s.designer_missing === 0) {
+    wrap.innerHTML = `<div style="padding:32px 20px;text-align:center;color:#15803D;background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;margin:8px">
+      <div style="font-size:32px;margin-bottom:6px">✅</div>
+      <div style="font-size:14px;font-weight:600">すべての line に単価が設定されています</div>
+      <div style="font-size:12px;color:#166534;margin-top:4px">director / editor / designer すべて欠落 0 件</div>
+    </div>`;
+    return;
+  }
+  if (!rows.length) {
+    const roleLabel = _costCoverageRole === 'director' ? 'ディレクター'
+                    : _costCoverageRole === 'editor' ? '編集者' : 'デザイナー';
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:#166534">✅ ${roleLabel} 単価の欠落はありません（他のロールチップを確認してください）</div>`;
+    return;
+  }
+
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const fmtDate = (s) => s ? s.replace(/T.*$/, '') : '-';
+  const showAssignee = (_costCoverageRole === 'director');
+  const tbody = rows.map(r => {
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 12px;font-size:12px;color:var(--text);white-space:nowrap">${esc(r.client_name)}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text)">
+        ${esc(r.project_name)}
+        ${r.line_name ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">line: ${esc(r.line_name)}${r.line_category ? ` / ${esc(r.line_category)}` : ''}</div>` : ''}
+      </td>
+      ${showAssignee ? `<td style="padding:8px 12px;font-size:12px;color:${r.director_name ? 'var(--text)' : '#B91C1C'};white-space:nowrap">${esc(r.director_name || '⚠️ 未設定')}</td>` : ''}
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text);white-space:nowrap">${yen(r.line_unit_price)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text);white-space:nowrap">
+        ${r.recent_delivered_count > 0 ? `<strong>${r.recent_delivered_count}本</strong>` : '<span style="color:var(--text-muted)">0本</span>'}
+      </td>
+      <td style="padding:8px 10px;text-align:center;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(fmtDate(r.last_delivered))}</td>
+      <td style="padding:8px 10px;text-align:center;white-space:nowrap">
+        <button class="btn-sm" onclick="openEditProjectById('${r.project_id}')" style="font-size:11px;padding:4px 10px">単価設定 →</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:880px">
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">クライアント</th>
+        <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark)">案件 / line</th>
+        ${showAssignee ? '<th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">ディレクター</th>' : ''}
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">line 単価</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap" title="直近3ヶ月の納品 creative 数">直近3ヶ月納品</th>
+        <th style="padding:9px 10px;text-align:center;font-size:11px;color:var(--em-dark);white-space:nowrap">最新納品日</th>
+        <th style="padding:9px 10px;text-align:center;font-size:11px;color:var(--em-dark);white-space:nowrap">アクション</th>
+      </tr>
+    </thead>
+    <tbody>${tbody}</tbody>
+  </table>`;
 }
 
 function renderMonthlyRevenueTable(data) {
