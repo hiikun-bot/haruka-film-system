@@ -4905,11 +4905,17 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (status === '納品') updateData.is_payable = true;
 
   // ステータス変更を検知するため、更新前の値を取得
+  // ADR 011: ラウンドsnapshot確定のため、コメント3種も同時に取得する。
   let beforeStatus = null;
+  let beforeRow = null;
   if (updateData.status !== undefined) {
     const { data: before } = await supabase
-      .from('creatives').select('status').eq('id', req.params.id).maybeSingle();
+      .from('creatives')
+      .select('status, director_comment, editor_comment, client_comment')
+      .eq('id', req.params.id)
+      .maybeSingle();
     beforeStatus = before?.status || null;
+    beforeRow = before || null;
   }
 
   const { data, error } = await supabase
@@ -4919,6 +4925,70 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // ADR 011: ラウンド snapshot 自動 INSERT
+  // 修正済 → 再チェック への遷移時に「指摘＋それに対する次の提出」をペアで frozen 保存。
+  // creative_version_history テーブルに 1 行 INSERT。失敗しても fire-and-forget（メイン更新は完了している）。
+  try {
+    const REVISION_TO_CHECK = {
+      'Dチェック後修正':              { newStatus: 'Dチェック',                 stage: 'd_check'  },
+      'Pチェック後修正':              { newStatus: 'Pチェック',                 stage: 'p_check'  },
+      'クライアントチェック後修正':   { newStatus: 'クライアントチェック中',     stage: 'cl_check' },
+    };
+    const trans = REVISION_TO_CHECK[beforeStatus];
+    if (
+      beforeRow &&
+      updateData.status !== undefined &&
+      trans && updateData.status === trans.newStatus
+    ) {
+      // 直前のチェック段階で書かれた指摘（director_comment or client_comment）と
+      // 今回提出時に編集者が書いた連絡事項（editor_comment）の最新値を frozen 保存。
+      // updateData.editor_comment が今回新たに送られてきた場合はそれ、なければ before を使う。
+      const editorCommentSnapshot =
+        (updateData.editor_comment !== undefined && updateData.editor_comment !== null)
+          ? updateData.editor_comment
+          : (beforeRow.editor_comment || null);
+      // 直近の creative_files から最大 version を取得（このラウンドの提出物）
+      const { data: latestFile } = await supabase
+        .from('creative_files')
+        .select('id, version')
+        .eq('creative_id', req.params.id)
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const versionNum = latestFile?.version || 1;
+      const fileId     = latestFile?.id || null;
+
+      // 同一 (creative_id, version_num, round_stage) の二重 INSERT を回避（連打対策）
+      const { data: existing } = await supabase
+        .from('creative_version_history')
+        .select('id')
+        .eq('creative_id', req.params.id)
+        .eq('version_num', versionNum)
+        .eq('round_stage', trans.stage)
+        .limit(1);
+      if (!existing || existing.length === 0) {
+        const { error: histErr } = await supabase
+          .from('creative_version_history')
+          .insert({
+            creative_id:       req.params.id,
+            version_num:       versionNum,
+            director_comment:  beforeRow.director_comment || null,
+            client_comment:    beforeRow.client_comment   || null,
+            editor_comment:    editorCommentSnapshot,
+            round_stage:       trans.stage,
+            creative_file_id:  fileId,
+            recorded_by:       req.user?.id || null,
+          });
+        if (histErr) {
+          // schema-sync 未適用環境でも本処理は止めない（列欠損は warn のみ）
+          console.warn('[creative_version_history] snapshot insert failed:', histErr.message);
+        }
+      }
+    }
+  } catch (snapErr) {
+    console.warn('[creative_version_history] snapshot block failed:', snapErr?.message || snapErr);
+  }
 
   // 担当者更新（assignee_id が送られてきた場合）
   if (assignee_id !== undefined) {
@@ -10640,6 +10710,50 @@ router.get('/creative-versions/:creativeId', async (req, res) => {
     .order('version_num', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// ADR 011: ラウンド比較型UI 用エンドポイント
+// クリエイティブのラウンド履歴（過去）を昇順で返す。
+// レスポンス: [{ id, version_num, round_stage, director_comment, editor_comment, client_comment,
+//                creative_file_id, recorded_by, created_at, file: { id, version, drive_url, drive_file_id, generated_name } | null }]
+router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
+  // schema 拡張済み環境では editor_comment / round_stage / creative_file_id / recorded_by が select 可能。
+  // 列欠損環境でも 500 で詰まないように 2 段フォールバック。
+  let { data, error } = await supabase
+    .from('creative_version_history')
+    .select('*')
+    .eq('creative_id', req.params.id)
+    .order('version_num', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) {
+    const msg = error.message || '';
+    if (/column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || error.code === 'PGRST204') {
+      // 列欠損フォールバック（migration 未適用環境）: 旧スキーマ列のみで再取得
+      ({ data, error } = await supabase
+        .from('creative_version_history')
+        .select('id, creative_id, version_num, director_comment, client_comment, created_at')
+        .eq('creative_id', req.params.id)
+        .order('version_num', { ascending: true })
+        .order('created_at', { ascending: true }));
+    }
+  }
+  if (error) return res.status(500).json({ error: error.message });
+
+  // 関連 creative_files をまとめて取得（N+1 解消）
+  const fileIds = [...new Set((data || []).map(r => r.creative_file_id).filter(Boolean))];
+  let filesById = {};
+  if (fileIds.length > 0) {
+    const { data: files } = await supabase
+      .from('creative_files')
+      .select('id, version, drive_url, drive_file_id, generated_name')
+      .in('id', fileIds);
+    filesById = Object.fromEntries((files || []).map(f => [f.id, f]));
+  }
+  const result = (data || []).map(r => ({
+    ...r,
+    file: r.creative_file_id ? (filesById[r.creative_file_id] || null) : null,
+  }));
+  res.json(result);
 });
 
 // バージョン履歴保存

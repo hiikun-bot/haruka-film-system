@@ -573,6 +573,8 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT;
 ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
 
 -- クリエイティブ バージョン履歴
+-- ADR 011 (2026-05-09): ラウンド比較型UIの履歴データソース。
+-- 「修正済→再チェック」遷移時にサーバー側で自動 INSERT される。
 CREATE TABLE IF NOT EXISTS creative_version_history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
@@ -581,6 +583,20 @@ CREATE TABLE IF NOT EXISTS creative_version_history (
   client_comment TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- ADR 011: 4列追加（編集者の提出時メモ・ラウンド種別・ファイル紐付け・記録者）
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS editor_comment TEXT;
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS round_stage TEXT;  -- 'd_check' | 'p_check' | 'cl_check'
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS creative_file_id UUID
+  REFERENCES creative_files(id) ON DELETE SET NULL;
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS recorded_by UUID
+  REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_cvh_creative_round
+  ON creative_version_history(creative_id, version_num);
 
 -- 管理者によるステータス強制変更の監査ログ
 -- 「誰が・いつ・どの状態 → どの状態に・なぜ・付随削除した下書き明細」を残す

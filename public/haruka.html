@@ -5556,6 +5556,26 @@ window.showPage = window.showPage || function(name, btn) {
 /* Frame.io レビューパネルの引用ボタン: 連絡・確認事項 textarea にコメントを引用挿入する。amber トーンで返信と区別 */
 .fp-quote-btn{background:transparent;color:#f59e0b;border:0.5px solid #f59e0b;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;line-height:1.2;transition:background .15s,color .15s}
 .fp-quote-btn:hover{background:#f59e0b;color:#0a0a0a}
+
+/* ADR 011: クリエイティブ詳細モーダル ラウンド比較型UI
+   - cd-2col-mode 時はモーダルを広めに（1080px ≒ 左右 460px ずつ） */
+#cd-modal-body.cd-2col-mode{ width: 1080px !important; max-width: 95vw; }
+#cd-round-left .cd-round-block + .cd-round-block{ margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); }
+#cd-round-left .cd-round-label{ font-size:10px; font-weight:700; color:var(--em-dark); letter-spacing:0.08em; margin-bottom:4px; text-transform:uppercase; }
+#cd-round-left .cd-round-text{ font-size:12.5px; color:var(--text); white-space:pre-wrap; line-height:1.6; background:#fff; border-radius:6px; padding:8px 10px; border:0.5px solid var(--border); max-height:160px; overflow:auto; }
+#cd-round-left .cd-round-empty{ font-size:12px; color:var(--text-muted); font-style:italic; padding:6px 0; }
+#cd-round-dots .cd-round-dot{ width:7px; height:7px; border-radius:50%; background:#d4d4d4; cursor:pointer; transition:transform .12s, background .12s; }
+#cd-round-dots .cd-round-dot.active{ background:var(--em-dark); transform:scale(1.25); }
+#cd-round-prev[disabled],#cd-round-next[disabled]{ opacity:.35; cursor:not-allowed; }
+
+/* スマホ: 2カラム維持は厳しいので 1カラム積み上げに退避（feature/mobile で別途タブUI化予定） */
+@media (max-width:768px){
+  #cd-round-grid{ grid-template-columns:1fr !important; }
+  #cd-modal-body.cd-2col-mode{ width:auto !important; }
+  #cd-round-left{ order:1; }
+  #cd-round-right{ order:2; }
+}
+
 .an-menu-btn:hover{background:rgba(255,255,255,0.6)}
 .an-menu-btn.an-menu-active{background:var(--em);color:#fff;font-weight:600}
 @media(max-width:768px){
@@ -6052,7 +6072,8 @@ window.showPage = window.showPage || function(name, btn) {
 <!-- data-no-overlay-close="true": メモ・連絡確認事項・コメントを入力中に背景クリックで消えるのを防ぐ -->
 <!-- Esc キー / × ボタン / 「閉じる」ボタンも、入力 dirty なときは confirm を出してから閉じる -->
 <div class="modal-overlay" id="modal-creative-detail" data-no-overlay-close="true" style="z-index:310">
-  <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
+  <!-- ADR 011: cd-2col-mode クラスが付与されると幅が広がる（左右比較レイアウト時） -->
+  <div class="modal" id="cd-modal-body" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
 
     <!-- ヘッダー（固定） -->
     <div style="padding:20px 24px 16px;flex-shrink:0;border-bottom:1px solid var(--border)">
@@ -6065,7 +6086,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
 
     <!-- スクロール可能コンテンツ -->
-    <div style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px">
+    <div id="cd-scroll-area" style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px">
 
       <!-- 基本情報バナー -->
       <div style="background:var(--em-pale);border-radius:10px;padding:12px 16px;margin-bottom:18px">
@@ -6154,8 +6175,37 @@ window.showPage = window.showPage || function(name, btn) {
 
       <!-- 旧 cd-check-director-section は削除（Dチェックへ進める時のピッカーに集約） -->
 
+      <!-- ADR 011: 2カラム比較ラッパ。左=過去ラウンド(slide可)、右=現在の入力欄。
+           cdRenderRoundCompare() が表示制御。ラウンドが0ならこの section ごと非表示で
+           既存レイアウト（1枚絵）を維持する。 -->
+      <div id="cd-round-compare" style="display:none;margin-bottom:18px">
+        <!-- ヘッダ: 比較タイトル + ◀▶ + ●○ -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:12px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.06em">前回までの往復 ↔ 今回</span>
+            <span id="cd-round-count-badge" style="font-size:10px;background:var(--em-pale);color:var(--em-dark);border-radius:4px;padding:1px 7px;font-weight:600"></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button type="button" id="cd-round-prev" onclick="cdRoundShift(-1)" title="前のラウンド" style="background:#fff;border:1px solid var(--border);border-radius:6px;width:30px;height:28px;font-size:13px;cursor:pointer;color:var(--text)">◀</button>
+            <div id="cd-round-dots" style="display:flex;gap:5px;align-items:center"></div>
+            <button type="button" id="cd-round-next" onclick="cdRoundShift(1)" title="次のラウンド" style="background:#fff;border:1px solid var(--border);border-radius:6px;width:30px;height:28px;font-size:13px;cursor:pointer;color:var(--text)">▶</button>
+          </div>
+        </div>
+        <!-- 2カラムグリッド: 左=過去ラウンド、右=現在の入力フォーム（JS で右側に元のフォーム要素を移動） -->
+        <div id="cd-round-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+          <!-- 左カラム: 過去ラウンド表示（読み取り専用） -->
+          <div id="cd-round-left" style="background:#fafafa;border:0.5px solid var(--border);border-radius:10px;padding:14px 14px 14px;min-height:100px;overflow:hidden">
+            <!-- cdRenderRoundCompare() で動的描画 -->
+          </div>
+          <!-- 右カラム: 現在の入力フォーム。JS で既存のコメント/連絡/upload セクションをこの中へ move する。 -->
+          <div id="cd-round-right">
+            <!-- ここに #cd-comment-section / #cd-editor-reply-group / #cd-director-note-group / #cd-upload-section を移動 -->
+          </div>
+        </div>
+      </div>
+
       <!-- コメントセクション（ステータス依存ラベル） -->
-      <div class="form-group" style="margin-bottom:18px">
+      <div class="form-group" id="cd-comment-section" style="margin-bottom:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <label class="form-label" id="cd-comment-label" style="margin-bottom:0">コメント</label>
           <button id="cd-template-btn" onclick="fillCommentTemplate()" style="font-size:11px;padding:3px 10px;background:#f0fdfb;border:0.5px solid var(--em);border-radius:6px;color:var(--em-dark);cursor:pointer;font-weight:500;white-space:nowrap">テンプレ挿入</button>
@@ -12502,6 +12552,14 @@ function closeModal(id) {
     __cdSkipDirtyCheck = false;
     __cdDraftCurrentId = null;
     __cdInitialSnapshot = null;
+    // ADR 011: 移動した DOM を元の親に戻す（次回 open 時の状態整合性）
+    try {
+      _cdMoveRightColumnElements(false);
+      const modalBody = document.getElementById('cd-modal-body');
+      if (modalBody) modalBody.classList.remove('cd-2col-mode');
+      const wrap = document.getElementById('cd-round-compare');
+      if (wrap) wrap.style.display = 'none';
+    } catch (_) {}
   }
 }
 
@@ -12535,6 +12593,14 @@ document.addEventListener('keydown', (e) => {
     __cdSkipDirtyCheck = false;
     __cdDraftCurrentId = null;
     __cdInitialSnapshot = null;
+    // ADR 011: 移動した DOM を元の親に戻す
+    try {
+      _cdMoveRightColumnElements(false);
+      const modalBody = document.getElementById('cd-modal-body');
+      if (modalBody) modalBody.classList.remove('cd-2col-mode');
+      const wrap = document.getElementById('cd-round-compare');
+      if (wrap) wrap.style.display = 'none';
+    } catch (_) {}
   }
 });
 
@@ -23984,6 +24050,254 @@ function fillCommentTemplate() {
   field.focus();
 }
 
+// ============================================================
+// ADR 011: クリエイティブ詳細モーダル ラウンド比較型UI
+// ============================================================
+//
+// 仕組み:
+//   1. openCreativeDetail() が GET /creatives/:id/rounds で過去ラウンドを取得
+//   2. _cdRoundsCache に保存し、cdRenderRoundCompare() で左カラムを描画
+//   3. ラウンド数 N >= 1 のとき、#cd-round-compare を表示し
+//      右カラム (#cd-round-right) へ既存のフォーム要素 (cd-comment-section /
+//      cd-editor-reply-group / cd-director-note-group / cd-upload-section) を
+//      DOM move する。モーダルにも cd-2col-mode クラスを付与して幅拡大。
+//   4. ラウンド数 N == 0 のとき、要素を元の親に戻す（1カラム表示維持）。
+//   5. ◀▶ で _cdRoundIndex を増減し再描画。
+
+let _cdRoundsCache = [];   // [{ version_num, round_stage, director_comment, editor_comment, client_comment, file, created_at, ... }]
+let _cdRoundIndex  = 0;    // 表示中の左カラム ラウンド (0 = 一番古い、長さ-1 = 一番新しい)
+
+const _CD_ROUND_RIGHT_TARGETS = [
+  'cd-comment-section',
+  'cd-editor-reply-group',
+  'cd-director-note-group',
+  'cd-upload-section',
+];
+const _CD_ROUND_STAGE_LABEL = {
+  'd_check':  'Dチェック',
+  'p_check':  'Pチェック',
+  'cl_check': 'CLチェック',
+};
+
+// 「現在は2カラム比較を有効にすべきか」を判定。
+// - 制作中（初稿提出前）/ 未着手 → 1枚絵（false）
+// - それ以外でラウンド履歴が 1 件以上 → true
+// - ライブの director_comment / client_comment があるが履歴未記録（修正中の最初の往復）→ true
+function _cdShouldShowRoundCompare(creative, rounds) {
+  if (!creative) return false;
+  const status = creative.status || '';
+  if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
+    // 制作中フェーズで履歴がない場合は1枚絵
+    return (rounds && rounds.length > 0);
+  }
+  if (rounds && rounds.length > 0) return true;
+  // 履歴未記録だが「直前のチェック段階で書かれた指摘」がライブで残っているケース
+  // （後修正状態で履歴に1度も snapshot されていない遺物データなど）
+  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  if (REVISION_STATUSES.includes(status) && (creative.director_comment || creative.client_comment)) {
+    return true;
+  }
+  return true; // チェック段階・納品 等もデフォルトで2カラム化（左は空でも枠は出す）
+}
+
+async function cdLoadRounds(creativeId) {
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/rounds`);
+    if (!res.ok) { _cdRoundsCache = []; return; }
+    const list = await res.json();
+    _cdRoundsCache = Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.warn('[cd-rounds] fetch failed:', e?.message || e);
+    _cdRoundsCache = [];
+  }
+}
+
+function _cdMoveRightColumnElements(intoRight) {
+  // 既存フォーム要素を 右カラム (#cd-round-right) ↔ 元のスクロール領域 へ移動。
+  // 元の親は #cd-scroll-area で、コメントセクションの順序を保つために
+  // データ属性 data-cd-original-anchor で「直前の sibling」を覚える。
+  const right = document.getElementById('cd-round-right');
+  const scroll = document.getElementById('cd-scroll-area');
+  if (!right || !scroll) return;
+  if (intoRight) {
+    _CD_ROUND_RIGHT_TARGETS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.parentElement === right) return; // 既に右カラム内
+      // 元の位置（直前の sibling の id）を記録
+      const prev = el.previousElementSibling;
+      if (!el.dataset.cdOrigPrevId) {
+        el.dataset.cdOrigPrevId = prev?.id || '';
+      }
+      right.appendChild(el);
+    });
+  } else {
+    // 元のスクロール領域へ戻す
+    _CD_ROUND_RIGHT_TARGETS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.parentElement === scroll) return; // 既に元の場所
+      const prevId = el.dataset.cdOrigPrevId || '';
+      const prev = prevId ? document.getElementById(prevId) : null;
+      if (prev && prev.parentElement === scroll) {
+        prev.after(el);
+      } else {
+        // フォールバック: スクロール領域の末尾近くに append
+        scroll.appendChild(el);
+      }
+      delete el.dataset.cdOrigPrevId;
+    });
+  }
+}
+
+function _cdRoundEntryHtml(round) {
+  if (!round) {
+    return '<div class="cd-round-empty">過去ラウンドはありません</div>';
+  }
+  const stageLabel = _CD_ROUND_STAGE_LABEL[round.round_stage] || (round.version_num ? `v${round.version_num}` : 'ラウンド');
+  const dateStr = round.created_at ? new Date(round.created_at).toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+  const fileLink = round.file ? (round.file.drive_url || (round.file.drive_file_id ? `https://drive.google.com/file/d/${round.file.drive_file_id}/view` : '')) : '';
+  const fileLabel = round.file ? `v${round.file.version || round.version_num || '?'}` : (round.version_num ? `v${round.version_num}` : '');
+
+  const reviewerComment = round.director_comment || round.client_comment || '';
+  const reviewerLabel   = round.client_comment && !round.director_comment ? 'クライアントの指摘' : 'ディレクターの指摘';
+
+  const blocks = [];
+  blocks.push(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;color:#fff;background:var(--em-dark);border-radius:4px;padding:2px 8px">${esc(stageLabel)}</span>
+      ${fileLabel ? `<span style="font-size:11px;color:var(--text-muted);font-family:monospace">${esc(fileLabel)}</span>` : ''}
+    </div>
+    ${dateStr ? `<span style="font-size:10.5px;color:var(--text-muted)">${esc(dateStr)}</span>` : ''}
+  </div>`);
+
+  if (round.editor_comment) {
+    blocks.push(`<div class="cd-round-block">
+      <div class="cd-round-label">編集者の提出時メモ・連絡事項</div>
+      <div class="cd-round-text">${esc(round.editor_comment)}</div>
+    </div>`);
+  }
+  if (reviewerComment) {
+    blocks.push(`<div class="cd-round-block">
+      <div class="cd-round-label">${esc(reviewerLabel)}</div>
+      <div class="cd-round-text">${esc(reviewerComment)}</div>
+    </div>`);
+  }
+  if (fileLink) {
+    blocks.push(`<div class="cd-round-block">
+      <div class="cd-round-label">提出物</div>
+      <a href="${esc(fileLink)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--em-dark);text-decoration:underline;word-break:break-all">${esc(round.file?.generated_name || fileLink)}</a>
+    </div>`);
+  }
+  if (!round.editor_comment && !reviewerComment && !fileLink) {
+    blocks.push(`<div class="cd-round-empty">このラウンドには記録された内容がありません</div>`);
+  }
+  return blocks.join('');
+}
+
+// ライブの「直前のチェック段階で書かれた指摘」を 1 ラウンドとして仮想生成する。
+// 後修正ステータス中で、まだ snapshot されていない（再提出前）の段階。
+function _cdBuildLiveRound(creative) {
+  if (!creative) return null;
+  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  if (!REVISION_STATUSES.includes(creative.status)) return null;
+  const stageMap = {
+    'Dチェック後修正':            { stage: 'd_check',  comment: creative.director_comment },
+    'Pチェック後修正':            { stage: 'p_check',  comment: creative.director_comment },
+    'クライアントチェック後修正': { stage: 'cl_check', comment: creative.client_comment   },
+  };
+  const m = stageMap[creative.status];
+  if (!m || !m.comment) return null;
+  return {
+    version_num: null,
+    round_stage: m.stage,
+    director_comment: m.stage === 'cl_check' ? null : m.comment,
+    client_comment:   m.stage === 'cl_check' ? m.comment : null,
+    editor_comment: null,
+    created_at: creative.updated_at || null,
+    file: null,
+    _live: true,
+  };
+}
+
+function cdRenderRoundCompare() {
+  const c = currentCreativeDetail;
+  const wrap = document.getElementById('cd-round-compare');
+  const modal = document.getElementById('cd-modal-body');
+  if (!wrap || !c) return;
+
+  // 履歴 + ライブ仮想ラウンドを連結（ライブは末尾＝最新の過去ラウンド扱い）
+  const live = _cdBuildLiveRound(c);
+  const allRounds = [..._cdRoundsCache];
+  if (live) allRounds.push(live);
+
+  const enable = _cdShouldShowRoundCompare(c, allRounds);
+  if (!enable) {
+    wrap.style.display = 'none';
+    if (modal) modal.classList.remove('cd-2col-mode');
+    _cdMoveRightColumnElements(false);
+    return;
+  }
+
+  wrap.style.display = '';
+  if (modal) modal.classList.add('cd-2col-mode');
+  _cdMoveRightColumnElements(true);
+
+  const N = allRounds.length;
+  const badge = document.getElementById('cd-round-count-badge');
+  if (badge) badge.textContent = N > 0 ? `過去 ${N} ラウンド` : '履歴なし';
+
+  // 初期 index は最新（末尾）。範囲外を補正。
+  if (_cdRoundIndex >= N) _cdRoundIndex = Math.max(0, N - 1);
+  if (_cdRoundIndex < 0)  _cdRoundIndex = 0;
+
+  // 左カラム描画
+  const left = document.getElementById('cd-round-left');
+  if (left) {
+    if (N === 0) {
+      left.innerHTML = `<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（修正・再提出が行われると、ここに前回の指摘と提出メモが残ります）</span></div>`;
+    } else {
+      left.innerHTML = _cdRoundEntryHtml(allRounds[_cdRoundIndex]);
+    }
+  }
+
+  // ◀▶ ボタン状態
+  const prevBtn = document.getElementById('cd-round-prev');
+  const nextBtn = document.getElementById('cd-round-next');
+  if (prevBtn) prevBtn.disabled = (N <= 1 || _cdRoundIndex <= 0);
+  if (nextBtn) nextBtn.disabled = (N <= 1 || _cdRoundIndex >= N - 1);
+
+  // ●○ ドット
+  const dots = document.getElementById('cd-round-dots');
+  if (dots) {
+    if (N <= 1) {
+      dots.innerHTML = '';
+    } else {
+      let html = '';
+      for (let i = 0; i < N; i++) {
+        html += `<span class="cd-round-dot${i === _cdRoundIndex ? ' active' : ''}" data-idx="${i}" onclick="cdRoundJump(${i})" title="ラウンド ${i + 1}/${N}"></span>`;
+      }
+      dots.innerHTML = html;
+    }
+  }
+}
+
+function cdRoundShift(delta) {
+  const live = _cdBuildLiveRound(currentCreativeDetail);
+  const N = _cdRoundsCache.length + (live ? 1 : 0);
+  if (N <= 1) return;
+  _cdRoundIndex = Math.max(0, Math.min(N - 1, _cdRoundIndex + delta));
+  cdRenderRoundCompare();
+}
+
+function cdRoundJump(idx) {
+  const live = _cdBuildLiveRound(currentCreativeDetail);
+  const N = _cdRoundsCache.length + (live ? 1 : 0);
+  if (idx < 0 || idx >= N) return;
+  _cdRoundIndex = idx;
+  cdRenderRoundCompare();
+}
+
 async function openCreativeDetail(id) {
   const res = await apiFetch(`${API}/creatives/${id}`);
   if (res.status === 404) {
@@ -24151,6 +24465,13 @@ async function openCreativeDetail(id) {
 
   // アップロード済みファイル
   await loadCreativeFiles(id);
+
+  // ADR 011: ラウンド比較型UI 履歴ロード + 描画
+  // 失敗しても本フローは止めない。
+  await cdLoadRounds(id);
+  // 直近ラウンド (= 一番新しい過去) を初期表示
+  _cdRoundIndex = Math.max(0, _cdRoundsCache.length + (_cdBuildLiveRound(currentCreativeDetail) ? 1 : 0) - 1);
+  try { cdRenderRoundCompare(); } catch (e) { console.warn('[cd-round-compare] render failed:', e); }
 
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（並列・失敗しても無視）
   refreshCreativePostEditButton(id).catch(() => {});
