@@ -24557,6 +24557,99 @@ function _cdRenderRoundLeftFileCard(round) {
 //
 // この判定により、ドロップ → executeUpload() → loadCreativeFiles() → cdRenderRoundCompare()
 // の再描画チェーンで、新しい v2/v3 カードが右カラムフッターへ自動的に差し込まれる。
+// 取り消しボタンを出して良いか判定する（代表 髙橋指示・ADR 011 補足）:
+//
+//   ・既にスナップショット済 (= 提出済) のバージョンは取り消し不可 → 非表示
+//   ・creative_files の最新版でないものは取り消し不可 (DB ガードと整合)
+//   ・最新ファイル かつ 未スナップショット のものだけ取り消し可
+//
+// サーバ側 DELETE /creatives/:cid/files/:fid が同条件で 409 を返すため、UI の
+// 表示条件はそれと完全一致させる。これでユーザーが過去の v1 カードに「取り消し」
+// ボタンを見て押下→失敗トースト という UX を防ぐ。
+function _cdCanUndoUpload(file) {
+  if (!file?.id) return false;
+  const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  // 最新版か？（_cdFilesCache は version desc）
+  let maxVer = 0;
+  for (const f of files) {
+    const v = Number(f.version) || 0;
+    if (v > maxVer) maxVer = v;
+  }
+  const fileVer = Number(file.version) || 0;
+  if (fileVer !== maxVer) return false;
+
+  // スナップショット済 (= 提出済) なら取り消し不可
+  const rounds = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+  const isSubmitted = rounds.some(r => Number(r?.version_num) === fileVer);
+  if (isSubmitted) return false;
+
+  // 後修正中 (Dチェック後修正等) で snapshot がまだ無いケースの補正:
+  //   V1 を提出 (Dチェック移行) → D指摘 → D後修正 へ来た時点では V1 はまだ snapshot 無し。
+  //   このとき最新ファイル = V1 で _cdRoundsCache に V1 が含まれない状態だが、V1 は
+  //   既に提出済みなので取り消せてはいけない。
+  //   補正: 後修正系 status のときは「最新ファイルが既存の最大ラウンド以下なら提出済扱い」。
+  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const status = currentCreativeDetail?.status || '';
+  if (REVISION_STATUSES.includes(status)) {
+    let maxSnapVer = 0;
+    for (const r of rounds) {
+      const v = Number(r?.version_num) || 0;
+      if (v > maxSnapVer) maxSnapVer = v;
+    }
+    // 後修正中で fileVer <= maxSnapVer (snapshot 済の範囲内 / または snapshot 0件で V1 のみ)
+    // → 提出済とみなし非表示。
+    // 言い換え: fileVer が最大 snapshot を「超えた」ときだけ未提出 = 取り消し可。
+    if (fileVer <= maxSnapVer) return false;
+    // snapshot 0 件 かつ fileVer が "もう Dチェックを 1度通過したラウンド分" と等しいケース
+    // (= V1 提出後 D後修正 で V1 のままアップロードがない状態) は、最新=V1 / maxSnapVer=0 なので
+    // fileVer(1) > maxSnapVer(0) で残ってしまう。これを救うために
+    // 「後修正中 かつ fileVer == 1 (=初稿) かつ snapshot 空」ならば提出済扱い。
+    if (maxSnapVer === 0 && fileVer >= 1) return false;
+  }
+
+  // チェック中・納品ステータスは提出されているはず。
+  // snapshot 反映が遅延しているケースを救うために、ここでも非表示にする。
+  const CHECK_STATUSES = ['Dチェック','Pチェック','クライアントチェック中','納品'];
+  if (CHECK_STATUSES.includes(status)) return false;
+
+  return true;
+}
+
+// 「これからアップロードする version」を計算する（ラウンド番号方式・代表 髙橋指示 / ADR 011 補足）:
+//
+//   ・creative_files の MAX(version) = M
+//   ・M = 0 → 1 (初稿)
+//   ・M がスナップショット済 (= 提出済) → M+1 (次ラウンドへ)
+//   ・M が未スナップショット (= 未提出 / 取り消し→再アップ) → M (同ラウンド)
+//
+// サーバ側 (POST /creatives/:id/upload) が真の採番を行うため、ここはあくまで
+// generated_name (_vN) の自動生成と "次は V<N> です" の表示ヒント。サーバが
+// 違う値で採番した場合は generated_name を _vN replace して整合する。
+function _cdComputeNextVersion() {
+  const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  if (files.length === 0) return 1;
+  // _cdFilesCache は新しい順 (loadCreativeFiles → /api/creatives/:id/files が
+  // version desc) なので [0] が最大。念のため Math.max でも保険。
+  let M = 0;
+  for (const f of files) {
+    const v = Number(f.version) || 0;
+    if (v > M) M = v;
+  }
+  if (M === 0) return 1;
+  // M がスナップショット済か判定（_cdRoundsCache のいずれかに version_num=M が含まれるか）
+  const rounds = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+  const hasSnapshotForM = rounds.some(r => Number(r?.version_num) === M);
+  if (hasSnapshotForM) return M + 1; // M が提出済 → 次ラウンドへ
+  // 後修正系 status 中の "初めての修正版アップ" は M+1 にする補正
+  // （snapshot は再提出時に確定するため、D後修正中は M=1 / snapshot=0 の状態。
+  //  ここで M を返すと V1 と衝突する。サーバ側採番ロジックと完全に一致させる。）
+  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  if (currentCreativeDetail && REVISION_STATUSES.includes(currentCreativeDetail.status || '')) {
+    return M + 1;
+  }
+  return M; // 取消→再アップ等、同ラウンド維持
+}
+
 // 「アップロード取り消し」ボタンの HTML を組み立てる共通ヘルパー。
 // 提出前 (= ラウンド snapshot に乗る前) のバージョンに対してのみ表示する。
 //
@@ -24602,13 +24695,12 @@ function _cdRenderRoundRightFileCard() {
     return '';
   }
   if (isRevision) {
-    // 「最新ファイルが今回サイクルのもの (=次バージョン) かどうか」を判定。
-    // ラウンド数 N に対し、最新ファイルの version が N+1 以上 → 既にアップロード済みの新版。
-    const roundsCount = Array.isArray(_cdRoundsCache) ? _cdRoundsCache.length : 0;
+    // 「最新ファイルが今回ラウンドの新バージョンか」 ＝ 「取り消し可能（=未提出の最新版）か」と
+    // 等価。_cdCanUndoUpload() で判定を統一する（ADR 011 補足: 取り消し条件と表示条件は一致）。
     const latestVer = Number(latest.version) || files.length;
-    const newVersionUploaded = latestVer > roundsCount;
+    const newVersionUploaded = _cdCanUndoUpload(latest);
     if (!newVersionUploaded) {
-      // まだ次バージョン未アップロード: placeholder を出して編集者にドロップを促す
+      // 修正版未アップロード: placeholder を出して編集者にドロップを促す
       return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
         <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
         <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
@@ -24616,24 +24708,26 @@ function _cdRenderRoundRightFileCard() {
         </div>
       </div>`;
     }
-    // 次バージョン既アップロード: 新ファイルを「今回の成果物」として表示
+    // 修正版既アップロード: 新ファイルを「今回の成果物」として表示
     // この状態 = ラウンド snapshot にまだ載っていない＝提出前なので、取り消しボタンを出す。
     const verLabel = `バージョン ${latestVer}`;
     return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
       <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
       ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn: true })}
-      ${_cdRenderUndoUploadBtn(c.id, latest, latestVer)}
+      ${_cdCanUndoUpload(latest) ? _cdRenderUndoUploadBtn(c.id, latest, latestVer) : ''}
     </div>`;
   }
-  // 制作中（初稿提出前）: 最新ファイル = 提出前の v1。取り消し可能。
-  // それ以外（Dチェック / Pチェック / CL確認 / 納品 等）: 既に提出済なので取り消し不可。
-  const PRE_SUBMIT_STATUSES = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
-  const isPreSubmit = PRE_SUBMIT_STATUSES.includes(c.status || '');
+  // 取り消しボタン表示判定は status ではなく "未スナップショットの最新版か" で判定する
+  // （代表 髙橋指示 / ADR 011 補足）。これにより、
+  //   ・制作中で V1 アップ直後 → 取り消し可
+  //   ・V1 提出 (Dチェック移行) 後は ステータスが何であれ V1 は snapshot 済 = 取り消し不可
+  //   ・D後修正中で V2 アップ直後 → 取り消し可
+  //   ・D後修正中で V2 提出 (Dチェック再移行) 後は V2 は snapshot 済 = 取り消し不可
   const verLabel = `バージョン ${latest.version || files.length}`;
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
     <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
     ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn: false })}
-    ${isPreSubmit ? _cdRenderUndoUploadBtn(c.id, latest, latest.version || files.length) : ''}
+    ${_cdCanUndoUpload(latest) ? _cdRenderUndoUploadBtn(c.id, latest, latest.version || files.length) : ''}
   </div>`;
 }
 
@@ -25731,10 +25825,9 @@ async function loadCreativeFiles(creativeId) {
   // 1カラム時の縦並び（既存挙動）。
   // 2カラム時は cdRenderRoundCompare() がこのリストを空にして左右カラムへ振り分ける。
   if (section) section.style.display = '';
-  // 提出前ステータス（初稿提出前 等）かつ最新ファイル → アップロード取り消しボタンを表示する。
-  // それ以外（Dチェック / Pチェック / CL確認 / 納品 等）は既に提出済なので非表示。
-  const PRE_SUBMIT_STATUSES_LIST = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
-  const isPreSubmitForUndo = PRE_SUBMIT_STATUSES_LIST.includes(currentCreativeDetail?.status || '');
+  // 取り消しボタンは「未スナップショットの最新版」のみ表示（代表 髙橋指示 / ADR 011 補足）。
+  // status ではなく _cdCanUndoUpload(file) で判定する。提出済の v1 は status が制作中であろうと
+  // 取り消せない＝ボタンを出さない。
   list.innerHTML = displayFiles.map((f, i) => {
     let verLabel, isLatest;
     if (isCLMode && files.length > 1) {
@@ -25745,7 +25838,7 @@ async function loadCreativeFiles(creativeId) {
       verLabel = `バージョン ${verNum}`;
       isLatest = i === 0;
     }
-    const showUndoBtn = isLatest && isPreSubmitForUndo;
+    const showUndoBtn = _cdCanUndoUpload(f);
     return _cdRenderFileCard(f, { verLabel, isLatest, hideCheckBtn, showUndoBtn, undoVer: f.version });
   }).join('');
 
@@ -28880,7 +28973,9 @@ async function processUploadFile(file, autoExecute = false) {
     const { width, height } = await detectMediaDimensions(file);
     uploadFileData = { file, width, height };
     document.getElementById('cd-detected-size').textContent = `${width} × ${height}`;
-    document.getElementById('cd-version-num').value = currentUploadedFileCount + 1;
+    // 次にアップロードする version はラウンド番号と等しい（ADR 011 補足・代表 髙橋指示）。
+    // 取り消し→再アップ で同じラウンド番号のまま再アップロードできるようにする。
+    document.getElementById('cd-version-num').value = _cdComputeNextVersion();
     preview.style.display = '';
     updateGeneratedFilename();
     // ドロップゾーンのテキストをファイル名に更新
@@ -30468,9 +30563,11 @@ async function cancelLatestUpload(creativeId, fileId, version) {
       try { updateCreativeCommentLabel(currentCreativeDetail.status); } catch (_) {}
     }
 
-    // (h) version 入力欄を「次にアップロードすべき version」に戻す
+    // (h) version 入力欄を「次にアップロードすべき version (=現ラウンド番号)」に戻す
+    //     取り消し直後は creative_files が減るので、_cdComputeNextVersion() は
+    //     スナップショット済の最大バージョン+1 (= 同じラウンド番号) を返す。
     const verInput = document.getElementById('cd-version-num');
-    if (verInput) verInput.value = String((currentUploadedFileCount || 0) + 1);
+    if (verInput) verInput.value = String(_cdComputeNextVersion());
   } catch (err) {
     showToast('取り消しに失敗しました: ' + (err?.message || err), 'error');
     restoreBtn();
