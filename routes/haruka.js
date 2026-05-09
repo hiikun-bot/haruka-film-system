@@ -6508,6 +6508,380 @@ router.get('/creatives/:id/edit-logs', requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
+// ==================== ADR 013: クリエイティブ単価上書き ====================
+// 詳細: docs/design/decisions/012-creative-level-rate-overrides.md
+// migrations: 2026-05-10_creative_rate_overrides.sql
+//
+// - GET /api/creatives/:id/rate-overrides   読み取り（誰でも）
+// - PUT /api/creatives/:id/rate-overrides   admin のみ
+//
+// creatives.override_client_amount: クライアント請求額の上書き（NULL=line 継承）
+// creative_cost_overrides: ロール別支払額の上書き（差分同期：配列に無い既存行は DELETE）
+//
+// creative_assignments.role は TEXT (role code) なので、roles.code → roles.id のマッピングを噛ませて
+// 「現在の担当 (role × user)」と line_costs / overrides を結合する。
+
+// creative_cost_overrides テーブル未作成時に PostgREST が出すエラーを判定
+function _isMissingCostOverridesTable(err) {
+  if (!err) return false;
+  const code = err.code || '';
+  const msg = (err.message || '').toLowerCase();
+  return code === '42P01' || msg.includes('creative_cost_overrides');
+}
+
+// GET /api/creatives/:id/rate-overrides
+router.get('/creatives/:id/rate-overrides', requireAuth, async (req, res) => {
+  const creativeId = req.params.id;
+
+  const { data: creative, error: cErr } = await supabase
+    .from('creatives')
+    .select('id, line_id, override_client_amount, creative_assignments(id, role, user_id, users:user_id(id, full_name, email))')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (cErr) {
+    // 列未追加（migration 未適用）でも UI が壊れないよう、override_client_amount を外して再試行
+    if ((cErr.message || '').includes('override_client_amount')) {
+      const { data: fallback } = await supabase
+        .from('creatives')
+        .select('id, line_id, creative_assignments(id, role, user_id, users:user_id(id, full_name, email))')
+        .eq('id', creativeId)
+        .maybeSingle();
+      if (!fallback) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+      return res.json({
+        creative_id: creativeId,
+        override_client_amount: null,
+        line_client_unit_price: null,
+        cost_overrides: [],
+        line_costs: [],
+        _migration_pending: true,
+      });
+    }
+    return res.status(500).json({ error: cErr.message });
+  }
+  if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+  // line（client_unit_price 取得用）
+  let lineClientUnitPrice = null;
+  if (creative.line_id) {
+    const { data: line } = await supabase
+      .from('project_estimate_lines')
+      .select('id, client_unit_price')
+      .eq('id', creative.line_id)
+      .maybeSingle();
+    lineClientUnitPrice = line?.client_unit_price ?? null;
+  }
+
+  // line_costs（あれば）
+  let lineCosts = [];
+  if (creative.line_id) {
+    const { data: lc, error: lcErr } = await supabase
+      .from('project_estimate_line_costs')
+      .select('id, role_id, user_id, unit_price, role:roles(id, code, label), user:users(id, full_name, email)')
+      .eq('line_id', creative.line_id);
+    if (!lcErr && Array.isArray(lc)) {
+      lineCosts = lc.map(r => ({
+        role_id: r.role_id,
+        role_code: r.role?.code || null,
+        role_name_ja: r.role?.label || null,
+        user_id: r.user_id,
+        user_name: r.user?.full_name || r.user?.email || null,
+        amount: r.unit_price ?? null,
+      }));
+    }
+  }
+
+  // 担当 (creative_assignments.role: TEXT) → roles.id マッピング
+  const assignments = Array.isArray(creative.creative_assignments) ? creative.creative_assignments : [];
+  const assignedCodes = Array.from(new Set(assignments.map(a => {
+    let code = a?.role || '';
+    if (code === 'director_as_editor') code = 'editor';
+    return code;
+  }).filter(Boolean)));
+  let codeToRole = {};
+  if (assignedCodes.length > 0) {
+    const { data: rolesData } = await supabase
+      .from('roles')
+      .select('id, code, label')
+      .in('code', assignedCodes);
+    for (const r of (rolesData || [])) codeToRole[r.code] = r;
+  }
+
+  // 既存 overrides
+  let existingOverrides = [];
+  {
+    const { data, error } = await supabase
+      .from('creative_cost_overrides')
+      .select('id, role_id, user_id, amount, note')
+      .eq('creative_id', creativeId);
+    if (error) {
+      if (_isMissingCostOverridesTable(error)) {
+        console.warn('[rate-overrides] creative_cost_overrides table missing. Apply migrations/2026-05-10_creative_rate_overrides.sql');
+      } else {
+        return res.status(500).json({ error: error.message });
+      }
+    } else if (Array.isArray(data)) {
+      existingOverrides = data;
+    }
+  }
+
+  // 担当 (role × user) ごとに行を作る
+  const seen = new Set();
+  const costOverrides = [];
+  for (const a of assignments) {
+    const code = (a.role === 'director_as_editor') ? 'editor' : a.role;
+    const role = codeToRole[code];
+    if (!role) continue;
+    const userId = a.user_id || null;
+    const key = `${role.id}::${userId || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const ov = existingOverrides.find(o => o.role_id === role.id && (o.user_id || null) === userId);
+    const lineMatch = lineCosts.find(lc => lc.role_id === role.id && (lc.user_id || null) === userId);
+    costOverrides.push({
+      role_id: role.id,
+      role_code: role.code,
+      role_name_ja: role.label,
+      user_id: userId,
+      user_name: a?.users?.full_name || a?.users?.email || null,
+      amount: ov ? Number(ov.amount) : null,
+      line_amount: lineMatch ? lineMatch.amount : null,
+    });
+  }
+
+  // 担当に存在しないが override だけ残っている行も末尾に追加（孤立データの可視化）
+  for (const o of existingOverrides) {
+    const key = `${o.role_id}::${o.user_id || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let roleLabel = null;
+    let userName = null;
+    {
+      const { data: r } = await supabase.from('roles').select('id, code, label').eq('id', o.role_id).maybeSingle();
+      roleLabel = r?.label || null;
+    }
+    if (o.user_id) {
+      const { data: u } = await supabase.from('users').select('id, full_name, email').eq('id', o.user_id).maybeSingle();
+      userName = u?.full_name || u?.email || null;
+    }
+    costOverrides.push({
+      role_id: o.role_id,
+      role_code: null,
+      role_name_ja: roleLabel,
+      user_id: o.user_id || null,
+      user_name: userName,
+      amount: Number(o.amount),
+      line_amount: null,
+    });
+  }
+
+  res.json({
+    creative_id: creativeId,
+    override_client_amount: creative.override_client_amount ?? null,
+    line_client_unit_price: lineClientUnitPrice,
+    cost_overrides: costOverrides,
+    line_costs: lineCosts,
+  });
+});
+
+// PUT /api/creatives/:id/rate-overrides  （admin のみ）
+// body: { override_client_amount: number|null, cost_overrides: [{ role_id, user_id, amount, note }, ...] }
+//
+// 仕様:
+// - admin 以外は 403
+// - override_client_amount が null/undefined → creatives.override_client_amount = NULL
+// - cost_overrides 配列に存在する (role_id, user_id) を upsert、配列に無い既存行は DELETE（差分同期）
+// - 監査ログ creative_edit_logs に rate_override:* の field_name で before/after を記録
+router.put('/creatives/:id/rate-overrides', requireAuth, async (req, res) => {
+  const creativeId = req.params.id;
+  const role = getEffectiveRole(req);
+  if (role !== 'admin') {
+    return res.status(403).json({ error: '単価上書きは管理者のみが編集できます' });
+  }
+
+  const body = req.body || {};
+  const incoming = Array.isArray(body.cost_overrides) ? body.cost_overrides : [];
+  let newClientAmount = body.override_client_amount;
+  if (newClientAmount === undefined || newClientAmount === '' || newClientAmount === null) {
+    newClientAmount = null;
+  } else {
+    const n = Number(newClientAmount);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: 'override_client_amount は 0 以上の数値か null で指定してください' });
+    }
+    newClientAmount = n;
+  }
+
+  const { data: before, error: bErr } = await supabase
+    .from('creatives')
+    .select('id, override_client_amount')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (bErr) {
+    if ((bErr.message || '').includes('override_client_amount')) {
+      return res.status(503).json({ error: 'creatives.override_client_amount 列が未作成です。migrations/2026-05-10_creative_rate_overrides.sql を本番Supabase に適用してください。' });
+    }
+    return res.status(500).json({ error: bErr.message });
+  }
+  if (!before) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+  for (const r of incoming) {
+    if (!r || !r.role_id) {
+      return res.status(400).json({ error: 'cost_overrides の各要素には role_id が必要です' });
+    }
+    const n = Number(r.amount);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: 'cost_overrides の amount は 0 以上の数値で指定してください' });
+    }
+    r.amount = n;
+    r.user_id = r.user_id || null;
+    r.note = (r.note ?? null);
+  }
+
+  const { data: existing, error: eErr } = await supabase
+    .from('creative_cost_overrides')
+    .select('id, role_id, user_id, amount')
+    .eq('creative_id', creativeId);
+  if (eErr) {
+    if (_isMissingCostOverridesTable(eErr)) {
+      return res.status(503).json({ error: 'creative_cost_overrides テーブルが未作成です。migrations/2026-05-10_creative_rate_overrides.sql を本番Supabase に適用してください。' });
+    }
+    return res.status(500).json({ error: eErr.message });
+  }
+  const existingArr = existing || [];
+  const keyOf = (roleId, userId) => `${roleId}::${userId || ''}`;
+  const incomingKeys = new Set(incoming.map(r => keyOf(r.role_id, r.user_id)));
+  const editorName = req.user?.full_name || req.user?.nickname || req.user?.email || null;
+  const editorId = req.user?.id || null;
+  const nowIso = new Date().toISOString();
+  const logRows = [];
+
+  // 1) override_client_amount の差分
+  if ((before.override_client_amount ?? null) !== (newClientAmount ?? null)) {
+    const { error: upErr } = await supabase
+      .from('creatives')
+      .update({ override_client_amount: newClientAmount, updated_at: nowIso })
+      .eq('id', creativeId);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    logRows.push({
+      creative_id: creativeId,
+      edited_by: editorId,
+      edited_by_name: editorName,
+      field_name: 'rate_override:override_client_amount',
+      old_value: before.override_client_amount == null ? null : String(before.override_client_amount),
+      new_value: newClientAmount == null ? null : String(newClientAmount),
+      reason: null,
+    });
+  }
+
+  // 2) cost_overrides の差分同期（INSERT/UPDATE/DELETE）
+  const roleIds = Array.from(new Set([
+    ...incoming.map(r => r.role_id),
+    ...existingArr.map(r => r.role_id),
+  ].filter(Boolean)));
+  const userIds = Array.from(new Set([
+    ...incoming.map(r => r.user_id).filter(Boolean),
+    ...existingArr.map(r => r.user_id).filter(Boolean),
+  ]));
+  const roleMap = {};
+  if (roleIds.length > 0) {
+    const { data: rs } = await supabase.from('roles').select('id, code, label').in('id', roleIds);
+    for (const r of (rs || [])) roleMap[r.id] = r;
+  }
+  const userMap = {};
+  if (userIds.length > 0) {
+    const { data: us } = await supabase.from('users').select('id, full_name, email').in('id', userIds);
+    for (const u of (us || [])) userMap[u.id] = u;
+  }
+  const dispLabel = (roleId, userId) => {
+    const r = roleMap[roleId];
+    const u = userId ? userMap[userId] : null;
+    const roleLabel = r?.label || roleId;
+    const userLabel = u ? (u.full_name || u.email || userId) : '（ロール全体）';
+    return `${roleLabel} / ${userLabel}`;
+  };
+
+  // DELETE: 既存にあるが incoming に無い
+  const toDelete = existingArr.filter(r => !incomingKeys.has(keyOf(r.role_id, r.user_id)));
+  if (toDelete.length > 0) {
+    const ids = toDelete.map(r => r.id);
+    const { error: delErr } = await supabase
+      .from('creative_cost_overrides')
+      .delete()
+      .in('id', ids);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+    for (const r of toDelete) {
+      logRows.push({
+        creative_id: creativeId,
+        edited_by: editorId,
+        edited_by_name: editorName,
+        field_name: `rate_override:cost:${dispLabel(r.role_id, r.user_id)}`,
+        old_value: String(r.amount),
+        new_value: null,
+        reason: null,
+      });
+    }
+  }
+
+  // UPSERT
+  for (const r of incoming) {
+    const prior = existingArr.find(e => e.role_id === r.role_id && (e.user_id || null) === r.user_id);
+    if (prior) {
+      if (Number(prior.amount) === Number(r.amount)) continue;
+      const { error: upErr } = await supabase
+        .from('creative_cost_overrides')
+        .update({ amount: r.amount, note: r.note, updated_by: editorId })
+        .eq('id', prior.id);
+      if (upErr) return res.status(500).json({ error: upErr.message });
+      logRows.push({
+        creative_id: creativeId,
+        edited_by: editorId,
+        edited_by_name: editorName,
+        field_name: `rate_override:cost:${dispLabel(r.role_id, r.user_id)}`,
+        old_value: String(prior.amount),
+        new_value: String(r.amount),
+        reason: null,
+      });
+    } else {
+      const { error: insErr } = await supabase
+        .from('creative_cost_overrides')
+        .insert({
+          creative_id: creativeId,
+          role_id: r.role_id,
+          user_id: r.user_id || null,
+          amount: r.amount,
+          note: r.note,
+          created_by: editorId,
+          updated_by: editorId,
+        });
+      if (insErr) {
+        if (_isMissingCostOverridesTable(insErr)) {
+          return res.status(503).json({ error: 'creative_cost_overrides テーブルが未作成です。migrations/2026-05-10_creative_rate_overrides.sql を本番Supabase に適用してください。' });
+        }
+        return res.status(500).json({ error: insErr.message });
+      }
+      logRows.push({
+        creative_id: creativeId,
+        edited_by: editorId,
+        edited_by_name: editorName,
+        field_name: `rate_override:cost:${dispLabel(r.role_id, r.user_id)}`,
+        old_value: null,
+        new_value: String(r.amount),
+        reason: null,
+      });
+    }
+  }
+
+  // 監査ログ（一括 INSERT）。失敗しても本処理は巻き戻さない
+  if (logRows.length > 0) {
+    const { error: logErr } = await supabase.from('creative_edit_logs').insert(logRows);
+    if (logErr) {
+      console.warn('[rate-overrides] audit log insert failed:', logErr.message);
+    }
+  }
+
+  res.json({ ok: true, change_count: logRows.length });
+});
+
 // 単発再共有エンドポイント
 //   POST /creatives/:id/share-client-review            -> 既存値を尊重
 //   POST /creatives/:id/share-client-review?force=true -> 既存値を上書き
