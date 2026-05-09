@@ -6223,11 +6223,9 @@ window.showPage = window.showPage || function(name, btn) {
           <span id="cd-ball-holder" style="display:none;color:var(--text-muted)"></span>
           <span id="cd-revision-count-badge" style="display:none;font-size:11px;background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 8px;font-weight:600"></span>
         </div>
-        <!-- Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示） -->
-        <!-- 第三者から「いま誰にボールがあるか」を一目で分かるようにするための UI。
-             creative_assignments[role='director'] を全部列挙する。
-             保存先は PR #218（複数Dチェック担当者対応）と同じ。 -->
-        <div id="cd-d-checkers" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--text-muted);align-items:center;flex-wrap:wrap;gap:8px"></div>
+        <!-- Dチェック担当者一覧は撤去（ボール表示で代替）。
+             ヘッダーの ball-dot + ball-name で「いま誰にボールがあるか」が見えるため重複情報になっていた。
+             creative_assignments[role='director'] のデータ自体は status 遷移・通知・返信モーダルで引き続き使用する。 -->
       </div>
 
       <!-- 納期表示 -->
@@ -25382,41 +25380,9 @@ async function openCreativeDetail(id) {
     el.style.display = '';
     el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span><span class="ball-name">${esc(bh.holder)}</span></span>`;
   })();
-  // Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示）
-  // - データソース: creative_assignments[role='director']（PR #218 で複数選択対応済み）
-  // - 0人なら「Dチェック担当: 未設定」とグレー表示
-  // - 1人でも複数でも一貫して表示
-  // - チェックOK出した人を区別する個別 approval 列は現状なし → 単純列挙
-  (function renderDCheckers() {
-    const el = document.getElementById('cd-d-checkers');
-    if (!el) return;
-    if (c.status !== 'Dチェック') {
-      el.style.display = 'none';
-      el.innerHTML = '';
-      return;
-    }
-    const directors = (c.creative_assignments || [])
-      .filter(a => a && a.role === 'director' && a.users)
-      .map(a => a.users);
-    // 重複除去（同じユーザーが複数行ある場合に備えて）
-    const seen = new Set();
-    const uniq = directors.filter(u => {
-      if (!u || !u.id) return false;
-      if (seen.has(u.id)) return false;
-      seen.add(u.id);
-      return true;
-    });
-    el.style.display = 'flex';
-    if (uniq.length === 0) {
-      el.innerHTML = `<span style="font-weight:600;color:var(--text)">Dチェック担当:</span><span style="color:var(--text-muted)">未設定</span>`;
-      return;
-    }
-    const chips = uniq.map(u => {
-      const name = u.full_name || u.nickname || '';
-      return `<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:999px;padding:2px 10px 2px 2px">${avatarHtml(u, 22)}<span style="font-size:12px;color:var(--text);font-weight:500">${esc(name)}</span></span>`;
-    }).join('');
-    el.innerHTML = `<span style="font-weight:600;color:var(--text)">Dチェック担当:</span>${chips}`;
-  })();
+  // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
+  // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
+  // 通知・返信モーダル（renderFromToAvatar フォールバック）で引き続き使用するため、保存・read 経路は無変更。
   // 修正回数バッジ
   const revBadge = document.getElementById('cd-revision-count-badge');
   if (revBadge) {
