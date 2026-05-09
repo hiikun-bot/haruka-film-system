@@ -3552,16 +3552,13 @@ window.showPage = window.showPage || function(name, btn) {
           <div style="display:flex;flex-direction:column;gap:14px">
             <div class="form-group" style="margin-bottom:0" data-creative-field="creative_type">
               <label class="form-label">クリエイティブ種別</label>
-              <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c');applyCreativeTypeVisibility(this.value)">
+              <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c');applyCreativeTypeVisibility()">
                 <option value="video_short">ショート動画</option>
                 <option value="video_long">ロング動画</option>
                 <option value="design_thumbnail">サムネイル</option>
                 <option value="design_banner">バナー</option>
                 <option value="design_post">投稿画像</option>
                 <option value="design_story">ストーリーズ</option>
-                <option value="hp">HP</option>
-                <option value="lp">LP</option>
-                <option value="line">LINE</option>
               </select>
             </div>
             <div class="form-group" style="margin-bottom:0" data-creative-field="product">
@@ -3687,9 +3684,6 @@ window.showPage = window.showPage || function(name, btn) {
               <option value="design_banner">バナー</option>
               <option value="design_post">投稿画像</option>
               <option value="design_story">ストーリーズ</option>
-              <option value="hp">HP</option>
-              <option value="lp">LP</option>
-              <option value="line">LINE</option>
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -6016,9 +6010,6 @@ window.showPage = window.showPage || function(name, btn) {
             <option value="design_banner">バナー</option>
             <option value="design_post">投稿画像</option>
             <option value="design_story">ストーリーズ</option>
-            <option value="hp">HP</option>
-            <option value="lp">LP</option>
-            <option value="line">LINE</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
@@ -6138,9 +6129,6 @@ window.showPage = window.showPage || function(name, btn) {
             <option value="design_banner">バナー</option>
             <option value="design_post">投稿画像</option>
             <option value="design_story">ストーリーズ</option>
-            <option value="hp">HP</option>
-            <option value="lp">LP</option>
-            <option value="line">LINE</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
@@ -20777,10 +20765,6 @@ function autoSetCreativeFmt(prefix) {
     if (sizeSel) sizeSel.value = '1080_1920';
   } else if (ct.startsWith('design')) {
     fmtSel.value = 'bn';
-  } else if (ct === 'hp' || ct === 'lp' || ct === 'line' || ct.startsWith('hp_') || ct.startsWith('lp_') || ct.startsWith('line_')) {
-    // Web系（HP/LP）/ LINE は従来の FMT/サイズに当てはまらないため任意のままクリア
-    fmtSel.value = '';
-    if (sizeSel) sizeSel.value = '';
   }
 }
 
@@ -24711,15 +24695,18 @@ function _cdRoundEntryHtml(round) {
   const reviewerFrom = isClient ? null : users.director; // クライアント指摘の場合は client ユーザーを保持していないので null
   // クライアント指摘でも、編集者(To) は出せる方が情報量があるが、From が出ないと From/To のスタイルが片肺になるため、
   // クライアント指摘では From/To 行を出さない（renderFromToAvatar(null, x) は何かは出るが意味が薄いので明示的にスキップ）
-  // 各ラウンド snapshot は「修正済→再チェック」遷移時に1行 INSERT されるため、
-  // editor_comment / director_comment / client_comment は同一 created_at を共有する。
-  // ここではその snapshot 時刻を pill 行右端に表示する（個別の発言時刻列は schema に無い）。
-  const tsIso = round && round.created_at ? round.created_at : null;
+  // タイムスタンプ分離 (PR #(round-distinct-timestamps)):
+  //   ・編集者の提出時メモ → editor_submitted_at（= snapshot 確定時刻 / 再提出時刻）
+  //   ・ディレクター/クライアントの指摘 → director_commented_at（= 直前のチェック段階の更新時刻）
+  //   どちらも NULL（migration 未適用 or 旧データ）の場合は created_at にフォールバックして
+  //   何も出ないより共通時刻を出す方を優先する。
+  const editorTsIso   = (round && round.editor_submitted_at)   || (round && round.created_at) || null;
+  const reviewerTsIso = (round && round.director_commented_at) || (round && round.created_at) || null;
   const reviewerFromToHtml = (!isClient && users.director && users.editor)
-    ? renderFromToAvatar(users.director, users.editor, 'ディレクター', '担当者', tsIso)
+    ? renderFromToAvatar(users.director, users.editor, 'ディレクター', '担当者', reviewerTsIso)
     : '';
   const editorFromToHtml = (users.editor && users.director)
-    ? renderFromToAvatar(users.editor, users.director, '担当者', 'ディレクター', tsIso)
+    ? renderFromToAvatar(users.editor, users.director, '担当者', 'ディレクター', editorTsIso)
     : '';
 
   const blocks = [];
@@ -24785,26 +24772,31 @@ function _cdBuildLiveRound(creative) {
 // _cdFilesCache（loadCreativeFiles でキャッシュ済の creative_files 全件）から
 // round.creative_file_id で実体を引く（width/height/uploaded_at/faststart_status 等を保持）。
 //
-// PR #(round-prev-video-footer) — フォールバック強化:
-//   1) creative_file_id で _cdFilesCache を引く（PR #422 以後の正規パス）
+// 解決ロジックは _cdResolveRoundLeftFile() に集約:
+//   1) creative_file_id 直引き（PR #422 以後の正規パス）
 //   2) round.file（rounds API の軽量プロジェクション）
 //   3) round.version_num が一致する _cdFilesCache を引く（PR #422 以前の遺物データ救済）
-//   4) ライブラウンド (round._live === true) の場合: 「直前のチェック段階で書かれた指摘」が
-//      対象としていた version は max(_cdRoundsCache.version_num) + 1（or 1）。
-//      このバージョンのファイルを _cdFilesCache から引く。
-//   5) 全部だめなら _cdFilesCache の最も古い（version 最小）ファイルを表示するフォールバック。
-//      → 何も出ないより「とりあえず提出済み動画を見せる」方が UX 上ずっとマシ。
+//   4) ライブラウンド (round._live === true): 仮 version で _cdFilesCache を引く
+//
+// PR #(round-tied-version) で旧 (5) latest fallback は撤去。
+// version 不明のラウンドを別バージョンに化けさせるとユーザー困惑の元
+// （creative_file_id=V1 のラウンドが V2 と表示される事故）。
+// 解決できない場合は何も出さない（return ''）。
 // 左カラムが解決する「過去ラウンド提出ファイル」を返す共通ヘルパー。
 // _cdRenderRoundLeftFileCard と _cdRenderRoundRightFileCard の dedup 判定で
 // 同じロジックを使うために切り出した（代表 髙橋指示・ADR 011 補足: 左右が
 // 同一バージョンを指したら右の「今回の成果物」を抑制する）。
 //
-// 解決順は _cdRenderRoundLeftFileCard と完全に一致させる:
-//   (1) creative_file_id 直引き
+// 解決順（PR #(round-tied-version) で latest fallback を撤去・厳格化）:
+//   (1) creative_file_id 直引き → 見つかれば即 return（最優先）
 //   (2) round.file（軽量プロジェクション）
-//   (3) version_num 一致
+//   (3) version_num 一致（PR #422 以前の creative_file_id 欠損データ救済）
 //   (4) ライブラウンドの仮 version
-//   (5) cache 末尾フォールバック（_cdFilesCache は version desc なので末尾=最古）
+//
+// 重要な変更: 旧 (5) "cache 末尾フォールバック (= 最古ファイルにすり替え)" は
+// **削除済み**。version 不明のラウンドを latest や別バージョンに化けさせるのは
+// ユーザー困惑の原因 (creative_file_id=V1 が誤って V2 と表示される事故)。
+// (1)-(4) で解決できなければ null を返し、呼び出し元に「ファイル無し」として扱わせる。
 //
 // 動画なし提出 (isFileless) のラウンドは null を返す（左は "[動画なし]" カード
 // になり、右の dedup 対象外。右はそのまま latest を出してよい）。
@@ -24817,35 +24809,34 @@ function _cdResolveRoundLeftFile(round) {
   const isFileless = !round.creative_file_id && /^\s*\[動画なし\]/.test(editorComment);
   if (isFileless) return null;
 
-  let f = null;
-
-  // (1) creative_file_id 直引き（正規パス）
+  // (1) creative_file_id 直引き（正規パス）— 見つかったら即 return。
+  // ここで「creative_file_id が指す実体」をそのまま使うことで、
+  // ラウンドに紐づいたバージョンが latest に化ける事故を防ぐ。
   if (round.creative_file_id && cache.length > 0) {
-    f = cache.find(x => x && x.id === round.creative_file_id) || null;
+    const f1 = cache.find(x => x && x.id === round.creative_file_id) || null;
+    if (f1) return f1;
   }
 
-  // (2) rounds API の軽量プロジェクション（faststart 等は欠落）
-  if (!f && round.file) f = round.file;
+  // (2) rounds API の軽量プロジェクション（faststart 等は欠落するがファイル特定はできる）
+  if (round.file) return round.file;
 
-  // (3) version_num 一致でフォールバック（PR #422 以前の creative_file_id 欠損データ用）
-  if (!f && round.version_num && cache.length > 0) {
-    f = cache.find(x => x && Number(x.version) === Number(round.version_num)) || null;
+  // (3) version_num 一致でフォールバック（creative_file_id が NULL の旧データ用）
+  if (round.version_num && cache.length > 0) {
+    const f3 = cache.find(x => x && Number(x.version) === Number(round.version_num)) || null;
+    if (f3) return f3;
   }
 
   // (4) ライブラウンド（snapshot 未挿入の修正中フェーズ）。
   //     未完了の修正中なので「いま指摘の対象になっている version」は
   //     完了済みラウンド数 + 1（一度も snapshot されていなければ 1）。
-  if (!f && round._live && cache.length > 0) {
+  if (round._live && cache.length > 0) {
     const targetVer = Math.max(1, (Array.isArray(_cdRoundsCache) ? _cdRoundsCache.length : 0) + 1);
-    f = cache.find(x => x && Number(x.version) === targetVer) || null;
+    const f4 = cache.find(x => x && Number(x.version) === targetVer) || null;
+    if (f4) return f4;
   }
 
-  // (5) どうしても見つからない時の最終フォールバック: _cdFilesCache の末尾（最古）。
-  if (!f && cache.length > 0) {
-    f = cache[cache.length - 1] || null;
-  }
-
-  return f;
+  // (5) latest fallback は削除（ラウンド紐付けバージョンの整合性優先）。
+  return null;
 }
 
 function _cdRenderRoundLeftFileCard(round) {
@@ -25103,8 +25094,12 @@ function _cdFormatRoundDate(iso) {
 //   - currentRoundIdx: 現在表示中ラウンド index (0..N-1)
 //   - totalN: ラウンド総数
 //   - round: 表示中ラウンドオブジェクト（null 可: 履歴0件のとき）
+//   - resolvedFile: _cdResolveRoundLeftFile() の解決結果（null 可）。
+//     渡されたときバッジの version はこの実ファイルの f.version を優先する。
+//     これにより "v2 紐付け表示なのに実は V1 が表示されている" というズレを防ぐ
+//     （PR #(round-tied-version)）。
 // ナビ（◀▶ + ●○）と日時 + ラウンド種別バッジを内包する。
-function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round) {
+function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round, resolvedFile = null) {
   // 「Nラウンド前」表記: 末尾(=最新の過去ラウンド)が0、その1つ前が1...
   // ただし「直前」が一番自然なので、末尾は表記なし、それ以前は「Nラウンド前」と書く
   const stepsBack = totalN - 1 - currentRoundIdx;
@@ -25112,8 +25107,13 @@ function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round) {
   if (totalN === 0) {
     titleSuffix = '';
   } else if (round) {
-    const stageLabel = _CD_ROUND_STAGE_LABEL[round.round_stage] || (round.version_num ? `v${round.version_num}` : '');
-    const verLabel = round.version_num ? `v${round.version_num}` : '';
+    // バッジ用 version: 解決された実ファイルの version を最優先（カード表示と一致させる）。
+    // 解決失敗時のみ round.version_num にフォールバック。
+    const verNumForBadge = (resolvedFile && resolvedFile.version != null)
+      ? resolvedFile.version
+      : (round.version_num || null);
+    const stageLabel = _CD_ROUND_STAGE_LABEL[round.round_stage] || (verNumForBadge ? `v${verNumForBadge}` : '');
+    const verLabel = verNumForBadge ? `v${verNumForBadge}` : '';
     const parts = [];
     if (stageLabel) parts.push(stageLabel);
     if (verLabel && verLabel !== stageLabel) parts.push(verLabel);
@@ -25220,9 +25220,11 @@ function cdRenderRoundCompare() {
   const currentRound = (N > 0) ? allRounds[_cdRoundIndex] : null;
 
   // 左ヘッダー描画（前回ラベル + 種別 + 日時 + ◀▶ + ●○）
+  // 解決済の左カラムファイルを渡してバッジ version を一致させる（PR #(round-tied-version)）
   const leftHeader = document.getElementById('cd-round-left-header');
   if (leftHeader) {
-    leftHeader.innerHTML = _cdRenderRoundLeftHeader(_cdRoundIndex, N, currentRound);
+    const resolvedLeftFile = currentRound ? _cdResolveRoundLeftFile(currentRound) : null;
+    leftHeader.innerHTML = _cdRenderRoundLeftHeader(_cdRoundIndex, N, currentRound, resolvedLeftFile);
   }
   // 右ヘッダー描画（今回ラベル + ステータス + 日時）
   const rightHeader = document.getElementById('cd-round-right-header');
