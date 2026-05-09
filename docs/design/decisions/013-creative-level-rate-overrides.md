@@ -1,5 +1,5 @@
 ---
-adr: 012
+adr: 013
 status: Accepted
 date: 2026-05-10
 tags: [pricing, creative, override, billing, payout, admin-only]
@@ -9,7 +9,7 @@ superseded_by: null
 related_adrs: [002, 004, 006]
 ---
 
-# 012. クリエイティブ単位の単価上書き（請求額・支払額）
+# 013. クリエイティブ単位の単価上書き（請求額・支払額）
 
 - **Status**: Accepted
 - **Date**: 2026-05-10
@@ -127,7 +127,7 @@ resolveCreativeRoleCost(creative, role, user, line):
 -- 1) creatives へクライアント請求額の上書き列を追加
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS override_client_amount NUMERIC;
 COMMENT ON COLUMN creatives.override_client_amount IS
-  'ADR 012: NULL = line.client_unit_price 継承。非 NULL = この creative 単独の売上額（税抜・admin のみ編集可）';
+  'ADR 013: NULL = line.client_unit_price 継承。非 NULL = この creative 単独の売上額（税抜・admin のみ編集可）';
 
 -- 2) ロール別支払額の上書きテーブル
 CREATE TABLE IF NOT EXISTS creative_cost_overrides (
@@ -150,7 +150,7 @@ CREATE INDEX IF NOT EXISTS creative_cost_overrides_creative_idx
   ON creative_cost_overrides (creative_id);
 
 COMMENT ON TABLE creative_cost_overrides IS
-  'ADR 012: クリエイティブ単位のロール別支払額上書き。admin のみ編集可。user_id NULL = ロール全体上書き';
+  'ADR 013: クリエイティブ単位のロール別支払額上書き。admin のみ編集可。user_id NULL = ロール全体上書き';
 ```
 
 ロールバック: `DROP TABLE creative_cost_overrides;` および `ALTER TABLE creatives DROP COLUMN override_client_amount;`。Stage 1 で導入する集計反映は別 ADR を切らずにこの ADR の範囲で扱う。
