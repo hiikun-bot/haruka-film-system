@@ -12917,6 +12917,203 @@ router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
   }
 });
 
+// ============================================================
+// バグ報告システム (bug_reports)
+// ============================================================
+// PR #188 の /api/error-report (Slack 投稿のみ・対応管理なし) とは独立。
+// 対応者割当・ステータス管理・履歴閲覧ができる管理対象のバグ報告。
+// 匿名フラグ true の場合は reporter_user_id = null で保存（誰が報告したか記録しない）。
+// ============================================================
+
+const BUG_REPORT_SEVERITIES = ['low', 'normal', 'high', 'critical'];
+const BUG_REPORT_STATUSES = ['open', 'in_progress', 'resolved', 'wont_fix', 'duplicate'];
+
+// data URL の最大サイズ（base64 で約 8MB ≒ 元画像 6MB）。
+// クライアント側で 1600px に縮小してから送る前提。
+const BUG_REPORT_DATA_URL_MAX = 8 * 1024 * 1024;
+
+function normalizeBugReportPayload(body, { isCreate }) {
+  const out = {};
+  if (body.title !== undefined) out.title = String(body.title || '').trim().slice(0, 200);
+  if (body.description !== undefined) out.description = body.description ? String(body.description).slice(0, 5000) : null;
+  if (body.url !== undefined) out.url = body.url ? String(body.url).slice(0, 1000) : null;
+  if (body.screen_label !== undefined) out.screen_label = body.screen_label ? String(body.screen_label).slice(0, 100) : null;
+  if (body.severity !== undefined) {
+    const v = String(body.severity || '').trim();
+    out.severity = BUG_REPORT_SEVERITIES.includes(v) ? v : 'normal';
+  }
+  if (body.status !== undefined) {
+    const v = String(body.status || '').trim();
+    out.status = BUG_REPORT_STATUSES.includes(v) ? v : 'open';
+  }
+  if (body.assignee_user_id !== undefined) {
+    const v = body.assignee_user_id;
+    out.assignee_user_id = (v === '' || v == null) ? null : String(v);
+  }
+  if (body.screenshot_data_url !== undefined) {
+    const v = body.screenshot_data_url;
+    if (!v) out.screenshot_data_url = null;
+    else {
+      const s = String(v);
+      if (s.length > BUG_REPORT_DATA_URL_MAX) {
+        const err = new Error('スクリーンショットが大きすぎます（8MB上限）');
+        err.statusCode = 413;
+        throw err;
+      }
+      if (!s.startsWith('data:image/')) {
+        const err = new Error('スクリーンショットの形式が不正です');
+        err.statusCode = 400;
+        throw err;
+      }
+      out.screenshot_data_url = s;
+    }
+  }
+  if (body.annotations !== undefined) out.annotations = body.annotations || null;
+  if (body.browser_info !== undefined) out.browser_info = body.browser_info || null;
+  if (isCreate) {
+    out.is_anonymous = !!body.is_anonymous;
+    if (!out.title) {
+      const err = new Error('タイトルは必須です');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+  // resolved_at はステータス遷移時に自動設定
+  return out;
+}
+
+// POST /api/haruka/bug-reports - 新規バグ報告（誰でも可・匿名対応）
+router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    let payload;
+    try { payload = normalizeBugReportPayload(req.body || {}, { isCreate: true }); }
+    catch (e) { return res.status(e.statusCode || 400).json({ error: e.message }); }
+
+    // 匿名なら reporter_user_id を一切記録しない
+    const reporterUserId = payload.is_anonymous ? null : (req.user?.id || null);
+
+    const insertRow = {
+      reporter_user_id: reporterUserId,
+      is_anonymous: !!payload.is_anonymous,
+      title: payload.title,
+      description: payload.description ?? null,
+      url: payload.url ?? null,
+      screen_label: payload.screen_label ?? null,
+      severity: payload.severity || 'normal',
+      status: 'open',
+      assignee_user_id: payload.assignee_user_id ?? null,
+      screenshot_data_url: payload.screenshot_data_url ?? null,
+      annotations: payload.annotations ?? null,
+      browser_info: payload.browser_info ?? null,
+    };
+
+    const { data, error } = await supabase
+      .from('bug_reports').insert(insertRow).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/bug-reports - 一覧（全員閲覧可）
+router.get('/bug-reports', requireAuth, async (req, res) => {
+  try {
+    const { status, assignee_user_id, mine } = req.query;
+    let q = supabase
+      .from('bug_reports')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url )')
+      .order('created_at', { ascending: false });
+    if (status) q = q.eq('status', status);
+    if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
+    if (mine === 'true' && req.user?.id) q = q.eq('reporter_user_id', req.user.id);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    // 匿名報告は reporter 情報をマスク
+    const sanitized = (data || []).map(r => {
+      if (r.is_anonymous) {
+        return { ...r, reporter_user_id: null, reporter: null };
+      }
+      return r;
+    });
+    res.json(sanitized);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/bug-reports/:id - 詳細（screenshot_data_url 含む）
+router.get('/bug-reports/:id', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('bug_reports')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url )')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not found' });
+    if (data.is_anonymous) {
+      data.reporter_user_id = null;
+      data.reporter = null;
+    }
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/haruka/bug-reports/:id - 更新（admin or assignee or 報告者本人）
+router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const { data: row, error: getErr } = await supabase
+      .from('bug_reports').select('id, reporter_user_id, assignee_user_id, status, is_anonymous').eq('id', req.params.id).maybeSingle();
+    if (getErr) return res.status(500).json({ error: getErr.message });
+    if (!row) return res.status(404).json({ error: 'not found' });
+
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isReporter = !row.is_anonymous && row.reporter_user_id && req.user?.id === row.reporter_user_id;
+    const isAssignee = row.assignee_user_id && req.user?.id === row.assignee_user_id;
+    if (!isAdmin && !isReporter && !isAssignee) {
+      return res.status(403).json({ error: '編集権限がありません（報告者本人 or 対応者 or 管理者のみ）' });
+    }
+
+    let payload;
+    try { payload = normalizeBugReportPayload(req.body || {}, { isCreate: false }); }
+    catch (e) { return res.status(e.statusCode || 400).json({ error: e.message }); }
+
+    payload.updated_at = new Date().toISOString();
+
+    // ステータスが resolved に遷移したら resolved_at を自動セット
+    if (payload.status && payload.status !== row.status) {
+      if (payload.status === 'resolved' || payload.status === 'wont_fix') {
+        payload.resolved_at = new Date().toISOString();
+      } else {
+        payload.resolved_at = null;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('bug_reports').update(payload).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/haruka/bug-reports/:id - 削除（admin のみ）
+router.delete('/bug-reports/:id', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ削除できます' });
+    const { error } = await supabase.from('bug_reports').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
 // 用途:
 //   const harukaRouter = require('./routes/haruka');                 // ルーター本体
