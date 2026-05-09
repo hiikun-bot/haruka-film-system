@@ -3390,6 +3390,8 @@ window.showPage = window.showPage || function(name, btn) {
           <button id="sort-btn-default" onclick="setMemberSort('default')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">登録順</button>
           <button id="sort-btn-role" onclick="setMemberSort('role')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">ロール順</button>
           <button id="sort-btn-team" onclick="setMemberSort('team')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">チーム順</button>
+          <button id="sort-btn-rank" onclick="setMemberSort('rank')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">ランク順</button>
+          <button id="sort-btn-name" onclick="setMemberSort('name')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">名前順</button>
         </div>
       </div>
       <div style="display:flex;gap:8px">
@@ -8707,7 +8709,7 @@ function setMemberSort(type) {
   memberSortBy = type;
   // ピル操作はヘッダソートを解除（最後に操作した方が勝つ）
   memberHeaderSort = null;
-  ['default','role','team'].forEach(t => {
+  ['default','role','team','rank','name'].forEach(t => {
     const btn = document.getElementById('sort-btn-' + t);
     if (!btn) return;
     const active = t === type;
@@ -8727,7 +8729,7 @@ function setMemberHeaderSort(col) {
     memberHeaderSort = { col, dir: 'asc' };
   }
   // ピル側のハイライトは外す（カスタム状態）
-  ['default','role','team'].forEach(t => {
+  ['default','role','team','rank','name'].forEach(t => {
     const btn = document.getElementById('sort-btn-' + t);
     if (!btn) return;
     btn.style.background = 'transparent';
@@ -8847,6 +8849,18 @@ function renderMemberList() {
         || (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0)
         || (leaderPriorityOf(a) - leaderPriorityOf(b));
     });
+  } else if (memberSortBy === 'rank') {
+    // ランク順: S→A→B→C→D（強い順）。空ランクは末尾。
+    // 同ランク内は二次キー（リーダー優先 → 氏名昇順）でフォールバック。
+    const rankOrderOf = (m) => Object.prototype.hasOwnProperty.call(MEMBER_RANK_ORDER, m.rank) ? MEMBER_RANK_ORDER[m.rank] : 99;
+    visibleMembers.sort((a,b) =>
+      (rankOrderOf(a) - rankOrderOf(b))
+      || (leaderPriorityOf(a) - leaderPriorityOf(b))
+      || (a.full_name||'').localeCompare(b.full_name||'','ja'));
+  } else if (memberSortBy === 'name') {
+    // 名前順: 氏名（display_name / full_name）昇順。日本語ロケール比較。
+    visibleMembers.sort((a,b) =>
+      (a.full_name||'').localeCompare(b.full_name||'','ja'));
   }
   if (!visibleMembers.length) {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
