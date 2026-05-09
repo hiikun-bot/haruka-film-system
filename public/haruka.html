@@ -24325,6 +24325,42 @@ function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback) {
   </span>`;
 }
 
+// 過去ラウンドの「指摘」「提出時メモ・連絡事項」ブロックに付ける From/To 用に、
+// そのラウンド時点での編集者(=recorded_by 推定) と ディレクター(=projects.director_id) を
+// allMembers から解決する。recorded_by が無い古いデータは editor を null にして、
+// 呼び出し元で「From/To 行を出さない」ようフォールバックさせる。
+//
+// 戻り値: { editor: {id, full_name, avatar_url}|null, director: {...}|null }
+function _cdResolveRoundUsers(round) {
+  const out = { editor: null, director: null };
+  const membersArr = Array.isArray(allMembers) ? allMembers : [];
+  // 1) recorded_by（その提出を行った編集者ユーザー）。snapshot は「修正済→再チェック」の
+  //    遷移で INSERT されるので、recorded_by はそのラウンドの editor 担当を最も正確に表す。
+  if (round && round.recorded_by) {
+    out.editor = membersArr.find(m => m && m.id === round.recorded_by) || null;
+  }
+  // 2) 編集者の最終フォールバック: 現在の creative_assignments から editor/designer/director_as_editor を拾う
+  if (!out.editor && currentCreativeDetail) {
+    const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
+    const assignee = (Array.isArray(assigns) ? assigns : []).find(a => a && ['editor','designer','director_as_editor'].includes(a.role)) || null;
+    out.editor = (assignee && assignee.users) || null;
+  }
+  // 3) ディレクター: 案件の projects.director_id（右カラムと同じ解決ロジック）
+  if (currentCreativeDetail) {
+    const projectDirectorId = currentCreativeDetail?.projects?.director_id || null;
+    if (projectDirectorId) {
+      out.director = membersArr.find(m => m && m.id === projectDirectorId) || null;
+    }
+    // ディレクターの最終フォールバック: creative_assignments.role='director'
+    if (!out.director) {
+      const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
+      const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
+      out.director = (dirAssign && dirAssign.users) || null;
+    }
+  }
+  return out;
+}
+
 function _cdRoundEntryHtml(round) {
   if (!round) {
     return '<div class="cd-round-empty">過去ラウンドはありません</div>';
@@ -24334,19 +24370,37 @@ function _cdRoundEntryHtml(round) {
   const fileLink = round.file ? (round.file.drive_url || (round.file.drive_file_id ? `https://drive.google.com/file/d/${round.file.drive_file_id}/view` : '')) : '';
 
   const reviewerComment = round.director_comment || round.client_comment || '';
-  const reviewerLabel   = round.client_comment && !round.director_comment ? 'クライアントの指摘' : 'ディレクターの指摘';
+  const isClient        = !!(round.client_comment && !round.director_comment);
+  const reviewerLabel   = isClient ? 'クライアントの指摘' : 'ディレクターの指摘';
+
+  // From/To 用ユーザー解決（右カラムと同じスタイルで前回側にも表示する）
+  // - 「指摘」: From=ディレクター/クライアント → To=編集者（右カラム line 24975 と対応）
+  // - 「編集者の提出時メモ・連絡事項」: From=編集者 → To=ディレクター（右カラム line 25076 と対応）
+  // historical fallback でユーザー解決できなかったブロックは From/To 行ごと非表示にする（renderFromToAvatar が空文字を返す）
+  const users = _cdResolveRoundUsers(round);
+  const reviewerFrom = isClient ? null : users.director; // クライアント指摘の場合は client ユーザーを保持していないので null
+  // クライアント指摘でも、編集者(To) は出せる方が情報量があるが、From が出ないと From/To のスタイルが片肺になるため、
+  // クライアント指摘では From/To 行を出さない（renderFromToAvatar(null, x) は何かは出るが意味が薄いので明示的にスキップ）
+  const reviewerFromToHtml = (!isClient && users.director && users.editor)
+    ? renderFromToAvatar(users.director, users.editor, 'ディレクター', '担当者')
+    : '';
+  const editorFromToHtml = (users.editor && users.director)
+    ? renderFromToAvatar(users.editor, users.director, '担当者', 'ディレクター')
+    : '';
 
   const blocks = [];
 
   if (round.editor_comment) {
     blocks.push(`<div class="cd-round-block">
       <div class="cd-round-label">編集者の提出時メモ・連絡事項</div>
+      ${editorFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${editorFromToHtml}</div>` : ''}
       <div class="cd-round-text">${esc(round.editor_comment)}</div>
     </div>`);
   }
   if (reviewerComment) {
     blocks.push(`<div class="cd-round-block">
       <div class="cd-round-label">${esc(reviewerLabel)}</div>
+      ${reviewerFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${reviewerFromToHtml}</div>` : ''}
       <div class="cd-round-text">${esc(reviewerComment)}</div>
     </div>`);
   }
