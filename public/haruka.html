@@ -6194,7 +6194,7 @@ window.showPage = window.showPage || function(name, btn) {
         <!-- 2カラムグリッド: 左=過去ラウンド、右=現在の入力フォーム（JS で右側に元のフォーム要素を移動） -->
         <div id="cd-round-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
           <!-- 左カラム: 過去ラウンド表示（読み取り専用） -->
-          <div id="cd-round-left" style="background:#fafafa;border:0.5px solid var(--border);border-radius:10px;padding:14px 14px 14px;min-height:100px;overflow:hidden">
+          <div id="cd-round-left" style="background:#fafafa;border:0.5px solid var(--border);border-radius:10px;padding:14px 14px 14px;min-height:100px;overflow:hidden;min-width:0">
             <!-- cdRenderRoundCompare() で動的描画 -->
           </div>
           <!-- 右カラム: 現在の入力フォーム。JS で既存のコメント/連絡/upload セクションをこの中へ move する。 -->
@@ -12627,6 +12627,9 @@ function closeModal(id) {
       if (modalBody) modalBody.classList.remove('cd-2col-mode');
       const wrap = document.getElementById('cd-round-compare');
       if (wrap) wrap.style.display = 'none';
+      // 右カラム下部に差し込んだ「今回の成果物」カードを除去（次回 open に持ち越さない）
+      document.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+      _cdFilesCache = [];
     } catch (_) {}
   }
 }
@@ -12668,6 +12671,8 @@ document.addEventListener('keydown', (e) => {
       if (modalBody) modalBody.classList.remove('cd-2col-mode');
       const wrap = document.getElementById('cd-round-compare');
       if (wrap) wrap.style.display = 'none';
+      document.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+      _cdFilesCache = [];
     } catch (_) {}
   }
 });
@@ -24134,6 +24139,7 @@ function fillCommentTemplate() {
 
 let _cdRoundsCache = [];   // [{ version_num, round_stage, director_comment, editor_comment, client_comment, file, created_at, ... }]
 let _cdRoundIndex  = 0;    // 表示中の左カラム ラウンド (0 = 一番古い、長さ-1 = 一番新しい)
+let _cdFilesCache  = [];   // loadCreativeFiles() でキャッシュ。ラウンド左右カラムへ振り分けるときに参照
 
 const _CD_ROUND_RIGHT_TARGETS = [
   'cd-comment-section',
@@ -24218,6 +24224,28 @@ function _cdMoveRightColumnElements(intoRight) {
   }
 }
 
+// From/To をアイコン+名前で描画する共通ヘルパー。
+// fromUser/toUser は { id, full_name, avatar_url } を持つユーザー風オブジェクト。
+// 片方しか居ないケースは fallback ラベルでテキスト表示する。
+// 戻り値: HTML 文字列（呼び出し元で innerHTML に流し込む）。両方 null/未指定なら空文字。
+function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback) {
+  if (!fromUser && !toUser) return '';
+  const chip = (user, fallback) => {
+    if (user && (user.full_name || user.id)) {
+      // avatar(20px) + 名前。flex-wrap 対応で長い名前でも崩れない。
+      return `<span style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:0.5px solid var(--border);border-radius:14px;padding:2px 9px 2px 3px;max-width:100%">${avatarHtml(user, 20)}<span style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${esc(user.full_name || '?')}</span></span>`;
+    }
+    return `<span style="font-size:12px;color:var(--text-muted)">${esc(fallback || '-')}</span>`;
+  };
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;row-gap:4px">
+    <span style="font-weight:600;color:var(--text);font-size:11px">From:</span>
+    ${chip(fromUser, fromFallback)}
+    <span style="margin:0 2px;color:var(--text-muted);font-size:13px">→</span>
+    <span style="font-weight:600;color:var(--text);font-size:11px">To:</span>
+    ${chip(toUser, toFallback)}
+  </span>`;
+}
+
 function _cdRoundEntryHtml(round) {
   if (!round) {
     return '<div class="cd-round-empty">過去ラウンドはありません</div>';
@@ -24251,12 +24279,8 @@ function _cdRoundEntryHtml(round) {
       <div class="cd-round-text">${esc(reviewerComment)}</div>
     </div>`);
   }
-  if (fileLink) {
-    blocks.push(`<div class="cd-round-block">
-      <div class="cd-round-label">提出物</div>
-      <a href="${esc(fileLink)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--em-dark);text-decoration:underline;word-break:break-all">${esc(round.file?.generated_name || fileLink)}</a>
-    </div>`);
-  }
+  // 提出物（ファイル）は左カラム下部に _cdRenderFileCard で別ブロックとして表示するため、
+  // ここでは「ファイル名のリンク」だけは出さない（重複を避ける）。
   if (!round.editor_comment && !reviewerComment && !fileLink) {
     blocks.push(`<div class="cd-round-empty">このラウンドには記録された内容がありません</div>`);
   }
@@ -24288,10 +24312,62 @@ function _cdBuildLiveRound(creative) {
   };
 }
 
+// ラウンド左カラムに表示する「過去ラウンドの提出物カード」HTML を返す。
+// _cdFilesCache（loadCreativeFiles でキャッシュ済の creative_files 全件）から
+// round.creative_file_id で実体を引く（width/height/uploaded_at/faststart_status 等を保持）。
+// 引けなかった場合は round.file（rounds API で軽量プロジェクションされた情報）でフォールバック。
+function _cdRenderRoundLeftFileCard(round) {
+  if (!round) return '';
+  let f = null;
+  if (round.creative_file_id && Array.isArray(_cdFilesCache)) {
+    f = _cdFilesCache.find(x => x && x.id === round.creative_file_id) || null;
+  }
+  if (!f) f = round.file || null;
+  if (!f) return ''; // ファイル無しのラウンド（指摘のみ）は何も出さない
+  const verNum = f.version || round.version_num || '?';
+  return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+    <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
+    ${_cdRenderFileCard(f, { verLabel: `バージョン ${verNum}`, isLatest: false, hideCheckBtn: true })}
+  </div>`;
+}
+
+// ラウンド右カラムに表示する「今回の成果物カード」HTML を返す。
+// 後修正中で未アップロードの状態（_cdFilesCache の最新が「前回」のものでしかない場合）は
+// アップロード待ちプレースホルダを返す。
+function _cdRenderRoundRightFileCard() {
+  const c = currentCreativeDetail;
+  if (!c) return '';
+  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const isRevision = REVISION_STATUSES.includes(c.status);
+  const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  const latest = files[0] || null; // 一覧は新しい順
+  // 後修正中で「次回バージョン」がまだ未アップロード（version_num == files.length + 1）の場合 → プレースホルダ
+  // それ以外（チェック中・納品済・通常）は最新ファイルを「今回」として表示
+  if (!latest) return '';
+  const hideCheckBtn = isRevision;
+  if (isRevision) {
+    // 修正中: 上の cd-upload-section が編集者用 UI を出す。ここでは最新ファイル(=前回提出)を
+    // あえて出さない（左カラムが「前回」を担当しているため重複を避ける）。
+    // 代わりに「アップロード待ち」のヒントだけ出す。
+    return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
+      <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
+        上のドロップゾーンに修正版をアップロードしてください
+      </div>
+    </div>`;
+  }
+  const verLabel = `バージョン ${latest.version || files.length}`;
+  return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+    <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
+    ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn })}
+  </div>`;
+}
+
 function cdRenderRoundCompare() {
   const c = currentCreativeDetail;
   const wrap = document.getElementById('cd-round-compare');
   const modal = document.getElementById('cd-modal-body');
+  const filesSection = document.getElementById('cd-files-section');
   if (!wrap || !c) return;
 
   // 履歴 + ライブ仮想ラウンドを連結（ライブは末尾＝最新の過去ラウンド扱い）
@@ -24304,6 +24380,12 @@ function cdRenderRoundCompare() {
     wrap.style.display = 'none';
     if (modal) modal.classList.remove('cd-2col-mode');
     _cdMoveRightColumnElements(false);
+    // 右カラムに差し込んだ「今回の成果物」カードを除去
+    document.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+    // 1カラム時は元の「アップロード済みファイル」一覧をそのまま見せる
+    if (filesSection && Array.isArray(_cdFilesCache) && _cdFilesCache.length > 0) {
+      filesSection.style.display = '';
+    }
     return;
   }
 
@@ -24319,13 +24401,30 @@ function cdRenderRoundCompare() {
   if (_cdRoundIndex >= N) _cdRoundIndex = Math.max(0, N - 1);
   if (_cdRoundIndex < 0)  _cdRoundIndex = 0;
 
-  // 左カラム描画
+  // 左カラム描画（過去ラウンドの指摘 + 提出物カード）
   const left = document.getElementById('cd-round-left');
   if (left) {
     if (N === 0) {
       left.innerHTML = `<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（修正・再提出が行われると、ここに前回の指摘と提出メモが残ります）</span></div>`;
     } else {
-      left.innerHTML = _cdRoundEntryHtml(allRounds[_cdRoundIndex]);
+      const round = allRounds[_cdRoundIndex];
+      left.innerHTML = _cdRoundEntryHtml(round) + _cdRenderRoundLeftFileCard(round);
+    }
+  }
+
+  // 2カラムモードでは下部の `#cd-files-section`（縦並び）を畳んで、
+  // 代わりに「今回の成果物」を右カラム下部に挿し込む。
+  if (filesSection) filesSection.style.display = 'none';
+  const right = document.getElementById('cd-round-right');
+  if (right) {
+    // 既存の差し込みを除去して再描画（冪等）
+    right.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
+    const html = _cdRenderRoundRightFileCard();
+    if (html) {
+      const wrapEl = document.createElement('div');
+      wrapEl.dataset.cdRoundRightFile = '1';
+      wrapEl.innerHTML = html;
+      right.appendChild(wrapEl);
     }
   }
 
@@ -24709,26 +24808,25 @@ function updateCreativeCommentLabel(status) {
   } else if (isRevision) {
     const checkMap = { 'Dチェック後修正': 'Dチェック', 'Pチェック後修正': 'Pチェック', 'クライアントチェック後修正': 'CLチェック' };
     label.innerHTML = `${checkMap[status]}　修正指摘内容 <span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">読み取り専用</span>`;
-    // From/To 表示
+    // From/To 表示（アイコン+名前）
     const fromToEl = document.getElementById('cd-comment-from-to');
     if (fromToEl && currentCreativeDetail) {
       try {
         const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
         const assignee = (Array.isArray(assigns) ? assigns : []).find(a => a && ['editor','designer','director_as_editor'].includes(a.role)) || null;
         const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
-        let fromName = (dirAssign && dirAssign.users && dirAssign.users.full_name) || null;
-        if (!fromName && assignee && assignee.users) {
+        let fromUser = (dirAssign && dirAssign.users) || null;
+        if (!fromUser && assignee && assignee.users) {
           const u = assignee.users || {};
           const teamsArr = Array.isArray(allTeams) ? allTeams : [];
           const byTeamId = (u.team_id && teamsArr.find(t => t && t.id === u.team_id)) || null;
           const byMember = teamsArr.find(t => t && Array.isArray(t.team_members) && t.team_members.some(tm => tm && tm.user_id === u.id)) || null;
-          fromName = (byTeamId && byTeamId.director && byTeamId.director.full_name)
-            || (byMember && byMember.director && byMember.director.full_name)
-            || null;
+          fromUser = (byTeamId && byTeamId.director) || (byMember && byMember.director) || null;
         }
-        const toName = (assignee && assignee.users && assignee.users.full_name) || null;
-        if (fromName || toName) {
-          fromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || 'ディレクター'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || '担当者'}`;
+        const toUser = (assignee && assignee.users) || null;
+        const html = renderFromToAvatar(fromUser, toUser, 'ディレクター', '担当者');
+        if (html) {
+          fromToEl.innerHTML = html;
           fromToEl.style.display = '';
         } else {
           fromToEl.style.display = 'none';
@@ -24819,16 +24917,17 @@ function updateCreativeCommentLabel(status) {
         const projDirUser = projectDirectorId
           ? (membersArr.find(m => m && m.id === projectDirectorId) || null)
           : null;
-        let toName = (projDirUser && projDirUser.full_name) || null;
+        let toUser = projDirUser || null;
         // 案件にディレクターが未設定のケースのみ、最後の砦として Dチェック担当を表示する
         // （担当チームのリーダーへのフォールバックは行わない・PR #371）
-        if (!toName) {
+        if (!toUser) {
           const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
-          toName = (dirAssign && dirAssign.users && dirAssign.users.full_name) || null;
+          toUser = (dirAssign && dirAssign.users) || null;
         }
-        const fromName = (assignee && assignee.users && assignee.users.full_name) || null;
-        if (fromName || toName) {
-          replyFromToEl.innerHTML = `<span style="font-weight:600;color:var(--text)">From:</span> ${fromName || '担当者'} <span style="margin:0 4px;color:var(--text-muted)">→</span> <span style="font-weight:600;color:var(--text)">To:</span> ${toName || 'ディレクター'}`;
+        const fromUser = (assignee && assignee.users) || null;
+        const html = renderFromToAvatar(fromUser, toUser, '担当者', 'ディレクター');
+        if (html) {
+          replyFromToEl.innerHTML = html;
           replyFromToEl.style.display = '';
         } else {
           replyFromToEl.style.display = 'none';
@@ -25161,15 +25260,82 @@ async function requestRevision() {
   await saveCreativeDetail(target);
 }
 
+// 1ファイル分のカード HTML を生成する。loadCreativeFiles のインライン map を抽出し、
+// ラウンド比較型UI の左/右カラムからも再利用できるようにした（PR #TBD）。
+// opts: { verLabel, isLatest, hideCheckBtn, totalFilesForFallback }
+function _cdRenderFileCard(f, opts) {
+  if (!f) return '';
+  const verLabel  = opts?.verLabel || `バージョン ${f.version || ''}`;
+  const isLatest  = !!opts?.isLatest;
+  const hideCheckBtn = !!opts?.hideCheckBtn;
+
+  const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
+  const canPreview  = !!driveFileId;
+
+  const checkBtnStyle = canPreview
+    ? `background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;box-shadow:0 3px 12px rgba(62,207,202,0.45);`
+    : `background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);`;
+  const _ct = currentCreativeDetail?.creative_type || '';
+  const _assigneeRoleRender = currentCreativeDetail?.creative_assignments
+    ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role || '';
+  // 引数は JSON.stringify で安全にエスケープ（ファイル名やURLに ' が含まれても onclick が壊れない）
+  const checkBtnClick = canPreview
+    ? `openFilePreview(${JSON.stringify(driveFileId)},${JSON.stringify(f.generated_name)},${JSON.stringify(f.drive_url||'')},${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`
+    : `openFilePreview(null,${JSON.stringify(f.generated_name)},'',${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`;
+  const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
+  // faststart プレビュー版の状態バッジ
+  const fsStatus = f.faststart_status || null;
+  const fsUrl    = f.faststart_drive_url || '';
+  const isAdmin  = (typeof effectiveRole === 'function' && effectiveRole() === 'admin');
+  let fsBadge = '';
+  if (fsStatus === 'pending') {
+    fsBadge = `<span title="プレビュー版生成待ち" style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⏳ 準備中</span>`;
+  } else if (fsStatus === 'processing') {
+    fsBadge = `<span title="プレビュー版生成中" style="font-size:10px;color:#1e40af;background:#dbeafe;border:0.5px solid #93c5fd;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">🎞 生成中</span>`;
+  } else if (fsStatus === 'done' && fsUrl) {
+    fsBadge = `<a href="${fsUrl}" target="_blank" rel="noopener" title="faststart プレビュー版を Drive で開く" style="font-size:10px;color:#065f46;background:#d1fae5;border:0.5px solid #6ee7b7;border-radius:5px;padding:2px 6px;text-decoration:none;white-space:nowrap;flex-shrink:0">✅ プレビュー版</a>`;
+  } else if (fsStatus === 'failed') {
+    const regenBtn = isAdmin ? `<button onclick="regenerateFaststart('${f.id}')" title="faststart 再生成" style="font-size:10px;color:#7c2d12;background:transparent;border:0.5px solid #fb923c;border-radius:5px;padding:2px 6px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px">↻ 再生成</button>` : '';
+    fsBadge = `<span title="faststart 生成失敗" style="font-size:10px;color:#991b1b;background:#fee2e2;border:0.5px solid #fca5a5;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⚠️ 生成失敗</span>${regenBtn}`;
+  }
+
+  return `
+  <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border);flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}</span>
+      <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name||'')}">${esc(f.generated_name||'')}</span>
+      ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
+      ${f.uploaded_at ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>` : ''}
+      ${fsBadge}
+      ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
+    </div>
+    <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
+      ${hideCheckBtn ? `
+      <button onclick="${esc(checkBtnClick)}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+        📋 ${verLabel}を確認・コメントを見る
+      </button>` : `
+      <button onclick="${esc(checkBtnClick)}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+        ${checkBtnLabel}
+      </button>`}
+    </div>
+  </div>`;
+}
+
 async function loadCreativeFiles(creativeId) {
   const res = await apiFetch(`${API}/creatives/${creativeId}/files`);
   if (!res.ok) return;
   const files = await res.json();
   currentUploadedFileCount = files.length; // バージョン自動計算用
+  _cdFilesCache = Array.isArray(files) ? files : [];
   const section = document.getElementById('cd-files-section');
   const list    = document.getElementById('cd-files-list');
-  if (!files.length) { section.style.display = 'none'; return; }
-  section.style.display = '';
+  if (!files.length) {
+    if (section) section.style.display = 'none';
+    if (list) list.innerHTML = '';
+    // ラウンド比較型UIで左右カラムへ振り分けている可能性があるので再描画
+    try { cdRenderRoundCompare(); } catch (_) {}
+    return;
+  }
 
   // 後修正ステータスでは編集者がアップロードのみ行う画面なのでチェック/コメントボタン不要
   const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
@@ -25182,11 +25348,10 @@ async function loadCreativeFiles(creativeId) {
   // CLモードで2件以上 → 最新2件のみ表示、ラベルを「今回」「前回」にする
   const displayFiles = (isCLMode && files.length > 1) ? files.slice(0, 2) : files;
 
+  // 1カラム時の縦並び（既存挙動）。
+  // 2カラム時は cdRenderRoundCompare() がこのリストを空にして左右カラムへ振り分ける。
+  if (section) section.style.display = '';
   list.innerHTML = displayFiles.map((f, i) => {
-    const driveFileId = f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
-    const canPreview  = !!driveFileId;
-
-    // ラベル決定
     let verLabel, isLatest;
     if (isCLMode && files.length > 1) {
       verLabel = i === 0 ? '今回' : '前回';
@@ -25196,55 +25361,11 @@ async function loadCreativeFiles(creativeId) {
       verLabel = `バージョン ${verNum}`;
       isLatest = i === 0;
     }
-
-    const checkBtnStyle = canPreview
-      ? `background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;box-shadow:0 3px 12px rgba(62,207,202,0.45);`
-      : `background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);`;
-    const _ct = currentCreativeDetail?.creative_type || '';
-    const _assigneeRoleRender = currentCreativeDetail?.creative_assignments
-      ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role || '';
-    // 引数は JSON.stringify で安全にエスケープ（ファイル名やURLに ' が含まれても onclick が壊れない）
-    const checkBtnClick = canPreview
-      ? `openFilePreview(${JSON.stringify(driveFileId)},${JSON.stringify(f.generated_name)},${JSON.stringify(f.drive_url||'')},${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`
-      : `openFilePreview(null,${JSON.stringify(f.generated_name)},'',${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`;
-    const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
-    // faststart プレビュー版の状態バッジ
-    const fsStatus = f.faststart_status || null;
-    const fsUrl    = f.faststart_drive_url || '';
-    const isAdmin  = (typeof effectiveRole === 'function' && effectiveRole() === 'admin');
-    let fsBadge = '';
-    if (fsStatus === 'pending') {
-      fsBadge = `<span title="プレビュー版生成待ち" style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⏳ 準備中</span>`;
-    } else if (fsStatus === 'processing') {
-      fsBadge = `<span title="プレビュー版生成中" style="font-size:10px;color:#1e40af;background:#dbeafe;border:0.5px solid #93c5fd;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">🎞 生成中</span>`;
-    } else if (fsStatus === 'done' && fsUrl) {
-      fsBadge = `<a href="${fsUrl}" target="_blank" rel="noopener" title="faststart プレビュー版を Drive で開く" style="font-size:10px;color:#065f46;background:#d1fae5;border:0.5px solid #6ee7b7;border-radius:5px;padding:2px 6px;text-decoration:none;white-space:nowrap;flex-shrink:0">✅ プレビュー版</a>`;
-    } else if (fsStatus === 'failed') {
-      const regenBtn = isAdmin ? `<button onclick="regenerateFaststart('${f.id}')" title="faststart 再生成" style="font-size:10px;color:#7c2d12;background:transparent;border:0.5px solid #fb923c;border-radius:5px;padding:2px 6px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-left:4px">↻ 再生成</button>` : '';
-      fsBadge = `<span title="faststart 生成失敗" style="font-size:10px;color:#991b1b;background:#fee2e2;border:0.5px solid #fca5a5;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⚠️ 生成失敗</span>${regenBtn}`;
-    }
-
-    return `
-    <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border)">
-        <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}</span>
-        <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name)}">${esc(f.generated_name)}</span>
-        ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
-        <span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-        ${fsBadge}
-        ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
-      </div>
-      <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
-        ${hideCheckBtn ? `
-        <button onclick="${esc(checkBtnClick)}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
-          📋 ${verLabel}を確認・コメントを見る
-        </button>` : `
-        <button onclick="${esc(checkBtnClick)}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
-          ${checkBtnLabel}
-        </button>`}
-      </div>
-    </div>`;
+    return _cdRenderFileCard(f, { verLabel, isLatest, hideCheckBtn });
   }).join('');
+
+  // 2カラムモードへ移譲（左=過去ラウンドのファイル / 右=最新ファイル）
+  try { cdRenderRoundCompare(); } catch (_) {}
 }
 
 // クライアント確認URLを再共有（管理者のみ）。
