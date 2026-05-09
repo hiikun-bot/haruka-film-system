@@ -1864,6 +1864,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       <textarea id="error-report-description" rows="4" placeholder="例: 案件一覧で「保存」を押したが画面が真っ白になった" style="width:100%;padding:8px;border:1px solid #d4d4d8;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical"></textarea>
       <div id="error-report-meta-summary" style="font-size:11px;color:#999;margin-top:8px"></div>
     </div>
+    <div style="padding:8px 20px;font-size:11px;color:#666;background:#f8fafc;border-top:1px solid #eef2f6">
+      📋 対応依頼として正式に登録したい場合は
+      <a href="javascript:void(0)" onclick="closeModal('modal-error-report'); openBugReportModal({ description: document.getElementById('error-report-description').value })" style="color:#2563eb;text-decoration:underline">バグ報告フォーム</a>
+      へ（対応者・ステータス管理あり）
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid #e0e0e0;background:#fafafa">
       <button class="btn" onclick="closeModal('modal-error-report')" style="font-size:13px;padding:8px 16px">キャンセル</button>
       <button class="btn-primary" id="error-report-submit-btn" onclick="submitErrorReport()" style="font-size:13px;padding:8px 20px">送信</button>
@@ -2498,6 +2503,10 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="normal">通常</option>
         <option value="low">軽微</option>
       </select>
+      <select id="verup-filter-reporter" class="form-input" style="width:auto" onchange="renderVerupList()" title="報告者で絞り込み">
+        <option value="">すべての報告者</option>
+        <option value="__me__">📣 自分の報告だけ</option>
+      </select>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="verup-filter-unread" onchange="renderVerupList()">未読のみ</label>
       <span style="flex:1"></span>
       <button class="btn" onclick="markAllVerupRead()" title="表示中の項目をすべて既読にする">既読にする</button>
@@ -2592,6 +2601,12 @@ window.showPage = window.showPage || function(name, btn) {
         <input id="vle-related-url" class="form-input" placeholder="https://...">
       </div>
     </div>
+    <div class="form-group">
+      <label class="form-label">報告者 <span style="color:var(--text-muted);font-size:11px">（任意。フィルタ・表示用）</span></label>
+      <select id="vle-reporter" class="form-input">
+        <option value="">— 指定しない —</option>
+      </select>
+    </div>
     <div class="form-group" id="vle-is-hidden-wrap">
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px">
         <input type="checkbox" id="vle-is-hidden">
@@ -2602,6 +2617,141 @@ window.showPage = window.showPage || function(name, btn) {
       <button id="vle-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteVerupEntry()">削除</button>
       <button class="btn" onclick="closeModal('modal-verup-editor')">キャンセル</button>
       <button class="btn-primary" onclick="submitVerupEntry()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== バグ報告: 一覧モーダル ==================== -->
+<div class="modal-overlay" id="modal-bug-report-list">
+  <div class="modal-card" style="width:min(1000px,95vw);max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-title">
+      🦋 バグ報告（対応依頼）
+      <button class="modal-close" onclick="closeModal('modal-bug-report-list')">×</button>
+    </div>
+    <div id="bug-report-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0 10px;border-bottom:1px solid var(--border);margin-bottom:10px">
+      <input id="bug-report-search" class="form-input" placeholder="🔍 タイトル / 説明で検索" style="flex:1;min-width:180px;max-width:260px" oninput="renderBugReportList()">
+      <select id="bug-report-filter-status" class="form-input" style="width:auto" onchange="renderBugReportList()">
+        <option value="">すべての状態</option>
+        <option value="open" selected>🟥 未対応 (open)</option>
+        <option value="in_progress">🟦 対応中 (in_progress)</option>
+        <option value="resolved">🟩 解決 (resolved)</option>
+        <option value="wont_fix">⬜ 対応しない (wont_fix)</option>
+        <option value="duplicate">🔁 重複 (duplicate)</option>
+      </select>
+      <select id="bug-report-filter-severity" class="form-input" style="width:auto" onchange="renderBugReportList()">
+        <option value="">すべての重要度</option>
+        <option value="critical">🚨 致命的</option>
+        <option value="high">🔴 高</option>
+        <option value="normal">🟡 通常</option>
+        <option value="low">🟢 低</option>
+      </select>
+      <select id="bug-report-filter-assignee" class="form-input" style="width:auto" onchange="renderBugReportList()" title="対応者で絞り込み">
+        <option value="">すべての対応者</option>
+      </select>
+      <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-mine" onchange="renderBugReportList()">自分の報告のみ</label>
+      <span style="flex:1"></span>
+      <button class="btn-primary" onclick="openBugReportModal()">＋ 新規報告</button>
+    </div>
+    <div id="bug-report-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px">
+      <div style="padding:24px;text-align:center;color:var(--text-muted)">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== バグ報告: 新規/編集モーダル ==================== -->
+<div class="modal-overlay" id="modal-bug-report" data-no-overlay-close="true" style="z-index:250">
+  <div class="modal-card" style="width:min(820px,95vw);max-height:92vh;display:flex;flex-direction:column">
+    <div class="modal-title">
+      <span id="bug-report-modal-title">🦋 バグ報告</span>
+      <button class="modal-close" onclick="closeModal('modal-bug-report')">×</button>
+    </div>
+    <input type="hidden" id="br-id">
+    <div style="overflow-y:auto;flex:1;padding-right:4px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label class="form-label">タイトル <span style="color:#C0392B">*</span></label>
+          <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200">
+        </div>
+        <div class="form-group">
+          <label class="form-label">画面（任意）</label>
+          <input id="br-screen-label" class="form-input" placeholder="例) クリエイティブ詳細 / 案件一覧 / 請求 など" maxlength="100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">重要度</label>
+          <select id="br-severity" class="form-input">
+            <option value="low">🟢 低（こうなったら嬉しい）</option>
+            <option value="normal" selected>🟡 通常（あれば嬉しい）</option>
+            <option value="high">🔴 高（困っている）</option>
+            <option value="critical">🚨 致命的（業務が止まる）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">対応者（任意）</label>
+          <select id="br-assignee" class="form-input">
+            <option value="">— 未割当 —</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">詳細・再現手順</label>
+        <textarea id="br-description" class="form-input" rows="4" placeholder="例) 案件一覧で『保存』を押したが画面が真っ白になった。手順: 1. 案件タブを開く 2. 行をクリック 3. 保存"></textarea>
+      </div>
+
+      <!-- スクリーンショット領域 -->
+      <div class="form-group">
+        <label class="form-label">スクリーンショット <span style="color:var(--text-muted);font-size:11px">（任意・貼り付け Ctrl+V / ドラッグ&ドロップ / ファイル選択）</span></label>
+        <div id="br-screenshot-dropzone"
+          style="border:2px dashed #D1D5DB;border-radius:8px;padding:14px;text-align:center;background:#FAFAFA;color:#6B7280;font-size:12px;cursor:pointer"
+          onclick="document.getElementById('br-screenshot-file').click()">
+          📎 ここをクリックして画像を選択 / Ctrl+V で貼り付け / 画像をドラッグ&ドロップ
+          <input type="file" id="br-screenshot-file" accept="image/*" style="display:none" onchange="bugReportHandleFile(this.files && this.files[0])">
+        </div>
+        <!-- canvas 編集エリア（画像読み込み時のみ表示） -->
+        <div id="br-screenshot-editor" style="display:none;margin-top:10px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:10px">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px">
+            <strong style="font-size:12px;color:#374151">アノテーション:</strong>
+            <button type="button" class="btn" id="br-tool-rect" onclick="bugReportSetTool('rect')" style="font-size:11px;padding:4px 10px">🟥 四角で囲む</button>
+            <button type="button" class="btn" id="br-tool-arrow" onclick="bugReportSetTool('arrow')" style="font-size:11px;padding:4px 10px">↗ 矢印</button>
+            <button type="button" class="btn" onclick="bugReportUndoAnnotation()" style="font-size:11px;padding:4px 10px">↶ 元に戻す</button>
+            <button type="button" class="btn" onclick="bugReportClearAnnotations()" style="font-size:11px;padding:4px 10px">🗑 すべて消す</button>
+            <span style="flex:1"></span>
+            <button type="button" class="btn danger" onclick="bugReportRemoveScreenshot()" style="font-size:11px;padding:4px 10px">画像を破棄</button>
+          </div>
+          <div style="overflow:auto;max-height:50vh;text-align:center;background:#F3F4F6;border-radius:6px">
+            <canvas id="br-canvas" style="cursor:crosshair;max-width:100%;display:inline-block"></canvas>
+          </div>
+          <div style="font-size:11px;color:#6B7280;margin-top:6px">💡 画像上をドラッグして範囲指定。バグ箇所を四角や矢印で示してください。</div>
+        </div>
+      </div>
+
+      <!-- 匿名チェック -->
+      <div class="form-group" id="br-anonymous-wrap">
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#F3F4F6;padding:8px 12px;border-radius:6px;cursor:pointer">
+          <input type="checkbox" id="br-is-anonymous">
+          <span>🕵️ 匿名で報告する <span style="color:var(--text-muted);font-size:11px">（誰が報告したかは記録されません。日時のみ残ります）</span></span>
+        </label>
+      </div>
+
+      <!-- 編集時のみ表示: ステータス・削除 -->
+      <div id="br-edit-only" style="display:none">
+        <div class="form-group">
+          <label class="form-label">対応ステータス</label>
+          <select id="br-status" class="form-input">
+            <option value="open">🟥 未対応 (open)</option>
+            <option value="in_progress">🟦 対応中 (in_progress)</option>
+            <option value="resolved">🟩 解決 (resolved)</option>
+            <option value="wont_fix">⬜ 対応しない (wont_fix)</option>
+            <option value="duplicate">🔁 重複 (duplicate)</option>
+          </select>
+        </div>
+        <div id="br-meta-info" style="font-size:11px;color:var(--text-muted);background:#F9FAFB;border-radius:6px;padding:8px 10px;margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button id="br-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteBugReport()">削除</button>
+      <button class="btn" onclick="closeModal('modal-bug-report')">キャンセル</button>
+      <button class="btn-primary" onclick="submitBugReport()">保存</button>
     </div>
   </div>
 </div>
@@ -2949,6 +3099,17 @@ window.showPage = window.showPage || function(name, btn) {
           <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm6.5-6V11c0-3.36-1.79-6.17-5-6.86V3.5a1.5 1.5 0 0 0-3 0v.64C7.29 4.83 5.5 7.64 5.5 11v5L4 17.5V18h16v-.5L18.5 16z"/>
         </svg>
         <span id="notification-badge" class="bell-badge" hidden>0</span>
+      </button>
+      <!-- バグ報告（対応依頼） — Verup情報の左隣 -->
+      <button
+        type="button"
+        id="bug-report-toggle"
+        class="bell-button"
+        aria-label="バグ報告"
+        title="バグ報告（一覧・新規）"
+        onclick="openBugReportListModal()">
+        <span style="font-size:18px;line-height:1">🦋</span>
+        <span id="bug-report-badge" class="bell-badge" hidden>0</span>
       </button>
       <!-- Verup情報（システム改訂履歴） — ベルの左隣 -->
       <button
@@ -5387,6 +5548,31 @@ window.showPage = window.showPage || function(name, btn) {
             </div>
           </details>
         </div>
+
+        <!-- ADR 008 Phase 1: クリエイティブ管理シート同期 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="display:inline-block;width:3px;height:14px;background:#0B7BD6;border-radius:2px"></span>
+            <span style="font-size:12px;font-weight:600;color:#0B61A8">📊 クリエイティブ管理シート同期</span>
+            <span style="font-size:11px;color:var(--text-muted);font-weight:400">（システム → Google Sheets）</span>
+          </div>
+          <div class="form-group" style="margin-bottom:8px">
+            <label class="form-label">同期先シート URL</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="form-input" id="p-creatives-export-sheet-url"
+                placeholder="未設定なら同期実行時に自動作成" style="flex:1;min-width:0">
+              <button type="button" class="btn" onclick="openLink('p-creatives-export-sheet-url')"
+                style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+              <button type="button" class="btn" id="p-sync-sheet-btn" onclick="syncCreativesToSheet()"
+                style="white-space:nowrap;padding:8px 12px;flex-shrink:0;background:#0B7BD6;color:#fff;border-color:#0B7BD6">📊 Sheets に同期</button>
+            </div>
+            <div id="p-sync-sheet-result" style="display:none;margin-top:8px;font-size:11px;line-height:1.6;padding:8px 10px;border-radius:6px"></div>
+            <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
+              案件のクリエイティブ + 修正サイクル履歴をマスターマッピングに従って Google Sheets に書き出します。<br>
+              Phase 1 は片方向同期（システム → シート）のみ。シートで編集してもシステムには反映されません（Phase 2 で対応予定）。
+            </div>
+          </div>
+        </div>
     </div><!-- /p-subtab-panel-settings -->
 
     <!-- ====== サブタブ：🔗 連携（リソース / 通知連携） ====== -->
@@ -5914,6 +6100,11 @@ window.showPage = window.showPage || function(name, btn) {
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           📁 ファイル名テンプレート
         </div>
+        <!-- ADR 008 Phase 1: クリエイティブ管理シート出力マッピング（admin only） -->
+        <div id="mnav-creatives_export" class="master-nav-item" onclick="selectMasterNav('creatives_export')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📊 クリエイティブ出力マッピング
+        </div>
         <div class="master-nav-item" onclick="selectMasterNav('checklist')" id="mnav-checklist"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ✅ チェックリスト
@@ -6396,17 +6587,19 @@ window.showPage = window.showPage || function(name, btn) {
       <div id="cd-deadline-bar" style="display:none;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center"></div>
 
       <!-- URL セクション（2カラム） -->
+      <!-- ADR 012: 各 form-group は data-field-key を持ち、applyCreativeDetailFieldVisibility() で
+           カテゴリの設定に応じて display:none / ラベル上書きされる。 -->
       <input type="hidden" id="cd-frameio-url">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">台本URL</label>
+      <div id="cd-builtin-url-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
+        <div class="form-group cd-field-group" data-field-key="script_url" style="margin-bottom:0">
+          <label class="form-label" data-default-label="台本URL">台本URL</label>
           <div style="display:flex;gap:5px">
             <input class="form-input" id="cd-script-url" placeholder="https://..." style="min-width:0;flex:1">
             <button class="btn" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
           </div>
         </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">レギュレーションシート</label>
+        <div class="form-group cd-field-group" data-field-key="regulation_url" style="margin-bottom:0">
+          <label class="form-label" data-default-label="レギュレーションシート">レギュレーションシート</label>
           <div id="cd-regulation-cell">
             <div id="cd-regulation-link" style="display:none;align-items:center;gap:6px">
               <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
@@ -6420,10 +6613,13 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
 
+      <!-- ADR 012: カスタムフィールドコンテナ（カテゴリ別に動的生成） -->
+      <div id="cd-custom-fields" style="display:none;margin-bottom:18px"></div>
+
       <!-- クライアント確認URL（自動共有 / 手動入力） -->
-      <div class="form-group" id="cd-client-review-group" style="margin-bottom:18px">
-        <label class="form-label">
-          クライアント確認URL
+      <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-bottom:18px">
+        <label class="form-label" data-default-label="クライアント確認URL">
+          <span class="cd-field-label-text">クライアント確認URL</span>
           <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:6px">🔗 自動共有済み</span>
         </label>
         <div style="display:flex;gap:5px">
@@ -12474,6 +12670,43 @@ function populateCategorySelect(selectEl, selectedId) {
   if (selectedId) selectEl.value = selectedId;
 }
 
+// ==================== カテゴリ別フィールド設定 (ADR 012) ====================
+// /api/categories/:id/fields のクライアント側キャッシュ。
+// 詳細モーダル open 時に loadCategoryFields(category_id) を呼ぶと、
+// 同一カテゴリへの再アクセスはキャッシュから返る。
+// migration 未適用環境では API が builtin 全表示の fallback を返すため、
+// フロント側は migration の有無を意識する必要なし。
+const BUILTIN_FIELD_DEFAULTS = {
+  product:           '商材',
+  appeal_axis:       '訴求軸',
+  media_format_size: '媒体・尺・サイズ',
+  talent:            'タレント',
+  script_url:        '台本URL',
+  regulation_url:    'レギュレーション',
+  client_review_url: 'クライアント確認URL',
+};
+const _categoryFieldsCache = new Map(); // category_id -> [field, ...]
+async function loadCategoryFields(categoryId, force = false) {
+  if (!categoryId) return [];
+  if (!force && _categoryFieldsCache.has(categoryId)) {
+    return _categoryFieldsCache.get(categoryId);
+  }
+  try {
+    const res = await apiFetch(`${API}/categories/${categoryId}/fields`);
+    const data = res.ok ? (await res.json() || []) : [];
+    _categoryFieldsCache.set(categoryId, data);
+    return data;
+  } catch (e) {
+    console.warn('[loadCategoryFields]', e);
+    _categoryFieldsCache.set(categoryId, []);
+    return [];
+  }
+}
+function invalidateCategoryFieldsCache(categoryId) {
+  if (categoryId) _categoryFieldsCache.delete(categoryId);
+  else _categoryFieldsCache.clear();
+}
+
 // 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
 // primary_category.code を優先し、未解決時は 'video' にフォールバック。
 // PROJECT_TYPE_VALUES は UI バッジ・フィルタの表示順序定義として残す。
@@ -13791,6 +14024,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-slack-channel-url').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
+  // ADR 008 Phase 1: 新規時は同期 URL 空、結果表示も非表示
+  { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = ''; }
+  { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
   // ADR 008 Phase 4: 連番カスタマイズ初期値
   { const _nfs = document.getElementById('p-next-filename-serial'); if (_nfs) _nfs.value = ''; }
   { const _sd = document.getElementById('p-serial-digits'); if (_sd) _sd.value = '3'; }
@@ -13897,6 +14133,9 @@ function openEditProject(p) {
   document.getElementById('p-slack-channel-url').value = p.slack_channel_url || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
+  // ADR 008 Phase 1: クリエイティブ管理シート同期 URL 復元
+  { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = p.creatives_export_sheet_url || ''; }
+  { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
   // ADR 008 Phase 4: 連番カスタマイズ復元
   {
     const _nfs = document.getElementById('p-next-filename-serial');
@@ -17098,6 +17337,9 @@ async function submitProject() {
   const _sdRaw = document.getElementById('p-serial-digits')?.value;
   const serial_digits = (_sdRaw != null && String(_sdRaw).trim() !== '') ? Number(_sdRaw) : undefined;
 
+  // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（編集時に明示送信、新規時は空）
+  const creatives_export_sheet_url = document.getElementById('p-creatives-export-sheet-url')?.value.trim() || null;
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -17106,7 +17348,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, next_filename_serial, serial_digits })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -21398,7 +21640,7 @@ function selectMasterNav(type) {
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
   // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
-  ['generic','general','categories','products','appeal_axes','filename_templates','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -21420,6 +21662,8 @@ function selectMasterNav(type) {
     renderAppealAxesMasterPage();
   } else if (type === 'filename_templates') {
     renderFilenameTemplatesPage();
+  } else if (type === 'creatives_export') {
+    renderCreativesExportMappingPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
@@ -21443,6 +21687,9 @@ async function loadMasterPage() {
   // 管理者のみシステム設定タブを表示（秘書・他ロール非表示）
   const sysconfigNav = document.getElementById('mnav-sysconfig');
   if (sysconfigNav) sysconfigNav.style.display = isTopAdmin() ? '' : 'none';
+  // ADR 008 Phase 1: 出力マッピングは admin のみ
+  const exportNav = document.getElementById('mnav-creatives_export');
+  if (exportNav) exportNav.style.display = isTopAdmin() ? '' : 'none';
 
   const [catRes, itemRes] = await Promise.all([
     apiFetch(`${API}/master/categories`),
@@ -22157,6 +22404,161 @@ async function reloadSchemaCacheManual(btn) {
   } finally {
     btn.disabled = false; btn.textContent = original;
   }
+}
+
+// ==================== ADR 008 Phase 1: クリエイティブ出力マッピング ====================
+// admin only。マスターテンプレ URL とマッピング JSON を編集する。
+const CREATIVES_EXPORT_DEFAULT_MAPPING = {
+  fixed_columns: [
+    { header: '案件番号',   system_field: 'internal_code',   sync: 'to_sheet' },
+    { header: '編集者',     system_field: 'assignee_name',   sync: 'to_sheet' },
+    { header: 'ファイル名', system_field: 'file_name',       sync: 'to_sheet' },
+    { header: '納期',       system_field: 'final_deadline',  sync: 'to_sheet' },
+    { header: 'ステータス', system_field: 'status',          sync: 'to_sheet' },
+    { header: 'Frame.io',   system_field: 'frameio_url',     sync: 'to_sheet' },
+    { header: '編集者からのコメント',         system_field: 'editor_comment',   sync: 'to_sheet' },
+    { header: 'ディレクターからの修正点',     system_field: 'director_comment', sync: 'to_sheet' },
+    { header: 'クライアントへの初稿URL',       system_field: 'delivery_url',     sync: 'to_sheet' },
+    { header: 'あるるさんへの初稿の説明や質問など', system_field: 'client_comment', sync: 'to_sheet' }
+  ],
+  version_block: {
+    max_versions: 5,
+    columns_per_version: [
+      { header_tpl: 'URL({n}回目)',                      system_field: 'version.preview_url',     sync: 'to_sheet' },
+      { header_tpl: '編集者からのコメント({n}回目)',     system_field: 'version.editor_comment',   sync: 'to_sheet' },
+      { header_tpl: 'ディレクターからの修正点({n}回目)', system_field: 'version.director_comment', sync: 'to_sheet' },
+      { header_tpl: '修正指示({n}回目)',                 system_field: 'version.client_comment',   sync: 'to_sheet' }
+    ]
+  },
+  final_column: { header: '最終納品', system_field: 'final_delivery_url', sync: 'to_sheet' },
+  tabs: {
+    '動画管理':   { creative_type_filter: '動画' },
+    '静止画管理': { creative_type_filter: '静止画' }
+  }
+};
+
+async function renderCreativesExportMappingPage() {
+  if (!isTopAdmin()) {
+    document.getElementById('master-content').innerHTML = '<div style="color:#E24B4A;padding:20px">アクセス権限がありません</div>';
+    return;
+  }
+  const el = document.getElementById('master-content');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+
+  const res = await apiFetch(`${API}/system-settings`);
+  const settings = res.ok ? await res.json() : {};
+  const masterUrl = settings.creatives_export_master_template_url || '';
+  let mappingJson = settings.creatives_export_mapping_json || '';
+  if (!mappingJson) {
+    try { mappingJson = JSON.stringify(CREATIVES_EXPORT_DEFAULT_MAPPING, null, 2); }
+    catch (_) { mappingJson = ''; }
+  }
+
+  el.innerHTML = `
+    <div style="max-width:900px">
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">📊 クリエイティブ出力マッピング</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:24px">
+        ADR 008 Phase 1 — システム → Google Sheets 片方向同期のマスター設定（最高管理者のみ変更可）
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">マスターテンプレシート URL</div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">URL</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="cem-master-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+              style="flex:1" value="${esc(masterUrl)}">
+            <button class="btn" onclick="saveCreativesExportMasterUrl()">保存</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
+            未設定の場合、案件モーダルの「Sheets に同期」ボタン押下時に空のスプレッドシートを自動作成します。<br>
+            設定するとマスターテンプレ（書式・色付け・タブ構成）のコピーをベースに案件単位のシートを作成します。
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;color:var(--em-dark)">マッピング JSON</div>
+          <button class="btn btn-ghost" onclick="resetCreativesExportMappingToDefault()" style="font-size:12px;padding:4px 10px">DEFAULT に戻す</button>
+        </div>
+        <textarea id="cem-mapping-json" rows="20"
+          style="width:100%;font-family:monospace;font-size:12px;padding:10px;border:1px solid var(--border);border-radius:6px;line-height:1.5;resize:vertical">${esc(mappingJson)}</textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+          <button class="btn" onclick="saveCreativesExportMappingJson()">保存</button>
+          <button class="btn btn-ghost" onclick="validateCreativesExportMappingJson()">JSON 検証</button>
+          <span id="cem-json-status" style="font-size:12px;color:var(--text-muted)"></span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:10px">
+          <code>fixed_columns[]</code> = 固定列、<code>version_block</code> = 修正サイクル列の雛形（{n} で何回目かを挿入）、<code>tabs</code> = タブ名 → creative_type フィルタ。<br>
+          各列の <code>sync</code> は Phase 1 では <code>to_sheet</code> のみ動作。<code>two_way</code> / <code>from_sheet</code> は Phase 2 で対応予定。
+        </div>
+      </div>
+
+      <div id="cem-save-msg" style="display:none;font-size:13px;color:var(--em-dark);padding:8px 0"></div>
+    </div>
+  `;
+}
+
+function _cemShowMsg(text, ok = true) {
+  const msg = document.getElementById('cem-save-msg');
+  if (!msg) return;
+  msg.textContent = (ok ? '✓ ' : '✗ ') + text;
+  msg.style.color = ok ? 'var(--em-dark)' : '#E24B4A';
+  msg.style.display = '';
+  setTimeout(() => { msg.style.display = 'none'; }, 4000);
+}
+
+async function saveCreativesExportMasterUrl() {
+  const url = document.getElementById('cem-master-url').value.trim();
+  if (url && !/\/spreadsheets\/d\/[a-zA-Z0-9_-]+/.test(url)) {
+    showToast('スプレッドシート URL の形式が正しくありません', 'warn');
+    return;
+  }
+  const res = await apiFetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'creatives_export_master_template_url', value: url || null }),
+  });
+  if (res.ok) _cemShowMsg('マスターテンプレ URL を保存しました');
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error), 'error'); }
+}
+
+function validateCreativesExportMappingJson() {
+  const ta = document.getElementById('cem-mapping-json');
+  const status = document.getElementById('cem-json-status');
+  if (!ta) return null;
+  try {
+    const parsed = JSON.parse(ta.value);
+    if (!parsed || typeof parsed !== 'object') throw new Error('オブジェクトではありません');
+    if (!Array.isArray(parsed.fixed_columns)) throw new Error('fixed_columns が配列ではありません');
+    if (parsed.tabs && typeof parsed.tabs !== 'object') throw new Error('tabs がオブジェクトではありません');
+    if (status) { status.textContent = '✓ JSON 形式 OK'; status.style.color = 'var(--em-dark)'; }
+    return parsed;
+  } catch (e) {
+    if (status) { status.textContent = '✗ ' + e.message; status.style.color = '#E24B4A'; }
+    return null;
+  }
+}
+
+async function saveCreativesExportMappingJson() {
+  const parsed = validateCreativesExportMappingJson();
+  if (!parsed) { showToast('JSON が不正です', 'warn'); return; }
+  const value = JSON.stringify(parsed); // 整形落として保存
+  const res = await apiFetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'creatives_export_mapping_json', value }),
+  });
+  if (res.ok) _cemShowMsg('マッピング JSON を保存しました');
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error), 'error'); }
+}
+
+function resetCreativesExportMappingToDefault() {
+  const ta = document.getElementById('cem-mapping-json');
+  if (!ta) return;
+  ta.value = JSON.stringify(CREATIVES_EXPORT_DEFAULT_MAPPING, null, 2);
+  validateCreativesExportMappingJson();
 }
 
 function parseSysDriveUrl() {
@@ -23500,7 +23902,7 @@ async function renderCategoriesMasterPage() {
 
     <!-- 編集モーダル（インライン） -->
     <div id="category-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
-      <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:92vw;max-height:90vh;overflow:auto">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:640px;max-width:94vw;max-height:92vh;overflow:auto">
         <div style="font-size:16px;font-weight:700;margin-bottom:16px" id="cat-modal-title">カテゴリ追加</div>
         <input type="hidden" id="cat-modal-id">
         <div class="form-group">
@@ -23535,6 +23937,19 @@ async function renderCategoriesMasterPage() {
           <input type="checkbox" id="cat-modal-active" checked>
           <span>有効（is_active=true）</span>
         </label>
+
+        <!-- ADR 012: 表示項目（フィールド可視性管理） -->
+        <div id="cat-modal-fields-section" style="display:none;margin-top:22px;padding-top:18px;border-top:1px dashed var(--border)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:var(--text-main)">📋 表示項目</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">クリエイティブ詳細画面で表示する項目を選択。並び順は数値が小さいほど上。</div>
+            </div>
+            <button type="button" class="btn-sm" onclick="addCategoryCustomField()">+ カスタム項目を追加</button>
+          </div>
+          <div id="cat-modal-fields-list" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
           <button class="btn" onclick="closeCategoryModal()">キャンセル</button>
           <button class="btn-primary" onclick="saveCategory()">保存</button>
@@ -23544,7 +23959,7 @@ async function renderCategoriesMasterPage() {
   `;
 }
 
-function openCategoryModal(id) {
+async function openCategoryModal(id) {
   const modal = document.getElementById('category-modal');
   if (!modal) return;
   const cat = id ? (_categoriesCache || []).find(c => c.id === id)
@@ -23560,10 +23975,178 @@ function openCategoryModal(id) {
   document.getElementById('cat-modal-sort').value = (cat?.sort_order ?? 100);
   document.getElementById('cat-modal-active').checked = cat?.is_active !== false;
   modal.style.display = 'flex';
+
+  // ADR 012: 表示項目セクション（既存カテゴリ編集時のみ。新規時は保存後に再オープンしてもらう）
+  const fieldsSection = document.getElementById('cat-modal-fields-section');
+  if (id && fieldsSection) {
+    fieldsSection.style.display = '';
+    await loadCategoryFieldsIntoModal(id);
+  } else if (fieldsSection) {
+    fieldsSection.style.display = 'none';
+    document.getElementById('cat-modal-fields-list').innerHTML = '';
+  }
 }
+
+// ==================== ADR 012: カテゴリフィールド管理 (Master) ====================
+// カテゴリ編集モーダル内の「表示項目」を扱う。
+// _catModalFields: 編集中のフィールド配列。保存時に PUT /api/categories/:id/fields で送る。
+let _catModalFields = [];
+const BUILTIN_FIELD_KEYS_FRONT = [
+  'product','appeal_axis','media_format_size','talent','script_url','regulation_url','client_review_url',
+];
+const BUILTIN_FIELD_LABELS_FRONT = {
+  product:           '商材',
+  appeal_axis:       '訴求軸',
+  media_format_size: '媒体・尺・サイズ',
+  talent:            'タレント',
+  script_url:        '台本URL',
+  regulation_url:    'レギュレーション',
+  client_review_url: 'クライアント確認URL',
+};
+
+async function loadCategoryFieldsIntoModal(categoryId) {
+  let fields = [];
+  try {
+    const res = await apiFetch(`${API}/categories/${categoryId}/fields`);
+    fields = res.ok ? (await res.json() || []) : [];
+  } catch (_) { fields = []; }
+
+  // builtin の不足を補完（DBに行が無いキーは visible=true で初期化）
+  const haveKeys = new Set(fields.map(f => f.field_key));
+  BUILTIN_FIELD_KEYS_FRONT.forEach((k, i) => {
+    if (!haveKeys.has(k)) {
+      fields.push({
+        field_key: k,
+        field_kind: 'builtin',
+        visible: true,
+        sort_order: (i + 1) * 10,
+        label: BUILTIN_FIELD_LABELS_FRONT[k],
+        required: false,
+      });
+    }
+  });
+  // sort_order 昇順
+  fields.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  _catModalFields = fields;
+  renderCategoryFieldsList();
+}
+
+function renderCategoryFieldsList() {
+  const host = document.getElementById('cat-modal-fields-list');
+  if (!host) return;
+  if (!_catModalFields || _catModalFields.length === 0) {
+    host.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px">項目がありません</div>';
+    return;
+  }
+  host.innerHTML = _catModalFields.map((f, idx) => {
+    const isCustom = f.field_kind === 'custom';
+    const defaultLabel = BUILTIN_FIELD_LABELS_FRONT[f.field_key] || f.field_key;
+    const labelDisp = f.label !== undefined && f.label !== null ? f.label : defaultLabel;
+    const kindBadge = isCustom
+      ? '<span style="font-size:10px;background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-weight:600">カスタム</span>'
+      : '<span style="font-size:10px;background:#f3f4f6;color:#4b5563;padding:1px 6px;border-radius:4px;font-weight:600">builtin</span>';
+    const customTypeDisp = isCustom
+      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:4px">(${esc(f.custom_type || 'text')})</span>`
+      : '';
+    const upDisabled  = idx === 0 ? 'disabled' : '';
+    const downDisabled = idx === _catModalFields.length - 1 ? 'disabled' : '';
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:0.5px solid var(--border);border-radius:8px;background:var(--surface);font-size:13px">
+        <input type="checkbox" ${f.visible !== false ? 'checked' : ''} onchange="catModalToggleVisible(${idx}, this.checked)">
+        <span style="font-family:monospace;color:var(--text-muted);font-size:11px;min-width:140px">${esc(f.field_key)}</span>
+        ${kindBadge}${customTypeDisp}
+        <input class="form-input" type="text" value="${esc(labelDisp)}" placeholder="${esc(defaultLabel)}" oninput="catModalUpdateLabel(${idx}, this.value)" style="flex:1;font-size:12px;padding:4px 8px">
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;cursor:pointer">
+          <input type="checkbox" ${f.required ? 'checked' : ''} onchange="catModalToggleRequired(${idx}, this.checked)">必須
+        </label>
+        <button type="button" class="btn-sm" onclick="catModalMoveField(${idx}, -1)" ${upDisabled} title="上へ">▲</button>
+        <button type="button" class="btn-sm" onclick="catModalMoveField(${idx}, 1)"  ${downDisabled} title="下へ">▼</button>
+        ${isCustom ? `<button type="button" class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="catModalRemoveField(${idx})" title="削除">×</button>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function catModalToggleVisible(idx, val) {
+  if (!_catModalFields[idx]) return;
+  _catModalFields[idx].visible = !!val;
+}
+function catModalToggleRequired(idx, val) {
+  if (!_catModalFields[idx]) return;
+  _catModalFields[idx].required = !!val;
+}
+function catModalUpdateLabel(idx, val) {
+  if (!_catModalFields[idx]) return;
+  _catModalFields[idx].label = String(val || '');
+}
+function catModalMoveField(idx, delta) {
+  const ni = idx + delta;
+  if (ni < 0 || ni >= _catModalFields.length) return;
+  const tmp = _catModalFields[idx];
+  _catModalFields[idx] = _catModalFields[ni];
+  _catModalFields[ni]  = tmp;
+  // sort_order を再採番（10 刻み）
+  _catModalFields.forEach((f, i) => { f.sort_order = (i + 1) * 10; });
+  renderCategoryFieldsList();
+}
+function catModalRemoveField(idx) {
+  if (!_catModalFields[idx]) return;
+  if (_catModalFields[idx].field_kind !== 'custom') {
+    showToast('builtin 項目は削除できません（visible を OFF にしてください）', 'warn');
+    return;
+  }
+  if (!confirm(`カスタム項目「${_catModalFields[idx].label || _catModalFields[idx].field_key}」を削除しますか？\n（既に入力されている値はカテゴリ保存時に消えます）`)) return;
+  _catModalFields.splice(idx, 1);
+  _catModalFields.forEach((f, i) => { f.sort_order = (i + 1) * 10; });
+  renderCategoryFieldsList();
+}
+function addCategoryCustomField() {
+  const key = (prompt('カスタム項目のキー（半角英数_、ユニーク。例: public_url）', '') || '').trim();
+  if (!key) return;
+  if (!/^[a-z][a-z0-9_]*$/.test(key)) {
+    showToast('キーは半角英小文字・数字・アンダースコアで先頭は英字にしてください', 'warn');
+    return;
+  }
+  if (BUILTIN_FIELD_KEYS_FRONT.includes(key)) {
+    showToast(`builtin と衝突するキー「${key}」は使えません`, 'warn');
+    return;
+  }
+  if (_catModalFields.some(f => f.field_key === key)) {
+    showToast('既に同じキーの項目があります', 'warn');
+    return;
+  }
+  const label = (prompt('表示ラベル（例: 公開URL）', key) || '').trim() || key;
+  const type = (prompt('入力タイプを選択: text / textarea / url / select', 'text') || 'text').trim();
+  if (!['text','textarea','url','select'].includes(type)) {
+    showToast('入力タイプは text / textarea / url / select のいずれかです', 'warn');
+    return;
+  }
+  let custom_options = null;
+  if (type === 'select') {
+    const opts = (prompt('選択肢をカンマ区切りで入力（例: A,B,C）', '') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (opts.length === 0) {
+      showToast('select は選択肢が1つ以上必要です', 'warn');
+      return;
+    }
+    custom_options = { options: opts };
+  }
+  const sort_order = (_catModalFields.length + 1) * 10;
+  _catModalFields.push({
+    field_key: key,
+    field_kind: 'custom',
+    custom_type: type,
+    custom_options,
+    visible: true,
+    sort_order,
+    label,
+    required: false,
+  });
+  renderCategoryFieldsList();
+}
+
 function closeCategoryModal() {
   const modal = document.getElementById('category-modal');
   if (modal) modal.style.display = 'none';
+  _catModalFields = [];
 }
 async function saveCategory() {
   const id = document.getElementById('cat-modal-id').value;
@@ -23589,6 +24172,41 @@ async function saveCategory() {
     showToast('保存失敗: ' + (e?.error || res.status), 'error');
     return;
   }
+  // 保存後の id（新規 POST 時はレスポンスから取得）
+  const saved = await res.json().catch(() => null);
+  const savedId = id || saved?.id;
+
+  // ADR 012: 表示項目（フィールド設定）を保存
+  if (savedId && _catModalFields && _catModalFields.length > 0) {
+    const fieldsPayload = {
+      fields: _catModalFields.map(f => ({
+        field_key: f.field_key,
+        field_kind: f.field_kind || 'builtin',
+        custom_type: f.field_kind === 'custom' ? (f.custom_type || 'text') : null,
+        custom_options: f.field_kind === 'custom' ? (f.custom_options || null) : null,
+        visible: f.visible !== false,
+        sort_order: f.sort_order || 100,
+        label: (f.label === undefined || f.label === null) ? null : String(f.label),
+        required: !!f.required,
+      })),
+    };
+    try {
+      const fres = await apiFetch(`${API}/categories/${savedId}/fields`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fieldsPayload),
+      });
+      if (!fres.ok) {
+        const fe = await fres.json().catch(() => ({}));
+        showToast('表示項目の保存に失敗: ' + (fe?.error || fres.status), 'warn');
+      }
+    } catch (e) {
+      console.warn('[saveCategory] fields PUT failed:', e);
+    }
+    // フィールドキャッシュを破棄して、次回詳細モーダル open 時に再取得させる
+    invalidateCategoryFieldsCache(savedId);
+  }
+
   closeCategoryModal();
   await loadCategories(true); // キャッシュ強制更新
   renderCategoriesMasterPage();
@@ -25957,6 +26575,164 @@ async function onCreativeFileNameBlur(el) {
   }
 }
 
+// ==================== ADR 012: カテゴリ別フィールド可視性 ====================
+// 詳細モーダルの builtin DOM (data-field-key) を visible/hidden 切り替え + ラベル上書き。
+// custom フィールドは #cd-custom-fields に動的生成（既存値は GET /custom-fields で populate）。
+//
+// 引数 categoryId が null/undefined の場合は「すべて表示」のフェイルセーフ動作。
+async function applyCreativeDetailFieldVisibility(categoryId, creativeId) {
+  // 1) builtin 可視性デフォルト: すべて visible（カテゴリ未設定でも fallback）
+  const groups = document.querySelectorAll('#modal-creative-detail .cd-field-group');
+  const builtinByKey = {};
+
+  let fields = [];
+  if (categoryId) {
+    try { fields = await loadCategoryFields(categoryId); } catch (_) { fields = []; }
+  }
+
+  // 設定がゼロのときは「すべて visible」のフェイルセーフ
+  if (!fields || fields.length === 0) {
+    groups.forEach(g => { g.style.display = ''; });
+    // カスタム欄も空に
+    const cf = document.getElementById('cd-custom-fields');
+    if (cf) { cf.innerHTML = ''; cf.style.display = 'none'; }
+    return;
+  }
+
+  fields.forEach(f => {
+    if (f.field_kind === 'builtin' || !f.field_kind) {
+      builtinByKey[f.field_key] = f;
+    }
+  });
+
+  // 2) builtin: data-field-key 単位で表示制御 + ラベル上書き
+  groups.forEach(g => {
+    const key = g.getAttribute('data-field-key');
+    if (!key) return;
+    const cfg = builtinByKey[key];
+    if (!cfg) {
+      // builtin として登録されていない field_key は安全側で表示（過去互換）
+      g.style.display = '';
+      return;
+    }
+    g.style.display = (cfg.visible === false) ? 'none' : '';
+    if (cfg.label) {
+      // 子の form-label / .cd-field-label-text を更新
+      const labelText = g.querySelector('.cd-field-label-text');
+      if (labelText) {
+        labelText.textContent = cfg.label;
+      } else {
+        const labelEl = g.querySelector('.form-label');
+        if (labelEl && labelEl.children.length === 0) {
+          labelEl.textContent = cfg.label;
+        }
+      }
+    } else {
+      // ラベル指定なし → デフォルトに戻す
+      const labelEl = g.querySelector('.form-label');
+      if (labelEl) {
+        const def = labelEl.getAttribute('data-default-label');
+        const labelText = g.querySelector('.cd-field-label-text');
+        if (labelText && def) labelText.textContent = def;
+        else if (def && labelEl.children.length === 0) labelEl.textContent = def;
+      }
+    }
+  });
+
+  // 3) カスタムフィールド: 値を fetch して動的生成
+  const customFields = fields.filter(f => f.field_kind === 'custom' && f.visible !== false)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  await renderCreativeCustomFields(customFields, creativeId);
+}
+
+async function renderCreativeCustomFields(customFields, creativeId) {
+  const host = document.getElementById('cd-custom-fields');
+  if (!host) return;
+  if (!customFields || customFields.length === 0) {
+    host.innerHTML = '';
+    host.style.display = 'none';
+    return;
+  }
+
+  // 既存値を fetch
+  let valuesByKey = {};
+  if (creativeId) {
+    try {
+      const res = await apiFetch(`${API}/creatives/${creativeId}/custom-fields`);
+      if (res.ok) {
+        const arr = await res.json();
+        (arr || []).forEach(v => { valuesByKey[v.field_key] = v.value; });
+      }
+    } catch (_) { /* noop */ }
+  }
+
+  const html = customFields.map(f => {
+    const label  = esc(f.label || f.field_key);
+    const reqMark = f.required ? ' <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>' : '';
+    const id = `cd-custom-${esc(f.field_key)}`;
+    const val = valuesByKey[f.field_key] || '';
+    let inputHtml = '';
+    switch (f.custom_type) {
+      case 'textarea':
+        inputHtml = `<textarea class="form-input cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}" rows="3" style="resize:vertical">${esc(val)}</textarea>`;
+        break;
+      case 'url': {
+        inputHtml = `
+          <div style="display:flex;gap:5px">
+            <input class="form-input cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}" type="url" value="${esc(val)}" placeholder="https://..." style="min-width:0;flex:1">
+            <button type="button" class="btn" onclick="openLink('${id}')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+          </div>`;
+        break;
+      }
+      case 'select': {
+        const opts = Array.isArray(f.custom_options?.options) ? f.custom_options.options : [];
+        const optionHtml = ['<option value="">（未選択）</option>']
+          .concat(opts.map(o => `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o)}</option>`))
+          .join('');
+        inputHtml = `<select class="form-select cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}">${optionHtml}</select>`;
+        break;
+      }
+      case 'text':
+      default:
+        inputHtml = `<input class="form-input cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}" type="text" value="${esc(val)}">`;
+    }
+    return `
+      <div class="form-group" data-custom-field-key="${esc(f.field_key)}" style="margin-bottom:14px">
+        <label class="form-label">${label}${reqMark}</label>
+        ${inputHtml}
+      </div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">カスタム項目</div>
+    ${html}`;
+  host.style.display = '';
+}
+
+// 詳細モーダル保存時に呼ぶ: 現在の cd-custom-fields の入力値を PUT
+async function saveCreativeCustomFields(creativeId) {
+  if (!creativeId) return { ok: true };
+  const inputs = document.querySelectorAll('#cd-custom-fields .cd-custom-input');
+  if (!inputs || inputs.length === 0) return { ok: true };
+  const values = [];
+  inputs.forEach(el => {
+    const key = el.getAttribute('data-field-key');
+    if (!key) return;
+    values.push({ field_key: key, value: (el.value ?? '').toString().trim() || null });
+  });
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/custom-fields`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    });
+    return res.ok ? { ok: true } : { ok: false };
+  } catch (e) {
+    console.warn('[saveCreativeCustomFields]', e);
+    return { ok: false };
+  }
+}
+
 async function openCreativeDetail(id) {
   const res = await apiFetch(`${API}/creatives/${id}`);
   if (res.status === 404) {
@@ -26135,13 +26911,204 @@ async function openCreativeDetail(id) {
   refreshCreativePostEditButton(id).catch(() => {});
   refreshCreativeEditHistory(id).catch(() => {});
 
+  // ADR 012: カテゴリ別フィールド可視性を適用（builtin DOM の表示/ラベル + custom 動的生成）
+  // 失敗してもフローは止めない（フェイルセーフで全表示）
+  try {
+    await applyCreativeDetailFieldVisibility(c.category_id || c.projects?.primary_category_id || null, id);
+  } catch (e) { console.warn('[applyCreativeDetailFieldVisibility]', e); }
+
   openModal('modal-creative-detail');
   // 入力保護: 初期スナップショット取得 + localStorage 下書き復元
   // openModal の直後に呼ぶ（モーダルが open になってからでないと dirty 判定が動かない）
   try { __cdAfterOpen(id); } catch (e) { console.warn('[creative-detail-draft] afterOpen failed:', e); }
 }
 
+// =====================================================
+// LP / HP / LINE 専用: テンプレ駆動チェブロン
+// =====================================================
+// projects.primary_category.code が 'lp' / 'hp' / 'line' のクリエイティブで呼ばれる。
+// status_template_items (sort_order 昇順) を polygon clip-path のチェブロンで描画。
+// is_milestone な step は色を強める。
+//
+// 動画 / 静止画 のロジックは触らない（既存 STEPS 駆動）。
+function renderTemplateChevron(c) {
+  const el = document.getElementById('cd-step-indicator');
+  if (!el) return;
+  const items = Array.isArray(c?.status_template_items) ? c.status_template_items : [];
+  const A = 14; // arrow depth px
+
+  if (!items.length) {
+    el.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:40px;color:var(--text-muted);font-size:12px';
+    el.innerHTML = '工程テンプレ未設定（管理者にお問い合わせください）';
+    _renderTemplateChevronButtons(c, items, -1);
+    return;
+  }
+
+  const currentCode = c.status_code || items[0]?.code;
+  const currentIdx = items.findIndex(i => i.code === currentCode);
+
+  el.style.cssText = 'display:flex;align-items:stretch;width:100%;height:40px';
+  el.innerHTML = items.map((it, i) => {
+    const done   = currentIdx >= 0 && i < currentIdx;
+    const active = i === currentIdx;
+    const isFirst = i === 0;
+    const isLast  = i === items.length - 1;
+    const zIdx    = items.length - i;
+    const ml      = i > 0 ? `-${A - 2}px` : '0';
+
+    let bg, tc;
+    if (done) {
+      bg = it.is_milestone ? '#1A9E9A' : '#3ECFCA';
+      tc = '#fff';
+    } else if (active) {
+      // 現在ステップ: マイルストーンはより濃く
+      bg = it.is_milestone ? '#0F7C78' : '#1A9E9A';
+      tc = '#fff';
+    } else {
+      bg = '#E8E8E6';
+      tc = '#7a7a7a';
+    }
+
+    const clip = isFirst
+      ? `polygon(0 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, 0 100%)`
+      : isLast
+        ? `polygon(${A}px 0, 100% 0, 100% 100%, ${A}px 100%, 0 50%)`
+        : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
+
+    const milestoneMark = it.is_milestone ? '★ ' : '';
+    const inner = done
+      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 4px;color:${tc}">${milestoneMark}${esc(it.label || it.code)}</span>`;
+
+    return `<div title="${esc(it.label || it.code)}${it.is_milestone ? '（マイルストーン）' : ''}" style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}">${inner}</div>`;
+  }).join('');
+
+  // status chip も template ラベルに揃える
+  const chip = document.getElementById('cd-status-chip');
+  if (chip) {
+    const cur = currentIdx >= 0 ? items[currentIdx] : null;
+    const label = cur?.label || c.status || '-';
+    const tone = cur?.is_milestone ? 'background:#0F7C78;color:#fff' : 'background:#E5F4F3;color:#0F7C78';
+    chip.innerHTML = `<span class="status-chip" style="${tone};padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600">${esc(label)}</span>`;
+  }
+
+  _renderTemplateChevronButtons(c, items, currentIdx);
+}
+
+// LP / HP / LINE 用ボタン制御:
+//   - D/P/CL 系（CL直行・Dチェックへ・Pスキップ・Dチェックへ戻す・修正依頼）は全て非表示
+//   - 「次のステップへ →」のみ表示（最終ステップなら「✅ 完了」表示で disabled）
+//   - admin は「← 前のステップへ」も表示
+//   - 「下書き保存」「閉じる」「納品完了モード」は維持
+function _renderTemplateChevronButtons(c, items, currentIdx) {
+  const nextBtn      = document.getElementById('cd-next-step-btn');
+  const revisionBtn  = document.getElementById('cd-revision-btn');
+  const skipPBtn     = document.getElementById('cd-skip-p-btn');
+  const directClBtn  = document.getElementById('cd-direct-cl-btn');
+  const backToDBtn   = document.getElementById('cd-back-to-d-btn');
+  const forceDelBtn  = document.getElementById('cd-force-deliver-btn');
+
+  // D/P/CL 系ボタンは全て非表示
+  if (revisionBtn)  revisionBtn.style.display  = 'none';
+  if (skipPBtn)     skipPBtn.style.display     = 'none';
+  if (directClBtn)  directClBtn.style.display  = 'none';
+  if (backToDBtn)   backToDBtn.style.display   = 'none';
+  // 納品完了モード: 最終ステップ以外なら表示（既存挙動踏襲）
+  if (forceDelBtn) {
+    const isFinal = currentIdx >= 0 && currentIdx === items.length - 1;
+    forceDelBtn.style.display = isFinal ? 'none' : '';
+  }
+
+  if (!nextBtn) return;
+
+  // admin の戻し導線（チェブロンセグメントクリックではなく、専用ボタンを設置）
+  // 既存の cd-back-to-d-btn を流用するのは意味が変わるので、テキストだけ置き換えて使う。
+  if (backToDBtn && isTopAdmin && isTopAdmin() && currentIdx > 0) {
+    backToDBtn.style.display = '';
+    backToDBtn.textContent = '← 前のステップへ';
+    backToDBtn.onclick = () => backTemplateStatus();
+  } else if (backToDBtn) {
+    // 既存 onclick (backToDCheck) に戻す（動画ロジックで使えるように）
+    backToDBtn.onclick = () => backToDCheck();
+  }
+
+  if (currentIdx < 0) {
+    nextBtn.style.display = 'none';
+    return;
+  }
+  const isFinal = currentIdx === items.length - 1;
+  nextBtn.style.display = '';
+  nextBtn.onclick = () => advanceTemplateStatus();
+  if (isFinal) {
+    nextBtn.textContent = '✅ 完了';
+    nextBtn.disabled = true;
+    nextBtn.style.background = '#9CA3AF';
+    nextBtn.style.cursor = 'not-allowed';
+  } else {
+    const next = items[currentIdx + 1];
+    nextBtn.disabled = false;
+    nextBtn.style.cursor = '';
+    nextBtn.textContent = `${next.label || next.code} へ →`;
+    nextBtn.style.background = next.is_milestone
+      ? 'linear-gradient(135deg,#0F7C78,#1A9E9A)'
+      : 'linear-gradient(135deg,#3ECFCA,#2BB8B4)';
+  }
+}
+
+async function advanceTemplateStatus() {
+  if (!currentCreativeDetail?.id) return;
+  const id = currentCreativeDetail.id;
+  const nextBtn = document.getElementById('cd-next-step-btn');
+  if (nextBtn) nextBtn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}/advance-template-status`, { method: 'POST' });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(j.error || 'ステップを進められませんでした', 'error');
+      return;
+    }
+    showToast(`「${j.label || j.status_code}」へ進めました`, 'success');
+    // 詳細を再ロード（チェブロン更新 + ボール保持者再計算反映）
+    try { await openCreativeDetail(id); } catch (_) {}
+    // 一覧側も再描画（軽量）
+    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch (_) {}
+  } catch (e) {
+    console.warn('[advance-template-status] failed:', e);
+    showToast('通信エラー', 'error');
+  } finally {
+    if (nextBtn) nextBtn.disabled = false;
+  }
+}
+
+async function backTemplateStatus() {
+  if (!currentCreativeDetail?.id) return;
+  const id = currentCreativeDetail.id;
+  if (!confirm('一つ前のステップに戻しますか？')) return;
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}/back-template-status`, { method: 'POST' });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(j.error || '戻せませんでした', 'error');
+      return;
+    }
+    showToast(`「${j.label || j.status_code}」へ戻しました`, 'info');
+    try { await openCreativeDetail(id); } catch (_) {}
+    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch (_) {}
+  } catch (e) {
+    console.warn('[back-template-status] failed:', e);
+    showToast('通信エラー', 'error');
+  }
+}
+
 function updateCreativeStepIndicator(status) {
+  // カテゴリ別チェブロン分岐: LP / HP / LINE はテンプレ駆動 (status_template_items) で描画。
+  // 動画 / 静止画 / 未設定 は既存ロジックそのまま (status 駆動・ハードコード STEPS)。
+  const _catCode = currentCreativeDetail?.projects?.primary_category?.code || null;
+  if (_catCode && ['lp', 'hp', 'line'].includes(_catCode)) {
+    renderTemplateChevron(currentCreativeDetail);
+    return;
+  }
+
   const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
   // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
@@ -26153,6 +27120,19 @@ function updateCreativeStepIndicator(status) {
     { label: '納品',      statuses: ['納品'] },
   ];
   if (!hasProducer) STEPS = STEPS.filter(s => s.label !== 'Pチェック');
+  // LP/HP/LINE 経由のときに残留していた可能性のある nextBtn.disabled / onclick を初期化。
+  // （既存挙動は変えない: disabled=false。onclick は元の動画系ハンドラに戻す）
+  const _resetNextBtn = document.getElementById('cd-next-step-btn');
+  if (_resetNextBtn) {
+    _resetNextBtn.disabled = false;
+    _resetNextBtn.onclick = () => advanceCreativeStatus();
+    _resetNextBtn.style.cursor = '';
+  }
+  const _resetBackBtn = document.getElementById('cd-back-to-d-btn');
+  if (_resetBackBtn) {
+    _resetBackBtn.onclick = () => backToDCheck();
+    _resetBackBtn.textContent = 'Dチェックへ戻す';
+  }
   const currentIdx = STEPS.findIndex(s => s.statuses.includes(status));
   const el = document.getElementById('cd-step-indicator');
   const A = 14; // arrow depth px
@@ -32270,6 +33250,8 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) {
+    // ADR 012: カスタムフィールドの値も保存（失敗しても本フローは止めない）
+    try { await saveCreativeCustomFields(currentCreativeDetail.id); } catch (_) {}
     // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
@@ -32374,6 +33356,50 @@ function openLink(inputId) {
   const url = document.getElementById(inputId).value.trim();
   if (url) window.open(url, '_blank', 'noopener');
   else showToast('URLが入力されていません', 'warn');
+}
+
+// ===== ADR 008 Phase 1: クリエイティブ管理シート同期 =====
+async function syncCreativesToSheet() {
+  const projectId = document.getElementById('p-id')?.value;
+  const btn = document.getElementById('p-sync-sheet-btn');
+  const resEl = document.getElementById('p-sync-sheet-result');
+  if (!projectId) {
+    showToast('案件を保存してから同期してください（新規案件は先に保存が必要）', 'warn');
+    return;
+  }
+  if (!btn || !resEl) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '同期中...';
+  resEl.style.display = '';
+  resEl.style.background = 'var(--em-pale)';
+  resEl.style.color = 'var(--text)';
+  resEl.textContent = 'Google Sheets に書き出し中... (数秒〜十数秒かかります)';
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/sync-sheet`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const urlInput = document.getElementById('p-creatives-export-sheet-url');
+      if (urlInput && data.sheet_url) urlInput.value = data.sheet_url;
+      const wr = data.written_rows || {};
+      const summary = Object.entries(wr).map(([t, n]) => `${t}: ${n}件`).join(' / ');
+      resEl.style.background = '#e8f5e9';
+      resEl.style.color = '#1b5e20';
+      resEl.innerHTML = `✓ 同期しました （${esc(summary || '0件')}） — <a href="${esc(data.sheet_url || '#')}" target="_blank" rel="noopener" style="color:#1b5e20;text-decoration:underline">シートを開く</a>`;
+      showToast('Sheets に同期しました', 'info');
+    } else {
+      resEl.style.background = '#ffebee';
+      resEl.style.color = '#b71c1c';
+      resEl.textContent = `✗ ${data.error || `HTTP ${res.status}`}`;
+    }
+  } catch (e) {
+    resEl.style.background = '#ffebee';
+    resEl.style.color = '#b71c1c';
+    resEl.textContent = `✗ 通信エラー: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 // ===== 招待リンク発行 =====
@@ -32585,6 +33611,37 @@ async function openVerupModal() {
   await loadVerupList();
 }
 
+// 報告者の表示ラベル（nickname > full_name の優先）
+function _verupReporterLabel(reporter) {
+  if (!reporter) return '';
+  return reporter.nickname || reporter.full_name || '';
+}
+
+// ツールバーの「報告者」フィルタを、実際に紐付いている報告者だけで再構築
+function _verupRebuildReporterFilter() {
+  const sel = document.getElementById('verup-filter-reporter');
+  if (!sel) return;
+  const prev = sel.value;
+  const seen = new Map(); // id -> label
+  for (const r of _verupCache) {
+    if (r.reporter && r.reporter.id && !seen.has(r.reporter.id)) {
+      seen.set(r.reporter.id, _verupReporterLabel(r.reporter));
+    }
+  }
+  // 現在のユーザー本人が報告者として登場していなくても、「自分の報告だけ」の選択肢は常に出す
+  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+  let html = '<option value="">すべての報告者</option>';
+  if (me?.id) html += `<option value="__me__">📣 自分の報告だけ</option>`;
+  const sorted = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja'));
+  for (const [id, label] of sorted) {
+    if (me?.id && id === me.id) continue; // 自分は __me__ に集約
+    html += `<option value="${_verupEsc(id)}">${_verupEsc(label)}</option>`;
+  }
+  sel.innerHTML = html;
+  // 直前の選択を復元（消えていなければ）
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
 async function loadVerupList() {
   if (_verupLoading) return;
   _verupLoading = true;
@@ -32592,6 +33649,7 @@ async function loadVerupList() {
     const res = await fetch('/api/haruka/version-logs');
     if (!res.ok) throw new Error('一覧の取得に失敗しました');
     _verupCache = await res.json();
+    _verupRebuildReporterFilter();
     renderVerupList();
   } catch (e) {
     document.getElementById('verup-list').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B">${_verupEsc(e.message)}</div>`;
@@ -32606,8 +33664,10 @@ function renderVerupList() {
   const search = (document.getElementById('verup-search')?.value || '').trim().toLowerCase();
   const fcat = document.getElementById('verup-filter-category')?.value || '';
   const fimp = document.getElementById('verup-filter-importance')?.value || '';
+  const freporter = document.getElementById('verup-filter-reporter')?.value || '';
   const onlyUnread = document.getElementById('verup-filter-unread')?.checked || false;
   const isAdmin = _verupIsAdmin();
+  const myUserId = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
 
   // 非 admin（VIEW AS で別ロール視点中の admin も含む）は is_hidden を見せない。
   // バックエンドの API は実ユーザーの role で判定するため、VIEW AS 中の admin にも
@@ -32616,10 +33676,16 @@ function renderVerupList() {
   if (!isAdmin) rows = rows.filter(r => !r.is_hidden);
   if (fcat) rows = rows.filter(r => r.category === fcat);
   if (fimp) rows = rows.filter(r => r.importance === fimp);
+  if (freporter === '__me__') {
+    rows = myUserId ? rows.filter(r => r.reporter_user_id === myUserId) : [];
+  } else if (freporter) {
+    rows = rows.filter(r => r.reporter_user_id === freporter);
+  }
   if (onlyUnread) rows = rows.filter(r => !r.is_read);
   if (search) {
     rows = rows.filter(r => {
-      const hay = [r.screen, r.feature, r.description, r.before_text, r.after_text, r.use_case, r.version_label, ...(r.tags || [])].filter(Boolean).join(' ').toLowerCase();
+      const reporterLabel = _verupReporterLabel(r.reporter);
+      const hay = [r.screen, r.feature, r.description, r.before_text, r.after_text, r.use_case, r.version_label, reporterLabel, ...(r.tags || [])].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(search);
     });
   }
@@ -32652,6 +33718,10 @@ function renderVerupList() {
       ? `<div style="margin-top:8px;background:#FFFBEB;border-left:3px solid #F59E0B;padding:6px 10px;font-size:12px;color:#78350F">💡 ${_verupEsc(r.use_case).replace(/\n/g,'<br>')}</div>` : '';
     const relatedLink = r.related_url
       ? `<a href="${_verupEsc(r.related_url)}" target="_blank" rel="noopener" style="font-size:11px;color:#3B82F6">関連リンク ↗</a>` : '';
+    const reporterLabel = _verupReporterLabel(r.reporter);
+    const reporterBadge = reporterLabel
+      ? `<span style="background:#EEF2FF;color:#3730A3;padding:2px 8px;border-radius:10px;font-size:11px" title="この改善を報告したメンバー">📣 ${_verupEsc(reporterLabel)}</span>`
+      : '';
     const editBtn = isAdmin
       ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='editVerupEntry(${JSON.stringify(r.id)})'>編集</button>` : '';
     const hideBtn = isAdmin
@@ -32667,6 +33737,7 @@ function renderVerupList() {
         ${hiddenBadge}
         <span style="font-family:monospace;font-size:11px;color:var(--text-muted)">${_verupRevisionLabel(r.revision_no)}${r.version_label ? ' / ' + _verupEsc(r.version_label) : ''}</span>
         <span style="font-size:11px;color:var(--text-muted)">${_verupEsc(_verupFmtDate(r.released_at))}</span>
+        ${reporterBadge}
         <span style="flex:1"></span>
         ${!r.is_read ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='markVerupRead(${JSON.stringify(r.id)})'>既読</button>` : ''}
         ${adminBtns}
@@ -32728,6 +33799,25 @@ async function toggleVerupVisibility(id, nextHidden) {
   } catch (e) { alert(e.message); }
 }
 
+// 編集モーダルの「報告者」セレクトを allMembers から構築
+function _verupPopulateReporterEditor(selectedId) {
+  const sel = document.getElementById('vle-reporter');
+  if (!sel) return;
+  const members = Array.isArray(allMembers) ? allMembers : [];
+  const sorted = members.slice().sort((a, b) => {
+    const la = a.nickname || a.full_name || '';
+    const lb = b.nickname || b.full_name || '';
+    return la.localeCompare(lb, 'ja');
+  });
+  let html = '<option value="">— 指定しない —</option>';
+  for (const m of sorted) {
+    const label = m.nickname ? `${_verupEsc(m.nickname)}（${_verupEsc(m.full_name || '')}）` : _verupEsc(m.full_name || '');
+    html += `<option value="${_verupEsc(m.id)}"${selectedId === m.id ? ' selected' : ''}>${label}</option>`;
+  }
+  sel.innerHTML = html;
+  if (selectedId) sel.value = selectedId;
+}
+
 function openVerupEditor() {
   if (!_verupIsAdmin()) return;
   document.getElementById('verup-editor-title').textContent = '新規追加';
@@ -32746,6 +33836,7 @@ function openVerupEditor() {
   document.getElementById('vle-tags').value = '';
   document.getElementById('vle-related-url').value = '';
   document.getElementById('vle-is-hidden').checked = false;
+  _verupPopulateReporterEditor(null);
   document.querySelectorAll('#vle-target-roles input[type=checkbox]').forEach(cb => { cb.checked = (cb.value === 'all'); });
   document.getElementById('vle-delete-btn').style.display = 'none';
   openModal('modal-verup-editor');
@@ -32773,6 +33864,7 @@ function editVerupEntry(id) {
   document.getElementById('vle-tags').value = (r.tags || []).join(', ');
   document.getElementById('vle-related-url').value = r.related_url || '';
   document.getElementById('vle-is-hidden').checked = !!r.is_hidden;
+  _verupPopulateReporterEditor(r.reporter_user_id || null);
   const tr = new Set(r.target_roles || ['all']);
   document.querySelectorAll('#vle-target-roles input[type=checkbox]').forEach(cb => { cb.checked = tr.has(cb.value); });
   document.getElementById('vle-delete-btn').style.display = '';
@@ -32800,6 +33892,7 @@ async function submitVerupEntry() {
     tags,
     related_url: document.getElementById('vle-related-url').value.trim() || null,
     is_hidden: document.getElementById('vle-is-hidden').checked,
+    reporter_user_id: document.getElementById('vle-reporter').value || null,
   };
   if (!payload.screen || !payload.feature || !payload.description) {
     alert('画面 / 機能 / 修正の要約は必須です');
@@ -32841,7 +33934,499 @@ async function deleteVerupEntry() {
 // 初回ロード後に未読数を取得（init() の最後で呼ばれる）
 window.addEventListener('load', () => {
   setTimeout(() => { loadVerupUnreadCount(); }, 1500);
+  setTimeout(() => { loadBugReportOpenCount(); }, 1700);
 });
+
+// ==================== バグ報告（管理対象） ====================
+// 既存の /api/error-report (PR #188・Slack 投稿のみ) とは独立した、
+// 対応者割当・ステータス管理ができるバグ報告システム。
+let _bugReports = [];
+let _bugReportLoading = false;
+let _bugReportEditing = null;       // 編集中の元データ（null=新規）
+let _bugReportImage = null;         // 元画像 (HTMLImageElement)
+let _bugReportAnnotations = [];     // [{type:'rect'|'arrow', x1,y1,x2,y2}]
+let _bugReportTool = 'rect';
+let _bugReportDrag = null;          // {startX, startY}
+
+const BUG_SEVERITY_LABEL = { low: '🟢 低', normal: '🟡 通常', high: '🔴 高', critical: '🚨 致命的' };
+const BUG_SEVERITY_COLOR = { low: '#10B981', normal: '#F59E0B', high: '#EF4444', critical: '#991B1B' };
+const BUG_STATUS_LABEL = { open: '🟥 未対応', in_progress: '🟦 対応中', resolved: '🟩 解決', wont_fix: '⬜ 対応しない', duplicate: '🔁 重複' };
+const BUG_STATUS_COLOR = { open: '#EF4444', in_progress: '#3B82F6', resolved: '#10B981', wont_fix: '#9CA3AF', duplicate: '#6B7280' };
+
+function _brEsc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _brFmtDate(s) {
+  if (!s) return '';
+  try {
+    const d = new Date(s);
+    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  } catch(_) { return s; }
+}
+function _brUserLabel(u) {
+  if (!u) return '';
+  return u.nickname || u.full_name || '';
+}
+
+// ヘッダーの🐛バッジ: open + in_progress 件数を表示
+async function loadBugReportOpenCount() {
+  try {
+    const res = await fetch('/api/haruka/bug-reports');
+    if (!res.ok) return;
+    const all = await res.json();
+    const n = (all || []).filter(r => r.status === 'open' || r.status === 'in_progress').length;
+    const badge = document.getElementById('bug-report-badge');
+    const btn = document.getElementById('bug-report-toggle');
+    if (!badge || !btn) return;
+    if (n > 0) {
+      badge.textContent = n > 99 ? '99+' : String(n);
+      badge.hidden = false;
+      btn.classList.add('has-unread');
+    } else {
+      badge.hidden = true;
+      btn.classList.remove('has-unread');
+    }
+  } catch (_) {}
+}
+
+async function openBugReportListModal() {
+  openModal('modal-bug-report-list');
+  await loadBugReportList();
+}
+
+async function loadBugReportList() {
+  if (_bugReportLoading) return;
+  _bugReportLoading = true;
+  try {
+    const res = await fetch('/api/haruka/bug-reports');
+    if (!res.ok) throw new Error('一覧の取得に失敗しました');
+    _bugReports = await res.json();
+    _brRebuildAssigneeFilter();
+    renderBugReportList();
+  } catch (e) {
+    document.getElementById('bug-report-list').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B">${_brEsc(e.message)}</div>`;
+  } finally {
+    _bugReportLoading = false;
+  }
+}
+
+function _brRebuildAssigneeFilter() {
+  const sel = document.getElementById('bug-report-filter-assignee');
+  if (!sel) return;
+  const prev = sel.value;
+  const seen = new Map();
+  for (const r of _bugReports) {
+    if (r.assignee && r.assignee.id && !seen.has(r.assignee.id)) {
+      seen.set(r.assignee.id, _brUserLabel(r.assignee));
+    }
+  }
+  let html = '<option value="">すべての対応者</option><option value="__none__">— 未割当のみ —</option>';
+  const sorted = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja'));
+  for (const [id, label] of sorted) {
+    html += `<option value="${_brEsc(id)}">${_brEsc(label)}</option>`;
+  }
+  sel.innerHTML = html;
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function renderBugReportList() {
+  const list = document.getElementById('bug-report-list');
+  if (!list) return;
+  const search = (document.getElementById('bug-report-search')?.value || '').trim().toLowerCase();
+  const fStatus = document.getElementById('bug-report-filter-status')?.value || '';
+  const fSev = document.getElementById('bug-report-filter-severity')?.value || '';
+  const fAss = document.getElementById('bug-report-filter-assignee')?.value || '';
+  const onlyMine = document.getElementById('bug-report-filter-mine')?.checked || false;
+  const myId = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
+
+  let rows = _bugReports.slice();
+  if (fStatus) rows = rows.filter(r => r.status === fStatus);
+  if (fSev) rows = rows.filter(r => r.severity === fSev);
+  if (fAss === '__none__') rows = rows.filter(r => !r.assignee_user_id);
+  else if (fAss) rows = rows.filter(r => r.assignee_user_id === fAss);
+  if (onlyMine) rows = myId ? rows.filter(r => r.reporter_user_id === myId) : [];
+  if (search) {
+    rows = rows.filter(r => {
+      const hay = [r.title, r.description, r.screen_label, _brUserLabel(r.reporter), _brUserLabel(r.assignee)].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(search);
+    });
+  }
+
+  if (rows.length === 0) {
+    list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted)">該当するバグ報告はありません</div>`;
+    return;
+  }
+
+  list.innerHTML = rows.map(r => {
+    const sevColor = BUG_SEVERITY_COLOR[r.severity] || '#6B7280';
+    const sevLabel = BUG_SEVERITY_LABEL[r.severity] || r.severity;
+    const stColor = BUG_STATUS_COLOR[r.status] || '#6B7280';
+    const stLabel = BUG_STATUS_LABEL[r.status] || r.status;
+    const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
+    const assigneeLabel = r.assignee ? `👤 ${_brEsc(_brUserLabel(r.assignee))}` : '<span style="color:var(--text-muted)">未割当</span>';
+    const screen = r.screen_label ? `<span style="background:#EEF2F7;color:#374151;padding:2px 8px;border-radius:10px;font-size:11px">${_brEsc(r.screen_label)}</span>` : '';
+    const desc = r.description ? `<div style="font-size:12px;color:#4B5563;margin-top:4px;white-space:pre-wrap;line-height:1.5;max-height:60px;overflow:hidden">${_brEsc(r.description)}</div>` : '';
+    return `
+    <div data-brid="${_brEsc(r.id)}" style="border:1px solid var(--border);border-left:4px solid ${stColor};border-radius:8px;padding:10px 12px;background:#fff;cursor:pointer" onclick='openBugReportModal({ id: ${JSON.stringify(r.id)} })'>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="background:${stColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_brEsc(stLabel)}</span>
+        <span style="background:${sevColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_brEsc(sevLabel)}</span>
+        ${screen}
+        <span style="flex:1"></span>
+        <span style="font-size:11px;color:var(--text-muted)">${_brEsc(_brFmtDate(r.created_at))}</span>
+      </div>
+      <div style="font-weight:700;font-size:14px;color:#111827">${_brEsc(r.title)}</div>
+      ${desc}
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;font-size:11px;color:#6B7280">
+        <span>📣 報告: ${_brEsc(reporterLabel)}</span>
+        <span>${assigneeLabel}</span>
+        ${r.url ? `<span title="${_brEsc(r.url)}">🔗 ${_brEsc(r.url.replace(/^https?:\/\/[^/]+/, ''))}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// 新規 or 編集モーダルを開く
+//   options: { id?: string, description?: string, title?: string }
+async function openBugReportModal(options = {}) {
+  // メンバー一覧から assignee select を構築
+  const assignSel = document.getElementById('br-assignee');
+  if (assignSel) {
+    const members = Array.isArray(allMembers) ? allMembers : [];
+    const sorted = members.slice().sort((a, b) => {
+      const la = a.nickname || a.full_name || '';
+      const lb = b.nickname || b.full_name || '';
+      return la.localeCompare(lb, 'ja');
+    });
+    let html = '<option value="">— 未割当 —</option>';
+    for (const m of sorted) {
+      const label = m.nickname ? `${_brEsc(m.nickname)}（${_brEsc(m.full_name || '')}）` : _brEsc(m.full_name || '');
+      html += `<option value="${_brEsc(m.id)}">${label}</option>`;
+    }
+    assignSel.innerHTML = html;
+  }
+
+  // フォーム初期化
+  document.getElementById('br-id').value = '';
+  document.getElementById('br-title').value = options.title || '';
+  document.getElementById('br-screen-label').value = '';
+  document.getElementById('br-severity').value = 'normal';
+  document.getElementById('br-assignee').value = '';
+  document.getElementById('br-description').value = options.description || '';
+  document.getElementById('br-is-anonymous').checked = false;
+  document.getElementById('br-status').value = 'open';
+  document.getElementById('br-edit-only').style.display = 'none';
+  document.getElementById('br-delete-btn').style.display = 'none';
+  document.getElementById('br-meta-info').textContent = '';
+  bugReportRemoveScreenshot();
+  _bugReportEditing = null;
+
+  if (options.id) {
+    // 編集モード: 詳細取得
+    document.getElementById('bug-report-modal-title').textContent = '🦋 バグ報告 — 編集';
+    try {
+      const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(options.id)}`);
+      if (!res.ok) throw new Error('詳細の取得に失敗しました');
+      const r = await res.json();
+      _bugReportEditing = r;
+      document.getElementById('br-id').value = r.id;
+      document.getElementById('br-title').value = r.title || '';
+      document.getElementById('br-screen-label').value = r.screen_label || '';
+      document.getElementById('br-severity').value = r.severity || 'normal';
+      document.getElementById('br-assignee').value = r.assignee_user_id || '';
+      document.getElementById('br-description').value = r.description || '';
+      document.getElementById('br-is-anonymous').checked = !!r.is_anonymous;
+      document.getElementById('br-anonymous-wrap').style.display = 'none'; // 編集時は匿名チェックを変えさせない
+      document.getElementById('br-status').value = r.status || 'open';
+      document.getElementById('br-edit-only').style.display = '';
+      // 削除は admin のみ
+      const isAdmin = (typeof currentUser !== 'undefined' && currentUser?.role === 'admin');
+      document.getElementById('br-delete-btn').style.display = isAdmin ? '' : 'none';
+      // メタ情報
+      const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
+      const meta = [
+        `報告: ${reporterLabel}`,
+        `日時: ${_brFmtDate(r.created_at)}`,
+        r.url ? `URL: ${r.url}` : '',
+        r.resolved_at ? `解決日時: ${_brFmtDate(r.resolved_at)}` : '',
+      ].filter(Boolean).join(' / ');
+      document.getElementById('br-meta-info').textContent = meta;
+      // スクショ
+      if (r.screenshot_data_url) {
+        await bugReportLoadImageFromDataUrl(r.screenshot_data_url);
+      }
+    } catch (e) {
+      alert(e.message);
+      return;
+    }
+  } else {
+    document.getElementById('bug-report-modal-title').textContent = '🦋 バグ報告 — 新規';
+    document.getElementById('br-anonymous-wrap').style.display = '';
+    // 現在のページURLを記録（送信時にbrowser_infoに含める）
+  }
+
+  bugReportSetTool('rect');
+  openModal('modal-bug-report');
+}
+
+// ===== スクリーンショット ハンドリング =====
+async function bugReportHandleFile(file) {
+  if (!file) return;
+  if (!/^image\//.test(file.type)) { alert('画像ファイルを選んでください'); return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    await bugReportLoadImageFromDataUrl(reader.result);
+  };
+  reader.readAsDataURL(file);
+}
+
+function bugReportLoadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      _bugReportImage = img;
+      _bugReportAnnotations = [];
+      const canvas = document.getElementById('br-canvas');
+      const maxW = 1600; // 縦横どちらかが maxW を超えたら縮小
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) > maxW) {
+        const scale = maxW / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      canvas.width = w; canvas.height = h;
+      bugReportRedrawCanvas();
+      document.getElementById('br-screenshot-editor').style.display = '';
+      resolve();
+    };
+    img.src = dataUrl;
+  });
+}
+
+function bugReportRemoveScreenshot() {
+  _bugReportImage = null;
+  _bugReportAnnotations = [];
+  _bugReportDrag = null;
+  document.getElementById('br-screenshot-editor').style.display = 'none';
+  const f = document.getElementById('br-screenshot-file');
+  if (f) f.value = '';
+}
+
+function bugReportRedrawCanvas() {
+  const canvas = document.getElementById('br-canvas');
+  if (!canvas || !_bugReportImage) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(_bugReportImage, 0, 0, canvas.width, canvas.height);
+  for (const ann of _bugReportAnnotations) {
+    bugReportDrawAnnotation(ctx, ann);
+  }
+  // ドラッグ中のプレビュー
+  if (_bugReportDrag && _bugReportDrag.current) {
+    bugReportDrawAnnotation(ctx, {
+      type: _bugReportTool,
+      x1: _bugReportDrag.startX, y1: _bugReportDrag.startY,
+      x2: _bugReportDrag.current.x, y2: _bugReportDrag.current.y,
+    });
+  }
+}
+
+function bugReportDrawAnnotation(ctx, ann) {
+  ctx.strokeStyle = '#EF4444';
+  ctx.lineWidth = 3;
+  if (ann.type === 'rect') {
+    const x = Math.min(ann.x1, ann.x2);
+    const y = Math.min(ann.y1, ann.y2);
+    const w = Math.abs(ann.x2 - ann.x1);
+    const h = Math.abs(ann.y2 - ann.y1);
+    ctx.strokeRect(x, y, w, h);
+  } else if (ann.type === 'arrow') {
+    ctx.beginPath();
+    ctx.moveTo(ann.x1, ann.y1);
+    ctx.lineTo(ann.x2, ann.y2);
+    ctx.stroke();
+    // 矢印の先端
+    const angle = Math.atan2(ann.y2 - ann.y1, ann.x2 - ann.x1);
+    const headLen = 18;
+    ctx.beginPath();
+    ctx.moveTo(ann.x2, ann.y2);
+    ctx.lineTo(ann.x2 - headLen * Math.cos(angle - Math.PI / 6), ann.y2 - headLen * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(ann.x2, ann.y2);
+    ctx.lineTo(ann.x2 - headLen * Math.cos(angle + Math.PI / 6), ann.y2 - headLen * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  }
+}
+
+function bugReportSetTool(tool) {
+  _bugReportTool = tool;
+  for (const id of ['br-tool-rect', 'br-tool-arrow']) {
+    const btn = document.getElementById(id);
+    if (btn) {
+      const active = (id === `br-tool-${tool}`);
+      btn.style.background = active ? '#EF4444' : '';
+      btn.style.color = active ? '#fff' : '';
+    }
+  }
+}
+
+function bugReportUndoAnnotation() {
+  if (_bugReportAnnotations.length > 0) {
+    _bugReportAnnotations.pop();
+    bugReportRedrawCanvas();
+  }
+}
+function bugReportClearAnnotations() {
+  _bugReportAnnotations = [];
+  bugReportRedrawCanvas();
+}
+
+// canvas マウスイベント（init 時にバインド）
+function _brSetupCanvasEvents() {
+  const canvas = document.getElementById('br-canvas');
+  if (!canvas) return;
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width;
+    const sy = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+  }
+  canvas.addEventListener('mousedown', (e) => {
+    if (!_bugReportImage) return;
+    const p = getPos(e);
+    _bugReportDrag = { startX: p.x, startY: p.y, current: { x: p.x, y: p.y } };
+  });
+  canvas.addEventListener('mousemove', (e) => {
+    if (!_bugReportDrag) return;
+    _bugReportDrag.current = getPos(e);
+    bugReportRedrawCanvas();
+  });
+  canvas.addEventListener('mouseup', (e) => {
+    if (!_bugReportDrag) return;
+    const p = getPos(e);
+    const dx = Math.abs(p.x - _bugReportDrag.startX);
+    const dy = Math.abs(p.y - _bugReportDrag.startY);
+    if (dx > 4 || dy > 4) {
+      _bugReportAnnotations.push({
+        type: _bugReportTool,
+        x1: _bugReportDrag.startX, y1: _bugReportDrag.startY,
+        x2: p.x, y2: p.y,
+      });
+    }
+    _bugReportDrag = null;
+    bugReportRedrawCanvas();
+  });
+  canvas.addEventListener('mouseleave', () => {
+    if (_bugReportDrag) { _bugReportDrag = null; bugReportRedrawCanvas(); }
+  });
+}
+
+// dropzone セットアップ（dragover/drop, paste）
+function _brSetupDropzone() {
+  const dz = document.getElementById('br-screenshot-dropzone');
+  if (!dz) return;
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.style.background = '#EEF2FF'; });
+  dz.addEventListener('dragleave', () => { dz.style.background = '#FAFAFA'; });
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dz.style.background = '#FAFAFA';
+    const file = e.dataTransfer?.files?.[0];
+    if (file) bugReportHandleFile(file);
+  });
+  // モーダルが開いている時の paste をキャッチ
+  document.addEventListener('paste', (e) => {
+    const modal = document.getElementById('modal-bug-report');
+    if (!modal || modal.style.display !== 'flex') return;
+    const items = e.clipboardData?.items || [];
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        const file = it.getAsFile();
+        if (file) { bugReportHandleFile(file); e.preventDefault(); break; }
+      }
+    }
+  });
+}
+
+window.addEventListener('load', () => {
+  setTimeout(() => { _brSetupCanvasEvents(); _brSetupDropzone(); }, 500);
+});
+
+// 送信
+async function submitBugReport() {
+  const id = document.getElementById('br-id').value || null;
+  const title = document.getElementById('br-title').value.trim();
+  if (!title) { alert('タイトルは必須です'); return; }
+
+  // canvas をPNG data URLに（画像があれば）
+  let screenshotDataUrl = null;
+  if (_bugReportImage) {
+    const canvas = document.getElementById('br-canvas');
+    try {
+      screenshotDataUrl = canvas.toDataURL('image/png');
+    } catch (e) {
+      console.warn('[bug-report] canvas.toDataURL failed:', e);
+    }
+  } else if (_bugReportEditing && _bugReportEditing.screenshot_data_url === null) {
+    // 既存編集で画像を破棄したパターン → null送信
+    screenshotDataUrl = null;
+  }
+
+  const payload = {
+    title,
+    description: document.getElementById('br-description').value.trim() || null,
+    screen_label: document.getElementById('br-screen-label').value.trim() || null,
+    severity: document.getElementById('br-severity').value,
+    assignee_user_id: document.getElementById('br-assignee').value || null,
+  };
+  if (screenshotDataUrl !== null || !id) {
+    // 新規 or 画像変更があった場合のみ送信
+    payload.screenshot_data_url = screenshotDataUrl;
+  }
+  if (!id) {
+    payload.is_anonymous = document.getElementById('br-is-anonymous').checked;
+    payload.url = location.href;
+    payload.browser_info = { ua: navigator.userAgent, viewport: `${window.innerWidth}x${window.innerHeight}` };
+  } else {
+    payload.status = document.getElementById('br-status').value;
+  }
+
+  try {
+    const url = id ? `/api/haruka/bug-reports/${encodeURIComponent(id)}` : '/api/haruka/bug-reports';
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '保存に失敗しました');
+      return;
+    }
+    closeModal('modal-bug-report');
+    showToast(id ? 'バグ報告を更新しました' : 'バグ報告を送信しました（ご報告ありがとうございます）', 'success');
+    if (document.getElementById('modal-bug-report-list')?.style.display === 'flex') {
+      await loadBugReportList();
+    }
+    loadBugReportOpenCount();
+  } catch (e) { alert(e.message); }
+}
+
+async function deleteBugReport() {
+  const id = document.getElementById('br-id').value;
+  if (!id) return;
+  if (!confirm('このバグ報告を削除します。よろしいですか？')) return;
+  try {
+    const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '削除に失敗しました');
+      return;
+    }
+    closeModal('modal-bug-report');
+    if (document.getElementById('modal-bug-report-list')?.style.display === 'flex') {
+      await loadBugReportList();
+    }
+    loadBugReportOpenCount();
+  } catch (e) { alert(e.message); }
+}
+
+// 任意のタイミングで起動できるよう公開
+window.openBugReportModal = openBugReportModal;
+window.openBugReportListModal = openBugReportListModal;
 
 init();
 

@@ -18,6 +18,12 @@ const {
   getUsersRolesMap,
   invalidateRolesCache,
 } = require('../utils/roles');
+const {
+  BUILTIN_FIELDS,
+  BUILTIN_FIELD_LABELS,
+  isBuiltinField,
+  isAllowedCustomType,
+} = require('../utils/category-fields');
 
 // ==================== ロール判定ヘルパー（dual-read 期間用） ====================
 // Stage 0 / Step 2 (ADR 003): authorization 経路の role 判定はこのヘルパー経由で行う。
@@ -725,6 +731,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     tags,
     filename_template_id, filename_token_overrides,
     scheduled_start_date, active_phase_template_id,
+    // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL
+    creatives_export_sheet_url,
     // ADR 008 Phase 4: ファイル名連番カスタマイズ
     next_filename_serial, serial_digits
   } = req.body;
@@ -808,6 +816,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
   }
+  // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（明示時のみ反映）
+  if (creatives_export_sheet_url !== undefined) {
+    updateData.creatives_export_sheet_url = creatives_export_sheet_url || null;
+  }
   // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
   // フィールドが渡ってきた時のみ正規化して反映する。
   if (sub_director_ids !== undefined) {
@@ -848,6 +860,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const retry3 = await supabase.from('projects').update(fallback3).eq('id', req.params.id).select().single();
     data = retry3.data; error = retry3.error;
   }
+  // ADR 008 Phase 1 migration 未適用ガード
+  if (error && /creatives_export_sheet_url/i.test(error.message || '')) {
+    const { creatives_export_sheet_url: _oExp, ...fallbackExp } = updateData;
+    const retryExp = await supabase.from('projects').update(fallbackExp).eq('id', req.params.id).select().single();
+    data = retryExp.data; error = retryExp.error;
+  }
   // ADR 010 Phase 1 migration 未適用ガード（schema-sync 失敗時）
   if (error && /scheduled_start_date|active_phase_template_id/i.test(error.message || '')) {
     const { scheduled_start_date: _o4a, active_phase_template_id: _o4b, ...fallback4 } = updateData;
@@ -871,6 +889,22 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     resolvedTags = normalizedTags;
   }
   res.json(resolvedTags !== undefined ? { ...(data || {}), tags: resolvedTags } : data);
+});
+
+// ==================== ADR 008 Phase 1: クリエイティブ管理シート同期 ====================
+// 案件単位で creatives + creative_versions を Google Sheets に片方向同期する。
+// 同期先 URL が未設定なら system_settings.creatives_export_master_template_url を
+// コピーして自動で割り当てる。マッピングは system_settings.creatives_export_mapping_json
+// で上書き可能（未設定なら DEFAULT_MAPPING）。
+router.post('/projects/:id/sync-sheet', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  try {
+    const { syncToSheet } = require('../utils/sheets-export');
+    const result = await syncToSheet(req.params.id, req.user?.id);
+    res.json(result);
+  } catch (e) {
+    console.error('[POST /projects/:id/sync-sheet]', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
 });
 
 // 案件削除（admin/secretary/producer/PD のみ）
@@ -1110,6 +1144,220 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
     return res.status(500).json({ error: error.message });
   }
   res.json({ ok: true });
+});
+
+// ==================== creative_category_fields (ADR 012) ====================
+// カテゴリ × フィールドの可視性 / 並び順 / ラベル / 必須 / カスタム項目を管理。
+// 詳細モーダル（modal-creative-detail）が openCreativeDetail 時にここを引き、
+// builtin DOM の visibility と custom フィールドの動的生成を行う。
+//
+// schema-sync 失敗で本番に creative_category_fields テーブルが無い場合は、
+// 200 / 空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingCategoryFieldsTable = (err) =>
+  err && /relation .*creative_category_fields.* does not exist|could not find the table/i.test(err.message || '');
+const isMissingCustomFieldValuesTable = (err) =>
+  err && /relation .*creative_custom_field_values.* does not exist|could not find the table/i.test(err.message || '');
+
+// GET /api/categories/:id/fields
+//   カテゴリのフィールド設定一覧を返す。sort_order 昇順。
+//   フォールバック: テーブル未作成 → builtin の既定値（全部 visible=true）を返す
+router.get('/categories/:id/fields', async (req, res) => {
+  const cid = req.params.id;
+  const { data, error } = await supabase
+    .from('creative_category_fields')
+    .select('*')
+    .eq('category_id', cid)
+    .order('sort_order', { ascending: true });
+  if (error) {
+    if (isMissingCategoryFieldsTable(error)) {
+      // フェイルセーフ: builtin 全表示の既定値を返す
+      const fallback = BUILTIN_FIELDS.map((key, i) => ({
+        category_id: cid,
+        field_key: key,
+        field_kind: 'builtin',
+        visible: true,
+        sort_order: (i + 1) * 10,
+        label: BUILTIN_FIELD_LABELS[key] || key,
+        required: false,
+      }));
+      return res.json(fallback);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// PUT /api/categories/:id/fields
+//   フィールド設定を一括更新（upsert + 削除）。
+//   request body: { fields: [ { field_key, field_kind, custom_type, custom_options,
+//                               visible, sort_order, label, required } ... ] }
+//   送られなかった field_key の行は削除される（custom 削除に使う）。
+//   builtin フィールドの行は削除されても、フロントは BUILTIN_FIELDS のフォールバックで描画されるので問題なし。
+router.put('/categories/:id/fields', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const cid = req.params.id;
+  const fields = Array.isArray(req.body?.fields) ? req.body.fields : null;
+  if (!fields) {
+    return res.status(400).json({ error: 'fields 配列が必要です' });
+  }
+
+  // バリデーション
+  const seenKeys = new Set();
+  for (const f of fields) {
+    if (!f.field_key || typeof f.field_key !== 'string') {
+      return res.status(400).json({ error: 'field_key は必須です' });
+    }
+    if (seenKeys.has(f.field_key)) {
+      return res.status(400).json({ error: `field_key が重複しています: ${f.field_key}` });
+    }
+    seenKeys.add(f.field_key);
+    const kind = f.field_kind || 'builtin';
+    if (kind !== 'builtin' && kind !== 'custom') {
+      return res.status(400).json({ error: 'field_kind は builtin または custom' });
+    }
+    if (kind === 'builtin' && !isBuiltinField(f.field_key)) {
+      return res.status(400).json({ error: `builtin フィールドではありません: ${f.field_key}` });
+    }
+    if (kind === 'custom') {
+      if (!isAllowedCustomType(f.custom_type)) {
+        return res.status(400).json({ error: `custom_type は text/textarea/url/select` });
+      }
+      // builtin と同じ field_key は禁止（衝突回避）
+      if (isBuiltinField(f.field_key)) {
+        return res.status(400).json({ error: `field_key '${f.field_key}' は builtin と衝突します` });
+      }
+    }
+  }
+
+  // 1) 既存行のうち、送られなかった field_key を削除
+  const incomingKeys = fields.map(f => f.field_key);
+  if (incomingKeys.length > 0) {
+    const { error: delErr } = await supabase
+      .from('creative_category_fields')
+      .delete()
+      .eq('category_id', cid)
+      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
+    if (delErr && !isMissingCategoryFieldsTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  } else {
+    const { error: delErr } = await supabase
+      .from('creative_category_fields')
+      .delete()
+      .eq('category_id', cid);
+    if (delErr && !isMissingCategoryFieldsTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  }
+
+  // 2) upsert（カラム数を絞る）
+  const rows = fields.map(f => ({
+    category_id:    cid,
+    field_key:      f.field_key,
+    field_kind:     f.field_kind || 'builtin',
+    custom_type:    f.field_kind === 'custom' ? (f.custom_type || null) : null,
+    custom_options: f.field_kind === 'custom' ? (f.custom_options || null) : null,
+    visible:        f.visible !== false,
+    sort_order:     Number.isFinite(parseInt(f.sort_order, 10)) ? parseInt(f.sort_order, 10) : 100,
+    label:          (f.label === undefined || f.label === null) ? null : String(f.label),
+    required:       !!f.required,
+    updated_at:     new Date().toISOString(),
+  }));
+
+  if (rows.length === 0) {
+    return res.json({ ok: true, fields: [] });
+  }
+
+  const { data, error } = await supabase
+    .from('creative_category_fields')
+    .upsert(rows, { onConflict: 'category_id,field_key' })
+    .select();
+  if (error) {
+    if (isMissingCategoryFieldsTable(error)) {
+      return res.status(503).json({ error: 'creative_category_fields テーブルが未作成です。migrations/2026-05-10_creative_category_fields.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, fields: data || [] });
+});
+
+// GET /api/creatives/:id/custom-fields
+//   クリエイティブのカスタム値一覧 [{ field_key, value }, ...]
+router.get('/creatives/:id/custom-fields', requireAuth, async (req, res) => {
+  const cid = req.params.id;
+  const { data, error } = await supabase
+    .from('creative_custom_field_values')
+    .select('field_key, value')
+    .eq('creative_id', cid);
+  if (error) {
+    if (isMissingCustomFieldValuesTable(error)) {
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// PUT /api/creatives/:id/custom-fields
+//   request body: { values: [ { field_key, value } ... ] }
+//   送られなかった field_key の行は削除される。
+router.put('/creatives/:id/custom-fields', requireAuth, async (req, res) => {
+  const cid = req.params.id;
+  const values = Array.isArray(req.body?.values) ? req.body.values : null;
+  if (!values) {
+    return res.status(400).json({ error: 'values 配列が必要です' });
+  }
+  // バリデーション
+  for (const v of values) {
+    if (!v.field_key || typeof v.field_key !== 'string') {
+      return res.status(400).json({ error: 'field_key は必須' });
+    }
+    if (isBuiltinField(v.field_key)) {
+      return res.status(400).json({ error: `builtin フィールド '${v.field_key}' は creatives 本体に保存してください（custom-fields ではない）` });
+    }
+  }
+
+  // 1) 不要になった行を削除
+  const incomingKeys = values.map(v => v.field_key);
+  if (incomingKeys.length > 0) {
+    const { error: delErr } = await supabase
+      .from('creative_custom_field_values')
+      .delete()
+      .eq('creative_id', cid)
+      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
+    if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  } else {
+    const { error: delErr } = await supabase
+      .from('creative_custom_field_values')
+      .delete()
+      .eq('creative_id', cid);
+    if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  }
+
+  // 2) upsert
+  const rows = values.map(v => ({
+    creative_id: cid,
+    field_key:   v.field_key,
+    value:       (v.value === undefined || v.value === null) ? null : String(v.value),
+    updated_at:  new Date().toISOString(),
+  }));
+  if (rows.length === 0) {
+    return res.json({ ok: true, values: [] });
+  }
+  const { data, error } = await supabase
+    .from('creative_custom_field_values')
+    .upsert(rows, { onConflict: 'creative_id,field_key' })
+    .select('field_key, value');
+  if (error) {
+    if (isMissingCustomFieldValuesTable(error)) {
+      return res.status(503).json({ error: 'creative_custom_field_values テーブルが未作成です。migration を本番に適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, values: data || [] });
 });
 
 // ==================== filename_templates (ADR 007 Stage 1) ====================
@@ -4700,7 +4948,7 @@ router.get('/creatives/:id', async (req, res) => {
     .select(`
       *,
       projects(
-        id, name, producer_id, director_id, regulation_url,
+        id, name, producer_id, director_id, regulation_url, primary_category_id,
         director:director_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         producer:producer_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
         clients(id, name, client_code, status)
@@ -4716,6 +4964,49 @@ router.get('/creatives/:id', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   if (!data) {
     return res.status(404).json({ error: 'このクリエイティブは見つかりません（削除されている可能性があります）' });
+  }
+
+  // primary_category（カテゴリ別チェブロン用）+ status_template_items を埋め込む。
+  // LP/HP/LINE 等の専用工程をフロント側で描画するために使う。
+  // schema-sync 未適用 / テーブル無し環境でもフローは止めない（フォールバックで video/image 既存挙動）。
+  if (data && data.projects?.primary_category_id) {
+    try {
+      const { data: catData } = await supabase
+        .from('creative_categories')
+        .select('id, code, name, color')
+        .eq('id', data.projects.primary_category_id)
+        .maybeSingle();
+      data.projects.primary_category = catData || null;
+
+      // LP / HP / LINE 用の status_template_items を一緒に返す。
+      // video / image 用は既存ハードコード STEPS で描画されるため不要。
+      const code = catData?.code;
+      if (code && ['lp', 'hp', 'line'].includes(code)) {
+        const { data: tpls } = await supabase
+          .from('creative_status_templates')
+          .select('id, name, is_default, items:creative_status_template_items(code, label, sort_order, is_milestone)')
+          .eq('category_id', catData.id)
+          .order('is_default', { ascending: false })
+          .order('name', { ascending: true });
+        const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0] || null;
+        if (tpl) {
+          const items = (tpl.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          data.status_template_items = items;
+          data.status_template_id = tpl.id;
+          // status_code が NULL の場合は first item の code を表示用フォールバックとして埋める
+          // （DB は触らず、レスポンス上のみ。Backfill migration で本体は埋まる）
+          if (!data.status_code && items.length) {
+            data.status_code = items[0].code;
+          }
+        } else {
+          data.status_template_items = [];
+        }
+      }
+    } catch (e) {
+      console.warn('[creatives/:id] primary_category / status_template embed 失敗:', e.message);
+      data.projects.primary_category = null;
+      data.status_template_items = [];
+    }
   }
 
   // teams を別クエリで取得（FK 不要にするため PostgREST の埋め込みは使わない）
@@ -5083,7 +5374,37 @@ router.post('/creatives', async (req, res) => {
     resolvedTeamId = u?.team_id || null;
   }
 
-  const { data, error } = await supabase.from('creatives').insert({
+  // LP / HP / LINE カテゴリの案件の場合、初期 status_code を default テンプレの最小 sort_order の code に設定する。
+  // 動画 / 静止画 は status_code を入れない（既存の status 駆動を維持）。
+  // schema-sync 未適用 / テーブル無し環境では try/catch で握りつぶす。
+  let initialStatusCode = null;
+  try {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('primary_category_id')
+      .eq('id', project_id)
+      .maybeSingle();
+    if (proj?.primary_category_id) {
+      const { data: cat } = await supabase
+        .from('creative_categories')
+        .select('id, code')
+        .eq('id', proj.primary_category_id)
+        .maybeSingle();
+      if (cat?.code && ['lp', 'hp', 'line'].includes(cat.code)) {
+        const { data: tpls } = await supabase
+          .from('creative_status_templates')
+          .select('id, is_default, items:creative_status_template_items(code, sort_order)')
+          .eq('category_id', cat.id);
+        const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0];
+        const items = (tpl?.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+        if (items.length) initialStatusCode = items[0].code;
+      }
+    }
+  } catch (e) {
+    console.warn('[creatives:create] initial status_code 解決失敗:', e.message);
+  }
+
+  const insertPayload = {
     project_id, cycle_id, file_name, creative_type,
     draft_deadline: draft_deadline || null,
     final_deadline: final_deadline || null,
@@ -5101,7 +5422,16 @@ router.post('/creatives', async (req, res) => {
     team_id: resolvedTeamId,
     memo: (memo && String(memo).trim()) ? memo : null,
     client_review_url: (client_review_url && String(client_review_url).trim()) ? client_review_url : null,
-  }).select().single();
+  };
+  if (initialStatusCode) insertPayload.status_code = initialStatusCode;
+
+  let { data, error } = await supabase.from('creatives').insert(insertPayload).select().single();
+  // schema-sync 失敗で status_code 列がまだ無い場合のフォールバック
+  if (error && /status_code/i.test(error.message || '') && initialStatusCode) {
+    const { status_code: _omit, ...fallback } = insertPayload;
+    const retry = await supabase.from('creatives').insert(fallback).select().single();
+    data = retry.data; error = retry.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録
   if (assignee_id) {
@@ -6200,6 +6530,97 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     deleted_invoice_items: deletedItemIds.length,
     affected_invoices: affectedInvoiceIds.length,
     creative: updated,
+  });
+});
+
+// =====================================================
+// LP / HP / LINE 専用: テンプレ駆動の status_code 進行 / 戻し
+// =====================================================
+// 動画 / 静止画 系（status 駆動・既存ハードコード STEPS）には影響を与えない。
+// `creatives.projects.primary_category.code` が lp/hp/line のもののみ対象。
+// それ以外のカテゴリで叩かれた場合は 400 を返す。
+
+async function _resolveCategoryAndItems(creativeId) {
+  const { data: creative } = await supabase
+    .from('creatives')
+    .select('id, status_code, project_id, projects(id, primary_category_id)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (!creative) return { error: { status: 404, message: 'クリエイティブが見つかりません' } };
+  const catId = creative.projects?.primary_category_id;
+  if (!catId) return { error: { status: 400, message: 'カテゴリが未設定です' } };
+  const { data: cat } = await supabase
+    .from('creative_categories')
+    .select('id, code')
+    .eq('id', catId)
+    .maybeSingle();
+  if (!cat?.code || !['lp', 'hp', 'line'].includes(cat.code)) {
+    return { error: { status: 400, message: 'このエンドポイントは LP / HP / LINE 専用です' } };
+  }
+  const { data: tpls } = await supabase
+    .from('creative_status_templates')
+    .select('id, is_default, items:creative_status_template_items(code, label, sort_order, is_milestone)')
+    .eq('category_id', cat.id);
+  const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0] || null;
+  const items = ((tpl?.items) || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  if (!items.length) return { error: { status: 500, message: '工程テンプレが空です' } };
+  return { creative, category: cat, items };
+}
+
+// 次のステップへ進める（LP/HP/LINE 専用）
+router.post('/creatives/:id/advance-template-status', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const r = await _resolveCategoryAndItems(req.params.id);
+  if (r.error) return res.status(r.error.status).json({ error: r.error.message });
+  const { creative, items } = r;
+
+  const currentCode = creative.status_code || items[0].code;
+  const idx = items.findIndex(i => i.code === currentCode);
+  if (idx < 0) return res.status(400).json({ error: '現在の status_code がテンプレに存在しません' });
+  const next = items[idx + 1];
+  if (!next) return res.status(400).json({ error: '既に最終ステップです' });
+
+  const { data: updated, error: uErr } = await supabase
+    .from('creatives')
+    .update({ status_code: next.code, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select('id, status_code')
+    .single();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+
+  res.json({
+    ok: true,
+    status_code: updated.status_code,
+    label: next.label,
+    is_milestone: !!next.is_milestone,
+    is_final: idx + 1 === items.length - 1,
+  });
+});
+
+// 前のステップへ戻す（管理者のみ・LP/HP/LINE 専用）
+router.post('/creatives/:id/back-template-status', requireAuth, async (req, res) => {
+  if (getEffectiveRole(req) !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r = await _resolveCategoryAndItems(req.params.id);
+  if (r.error) return res.status(r.error.status).json({ error: r.error.message });
+  const { creative, items } = r;
+
+  const currentCode = creative.status_code || items[0].code;
+  const idx = items.findIndex(i => i.code === currentCode);
+  if (idx <= 0) return res.status(400).json({ error: '既に最初のステップです' });
+  const prev = items[idx - 1];
+
+  const { data: updated, error: uErr } = await supabase
+    .from('creatives')
+    .update({ status_code: prev.code, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select('id, status_code')
+    .single();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+
+  res.json({
+    ok: true,
+    status_code: updated.status_code,
+    label: prev.label,
+    is_milestone: !!prev.is_milestone,
   });
 });
 
@@ -12876,13 +13297,20 @@ function normalizeVersionLogPayload(body) {
   }
   if (body.related_url !== undefined) out.related_url = body.related_url || null;
   if (body.is_hidden !== undefined) out.is_hidden = !!body.is_hidden;
+  if (body.reporter_user_id !== undefined) {
+    const v = body.reporter_user_id;
+    out.reporter_user_id = (v === '' || v == null) ? null : String(v);
+  }
   return out;
 }
 
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
     const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    let q = supabase.from('version_logs').select('*').order('revision_no', { ascending: false });
+    let q = supabase
+      .from('version_logs')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url )')
+      .order('revision_no', { ascending: false });
     if (!isAdmin) q = q.eq('is_hidden', false);
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
@@ -12979,6 +13407,7 @@ router.post('/version-logs', requireAuth, async (req, res) => {
       tags: payload.tags || [],
       related_url: payload.related_url ?? null,
       is_hidden: payload.is_hidden || false,
+      reporter_user_id: payload.reporter_user_id ?? null,
       created_by: req.user?.id || null,
     };
 
@@ -13074,6 +13503,203 @@ router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
       .eq('id', req.params.id).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// バグ報告システム (bug_reports)
+// ============================================================
+// PR #188 の /api/error-report (Slack 投稿のみ・対応管理なし) とは独立。
+// 対応者割当・ステータス管理・履歴閲覧ができる管理対象のバグ報告。
+// 匿名フラグ true の場合は reporter_user_id = null で保存（誰が報告したか記録しない）。
+// ============================================================
+
+const BUG_REPORT_SEVERITIES = ['low', 'normal', 'high', 'critical'];
+const BUG_REPORT_STATUSES = ['open', 'in_progress', 'resolved', 'wont_fix', 'duplicate'];
+
+// data URL の最大サイズ（base64 で約 8MB ≒ 元画像 6MB）。
+// クライアント側で 1600px に縮小してから送る前提。
+const BUG_REPORT_DATA_URL_MAX = 8 * 1024 * 1024;
+
+function normalizeBugReportPayload(body, { isCreate }) {
+  const out = {};
+  if (body.title !== undefined) out.title = String(body.title || '').trim().slice(0, 200);
+  if (body.description !== undefined) out.description = body.description ? String(body.description).slice(0, 5000) : null;
+  if (body.url !== undefined) out.url = body.url ? String(body.url).slice(0, 1000) : null;
+  if (body.screen_label !== undefined) out.screen_label = body.screen_label ? String(body.screen_label).slice(0, 100) : null;
+  if (body.severity !== undefined) {
+    const v = String(body.severity || '').trim();
+    out.severity = BUG_REPORT_SEVERITIES.includes(v) ? v : 'normal';
+  }
+  if (body.status !== undefined) {
+    const v = String(body.status || '').trim();
+    out.status = BUG_REPORT_STATUSES.includes(v) ? v : 'open';
+  }
+  if (body.assignee_user_id !== undefined) {
+    const v = body.assignee_user_id;
+    out.assignee_user_id = (v === '' || v == null) ? null : String(v);
+  }
+  if (body.screenshot_data_url !== undefined) {
+    const v = body.screenshot_data_url;
+    if (!v) out.screenshot_data_url = null;
+    else {
+      const s = String(v);
+      if (s.length > BUG_REPORT_DATA_URL_MAX) {
+        const err = new Error('スクリーンショットが大きすぎます（8MB上限）');
+        err.statusCode = 413;
+        throw err;
+      }
+      if (!s.startsWith('data:image/')) {
+        const err = new Error('スクリーンショットの形式が不正です');
+        err.statusCode = 400;
+        throw err;
+      }
+      out.screenshot_data_url = s;
+    }
+  }
+  if (body.annotations !== undefined) out.annotations = body.annotations || null;
+  if (body.browser_info !== undefined) out.browser_info = body.browser_info || null;
+  if (isCreate) {
+    out.is_anonymous = !!body.is_anonymous;
+    if (!out.title) {
+      const err = new Error('タイトルは必須です');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+  // resolved_at はステータス遷移時に自動設定
+  return out;
+}
+
+// POST /api/haruka/bug-reports - 新規バグ報告（誰でも可・匿名対応）
+router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    let payload;
+    try { payload = normalizeBugReportPayload(req.body || {}, { isCreate: true }); }
+    catch (e) { return res.status(e.statusCode || 400).json({ error: e.message }); }
+
+    // 匿名なら reporter_user_id を一切記録しない
+    const reporterUserId = payload.is_anonymous ? null : (req.user?.id || null);
+
+    const insertRow = {
+      reporter_user_id: reporterUserId,
+      is_anonymous: !!payload.is_anonymous,
+      title: payload.title,
+      description: payload.description ?? null,
+      url: payload.url ?? null,
+      screen_label: payload.screen_label ?? null,
+      severity: payload.severity || 'normal',
+      status: 'open',
+      assignee_user_id: payload.assignee_user_id ?? null,
+      screenshot_data_url: payload.screenshot_data_url ?? null,
+      annotations: payload.annotations ?? null,
+      browser_info: payload.browser_info ?? null,
+    };
+
+    const { data, error } = await supabase
+      .from('bug_reports').insert(insertRow).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/bug-reports - 一覧（全員閲覧可）
+router.get('/bug-reports', requireAuth, async (req, res) => {
+  try {
+    const { status, assignee_user_id, mine } = req.query;
+    let q = supabase
+      .from('bug_reports')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url )')
+      .order('created_at', { ascending: false });
+    if (status) q = q.eq('status', status);
+    if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
+    if (mine === 'true' && req.user?.id) q = q.eq('reporter_user_id', req.user.id);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    // 匿名報告は reporter 情報をマスク
+    const sanitized = (data || []).map(r => {
+      if (r.is_anonymous) {
+        return { ...r, reporter_user_id: null, reporter: null };
+      }
+      return r;
+    });
+    res.json(sanitized);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/bug-reports/:id - 詳細（screenshot_data_url 含む）
+router.get('/bug-reports/:id', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('bug_reports')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url )')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not found' });
+    if (data.is_anonymous) {
+      data.reporter_user_id = null;
+      data.reporter = null;
+    }
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/haruka/bug-reports/:id - 更新（admin or assignee or 報告者本人）
+router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const { data: row, error: getErr } = await supabase
+      .from('bug_reports').select('id, reporter_user_id, assignee_user_id, status, is_anonymous').eq('id', req.params.id).maybeSingle();
+    if (getErr) return res.status(500).json({ error: getErr.message });
+    if (!row) return res.status(404).json({ error: 'not found' });
+
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isReporter = !row.is_anonymous && row.reporter_user_id && req.user?.id === row.reporter_user_id;
+    const isAssignee = row.assignee_user_id && req.user?.id === row.assignee_user_id;
+    if (!isAdmin && !isReporter && !isAssignee) {
+      return res.status(403).json({ error: '編集権限がありません（報告者本人 or 対応者 or 管理者のみ）' });
+    }
+
+    let payload;
+    try { payload = normalizeBugReportPayload(req.body || {}, { isCreate: false }); }
+    catch (e) { return res.status(e.statusCode || 400).json({ error: e.message }); }
+
+    payload.updated_at = new Date().toISOString();
+
+    // ステータスが resolved に遷移したら resolved_at を自動セット
+    if (payload.status && payload.status !== row.status) {
+      if (payload.status === 'resolved' || payload.status === 'wont_fix') {
+        payload.resolved_at = new Date().toISOString();
+      } else {
+        payload.resolved_at = null;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('bug_reports').update(payload).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/haruka/bug-reports/:id - 削除（admin のみ）
+router.delete('/bug-reports/:id', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ削除できます' });
+    const { error } = await supabase.from('bug_reports').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

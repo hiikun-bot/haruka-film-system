@@ -69,6 +69,61 @@ function isPlaceholder(v) {
   return t === '' || t === 'なし' || t === '-' || t === '—' || t === 'skip' || t === '（任意）' || t === '(任意)' || t.startsWith('例)') || t.startsWith('例：');
 }
 
+// 報告者名から users.id を解決する。
+// 完全一致のみ（部分一致は誤マッチの元なので一切しない）。
+//   - nickname と完全一致（1人だけ）
+//   - full_name と完全一致（1人だけ）
+//   - full_name のスペース除去版と完全一致（1人だけ）
+// いずれにも該当しない / 複数マッチ する場合は null を返す。
+async function resolveReporterUserId(rawName, supabaseUrl, headers) {
+  if (!rawName) return null;
+  const name = rawName.trim();
+  if (!name || isPlaceholder(name)) return null;
+
+  // users 全件取得（数十〜数百行想定なので全件 fetch で十分）。
+  // is_active 条件は付けない（過去の報告者も解決できるよう保持）。
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/users?select=id,full_name,nickname`,
+    { headers }
+  );
+  if (!res.ok) {
+    console.warn('[verup] failed to fetch users for reporter resolve:', res.status);
+    return null;
+  }
+  const users = await res.json();
+  if (!Array.isArray(users) || users.length === 0) return null;
+
+  const stripSpaces = (s) => String(s || '').replace(/[\s　]+/g, '');
+  const nameNoSpace = stripSpaces(name);
+
+  // 1) nickname 完全一致
+  let hits = users.filter(u => (u.nickname || '').trim() === name);
+  if (hits.length === 1) return hits[0].id;
+  if (hits.length > 1) {
+    console.warn(`[verup] reporter "${name}" matched ${hits.length} users by nickname — ambiguous, skip`);
+    return null;
+  }
+
+  // 2) full_name 完全一致
+  hits = users.filter(u => (u.full_name || '').trim() === name);
+  if (hits.length === 1) return hits[0].id;
+  if (hits.length > 1) {
+    console.warn(`[verup] reporter "${name}" matched ${hits.length} users by full_name — ambiguous, skip`);
+    return null;
+  }
+
+  // 3) full_name のスペース除去版と完全一致
+  hits = users.filter(u => stripSpaces(u.full_name) === nameNoSpace);
+  if (hits.length === 1) return hits[0].id;
+  if (hits.length > 1) {
+    console.warn(`[verup] reporter "${name}" matched ${hits.length} users by full_name (no-space) — ambiguous, skip`);
+    return null;
+  }
+
+  console.log(`[verup] reporter "${name}" not matched to any user — leaving null`);
+  return null;
+}
+
 function detectCategory(value, prTitle, prLabels) {
   if (value && VALID_CATEGORIES.includes(value)) return value;
   // ラベルから推定
@@ -146,6 +201,7 @@ async function main() {
   const useCase = pickKey(fields, '便利なシーン', 'use_case', 'シーン') || null;
   const versionLabel = pickKey(fields, 'バージョン', 'version_label', 'version') || null;
   const relatedUrl = pickKey(fields, '関連リンク', 'related_url') || PR_URL || null;
+  const reporterRaw = pickKey(fields, '報告者', 'reporter');
 
   // revision_no は GitHub の PR 番号と一致させる（Slack 通知や PR タイトルと突合できるように）
   const headers = {
@@ -153,6 +209,9 @@ async function main() {
     Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
     'Content-Type': 'application/json',
   };
+
+  // 報告者を nickname / full_name 完全一致で解決（マッチしなければ null）
+  const reporterUserId = await resolveReporterUserId(reporterRaw, SUPABASE_URL, headers);
   const prNo = parseInt(PR_NUMBER, 10);
   if (!Number.isFinite(prNo) || prNo <= 0) {
     console.error('[verup] PR_NUMBER missing or invalid — cannot derive revision_no:', PR_NUMBER);
@@ -176,6 +235,7 @@ async function main() {
     tags,
     related_url: relatedUrl,
     is_hidden: false,
+    reporter_user_id: reporterUserId,
   };
 
   let insRes = await fetch(`${SUPABASE_URL}/rest/v1/version_logs`, {
