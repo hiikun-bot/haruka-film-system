@@ -9748,16 +9748,31 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
 
 // チーム一覧
 router.get('/teams', async (req, res) => {
-  const { data, error } = await supabase
+  // team_members.leader_rank はチームカード内のメンバー順序（リーダー優先）に使うので含める。
+  // 旧スキーマ環境（leader_rank 列なし）でも壊れないよう、エラーになったら user_id のみで再取得する。
+  let { data, error } = await supabase
     .from('teams')
     .select(`
       *,
       director:users!teams_director_id_fkey(id, full_name),
       producer:users!teams_producer_id_fkey(id, full_name),
-      team_members(user_id)
+      team_members(user_id, leader_rank)
     `)
     .order('team_code');
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.warn('[GET /teams] leader_rank select failed, fallback to user_id only:', error.message);
+    const fb = await supabase
+      .from('teams')
+      .select(`
+        *,
+        director:users!teams_director_id_fkey(id, full_name),
+        producer:users!teams_producer_id_fkey(id, full_name),
+        team_members(user_id)
+      `)
+      .order('team_code');
+    if (fb.error) return res.status(500).json({ error: fb.error.message });
+    data = fb.data;
+  }
   res.json(data);
 });
 
