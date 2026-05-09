@@ -5856,7 +5856,7 @@ router.get('/creatives/:id/edit-logs', requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
-// ==================== ADR 012: クリエイティブ単価上書き ====================
+// ==================== ADR 013: クリエイティブ単価上書き ====================
 // 詳細: docs/design/decisions/012-creative-level-rate-overrides.md
 // migrations: 2026-05-10_creative_rate_overrides.sql
 //

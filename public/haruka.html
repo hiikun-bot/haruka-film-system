@@ -1826,7 +1826,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
     max-width: 95vw !important;
   }
 }
-/* PR ADR 012-related: temporarily hide bulk creative registration UI. Logic/JS/HTML retained. */
+/* PR ADR 013-related: temporarily hide bulk creative registration UI. Logic/JS/HTML retained. */
 #tab-bulk-btn,
 #creative-step1-bulk-link {
   display: none !important;
@@ -3623,7 +3623,7 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- ヘッダー固定 -->
     <div style="padding:20px 24px 0;flex-shrink:0">
       <div class="modal-title" style="margin-bottom:16px">クリエイティブ追加<button class="modal-close" onclick="cancelCreativeModal()">×</button></div>
-      <!-- ADR 012-related: bulk tab is temporarily hidden via CSS (#tab-bulk-btn). Logic/JS/HTML retained for future restore. -->
+      <!-- ADR 013-related: bulk tab is temporarily hidden via CSS (#tab-bulk-btn). Logic/JS/HTML retained for future restore. -->
       <div id="creative-tab-bar" style="display:flex;gap:4px;border-bottom:0.5px solid var(--border);padding-bottom:0">
         <button id="tab-single-btn" onclick="switchCreativeTab('single')" style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--em-dark);font-weight:500;border-bottom:2px solid var(--em);cursor:pointer">個別登録</button>
         <button id="tab-bulk-btn" onclick="switchCreativeTab('bulk')" style="font-size:13px;padding:8px 20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer">一括登録</button>
@@ -3653,7 +3653,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
           <div>
             <!-- 動画/静止画案件を選んでいる時だけ表示。クリックで一括登録タブに切替（案件は引き継ぎ） -->
-            <!-- ADR 012-related: temporarily hidden via CSS (#creative-step1-bulk-link). Logic retained. -->
+            <!-- ADR 013-related: temporarily hidden via CSS (#creative-step1-bulk-link). Logic retained. -->
             <button type="button" id="creative-step1-bulk-link" onclick="goToBulkFromSingle()" style="display:none;background:none;border:none;color:var(--em-dark);font-size:12px;cursor:pointer;padding:4px 0;text-decoration:underline">→ 複数本まとめて登録（一括登録）</button>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -6293,7 +6293,7 @@ window.showPage = window.showPage || function(name, btn) {
         <textarea class="form-input" id="pe-reason" rows="2" style="resize:vertical" placeholder="例: 同名クライアントの動画案件と取り違えて登録していたため正しい案件に変更"></textarea>
       </div>
 
-      <!-- ADR 012: クリエイティブ単位の単価上書き（admin のみ表示。loadCreativeRateOverrides() で display を切替） -->
+      <!-- ADR 013: クリエイティブ単位の単価上書き（admin のみ表示。loadCreativeRateOverrides() で display を切替） -->
       <div id="pe-rate-section" style="display:none;border-top:1px dashed var(--border);padding-top:16px;margin-top:8px;flex-direction:column;gap:12px">
         <div>
           <div style="font-size:14px;font-weight:700;color:var(--text)">💰 単価編集 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（管理者のみ）</span></div>
@@ -32054,13 +32054,13 @@ async function openCreativePostEdit() {
   // 案件初期値を保持（変更検知用）
   document.getElementById('modal-creative-postedit').dataset.originalProjectId = c.project_id || '';
 
-  // ADR 012: 単価編集セクション（admin のみ）
+  // ADR 013: 単価編集セクション（admin のみ）
   try { await loadCreativeRateOverrides(c.id); } catch (e) { console.warn('[rate-overrides] load failed:', e?.message || e); }
 
   openModal('modal-creative-postedit');
 }
 
-// ===== ADR 012: クリエイティブ単価上書き（事後修正モーダル内） =====
+// ===== ADR 013: クリエイティブ単価上書き（事後修正モーダル内） =====
 //
 // admin だけに UI を見せる。それ以外のロールでもサーバ側で 403 に弾かれるが、
 // 表示自体を出さないことで誤操作・問い合わせを減らす。
