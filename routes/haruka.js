@@ -4790,6 +4790,44 @@ router.get('/creatives/:id', async (req, res) => {
     data.projects.client_teams = [];
   }
 
+  // ball_holder（派生表示用）を一覧と同じ getBallHolder() で計算して返す。
+  // 詳細モーダルのヘッダーに「現在のボール保持者」を表示する用途。
+  // 一覧 (/creatives) のフォーマットと完全一致させて、表示揺れを防ぐ。
+  try {
+    const { data: teamsRaw } = await supabase
+      .from('teams')
+      .select('id, director_id, director:director_id(full_name), team_members(user_id)');
+    const directorByTeamId   = new Map();
+    const directorByUserId   = new Map();
+    const directorIdByTeamId = new Map();
+    const directorIdByUserId = new Map();
+    (teamsRaw || []).forEach(t => {
+      const name = t.director?.full_name || '';
+      if (t.director_id) {
+        directorByTeamId.set(t.id, name);
+        directorIdByTeamId.set(t.id, t.director_id);
+      }
+      (t.team_members || []).forEach(tm => {
+        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+          directorByUserId.set(tm.user_id, name);
+          directorIdByUserId.set(tm.user_id, t.director_id || null);
+        }
+      });
+    });
+    const projectDirector = data.projects?.director_id
+      ? (data.projects.director || null)
+      : null;
+    data.ball_holder = getBallHolder(
+      data.status,
+      data.creative_assignments,
+      directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+      projectDirector
+    );
+  } catch (e) {
+    console.warn('[creatives/:id] ball_holder 計算失敗:', e.message);
+    data.ball_holder = null;
+  }
+
   res.json(data);
 });
 
