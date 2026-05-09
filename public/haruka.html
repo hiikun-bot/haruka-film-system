@@ -529,6 +529,29 @@ tr.row-help td{background:#FFFBF2}
 }
 .cap-toggle.is-active .cap-count{ background:rgba(255,255,255,0.55); }
 
+/* クリエイティブ追加モーダル Step 2 のフォームグリッド
+   通常: 2 カラム grid
+   .cv-form-grid--single: LP/HP/LINE/その他案件向けに中央寄せ 1 カラム化
+*/
+.cv-form-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:0 28px;
+}
+.cv-form-grid--single{
+  display:block;
+  max-width:720px;
+  margin:0 auto;
+}
+.cv-form-grid--single .cv-form-col{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.cv-form-grid--single .cv-form-col + .cv-form-col{
+  margin-top:14px;
+}
+
 /* チームカードグリッド（チーム管理画面） */
 .team-card-grid{
   display:grid;
@@ -3545,11 +3568,11 @@ window.showPage = window.showPage || function(name, btn) {
           <span style="font-size:11px;color:var(--text-muted);margin-left:auto">クリックで戻る</span>
         </div>
 
-        <!-- 2カラムグリッド -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
+        <!-- 2カラムグリッド（LP/HP/LINE 案件では JS で .cv-form-grid--single に切替えて 1 カラム化） -->
+        <div id="creative-step2-grid" class="cv-form-grid">
 
           <!-- 左カラム -->
-          <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="cv-form-col cv-form-col--left" style="display:flex;flex-direction:column;gap:14px">
             <div class="form-group" style="margin-bottom:0" data-creative-field="creative_type">
               <label class="form-label">クリエイティブ種別</label>
               <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c');applyCreativeTypeVisibility(this.value)">
@@ -3587,7 +3610,7 @@ window.showPage = window.showPage || function(name, btn) {
           </div>
 
           <!-- 右カラム -->
-          <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="cv-form-col cv-form-col--right" style="display:flex;flex-direction:column;gap:14px">
             <div class="form-group" style="margin-bottom:0" data-creative-field="appeal">
               <label class="form-label">訴求軸 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
               <select class="form-select" id="c-appeal-type" onchange="tryAutoGenerateFileName()">
@@ -20442,6 +20465,17 @@ function applyCreativeTypeVisibility(_typeArg) {
   setShow('#tab-single [data-creative-field="talent"]', isVideoOrDesign);
   setShow('#tab-single [data-creative-field="title"]', isLine);
   setShow('#tab-single [data-creative-field="filename"]', !isLine);
+
+  // レイアウト切替: 動画/静止画は 2 カラム、LP/HP/LINE/その他は中央寄せ 1 カラム
+  // (LP/HP/LINE では左カラムが空になるため、grid のままだと右半分しか使われず違和感があるので。)
+  const grid = document.getElementById('creative-step2-grid');
+  if (grid) {
+    if (isVideoOrDesign) {
+      grid.classList.remove('cv-form-grid--single');
+    } else {
+      grid.classList.add('cv-form-grid--single');
+    }
+  }
 
   // ファイル名フォーマット説明文を種別に応じて差し替え
   const hint = document.getElementById('filename-format-hint');
