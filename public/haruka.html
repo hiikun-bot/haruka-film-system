@@ -2503,7 +2503,17 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="normal">通常</option>
         <option value="low">軽微</option>
       </select>
-      <select id="verup-filter-reporter" class="form-input" style="width:auto" onchange="renderVerupList()" title="報告者で絞り込み">
+      <select id="verup-filter-role" class="form-input" style="width:auto" onchange="_verupRebuildReporterFilter(true)" title="ロールで報告者を絞り込み">
+        <option value="">全ロール</option>
+        <option value="admin">管理者</option>
+        <option value="secretary">秘書</option>
+        <option value="producer">プロデューサー</option>
+        <option value="producer_director">P/D兼任</option>
+        <option value="director">ディレクター</option>
+        <option value="editor">編集者</option>
+        <option value="designer">デザイナー</option>
+      </select>
+      <select id="verup-filter-reporter" class="form-input" style="width:auto;min-width:140px" onchange="renderVerupList()" title="報告者で絞り込み">
         <option value="">すべての報告者</option>
         <option value="__me__">📣 自分の報告だけ</option>
       </select>
@@ -33617,25 +33627,48 @@ function _verupReporterLabel(reporter) {
   return reporter.nickname || reporter.full_name || '';
 }
 
-// ツールバーの「報告者」フィルタを、実際に紐付いている報告者だけで再構築
-function _verupRebuildReporterFilter() {
+// ツールバーの「報告者」フィルタを構築。
+// allMembers（全メンバー）から候補を出す。ロール絞り込み select で絞れる。
+// 紐付けが既にある報告者は名前末尾に「(N件)」を出して、件数があるかが一目で分かるようにする。
+//   resetReporterValue=true なら現在の選択値を破棄する（ロール変更時など）
+function _verupRebuildReporterFilter(resetReporterValue) {
   const sel = document.getElementById('verup-filter-reporter');
   if (!sel) return;
-  const prev = sel.value;
-  const seen = new Map(); // id -> label
+  const roleFilter = document.getElementById('verup-filter-role')?.value || '';
+  const prev = resetReporterValue ? '' : sel.value;
+  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+
+  // 紐付き件数を集計
+  const counts = new Map(); // user_id -> count
   for (const r of _verupCache) {
-    if (r.reporter && r.reporter.id && !seen.has(r.reporter.id)) {
-      seen.set(r.reporter.id, _verupReporterLabel(r.reporter));
+    if (r.reporter_user_id) {
+      counts.set(r.reporter_user_id, (counts.get(r.reporter_user_id) || 0) + 1);
     }
   }
-  // 現在のユーザー本人が報告者として登場していなくても、「自分の報告だけ」の選択肢は常に出す
-  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+
+  // 全メンバーから候補を作る（ロール絞り込み適用）
+  const members = Array.isArray(allMembers) ? allMembers : [];
+  const candidates = members.filter(m => {
+    if (!m || !m.id) return false;
+    if (!roleFilter) return true;
+    return m.role === roleFilter;
+  });
+  candidates.sort((a, b) => {
+    const la = a.nickname || a.full_name || '';
+    const lb = b.nickname || b.full_name || '';
+    return la.localeCompare(lb, 'ja');
+  });
+
   let html = '<option value="">すべての報告者</option>';
-  if (me?.id) html += `<option value="__me__">📣 自分の報告だけ</option>`;
-  const sorted = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja'));
-  for (const [id, label] of sorted) {
-    if (me?.id && id === me.id) continue; // 自分は __me__ に集約
-    html += `<option value="${_verupEsc(id)}">${_verupEsc(label)}</option>`;
+  if (me?.id && (!roleFilter || me.role === roleFilter)) {
+    html += `<option value="__me__">📣 自分の報告だけ</option>`;
+  }
+  for (const m of candidates) {
+    if (me?.id && m.id === me.id) continue; // 自分は __me__ に集約
+    const baseLabel = m.nickname || m.full_name || '(無名)';
+    const cnt = counts.get(m.id) || 0;
+    const label = cnt > 0 ? `${baseLabel} (${cnt}件)` : baseLabel;
+    html += `<option value="${_verupEsc(m.id)}">${_verupEsc(label)}</option>`;
   }
   sel.innerHTML = html;
   // 直前の選択を復元（消えていなければ）
