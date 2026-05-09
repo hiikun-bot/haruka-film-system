@@ -6292,6 +6292,35 @@ window.showPage = window.showPage || function(name, btn) {
         <label class="form-label">変更理由 <span id="pe-reason-required" style="display:none;color:#dc2626;font-weight:700">＊案件変更時は必須</span></label>
         <textarea class="form-input" id="pe-reason" rows="2" style="resize:vertical" placeholder="例: 同名クライアントの動画案件と取り違えて登録していたため正しい案件に変更"></textarea>
       </div>
+
+      <!-- ADR 012: クリエイティブ単位の単価上書き（admin のみ表示。loadCreativeRateOverrides() で display を切替） -->
+      <div id="pe-rate-section" style="display:none;border-top:1px dashed var(--border);padding-top:16px;margin-top:8px;flex-direction:column;gap:12px">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text)">💰 単価編集 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（管理者のみ）</span></div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:3px">この 1 本だけ請求額・支払額を上書きします。空欄で保存すると案件単価へ戻ります（NULL=継承）。</div>
+        </div>
+        <div id="pe-rate-no-line" style="display:none;background:#fef3c7;border:1px solid #f0b429;color:#8a6500;border-radius:8px;padding:10px 14px;font-size:12.5px">
+          このクリエイティブには案件 line（成果物グループ）が紐付いていません。先に案件側で line を割り当ててください。
+        </div>
+        <div id="pe-rate-form" style="display:flex;flex-direction:column;gap:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">クライアント請求額（税抜）</label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input class="form-input" type="number" id="pe-override-client-amount" placeholder="" style="max-width:180px" min="0" step="1">
+              <span style="font-size:13px;color:var(--text-muted)">円</span>
+              <span id="pe-override-client-amount-hint" style="font-size:11.5px;color:var(--text-muted)"></span>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">各ロール × 担当者への支払額</div>
+            <div id="pe-cost-overrides-list" style="display:flex;flex-direction:column;gap:8px"></div>
+            <div id="pe-cost-overrides-empty" style="display:none;font-size:12px;color:var(--text-muted);padding:8px 0">担当者が割り当てられていません。先に詳細モーダルで担当を設定してください。</div>
+          </div>
+          <div style="display:flex;justify-content:flex-end">
+            <button type="button" class="btn-primary" id="pe-rate-save-btn" onclick="saveCreativeRateOverrides()">単価を保存</button>
+          </div>
+        </div>
+      </div>
     </div>
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
       <button class="btn" onclick="closeModal('modal-creative-postedit')">キャンセル</button>
@@ -32025,7 +32054,155 @@ async function openCreativePostEdit() {
   // 案件初期値を保持（変更検知用）
   document.getElementById('modal-creative-postedit').dataset.originalProjectId = c.project_id || '';
 
+  // ADR 012: 単価編集セクション（admin のみ）
+  try { await loadCreativeRateOverrides(c.id); } catch (e) { console.warn('[rate-overrides] load failed:', e?.message || e); }
+
   openModal('modal-creative-postedit');
+}
+
+// ===== ADR 012: クリエイティブ単価上書き（事後修正モーダル内） =====
+//
+// admin だけに UI を見せる。それ以外のロールでもサーバ側で 403 に弾かれるが、
+// 表示自体を出さないことで誤操作・問い合わせを減らす。
+// 空欄=NULL=案件 line 単価を継承。
+async function loadCreativeRateOverrides(creativeId) {
+  const section = document.getElementById('pe-rate-section');
+  if (!section) return;
+  const isAdmin = !!(window.currentUser && window.currentUser.role === 'admin');
+  if (!isAdmin) {
+    section.style.display = 'none';
+    return;
+  }
+  // 表示はするが、データ取得失敗時はフォーム部分を隠す
+  section.style.display = 'flex';
+  const noLineBox = document.getElementById('pe-rate-no-line');
+  const formBox = document.getElementById('pe-rate-form');
+  noLineBox.style.display = 'none';
+  formBox.style.display = '';
+
+  let res;
+  try {
+    res = await apiFetch(`${API}/creatives/${creativeId}/rate-overrides`);
+  } catch (e) {
+    section.style.display = 'none';
+    return;
+  }
+  if (!res.ok) {
+    if (res.status === 404) {
+      noLineBox.style.display = '';
+      formBox.style.display = 'none';
+      return;
+    }
+    section.style.display = 'none';
+    return;
+  }
+  const data = await res.json();
+  section.dataset.creativeId = creativeId;
+
+  // クライアント請求額：override があれば表示、なければ空欄。placeholder に line.client_unit_price
+  const cliInput = document.getElementById('pe-override-client-amount');
+  const cliHint = document.getElementById('pe-override-client-amount-hint');
+  const linePrice = data.line_client_unit_price;
+  cliInput.value = (data.override_client_amount == null) ? '' : String(data.override_client_amount);
+  cliInput.placeholder = (linePrice == null) ? '空欄=継承' : String(linePrice);
+  cliHint.textContent = (linePrice == null)
+    ? '空欄=案件単価を継承（line 未設定）'
+    : `空欄=案件単価を継承（現在 ¥${Number(linePrice).toLocaleString()}）`;
+
+  // ロール別支払額
+  const list = document.getElementById('pe-cost-overrides-list');
+  const empty = document.getElementById('pe-cost-overrides-empty');
+  list.innerHTML = '';
+  const rows = Array.isArray(data.cost_overrides) ? data.cost_overrides : [];
+  if (rows.length === 0) {
+    empty.style.display = '';
+  } else {
+    empty.style.display = 'none';
+    rows.forEach((row) => {
+      const lineLabel = (row.line_amount == null)
+        ? '空欄=継承（案件 line に該当行なし）'
+        : `空欄=継承（現在 ¥${Number(row.line_amount).toLocaleString()}）`;
+      const valueAttr = (row.amount == null) ? '' : String(row.amount);
+      const placeholderAttr = (row.line_amount == null) ? '空欄=継承' : String(row.line_amount);
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:grid;grid-template-columns:1fr 180px;gap:10px;align-items:center;font-size:13px';
+      wrap.dataset.roleId = row.role_id || '';
+      wrap.dataset.userId = row.user_id || '';
+      wrap.innerHTML = `
+        <div>
+          <div style="font-weight:500">${esc(row.role_name_ja || '')}<span style="color:var(--text-muted);font-weight:400">（${esc(row.user_name || '担当未設定')}）</span></div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(lineLabel)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input class="form-input pe-cost-override-input" type="number" min="0" step="1" placeholder="${esc(placeholderAttr)}" value="${esc(valueAttr)}" style="width:100%">
+          <span style="font-size:12px;color:var(--text-muted)">円</span>
+        </div>
+      `;
+      list.appendChild(wrap);
+    });
+  }
+}
+
+async function saveCreativeRateOverrides() {
+  const section = document.getElementById('pe-rate-section');
+  const creativeId = section?.dataset?.creativeId;
+  if (!creativeId) {
+    showToast('クリエイティブIDが取得できませんでした', 'error');
+    return;
+  }
+
+  // クライアント請求額（空欄=NULL=継承）
+  const cliRaw = (document.getElementById('pe-override-client-amount').value || '').trim();
+  let overrideClientAmount = null;
+  if (cliRaw !== '') {
+    const n = Number(cliRaw);
+    if (!Number.isFinite(n) || n < 0) {
+      showToast('クライアント請求額は 0 以上の数値で入力してください', 'error');
+      return;
+    }
+    overrideClientAmount = n;
+  }
+
+  // ロール別支払額（空欄行は配列に入れない=DELETE 対象）
+  const rows = Array.from(document.querySelectorAll('#pe-cost-overrides-list > div'));
+  const costOverrides = [];
+  for (const row of rows) {
+    const input = row.querySelector('.pe-cost-override-input');
+    const v = (input?.value || '').trim();
+    if (v === '') continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) {
+      showToast('支払額は 0 以上の数値で入力してください', 'error');
+      return;
+    }
+    const roleId = row.dataset.roleId || null;
+    const userId = row.dataset.userId || null;
+    if (!roleId) continue;
+    costOverrides.push({ role_id: roleId, user_id: userId || null, amount: n, note: null });
+  }
+
+  const btn = document.getElementById('pe-rate-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/rate-overrides`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        override_client_amount: overrideClientAmount,
+        cost_overrides: costOverrides,
+      }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('単価保存エラー: ' + (typeof translateError === 'function' ? translateError(e?.error) : (e?.error || '不明なエラー')), 'error');
+      return;
+    }
+    showToast('単価を保存しました', 'success');
+    // 反映後の値で再ロード（placeholder と現在値の整合性を取り直す）
+    await loadCreativeRateOverrides(creativeId);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '単価を保存'; }
+  }
 }
 
 // 商材・訴求軸を当該 project_id 配下で再ロードする
