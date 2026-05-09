@@ -24825,6 +24825,12 @@ const _CD_ROUND_STAGE_LABEL = {
   'd_check':  'Dチェック',
   'p_check':  'Pチェック',
   'cl_check': 'CLチェック',
+  // 孤児 handoff 用 (PR #(d-to-p-handoff-comment))。
+  // 修正なし直行（制作中→Dチェック→Pチェック）等で snapshot が無くても、
+  // 引き継ぎ承認コメントを単独ラウンドとして表示する場合に使うバッジラベル。
+  'd_check_handoff':  'Dチェック承認',
+  'p_check_handoff':  'Pチェック承認',
+  'cl_check_handoff': 'CLチェック承認',
 };
 
 // 「現在は2カラム比較を有効にすべきか」を判定。
@@ -24934,7 +24940,7 @@ function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback, timestam
 //
 // 戻り値: { editor: {id, full_name, avatar_url}|null, director: {...}|null }
 function _cdResolveRoundUsers(round) {
-  const out = { editor: null, director: null };
+  const out = { editor: null, director: null, producer: null };
   const membersArr = Array.isArray(allMembers) ? allMembers : [];
   // 1) recorded_by（その提出を行った編集者ユーザー）。snapshot は「修正済→再チェック」の
   //    遷移で INSERT されるので、recorded_by はそのラウンドの editor 担当を最も正確に表す。
@@ -24958,6 +24964,17 @@ function _cdResolveRoundUsers(round) {
       const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
       const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
       out.director = (dirAssign && dirAssign.users) || null;
+    }
+    // 4) プロデューサー: 案件の projects.producer_id 優先、無ければ creative_assignments.role='producer'
+    //    （引き継ぎ承認コメントの From/To 表示で D→P / P→CL に必要・PR #(d-to-p-handoff-comment)）
+    const projectProducerId = currentCreativeDetail?.projects?.producer_id || null;
+    if (projectProducerId) {
+      out.producer = membersArr.find(m => m && m.id === projectProducerId) || null;
+    }
+    if (!out.producer) {
+      const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
+      const prodAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'producer') || null;
+      out.producer = (prodAssign && prodAssign.users) || null;
     }
   }
   return out;
@@ -25059,9 +25076,52 @@ function _cdRoundEntryHtml(round) {
     if (editorBlockHtml)   orderedBlocks.push(editorBlockHtml);
   }
 
+  // 引き継ぎ承認コメント (handoff_to_next) を**本文の一番上**に挿入する
+  // (PR #(d-to-p-handoff-comment) / 代表 髙橋指示・2026-05-09):
+  //   サーバ側 GET /creatives/:id/rounds が round.handoff_to_next に
+  //   { stage, from_status, to_status, comment, changed_at, changed_by } を埋めて返す。
+  //   stage: 'd_to_p' | 'p_to_cl' | 'cl_to_delivered'
+  //
+  //   表示は「<from_status> → <to_status> 承認・引き継ぎコメント」とラベリング、
+  //   From/To アバターは:
+  //     d_to_p          → ディレクター → プロデューサー
+  //     p_to_cl         → プロデューサー → クライアント
+  //     cl_to_delivered → クライアント → 担当者（編集者）
+  //
+  //   コメントが空（NULL or 空文字）の場合は表示抑制（"承認のみ" 履歴を作っても情報量が薄いため）。
+  //   left カラム本文の冒頭に出ることで「過去ラウンドで何が承認されて次工程に進んだか」を一目で確認できる。
+  const handoff = round.handoff_to_next;
+  if (handoff && handoff.comment && String(handoff.comment).trim()) {
+    const HANDOFF_FROMTO = {
+      'd_to_p':          { from: users.director, to: users.producer, fromFb: 'ディレクター',   toFb: 'プロデューサー' },
+      'p_to_cl':         { from: users.producer, to: null,           fromFb: 'プロデューサー', toFb: 'クライアント'   },
+      'cl_to_delivered': { from: null,           to: users.editor,   fromFb: 'クライアント',   toFb: '担当者'         },
+    };
+    const ft = HANDOFF_FROMTO[handoff.stage] || null;
+    const handoffFromToHtml = ft
+      ? renderFromToAvatar(ft.from, ft.to, ft.fromFb, ft.toFb, handoff.changed_at || null)
+      : '';
+    const labelFrom = handoff.from_status || '';
+    const labelTo   = handoff.to_status   || '';
+    const handoffLabel = (labelFrom && labelTo)
+      ? `${labelFrom} → ${labelTo} 承認・引き継ぎコメント`
+      : '次工程への承認・引き継ぎコメント';
+    const handoffBlockHtml = `<div class="cd-round-block cd-round-handoff" style="border-left:3px solid var(--em-dark);padding-left:10px;background:#F0FDF4">
+      <div class="cd-round-label" style="color:var(--em-dark)">✅ ${esc(handoffLabel)}</div>
+      ${handoffFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${handoffFromToHtml}</div>` : ''}
+      <div class="cd-round-text">${esc(String(handoff.comment))}</div>
+    </div>`;
+    // **本文の一番上**に必ず差し込む（PR #(d-to-p-handoff-comment)）。
+    // 時系列としては「reviewer 指摘 → editor 提出 → reviewer 承認 → 次工程移行」なので
+    // 厳密には末尾に置くべきだが、ユーザー指示「左カラム本文の一番上に」を優先する。
+    // (1) その方が「このラウンドが承認されて次工程に進んだ」事実が即座にわかる
+    // (2) 過去ラウンド比較で「何が決まったか」を最初に見せる方が議事録として読みやすい
+    orderedBlocks.unshift(handoffBlockHtml);
+  }
+
   // 提出物（ファイル）は左カラム下部に _cdRenderFileCard で別ブロックとして表示するため、
   // ここでは「ファイル名のリンク」だけは出さない（重複を避ける）。
-  if (!editorBlockHtml && !reviewerBlockHtml && !fileLink) {
+  if (orderedBlocks.length === 0 && !fileLink) {
     orderedBlocks.push(`<div class="cd-round-empty">このラウンドには記録された内容がありません</div>`);
   }
   return orderedBlocks.join('');
