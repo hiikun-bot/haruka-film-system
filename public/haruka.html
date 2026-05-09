@@ -3539,6 +3539,9 @@ window.showPage = window.showPage || function(name, btn) {
               <option value="design_banner">バナー</option>
               <option value="design_post">投稿画像</option>
               <option value="design_story">ストーリーズ</option>
+              <option value="hp">HP</option>
+              <option value="lp">LP</option>
+              <option value="line">LINE</option>
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -3656,6 +3659,9 @@ window.showPage = window.showPage || function(name, btn) {
               <option value="design_banner">バナー</option>
               <option value="design_post">投稿画像</option>
               <option value="design_story">ストーリーズ</option>
+              <option value="hp">HP</option>
+              <option value="lp">LP</option>
+              <option value="line">LINE</option>
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0">
@@ -5975,6 +5981,9 @@ window.showPage = window.showPage || function(name, btn) {
             <option value="design_banner">バナー</option>
             <option value="design_post">投稿画像</option>
             <option value="design_story">ストーリーズ</option>
+            <option value="hp">HP</option>
+            <option value="lp">LP</option>
+            <option value="line">LINE</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
@@ -6094,6 +6103,9 @@ window.showPage = window.showPage || function(name, btn) {
             <option value="design_banner">バナー</option>
             <option value="design_post">投稿画像</option>
             <option value="design_story">ストーリーズ</option>
+            <option value="hp">HP</option>
+            <option value="lp">LP</option>
+            <option value="line">LINE</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
@@ -20522,6 +20534,10 @@ function autoSetCreativeFmt(prefix) {
     if (sizeSel) sizeSel.value = '1080_1920';
   } else if (ct.startsWith('design')) {
     fmtSel.value = 'bn';
+  } else if (ct === 'hp' || ct === 'lp' || ct === 'line' || ct.startsWith('hp_') || ct.startsWith('lp_') || ct.startsWith('line_')) {
+    // Web系（HP/LP）/ LINE は従来の FMT/サイズに当てはまらないため任意のままクリア
+    fmtSel.value = '';
+    if (sizeSel) sizeSel.value = '';
   }
 }
 
