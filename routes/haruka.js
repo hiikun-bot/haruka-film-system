@@ -12706,13 +12706,20 @@ function normalizeVersionLogPayload(body) {
   }
   if (body.related_url !== undefined) out.related_url = body.related_url || null;
   if (body.is_hidden !== undefined) out.is_hidden = !!body.is_hidden;
+  if (body.reporter_user_id !== undefined) {
+    const v = body.reporter_user_id;
+    out.reporter_user_id = (v === '' || v == null) ? null : String(v);
+  }
   return out;
 }
 
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
     const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    let q = supabase.from('version_logs').select('*').order('revision_no', { ascending: false });
+    let q = supabase
+      .from('version_logs')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url )')
+      .order('revision_no', { ascending: false });
     if (!isAdmin) q = q.eq('is_hidden', false);
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
@@ -12809,6 +12816,7 @@ router.post('/version-logs', requireAuth, async (req, res) => {
       tags: payload.tags || [],
       related_url: payload.related_url ?? null,
       is_hidden: payload.is_hidden || false,
+      reporter_user_id: payload.reporter_user_id ?? null,
       created_by: req.user?.id || null,
     };
 
