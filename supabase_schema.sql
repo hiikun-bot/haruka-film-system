@@ -271,6 +271,30 @@ CREATE TABLE IF NOT EXISTS creative_assignments (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ==================== creative_versions (ADR 008 Phase 0) ====================
+-- 修正サイクル（v0=初稿, v1=修正1回目, ..., 最大5回）の履歴を正規化保持。
+-- Phase 1 以降の Google Sheets 双方向同期で Rev{n} 列の動的展開ソースになる。
+-- 詳細は migrations/2026-05-09_creative_versions_table.sql を参照。
+CREATE TABLE IF NOT EXISTS creative_versions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id     UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  version_number  INT  NOT NULL CHECK (version_number >= 0 AND version_number <= 99),
+  preview_url     TEXT,
+  editor_comment  TEXT,
+  director_comment TEXT,
+  client_comment  TEXT,
+  editor_comment_updated_at   TIMESTAMPTZ,
+  director_comment_updated_at TIMESTAMPTZ,
+  client_comment_updated_at   TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(creative_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS idx_creative_versions_creative_id
+  ON creative_versions(creative_id);
+CREATE INDEX IF NOT EXISTS idx_creative_versions_creative_id_version
+  ON creative_versions(creative_id, version_number);
+
 -- ==================== project_rates ====================
 CREATE TABLE IF NOT EXISTS project_rates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
