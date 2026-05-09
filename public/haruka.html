@@ -24689,6 +24689,13 @@ function updateCreativeCommentLabel(status) {
 
   const assigneeSection = document.getElementById('cd-assignee-section');
   // 旧 cd-check-director-section は削除済み
+
+  // PR #422 の重複バグ対策: cd-comment-section は後修正ステータスでだけ非表示にしたい。
+  // ステータス遷移で再呼び出しされたときに以前の display:none が残らないよう、
+  // ここで毎回 default 表示に戻してから個別ブランチで再設定する。
+  const _cdCommentSectionEl = document.getElementById('cd-comment-section');
+  if (_cdCommentSectionEl) _cdCommentSectionEl.style.display = '';
+
   if (status === '未着手') {
     if (uploadSection)    uploadSection.style.display    = 'none';
     if (noteGroup)        noteGroup.style.display        = 'none';
@@ -24716,6 +24723,15 @@ function updateCreativeCommentLabel(status) {
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = '';
+    // PR #422 ラウンド比較型UI のバグ修正:
+    // 後修正ステータス（Dチェック後修正/Pチェック後修正/CL後修正）では、左カラムの
+    // 過去ラウンド表示に「ディレクター/クライアントの指摘」が既に出ているため、
+    // 右カラムの「修正指摘内容(読み取り専用)」コメント欄は重複となる。
+    // → 後修正ステータスでは cd-comment-section ごと非表示にする。
+    // 再提出時の API では director_comment を読まない（cd-editor-reply のみ送信）ので
+    // 隠しても保存ロジックには影響しない。
+    const _commentSection = document.getElementById('cd-comment-section');
+    if (_commentSection) _commentSection.style.display = 'none';
     if (editorRplyLabel) {
       editorRplyLabel.textContent = '連絡・確認事項';
     }
