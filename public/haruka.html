@@ -5573,6 +5573,13 @@ window.showPage = window.showPage || function(name, btn) {
 #cd-round-left .cd-round-label{ font-size:10px; font-weight:700; color:var(--em-dark); letter-spacing:0.08em; margin-bottom:4px; text-transform:uppercase; }
 #cd-round-left .cd-round-text{ font-size:12.5px; color:var(--text); white-space:pre-wrap; line-height:1.6; background:#fff; border-radius:6px; padding:8px 10px; border:0.5px solid var(--border); max-height:160px; overflow:auto; }
 #cd-round-left .cd-round-empty{ font-size:12px; color:var(--text-muted); font-style:italic; padding:6px 0; }
+/* From/To pill 行の右端に表示する発言日時。
+   pill 行は flex-wrap:wrap なので margin-left:auto で安全に右寄せ。 */
+.cd-fromto-time{ margin-left:auto; font-size:11px; color:var(--text-muted); white-space:nowrap; padding-left:6px; }
+/* 2カラム比較モード時、右カラム上部の「編集者からのコメント (読み取り専用)」は
+   左カラム本体の「編集者の提出時メモ」と完全に重複するため非表示にする
+   (CHECK_READONLY ステータスでのみ右カラムに移動してくる) */
+#cd-modal-body.cd-2col-mode #cd-round-right > #cd-comment-section[data-cd-readonly="1"]{ display:none !important; }
 #cd-round-dots .cd-round-dot{ width:7px; height:7px; border-radius:50%; background:#d4d4d4; cursor:pointer; transition:transform .12s, background .12s; }
 #cd-round-dots .cd-round-dot.active{ background:var(--em-dark); transform:scale(1.25); }
 #cd-round-prev[disabled],#cd-round-next[disabled]{ opacity:.35; cursor:not-allowed; }
@@ -24387,7 +24394,11 @@ function _cdMoveRightColumnElements(intoRight) {
 // fromUser/toUser は { id, full_name, avatar_url } を持つユーザー風オブジェクト。
 // 片方しか居ないケースは fallback ラベルでテキスト表示する。
 // 戻り値: HTML 文字列（呼び出し元で innerHTML に流し込む）。両方 null/未指定なら空文字。
-function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback) {
+//
+// timestampIso (任意): 渡されたとき pill 行の右端に発言日時を表示。
+// ラウンド比較 UI で「いつのやり取りか」を一目で示すために追加 (PR #TBD)。
+// 後方互換のためデフォルト null（既存呼び出しは時刻なしのまま）。
+function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback, timestampIso = null) {
   if (!fromUser && !toUser) return '';
   const chip = (user, fallback) => {
     if (user && (user.full_name || user.id)) {
@@ -24396,12 +24407,15 @@ function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback) {
     }
     return `<span style="font-size:12px;color:var(--text-muted)">${esc(fallback || '-')}</span>`;
   };
-  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;row-gap:4px">
+  const timeStr = timestampIso ? _cdFormatRoundDate(timestampIso) : '';
+  const timeHtml = timeStr ? `<span class="cd-fromto-time">${esc(timeStr)}</span>` : '';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;row-gap:4px;width:100%">
     <span style="font-weight:600;color:var(--text);font-size:11px">From:</span>
     ${chip(fromUser, fromFallback)}
     <span style="margin:0 2px;color:var(--text-muted);font-size:13px">→</span>
     <span style="font-weight:600;color:var(--text);font-size:11px">To:</span>
     ${chip(toUser, toFallback)}
+    ${timeHtml}
   </span>`;
 }
 
@@ -24461,11 +24475,15 @@ function _cdRoundEntryHtml(round) {
   const reviewerFrom = isClient ? null : users.director; // クライアント指摘の場合は client ユーザーを保持していないので null
   // クライアント指摘でも、編集者(To) は出せる方が情報量があるが、From が出ないと From/To のスタイルが片肺になるため、
   // クライアント指摘では From/To 行を出さない（renderFromToAvatar(null, x) は何かは出るが意味が薄いので明示的にスキップ）
+  // 各ラウンド snapshot は「修正済→再チェック」遷移時に1行 INSERT されるため、
+  // editor_comment / director_comment / client_comment は同一 created_at を共有する。
+  // ここではその snapshot 時刻を pill 行右端に表示する（個別の発言時刻列は schema に無い）。
+  const tsIso = round && round.created_at ? round.created_at : null;
   const reviewerFromToHtml = (!isClient && users.director && users.editor)
-    ? renderFromToAvatar(users.director, users.editor, 'ディレクター', '担当者')
+    ? renderFromToAvatar(users.director, users.editor, 'ディレクター', '担当者', tsIso)
     : '';
   const editorFromToHtml = (users.editor && users.director)
-    ? renderFromToAvatar(users.editor, users.director, '担当者', 'ディレクター')
+    ? renderFromToAvatar(users.editor, users.director, '担当者', 'ディレクター', tsIso)
     : '';
 
   const blocks = [];
@@ -25429,6 +25447,14 @@ function updateCreativeCommentLabel(status) {
   // ここで毎回 default 表示に戻してから個別ブランチで再設定する。
   const _cdCommentSectionEl = document.getElementById('cd-comment-section');
   if (_cdCommentSectionEl) _cdCommentSectionEl.style.display = '';
+  // 2カラム比較モード時のみ、CHECK_READONLY 中の「編集者からのコメント (読み取り専用)」を
+  // CSS で非表示にするためのフラグ。1 カラムモードでは CSS が効かないので影響なし。
+  // (左カラム本体に「編集者の提出時メモ」が時系列表示されており、右カラム上部の readonly
+  //  ブロックが完全な重複となるためユーザー要望で削除 - PR #TBD)
+  if (_cdCommentSectionEl) {
+    if (isCheckStage) _cdCommentSectionEl.setAttribute('data-cd-readonly', '1');
+    else              _cdCommentSectionEl.removeAttribute('data-cd-readonly');
+  }
 
   if (status === '未着手') {
     if (uploadSection)    uploadSection.style.display    = 'none';
