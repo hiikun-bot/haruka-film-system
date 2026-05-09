@@ -24512,31 +24512,28 @@ function _cdBuildLiveRound(creative) {
 //      このバージョンのファイルを _cdFilesCache から引く。
 //   5) 全部だめなら _cdFilesCache の最も古い（version 最小）ファイルを表示するフォールバック。
 //      → 何も出ないより「とりあえず提出済み動画を見せる」方が UX 上ずっとマシ。
-function _cdRenderRoundLeftFileCard(round) {
-  if (!round) return '';
+// 左カラムが解決する「過去ラウンド提出ファイル」を返す共通ヘルパー。
+// _cdRenderRoundLeftFileCard と _cdRenderRoundRightFileCard の dedup 判定で
+// 同じロジックを使うために切り出した（代表 髙橋指示・ADR 011 補足: 左右が
+// 同一バージョンを指したら右の「今回の成果物」を抑制する）。
+//
+// 解決順は _cdRenderRoundLeftFileCard と完全に一致させる:
+//   (1) creative_file_id 直引き
+//   (2) round.file（軽量プロジェクション）
+//   (3) version_num 一致
+//   (4) ライブラウンドの仮 version
+//   (5) cache 末尾フォールバック（_cdFilesCache は version desc なので末尾=最古）
+//
+// 動画なし提出 (isFileless) のラウンドは null を返す（左は "[動画なし]" カード
+// になり、右の dedup 対象外。右はそのまま latest を出してよい）。
+function _cdResolveRoundLeftFile(round) {
+  if (!round) return null;
   const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
 
-  // 動画なし提出のラウンドは creative_file_id=null かつ editor_comment が "[動画なし]" で
-  // 始まる（routes/haruka.js 側で固定プレフィックス付き保存）。
-  // 該当ラウンドはファイルカードのフォールバック検索を行わず、プレースホルダを返す。
-  // これによりラウンド比較UIの左右フッター3層構造（タグ/ファイル/底辺）の高さが揃う。
-  // 代表 髙橋指示（2026-05-09 補足・ADR 011）。
+  // 動画なし提出ラウンドは解決対象外
   const editorComment = (round && typeof round.editor_comment === 'string') ? round.editor_comment : '';
   const isFileless = !round.creative_file_id && /^\s*\[動画なし\]/.test(editorComment);
-  if (isFileless) {
-    // 理由部分だけ抽出（"[動画なし] xxx" の "xxx"）。理由が無ければ "理由未入力" 表示。
-    const m = editorComment.match(/^\s*\[動画なし\][ \t　]*([^\n]*)/);
-    const reasonRaw = (m && m[1]) ? m[1].trim() : '';
-    const reason = reasonRaw || '理由未入力';
-    const verLabel = round.version_num ? `バージョン ${round.version_num}` : '今回ラウンド';
-    return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
-      <div style="background:#FFFBEB;border:1px dashed #F59E0B;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:88px;justify-content:center">
-        <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
-        <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
-      </div>
-    </div>`;
-  }
+  if (isFileless) return null;
 
   let f = null;
 
@@ -24561,13 +24558,41 @@ function _cdRenderRoundLeftFileCard(round) {
     f = cache.find(x => x && Number(x.version) === targetVer) || null;
   }
 
-  // (5) どうしても見つからない時の最終フォールバック: _cdFilesCache の最も古いファイル。
-  //     ファイルが 1 件しか無い (= 初回ラウンド中) なら必ずそれを出す。
-  //     何も出さないよりは前回提出物が確認できる方がマシなので積極的にフォールバック。
+  // (5) どうしても見つからない時の最終フォールバック: _cdFilesCache の末尾（最古）。
   if (!f && cache.length > 0) {
-    f = cache[cache.length - 1] || null; // ASC 末尾 = 最も古い... ではなく cache は DESC なので末尾は最古
+    f = cache[cache.length - 1] || null;
   }
 
+  return f;
+}
+
+function _cdRenderRoundLeftFileCard(round) {
+  if (!round) return '';
+
+  // 動画なし提出のラウンドは creative_file_id=null かつ editor_comment が "[動画なし]" で
+  // 始まる（routes/haruka.js 側で固定プレフィックス付き保存）。
+  // 該当ラウンドはファイルカードのフォールバック検索を行わず、プレースホルダを返す。
+  // これによりラウンド比較UIの左右フッター3層構造（タグ/ファイル/底辺）の高さが揃う。
+  // 代表 髙橋指示（2026-05-09 補足・ADR 011）。
+  const editorComment = (round && typeof round.editor_comment === 'string') ? round.editor_comment : '';
+  const isFileless = !round.creative_file_id && /^\s*\[動画なし\]/.test(editorComment);
+  if (isFileless) {
+    // 理由部分だけ抽出（"[動画なし] xxx" の "xxx"）。理由が無ければ "理由未入力" 表示。
+    const m = editorComment.match(/^\s*\[動画なし\][ \t　]*([^\n]*)/);
+    const reasonRaw = (m && m[1]) ? m[1].trim() : '';
+    const reason = reasonRaw || '理由未入力';
+    const verLabel = round.version_num ? `バージョン ${round.version_num}` : '今回ラウンド';
+    return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
+      <div style="background:#FFFBEB;border:1px dashed #F59E0B;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:88px;justify-content:center">
+        <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
+        <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
+      </div>
+    </div>`;
+  }
+
+  // (1)〜(5) のフォールバック解決は共通ヘルパーへ集約（dedup と完全一致させる）。
+  const f = _cdResolveRoundLeftFile(round);
   if (!f) return ''; // 本当にファイル 0 件 (= 初回提出前の制作中フェーズ)。指摘のみのケース。
 
   const verNum = f.version || round.version_num || '?';
@@ -24707,13 +24732,33 @@ function _cdRenderUndoUploadBtn(creativeId, file, version) {
   </div>`;
 }
 
-function _cdRenderRoundRightFileCard() {
+function _cdRenderRoundRightFileCard(currentRound) {
   const c = currentCreativeDetail;
   if (!c) return '';
   const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isRevision = REVISION_STATUSES.includes(c.status);
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
   const latest = files[0] || null; // 一覧は新しい順
+
+  // dedup（代表 髙橋指示・ADR 011 補足）:
+  //   左カラムが解決した「自分が提出した成果物」と、右カラムが描画する「今回の成果物」が
+  //   同じバージョンの同じファイルを指している場合、右カラムを丸ごと非表示にする。
+  //   - 制作中で V1 が 1 件アップ済 / ラウンド snapshot 0 件 / live ラウンド無し
+  //     → 左 V1 (fallback (5)) / 右 V1 がそのまま重複していたケースを解消する。
+  //   - 「右が placeholder（修正版アップロード待ち）」のときは latest が左と一致しない or null
+  //     なので dedup ロジックは発火せず placeholder は維持される。
+  //   - 後修正で V2 アップ済のケースは latest=V2 / 左=V1 で一致しないので右は残る。
+  //   - 動画なし提出ラウンドは _cdResolveRoundLeftFile が null を返すので dedup 対象外。
+  if (latest && currentRound) {
+    const leftFile = _cdResolveRoundLeftFile(currentRound);
+    if (leftFile) {
+      const sameId = leftFile.id && latest.id && leftFile.id === latest.id;
+      const sameVer = (leftFile.version != null && latest.version != null
+                       && Number(leftFile.version) === Number(latest.version));
+      if (sameId || sameVer) return '';
+    }
+  }
+
   if (!latest) {
     // ファイルがまだ1件も無い: 後修正中なら placeholder、それ以外は何も出さない
     if (isRevision) {
@@ -24937,7 +24982,9 @@ function cdRenderRoundCompare() {
   }
   const rightFooter = document.getElementById('cd-round-right-footer');
   if (rightFooter) {
-    const html = _cdRenderRoundRightFileCard();
+    // currentRound を渡して、左右が同じバージョンを指すときは右カードを抑制する
+    // （ADR 011 補足・代表 髙橋指示）。
+    const html = _cdRenderRoundRightFileCard(currentRound);
     rightFooter.innerHTML = html ? `<div data-cd-round-right-file="1">${html}</div>` : '';
   }
 }
