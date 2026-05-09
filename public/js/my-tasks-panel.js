@@ -8,9 +8,9 @@
  *   - クリックで右側からスライドパネル (#my-tasks-panel) を開閉
  *   - タブで today / thisWeek / later を切替
  *   - 行クリックで案件編集モーダル(openEditProjectById)を開く
- *   - チェックボックスで PATCH /api/my-tasks/:id/done
+ *   - チェックボックスで PATCH /api/haruka/my-tasks/:id/done
  *   - ダッシュボード「✅ あなたのタスク」ウィジェット (#dash-my-tasks-body) も同データから描画
- *   - ダッシュボード「🎯 今週の山場」(#dash-upcoming-milestones) を /api/dashboard/upcoming-milestones から描画
+ *   - ダッシュボード「🎯 今週の山場」(#dash-upcoming-milestones) を /api/haruka/dashboard/upcoming-milestones から描画
  *
  * 通知ベルとの違い:
  *   - Realtime 購読は無し（ポーリングのみ）
@@ -81,7 +81,7 @@
   // ---------- API ----------
   async function fetchCount() {
     try {
-      const res = await fetch('/api/my-tasks/count', { credentials: 'same-origin' });
+      const res = await fetch('/api/haruka/my-tasks/count', { credentials: 'same-origin' });
       if (!res.ok) return null;
       return res.json();
     } catch (e) {
@@ -91,19 +91,19 @@
   }
 
   async function fetchTasks() {
-    const res = await fetch('/api/my-tasks', { credentials: 'same-origin' });
+    const res = await fetch('/api/haruka/my-tasks', { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`my-tasks ${res.status}`);
     return res.json();
   }
 
   async function fetchUpcomingMilestones() {
-    const res = await fetch('/api/dashboard/upcoming-milestones?days=14', { credentials: 'same-origin' });
+    const res = await fetch('/api/haruka/dashboard/upcoming-milestones?days=14', { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`upcoming-milestones ${res.status}`);
     return res.json();
   }
 
   async function patchTaskDone(taskId, isDone) {
-    const res = await fetch(`/api/my-tasks/${encodeURIComponent(taskId)}/done`, {
+    const res = await fetch(`/api/haruka/my-tasks/${encodeURIComponent(taskId)}/done`, {
       method: 'PATCH',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
