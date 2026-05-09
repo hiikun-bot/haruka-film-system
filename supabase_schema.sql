@@ -598,6 +598,13 @@ ALTER TABLE creative_version_history
 CREATE INDEX IF NOT EXISTS idx_cvh_creative_round
   ON creative_version_history(creative_id, version_num);
 
+-- ADR 011 補足 (2026-05-09): 編集者提出時刻 / ディレクター指摘時刻を分離保存。
+-- ラウンド比較UI From/To 行右端で別々の発言時刻を表示するため。
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS editor_submitted_at TIMESTAMPTZ;
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS director_commented_at TIMESTAMPTZ;
+
 -- 管理者によるステータス強制変更の監査ログ
 -- 「誰が・いつ・どの状態 → どの状態に・なぜ・付随削除した下書き明細」を残す
 CREATE TABLE IF NOT EXISTS creative_status_audit (

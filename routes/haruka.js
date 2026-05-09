@@ -5128,12 +5128,14 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 
   // ステータス変更を検知するため、更新前の値を取得
   // ADR 011: ラウンドsnapshot確定のため、コメント3種も同時に取得する。
+  // ADR 011 補足 (2026-05-09): director_commented_at の確定に updated_at も取得。
+  // 直前のチェック段階で指摘が書き込まれた時点 = この時点での creatives.updated_at。
   let beforeStatus = null;
   let beforeRow = null;
   if (updateData.status !== undefined) {
     const { data: before } = await supabase
       .from('creatives')
-      .select('status, director_comment, editor_comment, client_comment')
+      .select('status, director_comment, editor_comment, client_comment, updated_at')
       .eq('id', req.params.id)
       .maybeSingle();
     beforeStatus = before?.status || null;
@@ -5224,21 +5226,41 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         .eq('round_stage', trans.stage)
         .limit(1);
       if (!existing || existing.length === 0) {
-        const { error: histErr } = await supabase
+        // タイムスタンプ分離 (PR #(round-distinct-timestamps)):
+        //   ・editor_submitted_at   = いま再提出ボタンが押された時刻（= snapshot 確定時刻）
+        //   ・director_commented_at = 直前のチェック段階で指摘が書かれた時点の updated_at
+        //                             （beforeRow.updated_at = ステータスを修正系に変えた瞬間）
+        const nowIso = new Date().toISOString();
+        const directorCommentedAt = beforeRow?.updated_at || null;
+        const insertPayload = {
+          creative_id:           req.params.id,
+          version_num:           versionNum,
+          director_comment:      beforeRow.director_comment || null,
+          client_comment:        beforeRow.client_comment   || null,
+          editor_comment:        snapshotEditorComment,
+          round_stage:           trans.stage,
+          creative_file_id:      fileId,
+          recorded_by:           req.user?.id || null,
+          editor_submitted_at:   nowIso,
+          director_commented_at: directorCommentedAt,
+        };
+        let { error: histErr } = await supabase
           .from('creative_version_history')
-          .insert({
-            creative_id:       req.params.id,
-            version_num:       versionNum,
-            director_comment:  beforeRow.director_comment || null,
-            client_comment:    beforeRow.client_comment   || null,
-            editor_comment:    snapshotEditorComment,
-            round_stage:       trans.stage,
-            creative_file_id:  fileId,
-            recorded_by:       req.user?.id || null,
-          });
+          .insert(insertPayload);
         if (histErr) {
-          // schema-sync 未適用環境でも本処理は止めない（列欠損は warn のみ）
-          console.warn('[creative_version_history] snapshot insert failed:', histErr.message);
+          // 新列 (editor_submitted_at / director_commented_at) が schema-sync 未適用の環境でも
+          // 本処理は止めない。新列を抜いて再試行 → それでもダメなら warn のみ。
+          const msg = histErr.message || '';
+          const isMissingNewCol = /editor_submitted_at|director_commented_at/.test(msg);
+          if (isMissingNewCol) {
+            const { editor_submitted_at: _e, director_commented_at: _d, ...legacy } = insertPayload;
+            const retry = await supabase.from('creative_version_history').insert(legacy);
+            if (retry.error) {
+              console.warn('[creative_version_history] snapshot insert failed (after fallback):', retry.error.message);
+            }
+          } else {
+            console.warn('[creative_version_history] snapshot insert failed:', histErr.message);
+          }
         }
       }
     }
