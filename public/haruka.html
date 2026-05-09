@@ -6317,9 +6317,10 @@ window.showPage = window.showPage || function(name, btn) {
         <textarea class="form-input" id="cd-director-note" rows="5" style="resize:vertical;border-color:var(--em-dark)" placeholder="修正依頼・承認の理由やコメントを入力してください..."></textarea>
       </div>
 
-      <!-- アップロードセクション -->
+      <!-- アップロードセクション。タイトルはステータスに応じて updateCreativeCommentLabel() で
+           「納品ファイルアップロード」/「修正版アップロード」を出し分ける。 -->
       <div id="cd-upload-section" style="background:var(--surface);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
+        <div id="cd-upload-section-title" style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:12px">納品ファイルアップロード</div>
 
 
         <div id="cd-drop-zone"
@@ -24540,8 +24541,17 @@ function _cdRenderRoundLeftFileCard(round) {
 }
 
 // ラウンド右カラムに表示する「今回の成果物カード」HTML を返す。
-// 後修正中で未アップロードの状態（_cdFilesCache の最新が「前回」のものでしかない場合）は
-// アップロード待ちプレースホルダを返す。
+//
+// 後修正フェーズの判定（バグ #(round-upload-flow)）:
+//   - 後修正ステータス (Dチェック後修正/Pチェック後修正/CL後修正) で
+//     **まだ次バージョンが未アップロードの状態** = 最新ファイルの version <= ラウンド数
+//     → アップロード待ちプレースホルダ
+//   - 後修正でも **次バージョンが既にアップロード済み** = latest.version > _cdRoundsCache.length
+//     → その新ファイルを「今回の成果物」として表示（v2 カードが右フッターに出る）
+//   - その他のステータス（チェック中・納品済・通常）→ 常に最新ファイルを「今回」として表示
+//
+// この判定により、ドロップ → executeUpload() → loadCreativeFiles() → cdRenderRoundCompare()
+// の再描画チェーンで、新しい v2/v3 カードが右カラムフッターへ自動的に差し込まれる。
 function _cdRenderRoundRightFileCard() {
   const c = currentCreativeDetail;
   if (!c) return '';
@@ -24549,25 +24559,44 @@ function _cdRenderRoundRightFileCard() {
   const isRevision = REVISION_STATUSES.includes(c.status);
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
   const latest = files[0] || null; // 一覧は新しい順
-  // 後修正中で「次回バージョン」がまだ未アップロード（version_num == files.length + 1）の場合 → プレースホルダ
-  // それ以外（チェック中・納品済・通常）は最新ファイルを「今回」として表示
-  if (!latest) return '';
-  const hideCheckBtn = isRevision;
+  if (!latest) {
+    // ファイルがまだ1件も無い: 後修正中なら placeholder、それ以外は何も出さない
+    if (isRevision) {
+      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
+        <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
+          上のドロップゾーンに修正版をアップロードしてください
+        </div>
+      </div>`;
+    }
+    return '';
+  }
   if (isRevision) {
-    // 修正中: 上の cd-upload-section が編集者用 UI を出す。ここでは最新ファイル(=前回提出)を
-    // あえて出さない（左カラムが「前回」を担当しているため重複を避ける）。
-    // 代わりに「アップロード待ち」のヒントだけ出す。
+    // 「最新ファイルが今回サイクルのもの (=次バージョン) かどうか」を判定。
+    // ラウンド数 N に対し、最新ファイルの version が N+1 以上 → 既にアップロード済みの新版。
+    const roundsCount = Array.isArray(_cdRoundsCache) ? _cdRoundsCache.length : 0;
+    const latestVer = Number(latest.version) || files.length;
+    const newVersionUploaded = latestVer > roundsCount;
+    if (!newVersionUploaded) {
+      // まだ次バージョン未アップロード: placeholder を出して編集者にドロップを促す
+      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
+        <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
+          上のドロップゾーンに修正版をアップロードしてください
+        </div>
+      </div>`;
+    }
+    // 次バージョン既アップロード: 新ファイルを「今回の成果物」として表示
+    const verLabel = `バージョン ${latestVer}`;
     return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
-      <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
-        上のドロップゾーンに修正版をアップロードしてください
-      </div>
+      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
+      ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn: true })}
     </div>`;
   }
   const verLabel = `バージョン ${latest.version || files.length}`;
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
     <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 今回の成果物</div>
-    ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn })}
+    ${_cdRenderFileCard(latest, { verLabel, isLatest: true, hideCheckBtn: false })}
   </div>`;
 }
 
@@ -25190,6 +25219,11 @@ function updateCreativeCommentLabel(status) {
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = '';
+    // 後修正フェーズ中は「修正版アップロード」をアップロードセクションのタイトルにする。
+    // 役割が「修正版」なのに見出しが「納品ファイルアップロード」のままだと迷うため
+    // (バグレポート: 右カラム下部の placeholder と二重に「修正版アップロード」表記が出ていた問題の整理)。
+    const _cdUploadTitle = document.getElementById('cd-upload-section-title');
+    if (_cdUploadTitle) _cdUploadTitle.textContent = '修正版アップロード';
     // PR #422 ラウンド比較型UI のバグ修正:
     // 後修正ステータス（Dチェック後修正/Pチェック後修正/CL後修正）では、左カラムの
     // 過去ラウンド表示に「ディレクター/クライアントの指摘」が既に出ているため、
@@ -25243,6 +25277,9 @@ function updateCreativeCommentLabel(status) {
     if (uploadSection)   uploadSection.style.display   = '';
     if (noteGroup)       noteGroup.style.display       = 'none';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
+    // 後修正→制作中など非revision に戻ったケースのため、タイトルを既定の「納品ファイルアップロード」に戻す
+    const _cdUploadTitle = document.getElementById('cd-upload-section-title');
+    if (_cdUploadTitle) _cdUploadTitle.textContent = '納品ファイルアップロード';
   }
 }
 
@@ -28769,16 +28806,20 @@ async function deleteLearningVideo(videoId) {
 async function handleUploadFileSelect(input) {
   const file = input.files[0];
   if (!file) return;
+  // クリック→ファイル選択は manual review モード（プレビュー＋「Googleドライブにアップロード」ボタン）
   await processUploadFile(file);
 }
 
 async function handleUploadFileDrop(event) {
   const file = event.dataTransfer.files[0];
   if (!file) return;
-  await processUploadFile(file, true);
+  // ドラッグ&ドロップは「即アップロード」UX。事前に preview を出して情報を見せたあと
+  // executeUpload() を直接呼ぶ。ユーザーが「ドロップしたのに何も起きない」と感じる問題を解消。
+  // ※ アップロード進捗バーは preview 内に出る（cd-upload-progress-wrap）。
+  await processUploadFile(file, /* autoExecute */ true);
 }
 
-async function processUploadFile(file, showConfirm = false) {
+async function processUploadFile(file, autoExecute = false) {
   const preview = document.getElementById('cd-upload-preview');
   const confirmBar = document.getElementById('cd-upload-confirm');
   const manualBtn = document.getElementById('cd-manual-upload-btn');
@@ -28792,10 +28833,12 @@ async function processUploadFile(file, showConfirm = false) {
     // ドロップゾーンのテキストをファイル名に更新
     const zone = document.getElementById('cd-drop-zone');
     if (zone) zone.querySelector('div:nth-child(2)').textContent = file.name;
-    // ドロップ時は確認バーを表示、手動ボタンを隠す
-    if (showConfirm && confirmBar && manualBtn) {
-      confirmBar.style.display = '';
-      manualBtn.style.display = 'none';
+    // 確認バーは過去の互換のためだけに残し、必ず非表示にする（ドロップ→即アップロード方針へ移行）
+    if (confirmBar) confirmBar.style.display = 'none';
+    if (manualBtn) manualBtn.style.display = '';
+    // ドロップ → 即アップロード（manual review せず executeUpload() を直接呼ぶ）
+    if (autoExecute) {
+      await executeUpload();
     }
   } catch(e) {
     showToast('サイズを検出できませんでした: ' + e.message, 'error');
