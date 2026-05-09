@@ -221,7 +221,10 @@ SELECT id, v.code, v.label, v.sort_order, v.is_milestone, v.default_days FROM in
   ) AS v(code, label, sort_order, is_milestone, default_days)
 ON CONFLICT (template_id, code) DO NOTHING;
 
--- lp: 構成案→デザイン→修正→コーディング→検証→公開
+-- lp: ADR 010 の M1〜M6 に揃える（2026-05-09 migration で再構成済）
+-- 旧 code: outline / design / design_fix / coding / qa / publish
+-- 新 code: hearing(M1) / wireframe_design(M2) / client_review(M3) /
+--          design_fix(M4) / coding(M5) / delivery(M6)
 WITH cat AS (SELECT id FROM creative_categories WHERE code = 'lp' LIMIT 1),
      ins AS (
        INSERT INTO creative_status_templates (category_id, name, is_default)
@@ -235,12 +238,12 @@ WITH cat AS (SELECT id FROM creative_categories WHERE code = 'lp' LIMIT 1),
 INSERT INTO creative_status_template_items (template_id, code, label, sort_order, is_milestone, default_days)
 SELECT id, v.code, v.label, v.sort_order, v.is_milestone, v.default_days FROM ins,
   (VALUES
-    ('outline',    '構成案',       10, true,  2),
-    ('design',     'デザイン',     20, true,  4),
-    ('design_fix', 'デザイン修正', 30, false, 2),
-    ('coding',     'コーディング', 40, true,  3),
-    ('qa',         '検証',         50, false, 1),
-    ('publish',    '公開',         60, true,  0)
+    ('hearing',          'ヒアリング',         10, true,  4),
+    ('wireframe_design', 'ワイヤー・デザイン', 20, true, 10),
+    ('client_review',    '先方デザイン確認',   30, true,  5),
+    ('design_fix',       'デザインFIX',        40, true,  5),
+    ('coding',           'コーディング',       50, true,  8),
+    ('delivery',         '納品',               60, true,  0)
   ) AS v(code, label, sort_order, is_milestone, default_days)
 ON CONFLICT (template_id, code) DO NOTHING;
 
