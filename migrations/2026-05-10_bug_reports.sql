@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS bug_reports (
   url text,                         -- バグ発生時の URL
   screen_label text,                -- ユーザーが選んだ画面ラベル（例: クリエイティブ詳細）
 
-  -- 重要度・ステータス
+  -- 重要度・至急対応・ステータス
   severity text NOT NULL DEFAULT 'normal',  -- low / normal / high / critical
+  is_urgent boolean NOT NULL DEFAULT false, -- 業務が止まる等で至急対応が必要なフラグ（severity と独立）
   status text NOT NULL DEFAULT 'open',      -- open / in_progress / resolved / wont_fix / duplicate
 
   -- 対応者
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS bug_reports (
 );
 
 CREATE INDEX IF NOT EXISTS bug_reports_status_idx ON bug_reports (status);
+CREATE INDEX IF NOT EXISTS bug_reports_is_urgent_idx ON bug_reports (is_urgent) WHERE is_urgent = true;
 CREATE INDEX IF NOT EXISTS bug_reports_assignee_idx
   ON bug_reports (assignee_user_id) WHERE assignee_user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS bug_reports_reporter_idx
