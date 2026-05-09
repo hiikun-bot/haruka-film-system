@@ -742,6 +742,13 @@ tr.row-help td{background:#FFFBF2}
 .form-select{width:100%;font-size:14px;padding:9px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text);outline:none}
 input::placeholder,textarea::placeholder{color:#bfc8cc}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+/* 案件モーダル「基本情報」タブ内のサブタブ（chip / pill 風で親タブと差別化） */
+.p-subtab-nav{display:flex;flex-wrap:wrap;gap:4px;padding:14px 28px 0;align-items:center}
+.p-subtab-btn{padding:6px 14px;font-size:12px;font-weight:500;background:transparent;color:var(--text-muted);border:1px solid transparent;border-radius:6px;cursor:pointer;transition:all .15s;line-height:1.4}
+.p-subtab-btn:hover{background:var(--em-pale);color:var(--em-dark)}
+.p-subtab-btn.active{background:var(--em-pale);color:var(--em-dark);font-weight:600;border-color:var(--em-pale)}
+.p-subtab-panel{padding:18px 28px 8px;display:flex;flex-direction:column;gap:14px}
+.p-subtab-panel.hidden{display:none}
 .btn{font-size:13px;padding:8px 18px;border-radius:8px;border:0.5px solid var(--border);background:transparent;color:var(--em-dark);cursor:pointer}
 .btn-primary{background:var(--em);color:#fff;border:none;font-size:14px;padding:9px 22px;border-radius:8px;cursor:pointer;font-weight:500}
 .btn-sm{font-size:13px;padding:5px 14px;border-radius:7px;border:0.5px solid var(--border);background:transparent;color:var(--em-dark);cursor:pointer}
@@ -4989,19 +4996,18 @@ window.showPage = window.showPage || function(name, btn) {
 
     <!-- パネル：基本情報 -->
     <div id="p-tab-panel-main">
-    <!-- ボディ：2カラムグリッド -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;padding:24px 28px;column-gap:32px;row-gap:0">
+    <!-- サブタブナビ（新規・編集ともに常時表示。pill 風で親タブと差別化） -->
+    <div id="p-subtab-nav" class="p-subtab-nav">
+      <button type="button" id="p-subtab-btn-basic"    class="p-subtab-btn active" onclick="switchProjectSubTab('basic')">📝 基本</button>
+      <button type="button" id="p-subtab-btn-schedule" class="p-subtab-btn"        onclick="switchProjectSubTab('schedule')">👥 期間・担当</button>
+      <button type="button" id="p-subtab-btn-settings" class="p-subtab-btn"        onclick="switchProjectSubTab('settings')">⚙️ 設定</button>
+      <button type="button" id="p-subtab-btn-link"     class="p-subtab-btn"        onclick="switchProjectSubTab('link')">🔗 連携</button>
+    </div>
 
-      <!-- ====== 左カラム ====== -->
-      <div style="display:flex;flex-direction:column;gap:22px">
-
-        <!-- 基本情報 -->
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">基本情報</span>
-          </div>
-          <div class="form-row" style="margin-bottom:10px">
+    <!-- ====== サブタブ：📝 基本（クライアント / ステータス / カテゴリ / 案件名 / タグ） ====== -->
+    <div id="p-subtab-panel-basic" class="p-subtab-panel">
+      <div>
+        <div class="form-row" style="margin-bottom:10px">
             <div class="form-group" style="flex:2;margin-bottom:0">
               <label class="form-label">クライアント <span style="color:#E24B4A">*</span></label>
               <select class="form-select" id="p-client-id" onchange="onProjectClientChange()">
@@ -5044,13 +5050,11 @@ window.showPage = window.showPage || function(name, btn) {
             <div id="p-tags-preview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"></div>
           </div>
         </div>
+    </div><!-- /p-subtab-panel-basic -->
 
-        <!-- 期間・担当者 -->
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">期間・担当者</span>
-          </div>
+    <!-- ====== サブタブ：👥 期間・担当（開始日 / 終了日 / P / D / サブP / サブD） ====== -->
+    <div id="p-subtab-panel-schedule" class="p-subtab-panel hidden">
+      <div>
           <div class="form-row" style="margin-bottom:10px">
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">開始日</label>
@@ -5124,14 +5128,13 @@ window.showPage = window.showPage || function(name, btn) {
               <div id="p-sub-directors-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
             </div>
           </div>
-        </div>
+      </div>
+    </div><!-- /p-subtab-panel-schedule -->
 
+    <!-- ====== サブタブ：⚙️ 設定（締め切り設定 / 管理者メモ / ファイル名テンプレート） ====== -->
+    <div id="p-subtab-panel-settings" class="p-subtab-panel hidden">
         <!-- 締め切り設定 -->
         <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">締め切り設定</span>
-          </div>
           <input type="hidden" id="p-deadline-unit" value="monthly">
           <input type="hidden" id="p-deadline-weekday" value="">
           <div class="form-group" style="margin-bottom:10px">
@@ -5157,76 +5160,15 @@ window.showPage = window.showPage || function(name, btn) {
 
         <!-- 管理者メモ -->
         <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:var(--em);border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:var(--em-dark);letter-spacing:0.12em;text-transform:uppercase">管理者メモ</span>
-          </div>
+          <label class="form-label" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:6px">📝 管理者メモ</label>
           <textarea class="form-input" id="p-admin-note" rows="3" placeholder="社内向けの備考など" style="resize:vertical;margin-bottom:0"></textarea>
-        </div>
-
-      </div><!-- /左カラム -->
-
-      <!-- ====== 右カラム ====== -->
-      <div style="display:flex;flex-direction:column;gap:22px">
-
-        <!-- リソース -->
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:#4285F4;border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:#2a5fc7;letter-spacing:0.12em;text-transform:uppercase">リソース</span>
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label class="form-label" style="display:flex;align-items:center;gap:5px">
-              <svg width="13" height="13" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z" fill="#5f6368"/></svg>
-              Google Sheet URL <span style="color:var(--text-muted);font-weight:400">（任意）</span>
-            </label>
-            <input class="form-input" id="p-sheet-url" placeholder="https://docs.google.com/spreadsheets/...">
-          </div>
-          <div class="form-group" style="margin-bottom:0;margin-top:10px">
-            <label class="form-label" style="display:flex;align-items:center;gap:5px">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/><path d="M16 13H8m8 4H8m2-8H8" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
-              レギュレーションシート <span style="color:var(--text-muted);font-weight:400">（任意）</span>
-            </label>
-            <div style="display:flex;gap:6px">
-              <input class="form-input" id="p-regulation-url" type="url" placeholder="Google ドキュメント / ドライブの URL" style="flex:1">
-              <button type="button" class="btn" onclick="(()=>{const u=document.getElementById('p-regulation-url').value.trim();if(u)window.open(u,'_blank');})()" style="white-space:nowrap">開く</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 通知連携 -->
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
-            <span style="display:inline-block;width:3px;height:14px;background:#6C63FF;border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:#4527A0;letter-spacing:0.12em;text-transform:uppercase">通知連携</span>
-          </div>
-          <div style="background:#F3F1FF;border:1px solid #E0DBFF;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#4527A0;line-height:1.6">
-            <strong>クリエイティブ通知の送信先</strong>として、案件レベルで設定があればクライアント設定より優先されます。<br>
-            空欄ならクライアントの設定にフォールバック。
-          </div>
-          <div class="form-row">
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label" style="display:flex;align-items:center;gap:5px">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="#00B900"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M12 6C8.69 6 6 8.24 6 11c0 1.73 1.04 3.26 2.62 4.21-.1.38-.37 1.37-.42 1.58-.07.27.1.27.21.2.09-.06 1.42-.94 2-.33.49.05.99.08 1.5.08 3.31 0 6-2.24 6-5s-2.69-5-6-5z" fill="white"/></svg>
-                Chatwork ルームID
-              </label>
-              <input class="form-input" id="p-chatwork-room-id" placeholder="例：123456789">
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label" style="display:flex;align-items:center;gap:5px">
-                <svg width="13" height="13" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
-                Slack チャンネルURL
-              </label>
-              <input class="form-input" id="p-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
-            </div>
-          </div>
         </div>
 
         <!-- ファイル名テンプレート (ADR 007 Stage 2) -->
         <div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
             <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
-            <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">📁 ファイル名テンプレート</span>
+            <span style="font-size:12px;font-weight:600;color:#0F7A56">📁 ファイル名テンプレート</span>
             <span style="font-size:11px;color:var(--text-muted);font-weight:400">（提出ファイル名の命名規約）</span>
           </div>
           <div class="form-group" style="margin-bottom:10px">
@@ -5252,9 +5194,63 @@ window.showPage = window.showPage || function(name, btn) {
             <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
           </div>
         </div>
+    </div><!-- /p-subtab-panel-settings -->
 
-      </div><!-- /右カラム -->
-    </div><!-- /グリッド -->
+    <!-- ====== サブタブ：🔗 連携（リソース / 通知連携） ====== -->
+    <div id="p-subtab-panel-link" class="p-subtab-panel hidden">
+        <!-- リソース -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="display:inline-block;width:3px;height:14px;background:#4285F4;border-radius:2px"></span>
+            <span style="font-size:12px;font-weight:600;color:#2a5fc7">📂 リソース</span>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label" style="display:flex;align-items:center;gap:5px">
+              <svg width="13" height="13" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z" fill="#5f6368"/></svg>
+              Google Sheet URL <span style="color:var(--text-muted);font-weight:400">（任意）</span>
+            </label>
+            <input class="form-input" id="p-sheet-url" placeholder="https://docs.google.com/spreadsheets/...">
+          </div>
+          <div class="form-group" style="margin-bottom:0;margin-top:10px">
+            <label class="form-label" style="display:flex;align-items:center;gap:5px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/><path d="M16 13H8m8 4H8m2-8H8" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+              レギュレーションシート <span style="color:var(--text-muted);font-weight:400">（任意）</span>
+            </label>
+            <div style="display:flex;gap:6px">
+              <input class="form-input" id="p-regulation-url" type="url" placeholder="Google ドキュメント / ドライブの URL" style="flex:1">
+              <button type="button" class="btn" onclick="(()=>{const u=document.getElementById('p-regulation-url').value.trim();if(u)window.open(u,'_blank');})()" style="white-space:nowrap">開く</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 通知連携 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="display:inline-block;width:3px;height:14px;background:#6C63FF;border-radius:2px"></span>
+            <span style="font-size:12px;font-weight:600;color:#4527A0">🔔 通知連携</span>
+          </div>
+          <div style="background:#F3F1FF;border:1px solid #E0DBFF;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#4527A0;line-height:1.6">
+            <strong>クリエイティブ通知の送信先</strong>として、案件レベルで設定があればクライアント設定より優先されます。<br>
+            空欄ならクライアントの設定にフォールバック。
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" style="display:flex;align-items:center;gap:5px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="#00B900"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M12 6C8.69 6 6 8.24 6 11c0 1.73 1.04 3.26 2.62 4.21-.1.38-.37 1.37-.42 1.58-.07.27.1.27.21.2.09-.06 1.42-.94 2-.33.49.05.99.08 1.5.08 3.31 0 6-2.24 6-5s-2.69-5-6-5z" fill="white"/></svg>
+                Chatwork ルームID
+              </label>
+              <input class="form-input" id="p-chatwork-room-id" placeholder="例：123456789">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" style="display:flex;align-items:center;gap:5px">
+                <svg width="13" height="13" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
+                Slack チャンネルURL
+              </label>
+              <input class="form-input" id="p-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
+            </div>
+          </div>
+        </div>
+    </div><!-- /p-subtab-panel-link -->
 
     <!-- ===== 成果物グループ（project_estimate_lines）Stage 4a ===== -->
     <!-- ADR 002 + 005 に基づく見積行 / deliverable の編集 UI。
@@ -13415,6 +13411,8 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-nav').style.display = 'none';
   document.getElementById('p-tab-panel-main').style.display = '';
   document.getElementById('p-tab-panel-sync').style.display = 'none';
+  // サブタブは新規・編集ともに常に表示。デフォルトは「📝 基本」
+  switchProjectSubTab('basic');
   const _ppPanel = document.getElementById('p-tab-panel-products'); if (_ppPanel) _ppPanel.style.display = 'none';
   const _paPanel = document.getElementById('p-tab-panel-appeal-axes'); if (_paPanel) _paPanel.style.display = 'none';
   const _pcPanel = document.getElementById('p-tab-panel-checklist'); if (_pcPanel) _pcPanel.style.display = 'none';
@@ -13530,6 +13528,8 @@ function openEditProject(p) {
   // 編集時はタブを表示し、基本情報タブをデフォルト表示
   document.getElementById('p-tab-nav').style.display = '';
   switchProjectTab('main');
+  // サブタブは「📝 基本」をデフォルト表示（モーダル開き直しでも常にリセット）
+  switchProjectSubTab('basic');
   // 「💰 収支」タブは廃止。案件カードの「報酬」ボタンから直接 modal-project-finance を開く
 
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
@@ -13690,6 +13690,18 @@ function switchProjectTab(tab) {
     const overrideOn = document.getElementById('p-axes-override').style.display !== 'none';
     if (projectId && overrideOn) renderProjectAxes(projectId);
   }
+}
+
+// 「基本情報」親タブ内のサブタブ切替（display 切替のみ。input/state はリセットしない）
+function switchProjectSubTab(name) {
+  const subtabs = ['basic', 'schedule', 'settings', 'link'];
+  subtabs.forEach(t => {
+    const panel = document.getElementById(`p-subtab-panel-${t}`);
+    const btn   = document.getElementById(`p-subtab-btn-${t}`);
+    const isActive = (t === name);
+    if (panel) panel.classList.toggle('hidden', !isActive);
+    if (btn)   btn.classList.toggle('active', isActive);
+  });
 }
 
 // ==================== 成果物グループ（project_estimate_lines）Stage 4a ====================
