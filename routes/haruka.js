@@ -18,6 +18,12 @@ const {
   getUsersRolesMap,
   invalidateRolesCache,
 } = require('../utils/roles');
+const {
+  BUILTIN_FIELDS,
+  BUILTIN_FIELD_LABELS,
+  isBuiltinField,
+  isAllowedCustomType,
+} = require('../utils/category-fields');
 
 // ==================== ロール判定ヘルパー（dual-read 期間用） ====================
 // Stage 0 / Step 2 (ADR 003): authorization 経路の role 判定はこのヘルパー経由で行う。
@@ -1089,6 +1095,220 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
     return res.status(500).json({ error: error.message });
   }
   res.json({ ok: true });
+});
+
+// ==================== creative_category_fields (ADR 012) ====================
+// カテゴリ × フィールドの可視性 / 並び順 / ラベル / 必須 / カスタム項目を管理。
+// 詳細モーダル（modal-creative-detail）が openCreativeDetail 時にここを引き、
+// builtin DOM の visibility と custom フィールドの動的生成を行う。
+//
+// schema-sync 失敗で本番に creative_category_fields テーブルが無い場合は、
+// 200 / 空配列で安全フォールバックする（読み出し時のみ）。
+const isMissingCategoryFieldsTable = (err) =>
+  err && /relation .*creative_category_fields.* does not exist|could not find the table/i.test(err.message || '');
+const isMissingCustomFieldValuesTable = (err) =>
+  err && /relation .*creative_custom_field_values.* does not exist|could not find the table/i.test(err.message || '');
+
+// GET /api/categories/:id/fields
+//   カテゴリのフィールド設定一覧を返す。sort_order 昇順。
+//   フォールバック: テーブル未作成 → builtin の既定値（全部 visible=true）を返す
+router.get('/categories/:id/fields', async (req, res) => {
+  const cid = req.params.id;
+  const { data, error } = await supabase
+    .from('creative_category_fields')
+    .select('*')
+    .eq('category_id', cid)
+    .order('sort_order', { ascending: true });
+  if (error) {
+    if (isMissingCategoryFieldsTable(error)) {
+      // フェイルセーフ: builtin 全表示の既定値を返す
+      const fallback = BUILTIN_FIELDS.map((key, i) => ({
+        category_id: cid,
+        field_key: key,
+        field_kind: 'builtin',
+        visible: true,
+        sort_order: (i + 1) * 10,
+        label: BUILTIN_FIELD_LABELS[key] || key,
+        required: false,
+      }));
+      return res.json(fallback);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// PUT /api/categories/:id/fields
+//   フィールド設定を一括更新（upsert + 削除）。
+//   request body: { fields: [ { field_key, field_kind, custom_type, custom_options,
+//                               visible, sort_order, label, required } ... ] }
+//   送られなかった field_key の行は削除される（custom 削除に使う）。
+//   builtin フィールドの行は削除されても、フロントは BUILTIN_FIELDS のフォールバックで描画されるので問題なし。
+router.put('/categories/:id/fields', requireAuth, requirePermission('master.page'), async (req, res) => {
+  const cid = req.params.id;
+  const fields = Array.isArray(req.body?.fields) ? req.body.fields : null;
+  if (!fields) {
+    return res.status(400).json({ error: 'fields 配列が必要です' });
+  }
+
+  // バリデーション
+  const seenKeys = new Set();
+  for (const f of fields) {
+    if (!f.field_key || typeof f.field_key !== 'string') {
+      return res.status(400).json({ error: 'field_key は必須です' });
+    }
+    if (seenKeys.has(f.field_key)) {
+      return res.status(400).json({ error: `field_key が重複しています: ${f.field_key}` });
+    }
+    seenKeys.add(f.field_key);
+    const kind = f.field_kind || 'builtin';
+    if (kind !== 'builtin' && kind !== 'custom') {
+      return res.status(400).json({ error: 'field_kind は builtin または custom' });
+    }
+    if (kind === 'builtin' && !isBuiltinField(f.field_key)) {
+      return res.status(400).json({ error: `builtin フィールドではありません: ${f.field_key}` });
+    }
+    if (kind === 'custom') {
+      if (!isAllowedCustomType(f.custom_type)) {
+        return res.status(400).json({ error: `custom_type は text/textarea/url/select` });
+      }
+      // builtin と同じ field_key は禁止（衝突回避）
+      if (isBuiltinField(f.field_key)) {
+        return res.status(400).json({ error: `field_key '${f.field_key}' は builtin と衝突します` });
+      }
+    }
+  }
+
+  // 1) 既存行のうち、送られなかった field_key を削除
+  const incomingKeys = fields.map(f => f.field_key);
+  if (incomingKeys.length > 0) {
+    const { error: delErr } = await supabase
+      .from('creative_category_fields')
+      .delete()
+      .eq('category_id', cid)
+      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
+    if (delErr && !isMissingCategoryFieldsTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  } else {
+    const { error: delErr } = await supabase
+      .from('creative_category_fields')
+      .delete()
+      .eq('category_id', cid);
+    if (delErr && !isMissingCategoryFieldsTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  }
+
+  // 2) upsert（カラム数を絞る）
+  const rows = fields.map(f => ({
+    category_id:    cid,
+    field_key:      f.field_key,
+    field_kind:     f.field_kind || 'builtin',
+    custom_type:    f.field_kind === 'custom' ? (f.custom_type || null) : null,
+    custom_options: f.field_kind === 'custom' ? (f.custom_options || null) : null,
+    visible:        f.visible !== false,
+    sort_order:     Number.isFinite(parseInt(f.sort_order, 10)) ? parseInt(f.sort_order, 10) : 100,
+    label:          (f.label === undefined || f.label === null) ? null : String(f.label),
+    required:       !!f.required,
+    updated_at:     new Date().toISOString(),
+  }));
+
+  if (rows.length === 0) {
+    return res.json({ ok: true, fields: [] });
+  }
+
+  const { data, error } = await supabase
+    .from('creative_category_fields')
+    .upsert(rows, { onConflict: 'category_id,field_key' })
+    .select();
+  if (error) {
+    if (isMissingCategoryFieldsTable(error)) {
+      return res.status(503).json({ error: 'creative_category_fields テーブルが未作成です。migrations/2026-05-10_creative_category_fields.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, fields: data || [] });
+});
+
+// GET /api/creatives/:id/custom-fields
+//   クリエイティブのカスタム値一覧 [{ field_key, value }, ...]
+router.get('/creatives/:id/custom-fields', requireAuth, async (req, res) => {
+  const cid = req.params.id;
+  const { data, error } = await supabase
+    .from('creative_custom_field_values')
+    .select('field_key, value')
+    .eq('creative_id', cid);
+  if (error) {
+    if (isMissingCustomFieldValuesTable(error)) {
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// PUT /api/creatives/:id/custom-fields
+//   request body: { values: [ { field_key, value } ... ] }
+//   送られなかった field_key の行は削除される。
+router.put('/creatives/:id/custom-fields', requireAuth, async (req, res) => {
+  const cid = req.params.id;
+  const values = Array.isArray(req.body?.values) ? req.body.values : null;
+  if (!values) {
+    return res.status(400).json({ error: 'values 配列が必要です' });
+  }
+  // バリデーション
+  for (const v of values) {
+    if (!v.field_key || typeof v.field_key !== 'string') {
+      return res.status(400).json({ error: 'field_key は必須' });
+    }
+    if (isBuiltinField(v.field_key)) {
+      return res.status(400).json({ error: `builtin フィールド '${v.field_key}' は creatives 本体に保存してください（custom-fields ではない）` });
+    }
+  }
+
+  // 1) 不要になった行を削除
+  const incomingKeys = values.map(v => v.field_key);
+  if (incomingKeys.length > 0) {
+    const { error: delErr } = await supabase
+      .from('creative_custom_field_values')
+      .delete()
+      .eq('creative_id', cid)
+      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
+    if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  } else {
+    const { error: delErr } = await supabase
+      .from('creative_custom_field_values')
+      .delete()
+      .eq('creative_id', cid);
+    if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
+      return res.status(500).json({ error: delErr.message });
+    }
+  }
+
+  // 2) upsert
+  const rows = values.map(v => ({
+    creative_id: cid,
+    field_key:   v.field_key,
+    value:       (v.value === undefined || v.value === null) ? null : String(v.value),
+    updated_at:  new Date().toISOString(),
+  }));
+  if (rows.length === 0) {
+    return res.json({ ok: true, values: [] });
+  }
+  const { data, error } = await supabase
+    .from('creative_custom_field_values')
+    .upsert(rows, { onConflict: 'creative_id,field_key' })
+    .select('field_key, value');
+  if (error) {
+    if (isMissingCustomFieldValuesTable(error)) {
+      return res.status(503).json({ error: 'creative_custom_field_values テーブルが未作成です。migration を本番に適用してください。' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, values: data || [] });
 });
 
 // ==================== filename_templates (ADR 007 Stage 1) ====================

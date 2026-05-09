@@ -6360,17 +6360,19 @@ window.showPage = window.showPage || function(name, btn) {
       <div id="cd-deadline-bar" style="display:none;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center"></div>
 
       <!-- URL セクション（2カラム） -->
+      <!-- ADR 012: 各 form-group は data-field-key を持ち、applyCreativeDetailFieldVisibility() で
+           カテゴリの設定に応じて display:none / ラベル上書きされる。 -->
       <input type="hidden" id="cd-frameio-url">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">台本URL</label>
+      <div id="cd-builtin-url-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
+        <div class="form-group cd-field-group" data-field-key="script_url" style="margin-bottom:0">
+          <label class="form-label" data-default-label="台本URL">台本URL</label>
           <div style="display:flex;gap:5px">
             <input class="form-input" id="cd-script-url" placeholder="https://..." style="min-width:0;flex:1">
             <button class="btn" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
           </div>
         </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">レギュレーションシート</label>
+        <div class="form-group cd-field-group" data-field-key="regulation_url" style="margin-bottom:0">
+          <label class="form-label" data-default-label="レギュレーションシート">レギュレーションシート</label>
           <div id="cd-regulation-cell">
             <div id="cd-regulation-link" style="display:none;align-items:center;gap:6px">
               <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
@@ -6384,10 +6386,13 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
 
+      <!-- ADR 012: カスタムフィールドコンテナ（カテゴリ別に動的生成） -->
+      <div id="cd-custom-fields" style="display:none;margin-bottom:18px"></div>
+
       <!-- クライアント確認URL（自動共有 / 手動入力） -->
-      <div class="form-group" id="cd-client-review-group" style="margin-bottom:18px">
-        <label class="form-label">
-          クライアント確認URL
+      <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-bottom:18px">
+        <label class="form-label" data-default-label="クライアント確認URL">
+          <span class="cd-field-label-text">クライアント確認URL</span>
           <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:6px">🔗 自動共有済み</span>
         </label>
         <div style="display:flex;gap:5px">
@@ -12436,6 +12441,43 @@ function populateCategorySelect(selectEl, selectedId) {
     .concat(cats.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`));
   selectEl.innerHTML = opts.join('');
   if (selectedId) selectEl.value = selectedId;
+}
+
+// ==================== カテゴリ別フィールド設定 (ADR 012) ====================
+// /api/categories/:id/fields のクライアント側キャッシュ。
+// 詳細モーダル open 時に loadCategoryFields(category_id) を呼ぶと、
+// 同一カテゴリへの再アクセスはキャッシュから返る。
+// migration 未適用環境では API が builtin 全表示の fallback を返すため、
+// フロント側は migration の有無を意識する必要なし。
+const BUILTIN_FIELD_DEFAULTS = {
+  product:           '商材',
+  appeal_axis:       '訴求軸',
+  media_format_size: '媒体・尺・サイズ',
+  talent:            'タレント',
+  script_url:        '台本URL',
+  regulation_url:    'レギュレーション',
+  client_review_url: 'クライアント確認URL',
+};
+const _categoryFieldsCache = new Map(); // category_id -> [field, ...]
+async function loadCategoryFields(categoryId, force = false) {
+  if (!categoryId) return [];
+  if (!force && _categoryFieldsCache.has(categoryId)) {
+    return _categoryFieldsCache.get(categoryId);
+  }
+  try {
+    const res = await apiFetch(`${API}/categories/${categoryId}/fields`);
+    const data = res.ok ? (await res.json() || []) : [];
+    _categoryFieldsCache.set(categoryId, data);
+    return data;
+  } catch (e) {
+    console.warn('[loadCategoryFields]', e);
+    _categoryFieldsCache.set(categoryId, []);
+    return [];
+  }
+}
+function invalidateCategoryFieldsCache(categoryId) {
+  if (categoryId) _categoryFieldsCache.delete(categoryId);
+  else _categoryFieldsCache.clear();
 }
 
 // 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
@@ -23442,7 +23484,7 @@ async function renderCategoriesMasterPage() {
 
     <!-- 編集モーダル（インライン） -->
     <div id="category-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;align-items:center;justify-content:center">
-      <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:92vw;max-height:90vh;overflow:auto">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:640px;max-width:94vw;max-height:92vh;overflow:auto">
         <div style="font-size:16px;font-weight:700;margin-bottom:16px" id="cat-modal-title">カテゴリ追加</div>
         <input type="hidden" id="cat-modal-id">
         <div class="form-group">
@@ -23477,6 +23519,19 @@ async function renderCategoriesMasterPage() {
           <input type="checkbox" id="cat-modal-active" checked>
           <span>有効（is_active=true）</span>
         </label>
+
+        <!-- ADR 012: 表示項目（フィールド可視性管理） -->
+        <div id="cat-modal-fields-section" style="display:none;margin-top:22px;padding-top:18px;border-top:1px dashed var(--border)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:var(--text-main)">📋 表示項目</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">クリエイティブ詳細画面で表示する項目を選択。並び順は数値が小さいほど上。</div>
+            </div>
+            <button type="button" class="btn-sm" onclick="addCategoryCustomField()">+ カスタム項目を追加</button>
+          </div>
+          <div id="cat-modal-fields-list" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
           <button class="btn" onclick="closeCategoryModal()">キャンセル</button>
           <button class="btn-primary" onclick="saveCategory()">保存</button>
@@ -23486,7 +23541,7 @@ async function renderCategoriesMasterPage() {
   `;
 }
 
-function openCategoryModal(id) {
+async function openCategoryModal(id) {
   const modal = document.getElementById('category-modal');
   if (!modal) return;
   const cat = id ? (_categoriesCache || []).find(c => c.id === id)
@@ -23502,10 +23557,178 @@ function openCategoryModal(id) {
   document.getElementById('cat-modal-sort').value = (cat?.sort_order ?? 100);
   document.getElementById('cat-modal-active').checked = cat?.is_active !== false;
   modal.style.display = 'flex';
+
+  // ADR 012: 表示項目セクション（既存カテゴリ編集時のみ。新規時は保存後に再オープンしてもらう）
+  const fieldsSection = document.getElementById('cat-modal-fields-section');
+  if (id && fieldsSection) {
+    fieldsSection.style.display = '';
+    await loadCategoryFieldsIntoModal(id);
+  } else if (fieldsSection) {
+    fieldsSection.style.display = 'none';
+    document.getElementById('cat-modal-fields-list').innerHTML = '';
+  }
 }
+
+// ==================== ADR 012: カテゴリフィールド管理 (Master) ====================
+// カテゴリ編集モーダル内の「表示項目」を扱う。
+// _catModalFields: 編集中のフィールド配列。保存時に PUT /api/categories/:id/fields で送る。
+let _catModalFields = [];
+const BUILTIN_FIELD_KEYS_FRONT = [
+  'product','appeal_axis','media_format_size','talent','script_url','regulation_url','client_review_url',
+];
+const BUILTIN_FIELD_LABELS_FRONT = {
+  product:           '商材',
+  appeal_axis:       '訴求軸',
+  media_format_size: '媒体・尺・サイズ',
+  talent:            'タレント',
+  script_url:        '台本URL',
+  regulation_url:    'レギュレーション',
+  client_review_url: 'クライアント確認URL',
+};
+
+async function loadCategoryFieldsIntoModal(categoryId) {
+  let fields = [];
+  try {
+    const res = await apiFetch(`${API}/categories/${categoryId}/fields`);
+    fields = res.ok ? (await res.json() || []) : [];
+  } catch (_) { fields = []; }
+
+  // builtin の不足を補完（DBに行が無いキーは visible=true で初期化）
+  const haveKeys = new Set(fields.map(f => f.field_key));
+  BUILTIN_FIELD_KEYS_FRONT.forEach((k, i) => {
+    if (!haveKeys.has(k)) {
+      fields.push({
+        field_key: k,
+        field_kind: 'builtin',
+        visible: true,
+        sort_order: (i + 1) * 10,
+        label: BUILTIN_FIELD_LABELS_FRONT[k],
+        required: false,
+      });
+    }
+  });
+  // sort_order 昇順
+  fields.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  _catModalFields = fields;
+  renderCategoryFieldsList();
+}
+
+function renderCategoryFieldsList() {
+  const host = document.getElementById('cat-modal-fields-list');
+  if (!host) return;
+  if (!_catModalFields || _catModalFields.length === 0) {
+    host.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px">項目がありません</div>';
+    return;
+  }
+  host.innerHTML = _catModalFields.map((f, idx) => {
+    const isCustom = f.field_kind === 'custom';
+    const defaultLabel = BUILTIN_FIELD_LABELS_FRONT[f.field_key] || f.field_key;
+    const labelDisp = f.label !== undefined && f.label !== null ? f.label : defaultLabel;
+    const kindBadge = isCustom
+      ? '<span style="font-size:10px;background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-weight:600">カスタム</span>'
+      : '<span style="font-size:10px;background:#f3f4f6;color:#4b5563;padding:1px 6px;border-radius:4px;font-weight:600">builtin</span>';
+    const customTypeDisp = isCustom
+      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:4px">(${esc(f.custom_type || 'text')})</span>`
+      : '';
+    const upDisabled  = idx === 0 ? 'disabled' : '';
+    const downDisabled = idx === _catModalFields.length - 1 ? 'disabled' : '';
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:0.5px solid var(--border);border-radius:8px;background:var(--surface);font-size:13px">
+        <input type="checkbox" ${f.visible !== false ? 'checked' : ''} onchange="catModalToggleVisible(${idx}, this.checked)">
+        <span style="font-family:monospace;color:var(--text-muted);font-size:11px;min-width:140px">${esc(f.field_key)}</span>
+        ${kindBadge}${customTypeDisp}
+        <input class="form-input" type="text" value="${esc(labelDisp)}" placeholder="${esc(defaultLabel)}" oninput="catModalUpdateLabel(${idx}, this.value)" style="flex:1;font-size:12px;padding:4px 8px">
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;cursor:pointer">
+          <input type="checkbox" ${f.required ? 'checked' : ''} onchange="catModalToggleRequired(${idx}, this.checked)">必須
+        </label>
+        <button type="button" class="btn-sm" onclick="catModalMoveField(${idx}, -1)" ${upDisabled} title="上へ">▲</button>
+        <button type="button" class="btn-sm" onclick="catModalMoveField(${idx}, 1)"  ${downDisabled} title="下へ">▼</button>
+        ${isCustom ? `<button type="button" class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="catModalRemoveField(${idx})" title="削除">×</button>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function catModalToggleVisible(idx, val) {
+  if (!_catModalFields[idx]) return;
+  _catModalFields[idx].visible = !!val;
+}
+function catModalToggleRequired(idx, val) {
+  if (!_catModalFields[idx]) return;
+  _catModalFields[idx].required = !!val;
+}
+function catModalUpdateLabel(idx, val) {
+  if (!_catModalFields[idx]) return;
+  _catModalFields[idx].label = String(val || '');
+}
+function catModalMoveField(idx, delta) {
+  const ni = idx + delta;
+  if (ni < 0 || ni >= _catModalFields.length) return;
+  const tmp = _catModalFields[idx];
+  _catModalFields[idx] = _catModalFields[ni];
+  _catModalFields[ni]  = tmp;
+  // sort_order を再採番（10 刻み）
+  _catModalFields.forEach((f, i) => { f.sort_order = (i + 1) * 10; });
+  renderCategoryFieldsList();
+}
+function catModalRemoveField(idx) {
+  if (!_catModalFields[idx]) return;
+  if (_catModalFields[idx].field_kind !== 'custom') {
+    showToast('builtin 項目は削除できません（visible を OFF にしてください）', 'warn');
+    return;
+  }
+  if (!confirm(`カスタム項目「${_catModalFields[idx].label || _catModalFields[idx].field_key}」を削除しますか？\n（既に入力されている値はカテゴリ保存時に消えます）`)) return;
+  _catModalFields.splice(idx, 1);
+  _catModalFields.forEach((f, i) => { f.sort_order = (i + 1) * 10; });
+  renderCategoryFieldsList();
+}
+function addCategoryCustomField() {
+  const key = (prompt('カスタム項目のキー（半角英数_、ユニーク。例: public_url）', '') || '').trim();
+  if (!key) return;
+  if (!/^[a-z][a-z0-9_]*$/.test(key)) {
+    showToast('キーは半角英小文字・数字・アンダースコアで先頭は英字にしてください', 'warn');
+    return;
+  }
+  if (BUILTIN_FIELD_KEYS_FRONT.includes(key)) {
+    showToast(`builtin と衝突するキー「${key}」は使えません`, 'warn');
+    return;
+  }
+  if (_catModalFields.some(f => f.field_key === key)) {
+    showToast('既に同じキーの項目があります', 'warn');
+    return;
+  }
+  const label = (prompt('表示ラベル（例: 公開URL）', key) || '').trim() || key;
+  const type = (prompt('入力タイプを選択: text / textarea / url / select', 'text') || 'text').trim();
+  if (!['text','textarea','url','select'].includes(type)) {
+    showToast('入力タイプは text / textarea / url / select のいずれかです', 'warn');
+    return;
+  }
+  let custom_options = null;
+  if (type === 'select') {
+    const opts = (prompt('選択肢をカンマ区切りで入力（例: A,B,C）', '') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (opts.length === 0) {
+      showToast('select は選択肢が1つ以上必要です', 'warn');
+      return;
+    }
+    custom_options = { options: opts };
+  }
+  const sort_order = (_catModalFields.length + 1) * 10;
+  _catModalFields.push({
+    field_key: key,
+    field_kind: 'custom',
+    custom_type: type,
+    custom_options,
+    visible: true,
+    sort_order,
+    label,
+    required: false,
+  });
+  renderCategoryFieldsList();
+}
+
 function closeCategoryModal() {
   const modal = document.getElementById('category-modal');
   if (modal) modal.style.display = 'none';
+  _catModalFields = [];
 }
 async function saveCategory() {
   const id = document.getElementById('cat-modal-id').value;
@@ -23531,6 +23754,41 @@ async function saveCategory() {
     showToast('保存失敗: ' + (e?.error || res.status), 'error');
     return;
   }
+  // 保存後の id（新規 POST 時はレスポンスから取得）
+  const saved = await res.json().catch(() => null);
+  const savedId = id || saved?.id;
+
+  // ADR 012: 表示項目（フィールド設定）を保存
+  if (savedId && _catModalFields && _catModalFields.length > 0) {
+    const fieldsPayload = {
+      fields: _catModalFields.map(f => ({
+        field_key: f.field_key,
+        field_kind: f.field_kind || 'builtin',
+        custom_type: f.field_kind === 'custom' ? (f.custom_type || 'text') : null,
+        custom_options: f.field_kind === 'custom' ? (f.custom_options || null) : null,
+        visible: f.visible !== false,
+        sort_order: f.sort_order || 100,
+        label: (f.label === undefined || f.label === null) ? null : String(f.label),
+        required: !!f.required,
+      })),
+    };
+    try {
+      const fres = await apiFetch(`${API}/categories/${savedId}/fields`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fieldsPayload),
+      });
+      if (!fres.ok) {
+        const fe = await fres.json().catch(() => ({}));
+        showToast('表示項目の保存に失敗: ' + (fe?.error || fres.status), 'warn');
+      }
+    } catch (e) {
+      console.warn('[saveCategory] fields PUT failed:', e);
+    }
+    // フィールドキャッシュを破棄して、次回詳細モーダル open 時に再取得させる
+    invalidateCategoryFieldsCache(savedId);
+  }
+
   closeCategoryModal();
   await loadCategories(true); // キャッシュ強制更新
   renderCategoriesMasterPage();
@@ -25861,6 +26119,164 @@ function cdRoundJump(idx) {
   cdRenderRoundCompare();
 }
 
+// ==================== ADR 012: カテゴリ別フィールド可視性 ====================
+// 詳細モーダルの builtin DOM (data-field-key) を visible/hidden 切り替え + ラベル上書き。
+// custom フィールドは #cd-custom-fields に動的生成（既存値は GET /custom-fields で populate）。
+//
+// 引数 categoryId が null/undefined の場合は「すべて表示」のフェイルセーフ動作。
+async function applyCreativeDetailFieldVisibility(categoryId, creativeId) {
+  // 1) builtin 可視性デフォルト: すべて visible（カテゴリ未設定でも fallback）
+  const groups = document.querySelectorAll('#modal-creative-detail .cd-field-group');
+  const builtinByKey = {};
+
+  let fields = [];
+  if (categoryId) {
+    try { fields = await loadCategoryFields(categoryId); } catch (_) { fields = []; }
+  }
+
+  // 設定がゼロのときは「すべて visible」のフェイルセーフ
+  if (!fields || fields.length === 0) {
+    groups.forEach(g => { g.style.display = ''; });
+    // カスタム欄も空に
+    const cf = document.getElementById('cd-custom-fields');
+    if (cf) { cf.innerHTML = ''; cf.style.display = 'none'; }
+    return;
+  }
+
+  fields.forEach(f => {
+    if (f.field_kind === 'builtin' || !f.field_kind) {
+      builtinByKey[f.field_key] = f;
+    }
+  });
+
+  // 2) builtin: data-field-key 単位で表示制御 + ラベル上書き
+  groups.forEach(g => {
+    const key = g.getAttribute('data-field-key');
+    if (!key) return;
+    const cfg = builtinByKey[key];
+    if (!cfg) {
+      // builtin として登録されていない field_key は安全側で表示（過去互換）
+      g.style.display = '';
+      return;
+    }
+    g.style.display = (cfg.visible === false) ? 'none' : '';
+    if (cfg.label) {
+      // 子の form-label / .cd-field-label-text を更新
+      const labelText = g.querySelector('.cd-field-label-text');
+      if (labelText) {
+        labelText.textContent = cfg.label;
+      } else {
+        const labelEl = g.querySelector('.form-label');
+        if (labelEl && labelEl.children.length === 0) {
+          labelEl.textContent = cfg.label;
+        }
+      }
+    } else {
+      // ラベル指定なし → デフォルトに戻す
+      const labelEl = g.querySelector('.form-label');
+      if (labelEl) {
+        const def = labelEl.getAttribute('data-default-label');
+        const labelText = g.querySelector('.cd-field-label-text');
+        if (labelText && def) labelText.textContent = def;
+        else if (def && labelEl.children.length === 0) labelEl.textContent = def;
+      }
+    }
+  });
+
+  // 3) カスタムフィールド: 値を fetch して動的生成
+  const customFields = fields.filter(f => f.field_kind === 'custom' && f.visible !== false)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  await renderCreativeCustomFields(customFields, creativeId);
+}
+
+async function renderCreativeCustomFields(customFields, creativeId) {
+  const host = document.getElementById('cd-custom-fields');
+  if (!host) return;
+  if (!customFields || customFields.length === 0) {
+    host.innerHTML = '';
+    host.style.display = 'none';
+    return;
+  }
+
+  // 既存値を fetch
+  let valuesByKey = {};
+  if (creativeId) {
+    try {
+      const res = await apiFetch(`${API}/creatives/${creativeId}/custom-fields`);
+      if (res.ok) {
+        const arr = await res.json();
+        (arr || []).forEach(v => { valuesByKey[v.field_key] = v.value; });
+      }
+    } catch (_) { /* noop */ }
+  }
+
+  const html = customFields.map(f => {
+    const label  = esc(f.label || f.field_key);
+    const reqMark = f.required ? ' <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>' : '';
+    const id = `cd-custom-${esc(f.field_key)}`;
+    const val = valuesByKey[f.field_key] || '';
+    let inputHtml = '';
+    switch (f.custom_type) {
+      case 'textarea':
+        inputHtml = `<textarea class="form-input cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}" rows="3" style="resize:vertical">${esc(val)}</textarea>`;
+        break;
+      case 'url': {
+        inputHtml = `
+          <div style="display:flex;gap:5px">
+            <input class="form-input cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}" type="url" value="${esc(val)}" placeholder="https://..." style="min-width:0;flex:1">
+            <button type="button" class="btn" onclick="openLink('${id}')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+          </div>`;
+        break;
+      }
+      case 'select': {
+        const opts = Array.isArray(f.custom_options?.options) ? f.custom_options.options : [];
+        const optionHtml = ['<option value="">（未選択）</option>']
+          .concat(opts.map(o => `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o)}</option>`))
+          .join('');
+        inputHtml = `<select class="form-select cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}">${optionHtml}</select>`;
+        break;
+      }
+      case 'text':
+      default:
+        inputHtml = `<input class="form-input cd-custom-input" id="${id}" data-field-key="${esc(f.field_key)}" type="text" value="${esc(val)}">`;
+    }
+    return `
+      <div class="form-group" data-custom-field-key="${esc(f.field_key)}" style="margin-bottom:14px">
+        <label class="form-label">${label}${reqMark}</label>
+        ${inputHtml}
+      </div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <div style="font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;margin-bottom:10px">カスタム項目</div>
+    ${html}`;
+  host.style.display = '';
+}
+
+// 詳細モーダル保存時に呼ぶ: 現在の cd-custom-fields の入力値を PUT
+async function saveCreativeCustomFields(creativeId) {
+  if (!creativeId) return { ok: true };
+  const inputs = document.querySelectorAll('#cd-custom-fields .cd-custom-input');
+  if (!inputs || inputs.length === 0) return { ok: true };
+  const values = [];
+  inputs.forEach(el => {
+    const key = el.getAttribute('data-field-key');
+    if (!key) return;
+    values.push({ field_key: key, value: (el.value ?? '').toString().trim() || null });
+  });
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/custom-fields`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    });
+    return res.ok ? { ok: true } : { ok: false };
+  } catch (e) {
+    console.warn('[saveCreativeCustomFields]', e);
+    return { ok: false };
+  }
+}
+
 async function openCreativeDetail(id) {
   const res = await apiFetch(`${API}/creatives/${id}`);
   if (res.status === 404) {
@@ -26028,6 +26444,12 @@ async function openCreativeDetail(id) {
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（並列・失敗しても無視）
   refreshCreativePostEditButton(id).catch(() => {});
   refreshCreativeEditHistory(id).catch(() => {});
+
+  // ADR 012: カテゴリ別フィールド可視性を適用（builtin DOM の表示/ラベル + custom 動的生成）
+  // 失敗してもフローは止めない（フェイルセーフで全表示）
+  try {
+    await applyCreativeDetailFieldVisibility(c.category_id || c.projects?.primary_category_id || null, id);
+  } catch (e) { console.warn('[applyCreativeDetailFieldVisibility]', e); }
 
   openModal('modal-creative-detail');
   // 入力保護: 初期スナップショット取得 + localStorage 下書き復元
@@ -32362,6 +32784,8 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
   if (res.ok) {
+    // ADR 012: カスタムフィールドの値も保存（失敗しても本フローは止めない）
+    try { await saveCreativeCustomFields(currentCreativeDetail.id); } catch (_) {}
     // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
