@@ -3645,7 +3645,10 @@ window.showPage = window.showPage || function(name, btn) {
           <select id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="display:none" aria-hidden="true"></select>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
-          <div></div>
+          <div>
+            <!-- 動画/静止画案件を選んでいる時だけ表示。クリックで一括登録タブに切替（案件は引き継ぎ） -->
+            <button type="button" id="creative-step1-bulk-link" onclick="goToBulkFromSingle()" style="display:none;background:none;border:none;color:var(--em-dark);font-size:12px;cursor:pointer;padding:4px 0;text-decoration:underline">→ 複数本まとめて登録（一括登録）</button>
+          </div>
           <div style="display:flex;align-items:center;gap:8px">
             <button class="btn-primary" id="creative-step1-next-btn" onclick="goToCreativeStep2()">次へ →</button>
             <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
@@ -20616,6 +20619,51 @@ function updateCreativeStep1NextBtn() {
   btn.disabled = !projectId;
   btn.style.opacity = projectId ? '1' : '0.5';
   btn.style.cursor = projectId ? 'pointer' : 'not-allowed';
+
+  // 一括登録への誘導リンク: 動画 / 静止画 (image) 案件を選んでいる時だけ表示
+  const link = document.getElementById('creative-step1-bulk-link');
+  if (link) {
+    let showLink = false;
+    if (projectId) {
+      const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+      const cat = project && typeof getProjectCategory === 'function' ? getProjectCategory(project) : null;
+      const code = cat?.code || '';
+      // 一括対応カテゴリ判定: filterProjectsByBulkCap と同じ条件 (video / image)
+      showLink = (code === 'video' || code === 'image');
+    }
+    link.style.display = showLink ? '' : 'none';
+  }
+}
+
+// 個別登録タブ Step1 の「→ 複数本まとめて登録（一括登録）」リンクから呼ばれる。
+// 選択中の案件 (c-project-id) を一括登録タブの bulk-project-id に引き継いで切り替える。
+async function goToBulkFromSingle() {
+  const projectId = document.getElementById('c-project-id')?.value || '';
+  if (!projectId) return;
+  const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+  const cat = project && typeof getProjectCategory === 'function' ? getProjectCategory(project) : null;
+  const code = cat?.code || '';
+  // 念のためのガード（リンクは表示時点でフィルタ済み）
+  if (code !== 'video' && code !== 'image') return;
+
+  // 一括タブのフィルタを案件カテゴリに合わせる（video → 動画 / image → 静止画）
+  if (code === 'video') {
+    _creativeAddBulkProjectFilter = 'video';
+  } else {
+    _creativeAddBulkProjectFilter = 'design';
+  }
+
+  const bulkSel = document.getElementById('bulk-project-id');
+  if (bulkSel) {
+    // タイル/select を再描画（フィルタ反映）
+    if (typeof renderCreativeAddProjectDropdowns === 'function') renderCreativeAddProjectDropdowns();
+    bulkSel.value = projectId;
+    if (typeof onBulkProjectChange === 'function') {
+      await onBulkProjectChange(projectId);
+    }
+  }
+
+  switchCreativeTab('bulk');
 }
 
 // 種別文字列 → カテゴリ判定
@@ -20783,8 +20831,12 @@ function getDefaultDraftDeadline(finalDeadline) {
   return finalDeadline && plusWeekStr > finalDeadline ? finalDeadline : plusWeekStr;
 }
 
-async function openCreateCreative() {
+// presetProjectId: 案件画面など外部から呼ばれた際に、その案件で固定したい場合に渡す。
+//   - 案件カテゴリが LP/HP/LINE/その他 → 「一括登録」タブを非表示にし「個別登録」のみ
+//   - 案件カテゴリが 動画/静止画 → 個別/一括 両タブ表示（通常通り）
+async function openCreateCreative(opts = {}) {
   try {
+  const presetProjectId = (opts && typeof opts === 'object') ? (opts.presetProjectId || '') : '';
   _autoFileNameDone = false; // 自動生成フラグをリセット
   // 案件ドロップダウンの職種フィルタ初期値を user の job_type / default_creative_tab から決定し、
   // 個別/一括 両方のドロップダウンを再構築する（カウント・active も同時更新）
@@ -20870,6 +20922,28 @@ async function openCreateCreative() {
     });
   });
 
+  // 外部から案件が指定されている（presetProjectId）場合は両タブで案件を固定する。
+  // 案件カテゴリ判定に使えるよう、まず一致候補を解決する。
+  let presetProject = null;
+  if (presetProjectId) {
+    presetProject = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === presetProjectId) || null;
+  }
+  if (presetProject) {
+    const cSel = document.getElementById('c-project-id');
+    const bSel = document.getElementById('bulk-project-id');
+    if (cSel) cSel.value = presetProjectId;
+    // 一括対応カテゴリ (video / image) のときだけ bulk-project-id にもセット
+    const presetCat = typeof getProjectCategory === 'function' ? getProjectCategory(presetProject) : null;
+    const presetCode = presetCat?.code || '';
+    if (bSel && (presetCode === 'video' || presetCode === 'image')) {
+      // 一括タブのフィルタを案件カテゴリに合わせる（タイル表示時に選択中タイルが見えるように）
+      _creativeAddBulkProjectFilter = (presetCode === 'video') ? 'video' : 'design';
+      // タイル/select を再描画してから case の value をセット
+      renderCreativeAddProjectDropdowns();
+      bSel.value = presetProjectId;
+    }
+  }
+
   // 選択中の案件で訴求軸と担当者を初期ロード（個別・一括両方）
   const initialProject = document.getElementById('c-project-id').value;
   const initialBulkProject = document.getElementById('bulk-project-id').value;
@@ -20878,6 +20952,22 @@ async function openCreateCreative() {
     onBulkProjectChange(initialBulkProject),
   ]);
   updateAssigneeSelect();
+
+  // タブ表示制御:
+  //   preset 案件があり、そのカテゴリが LP/HP/LINE/その他 → 一括登録タブを非表示にし個別のみ
+  //   それ以外（preset 無し or 動画/静止画 preset）→ 両タブ表示
+  const tabBulkBtn = document.getElementById('tab-bulk-btn');
+  const tabSingleBtn = document.getElementById('tab-single-btn');
+  if (tabBulkBtn && tabSingleBtn) {
+    let hideBulkTab = false;
+    if (presetProject) {
+      const presetCat2 = typeof getProjectCategory === 'function' ? getProjectCategory(presetProject) : null;
+      const presetCode2 = presetCat2?.code || '';
+      hideBulkTab = !(presetCode2 === 'video' || presetCode2 === 'image');
+    }
+    tabBulkBtn.style.display = hideBulkTab ? 'none' : '';
+    tabSingleBtn.style.display = '';
+  }
 
   switchCreativeTab('single');
 
