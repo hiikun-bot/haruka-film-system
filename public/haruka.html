@@ -3516,120 +3516,148 @@ window.showPage = window.showPage || function(name, btn) {
 
     <!-- 個別登録タブ（デフォルト） -->
     <div id="tab-single">
-      <!-- 2カラムグリッド -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
 
-        <!-- 左カラム -->
-        <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">案件</label>
-            <div id="c-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-              <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
-              <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
-              <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
-            </div>
-            <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value)"></select>
+      <!-- ===== Step 1: 案件選択 ===== -->
+      <div id="creative-step-1">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">① 案件を選択してください</div>
+        <div class="form-group" style="margin-bottom:0;max-width:720px">
+          <div id="c-project-cap-tabs" class="creative-add-cap-tabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+            <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
+            <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
+            <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
           </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">クリエイティブ種別</label>
-            <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c')">
-              <option value="video_short">ショート動画</option>
-              <option value="video_long">ロング動画</option>
-              <option value="design_thumbnail">サムネイル</option>
-              <option value="design_banner">バナー</option>
-              <option value="design_post">投稿画像</option>
-              <option value="design_story">ストーリーズ</option>
-              <option value="hp">HP</option>
-              <option value="lp">LP</option>
-              <option value="line">LINE</option>
-            </select>
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">商材 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
-            <select class="form-select" id="c-product-id" onchange="tryAutoGenerateFileName()">
-              <option value="">未確定（後で設定）</option>
-            </select>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">媒体</label>
-              <select class="form-select" id="c-media-code" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">クリエイティブFMT</label>
-              <select class="form-select" id="c-creative-fmt" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
-            </div>
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">クリエイティブサイズ</label>
-            <select class="form-select" id="c-creative-size" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
+          <select class="form-select" id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="font-size:14px;padding:10px 12px"></select>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
+          <div></div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn-primary" id="creative-step1-next-btn" onclick="goToCreativeStep2()">次へ →</button>
+            <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
           </div>
         </div>
+      </div>
 
-        <!-- 右カラム -->
-        <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">訴求軸 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
-            <select class="form-select" id="c-appeal-type" onchange="tryAutoGenerateFileName()">
-              <option value="">未確定（後で設定）</option>
-            </select>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">チーム</label>
-              <select class="form-select" id="c-team-id" onchange="onTeamChange(this.value)">
-                <option value="">チームを選択（任意）</option>
+      <!-- ===== Step 2: 項目入力 ===== -->
+      <div id="creative-step-2" style="display:none">
+        <!-- ヘッダー: 戻るリンク + 選択中案件 -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:8px 12px;background:var(--em-pale);border-radius:6px;cursor:pointer" onclick="backToCreativeStep1()" title="案件選択に戻る">
+          <span style="font-size:13px;color:var(--em-dark);font-weight:500">← 案件: <span id="creative-step2-project-label" style="font-weight:600"></span></span>
+          <span style="font-size:11px;color:var(--text-muted);margin-left:auto">クリックで戻る</span>
+        </div>
+
+        <!-- 2カラムグリッド -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px">
+
+          <!-- 左カラム -->
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="form-group" style="margin-bottom:0" data-creative-field="creative_type">
+              <label class="form-label">クリエイティブ種別</label>
+              <select class="form-select" id="c-creative-type" onchange="updateAssigneeSelect();autoSetCreativeFmt('c');applyCreativeTypeVisibility(this.value)">
+                <option value="video_short">ショート動画</option>
+                <option value="video_long">ロング動画</option>
+                <option value="design_thumbnail">サムネイル</option>
+                <option value="design_banner">バナー</option>
+                <option value="design_post">投稿画像</option>
+                <option value="design_story">ストーリーズ</option>
+                <option value="hp">HP</option>
+                <option value="lp">LP</option>
+                <option value="line">LINE</option>
               </select>
             </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">担当者 <span style="color:#E24B4A">*</span></label>
-              <div style="display:flex;align-items:center;gap:8px">
-                <span id="c-assignee-avatar" style="flex-shrink:0;display:inline-flex;align-items:center"></span>
-                <select class="form-select" id="c-assignee-id" onchange="renderAssigneeAvatar('c-assignee-id','c-assignee-avatar')" style="flex:1;min-width:0"><option value="">担当者を選択</option></select>
+            <div class="form-group" style="margin-bottom:0" data-creative-field="product">
+              <label class="form-label">商材 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
+              <select class="form-select" id="c-product-id" onchange="tryAutoGenerateFileName()">
+                <option value="">未確定（後で設定）</option>
+              </select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" data-creative-field="media_fmt">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">媒体</label>
+                <select class="form-select" id="c-media-code" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">クリエイティブFMT</label>
+                <select class="form-select" id="c-creative-fmt" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
               </div>
             </div>
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
-            <div style="display:flex;gap:6px">
-              <input class="form-input" id="c-file-name" placeholder="訴求軸選択後に自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
-              <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
-            </div>
-            <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.6">形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。</div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">初稿提出日</label>
-              <input class="form-input" id="c-draft-deadline" type="date">
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">最終納期</label>
-              <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
+            <div class="form-group" style="margin-bottom:0" data-creative-field="size">
+              <label class="form-label">クリエイティブサイズ</label>
+              <select class="form-select" id="c-creative-size" onchange="tryAutoGenerateFileName()"><option value="">（任意）</option></select>
             </div>
           </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="form-label">メモ（任意）</label>
-            <textarea class="form-input" id="c-memo" rows="3" style="resize:vertical" placeholder="クライアント要望、参考リンク、撮影メモなど"></textarea>
-          </div>
-        </div>
 
-      </div><!-- /2カラムグリッド -->
+          <!-- 右カラム -->
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="form-group" style="margin-bottom:0" data-creative-field="appeal">
+              <label class="form-label">訴求軸 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・後で設定可）</span></label>
+              <select class="form-select" id="c-appeal-type" onchange="tryAutoGenerateFileName()">
+                <option value="">未確定（後で設定）</option>
+              </select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">チーム</label>
+                <select class="form-select" id="c-team-id" onchange="onTeamChange(this.value)">
+                  <option value="">チームを選択（任意）</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">担当者 <span style="color:#E24B4A">*</span></label>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="c-assignee-avatar" style="flex-shrink:0;display:inline-flex;align-items:center"></span>
+                  <select class="form-select" id="c-assignee-id" onchange="renderAssigneeAvatar('c-assignee-id','c-assignee-avatar')" style="flex:1;min-width:0"><option value="">担当者を選択</option></select>
+                </div>
+              </div>
+            </div>
+            <!-- LINE 専用: タイトル -->
+            <div class="form-group" style="margin-bottom:0;display:none" data-creative-field="title">
+              <label class="form-label">タイトル <span style="color:#E24B4A">*</span></label>
+              <input class="form-input" id="c-title" placeholder="例: 6月キャンペーン_配信1" style="font-size:13px">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.6">ここで入力したタイトルがクリエイティブ一覧の表示名になり、Googleドライブのファイル名としてもそのまま使われます。</div>
+            </div>
+            <!-- 動画 / 静止画 / LP / HP: 提出用ファイル名 -->
+            <div class="form-group" style="margin-bottom:0" data-creative-field="filename">
+              <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
+              <div style="display:flex;gap:6px">
+                <input class="form-input" id="c-file-name" placeholder="訴求軸選択後に自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
+                <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
+              </div>
+              <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
+              <div id="filename-format-hint" style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.6">形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">初稿提出日</label>
+                <input class="form-input" id="c-draft-deadline" type="date">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">最終納期</label>
+                <input class="form-input" id="c-final-deadline" type="date" onchange="clampDraftToFinal('c-draft-deadline','c-final-deadline')">
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">メモ（任意）</label>
+              <textarea class="form-input" id="c-memo" rows="3" style="resize:vertical" placeholder="クライアント要望、参考リンク、撮影メモなど"></textarea>
+            </div>
+          </div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:0.5px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:16px">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
-            <input type="checkbox" id="c-talent-flag" style="width:15px;height:15px;cursor:pointer">
-            <span>🎬 芸能人・インフルエンサー起用</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
-            <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
-            <span>連続登録モード</span>
-          </label>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <button class="btn-primary" onclick="createCreative()">追加する</button>
-          <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+        </div><!-- /2カラムグリッド -->
+
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:0.5px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:16px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)" data-creative-field="talent">
+              <input type="checkbox" id="c-talent-flag" style="width:15px;height:15px;cursor:pointer">
+              <span>🎬 芸能人・インフルエンサー起用</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+              <input type="checkbox" id="continuous-mode" style="width:16px;height:16px;cursor:pointer">
+              <span>連続登録モード</span>
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn-primary" onclick="createCreative()">追加する</button>
+            <button class="btn" onclick="cancelCreativeModal()">キャンセル</button>
+          </div>
         </div>
       </div>
     </div>
@@ -11125,8 +11153,20 @@ async function showCreativeMismatchDialog(info) {
 
 async function createCreative() {
   const project_id = document.getElementById('c-project-id').value;
-  const file_name = document.getElementById('c-file-name').value.trim();
   const creative_type = document.getElementById('c-creative-type').value;
+  const cat = (typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(creative_type) : null;
+  const isLine = (cat === 'line');
+  const isLpOrHp = (cat === 'lp' || cat === 'hp');
+  const isVideoOrDesign = (cat === 'video' || cat === 'design');
+
+  // ファイル名: LINE はタイトルをそのまま採用 / それ以外はファイル名フィールド
+  let file_name = '';
+  if (isLine) {
+    file_name = (document.getElementById('c-title')?.value || '').trim();
+  } else {
+    file_name = (document.getElementById('c-file-name')?.value || '').trim();
+  }
+
   const appeal_type_id = document.getElementById('c-appeal-type').value;
   const draft_deadline = document.getElementById('c-draft-deadline').value;
   const final_deadline = document.getElementById('c-final-deadline').value;
@@ -11134,13 +11174,18 @@ async function createCreative() {
 
   const assignee_id = document.getElementById('c-assignee-id').value;
   if (!project_id) { showToast('案件は必須です', 'warn'); return; }
-  if (!file_name) { showToast('提出用ファイル名は必須です\n訴求軸を選択するか手動で入力してください', 'warn'); return; }
+  if (isLine) {
+    if (!file_name) { showToast('タイトルは必須です', 'warn'); return; }
+  } else {
+    if (!file_name) { showToast('提出用ファイル名は必須です', 'warn'); return; }
+  }
   if (!assignee_id) { showToast('担当者を選択してください', 'warn'); return; }
 
-  const product_id = document.getElementById('c-product-id')?.value || null;
-  const media_code = document.getElementById('c-media-code')?.value || null;
-  const creative_fmt = document.getElementById('c-creative-fmt')?.value || null;
-  const creative_size = document.getElementById('c-creative-size')?.value || null;
+  // 種別ごとに不要な項目は NULL で送る
+  const product_id = isVideoOrDesign ? (document.getElementById('c-product-id')?.value || null) : null;
+  const media_code = isVideoOrDesign ? (document.getElementById('c-media-code')?.value || null) : null;
+  const creative_fmt = isVideoOrDesign ? (document.getElementById('c-creative-fmt')?.value || null) : null;
+  const creative_size = isVideoOrDesign ? (document.getElementById('c-creative-size')?.value || null) : null;
   const team_id = document.getElementById('c-team-id')?.value || null;
 
   // 案件種別 × チーム種別 の整合性チェック（不整合なら提出停止）
@@ -11153,10 +11198,13 @@ async function createCreative() {
   // 内部コードと制作日を取得（generateFileName で生成済みの場合）
   const internal_code = document.getElementById('c-internal-code')?.value?.trim() || null;
   const production_date = new Date().toISOString().slice(0, 10);
-  const talent_flag = document.getElementById('c-talent-flag')?.checked || false;
+  // talent_flag は動画/静止画系のみ意味を持つ。LP/HP/LINE は常に false。
+  const talent_flag = isVideoOrDesign ? (document.getElementById('c-talent-flag')?.checked || false) : false;
   const memo = document.getElementById('c-memo')?.value?.trim() || null;
+  // appeal_type_id は動画/静止画系のみ送信
+  const send_appeal_type_id = isVideoOrDesign ? (appeal_type_id || null) : null;
 
-  const btn = document.querySelector('#tab-single .btn-primary');
+  const btn = document.querySelector('#creative-step-2 .btn-primary');
   const origText = btn?.textContent;
   if (btn) { btn.textContent = '追加中...'; btn.disabled = true; }
 
@@ -11165,7 +11213,7 @@ async function createCreative() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       project_id, file_name, creative_type,
-      appeal_type_id: appeal_type_id || null,
+      appeal_type_id: send_appeal_type_id,
       assignee_id: assignee_id || null,
       team_id: team_id || null,
       draft_deadline: draft_deadline || null,
@@ -11185,8 +11233,12 @@ async function createCreative() {
 
   if (res.ok) {
     document.getElementById('filename-status').textContent = '';
-    document.getElementById('c-file-name').value = '';
-    document.getElementById('c-appeal-type').value = '';
+    const fnEl = document.getElementById('c-file-name');
+    if (fnEl) fnEl.value = '';
+    const titleEl = document.getElementById('c-title');
+    if (titleEl) titleEl.value = '';
+    const appealEl = document.getElementById('c-appeal-type');
+    if (appealEl) appealEl.value = '';
     const cMemoEl = document.getElementById('c-memo');
     if (cMemoEl) cMemoEl.value = '';
     await loadCreatives();
@@ -11194,9 +11246,17 @@ async function createCreative() {
     if (!continuous) {
       closeModal('modal-creative');
     } else {
+      // 連続登録モード: 同じ案件・同じ種別を保持して Step 2 のフォームだけクリア
+      // （上で file_name / title / appeal / memo はクリア済み）
+      // LP/HP の場合は連番が増えるので再生成
+      if (isLpOrHp) {
+        generateLpHpFilename(cat);
+      }
       const statusEl = document.getElementById('filename-status');
-      statusEl.style.color = 'var(--em-dark)';
-      statusEl.textContent = '登録しました。続けて登録できます。';
+      if (statusEl) {
+        statusEl.style.color = 'var(--em-dark)';
+        statusEl.textContent = '登録しました。続けて登録できます。';
+      }
     }
   } else {
     const e = await res.json().catch(() => ({ error: '不明なエラー' }));
@@ -20165,6 +20225,10 @@ let _autoFileNameDone = false;
 // 全フィールドが揃ったら一度だけ自動生成
 async function tryAutoGenerateFileName() {
   if (_autoFileNameDone) return;
+  const type = document.getElementById('c-creative-type')?.value || '';
+  const cat = (typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(type) : null;
+  // LP/HP/LINE は別系統のファイル名（商材/訴求軸を要求しない）。ここでは何もしない。
+  if (cat === 'lp' || cat === 'hp' || cat === 'line') return;
   const projectId    = document.getElementById('c-project-id')?.value;
   const appealTypeId = document.getElementById('c-appeal-type')?.value;
   const productId    = document.getElementById('c-product-id')?.value;
@@ -20185,6 +20249,17 @@ async function autoGenerateFileName() {
 
 // ファイル名自動生成
 async function generateFileName() {
+  // LP/HP は専用ロジックへ分岐
+  const type = document.getElementById('c-creative-type')?.value || '';
+  const cat = (typeof getCreativeTypeCategory === 'function') ? getCreativeTypeCategory(type) : null;
+  if (cat === 'lp' || cat === 'hp') {
+    generateLpHpFilename(cat);
+    return;
+  }
+  if (cat === 'line') {
+    // LINE はファイル名生成不要（タイトルがそのままファイル名扱い）
+    return;
+  }
   const projectId = document.getElementById('c-project-id').value;
   const appealTypeId = document.getElementById('c-appeal-type').value;
   const statusEl = document.getElementById('filename-status');
@@ -20228,10 +20303,147 @@ function cancelCreativeModal() {
   const hasInput = [
     document.getElementById('c-file-name')?.value,
     document.getElementById('c-appeal-type')?.value,
+    document.getElementById('c-title')?.value,
     document.getElementById('bulk-appeal-type')?.value,
   ].some(v => v && v.trim());
   if (hasInput && !confirm('入力中の内容があります。キャンセルしますか？')) return;
   closeModal('modal-creative');
+}
+
+// ======================================================
+// クリエイティブ追加モーダル: 2ステップ制 + 種別別フォーム
+// ======================================================
+
+// Step 1 → Step 2 遷移
+async function goToCreativeStep2() {
+  const projectId = document.getElementById('c-project-id')?.value;
+  if (!projectId) { showToast('案件を選択してください', 'warn'); return; }
+
+  // 選択中の案件名をヘッダーに表示
+  const sel = document.getElementById('c-project-id');
+  const label = sel?.options[sel.selectedIndex]?.text || '';
+  const lbl = document.getElementById('creative-step2-project-label');
+  if (lbl) lbl.textContent = label;
+
+  // Step1 → Step2 切替
+  document.getElementById('creative-step-1').style.display = 'none';
+  document.getElementById('creative-step-2').style.display = '';
+
+  // 現在の種別に応じた表示制御
+  const type = document.getElementById('c-creative-type')?.value || 'video_short';
+  applyCreativeTypeVisibility(type);
+}
+
+// Step 2 → Step 1 戻る（案件・種別は維持、Step2 のフォーム入力はクリア）
+function backToCreativeStep1() {
+  document.getElementById('creative-step-2').style.display = 'none';
+  document.getElementById('creative-step-1').style.display = '';
+  updateCreativeStep1NextBtn();
+}
+
+// 「次へ」ボタンの有効/無効切替
+function updateCreativeStep1NextBtn() {
+  const btn = document.getElementById('creative-step1-next-btn');
+  if (!btn) return;
+  const projectId = document.getElementById('c-project-id')?.value;
+  btn.disabled = !projectId;
+  btn.style.opacity = projectId ? '1' : '0.5';
+  btn.style.cursor = projectId ? 'pointer' : 'not-allowed';
+}
+
+// 種別文字列 → カテゴリ判定
+function getCreativeTypeCategory(type) {
+  const t = String(type || '');
+  if (t.startsWith('video')) return 'video';
+  if (t.startsWith('design')) return 'design';
+  if (t === 'lp' || t.startsWith('lp_')) return 'lp';
+  if (t === 'hp' || t.startsWith('hp_')) return 'hp';
+  if (t === 'line' || t.startsWith('line_')) return 'line';
+  return 'other';
+}
+
+// 種別ごとのフィールド表示制御
+function applyCreativeTypeVisibility(type) {
+  const cat = getCreativeTypeCategory(type);
+
+  // 種別ごとの表示テーブル
+  // video / design  : product, media_fmt, size, appeal, filename, talent
+  // lp / hp         : filename(簡易) のみ。商材/媒体/FMT/サイズ/訴求軸/talent は非表示
+  // line            : title のみ。商材/媒体/FMT/サイズ/訴求軸/filename/talent は非表示
+  const isVideoOrDesign = (cat === 'video' || cat === 'design');
+  const isLpOrHp = (cat === 'lp' || cat === 'hp');
+  const isLine = (cat === 'line');
+
+  const setShow = (selector, show) => {
+    document.querySelectorAll(selector).forEach(el => {
+      el.style.display = show ? '' : 'none';
+    });
+  };
+
+  setShow('#tab-single [data-creative-field="product"]', isVideoOrDesign);
+  setShow('#tab-single [data-creative-field="media_fmt"]', isVideoOrDesign);
+  setShow('#tab-single [data-creative-field="size"]', isVideoOrDesign);
+  setShow('#tab-single [data-creative-field="appeal"]', isVideoOrDesign);
+  setShow('#tab-single [data-creative-field="talent"]', isVideoOrDesign);
+  setShow('#tab-single [data-creative-field="title"]', isLine);
+  setShow('#tab-single [data-creative-field="filename"]', !isLine);
+
+  // ファイル名フォーマット説明文を種別に応じて差し替え
+  const hint = document.getElementById('filename-format-hint');
+  if (hint) {
+    if (isLpOrHp) {
+      const tag = (cat === 'lp') ? 'LP' : 'HP';
+      hint.innerHTML = `形式: YYMMDD_案件名_${tag}_連番　／　手動編集可<br>※ 自動生成名はそのままGoogleドライブのファイル名・一覧表示名として使われます。`;
+    } else if (isVideoOrDesign) {
+      hint.innerHTML = '形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
+    }
+  }
+
+  // LP / HP は案件選択直後にファイル名を自動生成（訴求軸/商材不要）
+  if (isLpOrHp) {
+    const fileEl = document.getElementById('c-file-name');
+    if (fileEl && !fileEl.value.trim()) {
+      generateLpHpFilename(cat);
+    }
+  }
+}
+
+// LP / HP の簡易ファイル名生成
+// 形式: YYMMDD_<案件名(空白除去)>_<LP|HP>_<連番>
+function generateLpHpFilename(cat) {
+  const projectId = document.getElementById('c-project-id')?.value;
+  if (!projectId) return;
+  const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+  if (!project) return;
+
+  const tag = (cat === 'lp') ? 'LP' : 'HP';
+  // 案件名: 空白・スラッシュを _ に置換、20文字 truncate
+  const rawName = String(project.name || '').trim();
+  const cleanName = rawName.replace(/[\s/\\]+/g, '_').slice(0, 20) || 'project';
+
+  // 日付 YYMMDD
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const ymd = `${yy}${mm}${dd}`;
+
+  // 連番（クライアントサイド概算: allCreatives から同案件・同種別の件数+1）
+  const sameTypeCount = (Array.isArray(allCreatives) ? allCreatives : []).filter(c => {
+    if (c.project_id !== projectId) return false;
+    const t = getCreativeTypeCategory(c.creative_type);
+    return t === cat;
+  }).length;
+  const seq = String(sameTypeCount + 1).padStart(3, '0');
+
+  const fileName = `${ymd}_${cleanName}_${tag}_${seq}`;
+  const fileEl = document.getElementById('c-file-name');
+  if (fileEl) fileEl.value = fileName;
+  const statusEl = document.getElementById('filename-status');
+  if (statusEl) {
+    statusEl.style.color = 'var(--em-dark)';
+    statusEl.textContent = `この案件の ${sameTypeCount + 1} 本目（${tag}）`;
+  }
 }
 
 function clampDraftToFinal(draftId, finalId) {
@@ -20336,6 +20548,20 @@ async function openCreateCreative() {
   updateAssigneeSelect();
 
   switchCreativeTab('single');
+
+  // 2ステップ制: 個別登録は Step 1（案件選択）から開始
+  const step1 = document.getElementById('creative-step-1');
+  const step2 = document.getElementById('creative-step-2');
+  if (step1 && step2) {
+    step1.style.display = '';
+    step2.style.display = 'none';
+  }
+  // 種別の初期表示制御（次へを押した時にも再適用される）
+  if (typeof applyCreativeTypeVisibility === 'function') {
+    applyCreativeTypeVisibility(document.getElementById('c-creative-type')?.value || 'video_short');
+  }
+  if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
+
   openModal('modal-creative');
   } catch(e) { console.error('openCreateCreative error:', e); showToast('モーダルの起動に失敗しました: ' + e.message, 'error'); }
 }
@@ -20350,6 +20576,16 @@ function switchCreativeTab(tab) {
   document.getElementById('tab-single-btn').style.color = tab === 'single' ? 'var(--em-dark)' : 'var(--text-muted)';
   document.getElementById('tab-single-btn').style.fontWeight = tab === 'single' ? '500' : '400';
   if (tab === 'bulk') updateBulkPreview();
+  // 個別登録に戻った時は Step 1 にリセット（中途半端な Step 2 表示で混乱しないように）
+  if (tab === 'single') {
+    const step1 = document.getElementById('creative-step-1');
+    const step2 = document.getElementById('creative-step-2');
+    if (step1 && step2) {
+      step1.style.display = '';
+      step2.style.display = 'none';
+    }
+    if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
+  }
 }
 
 async function onBulkProjectChange(projectId) {
