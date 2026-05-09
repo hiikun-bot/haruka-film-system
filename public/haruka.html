@@ -6218,6 +6218,9 @@ window.showPage = window.showPage || function(name, btn) {
           <span id="cd-status-chip"></span>
           <span style="color:var(--text-muted)" id="cd-project-name"></span>
           <span style="color:var(--text-muted)" id="cd-assignee"></span>
+          <!-- 現在のボール保持者: 一覧と同じ ball-dot / ball-name 表記。
+               ball_holder.type === 'done' / 'unknown' / 値なし のときは非表示（空欄を出さない） -->
+          <span id="cd-ball-holder" style="display:none;color:var(--text-muted)"></span>
           <span id="cd-revision-count-badge" style="display:none;font-size:11px;background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 8px;font-weight:600"></span>
         </div>
         <!-- Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示） -->
@@ -25308,6 +25311,23 @@ async function openCreativeDetail(id) {
   } else {
     cdAssigneeEl.textContent = '担当者未設定';
   }
+  // 現在のボール保持者: 一覧と完全一致のフォーマット（ball-dot ${dotClass} + ball-name）。
+  // - API側 (/creatives/:id) で getBallHolder() の結果を c.ball_holder にセット済み
+  // - 納品済 (type='done') / 未確定 (type='unknown') / null は非表示にして空欄を出さない
+  // - ball_holder_id NULL（同期前）でも、status から派生して表示できる場合はそのまま見せる
+  (function renderBallHolder() {
+    const el = document.getElementById('cd-ball-holder');
+    if (!el) return;
+    const bh = c.ball_holder;
+    if (!bh || !bh.holder || bh.type === 'done' || bh.type === 'unknown') {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
+    el.style.display = '';
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span><span class="ball-name">${esc(bh.holder)}</span></span>`;
+  })();
   // Dチェック担当者一覧（ステータス === 'Dチェック' のときのみ表示）
   // - データソース: creative_assignments[role='director']（PR #218 で複数選択対応済み）
   // - 0人なら「Dチェック担当: 未設定」とグレー表示
