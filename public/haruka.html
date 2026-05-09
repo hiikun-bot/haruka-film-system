@@ -5513,6 +5513,31 @@ window.showPage = window.showPage || function(name, btn) {
             <div id="p-filename-preview" style="font-family:monospace;font-size:13px;color:#0F7A56;word-break:break-all">—</div>
           </div>
         </div>
+
+        <!-- ADR 008 Phase 1: クリエイティブ管理シート同期 -->
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="display:inline-block;width:3px;height:14px;background:#0B7BD6;border-radius:2px"></span>
+            <span style="font-size:12px;font-weight:600;color:#0B61A8">📊 クリエイティブ管理シート同期</span>
+            <span style="font-size:11px;color:var(--text-muted);font-weight:400">（システム → Google Sheets）</span>
+          </div>
+          <div class="form-group" style="margin-bottom:8px">
+            <label class="form-label">同期先シート URL</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="form-input" id="p-creatives-export-sheet-url"
+                placeholder="未設定なら同期実行時に自動作成" style="flex:1;min-width:0">
+              <button type="button" class="btn" onclick="openLink('p-creatives-export-sheet-url')"
+                style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+              <button type="button" class="btn" id="p-sync-sheet-btn" onclick="syncCreativesToSheet()"
+                style="white-space:nowrap;padding:8px 12px;flex-shrink:0;background:#0B7BD6;color:#fff;border-color:#0B7BD6">📊 Sheets に同期</button>
+            </div>
+            <div id="p-sync-sheet-result" style="display:none;margin-top:8px;font-size:11px;line-height:1.6;padding:8px 10px;border-radius:6px"></div>
+            <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
+              案件のクリエイティブ + 修正サイクル履歴をマスターマッピングに従って Google Sheets に書き出します。<br>
+              Phase 1 は片方向同期（システム → シート）のみ。シートで編集してもシステムには反映されません（Phase 2 で対応予定）。
+            </div>
+          </div>
+        </div>
     </div><!-- /p-subtab-panel-settings -->
 
     <!-- ====== サブタブ：🔗 連携（リソース / 通知連携） ====== -->
@@ -6039,6 +6064,11 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="master-nav-item" onclick="selectMasterNav('filename_templates')" id="mnav-filename_templates"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           📁 ファイル名テンプレート
+        </div>
+        <!-- ADR 008 Phase 1: クリエイティブ管理シート出力マッピング（admin only） -->
+        <div id="mnav-creatives_export" class="master-nav-item" onclick="selectMasterNav('creatives_export')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📊 クリエイティブ出力マッピング
         </div>
         <div class="master-nav-item" onclick="selectMasterNav('checklist')" id="mnav-checklist"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
@@ -13948,6 +13978,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-slack-channel-url').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
+  // ADR 008 Phase 1: 新規時は同期 URL 空、結果表示も非表示
+  { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = ''; }
+  { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
   selectDeadlineUnit('monthly');
   document.getElementById('p-deadline-weekday').value = '';
   // サブディレクター: 新規は空で初期化
@@ -14051,6 +14084,9 @@ function openEditProject(p) {
   document.getElementById('p-slack-channel-url').value = p.slack_channel_url || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
+  // ADR 008 Phase 1: クリエイティブ管理シート同期 URL 復元
+  { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = p.creatives_export_sheet_url || ''; }
+  { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
 
   // サブディレクター: DB値を復元（クライアント外IDが残っていれば render 側で警告クリア）
   _editingProjectSubDirectorIds = Array.isArray(p.sub_director_ids) ? [...p.sub_director_ids] : [];
@@ -17240,6 +17276,9 @@ async function submitProject() {
   const filename_template_id = document.getElementById('p-filename-template-id')?.value || null;
   const filename_token_overrides = (_projFilenameState && _projFilenameState.overrides) ? _projFilenameState.overrides : {};
 
+  // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（編集時に明示送信、新規時は空）
+  const creatives_export_sheet_url = document.getElementById('p-creatives-export-sheet-url')?.value.trim() || null;
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -17248,7 +17287,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -21533,7 +21572,7 @@ function selectMasterNav(type) {
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
   // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
-  ['generic','general','categories','products','appeal_axes','filename_templates','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -21555,6 +21594,8 @@ function selectMasterNav(type) {
     renderAppealAxesMasterPage();
   } else if (type === 'filename_templates') {
     renderFilenameTemplatesPage();
+  } else if (type === 'creatives_export') {
+    renderCreativesExportMappingPage();
   } else if (type === 'checklist') {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
@@ -21578,6 +21619,9 @@ async function loadMasterPage() {
   // 管理者のみシステム設定タブを表示（秘書・他ロール非表示）
   const sysconfigNav = document.getElementById('mnav-sysconfig');
   if (sysconfigNav) sysconfigNav.style.display = isTopAdmin() ? '' : 'none';
+  // ADR 008 Phase 1: 出力マッピングは admin のみ
+  const exportNav = document.getElementById('mnav-creatives_export');
+  if (exportNav) exportNav.style.display = isTopAdmin() ? '' : 'none';
 
   const [catRes, itemRes] = await Promise.all([
     apiFetch(`${API}/master/categories`),
@@ -22292,6 +22336,161 @@ async function reloadSchemaCacheManual(btn) {
   } finally {
     btn.disabled = false; btn.textContent = original;
   }
+}
+
+// ==================== ADR 008 Phase 1: クリエイティブ出力マッピング ====================
+// admin only。マスターテンプレ URL とマッピング JSON を編集する。
+const CREATIVES_EXPORT_DEFAULT_MAPPING = {
+  fixed_columns: [
+    { header: '案件番号',   system_field: 'internal_code',   sync: 'to_sheet' },
+    { header: '編集者',     system_field: 'assignee_name',   sync: 'to_sheet' },
+    { header: 'ファイル名', system_field: 'file_name',       sync: 'to_sheet' },
+    { header: '納期',       system_field: 'final_deadline',  sync: 'to_sheet' },
+    { header: 'ステータス', system_field: 'status',          sync: 'to_sheet' },
+    { header: 'Frame.io',   system_field: 'frameio_url',     sync: 'to_sheet' },
+    { header: '編集者からのコメント',         system_field: 'editor_comment',   sync: 'to_sheet' },
+    { header: 'ディレクターからの修正点',     system_field: 'director_comment', sync: 'to_sheet' },
+    { header: 'クライアントへの初稿URL',       system_field: 'delivery_url',     sync: 'to_sheet' },
+    { header: 'あるるさんへの初稿の説明や質問など', system_field: 'client_comment', sync: 'to_sheet' }
+  ],
+  version_block: {
+    max_versions: 5,
+    columns_per_version: [
+      { header_tpl: 'URL({n}回目)',                      system_field: 'version.preview_url',     sync: 'to_sheet' },
+      { header_tpl: '編集者からのコメント({n}回目)',     system_field: 'version.editor_comment',   sync: 'to_sheet' },
+      { header_tpl: 'ディレクターからの修正点({n}回目)', system_field: 'version.director_comment', sync: 'to_sheet' },
+      { header_tpl: '修正指示({n}回目)',                 system_field: 'version.client_comment',   sync: 'to_sheet' }
+    ]
+  },
+  final_column: { header: '最終納品', system_field: 'final_delivery_url', sync: 'to_sheet' },
+  tabs: {
+    '動画管理':   { creative_type_filter: '動画' },
+    '静止画管理': { creative_type_filter: '静止画' }
+  }
+};
+
+async function renderCreativesExportMappingPage() {
+  if (!isTopAdmin()) {
+    document.getElementById('master-content').innerHTML = '<div style="color:#E24B4A;padding:20px">アクセス権限がありません</div>';
+    return;
+  }
+  const el = document.getElementById('master-content');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+
+  const res = await apiFetch(`${API}/system-settings`);
+  const settings = res.ok ? await res.json() : {};
+  const masterUrl = settings.creatives_export_master_template_url || '';
+  let mappingJson = settings.creatives_export_mapping_json || '';
+  if (!mappingJson) {
+    try { mappingJson = JSON.stringify(CREATIVES_EXPORT_DEFAULT_MAPPING, null, 2); }
+    catch (_) { mappingJson = ''; }
+  }
+
+  el.innerHTML = `
+    <div style="max-width:900px">
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">📊 クリエイティブ出力マッピング</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:24px">
+        ADR 008 Phase 1 — システム → Google Sheets 片方向同期のマスター設定（最高管理者のみ変更可）
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">マスターテンプレシート URL</div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">URL</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="cem-master-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+              style="flex:1" value="${esc(masterUrl)}">
+            <button class="btn" onclick="saveCreativesExportMasterUrl()">保存</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
+            未設定の場合、案件モーダルの「Sheets に同期」ボタン押下時に空のスプレッドシートを自動作成します。<br>
+            設定するとマスターテンプレ（書式・色付け・タブ構成）のコピーをベースに案件単位のシートを作成します。
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:600;color:var(--em-dark)">マッピング JSON</div>
+          <button class="btn btn-ghost" onclick="resetCreativesExportMappingToDefault()" style="font-size:12px;padding:4px 10px">DEFAULT に戻す</button>
+        </div>
+        <textarea id="cem-mapping-json" rows="20"
+          style="width:100%;font-family:monospace;font-size:12px;padding:10px;border:1px solid var(--border);border-radius:6px;line-height:1.5;resize:vertical">${esc(mappingJson)}</textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+          <button class="btn" onclick="saveCreativesExportMappingJson()">保存</button>
+          <button class="btn btn-ghost" onclick="validateCreativesExportMappingJson()">JSON 検証</button>
+          <span id="cem-json-status" style="font-size:12px;color:var(--text-muted)"></span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:10px">
+          <code>fixed_columns[]</code> = 固定列、<code>version_block</code> = 修正サイクル列の雛形（{n} で何回目かを挿入）、<code>tabs</code> = タブ名 → creative_type フィルタ。<br>
+          各列の <code>sync</code> は Phase 1 では <code>to_sheet</code> のみ動作。<code>two_way</code> / <code>from_sheet</code> は Phase 2 で対応予定。
+        </div>
+      </div>
+
+      <div id="cem-save-msg" style="display:none;font-size:13px;color:var(--em-dark);padding:8px 0"></div>
+    </div>
+  `;
+}
+
+function _cemShowMsg(text, ok = true) {
+  const msg = document.getElementById('cem-save-msg');
+  if (!msg) return;
+  msg.textContent = (ok ? '✓ ' : '✗ ') + text;
+  msg.style.color = ok ? 'var(--em-dark)' : '#E24B4A';
+  msg.style.display = '';
+  setTimeout(() => { msg.style.display = 'none'; }, 4000);
+}
+
+async function saveCreativesExportMasterUrl() {
+  const url = document.getElementById('cem-master-url').value.trim();
+  if (url && !/\/spreadsheets\/d\/[a-zA-Z0-9_-]+/.test(url)) {
+    showToast('スプレッドシート URL の形式が正しくありません', 'warn');
+    return;
+  }
+  const res = await apiFetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'creatives_export_master_template_url', value: url || null }),
+  });
+  if (res.ok) _cemShowMsg('マスターテンプレ URL を保存しました');
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error), 'error'); }
+}
+
+function validateCreativesExportMappingJson() {
+  const ta = document.getElementById('cem-mapping-json');
+  const status = document.getElementById('cem-json-status');
+  if (!ta) return null;
+  try {
+    const parsed = JSON.parse(ta.value);
+    if (!parsed || typeof parsed !== 'object') throw new Error('オブジェクトではありません');
+    if (!Array.isArray(parsed.fixed_columns)) throw new Error('fixed_columns が配列ではありません');
+    if (parsed.tabs && typeof parsed.tabs !== 'object') throw new Error('tabs がオブジェクトではありません');
+    if (status) { status.textContent = '✓ JSON 形式 OK'; status.style.color = 'var(--em-dark)'; }
+    return parsed;
+  } catch (e) {
+    if (status) { status.textContent = '✗ ' + e.message; status.style.color = '#E24B4A'; }
+    return null;
+  }
+}
+
+async function saveCreativesExportMappingJson() {
+  const parsed = validateCreativesExportMappingJson();
+  if (!parsed) { showToast('JSON が不正です', 'warn'); return; }
+  const value = JSON.stringify(parsed); // 整形落として保存
+  const res = await apiFetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'creatives_export_mapping_json', value }),
+  });
+  if (res.ok) _cemShowMsg('マッピング JSON を保存しました');
+  else { const e = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(e?.error), 'error'); }
+}
+
+function resetCreativesExportMappingToDefault() {
+  const ta = document.getElementById('cem-mapping-json');
+  if (!ta) return;
+  ta.value = JSON.stringify(CREATIVES_EXPORT_DEFAULT_MAPPING, null, 2);
+  validateCreativesExportMappingJson();
 }
 
 function parseSysDriveUrl() {
@@ -33041,6 +33240,50 @@ function openLink(inputId) {
   const url = document.getElementById(inputId).value.trim();
   if (url) window.open(url, '_blank', 'noopener');
   else showToast('URLが入力されていません', 'warn');
+}
+
+// ===== ADR 008 Phase 1: クリエイティブ管理シート同期 =====
+async function syncCreativesToSheet() {
+  const projectId = document.getElementById('p-id')?.value;
+  const btn = document.getElementById('p-sync-sheet-btn');
+  const resEl = document.getElementById('p-sync-sheet-result');
+  if (!projectId) {
+    showToast('案件を保存してから同期してください（新規案件は先に保存が必要）', 'warn');
+    return;
+  }
+  if (!btn || !resEl) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '同期中...';
+  resEl.style.display = '';
+  resEl.style.background = 'var(--em-pale)';
+  resEl.style.color = 'var(--text)';
+  resEl.textContent = 'Google Sheets に書き出し中... (数秒〜十数秒かかります)';
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/sync-sheet`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const urlInput = document.getElementById('p-creatives-export-sheet-url');
+      if (urlInput && data.sheet_url) urlInput.value = data.sheet_url;
+      const wr = data.written_rows || {};
+      const summary = Object.entries(wr).map(([t, n]) => `${t}: ${n}件`).join(' / ');
+      resEl.style.background = '#e8f5e9';
+      resEl.style.color = '#1b5e20';
+      resEl.innerHTML = `✓ 同期しました （${esc(summary || '0件')}） — <a href="${esc(data.sheet_url || '#')}" target="_blank" rel="noopener" style="color:#1b5e20;text-decoration:underline">シートを開く</a>`;
+      showToast('Sheets に同期しました', 'info');
+    } else {
+      resEl.style.background = '#ffebee';
+      resEl.style.color = '#b71c1c';
+      resEl.textContent = `✗ ${data.error || `HTTP ${res.status}`}`;
+    }
+  } catch (e) {
+    resEl.style.background = '#ffebee';
+    resEl.style.color = '#b71c1c';
+    resEl.textContent = `✗ 通信エラー: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 // ===== 招待リンク発行 =====
