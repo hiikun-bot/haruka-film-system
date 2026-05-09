@@ -26035,7 +26035,192 @@ async function openCreativeDetail(id) {
   try { __cdAfterOpen(id); } catch (e) { console.warn('[creative-detail-draft] afterOpen failed:', e); }
 }
 
+// =====================================================
+// LP / HP / LINE 専用: テンプレ駆動チェブロン
+// =====================================================
+// projects.primary_category.code が 'lp' / 'hp' / 'line' のクリエイティブで呼ばれる。
+// status_template_items (sort_order 昇順) を polygon clip-path のチェブロンで描画。
+// is_milestone な step は色を強める。
+//
+// 動画 / 静止画 のロジックは触らない（既存 STEPS 駆動）。
+function renderTemplateChevron(c) {
+  const el = document.getElementById('cd-step-indicator');
+  if (!el) return;
+  const items = Array.isArray(c?.status_template_items) ? c.status_template_items : [];
+  const A = 14; // arrow depth px
+
+  if (!items.length) {
+    el.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:40px;color:var(--text-muted);font-size:12px';
+    el.innerHTML = '工程テンプレ未設定（管理者にお問い合わせください）';
+    _renderTemplateChevronButtons(c, items, -1);
+    return;
+  }
+
+  const currentCode = c.status_code || items[0]?.code;
+  const currentIdx = items.findIndex(i => i.code === currentCode);
+
+  el.style.cssText = 'display:flex;align-items:stretch;width:100%;height:40px';
+  el.innerHTML = items.map((it, i) => {
+    const done   = currentIdx >= 0 && i < currentIdx;
+    const active = i === currentIdx;
+    const isFirst = i === 0;
+    const isLast  = i === items.length - 1;
+    const zIdx    = items.length - i;
+    const ml      = i > 0 ? `-${A - 2}px` : '0';
+
+    let bg, tc;
+    if (done) {
+      bg = it.is_milestone ? '#1A9E9A' : '#3ECFCA';
+      tc = '#fff';
+    } else if (active) {
+      // 現在ステップ: マイルストーンはより濃く
+      bg = it.is_milestone ? '#0F7C78' : '#1A9E9A';
+      tc = '#fff';
+    } else {
+      bg = '#E8E8E6';
+      tc = '#7a7a7a';
+    }
+
+    const clip = isFirst
+      ? `polygon(0 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, 0 100%)`
+      : isLast
+        ? `polygon(${A}px 0, 100% 0, 100% 100%, ${A}px 100%, 0 50%)`
+        : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
+
+    const milestoneMark = it.is_milestone ? '★ ' : '';
+    const inner = done
+      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 4px;color:${tc}">${milestoneMark}${esc(it.label || it.code)}</span>`;
+
+    return `<div title="${esc(it.label || it.code)}${it.is_milestone ? '（マイルストーン）' : ''}" style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}">${inner}</div>`;
+  }).join('');
+
+  // status chip も template ラベルに揃える
+  const chip = document.getElementById('cd-status-chip');
+  if (chip) {
+    const cur = currentIdx >= 0 ? items[currentIdx] : null;
+    const label = cur?.label || c.status || '-';
+    const tone = cur?.is_milestone ? 'background:#0F7C78;color:#fff' : 'background:#E5F4F3;color:#0F7C78';
+    chip.innerHTML = `<span class="status-chip" style="${tone};padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600">${esc(label)}</span>`;
+  }
+
+  _renderTemplateChevronButtons(c, items, currentIdx);
+}
+
+// LP / HP / LINE 用ボタン制御:
+//   - D/P/CL 系（CL直行・Dチェックへ・Pスキップ・Dチェックへ戻す・修正依頼）は全て非表示
+//   - 「次のステップへ →」のみ表示（最終ステップなら「✅ 完了」表示で disabled）
+//   - admin は「← 前のステップへ」も表示
+//   - 「下書き保存」「閉じる」「納品完了モード」は維持
+function _renderTemplateChevronButtons(c, items, currentIdx) {
+  const nextBtn      = document.getElementById('cd-next-step-btn');
+  const revisionBtn  = document.getElementById('cd-revision-btn');
+  const skipPBtn     = document.getElementById('cd-skip-p-btn');
+  const directClBtn  = document.getElementById('cd-direct-cl-btn');
+  const backToDBtn   = document.getElementById('cd-back-to-d-btn');
+  const forceDelBtn  = document.getElementById('cd-force-deliver-btn');
+
+  // D/P/CL 系ボタンは全て非表示
+  if (revisionBtn)  revisionBtn.style.display  = 'none';
+  if (skipPBtn)     skipPBtn.style.display     = 'none';
+  if (directClBtn)  directClBtn.style.display  = 'none';
+  if (backToDBtn)   backToDBtn.style.display   = 'none';
+  // 納品完了モード: 最終ステップ以外なら表示（既存挙動踏襲）
+  if (forceDelBtn) {
+    const isFinal = currentIdx >= 0 && currentIdx === items.length - 1;
+    forceDelBtn.style.display = isFinal ? 'none' : '';
+  }
+
+  if (!nextBtn) return;
+
+  // admin の戻し導線（チェブロンセグメントクリックではなく、専用ボタンを設置）
+  // 既存の cd-back-to-d-btn を流用するのは意味が変わるので、テキストだけ置き換えて使う。
+  if (backToDBtn && isTopAdmin && isTopAdmin() && currentIdx > 0) {
+    backToDBtn.style.display = '';
+    backToDBtn.textContent = '← 前のステップへ';
+    backToDBtn.onclick = () => backTemplateStatus();
+  } else if (backToDBtn) {
+    // 既存 onclick (backToDCheck) に戻す（動画ロジックで使えるように）
+    backToDBtn.onclick = () => backToDCheck();
+  }
+
+  if (currentIdx < 0) {
+    nextBtn.style.display = 'none';
+    return;
+  }
+  const isFinal = currentIdx === items.length - 1;
+  nextBtn.style.display = '';
+  nextBtn.onclick = () => advanceTemplateStatus();
+  if (isFinal) {
+    nextBtn.textContent = '✅ 完了';
+    nextBtn.disabled = true;
+    nextBtn.style.background = '#9CA3AF';
+    nextBtn.style.cursor = 'not-allowed';
+  } else {
+    const next = items[currentIdx + 1];
+    nextBtn.disabled = false;
+    nextBtn.style.cursor = '';
+    nextBtn.textContent = `${next.label || next.code} へ →`;
+    nextBtn.style.background = next.is_milestone
+      ? 'linear-gradient(135deg,#0F7C78,#1A9E9A)'
+      : 'linear-gradient(135deg,#3ECFCA,#2BB8B4)';
+  }
+}
+
+async function advanceTemplateStatus() {
+  if (!currentCreativeDetail?.id) return;
+  const id = currentCreativeDetail.id;
+  const nextBtn = document.getElementById('cd-next-step-btn');
+  if (nextBtn) nextBtn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}/advance-template-status`, { method: 'POST' });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(j.error || 'ステップを進められませんでした', 'error');
+      return;
+    }
+    showToast(`「${j.label || j.status_code}」へ進めました`, 'success');
+    // 詳細を再ロード（チェブロン更新 + ボール保持者再計算反映）
+    try { await openCreativeDetail(id); } catch (_) {}
+    // 一覧側も再描画（軽量）
+    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch (_) {}
+  } catch (e) {
+    console.warn('[advance-template-status] failed:', e);
+    showToast('通信エラー', 'error');
+  } finally {
+    if (nextBtn) nextBtn.disabled = false;
+  }
+}
+
+async function backTemplateStatus() {
+  if (!currentCreativeDetail?.id) return;
+  const id = currentCreativeDetail.id;
+  if (!confirm('一つ前のステップに戻しますか？')) return;
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}/back-template-status`, { method: 'POST' });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(j.error || '戻せませんでした', 'error');
+      return;
+    }
+    showToast(`「${j.label || j.status_code}」へ戻しました`, 'info');
+    try { await openCreativeDetail(id); } catch (_) {}
+    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch (_) {}
+  } catch (e) {
+    console.warn('[back-template-status] failed:', e);
+    showToast('通信エラー', 'error');
+  }
+}
+
 function updateCreativeStepIndicator(status) {
+  // カテゴリ別チェブロン分岐: LP / HP / LINE はテンプレ駆動 (status_template_items) で描画。
+  // 動画 / 静止画 / 未設定 は既存ロジックそのまま (status 駆動・ハードコード STEPS)。
+  const _catCode = currentCreativeDetail?.projects?.primary_category?.code || null;
+  if (_catCode && ['lp', 'hp', 'line'].includes(_catCode)) {
+    renderTemplateChevron(currentCreativeDetail);
+    return;
+  }
+
   const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
   // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
@@ -26047,6 +26232,19 @@ function updateCreativeStepIndicator(status) {
     { label: '納品',      statuses: ['納品'] },
   ];
   if (!hasProducer) STEPS = STEPS.filter(s => s.label !== 'Pチェック');
+  // LP/HP/LINE 経由のときに残留していた可能性のある nextBtn.disabled / onclick を初期化。
+  // （既存挙動は変えない: disabled=false。onclick は元の動画系ハンドラに戻す）
+  const _resetNextBtn = document.getElementById('cd-next-step-btn');
+  if (_resetNextBtn) {
+    _resetNextBtn.disabled = false;
+    _resetNextBtn.onclick = () => advanceCreativeStatus();
+    _resetNextBtn.style.cursor = '';
+  }
+  const _resetBackBtn = document.getElementById('cd-back-to-d-btn');
+  if (_resetBackBtn) {
+    _resetBackBtn.onclick = () => backToDCheck();
+    _resetBackBtn.textContent = 'Dチェックへ戻す';
+  }
   const currentIdx = STEPS.findIndex(s => s.statuses.includes(status));
   const el = document.getElementById('cd-step-indicator');
   const A = 14; // arrow depth px
