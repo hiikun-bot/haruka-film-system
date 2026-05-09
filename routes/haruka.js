@@ -4668,6 +4668,152 @@ router.get('/analytics/cost-coverage', requireAuth, requirePermission('analytics
   }
 });
 
+// ==================== バグ報告件数（月次） ====================
+// 対象月に作成された bug_reports を、報告者ごとにグルーピングして集計する。
+// 匿名報告は __anonymous__ キーで集約し、誰の報告かは特定しない。
+// 各報告には改善済みフラグ（improved_at）と 紐付いた Verup（version_logs.revision_no）も含める。
+async function aggregateBugReports({ year, month }) {
+  const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+  const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+
+  const { data: rows, error } = await supabase
+    .from('bug_reports')
+    .select(`
+      id, title, severity, status, is_anonymous, created_at,
+      reporter_user_id,
+      improved_at, improved_by_user_id, improvement_version_log_id,
+      reporter:reporter_user_id ( id, full_name, nickname ),
+      improvement_log:improvement_version_log_id ( id, revision_no, screen, feature )
+    `)
+    .gte('created_at', startDate.toISOString())
+    .lt('created_at', endDate.toISOString())
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const groups = new Map();
+  const byStatus = { open: 0, in_progress: 0, resolved: 0, wont_fix: 0, duplicate: 0 };
+  let total = 0;
+  let totalImproved = 0;
+
+  for (const r of (rows || [])) {
+    total++;
+    if (byStatus[r.status] != null) byStatus[r.status]++;
+    if (r.improved_at) totalImproved++;
+
+    const isAnon = !!r.is_anonymous;
+    const key = isAnon ? '__anonymous__' : (r.reporter_user_id || '__unknown__');
+    if (!groups.has(key)) {
+      const label = isAnon
+        ? '🕵️ 匿名（集約）'
+        : (r.reporter?.nickname || r.reporter?.full_name || '— 不明 —');
+      groups.set(key, {
+        reporter_user_id: isAnon ? null : r.reporter_user_id,
+        is_anonymous: isAnon,
+        label,
+        count: 0,
+        improved_count: 0,
+        reports: [],
+      });
+    }
+    const g = groups.get(key);
+    g.count++;
+    if (r.improved_at) g.improved_count++;
+    g.reports.push({
+      id: r.id,
+      short_id: String(r.id).replace(/-/g, '').slice(0, 8),
+      title: r.title,
+      severity: r.severity,
+      status: r.status,
+      created_at: r.created_at,
+      is_improved: !!r.improved_at,
+      improved_at: r.improved_at,
+      improvement_revision_no: r.improvement_log?.revision_no || null,
+      improvement_screen: r.improvement_log?.screen || null,
+      improvement_feature: r.improvement_log?.feature || null,
+      improvement_version_log_id: r.improvement_version_log_id || null,
+    });
+  }
+
+  // 件数降順、匿名は最後
+  const by_reporter = Array.from(groups.values()).sort((a, b) => {
+    if (a.is_anonymous !== b.is_anonymous) return a.is_anonymous ? 1 : -1;
+    if (b.count !== a.count) return b.count - a.count;
+    return (a.label || '').localeCompare(b.label || '', 'ja');
+  });
+
+  return {
+    year, month,
+    total,
+    total_improved: totalImproved,
+    total_unimproved: total - totalImproved,
+    by_status: byStatus,
+    by_reporter,
+  };
+}
+
+router.get('/analytics/bug-reports', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    res.json(await aggregateBugReports({ year, month }));
+  } catch (e) { res.status(500).json({ error: e.message || '集計に失敗しました' }); }
+});
+
+router.post('/analytics/bug-reports/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.body?.year ?? req.query.year, 10);
+  const month = parseInt(req.body?.month ?? req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    const data = await aggregateBugReports({ year, month });
+    const sevLabel = { low: '低', normal: '通常', high: '高', critical: '致命的' };
+    const stLabel = { open: '未対応', in_progress: '対応中', resolved: '解決', wont_fix: '対応しない', duplicate: '重複' };
+
+    // シート1: 詳細
+    const headers = ['報告者', '番号', 'タイトル', '重要度', '状態', '報告日時', '改善済み', '対応Verup#'];
+    const dataRows = [];
+    for (const g of data.by_reporter) {
+      for (const r of g.reports) {
+        const dateStr = new Date(r.created_at).toLocaleString('ja-JP');
+        dataRows.push([
+          g.label, '#' + r.short_id, r.title || '',
+          sevLabel[r.severity] || r.severity || '',
+          stLabel[r.status] || r.status || '',
+          dateStr,
+          r.is_improved ? '✅' : '',
+          r.improvement_revision_no ? `#${r.improvement_revision_no}` : '',
+        ]);
+      }
+    }
+    // シート1: 報告者別サマリ
+    const summaryHeaders = ['報告者', '報告件数', '改善件数', '改善率(%)'];
+    const summaryDataRows = data.by_reporter.map(g => [
+      g.label, g.count, g.improved_count,
+      g.count > 0 ? Math.round((g.improved_count / g.count) * 1000) / 10 : 0,
+    ]);
+    const totalRate = data.total > 0 ? Math.round((data.total_improved / data.total) * 1000) / 10 : 0;
+    const summaryRow = [
+      `報告総数 ${data.total} / 改善済み ${data.total_improved} / 未改善 ${data.total_unimproved} / 改善率 ${totalRate}%`,
+    ];
+    const sheetRows = [
+      [`HARUKA FILM バグ報告件数 (${year}年${month}月)`],
+      summaryRow,
+      [],
+      ['【報告者別サマリ】'],
+      summaryHeaders, ...summaryDataRows,
+      [],
+      ['【内訳】'],
+      headers, ...dataRows,
+    ];
+    const title = `分析_バグ報告件数_${year}年${String(month).padStart(2,'0')}月`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: dataRows.length });
+  } catch (e) {
+    console.error('[analytics/bug-reports/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
@@ -13573,6 +13719,11 @@ function normalizeBugReportPayload(body, { isCreate }) {
   }
   if (body.annotations !== undefined) out.annotations = body.annotations || null;
   if (body.browser_info !== undefined) out.browser_info = body.browser_info || null;
+  if (body.improved !== undefined) out.__improved = !!body.improved;
+  if (body.improvement_version_log_id !== undefined) {
+    const v = body.improvement_version_log_id;
+    out.improvement_version_log_id = (v === '' || v == null) ? null : String(v);
+  }
   if (isCreate) {
     out.is_anonymous = !!body.is_anonymous;
     if (!out.title) {
@@ -13582,6 +13733,7 @@ function normalizeBugReportPayload(body, { isCreate }) {
     }
   }
   // resolved_at はステータス遷移時に自動設定
+  // improved_at / improved_by_user_id は PUT 内で __improved フラグを見て自動設定
   return out;
 }
 
@@ -13625,7 +13777,7 @@ router.get('/bug-reports', requireAuth, async (req, res) => {
     const { status, assignee_user_id, mine } = req.query;
     let q = supabase
       .from('bug_reports')
-      .select('id, is_anonymous, title, description, url, screen_label, severity, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url )')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, improved_at, improved_by_user_id, improvement_version_log_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description )')
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
@@ -13650,7 +13802,7 @@ router.get('/bug-reports/:id', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('bug_reports')
-      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url )')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description )')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
@@ -13669,7 +13821,7 @@ router.get('/bug-reports/:id', requireAuth, async (req, res) => {
 router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   try {
     const { data: row, error: getErr } = await supabase
-      .from('bug_reports').select('id, reporter_user_id, assignee_user_id, status, is_anonymous').eq('id', req.params.id).maybeSingle();
+      .from('bug_reports').select('id, reporter_user_id, assignee_user_id, status, is_anonymous, improved_at').eq('id', req.params.id).maybeSingle();
     if (getErr) return res.status(500).json({ error: getErr.message });
     if (!row) return res.status(404).json({ error: 'not found' });
 
@@ -13683,6 +13835,26 @@ router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), asy
     let payload;
     try { payload = normalizeBugReportPayload(req.body || {}, { isCreate: false }); }
     catch (e) { return res.status(e.statusCode || 400).json({ error: e.message }); }
+
+    // 改善済みチェックは admin のみ
+    if (Object.prototype.hasOwnProperty.call(payload, '__improved')) {
+      if (!isAdmin) {
+        return res.status(403).json({ error: '改善済みチェックは管理者のみ可能です' });
+      }
+      const wantImproved = !!payload.__improved;
+      delete payload.__improved;
+      if (wantImproved) {
+        // 既に improved 済みなら timestamp は触らない（ログ的に最初のチェック時刻を保持）
+        if (!row.improved_at) {
+          payload.improved_at = new Date().toISOString();
+          payload.improved_by_user_id = req.user?.id || null;
+        }
+      } else {
+        payload.improved_at = null;
+        payload.improved_by_user_id = null;
+        payload.improvement_version_log_id = null;
+      }
+    }
 
     payload.updated_at = new Date().toISOString();
 

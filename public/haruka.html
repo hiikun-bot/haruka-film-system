@@ -2754,6 +2754,28 @@ window.showPage = window.showPage || function(name, btn) {
             <option value="duplicate">🔁 重複 (duplicate)</option>
           </select>
         </div>
+
+        <!-- 改善済みチェック (admin 専用) -->
+        <div class="form-group" id="br-improved-wrap" style="display:none">
+          <label class="form-label">✅ 改善済みチェック <span style="color:var(--text-muted);font-size:11px">（管理者のみ。報告内容に対して改善を実装済みかどうか）</span></label>
+          <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;padding:10px">
+            <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="br-improved" onchange="bugReportSyncImprovedUI()">
+              <span>この報告内容について <strong>改善を実装した</strong>（変更を取り消すと紐付けも解除されます）</span>
+            </label>
+            <div id="br-improvement-pickers" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #86EFAC">
+              <div style="font-size:12px;color:#166534;margin-bottom:6px">対応した修正履歴（Verup#）と紐付けます</div>
+              <div style="display:grid;grid-template-columns:auto 1fr;gap:6px;align-items:center">
+                <span style="font-size:11px;color:var(--text-muted);white-space:nowrap">Verup選択:</span>
+                <select id="br-improvement-version-log" class="form-input" style="font-size:12px;padding:4px 8px">
+                  <option value="">— 任意（後で選択）—</option>
+                </select>
+              </div>
+              <div id="br-improvement-current" style="font-size:11px;color:#166534;margin-top:6px"></div>
+            </div>
+          </div>
+        </div>
+
         <div id="br-meta-info" style="font-size:11px;color:var(--text-muted);background:#F9FAFB;border-radius:6px;padding:8px 10px;margin-top:8px"></div>
       </div>
     </div>
@@ -5886,6 +5908,10 @@ window.showPage = window.showPage || function(name, btn) {
       <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">データ品質</div>
       <button class="an-menu-btn" data-view="cost-coverage" onclick="switchAnalyticsView('cost-coverage')">
         <span style="font-size:14px">⚠️</span><span>単価未設定チェッカー</span>
+      </button>
+      <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">運用</div>
+      <button class="an-menu-btn" data-view="bug-reports" onclick="switchAnalyticsView('bug-reports')">
+        <span style="font-size:14px">🦋</span><span>バグ報告件数</span>
       </button>
       <div style="font-size:10px;color:var(--text-muted);margin:14px 6px 0;line-height:1.5">
         他の集計は順次追加予定<br>
@@ -29775,6 +29801,15 @@ function switchAnalyticsView(view, skipReset) {
     if (sheetBtn)  sheetBtn.style.display  = 'none';
     if (loadBtn)   loadBtn.style.display   = 'none';
     if (reloadBtn) reloadBtn.style.display = '';
+  } else if (view === 'bug-reports') {
+    if (titleEl) titleEl.textContent = '🦋 バグ報告件数';
+    if (descEl)  descEl.textContent  = '対象月に作成されたバグ報告を、報告者ごとに集計します。匿名報告は集約してカウントします。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
   } else {
     if (titleEl) titleEl.textContent = '📋 案件×担当者集計';
     if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。';
@@ -29816,6 +29851,8 @@ async function loadAnalytics() {
     url = `${API}/analytics/monthly-revenue?year=${year}&month=${parseInt(month,10)}`;
   } else if (_analyticsView === 'creator-summary') {
     url = `${API}/analytics/creator-summary?year=${year}&month=${parseInt(month,10)}&status=${status}`;
+  } else if (_analyticsView === 'bug-reports') {
+    url = `${API}/analytics/bug-reports?year=${year}&month=${parseInt(month,10)}`;
   } else {
     const client_id = document.getElementById('an-client').value || '';
     url = `${API}/analytics/creative-by-assignee?year=${year}&month=${parseInt(month,10)}` +
@@ -29832,6 +29869,7 @@ async function loadAnalytics() {
   _analyticsLastResult = data;
   if (_analyticsView === 'monthly-revenue') renderMonthlyRevenueTable(data);
   else if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
+  else if (_analyticsView === 'bug-reports') renderBugReportsAnalytics(data);
   else renderAnalyticsTable(data);
 }
 
@@ -30304,6 +30342,102 @@ function renderAnalyticsTable(data) {
   </table>`;
 }
 
+// =============== バグ報告件数 ===============
+// 対象月に作成された bug_reports を、報告者ごとにグルーピングして表示する。
+// 匿名報告は `__anonymous__` キーで集約し、個別報告者を特定しない。
+// 各報告は番号（短縮 UUID）として表示され、クリックでバグ報告編集モーダルを開く。
+function renderBugReportsAnalytics(data) {
+  const sumEl = document.getElementById('an-summary');
+  const wrap  = document.getElementById('an-table-content');
+  const total = Number(data?.total || 0);
+  const totalImproved = Number(data?.total_improved || 0);
+  const totalUnimproved = Number(data?.total_unimproved || 0);
+  const byStatus = data?.by_status || {};
+  const byReporter = Array.isArray(data?.by_reporter) ? data.by_reporter : [];
+  const improvedRate = total > 0 ? Math.round((totalImproved / total) * 1000) / 10 : 0;
+
+  const chip = (label, count, bg, fg, suffix) => `
+    <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:${bg};border-radius:8px;padding:9px 14px;font-size:12px">
+      <span style="color:${fg};font-size:11px">${label}</span>
+      <strong style="color:${fg};font-size:15px">${count}${suffix || '件'}</strong>
+    </div>`;
+  sumEl.innerHTML = `
+    ${chip('📊 報告総数', total, '#EEF2FF', '#3730A3')}
+    ${chip('✅ 改善済み', totalImproved, '#F0FDF4', '#166534')}
+    ${chip('⏳ 未改善',  totalUnimproved, '#FEF3C7', '#92400E')}
+    ${chip('改善率',    improvedRate,    '#ECFEFF', '#155E75', '%')}
+    ${chip('🟥 未対応', byStatus.open || 0,        '#FEF2F2', '#991B1B')}
+    ${chip('🟦 対応中', byStatus.in_progress || 0, '#EFF6FF', '#1E40AF')}
+    ${chip('🟩 解決',   byStatus.resolved || 0,    '#F0FDF4', '#166534')}
+    ${chip('⬜ 対応しない', byStatus.wont_fix || 0, '#F3F4F6', '#374151')}
+    ${chip('🔁 重複',   byStatus.duplicate || 0,   '#F5F3FF', '#5B21B6')}
+  `;
+
+  if (total === 0 || byReporter.length === 0) {
+    wrap.innerHTML = `<div style="padding:32px 20px;text-align:center;color:var(--text-muted)">対象月のバグ報告はありません。</div>`;
+    return;
+  }
+
+  const rows = byReporter.map(r => {
+    const reporterCell = r.is_anonymous
+      ? `<span style="background:#F3F4F6;color:#374151;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600">🕵️ 匿名（集約）</span>`
+      : `<span style="font-weight:600;color:#111827">${_brEsc(r.label || '—')}</span>`;
+    const rRate = r.count > 0 ? Math.round((r.improved_count / r.count) * 1000) / 10 : 0;
+    const reportsList = (r.reports || []).map(rep => {
+      const sevColor = BUG_SEVERITY_COLOR[rep.severity] || '#6B7280';
+      const sevLabel = BUG_SEVERITY_LABEL[rep.severity] || rep.severity;
+      const stColor  = BUG_STATUS_COLOR[rep.status] || '#6B7280';
+      const stLabel  = BUG_STATUS_LABEL[rep.status] || rep.status;
+      const num = rep.short_id ? `#${_brEsc(rep.short_id)}` : '#----';
+      const dateStr = _brFmtDate(rep.created_at);
+      const idJson = JSON.stringify(rep.id);
+      const improvedMark = rep.is_improved
+        ? `<span title="改善済み" style="color:#10B981;font-weight:700">✅</span>`
+        : `<span title="未改善" style="color:#9CA3AF">⏳</span>`;
+      const verupBadge = rep.improvement_revision_no
+        ? `<span style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap" title="${_brEsc((rep.improvement_screen||'') + ' / ' + (rep.improvement_feature||''))}">🆙 #${_brEsc(String(rep.improvement_revision_no))}</span>`
+        : '';
+      return `
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0;border-top:0.5px dashed var(--border)">
+        ${improvedMark}
+        <a href="#" onclick='event.preventDefault(); openBugReportModal({ id: ${idJson} })'
+           style="font-family:ui-monospace,monospace;font-size:12px;font-weight:700;color:#2563EB;text-decoration:underline;white-space:nowrap">${num}</a>
+        <span style="background:${stColor};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap">${_brEsc(stLabel)}</span>
+        <span style="background:${sevColor};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap">${_brEsc(sevLabel)}</span>
+        ${verupBadge}
+        <span style="flex:1;min-width:160px;font-size:13px;color:#111827">${_brEsc(rep.title || '(無題)')}</span>
+        <span style="font-size:11px;color:var(--text-muted);white-space:nowrap">${_brEsc(dateStr)}</span>
+      </div>`;
+    }).join('');
+    return `
+    <tr>
+      <td style="padding:10px 12px;vertical-align:top;border-top:1px solid var(--border);min-width:160px">${reporterCell}</td>
+      <td style="padding:10px 12px;vertical-align:top;border-top:1px solid var(--border);text-align:center;font-weight:700;color:var(--em-dark);font-size:14px;white-space:nowrap">${r.count}件</td>
+      <td style="padding:10px 12px;vertical-align:top;border-top:1px solid var(--border);text-align:center;font-size:13px;white-space:nowrap">
+        <span style="font-weight:700;color:#166534">${r.improved_count}</span>
+        <span style="color:var(--text-muted);font-size:11px"> / ${r.count}</span>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${rRate}%</div>
+      </td>
+      <td style="padding:6px 12px;vertical-align:top;border-top:1px solid var(--border)">
+        <div style="display:flex;flex-direction:column">${reportsList}</div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;background:#fff">
+      <thead>
+        <tr style="background:var(--em-pale)">
+          <th style="padding:9px 12px;text-align:left;font-size:12px;color:var(--em-dark);border-bottom:1px solid var(--border)">報告者</th>
+          <th style="padding:9px 12px;text-align:center;font-size:12px;color:var(--em-dark);border-bottom:1px solid var(--border);white-space:nowrap">報告件数</th>
+          <th style="padding:9px 12px;text-align:center;font-size:12px;color:var(--em-dark);border-bottom:1px solid var(--border);white-space:nowrap">改善件数</th>
+          <th style="padding:9px 12px;text-align:left;font-size:12px;color:var(--em-dark);border-bottom:1px solid var(--border)">内訳（番号クリックで詳細・🆙=Verup#）</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 // スプレッドシート出力（CSV ではなく Sheets を基本とする方針）
 async function exportAnalyticsToSheet() {
   const ym = document.getElementById('an-month').value;
@@ -30317,6 +30451,9 @@ async function exportAnalyticsToSheet() {
   } else if (_analyticsView === 'creator-summary') {
     endpoint = `${API}/analytics/creator-summary/export-sheet`;
     body = { year: parseInt(year, 10), month: parseInt(month, 10), status };
+  } else if (_analyticsView === 'bug-reports') {
+    endpoint = `${API}/analytics/bug-reports/export-sheet`;
+    body = { year: parseInt(year, 10), month: parseInt(month, 10) };
   } else {
     endpoint = `${API}/analytics/creative-by-assignee/export-sheet`;
     body = { year: parseInt(year, 10), month: parseInt(month, 10), client_id: document.getElementById('an-client').value || '', status };
@@ -34103,11 +34240,19 @@ function renderBugReportList() {
     const assigneeLabel = r.assignee ? `👤 ${_brEsc(_brUserLabel(r.assignee))}` : '<span style="color:var(--text-muted)">未割当</span>';
     const screen = r.screen_label ? `<span style="background:#EEF2F7;color:#374151;padding:2px 8px;border-radius:10px;font-size:11px">${_brEsc(r.screen_label)}</span>` : '';
     const desc = r.description ? `<div style="font-size:12px;color:#4B5563;margin-top:4px;white-space:pre-wrap;line-height:1.5;max-height:60px;overflow:hidden">${_brEsc(r.description)}</div>` : '';
+    const improvedBadge = r.improved_at
+      ? `<span style="background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">✅ 改善済</span>`
+      : '';
+    const verupBadge = r.improvement_log
+      ? `<span style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700" title="${_brEsc((r.improvement_log.screen||'') + ' / ' + (r.improvement_log.feature||''))}">🆙 #${_brEsc(String(r.improvement_log.revision_no))}</span>`
+      : '';
     return `
     <div data-brid="${_brEsc(r.id)}" style="border:1px solid var(--border);border-left:4px solid ${stColor};border-radius:8px;padding:10px 12px;background:#fff;cursor:pointer" onclick='openBugReportModal({ id: ${JSON.stringify(r.id)} })'>
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:4px">
         <span style="background:${stColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_brEsc(stLabel)}</span>
         <span style="background:${sevColor};color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">${_brEsc(sevLabel)}</span>
+        ${improvedBadge}
+        ${verupBadge}
         ${screen}
         <span style="flex:1"></span>
         <span style="font-size:11px;color:var(--text-muted)">${_brEsc(_brFmtDate(r.created_at))}</span>
@@ -34155,6 +34300,11 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-edit-only').style.display = 'none';
   document.getElementById('br-delete-btn').style.display = 'none';
   document.getElementById('br-meta-info').textContent = '';
+  document.getElementById('br-improved-wrap').style.display = 'none';
+  document.getElementById('br-improved').checked = false;
+  document.getElementById('br-improvement-pickers').style.display = 'none';
+  document.getElementById('br-improvement-version-log').value = '';
+  document.getElementById('br-improvement-current').textContent = '';
   bugReportRemoveScreenshot();
   _bugReportEditing = null;
 
@@ -34176,16 +34326,32 @@ async function openBugReportModal(options = {}) {
       document.getElementById('br-anonymous-wrap').style.display = 'none'; // 編集時は匿名チェックを変えさせない
       document.getElementById('br-status').value = r.status || 'open';
       document.getElementById('br-edit-only').style.display = '';
-      // 削除は admin のみ
+      // 削除と改善済みチェックは admin のみ
       const isAdmin = (typeof currentUser !== 'undefined' && currentUser?.role === 'admin');
       document.getElementById('br-delete-btn').style.display = isAdmin ? '' : 'none';
+      document.getElementById('br-improved-wrap').style.display = isAdmin ? '' : 'none';
+      // 改善済みチェック状態の復元
+      document.getElementById('br-improved').checked = !!r.improved_at;
+      if (isAdmin) {
+        // Verup候補をロード（admin のみ）
+        await bugReportLoadVersionLogOptions(r.improvement_version_log_id || '');
+      }
+      // 既に紐付け済みの Verup を表示
+      if (r.improvement_log) {
+        const log = r.improvement_log;
+        document.getElementById('br-improvement-current').innerHTML =
+          `現在の紐付け: <strong>#${log.revision_no}</strong> ${_brEsc(log.screen || '')} / ${_brEsc(log.feature || '')}`;
+      }
+      bugReportSyncImprovedUI();
       // メタ情報
       const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
+      const improverLabel = r.improved_at ? (_brUserLabel(r.improver) || '—') : '';
       const meta = [
         `報告: ${reporterLabel}`,
         `日時: ${_brFmtDate(r.created_at)}`,
         r.url ? `URL: ${r.url}` : '',
         r.resolved_at ? `解決日時: ${_brFmtDate(r.resolved_at)}` : '',
+        r.improved_at ? `✅ 改善済み: ${_brFmtDate(r.improved_at)}（${improverLabel}）` : '',
       ].filter(Boolean).join(' / ');
       document.getElementById('br-meta-info').textContent = meta;
       // スクショ
@@ -34424,6 +34590,17 @@ async function submitBugReport() {
     payload.browser_info = { ua: navigator.userAgent, viewport: `${window.innerWidth}x${window.innerHeight}` };
   } else {
     payload.status = document.getElementById('br-status').value;
+    // admin が改善済みチェックを操作した場合のみ payload に乗せる
+    const improvedWrap = document.getElementById('br-improved-wrap');
+    if (improvedWrap && improvedWrap.style.display !== 'none') {
+      payload.improved = document.getElementById('br-improved').checked;
+      if (payload.improved) {
+        const sel = document.getElementById('br-improvement-version-log').value || '';
+        payload.improvement_version_log_id = sel || null;
+      } else {
+        payload.improvement_version_log_id = null;
+      }
+    }
   }
 
   try {
@@ -34443,6 +34620,39 @@ async function submitBugReport() {
     loadBugReportOpenCount();
   } catch (e) { alert(e.message); }
 }
+
+// 「改善済み」チェックの ON/OFF に応じて Verup 選択欄を表示/非表示
+function bugReportSyncImprovedUI() {
+  const checked = document.getElementById('br-improved').checked;
+  document.getElementById('br-improvement-pickers').style.display = checked ? '' : 'none';
+}
+
+// version_logs を一括取得し、Verup 選択 select を埋める。
+// 既選択の id は selectedId で復元。
+async function bugReportLoadVersionLogOptions(selectedId) {
+  const sel = document.getElementById('br-improvement-version-log');
+  if (!sel) return;
+  try {
+    if (!_bugReportVersionLogCache) {
+      const res = await fetch('/api/haruka/version-logs');
+      if (!res.ok) throw new Error('version-logs load failed');
+      _bugReportVersionLogCache = await res.json();
+    }
+    const logs = (_bugReportVersionLogCache || []).slice()
+      .filter(l => !l.is_hidden)
+      .sort((a, b) => (b.revision_no || 0) - (a.revision_no || 0));
+    let html = '<option value="">— 任意（後で選択）—</option>';
+    for (const l of logs) {
+      const label = `#${l.revision_no} ${l.screen ? l.screen + ' / ' : ''}${l.feature || ''}`.trim();
+      html += `<option value="${_brEsc(l.id)}">${_brEsc(label)}</option>`;
+    }
+    sel.innerHTML = html;
+    if (selectedId) sel.value = selectedId;
+  } catch (e) {
+    sel.innerHTML = '<option value="">— 取得失敗 —</option>';
+  }
+}
+let _bugReportVersionLogCache = null;
 
 async function deleteBugReport() {
   const id = document.getElementById('br-id').value;
