@@ -8611,6 +8611,11 @@ async function loadTeams() {
 // メンバー
 let showResigned = false;
 let memberSortBy = 'role';
+// 列ヘッダクリックによるソート上書き。null のときは memberSortBy（ピル）が使われる。
+// 値: { col: 'role'|'rank'|'team'|'name', dir: 'asc'|'desc' }
+let memberHeaderSort = null;
+// ランク順（S が一番上）。S→D が「昇順」=「強い順」とする。
+const MEMBER_RANK_ORDER = { S: 0, A: 1, B: 2, C: 3, D: 4 };
 // ROLE_SORT_ORDER は roles マスタから動的構築する（Stage 0 / Step 2 PR3, ADR 003）。
 // 起動時 loadRolesMaster() で上書き。失敗時に備えてハードコードを fallback として残す。
 // 合成値 'producer_director' は roles マスタには無いので、producer/director の sort_order の
@@ -8619,6 +8624,8 @@ let ROLE_SORT_ORDER = { admin:7, secretary:6, producer:5, producer_director:4, d
 
 function setMemberSort(type) {
   memberSortBy = type;
+  // ピル操作はヘッダソートを解除（最後に操作した方が勝つ）
+  memberHeaderSort = null;
   ['default','role','team'].forEach(t => {
     const btn = document.getElementById('sort-btn-' + t);
     if (!btn) return;
@@ -8626,6 +8633,25 @@ function setMemberSort(type) {
     btn.style.background = active ? 'var(--em-pale)' : 'transparent';
     btn.style.borderColor = active ? 'var(--em-dark)' : 'var(--border)';
     btn.style.color = active ? 'var(--em-dark)' : 'var(--text-muted)';
+  });
+  renderMemberList();
+}
+
+// ヘッダクリックによる列ソート。同じ列を再クリック=方向トグル、別列=昇順から。
+function setMemberHeaderSort(col) {
+  if (!['role','rank','team','name'].includes(col)) return;
+  if (memberHeaderSort && memberHeaderSort.col === col) {
+    memberHeaderSort.dir = memberHeaderSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    memberHeaderSort = { col, dir: 'asc' };
+  }
+  // ピル側のハイライトは外す（カスタム状態）
+  ['default','role','team'].forEach(t => {
+    const btn = document.getElementById('sort-btn-' + t);
+    if (!btn) return;
+    btn.style.background = 'transparent';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--text-muted)';
   });
   renderMemberList();
 }
@@ -8652,6 +8678,16 @@ function toggleShowResigned() {
   renderMemberList();
 }
 
+// ヘッダ <th> を生成（クリックで setMemberHeaderSort、現在ソート列に ▲/▼）
+function memberSortHeaderHtml(col, label, align) {
+  const isActive = memberHeaderSort && memberHeaderSort.col === col;
+  const arrow = isActive
+    ? `<span style="font-size:10px;margin-left:4px;color:var(--em-dark)">${memberHeaderSort.dir === 'desc' ? '▼' : '▲'}</span>`
+    : '<span style="font-size:10px;margin-left:4px;color:#cfd8d7">↕</span>';
+  const color = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
+  return `<th onclick="setMemberHeaderSort('${col}')" style="padding:8px 12px;text-align:${align};font-size:11px;font-weight:600;color:${color};letter-spacing:0.05em;cursor:pointer;user-select:none" onmouseenter="this.style.color='var(--em-dark)'" onmouseleave="this.style.color='${color}'">${label}${arrow}</th>`;
+}
+
 function renderMemberList() {
   const list = document.getElementById('members-list');
   if (!list) return;
@@ -8670,7 +8706,39 @@ function renderMemberList() {
     countEl.textContent = resignedCount > 0 ? `在籍 ${activeCount}名 / 退職済 ${resignedCount}名` : `${activeCount}名`;
   }
   // ソート
-  if (memberSortBy === 'role') {
+  // 1) ヘッダクリックによる列ソートが指定されていればそちらを優先
+  if (memberHeaderSort) {
+    const dirMul = memberHeaderSort.dir === 'desc' ? -1 : 1;
+    const teamCodeOf = (m) => allTeams.find(t => t.id === m.team_id)?.team_code || '￿'; // 未所属は末尾
+    const rankOrderOf = (m) => Object.prototype.hasOwnProperty.call(MEMBER_RANK_ORDER, m.rank) ? MEMBER_RANK_ORDER[m.rank] : 99;
+    visibleMembers.sort((a, b) => {
+      let primary = 0;
+      switch (memberHeaderSort.col) {
+        case 'role': {
+          // 既存「ロール順」ピルと同じ向き = 昇順は admin/producer などが上（sort_order 大→小）。
+          // 直感優先で「昇順=役職順（プロデューサーが上）」のままに保ち、descで逆転させる。
+          primary = ((ROLE_SORT_ORDER[b.role] || 0) - (ROLE_SORT_ORDER[a.role] || 0)) * dirMul;
+          break;
+        }
+        case 'rank': {
+          // 昇順 = S→D（数値小→大）
+          primary = (rankOrderOf(a) - rankOrderOf(b)) * dirMul;
+          break;
+        }
+        case 'team': {
+          primary = teamCodeOf(a).localeCompare(teamCodeOf(b)) * dirMul;
+          break;
+        }
+        case 'name': {
+          primary = (a.full_name || '').localeCompare(b.full_name || '', 'ja') * dirMul;
+          break;
+        }
+      }
+      if (primary !== 0) return primary;
+      // 2次ソートは常に氏名昇順（安定化のため）
+      return (a.full_name || '').localeCompare(b.full_name || '', 'ja');
+    });
+  } else if (memberSortBy === 'role') {
     visibleMembers.sort((a,b) => (ROLE_SORT_ORDER[b.role]||0) - (ROLE_SORT_ORDER[a.role]||0) || (a.full_name||'').localeCompare(b.full_name||'','ja'));
   } else if (memberSortBy === 'team') {
     visibleMembers.sort((a,b) => {
@@ -8699,10 +8767,10 @@ function renderMemberList() {
     <thead>
       <tr style="background:var(--surface);border-bottom:1.5px solid var(--border)">
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em"></th>
-        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ロール</th>
-        ${showRankCol ? '<th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">ランク</th>' : ''}
-        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">チーム</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">名前</th>
+        ${memberSortHeaderHtml('role','ロール','center')}
+        ${showRankCol ? memberSortHeaderHtml('rank','ランク','center') : ''}
+        ${memberSortHeaderHtml('team','チーム','center')}
+        ${memberSortHeaderHtml('name','名前','left')}
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（平日）</th>
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（土日祝）</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メモ</th>
