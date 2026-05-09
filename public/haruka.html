@@ -3714,7 +3714,7 @@ window.showPage = window.showPage || function(name, btn) {
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label">チーム</label>
                 <select class="form-select" id="c-team-id" onchange="onTeamChange(this.value)">
-                  <option value="">チームを選択（任意）</option>
+                  <option value="">選択してください</option>
                 </select>
               </div>
               <div class="form-group" style="margin-bottom:0">
@@ -7774,7 +7774,7 @@ function renderCreativeAddTeamDropdowns() {
   const singleSel = document.getElementById('c-team-id');
   if (singleSel) {
     const prev = singleSel.value;
-    singleSel.innerHTML = renderOptions('チームを選択（任意）');
+    singleSel.innerHTML = renderOptions('選択してください');
     if (prev && filtered.some(t => t.id === prev)) {
       singleSel.value = prev;
     } else {
@@ -20901,19 +20901,17 @@ async function openCreateCreative(opts = {}) {
     idMap[catName].forEach(selId => {
       const s = document.getElementById(selId);
       if (!s) return;
-      s.innerHTML = '<option value="">（任意）</option>' + items.map(i =>
+      // クリエイティブFMTは「選択してください」を初期値にする（毎回 mv/bn が固定で選ばれる挙動を回避）。
+      // 媒体・サイズは従来どおり「（任意）」プレースホルダ。
+      const placeholder = (catName === 'クリエイティブFMT') ? '選択してください' : '（任意）';
+      s.innerHTML = `<option value="">${placeholder}</option>` + items.map(i =>
         catName === 'クリエイティブサイズ'
           ? `<option value="${i.code}">${i.name}</option>`
           : `<option value="${i.code}">${i.code} - ${i.name}</option>`
       ).join('');
       // 媒体はFBをデフォルト選択
       if (catName === '媒体') s.value = 'FB';
-      // クリエイティブFMTは動画系のとき mv をデフォルト
-      if (catName === 'クリエイティブFMT') {
-        const ct = document.getElementById(selId.startsWith('bulk') ? 'bulk-creative-type' : 'c-creative-type')?.value || '';
-        if (ct.startsWith('video')) s.value = 'mv';
-        else if (ct.startsWith('design')) s.value = 'bn';
-      }
+      // クリエイティブFMT は静止画含めて種別バリエーションが多いため、自動デフォルト選択は行わない（未選択スタート）。
       // クリエイティブサイズは動画系のとき 1080_1920 をデフォルト
       if (catName === 'クリエイティブサイズ') {
         const ct = document.getElementById(selId.startsWith('bulk') ? 'bulk-creative-type' : 'c-creative-type')?.value || '';
@@ -20952,6 +20950,19 @@ async function openCreateCreative(opts = {}) {
     onBulkProjectChange(initialBulkProject),
   ]);
   updateAssigneeSelect();
+
+  // チームの初期値は常に未選択にする。
+  // openCreateCreative 内で onProjectChange が走ると、紐付くチームから自動で先頭が選ばれる
+  // 仕様だが、フォームを開いた瞬間に「特定チームが固定で選択された状態」になってしまい、
+  // 静止画など別チームに切り替えるとき毎回手動で外す手間が発生する（UX 改善要望 #466 関連）。
+  // ユーザーが案件タイルを能動的にクリックしたタイミングでは change イベント経由で
+  // onProjectChange が再実行され、自動チーム選択は引き続き効く。
+  if (!presetProject) {
+    const cTeamSel = document.getElementById('c-team-id');
+    if (cTeamSel) cTeamSel.value = '';
+    const bTeamSel = document.getElementById('bulk-team-id');
+    if (bTeamSel) bTeamSel.value = '';
+  }
 
   // タブ表示制御:
   //   preset 案件があり、そのカテゴリが LP/HP/LINE/その他 → 一括登録タブを非表示にし個別のみ
