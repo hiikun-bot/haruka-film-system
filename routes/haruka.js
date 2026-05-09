@@ -11457,45 +11457,73 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     console.warn('[creative_status_transitions] fetch block failed:', e?.message || e);
   }
 
+  // round_stage → 引き継ぎ遷移定義
   const HANDOFF_BY_STAGE = {
     'd_check':  { from: 'Dチェック',                 to: 'Pチェック',                  next: 'd_to_p',          commentField: 'director_comment_at_change' },
     'p_check':  { from: 'Pチェック',                 to: 'クライアントチェック中',     next: 'p_to_cl',         commentField: 'director_comment_at_change' },
     'cl_check': { from: 'クライアントチェック中',     to: '納品',                       next: 'cl_to_delivered', commentField: 'client_comment_at_change'   },
   };
+  // transition.to_status から逆算して、紐付け対象の round_stage を求める
+  const TRANSITION_TO_FROM_STAGE = {
+    'Pチェック':              'd_check',
+    'クライアントチェック中': 'p_check',
+    '納品':                   'cl_check',
+  };
 
+  // 先に rounds 出力配列を作る（handoff_to_next は後段で埋める）
+  const result = (data || []).map(r => ({
+    ...r,
+    file: r.creative_file_id ? (filesById[r.creative_file_id] || null) : null,
+    handoff_to_next: null,
+  }));
+
+  // 紐付け規則 (PR #(handoff-attach-fix) / 髙橋指示 2026-05-09):
+  //   各 transition について、changed_at より **前** の同じ round_stage snapshot のうち
+  //   **最も新しいもの** に handoff_to_next を貼り付ける。これにより再提出シナリオで
+  //     v1 D→P transition (#1) → v1 d_check round に紐づく
+  //     v3 D→P transition (#2) → v3 d_check round に紐づく
+  //   と個別バインドされる。
+  //   旧実装「round.created_at より後の最早 transition」は v1/v3 両方に同じ transition が
+  //   マッチして表示崩れの原因になっていた。
+  //
+  //   data は version_num asc → created_at asc 済み（select の order 参照）。result も同順。
+  //   transitions は changed_at asc 済み。
+  //
+  //   PR #462 リリース前の transition 行は director_comment_at_change が「前ラウンドの指摘内容」
+  //   になっているケースがあるが、無いよりマシ（ユーザー確認済み）。
+  //   creatives.director_comment へはフォールバックしない（最新値で時刻が合わない可能性）。
   const usedTransitionIds = new Set();
-  const result = (data || []).map(r => {
-    const out = {
-      ...r,
-      file: r.creative_file_id ? (filesById[r.creative_file_id] || null) : null,
-      handoff_to_next: null,
-    };
-    const def = HANDOFF_BY_STAGE[r.round_stage];
-    if (def) {
-      // round.created_at より後で from→to が一致する最早の transition を採用
-      const roundTime = r.created_at ? Date.parse(r.created_at) : 0;
-      const match = transitions
-        .filter(t => t.from_status === def.from && t.to_status === def.to)
-        .filter(t => !usedTransitionIds.has(t.id))
-        .filter(t => !roundTime || (t.changed_at && Date.parse(t.changed_at) > roundTime))
-        .sort((a, b) => (a.changed_at || '').localeCompare(b.changed_at || ''))[0];
-      if (match) {
-        usedTransitionIds.add(match.id);
-        const comment = match[def.commentField] || null;
-        // コメントが空でも「いつ承認されたか」だけは出せると有用なので transition は返す。
-        // フロント側で comment が空のときは表示抑制する。
-        out.handoff_to_next = {
-          stage: def.next,                  // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered'
-          from_status: match.from_status,
-          to_status:   match.to_status,
-          comment,
-          changed_at:  match.changed_at,
-          changed_by:  match.changed_by,
-        };
+  for (const tr of transitions) {
+    const fromStage = TRANSITION_TO_FROM_STAGE[tr.to_status];
+    if (!fromStage) continue;
+    const def = HANDOFF_BY_STAGE[fromStage];
+    if (!def) continue;
+    if (tr.from_status !== def.from || tr.to_status !== def.to) continue; // 異常 from→to を弾く
+    const trTime = tr.changed_at ? Date.parse(tr.changed_at) : NaN;
+    if (Number.isNaN(trTime)) continue;
+    // result を走査し、changed_at <= tr.changed_at を満たす同 stage snapshot のうち最新を採用。
+    let target = null;
+    for (const r of result) {
+      if (r.round_stage !== fromStage) continue;
+      const rTime = r.created_at ? Date.parse(r.created_at) : NaN;
+      if (Number.isNaN(rTime)) continue;
+      if (rTime <= trTime) {
+        target = r; // ソート済みなので走査末尾の合致が最新
       }
     }
-    return out;
-  });
+    if (!target) continue; // snapshot 無し → 後段の「孤児 handoff」処理で仮想ラウンド化
+    // 同 round に複数 transition が当たる場合は最後（最新）の判断で上書き。
+    usedTransitionIds.add(tr.id);
+    const comment = tr[def.commentField] ?? null;
+    target.handoff_to_next = {
+      stage:       def.next, // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered'
+      from_status: tr.from_status,
+      to_status:   tr.to_status,
+      comment,
+      changed_at:  tr.changed_at,
+      changed_by:  tr.changed_by,
+    };
+  }
 
   // 孤児 handoff を仮想ラウンドとして追加 (PR #(d-to-p-handoff-comment)):
   //   修正なし直行ケース（制作中→Dチェック→Pチェック など、d_check スナップショット無し）
