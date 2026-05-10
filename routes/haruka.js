@@ -2206,8 +2206,29 @@ const TASK_SELECT_COLS = [
   'start_date, original_end_date, current_end_date,',
   'assignee_type, assignee_user_id, is_milestone, is_done, done_at,',
   'priority, note, sort_order, template_item_id, created_at, updated_at,',
+  // ADR 016: ボール状態モデル列
+  'ball_state_code, ball_holder_user_id, ball_moved_at,',
+  'skip_internal_review, skip_client_review,',
+  'assignee:users!project_tasks_assignee_user_id_fkey(id, full_name, nickname, avatar_url),',
+  'ball_holder:users!project_tasks_ball_holder_user_id_fkey(id, full_name, nickname, avatar_url)'
+].join(' ');
+
+// ADR 016 列が未適用の環境向けフォールバック select（safety net）。
+const TASK_SELECT_COLS_LEGACY = [
+  'id, project_id, parent_task_id, is_phase_header, title,',
+  'start_date, original_end_date, current_end_date,',
+  'assignee_type, assignee_user_id, is_milestone, is_done, done_at,',
+  'priority, note, sort_order, template_item_id, created_at, updated_at,',
   'assignee:users!project_tasks_assignee_user_id_fkey(id, full_name, nickname, avatar_url)'
 ].join(' ');
+
+const BALL_STATE_CODES = new Set(['in_progress', 'internal_review', 'client_review', 'revising', 'fixed']);
+
+const isMissingBallStateCols = (err) =>
+  err && /ball_state_code|ball_holder_user_id|ball_moved_at|skip_internal_review|skip_client_review/i.test(err.message || '');
+
+const isMissingBallStateDefsTable = (err) =>
+  err && /relation .*project_ball_state_definitions.* does not exist|could not find the table.*project_ball_state_definitions/i.test(err.message || '');
 
 // GET /api/phase-templates?category_id=:id  カテゴリのアクティブなテンプレ一覧
 router.get('/phase-templates', requireAuth, async (req, res) => {
@@ -2246,9 +2267,11 @@ router.get('/phase-templates/:template_id/items', requireAuth, async (req, res) 
 });
 
 // GET /api/projects/:project_id/tasks  案件タスク一覧（sort_order 順）
+// ADR 016: ball_state_code / ball_holder_user_id / ball_moved_at / skip_* を含めて返す。
+// schema-sync 失敗で新列が無い環境では legacy 列のみで再試行する。
 router.get('/projects/:project_id/tasks', requireAuth, async (req, res) => {
   const projectId = req.params.project_id;
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('project_tasks')
     .select(TASK_SELECT_COLS)
     .eq('project_id', projectId)
@@ -2259,7 +2282,19 @@ router.get('/projects/:project_id/tasks', requireAuth, async (req, res) => {
       console.warn('[tasks] project_tasks table missing. Apply migrations/2026-05-09_project_schedule_phase1.sql');
       return res.json([]);
     }
-    return res.status(500).json({ error: error.message });
+    if (isMissingBallStateCols(error)) {
+      console.warn('[tasks] ball_state_* columns missing. Falling back to legacy SELECT. Apply migrations/2026-05-10_lp_phase_ball_state.sql');
+      const fb = await supabase
+        .from('project_tasks')
+        .select(TASK_SELECT_COLS_LEGACY)
+        .eq('project_id', projectId)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (fb.error) return res.status(500).json({ error: fb.error.message });
+      data = fb.data || [];
+    } else {
+      return res.status(500).json({ error: error.message });
+    }
   }
   res.json(data || []);
 });
@@ -2298,6 +2333,23 @@ function _validateTaskFields(body, partial = false) {
   if (has('sort_order')) {
     const so = parseInt(body.sort_order, 10);
     if (!Number.isNaN(so)) out.sort_order = so;
+  }
+  // ADR 016: skip 系（フェーズ内で社内チェック/先方確認をスキップするフラグ）
+  if (has('skip_internal_review')) out.skip_internal_review = !!body.skip_internal_review;
+  if (has('skip_client_review')) out.skip_client_review = !!body.skip_client_review;
+  // PATCH 単体での ball_holder_user_id 単独編集（リーダー切替）は許容。
+  // ball_state_code 自体は専用エンドポイント PATCH /tasks/:id/ball-state で行うため、
+  // 本汎用 PATCH 経由でも受け付けはする（管理ユースのため）。
+  if (has('ball_holder_user_id')) out.ball_holder_user_id = body.ball_holder_user_id || null;
+  if (has('ball_state_code')) {
+    const code = body.ball_state_code;
+    if (code === null || code === undefined || code === '') {
+      out.ball_state_code = null;
+    } else if (BALL_STATE_CODES.has(code)) {
+      out.ball_state_code = code;
+    } else {
+      return { error: `ball_state_code は ${[...BALL_STATE_CODES].join(' / ')} のいずれか または null` };
+    }
   }
   return { values: out };
 }
@@ -2426,17 +2478,22 @@ router.patch('/projects/:project_id/tasks/:task_id', requireAuth, requirePermiss
 });
 
 // DELETE /api/projects/:project_id/tasks/:task_id  削除（CASCADE で子も消える）
+// ADR 016: テンプレ由来のフェーズ見出し（template_item_id IS NOT NULL かつ is_phase_header=true）は
+// 削除拒否（400）。手動追加されたタスクのみ物理削除を許可する。
 router.delete('/projects/:project_id/tasks/:task_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const { project_id: projectId, task_id: taskId } = req.params;
   const { data: existing, error: getErr } = await supabase
     .from('project_tasks')
-    .select('id, project_id')
+    .select('id, project_id, is_phase_header, template_item_id')
     .eq('id', taskId)
     .maybeSingle();
   if (getErr) return res.status(500).json({ error: getErr.message });
   if (!existing) return res.status(404).json({ error: 'task が見つかりません' });
   if (existing.project_id !== projectId) {
     return res.status(400).json({ error: 'project_id と task_id が一致しません' });
+  }
+  if (existing.is_phase_header && existing.template_item_id) {
+    return res.status(400).json({ error: 'テンプレ由来のフェーズ見出しは削除できません。フェーズをスキップするには skip_* フラグを使ってください。' });
   }
   const { error: delErr } = await supabase
     .from('project_tasks')
@@ -2555,6 +2612,373 @@ router.post('/projects/:project_id/tasks/from-template', requireAuth, requirePer
   }
 
   res.status(201).json({ ok: true, inserted_count: rows.length });
+});
+
+// ==================== ADR 016: ボール状態モデル API ====================
+// 「フェーズ × ボール状態」モデルのバックエンド。
+//   - GET  /api/phase-templates/by-category/:category_code   default テンプレ + items
+//   - GET  /api/categories/:id/ball-state-definitions         カテゴリのボール状態定義
+//   - PATCH /api/projects/:project_id/tasks/:task_id/ball-state   ボール状態遷移
+//   - POST /api/projects/:project_id/tasks/seed-from-template     初回展開（既存があれば 409）
+//
+// 権限:
+//   - GET 系は requireAuth のみ。
+//   - PATCH /ball-state は project.create_edit を持つロール（admin/producer/director 等）
+//     または 現在のボール保持者本人（effectiveRole で判定）。
+//   - POST /seed-from-template は project.create_edit。
+//
+// migration: migrations/2026-05-10_lp_phase_ball_state.sql（本番適用済み）
+
+// GET /api/phase-templates/by-category/:category_code  default テンプレ + items を返す
+// 要件のキー指定が UUID（template_id）と衝突するため `by-category` を経路に挟む。
+router.get('/phase-templates/by-category/:category_code', requireAuth, async (req, res) => {
+  const code = String(req.params.category_code || '').trim();
+  if (!code) return res.status(400).json({ error: 'category_code が必要です' });
+
+  const { data: cat, error: catErr } = await supabase
+    .from('creative_categories')
+    .select('id, code')
+    .eq('code', code)
+    .maybeSingle();
+  if (catErr) return res.status(500).json({ error: catErr.message });
+  if (!cat) return res.status(404).json({ error: `category ${code} が見つかりません` });
+
+  const { data: template, error: tplErr } = await supabase
+    .from('project_phase_templates')
+    .select('id, category_id, name, description, is_default, is_active')
+    .eq('category_id', cat.id)
+    .eq('is_default', true)
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (tplErr) {
+    if (isMissingPhaseTemplateTable(tplErr)) return res.json({ template: null, items: [] });
+    return res.status(500).json({ error: tplErr.message });
+  }
+  if (!template) return res.json({ template: null, items: [] });
+
+  const { data: items, error: itemsErr } = await supabase
+    .from('project_phase_template_items')
+    .select('id, template_id, parent_item_id, is_phase_header, title, default_offset_days_from_start, default_duration_days, default_assignee_type, is_milestone, default_priority, default_note, requires_internal_review, requires_client_review, sort_order')
+    .eq('template_id', template.id)
+    .order('sort_order', { ascending: true });
+  if (itemsErr) {
+    // requires_* 列がまだ無い環境では legacy で再試行
+    if (/requires_internal_review|requires_client_review/i.test(itemsErr.message || '')) {
+      const fb = await supabase
+        .from('project_phase_template_items')
+        .select('id, template_id, parent_item_id, is_phase_header, title, default_offset_days_from_start, default_duration_days, default_assignee_type, is_milestone, default_priority, default_note, sort_order')
+        .eq('template_id', template.id)
+        .order('sort_order', { ascending: true });
+      if (fb.error) return res.status(500).json({ error: fb.error.message });
+      return res.json({ template, items: fb.data || [] });
+    }
+    return res.status(500).json({ error: itemsErr.message });
+  }
+  res.json({ template, items: items || [] });
+});
+
+// GET /api/categories/:id/ball-state-definitions  カテゴリのボール状態定義（is_active のみ / sort_order 昇順）
+router.get('/categories/:id/ball-state-definitions', requireAuth, async (req, res) => {
+  const categoryId = req.params.id;
+  const { data, error } = await supabase
+    .from('project_ball_state_definitions')
+    .select('id, code, label, holder_type, sort_order')
+    .eq('category_id', categoryId)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true });
+  if (error) {
+    if (isMissingBallStateDefsTable(error)) {
+      console.warn('[ball-state-definitions] project_ball_state_definitions table missing. Apply migrations/2026-05-10_lp_phase_ball_state.sql');
+      return res.json({ definitions: [] });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ definitions: data || [] });
+});
+
+// PATCH /api/projects/:project_id/tasks/:task_id/ball-state  ボール状態遷移
+// body: { ball_state_code, ball_holder_user_id? }
+// - ball_state_code はカテゴリの definitions に存在する code のみ受理。
+// - ball_moved_at = now() を強制セット。
+// - ball_state_code === 'fixed' なら is_done=true, done_at=now() も同時セット。
+// 権限: project.create_edit 持ち or 現在のボール保持者本人。
+router.patch('/projects/:project_id/tasks/:task_id/ball-state', requireAuth, async (req, res) => {
+  const { project_id: projectId, task_id: taskId } = req.params;
+  const { ball_state_code: code, ball_holder_user_id: holderRaw } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'ball_state_code が必要です' });
+  if (!BALL_STATE_CODES.has(code)) {
+    return res.status(400).json({ error: `ball_state_code は ${[...BALL_STATE_CODES].join(' / ')} のいずれか` });
+  }
+
+  // 案件 → カテゴリ → 定義の整合性チェック（カテゴリ単位）
+  const { data: project, error: projErr } = await supabase
+    .from('projects')
+    .select('id, primary_category_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (projErr) return res.status(500).json({ error: projErr.message });
+  if (!project) return res.status(404).json({ error: 'project が見つかりません' });
+
+  const { data: existing, error: getErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, ball_holder_user_id, is_done')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (getErr) {
+    if (isMissingBallStateCols(getErr)) {
+      return res.status(409).json({ error: 'ball_state_* 列が未適用です。migrations/2026-05-10_lp_phase_ball_state.sql を適用してください。' });
+    }
+    return res.status(500).json({ error: getErr.message });
+  }
+  if (!existing) return res.status(404).json({ error: 'task が見つかりません' });
+  if (existing.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と task_id が一致しません' });
+  }
+
+  // 権限: project.create_edit が無くても、現在のボール保持者本人なら許可。
+  // ADR 015: getEffectiveRole(req) を使い、X-View-As を尊重。
+  const effRole = getEffectiveRole(req);
+  const canEdit = await userHasPermission(effRole, 'project.create_edit');
+  const isHolder = existing.ball_holder_user_id && req.user && existing.ball_holder_user_id === req.user.id;
+  if (!canEdit && !isHolder) {
+    return res.status(403).json({ error: 'ボール状態を変更する権限がありません' });
+  }
+
+  // カテゴリ × code の存在チェック（カテゴリが未設定 or 定義テーブル空なら enum チェックのみで通す）
+  if (project.primary_category_id) {
+    const { data: def, error: defErr } = await supabase
+      .from('project_ball_state_definitions')
+      .select('id, code')
+      .eq('category_id', project.primary_category_id)
+      .eq('code', code)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (defErr && !isMissingBallStateDefsTable(defErr)) {
+      return res.status(500).json({ error: defErr.message });
+    }
+    if (!defErr && !def) {
+      return res.status(400).json({ error: `ball_state_code ${code} はこのカテゴリでは未定義です` });
+    }
+  }
+
+  const now = new Date().toISOString();
+  const update = {
+    ball_state_code: code,
+    ball_moved_at: now,
+    updated_at: now,
+  };
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'ball_holder_user_id')) {
+    update.ball_holder_user_id = holderRaw || null;
+  }
+  if (code === 'fixed') {
+    update.is_done = true;
+    update.done_at = now;
+  }
+
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .update(update)
+    .eq('id', taskId)
+    .select(TASK_SELECT_COLS)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// POST /api/projects/:project_id/tasks/seed-from-template  初回テンプレ展開
+// body: { template_id?, force? }
+// - template_id 省略時は案件カテゴリの default テンプレを採用。
+// - 既存タスクがあれば force=true でない限り 409。
+// - scheduled_start_date があれば日付を自動計算。NULL なら日付 NULL で作成。
+// - requires_internal_review / requires_client_review → skip_internal_review / skip_client_review に反転コピー
+//   （要件: requires=true なら skip=false）。
+router.post('/projects/:project_id/tasks/seed-from-template', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const { template_id: templateIdRaw, force: forceRaw } = req.body || {};
+  const force = !!forceRaw;
+
+  // 案件取得（scheduled_start_date / primary_category_id 取得）
+  const { data: project, error: projErr } = await supabase
+    .from('projects')
+    .select('id, primary_category_id, scheduled_start_date')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (projErr) return res.status(500).json({ error: projErr.message });
+  if (!project) return res.status(404).json({ error: 'project が見つかりません' });
+
+  // 既存タスクの有無チェック
+  const { count: existingCount, error: cntErr } = await supabase
+    .from('project_tasks')
+    .select('id', { head: true, count: 'exact' })
+    .eq('project_id', projectId);
+  if (cntErr && !isMissingTasksTable(cntErr)) return res.status(500).json({ error: cntErr.message });
+  if ((existingCount || 0) > 0 && !force) {
+    return res.status(409).json({ error: '既存タスクがあります。force=true で上書きできます。', existing_count: existingCount });
+  }
+
+  // template 決定
+  let templateId = templateIdRaw || null;
+  if (!templateId) {
+    if (!project.primary_category_id) {
+      return res.status(400).json({ error: '案件にカテゴリが未設定のため template_id を明示してください' });
+    }
+    const { data: tpl, error: tErr } = await supabase
+      .from('project_phase_templates')
+      .select('id')
+      .eq('category_id', project.primary_category_id)
+      .eq('is_default', true)
+      .eq('is_active', true)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (tErr) return res.status(500).json({ error: tErr.message });
+    if (!tpl) return res.status(404).json({ error: 'カテゴリの default テンプレが見つかりません' });
+    templateId = tpl.id;
+  }
+
+  // items 取得（requires_* 列の有無に応じてフォールバック）
+  let items;
+  {
+    const r1 = await supabase
+      .from('project_phase_template_items')
+      .select('id, template_id, parent_item_id, is_phase_header, title, default_offset_days_from_start, default_duration_days, default_assignee_type, is_milestone, default_priority, default_note, requires_internal_review, requires_client_review, sort_order')
+      .eq('template_id', templateId)
+      .order('sort_order', { ascending: true });
+    if (r1.error) {
+      if (/requires_internal_review|requires_client_review/i.test(r1.error.message || '')) {
+        const r2 = await supabase
+          .from('project_phase_template_items')
+          .select('id, template_id, parent_item_id, is_phase_header, title, default_offset_days_from_start, default_duration_days, default_assignee_type, is_milestone, default_priority, default_note, sort_order')
+          .eq('template_id', templateId)
+          .order('sort_order', { ascending: true });
+        if (r2.error) return res.status(500).json({ error: r2.error.message });
+        items = (r2.data || []).map(it => ({
+          ...it,
+          requires_internal_review: true,
+          requires_client_review: true,
+        }));
+      } else {
+        return res.status(500).json({ error: r1.error.message });
+      }
+    } else {
+      items = r1.data || [];
+    }
+  }
+  if (!items.length) return res.status(404).json({ error: 'テンプレに items がありません' });
+
+  // force のときは既存タスクを物理削除（手動追加分も含む。fresh seed のため）
+  if (force && (existingCount || 0) > 0) {
+    const { error: delErr } = await supabase
+      .from('project_tasks')
+      .delete()
+      .eq('project_id', projectId);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+  }
+
+  const startDate = project.scheduled_start_date || null;
+  const computeDate = (offsetDays) => {
+    if (!startDate || offsetDays === null || offsetDays === undefined) return null;
+    const d = new Date(startDate + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() + Number(offsetDays));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const rows = items.map((it, idx) => {
+    const offset = it.default_offset_days_from_start;
+    const duration = it.default_duration_days;
+    const sStart = computeDate(offset);
+    const sEnd = (sStart && duration !== null && duration !== undefined)
+      ? computeDate(Number(offset || 0) + Number(duration || 0))
+      : sStart;
+    return {
+      project_id: projectId,
+      parent_task_id: null,
+      is_phase_header: !!it.is_phase_header,
+      title: it.title,
+      start_date: sStart,
+      current_end_date: sEnd,
+      original_end_date: sEnd, // 元日程保持（current と同値で初期化）
+      assignee_type: it.default_assignee_type || 'us',
+      is_milestone: !!it.is_milestone,
+      priority: it.default_priority || 'normal',
+      note: it.default_note || null,
+      sort_order: (idx + 1) * 10,
+      template_item_id: it.id,
+      // ADR 016: requires=true → skip=false（反転コピー）
+      skip_internal_review: !(it.requires_internal_review === undefined ? true : it.requires_internal_review),
+      skip_client_review:   !(it.requires_client_review   === undefined ? true : it.requires_client_review),
+    };
+  });
+
+  // 一括 INSERT（N+1 解消）
+  let inserted;
+  {
+    const r = await supabase
+      .from('project_tasks')
+      .insert(rows)
+      .select('id, template_item_id');
+    if (r.error) {
+      // skip_* 列未適用環境のフォールバック
+      if (isMissingBallStateCols(r.error)) {
+        const rowsLegacy = rows.map(({ skip_internal_review: _a, skip_client_review: _b, ...rest }) => rest);
+        const r2 = await supabase
+          .from('project_tasks')
+          .insert(rowsLegacy)
+          .select('id, template_item_id');
+        if (r2.error) return res.status(500).json({ error: r2.error.message });
+        inserted = r2.data || [];
+      } else {
+        return res.status(500).json({ error: r.error.message });
+      }
+    } else {
+      inserted = r.data || [];
+    }
+  }
+
+  // parent_item_id → parent_task_id の差し戻し更新
+  const itemIdToTaskId = new Map();
+  (inserted || []).forEach(r => {
+    if (r.template_item_id) itemIdToTaskId.set(r.template_item_id, r.id);
+  });
+  const childUpdates = items
+    .filter(it => it.parent_item_id)
+    .map(it => ({
+      taskId: itemIdToTaskId.get(it.id),
+      parentTaskId: itemIdToTaskId.get(it.parent_item_id),
+    }))
+    .filter(x => x.taskId && x.parentTaskId);
+  if (childUpdates.length) {
+    const errs = [];
+    await Promise.all(childUpdates.map(({ taskId, parentTaskId }) =>
+      supabase
+        .from('project_tasks')
+        .update({ parent_task_id: parentTaskId, updated_at: new Date().toISOString() })
+        .eq('id', taskId)
+        .then(({ error }) => { if (error) errs.push(error.message); })
+    ));
+    if (errs.length) return res.status(500).json({ error: errs.join(' / ') });
+  }
+
+  // projects.active_phase_template_id を反映
+  const { error: projUpdErr } = await supabase
+    .from('projects')
+    .update({ active_phase_template_id: templateId })
+    .eq('id', projectId);
+  if (projUpdErr) {
+    if (/column .+ does not exist/i.test(projUpdErr.message || '')) {
+      console.warn('[seed-from-template] projects.active_phase_template_id 未適用。タスク生成は成功。');
+    } else {
+      console.warn('[seed-from-template] project update failed:', projUpdErr.message);
+    }
+  }
+
+  res.status(201).json({ ok: true, inserted_count: rows.length, template_id: templateId, replaced: force && (existingCount || 0) > 0 });
 });
 
 // GET /api/projects/schedule-overview  全案件マイルストーンガント用集計（L2）
