@@ -12598,7 +12598,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   try {
     const { data: trans, error: transErr } = await supabase
       .from('creative_status_transitions')
-      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, version_at_change')
+      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
       .eq('creative_id', req.params.id)
       .order('changed_at', { ascending: true });
     if (!transErr && Array.isArray(trans)) {
@@ -12758,8 +12758,106 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     });
   }
 
-  // 並び順を再保証（snapshot + 孤児 handoff の混在ソート）:
+  // 「初回提出」仮想ラウンド (PR #(prev-panel-show-initial-submission) / 髙橋指示 2026-05-10):
+  //   既存の snapshot ロジックは「修正後 → 再チェック」の往復ループに突入してから初めて
+  //   creative_version_history に行を入れる。つまり**初回 Dチェック / Pチェック / クライアントチェック**で
+  //   は snapshot が無く、ラウンド比較UIの「前回」パネルに「前工程で提出されたファイルと
+  //   編集者の提出メモ」が表示されない（バグ報告 b9c7c60c に類似のレビュアー視点の盲点）。
+  //
+  //   ここでは creative_status_transitions から「初回チェックフェーズ突入」を検出し、
+  //   仮想ラウンドを result に追加する。これにより前工程の提出物 (creative_files) と提出メモが
+  //   「前回」として可視化される。
+  //
+  //   仮想化条件:
+  //     ・to_status が 'Dチェック' / 'Pチェック' / 'クライアントチェック中'
+  //     ・from_status が修正系（Dチェック後修正 / Pチェック後修正 / クライアントチェック後修正）でない
+  //       → 修正→再チェックの往復は既存 snapshot で扱う
+  //     ・version_at_change が NULL でない
+  //     ・同じ (creative_id, version_num, round_stage) の既存 snapshot が無い
+  //       → 既に snapshot 済みなら重複させない
+  //
+  //   ファイル紐付け:
+  //     creative_file_id は version_at_change と一致する creative_files から逆引きして埋める。
+  //     見つからなければ null（フロントの version_num フォールバック解決に任せる）。
+  //
+  //   editor_comment 解決の優先度:
+  //     (a) transition.editor_comment_at_change（PR #(editor-comment-at-change) 以後）
+  //     (b) (a) が NULL の旧データ: その transition より前の **同 creative_file (version_at_change)** に
+  //         紐づく editor_comment（creatives.editor_comment は揮発的なので確実ではないが、
+  //         無いより良い）。簡略化のため fallback は省略（旧データは editor_comment 空表示で許容）。
+  //
+  //   合流先 round_stage:
+  //     to_status='Dチェック'                 → 'd_check'
+  //     to_status='Pチェック'                 → 'p_check'
+  //     to_status='クライアントチェック中'    → 'cl_check'
+  //
+  //   _synthetic_initial_submit=true マークでフロント側で「編集ボタンを出さない」「ライブと混同しない」等の判定に使える。
+  const TO_STAGE_INITIAL = {
+    'Dチェック':                   'd_check',
+    'Pチェック':                   'p_check',
+    'クライアントチェック中':      'cl_check',
+  };
+  const REVISION_FROM_STATUSES = new Set([
+    'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正',
+  ]);
+  // creative_files を version_num→{id,...} マップ化（version_at_change からの逆引き用）。
+  // N+1 解消のため上位スコープで一括取得済みの filesById は creative_file_id 引きなので
+  // 別途 version で引けるマップを作る。
+  let filesByVersion = {};
+  try {
+    const { data: cfRows } = await supabase
+      .from('creative_files')
+      .select('id, version, drive_url, drive_file_id, generated_name')
+      .eq('creative_id', req.params.id);
+    (cfRows || []).forEach(f => {
+      if (f && f.version != null) {
+        filesByVersion[Number(f.version)] = f;
+      }
+    });
+  } catch (_) { /* 無くてもバグらない（ファイルカードは空欄になるだけ） */ }
+
+  // 既存 snapshot の (version_num, round_stage) セット
+  const existingSnapKeys = new Set(
+    (data || []).map(r => `${r.version_num ?? ''}::${r.round_stage ?? ''}`)
+  );
+  for (const tr of transitions) {
+    const stage = TO_STAGE_INITIAL[tr.to_status];
+    if (!stage) continue;
+    if (REVISION_FROM_STATUSES.has(tr.from_status)) continue;
+    if (tr.version_at_change == null) continue;
+    const key = `${tr.version_at_change}::${stage}`;
+    if (existingSnapKeys.has(key)) continue;
+    // 仮想ラウンドの editor_comment は transition.editor_comment_at_change を採用。
+    // NULL のままでも arrival ラウンドとして file カードは出すので有用。
+    const file = filesByVersion[Number(tr.version_at_change)] || null;
+    const editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
+      ? tr.editor_comment_at_change
+      : null;
+    result.push({
+      id:                    `initial-submit-${tr.id}`,
+      creative_id:           req.params.id,
+      version_num:           tr.version_at_change,
+      director_comment:      null,
+      client_comment:        null,
+      editor_comment:        editorComment,
+      round_stage:           stage,
+      creative_file_id:      file ? file.id : null,
+      recorded_by:           null,
+      editor_submitted_at:   tr.changed_at || null,
+      director_commented_at: null,
+      client_commented_at:   null,
+      created_at:            tr.changed_at || null,
+      file:                  file,
+      handoff_to_next:       null,
+      _synthetic_initial_submit: true,
+    });
+    existingSnapKeys.add(key); // 同 transition 重複ガード
+  }
+
+  // 並び順を再保証（snapshot + 孤児 handoff + 初回提出 仮想 の混在ソート）:
   //   version_num asc (NULL は末尾) → created_at asc。
+  //   同 (version_num, created_at) の場合、初回提出 → snapshot → handoff の順に並ぶよう
+  //   stage の secondary 比較で解決。実用上は created_at の差で十分なので無理に並べ替えない。
   result.sort((a, b) => {
     const av = a.version_num == null ? Infinity : Number(a.version_num);
     const bv = b.version_num == null ? Infinity : Number(b.version_num);

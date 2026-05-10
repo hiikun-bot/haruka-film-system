@@ -25876,6 +25876,7 @@ function _cdCanEditRoundEditorComment(round) {
   try {
     if (!round || !round.id) return false;
     if (round._synthetic_handoff) return false;
+    if (round._synthetic_initial_submit) return false;
     if (round._live) return false;
     if (!['d_check', 'p_check', 'cl_check'].includes(round.round_stage || '')) return false;
     // 認可: 本人 or admin（VIEW AS 反映）
@@ -25891,7 +25892,7 @@ function _cdCanEditRoundEditorComment(round) {
     const targetVer = Number(round.version_num) || 0;
     for (const r of cache) {
       if (!r || r.id === round.id) continue;
-      if (r._synthetic_handoff || r._live) continue;
+      if (r._synthetic_handoff || r._synthetic_initial_submit || r._live) continue;
       const v = Number(r.version_num) || 0;
       if (v > targetVer) return false;
       if (v === targetVer && (r.created_at || '') > (round.created_at || '')) return false;
