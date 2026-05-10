@@ -34370,6 +34370,7 @@ async function loadBugReportOpenCount() {
 
 async function openBugReportListModal() {
   openModal('modal-bug-report-list');
+  _brBindFilterAssignee();
   await loadBugReportList();
 }
 
@@ -34380,7 +34381,6 @@ async function loadBugReportList() {
     const res = await fetch('/api/haruka/bug-reports');
     if (!res.ok) throw new Error('一覧の取得に失敗しました');
     _bugReports = await res.json();
-    _brRebuildAssigneeFilter();
     renderBugReportList();
   } catch (e) {
     document.getElementById('bug-report-list').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B">${_brEsc(e.message)}</div>`;
@@ -34389,23 +34389,17 @@ async function loadBugReportList() {
   }
 }
 
-function _brRebuildAssigneeFilter() {
-  const sel = document.getElementById('bug-report-filter-assignee');
-  if (!sel) return;
-  const prev = sel.value;
-  const seen = new Map();
-  for (const r of _bugReports) {
-    if (r.assignee && r.assignee.id && !seen.has(r.assignee.id)) {
-      seen.set(r.assignee.id, _brUserLabel(r.assignee));
-    }
-  }
-  let html = '<option value="">すべての対応者</option><option value="__none__">— 未割当のみ —</option>';
-  const sorted = [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja'));
-  for (const [id, label] of sorted) {
-    html += `<option value="${_brEsc(id)}">${_brEsc(label)}</option>`;
-  }
-  sel.innerHTML = html;
-  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+// ADR 014: 共通 MemberPicker で対応者フィルタを置き換え（初回のみ）
+function _brBindFilterAssignee() {
+  const el = document.getElementById('bug-report-filter-assignee');
+  if (!el || (el.dataset && el.dataset.mpBound === '1')) return;
+  if (typeof MemberPicker === 'undefined') return;
+  MemberPicker.bindSelect(el, {
+    placeholder: 'すべての対応者',
+    emptyLabel: '— 未割当のみ —',
+    emptyValue: '__none__',
+    onChange: () => renderBugReportList(),
+  });
 }
 
 // 経過時間ラベル（"2h" / "3d" / "解決まで1.2d" など）
@@ -34512,21 +34506,13 @@ function renderBugReportList() {
 // 新規 or 編集モーダルを開く
 //   options: { id?: string, description?: string, title?: string }
 async function openBugReportModal(options = {}) {
-  // メンバー一覧から assignee select を構築
+  // ADR 014: 共通 MemberPicker で対応者選択を置き換え（初回のみ）
   const assignSel = document.getElementById('br-assignee');
-  if (assignSel) {
-    const members = Array.isArray(allMembers) ? allMembers : [];
-    const sorted = members.slice().sort((a, b) => {
-      const la = a.nickname || a.full_name || '';
-      const lb = b.nickname || b.full_name || '';
-      return la.localeCompare(lb, 'ja');
+  if (assignSel && (!assignSel.dataset || assignSel.dataset.mpBound !== '1') && typeof MemberPicker !== 'undefined') {
+    MemberPicker.bindSelect(assignSel, {
+      placeholder: '— 未割当 —',
+      emptyLabel: '— 未割当 —',
     });
-    let html = '<option value="">— 未割当 —</option>';
-    for (const m of sorted) {
-      const label = m.nickname ? `${_brEsc(m.nickname)}（${_brEsc(m.full_name || '')}）` : _brEsc(m.full_name || '');
-      html += `<option value="${_brEsc(m.id)}">${label}</option>`;
-    }
-    assignSel.innerHTML = html;
   }
 
   // フォーム初期化
@@ -34991,6 +34977,9 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
+
+<!-- 共通マスター選択 UI（ADR 014）— メンバー選択は全画面でこれを使う -->
+<script src="/js/member-picker.js"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->
