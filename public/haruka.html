@@ -2553,10 +2553,7 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="editor">編集者</option>
         <option value="designer">デザイナー</option>
       </select>
-      <select id="verup-filter-reporter" class="form-input" style="width:auto;min-width:140px" onchange="renderVerupList()" title="報告者で絞り込み">
-        <option value="">すべての報告者</option>
-        <option value="__me__">📣 自分の報告だけ</option>
-      </select>
+      <select id="verup-filter-reporter" class="form-input" style="width:auto;min-width:140px" onchange="renderVerupList()" title="報告者で絞り込み"></select>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="verup-filter-unread" onchange="renderVerupList()">未読のみ</label>
       <span style="flex:1"></span>
       <button class="btn" onclick="markAllVerupRead()" title="表示中の項目をすべて既読にする">既読にする</button>
@@ -2653,9 +2650,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <div class="form-group">
       <label class="form-label">報告者 <span style="color:var(--text-muted);font-size:11px">（任意。フィルタ・表示用）</span></label>
-      <select id="vle-reporter" class="form-input">
-        <option value="">— 指定しない —</option>
-      </select>
+      <select id="vle-reporter" class="form-input"></select>
     </div>
     <div class="form-group" id="vle-is-hidden-wrap">
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:6px">
@@ -3488,38 +3483,11 @@ window.showPage = window.showPage || function(name, btn) {
           </div>
         </div>
         <div id="assignee-multi" class="cv-tb-assignee">
-          <button type="button" id="assignee-multi-btn" onclick="toggleAssigneeMultiOpen(event)" class="form-select" aria-haspopup="listbox" aria-expanded="false" style="height:30px;font-size:12px">
-            <span id="assignee-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">担当者</span>
+          <button type="button" id="assignee-multi-btn" onclick="openAssigneeMemberPicker(event)" class="form-select" aria-haspopup="dialog" style="height:30px;font-size:12px">
+            <span id="assignee-multi-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">担当者でフィルタ</span>
             <span id="assignee-multi-count-badge" class="cm-count-badge" style="display:none">0</span>
             <span style="color:var(--text-muted);flex-shrink:0;font-size:11px">▾</span>
           </button>
-          <div id="assignee-multi-pop" class="cm-pop" role="dialog" aria-label="担当者選択">
-            <div class="cm-header">
-              <div class="cm-search-row">
-                <div class="cm-search-wrap">
-                  <span class="cm-search-icon" aria-hidden="true">🔍</span>
-                  <input type="text" id="assignee-multi-search" class="cm-search-input"
-                         placeholder="担当者名で検索..."
-                         oninput="filterAssigneeMultiList(this.value)"
-                         onkeydown="onAssigneeMultiSearchKey(event)"
-                         autocomplete="off"
-                         aria-label="担当者名で検索"
-                         aria-controls="assignee-multi-list">
-                  <button type="button" id="assignee-multi-search-clear" class="cm-search-clear" onclick="clearAssigneeMultiSearch()" title="クリア" aria-label="検索をクリア">✕</button>
-                </div>
-              </div>
-              <div class="cm-status">
-                <span id="assignee-multi-result-count">0名</span>
-                <span id="assignee-multi-selected-badge" class="cm-selected-badge"><span id="assignee-multi-selected-count">0</span>名選択中</span>
-              </div>
-            </div>
-            <div id="assignee-multi-list" class="cm-list" role="listbox" aria-multiselectable="true" tabindex="-1"></div>
-            <div class="cm-footer">
-              <button type="button" class="cm-btn cm-btn-outline" onclick="selectAllAssigneeMulti()">すべて選択</button>
-              <button type="button" class="cm-btn" onclick="clearAssigneeMulti()">クリア</button>
-              <button type="button" class="cm-btn cm-btn-primary" onclick="closeAssigneeMulti()">閉じる</button>
-            </div>
-          </div>
         </div>
         <input class="search-box cv-tb-keyword" type="text" placeholder="キーワードで検索" oninput="filterSearch(this.value)" style="height:30px;font-size:12px;padding:5px 10px">
         <!-- 詳細フィルター（検索条件の右隣に配置して見つけやすく） -->
@@ -9770,236 +9738,10 @@ async function loadMoreCreatives() {
 }
 
 // ====================================================
-// クリエイティブ画面の「担当者」複数選択ドロップダウン
-// クライアントフィルタ（client-multi）と同じ .cm-* スタイルを共有
+// クリエイティブ画面の「担当者」フィルタ（共通 MemberPicker / ADR 014 Stage 4-3）
+// ボタン1つに集約: クリックで MemberPicker.open(multi) を呼ぶ。
+// 旧 .cm-* ドロップダウン UI は廃止。
 // ====================================================
-// 担当者リスト: 「現在表示中のクリエイティブに登場する担当者」を母集合にする。
-// ＝ クライアントフィルタを変えると、関係ある人だけが残る。
-// 選択中→未選択 の順 + 各グループ内で日本語ロケール昇順にソート。
-function getAssigneeMultiVisibleAssignees() {
-  const assigneeIds = new Set();
-  (allCreatives || []).forEach(c => {
-    (c.creative_assignments || []).forEach(a => {
-      if (a.users?.id) assigneeIds.add(a.users.id);
-    });
-  });
-  const visible = (allMembers || []).filter(m => assigneeIds.has(m.id));
-  return visible.slice().sort((a, b) => {
-    const aSel = currentAssigneeIds.has(a.id) ? 0 : 1;
-    const bSel = currentAssigneeIds.has(b.id) ? 0 : 1;
-    if (aSel !== bSel) return aSel - bSel;
-    const an = (a.nickname || a.full_name || '');
-    const bn = (b.nickname || b.full_name || '');
-    return an.localeCompare(bn, 'ja');
-  });
-}
-
-// 旧 API 互換ラッパ。新 UI では list を再描画する役目に変更。
-function populateAssigneeFilter() {
-  renderAssigneeMultiList();
-}
-
-function renderAssigneeMultiList() {
-  const list = document.getElementById('assignee-multi-list');
-  if (!list) return;
-  const sortedAssignees = getAssigneeMultiVisibleAssignees();
-
-  list.classList.toggle('is-grid', sortedAssignees.length >= 11);
-
-  if (!sortedAssignees.length) {
-    list.innerHTML = `<div class="cm-empty">担当者がいません</div>`;
-  } else {
-    const rows = sortedAssignees.map(m => {
-      const isSel = currentAssigneeIds.has(m.id);
-      const safeId = esc(m.id);
-      const displayName = m.nickname ? `${m.nickname}（${m.full_name || ''}）` : (m.full_name || '(無名)');
-      const safeName = esc(displayName);
-      const searchKey = [m.full_name, m.nickname].filter(Boolean).join(' ').toLowerCase();
-      return `<div class="cm-row${isSel ? ' is-selected' : ''}"
-                   role="option" aria-selected="${isSel}"
-                   data-id="${safeId}" data-name="${esc(searchKey)}"
-                   tabindex="-1"
-                   onclick="onAssigneeMultiRowClick(event, '${safeId}')"
-                   onkeydown="onAssigneeMultiRowKey(event, '${safeId}')"
-                   title="${safeName}">
-        <input type="checkbox" value="${safeId}" ${isSel ? 'checked' : ''}
-               onclick="event.stopPropagation()"
-               onchange="toggleAssigneeId('${safeId}', this.checked)">
-        <span class="cm-name">${safeName}</span>
-      </div>`;
-    });
-    list.innerHTML = rows.join('');
-  }
-  refreshAssigneeMultiLabel();
-  const input = document.getElementById('assignee-multi-search');
-  if (input && input.value) filterAssigneeMultiList(input.value);
-  else updateAssigneeMultiResultCount();
-}
-
-function refreshAssigneeMultiLabel() {
-  const labelEl = document.getElementById('assignee-multi-label');
-  const badgeEl = document.getElementById('assignee-multi-count-badge');
-  if (!labelEl) return;
-  const count = currentAssigneeIds.size;
-  const totalVisible = (() => {
-    const ids = new Set();
-    (allCreatives || []).forEach(c => {
-      (c.creative_assignments || []).forEach(a => { if (a.users?.id) ids.add(a.users.id); });
-    });
-    return ids.size;
-  })();
-  if (count === 0) {
-    labelEl.textContent = `担当者：全員（${totalVisible}名）`;
-    if (badgeEl) badgeEl.style.display = 'none';
-  } else if (count === 1) {
-    const id = [...currentAssigneeIds][0];
-    const m = (allMembers || []).find(x => x.id === id);
-    labelEl.textContent = m ? (m.nickname || m.full_name || '1名選択中') : '1名選択中';
-    if (badgeEl) { badgeEl.textContent = '1'; badgeEl.style.display = ''; }
-  } else {
-    labelEl.textContent = `${count}名選択中`;
-    if (badgeEl) { badgeEl.textContent = String(count); badgeEl.style.display = ''; }
-  }
-  const selBadge = document.getElementById('assignee-multi-selected-badge');
-  const selCount = document.getElementById('assignee-multi-selected-count');
-  if (selBadge && selCount) {
-    selBadge.classList.toggle('is-active', count > 0);
-    selCount.textContent = String(count);
-  }
-}
-
-function updateAssigneeMultiResultCount() {
-  const list = document.getElementById('assignee-multi-list');
-  const counter = document.getElementById('assignee-multi-result-count');
-  if (!list || !counter) return;
-  const total = list.querySelectorAll('.cm-row').length;
-  const visible = list.querySelectorAll('.cm-row:not([hidden])').length;
-  counter.textContent = (total === visible) ? `${total}名` : `${visible} / ${total}名`;
-}
-
-function toggleAssigneeMultiOpen(ev) {
-  if (ev) ev.stopPropagation();
-  const pop = document.getElementById('assignee-multi-pop');
-  const btn = document.getElementById('assignee-multi-btn');
-  if (!pop) return;
-  const willOpen = !pop.classList.contains('is-open');
-  if (willOpen) {
-    renderAssigneeMultiList();
-    clearAssigneeMultiSearch();
-    pop.classList.add('is-open');
-    if (btn) btn.setAttribute('aria-expanded', 'true');
-    setTimeout(() => {
-      const input = document.getElementById('assignee-multi-search');
-      if (input) input.focus();
-    }, 0);
-  } else {
-    closeAssigneeMulti();
-  }
-}
-function closeAssigneeMulti() {
-  const pop = document.getElementById('assignee-multi-pop');
-  const btn = document.getElementById('assignee-multi-btn');
-  if (pop) pop.classList.remove('is-open');
-  if (btn) btn.setAttribute('aria-expanded', 'false');
-}
-
-function filterAssigneeMultiList(qStr) {
-  const query = (qStr || '').toLowerCase().trim();
-  const list = document.getElementById('assignee-multi-list');
-  if (!list) return;
-  const rows = list.querySelectorAll('.cm-row');
-  rows.forEach(row => {
-    const name = row.dataset.name || '';
-    const match = !query || name.includes(query);
-    row.hidden = !match;
-  });
-  const clearBtn = document.getElementById('assignee-multi-search-clear');
-  if (clearBtn) clearBtn.style.display = query ? '' : 'none';
-  const empty = list.querySelector('.cm-empty.cm-empty-search');
-  const visibleCount = list.querySelectorAll('.cm-row:not([hidden])').length;
-  if (visibleCount === 0 && rows.length > 0) {
-    if (!empty) {
-      const div = document.createElement('div');
-      div.className = 'cm-empty cm-empty-search';
-      div.textContent = '該当なし';
-      list.appendChild(div);
-    }
-  } else if (empty) {
-    empty.remove();
-  }
-  updateAssigneeMultiResultCount();
-}
-function clearAssigneeMultiSearch() {
-  const input = document.getElementById('assignee-multi-search');
-  if (input) input.value = '';
-  filterAssigneeMultiList('');
-}
-
-function onAssigneeMultiSearchKey(ev) {
-  if (ev.key === 'Enter') {
-    ev.preventDefault();
-    closeAssigneeMulti();
-  } else if (ev.key === 'Escape') {
-    ev.preventDefault();
-    if (ev.target && ev.target.value) clearAssigneeMultiSearch();
-    else closeAssigneeMulti();
-  } else if (ev.key === 'ArrowDown') {
-    ev.preventDefault();
-    focusFirstAssigneeMultiRow();
-  }
-}
-function onAssigneeMultiRowClick(ev, id) {
-  const cb = ev.currentTarget.querySelector('input[type=checkbox]');
-  if (!cb) return;
-  cb.checked = !cb.checked;
-  toggleAssigneeId(id, cb.checked);
-}
-function onAssigneeMultiRowKey(ev, id) {
-  if (ev.key === ' ' || ev.key === 'Enter') {
-    ev.preventDefault();
-    const cb = ev.currentTarget.querySelector('input[type=checkbox]');
-    if (cb) {
-      cb.checked = !cb.checked;
-      toggleAssigneeId(id, cb.checked);
-    }
-  } else if (ev.key === 'ArrowDown') {
-    ev.preventDefault();
-    moveAssigneeMultiFocus(ev.currentTarget, 1);
-  } else if (ev.key === 'ArrowUp') {
-    ev.preventDefault();
-    moveAssigneeMultiFocus(ev.currentTarget, -1);
-  } else if (ev.key === 'Escape') {
-    ev.preventDefault();
-    closeAssigneeMulti();
-  }
-}
-function focusFirstAssigneeMultiRow() {
-  const list = document.getElementById('assignee-multi-list');
-  if (!list) return;
-  const first = list.querySelector('.cm-row:not([hidden])');
-  if (first) first.focus();
-}
-function moveAssigneeMultiFocus(currentRow, dir) {
-  const list = document.getElementById('assignee-multi-list');
-  if (!list) return;
-  const rows = Array.from(list.querySelectorAll('.cm-row:not([hidden])'));
-  const idx = rows.indexOf(currentRow);
-  if (idx < 0) return;
-  const next = rows[idx + dir];
-  if (next) next.focus();
-  else if (dir < 0) {
-    const input = document.getElementById('assignee-multi-search');
-    if (input) input.focus();
-  }
-}
-
-// 外側クリックで閉じる（クライアント側と同様）
-document.addEventListener('click', (e) => {
-  const wrap = document.getElementById('assignee-multi');
-  if (!wrap) return;
-  if (!wrap.contains(e.target)) closeAssigneeMulti();
-});
-
 function _syncAssigneeFilterCompat() {
   if (currentAssigneeIds.size === 0) currentAssigneeFilter = '';
   else if (currentAssigneeIds.size === 1) currentAssigneeFilter = [...currentAssigneeIds][0];
@@ -10007,62 +9749,65 @@ function _syncAssigneeFilterCompat() {
   _saveAssigneeIds();
 }
 
-function toggleAssigneeId(id, checked) {
-  if (checked) currentAssigneeIds.add(id);
-  else         currentAssigneeIds.delete(id);
-  const list = document.getElementById('assignee-multi-list');
-  if (list) {
-    const row = list.querySelector(`.cm-row[data-id="${cssEscape(id)}"]`);
-    if (row) {
-      row.classList.toggle('is-selected', checked);
-      row.setAttribute('aria-selected', String(checked));
-    }
+// ボタンのラベル/バッジ更新（外部からも呼ばれる: refreshAssigneeMultiLabel）
+function refreshAssigneeMultiLabel() {
+  const labelEl = document.getElementById('assignee-multi-label');
+  const badgeEl = document.getElementById('assignee-multi-count-badge');
+  if (!labelEl) return;
+  const count = currentAssigneeIds.size;
+  if (count === 0) {
+    labelEl.textContent = '担当者でフィルタ';
+    if (badgeEl) badgeEl.style.display = 'none';
+  } else if (count === 1) {
+    const id = [...currentAssigneeIds][0];
+    const m = (allMembers || []).find(x => x.id === id);
+    const name = m ? (m.nickname || m.full_name || '1名選択中') : '1名選択中';
+    labelEl.textContent = `担当者: ${name}`;
+    if (badgeEl) { badgeEl.textContent = '1'; badgeEl.style.display = ''; }
+  } else {
+    labelEl.textContent = `担当者 (${count}名選択中)`;
+    if (badgeEl) { badgeEl.textContent = String(count); badgeEl.style.display = ''; }
   }
-  refreshAssigneeMultiLabel();
-  _syncAssigneeFilterCompat();
-  creativesPage.offset = 0;
-  loadCreatives();
 }
 
-function clearAssigneeMulti() {
-  currentAssigneeIds.clear();
-  const list = document.getElementById('assignee-multi-list');
-  if (list) {
-    list.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
-    list.querySelectorAll('.cm-row.is-selected').forEach(r => {
-      r.classList.remove('is-selected');
-      r.setAttribute('aria-selected', 'false');
-    });
+// MemberPicker を開く（multi）
+function openAssigneeMemberPicker(ev) {
+  if (ev) ev.stopPropagation();
+  if (!window.MemberPicker || typeof MemberPicker.open !== 'function') {
+    console.error('[creatives] MemberPicker is not loaded');
+    return;
   }
-  refreshAssigneeMultiLabel();
-  _syncAssigneeFilterCompat();
-  creativesPage.offset = 0;
-  loadCreatives();
-}
-
-function selectAllAssigneeMulti() {
-  const list = document.getElementById('assignee-multi-list');
-  if (!list) return;
-  const rows = list.querySelectorAll('.cm-row:not([hidden])');
-  rows.forEach(row => {
-    const id = row.dataset.id;
-    if (!id) return;
-    currentAssigneeIds.add(id);
-    const cb = row.querySelector('input[type=checkbox]');
-    if (cb) cb.checked = true;
-    row.classList.add('is-selected');
-    row.setAttribute('aria-selected', 'true');
+  const trigger = document.getElementById('assignee-multi-btn');
+  MemberPicker.open(trigger, {
+    mode: 'multi',
+    title: '担当者でフィルタ',
+    value: [...currentAssigneeIds],
+    onChange: (ids) => {
+      currentAssigneeIds = new Set(Array.isArray(ids) ? ids.filter(Boolean) : []);
+      refreshAssigneeMultiLabel();
+      _syncAssigneeFilterCompat();
+      creativesPage.offset = 0;
+      loadCreatives();
+    },
   });
-  refreshAssigneeMultiLabel();
-  _syncAssigneeFilterCompat();
-  creativesPage.offset = 0;
-  loadCreatives();
 }
 
-// 旧API: setAssigneeFilter(userId) は呼び出し箇所が残っていれば動くように維持
+// 旧 API 互換ラッパ（外部から呼ばれるため残す）
+function populateAssigneeFilter() { refreshAssigneeMultiLabel(); }
+function renderAssigneeMultiList() { refreshAssigneeMultiLabel(); }
+function getAssigneeMultiVisibleAssignees() {
+  const assigneeIds = new Set();
+  (allCreatives || []).forEach(c => {
+    (c.creative_assignments || []).forEach(a => {
+      if (a.users?.id) assigneeIds.add(a.users.id);
+    });
+  });
+  return (allMembers || []).filter(m => assigneeIds.has(m.id));
+}
 function setAssigneeFilter(userId) {
   if (!userId) currentAssigneeIds.clear();
   else         currentAssigneeIds = new Set([userId]);
+  refreshAssigneeMultiLabel();
   _syncAssigneeFilterCompat();
   creativesPage.offset = 0;
   loadCreatives();
@@ -33783,52 +33528,34 @@ function _verupReporterLabel(reporter) {
   return reporter.nickname || reporter.full_name || '';
 }
 
-// ツールバーの「報告者」フィルタを構築。
-// allMembers（全メンバー）から候補を出す。ロール絞り込み select で絞れる。
-// 紐付けが既にある報告者は名前末尾に「(N件)」を出して、件数があるかが一目で分かるようにする。
-//   resetReporterValue=true なら現在の選択値を破棄する（ロール変更時など）
+// ツールバーの「報告者」フィルタを共通 MemberPicker に置換（ADR 014 Stage 4-3）
+// 旧手動 option 構築は廃止。「__me__（自分の報告だけ）」「(N件)」表記も廃止。
+// ロール絞り込みは MemberPicker 側のロール chip と allowedRoles で代替する。
+let _verupReporterPickerBound = false;
 function _verupRebuildReporterFilter(resetReporterValue) {
   const sel = document.getElementById('verup-filter-reporter');
   if (!sel) return;
   const roleFilter = document.getElementById('verup-filter-role')?.value || '';
-  const prev = resetReporterValue ? '' : sel.value;
-  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
-
-  // 紐付き件数を集計
-  const counts = new Map(); // user_id -> count
-  for (const r of _verupCache) {
-    if (r.reporter_user_id) {
-      counts.set(r.reporter_user_id, (counts.get(r.reporter_user_id) || 0) + 1);
-    }
+  // 初回だけ MemberPicker.bindSelect で trigger 化
+  if (!_verupReporterPickerBound && window.MemberPicker && typeof MemberPicker.bindSelect === 'function') {
+    MemberPicker.bindSelect(sel, {
+      placeholder: 'すべての報告者',
+      emptyLabel: 'すべての報告者',
+      emptyValue: '',
+      title: '報告者で絞り込み',
+      allowedRoles: roleFilter ? [roleFilter] : null,
+      onChange: () => { try { renderVerupList(); } catch (_) {} },
+    });
+    _verupReporterPickerBound = true;
   }
-
-  // 全メンバーから候補を作る（ロール絞り込み適用）
-  const members = Array.isArray(allMembers) ? allMembers : [];
-  const candidates = members.filter(m => {
-    if (!m || !m.id) return false;
-    if (!roleFilter) return true;
-    return m.role === roleFilter;
-  });
-  candidates.sort((a, b) => {
-    const la = a.nickname || a.full_name || '';
-    const lb = b.nickname || b.full_name || '';
-    return la.localeCompare(lb, 'ja');
-  });
-
-  let html = '<option value="">すべての報告者</option>';
-  if (me?.id && (!roleFilter || me.role === roleFilter)) {
-    html += `<option value="__me__">📣 自分の報告だけ</option>`;
+  // ロール絞り込みが変わった場合、MemberPicker の allowedRoles を更新
+  const trigger = sel._mpTrigger || document.getElementById('verup-filter-reporter');
+  if (trigger && typeof trigger.setMemberPickerOptions === 'function') {
+    trigger.setMemberPickerOptions({ allowedRoles: roleFilter ? [roleFilter] : null });
   }
-  for (const m of candidates) {
-    if (me?.id && m.id === me.id) continue; // 自分は __me__ に集約
-    const baseLabel = m.nickname || m.full_name || '(無名)';
-    const cnt = counts.get(m.id) || 0;
-    const label = cnt > 0 ? `${baseLabel} (${cnt}件)` : baseLabel;
-    html += `<option value="${_verupEsc(m.id)}">${_verupEsc(label)}</option>`;
+  if (resetReporterValue && trigger) {
+    try { trigger.value = ''; } catch (_) {}
   }
-  sel.innerHTML = html;
-  // 直前の選択を復元（消えていなければ）
-  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
 async function loadVerupList() {
@@ -33988,23 +33715,25 @@ async function toggleVerupVisibility(id, nextHidden) {
   } catch (e) { alert(e.message); }
 }
 
-// 編集モーダルの「報告者」セレクトを allMembers から構築
+// 編集モーダルの「報告者」セレクトを共通 MemberPicker に置換（ADR 014 Stage 4-3）
+// 旧手動 option 構築は廃止。bindSelect で trigger 化し、value だけ書き換えれば良い。
+let _verupReporterEditorBound = false;
 function _verupPopulateReporterEditor(selectedId) {
   const sel = document.getElementById('vle-reporter');
   if (!sel) return;
-  const members = Array.isArray(allMembers) ? allMembers : [];
-  const sorted = members.slice().sort((a, b) => {
-    const la = a.nickname || a.full_name || '';
-    const lb = b.nickname || b.full_name || '';
-    return la.localeCompare(lb, 'ja');
-  });
-  let html = '<option value="">— 指定しない —</option>';
-  for (const m of sorted) {
-    const label = m.nickname ? `${_verupEsc(m.nickname)}（${_verupEsc(m.full_name || '')}）` : _verupEsc(m.full_name || '');
-    html += `<option value="${_verupEsc(m.id)}"${selectedId === m.id ? ' selected' : ''}>${label}</option>`;
+  if (!_verupReporterEditorBound && window.MemberPicker && typeof MemberPicker.bindSelect === 'function') {
+    MemberPicker.bindSelect(sel, {
+      placeholder: '— 指定しない —',
+      emptyLabel: '— 指定しない —',
+      emptyValue: '',
+      title: '報告者を選択',
+    });
+    _verupReporterEditorBound = true;
   }
-  sel.innerHTML = html;
-  if (selectedId) sel.value = selectedId;
+  const trigger = sel._mpTrigger || document.getElementById('vle-reporter');
+  if (trigger) {
+    try { trigger.value = selectedId || ''; } catch (_) {}
+  }
 }
 
 function openVerupEditor() {
