@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜ようこそ！はじめての登録チュートリアル</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#2BB8B4 0%,#3ECFCA 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+/* Progress bar */
+.progress-wrap{position:sticky;top:0;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--border-light);padding:12px 16px}
+.progress-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px}
+.progress-track{flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden;position:relative}
+.progress-fill{position:absolute;top:0;left:0;height:100%;width:0;background:linear-gradient(90deg,var(--em),var(--em-dark));transition:width .3s ease;border-radius:99px}
+.progress-text{font-size:12px;font-weight:700;color:var(--em-dark);white-space:nowrap;letter-spacing:0.04em}
+.progress-dots{display:flex;gap:8px}
+.progress-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:all .3s;cursor:pointer}
+.progress-dot.done{background:var(--em-dark)}
+.progress-dot.current{background:var(--em);box-shadow:0 0 0 4px var(--em-pale)}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram (SVG) */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint (sticky-note callout) */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Compact step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock screen */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--text);width:100%;margin-bottom:8px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+
+/* Tab pills */
+.tab-pills{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tab-pill{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 8px;text-align:center;font-size:12px;font-weight:700;color:var(--text);position:relative;transition:transform .15s}
+.tab-pill-icon{font-size:22px;margin-bottom:4px;line-height:1}
+.tab-pill.star{border-color:var(--star);background:linear-gradient(135deg,var(--star-bg),#fff);color:var(--star-deep);box-shadow:0 4px 12px rgba(245,158,11,0.2)}
+.tab-pill.star::after{content:"⭐";position:absolute;top:-8px;right:-6px;font-size:14px}
+
+/* Field hierarchy: must / recommended / optional */
+.fields{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.must-card{background:linear-gradient(135deg,#FFF7ED 0%,#fff 60%);border:2px solid var(--star);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:flex-start;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.18)}
+.must-card-icon{font-size:28px;line-height:1;flex-shrink:0}
+.must-card-body{flex:1;min-width:0}
+.must-card-tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:0.14em;color:#fff;background:var(--star);padding:2px 9px;border-radius:99px;margin-bottom:6px;text-transform:uppercase}
+.must-card h4{font-size:15px;font-weight:800;color:var(--star-deep);margin-bottom:4px}
+.must-card p{font-size:12.5px;color:#78350F;line-height:1.65}
+.must-card p strong{font-weight:800;background:rgba(245,158,11,0.2);padding:1px 5px;border-radius:3px}
+
+.reco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.reco-label{font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:0.06em;flex-shrink:0}
+.reco-chip{display:inline-flex;align-items:center;gap:5px;background:var(--em-pale);color:var(--em-dark);font-size:12px;font-weight:600;padding:5px 11px;border-radius:99px;border:1px solid var(--em-light)}
+
+.opt-row{margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.6}
+.opt-row strong{color:#6b7280;font-weight:600}
+
+/* Basic-info interactive explorer */
+.bie{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.bie-mock{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.bie-mock-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.bie-mock-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:14px 0 #F59E0B,28px 0 #10B981}
+.bie-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;background:#fafdfd}
+.bie-row:hover{background:var(--em-pale);border-color:var(--em-light)}
+.bie-row.selected{background:var(--em-pale);border-color:var(--em-dark);box-shadow:0 4px 12px rgba(43,184,180,0.18)}
+.bie-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--em-dark);color:var(--em-dark);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.bie-row:hover .bie-num{transform:scale(1.1)}
+.bie-row.selected .bie-num{background:var(--em-dark);color:#fff}
+.bie-input-area{flex:1;min-width:0}
+.bie-label{font-size:11px;color:var(--text);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.bie-mock-input{background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#9ca3af;font-family:inherit;min-height:22px;display:flex;align-items:center}
+.bie-mock-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bie-mock-input.disabled{background:#f5f5f5;color:#9ca3af}
+.bie-explain{background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px solid var(--star-border);border-radius:12px;padding:16px 18px;min-height:200px;position:relative}
+.bie-explain-prompt{font-size:12px;color:var(--star-deep);text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:center;height:100%;padding:12px}
+.bie-explain-prompt-arrow{font-size:24px;animation:bie-arrow 1.4s ease-in-out infinite}
+@keyframes bie-arrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-6px)}}
+.bie-explain-content{display:none}
+.bie-explain-content.show{display:block;animation:bie-fade 0.25s ease-out}
+@keyframes bie-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.bie-explain-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--star);color:#fff;font-size:11px;font-weight:800;margin-right:6px}
+.bie-explain-title{font-size:14px;font-weight:800;color:var(--star-deep);margin-bottom:10px;display:flex;align-items:center}
+.bie-explain h5{font-size:11px;font-weight:800;color:var(--star);letter-spacing:0.06em;margin:10px 0 4px;text-transform:uppercase}
+.bie-explain h5::before{content:"";display:inline-block;width:4px;height:12px;background:var(--star);margin-right:6px;vertical-align:middle;border-radius:2px}
+.bie-explain p{font-size:12.5px;color:#78350F;line-height:1.7}
+.bie-explain-eg{margin-top:8px;background:#fff;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#78350F;line-height:1.7;border-left:3px solid var(--star)}
+.bie-explain-eg b{color:#92400E;background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px}
+@media (max-width:768px){
+  .bie{grid-template-columns:1fr;gap:10px}
+  .bie-explain{min-height:auto}
+}
+
+/* Done banner (compact) */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble (compact, single block) */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .progress-dots{display:none}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .tab-pills{grid-template-columns:repeat(2,1fr)}
+  .must-card{padding:14px 16px;gap:12px}
+  .must-card-icon{font-size:24px}
+  .must-card h4{font-size:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">TUTORIAL ／ はじめての方へ</span>
+    <h1>ようこそ、HARUKA FILM へ！<span>3 ステップでセットアップ完了</span></h1>
+    <div class="hero-eta">⏱ 約 5 〜 10 分</div>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text" id="progress-text">準備OK ／ 0 / 3</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-dots">
+      <span class="progress-dot current" data-step="1"></span>
+      <span class="progress-dot" data-step="2"></span>
+      <span class="progress-dot" data-step="3"></span>
+    </div>
+  </div>
+</div>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>アカウントを作る</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <!-- 視覚的フロー -->
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">📩</div>
+      <div class="flow-step-label">招待リンクを<br>開く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✏️</div>
+      <div class="flow-step-label">名前と<br>パスワード入力</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✅</div>
+      <div class="flow-step-label">自動ログイン<br>完了！</div>
+    </div>
+  </div>
+
+  <!-- ⭐ ワンポイント -->
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>招待リンクは <strong>24 時間で無効</strong>。期限切れだったら秘書チームに「再発行してください」とひとこと。</p>
+  </div>
+
+  <!-- 入力イメージ -->
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">入力イメージ</div>
+    <div class="mock">
+      <span class="mock-fieldlabel">表示名 <span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="text" value="田中 太郎" readonly>
+      <span class="mock-fieldlabel">パスワード（8文字以上）<span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="password" value="••••••••" readonly>
+      <button class="mock-btn">アカウントを作成してログイン</button>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 表示名は普段呼ばれている名前（例：田中、たろ）にすると、メンションされやすい。</p>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">アカウント作成、おつかれさま！<small>自動でダッシュボードが開きます</small></div>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>プロフィールを整える</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">画面右上の <b>アバター</b> をクリック → プロフィール編集モーダルが開きます。<b>4 つのタブ</b> を埋めていきます。</p>
+
+  <!-- タブの可視化 -->
+  <div class="tab-pills">
+    <div class="tab-pill"><div class="tab-pill-icon">👤</div>基本情報</div>
+    <div class="tab-pill"><div class="tab-pill-icon">⏰</div>稼働時間</div>
+    <div class="tab-pill star"><div class="tab-pill-icon">💬</div>連絡先</div>
+    <div class="tab-pill"><div class="tab-pill-icon">🏦</div>口座情報</div>
+  </div>
+  <p style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:-6px">⭐ がついている「連絡先」が今回いちばん大事</p>
+
+  <!-- 連絡先 — インタラクティブ解説 -->
+  <div class="step-card" style="margin-top:18px;border-color:var(--star);background:linear-gradient(180deg,#FFFCEB 0%,#fff 70%)">
+    <div class="step-card-title" style="color:var(--star-deep);font-size:15px">💬 連絡先 ── ここがいちばん大事 ／ 番号をタップ</div>
+    <p style="margin-bottom:8px">これを入れないと、Dチェック依頼や修正通知が <b>あなたに飛びません</b>。</p>
+    <div class="bie">
+      <div class="bie-mock">
+        <div class="bie-mock-title">連絡先</div>
+        <div class="bie-row" data-field="slack-id">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">💬 Slack DM ID</div>
+            <div class="bie-mock-input">例：U0123456789</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="chatwork-id">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">💬 Chatwork DM ID</div>
+            <div class="bie-mock-input">例：6603336</div>
+          </div>
+        </div>
+      </div>
+      <div class="bie-explain">
+        <div class="bie-explain-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① ②</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ／何がよくなる？／取得方法</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="slack-id">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>💬 Slack DM ID</div>
+          <h5>なぜ入れる？</h5>
+          <p>システムから <b>あなた宛て</b> に Slack DM を飛ばすための宛先 ID。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>Dチェック依頼／修正通知／納品確認が <b>あなたの Slack に直接届く</b>。「気づかずスルー」がなくなる。</p>
+          <div class="bie-explain-eg">📋 例：あなたのクリエイティブが「Dチェック」に進んだ瞬間、ディレクターに Slack DM 通知 → 確認スピードアップ</div>
+          <h5>取得方法</h5>
+          <p>Slack の DM 画面 → プロフィール右クリック → <b>「メンバーIDをコピー」</b>。<code>U</code> から始まる 10 桁前後の文字列。</p>
+        </div>
+
+        <div class="bie-explain-content" data-field="chatwork-id">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>💬 Chatwork DM ID</div>
+          <h5>なぜ入れる？</h5>
+          <p>Chatwork メンションの <b>あなたの番号</b>。Chatwork を主に使うクライアント・チームで重要。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>Chatwork の自分宛てに通知が飛ぶ。<b>Slack 派／Chatwork 派どちらでも漏れなく届く</b>。</p>
+          <div class="bie-explain-eg">📋 例：Chatwork メンション形式 <code style="background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px">[To:6603336]</code> の <b>数字部分</b> を入力</div>
+          <h5>取得方法</h5>
+          <p>Chatwork のメンションをコピペ、または プロフィール画面の「アカウント ID」を確認。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 基本情報 — インタラクティブ解説 -->
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">👤 基本情報 ── 番号をタップして「なぜ入れる？」を見る</div>
+    <div class="bie">
+      <!-- 左：基本情報モック画面 -->
+      <div class="bie-mock">
+        <div class="bie-mock-title">基本情報</div>
+        <div class="bie-row" data-field="avatar">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">📷 アバター</div>
+            <div style="display:flex;align-items:center;gap:8px"><div class="bie-mock-avatar">田</div><span style="font-size:11px;color:var(--text-muted)">画像を変更</span></div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="nickname">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🏷 ニックネーム</div>
+            <div class="bie-mock-input">例：たろ</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="job">
+          <div class="bie-num">3</div>
+          <div class="bie-input-area">
+            <div class="bie-label">💼 職種</div>
+            <div class="bie-mock-input">動画 ／ デザイン ／ 両方　▾</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="birthday">
+          <div class="bie-num">4</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🎂 誕生日</div>
+            <div class="bie-mock-input">YYYY ／ MM ／ DD</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：選択した項目の説明（なぜ／メリット／例） -->
+      <div class="bie-explain">
+        <div class="bie-explain-prompt" id="bie-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① 〜 ④</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ入れる？／何がよくなる？／例</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="avatar">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>📷 アバター（プロフィール画像）</div>
+          <h5>なぜ入れる？</h5>
+          <p>クリエイティブ一覧やコメント欄で、誰の作業／発言かが <b>パッと見で分かる</b> ようにするため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>アサイン候補リストで <b>名前より先に顔が記憶される</b>ので、声がかかりやすくなる。</p>
+          <div class="bie-explain-eg">📋 例：D が編集者を選ぶとき、アイコンが入っている人から目に止まる → <b>アサイン率アップ</b></div>
+        </div>
+
+        <div class="bie-explain-content" data-field="nickname">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>🏷 ニックネーム</div>
+          <h5>なぜ入れる？</h5>
+          <p>本名と普段呼ばれている名前が違うとき、検索・メンションで <b>呼び名でも見つかる</b> ようにするため。さらに、社内SNS・コメント・担当者欄などの<b>表示が「ニックネーム（本名）」</b> になる（社内で温かみのあるコミュニケーションを優先）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>「田中太郎」の登録で「たろ」を入れておけば、メンバー検索で「たろ」と打っても出る。<b>連絡漏れを防ぐ</b>＋<b>呼び名で表示</b>される（未設定なら本名のみ）。</p>
+          <div class="bie-explain-eg">📋 例：「たろさんに連絡したい」→ メンバー検索 <code style="background:rgba(245,158,11,0.18);padding:1px 4px;border-radius:3px">たろ</code> でヒット</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="job">
+          <div class="bie-explain-title"><span class="bie-explain-num">3</span>💼 職種（動画／デザイン／両方）</div>
+          <h5>なぜ入れる？</h5>
+          <p>システムが <b>「この人にどのアサインを薦めるか」</b> を判定するため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>動画案件のアサイン候補に名前が出る／デザイン案件は出ない、と <b>自動で振り分けられる</b>。<br>「両方」を選べば両方の案件で候補に上がります。</p>
+          <div class="bie-explain-eg">📋 例：D が動画編集者をアサイン → <b>「動画」or「両方」</b>を選んだ人だけがリストに出る</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="birthday">
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>🎂 誕生日</div>
+          <h5>なぜ入れる？</h5>
+          <p>社内の誕生日通知に使われます。年は <b>非表示にする設定</b> も用意（月日のみ表示）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>誕生日当日にチームから祝ってもらえる。<b>会ったことがないリモートメンバーとも距離が縮まる</b>。</p>
+          <div class="bie-explain-eg">📋 例：誕生日当日朝に Slack で「今日は田中さんの誕生日 🎉」と通知</div>
+        </div>
+      </div>
+    </div>
+    <div class="opt-row" style="margin-top:10px">あとでもOKな項目：<strong>すべて</strong>（必須は登録時の名前・パスワードのみ）</div>
+  </div>
+
+  <!-- 稼働時間 — インタラクティブ解説 -->
+  <div class="step-card">
+    <div class="step-card-title">⏰ 稼働時間 ── 番号をタップして「なぜ入れる？」を見る</div>
+    <div class="bie">
+      <div class="bie-mock">
+        <div class="bie-mock-title">稼働時間</div>
+        <div class="bie-row" data-field="weekday">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🕘 平日 稼働時間</div>
+            <div class="bie-mock-input">例：09:00 〜 18:00</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="weekend">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🌅 土日祝 稼働時間</div>
+            <div class="bie-mock-input">稼働なし／時間帯を指定</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="memo">
+          <div class="bie-num">3</div>
+          <div class="bie-input-area">
+            <div class="bie-label">📝 メモ（スキル等）</div>
+            <div class="bie-mock-input">例：After Effects 得意</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="default-view">
+          <div class="bie-num">4</div>
+          <div class="bie-input-area">
+            <div class="bie-label">👁 クリエイティブ初期ビュー</div>
+            <div class="bie-mock-input">全案件 ／ 自分の案件 ／ 自分のボール ▾</div>
+          </div>
+        </div>
+      </div>
+      <div class="bie-explain">
+        <div class="bie-explain-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① 〜 ④</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ入れる？／何がよくなる？／例</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="weekday">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>🕘 平日 稼働時間</div>
+          <h5>なぜ入れる？</h5>
+          <p>D／P が「夜遅い時間にアサインしていいか」を判断するため。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p><b>稼働時間外の急な依頼が減る</b>。あなたが寝ている時間帯に「明日朝までにお願い」が来なくなる。</p>
+          <div class="bie-explain-eg">📋 例：22 時に修正依頼を出すか迷った D が、稼働「09:00 〜 21:00」だと分かれば → 翌朝に回す判断ができる</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="weekend">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>🌅 土日祝 稼働時間</div>
+          <h5>なぜ入れる？</h5>
+          <p>土日に動ける人かどうかをチームが知るため。「<b>稼働なし</b>」も明示できる（チェック 1 つ）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>金曜遅くに飛び込んできた緊急案件で、<b>土日稼働可能なメンバーから優先的にアサイン候補</b> に出る。</p>
+          <div class="bie-explain-eg">📋 例：金曜 18 時に CM 公開直前修正が発生 → 土日「稼働あり」のメンバーで素早くチーム編成</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="memo">
+          <div class="bie-explain-title"><span class="bie-explain-num">3</span>📝 メモ（スキル等）</div>
+          <h5>なぜ入れる？</h5>
+          <p>得意なソフト・ジャンルをチームに伝える自由記述欄。プロフィール一覧で表示される。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>ニッチなスキルが必要な案件で <b>指名されやすくなる</b>。連絡可能時間帯を補足するのにも使える。</p>
+          <div class="bie-explain-eg">📋 例：「After Effects 得意」と書いておくと、AE 必須の案件で D が「この人に頼もう」と即決</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="default-view">
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>👁 クリエイティブ初期ビュー</div>
+          <h5>なぜ設定する？</h5>
+          <p>クリエイティブ画面を開いたときの <b>初期表示フィルタ</b>。3 つから選べる。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p><b>「自分のボール」</b> を選ぶと、<u>今あなたが動かす番のクリエイティブだけ</u> が最初に並ぶ。仕事の優先度が一発で分かる。</p>
+          <div class="bie-explain-eg">📋 例：朝出社して画面を開いた瞬間、「今日やる作業」が 3 件だけ表示 → 余計なものが視界に入らず集中できる</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">プロフィール初期設定、完了！<small>これで通知が届くようになります</small></div>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3" onclick="markStep(2)">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>口座情報を登録する</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <!-- なぜ必要かを1行で -->
+  <div class="step-card">
+    <p style="font-size:13px"><b>納品 → 自動で請求書ドラフト → 月末に自分で「提出」 → 振込</b> という流れ。<br>振込先として口座情報が必須です（編集者・デザイナー）。</p>
+  </div>
+
+  <!-- 口座情報 — インタラクティブ解説 -->
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">🏦 口座情報 ── 番号をタップして「なぜ入れる？」を見る</div>
+    <div class="bie">
+      <div class="bie-mock">
+        <div class="bie-mock-title">口座情報</div>
+        <div class="bie-row" data-field="bank">
+          <div class="bie-num">1</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🏦 銀行・支店・口座番号</div>
+            <div class="bie-mock-input">楽天銀行 / 0036 / ワルツ支店 / 普通 / 3XXXXXX</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="kana">
+          <div class="bie-num">2</div>
+          <div class="bie-input-area">
+            <div class="bie-label">✏️ 口座名義（カナ）</div>
+            <div class="bie-mock-input">例：タカハシ サトル</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="phone">
+          <div class="bie-num">3</div>
+          <div class="bie-input-area">
+            <div class="bie-label">📞 電話番号</div>
+            <div class="bie-mock-input">例：090-1234-5678</div>
+          </div>
+        </div>
+        <div class="bie-row" data-field="address">
+          <div class="bie-num">4</div>
+          <div class="bie-input-area">
+            <div class="bie-label">🏠 住所（郵便番号含む）</div>
+            <div class="bie-mock-input">例：123-4567 東京都...</div>
+          </div>
+        </div>
+      </div>
+      <div class="bie-explain">
+        <div class="bie-explain-prompt">
+          <span class="bie-explain-prompt-arrow">←</span>
+          <span>左の <b>① 〜 ④</b> をタップしてみてください</span>
+          <small style="color:#a16207">なぜ入れる？／何がよくなる？／例</small>
+        </div>
+
+        <div class="bie-explain-content" data-field="bank">
+          <div class="bie-explain-title"><span class="bie-explain-num">1</span>🏦 銀行・支店・口座番号</div>
+          <h5>なぜ入れる？</h5>
+          <p>請求書承認後の <b>振込先</b>。これがないと支払いが止まる（編集者・デザイナーは必須）。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>月末に請求書を提出 → 管理者承認 → <b>自動的にこの口座に振込</b>まれる。手作業のやり取りなし。</p>
+          <div class="bie-explain-eg">📋 例：5 月末に請求書提出 → 6 月 10 日にこの口座へ着金</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="kana">
+          <div class="bie-explain-title"><span class="bie-explain-num">2</span>✏️ 口座名義（カナ）</div>
+          <h5>なぜ厳密？</h5>
+          <p>銀行の振込照合は <b>名義カナの完全一致</b> をチェック。1 文字でも違うとエラーで戻ってくる。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>正しく入れておけば一発で振込完了。<b>間違えると振込が戻ってきて支払い遅延</b> になる。</p>
+          <div class="bie-explain-eg">📋 NG 例：通帳「タカハシ　サトル」(全角スペース) を「タカハシ サトル」(半角) で入力 → 振込エラー<br>👉 通帳・キャッシュカードを見ながら正確に！</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="phone">
+          <div class="bie-explain-title"><span class="bie-explain-num">3</span>📞 電話番号</div>
+          <h5>なぜ入れる？</h5>
+          <p>請求書フォーマットの <b>請求者連絡先</b> として印字される。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>クライアントから見える正式な書類になる。経理問い合わせ時の連絡先として機能する。</p>
+          <div class="bie-explain-eg">📋 例：請求書の右上「請求者」欄に表示</div>
+        </div>
+
+        <div class="bie-explain-content" data-field="address">
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>🏠 住所</div>
+          <h5>なぜ入れる？</h5>
+          <p>請求書の <b>正式な発行者住所</b>。税務上必要な情報として保存される。</p>
+          <h5>入れるとどう変わる？</h5>
+          <p>請求書フッターに住所が印字される。確定申告時の控えとしても残る。</p>
+          <div class="bie-explain-eg">📋 例：請求書フッター「〒123-4567 東京都渋谷区...」と表示</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">口座情報、登録完了！<small>これで請求書がスムーズに処理されます</small></div>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">🎉</div>
+  <h2>登録チュートリアル、完了！</h2>
+  <p>セットアップ完了です。あとは実際に画面を触って覚えていきましょう。</p>
+  <a class="final-cta" href="/haruka.html" onclick="markStep(3)">システムを開く →</a>
+</section>
+
+<!-- 困ったら（コンパクト） -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">⏰</span>
+      <div><div class="trouble-q">招待リンクが期限切れ</div><div class="trouble-a">秘書チームに「再発行してください」と連絡</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔁</span>
+      <div><div class="trouble-q">「すでに使用されています」と出る</div><div class="trouble-a">登録済み。<a href="/haruka.html" style="color:var(--em-dark);font-weight:700">ログイン画面</a> から入る。PW 忘れたら秘書チームへ</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔕</span>
+      <div><div class="trouble-q">通知（DM）が来ない</div><div class="trouble-a">プロフィール「連絡先」タブで Slack/Chatwork ID を確認（STEP 2 参照）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🆘</span>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">秘書チームに Chatwork で気軽に。スクショを添えると早い</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ はじめての登録チュートリアル</p>
+</footer>
+
+<script>
+const TOTAL_STEPS = 3;
+let completed = parseInt(localStorage.getItem('haruka_tutorial_progress') || '0', 10);
+
+function updateProgress() {
+  const pct = Math.min(100, (completed / TOTAL_STEPS) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const label = completed === 0 ? '準備OK' : (completed >= TOTAL_STEPS ? '完了 🎉' : '進行中');
+  document.getElementById('progress-text').textContent = `${label} ／ ${completed} / ${TOTAL_STEPS}`;
+  document.querySelectorAll('.progress-dot').forEach((d, i) => {
+    const step = i + 1;
+    d.classList.toggle('done', step <= completed);
+    d.classList.toggle('current', step === completed + 1);
+  });
+}
+function markStep(n){ if(n>completed){ completed=n; localStorage.setItem('haruka_tutorial_progress', String(completed)); updateProgress(); } }
+updateProgress();
+document.querySelectorAll('.progress-dot').forEach(d=>{
+  d.addEventListener('click',()=>document.getElementById('step'+d.dataset.step)?.scrollIntoView({behavior:'smooth',block:'start'}));
+});
+
+// Basic-info interactive explorer
+document.querySelectorAll('.bie-row').forEach(row=>{
+  row.addEventListener('click',()=>{
+    const field = row.dataset.field;
+    document.querySelectorAll('.bie-row').forEach(r=>r.classList.toggle('selected', r === row));
+    const prompt = document.getElementById('bie-prompt');
+    if (prompt) prompt.style.display = 'none';
+    document.querySelectorAll('.bie-explain-content').forEach(c=>{
+      c.classList.toggle('show', c.dataset.field === field);
+    });
+  });
+});
+</script>
+
+</body>
+</html>

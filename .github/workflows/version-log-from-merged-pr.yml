@@ -1,0 +1,105 @@
+name: Verup情報を自動登録（PRマージ時）
+
+# main にマージされた PR の本文から「## 🆙 Verup情報」セクションを抽出し、
+# Supabase の version_logs テーブルに INSERT する。
+# - セクションが無い PR / placeholder のみの PR / skip-verup ラベル付き PR はスキップ
+# - SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が未設定なら何もせず終了（CI は緑のまま）
+#
+# トリガー:
+#   - pull_request: closed → main マージ時にリアルタイム発火（auto-merge.yml が BOT_TOKEN を
+#     使っている場合のみ起動。GITHUB_TOKEN だと GitHub の仕様で下流workflowが起動しない）
+#   - workflow_dispatch    → 取りこぼし PR の手動 backfill 用（PR番号を入力）
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Backfill する PR 番号（例: 376）'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+# 同じ PR 番号に対する重複 INSERT を構造的に防ぐ。先着優先でキューイング（cancel-in-progress: false）。
+concurrency:
+  group: verup-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  post-version-log:
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛑 無限ループ検出ガード（直近5分で30回超なら強制停止）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          SINCE=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/version-log-from-merged-pr.yml/runs?per_page=100" \
+            --jq "[.workflow_runs[] | select(.created_at > \"$SINCE\")] | length")
+          echo "直近5分の Verup workflow 実行数: $COUNT"
+          if [ "$COUNT" -gt 30 ]; then
+            echo "::error::🚨 ループ検出: 直近5分で ${COUNT} 回実行された → 強制停止します。Actions タブで該当 workflow を Disable してから原因調査してください。"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve PR fields (workflow_dispatch のみ)
+        id: resolve
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -e
+          DATA=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json title,body,number,url,author,labels,state,baseRefName)
+          STATE=$(echo "$DATA" | jq -r '.state')
+          BASE=$(echo "$DATA"  | jq -r '.baseRefName')
+          if [ "$STATE" != "MERGED" ] || [ "$BASE" != "main" ]; then
+            echo "PR #$PR_NUMBER は main へのマージ済みではない（state=$STATE base=$BASE） → スキップ"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "pr_title<<__EOF__"
+            echo "$DATA" | jq -r '.title'
+            echo "__EOF__"
+            echo "pr_body<<__EOF__"
+            echo "$DATA" | jq -r '.body'
+            echo "__EOF__"
+            echo "pr_url=$(echo "$DATA" | jq -r '.url')"
+            echo "pr_author=$(echo "$DATA" | jq -r '.author.login')"
+            echo "pr_labels=$(echo "$DATA" | jq -r '[.labels[].name] | join(",")')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post Verup情報 to Supabase
+        if: github.event_name == 'pull_request' || steps.resolve.outputs.skip != 'true'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # バグ修正完了 Slack 通知（既存のフロントエラー通知と同じチャンネル）
+          # 未設定なら post-version-log.js は通知をスキップ（CI は緑のまま）
+          ERROR_REPORT_SLACK_CHANNEL_URL: ${{ secrets.ERROR_REPORT_SLACK_CHANNEL_URL }}
+          PR_TITLE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_title || github.event.pull_request.title }}
+          PR_BODY: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_body || github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+          PR_URL: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_url || github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_author || github.event.pull_request.user.login }}
+          PR_LABELS: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_labels || join(github.event.pull_request.labels.*.name, ',') }}
+        run: node .github/scripts/post-version-log.js

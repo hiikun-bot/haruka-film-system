@@ -1,0 +1,84 @@
+name: Migration Merge Guard
+
+# migration ファイル（migrations/** または supabase_schema.sql）を含む PR は
+# db-migration-applied ラベルが付いて初めて pass する。
+# required status check として登録すれば auto-merge を停止できる。
+#
+# 仕様:
+#   - migration ファイルを含まない PR  → 即 success
+#   - migration ファイルを含む PR
+#       - db-migration-applied 未付与 → fail
+#       - db-migration-applied 付与済 → success
+#
+# 修正履歴 (2026-05-05):
+#   旧版はラベル (`needs-db-migration`) のみで判定していたため、
+#   「PR 起動直後（ラベル付与前）に opened/synchronize で走って NEEDS=false で
+#    SUCCESS を返したまま、その後 migration-reminder.yml が GITHUB_TOKEN で
+#    ラベルを付けても downstream workflow が再起動されない GitHub 仕様により
+#    再評価されず、誤って pass のまま残る」race があった。
+#   PR ファイルを直接見ることで、ラベルの付与タイミングに依存せずに判定する。
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  migration-applied:
+    name: migration-applied
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR の files とラベルからガード判定
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -e
+
+          # 1) PR ファイルを直接見て migration を含むか判定
+          #    （ラベル付与は GITHUB_TOKEN が原因で downstream に再伝播しないため、
+          #     ラベル状態だけに頼ると race で誤判定する）
+          MIGRATION_FILE_COUNT=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json files \
+            --jq '[.files[] | select((.path | startswith("migrations/")) or (.path == "supabase_schema.sql"))] | length')
+
+          # 2) ラベル状態
+          LABELS=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' || echo "")
+          HAS_NEEDS_LABEL=false
+          HAS_APPLIED_LABEL=false
+          echo "$LABELS" | grep -qx "needs-db-migration"   && HAS_NEEDS_LABEL=true
+          echo "$LABELS" | grep -qx "db-migration-applied" && HAS_APPLIED_LABEL=true
+
+          echo "MIGRATION_FILE_COUNT=$MIGRATION_FILE_COUNT"
+          echo "HAS_NEEDS_LABEL=$HAS_NEEDS_LABEL"
+          echo "HAS_APPLIED_LABEL=$HAS_APPLIED_LABEL"
+
+          IS_MIGRATION_PR=false
+          if [ "$MIGRATION_FILE_COUNT" -gt 0 ] || [ "$HAS_NEEDS_LABEL" = "true" ]; then
+            IS_MIGRATION_PR=true
+          fi
+
+          # 3) migration を含まなければ即 pass
+          if [ "$IS_MIGRATION_PR" != "true" ]; then
+            echo "✅ migration 不要の PR → pass"
+            exit 0
+          fi
+
+          # 4) migration を含み、適用済みなら pass
+          if [ "$HAS_APPLIED_LABEL" = "true" ]; then
+            echo "✅ migration 適用済み（db-migration-applied ラベル検出）→ pass"
+            exit 0
+          fi
+
+          # 5) migration を含み、未適用 → fail
+          echo "❌ 本番Supabase への migration が未適用です。"
+          echo ""
+          echo "対応:"
+          echo "  1. migrations/*.sql の中身を Supabase SQL Editor で実行"
+          echo "  2. このPRに 'db-migration-applied' ラベルを付与"
+          echo ""
+          echo "詳細: docs/db-migration-workflow.md"
+          exit 1

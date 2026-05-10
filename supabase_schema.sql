@@ -48,6 +48,18 @@ CREATE TABLE IF NOT EXISTS clients (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ==================== client_teams (Nクライアント:Nチーム の中間表) ====================
+CREATE TABLE IF NOT EXISTS client_teams (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(client_id, team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_client_teams_client ON client_teams(client_id);
+CREATE INDEX IF NOT EXISTS idx_client_teams_team ON client_teams(team_id);
+
 -- ==================== slack_workspaces ====================
 CREATE TABLE IF NOT EXISTS slack_workspaces (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -71,13 +83,130 @@ CREATE TABLE IF NOT EXISTS projects (
   start_date DATE,
   end_date DATE,
   chatwork_room_id TEXT,
-  slack_workspace_id UUID REFERENCES slack_workspaces(id),
-  slack_channel_id TEXT,
   is_hidden BOOLEAN DEFAULT false,
   seq_counter INTEGER DEFAULT 0,
+  -- project_type 列は migrations/2026-05-06_drop_projects_project_type.sql で DROP 済み。
+  -- 案件カテゴリは primary_category_id (creative_categories) で管理する。
+  -- ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（migrations/2026-05-09_phase1_creatives_export.sql）
+  creatives_export_sheet_url TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- ==================== creative_categories (Stage A) ====================
+-- カテゴリマスタ。案件・クリエイティブの種別をハードコード分岐ではなく
+-- マスタテーブルから動的に解決する。詳細は migrations/2026-05-05_creative_categories.sql
+CREATE TABLE IF NOT EXISTS creative_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  render_kind TEXT NOT NULL CHECK (render_kind IN ('video','image','longpage','iframe','pdf')),
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  color TEXT,
+  default_status_template_id UUID,     -- creative_status_templates(id) を後付け FK
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_creative_categories_active_sort
+  ON creative_categories(is_active, sort_order);
+
+-- 工程テンプレ
+CREATE TABLE IF NOT EXISTS creative_status_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID REFERENCES creative_categories(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_creative_status_templates_category
+  ON creative_status_templates(category_id);
+
+-- 工程テンプレ項目
+CREATE TABLE IF NOT EXISTS creative_status_template_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id UUID REFERENCES creative_status_templates(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  sort_order INT NOT NULL,
+  is_milestone BOOLEAN NOT NULL DEFAULT false,
+  default_days INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (template_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_csti_template_sort
+  ON creative_status_template_items(template_id, sort_order);
+
+-- 案件×カテゴリ単価（縦持ち）。Stage A では project_rates / project_director_rates /
+-- project_producer_rates と並走（Stage C で旧テーブル DROP 予定）。
+CREATE TABLE IF NOT EXISTS project_category_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  category_id UUID NOT NULL REFERENCES creative_categories(id) ON DELETE CASCADE,
+  unit_price NUMERIC,
+  director_unit_price NUMERIC,
+  producer_unit_price NUMERIC,
+  rank TEXT,
+  base_fee INTEGER,
+  script_fee INTEGER,
+  ai_fee INTEGER,
+  other_fee INTEGER,
+  other_fee_note TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (project_id, category_id, rank)
+);
+CREATE INDEX IF NOT EXISTS idx_pcr_project ON project_category_rates(project_id);
+CREATE INDEX IF NOT EXISTS idx_pcr_category ON project_category_rates(category_id);
+
+-- projects / creatives へのカラム追加（Stage A）
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS primary_category_id UUID REFERENCES creative_categories(id);
+CREATE INDEX IF NOT EXISTS idx_projects_primary_category
+  ON projects(primary_category_id);
+
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES creative_categories(id);
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS status_code TEXT;
+CREATE INDEX IF NOT EXISTS idx_creatives_category
+  ON creatives(category_id);
+
+-- ==================== filename_templates (ADR 007 Stage 1) ====================
+-- 案件別ファイル名テンプレート。設定タブで管理し、案件側で選択 + override する。
+-- 詳細: docs/design/decisions/007-filename-templates.md
+--       migrations/2026-05-07_filename_templates.sql
+CREATE TABLE IF NOT EXISTS filename_templates (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT NOT NULL,
+  separator     TEXT NOT NULL DEFAULT '_',
+  tokens        JSONB NOT NULL DEFAULT '[]'::jsonb,
+  is_default    BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS filename_template_id UUID REFERENCES filename_templates(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS filename_token_overrides JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_projects_filename_template_id
+  ON projects(filename_template_id);
+
+-- ADR 008 Phase 4: ファイル名連番のカスタマイズと桁数設定
+-- migrations/2026-05-09_phase4_filename_serial.sql
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS next_filename_serial INT NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS serial_digits INT NOT NULL DEFAULT 3;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'projects_serial_digits_range'
+  ) THEN
+    ALTER TABLE projects
+      ADD CONSTRAINT projects_serial_digits_range
+      CHECK (serial_digits BETWEEN 1 AND 10);
+  END IF;
+END$$;
 
 -- ==================== project_cycles ====================
 CREATE TABLE IF NOT EXISTS project_cycles (
@@ -136,6 +265,7 @@ CREATE TABLE IF NOT EXISTS creatives (
   frameio_url TEXT,
   delivery_url TEXT,
   final_delivery_url TEXT,
+  client_review_url TEXT,
   help_flag BOOLEAN DEFAULT false,
   talent_flag BOOLEAN DEFAULT false,
   note TEXT,
@@ -159,6 +289,30 @@ CREATE TABLE IF NOT EXISTS creative_assignments (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ==================== creative_versions (ADR 008 Phase 0) ====================
+-- 修正サイクル（v0=初稿, v1=修正1回目, ..., 最大5回）の履歴を正規化保持。
+-- Phase 1 以降の Google Sheets 双方向同期で Rev{n} 列の動的展開ソースになる。
+-- 詳細は migrations/2026-05-09_creative_versions_table.sql を参照。
+CREATE TABLE IF NOT EXISTS creative_versions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id     UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  version_number  INT  NOT NULL CHECK (version_number >= 0 AND version_number <= 99),
+  preview_url     TEXT,
+  editor_comment  TEXT,
+  director_comment TEXT,
+  client_comment  TEXT,
+  editor_comment_updated_at   TIMESTAMPTZ,
+  director_comment_updated_at TIMESTAMPTZ,
+  client_comment_updated_at   TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(creative_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS idx_creative_versions_creative_id
+  ON creative_versions(creative_id);
+CREATE INDEX IF NOT EXISTS idx_creative_versions_creative_id_version
+  ON creative_versions(creative_id, version_number);
+
 -- ==================== project_rates ====================
 CREATE TABLE IF NOT EXISTS project_rates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -173,6 +327,36 @@ CREATE TABLE IF NOT EXISTS project_rates (
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(project_id, creative_type, rank)
 );
+
+-- ==================== project_director_rates ====================
+-- 案件別ディレクション費（per-project, per-creative_type）。
+-- creatives 1件あたり 1回必ず加算される（編集者と兼務でも満額）。
+-- 受取人は projects.director_id。
+CREATE TABLE IF NOT EXISTS project_director_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+  director_fee INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, creative_type)
+);
+CREATE INDEX IF NOT EXISTS idx_pdr_project ON project_director_rates(project_id);
+
+-- ==================== project_producer_rates ====================
+-- 案件別プロデュース費（per-project, per-creative_type）。
+-- creatives 1件あたり 1回必ず加算される（編集者・ディレクターと兼務でも満額）。
+-- 受取人は projects.producer_id。
+CREATE TABLE IF NOT EXISTS project_producer_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  creative_type TEXT NOT NULL CHECK (creative_type IN ('video', 'design')),
+  producer_fee INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, creative_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ppr_project ON project_producer_rates(project_id);
 
 -- ==================== invoices ====================
 CREATE TABLE IF NOT EXISTS invoices (
@@ -216,6 +400,8 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS director_comment TEXT;
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS client_comment TEXT;
 -- 編集者/デザイナーのコメント・返信を分離保存（後修正再提出時に director_comment の上書き防止）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS editor_comment TEXT;
+-- クリエイティブのメモ（クライアント要望、参考リンク、撮影メモ等）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS memo TEXT;
 
 -- clients にステータス・営業開始日追加
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS sales_start_date DATE;
@@ -229,6 +415,12 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS youtube_url TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS tiktok_url TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS line_url TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS other_url TEXT;
+-- ペルソナ（ターゲット顧客像：年齢層・性別・ライフスタイル・悩み等の自由記述）
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS persona TEXT;
+
+-- クリエイティブ進捗の自動通知用：クライアントごとの Slack チャンネル / Chatwork ルーム
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS slack_channel_url TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT;
 
 -- teams にプロデューサー追加
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS producer_id UUID REFERENCES users(id);
@@ -258,7 +450,8 @@ CREATE TABLE IF NOT EXISTS creative_files (
   drive_file_id TEXT,
   drive_url TEXT,
   uploaded_by UUID REFERENCES users(id),
-  uploaded_at TIMESTAMPTZ DEFAULT now()
+  uploaded_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT creative_files_creative_id_version_unique UNIQUE (creative_id, version)
 );
 
 -- ==================== マスターテーブル群 ====================
@@ -311,11 +504,37 @@ CREATE TABLE IF NOT EXISTS creative_file_comments (
   timecode TEXT,
   is_knowledge BOOLEAN DEFAULT false,
   category_id UUID REFERENCES master_items(id) ON DELETE SET NULL,
+  bbox JSONB,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 返信スレッド構造（migrations/2026-05-08_creative_file_comments_threading.sql）
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS parent_comment_id UUID
+  REFERENCES creative_file_comments(id) ON DELETE CASCADE;
+
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
+CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
+  ON creative_file_comments ((bbox IS NOT NULL))
+  WHERE bbox IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_parent_comment_id
+  ON creative_file_comments(parent_comment_id)
+  WHERE parent_comment_id IS NOT NULL;
+
+-- ==================== creative_file_likes ====================
+-- タイムコード別いいね（routes/haruka.js の /creative-files/:id/likes 系で使用）
+CREATE TABLE IF NOT EXISTS creative_file_likes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_file_id UUID NOT NULL REFERENCES creative_files(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  timecode_sec NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (creative_file_id, user_id, timecode_sec)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cfl_creative_file_id ON creative_file_likes(creative_file_id);
+CREATE INDEX IF NOT EXISTS idx_cfl_user_id ON creative_file_likes(user_id);
 
 -- ==================== システム設定 ====================
 CREATE TABLE IF NOT EXISTS system_settings (
@@ -386,13 +605,18 @@ CREATE TABLE IF NOT EXISTS project_appeal_axes (
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS sync_products BOOLEAN DEFAULT true;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS sync_appeal_axes BOOLEAN DEFAULT true;
 
--- Slackワークスペースを直接テキストIDで持つ（UUID FKの代替）
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_team_id TEXT;
+-- 案件ごとの Slack チャンネル URL（チャンネルURL貼付け方式・通知送信用）
+-- projects レベルで設定があれば clients.slack_channel_url より優先される
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_channel_url TEXT;
+-- 既存の projects.chatwork_room_id を通知送信時のオーバーライドとしても利用する
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS chatwork_room_id TEXT;
 
 -- projects_status_check 制約が存在する場合は削除（アプリ側でバリデーション済み）
 ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
 
 -- クリエイティブ バージョン履歴
+-- ADR 011 (2026-05-09): ラウンド比較型UIの履歴データソース。
+-- 「修正済→再チェック」遷移時にサーバー側で自動 INSERT される。
 CREATE TABLE IF NOT EXISTS creative_version_history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
@@ -401,6 +625,41 @@ CREATE TABLE IF NOT EXISTS creative_version_history (
   client_comment TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- ADR 011: 4列追加（編集者の提出時メモ・ラウンド種別・ファイル紐付け・記録者）
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS editor_comment TEXT;
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS round_stage TEXT;  -- 'd_check' | 'p_check' | 'cl_check'
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS creative_file_id UUID
+  REFERENCES creative_files(id) ON DELETE SET NULL;
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS recorded_by UUID
+  REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_cvh_creative_round
+  ON creative_version_history(creative_id, version_num);
+
+-- ADR 011 補足 (2026-05-09): 編集者提出時刻 / ディレクター指摘時刻を分離保存。
+-- ラウンド比較UI From/To 行右端で別々の発言時刻を表示するため。
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS editor_submitted_at TIMESTAMPTZ;
+ALTER TABLE creative_version_history
+  ADD COLUMN IF NOT EXISTS director_commented_at TIMESTAMPTZ;
+
+-- 管理者によるステータス強制変更の監査ログ
+-- 「誰が・いつ・どの状態 → どの状態に・なぜ・付随削除した下書き明細」を残す
+CREATE TABLE IF NOT EXISTS creative_status_audit (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  from_status TEXT,
+  to_status  TEXT,
+  reason     TEXT NOT NULL,
+  changed_by UUID REFERENCES users(id),
+  changed_at TIMESTAMPTZ DEFAULT now(),
+  deleted_invoice_item_ids JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_creative_status_audit_creative ON creative_status_audit(creative_id, changed_at DESC);
 
 -- projects にレギュレーションシートURL追加
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS regulation_url TEXT;
@@ -494,6 +753,19 @@ CREATE INDEX IF NOT EXISTS idx_ccr_file ON creative_checklist_results(creative_f
 -- creative_files に Premiere Pro プロジェクトID（documentID）を紐づけ
 ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS premiere_project_id TEXT;
 
+-- ==================== 動画ストリーミング高速化 ====================
+-- mime_type / file_size: Drive メタ情報をキャッシュし、Range配信ごとの drive.files.get 呼び出しを削減
+-- faststart_*: -c copy -movflags +faststart で再エンコード無しに moov を先頭へ移動した版（画質完全維持）
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS mime_type              TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS file_size              BIGINT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_drive_file_id TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_drive_url     TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_file_size     BIGINT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_status        TEXT;
+ALTER TABLE creative_files ADD COLUMN IF NOT EXISTS faststart_processed_at  TIMESTAMPTZ;
+-- drive_file_id 経由のキャッシュ参照を高速化
+CREATE INDEX IF NOT EXISTS idx_creative_files_drive_file_id ON creative_files(drive_file_id);
+
 -- ====================================================================================
 -- ワークスペース（マルチチーム対応）
 -- 各チームが独自のインフラ（Railway/Supabase/Drive）でデプロイし、
@@ -543,6 +815,11 @@ CREATE TABLE IF NOT EXISTS client_configs (
   updated_at                 TIMESTAMPTZ DEFAULT now()
 );
 
+-- 誕生日の年（および年齢）を非表示にしたいユーザー向けのフラグ
+-- false（デフォルト）: 通常通り年月日を表示し、年齢も表示してOK
+-- true: 月日のみ表示。年齢計算・表示は行わない
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_birth_year BOOLEAN DEFAULT false;
+
 -- ==================== workspace_id カラム追加 ====================
 ALTER TABLE users             ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
 ALTER TABLE clients           ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
@@ -585,6 +862,10 @@ CREATE INDEX IF NOT EXISTS idx_creatives_project_id         ON creatives(project
 CREATE INDEX IF NOT EXISTS idx_creatives_cycle_id           ON creatives(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_creatives_final_deadline     ON creatives(final_deadline);
 CREATE INDEX IF NOT EXISTS idx_creatives_status             ON creatives(status);
+-- 一覧 API 高速化（status フィルタ + final_deadline ソート の複合）
+CREATE INDEX IF NOT EXISTS idx_creatives_status_deadline    ON creatives (status, final_deadline NULLS LAST);
+-- 案件ページからの絞り込み（project_id + status）
+CREATE INDEX IF NOT EXISTS idx_creatives_project_status     ON creatives (project_id, status);
 CREATE INDEX IF NOT EXISTS idx_creative_assignments_user_id     ON creative_assignments(user_id);
 CREATE INDEX IF NOT EXISTS idx_creative_assignments_creative_id ON creative_assignments(creative_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_issuer_year_month   ON invoices(issuer_id, year, month);
@@ -593,6 +874,38 @@ CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(cr
 
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
+
+-- creatives にチームを独立保存（担当者の team_id 派生から脱却）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
+
+-- 納品完了モード（途中工程をスキップして直接「納品」にした記録）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered        BOOLEAN DEFAULT false;
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_reason TEXT;
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_at     TIMESTAMPTZ;
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_by     UUID REFERENCES users(id);
+CREATE INDEX IF NOT EXISTS idx_creatives_team_id ON creatives(team_id);
+
+-- team_id への FK を確実に付与（過去にカラムだけが FK 無しで追加された場合の修復）
+-- これが無いと PostgREST は creatives → teams の埋め込み select を解決できず、
+-- /api/creatives が 500 を返してフロントが allCreatives.forEach is not a function で落ちる
+DO $$
+BEGIN
+  -- 既存の孤立 team_id を NULL 化（FK 追加時のバリデーション失敗を防ぐ）
+  UPDATE public.creatives c
+     SET team_id = NULL
+   WHERE c.team_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.teams t WHERE t.id = c.team_id);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'creatives_team_id_fkey' AND conrelid = 'public.creatives'::regclass
+  ) THEN
+    ALTER TABLE public.creatives
+      ADD CONSTRAINT creatives_team_id_fkey
+      FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE SET NULL;
+  END IF;
+END
+$$;
 
 -- チェックリストマスターに対象区分を追加（'all'=共通, 'video'=動画のみ, 'design'=デザインのみ）
 ALTER TABLE checklist_masters ADD COLUMN IF NOT EXISTS target_type TEXT DEFAULT 'all';
@@ -615,6 +928,54 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 );
 CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role);
 
+-- ==================== ロールマスタ（ADR 003 / Stage 0 Step 1） ====================
+-- 詳細: docs/design/decisions/003-roles-as-master-data.md
+-- migration: migrations/2026-05-06_roles_master.sql
+--
+-- users.role TEXT / role_permissions.role TEXT は dual-read 期間として残す。
+-- Stage 0 Step 4 で DROP 予定。
+CREATE TABLE IF NOT EXISTS roles (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code        TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL,
+  category    TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  is_creator  BOOLEAN NOT NULL DEFAULT FALSE,
+  is_internal BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  archived_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_roles_active_sort ON roles(archived_at, sort_order);
+CREATE INDEX IF NOT EXISTS idx_roles_category    ON roles(category);
+
+INSERT INTO roles (code, label, category, sort_order, is_creator, is_internal) VALUES
+  ('admin',        '管理者',             'admin',   10, FALSE, TRUE),
+  ('secretary',    '秘書',               'staff',   20, FALSE, TRUE),
+  ('producer',     'プロデューサー',     'staff',   30, TRUE,  TRUE),
+  ('director',     'ディレクター',       'staff',   40, TRUE,  TRUE),
+  ('sub_producer', 'サブプロデューサー', 'staff',   50, TRUE,  TRUE),
+  ('sub_director', 'サブディレクター',   'staff',   60, TRUE,  TRUE),
+  ('editor',       '編集者',             'creator', 70, TRUE,  TRUE),
+  ('designer',     'デザイナー',         'creator', 80, TRUE,  TRUE)
+ON CONFLICT (code) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS user_roles (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id     UUID NOT NULL REFERENCES roles(id),
+  scope_type  TEXT,
+  scope_id    UUID,
+  granted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, role_id, scope_type, scope_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_roles_user  ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role  ON user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_scope ON user_roles(scope_type, scope_id);
+
+-- role_permissions に role_id 列を追加（dual-read 期間: role TEXT も残す）
+ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id);
+
 -- 初期シード（既存挙動と完全一致）
 INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   -- ダッシュボード
@@ -628,8 +989,10 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','creative.all_projects_view',true),('secretary','creative.all_projects_view',true),('producer','creative.all_projects_view',true),('producer_director','creative.all_projects_view',true),
   ('admin','creative.rank_price_column',true),('producer','creative.rank_price_column',true),('producer_director','creative.rank_price_column',true),('director','creative.rank_price_column',true),
   ('admin','creative.csv_import',true),('secretary','creative.csv_import',true),('producer','creative.csv_import',true),('producer_director','creative.csv_import',true),
+  -- SOSフラグの他人クリエイティブへの操作権限（編集者/デザイナーは自分の担当のみ可。下位ロールは row レベルで判定）
+  ('admin','creative.sos_others',true),('secretary','creative.sos_others',true),('producer','creative.sos_others',true),('producer_director','creative.sos_others',true),('director','creative.sos_others',true),
   -- メンバー
-  ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),
+  ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),('editor','member.list',true),('designer','member.list',true),
   ('admin','member.edit_password',true),('secretary','member.edit_password',true),
   ('admin','member.deactivate',true),('secretary','member.deactivate',true),
   ('admin','member.delete',true),
@@ -643,8 +1006,15 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','master.page',true),('secretary','master.page',true),
   ('admin','master.sys_config',true),
   -- システム
-  ('admin','system.view_as',true)
-ON CONFLICT (role, permission_key) DO NOTHING;
+  ('admin','system.view_as',true),
+  -- 分析・集計（管理者・秘書のみ閲覧）
+  ('admin','analytics.view',true),('secretary','analytics.view',true),
+  -- 分析メニュー: バグ報告件数のみ全ロール開放
+  ('admin','analytics.bug_reports.view',true),('secretary','analytics.bug_reports.view',true),
+  ('producer','analytics.bug_reports.view',true),('producer_director','analytics.bug_reports.view',true),
+  ('director','analytics.bug_reports.view',true),('editor','analytics.bug_reports.view',true),
+  ('designer','analytics.bug_reports.view',true)
+ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
 -- ==================== 請求書明細：自由編集対応（Step 1） ====================
 -- invoice_items に明細行として必要な列を追加（既存の creative_id 紐付け行とも共存）
@@ -787,3 +1157,1129 @@ UPDATE invoices inv
 -- グルーピング表示用インデックス
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_creative_sort
   ON invoice_items(invoice_id, creative_id, sort_order);
+
+-- ==================== 請求書明細：単価変更の監査列 ====================
+-- 「いくらから いくらに 上げたのか」を後から再現するため、
+-- 請求書作成時点での project_rates 由来デフォルト単価と、
+-- 変更があった場合の理由を別カラムで保存する。
+-- special_reason は creatives.special_payable_reason 由来のフィールドに戻し、
+-- 単価変更とは別概念として分離する。
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS original_unit_price INTEGER;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS price_change_reason TEXT;
+
+-- ==================== セキュリティ：全 public テーブルで RLS 有効化 ====================
+-- 本アプリは Supabase の service_role キーをサーバー側でのみ使用しており、
+-- クライアントから anon キーで Supabase REST API を叩く構成ではない。
+-- ただし多重防御として、public スキーマの全テーブルで Row Level Security を
+-- 有効化し、ポリシー無し = anon/authenticated 直接アクセスは全拒否とする。
+-- service_role はバイパスするので既存アプリ機能には影響しない。
+DO $rls_enable$
+DECLARE
+  t record;
+BEGIN
+  FOR t IN
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+  END LOOP;
+END
+$rls_enable$;
+
+-- ==================== invoices.status の CHECK 制約を撤廃 ====================
+-- 旧スキーマで draft/issued のみ許可する CHECK 制約があり、submitted への
+-- ステータス遷移が「invoices_status_check」違反で失敗していた。
+-- アプリ側で遷移ロジックをガードしているため CHECK 制約は不要。
+-- (projects_status_check と同じ方針)
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_status_check;
+
+-- ==================== 全体連絡（アナウンスメント） ====================
+-- ダッシュボードに表示される全社員向けの連絡。
+-- 投稿者は完了状況（誰がやったか）を一覧で確認できる。
+-- 投稿時に system_settings.broadcast_slack_channel_url が設定されていれば
+-- そのチャンネルへも自動で同じメッセージを投稿する。
+CREATE TABLE IF NOT EXISTS announcements (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  body TEXT,
+  posted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  posted_at TIMESTAMPTZ DEFAULT now(),
+  deadline_at TIMESTAMPTZ,
+  is_active BOOLEAN DEFAULT true,
+  slack_pushed_at TIMESTAMPTZ,
+  slack_push_result TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(is_active, posted_at DESC);
+
+-- 各メンバーの完了状況。完了ボタンを押した時に1行追加される。
+CREATE TABLE IF NOT EXISTS announcement_acks (
+  announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  done_at TIMESTAMPTZ DEFAULT now(),
+  -- 代理完了 (admin/secretary が他メンバーの代わりに完了マークした場合に set)
+  proxy_acked_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  proxy_acked_at TIMESTAMPTZ,
+  PRIMARY KEY (announcement_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_announcement_acks_user ON announcement_acks(user_id);
+CREATE INDEX IF NOT EXISTS idx_announcement_acks_proxy_by
+  ON announcement_acks(proxy_acked_by_user_id)
+  WHERE proxy_acked_by_user_id IS NOT NULL;
+
+-- ==================== つぶやき機能（社内タイムライン）====================
+-- 写真（任意） + 短いコメント + ❤️ いいね のミニ社内 SNS。
+-- ダッシュボード上に表示され、90 日で自動的に非表示（ピン留めは永続）。
+CREATE TABLE IF NOT EXISTS tweets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (char_length(body) <= 280),
+  image_data TEXT,
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '90 days'),
+  is_pinned BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tweets_active ON tweets(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tweets_user ON tweets(user_id);
+
+CREATE TABLE IF NOT EXISTS tweet_likes (
+  tweet_id UUID NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (tweet_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tweet_likes_user ON tweet_likes(user_id);
+
+-- -------- 通知 Phase 1 段階4: つぶやき拡張（B案） --------
+-- migrations/2026-05-03_notification_phase4_tweets_rich.sql と同等の定義を schema-sync 用に同期。
+-- 既存 tweets を活かし、5種リアクション + コメント + メンション通知を増設する。
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS mentioned_user_ids UUID[] DEFAULT '{}';
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS reaction_count INT NOT NULL DEFAULT 0;
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS comment_count  INT NOT NULL DEFAULT 0;
+-- 本文編集機能（PATCH /api/tweets/:id）の編集タイムスタンプ。
+-- NULL = 未編集。値が入っていれば UI 側で「（編集済み）」を表示する。
+ALTER TABLE tweets ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_tweets_mentioned ON tweets USING GIN(mentioned_user_ids);
+
+CREATE TABLE IF NOT EXISTS tweet_reactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tweet_id UUID NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+  user_id  UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  reaction_type TEXT NOT NULL CHECK (reaction_type IN ('good','heart','clap','smile','surprised')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tweet_id, user_id, reaction_type)
+);
+CREATE INDEX IF NOT EXISTS idx_tweet_reactions_tweet ON tweet_reactions(tweet_id);
+CREATE INDEX IF NOT EXISTS idx_tweet_reactions_user  ON tweet_reactions(user_id);
+
+CREATE TABLE IF NOT EXISTS tweet_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tweet_id UUID NOT NULL REFERENCES tweets(id) ON DELETE CASCADE,
+  user_id  UUID NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (char_length(body) <= 500),
+  mentioned_user_ids UUID[] DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_tweet_comments_tweet ON tweet_comments(tweet_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_tweet_comments_mentioned ON tweet_comments USING GIN(mentioned_user_ids);
+
+-- 既存 tweet_likes → tweet_reactions(heart) への冪等コピー
+INSERT INTO tweet_reactions (tweet_id, user_id, reaction_type, created_at)
+SELECT tweet_id, user_id, 'heart', created_at FROM tweet_likes
+ON CONFLICT (tweet_id, user_id, reaction_type) DO NOTHING;
+
+UPDATE tweets t
+SET reaction_count = COALESCE(
+  (SELECT COUNT(*) FROM tweet_reactions r WHERE r.tweet_id = t.id), 0);
+UPDATE tweets t
+SET comment_count = COALESCE(
+  (SELECT COUNT(*) FROM tweet_comments c WHERE c.tweet_id = t.id AND c.deleted_at IS NULL), 0);
+
+-- リアクション数 / コメント数の自動カウントトリガー
+CREATE OR REPLACE FUNCTION update_tweet_reaction_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE tweets SET reaction_count = reaction_count + 1 WHERE id = NEW.tweet_id;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE tweets SET reaction_count = GREATEST(reaction_count - 1, 0) WHERE id = OLD.tweet_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_tweet_reactions_count ON tweet_reactions;
+CREATE TRIGGER trg_tweet_reactions_count
+AFTER INSERT OR DELETE ON tweet_reactions
+FOR EACH ROW EXECUTE FUNCTION update_tweet_reaction_count();
+
+CREATE OR REPLACE FUNCTION update_tweet_comment_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE tweets SET comment_count = comment_count + 1 WHERE id = NEW.tweet_id;
+  ELSIF TG_OP = 'UPDATE' AND NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
+    UPDATE tweets SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = NEW.tweet_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_tweet_comments_count ON tweet_comments;
+CREATE TRIGGER trg_tweet_comments_count
+AFTER INSERT OR UPDATE ON tweet_comments
+FOR EACH ROW EXECUTE FUNCTION update_tweet_comment_count();
+
+ALTER TABLE tweet_reactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tweet_reactions_select_all ON tweet_reactions;
+CREATE POLICY tweet_reactions_select_all ON tweet_reactions FOR SELECT USING (true);
+DROP POLICY IF EXISTS tweet_reactions_insert_own ON tweet_reactions;
+CREATE POLICY tweet_reactions_insert_own ON tweet_reactions FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS tweet_reactions_delete_own ON tweet_reactions;
+CREATE POLICY tweet_reactions_delete_own ON tweet_reactions FOR DELETE USING (user_id = auth.uid());
+
+ALTER TABLE tweet_comments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tweet_comments_select_visible ON tweet_comments;
+CREATE POLICY tweet_comments_select_visible ON tweet_comments FOR SELECT USING (deleted_at IS NULL);
+DROP POLICY IF EXISTS tweet_comments_insert_own ON tweet_comments;
+CREATE POLICY tweet_comments_insert_own ON tweet_comments FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS tweet_comments_update_own ON tweet_comments;
+CREATE POLICY tweet_comments_update_own ON tweet_comments FOR UPDATE USING (user_id = auth.uid());
+
+DO $$
+BEGIN
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tweets;
+  EXCEPTION WHEN duplicate_object THEN NULL; WHEN undefined_object THEN NULL; END;
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tweet_reactions;
+  EXCEPTION WHEN duplicate_object THEN NULL; WHEN undefined_object THEN NULL; END;
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tweet_comments;
+  EXCEPTION WHEN duplicate_object THEN NULL; WHEN undefined_object THEN NULL; END;
+END $$;
+
+-- ==================== users 個人情報カラム（過去の commit 50a1a3e で
+--   コードだけ追加され、本番DBへ反映されていなかったカラムを補完） ====================
+-- これが無いと PUT /api/members/:id が "column ... does not exist" で失敗し、
+-- メンバー編集が「保存しても反映されない」バグになる（feedback batch 002）。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname            TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS note                TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_name           TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_code           TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_name         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_code         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_type        TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_number      TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_holder_kana TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone               TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS postal_code         TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS address             TEXT;
+
+-- ==================== users 休日曜日（feedback batch 002） ====================
+-- 「土曜日が基本仕事」など、メンバーごとに休日にあたる曜日を設定できるようにする。
+-- weekday_hours / weekend_hours は既存の時間帯設定（残す）。本カラムは「曜日カレンダー
+-- 上で休日扱いにする日」のリスト。既定は土日（[0,6] = 日, 土）。
+-- 配列は ISO 風 0=日, 1=月, ... 6=土。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS holiday_weekdays JSONB DEFAULT '[0,6]'::jsonb;
+
+-- ==================== users カメラマン機材情報（feedback batch 002） ====================
+-- 撮影系メンバーが「使用カメラ機種」「三脚」「照明」を登録できる欄。
+-- すべて任意 TEXT。空文字 / NULL = 未登録。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS camera_model TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tripod_info  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS lighting_info TEXT;
+
+-- ==================== 適格請求書発行事業者 登録番号（インボイス制度） ====================
+-- (migrations/2026-05-05_invoice_registration_number.sql)
+-- 形式: 「T + 半角数字13桁」。NULL 許容（免税事業者・未登録）。
+-- アプリ層で /^T\d{13}$/ バリデーション。
+ALTER TABLE users   ADD COLUMN IF NOT EXISTS invoice_registration_number TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS invoice_registration_number TEXT;
+
+-- ==================== users クリエイティブ画面の初期表示タブ ====================
+-- (migrations/2026-05-04_users_default_creative_tab.sql)
+-- 値: 'all' / 'video' / 'design' / NULL（NULL はロール準拠フォールバック）
+-- CHECK 制約は付けない（将来タブが増える想定のため柔軟に）。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS default_creative_tab TEXT;
+
+-- ==================== users クリエイティブ画面の初期表示状態（フィルター10種） ====================
+-- (migrations/2026-05-05_users_creative_default_filters.sql)
+-- メンバーマスターで「ビュー / 表示モード / グルーピング / 期間 / 詳細フィルター（4チェック）/
+-- ステータス pill / ボール種別 pill」の初期値を持てるようにする。すべて nullable で、
+-- NULL の場合はフロント側のハードコード既定値にフォールバック。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_view              TEXT;     -- 'all' / 'mine' / 'ball'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_view_mode         TEXT;     -- 'gantt' / 'list'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_group_mode        TEXT;     -- 'project' / 'client' / 'assignee' / 'team'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_range             TEXT;     -- 'week' / '2week' / 'month' / '2month'
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_include_ended     BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_include_delivered BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_delayed_only      BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_sos_only          BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_statuses          JSONB;    -- 文字列配列（NULL = 全選択）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS creative_default_ball_types        JSONB;    -- 'editor'/'D'/'P'/'client' の配列（NULL = 全選択）
+
+-- ==================== 案件収支（Project Accounting）— Step A ====================
+-- 詳細は docs/project_accounting_design_ja.md
+-- スタンドアロン migration: migrations/2026-05-02_project_accounting_step_a.sql
+-- 既存テーブルは無変更。トリガで invoice_items / invoices から自動連携。
+
+-- invoices.invoice_type は本番DBに既に存在するが定義漏れがあったため明示
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_type TEXT;
+
+-- 案件収支台帳（1 project : 1 row）
+CREATE TABLE IF NOT EXISTS project_finance_books (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  contract_total INTEGER DEFAULT 0,
+  estimated_revenue INTEGER DEFAULT 0,
+  estimated_cost INTEGER DEFAULT 0,
+  actual_revenue INTEGER DEFAULT 0,
+  actual_cost INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+  closed_at TIMESTAMPTZ,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_finance_books_project ON project_finance_books(project_id);
+
+-- 案件タイプ別の入力プロファイル（HP/LP/動画ごとに可変）と正規化メトリクス
+CREATE TABLE IF NOT EXISTS project_input_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  project_type TEXT NOT NULL DEFAULT 'other'
+    CHECK (project_type IN ('video', 'hp', 'lp', 'other')),
+  input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  normalized_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+  raw_request_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_input_profiles_type ON project_input_profiles(project_type);
+
+-- 見積（バージョン別）
+CREATE TABLE IF NOT EXISTS project_estimates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL DEFAULT 1,
+  title TEXT,
+  total_amount INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'draft'
+    CHECK (status IN ('draft', 'sent', 'accepted', 'rejected', 'archived')),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_project_estimates_project ON project_estimates(project_id, version DESC);
+
+-- 見積明細
+CREATE TABLE IF NOT EXISTS project_estimate_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  estimate_id UUID NOT NULL REFERENCES project_estimates(id) ON DELETE CASCADE,
+  category TEXT,
+  label TEXT NOT NULL,
+  quantity NUMERIC(10,2) DEFAULT 1,
+  unit TEXT,
+  unit_price INTEGER DEFAULT 0,
+  amount INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_estimate_items_estimate ON project_estimate_items(estimate_id, sort_order);
+
+-- 原価エントリ（invoice_items 自動連携 + 手入力可）
+CREATE TABLE IF NOT EXISTS project_cost_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual', 'invoice_item')),
+  source_invoice_item_id UUID REFERENCES invoice_items(id) ON DELETE CASCADE,
+  source_invoice_id UUID REFERENCES invoices(id) ON DELETE SET NULL,
+  cost_type TEXT,
+  label TEXT,
+  amount INTEGER NOT NULL DEFAULT 0,
+  occurred_on DATE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_cost_entries_project ON project_cost_entries(project_id, occurred_on DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_cost_entries_invoice_item
+  ON project_cost_entries(source_invoice_item_id)
+  WHERE source_invoice_item_id IS NOT NULL;
+
+-- 売上エントリ（client invoice 自動連携 + 手入力可）
+CREATE TABLE IF NOT EXISTS project_revenue_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual', 'client_invoice')),
+  source_invoice_id UUID REFERENCES invoices(id) ON DELETE CASCADE,
+  revenue_type TEXT,
+  label TEXT,
+  amount INTEGER NOT NULL DEFAULT 0,
+  occurred_on DATE,
+  client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_revenue_entries_project ON project_revenue_entries(project_id, occurred_on DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_revenue_entries_invoice
+  ON project_revenue_entries(source_invoice_id)
+  WHERE source_invoice_id IS NOT NULL;
+
+-- ==================== 案件収支：トリガ関数 ====================
+
+CREATE OR REPLACE FUNCTION sync_cost_entry_from_invoice_item() RETURNS TRIGGER AS $$
+DECLARE
+  v_project_id   UUID;
+  v_invoice_type TEXT;
+BEGIN
+  IF NEW.invoice_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT i.project_id, i.invoice_type
+    INTO v_project_id, v_invoice_type
+    FROM invoices i
+   WHERE i.id = NEW.invoice_id;
+
+  IF v_invoice_type = 'client' THEN
+    DELETE FROM project_cost_entries WHERE source_invoice_item_id = NEW.id;
+    RETURN NEW;
+  END IF;
+
+  IF v_project_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM project_cost_entries WHERE source_invoice_item_id = NEW.id) THEN
+    UPDATE project_cost_entries
+       SET project_id        = v_project_id,
+           source_invoice_id = NEW.invoice_id,
+           cost_type         = COALESCE(NEW.cost_type, cost_type),
+           label             = COALESCE(NEW.label, label),
+           amount            = COALESCE(NEW.total_amount, 0),
+           updated_at        = now()
+     WHERE source_invoice_item_id = NEW.id;
+  ELSE
+    INSERT INTO project_cost_entries (
+      project_id, source, source_invoice_item_id, source_invoice_id,
+      cost_type, label, amount
+    ) VALUES (
+      v_project_id, 'invoice_item', NEW.id, NEW.invoice_id,
+      NEW.cost_type, NEW.label, COALESCE(NEW.total_amount, 0)
+    );
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'sync_cost_entry_from_invoice_item failed (invoice_item_id=%): %', NEW.id, SQLERRM;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION delete_cost_entry_from_invoice_item() RETURNS TRIGGER AS $$
+BEGIN
+  DELETE FROM project_cost_entries WHERE source_invoice_item_id = OLD.id;
+  RETURN OLD;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'delete_cost_entry_from_invoice_item failed (invoice_item_id=%): %', OLD.id, SQLERRM;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION sync_revenue_entry_from_invoice() RETURNS TRIGGER AS $$
+DECLARE
+  v_client_id UUID;
+BEGIN
+  IF NEW.invoice_type IS DISTINCT FROM 'client' THEN
+    DELETE FROM project_revenue_entries WHERE source_invoice_id = NEW.id;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.project_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT p.client_id INTO v_client_id FROM projects p WHERE p.id = NEW.project_id;
+
+  IF EXISTS (SELECT 1 FROM project_revenue_entries WHERE source_invoice_id = NEW.id) THEN
+    UPDATE project_revenue_entries
+       SET project_id  = NEW.project_id,
+           amount      = COALESCE(NEW.total_amount, 0),
+           client_id   = v_client_id,
+           updated_at  = now()
+     WHERE source_invoice_id = NEW.id;
+  ELSE
+    INSERT INTO project_revenue_entries (
+      project_id, source, source_invoice_id, revenue_type,
+      label, amount, occurred_on, client_id
+    ) VALUES (
+      NEW.project_id, 'client_invoice', NEW.id, 'lump_sum',
+      NEW.invoice_number, COALESCE(NEW.total_amount, 0),
+      COALESCE(NEW.issued_at::date, CURRENT_DATE), v_client_id
+    );
+  END IF;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'sync_revenue_entry_from_invoice failed (invoice_id=%): %', NEW.id, SQLERRM;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION delete_revenue_entry_from_invoice() RETURNS TRIGGER AS $$
+BEGIN
+  DELETE FROM project_revenue_entries WHERE source_invoice_id = OLD.id;
+  RETURN OLD;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'delete_revenue_entry_from_invoice failed (invoice_id=%): %', OLD.id, SQLERRM;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==================== 案件収支：トリガ ====================
+
+DROP TRIGGER IF EXISTS tr_invoice_items_to_cost ON invoice_items;
+CREATE TRIGGER tr_invoice_items_to_cost
+  AFTER INSERT OR UPDATE OF invoice_id, total_amount, cost_type, label
+  ON invoice_items
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_cost_entry_from_invoice_item();
+
+DROP TRIGGER IF EXISTS tr_invoice_items_to_cost_del ON invoice_items;
+CREATE TRIGGER tr_invoice_items_to_cost_del
+  AFTER DELETE
+  ON invoice_items
+  FOR EACH ROW
+  EXECUTE FUNCTION delete_cost_entry_from_invoice_item();
+
+DROP TRIGGER IF EXISTS tr_invoices_to_revenue ON invoices;
+CREATE TRIGGER tr_invoices_to_revenue
+  AFTER INSERT OR UPDATE OF project_id, total_amount, invoice_type, issued_at
+  ON invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_revenue_entry_from_invoice();
+
+DROP TRIGGER IF EXISTS tr_invoices_to_revenue_del ON invoices;
+CREATE TRIGGER tr_invoices_to_revenue_del
+  AFTER DELETE
+  ON invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION delete_revenue_entry_from_invoice();
+
+-- ==================== 案件収支：バックフィル ====================
+
+INSERT INTO project_finance_books (project_id)
+SELECT p.id
+  FROM projects p
+ WHERE NOT EXISTS (
+   SELECT 1 FROM project_finance_books fb WHERE fb.project_id = p.id
+ );
+
+INSERT INTO project_cost_entries (
+  project_id, source, source_invoice_item_id, source_invoice_id,
+  cost_type, label, amount
+)
+SELECT
+  i.project_id, 'invoice_item', ii.id, ii.invoice_id,
+  ii.cost_type, ii.label, COALESCE(ii.total_amount, 0)
+  FROM invoice_items ii
+  JOIN invoices i ON i.id = ii.invoice_id
+ WHERE i.project_id IS NOT NULL
+   AND (i.invoice_type IS NULL OR i.invoice_type <> 'client')
+   AND NOT EXISTS (
+     SELECT 1 FROM project_cost_entries pce
+      WHERE pce.source_invoice_item_id = ii.id
+   );
+
+INSERT INTO project_revenue_entries (
+  project_id, source, source_invoice_id, revenue_type,
+  label, amount, occurred_on, client_id
+)
+SELECT
+  i.project_id, 'client_invoice', i.id, 'lump_sum',
+  i.invoice_number, COALESCE(i.total_amount, 0),
+  COALESCE(i.issued_at::date, CURRENT_DATE), p.client_id
+  FROM invoices i
+  LEFT JOIN projects p ON p.id = i.project_id
+ WHERE i.invoice_type = 'client'
+   AND i.project_id IS NOT NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM project_revenue_entries pre
+      WHERE pre.source_invoice_id = i.id
+   );
+
+-- ==================== 案件収支 V2: 契約タイプ ====================
+-- 詳細: migrations/2026-05-02_project_accounting_v2_contract_type.sql
+-- 加算のみ・既存無影響・ロールバック容易（カラム残置で問題なし）
+ALTER TABLE project_finance_books
+  ADD COLUMN IF NOT EXISTS contract_type TEXT DEFAULT 'fixed'
+  CHECK (contract_type IN ('fixed', 'per_unit', 'mixed'));
+ALTER TABLE project_finance_books
+  ADD COLUMN IF NOT EXISTS planned_unit_count INTEGER;
+CREATE INDEX IF NOT EXISTS idx_project_finance_books_contract_type
+  ON project_finance_books(contract_type);
+
+-- ==================== 案件収支 Phase A: 見積書フィールド ====================
+-- 詳細: migrations/2026-05-02_project_estimates_invoice_like_fields.sql
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS issue_date DATE;
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS valid_until DATE;
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS recipient_name TEXT;
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS honorific TEXT DEFAULT '御中'
+  CHECK (honorific IS NULL OR honorific IN ('御中', '様', ''));
+ALTER TABLE project_estimates ADD COLUMN IF NOT EXISTS estimate_number TEXT;
+CREATE INDEX IF NOT EXISTS idx_project_estimates_estimate_number
+  ON project_estimates(estimate_number)
+  WHERE estimate_number IS NOT NULL;
+
+-- ==================== 品目名マスター（見積明細のクイック選択用） ====================
+-- 詳細: migrations/2026-05-02_item_name_master.sql
+CREATE TABLE IF NOT EXISTS item_name_master (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL CHECK (category IN ('video', 'design')),
+  name TEXT NOT NULL,
+  default_unit TEXT,
+  default_unit_price INTEGER,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE item_name_master ADD COLUMN IF NOT EXISTS default_unit_price INTEGER;
+CREATE INDEX IF NOT EXISTS idx_item_name_master_active
+  ON item_name_master(is_active, category, sort_order);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_item_name_master_category_name
+  ON item_name_master(category, name);
+
+-- ============================================================
+-- クライアント削除監査ログ
+-- 詳細: migrations/2026-05-02_client_deletion_logs.sql
+-- 親 clients は削除されるため、外部参照は持たず スナップショット で残す。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS client_deletion_logs (
+  id           BIGSERIAL PRIMARY KEY,
+  client_id    UUID,
+  client_name  TEXT NOT NULL,
+  client_short TEXT,
+  reason       TEXT NOT NULL,
+  deleted_by   UUID,
+  deleted_by_name TEXT,
+  related_projects_count INT DEFAULT 0,
+  deleted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_client_deletion_logs_deleted_at
+  ON client_deletion_logs(deleted_at DESC);
+
+-- ============================================================
+-- 案件削除監査ログ
+-- 詳細: migrations/2026-05-03_project_deletion_logs.sql
+-- 親 projects は削除されるため、外部参照は持たず スナップショット で残す。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS project_deletion_logs (
+  id              BIGSERIAL PRIMARY KEY,
+  project_id      UUID,
+  project_name    TEXT NOT NULL,
+  client_id       UUID,
+  client_name     TEXT,
+  reason          TEXT NOT NULL,
+  deleted_by      UUID,
+  deleted_by_name TEXT,
+  related_creatives_count INT DEFAULT 0,
+  deleted_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_deletion_logs_deleted_at
+  ON project_deletion_logs(deleted_at DESC);
+
+-- ============================================================
+-- クリエイティブ事後修正監査ログ
+-- 詳細: migrations/2026-05-05_creative_edit_logs.sql
+-- 役割: 案件取り違え等で後から付け替えた場合の「誰が・いつ・何を・どう変えたか・なぜ」を記録
+-- ============================================================
+CREATE TABLE IF NOT EXISTS creative_edit_logs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id     UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  edited_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+  edited_by_name  TEXT,
+  edited_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  field_name      TEXT NOT NULL,
+  old_value       TEXT,
+  new_value       TEXT,
+  reason          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_creative_edit_logs_creative
+  ON creative_edit_logs(creative_id, edited_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creative_edit_logs_edited_at
+  ON creative_edit_logs(edited_at DESC);
+
+-- ============================================================
+-- 通知機能 Phase 1 段階1 — 通知基盤
+-- 詳細: migrations/2026-05-03_notification_phase1.sql
+-- 役割: notification_logs / notification_settings / posts / post_reactions / post_comments
+--      + creatives.ball_holder_id 列 + RLS + トリガー + Realtime publication 登録
+-- ============================================================
+
+-- notification_logs（通知本体）
+-- send_mode/scheduled_send_at/delivered_at/cancelled_* は migrations/2026-05-05_notification_scheduled_send.sql で追加。
+-- スコープA（人が能動的に出す通知）の予約配信に使用。システム自動通知は send_mode='immediate' のまま。
+CREATE TABLE IF NOT EXISTS notification_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notification_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  link_url TEXT,
+  meta JSONB DEFAULT '{}'::jsonb,
+  is_read BOOLEAN NOT NULL DEFAULT false,
+  read_at TIMESTAMPTZ,
+  sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  send_mode TEXT NOT NULL DEFAULT 'immediate' CHECK (send_mode IN ('immediate','scheduled')),
+  scheduled_send_at TIMESTAMPTZ NULL,
+  delivered_at TIMESTAMPTZ NULL,
+  cancelled_at TIMESTAMPTZ NULL,
+  cancelled_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 新環境向け: 既存レコードがあれば delivered_at を created_at で埋める（migration と同じバックフィル）
+UPDATE notification_logs
+   SET delivered_at = created_at
+ WHERE delivered_at IS NULL
+   AND cancelled_at IS NULL
+   AND (send_mode IS NULL OR send_mode = 'immediate');
+CREATE INDEX IF NOT EXISTS idx_notification_logs_user_unread
+  ON notification_logs(user_id, is_read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_user_created
+  ON notification_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_type
+  ON notification_logs(notification_type);
+-- 配信ワーカが「未配信・未キャンセル・予定時刻到来」を引くための部分インデックス
+CREATE INDEX IF NOT EXISTS idx_notification_logs_pending_delivery
+  ON notification_logs (scheduled_send_at)
+  WHERE delivered_at IS NULL AND cancelled_at IS NULL;
+-- 受信者向け一覧用（配信済みのみ）
+CREATE INDEX IF NOT EXISTS idx_notification_logs_user_delivered
+  ON notification_logs (user_id, created_at DESC)
+  WHERE delivered_at IS NOT NULL AND cancelled_at IS NULL;
+-- 差出人視点「自分の予約一覧」用
+CREATE INDEX IF NOT EXISTS idx_notification_logs_sender_pending
+  ON notification_logs (sender_id, scheduled_send_at)
+  WHERE delivered_at IS NULL AND cancelled_at IS NULL;
+
+-- notification_settings（受信ON/OFF設定。Phase 2でUI整備時に活用）
+CREATE TABLE IF NOT EXISTS notification_settings (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  ball_returned_enabled BOOLEAN NOT NULL DEFAULT true,
+  global_enabled BOOLEAN NOT NULL DEFAULT true,
+  mention_enabled BOOLEAN NOT NULL DEFAULT true,
+  post_reaction_enabled BOOLEAN NOT NULL DEFAULT true,
+  post_comment_enabled BOOLEAN NOT NULL DEFAULT true,
+  sos_enabled BOOLEAN NOT NULL DEFAULT true,
+  deadline_enabled BOOLEAN NOT NULL DEFAULT true,
+  assignment_enabled BOOLEAN NOT NULL DEFAULT true,
+  invoice_enabled BOOLEAN NOT NULL DEFAULT true,
+  browser_notification BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO notification_settings (user_id)
+SELECT id FROM users
+ON CONFLICT (user_id) DO NOTHING;
+
+-- posts（つぶやき）
+CREATE TABLE IF NOT EXISTS posts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (char_length(body) <= 1000),
+  mentioned_user_ids UUID[] DEFAULT '{}',
+  reaction_count INT NOT NULL DEFAULT 0,
+  comment_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_posts_created
+  ON posts(created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_user
+  ON posts(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_mentioned
+  ON posts USING GIN(mentioned_user_ids);
+
+-- post_reactions
+CREATE TABLE IF NOT EXISTS post_reactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reaction_type TEXT NOT NULL CHECK (reaction_type IN ('good','heart','clap','smile','surprised')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (post_id, user_id, reaction_type)
+);
+CREATE INDEX IF NOT EXISTS idx_post_reactions_post ON post_reactions(post_id);
+
+-- post_comments
+CREATE TABLE IF NOT EXISTS post_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (char_length(body) <= 500),
+  mentioned_user_ids UUID[] DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_post_comments_post
+  ON post_comments(post_id, created_at);
+
+-- creatives.ball_holder_id（現ボール保持者キャッシュ）
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS ball_holder_id UUID REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_creatives_ball_holder
+  ON creatives(ball_holder_id);
+
+-- RLS
+ALTER TABLE notification_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notification_select_own ON notification_logs;
+CREATE POLICY notification_select_own ON notification_logs
+  FOR SELECT USING (user_id = auth.uid());
+DROP POLICY IF EXISTS notification_update_own ON notification_logs;
+CREATE POLICY notification_update_own ON notification_logs
+  FOR UPDATE USING (user_id = auth.uid());
+
+ALTER TABLE notification_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notification_settings_select_own ON notification_settings;
+CREATE POLICY notification_settings_select_own ON notification_settings
+  FOR SELECT USING (user_id = auth.uid());
+DROP POLICY IF EXISTS notification_settings_update_own ON notification_settings;
+CREATE POLICY notification_settings_update_own ON notification_settings
+  FOR UPDATE USING (user_id = auth.uid());
+
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS posts_select_all ON posts;
+CREATE POLICY posts_select_all ON posts
+  FOR SELECT USING (deleted_at IS NULL);
+DROP POLICY IF EXISTS posts_insert_own ON posts;
+CREATE POLICY posts_insert_own ON posts
+  FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS posts_update_own ON posts;
+CREATE POLICY posts_update_own ON posts
+  FOR UPDATE USING (user_id = auth.uid());
+
+ALTER TABLE post_reactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS post_reactions_select_all ON post_reactions;
+CREATE POLICY post_reactions_select_all ON post_reactions
+  FOR SELECT USING (true);
+DROP POLICY IF EXISTS post_reactions_insert_own ON post_reactions;
+CREATE POLICY post_reactions_insert_own ON post_reactions
+  FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS post_reactions_delete_own ON post_reactions;
+CREATE POLICY post_reactions_delete_own ON post_reactions
+  FOR DELETE USING (user_id = auth.uid());
+
+ALTER TABLE post_comments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS post_comments_select_all ON post_comments;
+CREATE POLICY post_comments_select_all ON post_comments
+  FOR SELECT USING (deleted_at IS NULL);
+DROP POLICY IF EXISTS post_comments_insert_own ON post_comments;
+CREATE POLICY post_comments_insert_own ON post_comments
+  FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS post_comments_update_own ON post_comments;
+CREATE POLICY post_comments_update_own ON post_comments
+  FOR UPDATE USING (user_id = auth.uid());
+
+-- トリガー: ball_holder_id 変化で自動通知発火
+CREATE OR REPLACE FUNCTION notify_ball_returned()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.ball_holder_id IS DISTINCT FROM OLD.ball_holder_id
+     AND NEW.ball_holder_id IS NOT NULL THEN
+    INSERT INTO notification_logs (
+      user_id, notification_type, title, body, link_url, meta, sender_id
+    ) VALUES (
+      NEW.ball_holder_id,
+      'ball_returned',
+      'ボールが返ってきました',
+      COALESCE(NEW.file_name, 'クリエイティブ') || 'のボールが返ってきました',
+      '/creatives/' || NEW.id,
+      jsonb_build_object(
+        'creative_id', NEW.id,
+        'creative_name', NEW.file_name,
+        'previous_status', OLD.status,
+        'new_status', NEW.status
+      ),
+      OLD.ball_holder_id
+    );
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_creatives_ball_returned ON creatives;
+CREATE TRIGGER trg_creatives_ball_returned
+AFTER UPDATE OF ball_holder_id ON creatives
+FOR EACH ROW EXECUTE FUNCTION notify_ball_returned();
+
+-- トリガー: posts のリアクション数自動カウント
+CREATE OR REPLACE FUNCTION update_post_reaction_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE posts SET reaction_count = reaction_count + 1
+    WHERE id = NEW.post_id;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE posts SET reaction_count = GREATEST(reaction_count - 1, 0)
+    WHERE id = OLD.post_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_post_reactions_count ON post_reactions;
+CREATE TRIGGER trg_post_reactions_count
+AFTER INSERT OR DELETE ON post_reactions
+FOR EACH ROW EXECUTE FUNCTION update_post_reaction_count();
+
+-- トリガー: posts のコメント数自動カウント
+CREATE OR REPLACE FUNCTION update_post_comment_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE posts SET comment_count = comment_count + 1
+    WHERE id = NEW.post_id;
+  ELSIF TG_OP = 'UPDATE'
+        AND NEW.deleted_at IS NOT NULL
+        AND OLD.deleted_at IS NULL THEN
+    UPDATE posts SET comment_count = GREATEST(comment_count - 1, 0)
+    WHERE id = NEW.post_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_post_comments_count ON post_comments;
+CREATE TRIGGER trg_post_comments_count
+AFTER INSERT OR UPDATE ON post_comments
+FOR EACH ROW EXECUTE FUNCTION update_post_comment_count();
+
+-- Supabase Realtime publication 登録（重複は無視）
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE notification_logs;
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN undefined_object THEN NULL;
+  END;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE posts;
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN undefined_object THEN NULL;
+  END;
+END $$;
+
+-- ==================== project_tags ====================
+-- 案件×タグ の多対多。主カテゴリ (projects.primary_category_id) と併用する補助タグ。
+-- migration: 2026-05-05_project_categories_and_tags.sql
+CREATE TABLE IF NOT EXISTS project_tags (
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  tag        TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (project_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_project_tags_tag        ON project_tags(tag);
+CREATE INDEX IF NOT EXISTS idx_project_tags_project_id ON project_tags(project_id);
+ALTER TABLE project_tags ENABLE ROW LEVEL SECURITY;
+
+-- ==================== project_estimate_lines (ADR 002 + 004 + 005) ====================
+-- 詳細: docs/design/decisions/002-estimate-lines-unify-deliverable-rates.md
+--       docs/design/decisions/004-pricing-extensibility.md
+--       docs/design/decisions/005-estimate-deliverable-lifecycle.md
+-- migration: migrations/2026-05-06_estimate_lines_and_fixed_items.sql
+--
+-- 見積行と deliverable を一本化する縦持ちテーブル（Stage 1 では新設のみ、
+-- 旧 project_rates / project_category_rates / project_director_rates / project_producer_rates /
+-- project_sub_directors / project_sub_producers / project_rate_extras / project_client_fees からの
+-- データ移行は Stage 2 で別 migration で実施）。
+-- Stage 2 (2026-05-06_migrate_rates_to_lines.sql) で旧 rates 系から自動バックフィル済み。
+--   - project_rates, project_director_rates, project_producer_rates → lines + line_costs
+--   - project_rate_extras → project_fixed_items(item_type='expense')
+--   - project_client_fees.{video|design}_unit_price → lines.client_unit_price
+--   - project_client_fees.fixed_budget (use_fixed_budget=TRUE) → project_fixed_items(item_type='revenue')
+--   - creatives.line_id は (project_id, category_id) + rank で best-effort バックフィル
+CREATE TABLE IF NOT EXISTS project_estimate_lines (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id         UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  category_id        UUID REFERENCES creative_categories(id),
+  name               TEXT,
+  planned_count      INTEGER NOT NULL DEFAULT 0,
+  client_unit_price  INTEGER NOT NULL DEFAULT 0,
+  sort_order         INTEGER,
+  currency           CHAR(3) NOT NULL DEFAULT 'JPY',
+  tax_included       BOOLEAN NOT NULL DEFAULT TRUE,
+  -- ADR 005: draft|estimated|contracted|in_progress|delivered|cancelled|rejected
+  status             TEXT NOT NULL DEFAULT 'draft',
+  status_changed_at  TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pel_project  ON project_estimate_lines(project_id);
+CREATE INDEX IF NOT EXISTS idx_pel_status   ON project_estimate_lines(status);
+CREATE INDEX IF NOT EXISTS idx_pel_category ON project_estimate_lines(category_id);
+ALTER TABLE project_estimate_lines ENABLE ROW LEVEL SECURITY;
+
+-- ==================== project_estimate_line_costs (ADR 002 + 003 + 004) ====================
+-- 1 line × ロール別コストを縦持ちで保持。role_id は roles マスタ参照（ADR 003）。
+-- pricing_type: fixed_per_unit | percentage | hourly | fixed_total （ADR 004）
+CREATE TABLE IF NOT EXISTS project_estimate_line_costs (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  line_id       UUID NOT NULL REFERENCES project_estimate_lines(id) ON DELETE CASCADE,
+  role_id       UUID NOT NULL REFERENCES roles(id),
+  user_id       UUID REFERENCES users(id),
+  unit_price    INTEGER NOT NULL DEFAULT 0,
+  currency      CHAR(3) NOT NULL DEFAULT 'JPY',
+  pricing_type  TEXT NOT NULL DEFAULT 'fixed_per_unit',
+  percentage    NUMERIC(5,2),
+  actual_hours  NUMERIC(8,2),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (line_id, role_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pelc_line ON project_estimate_line_costs(line_id);
+CREATE INDEX IF NOT EXISTS idx_pelc_role ON project_estimate_line_costs(role_id);
+CREATE INDEX IF NOT EXISTS idx_pelc_user ON project_estimate_line_costs(user_id);
+ALTER TABLE project_estimate_line_costs ENABLE ROW LEVEL SECURITY;
+
+-- ==================== project_fixed_items (ADR 006) ====================
+-- 詳細: docs/design/decisions/006-project-fixed-costs.md
+-- 案件固定費・追加収入（スタジオ/機材/出張/ロケ地代等、本数非依存）。
+CREATE TABLE IF NOT EXISTS project_fixed_items (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  -- 'expense' | 'revenue'
+  item_type       TEXT NOT NULL,
+  -- 'studio' | 'equipment' | 'travel' | 'location' | 'other'
+  category        TEXT,
+  name            TEXT NOT NULL,
+  amount          INTEGER NOT NULL DEFAULT 0,
+  currency        CHAR(3) NOT NULL DEFAULT 'JPY',
+  occurred_on     DATE,
+  paid_to         TEXT,
+  paid_to_user_id UUID REFERENCES users(id),
+  -- 'planned' | 'committed' | 'incurred' | 'cancelled'
+  status          TEXT NOT NULL DEFAULT 'planned',
+  notes           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by      UUID REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_pfi_project ON project_fixed_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_pfi_status  ON project_fixed_items(status);
+ALTER TABLE project_fixed_items ENABLE ROW LEVEL SECURITY;
+
+-- creatives / invoice_items に line_id 列を追加（ADR 002 双方向参照）
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
+CREATE INDEX IF NOT EXISTS idx_creatives_line_id ON creatives(line_id);
+
+ALTER TABLE invoice_items
+  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_line_id ON invoice_items(line_id);
+
+-- ==================== team_members.leader_rank（ADR 008 Stage 1）====================
+-- チームリーダーを役職（users.role）から独立した「業務上の連絡窓口」として持つ。
+-- 'leader' は 1 チーム最大 1 人、'sub_leader' は複数可、NULL = 一般メンバー。
+ALTER TABLE team_members
+  ADD COLUMN IF NOT EXISTS leader_rank text
+  CHECK (leader_rank IS NULL OR leader_rank IN ('leader', 'sub_leader'));
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_team_members_leader
+  ON team_members(team_id) WHERE leader_rank = 'leader';
+CREATE INDEX IF NOT EXISTS idx_team_members_team_leader_rank
+  ON team_members(team_id, leader_rank) WHERE leader_rank IS NOT NULL;
+
+-- ==================== 案件スケジュール / フェーズ・タスク（ADR 010 Phase 1）====================
+-- 詳細: docs/design/decisions/010-project-schedule-tasks.md
+-- migration: migrations/2026-05-09_project_schedule_phase1.sql（本番適用済み PR #413）
+-- 案件単位の工程・タスク・マイルストーン管理。クリエイティブ単位の進捗管理
+-- (creative_status_templates) とは分離する。
+
+CREATE TABLE IF NOT EXISTS project_phase_templates (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id     UUID NOT NULL REFERENCES creative_categories(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  description     TEXT,
+  is_default      BOOLEAN NOT NULL DEFAULT false,
+  is_active       BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_phase_templates_category
+  ON project_phase_templates(category_id) WHERE is_active;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_phase_templates_category_name
+  ON project_phase_templates(category_id, name);
+ALTER TABLE project_phase_templates ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS project_phase_template_items (
+  id                              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id                     UUID NOT NULL REFERENCES project_phase_templates(id) ON DELETE CASCADE,
+  parent_item_id                  UUID REFERENCES project_phase_template_items(id) ON DELETE CASCADE,
+  is_phase_header                 BOOLEAN NOT NULL DEFAULT false,
+  title                           TEXT NOT NULL,
+  default_offset_days_from_start  INT,
+  default_duration_days           INT,
+  default_assignee_type           TEXT NOT NULL DEFAULT 'us'
+    CHECK (default_assignee_type IN ('us','client','meeting','milestone')),
+  is_milestone                    BOOLEAN NOT NULL DEFAULT false,
+  default_priority                TEXT NOT NULL DEFAULT 'normal'
+    CHECK (default_priority IN ('low','normal','high')),
+  default_note                    TEXT,
+  sort_order                      INT NOT NULL DEFAULT 0,
+  created_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_phase_template_items_template
+  ON project_phase_template_items(template_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_project_phase_template_items_parent
+  ON project_phase_template_items(parent_item_id) WHERE parent_item_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_phase_template_items_sort
+  ON project_phase_template_items(template_id, sort_order);
+ALTER TABLE project_phase_template_items ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS project_tasks (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id         UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  parent_task_id     UUID REFERENCES project_tasks(id) ON DELETE CASCADE,
+  is_phase_header    BOOLEAN NOT NULL DEFAULT false,
+  title              TEXT NOT NULL,
+  start_date         DATE,
+  original_end_date  DATE,        -- 元日程（変更前）
+  current_end_date   DATE,        -- 新日程（現在予定）
+  assignee_type      TEXT NOT NULL DEFAULT 'us'
+    CHECK (assignee_type IN ('us','client','meeting','milestone')),
+  assignee_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+  is_milestone       BOOLEAN NOT NULL DEFAULT false,
+  is_done            BOOLEAN NOT NULL DEFAULT false,
+  done_at            TIMESTAMPTZ,
+  priority           TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low','normal','high')),
+  note               TEXT,
+  sort_order         INT NOT NULL DEFAULT 0,
+  template_item_id   UUID REFERENCES project_phase_template_items(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_project
+  ON project_tasks(project_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_project_tasks_assignee
+  ON project_tasks(assignee_user_id)
+  WHERE assignee_user_id IS NOT NULL AND NOT is_done;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_milestone
+  ON project_tasks(current_end_date)
+  WHERE is_milestone AND NOT is_done;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_parent
+  ON project_tasks(parent_task_id) WHERE parent_task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_assignee_due
+  ON project_tasks(assignee_user_id, current_end_date)
+  WHERE assignee_user_id IS NOT NULL AND NOT is_done;
+ALTER TABLE project_tasks ENABLE ROW LEVEL SECURITY;
+
+-- projects に列追加: 工程表の起点 / 適用中テンプレ
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS scheduled_start_date DATE;
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS active_phase_template_id UUID
+  REFERENCES project_phase_templates(id) ON DELETE SET NULL;
+
+NOTIFY pgrst, 'reload schema';

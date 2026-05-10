@@ -5,15 +5,19 @@
 
 require('dotenv').config();
 const harukaRouter = require('./routes/haruka');
+// 案件収支機能（feature flag: ENABLE_PROJECT_ACCOUNTING）— Step B
+const accountingEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_PROJECT_ACCOUNTING || '').toLowerCase());
+const accountingRouter = accountingEnabled ? require('./routes/accounting') : null;
 const supabase = require('./supabase');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const crypto = require('crypto');
 const axios = require('axios');
 const path = require('path');
 
 const { members, projects, projectMemos, editorRanks, projectRates, deliveries, comments, knowledge, invoices, assets, videoComments, users, invitations, uid } = require('./db/db');
-const { passport: passportInstance, requireAuth, requireLevel, requirePermission, ROLES } = require('./auth');
+const { passport: passportInstance, requireAuth, requireLevel, requirePermission, isSuperAdminUser, ROLES } = require('./auth');
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -29,21 +33,76 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const TAX_RATE = 0.10;
 
+// ==================== ビルド ID ====================
+// クライアント (`/api/build-info` + `X-Server-Build` ヘッダ) から参照される。
+// Railway のビルド時環境変数があればそれを優先。なければ起動時に git から取得。
+// git も失敗したら起動時刻を fallback として使い、いずれも module-level でキャッシュ。
+const BUILD_ID = (() => {
+  const fromEnv = process.env.RAILWAY_GIT_COMMIT_SHA
+               || process.env.GIT_COMMIT_SHA
+               || process.env.COMMIT_SHA
+               || process.env.GIT_COMMIT
+               || process.env.SOURCE_VERSION;
+  if (fromEnv) return String(fromEnv).slice(0, 12);
+  try {
+    const { execSync } = require('child_process');
+    const sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    if (sha) return sha;
+  } catch (_) { /* git 取れなければ次の fallback */ }
+  return Date.now().toString();
+})();
+console.log(`[build] BUILD_ID = ${BUILD_ID}`);
+
 // ==================== ミドルウェア ====================
 // ミドルウェア: リクエストとレスポンスの間で処理を挟む仕組み
 
+// 壊さない範囲のセキュリティヘッダのみ。CSP は既存のインライン script/style を割るため
+// 本 PR では入れない（report-only 含めて段階導入は別 PR で扱う）。
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
+  // HSTS は Railway 経由で常時 HTTPS のため有効化したいが、独自ドメイン側で
+  // HTTPS 切れに弱いユーザーが残る可能性があるので別 PR で扱う
+  strictTransportSecurity: false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  frameguard: { action: 'deny' },
+}));
+
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentials: true }));
+
+// すべてのレスポンスに X-Server-Build ヘッダを付与（クライアント側のバージョン照合用）
+app.use((req, res, next) => {
+  res.setHeader('X-Server-Build', BUILD_ID);
+  next();
+});
+
+// クライアント (haruka.html) が起動時に呼ぶ軽量エンドポイント。
+// 認証不要（ヘッダ値と同じ build しか返さない）。404 ノイズを止めるための実装。
+// セッション/認証 middleware より前に登録して負荷を避ける。
+app.get('/api/build-info', (req, res) => {
+  res.json({ build: BUILD_ID });
+});
 
 // セッション設定
 // セッション: ログイン状態をサーバー側で管理する仕組み
+// 本番では SESSION_SECRET 必須。未設定で起動するとフォールバック値で署名されてしまうため即時失敗させる。
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (process.env.NODE_ENV === 'production' && !SESSION_SECRET) {
+  console.error('[FATAL] SESSION_SECRET is required in production. Refusing to start.');
+  process.exit(1);
+}
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
-  secret: process.env.SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
+  secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production', // 本番ではHTTPS必須
     httpOnly: true, // JavaScriptからCookieを読めないようにしてXSS対策
+    sameSite: 'lax', // 通常の遷移ログインを壊さずに CSRF 耐性を底上げ
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7日間
   },
 }));
@@ -73,8 +132,13 @@ function getClientIP(req) {
   return normalizeIP(req.ip || req.connection?.remoteAddress || '');
 }
 
-// 自分のIPを確認するためのデバッグエンドポイント（認証不要）
+// 自分のIPを確認するためのデバッグエンドポイント。
+// 認証不要だった頃は AUTO_LOGIN_IPS / AUTO_LOGIN_EMAIL 等の内部設定を未認証で返していたため、
+// 最高管理者（admin かつ SUPER_ADMIN_EMAILS）以外は 404 扱いに変更。
 app.get('/auth/debug-ip', async (req, res) => {
+  if (!req.isAuthenticated?.() || !isSuperAdminUser(req.user)) {
+    return res.status(404).json({ error: 'Not Found' });
+  }
   const ip = getClientIP(req);
   const cookieOff = !!(req.headers.cookie && /(?:^|;\s*)auto_login_off=1/.test(req.headers.cookie));
   let user_lookup = null;
@@ -121,7 +185,12 @@ app.use(async (req, res, next) => {
       if (err) { console.log(`[AUTO-LOGIN] login error:`, err.message); return next(); }
       console.log(`[AUTO-LOGIN] success: ${user.email} from IP ${ip}`);
       // ログイン直後はログイン画面に来た場合 haruka.html へリダイレクト
-      if (req.path === '/login.html' || req.path === '/') return res.redirect('/haruka.html');
+      // ?next=/haruka.html?creative=xxx 形式で指定があれば、許可済みパターンに限り尊重する
+      if (req.path === '/login.html' || req.path === '/') {
+        const nextParam = String(req.query?.next || '');
+        const safeNext = /^\/haruka\.html(\?|$)/.test(nextParam) ? nextParam : '/haruka.html';
+        return res.redirect(safeNext);
+      }
       next();
     });
   } catch(e) {
@@ -132,7 +201,9 @@ app.use(async (req, res, next) => {
 
 // Webhookエンドポイントはraw bodyが必要なため、先に定義
 app.use('/webhook/frameio', express.raw({ type: 'application/json' }));
-app.use(express.json());
+// limit を上げる: バグ報告のスクリーンショット (data URL) が 1〜数 MB になるため。
+// デフォルト 100kb だと bug_reports POST が 413 (request entity too large) で失敗する。
+app.use(express.json({ limit: '15mb' }));
 
 // last_seen_at 更新ミドルウェア（認証済みAPIリクエストのみ、5分ごと）
 const _lastSeenCache = new Map();
@@ -150,9 +221,37 @@ app.use('/api/', (req, res, next) => {
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
 
+// 通知API（Phase 1 段階1）
+// /api/notifications 配下: 一覧 / 未読件数 / 既読化 / 全体通知発火
+app.use('/api/notifications', require('./routes/notifications'));
+
+// クライアント設定 API（Phase 1 段階2）
+// Supabase Realtime 接続用に anon key（公開可能な公開鍵）と URL をフロントへ渡す。
+// service_role キーは絶対に渡さない。anon キーは Supabase の RLS（行レベルセキュリティ）で
+// 守られる前提のフロント公開鍵で、ブラウザに置いて問題ないキー。
+app.get('/api/config', requireAuth, (req, res) => {
+  res.json({
+    supabase_url: process.env.SUPABASE_URL || '',
+    supabase_anon_key: process.env.SUPABASE_ANON_KEY || '',
+  });
+});
+
+// 案件収支 API（feature flag が有効な時のみマウント。flag OFF 時はそもそもエンドポイントが存在しない）
+if (accountingRouter) {
+  app.use('/api/accounting', accountingRouter);
+  console.log('[accounting] feature flag ENABLED — /api/accounting/* available');
+} else {
+  console.log('[accounting] feature flag DISABLED — set ENABLE_PROJECT_ACCOUNTING=true to enable');
+}
+
 // login.html: 認証済みユーザーは haruka.html へリダイレクト
+// （?next=/haruka.html?creative=xxx で来た場合はディープリンク先へ）
 app.get('/login.html', (req, res) => {
-  if (req.isAuthenticated?.()) return res.redirect('/haruka.html');
+  if (req.isAuthenticated?.()) {
+    const nextParam = String(req.query?.next || '');
+    const safeNext = /^\/haruka\.html(\?|$)/.test(nextParam) ? nextParam : '/haruka.html';
+    return res.redirect(safeNext);
+  }
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 // ルート: 認証済みなら haruka.html、未認証なら login.html
@@ -533,11 +632,11 @@ app.post('/api/knowledge/briefing', async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   const allKnowledge = knowledge.all({ projectId, category });
-  if (!allKnowledge.length) return res.json({ briefing: 'まだナレッジがありません。', items: [] });
+  if (!allKnowledge.length) return res.json({ briefing: 'まだ学びが集まっていません。', items: [] });
 
   if (!apiKey) {
     return res.json({
-      briefing: `${allKnowledge.length}件のナレッジがあります。作業前に確認してください。`,
+      briefing: `学び広場に${allKnowledge.length}件の学びがあります。作業前に確認してください。`,
       items: allKnowledge.slice(0, 5),
     });
   }
@@ -553,7 +652,7 @@ app.post('/api/knowledge/briefing', async (req, res) => {
       messages: [{
         role: 'user',
         content: `動画編集者への作業前ブリーフィングを作成してください。
-以下は過去に指摘されたナレッジです：
+以下は学び広場に蓄積されている過去の指摘です：
 
 ${knowledgeText}
 
@@ -587,8 +686,8 @@ app.post('/api/knowledge/weekly-report', async (req, res) => {
   if (!apiKey || !weekItems.length) {
     return res.json({
       report: weekItems.length
-        ? `今週 ${weekItems.length}件の指摘がナレッジ化されました。`
-        : '今週のナレッジはありません。',
+        ? `今週 ${weekItems.length}件の指摘が学び広場に追加されました。`
+        : '今週の学びはありません。',
       items: weekItems,
     });
   }
@@ -605,7 +704,7 @@ app.post('/api/knowledge/weekly-report', async (req, res) => {
         role: 'user',
         content: `動画編集チームの週次品質レポートを日本語で作成してください。
 
-今週のナレッジ（${weekItems.length}件）:
+今週の学び（${weekItems.length}件）:
 ${summary}
 
 以下の構成でまとめてください：
@@ -1014,6 +1113,63 @@ app.get('*', (req, res, next) => {
     res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
   });
 });
+
+// ==================== 自動エラー通知（サーバ側） ====================
+// 1) Express error-handling middleware
+//    next(err) されたエラーのうち 5xx 相当を Slack に流す。
+//    既存の res.status(500).json(...) は握りつぶさない（middleware には渡らない）。
+//    HTTP ループを避けるため /api/haruka/auto-error 経由ではなく直接ヘルパを呼ぶ。
+// 2) process-level handlers
+//    uncaughtException / unhandledRejection を Slack へ。
+//    通知後もプロセスは継続（既存挙動の維持）。notify 内部は完全に try/catch されている。
+const { notifyAutoError } = require('./notifications');
+app.use((err, req, res, next) => {
+  try {
+    const status = (err && (err.status || err.statusCode)) || 500;
+    if (status >= 500) {
+      // 投げっぱなしで OK（fire & forget）。await しない。
+      notifyAutoError({
+        source: 'server',
+        kind: 'express-error',
+        message: err?.message || String(err),
+        stack: err?.stack || null,
+        url: req?.originalUrl || null,
+        apiPath: req?.originalUrl || null,
+        statusCode: status,
+        userEmail: req?.user?.email || null,
+        userAgent: req?.headers?.['user-agent'] || null,
+      }).catch(() => {});
+    }
+  } catch (_) { /* notify 失敗で 2 重例外にしない */ }
+  // レスポンス未送信ならデフォルト挙動（500）に倒す
+  if (res.headersSent) return next(err);
+  res.status((err && (err.status || err.statusCode)) || 500)
+     .json({ error: err?.message || 'Internal Server Error' });
+});
+
+process.on('uncaughtException', (err) => {
+  try { console.error('[uncaughtException]', err); } catch (_) {}
+  try {
+    notifyAutoError({
+      source: 'server',
+      kind: 'uncaughtException',
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    }).catch(() => {});
+  } catch (_) { /* 通知失敗でプロセスを巻き込まない */ }
+});
+process.on('unhandledRejection', (reason) => {
+  try { console.error('[unhandledRejection]', reason); } catch (_) {}
+  try {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    notifyAutoError({
+      source: 'server',
+      kind: 'unhandledRejection',
+      message: err.message,
+      stack: err.stack || null,
+    }).catch(() => {});
+  } catch (_) { /* 通知失敗でプロセスを巻き込まない */ }
+});
 // ==================== 初期管理者作成 ====================
 async function seedAdminIfNeeded() {
   try {
@@ -1064,5 +1220,19 @@ const runSchemaSync = require('./db/migrate');
   ╚═══════════════════════════════════════╝
   `);
     await seedAdminIfNeeded();
+    // 通知 Phase 1: 予約配信ワーカを起動（1分ごとに scheduled_send_at <= now の予約を配信扱いにする）
+    try {
+      const { startNotificationScheduler } = require('./workers/notification-scheduler');
+      startNotificationScheduler();
+    } catch (e) {
+      console.error('[startup] notification-scheduler 起動失敗:', e.message);
+    }
+    // バグ報告: 24h トリアージSLA チェッカ（1時間ごとに admin へ通知）
+    try {
+      const { startBugTriageSlaChecker } = require('./workers/bug-triage-sla-checker');
+      startBugTriageSlaChecker();
+    } catch (e) {
+      console.error('[startup] bug-triage-sla-checker 起動失敗:', e.message);
+    }
   });
 })();

@@ -19,11 +19,67 @@
 
 ## 開発の進め方ルール（必ず守ること）
 
+### ⭐ 設計判断は docs/design/ に集約（必要時だけ読む）
+スレッドごとに設計判断がバラつく問題を防ぐため、ドメイン設計の議論・判断は [docs/design/](docs/design/) を単一の正としている。
+
+**読むべきタイミング（それ以外は読まない）**
+- スキーマ変更・新テーブル・新概念を扱うとき
+- 「どこに列を足すか」「どのテーブルが正か」迷ったとき
+- 設計の方針を聞かれたとき・複数案で迷ったとき
+
+**読まなくて良いケース**: バグ修正、UI微調整、文言変更、既存機能の軽い拡張
+
+**ADR インデックス（pinpoint で該当ファイルだけ読む）**
+| 触る領域・キーワード | 読むファイル |
+|---|---|
+| 商品 / 訴求軸 / appeal_axes / products / ファイル名生成 | [decisions/001](docs/design/decisions/001-creative-first-product-appeal.md) |
+| 見積明細 / 単価 / rates / 粗利 / deliverable / project_*_rates | [decisions/002](docs/design/decisions/002-estimate-lines-unify-deliverable-rates.md) |
+| ロール / users.role / 権限 / roles マスタ | [decisions/003](docs/design/decisions/003-roles-as-master-data.md) |
+| ⭐ **VIEW AS / 権限制御 / 出し分け / currentUser.role / req.user.role / requirePermission / hasPermission / effectiveRole / X-View-As** — 権限・ロール・UI出し分けに**少しでも触れる実装**は本ADRのチェックリストを**必ず通してから PR を出す**（再発バグ抑止のため例外なし） | [decisions/015](docs/design/decisions/015-view-as-development-checklist.md)（**必読・必須**） |
+| 通貨 / 課金タイプ / 時間単価 / %歩合 | [decisions/004](docs/design/decisions/004-pricing-extensibility.md) |
+| 見積ステータス / 契約状態 / 却下 / 進行管理 | [decisions/005](docs/design/decisions/005-estimate-deliverable-lifecycle.md) |
+| 案件固定費 / スタジオ / 機材 / 経費 / project_client_fees | [decisions/006](docs/design/decisions/006-project-fixed-costs.md) |
+| ファイル名テンプレート / filename_templates / トークン / 案件別命名規約 | [decisions/007](docs/design/decisions/007-filename-templates.md) |
+| 案件スケジュール / フェーズ / タスク / ガント / LP / HP / マイルストーン / 工程表 | [decisions/010](docs/design/decisions/010-project-schedule-tasks.md) |
+| カテゴリ別フィールド可視性 / creative_category_fields / カスタム項目 / 詳細モーダル | [decisions/012](docs/design/decisions/012-creative-category-field-visibility.md) |
+| 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
+| ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
+| 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
+| ADR Status遷移 / migration 連携 / レビュー期限 | [lifecycle.md](docs/design/lifecycle.md) |
+| ADR の書き方・運用ルール | [README.md](docs/design/README.md) |
+
+**運用**
+- 設計議論をしたら `docs/design/` に追記。memory・CLAUDE.md には書かない
+- 矛盾を見つけたら実装を止めてユーザーに報告
+- 新規判断は `decisions/NNN-<topic>.md` を ADR 形式（Status / Context / Decision / Consequences / Alternatives）で作成
+
 ### 原則
 - ユーザーから開発依頼が来たら、**機能単位に分解してサブエージェントに並行で振る**
 - 各エージェントは対応する worktree フォルダで作業させる
 - 複数機能にまたがる場合は **複数エージェントを同時起動**（`run_in_background: true`）
 - 全エージェント完了後、**PRを作成してレビュー → squash merge**（main直pushは禁止）
+
+### ⭐ ユーザー実行が必要な SQL は **必ずチャット本文に全文貼る**（強制）
+migration を含む PR を作る／本番適用が必要な SQL を提示するときは、**「PR本文を見て」「migrations/xxx.sql を見て」では絶対にダメ**。チャット本文に \`\`\`sql ... \`\`\` で全文をコードブロック表示すること。
+- 対象: `migrations/**`、`pending-migrations/**`、PR 本文、ユーザー手作業を伴う SQL すべて
+- 理由: ユーザーが Supabase 管理画面で実行する際、チャットからコピペで貼れる状態でないと事故が起きる。PR をクリックして本文を辿るのは負担
+- 例外なし。短い ALTER だけでも貼る。長くてもチャット幅を理由に省略しない
+- サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker）も例外なく従う
+
+### ⭐ UI/レイアウト/比較は **必ず ASCII 絵コンテで提示**（強制）
+画面追加・配置変更・並び順・複数案比較の説明は、**文章だけでは絶対にダメ**。`AskUserQuestion` の選択肢や提案テキストの中に ASCII の枠線で完成形を描くこと。
+- 対象: モーダル追加、セクション追加、タブ操作、配置変更、複数案の見せ方比較
+- 例:
+  ```
+  ┌─ クリエイティブ詳細 ───────────────┐
+  │ 💰 単価編集（管理者のみ）          │
+  │  クライアント請求額  [12,000] 円   │
+  │  ディレクター 山田太郎 [4,000] 円  │
+  │  [単価を保存]                     │
+  └────────────────────────────────────┘
+  ```
+- ロジックの説明は文章で OK。UI は必ず絵コンテ
+- サブエージェントへの実装委託指示にも絵コンテを必ず含める
 
 ### タスク振り分けの基準
 | 依頼内容 | 担当branch |
@@ -35,6 +91,33 @@
 | 請求・インボイス関連 | feature/invoices |
 | スマホUI（レスポンシブ） | feature/mobile |
 | PC版共有ロジック・サーバー | feature/pc |
+
+## 主要既存機能の地図（実装前の必読チェック）
+
+新機能依頼が来たら、設計書を読む**前に**この表で「同名/類似機能の既存実装」を確認する。
+重複・競合があれば「設計書通りの新規実装」「既存拡張」「設計書修正」のどれで進めるかをまずユーザーに提示する。
+
+| 領域 | 主要テーブル | バックエンド | フロント | 補足 |
+|---|---|---|---|---|
+| 社内SNS（つぶやき） | `tweets` / `tweet_likes` / `tweet_reactions` / `tweet_comments` | `routes/haruka.js` の `/api/tweets/*` | `public/haruka.html` の **独立タブ `#page-tweets`** + `loadTweetsPage()` + 投稿モーダル `modal-tweet-compose` | リベシティ風タイムライン（PR #209）。ダッシュボード内 `dash-tweets` は廃止 |
+| 全体連絡（旧版） | `announcements` / `announcement_acks` | `routes/haruka.js` | `public/haruka.html` の `modal-announcement-status` | 既読確認つきの全体周知。新通知系（`notification_logs`）と並走 |
+| 通知（Phase 1） | `notification_logs` / `notification_settings` | `routes/notifications.js` + `utils/notification.js` | `public/js/notification-bell.js` / `notification-panel.js` / `notification-realtime.js` / `notification-card.js` | リベシティ風 5エンドポイント。Realtime購読あり |
+| 通知（旧設計の遺物） | `posts` / `post_reactions` / `post_comments` | なし | なし | migration `2026-05-03_notification_phase1.sql` で作成されたが**未使用**。Phase 1 段階4 で `tweets` 拡張に方針変更したため塩漬け |
+| クリエイティブ | `creatives` / `creative_assignments` / `creative_versions` (ADR 008 Phase 0 で新設) | `routes/haruka.js` の `/api/creatives/*` | `public/haruka.html` クリエイティブタブ | `ball_holder_id` がボール保持者キャッシュ。`creative_versions` は修正サイクル履歴の正規化テーブル（v0=初稿）。Phase 1 で routes/utils 連携予定 |
+| 案件 | `projects` / `project_deletion_logs` | `routes/haruka.js` | `public/haruka.html` 案件タブ | 旧単価モーダル (`modal-rates` / director-rates / producer-rates / client-fee) は Stage 4d (PR #TBD) で削除済。単価編集はすべて案件編集モーダルの「成果物グループ」「固定費・追加収入」セクションへ |
+| 案件カテゴリ (Stage A) | `creative_categories` / `creative_status_templates` / `creative_status_template_items` / `project_category_rates` / `creative_category_fields` / `creative_custom_field_values` | `routes/haruka.js` の `/api/categories/*` `/api/status-templates` `/api/categories/:id/fields` `/api/creatives/:id/custom-fields` | `public/haruka.html` の **設定タブ「🏷️ カテゴリ管理」** + 案件モーダルの category select + クリエイティブ詳細モーダルのフィールド可視性 (`applyCreativeDetailFieldVisibility`) | カテゴリ追加だけで UI/DB が拡張される設計（PR #TBD・Stage A）。詳細モーダルのフィールドはカテゴリ別に可視性/ラベル/カスタム項目を管理（ADR 012）。Stage B/C で旧 `project_type` / `RATE_CREATIVE_TYPES` 削除予定 |
+| 案件 line / 単価 (Stage 1+) | `project_estimate_lines` / `project_estimate_line_costs` / `project_fixed_items` | `routes/haruka.js` の `/api/projects/:id/lines` (Stage 4a) / `/api/projects/:id/lines/:line_id/costs` (Stage 4b) / `/api/projects/:id/fixed-items` (Stage 4c) / `utils/pricing.js` | `public/haruka.html` 案件編集モーダル「成果物グループ」セクション（line_costs アコーディオン含む・Stage 4a/4b）+「固定費・追加収入」セクション（Stage 4c） | ADR 002+003+004+005+006。lines は見積行 兼 deliverable。`status IN ('contracted','in_progress','delivered')` のみ集計対象。line_costs は role_id 必須（roles マスタ）、pricing_type で 4 課金方式（fixed_per_unit/percentage/hourly/fixed_total）。**Stage 4d (PR #TBD) で旧単価モーダルと旧 rates / director-rates / producer-rates / client-fee の write endpoint を削除済**。旧テーブル本体 (`project_rates` / `project_director_rates` / `project_producer_rates` / `project_client_fees` / `project_rate_extras`) の DROP は Stage 6 で実施。invoices flow (`/invoices/preview-items`, `/invoices/generate`) のみ Stage 6 まで旧テーブルを read 参照する |
+| クライアント・商材 | `clients` / `products` / `appeal_axes` (削除予定) | `routes/haruka.js` | `public/haruka.html` クライアントタブ | **Stage C で products / appeal_axes / project_products / project_appeal_axes 系を完全削除予定**。Stage A では商材/訴求軸タブ・マスター画面の HTML を非表示化済み |
+| メンバー | `users` / `user_stats` / `teams` / `team_members` | `routes/haruka.js` | `public/haruka.html` メンバータブ | `users.role` で admin/secretary/producer/producer_director/director/editor/designer |
+| 請求 | `invoices` / `client_invoices` | `routes/haruka.js` の `/api/invoices/*` `/api/client-invoice/*` | `public/haruka.html` 請求タブ | `migrations/2026-04-28_invoice_items_step1.sql` 進行中 |
+| 自動エラー通知 | - | `routes/haruka.js` の `/api/error-report` | `public/js/auto-error-report.js` | 500/uncaught/window.onerror を Slack 投稿（PR #197）|
+
+**運用ルール**
+- 「○○機能を追加して」と言われた瞬間、まず上表とコードベースを `grep` で確認する
+- 設計書（`docs/notification/*.md` 等）を全文読み込むのは、既存重複が無いと確認できてから
+- 上表に新領域を追加した PR を作るときは、この表も同 PR で更新する
+
+---
 
 ## スマホチャット（mobile）の実装範囲（厳密）
 
@@ -93,11 +176,35 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - **影響範囲（mobile/PC/両方）を必ず記載**
 - 両方に影響する PR は関連chatのレビューを受ける
 
+### PR タイトルの先頭に `#番号` を付ける（必須）
+- `gh pr create` 直後に返ってきた PR 番号を使い、**必ず** `gh pr edit <N> --title "#<N> <元タイトル>"` でタイトル先頭に番号を追記する
+- 例: `#345 feat(projects): ファイル名テンプレのカスタムトークン key を自動採番化（UX改善）`
+- 理由: Railway のデプロイ一覧 / Slack 等でタイトルが長いと末尾の `(#N)` が truncate されて PR 特定不能になる。先頭にあれば必ず見える
+- squash merge 時に GitHub が末尾にも `(#N)` を再付与するが、重複は許容（先頭が見えることが優先）
+- サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker など）も例外なく従うこと
+- **CI セーフティネット**: `.github/workflows/pr-title-prefix.yml` が `pull_request: opened/reopened/edited` で発火し、先頭に `#<PR番号>` が無ければ自動で付与する（取りこぼし防止）。ただしこれは保険であり、エージェントは自力で `gh pr edit --title` するのが原則
+
 ### 自動マージ（auto-merge ラベル）
 - PR に `auto-merge` ラベルを付与すると、CI 通過後に **自動で squash merge + ブランチ削除** されます（`.github/workflows/auto-merge.yml`）
 - 仕組み: GitHub の Auto-merge 機能（`gh pr merge --squash --auto --delete-branch`）を有効化するだけで、即マージではない（CI が通るまで待つ）
 - ブランチ保護でCI通過必須にしている場合、CIが通った瞬間にマージされる
 - 解除したいときは `auto-merge` ラベルを外す、または `gh pr merge <PR> --disable-auto` で解除
+
+### Verup情報（必須）— ユーザー向け改訂履歴の自動掲載
+- すべての PR は **PR本文の `## 🆙 Verup情報` セクションを記入**して出すこと（テンプレに含まれている）
+- `main` にマージされた瞬間に `.github/workflows/version-log-from-merged-pr.yml` が走り、Supabase の `version_logs` に INSERT される。**ヘッダーの🆙アイコン → Verup情報 一覧** で誰でも見える状態になる
+- 必須フィールド: `画面 / 機能 / 修正`（空欄だと自動登録されない）
+- 任意: `変更前 / 変更後 / 便利なシーン / 種別 / 重要度 / 対象ロール / タグ / バージョン / 報告者`
+- **`報告者:` 欄の運用**: 指示の冒頭などに「報告者：◯◯」と**明示された時だけ**記入する。指定が無ければ空欄でよい（≠ハル本人と推測して埋めない）。値は `users.nickname` か `users.full_name`（スペース有無どちらも可）と完全一致する文字列のみ — 略称・愛称・苗字だけは silent に null になる。後追いで紐付けたい場合は Verup情報モーダルの「編集」から admin が手動でセット可能
+- **掲載したくない PR**（refactor / 内部整理 / chore / dep-bump 等）はセクションごと丸ごと削除するか、`skip-verup` ラベルを付与する
+- **書き方の指針**: ユーザー目線で書く。「リファクタしました」ではなく「クリック1回で〇〇できるようになった」のように、何が便利になったかを書く
+- サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker 等）も例外なく Verup情報セクションを記入すること
+
+### DB migration を含む PR（必読）
+- `migrations/**` または `supabase_schema.sql` を変更する PR は、CI が **`needs-db-migration` ラベルを自動付与** します（`.github/workflows/migration-reminder.yml`）
+- このラベルが付いている PR は、**本番Supabaseで適用 → `db-migration-applied` ラベルを手動付与** して初めて `migration-applied` チェックが pass します
+- `auto-merge` を併用しても、`db-migration-applied` が無い限り auto-merge は止まります（安全装置）
+- 適用手順・全体像: [`docs/db-migration-workflow.md`](docs/db-migration-workflow.md)
 
 ## マージ手順（旧・参考）
 ```bash

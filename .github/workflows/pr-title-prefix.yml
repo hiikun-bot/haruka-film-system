@@ -1,0 +1,56 @@
+name: PR Title Prefix
+
+# PR タイトル先頭に `#<PR番号>` を自動付与する。
+#
+# 背景:
+#   Railway / Slack 等で PR タイトル末尾が truncate されると、
+#   末尾に GitHub が付ける `(#N)` が見えなくなり PR 特定不能になる。
+#   CLAUDE.md には「`gh pr edit --title "#N ..."` で先頭に番号を追記」と
+#   書いているが、subagent や手動作業で漏れる事故が多発したため CI で強制する。
+#
+# 動作:
+#   - PR が opened / reopened / edited のとき発火
+#   - タイトルが `#<このPR番号>` で始まっていなければ、自動で先頭に付与
+#   - 既に正しい番号で始まっていれば何もしない（無限ループ防止）
+
+on:
+  pull_request:
+    types: [opened, reopened, edited]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  ensure-prefix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure title starts with #<PR number>
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          expected_prefix="#${PR_NUMBER}"
+
+          # 既に正しい番号で始まっていればスキップ（"#541 ..." や "#541:" 等）
+          if [[ "$PR_TITLE" =~ ^#${PR_NUMBER}([[:space:]]|:|$) ]]; then
+            echo "Title already starts with ${expected_prefix} — nothing to do."
+            exit 0
+          fi
+
+          # 違うPR番号（`#999 ...`）が誤って付いている場合は剥がしてから付け直す
+          stripped="$PR_TITLE"
+          if [[ "$stripped" =~ ^#[0-9]+[[:space:]]+(.*)$ ]]; then
+            stripped="${BASH_REMATCH[1]}"
+            echo "Stripping wrong number prefix; remainder: ${stripped}"
+          fi
+
+          new_title="${expected_prefix} ${stripped}"
+          echo "Renaming PR title:"
+          echo "  before: ${PR_TITLE}"
+          echo "  after : ${new_title}"
+
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --title "$new_title"
