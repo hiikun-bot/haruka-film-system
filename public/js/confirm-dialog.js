@@ -17,7 +17,13 @@
  *   const ok = await showConfirmDialog('本当に削除しますか？');
  *
  * 設計メモ:
- *   - z-index: 10000  → 既存 modal-overlay (z-index:200) より上に出す
+ *   - z-index: 10500  → 既存 modal-overlay (z-index:200) や picker系モーダル
+ *                       (z-index:10001 / 10050 / 10100) より上に出す。
+ *                       ただしトースト (z-index:99999) よりは下。
+ *                       ※ Bug #bd019f20-db72-49a4-9061-f60032d6ee5d 対応:
+ *                         旧 10000 では Dチェック担当ピッカー(10001) の裏に
+ *                         隠れて操作不能になっていたため、確認モーダルは
+ *                         「あらゆる UI モーダルより前面」に来る方針へ変更。
  *   - Esc / 背景クリック / × ボタン / キャンセル → false
  *   - OK → true
  *   - haruka.html の CSS 変数（--em / --em-dark / --text / --border 等）を使い
@@ -38,7 +44,9 @@
       .haruka-confirm-overlay{
         position:fixed; inset:0;
         background:rgba(0,0,0,0.45);
-        z-index:10000;
+        /* Dチェック/Pチェック等の picker モーダル(10001/10050/10100) より前面に出す。
+           トースト(99999) より低くして通知は確認モーダルの上に出るようにする。 */
+        z-index:10500;
         display:flex; align-items:center; justify-content:center;
         padding:24px;
         animation:harukaConfirmFadeIn .14s ease-out;
