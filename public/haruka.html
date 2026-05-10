@@ -798,6 +798,16 @@ tr.row-help td{background:#FFFBF2}
   border-top-color:#3ECFCA;
   animation:fp-spin .9s linear infinite;
 }
+/* クリエイティブ追加成功モーダルのボタン内インラインスピナー。
+   ボタンを押した瞬間「処理中…」のフィードバックを返すための極小スピナー。
+   キーフレームは fp-spin を共用。 */
+.cv-add-next-spinner{
+  display:inline-block;width:14px;height:14px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.35);
+  border-top-color:currentColor;
+  animation:fp-spin .8s linear infinite;
+  margin-right:6px;vertical-align:-2px;
+}
 /* クリエイティブ詳細モーダル: クリック直後に出すローディングオーバーレイ。
    クリックしてから API レスポンスが返るまでの "押した瞬間に反応が見える" UX 担保。
    フェーズ付きプログレスバー (1:詳細取得 → 2:基本情報描画 → 3:ファイル/履歴/可視性 → 4:描画) で
@@ -11931,7 +11941,17 @@ async function createCreative() {
     const createdName = createdCreative?.file_name || file_name || '';
 
     document.getElementById('filename-status').textContent = '';
-    await loadCreatives();
+
+    // 一覧再取得は **バックグラウンドで** 走らせる（fire-and-forget）。
+    // 旧実装は `await loadCreatives()` を 3択モーダル表示の前に置いていたため、
+    // POST 成功後 → 一覧 GET + counts GET + render が完了するまで「追加中...」のまま固まり、
+    // ユーザーには「ボタンを押した後しばらく無反応」に見えていた（バグ報告 #遅い）。
+    // モーダルは即時に出して、リロードは裏で進める。各動線（詳細を見る / 続けて追加 / 一覧に戻る）
+    // が必要に応じて _creativeListReloadPromise を await する。
+    _creativeListReloadPromise = loadCreatives().catch(e => {
+      console.warn('[createCreative] background loadCreatives failed:', e);
+    });
+
     const continuous = document.getElementById('continuous-mode').checked;
     if (continuous) {
       // 連続登録モード ON: 従来通り即座に追加モードに入る（後方互換）
@@ -11943,6 +11963,7 @@ async function createCreative() {
         createdId,
         createdName,
         onContinue: () => _resetCreativeFormForContinuous(cat, isLpOrHp),
+        listReloadPromise: _creativeListReloadPromise,
       });
     }
   } else {
@@ -11950,6 +11971,9 @@ async function createCreative() {
     showToast('登録エラー: ' + translateError(e?.error), 'error');
   }
 }
+
+// 追加直後の一覧再取得 Promise。次アクションモーダルの各ボタンが await できるように保持。
+let _creativeListReloadPromise = null;
 
 // 連続登録モード相当のフォームリセット。
 // createCreative() の従来挙動と「続けて追加する」選択時の挙動を共通化する。
@@ -11978,7 +12002,7 @@ function _resetCreativeFormForContinuous(cat, isLpOrHp) {
 // 「連続登録モード」チェックが OFF のときだけ表示し、追加後の動線をユーザーが選べるようにする。
 // 追加画面にファイルアップロード機能は絶対に入れない設計を維持しつつ、追加直後に詳細画面へ
 // すぐ進める動線を提供する。
-function showCreativeAddedNextActionModal({ createdId, createdName, onContinue }) {
+function showCreativeAddedNextActionModal({ createdId, createdName, onContinue, listReloadPromise }) {
   // 既存モーダルが残っていれば撤去
   const prev = document.getElementById('modal-creative-added-next');
   if (prev) prev.remove();
@@ -12064,6 +12088,24 @@ function showCreativeAddedNextActionModal({ createdId, createdName, onContinue }
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
+  // 各ボタンの「処理中」インジケーター用に元 HTML を退避
+  const _origDetailHtml   = btnDetail.innerHTML;
+  const _origContinueHtml = btnContinue.innerHTML;
+  const _origListHtml     = btnList.innerHTML;
+
+  // 押されたボタンを spinner 付き「処理中…」状態にしつつ全ボタンを disable する。
+  // 体感速度の問題は「クリック直後に何も起きないように見える」ことなので、
+  // どんなに短い処理でも 1 フレームでフィードバックを返すのを最優先する。
+  function setButtonBusy(btn, label) {
+    [btnDetail, btnContinue, btnList, closeBtn].forEach(b => {
+      if (b) { b.disabled = true; b.style.cursor = 'wait'; }
+    });
+    if (btn) {
+      btn.style.opacity = '0.85';
+      btn.innerHTML = `<span class="cv-add-next-spinner" aria-hidden="true"></span><span>${label}</span>`;
+    }
+  }
+
   function cleanup() {
     try { overlay.remove(); } catch (_) {}
     document.removeEventListener('keydown', onKey, true);
@@ -12090,27 +12132,49 @@ function showCreativeAddedNextActionModal({ createdId, createdName, onContinue }
   });
 
   btnDetail.addEventListener('click', async () => {
-    cleanup();
+    // クリック直後にフィードバック表示（体感速度の改善）。
+    // openCreativeDetail() は内部で即時にモーダルを開いてプログレスバーを出す
+    // 仕様（openCreativeDetail 冒頭参照）なので、ここでもボタンを spinner 化して
+    // 「押された瞬間 → 何かが起きている」を保証する。
+    setButtonBusy(btnDetail, '開いています…');
     try { closeModal('modal-creative'); } catch (_) {}
     if (createdId && typeof openCreativeDetail === 'function') {
+      // 詳細モーダルは独立したフェッチパスを持つので、一覧再取得は待たない。
       try { await openCreativeDetail(createdId); } catch (e) {
         console.warn('[creative-added-next] openCreativeDetail failed:', e);
       }
     }
+    cleanup();
   });
 
   btnContinue.addEventListener('click', () => {
-    cleanup();
-    if (typeof onContinue === 'function') {
-      try { onContinue(); } catch (e) {
-        console.warn('[creative-added-next] onContinue failed:', e);
+    // フォームリセットは同期処理（軽い）なので体感は十分速いが、念のため spinner を一瞬出す。
+    setButtonBusy(btnContinue, '次の入力へ…');
+    // 1 フレ後に閉じてフォームリセット（クリック→cleanup の間に DOM 更新が見えるように）
+    requestAnimationFrame(() => {
+      cleanup();
+      if (typeof onContinue === 'function') {
+        try { onContinue(); } catch (e) {
+          console.warn('[creative-added-next] onContinue failed:', e);
+        }
       }
-    }
+    });
+    // 一覧再取得はバックグラウンドで継続中（await しない）。
+    // 連続登録中の体感を最優先するため、ここで spinner をブロックしない。
   });
 
-  btnList.addEventListener('click', () => {
-    cleanup();
+  btnList.addEventListener('click', async () => {
+    // 「一覧に戻る」は一覧側で新しい行が見えるべき動線なので、
+    // 一覧再取得 Promise が未完了なら **ここで await** してから戻る。
+    // 通常はバックグラウンドで先行しているため待機は短い（多くは 0ms 〜数百ms）。
+    setButtonBusy(btnList, '一覧を更新中…');
     try { closeModal('modal-creative'); } catch (_) {}
+    try {
+      if (listReloadPromise && typeof listReloadPromise.then === 'function') {
+        await listReloadPromise;
+      }
+    } catch (_) { /* loadCreatives 自身が UI 復元するので無視 */ }
+    cleanup();
   });
 
   // 詳細を見るに初期フォーカス
