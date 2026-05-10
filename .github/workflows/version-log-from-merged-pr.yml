@@ -93,6 +93,9 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # バグ修正完了 Slack 通知（既存のフロントエラー通知と同じチャンネル）
+          # 未設定なら post-version-log.js は通知をスキップ（CI は緑のまま）
+          ERROR_REPORT_SLACK_CHANNEL_URL: ${{ secrets.ERROR_REPORT_SLACK_CHANNEL_URL }}
           PR_TITLE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_title || github.event.pull_request.title }}
           PR_BODY: ${{ github.event_name == 'workflow_dispatch' && steps.resolve.outputs.pr_body || github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}

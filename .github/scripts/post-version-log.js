@@ -287,6 +287,16 @@ async function main() {
   // 失敗してもメインフロー(version_logs INSERT)は成功扱いにする(警告のみ)。
   // ============================================================
   await linkBugReports(PR_BODY, insertedRow?.id, SUPABASE_URL, headers);
+
+  // ============================================================
+  // バグ報告改善 Slack 通知 (#haruka-error-report 等)
+  // ============================================================
+  // 環境変数 ERROR_REPORT_SLACK_CHANNEL_URL（既存のフロントエラー通知と同じ
+  // チャンネル）に「あなたの報告が改善されました」をメンション付きで投稿。
+  // ENV 未設定なら何もしない（CI は緑のまま）。失敗しても version_logs INSERT は
+  // 成功扱い（警告ログのみ）。
+  // ============================================================
+  await notifyBugFixesToSlack(PR_BODY, PR_NUMBER, PR_TITLE, SUPABASE_URL, headers);
 }
 
 // linkBugReports: PR本文から Bug-Report-Id trailer を抽出し bug_reports を更新
@@ -388,6 +398,135 @@ function extractBugReportIds(body) {
     for (const u of uuids) ids.add(u.toLowerCase());
   }
   return Array.from(ids);
+}
+
+// =============================================================================
+// バグ修正完了 Slack 通知（メンション付き）
+// =============================================================================
+// PR本文の Bug-Report-Id trailer に書かれたバグ報告について、Slack に
+// 「あなたの報告が改善されました」をメンション付きで投稿する。
+// 親バグ + duplicate 子バグも対象。子の報告者にも個別に通知が飛ぶ。
+//
+// 必要な ENV / DB:
+//   - ERROR_REPORT_SLACK_CHANNEL_URL  (既存のフロントエラー通知チャンネルと同じ)
+//   - slack_workspaces テーブルに該当 team_id の bot_token
+//   - bot に chat:write スコープが必要
+//
+// メンション ロジック:
+//   報告者 (assignee_user_id) を最優先でメンション
+//   匿名でなければ入力者 (reporter_user_id) も追加メンション
+//   どちらも slack_dm_id が無い場合はテキスト表示のみ
+// =============================================================================
+
+const BUG_SEV_LABEL = { low: '🟢 低', normal: '🟡 通常', high: '🔴 高', critical: '🚨 致命的' };
+
+async function notifyBugFixesToSlack(prBody, prNumber, prTitle, supabaseUrl, headers) {
+  const channelUrl = process.env.ERROR_REPORT_SLACK_CHANNEL_URL;
+  if (!channelUrl) {
+    console.log('[bug-slack] ERROR_REPORT_SLACK_CHANNEL_URL 未設定 → 通知をスキップ');
+    return;
+  }
+  if (!prBody || !supabaseUrl) return;
+  const ids = extractBugReportIds(prBody);
+  if (ids.length === 0) return;
+
+  const m = String(channelUrl).match(/\/client\/(T[A-Z0-9]+)\/(C[A-Z0-9]+)/);
+  if (!m) {
+    console.warn('[bug-slack] channel URL から team_id/channel_id を抽出できません:', channelUrl);
+    return;
+  }
+  const team_id = m[1], channel_id = m[2];
+
+  // bot_token を slack_workspaces から取得
+  let botToken = null;
+  try {
+    const wsRes = await fetch(
+      `${supabaseUrl}/rest/v1/slack_workspaces?select=bot_token,name&team_id=eq.${encodeURIComponent(team_id)}&limit=1`,
+      { headers }
+    );
+    if (wsRes.ok) {
+      const wsRows = await wsRes.json();
+      botToken = wsRows[0]?.bot_token || null;
+    }
+  } catch (e) {
+    console.warn('[bug-slack] bot_token 取得失敗:', e.message);
+  }
+  if (!botToken) {
+    console.warn(`[bug-slack] bot_token 未登録 team_id=${team_id} → 通知スキップ`);
+    return;
+  }
+
+  // 親 + duplicate 子 を含めた送信対象セットを作る
+  const allTargets = new Set(ids);
+  for (const parentId of ids) {
+    try {
+      const childRes = await fetch(
+        `${supabaseUrl}/rest/v1/bug_reports?select=id&duplicate_of_id=eq.${encodeURIComponent(parentId)}`,
+        { headers }
+      );
+      if (childRes.ok) {
+        const children = await childRes.json();
+        for (const c of (children || [])) allTargets.add(c.id);
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  for (const bugId of allTargets) {
+    try {
+      const bugRes = await fetch(
+        `${supabaseUrl}/rest/v1/bug_reports?select=id,title,severity,is_anonymous,duplicate_of_id,assignee:assignee_user_id(id,full_name,nickname,slack_dm_id),reporter:reporter_user_id(id,full_name,nickname,slack_dm_id)&id=eq.${encodeURIComponent(bugId)}`,
+        { headers }
+      );
+      if (!bugRes.ok) {
+        console.warn(`[bug-slack] バグ取得失敗: bug=${bugId} status=${bugRes.status}`);
+        continue;
+      }
+      const bugRows = await bugRes.json();
+      const bug = bugRows[0];
+      if (!bug) continue;
+
+      // メンション組み立て: 報告者(assignee) + 入力者(reporter, 匿名でない場合) を重複なくまとめる
+      const slackIds = new Set();
+      if (bug.assignee?.slack_dm_id) slackIds.add(bug.assignee.slack_dm_id);
+      if (!bug.is_anonymous && bug.reporter?.slack_dm_id) slackIds.add(bug.reporter.slack_dm_id);
+      const mentionStr = Array.from(slackIds).map(id => `<@${id}>`).join(' ');
+
+      // 表示用ラベル
+      const reporterLabel = bug.is_anonymous
+        ? '🕵️ 匿名'
+        : (bug.assignee?.nickname || bug.assignee?.full_name || (bug.reporter?.nickname || bug.reporter?.full_name || '—'));
+      const sev = bug.severity ? (BUG_SEV_LABEL[bug.severity] || bug.severity) : '';
+      const dupNote = bug.duplicate_of_id ? '（重複報告として登録されていた件）' : '';
+
+      const lines = [
+        mentionStr ? mentionStr : '',
+        `✅ あなたの報告が改善されました ${dupNote}`.trim(),
+        '',
+        `🦋 *${bug.title || ''}*`,
+        `報告者: ${reporterLabel}`,
+        sev ? `重要度: ${sev}` : '',
+        `対応: 🆙 #${prNumber} ${prTitle || ''}`,
+        '',
+        '_動作確認のうえ、問題なければバグ報告画面で「🟩 解決」へ進めてください_',
+      ].filter(Boolean);
+
+      const text = lines.join('\n');
+
+      const postRes = await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: channel_id, text, unfurl_links: false, unfurl_media: false }),
+      });
+      const postJson = await postRes.json().catch(() => ({}));
+      if (postJson?.ok) {
+        console.log(`[bug-slack] 投稿成功: bug=${bugId}${bug.duplicate_of_id ? ' (duplicate)' : ''}`);
+      } else {
+        console.warn(`[bug-slack] 投稿失敗: bug=${bugId} err=${postJson?.error || postRes.status}`);
+      }
+    } catch (e) {
+      console.warn(`[bug-slack] 例外: bug=${bugId} err=${e.message}`);
+    }
+  }
 }
 
 main().catch(err => {
