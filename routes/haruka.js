@@ -4995,27 +4995,28 @@ router.get('/creatives', async (req, res) => {
     teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
   });
 
-  // 案件専用ディレクター解決用に projects.director_id 集合を一括取得
-  const projDirIds = Array.from(new Set(
-    (data || []).map(c => c.projects?.director_id).filter(Boolean)
+  // 案件専用ディレクター/プロデューサー解決用に projects.director_id / producer_id 集合を一括取得
+  const projUserIds = Array.from(new Set(
+    (data || []).flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
   ));
   const userById = new Map();
-  if (projDirIds.length) {
+  if (projUserIds.length) {
     const { data: dirUsers } = await supabase
-      .from('users').select('id, full_name').in('id', projDirIds);
+      .from('users').select('id, full_name').in('id', projUserIds);
     (dirUsers || []).forEach(u => userById.set(u.id, u));
   }
 
   // ボール保持者と teams を付与（teams は FK 不要の手動 stitch）
   const withBall = (data || []).map(c => {
     const projectDirector = c.projects?.director_id ? userById.get(c.projects.director_id) || null : null;
+    const projectProducer = c.projects?.producer_id ? userById.get(c.projects.producer_id) || null : null;
     return {
       ...c,
       teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
       ball_holder: getBallHolder(
         c.status, c.creative_assignments,
         directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
-        projectDirector
+        projectDirector, projectProducer
       ),
     };
   });
@@ -5353,11 +5354,14 @@ router.get('/creatives/:id', async (req, res) => {
       const projectDirector = data.projects?.director_id
         ? (data.projects.director || null)
         : null;
+      const projectProducer = data.projects?.producer_id
+        ? (data.projects.producer || null)
+        : null;
       data.ball_holder = getBallHolder(
         data.status,
         data.creative_assignments,
         directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
-        projectDirector
+        projectDirector, projectProducer
       );
     }
   } catch (e) {
@@ -11307,9 +11311,10 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 // ==================== ボール保持者判定 ====================
 
-function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector) {
+function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const dirAssign = assignments?.find(a => a.role === 'director');
+  const prodAssign = assignments?.find(a => a.role === 'producer');
 
   const editorName = editor?.users?.full_name || '編集者';
   const editorId = editor?.users?.id || null;
@@ -11337,6 +11342,20 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
   }
   directorName = directorName || 'ディレクター';
 
+  // プロデューサー名 / ID の優先順位（Dチェックと完全対称）:
+  //   1. assignment 直接（role='producer' の creative_assignments）
+  //   2. projects.producer_id（案件担当プロデューサー）
+  //   3. 'プロデューサー' リテラル
+  // 注: producer はディレクターのような「チーム代表」概念が無いので
+  //     team経由フォールバックは行わない。
+  let producerName = prodAssign?.users?.full_name;
+  let producerId   = prodAssign?.users?.id || null;
+  if (!producerName && projectProducer) {
+    producerName = projectProducer.full_name || '';
+    producerId   = projectProducer.id || null;
+  }
+  producerName = producerName || 'プロデューサー';
+
   const ballMap = {
     '未着手': { holder: editorName, type: 'editor', user_id: editorId },
     '制作中（初稿提出前）': { holder: editorName, type: 'editor', user_id: editorId },
@@ -11345,7 +11364,7 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     '編集': { holder: editorName, type: 'editor', user_id: editorId },
     'Dチェック': { holder: directorName, type: 'director', user_id: directorId },
     'Dチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
-    'Pチェック': { holder: 'プロデューサー', type: 'producer' },
+    'Pチェック': { holder: producerName, type: 'producer', user_id: producerId },
     'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
     'クライアントチェック中': { holder: 'クライアント', type: 'client' },
     // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
@@ -11383,12 +11402,12 @@ async function syncBallHolderId(creativeId, sb) {
   const client = sb || supabase;
   if (!creativeId) return null;
   try {
-    // 1. クリエイティブ本体 + assignments + 案件専用ディレクター
+    // 1. クリエイティブ本体 + assignments + 案件専用ディレクター/プロデューサー
     const { data: c, error: cErr } = await client
       .from('creatives')
       .select(`
         id, status, ball_holder_id, project_id, team_id,
-        projects(id, director_id),
+        projects(id, director_id, producer_id),
         creative_assignments(role, users(id, full_name, team_id))
       `)
       .eq('id', creativeId)
@@ -11418,19 +11437,25 @@ async function syncBallHolderId(creativeId, sb) {
       });
     });
 
-    // 3. 案件専用ディレクターのフルネーム取得（assignment にディレクター無い時のフォールバック）
+    // 3. 案件専用ディレクター/プロデューサーのフルネーム取得（assignment 無い時のフォールバック）
+    //    director_id / producer_id を一括 IN で取って RTT を 1 本にまとめる
     let projectDirector = null;
-    const projDirId = c.projects?.director_id;
-    if (projDirId) {
-      const { data: u } = await client.from('users').select('id, full_name').eq('id', projDirId).maybeSingle();
-      projectDirector = u || null;
+    let projectProducer = null;
+    const projDirId  = c.projects?.director_id;
+    const projProdId = c.projects?.producer_id;
+    const ids = [projDirId, projProdId].filter(Boolean);
+    if (ids.length) {
+      const { data: us } = await client.from('users').select('id, full_name').in('id', ids);
+      const byId = new Map((us || []).map(u => [u.id, u]));
+      if (projDirId)  projectDirector = byId.get(projDirId)  || null;
+      if (projProdId) projectProducer = byId.get(projProdId) || null;
     }
 
     // 4. getBallHolder() に投げて新しいID算出
     const ball = getBallHolder(
       c.status, c.creative_assignments,
       directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
-      projectDirector
+      projectDirector, projectProducer
     );
     // user_id（editor / director / producer 等）は単数。
     // 将来 type:'all' のような複数保持ステータスを再導入する場合のフォールバックとして、
