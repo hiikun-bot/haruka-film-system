@@ -27012,7 +27012,12 @@ function updateCreativeStepIndicator(status) {
     if (next) {
       nextBtn.style.display = '';
       const RESUBMIT = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
-      nextBtn.textContent = RESUBMIT.includes(status) ? `${next}へ提出 →` : `${next} へ →`;
+      // クライアントチェック後修正からの再提出は「クライアントに再提出」と表示
+      // （UX: 一度クライアントに見せた後の修正だと一目でわかる）
+      nextBtn.textContent =
+        status === 'クライアントチェック後修正' ? 'クライアントに再提出 →'
+        : RESUBMIT.includes(status) ? `${next}へ提出 →`
+        : `${next} へ →`;
       nextBtn.dataset.target = next;
       const amber = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
       nextBtn.style.background = amber.includes(next)
