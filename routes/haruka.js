@@ -4690,8 +4690,10 @@ async function aggregateBugReports({ year, month }) {
       id, title, severity, status, is_anonymous, created_at,
       reporter_user_id, assignee_user_id,
       improved_at, improved_by_user_id, improvement_version_log_id,
+      duplicate_of_id,
       assignee:assignee_user_id ( id, full_name, nickname ),
-      improvement_log:improvement_version_log_id ( id, revision_no, screen, feature )
+      improvement_log:improvement_version_log_id ( id, revision_no, screen, feature ),
+      duplicate_parent:duplicate_of_id ( id, title )
     `)
     .gte('created_at', startDate.toISOString())
     .lt('created_at', endDate.toISOString())
@@ -4699,14 +4701,18 @@ async function aggregateBugReports({ year, month }) {
   if (error) throw new Error(error.message);
 
   const groups = new Map();
-  const byStatus = { open: 0, in_progress: 0, resolved: 0, wont_fix: 0, duplicate: 0 };
+  const byStatus = { open: 0, in_progress: 0, implemented: 0, resolved: 0, wont_fix: 0, duplicate: 0 };
   let total = 0;
   let totalImproved = 0;
+  let totalDuplicate = 0;
 
   for (const r of (rows || [])) {
     total++;
     if (byStatus[r.status] != null) byStatus[r.status]++;
-    if (r.improved_at) totalImproved++;
+    // 重複は「先勝ちノーカウント」運用。改善カウントには含めない
+    const isDup = r.status === 'duplicate' || !!r.duplicate_of_id;
+    if (isDup) totalDuplicate++;
+    if (r.improved_at && !isDup) totalImproved++;
 
     const isAnon = !!r.is_anonymous;
     // 報告者(assignee_user_id) でグルーピング。null なら __unspecified__
@@ -4728,8 +4734,11 @@ async function aggregateBugReports({ year, month }) {
       });
     }
     const g = groups.get(key);
-    g.count++;
-    if (r.improved_at) g.improved_count++;
+    // 重複(ノーカウント)は count / improved_count に加算しない。reports リストには含める
+    if (!isDup) {
+      g.count++;
+      if (r.improved_at) g.improved_count++;
+    }
     g.reports.push({
       id: r.id,
       short_id: String(r.id).replace(/-/g, '').slice(0, 8),
@@ -4739,6 +4748,10 @@ async function aggregateBugReports({ year, month }) {
       created_at: r.created_at,
       is_improved: !!r.improved_at,
       improved_at: r.improved_at,
+      // 重複情報（フロント側で「ノーカウント」バッジを出す）
+      is_duplicate: isDup,
+      duplicate_of_id: r.duplicate_of_id || null,
+      duplicate_of_title: r.duplicate_parent?.title || null,
       improvement_revision_no: r.improvement_log?.revision_no || null,
       improvement_screen: r.improvement_log?.screen || null,
       improvement_feature: r.improvement_log?.feature || null,
@@ -4753,11 +4766,16 @@ async function aggregateBugReports({ year, month }) {
     return (a.label || '').localeCompare(b.label || '', 'ja');
   });
 
+  // 重複は「先勝ちノーカウント」のため、改善率の母数からも除外して計算する
+  const totalCounted = total - totalDuplicate;
+
   return {
     year, month,
     total,
+    total_counted: totalCounted,
+    total_duplicate: totalDuplicate,
     total_improved: totalImproved,
-    total_unimproved: total - totalImproved,
+    total_unimproved: totalCounted - totalImproved,
     by_status: byStatus,
     by_reporter,
   };
@@ -14113,6 +14131,11 @@ function normalizeBugReportPayload(body, { isCreate }) {
     const v = body.improvement_version_log_id;
     out.improvement_version_log_id = (v === '' || v == null) ? null : String(v);
   }
+  // duplicate_of_id は新規作成時のみ受け付け、以降は不変（親子関係を後から付け替えできない）
+  if (isCreate && body.duplicate_of_id !== undefined) {
+    const v = body.duplicate_of_id;
+    out.duplicate_of_id = (v === '' || v == null) ? null : String(v);
+  }
   if (isCreate) {
     out.is_anonymous = !!body.is_anonymous;
     if (!out.title) {
@@ -14136,6 +14159,10 @@ router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async 
     // 匿名なら reporter_user_id を一切記録しない
     const reporterUserId = payload.is_anonymous ? null : (req.user?.id || null);
 
+    // 「これと同じです」で投稿された場合、duplicate_of_id を持って status='duplicate' で新規作成。
+    // この場合 reporter のレコードは残るが、集計上はノーカウント扱いになる。
+    const isDup = !!payload.duplicate_of_id;
+
     const insertRow = {
       reporter_user_id: reporterUserId,
       is_anonymous: !!payload.is_anonymous,
@@ -14145,11 +14172,12 @@ router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async 
       screen_label: payload.screen_label ?? null,
       severity: payload.severity || 'normal',
       is_urgent: !!payload.is_urgent,
-      status: 'open',
+      status: isDup ? 'duplicate' : 'open',
       assignee_user_id: payload.assignee_user_id ?? null,
       screenshot_data_url: payload.screenshot_data_url ?? null,
       annotations: payload.annotations ?? null,
       browser_info: payload.browser_info ?? null,
+      duplicate_of_id: payload.duplicate_of_id ?? null,
     };
 
     const { data, error } = await supabase
@@ -14167,7 +14195,7 @@ router.get('/bug-reports', requireAuth, async (req, res) => {
     const { status, assignee_user_id, mine } = req.query;
     let q = supabase
       .from('bug_reports')
-      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, last_updated_by_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url )')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, last_updated_by_user_id, duplicate_of_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url ), duplicate_parent:duplicate_of_id ( id, title, status )')
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
@@ -14192,7 +14220,7 @@ router.get('/bug-reports/:id', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('bug_reports')
-      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url )')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url ), duplicate_parent:duplicate_of_id ( id, title, status )')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });

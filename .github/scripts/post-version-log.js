@@ -297,52 +297,74 @@ async function linkBugReports(prBody, versionLogId, headers) {
 
   const nowIso = new Date().toISOString();
   for (const bugId of ids) {
+    await linkOneBugReport(bugId, versionLogId, nowIso, headers, /*isPropagation*/false);
+
+    // 親が改善されたら、duplicate_of_id = 親 の子レコードにも改善情報を伝播させる
+    // （子は status='duplicate' のままでも improved_at と improvement_version_log_id をコピー）
     try {
-      // 現在の status と improved_at を取得
-      const getRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/bug_reports?select=id,status,improved_at&id=eq.${encodeURIComponent(bugId)}`,
+      const childRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/bug_reports?select=id,status,improved_at&duplicate_of_id=eq.${encodeURIComponent(bugId)}`,
         { headers }
       );
-      if (!getRes.ok) {
-        console.warn(`[bug-link] GET 失敗: bug=${bugId} status=${getRes.status}`);
-        continue;
-      }
-      const rows = await getRes.json();
-      if (!rows || rows.length === 0) {
-        console.warn(`[bug-link] bug_reports に該当なし: ${bugId}`);
-        continue;
-      }
-      const cur = rows[0];
-
-      const patch = {
-        improvement_version_log_id: versionLogId,
-        updated_at: nowIso,
-      };
-      // improved_at はまだ未セットのときだけ最初のリンク時刻を残す
-      if (!cur.improved_at) patch.improved_at = nowIso;
-
-      // status は open / in_progress のときだけ 'implemented' に上書き
-      // resolved (人が検証済み) や wont_fix / duplicate は触らない
-      if (cur.status === 'open' || cur.status === 'in_progress') {
-        patch.status = 'implemented';
-      }
-
-      const updRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/bug_reports?id=eq.${encodeURIComponent(bugId)}`,
-        {
-          method: 'PATCH',
-          headers: { ...headers, Prefer: 'return=minimal' },
-          body: JSON.stringify(patch),
+      if (childRes.ok) {
+        const children = await childRes.json();
+        for (const c of (children || [])) {
+          await linkOneBugReport(c.id, versionLogId, nowIso, headers, /*isPropagation*/true);
         }
-      );
-      if (!updRes.ok) {
-        console.warn(`[bug-link] PATCH 失敗: bug=${bugId} status=${updRes.status} body=${await updRes.text()}`);
-        continue;
       }
-      console.log(`[bug-link] 紐付け完了: bug=${bugId} → version_log=${versionLogId}, status=${patch.status || cur.status}`);
     } catch (e) {
-      console.warn(`[bug-link] 例外: bug=${bugId} err=${e.message}`);
+      console.warn(`[bug-link] 子レコード探索失敗: parent=${bugId} err=${e.message}`);
     }
+  }
+}
+
+async function linkOneBugReport(bugId, versionLogId, nowIso, headers, isPropagation) {
+  try {
+    const getRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/bug_reports?select=id,status,improved_at&id=eq.${encodeURIComponent(bugId)}`,
+      { headers }
+    );
+    if (!getRes.ok) {
+      console.warn(`[bug-link] GET 失敗: bug=${bugId} status=${getRes.status}`);
+      return;
+    }
+    const rows = await getRes.json();
+    if (!rows || rows.length === 0) {
+      console.warn(`[bug-link] bug_reports に該当なし: ${bugId}`);
+      return;
+    }
+    const cur = rows[0];
+
+    const patch = {
+      improvement_version_log_id: versionLogId,
+      updated_at: nowIso,
+    };
+    if (!cur.improved_at) patch.improved_at = nowIso;
+
+    // status の更新ルール
+    //   - 通常: open / in_progress のときだけ 'implemented' に進める
+    //   - duplicate: status='duplicate' のままでよい（先勝ちノーカウントを維持）
+    //   - resolved / wont_fix: 触らない
+    if (cur.status === 'open' || cur.status === 'in_progress') {
+      patch.status = 'implemented';
+    }
+
+    const updRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/bug_reports?id=eq.${encodeURIComponent(bugId)}`,
+      {
+        method: 'PATCH',
+        headers: { ...headers, Prefer: 'return=minimal' },
+        body: JSON.stringify(patch),
+      }
+    );
+    if (!updRes.ok) {
+      console.warn(`[bug-link] PATCH 失敗: bug=${bugId} status=${updRes.status} body=${await updRes.text()}`);
+      return;
+    }
+    const tag = isPropagation ? '[bug-link/propagate]' : '[bug-link]';
+    console.log(`${tag} 紐付け完了: bug=${bugId} → version_log=${versionLogId}, status=${patch.status || cur.status}`);
+  } catch (e) {
+    console.warn(`[bug-link] 例外: bug=${bugId} err=${e.message}`);
   }
 }
 

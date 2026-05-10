@@ -2816,7 +2816,15 @@ window.showPage = window.showPage || function(name, btn) {
           <!-- ③ タイトル -->
           <div class="form-group">
             <label class="form-label">タイトル（症状） <span style="color:#C0392B">*</span></label>
-            <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200">
+            <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200" oninput="_brOnTitleInput()">
+            <!-- 類似報告候補（新規モード時のみ表示） -->
+            <div id="br-similar-wrap" style="display:none;margin-top:8px;background:#FFFBEB;border:1px solid #F59E0B;border-radius:8px;padding:10px">
+              <div style="font-size:12px;color:#92400E;font-weight:600;margin-bottom:6px">⚠ 似たバグ報告があります</div>
+              <div id="br-similar-list" style="display:flex;flex-direction:column;gap:4px"></div>
+              <div style="font-size:11px;color:#78350F;margin-top:6px">
+                💡 同じ症状なら「これと同じです」を押すと、その報告に紐付きます（ノーカウントで重複登録）
+              </div>
+            </div>
           </div>
 
           <!-- ④ 詳細 + テンプレ挿入ボタン（ラベル横・右揃い） -->
@@ -30113,8 +30121,9 @@ function renderBugReportsAnalytics(data) {
       const improvedMark = rep.is_improved
         ? `<span title="改善済み" style="color:#10B981;font-weight:700">✅</span>`
         : `<span title="未改善" style="color:#9CA3AF">⏳</span>`;
+      // 🆙 #N をクリックで修正履歴モーダル（該当行）へ遷移
       const verupBadge = rep.improvement_revision_no
-        ? `<span style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap" title="${_brEsc((rep.improvement_screen||'') + ' / ' + (rep.improvement_feature||''))}">🆙 #${_brEsc(String(rep.improvement_revision_no))}</span>`
+        ? `<a href="#" onclick='event.preventDefault(); event.stopPropagation(); openVerupModalAtRevision(${Number(rep.improvement_revision_no)})' style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap;text-decoration:none;cursor:pointer" title="${_brEsc((rep.improvement_screen||'') + ' / ' + (rep.improvement_feature||'') + '（クリックで修正履歴を開く）')}">🆙 #${_brEsc(String(rep.improvement_revision_no))}</a>`
         : '';
       return `
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0;border-top:0.5px dashed var(--border)">
@@ -33632,6 +33641,38 @@ async function openVerupModal() {
   await loadVerupList();
 }
 
+// 修正履歴モーダルを開いて指定 revision_no の行へスクロール＋ハイライト
+// 用途: バグ報告の「🆙 #508」バッジをクリックすると該当 Verup のカードへ飛ぶ
+async function openVerupModalAtRevision(revisionNo) {
+  if (typeof openVerupModal === 'function') await openVerupModal();
+  // renderVerupList が DOM を生成するまで少し待つ
+  setTimeout(() => {
+    try {
+      const cache = (typeof _verupCache !== 'undefined' && Array.isArray(_verupCache)) ? _verupCache : null;
+      const row = cache?.find(r => Number(r.revision_no) === Number(revisionNo));
+      if (!row) {
+        showToast(`Verup #${revisionNo} は見つかりませんでした`, 'warn');
+        return;
+      }
+      const el = document.querySelector(`[data-vid="${row.id}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 一瞬ハイライト
+      const origShadow = el.style.boxShadow;
+      const origBg = el.style.background;
+      el.style.boxShadow = '0 0 0 3px #2DD4BF';
+      el.style.background = '#ECFEFF';
+      setTimeout(() => {
+        el.style.boxShadow = origShadow;
+        el.style.background = origBg;
+      }, 2000);
+    } catch (e) {
+      console.warn('[openVerupModalAtRevision]', e);
+    }
+  }, 250);
+}
+window.openVerupModalAtRevision = openVerupModalAtRevision;
+
 // 報告者の表示ラベル（nickname > full_name の優先）
 function _verupReporterLabel(reporter) {
   if (!reporter) return '';
@@ -34145,7 +34186,7 @@ function renderBugReportList() {
       ? `<span style="background:#10B981;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap">✅</span>`
       : '';
     const verupBadge = r.improvement_log
-      ? `<span style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap" title="${_brEsc((r.improvement_log.screen||'') + ' / ' + (r.improvement_log.feature||''))}">🆙 #${_brEsc(String(r.improvement_log.revision_no))}</span>`
+      ? `<a href="#" onclick='event.preventDefault(); event.stopPropagation(); openVerupModalAtRevision(${Number(r.improvement_log.revision_no)})' style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap;text-decoration:none;cursor:pointer" title="${_brEsc((r.improvement_log.screen||'') + ' / ' + (r.improvement_log.feature||'') + '（クリックで修正履歴を開く）')}">🆙 #${_brEsc(String(r.improvement_log.revision_no))}</a>`
       : '';
     const stCell = `<span style="background:${stColor};color:#fff;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap">${_brEsc(stLabel)}</span>${improvedBadge ? ' ' + improvedBadge : ''}${verupBadge ? ' ' + verupBadge : ''}`;
     const id = JSON.stringify(r.id);
@@ -34253,6 +34294,10 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-triage-comment').value = '';
   document.getElementById('br-triage-current').textContent = '';
   document.getElementById('br-comment-input').value = '';
+  // 類似検出パネル: 新規モード時にだけ動作。値はリセット
+  _brSelectedDuplicateOfId = null;
+  document.getElementById('br-similar-wrap').style.display = 'none';
+  document.getElementById('br-similar-list').innerHTML = '';
 
   if (options.id) {
     // 編集モード: 詳細取得
@@ -34290,11 +34335,11 @@ async function openBugReportModal(options = {}) {
         // Verup候補をロード（admin のみ）
         await bugReportLoadVersionLogOptions(r.improvement_version_log_id || '');
       }
-      // 既に紐付け済みの Verup を表示
+      // 既に紐付け済みの Verup を表示（番号クリックで修正履歴へ遷移）
       if (r.improvement_log) {
         const log = r.improvement_log;
         document.getElementById('br-improvement-current').innerHTML =
-          `現在の紐付け: <strong>#${log.revision_no}</strong> ${_brEsc(log.screen || '')} / ${_brEsc(log.feature || '')}`;
+          `現在の紐付け: <a href="#" onclick='event.preventDefault(); openVerupModalAtRevision(${Number(log.revision_no)})' style="color:#2563EB;text-decoration:underline;font-weight:700">#${log.revision_no}</a> ${_brEsc(log.screen || '')} / ${_brEsc(log.feature || '')}`;
       }
       bugReportSyncImprovedUI();
 
@@ -34323,6 +34368,10 @@ async function openBugReportModal(options = {}) {
         r.url ? `URL: ${_brEsc(r.url)}` : '',
         r.resolved_at ? `解決日時: ${_brEsc(_brFmtDate(r.resolved_at))}` : '',
         r.improved_at ? `✅ 改善済み: ${_brEsc(_brFmtDate(r.improved_at))}（${improverHtml}）` : '',
+        // 重複登録のとき: 親へリンク + ノーカウント表記
+        r.duplicate_of_id && r.duplicate_parent
+          ? `🔁 これは <a href="#" onclick='event.preventDefault(); openBugReportModal({ id: ${JSON.stringify(r.duplicate_of_id)} })' style="color:#2563EB;text-decoration:underline">「${_brEsc(r.duplicate_parent.title || '')}」</a> と同じ内容として登録されました（ノーカウント）`
+          : '',
       ].filter(Boolean).join(' / ');
       document.getElementById('br-meta-info').innerHTML = meta;
       // スクショ
@@ -34655,6 +34704,9 @@ async function submitBugReport() {
     payload.is_anonymous = document.getElementById('br-is-anonymous').checked;
     payload.url = location.href;
     payload.browser_info = { ua: navigator.userAgent, viewport: `${window.innerWidth}x${window.innerHeight}` };
+    // 「これと同じです」ボタン経由で投稿された場合は duplicate_of_id も送信
+    // → backend が status='duplicate' を自動セット
+    if (_brSelectedDuplicateOfId) payload.duplicate_of_id = _brSelectedDuplicateOfId;
   } else {
     payload.status = document.getElementById('br-status').value;
     // admin が改善済みチェックを操作した場合のみ payload に乗せる
@@ -34719,6 +34771,102 @@ function _brRestoreTriageState(r) {
 //  name: 'main' | 'triage'
 //  - main:   バグ報告タブ（誰でも見れる）
 //  - triage: 対応方針タブ（admin のみ表示）
+// =============================================
+// バグ報告: 類似検出（重複先勝ち）
+// =============================================
+let _brSelectedDuplicateOfId = null; // 「これと同じです」を押した時の親ID
+let _brSimilarDebounceTimer = null;
+
+// タイトル入力時の debounce 起動
+function _brOnTitleInput() {
+  // 編集モードでは類似検出しない（既存報告を編集中なので）
+  if (document.getElementById('br-id').value) return;
+  if (_brSimilarDebounceTimer) clearTimeout(_brSimilarDebounceTimer);
+  _brSimilarDebounceTimer = setTimeout(_brRefreshSimilarList, 400);
+}
+window._brOnTitleInput = _brOnTitleInput;
+
+// タイトルから2文字bigramを抽出
+function _brBigrams(s) {
+  if (!s) return [];
+  const trimmed = String(s).replace(/\s+/g, '').toLowerCase();
+  const out = [];
+  for (let i = 0; i < trimmed.length - 1; i++) {
+    out.push(trimmed.slice(i, i + 2));
+  }
+  return out;
+}
+
+// 2文字単位で重なるbigramの割合（0..1）
+function _brSimScore(a, b) {
+  const ag = _brBigrams(a);
+  const bg = new Set(_brBigrams(b));
+  if (ag.length === 0 || bg.size === 0) return 0;
+  let hit = 0;
+  for (const g of ag) if (bg.has(g)) hit++;
+  return hit / Math.max(ag.length, bg.size);
+}
+
+async function _brRefreshSimilarList() {
+  const wrap = document.getElementById('br-similar-wrap');
+  const list = document.getElementById('br-similar-list');
+  if (!wrap || !list) return;
+  const title = (document.getElementById('br-title')?.value || '').trim();
+  // 4文字未満は判定しない（誤検知が多すぎるので）
+  if (title.length < 4) {
+    wrap.style.display = 'none';
+    return;
+  }
+  // _bugReports が無ければ取りに行く（一覧モーダル開いたあとの再利用）
+  if (!Array.isArray(_bugReports) || _bugReports.length === 0) {
+    try {
+      const res = await fetch('/api/haruka/bug-reports');
+      if (res.ok) _bugReports = await res.json();
+    } catch (_) { /* ignore */ }
+  }
+  const candidates = (_bugReports || [])
+    // 重複本体は提示しない（チェーンが伸びないように）。wont_fix も除外
+    .filter(r => r.status !== 'duplicate' && r.status !== 'wont_fix')
+    .map(r => ({ r, score: _brSimScore(title, r.title || '') }))
+    .filter(x => x.score >= 0.4)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+  if (candidates.length === 0) {
+    wrap.style.display = 'none';
+    return;
+  }
+  list.innerHTML = candidates.map(({ r, score }) => {
+    const stColor = BUG_STATUS_COLOR[r.status] || '#6B7280';
+    const stLabel = BUG_STATUS_LABEL[r.status] || r.status;
+    const idJson = JSON.stringify(r.id);
+    const titleEsc = _brEsc(r.title || '');
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fff;border:1px solid #FCD34D;border-radius:6px">
+        <span style="background:${stColor};color:#fff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap">${_brEsc(stLabel)}</span>
+        <span style="flex:1;font-size:12px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${titleEsc}</span>
+        <span style="font-size:10px;color:#92400E">類似度 ${Math.round(score * 100)}%</span>
+        <button type="button" class="btn" onclick='_brMarkAsSameAs(${idJson})' style="font-size:11px;padding:3px 10px">これと同じです</button>
+      </div>`;
+  }).join('');
+  wrap.style.display = '';
+}
+
+// 「これと同じです」を押下→ duplicate_of_id をセットして即送信モードに
+function _brMarkAsSameAs(parentId) {
+  _brSelectedDuplicateOfId = String(parentId);
+  // ユーザーに「重複として送信されます」と分かるよう保存ボタンの文言を変える
+  const saveBtn = document.querySelector('#modal-bug-report .modal-footer .btn-primary');
+  if (saveBtn) saveBtn.textContent = '🔁 重複として送信';
+  // パネル全体を「選択済み」表示に
+  const wrap = document.getElementById('br-similar-wrap');
+  if (wrap) {
+    wrap.style.background = '#FFFBEB';
+    wrap.style.borderColor = '#10B981';
+  }
+  showToast('🔁「これと同じです」として登録します。保存ボタンを押してください', 'info');
+}
+window._brMarkAsSameAs = _brMarkAsSameAs;
+
 function _brSwitchTab(name) {
   const tabs = ['main', 'triage'];
   for (const t of tabs) {
