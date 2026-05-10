@@ -20871,6 +20871,27 @@ async function onProjectChange(projectId) {
   sel.innerHTML = '<option value="">読み込み中...</option>';
   if (prodSel) prodSel.innerHTML = '<option value="">読み込み中...</option>';
 
+  // 案件を切り替えたら前回案件のファイル名・タイトルを必ずリセットする。
+  // Step1 で「← 案件: ...」から戻って別案件を選び直したとき、前回案件用に生成された
+  // ファイル名（例: 260510_テスト「LP」案件_LP_001）がそのまま残ってしまう不具合があった。
+  // 案件カテゴリ（テンプレート）が変わるとファイル名形式自体が変わるため、案件変更を
+  // 検出した時点でクリア＋自動生成フラグもリセットして、新案件のテンプレートで再生成
+  // できる状態に戻す。
+  // - video/design: 全フィールド揃ったら tryAutoGenerateFileName が再走する
+  // - LP/HP: goToCreativeStep2 → applyCreativeTypeVisibility が空欄を検知して再生成
+  // - LINE: タイトル入力欄をクリア（前回タイトルを引き継がない）
+  const _prevProjectId = (typeof onProjectChange._lastProjectId === 'string') ? onProjectChange._lastProjectId : '';
+  if (_prevProjectId !== projectId) {
+    const _fileEl = document.getElementById('c-file-name');
+    if (_fileEl) _fileEl.value = '';
+    const _titleEl = document.getElementById('c-title');
+    if (_titleEl) _titleEl.value = '';
+    const _statusEl = document.getElementById('filename-status');
+    if (_statusEl) _statusEl.textContent = '';
+    _autoFileNameDone = false;
+  }
+  onProjectChange._lastProjectId = projectId || '';
+
   if (!projectId) {
     sel.innerHTML = '<option value="">案件を先に選択してください</option>';
     if (prodSel) prodSel.innerHTML = '<option value="">案件を先に選択してください</option>';
@@ -21291,6 +21312,10 @@ async function openCreateCreative(opts = {}) {
   try {
   const presetProjectId = (opts && typeof opts === 'object') ? (opts.presetProjectId || '') : '';
   _autoFileNameDone = false; // 自動生成フラグをリセット
+  // モーダルを開き直したときに、前回開いたときの案件IDが残っていると
+  // onProjectChange の差分検知が「同じ案件」と誤判定してファイル名クリアが効かない。
+  // モーダルを開くたびに「前回案件IDなし」状態に戻して必ずクリアが走るようにする。
+  if (typeof onProjectChange === 'function') onProjectChange._lastProjectId = '';
   // 案件ドロップダウンの職種フィルタ初期値を user の job_type / default_creative_tab から決定し、
   // 個別/一括 両方のドロップダウンを再構築する（カウント・active も同時更新）
   _creativeAddProjectFilter = pickInitialProjectFilterTab(currentUser);
