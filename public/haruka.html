@@ -2446,7 +2446,11 @@ window.showPage = window.showPage || function(name, btn) {
   #modal-creator-detail .role-chip-director_as_editor { background: #DCFCE7; color: #166534; }
   #modal-creator-detail .role-chip-other       { background: #F1F5F9; color: #334155; }
 
-  /* バグ報告: canvas エディタの全画面表示モード */
+  /* バグ報告: canvas エディタの全画面表示モード
+     注意: 親 #modal-bug-report が z-index:250 で stacking context を作るため、
+     editor の z-index は親内でしか効かない。よって body::after オーバーレイは
+     使わず、modal-bug-report の暗背景を透明化することで「editor だけが見える」
+     状態を作る。 */
   #br-screenshot-editor.br-fullscreen {
     position: fixed !important;
     inset: 16px !important;
@@ -2469,14 +2473,17 @@ window.showPage = window.showPage || function(name, btn) {
     max-width: 100% !important;
     max-height: calc(100vh - 120px) !important;
   }
-  /* 全画面時に下のモーダルを暗くするオーバーレイ */
-  body.br-fullscreen-active::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    z-index: 10049;
-    pointer-events: none;
+  /* 全画面時、親 modal-bug-report の暗背景は editor の白背景と被って見栄えが悪いので透明化。
+     さらに modal-card の中身も非表示にして editor だけが見える状態にする */
+  body.br-fullscreen-active #modal-bug-report.modal-overlay {
+    background: rgba(0,0,0,0.6) !important;
+  }
+  body.br-fullscreen-active #modal-bug-report .modal-card > *:not(#br-id) {
+    visibility: hidden;
+  }
+  body.br-fullscreen-active #modal-bug-report #br-screenshot-editor.br-fullscreen,
+  body.br-fullscreen-active #modal-bug-report #br-screenshot-editor.br-fullscreen * {
+    visibility: visible;
   }
 </style>
 <div class="modal-overlay" id="modal-creator-detail">
