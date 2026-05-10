@@ -33988,7 +33988,24 @@ function _brFmtDate(s) {
 }
 function _brUserLabel(u) {
   if (!u) return '';
-  return u.nickname || u.full_name || '';
+  // システム共通の NameDisplay.full（ニックネーム（名前））
+  return (typeof window !== 'undefined' && window.NameDisplay) ? window.NameDisplay.full(u) : (u.nickname || u.full_name || '');
+}
+// アバター + 名前（インライン）。avatar_url があれば <img>、無ければイニシャル円
+function _brUserAvatarHtml(u, size) {
+  if (!u) return '';
+  const sz = size || 18;
+  const url = u.avatar_url;
+  const initial = ((u.full_name || u.nickname || '?').trim().charAt(0) || '?').toUpperCase();
+  const baseStyle = `display:inline-flex;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;border-radius:50%;background:#E2E8F0;color:#475569;font-size:${Math.max(9, sz-8)}px;font-weight:600;overflow:hidden;flex-shrink:0;vertical-align:middle`;
+  if (url) return `<span style="${baseStyle}"><img src="${_brEsc(url)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block" loading="lazy"></span>`;
+  return `<span style="${baseStyle}">${_brEsc(initial)}</span>`;
+}
+// アイコン+名前のセット（pickerLabel 表示）
+function _brUserChipHtml(u, size) {
+  if (!u) return '—';
+  const av = _brUserAvatarHtml(u, size || 18);
+  return `<span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle">${av}<span>${_brEsc(_brUserLabel(u))}</span></span>`;
 }
 
 // ヘッダーの🐛バッジ: open + in_progress 件数を表示
@@ -34116,8 +34133,8 @@ function renderBugReportList() {
     const sevLabel = BUG_SEVERITY_LABEL[r.severity] || r.severity;
     const stColor = BUG_STATUS_COLOR[r.status] || '#6B7280';
     const stLabel = BUG_STATUS_LABEL[r.status] || r.status;
-    const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
-    const assigneeLabel = r.assignee ? `👤 ${_brEsc(_brUserLabel(r.assignee))}` : '<span style="color:#9CA3AF">未割当</span>';
+    const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (r.reporter ? _brUserChipHtml(r.reporter, 18) : '—');
+    const assigneeLabel = r.assignee ? _brUserChipHtml(r.assignee, 18) : '<span style="color:#9CA3AF">未割当</span>';
     const rowBg = r.is_urgent ? '#FEF2F2' : '#fff';
     // PR #479: 改善済バッジ + Verup#バッジ
     const improvedBadge = r.improved_at
@@ -34134,7 +34151,7 @@ function renderBugReportList() {
         <td style="padding:8px 6px;font-size:11px">${stCell}</td>
         <td style="padding:8px 6px;font-size:11px"><span style="background:${sevColor};color:#fff;padding:2px 6px;border-radius:8px;font-weight:700;white-space:nowrap">${_brEsc(sevLabel)}</span></td>
         <td style="padding:8px 6px;font-size:13px;color:#111827;font-weight:600">${_brEsc(r.title)}</td>
-        <td style="padding:8px 6px;font-size:12px;color:#374151">${_brEsc(reporterLabel)}</td>
+        <td style="padding:8px 6px;font-size:12px;color:#374151">${reporterLabel}</td>
         <td style="padding:8px 6px;font-size:12px;color:#374151">${assigneeLabel}</td>
         <td style="padding:8px 6px;font-size:11px;color:#6B7280;white-space:nowrap">${_brEsc(_brFmtDate(r.created_at))}</td>
         <td style="padding:8px 6px;font-size:11px;color:#6B7280;text-align:right;white-space:nowrap">${_brElapsedLabel(r)}</td>
@@ -34289,21 +34306,21 @@ async function openBugReportModal(options = {}) {
       // メタ情報（reporter_user_id は「保存ボタンを押した人＝入力者」を意味する）
       // 入力者は初回作成時のみセットされ、以降の更新では絶対に上書きされない。
       // 最終更新者は last_updated_by_user_id で別途管理（admin が見てくれた／編集した最後の人）。
-      const enteredByLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
-      const improverLabel = r.improved_at ? (_brUserLabel(r.improver) || '—') : '';
-      const lastUpdaterLabel = r.last_updater ? _brUserLabel(r.last_updater) : '';
+      const enteredByHtml = r.is_anonymous ? '🕵️ 匿名' : (r.reporter ? _brUserChipHtml(r.reporter) : '—');
+      const improverHtml = r.improved_at ? (r.improver ? _brUserChipHtml(r.improver) : '—') : '';
+      const lastUpdaterHtml = r.last_updater ? _brUserChipHtml(r.last_updater) : '';
       const meta = [
-        `入力: ${enteredByLabel}`,
-        `日時: ${_brFmtDate(r.created_at)}`,
+        `入力: ${enteredByHtml}`,
+        `日時: ${_brEsc(_brFmtDate(r.created_at))}`,
         // 最終更新者がいて、かつ作成者と異なる、または更新時刻が異なる場合に表示
-        lastUpdaterLabel && r.updated_at && r.updated_at !== r.created_at
-          ? `最終更新: ${lastUpdaterLabel}（${_brFmtDate(r.updated_at)}）`
+        lastUpdaterHtml && r.updated_at && r.updated_at !== r.created_at
+          ? `最終更新: ${lastUpdaterHtml}（${_brEsc(_brFmtDate(r.updated_at))}）`
           : '',
-        r.url ? `URL: ${r.url}` : '',
-        r.resolved_at ? `解決日時: ${_brFmtDate(r.resolved_at)}` : '',
-        r.improved_at ? `✅ 改善済み: ${_brFmtDate(r.improved_at)}（${improverLabel}）` : '',
+        r.url ? `URL: ${_brEsc(r.url)}` : '',
+        r.resolved_at ? `解決日時: ${_brEsc(_brFmtDate(r.resolved_at))}` : '',
+        r.improved_at ? `✅ 改善済み: ${_brEsc(_brFmtDate(r.improved_at))}（${improverHtml}）` : '',
       ].filter(Boolean).join(' / ');
-      document.getElementById('br-meta-info').textContent = meta;
+      document.getElementById('br-meta-info').innerHTML = meta;
       // スクショ
       if (r.screenshot_data_url) {
         await bugReportLoadImageFromDataUrl(r.screenshot_data_url);
@@ -34811,13 +34828,13 @@ async function _brLoadComments(bugId) {
     const isAdmin = _effRole === 'admin';
     list.innerHTML = rows.map(c => {
       const isSystem = c.kind === 'system';
-      const author = _brCommentAuthorLabel(c.author);
+      const authorHtml = c.author ? _brUserChipHtml(c.author, 20) : '—';
       const date = _brFmtDate(c.created_at);
       const bodyEsc = _brEsc(c.body || '').replace(/\n/g, '<br>');
       if (isSystem) {
         return `
           <div style="padding:6px 8px;margin:4px 0;background:#F3F4F6;border-radius:6px;font-size:11px;color:#4B5563">
-            🤖 <strong>${_brEsc(author)}</strong> <span style="color:#9CA3AF">${_brEsc(date)}</span><br>
+            🤖 <strong>${authorHtml}</strong> <span style="color:#9CA3AF">${_brEsc(date)}</span><br>
             ${bodyEsc}
           </div>`;
       }
@@ -34833,7 +34850,7 @@ async function _brLoadComments(bugId) {
       return `
         <div data-cid="${_brEsc(c.id)}" style="padding:8px 10px;margin:6px 0;background:#FAFAFA;border:1px solid #F3F4F6;border-radius:6px;font-size:13px">
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <span><strong style="color:#111827">${_brEsc(author)}</strong> ・ ${_brEsc(date)}</span>
+            <span style="display:inline-flex;align-items:center;gap:6px"><strong style="color:#111827;display:inline-flex;align-items:center;gap:5px">${authorHtml}</strong><span>・ ${_brEsc(date)}</span></span>
             ${actions}
           </div>
           <div data-comment-body style="color:#1F2937;line-height:1.45">${bodyEsc}</div>
