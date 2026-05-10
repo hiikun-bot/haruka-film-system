@@ -286,7 +286,7 @@ async function main() {
   //
   // 失敗してもメインフロー(version_logs INSERT)は成功扱いにする(警告のみ)。
   // ============================================================
-  await linkBugReports(PR_BODY, insertedRow?.id, SUPABASE_URL, headers);
+  await linkBugReports(PR_BODY, insertedRow?.id, PR_NUMBER, PR_TITLE, SUPABASE_URL, headers);
 
   // ============================================================
   // バグ報告改善 Slack 通知 (#haruka-error-report 等)
@@ -301,7 +301,7 @@ async function main() {
 
 // linkBugReports: PR本文から Bug-Report-Id trailer を抽出し bug_reports を更新
 // SUPABASE_URL は main() の destructure で local scope のため、引数で受け渡す
-async function linkBugReports(prBody, versionLogId, supabaseUrl, headers) {
+async function linkBugReports(prBody, versionLogId, prNumber, prTitle, supabaseUrl, headers) {
   if (!prBody || !versionLogId) return;
   if (!supabaseUrl) {
     console.warn('[bug-link] supabaseUrl が空のため skip');
@@ -313,7 +313,7 @@ async function linkBugReports(prBody, versionLogId, supabaseUrl, headers) {
 
   const nowIso = new Date().toISOString();
   for (const bugId of ids) {
-    await linkOneBugReport(bugId, versionLogId, nowIso, supabaseUrl, headers, /*isPropagation*/false);
+    await linkOneBugReport(bugId, versionLogId, prNumber, prTitle, nowIso, supabaseUrl, headers, /*isPropagation*/false);
 
     // 親が改善されたら、duplicate_of_id = 親 の子レコードにも改善情報を伝播させる
     // （子は status='duplicate' のままでも improved_at と improvement_version_log_id をコピー）
@@ -325,7 +325,7 @@ async function linkBugReports(prBody, versionLogId, supabaseUrl, headers) {
       if (childRes.ok) {
         const children = await childRes.json();
         for (const c of (children || [])) {
-          await linkOneBugReport(c.id, versionLogId, nowIso, supabaseUrl, headers, /*isPropagation*/true);
+          await linkOneBugReport(c.id, versionLogId, prNumber, prTitle, nowIso, supabaseUrl, headers, /*isPropagation*/true);
         }
       }
     } catch (e) {
@@ -334,7 +334,7 @@ async function linkBugReports(prBody, versionLogId, supabaseUrl, headers) {
   }
 }
 
-async function linkOneBugReport(bugId, versionLogId, nowIso, supabaseUrl, headers, isPropagation) {
+async function linkOneBugReport(bugId, versionLogId, prNumber, prTitle, nowIso, supabaseUrl, headers, isPropagation) {
   try {
     const getRes = await fetch(
       `${supabaseUrl}/rest/v1/bug_reports?select=id,status,improved_at&id=eq.${encodeURIComponent(bugId)}`,
@@ -379,6 +379,35 @@ async function linkOneBugReport(bugId, versionLogId, nowIso, supabaseUrl, header
     }
     const tag = isPropagation ? '[bug-link/propagate]' : '[bug-link]';
     console.log(`${tag} 紐付け完了: bug=${bugId} → version_log=${versionLogId}, status=${patch.status || cur.status}`);
+
+    // 「実装済み」へ遷移した／duplicate でも親と一緒に紐付いた瞬間、コメント欄に
+    // system コメントを残す（通知は飛ばない／kind='system' は内部通知の対象外）。
+    // ハル要望: 「最後に実装済みになった時もそのコメントにディレクトして残す」
+    try {
+      const lines = isPropagation
+        ? [`[実装済み（重複統合）: 親バグの修正 🆙 #${prNumber} に伴い同時に対応されました]`]
+        : [`[実装済み: 🆙 #${prNumber}${prTitle ? ' — ' + prTitle : ''} で改善]`,
+           `動作確認のうえ、問題なければバグ報告画面で「🟩 解決」へ進めてください`];
+      const commentBody = lines.join('\n');
+      const cmtRes = await fetch(
+        `${supabaseUrl}/rest/v1/bug_report_comments`,
+        {
+          method: 'POST',
+          headers: { ...headers, Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            bug_report_id: bugId,
+            author_user_id: null, // システム由来
+            body: commentBody,
+            kind: 'system',
+          }),
+        }
+      );
+      if (!cmtRes.ok) {
+        console.warn(`[bug-link] systemコメント INSERT失敗: bug=${bugId} status=${cmtRes.status}`);
+      }
+    } catch (e) {
+      console.warn(`[bug-link] systemコメント例外: bug=${bugId} err=${e.message}`);
+    }
   } catch (e) {
     console.warn(`[bug-link] 例外: bug=${bugId} err=${e.message}`);
   }
