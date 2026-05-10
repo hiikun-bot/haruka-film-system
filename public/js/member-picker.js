@@ -39,7 +39,8 @@
   function loadMembers() {
     if (cachedMembers) return Promise.resolve(cachedMembers);
     if (cachedFetchPromise) return cachedFetchPromise;
-    cachedFetchPromise = fetch('/members', { credentials: 'same-origin' })
+    // routes/haruka.js は /api/haruka 配下にマウントされている
+    cachedFetchPromise = fetch('/api/haruka/members', { credentials: 'same-origin' })
       .then(r => r.json())
       .then(data => {
         cachedMembers = Array.isArray(data) ? data : [];
@@ -373,6 +374,7 @@
     const id = selectEl.id;
     const name = selectEl.name || '';
     const className = selectEl.className || '';
+    const styleAttr = selectEl.getAttribute('style') || '';
     const required = selectEl.required;
     const initial = selectEl.value || '';
 
@@ -388,6 +390,7 @@
     trigger.type = 'button';
     if (id) trigger.id = id;
     trigger.className = 'mp-trigger ' + className;
+    if (styleAttr) trigger.setAttribute('style', styleAttr);
     trigger.dataset.mpBound = '1';
     trigger._mpHidden = hidden;
     trigger._mpOpts = opts;

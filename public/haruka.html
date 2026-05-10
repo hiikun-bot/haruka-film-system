@@ -7304,6 +7304,16 @@ function updateUserSelectAvatar(selectId, avatarId, size) {
   avatarEl.innerHTML = avatarHtml(user || { full_name: '?' }, sz);
 }
 
+// ADR 014: 共通 MemberPicker バインドヘルパー（select を trigger ボタンに置き換え）
+//   onChangeFn: (id) => void  値変更時に呼ばれる（avatar 更新等）
+function bindMemberPickerSelect(selectId, opts) {
+  const el = document.getElementById(selectId);
+  if (!el) return null;
+  if (el.dataset && el.dataset.mpBound === '1') return el;
+  if (typeof MemberPicker === 'undefined') return null;
+  return MemberPicker.bindSelect(el, opts || {});
+}
+
 // ユーザー名 + アバターをまとめて返す（横並び、avatar-name のクラスで装飾可）
 function avatarWithName(user, size, opts) {
   const u = user || {};
@@ -11901,15 +11911,19 @@ function openTeamModal(team) {
   codeInput.disabled = false;
   codeInput.readOnly = false;
 
-  // プロデューサー
+  // ADR 014: チーム責任者の P/D 選択を共通 MemberPicker に統一（初回のみバインド）
+  bindMemberPickerSelect('t-producer', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','producer','producer_director'],
+    onChange: () => updateUserSelectAvatar('t-producer', 't-producer-avatar', 24),
+  });
+  bindMemberPickerSelect('t-director', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','director','producer_director'],
+    onChange: () => updateUserSelectAvatar('t-director', 't-director-avatar', 24),
+  });
   const pSel = document.getElementById('t-producer');
-  const producers = allMembers.filter(m => ['admin','producer','producer_director'].includes(m.role) && m.is_active !== false);
-  pSel.innerHTML = '<option value="">未設定</option>' + producers.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
-
-  // ディレクター
   const dSel = document.getElementById('t-director');
-  const dirs = allMembers.filter(m => ['admin','director','producer_director'].includes(m.role) && m.is_active !== false);
-  dSel.innerHTML = '<option value="">未設定</option>' + dirs.map(d => `<option value="${d.id}">${d.full_name}</option>`).join('');
 
   if (isEdit) {
     // 編集モード：既存データをフォームに反映
@@ -14092,10 +14106,25 @@ function openProjectModal(preClientId) {
     allClients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
   if (preClientId) cSel.value = preClientId;
 
-  const producers = allMembers.filter(m => m.is_active !== false && ['producer','producer_director','admin'].includes(m.role));
-  const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director','producer','admin'].includes(m.role));
-  document.getElementById('p-producer-id').innerHTML = '<option value="">未設定</option>' + producers.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
-  document.getElementById('p-director-id').innerHTML = '<option value="">未設定</option>' + directors.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+  // ADR 014: P/D 選択を共通 MemberPicker に統一（初回のみバインド）
+  bindMemberPickerSelect('p-producer-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','producer','producer_director'],
+    onChange: () => {
+      updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
+      if (typeof renderProjectSubProducerPicker === 'function') renderProjectSubProducerPicker();
+    },
+  });
+  bindMemberPickerSelect('p-director-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','producer','producer_director','director'],
+    onChange: () => {
+      updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
+      if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
+    },
+  });
+  document.getElementById('p-producer-id').value = '';
+  document.getElementById('p-director-id').value = '';
   // アバタープレビュー初期化（新規は未選択）
   updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
   updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
@@ -14197,10 +14226,23 @@ function openEditProject(p) {
     allClients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
   cSel.value = p.client_id;
 
-  const producers = allMembers.filter(m => m.is_active !== false && ['producer','producer_director','admin'].includes(m.role));
-  const directors = allMembers.filter(m => m.is_active !== false && ['director','producer_director','producer','admin'].includes(m.role));
-  document.getElementById('p-producer-id').innerHTML = '<option value="">未設定</option>' + producers.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
-  document.getElementById('p-director-id').innerHTML = '<option value="">未設定</option>' + directors.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+  // ADR 014: P/D 選択を共通 MemberPicker に統一（初回のみバインド）
+  bindMemberPickerSelect('p-producer-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','producer','producer_director'],
+    onChange: () => {
+      updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
+      if (typeof renderProjectSubProducerPicker === 'function') renderProjectSubProducerPicker();
+    },
+  });
+  bindMemberPickerSelect('p-director-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','producer','producer_director','director'],
+    onChange: () => {
+      updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
+      if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
+    },
+  });
 
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
@@ -21696,28 +21738,25 @@ function renderAssigneeAvatar(selId, avatarSpanId) {
 }
 
 function updateBulkAssigneeSelect() {
-  const teamId = document.getElementById('bulk-team-id')?.value || '';
-  const creativeType = document.getElementById('bulk-creative-type')?.value || '';
   const sel = document.getElementById('bulk-assignee-id');
   if (!sel) return;
+  const creativeType = document.getElementById('bulk-creative-type')?.value || '';
   const isVideo = creativeType.startsWith('video');
   const isDesign = creativeType.startsWith('design');
   const videoRoles  = ['producer','producer_director','director','editor'];
   const designRoles = ['producer','producer_director','director','designer'];
-  const ROLE_LABEL = { producer:'プロデューサー', producer_director:'PD', director:'ディレクター', editor:'編集者', designer:'デザイナー' };
-  let candidates = allMembers.filter(m => m.is_active !== false);
-  if (teamId) {
-    const team = allTeams.find(t => t.id === teamId);
-    const teamMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
-    candidates = candidates.filter(m => teamMemberIds.has(m.id) || m.team_id === teamId);
-  } else {
-    if (isVideo)       candidates = candidates.filter(m => videoRoles.includes(m.role) && m.job_type !== 'design');
-    else if (isDesign) candidates = candidates.filter(m => designRoles.includes(m.role) && m.job_type !== 'video');
+  const allowedRoles = isVideo ? videoRoles : isDesign ? designRoles : null;
+
+  // ADR 014: 共通 MemberPicker でロール絞り込みは picker 側に委ねる（チーム別の絞り込みは検索で代替）
+  if (sel.dataset && sel.dataset.mpBound !== '1') {
+    bindMemberPickerSelect('bulk-assignee-id', {
+      placeholder: '未設定', emptyLabel: '未設定',
+      allowedRoles,
+      onChange: () => renderAssigneeAvatar('bulk-assignee-id', 'bulk-assignee-avatar'),
+    });
+  } else if (typeof sel.setMemberPickerOptions === 'function') {
+    sel.setMemberPickerOptions({ allowedRoles });
   }
-  sel.innerHTML = '<option value="">未設定</option>' + candidates.map(m => {
-    const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
-    return `<option value="${m.id}">${m.full_name}${label}</option>`;
-  }).join('');
   renderAssigneeAvatar('bulk-assignee-id', 'bulk-assignee-avatar');
 }
 
