@@ -27781,8 +27781,12 @@ async function openCreativeDetail(id) {
       return;
     }
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
+    // bh.holder_user が解決できているとき（editor / director / producer）のみアバター表示。
+    // クライアント / done / unknown は holder_user=null なのでアバター無しでフォールバック。
+    // 担当ラベルが 40px なのに対しボール側は 22px で控えめに（担当との対比で「別人かどうか」を視認しやすく）。
+    const avatarPart = bh.holder_user ? avatarHtml(bh.holder_user, 22) : '';
     el.style.display = '';
-    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span><span class="ball-name">${esc(bh.holder)}</span></span>`;
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(bh.holder)}</span></span>`;
   })();
   // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
   // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
