@@ -26925,7 +26925,9 @@ function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round, resolvedFile =
 
 // 右カラム（今回）ヘッダー HTML を組み立てる。
 //   - creative: currentCreativeDetail
-// 現在のステータス (修正中=is-edit / それ以外=is-current) と更新日時を表示。
+// 現在のステータス (修正中=is-edit / それ以外=is-current) のみ表示。
+// 旧仕様では updated_at を右側に出していたが、ステータス変更や任意フィールド編集など
+// 何でも動く値で意味が曖昧だったため削除（PR #TBD）。
 function _cdRenderRoundRightHeader(creative) {
   const status = creative?.status || '';
   const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
@@ -26937,14 +26939,10 @@ function _cdRenderRoundRightHeader(creative) {
   } else if (status) {
     statusHtml = `<span class="cd-rh-status is-current">${esc(status)}</span>`;
   }
-  const dateStr = creative?.updated_at ? _cdFormatRoundDate(creative.updated_at) : '';
   return `
     <div class="cd-rh-title">
       <span class="cd-rh-icon">📝</span><span>今回</span>
       ${statusHtml}
-    </div>
-    <div class="cd-rh-meta">
-      ${dateStr ? `<span class="cd-rh-date">${esc(dateStr)}</span>` : ''}
     </div>`;
 }
 
