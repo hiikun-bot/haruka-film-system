@@ -6,7 +6,7 @@
  *   MemberPicker.bindSelect(selectEl, options)    既存 <select> を picker に置き換え
  *   MemberPicker.loadMembers()                    /members を取得（キャッシュ）
  *   MemberPicker.invalidateCache()                キャッシュ破棄（メンバー変更時に呼ぶ）
- *   MemberPicker.memberLabel(member)              "nickname（full_name）" 形式の表示文字列
+ *   MemberPicker.memberLabel(member)              "ニックネーム（名前）" 形式（= NameDisplay.full）
  *
  * options:
  *   mode:          'single' | 'multi'             既定 'single'
@@ -60,13 +60,14 @@
   }
 
   // ───────── ユーティリティ ─────────
+  // 表示は全システム共通の NameDisplay ヘルパーに委譲（ニックネーム→名前 順）
   function memberLabel(m) {
+    if (typeof window !== 'undefined' && window.NameDisplay) return window.NameDisplay.full(m);
     if (!m) return '';
     const nick = (m.nickname || '').trim();
     const full = (m.full_name || '').trim();
-    // 名前を主、ニックネームを括弧書きで補助情報として表示
-    if (nick && full && nick !== full) return `${full}（${nick}）`;
-    return full || nick || '(名前未設定)';
+    if (nick && full && nick !== full) return `${nick}（${full}）`;
+    return nick || full || '(名前未設定)';
   }
   function escapeHtml(s) {
     return String(s == null ? '' : s)
