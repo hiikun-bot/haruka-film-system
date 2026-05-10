@@ -26702,9 +26702,18 @@ function _cdRenderRoundLeftPreviewPanel(file, round) {
              playsinline></video>`;
   }
   if (driveFileId && isImage) {
+    // 画像クリックで既存の openFilePreview（zoom/pan/コメント機能つき）を開く。
+    // 引数の組み立て方は _cdRenderFileCard の checkBtnClick と完全に揃える。
+    const _ct = currentCreativeDetail?.creative_type || '';
+    const _assigneeRoleRender = currentCreativeDetail?.creative_assignments
+      ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role || '';
+    const imgClick = `openFilePreview(${JSON.stringify(driveFileId)},${JSON.stringify(filename)},${JSON.stringify(file.drive_url||'')},${JSON.stringify(file.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`;
     return `${headerHtml}
       <img class="cd-round-left-preview-media" src="${API}/files/${esc(driveFileId)}/stream"
            alt="${esc(filename)}"
+           title="クリックで拡大（コメント・ズーム可）"
+           style="cursor:zoom-in"
+           onclick="${imgClick}"
            onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
       <div class="cd-round-left-preview-empty" style="display:none;margin-top:6px">画像の読み込みに失敗しました</div>`;
   }
