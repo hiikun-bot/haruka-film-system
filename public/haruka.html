@@ -2671,7 +2671,7 @@ window.showPage = window.showPage || function(name, btn) {
 
 <!-- ==================== バグ報告: 新規/編集モーダル ==================== -->
 <div class="modal-overlay" id="modal-bug-report" data-no-overlay-close="true" style="z-index:250">
-  <div class="modal-card" style="width:min(820px,95vw);max-height:92vh;display:flex;flex-direction:column">
+  <div class="modal-card" style="width:min(1100px,96vw);max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title">
       <span id="bug-report-modal-title">🦋 バグ報告</span>
       <button class="modal-close" onclick="closeModal('modal-bug-report')">×</button>
@@ -2679,86 +2679,98 @@ window.showPage = window.showPage || function(name, btn) {
     <input type="hidden" id="br-id">
     <div style="overflow-y:auto;flex:1;padding-right:4px">
 
-      <!-- ① 対応者 + 匿名チェック -->
-      <div class="form-group">
-        <label class="form-label">対応者</label>
-        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
-          <select id="br-assignee" class="form-input" style="flex:1;min-width:200px">
-            <option value="">— 未割当 —</option>
-          </select>
-          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#F3F4F6;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap" id="br-anonymous-wrap">
-            <input type="checkbox" id="br-is-anonymous">
-            <span>🕵️ 匿名で報告</span>
-          </label>
-        </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-          ※ 匿名で報告した場合、個人のバグ報告統計（自分の報告履歴）には集計されません
-        </div>
-      </div>
+      <!-- 2カラムレイアウト（PCは左右、スマホは1カラムフォールバック） -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;align-items:start">
 
-      <!-- ② スクリーンショット（Ctrl+V 推奨） -->
-      <div class="form-group">
-        <label class="form-label">スクリーンショット <span style="color:var(--text-muted);font-size:11px">（Ctrl+V で貼り付け / ドラッグ&ドロップ / クリックで選択）</span></label>
-        <div id="br-screenshot-dropzone"
-          style="border:2px dashed #D1D5DB;border-radius:8px;padding:18px;text-align:center;background:#FAFAFA;color:#6B7280;font-size:13px;cursor:pointer;transition:border-color .15s,background-color .15s"
-          onclick="document.getElementById('br-screenshot-file').click()">
-          📎 ここをクリックして画像を選択 / <strong>Ctrl+V で貼り付け</strong> / 画像をドラッグ&ドロップ
-          <input type="file" id="br-screenshot-file" accept="image/*" style="display:none" onchange="bugReportHandleFile(this.files && this.files[0])">
-        </div>
-        <!-- canvas 編集エリア（画像読み込み時のみ表示） -->
-        <div id="br-screenshot-editor" style="display:none;margin-top:10px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:10px">
-          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px">
-            <strong style="font-size:12px;color:#374151">アノテーション:</strong>
-            <button type="button" class="btn" id="br-tool-rect" onclick="bugReportSetTool('rect')" style="font-size:11px;padding:4px 10px">🟥 四角で囲む</button>
-            <button type="button" class="btn" id="br-tool-arrow" onclick="bugReportSetTool('arrow')" style="font-size:11px;padding:4px 10px">↗ 矢印</button>
-            <button type="button" class="btn" onclick="bugReportUndoAnnotation()" style="font-size:11px;padding:4px 10px">↶ 元に戻す</button>
-            <button type="button" class="btn" onclick="bugReportClearAnnotations()" style="font-size:11px;padding:4px 10px">🗑 すべて消す</button>
-            <span style="flex:1"></span>
-            <button type="button" class="btn danger" onclick="bugReportRemoveScreenshot()" style="font-size:11px;padding:4px 10px">画像を破棄</button>
+        <!-- 【左カラム】対応者 / スクショ / 重要度+至急 -->
+        <div>
+          <!-- ① 対応者 + 匿名チェック -->
+          <div class="form-group">
+            <label class="form-label">対応者</label>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+              <select id="br-assignee" class="form-input" style="flex:1;min-width:160px">
+                <option value="">— 未割当 —</option>
+              </select>
+              <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#F3F4F6;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap" id="br-anonymous-wrap">
+                <input type="checkbox" id="br-is-anonymous">
+                <span>🕵️ 匿名で報告</span>
+              </label>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              ※ 匿名で報告した場合、個人のバグ報告統計（自分の報告履歴）には集計されません
+            </div>
           </div>
-          <div style="overflow:auto;max-height:50vh;text-align:center;background:#F3F4F6;border-radius:6px">
-            <canvas id="br-canvas" style="cursor:crosshair;max-width:100%;display:inline-block"></canvas>
+
+          <!-- ② スクリーンショット（Ctrl+V 推奨） -->
+          <div class="form-group">
+            <label class="form-label">スクリーンショット <span style="color:var(--text-muted);font-size:11px">（Ctrl+V / D&D / クリック）</span></label>
+            <div id="br-screenshot-dropzone"
+              style="border:2px dashed #D1D5DB;border-radius:8px;padding:18px;text-align:center;background:#FAFAFA;color:#6B7280;font-size:13px;cursor:pointer;transition:border-color .15s,background-color .15s"
+              onclick="document.getElementById('br-screenshot-file').click()">
+              📎 ここをクリックして画像を選択 / <strong>Ctrl+V で貼り付け</strong> / 画像をドラッグ&ドロップ
+              <input type="file" id="br-screenshot-file" accept="image/*" style="display:none" onchange="bugReportHandleFile(this.files && this.files[0])">
+            </div>
+            <!-- canvas 編集エリア（画像読み込み時のみ表示） -->
+            <div id="br-screenshot-editor" style="display:none;margin-top:10px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:10px">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px">
+                <strong style="font-size:12px;color:#374151">アノテーション:</strong>
+                <button type="button" class="btn" id="br-tool-rect" onclick="bugReportSetTool('rect')" style="font-size:11px;padding:4px 8px">🟥 四角</button>
+                <button type="button" class="btn" id="br-tool-arrow" onclick="bugReportSetTool('arrow')" style="font-size:11px;padding:4px 8px">↗ 矢印</button>
+                <button type="button" class="btn" onclick="bugReportUndoAnnotation()" style="font-size:11px;padding:4px 8px">↶ 戻す</button>
+                <button type="button" class="btn" onclick="bugReportClearAnnotations()" style="font-size:11px;padding:4px 8px">🗑 全消去</button>
+                <span style="flex:1"></span>
+                <button type="button" class="btn danger" onclick="bugReportRemoveScreenshot()" style="font-size:11px;padding:4px 8px">❌ 破棄</button>
+              </div>
+              <div style="overflow:auto;max-height:50vh;text-align:center;background:#F3F4F6;border-radius:6px">
+                <canvas id="br-canvas" style="cursor:crosshair;max-width:100%;display:inline-block"></canvas>
+              </div>
+              <div style="font-size:11px;color:#6B7280;margin-top:6px">💡 画像上をドラッグして範囲指定。バグ箇所を四角や矢印で示してください。</div>
+            </div>
           </div>
-          <div style="font-size:11px;color:#6B7280;margin-top:6px">💡 画像上をドラッグして範囲指定。バグ箇所を四角や矢印で示してください。</div>
-        </div>
-      </div>
 
-      <!-- ③ タイトル -->
-      <div class="form-group">
-        <label class="form-label">タイトル（症状） <span style="color:#C0392B">*</span></label>
-        <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200">
-      </div>
-
-      <!-- ④ 詳細 + テンプレ挿入ボタン -->
-      <div class="form-group">
-        <label class="form-label">詳細（フリーフォーマット）</label>
-        <textarea id="br-description" class="form-input" rows="6" placeholder="気になっていること、いつから起きているか、どのくらいの頻度か など、自由に書いてください"></textarea>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
-          <button type="button" class="btn" onclick="bugReportInsertTemplate('steps')" style="font-size:11px;padding:4px 10px">📋 再現手順テンプレを挿入</button>
-          <button type="button" class="btn" onclick="bugReportInsertTemplate('env')" style="font-size:11px;padding:4px 10px">📋 環境テンプレを挿入</button>
-        </div>
-      </div>
-
-      <!-- ⑤ 重要度 + 至急対応 -->
-      <div class="form-group">
-        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
-          <div style="flex:1;min-width:200px">
-            <label class="form-label" style="font-size:11px">重要度</label>
-            <select id="br-severity" class="form-input">
-              <option value="low">🟢 低（こうなったら嬉しい）</option>
-              <option value="normal" selected>🟡 通常（あれば嬉しい）</option>
-              <option value="high">🔴 高（困っている）</option>
-              <option value="critical">🚨 致命的（業務が止まる）</option>
-            </select>
+          <!-- ⑤ 重要度 + 至急対応（左下） -->
+          <div class="form-group">
+            <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px">
+              <div style="flex:1;min-width:160px">
+                <label class="form-label" style="font-size:11px">重要度</label>
+                <select id="br-severity" class="form-input">
+                  <option value="low">🟢 低（こうなったら嬉しい）</option>
+                  <option value="normal" selected>🟡 通常（あれば嬉しい）</option>
+                  <option value="high">🔴 高（困っている）</option>
+                  <option value="critical">🚨 致命的（業務が止まる）</option>
+                </select>
+              </div>
+              <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#FEF2F2;border:1px solid #FECACA;color:#7F1D1D;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap">
+                <input type="checkbox" id="br-is-urgent">
+                <span>🚨 至急対応</span>
+              </label>
+            </div>
           </div>
-          <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;background:#FEF2F2;border:1px solid #FECACA;color:#7F1D1D;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;align-self:flex-end">
-            <input type="checkbox" id="br-is-urgent">
-            <span>🚨 至急対応</span>
-          </label>
+        </div>
+
+        <!-- 【右カラム】タイトル / 詳細（ラベル横にテンプレボタン） -->
+        <div>
+          <!-- ③ タイトル -->
+          <div class="form-group">
+            <label class="form-label">タイトル（症状） <span style="color:#C0392B">*</span></label>
+            <input id="br-title" class="form-input" placeholder="例) クリエイティブ詳細で「保存」が反応しない" maxlength="200">
+          </div>
+
+          <!-- ④ 詳細 + テンプレ挿入ボタン（ラベル横・右揃い） -->
+          <div class="form-group">
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <label class="form-label" style="margin:0">詳細（フリーフォーマット）</label>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto">
+                <button type="button" class="btn" onclick="bugReportInsertTemplate('steps')" style="font-size:11px;padding:4px 10px">📋 再現手順テンプレを挿入</button>
+                <button type="button" class="btn" onclick="bugReportInsertTemplate('env')" style="font-size:11px;padding:4px 10px">📋 環境テンプレを挿入</button>
+              </div>
+            </div>
+            <textarea id="br-description" class="form-input" rows="14" placeholder="気になっていること、いつから起きているか、どのくらいの頻度か など、自由に書いてください" style="resize:vertical"></textarea>
+          </div>
         </div>
       </div>
 
-      <!-- 編集時のみ表示: ステータス・メタ情報 -->
+      <!-- 編集時のみ表示: ステータス・メタ情報（下部・全幅） -->
       <div id="br-edit-only" style="display:none">
         <div class="form-group">
           <label class="form-label">対応ステータス</label>
