@@ -6113,6 +6113,15 @@ window.showPage = window.showPage || function(name, btn) {
 #cd-round-left .cd-round-label{ font-size:10px; font-weight:700; color:var(--em-dark); letter-spacing:0.08em; margin-bottom:4px; text-transform:uppercase; }
 #cd-round-left .cd-round-text{ font-size:12.5px; color:var(--text); white-space:pre-wrap; line-height:1.6; background:#fff; border-radius:6px; padding:8px 10px; border:0.5px solid var(--border); max-height:160px; overflow:auto; }
 #cd-round-left .cd-round-empty{ font-size:12px; color:var(--text-muted); font-style:italic; padding:6px 0; }
+/* バグ報告 #baed5d71: 過去ラウンド editor_comment 編集ボタン（控えめ・ホバーで強調） */
+#cd-round-left .cd-round-edit-btn{
+  font-size:10.5px; line-height:1; color:var(--text-muted); background:transparent; border:0.5px solid transparent;
+  border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s, border-color .15s;
+}
+#cd-round-left .cd-round-edit-btn:hover{ background:var(--em-pale); color:var(--em-dark); border-color:var(--border); }
+#cd-round-left .cd-round-edited-mark{
+  margin-left:6px; font-size:10px; font-weight:500; color:var(--text-muted); letter-spacing:0; text-transform:none;
+}
 /* From/To pill 行の右端に表示する発言日時。
    pill 行は flex-wrap:wrap なので margin-left:auto で安全に右寄せ。 */
 .cd-fromto-time{ margin-left:auto; font-size:11px; color:var(--text-muted); white-space:nowrap; padding-left:6px; }
@@ -25616,6 +25625,136 @@ function _cdResolveRoundUsers(round) {
   return out;
 }
 
+// バグ報告 #baed5d71 対応:
+//   過去ラウンドの editor_comment を「いま自分が出したばかりで、
+//   相手がまだ受け取って次に進めていない」場合に限り編集可能にする。
+//
+//   許可条件（フロント側の見せかけ判定。最終判定はサーバ側で再度行う）:
+//     1. round に id があり、_synthetic_handoff でない（snapshot 行）
+//     2. round_stage が 'd_check' / 'p_check' / 'cl_check'
+//     3. round.recorded_by === currentUser.id  または effectiveRole() === 'admin'
+//     4. _cdRoundsCache の中で round が「最新 snapshot」(version_num が最大、
+//        同 version_num なら created_at が最新)
+//     5. currentCreativeDetail.status が round_stage の対応する待機ステータス
+//
+//   いずれか欠けた瞬間に編集ボタンを出さない。サーバ側 PATCH は同条件＋本人判定で
+//   再チェックするので、ここを甘くしても権限漏れは起きない（fail-closed）。
+function _cdCanEditRoundEditorComment(round) {
+  try {
+    if (!round || !round.id) return false;
+    if (round._synthetic_handoff) return false;
+    if (round._live) return false;
+    if (!['d_check', 'p_check', 'cl_check'].includes(round.round_stage || '')) return false;
+    // 認可: 本人 or admin（VIEW AS 反映）
+    const isOwner = !!(typeof currentUser !== 'undefined' && currentUser && round.recorded_by && currentUser.id === round.recorded_by);
+    const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+    const isAdmin = role === 'admin';
+    if (!isOwner && !isAdmin) return false;
+    // 最新 snapshot 判定（_cdRoundsCache 内で、round.id を除いて
+    //   - version_num がより大きい snapshot
+    //   - 同 version_num で created_at がより新しい snapshot
+    // が存在しないこと。synthetic_handoff / live は無視）
+    const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+    const targetVer = Number(round.version_num) || 0;
+    for (const r of cache) {
+      if (!r || r.id === round.id) continue;
+      if (r._synthetic_handoff || r._live) continue;
+      const v = Number(r.version_num) || 0;
+      if (v > targetVer) return false;
+      if (v === targetVer && (r.created_at || '') > (round.created_at || '')) return false;
+    }
+    // 受け手側待ちステータスのままか
+    const ROUND_TO_STATUS = {
+      d_check:  'Dチェック',
+      p_check:  'Pチェック',
+      cl_check: 'クライアントチェック中',
+    };
+    const expected = ROUND_TO_STATUS[round.round_stage];
+    const actual = currentCreativeDetail?.status || '';
+    if (actual !== expected) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// インライン編集モーダルを開く。
+// 軽量実装: 一時 modal を body に append → 保存で PATCH /creatives/:cid/versions/:vid
+async function editRoundEditorComment(roundId) {
+  const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+  const round = cache.find(r => r && r.id === roundId);
+  if (!round) {
+    alert('対象のラウンドが見つかりませんでした。画面を再読み込みしてください。');
+    return;
+  }
+  // 編集対象の元コメント（[動画なし] プレフィックスは保持して編集可とする
+  //   — プレフィックスはサーバ生成だが、現時点で動画なしフローはこのボタンの
+  //     対象に通常ならないが、保険として元の値で開く）
+  const original = String(round.editor_comment || '');
+  // モーダル
+  const overlay = document.createElement('div');
+  overlay.className = 'cd-round-edit-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;max-width:520px;width:100%;padding:18px 20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 6px 24px rgba(0,0,0,0.18)">
+      <div style="font-size:15px;font-weight:700;color:var(--text)">✏️ 提出時メモ・連絡事項を編集</div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.55">
+        相手がまだアクションする前のため、今ならコメントを直せます。<br>
+        保存すると、相手に「修正されました」と再通知されます。
+      </div>
+      <textarea id="cd-round-edit-textarea" rows="5" style="width:100%;resize:vertical;font-size:13.5px;line-height:1.6;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:inherit"></textarea>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn-sm" id="cd-round-edit-cancel" type="button" style="font-size:12.5px;padding:6px 14px">キャンセル</button>
+        <button class="btn btn-primary" id="cd-round-edit-save" type="button" style="font-size:12.5px;padding:6px 16px">保存（再通知される）</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const ta = overlay.querySelector('#cd-round-edit-textarea');
+  ta.value = original;
+  setTimeout(() => { try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch(_){} }, 30);
+
+  const close = () => { try { overlay.remove(); } catch(_){} };
+  overlay.querySelector('#cd-round-edit-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
+
+  overlay.querySelector('#cd-round-edit-save').addEventListener('click', async () => {
+    const next = (ta.value || '').trim();
+    if (!next) { alert('コメントを入力してください。'); return; }
+    if (next === original.trim()) { close(); return; }
+    const btn = overlay.querySelector('#cd-round-edit-save');
+    btn.disabled = true;
+    btn.textContent = '保存中…';
+    try {
+      const creativeId = currentCreativeDetail?.id;
+      if (!creativeId) throw new Error('creative_id 不明');
+      const res = await apiFetch(`${API}/creatives/${creativeId}/versions/${roundId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editor_comment: next }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      // キャッシュ更新（同一 id の round.editor_comment を上書き）
+      const idx = (_cdRoundsCache || []).findIndex(r => r && r.id === roundId);
+      if (idx >= 0) _cdRoundsCache[idx].editor_comment = next;
+      // 編集済みマーカーを保持
+      window._cdRoundEditedAt = window._cdRoundEditedAt || {};
+      if (data.edited_at) window._cdRoundEditedAt[roundId] = data.edited_at;
+      close();
+      // 再描画
+      try { cdRenderRoundCompare(); } catch (_) {}
+      try { showToast && showToast('コメントを更新しました（受け手に再通知しました）'); } catch (_) {}
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '保存（再通知される）';
+      alert('保存に失敗しました: ' + (e?.message || e));
+    }
+  });
+}
+
 function _cdRoundEntryHtml(round) {
   if (!round) {
     return '<div class="cd-round-empty">過去ラウンドはありません</div>';
@@ -25665,6 +25804,10 @@ function _cdRoundEntryHtml(round) {
   const orderedBlocks = [];
 
   // editor block
+  // バグ報告 #baed5d71 対応:
+  //   提出済みラウンドの editor_comment を「相手がまだアクションする前」なら編集できるよう
+  //   ✏️ ボタンを差し込む。判定は _cdCanEditRoundEditorComment(round) に集約。
+  //   ボタンクリックで editRoundEditorComment(roundId) を起動 → 軽量モーダルで保存。
   let editorBlockHtml = null;
   if (round.editor_comment) {
     let editorCommentDisplay = String(round.editor_comment || '');
@@ -25672,8 +25815,18 @@ function _cdRoundEntryHtml(round) {
       editorCommentDisplay = editorCommentDisplay.replace(/^\s*\[動画なし\][^\n]*\n?/, '').trim();
     }
     if (editorCommentDisplay) {
-      editorBlockHtml = `<div class="cd-round-block">
-        <div class="cd-round-label">編集者の提出時メモ・連絡事項</div>
+      const canEdit = _cdCanEditRoundEditorComment(round);
+      const editBtnHtml = canEdit
+        ? `<button class="cd-round-edit-btn" onclick="editRoundEditorComment('${esc(round.id)}')" title="このコメントを編集">✏️ 編集</button>`
+        : '';
+      // 編集済みマーカー（保存後にクライアント側だけで保持）
+      const editedAtIso = (window._cdRoundEditedAt && window._cdRoundEditedAt[round.id]) || null;
+      const editedMark = editedAtIso ? `<span class="cd-round-edited-mark">（編集済み ${esc(_cdFormatRoundDate(editedAtIso))}）</span>` : '';
+      editorBlockHtml = `<div class="cd-round-block" data-round-id="${esc(round.id || '')}">
+        <div class="cd-round-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span>編集者の提出時メモ・連絡事項${editedMark}</span>
+          ${editBtnHtml}
+        </div>
         ${editorFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${editorFromToHtml}</div>` : ''}
         <div class="cd-round-text">${esc(editorCommentDisplay)}</div>
       </div>`;
