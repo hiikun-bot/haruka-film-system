@@ -13718,6 +13718,18 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // ファイルプレビュー（modal-file-preview, 静止画/動画の拡大プレビュー）が開いている間は
+  // この最前面 Esc は無視する。fpKeyHandler 側で closeFilePreview() を実行して
+  // 拡大プレビューだけを閉じ、背後のクリエイティブ詳細モーダルを残すため。
+  // （ファイルプレビューは .modal-overlay ではなく独自 DOM のため、
+  //   下記 querySelectorAll では検出されないが、両ハンドラが同時発火して
+  //   詳細モーダルまで一緒に閉じてしまう不具合があった）
+  // 表示中: openFilePreview() は style.display='' をセットしてインライン display:none を解除する
+  // 非表示: closeFilePreview() は style.display='none' をセットする
+  const fpModal = document.getElementById('modal-file-preview');
+  if (fpModal && fpModal.style.display !== 'none') {
+    return;
+  }
   const opens = document.querySelectorAll('.modal-overlay.open');
   if (!opens.length) return;
   // 一番最後に開かれたもの（DOM 上は同じだが上位 z-index 想定）を閉じる
