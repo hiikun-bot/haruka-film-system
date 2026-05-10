@@ -39,7 +39,8 @@
   function loadMembers() {
     if (cachedMembers) return Promise.resolve(cachedMembers);
     if (cachedFetchPromise) return cachedFetchPromise;
-    cachedFetchPromise = fetch('/members', { credentials: 'same-origin' })
+    // routes/haruka.js は /api/haruka 配下にマウントされている
+    cachedFetchPromise = fetch('/api/haruka/members', { credentials: 'same-origin' })
       .then(r => r.json())
       .then(data => {
         cachedMembers = Array.isArray(data) ? data : [];
