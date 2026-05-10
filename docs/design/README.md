@@ -66,6 +66,8 @@ NNN は連番（`001`, `002`, ...）。
 | [004](decisions/004-pricing-extensibility.md) | 単価の拡張性（通貨・課金タイプ）を最初から確保する | pricing, currency, billing, extensibility |
 | [005](decisions/005-estimate-deliverable-lifecycle.md) | 見積もりと deliverable のライフサイクル分離 | estimate, lifecycle, status, contract |
 | [006](decisions/006-project-fixed-costs.md) | 案件レベルの固定費・固定収入を別表現で持つ | fixed-cost, expense, billing, project |
+| [010](decisions/010-project-schedule-tasks.md) | 案件スケジュール / フェーズ・タスク管理（LP・HP 等カテゴリ横断） | projects, schedule, tasks, gantt, lp, hp |
+| [016](decisions/016-project-work-type-and-ball-state.md) | 案件業務管理：業務種別（制作/保守）とボール状態モデル | projects, schedule, work-type, ball-state, lp, hp, maintenance |
 
 ### 共通参照
 - [philosophy.md](philosophy.md) — 共通設計原則
