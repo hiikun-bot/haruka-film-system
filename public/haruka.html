@@ -6718,6 +6718,22 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
 
+      <!-- 日付の修正（事後修正で初稿締切・最終納品日も後から直せる） -->
+      <div style="border-top:1px dashed var(--border);padding-top:14px;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--em-dark);letter-spacing:0.05em">📅 日付の修正</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">初稿締切日</label>
+            <input class="form-input" type="date" id="pe-draft-deadline">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">最終納品日</label>
+            <input class="form-input" type="date" id="pe-final-deadline">
+          </div>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-muted)">空欄で保存すると未設定に戻ります。変更は履歴に残ります。</div>
+      </div>
+
       <div class="form-group" style="margin-bottom:0">
         <label class="form-label">メモ（管理用 / note）</label>
         <textarea class="form-input" id="pe-note" rows="2" style="resize:vertical"></textarea>
@@ -33675,6 +33691,8 @@ async function refreshCreativeEditHistory(creativeId) {
     appeal_type_id: '訴求軸',
     memo: 'メモ（共有）',
     note: 'メモ（管理）',
+    draft_deadline: '初稿締切日',
+    final_deadline: '最終納品日',
   };
 
   // edited_at + edited_by + reason ごとにグルーピング（同一保存の複数列変更を1ブロックに）
@@ -33770,6 +33788,10 @@ async function openCreativePostEdit() {
   document.getElementById('pe-note').value = c.note || '';
   document.getElementById('pe-memo').value = c.memo || '';
   document.getElementById('pe-reason').value = '';
+  // 日付（draft_deadline / final_deadline）— ISO 文字列でも YYYY-MM-DD でも先頭10文字を採用
+  const _toYmd = (v) => (v ? String(v).slice(0, 10) : '');
+  document.getElementById('pe-draft-deadline').value = _toYmd(c.draft_deadline);
+  document.getElementById('pe-final-deadline').value = _toYmd(c.final_deadline);
   document.getElementById('pe-project-changed-warn').style.display = 'none';
   document.getElementById('pe-reason-required').style.display = 'none';
 
@@ -33997,6 +34019,9 @@ async function saveCreativePostEdit() {
     appeal_type_id: document.getElementById('pe-appeal-type').value || null,
     note: document.getElementById('pe-note').value.trim() || null,
     memo: document.getElementById('pe-memo').value.trim() || null,
+    // 日付（空欄=null=未設定に戻す）
+    draft_deadline: document.getElementById('pe-draft-deadline').value || null,
+    final_deadline: document.getElementById('pe-final-deadline').value || null,
     reason,
   };
 
