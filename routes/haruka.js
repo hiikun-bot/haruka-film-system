@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -12768,6 +12768,270 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   });
 
   res.json(result);
+});
+
+// ============================================================
+// PATCH /api/creatives/:creativeId/versions/:versionId
+//   バグ報告 #baed5d71 対応:
+//   提出済みラウンドの「編集者の提出時メモ・連絡事項」(editor_comment) を、
+//   相手がまだアクションする前であれば後から編集できるようにする。
+//
+// 編集が許可される条件（厳格チェック）:
+//   1. version 行 R は creative_version_history の対象 creative の **最新 snapshot**。
+//      （後続 round_stage が記録されていない＝相手が次工程に進んでいない）
+//   2. リクエスト元が R.recorded_by 本人 または admin。
+//   3. R.round_stage に対応する creative.status が「受け手側待ち」のまま:
+//        d_check  → 'Dチェック'
+//        p_check  → 'Pチェック'
+//        cl_check → 'クライアントチェック中'
+//      これにより「ディレクターが既に承認/差戻しした後」を弾く。
+//
+// 編集対象（Phase 1）:
+//   - editor_comment のみ。
+//   - file_url（成果物の差し替え）は本エンドポイントでは扱わない。
+//     既存の「取り消し → 再アップロード」フローを使う想定。
+//
+// VIEW AS:
+//   - 認可は auth.js#getEffectiveRoleCodes(req) で X-View-As を尊重して判定。
+//   - admin プレビューでは編集可、editor プレビューでは recorded_by 本人のみ可。
+//
+// 通知:
+//   - 保存後、本来の通知先（受け手側）に「コメントが修正されました」を Slack DM /
+//     アプリ内通知として再送する。fire-and-forget（失敗しても本処理は止めない）。
+// ============================================================
+router.patch('/creatives/:creativeId/versions/:versionId', requireAuth, async (req, res) => {
+  const { creativeId, versionId } = req.params;
+  const editorCommentRaw = req.body?.editor_comment;
+  if (typeof editorCommentRaw !== 'string') {
+    return res.status(400).json({ error: 'editor_comment（文字列）は必須です' });
+  }
+  const editorCommentNew = editorCommentRaw.trim();
+  if (!editorCommentNew) {
+    return res.status(400).json({ error: 'editor_comment は空にできません' });
+  }
+  if (editorCommentNew.length > 5000) {
+    return res.status(400).json({ error: 'editor_comment が長すぎます（5000字以内）' });
+  }
+
+  // 1) 対象 version 行を取得
+  const { data: vRow, error: vErr } = await supabase
+    .from('creative_version_history')
+    .select('id, creative_id, version_num, round_stage, recorded_by, editor_comment, editor_submitted_at, created_at')
+    .eq('id', versionId)
+    .eq('creative_id', creativeId)
+    .maybeSingle();
+  if (vErr) {
+    return res.status(500).json({ error: vErr.message });
+  }
+  if (!vRow) {
+    return res.status(404).json({ error: 'バージョンが見つかりません' });
+  }
+  if (!['d_check', 'p_check', 'cl_check'].includes(vRow.round_stage || '')) {
+    return res.status(400).json({ error: 'このラウンド種別はコメント編集に対応していません' });
+  }
+
+  // 2) 最新 snapshot か検証（後続 snapshot が無いこと）
+  const { data: laterRows, error: laterErr } = await supabase
+    .from('creative_version_history')
+    .select('id, version_num, created_at')
+    .eq('creative_id', creativeId);
+  if (laterErr) {
+    return res.status(500).json({ error: laterErr.message });
+  }
+  const isLatest = !(laterRows || []).some(r => {
+    if (r.id === vRow.id) return false;
+    const a = Number(r.version_num) || 0;
+    const b = Number(vRow.version_num) || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+    // 同 version_num はあり得ないが念のため created_at で比較
+    return (r.created_at || '') > (vRow.created_at || '');
+  });
+  if (!isLatest) {
+    return res.status(409).json({ error: 'このラウンドはすでに次の工程に進んでいるため編集できません' });
+  }
+
+  // 3) creative.status が「受け手側待ち」のままか検証
+  const ROUND_TO_WAITING_STATUS = {
+    d_check:  'Dチェック',
+    p_check:  'Pチェック',
+    cl_check: 'クライアントチェック中',
+  };
+  const expectedStatus = ROUND_TO_WAITING_STATUS[vRow.round_stage];
+  const { data: cRow, error: cErr } = await supabase
+    .from('creatives')
+    .select('id, status, project_id, file_name, team_id')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!cRow) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+  if (cRow.status !== expectedStatus) {
+    return res.status(409).json({
+      error: `現在のステータス（${cRow.status || '不明'}）では編集できません。相手がすでに次の工程に進めています。`,
+    });
+  }
+
+  // 4) 認可: 本人 または admin（VIEW AS 反映）
+  let effectiveCodes = [];
+  try {
+    effectiveCodes = await getEffectiveRoleCodes(req);
+  } catch (_) { /* fallback below */ }
+  const isAdminEffective = effectiveCodes.includes('admin');
+  const isOwner = !!(req.user?.id && vRow.recorded_by && req.user.id === vRow.recorded_by);
+  if (!isAdminEffective && !isOwner) {
+    return res.status(403).json({ error: '自分が提出したコメントのみ編集できます' });
+  }
+
+  // 5) 同値ガード（変更なしなら何もしない）
+  const oldComment = vRow.editor_comment || '';
+  if (oldComment.trim() === editorCommentNew) {
+    return res.json({ ok: true, unchanged: true, version: vRow });
+  }
+
+  // 6) UPDATE — created_at は触らず、editor_submitted_at だけは「最後に編集した時刻」に更新する
+  //    （フロント表示の「(編集済み hh:mm)」用に updated_at 相当を別途持たせる）
+  //    creative_version_history には updated_at 列が無い（schema 確認済み）ため、
+  //    変更検知用に editor_submitted_at の上書きはしない。代わりに meta は通知側で持つ。
+  //    フロントは「edited_at」を独自に記録するため、応答に edited_at を含めて返す。
+  const editedAtIso = new Date().toISOString();
+  const { data: updated, error: upErr } = await supabase
+    .from('creative_version_history')
+    .update({ editor_comment: editorCommentNew })
+    .eq('id', vRow.id)
+    .select('id, creative_id, version_num, round_stage, recorded_by, editor_comment, editor_submitted_at, director_commented_at, created_at')
+    .single();
+  if (upErr) {
+    return res.status(500).json({ error: upErr.message });
+  }
+
+  res.json({ ok: true, edited_at: editedAtIso, version: updated });
+
+  // 7) 通知再送（fire-and-forget）
+  setImmediate(async () => {
+    try {
+      const notif = require('../notifications');
+      // 受け手側を解決
+      const { data: detail } = await supabase
+        .from('creatives')
+        .select(`
+          id, file_name, project_id, team_id,
+          teams(id, director_id, producer_id),
+          projects(id, name, slack_channel_url, chatwork_room_id, director_id, producer_id, clients(id, name, slack_channel_url, chatwork_room_id)),
+          creative_assignments(role, users(id, full_name, slack_dm_id, chatwork_dm_id, nickname))
+        `)
+        .eq('id', creativeId)
+        .maybeSingle();
+      if (!detail) return;
+      const project = detail.projects || null;
+      const channelUrl = project?.slack_channel_url || project?.clients?.slack_channel_url || null;
+
+      // actor 名（誰が編集したか）
+      let actorName = '(不明)';
+      if (req.user?.id) {
+        const { data: u } = await supabase
+          .from('users').select('full_name, nickname').eq('id', req.user.id).maybeSingle();
+        actorName = u?.nickname || u?.full_name || actorName;
+      }
+
+      // 受け手の解決:
+      //   d_check: directorAssignees > projects.director_id > teams.director_id
+      //   p_check: producerAssignees > projects.producer_id
+      //   cl_check: クライアントチェック中なので Slack channel への投稿を主とする
+      const directorAssignees = (detail.creative_assignments || [])
+        .filter(a => a.role === 'director').map(a => a.users).filter(Boolean);
+      const producerAssignees = (detail.creative_assignments || [])
+        .filter(a => a.role === 'producer').map(a => a.users).filter(Boolean);
+      let recipients = [];
+      if (vRow.round_stage === 'd_check') {
+        recipients = directorAssignees.length > 0
+          ? directorAssignees
+          : (project?.director_id ? [{ id: project.director_id }] : (detail.teams?.director_id ? [{ id: detail.teams.director_id }] : []));
+      } else if (vRow.round_stage === 'p_check') {
+        recipients = producerAssignees.length > 0
+          ? producerAssignees
+          : (project?.producer_id ? [{ id: project.producer_id }] : []);
+      }
+      // cl_check は人ベースの recipient 解決が難しいので channel 投稿のみ
+
+      // recipient の id しか分からない場合は users から補う
+      const recipientIds = recipients.map(r => r?.id).filter(Boolean);
+      if (recipientIds.length > 0) {
+        const { data: us } = await supabase
+          .from('users')
+          .select('id, full_name, nickname, slack_dm_id, chatwork_dm_id')
+          .in('id', recipientIds);
+        recipients = us || [];
+      }
+
+      // 本文（先頭 80 文字を含める）
+      const fileName = detail.file_name || '';
+      const projectName = project?.name || '';
+      const snippet = editorCommentNew.length > 80
+        ? `${editorCommentNew.slice(0, 80)}…`
+        : editorCommentNew;
+      const stageLabel = vRow.round_stage === 'd_check' ? 'Dチェック'
+                        : vRow.round_stage === 'p_check' ? 'Pチェック'
+                        : 'クライアントチェック中';
+      const baseUrl = process.env.APP_URL || process.env.PUBLIC_URL || '';
+      const linkUrl = baseUrl
+        ? `${baseUrl}/haruka.html?creative=${creativeId}`
+        : `/haruka.html?creative=${creativeId}`;
+      const slackBody =
+        `✏️ 提出時メモ・連絡事項が修正されました\n` +
+        `案件: ${projectName}\n` +
+        `クリエイティブ: ${fileName}\n` +
+        `ラウンド: ${stageLabel}\n` +
+        `修正者: ${actorName}\n` +
+        `修正後コメント:\n${snippet}\n` +
+        `URL: ${linkUrl}`;
+
+      // Slack DM (recipients) — 個別メンションで集約 1 投稿
+      if (channelUrl) {
+        const slackUsers = (recipients || []).filter(u => u && u.slack_dm_id && u.id !== req.user?.id);
+        if (slackUsers.length > 0) {
+          const mentions = slackUsers.map(u => `<@${u.slack_dm_id}>`).join(' ');
+          await notif.sendSlackChannel(channelUrl, `${mentions}\n\n${slackBody}`);
+        } else if (vRow.round_stage === 'cl_check') {
+          // CL チェック中は recipients 解決が難しいので channel 投稿のみ
+          await notif.sendSlackChannel(channelUrl, slackBody);
+        }
+      }
+
+      // アプリ内通知（受信者本人がいる場合）
+      const { createBulkNotifications } = require('../utils/notification');
+      const inAppRecipients = (recipients || []).filter(u => u && u.id && u.id !== req.user?.id);
+      if (inAppRecipients.length > 0) {
+        const seen = new Set();
+        const rows = [];
+        for (const u of inAppRecipients) {
+          if (seen.has(u.id)) continue;
+          seen.add(u.id);
+          rows.push({
+            user_id: u.id,
+            notification_type: 'creative_status',
+            title: '提出時メモ・連絡事項が修正されました',
+            body: projectName ? `${fileName}（${projectName}）` : fileName,
+            link_url: `/creatives/${creativeId}`,
+            meta: {
+              creative_id: creativeId,
+              project_id: detail.project_id || null,
+              file_name: fileName,
+              round_stage: vRow.round_stage,
+              version_num: vRow.version_num,
+              edited_by: req.user?.id || null,
+              kind: 'editor_comment_edited',
+            },
+            sender_id: req.user?.id || null,
+          });
+        }
+        if (rows.length > 0) {
+          await createBulkNotifications(rows);
+        }
+      }
+    } catch (e) {
+      console.warn('[creative_version_history] re-notify failed:', e?.message || e);
+    }
+  });
 });
 
 // バージョン履歴保存
