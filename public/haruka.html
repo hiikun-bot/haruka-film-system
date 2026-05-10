@@ -771,6 +771,225 @@ tr.row-help td{background:#FFFBF2}
 }
 .team-card.is-open .team-card-chev{transform:rotate(180deg)}
 
+/* ============================================================ */
+/* Netflix風 メンバーポスター棚（ロール別 横スクロール）            */
+/* ============================================================ */
+.mroster-wrap{display:flex;flex-direction:column;gap:28px;padding:4px 0 80px}
+.mroster-row{position:relative}
+.mroster-row-head{
+  display:flex;align-items:baseline;justify-content:space-between;
+  padding:0 6px;margin-bottom:10px;
+}
+.mroster-row-title{
+  display:inline-flex;align-items:center;gap:10px;
+  font-size:17px;font-weight:800;color:var(--text);
+  letter-spacing:0.01em;
+}
+.mroster-row-title .mroster-emoji{font-size:18px;line-height:1}
+.mroster-row-title .mroster-count{
+  font-size:11px;font-weight:600;color:var(--em-dark);
+  background:var(--em-pale);border-radius:12px;padding:2px 9px;letter-spacing:0;
+}
+.mroster-see-all{
+  font-size:12px;color:var(--text-muted);
+  background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:6px;
+  transition:color .15s, background .15s;
+}
+.mroster-see-all:hover{color:var(--em-dark);background:var(--em-pale)}
+.mroster-strip{
+  position:relative;
+  /* スクロール時に拡大カードが上下で見切れないよう、上下方向に余裕を取る */
+  padding:60px 6px 70px;
+  margin:-60px -6px -70px;
+}
+.mroster-strip-inner{
+  display:flex;gap:14px;
+  overflow-x:auto;overflow-y:visible;
+  scroll-behavior:smooth;
+  scroll-snap-type:x proximity;
+  scrollbar-width:thin;
+  /* WebKit横スクロールバー隠す */
+  -webkit-overflow-scrolling:touch;
+  padding-bottom:6px;
+}
+.mroster-strip-inner::-webkit-scrollbar{height:6px}
+.mroster-strip-inner::-webkit-scrollbar-track{background:transparent}
+.mroster-strip-inner::-webkit-scrollbar-thumb{
+  background:rgba(43,184,180,0.18);border-radius:3px;
+}
+.mroster-strip-inner:hover::-webkit-scrollbar-thumb{background:rgba(43,184,180,0.35)}
+.mroster-chev{
+  position:absolute;top:50%;transform:translateY(-50%);
+  width:34px;height:54px;
+  display:none;align-items:center;justify-content:center;
+  background:rgba(255,255,255,0.94);
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:var(--em-dark);
+  font-size:18px;font-weight:700;
+  cursor:pointer;
+  z-index:5;
+  box-shadow:0 4px 14px rgba(15,110,86,0.12);
+  transition:background .15s, transform .15s;
+}
+.mroster-row:hover .mroster-chev{display:flex}
+.mroster-chev:hover{background:#fff;transform:translateY(-50%) scale(1.06)}
+.mroster-chev.is-left{left:-6px}
+.mroster-chev.is-right{right:-6px}
+
+/* ポスターカード本体 */
+.mposter{
+  position:relative;
+  flex:0 0 auto;
+  width:172px;
+  border-radius:12px;
+  background:#fff;
+  border:1px solid var(--border);
+  box-shadow:0 2px 6px rgba(15,110,86,0.06);
+  overflow:visible; /* スライドインを外にはみ出させる */
+  cursor:pointer;
+  scroll-snap-align:start;
+  transition:transform 250ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 250ms ease, z-index 0s linear .25s;
+  display:flex;flex-direction:column;
+  transform-origin:center center;
+}
+.mposter:hover{
+  transform:scale(1.32) translateY(-10px);
+  box-shadow:0 24px 50px rgba(15,110,86,0.22), 0 8px 16px rgba(15,110,86,0.10);
+  z-index:20;
+  transition:transform 250ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 250ms ease, z-index 0s linear 0s;
+}
+/* 端カードのはみ出し補正 */
+.mroster-strip-inner > .mposter:first-child:hover{transform:scale(1.32) translate(28px,-10px);transform-origin:left center}
+.mroster-strip-inner > .mposter:last-child:hover{transform:scale(1.32) translate(-28px,-10px);transform-origin:right center}
+
+.mposter-art{
+  position:relative;
+  height:230px; /* 約 2:3 ポスター比 */
+  border-radius:12px 12px 0 0;
+  overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(160deg, #f2fbfa 0%, #fff 100%);
+}
+.mposter-art .avatar{
+  --avatar-size:128px;
+  width:128px;height:128px;
+  font-size:48px;
+  border:3px solid rgba(255,255,255,0.85);
+  box-shadow:0 10px 24px rgba(0,0,0,0.16);
+}
+/* ロールごとのグラデーション（控えめ） */
+.mposter[data-role-grad="director"]   .mposter-art{background:linear-gradient(165deg, #DCE6F5 0%, #F4F8FE 65%, #fff 100%)}
+.mposter[data-role-grad="producer"]   .mposter-art{background:linear-gradient(165deg, #FDE4CC 0%, #FFF4E8 65%, #fff 100%)}
+.mposter[data-role-grad="editor"]     .mposter-art{background:linear-gradient(165deg, #E4D7F2 0%, #F6EFFC 65%, #fff 100%)}
+.mposter[data-role-grad="designer"]   .mposter-art{background:linear-gradient(165deg, #FAD2DD 0%, #FCEAF0 65%, #fff 100%)}
+.mposter[data-role-grad="secretary"]  .mposter-art{background:linear-gradient(165deg, #D7EBD8 0%, #F0F8F1 65%, #fff 100%)}
+.mposter[data-role-grad="admin"]      .mposter-art{background:linear-gradient(165deg, #F4E9C7 0%, #FAF5E3 65%, #fff 100%)}
+.mposter-art-icon{
+  font-size:64px;opacity:0.55;line-height:1;
+}
+.mposter-leader-badge{
+  position:absolute;top:8px;right:8px;
+  font-size:10px;font-weight:700;
+  padding:3px 7px;border-radius:10px;
+  background:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,0.15);
+  z-index:2;
+}
+.mposter-leader-badge.lb-leader{color:#7C5800;background:#FFE082}
+.mposter-leader-badge.lb-sub{color:#0D47A1;background:#BBDEFB}
+.mposter-resigned-badge{
+  position:absolute;top:8px;left:8px;
+  font-size:10px;font-weight:700;color:#A32D2D;background:#FCEBEB;
+  padding:2px 7px;border-radius:8px;z-index:2;
+}
+.mposter[data-resigned="1"] .mposter-art{filter:grayscale(0.55);opacity:0.85}
+.mposter-info{
+  padding:8px 10px 10px;
+  display:flex;flex-direction:column;gap:3px;
+  border-top:1px solid var(--border);
+  background:#fff;
+  border-radius:0 0 12px 12px;
+}
+.mposter-name{
+  font-size:13px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.mposter-name .mposter-name-sub{
+  font-size:10.5px;font-weight:400;color:var(--text-muted);margin-left:3px;
+}
+.mposter-meta{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  font-size:10.5px;color:var(--text-muted);
+  min-height:16px;
+}
+.mposter-role-chip{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:1px 6px;border-radius:8px;
+  background:var(--em-pale);color:var(--em-dark);
+  font-size:10px;font-weight:600;
+}
+.mposter-rank-chip{
+  padding:1px 5px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:0.02em;
+}
+.mposter-rank-chip.r-s{background:#FFE082;color:#7C5800}
+.mposter-rank-chip.r-a{background:#FFCCBC;color:#A12B0A}
+.mposter-rank-chip.r-b{background:#C8E6C9;color:#1B5E20}
+.mposter-rank-chip.r-c{background:#B3E5FC;color:#01579B}
+.mposter-rank-chip.r-d{background:#E1BEE7;color:#4A148C}
+.mposter-team-chip{
+  font-size:10px;font-weight:600;color:var(--em-dark);
+  background:#E6F6F5;border-radius:6px;padding:1px 5px;
+}
+
+/* 拡大時にせり出すパネル（カード下に絶対配置） */
+.mposter-pop{
+  position:absolute;left:0;right:0;top:100%;
+  background:#fff;
+  border:1px solid var(--border);
+  border-top:none;
+  border-radius:0 0 12px 12px;
+  box-shadow:0 24px 50px rgba(15,110,86,0.22);
+  padding:0 12px;
+  max-height:0;overflow:hidden;
+  opacity:0;
+  transition:max-height 260ms ease, opacity 200ms ease 60ms, padding 200ms ease;
+  pointer-events:none;
+}
+.mposter:hover .mposter-pop{
+  max-height:260px;
+  opacity:1;
+  padding:10px 12px 12px;
+  pointer-events:auto;
+}
+.mposter-pop-bars{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.mposter-pop-bar-label{font-size:10px;color:var(--text-muted);margin-bottom:2px;font-weight:600}
+.mposter-pop-bar-track{position:relative;height:8px;background:#e8f5f4;border-radius:4px}
+.mposter-pop-bar-seg{position:absolute;top:0;bottom:0;border-radius:3px}
+.mposter-pop-note{
+  font-size:11px;color:var(--text-muted);
+  line-height:1.45;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  margin-bottom:8px;
+}
+.mposter-pop-actions{
+  display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;
+}
+.mposter-pop-actions .btn-sm,
+.mposter-pop-actions .btn-danger{
+  font-size:10.5px;padding:2px 7px;border-radius:6px;
+}
+
+/* レスポンシブ：スマホでは fallback として grid に切り替え（破壊しない） */
+@media (max-width:768px){
+  .mposter{width:140px}
+  .mposter-art{height:190px}
+  .mposter-art .avatar{--avatar-size:96px;width:96px;height:96px;font-size:36px}
+  .mposter:hover{transform:none;box-shadow:0 2px 6px rgba(15,110,86,0.06)}
+  .mposter:hover .mposter-pop{max-height:0;opacity:0;padding:0 12px;pointer-events:none}
+  .mroster-strip{padding:8px 6px;margin:0}
+}
+
 /* メンバーモーダル タブ */
 .m-tab-btn{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--text-muted);cursor:pointer;transition:color .15s,border-color .15s;white-space:nowrap}
 .m-tab-btn.active{color:var(--em-dark);border-bottom-color:var(--em-dark);font-weight:600}
@@ -9913,88 +10132,148 @@ function renderMemberList() {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
   }
-  const showRankCol = hasPermission('creative.rank_price_column');
-  list.innerHTML = `
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
-    <colgroup>
-      <col style="width:36px">
-      <col style="width:96px">
-      ${showRankCol ? '<col style="width:72px">' : ''}
-      <col style="width:88px">
-      <col style="width:160px">
-      <col style="width:200px">
-      <col>
-      <col style="width:160px">
-    </colgroup>
-    <thead>
-      <tr style="background:var(--surface);border-bottom:1.5px solid var(--border)">
-        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em"></th>
-        ${memberSortHeaderHtml('role','ロール','center')}
-        ${showRankCol ? memberSortHeaderHtml('rank','ランク','center') : ''}
-        ${memberSortHeaderHtml('team','チーム','center')}
-        ${memberSortHeaderHtml('name','名前','left')}
-        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（平日）</th>
-        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（土日祝）</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メモ</th>
-        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${visibleMembers.map((m, i) => {
-        const team = allTeams.find(t => t.id === m.team_id);
-        const TICK_HOURS = [0,6,12,18,24];
-        const fmtTip = ranges => ranges ? ranges.map(r=>`${r.from}:00〜${r.to}:00`).join('、') : '休み';
-        const mkBar = (ranges, color, label) => {
-          const totalH = (ranges||[]).reduce((s,r) => s + (r.to - r.from), 0);
-          const displayLabel = `${label}：${totalH}時間`;
-          const W = 160;
-          const segs = (ranges||[]).map(r => {
-            const l = (r.from/24*100).toFixed(2), w = ((r.to-r.from)/24*100).toFixed(2);
-            return `<div style="position:absolute;left:${l}%;width:${w}%;height:100%;background:${color};border-radius:3px"></div>`;
-          }).join('');
-          const ticks = TICK_HOURS.map(h => {
-            const pct = (h/24*100).toFixed(2);
-            return `<div style="position:absolute;left:${pct}%;transform:translateX(-50%);font-size:9px;color:#aaa;line-height:1">${h}</div>`;
-          }).join('');
-          const tipText = fmtTip(ranges);
-          return `
-          <div class="wh-tip-wrap" style="width:${W}px">
-            <div class="wh-tip-pop">${label}：${tipText}</div>
-            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;font-weight:500">${displayLabel}</div>
-            <div style="position:relative;height:10px;background:#e8f5f4;border-radius:4px;margin-bottom:3px">${segs}</div>
-            <div style="position:relative;height:10px">${ticks}</div>
-          </div>`;
-        };
-        const rowBg = !m.is_active ? 'background:#FAFAFA' : (i % 2 === 0 ? '' : 'background:#FAFEFE');
-        const canEdit = canEditMember(m);
-        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border);${!m.is_active?'opacity:0.55':''}${canEdit?';cursor:pointer':''}" ${canEdit ? `onclick="openEditMemberById('${m.id}')"` : ''} onmouseenter="this.style.background='#EEF9F8'" onmouseleave="this.style.background='${!m.is_active?'#FAFAFA':(i%2===0?'':'#FAFEFE')}'">
-          <td style="padding:8px 12px;text-align:center">
-            ${avatarHtml(m, 48, { className: !m.is_active ? 'avatar-inactive' : '' })}
-          </td>
-          <td style="padding:8px 12px;text-align:center"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
-          ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
-          <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
-          <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.nickname ? `${esc(m.nickname)}<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${esc(m.full_name||'')}）</span>` : esc(m.full_name||'')}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
-            // ADR 008 Stage 2: leader_rank バッジ（ロールチップとは別の業務窓口表示）
-            m.leader_rank === 'leader' ? ' <span style="font-size:10px;background:#FFE082;color:#7C5800;padding:1px 6px;border-radius:6px;font-weight:600">👑 リーダー</span>'
-            : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
-            : ''
-          }</td>
-          <td style="padding:8px 12px;text-align:center">${mkBar(m.weekday_hours,'var(--em)','平日')}</td>
-          <td style="padding:8px 12px;text-align:center">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<span style="font-size:11px;color:#bbb">休み</span>'}</td>
-          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
-          <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
-            ${m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
-            ${hasPermission('member.deactivate') ? (m.is_active
-              ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
-              : `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
-            ) : ''}
-            ${hasPermission('member.delete') && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
-          </td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>`;
+  // Netflix風ポスター棚レンダラー（renderMemberRoster）に委譲。
+  // 並び替えロジック（memberHeaderSort/memberSortBy）は上で visibleMembers に適用済み。
+  // ロールごとに行を切って、行内は visibleMembers の順序をそのまま使う。
+  renderMemberRoster(list, visibleMembers);
+}
+
+// ---- Netflix風 ポスター棚 ----------------------------------------
+// roles マスタにはコードしか無いので、表示用のメタはこの table に集約。
+// data-role-grad はカードの背景グラデ用キー（CSSの .mposter[data-role-grad="..."]）。
+const _MROSTER_ROW_DEFS = [
+  { key:'directors',  emoji:'🎬', label:'DIRECTORS', grad:'director',  roles:['director','producer_director'] },
+  { key:'producers',  emoji:'🎥', label:'PRODUCERS', grad:'producer',  roles:['producer'] },
+  { key:'editors',    emoji:'✂️', label:'EDITORS',   grad:'editor',    roles:['editor'] },
+  { key:'designers',  emoji:'🎨', label:'DESIGNERS', grad:'designer',  roles:['designer'] },
+  { key:'secretary',  emoji:'📝', label:'秘書陣',     grad:'secretary', roles:['secretary'] },
+  { key:'admin',      emoji:'🛡️', label:'管理者',     grad:'admin',     roles:['admin'] },
+];
+
+function _mrosterRoleIcon(grad) {
+  return { director:'🎬', producer:'🎥', editor:'✂️', designer:'🎨', secretary:'📝', admin:'🛡️' }[grad] || '🎬';
+}
+
+// 稼働バー（pop内）
+function _mrosterBar(ranges, color, label) {
+  const totalH = (ranges||[]).reduce((s,r) => s + (r.to - r.from), 0);
+  const segs = (ranges||[]).map(r => {
+    const l = (r.from/24*100).toFixed(2), w = ((r.to-r.from)/24*100).toFixed(2);
+    return `<div class="mposter-pop-bar-seg" style="left:${l}%;width:${w}%;background:${color}"></div>`;
+  }).join('');
+  return `
+    <div>
+      <div class="mposter-pop-bar-label">${label}：${totalH}時間</div>
+      <div class="mposter-pop-bar-track">${segs}</div>
+    </div>`;
+}
+
+function _mrosterScrollStrip(rowKey, dir) {
+  const strip = document.getElementById(`mroster-strip-${rowKey}`);
+  if (!strip) return;
+  const step = Math.max(240, strip.clientWidth * 0.85);
+  strip.scrollBy({ left: dir === 'left' ? -step : step, behavior:'smooth' });
+}
+// 関数参照を window へ（onclick から呼べるように）
+window._mrosterScrollStrip = _mrosterScrollStrip;
+
+function renderMemberRoster(list, members) {
+  // 各行用にグルーピング（並び順は members の順を保つ）
+  const groups = new Map();
+  _MROSTER_ROW_DEFS.forEach(def => groups.set(def.key, []));
+  members.forEach(m => {
+    const def = _MROSTER_ROW_DEFS.find(d => d.roles.includes(m.role));
+    if (!def) return; // 未知のロールは無視（client 等）
+    groups.get(def.key).push(m);
+  });
+
+  const rowsHtml = _MROSTER_ROW_DEFS.map(def => {
+    const arr = groups.get(def.key) || [];
+    if (!arr.length) return '';
+    const cards = arr.map(m => _mrosterCardHtml(m, def)).join('');
+    return `
+      <div class="mroster-row" data-row="${def.key}">
+        <div class="mroster-row-head">
+          <div class="mroster-row-title">
+            <span class="mroster-emoji">${def.emoji}</span>
+            <span>${esc(def.label)}</span>
+            <span class="mroster-count">${arr.length}名</span>
+          </div>
+        </div>
+        <div class="mroster-strip">
+          <button type="button" class="mroster-chev is-left" aria-label="左へ" onclick="_mrosterScrollStrip('${def.key}','left')">‹</button>
+          <div class="mroster-strip-inner" id="mroster-strip-${def.key}">
+            ${cards}
+          </div>
+          <button type="button" class="mroster-chev is-right" aria-label="右へ" onclick="_mrosterScrollStrip('${def.key}','right')">›</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  list.innerHTML = `<div class="mroster-wrap">${rowsHtml || '<div class="loading">該当するメンバーがいません</div>'}</div>`;
+}
+
+function _mrosterCardHtml(m, def) {
+  const team = allTeams.find(t => t.id === m.team_id);
+  const canEdit = canEditMember(m);
+  const isResigned = m.is_active === false;
+  const nameMain = m.nickname ? esc(m.nickname) : esc(m.full_name || '');
+  const nameSub = m.nickname && m.full_name ? `<span class="mposter-name-sub">${esc(m.full_name)}</span>` : '';
+  const roleShort = ROLE_LABEL_SHORT[m.role] || '';
+  const roleChip = `<span class="mposter-role-chip">${esc(def.emoji)} ${esc(roleShort)}</span>`;
+  const rankChip = m.rank ? `<span class="mposter-rank-chip r-${esc(m.rank.toLowerCase())}">${esc(m.rank)}</span>` : '';
+  const teamChip = team ? `<span class="mposter-team-chip">${esc(team.team_code)}</span>` : '';
+  const leaderBadge =
+    m.leader_rank === 'leader' ? '<span class="mposter-leader-badge lb-leader">👑 リーダー</span>'
+    : m.leader_rank === 'sub_leader' ? '<span class="mposter-leader-badge lb-sub">🥈 サブ</span>'
+    : '';
+  const resignedBadge = isResigned ? '<span class="mposter-resigned-badge">退職</span>' : '';
+  // アート: アバター画像 or 大型ロールアイコン
+  const hasAvatar = !!m.avatar_url;
+  const art = hasAvatar
+    ? avatarHtml(m, 128, { className: isResigned ? 'avatar-inactive' : '' })
+    : `<div class="mposter-art-icon" aria-hidden="true">${_mrosterRoleIcon(def.grad)}</div>`;
+  // hover時の pop（稼働バー / メモ / 操作）
+  const weekdayBar = _mrosterBar(m.weekday_hours || [], 'var(--em)', '平日');
+  const weekendBar = m.weekend_hours && m.weekend_hours.length
+    ? _mrosterBar(m.weekend_hours, '#94d4d1', '土日祝')
+    : `<div><div class="mposter-pop-bar-label">土日祝：休み</div></div>`;
+  const note = m.note ? `<div class="mposter-pop-note">💬 ${esc(m.note)}</div>` : '';
+  const actBtns = [
+    m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id)
+      ? `<button class="btn-sm" onclick="event.stopPropagation();resetMemberPassword('${m.id}','${esc(m.full_name||'')}')">🔑 PW</button>` : '',
+    hasPermission('member.deactivate')
+      ? (m.is_active
+          ? `<button class="btn-danger" onclick="event.stopPropagation();deactivateMember('${m.id}','${esc(m.full_name||'')}')">退職</button>`
+          : `<button class="btn-sm" onclick="event.stopPropagation();reactivateMember('${m.id}')">復帰</button>`)
+      : '',
+    hasPermission('member.delete') && m.id !== currentUser?.id
+      ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595" onclick="event.stopPropagation();deleteMemberPermanently('${m.id}','${esc(m.full_name||'')}')">削除</button>` : '',
+    canEdit
+      ? `<button class="btn-sm" onclick="event.stopPropagation();openEditMemberById('${m.id}')">✏️ 編集</button>` : '',
+  ].filter(Boolean).join('');
+  const cardClick = canEdit ? `onclick="openEditMemberById('${m.id}')"` : '';
+  return `
+    <div class="mposter" data-role-grad="${esc(def.grad)}" data-resigned="${isResigned ? '1' : '0'}" ${cardClick}
+         title="${esc((m.nickname||'') + (m.nickname && m.full_name ? '（' + m.full_name + '）' : (m.full_name||'')))}">
+      <div class="mposter-art">
+        ${resignedBadge}
+        ${leaderBadge}
+        ${art}
+      </div>
+      <div class="mposter-info">
+        <div class="mposter-name">${nameMain}${nameSub}</div>
+        <div class="mposter-meta">${roleChip}${rankChip}${teamChip}</div>
+      </div>
+      <div class="mposter-pop" onclick="event.stopPropagation()">
+        <div class="mposter-pop-bars">
+          ${weekdayBar}
+          ${weekendBar}
+        </div>
+        ${note}
+        <div class="mposter-pop-actions">${actBtns || '<span style="font-size:10.5px;color:#bbb">操作権限なし</span>'}</div>
+      </div>
+    </div>`;
 }
 
 async function loadMembers() {
