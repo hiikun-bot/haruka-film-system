@@ -2695,8 +2695,8 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="normal">🟡 通常</option>
         <option value="low">🟢 低</option>
       </select>
-      <select id="bug-report-filter-assignee" class="form-input" style="width:auto" onchange="renderBugReportList()" title="対応者で絞り込み">
-        <option value="">すべての対応者</option>
+      <select id="bug-report-filter-assignee" class="form-input" style="width:auto" onchange="renderBugReportList()" title="報告者で絞り込み">
+        <option value="">すべての報告者</option>
       </select>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-urgent" onchange="renderBugReportList()">🚨 至急のみ</label>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-mine" onchange="renderBugReportList()">自分の報告のみ</label>
@@ -2722,11 +2722,13 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- 2カラムレイアウト（PC: 左:右 = 1.4:1 でスクショ側を広く / スマホは1カラムフォールバック） -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;align-items:start">
 
-        <!-- 【左カラム】対応者 / スクショ / 重要度+至急 -->
+        <!-- 【左カラム】報告者 / スクショ / 重要度+至急 -->
         <div>
-          <!-- ① 対応者 + 匿名チェック -->
+          <!-- ① 報告者 + 匿名チェック
+               ※ ここで選ぶのは「実際にバグに気づいた人＝報告者」。
+                  保存ボタンを押した人（ログイン中ユーザー）は別途「入力者」として記録される。 -->
           <div class="form-group">
-            <label class="form-label">対応者</label>
+            <label class="form-label">報告者</label>
             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
               <select id="br-assignee" class="form-input" style="flex:1;min-width:160px">
                 <option value="">— 未割当 —</option>
@@ -2854,6 +2856,17 @@ window.showPage = window.showPage || function(name, btn) {
       <button class="btn" onclick="closeBugReportModal()">キャンセル</button>
       <button class="btn-primary" onclick="submitBugReport()">保存</button>
     </div>
+
+    <!-- 拡大表示中だけ画面下部中央に出る大きな「編集を確定」ボタン
+         （拡大時はモーダル本体の他要素は visibility:hidden になっているので、
+          このボタンが「戻る」操作の主要な動線になる） -->
+    <button id="br-fullscreen-confirm-btn" type="button" onclick="bugReportToggleFullscreen()"
+      style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+             z-index:10100;padding:14px 36px;font-size:16px;font-weight:700;
+             background:#10B981;color:#fff;border:none;border-radius:30px;
+             box-shadow:0 6px 24px rgba(0,0,0,0.4);cursor:pointer;letter-spacing:0.05em">
+      ✅ 編集を確定して戻る
+    </button>
   </div>
 </div>
 
@@ -34510,7 +34523,9 @@ function renderBugReportList() {
   if (fAss === '__none__') rows = rows.filter(r => !r.assignee_user_id);
   else if (fAss) rows = rows.filter(r => r.assignee_user_id === fAss);
   if (onlyUrgent) rows = rows.filter(r => r.is_urgent);
-  if (onlyMine) rows = myId ? rows.filter(r => r.reporter_user_id === myId) : [];
+  // 「自分の報告のみ」= 自分が「報告者」(assignee_user_id) として登録されているもの
+  // （入力者ではなく報告者で絞る。代理入力されたケースも自分の報告として表示する）
+  if (onlyMine) rows = myId ? rows.filter(r => r.assignee_user_id === myId) : [];
   if (search) {
     rows = rows.filter(r => {
       const hay = [r.title, r.description, _brUserLabel(r.reporter), _brUserLabel(r.assignee)].filter(Boolean).join(' ').toLowerCase();
@@ -34538,8 +34553,8 @@ function renderBugReportList() {
         <th style="padding:8px 6px;text-align:left;width:90px">状態</th>
         <th style="padding:8px 6px;text-align:left;width:80px">重要度</th>
         <th style="padding:8px 6px;text-align:left">タイトル</th>
+        <th style="padding:8px 6px;text-align:left;width:120px">入力者</th>
         <th style="padding:8px 6px;text-align:left;width:120px">報告者</th>
-        <th style="padding:8px 6px;text-align:left;width:120px">対応者</th>
         <th style="padding:8px 6px;text-align:left;width:120px">報告日時</th>
         <th style="padding:8px 6px;text-align:right;width:60px">経過</th>
         <th style="padding:8px 6px;text-align:center;width:60px">スクショ</th>
@@ -34617,7 +34632,7 @@ async function openBugReportModal(options = {}) {
   const fsBtn = document.getElementById('br-fullscreen-toggle');
   if (fsBtn) fsBtn.textContent = '🔍 拡大';
 
-  // ADR 014: 共通 MemberPicker で対応者選択を統一（初回のみ bindSelect）
+  // ADR 014: 共通 MemberPicker で報告者選択を統一（初回のみ bindSelect）
   const assignSel = document.getElementById('br-assignee');
   if (assignSel && (!assignSel.dataset || assignSel.dataset.mpBound !== '1') && typeof MemberPicker !== 'undefined') {
     MemberPicker.bindSelect(assignSel, {
@@ -34635,7 +34650,8 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-id').value = '';
   document.getElementById('br-title').value = options.title || '';
   document.getElementById('br-severity').value = 'normal';
-  // 対応者の初期値: ログイン中のユーザー（自分が対応者として動く想定）
+  // 報告者の初期値: ログイン中のユーザー（自分のバグを自分で報告する一般ケース）
+  // 別の人の代わりに入力する場合はこのドロップダウンから変更する
   const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
   const myId = me?.id || '';
   document.getElementById('br-assignee').value = myId || '';
@@ -34690,11 +34706,11 @@ async function openBugReportModal(options = {}) {
           `現在の紐付け: <strong>#${log.revision_no}</strong> ${_brEsc(log.screen || '')} / ${_brEsc(log.feature || '')}`;
       }
       bugReportSyncImprovedUI();
-      // メタ情報
-      const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
+      // メタ情報（reporter_user_id は「保存ボタンを押した人＝入力者」を意味する）
+      const enteredByLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
       const improverLabel = r.improved_at ? (_brUserLabel(r.improver) || '—') : '';
       const meta = [
-        `報告: ${reporterLabel}`,
+        `入力: ${enteredByLabel}`,
         `日時: ${_brFmtDate(r.created_at)}`,
         r.url ? `URL: ${r.url}` : '',
         r.resolved_at ? `解決日時: ${_brFmtDate(r.resolved_at)}` : '',
@@ -34877,20 +34893,34 @@ function bugReportClearAnnotations() {
 function bugReportToggleFullscreen() {
   const editor = document.getElementById('br-screenshot-editor');
   const btn = document.getElementById('br-fullscreen-toggle');
+  const confirmBtn = document.getElementById('br-fullscreen-confirm-btn');
   if (!editor) return;
   const goingFullscreen = !editor.classList.contains('br-fullscreen');
   if (goingFullscreen) {
     editor.classList.add('br-fullscreen');
     document.body.classList.add('br-fullscreen-active');
     if (btn) btn.textContent = '🔽 縮小';
+    if (confirmBtn) confirmBtn.style.display = 'inline-block';
   } else {
     editor.classList.remove('br-fullscreen');
     document.body.classList.remove('br-fullscreen-active');
     if (btn) btn.textContent = '🔍 拡大';
+    if (confirmBtn) confirmBtn.style.display = 'none';
   }
   // 再描画でレイアウトを最新化（canvas 自体のサイズは元画像に依存して固定）
   bugReportRedrawCanvas();
 }
+
+// バグ報告モーダルが開いている間は ESC で閉じない（書きかけ内容を守る）
+// 既存の document.addEventListener('keydown' ...) 共通機構より先に capture phase で処理
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const m = document.getElementById('modal-bug-report');
+  if (m && m.classList.contains('open')) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}, true);
 
 // canvas マウスイベント（init 時にバインド）
 function _brSetupCanvasEvents() {
@@ -35043,7 +35073,8 @@ async function submitBugReport() {
     }
     closeBugReportModal();
     showToast(id ? 'バグ報告を更新しました' : 'バグ報告を送信しました（ご報告ありがとうございます）', 'success');
-    if (document.getElementById('modal-bug-report-list')?.style.display === 'flex') {
+    // 一覧モーダルが開いていれば即時最新化（openModal は class 制御なので classList で判定）
+    if (document.getElementById('modal-bug-report-list')?.classList.contains('open')) {
       await loadBugReportList();
     }
     loadBugReportOpenCount();
@@ -35095,7 +35126,7 @@ async function deleteBugReport() {
       return;
     }
     closeBugReportModal();
-    if (document.getElementById('modal-bug-report-list')?.style.display === 'flex') {
+    if (document.getElementById('modal-bug-report-list')?.classList.contains('open')) {
       await loadBugReportList();
     }
     loadBugReportOpenCount();
