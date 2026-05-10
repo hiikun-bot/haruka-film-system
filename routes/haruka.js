@@ -14394,6 +14394,70 @@ router.post('/bug-reports/:id/comments', requireAuth, express.json(), async (req
   }
 });
 
+// PATCH /api/haruka/bug-report-comments/:commentId
+// 編集権限: 投稿者本人 or admin
+// system kind は編集不可（運用ログとして immutable）
+router.patch('/bug-report-comments/:commentId', requireAuth, express.json(), async (req, res) => {
+  try {
+    const body = (req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: '本文は必須です' });
+    if (body.length > 2000) return res.status(400).json({ error: '本文は2000文字以内' });
+
+    const { data: row, error: getErr } = await supabase
+      .from('bug_report_comments')
+      .select('id, author_user_id, kind')
+      .eq('id', req.params.commentId)
+      .maybeSingle();
+    if (getErr) return res.status(500).json({ error: getErr.message });
+    if (!row) return res.status(404).json({ error: 'コメントが見つかりません' });
+    if (row.kind === 'system') return res.status(403).json({ error: 'システムコメントは編集できません' });
+
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isAuthor = row.author_user_id && req.user?.id === row.author_user_id;
+    if (!isAdmin && !isAuthor) return res.status(403).json({ error: '編集権限がありません（投稿者または管理者のみ）' });
+
+    const { data, error } = await supabase
+      .from('bug_report_comments')
+      .update({ body })
+      .eq('id', req.params.commentId)
+      .select('id, bug_report_id, author_user_id, body, kind, created_at, author:author_user_id ( id, full_name, nickname, avatar_url )')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/haruka/bug-report-comments/:commentId
+// 削除権限: 投稿者本人 or admin
+// system kind は削除不可
+router.delete('/bug-report-comments/:commentId', requireAuth, async (req, res) => {
+  try {
+    const { data: row, error: getErr } = await supabase
+      .from('bug_report_comments')
+      .select('id, author_user_id, kind')
+      .eq('id', req.params.commentId)
+      .maybeSingle();
+    if (getErr) return res.status(500).json({ error: getErr.message });
+    if (!row) return res.status(404).json({ error: 'コメントが見つかりません' });
+    if (row.kind === 'system') return res.status(403).json({ error: 'システムコメントは削除できません' });
+
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isAuthor = row.author_user_id && req.user?.id === row.author_user_id;
+    if (!isAdmin && !isAuthor) return res.status(403).json({ error: '削除権限がありません（投稿者または管理者のみ）' });
+
+    const { error } = await supabase
+      .from('bug_report_comments')
+      .delete()
+      .eq('id', req.params.commentId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/haruka/bug-reports/:id - 削除（admin のみ）
 router.delete('/bug-reports/:id', requireAuth, async (req, res) => {
   try {

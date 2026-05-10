@@ -34772,6 +34772,21 @@ async function submitBugReportTriage() {
   } catch (e) { alert(e.message); }
 }
 
+// コメント欄での名前表記は MemberPicker の共通ルールに揃える
+// （バグ報告一覧テーブルは横幅が狭いので _brUserLabel = nickname優先 を使うが、
+//   議論欄のような余白が広いセクションでは「full_name（nickname）」が標準）
+function _brCommentAuthorLabel(u) {
+  if (!u) return '—';
+  if (typeof MemberPicker !== 'undefined' && typeof MemberPicker.memberLabel === 'function') {
+    return MemberPicker.memberLabel(u) || '—';
+  }
+  // フォールバック: MemberPicker 未ロードでも壊れないように共通ルールを内製
+  const nick = (u.nickname || '').trim();
+  const full = (u.full_name || '').trim();
+  if (nick && full && nick !== full) return `${full}（${nick}）`;
+  return full || nick || '—';
+}
+
 // コメント一覧読み込み
 async function _brLoadComments(bugId) {
   const list = document.getElementById('br-comments-list');
@@ -34786,9 +34801,12 @@ async function _brLoadComments(bugId) {
       list.innerHTML = `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">まだコメントはありません</div>`;
       return;
     }
+    const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+    const myId = me?.id || null;
+    const isAdmin = me?.role === 'admin';
     list.innerHTML = rows.map(c => {
       const isSystem = c.kind === 'system';
-      const author = c.author ? (_brUserLabel(c.author) || '—') : '—';
+      const author = _brCommentAuthorLabel(c.author);
       const date = _brFmtDate(c.created_at);
       const bodyEsc = _brEsc(c.body || '').replace(/\n/g, '<br>');
       if (isSystem) {
@@ -34798,18 +34816,90 @@ async function _brLoadComments(bugId) {
             ${bodyEsc}
           </div>`;
       }
+      // 編集/削除可: 投稿者本人 or admin
+      const canEdit = isAdmin || (myId && c.author_user_id === myId);
+      const cidJson = JSON.stringify(c.id);
+      const actions = canEdit
+        ? `<div style="display:inline-flex;gap:6px">
+             <button type="button" title="編集" onclick='_brStartEditComment(${cidJson})' style="background:none;border:none;font-size:12px;cursor:pointer;color:#6B7280;padding:0 4px">✏️</button>
+             <button type="button" title="削除" onclick='_brDeleteComment(${cidJson})' style="background:none;border:none;font-size:12px;cursor:pointer;color:#9CA3AF;padding:0 4px">🗑</button>
+           </div>`
+        : '';
       return `
-        <div style="padding:8px 10px;margin:6px 0;background:#FAFAFA;border:1px solid #F3F4F6;border-radius:6px;font-size:13px">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">
-            <strong style="color:#111827">${_brEsc(author)}</strong> ・ ${_brEsc(date)}
+        <div data-cid="${_brEsc(c.id)}" style="padding:8px 10px;margin:6px 0;background:#FAFAFA;border:1px solid #F3F4F6;border-radius:6px;font-size:13px">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span><strong style="color:#111827">${_brEsc(author)}</strong> ・ ${_brEsc(date)}</span>
+            ${actions}
           </div>
-          <div style="color:#1F2937;line-height:1.45">${bodyEsc}</div>
+          <div data-comment-body style="color:#1F2937;line-height:1.45">${bodyEsc}</div>
         </div>`;
     }).join('');
   } catch (e) {
     list.innerHTML = `<div style="padding:12px;text-align:center;color:#C0392B;font-size:12px">${_brEsc(e.message)}</div>`;
   }
 }
+
+// インライン編集モードに切り替え
+function _brStartEditComment(commentId) {
+  const wrap = document.querySelector(`[data-cid="${commentId.replace(/"/g, '\\"')}"]`);
+  if (!wrap) return;
+  const bodyEl = wrap.querySelector('[data-comment-body]');
+  if (!bodyEl || bodyEl.dataset.editing === '1') return;
+  // 元 HTML を保持（キャンセル復元用）
+  const originalHtml = bodyEl.innerHTML;
+  // textarea に切替
+  const original = bodyEl.innerText;
+  bodyEl.dataset.editing = '1';
+  bodyEl.innerHTML = `
+    <textarea class="form-input" rows="2" maxlength="2000" style="resize:vertical;font-size:13px;width:100%">${_brEsc(original)}</textarea>
+    <div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">
+      <button type="button" class="btn" style="font-size:11px;padding:4px 10px" data-cancel>キャンセル</button>
+      <button type="button" class="btn-primary" style="font-size:11px;padding:4px 10px" data-save>保存</button>
+    </div>`;
+  const ta = bodyEl.querySelector('textarea');
+  ta?.focus();
+  bodyEl.querySelector('[data-cancel]').onclick = () => {
+    bodyEl.innerHTML = originalHtml;
+    delete bodyEl.dataset.editing;
+  };
+  bodyEl.querySelector('[data-save]').onclick = async () => {
+    const newBody = (ta?.value || '').trim();
+    if (!newBody) { showToast('本文は必須です', 'warn'); return; }
+    try {
+      const res = await fetch(`/api/haruka/bug-report-comments/${encodeURIComponent(commentId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: newBody }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'コメント更新に失敗しました');
+        return;
+      }
+      const bugId = document.getElementById('br-id').value;
+      await _brLoadComments(bugId);
+      showToast('コメントを更新しました', 'success');
+    } catch (e) { alert(e.message); }
+  };
+}
+
+async function _brDeleteComment(commentId) {
+  if (!window.confirm('このコメントを削除します。よろしいですか？')) return;
+  try {
+    const res = await fetch(`/api/haruka/bug-report-comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'コメント削除に失敗しました');
+      return;
+    }
+    const bugId = document.getElementById('br-id').value;
+    await _brLoadComments(bugId);
+    showToast('コメントを削除しました', 'success');
+  } catch (e) { alert(e.message); }
+}
+
+window._brStartEditComment = _brStartEditComment;
+window._brDeleteComment = _brDeleteComment;
 
 // コメント送信（全員可）
 async function postBugReportComment() {
