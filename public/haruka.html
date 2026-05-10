@@ -2940,12 +2940,18 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="form-group" id="br-claude-wrap">
           <label class="form-label">🤖 Claude Code 修正依頼 <span style="color:var(--text-muted);font-size:11px">（対応方針=「対応する」のとき有効）</span></label>
           <div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px">
-            <button type="button" id="br-claude-copy-btn" class="btn" style="font-size:13px;padding:8px 16px" onclick="bugReportCopyClaudePrompt()">
-              📋 Claude Code 修正依頼テキストをコピー
-            </button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button type="button" id="br-claude-copy-btn" class="btn" style="font-size:13px;padding:8px 16px" onclick="bugReportCopyClaudePrompt()">
+                📋 Claude Code 修正依頼テキストをコピー
+              </button>
+              <button type="button" id="br-claude-copy-image-btn" class="btn" style="font-size:13px;padding:8px 16px;display:none" onclick="bugReportCopyScreenshotImage()">
+                🖼 報告画像をコピー
+              </button>
+            </div>
             <div style="font-size:11px;color:#1E40AF;margin-top:6px">
               💡 コピーされたテキストには <code>Bug-Report-Id: ...</code> trailer の指示が含まれます。<br>
-              Claude が PR を作成しマージされた瞬間に、このバグ報告と Verup# が自動紐付されます。
+              Claude が PR を作成しマージされた瞬間に、このバグ報告と Verup# が自動紐付されます。<br>
+              🖼 画像コピー後は Claude Code の入力欄にそのまま貼り付け（Cmd/Ctrl+V）できます。
             </div>
             <div id="br-claude-disabled-msg" style="font-size:11px;color:#9A3412;margin-top:6px;display:none">
               ⚠️ 先に対応方針で「対応する」を選んでから利用してください
@@ -34984,12 +34990,18 @@ window._brPreviewStatusFromTriage = _brPreviewStatusFromTriage;
 // triage_decision に応じて Claude依頼ボタンの活性化を切り替え
 function _brSyncClaudeButton(decision) {
   const btn = document.getElementById('br-claude-copy-btn');
+  const imgBtn = document.getElementById('br-claude-copy-image-btn');
   const msg = document.getElementById('br-claude-disabled-msg');
   if (!btn) return;
   const enabled = decision === 'to_fix';
   btn.disabled = !enabled;
   btn.style.opacity = enabled ? '1' : '0.5';
   btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  if (imgBtn) {
+    // 画像コピーボタンは「画像が存在する」かつ「対応する」のときだけ表示
+    const hasImage = !!(_bugReportEditing && _bugReportEditing.screenshot_data_url);
+    imgBtn.style.display = (enabled && hasImage) ? '' : 'none';
+  }
   if (msg) msg.style.display = enabled ? 'none' : '';
 }
 
@@ -35268,9 +35280,57 @@ async function bugReportCopyClaudePrompt() {
   }
 }
 
+// 報告された画像（screenshot_data_url）を画像としてクリップボードにコピー。
+// Claude Code の入力欄に Cmd/Ctrl+V でそのまま貼り付ける用途。
+// data URL → Blob → ClipboardItem(image/png) で書き込む。Safari は image/png のみ許可するため
+// JPEG など他形式が来た場合は canvas 経由で PNG に再エンコードする。
+async function bugReportCopyScreenshotImage() {
+  const r = _bugReportEditing;
+  if (!r || !r.screenshot_data_url) {
+    showToast('コピーできる画像がありません', 'warn');
+    return;
+  }
+  if (r.triage_decision !== 'to_fix') {
+    showToast('対応方針で「対応する」を選んでから利用してください', 'warn');
+    return;
+  }
+  try {
+    const dataUrl = r.screenshot_data_url;
+    let blob;
+    if (dataUrl.startsWith('data:image/png')) {
+      const res = await fetch(dataUrl);
+      blob = await res.blob();
+    } else {
+      // PNG 以外（JPEG 等）は canvas 経由で PNG に再エンコード
+      blob = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/png');
+        };
+        img.onerror = () => reject(new Error('image load failed'));
+        img.src = dataUrl;
+      });
+    }
+    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+      throw new Error('このブラウザは画像クリップボードコピーに対応していません');
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    showToast('🖼 報告画像をコピーしました（Claude Code に Cmd/Ctrl+V で貼り付け）', 'success');
+  } catch (e) {
+    console.warn('[bug-report] copy image failed:', e);
+    alert(e.message || '画像のクリップボードコピーに失敗しました');
+  }
+}
+
 window.submitBugReportTriage = submitBugReportTriage;
 window.postBugReportComment = postBugReportComment;
 window.bugReportCopyClaudePrompt = bugReportCopyClaudePrompt;
+window.bugReportCopyScreenshotImage = bugReportCopyScreenshotImage;
 
 // 「改善済み」チェックの ON/OFF に応じて Verup 選択欄を表示/非表示
 function bugReportSyncImprovedUI() {
