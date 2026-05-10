@@ -847,18 +847,25 @@ tr.row-help td{background:#FFFBF2}
   scroll-snap-align:start;
   transition:transform 250ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 250ms ease, z-index 0s linear .25s;
   display:flex;flex-direction:column;
-  transform-origin:center center;
+  /* デフォルトは上方向に展開（pop は下に出るので、scale は中央寄せで OK）。
+     行頭/行末は JS で data-edge を付与し、transform-origin を切り替える。 */
+  transform-origin:top center;
 }
 .mposter:hover{
-  transform:scale(1.32) translateY(-10px);
+  /* Netflix風 overlay: 拡大は控えめにして隣カードを覆い被さるイメージ。
+     scale 1.32 は強すぎて行が動いて見えるので、1.08 まで抑制。
+     z-index で前面化し、pop は下に absolute で伸びる（行高には影響なし）。 */
+  transform:scale(1.08);
   box-shadow:0 24px 50px rgba(15,110,86,0.22), 0 8px 16px rgba(15,110,86,0.10);
   z-index:20;
   transition:transform 250ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 250ms ease, z-index 0s linear 0s;
 }
-/* グリッドでは行頭/行末の判定がレスポンシブで変わるので、
-   transform-origin はカードの位置に応じて CSS だけで簡易補正できないため
-   pop（下部パネル）の方向だけ自然に下に伸びる現行仕様を維持。
-   端でわずかに見切れるケースは padding/margin の余裕で吸収する。 */
+/* 行頭（左端）: 右方向に拡大して左にはみ出さない */
+.mposter[data-edge~="start"]{transform-origin:top left}
+/* 行末（右端 / 8列目）: 左方向に拡大して右にはみ出さない */
+.mposter[data-edge~="end"]{transform-origin:top right}
+/* 最終行: pop を上方向に展開して画面下に出ないようにする */
+.mposter[data-edge~="bottom"] .mposter-pop{top:auto;bottom:100%;border-top:1px solid var(--border);border-bottom:none;border-radius:12px 12px 0 0}
 
 .mposter-art{
   position:relative;
@@ -959,10 +966,13 @@ tr.row-help td{background:#FFFBF2}
   padding:10px 12px 12px;
   pointer-events:auto;
 }
-.mposter-pop-bars{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.mposter-pop-bars{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
 .mposter-pop-bar-label{font-size:10px;color:var(--text-muted);margin-bottom:2px;font-weight:600}
 .mposter-pop-bar-track{position:relative;height:8px;background:#e8f5f4;border-radius:4px}
 .mposter-pop-bar-seg{position:absolute;top:0;bottom:0;border-radius:3px}
+/* 24時間タイムラインの目盛り (0/6/12/18/24) — 元テーブル一覧と同じ表示 */
+.mposter-pop-bar-ticks{position:relative;height:10px;margin-top:2px}
+.mposter-pop-bar-tick{position:absolute;transform:translateX(-50%);font-size:9px;color:#aaa;line-height:1}
 .mposter-pop-note{
   font-size:11px;color:var(--text-muted);
   line-height:1.45;
@@ -10278,17 +10288,27 @@ function _mrosterRoleIcon(grad) {
   return { director:'🎬', producer:'🎥', editor:'✂️', designer:'🎨', secretary:'📝', admin:'🛡️' }[grad] || '🎬';
 }
 
-// 稼働バー（pop内）
+// 稼働バー（pop内）— 24時間タイムライン上で稼働時間帯をハイライトする表示。
+// 元テーブル一覧（10205行 mkBar）と同じ仕様を踏襲：時間帯ハイライト + 0/6/12/18/24目盛り。
 function _mrosterBar(ranges, color, label) {
+  const TICK_HOURS = [0, 6, 12, 18, 24];
   const totalH = (ranges||[]).reduce((s,r) => s + (r.to - r.from), 0);
+  const tipText = (ranges && ranges.length)
+    ? ranges.map(r => `${r.from}:00〜${r.to}:00`).join('、')
+    : '休み';
   const segs = (ranges||[]).map(r => {
     const l = (r.from/24*100).toFixed(2), w = ((r.to-r.from)/24*100).toFixed(2);
     return `<div class="mposter-pop-bar-seg" style="left:${l}%;width:${w}%;background:${color}"></div>`;
   }).join('');
+  const ticks = TICK_HOURS.map(h => {
+    const pct = (h/24*100).toFixed(2);
+    return `<div class="mposter-pop-bar-tick" style="left:${pct}%">${h}</div>`;
+  }).join('');
   return `
-    <div>
+    <div title="${esc(label + '：' + tipText)}">
       <div class="mposter-pop-bar-label">${label}：${totalH}時間</div>
       <div class="mposter-pop-bar-track">${segs}</div>
+      <div class="mposter-pop-bar-ticks">${ticks}</div>
     </div>`;
 }
 
@@ -10339,7 +10359,56 @@ function renderMemberRoster(list, members) {
   }).join('');
 
   list.innerHTML = `<div class="mroster-wrap">${rowsHtml || '<div class="loading">該当するメンバーがいません</div>'}</div>`;
+
+  // 行頭/行末/最終行に data-edge を付与（hover overlay の transform-origin と pop の上下展開を制御）。
+  // grid auto-fill のためレスポンシブで列数が変わるので、各カードの offsetTop / offsetLeft から
+  // 同じ行のグループを動的に検出して両端を判定する。
+  _mrosterApplyEdges();
 }
+
+// hover overlay の transform-origin / pop の上下展開を制御するための edge 属性を再計算する。
+// resize でも呼び直す。
+function _mrosterApplyEdges() {
+  const wrap = document.querySelector('.mroster-wrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.mroster-grid').forEach(grid => {
+    const cards = Array.from(grid.querySelectorAll('.mposter'));
+    if (!cards.length) return;
+    // 同 offsetTop でグルーピング = 同じ行
+    const rows = [];
+    let cur = null;
+    let curTop = null;
+    cards.forEach(c => {
+      if (curTop === null || Math.abs(c.offsetTop - curTop) > 4) {
+        cur = [c];
+        rows.push(cur);
+        curTop = c.offsetTop;
+      } else {
+        cur.push(c);
+      }
+    });
+    const lastRowIdx = rows.length - 1;
+    rows.forEach((row, rowIdx) => {
+      row.forEach((card, colIdx) => {
+        const edges = [];
+        if (colIdx === 0) edges.push('start');
+        if (colIdx === row.length - 1) edges.push('end');
+        if (rowIdx === lastRowIdx) edges.push('bottom');
+        if (edges.length) card.setAttribute('data-edge', edges.join(' '));
+        else card.removeAttribute('data-edge');
+      });
+    });
+  });
+}
+
+// resize で edge を再計算（debounce）
+(function() {
+  let _t = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_t);
+    _t = setTimeout(_mrosterApplyEdges, 120);
+  });
+})();
 
 function _mrosterCardHtml(m, def, isSelf) {
   const team = allTeams.find(t => t.id === m.team_id);
@@ -10365,7 +10434,7 @@ function _mrosterCardHtml(m, def, isSelf) {
   const weekdayBar = _mrosterBar(m.weekday_hours || [], 'var(--em)', '平日');
   const weekendBar = m.weekend_hours && m.weekend_hours.length
     ? _mrosterBar(m.weekend_hours, '#94d4d1', '土日祝')
-    : `<div><div class="mposter-pop-bar-label">土日祝：休み</div></div>`;
+    : _mrosterBar([], '#94d4d1', '土日祝（休み）');
   const note = m.note ? `<div class="mposter-pop-note">💬 ${esc(m.note)}</div>` : '';
   const actBtns = [
     m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id)
