@@ -6025,26 +6025,26 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- 左サイドバー -->
     <aside id="an-sidebar" style="width:220px;flex-shrink:0;background:var(--em-pale);border-right:1px solid var(--border);padding:20px 12px">
       <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;color:var(--em-dark);margin:0 6px 10px">📊 分析メニュー</div>
-      <div style="font-size:10px;color:var(--text-muted);margin:4px 6px 4px;letter-spacing:0.05em">経営</div>
-      <button class="an-menu-btn an-menu-active" data-view="monthly-revenue" onclick="switchAnalyticsView('monthly-revenue')">
+      <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:4px 6px 4px;letter-spacing:0.05em">経営</div>
+      <button class="an-menu-btn an-menu-active" data-view="monthly-revenue" data-an-perm="analytics.view" onclick="switchAnalyticsView('monthly-revenue')">
         <span style="font-size:14px">💰</span><span>月次売上・粗利</span>
       </button>
-      <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">本数集計</div>
-      <button class="an-menu-btn" data-view="creator-summary" onclick="switchAnalyticsView('creator-summary')">
+      <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">本数集計</div>
+      <button class="an-menu-btn" data-view="creator-summary" data-an-perm="analytics.view" onclick="switchAnalyticsView('creator-summary')">
         <span style="font-size:14px">👤</span><span>クリエイター別作成本数</span>
       </button>
-      <button class="an-menu-btn" data-view="project-assignee" onclick="switchAnalyticsView('project-assignee')">
+      <button class="an-menu-btn" data-view="project-assignee" data-an-perm="analytics.view" onclick="switchAnalyticsView('project-assignee')">
         <span style="font-size:14px">📋</span><span>案件×担当者集計</span>
       </button>
-      <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">データ品質</div>
-      <button class="an-menu-btn" data-view="cost-coverage" onclick="switchAnalyticsView('cost-coverage')">
+      <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">データ品質</div>
+      <button class="an-menu-btn" data-view="cost-coverage" data-an-perm="analytics.view" onclick="switchAnalyticsView('cost-coverage')">
         <span style="font-size:14px">⚠️</span><span>単価未設定チェッカー</span>
       </button>
-      <div style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">運用</div>
+      <div class="an-menu-section" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">運用</div>
       <button class="an-menu-btn" data-view="bug-reports" onclick="switchAnalyticsView('bug-reports')">
         <span style="font-size:14px">🦋</span><span>バグ報告件数</span>
       </button>
-      <div style="font-size:10px;color:var(--text-muted);margin:14px 6px 0;line-height:1.5">
+      <div id="an-menu-footer" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:14px 6px 0;line-height:1.5">
         他の集計は順次追加予定<br>
         （月次推移・チーム別・納期遵守率 等）
       </div>
@@ -13148,6 +13148,13 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|invoice.all_view': true,
   'secretary|master.page': true,
   'secretary|analytics.view': true,
+  // analytics.bug_reports.view は全ロール開放
+  'secretary|analytics.bug_reports.view': true,
+  'producer|analytics.bug_reports.view': true,
+  'producer_director|analytics.bug_reports.view': true,
+  'director|analytics.bug_reports.view': true,
+  'editor|analytics.bug_reports.view': true,
+  'designer|analytics.bug_reports.view': true,
 };
 async function loadRolePermissions() {
   try {
@@ -13239,6 +13246,11 @@ function setPreviewRole(role) {
     if (typeof loadInvoices === 'function') loadInvoices();
   }
   if (document.getElementById('page-knowledge')?.classList.contains('active') && typeof loadKnowledgePage === 'function') loadKnowledgePage();
+  // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
+  if (document.getElementById('page-analytics')?.classList.contains('active') && typeof initAnalyticsPage === 'function') {
+    if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
+    initAnalyticsPage();
+  }
   // VIEW AS 切替時は master ページも再描画（最高管理者専用タブが previewRole 切替で見えなくなるべきため）
   if (document.getElementById('page-master')?.classList.contains('active')) {
     // 現在開いているマスターサブページを再ロード。サブページごとに renderXxxPage が定義されているのでそれを再呼び出し
@@ -13273,12 +13285,22 @@ function applyRoleBasedUI() {
   if (masterNav) masterNav.style.display = hasPermission('master.page') ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
   if (drawerMaster) drawerMaster.style.display = hasPermission('master.page') ? '' : 'none';
-  // 分析・集計ナビ（admin / secretary のみ）
-  const canAnalytics = hasPermission('analytics.view');
+  // 分析・集計ナビ
+  // - analytics.view (経営系・全集計): admin / secretary のみ
+  // - analytics.bug_reports.view (バグ報告件数): 全ロール開放
+  // どちらか片方でも持っていればナビは表示し、サイドバーで該当項目だけ出し分ける。
+  const canAnalyticsFull = hasPermission('analytics.view');
+  const canAnalyticsBugReports = hasPermission('analytics.bug_reports.view');
+  const canAnalytics = canAnalyticsFull || canAnalyticsBugReports;
   const analyticsNav = document.getElementById('nav-analytics');
   if (analyticsNav) analyticsNav.style.display = canAnalytics ? '' : 'none';
   const drawerAnalytics = document.getElementById('nav-drawer-analytics');
   if (drawerAnalytics) drawerAnalytics.style.display = canAnalytics ? '' : 'none';
+  // サイドバーのうち analytics.view が必要な項目（経営系メニューと将来追加されるサブメニュー）は
+  // フル権限がないロールでは隠す。data-an-perm="analytics.view" を目印にする。
+  document.querySelectorAll('#an-sidebar [data-an-perm="analytics.view"]').forEach(el => {
+    el.style.display = canAnalyticsFull ? '' : 'none';
+  });
   // VIEW AS 中は最高管理者専用メニューを隠す（実ユーザーが super admin でも previewRole 設定中は非表示）
   const showSuperAdminOnly = isSuperAdmin() && !previewRole;
   const userStatsNav = document.getElementById('mnav-userstats');
@@ -21607,7 +21629,8 @@ const ROLE_PERM_LIST = [
   { section:'マスター管理',   key:'master.page',                 label:'マスター管理ページ' },
   { section:'マスター管理',   key:'master.sys_config',           label:'システム設定' },
   { section:'システム',       key:'system.view_as',              label:'VIEW AS（ロールプレビュー）' },
-  { section:'分析',           key:'analytics.view',              label:'分析・集計ページ閲覧' },
+  { section:'分析',           key:'analytics.view',              label:'分析・集計ページ閲覧（経営系・全集計）' },
+  { section:'分析',           key:'analytics.bug_reports.view',  label:'分析メニュー：バグ報告件数' },
 ];
 
 let _rolesEditMode = false;
@@ -29506,6 +29529,10 @@ function initAnalyticsPage() {
     sel.innerHTML = '<option value="">すべて</option>' +
       allClients.filter(c => c.status !== 'クライアント取引終了')
         .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }
+  // analytics.view を持たないロールはバグ報告件数しか開放されていないので強制的に bug-reports に寄せる
+  if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) {
+    _analyticsView = 'bug-reports';
   }
   switchAnalyticsView(_analyticsView, true);
 }
