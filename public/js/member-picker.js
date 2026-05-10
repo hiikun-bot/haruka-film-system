@@ -373,6 +373,7 @@
     const id = selectEl.id;
     const name = selectEl.name || '';
     const className = selectEl.className || '';
+    const styleAttr = selectEl.getAttribute('style') || '';
     const required = selectEl.required;
     const initial = selectEl.value || '';
 
@@ -388,6 +389,7 @@
     trigger.type = 'button';
     if (id) trigger.id = id;
     trigger.className = 'mp-trigger ' + className;
+    if (styleAttr) trigger.setAttribute('style', styleAttr);
     trigger.dataset.mpBound = '1';
     trigger._mpHidden = hidden;
     trigger._mpOpts = opts;
