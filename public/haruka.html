@@ -21478,7 +21478,8 @@ async function renderUserStatsPage() {
       <td style="padding:8px 12px;font-size:13px;font-weight:500;white-space:nowrap">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="width:8px;height:8px;border-radius:50%;background:${u.is_online ? '#22c55e' : '#d1d5db'};flex-shrink:0;display:inline-block"></span>
-          <span title="${esc(NameDisplay.tooltip(u))}">${esc(NameDisplay.short(u) || u.email)}</span>
+          ${avatarHtml(u, 24)}
+          <span title="${esc(NameDisplay.tooltip(u))}">${esc(NameDisplay.full(u) || u.email)}</span>
         </div>
       </td>
       <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${esc(u.email)}</td>

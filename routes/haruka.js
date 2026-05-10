@@ -11992,7 +11992,7 @@ router.get('/admin/user-stats', requireAuth, async (req, res) => {
   // 全ユーザー取得
   const { data: users } = await supabase
     .from('users')
-    .select('id, full_name, email, role, rank, is_active, last_seen_at, login_count, created_at')
+    .select('id, full_name, nickname, avatar_url, email, role, rank, is_active, last_seen_at, login_count, created_at')
     .order('last_seen_at', { ascending: false, nullsFirst: false });
 
   // 直近30日のログインログ（ユーザーごとの集計）
