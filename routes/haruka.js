@@ -5720,6 +5720,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url, client_review_url,
     help_flag, talent_flag, note, revision_count,
+    internal_revision_count, client_revision_count,
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
@@ -5775,6 +5776,12 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (talent_flag !== undefined) updateData.talent_flag = talent_flag;
   if (note !== undefined) updateData.note = note;
   if (revision_count !== undefined) updateData.revision_count = revision_count;
+  // 修正回数の社内/CL分離 (PR #(revision-count-split)):
+  //   internal_revision_count = D後修正 + P後修正 への遷移回数
+  //   client_revision_count   = CL後修正 への遷移回数
+  //   revision_count          = 上2つの合計（後方互換のため引き続き保持）
+  if (internal_revision_count !== undefined) updateData.internal_revision_count = internal_revision_count;
+  if (client_revision_count   !== undefined) updateData.client_revision_count   = client_revision_count;
   // ADR 011 補足 (2026-05-09 v2): コメント書き込みごとに _updated_at を同時セット。
   //   ・本体 creatives.{director,client,editor}_comment_updated_at を now() で更新する。
   //   ・snapshot 確定時に beforeRow.director_comment_updated_at をコピー保存することで、
@@ -5881,6 +5888,22 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
       ({ data, error } = await supabase
         .from('creatives')
         .update(legacyUpdate)
+        .eq('id', req.params.id)
+        .select()
+        .single());
+    }
+  }
+  if (error) {
+    // PR #(revision-count-split): internal_revision_count / client_revision_count が
+    // schema-sync 未適用の環境では列欠損エラーになる。新列を抜いて再 UPDATE する。
+    // 旧 revision_count は維持されるので、表示は「修正 N回」(合計) フォールバック挙動になる。
+    const msg = error.message || '';
+    const isMissingRevCol = /internal_revision_count|client_revision_count/.test(msg);
+    if (isMissingRevCol) {
+      const { internal_revision_count: _ir, client_revision_count: _cr, director_comment_updated_at: _d2, client_comment_updated_at: _c2, editor_comment_updated_at: _e2, ...legacyUpdate2 } = updateData;
+      ({ data, error } = await supabase
+        .from('creatives')
+        .update(legacyUpdate2)
         .eq('id', req.params.id)
         .select()
         .single());
@@ -12876,6 +12899,25 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   const existingSnapKeys = new Set(
     (data || []).map(r => `${r.version_num ?? ''}::${r.round_stage ?? ''}`)
   );
+
+  // PR #(cl-check-live-editor-comment): 仮想 cl_check ラウンドの editor_comment は
+  // 「現在クライアントチェック中で、まだ次工程に進んでいない」場合に限り、
+  // creatives.editor_comment（=「今回」右側で編集者が入れたコメント）を優先表示する。
+  // これにより、Pチェック→CLチェック遷移時点では editor_comment_at_change にコピーされる
+  // のが「v2 を D-check に出した時の editor_comment（古い値）」になってしまう不具合を回避し、
+  // 編集者が CL チェック中に書き直した最新コメントが「前回（コメント）タブ」に反映されるようにする。
+  let liveCreativeStatus = null;
+  let liveCreativeEditorComment = null;
+  try {
+    const { data: cMeta } = await supabase
+      .from('creatives')
+      .select('status, editor_comment')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    liveCreativeStatus = cMeta?.status || null;
+    liveCreativeEditorComment = cMeta?.editor_comment || null;
+  } catch (_) { /* 取得失敗時は仮想ラウンドの editor_comment は transition 由来のフォールバックのまま */ }
+
   for (const tr of transitions) {
     const stage = TO_STAGE_INITIAL[tr.to_status];
     if (!stage) continue;
@@ -12886,9 +12928,20 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     // 仮想ラウンドの editor_comment は transition.editor_comment_at_change を採用。
     // NULL のままでも arrival ラウンドとして file カードは出すので有用。
     const file = filesByVersion[Number(tr.version_at_change)] || null;
-    const editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
+    let editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
       ? tr.editor_comment_at_change
       : null;
+    // PR #(cl-check-live-editor-comment): cl_check ラウンドかつ「現在もクライアントチェック中」
+    // のときは creatives.editor_comment（編集者が今回パネルで書き換えた最新値）で上書きする。
+    // p_check / d_check では従来通り transition 由来の値を維持（古い往復のメモを上書きしないため）。
+    if (
+      stage === 'cl_check' &&
+      liveCreativeStatus === 'クライアントチェック中' &&
+      typeof liveCreativeEditorComment === 'string' &&
+      liveCreativeEditorComment.trim()
+    ) {
+      editorComment = liveCreativeEditorComment;
+    }
     result.push({
       id:                    `initial-submit-${tr.id}`,
       creative_id:           req.params.id,
