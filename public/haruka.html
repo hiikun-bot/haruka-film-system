@@ -26272,10 +26272,19 @@ function _cdBuildLiveRound(creative) {
   if (!creative) return null;
   const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   if (!REVISION_STATUSES.includes(creative.status)) return null;
+  // 「クライアントチェック後修正」の comment ソースについて (PR #(cl-prev-comment-source) / 髙橋指示 2026-05-10):
+  //   現在の saveCreativeDetail() は status='クライアントチェック中' でも
+  //   `body.director_comment = noteValue` で送っているため (line 34316-34318)、
+  //   CL の指摘は実体として `creatives.director_comment` 列に保存される。
+  //   そのため live round の comment ソースも `creative.director_comment` を優先し、
+  //   将来 client_comment 列に直接書く実装に変わった場合のために `client_comment` を fallback で受ける。
+  //   旧実装は `creative.client_comment` のみを参照していたため、CL→CL後修正 直後に
+  //   live round が build されず、左カラム「💬 前回（コメント）」タブが
+  //   1つ前の cl_check 仮想ラウンド（編集者の提出時メモ）にフォールバックして見える不具合があった。
   const stageMap = {
     'Dチェック後修正':            { stage: 'd_check',  comment: creative.director_comment, syntheticStage: 'd_check_handoff'  },
     'Pチェック後修正':            { stage: 'p_check',  comment: creative.director_comment, syntheticStage: 'p_check_handoff'  },
-    'クライアントチェック後修正': { stage: 'cl_check', comment: creative.client_comment,   syntheticStage: 'cl_check_handoff' },
+    'クライアントチェック後修正': { stage: 'cl_check', comment: (creative.director_comment || creative.client_comment), syntheticStage: 'cl_check_handoff' },
   };
   const m = stageMap[creative.status];
   if (!m || !m.comment) return null;
