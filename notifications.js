@@ -268,8 +268,11 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
   // Slack 本文（mrkdwn）。ファイル名は <url|name> 形式で青リンク化済み。
   // 見出しを区切り線で挟み、本文項目は装飾なしで1行ずつ並べる（バグ報告 #82b1c20d）。
   // メンション行は呼び出し側が body の前に `${mentions}\n\n` で連結する。
+  // URL 行はファイル名リンクとは別に立てる。Slack 上で全角文字混じりのリンクが
+  // 切れて見えるケース（モバイル等）でも、平文 URL を1行載せておけばコピペで飛べる。
+  // バグ報告 #8d97a0e7「動画への URL もあるとそのまま飛べる」要望対応。
   const SEP = '━━━━━━━━━━━━━━━';
-  const slackBody = [
+  const slackLines = [
     SEP,
     `${emoji} *${kind}*`,
     SEP,
@@ -278,7 +281,9 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
     `ファイル: ${slackName}`,
     `担当者: ${fromTo}`,
     `コメント: ${commentBlock}`,
-  ].join('\n');
+  ];
+  if (creativeUrl) slackLines.push(`URL: ${creativeUrl}`);
+  const slackBody = slackLines.join('\n');
 
   // Chatwork 本文（[info][title]...[/title]...[/info]）。
   // URL 行は info ブロック内に置く（クリック可能）。
@@ -428,6 +433,49 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     }
     if (roomId) {
       await sendChatworkRoom(roomId, `[toall]\n${cwBody}`, { token: chatworkPost.token });
+    }
+  };
+
+  // 修正依頼系の in-app 通知ヘルパ（Dチェック後修正 / Pチェック後修正 / クライアントチェック後修正 で共通利用）。
+  //
+  // 背景（バグ報告 #8d97a0e7 対応）:
+  //   旧実装は notify_ball_returned (DBトリガー) 任せで、ball_holder_id が単一 UUID なので
+  //   複数 editor / 複数 director の場合に 2人目以降が bell 通知を取りこぼしていた。
+  //   Dチェック依頼 (1-e) / Pチェック依頼 (2-e) と同じ枠組み (notification_type='creative_status')
+  //   で全宛先に明示 INSERT する。
+  //
+  // recipients: 通知ログを入れるユーザー配列。actor 自身と id 重複は除外。
+  const insertModifyRequestInApp = async (kindLabel, recipients, newStatusLabel) => {
+    try {
+      const projectName = project?.name || '';
+      const inAppBody = projectName ? `${fileName}（${projectName}）` : fileName;
+      const inAppLink = `/creatives/${detail.id}`;
+      const filtered = (recipients || []).filter(u => u && u.id && (!actor || u.id !== actor.id));
+      const seenIds = new Set();
+      const rows = [];
+      for (const u of filtered) {
+        if (seenIds.has(u.id)) continue;
+        seenIds.add(u.id);
+        rows.push({
+          user_id: u.id,
+          notification_type: 'creative_status',
+          title: kindLabel,
+          body: inAppBody,
+          link_url: inAppLink,
+          meta: {
+            creative_id: detail.id,
+            project_id: detail.project_id || null,
+            file_name: fileName,
+            new_status: newStatusLabel,
+          },
+          sender_id: actor?.id || null,
+        });
+      }
+      if (rows.length > 0) {
+        await createBulkNotifications(rows);
+      }
+    } catch (e) {
+      console.warn(`[notif] in-app ${kindLabel} notify failed:`, e?.message || e);
     }
   };
 
@@ -617,9 +665,23 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    宛先は editorAssignees（編集者・デザイナー）。ディレクターは除外
   //    （旧 assignees だと director も含まれていて、editor 側に「修正してください」が
   //     届かないバグがあった。PR #?）
+  //    バグ報告 #8d97a0e7: editorAssignees 全員 DM 未到達でも、チャンネルに
+  //    必ずフォールバック投稿し、in-app 通知も全員に明示 INSERT する。
   else if (newStatus === 'Dチェック後修正') {
-    const { slackBody, cwBody } = tpl('Dチェック修正依頼', '🔁', editorAssignees);
-    await sendNotifMulti(editorAssignees, slackBody, cwBody);
+    const targets = editorAssignees.slice();
+    const { slackBody, cwBody } = tpl('Dチェック修正依頼', '🔁', targets);
+    const sendResult = await sendNotifMulti(targets, slackBody, cwBody);
+
+    // 全員 DM ID 未設定 / 担当 editor 不在 → チャンネルフォールバック
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Dチェック修正依頼', '🔁', null);
+      const note = '\n（編集者未設定または DM ID 未登録のため関係者にメンションしています）';
+      const slackFallback = fbSlack + note;
+      const cwFallback = fbCw.replace('[/info]', note + '[/info]');
+      await sendChannelMention(slackFallback, cwFallback);
+    }
+
+    await insertModifyRequestInApp('Dチェック修正依頼', targets, 'Dチェック後修正');
   }
   // 4) → Pチェック後修正（プロデューサーから戻る → editor + director の両方が修正対象）
   //    多重ディレクター対応: directorAssignees があればそれを使う（無ければ projects.director_id を1人だけ）。
@@ -630,12 +692,21 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       : [director].filter(Boolean);
     const targets = [...editorAssignees, ...directorTargets];
     const { slackBody, cwBody } = tpl('Pチェック修正依頼', '🔁', targets);
-    await sendNotifMulti(targets, slackBody, cwBody);
+    const sendResult = await sendNotifMulti(targets, slackBody, cwBody);
+
+    // 全員 DM ID 未設定 / 関係者不在 → チャンネルフォールバック
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Pチェック修正依頼', '🔁', null);
+      const note = '\n（編集者・ディレクター未設定または DM ID 未登録のため関係者にメンションしています）';
+      const slackFallback = fbSlack + note;
+      const cwFallback = fbCw.replace('[/info]', note + '[/info]');
+      await sendChannelMention(slackFallback, cwFallback);
+    }
+
+    await insertModifyRequestInApp('Pチェック修正依頼', targets, 'Pチェック後修正');
   }
   // 4-b) → クライアントチェック後修正（クライアントから戻る → editor + director の両方が修正対象）
   //    Pチェック後修正と同じパターン。クライアントからの戻りも編集者だけでなくディレクター層にも共有が必要。
-  //    アプリ内通知は ball_holder_id が editor 側に戻ることで notify_ball_returned トリガーが
-  //    自動で発火するため、重複防止のためここでは送らない。
   //    （旧実装はこの分岐自体が欠落しており Slack/CW DM が一切飛ばないバグだった）
   else if (newStatus === 'クライアントチェック後修正') {
     const directorTargets = directorAssignees.length > 0
@@ -643,7 +714,18 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       : [director].filter(Boolean);
     const targets = [...editorAssignees, ...directorTargets];
     const { slackBody, cwBody } = tpl('クライアントチェック後修正依頼', '🔁', targets);
-    await sendNotifMulti(targets, slackBody, cwBody);
+    const sendResult = await sendNotifMulti(targets, slackBody, cwBody);
+
+    // 全員 DM ID 未設定 / 関係者不在 → チャンネルフォールバック
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('クライアントチェック後修正依頼', '🔁', null);
+      const note = '\n（編集者・ディレクター未設定または DM ID 未登録のため関係者にメンションしています）';
+      const slackFallback = fbSlack + note;
+      const cwFallback = fbCw.replace('[/info]', note + '[/info]');
+      await sendChannelMention(slackFallback, cwFallback);
+    }
+
+    await insertModifyRequestInApp('クライアントチェック後修正依頼', targets, 'クライアントチェック後修正');
   }
   // 5) → クライアントチェック中（操作した本人にテンプレ案内）
   //    メンション方式によりチームにも見える形になるが、ミス防止のため第三者レビュー可能な
