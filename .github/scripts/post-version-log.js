@@ -286,30 +286,36 @@ async function main() {
   //
   // 失敗してもメインフロー(version_logs INSERT)は成功扱いにする(警告のみ)。
   // ============================================================
-  await linkBugReports(PR_BODY, insertedRow?.id, headers);
+  await linkBugReports(PR_BODY, insertedRow?.id, SUPABASE_URL, headers);
 }
 
-async function linkBugReports(prBody, versionLogId, headers) {
+// linkBugReports: PR本文から Bug-Report-Id trailer を抽出し bug_reports を更新
+// SUPABASE_URL は main() の destructure で local scope のため、引数で受け渡す
+async function linkBugReports(prBody, versionLogId, supabaseUrl, headers) {
   if (!prBody || !versionLogId) return;
+  if (!supabaseUrl) {
+    console.warn('[bug-link] supabaseUrl が空のため skip');
+    return;
+  }
   const ids = extractBugReportIds(prBody);
   if (ids.length === 0) return;
   console.log(`[bug-link] Bug-Report-Id trailer から ${ids.length} 件抽出: ${ids.join(', ')}`);
 
   const nowIso = new Date().toISOString();
   for (const bugId of ids) {
-    await linkOneBugReport(bugId, versionLogId, nowIso, headers, /*isPropagation*/false);
+    await linkOneBugReport(bugId, versionLogId, nowIso, supabaseUrl, headers, /*isPropagation*/false);
 
     // 親が改善されたら、duplicate_of_id = 親 の子レコードにも改善情報を伝播させる
     // （子は status='duplicate' のままでも improved_at と improvement_version_log_id をコピー）
     try {
       const childRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/bug_reports?select=id,status,improved_at&duplicate_of_id=eq.${encodeURIComponent(bugId)}`,
+        `${supabaseUrl}/rest/v1/bug_reports?select=id,status,improved_at&duplicate_of_id=eq.${encodeURIComponent(bugId)}`,
         { headers }
       );
       if (childRes.ok) {
         const children = await childRes.json();
         for (const c of (children || [])) {
-          await linkOneBugReport(c.id, versionLogId, nowIso, headers, /*isPropagation*/true);
+          await linkOneBugReport(c.id, versionLogId, nowIso, supabaseUrl, headers, /*isPropagation*/true);
         }
       }
     } catch (e) {
@@ -318,10 +324,10 @@ async function linkBugReports(prBody, versionLogId, headers) {
   }
 }
 
-async function linkOneBugReport(bugId, versionLogId, nowIso, headers, isPropagation) {
+async function linkOneBugReport(bugId, versionLogId, nowIso, supabaseUrl, headers, isPropagation) {
   try {
     const getRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/bug_reports?select=id,status,improved_at&id=eq.${encodeURIComponent(bugId)}`,
+      `${supabaseUrl}/rest/v1/bug_reports?select=id,status,improved_at&id=eq.${encodeURIComponent(bugId)}`,
       { headers }
     );
     if (!getRes.ok) {
@@ -350,7 +356,7 @@ async function linkOneBugReport(bugId, versionLogId, nowIso, headers, isPropagat
     }
 
     const updRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/bug_reports?id=eq.${encodeURIComponent(bugId)}`,
+      `${supabaseUrl}/rest/v1/bug_reports?id=eq.${encodeURIComponent(bugId)}`,
       {
         method: 'PATCH',
         headers: { ...headers, Prefer: 'return=minimal' },
