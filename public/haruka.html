@@ -27650,7 +27650,13 @@ async function openCreativeDetail(id) {
     }
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
     el.style.display = '';
-    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span><span class="ball-name">${esc(bh.holder)}</span></span>`;
+    // bh.holder_user があれば（人物特定可・editor/director/producer 系）、担当と同じくアバターを並べる。
+    // サイズは 22px（担当の 40px より小さく、行高に収まる視覚優先順位）。
+    // 「クライアント」など人物ではないケースは holder_user=null なのでドット+テキストのみのまま。
+    const avatarPart = (bh.holder_user && typeof avatarHtml === 'function')
+      ? avatarHtml(bh.holder_user, 22)
+      : '';
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(bh.holder)}</span></span>`;
   })();
   // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
   // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
@@ -28476,9 +28482,15 @@ async function directToClientCheck() {
     message: 'DチェックとPチェックをスキップして、直接CL確認に進めますか？\nファイルがアップロード済みであることを確認してください。',
     okLabel: 'CL確認へ進める',
   }))) return;
+  // PR #(d-check-prev-comment-initial-submit) / 髙橋指示 2026-05-10:
+  //   directToClientCheck も doDCheckTransition と同じく cd-comment-field は
+  //   **編集者の提出メモ**（updateCreativeCommentLabel: 編集者→ディレクター宛の連絡事項）。
+  //   旧実装は payload.director_comment に入れていたため、ラウンド比較UIの「前回」
+  //   セクションに初稿提出メモが乗らない不具合になっていた（doDCheckTransition と同根）。
+  //   ここも saveCreativeDetail() と同じく editor_comment にセットする。
   const body = {
     status: 'クライアントチェック中',
-    director_comment: document.getElementById('cd-comment-field').value.trim() || null,
+    editor_comment: document.getElementById('cd-comment-field').value.trim() || null,
     script_url: document.getElementById('cd-script-url').value.trim() || null,
     client_review_url: document.getElementById('cd-client-review-url')?.value.trim() || null,
   };
@@ -32246,7 +32258,16 @@ async function doDCheckTransition() {
       const statusEl = document.getElementById('cd-upload-status');
       const editorComment = document.getElementById('cd-comment-field').value.trim();
       const payload = { status: 'Dチェック' };
-      if (editorComment) payload.director_comment = editorComment;
+      // PR #(d-check-prev-comment-initial-submit) / 髙橋指示 2026-05-10:
+      //   制作中（初稿提出前） → Dチェック の遷移時、cd-comment-field は **編集者の提出メモ**
+      //   （updateCreativeCommentLabel(): 編集者→ディレクター宛の提出時連絡事項）。
+      //   ところが旧実装は payload.director_comment にこの値を入れていたため、
+      //   1) creatives.director_comment が編集者のメモで上書きされる
+      //   2) creative_status_transitions.editor_comment_at_change が NULL になり
+      //      ラウンド比較UIの「前回」セクションで初稿提出メモが見えなくなる
+      //   不具合を起こしていた。ここでは saveCreativeDetail() と同じく editor_comment に入れる。
+      //   （saveCreativeDetail の制作中ブランチは body.editor_comment にセットしている）
+      if (editorComment) payload.editor_comment = editorComment;
       // 配列で送る。サーバ側で creative_assignments role='director' に同期。
       payload.director_user_ids = Array.isArray(directorUserIds) ? directorUserIds : [];
       // 追加レビュアー（任意・creatives.additional_reviewer_ids に保存）。
