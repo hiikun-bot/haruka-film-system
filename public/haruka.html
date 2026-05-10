@@ -27707,10 +27707,10 @@ function _renderTemplateChevronButtons(c, items, currentIdx) {
   if (skipPBtn)     skipPBtn.style.display     = 'none';
   if (directClBtn)  directClBtn.style.display  = 'none';
   if (backToDBtn)   backToDBtn.style.display   = 'none';
-  // 納品完了モード: 最終ステップ以外なら表示（既存挙動踏襲）
+  // 納品完了モード: 最終ステップ（=納品扱い）のときだけ表示（納品前は非表示）
   if (forceDelBtn) {
     const isFinal = currentIdx >= 0 && currentIdx === items.length - 1;
-    forceDelBtn.style.display = isFinal ? 'none' : '';
+    forceDelBtn.style.display = isFinal ? '' : 'none';
   }
 
   if (!nextBtn) return;
@@ -27887,8 +27887,8 @@ function updateCreativeStepIndicator(status) {
   const backToDBtn   = document.getElementById('cd-back-to-d-btn');
   const forceDelBtn  = document.getElementById('cd-force-deliver-btn');
   if (backToDBtn) backToDBtn.style.display = 'none';
-  // 納品完了モード: 既に納品済みの場合は出さない。それ以外は常時出す（途中工程をすべてスキップ）
-  if (forceDelBtn) forceDelBtn.style.display = (status === '納品') ? 'none' : '';
+  // 納品完了モード: ステータスが「納品」のときだけ表示（納品前は非表示）
+  if (forceDelBtn) forceDelBtn.style.display = (status === '納品') ? '' : 'none';
   if (!nextBtn) return;
 
   // チェック段階: 修正依頼 ＋ 承認 の2ボタン
