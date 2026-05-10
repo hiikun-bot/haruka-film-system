@@ -6429,7 +6429,9 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
   }
 
   // 受付項目（ホワイトリスト）— 通常 PUT との混線を避けるため明示的に絞る
-  const ALLOWED = ['project_id', 'creative_type', 'file_name', 'product_id', 'appeal_type_id', 'memo', 'note'];
+  // draft_deadline / final_deadline は事後修正で日付ごと修正できるよう追加（PR #TBD）
+  const ALLOWED = ['project_id', 'creative_type', 'file_name', 'product_id', 'appeal_type_id', 'memo', 'note', 'draft_deadline', 'final_deadline'];
+  const DATE_FIELDS = new Set(['draft_deadline', 'final_deadline']);
   const reason = (req.body?.reason ?? '').toString().trim() || null;
   const incoming = {};
   for (const k of ALLOWED) {
@@ -6437,6 +6439,14 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       let v = req.body[k];
       if (typeof v === 'string') v = v.trim();
       if (v === '') v = null;
+      // 日付は YYYY-MM-DD のみ受け付け（簡易 validate）
+      if (DATE_FIELDS.has(k) && v != null) {
+        const m = String(v).match(/^(\d{4}-\d{2}-\d{2})/);
+        if (!m) {
+          return res.status(400).json({ error: `${k} は YYYY-MM-DD 形式で指定してください` });
+        }
+        v = m[1];
+      }
       incoming[k] = v;
     }
   }
@@ -6447,7 +6457,7 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
   // 旧クリエイティブをフルロードして差分計算 + 表示用スナップショット作成
   const { data: before, error: beforeErr } = await supabase
     .from('creatives')
-    .select('id, project_id, creative_type, file_name, product_id, appeal_type_id, memo, note, projects:project_id(id, name)')
+    .select('id, project_id, creative_type, file_name, product_id, appeal_type_id, memo, note, draft_deadline, final_deadline, projects:project_id(id, name)')
     .eq('id', creativeId)
     .maybeSingle();
   if (beforeErr) return res.status(500).json({ error: beforeErr.message });
@@ -6510,10 +6520,19 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     product_id: { old: oldProductName, new: newProductName },
     appeal_type_id: { old: oldAppealName, new: newAppealName },
   };
+  // 日付列は DB 側が ISO（YYYY-MM-DDTHH:mm:ss）/ Date オブジェクト等で返す可能性があるため、
+  // 比較・ログ表示は YYYY-MM-DD に正規化する。
+  const _normYmd = (v) => {
+    if (v == null) return null;
+    const s = String(v);
+    const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : s;
+  };
   for (const [k, v] of Object.entries(incoming)) {
     if (k === 'cycle_id') continue; // 表示しない（project_id 変更に付随する内部リセット）
-    const oldRaw = before[k] ?? null;
-    const newRaw = v ?? null;
+    const isDate = DATE_FIELDS.has(k);
+    const oldRaw = isDate ? _normYmd(before[k] ?? null) : (before[k] ?? null);
+    const newRaw = isDate ? _normYmd(v ?? null) : (v ?? null);
     if (oldRaw === newRaw) continue;
     const disp = fieldDisplay[k];
     logRows.push({
