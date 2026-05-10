@@ -12095,8 +12095,8 @@ router.get('/teams', async (req, res) => {
     .from('teams')
     .select(`
       *,
-      director:users!teams_director_id_fkey(id, full_name),
-      producer:users!teams_producer_id_fkey(id, full_name),
+      director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
+      producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
       team_members(user_id, leader_rank)
     `)
     .order('team_code');
@@ -12106,8 +12106,8 @@ router.get('/teams', async (req, res) => {
       .from('teams')
       .select(`
         *,
-        director:users!teams_director_id_fkey(id, full_name),
-        producer:users!teams_producer_id_fkey(id, full_name),
+        director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
+        producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
         team_members(user_id)
       `)
       .order('team_code');
