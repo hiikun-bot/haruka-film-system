@@ -12803,7 +12803,16 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     //   （承認したら次 stage に進むので、その snapshot 後に発生する transition は別 round 用）。
     //   よって kind の混在による上書き競合は実用上発生しない。
     usedTransitionIds.add(tr.id);
-    const comment = tr[def.commentField] ?? null;
+    let comment = tr[def.commentField] ?? null;
+    // CL の指摘/承認は本来 client_comment_at_change に入るべきだが、フロント
+    // saveCreativeDetail の isCheck 分岐が CLチェック中でも body.director_comment で
+    // 送るため、実体は director_comment_at_change に残っている (ADR 011 既知の歪み)。
+    // client_comment_at_change が空の場合は director_comment_at_change にフォールバックする
+    // (PR #(cl-handoff-comment-fallback) / 髙橋指示 2026-05-10)。
+    if ((!comment || !String(comment).trim()) && fromStage === 'cl_check') {
+      const fb = tr.director_comment_at_change;
+      if (fb && String(fb).trim()) comment = fb;
+    }
     target.handoff_to_next = {
       stage:       def.next, // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered' | 'd_to_d_revise' | 'p_to_p_revise' | 'cl_to_cl_revise'
       from_status: tr.from_status,
@@ -12839,7 +12848,22 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     const key = `${t.from_status}→${t.to_status}`;
     const def = HANDOFF_TRANSITIONS_TO_STAGE[key];
     if (!def) continue;
-    const comment = t[def.commentField] || null;
+    // 通常は def.commentField を読む。
+    // ただし CL の指摘 (cl_to_cl_revise / cl_to_delivered) は本来 client_comment_at_change に
+    // 入るべきだが、フロント saveCreativeDetail の isCheck 分岐が CLチェック中でも
+    // body.director_comment = noteValue で送っているため、実体は director_comment_at_change に
+    // 残っている (ADR 011 既知の歪み)。client_comment_at_change が空なら
+    // director_comment_at_change へフォールバックして CL の指摘を救済する
+    // (PR #(cl-handoff-comment-fallback) / 髙橋指示 2026-05-10)。
+    let comment = t[def.commentField] || null;
+    const CL_HANDOFF_KEYS = new Set([
+      'クライアントチェック中→クライアントチェック後修正',
+      'クライアントチェック中→納品',
+    ]);
+    if ((!comment || !String(comment).trim()) && CL_HANDOFF_KEYS.has(key)) {
+      const fallback = t.director_comment_at_change;
+      if (fallback && String(fallback).trim()) comment = fallback;
+    }
     if (!comment || !String(comment).trim()) continue; // 空コメントの孤児は出さない
     result.push({
       id:               `handoff-${t.id}`,
