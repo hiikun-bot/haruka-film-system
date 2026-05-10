@@ -26002,9 +26002,26 @@ const _CD_ROUND_STAGE_LABEL = {
   // 孤児 handoff 用 (PR #(d-to-p-handoff-comment))。
   // 修正なし直行（制作中→Dチェック→Pチェック）等で snapshot が無くても、
   // 引き継ぎ承認コメントを単独ラウンドとして表示する場合に使うバッジラベル。
+  // 注: この approve ラベルは「kind=approve のとき」用。kind=revise の場合は
+  // _cdRenderRoundLeftHeader で「修正依頼」ラベルへ動的に差し替える
+  // (PR #(handoff-label-by-kind) / 髙橋指示 2026-05-10)。
   'd_check_handoff':  'Dチェック承認',
   'p_check_handoff':  'Pチェック承認',
   'cl_check_handoff': 'CLチェック承認',
+  // dedup により snapshot を「次工程」ラベルへ昇格するときの追加バッジ。
+  // 'delivered' は cl_check snapshot に handoff_to_next.stage='cl_to_delivered' が
+  // 紐づいたケース (CL承認→納品 直後) で使う (PR #(handoff-label-delivered))。
+  'delivered': '納品完了',
+};
+
+// _synthetic_handoff の kind=revise バッジラベル
+// (PR #(handoff-label-by-kind) / 髙橋指示 2026-05-10):
+// 修正依頼コメントしか持たない孤児 handoff (シナリオ #2/#5/#8 直後の最右ドット) の
+// ヘッダラベルとして使う。承認/修正依頼の混同を防ぐ。
+const _CD_ROUND_STAGE_LABEL_REVISE = {
+  'd_check_handoff':  'Dチェック修正依頼',
+  'p_check_handoff':  'Pチェック修正依頼',
+  'cl_check_handoff': 'CLチェック修正依頼',
 };
 
 // 「現在は2カラム比較を有効にすべきか」を判定。
@@ -26126,6 +26143,23 @@ function _cdDedupRoundsForTimeline(rounds) {
   const out = [];
   for (let i = 0; i < rounds.length; i++) {
     const cur = rounds[i];
+    // PR #(handoff-label-delivered) / 髙橋指示 2026-05-10:
+    //   CL承認→納品 の直後 (シナリオ #10) は cl_check snapshot に
+    //   handoff_to_next.stage='cl_to_delivered' が紐づくが、TO_STAGE_INITIAL に
+    //   '納品' は無いので _synthetic_initial_submit は生成されず、
+    //   既存の dedup 経路 (matchRealSnapshot) も発火しない。結果ラベルは「CLチェック / v4」のままで
+    //   ユーザー視点の「ここまで進んだ＝納品完了」とズレる。
+    //   ここで cur 自身に「納品昇格マーク」を立て、ヘッダラベルだけを「納品完了」に切替える。
+    //   round_stage 自身は触らない (編集権限判定や ID 引きで参照されるため)。
+    if (cur
+        && !cur._synthetic_initial_submit
+        && !cur._synthetic_handoff
+        && !cur._cdDisplayStage
+        && cur.handoff_to_next
+        && cur.handoff_to_next.kind === 'approve'
+        && cur.handoff_to_next.stage === 'cl_to_delivered') {
+      cur._cdDisplayStage = 'delivered';
+    }
     if (cur && cur._synthetic_initial_submit) {
       const prev = out.length > 0 ? out[out.length - 1] : null;
       const sameVersion = !!(prev
@@ -27008,7 +27042,16 @@ function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round, resolvedFile =
     // ズレる。_cdDedupRoundsForTimeline で立てた _cdDisplayStage を最優先する
     // (PR #(prev-merge-real-snapshot-handoff))。
     const displayStage = round._cdDisplayStage || round.round_stage;
-    const stageLabel = _CD_ROUND_STAGE_LABEL[displayStage] || (verNumForBadge ? `v${verNumForBadge}` : '');
+    // kind=revise の孤児 handoff は「修正依頼」ラベルを使う
+    // (PR #(handoff-label-by-kind) / 髙橋指示 2026-05-10):
+    //   旧実装は _CD_ROUND_STAGE_LABEL の '*_handoff' を一律「Dチェック承認/Pチェック承認/...」と
+    //   出していたため、シナリオ #2/#5 (D修正依頼/P修正依頼の直後) で「Dチェック承認」「Pチェック承認」と
+    //   表示されてしまい、本文 (handoff revise コメント) と矛盾する不具合があった。
+    //   round.handoff_to_next.kind === 'revise' のときは _CD_ROUND_STAGE_LABEL_REVISE を優先する。
+    const isReviseHandoff = !!(round && round.handoff_to_next && round.handoff_to_next.kind === 'revise');
+    const stageLabel = (isReviseHandoff && _CD_ROUND_STAGE_LABEL_REVISE[displayStage])
+      ? _CD_ROUND_STAGE_LABEL_REVISE[displayStage]
+      : (_CD_ROUND_STAGE_LABEL[displayStage] || (verNumForBadge ? `v${verNumForBadge}` : ''));
     const verLabel = verNumForBadge ? `v${verNumForBadge}` : '';
     const parts = [];
     if (stageLabel) parts.push(stageLabel);
