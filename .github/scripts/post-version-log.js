@@ -124,6 +124,45 @@ async function resolveReporterUserId(rawName, supabaseUrl, headers) {
   return null;
 }
 
+// PR本文に「報告者:」が無いとき、Bug-Report-Id trailer から「バグを報告した人」を逆引きする。
+// 命名注意: bug_reports スキーマでは
+//   - assignee_user_id = 「実際にバグを発見・報告した人」（admin が代理入力したケースで本人を指す）
+//   - reporter_user_id = 「保存ボタンを押した入力者」（admin が代理入力した場合は admin になる）
+// したがって Verup の「報告者」として表示すべきは assignee_user_id（無ければ reporter_user_id）。
+// is_anonymous=true のときは匿名希望なので null を返す（手動でも書かない運用）。
+// 複数 Bug-Report-Id がある場合は、最初に「匿名でなく かつ 解決可能な user_id を持つ」報告を採用。
+async function resolveReporterFromBugReports(prBody, supabaseUrl, headers) {
+  const ids = extractBugReportIds(prBody);
+  if (ids.length === 0) return null;
+  for (const bugId of ids) {
+    try {
+      const res = await fetch(
+        `${supabaseUrl}/rest/v1/bug_reports?select=id,is_anonymous,assignee_user_id,reporter_user_id&id=eq.${encodeURIComponent(bugId)}`,
+        { headers }
+      );
+      if (!res.ok) {
+        console.warn(`[verup] bug_reports GET 失敗 bug=${bugId} status=${res.status}`);
+        continue;
+      }
+      const rows = await res.json();
+      const r = rows && rows[0];
+      if (!r) continue;
+      if (r.is_anonymous) {
+        console.log(`[verup] bug=${bugId} is anonymous → 報告者 fallback skip`);
+        continue;
+      }
+      const uid = r.assignee_user_id || r.reporter_user_id;
+      if (uid) {
+        console.log(`[verup] 報告者 fallback: bug=${bugId} → user=${uid} (assignee 優先 / reporter フォールバック)`);
+        return uid;
+      }
+    } catch (e) {
+      console.warn(`[verup] bug=${bugId} 報告者 fallback 例外: ${e.message}`);
+    }
+  }
+  return null;
+}
+
 function detectCategory(value, prTitle, prLabels) {
   if (value && VALID_CATEGORIES.includes(value)) return value;
   // ラベルから推定
@@ -211,7 +250,12 @@ async function main() {
   };
 
   // 報告者を nickname / full_name 完全一致で解決（マッチしなければ null）
-  const reporterUserId = await resolveReporterUserId(reporterRaw, SUPABASE_URL, headers);
+  let reporterUserId = await resolveReporterUserId(reporterRaw, SUPABASE_URL, headers);
+  // PR本文に「報告者:」が無い／解決できなかったとき、Bug-Report-Id trailer から逆引き。
+  // バグ報告フローで来た PR は明示記入が漏れやすいので、自動的に報告者クレジットを付ける。
+  if (!reporterUserId) {
+    reporterUserId = await resolveReporterFromBugReports(PR_BODY, SUPABASE_URL, headers);
+  }
   const prNo = parseInt(PR_NUMBER, 10);
   if (!Number.isFinite(prNo) || prNo <= 0) {
     console.error('[verup] PR_NUMBER missing or invalid — cannot derive revision_no:', PR_NUMBER);
