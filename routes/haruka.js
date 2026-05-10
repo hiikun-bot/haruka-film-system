@@ -12911,14 +12911,40 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   }
 
   // 並び順を再保証（snapshot + 孤児 handoff + 初回提出 仮想 の混在ソート）:
-  //   version_num asc (NULL は末尾) → created_at asc。
-  //   同 (version_num, created_at) の場合、初回提出 → snapshot → handoff の順に並ぶよう
-  //   stage の secondary 比較で解決。実用上は created_at の差で十分なので無理に並べ替えない。
+  //   version_num asc (NULL は末尾) → created_at asc → round_stage の意味的順序（tertiary key）。
+  //
+  //   Tertiary key を入れた理由（PR #(d-approval-visible-on-p-check) / 髙橋指示 2026-05-10）:
+  //     ディレクターが「OK→Pチェックへ」と承認した直後、同 version で
+  //       (1) v=N stage='d_check'         (初回提出 仮想 or snapshot)
+  //       (2) v=N stage='d_check_handoff' (D承認コメント入りの孤児 handoff)
+  //       (3) v=N stage='p_check'         (Pチェック突入の初回提出 仮想)
+  //     が並ぶ。created_at が同一になるケースもあり、その場合 'd_check' < 'd_check_handoff'
+  //     のアルファベット順になり、(2) と (3) の前後が不安定になる。
+  //     フロントは末尾を「最新」として `_cdRoundIndex = length - 1` で初期表示するため、
+  //     (3) の p_check (編集者の提出時メモしか持たない) が選ばれてしまうと
+  //     「Pチェック画面で D承認コメントが見えない」不具合になる。
+  //
+  //   stage の意味的順序（小さいほど時系列で先）:
+  //     'd_check'(1)         < 'd_check_handoff'(2)   ← 提出 → 承認/差戻し
+  //     'p_check'(3)         < 'p_check_handoff'(4)
+  //     'cl_check'(5)        < 'cl_check_handoff'(6)
+  //   この順序で並べると、同 created_at でも「承認 handoff」が直前の提出 stage の直後に来て
+  //   「次工程の初回提出 仮想」より前に並ぶ。
+  const stageOrder = (s) => {
+    const order = {
+      'd_check': 1, 'd_check_handoff': 2,
+      'p_check': 3, 'p_check_handoff': 4,
+      'cl_check': 5, 'cl_check_handoff': 6,
+    };
+    return order[s] ?? 99;
+  };
   result.sort((a, b) => {
     const av = a.version_num == null ? Infinity : Number(a.version_num);
     const bv = b.version_num == null ? Infinity : Number(b.version_num);
     if (av !== bv) return av - bv;
-    return (a.created_at || '').localeCompare(b.created_at || '');
+    const tCmp = (a.created_at || '').localeCompare(b.created_at || '');
+    if (tCmp !== 0) return tCmp;
+    return stageOrder(a.round_stage) - stageOrder(b.round_stage);
   });
 
   res.json(result);
