@@ -5989,19 +5989,46 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
 
-      <!-- 案件開始日 + テンプレ適用 -->
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--em-pale);border-radius:8px">
+      <!-- 案件開始日 + テンプレ適用（LP/非LP 共通） -->
+      <div id="p-schedule-start-bar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--em-pale);border-radius:8px">
         <label style="font-size:12px;color:var(--text-muted);white-space:nowrap">案件開始日</label>
         <input type="date" id="p-scheduled-start-date" class="form-input" style="width:140px;padding:5px 8px;font-size:13px">
-        <span style="width:1px;height:18px;background:var(--border)"></span>
-        <label style="font-size:12px;color:var(--text-muted);white-space:nowrap">テンプレ</label>
+        <!-- ▼ 非LP 用テンプレ select。LP では JS 側で hide する -->
+        <span id="p-active-template-divider" style="width:1px;height:18px;background:var(--border)"></span>
+        <label id="p-active-template-label" style="font-size:12px;color:var(--text-muted);white-space:nowrap">テンプレ</label>
         <select id="p-active-template" class="form-input" style="min-width:200px;padding:5px 8px;font-size:13px">
           <option value="">テンプレ選択...</option>
         </select>
-        <button type="button" class="btn-primary" onclick="applyPhaseTemplate()" style="padding:5px 12px;font-size:12px;white-space:nowrap">テンプレから生成</button>
+        <button type="button" id="p-active-template-apply-btn" class="btn-primary" onclick="applyPhaseTemplate()" style="padding:5px 12px;font-size:12px;white-space:nowrap">テンプレから生成</button>
       </div>
 
-      <!-- コンパクトガント帯 -->
+      <!-- ===== LP 専用: フェーズ × ボール状態 UI（ADR 016 / PR-3） =====
+           LP 案件 (primary_category.code === 'lp') のみ表示。それ以外では JS で hidden に。
+           - 初回展開ボタン（タスク0件時）
+           - フェーズシェブロン（カテゴリの phase テンプレ 5フェーズ）
+           - 現在のフェーズ詳細（5段階のボール状態切替）
+           その下に「全タスク一覧テーブル」として既存の #p-schedule-tasks-table が続く。 -->
+      <div id="p-schedule-lp-block" style="display:none;margin-bottom:14px">
+        <!-- ▼ 初回展開（タスク0件時のみ表示） -->
+        <div id="p-schedule-lp-seed" style="display:none;padding:14px 16px;background:#EFF6FF;border:1px dashed #93C5FD;border-radius:8px;margin-bottom:12px">
+          <div style="font-size:13px;color:#1E3A8A;margin-bottom:8px">
+            この案件にはまだ工程表が作成されていません。<br>
+            カテゴリ「LP」の標準テンプレ（5フェーズ）から展開しますか？
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
+            <span style="font-size:11px;color:var(--text-muted)">起点日は上の「案件開始日」を使います</span>
+            <button type="button" id="p-schedule-lp-seed-btn" class="btn-primary" onclick="seedLpScheduleFromTemplate()" style="padding:6px 14px;font-size:12px;white-space:nowrap">📋 テンプレから工程表を作成</button>
+          </div>
+        </div>
+
+        <!-- ▼ フェーズシェブロン -->
+        <div id="p-schedule-lp-chevron" style="display:none;padding:12px;background:#fff;border:0.5px solid var(--border);border-radius:8px;margin-bottom:12px;overflow-x:auto"></div>
+
+        <!-- ▼ 現在のフェーズ詳細 -->
+        <div id="p-schedule-lp-phase-detail" style="display:none;padding:14px 16px;background:#fff;border:0.5px solid var(--border);border-radius:8px;margin-bottom:14px"></div>
+      </div>
+
+      <!-- コンパクトガント帯（LP では非表示） -->
       <div id="p-schedule-compact-gantt" style="margin-bottom:14px;padding:10px 12px;background:#fff;border:0.5px solid var(--border);border-radius:8px;overflow-x:auto"></div>
 
       <!-- タスクテーブル -->
@@ -15602,6 +15629,12 @@ async function executeProjectFixedItemDelete() {
 
 let _pScheduleTasks = [];
 let _pScheduleProjectId = null;
+// ADR 016: 現在モーダルで開いている案件のキャッシュ（カテゴリ判定とボール状態 UI に必要）
+let _pScheduleProject = null;
+// LP シェブロンで現在「選んでいる」フェーズ task_id（クリックで切替）。null なら自動算出。
+let _pScheduleSelectedPhaseId = null;
+// LP のボール状態定義キャッシュ（カテゴリ毎）
+const _pBallStateDefsCache = new Map(); // categoryId -> [{code,label,holder_type,sort_order}, ...]
 
 const TASK_ASSIGNEE_LABEL = {
   us:        { icon: '●', color: '#6B7280', label: '自社' },
@@ -15610,10 +15643,25 @@ const TASK_ASSIGNEE_LABEL = {
   milestone: { icon: '■', color: '#111827', label: 'マイルストーン' },
 };
 
+// ADR 016: 現在モーダルの案件が LP かどうか
+function _pScheduleIsLp() {
+  if (!_pScheduleProject) return false;
+  // primary_category（埋め込み）→ getCategory(id) の順で解決（getProjectCategory と同じ流儀）
+  const cat = (_pScheduleProject.primary_category)
+    || (typeof getCategory === 'function' ? getCategory(_pScheduleProject.primary_category_id) : null);
+  return !!(cat && cat.code === 'lp');
+}
+
 async function loadProjectSchedule(p) {
   const projectId = (p && p.id) || document.getElementById('p-id')?.value;
   if (!projectId) return;
   _pScheduleProjectId = projectId;
+  _pScheduleProject = p || null;
+  _pScheduleSelectedPhaseId = null;
+  // カテゴリキャッシュを確保（_pScheduleIsLp() で getCategory を引くため）
+  if (typeof loadCategories === 'function') {
+    try { await loadCategories(); } catch (_) {}
+  }
 
   const startInput = document.getElementById('p-scheduled-start-date');
   if (startInput) {
@@ -15629,6 +15677,8 @@ async function loadProjectSchedule(p) {
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           showToast(`開始日の保存に失敗: ${err.error || res.status}`, 'warn');
+        } else {
+          if (_pScheduleProject) _pScheduleProject.scheduled_start_date = val;
         }
       } catch (e) {
         showToast(`開始日の保存に失敗: ${e.message || ''}`, 'warn');
@@ -15636,8 +15686,24 @@ async function loadProjectSchedule(p) {
     };
   }
 
+  // LP の場合は「テンプレ select 帯」を隠す（LP は seed-from-template で default テンプレを自動採用）
+  _applyLpScheduleVisibility();
+
   await populatePhaseTemplateSelect(p);
   await reloadProjectTasks(projectId);
+}
+
+// LP モードでは UI の上段を「LP ブロック」に切り替える
+function _applyLpScheduleVisibility() {
+  const isLp = _pScheduleIsLp();
+  const lpBlock = document.getElementById('p-schedule-lp-block');
+  if (lpBlock) lpBlock.style.display = isLp ? '' : 'none';
+  // 非LP 用のテンプレ select 帯を LP では非表示に
+  ['p-active-template-divider', 'p-active-template-label', 'p-active-template', 'p-active-template-apply-btn']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = isLp ? 'none' : ''; });
+  // 既存のコンパクトガントは LP では使わない（フェーズ詳細が代替）
+  const gantt = document.getElementById('p-schedule-compact-gantt');
+  if (gantt) gantt.style.display = isLp ? 'none' : '';
 }
 
 async function populatePhaseTemplateSelect(p) {
@@ -15669,6 +15735,8 @@ async function reloadProjectTasks(projectId) {
   }
   renderProjectScheduleTasks();
   renderProjectScheduleCompactGantt();
+  // ADR 016: LP 案件はフェーズ × ボール状態 UI に追加描画
+  await renderLpScheduleUi();
 }
 
 function renderProjectScheduleTasks() {
@@ -15751,8 +15819,10 @@ function renderProjectScheduleTasks() {
             style="border:none;background:transparent;font-size:11px;width:100%">
         </td>
         <td style="padding:6px 4px;text-align:center">
-          <button type="button" onclick="deleteProjectTask('${t.id}')" title="削除"
-            style="border:none;background:transparent;cursor:pointer;color:#9CA3AF;font-size:12px;padding:2px 4px">🗑️</button>
+          ${(isPhase && t.template_item_id)
+            ? '<span title="テンプレ由来のフェーズ見出しは削除できません" style="color:#D1D5DB;font-size:12px;padding:2px 4px">🔒</span>'
+            : `<button type="button" onclick="deleteProjectTask('${t.id}')" title="削除"
+                style="border:none;background:transparent;cursor:pointer;color:#9CA3AF;font-size:12px;padding:2px 4px">🗑️</button>`}
         </td>
       </tr>
     `;
@@ -15882,6 +15952,412 @@ async function deleteProjectTask(taskId) {
     showToast(`削除に失敗: ${e.message || ''}`, 'warn');
   }
 }
+
+// ==================== ADR 016: LP フェーズ × ボール状態 UI ====================
+// LP 案件専用。フェーズシェブロン + 現在のフェーズ詳細（5段階のボール状態切替）。
+// API:
+//   - POST /api/projects/:id/tasks/seed-from-template    初回展開（既存があれば 409 → force confirm）
+//   - GET  /api/categories/:id/ball-state-definitions    ボール状態定義（カテゴリ別）
+//   - PATCH /api/projects/:id/tasks/:task_id/ball-state  ボール状態遷移
+// 権限: 編集系は hasPermission('project.create_edit') で判定（ADR 015）。
+
+const _BALL_STATE_FALLBACK_LP = [
+  { code: 'in_progress',    label: '社内作業',     holder_type: 'internal', sort_order: 1 },
+  { code: 'internal_review', label: '社内チェック', holder_type: 'internal', sort_order: 2 },
+  { code: 'client_review',  label: '先方確認',     holder_type: 'client',   sort_order: 3 },
+  { code: 'revising',       label: '修正対応',     holder_type: 'internal', sort_order: 4 },
+  { code: 'fixed',          label: 'FIX',          holder_type: 'done',     sort_order: 5 },
+];
+
+async function _loadBallStateDefsForCurrentProject() {
+  if (!_pScheduleProject) return _BALL_STATE_FALLBACK_LP;
+  const catId = _pScheduleProject.primary_category_id
+    || (_pScheduleProject.primary_category && _pScheduleProject.primary_category.id)
+    || null;
+  if (!catId) return _BALL_STATE_FALLBACK_LP;
+  if (_pBallStateDefsCache.has(catId)) return _pBallStateDefsCache.get(catId);
+  try {
+    const res = await apiFetch(`${API}/categories/${encodeURIComponent(catId)}/ball-state-definitions`);
+    const data = res.ok ? await res.json() : null;
+    const defs = (data && Array.isArray(data.definitions) && data.definitions.length)
+      ? data.definitions
+      : _BALL_STATE_FALLBACK_LP;
+    _pBallStateDefsCache.set(catId, defs);
+    return defs;
+  } catch (_) {
+    return _BALL_STATE_FALLBACK_LP;
+  }
+}
+
+function _lpPhaseTasks() {
+  // フェーズ見出し = parent_task_id IS NULL AND is_phase_header=true。sort_order 昇順。
+  return (_pScheduleTasks || [])
+    .filter(t => t.is_phase_header && !t.parent_task_id)
+    .slice()
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
+
+function _lpCurrentPhase(phases) {
+  // ball_state_code !== 'fixed' な最初のフェーズ。全 fixed なら末尾を返す（完了表示）。
+  if (!phases || !phases.length) return null;
+  const found = phases.find(p => p.ball_state_code !== 'fixed');
+  return found || phases[phases.length - 1];
+}
+
+// ADR 016: LP UI のメイン描画（reloadProjectTasks の末尾で呼ばれる）
+async function renderLpScheduleUi() {
+  _applyLpScheduleVisibility();
+  if (!_pScheduleIsLp()) return;
+
+  const lpBlock = document.getElementById('p-schedule-lp-block');
+  if (!lpBlock) return;
+
+  const seedEl = document.getElementById('p-schedule-lp-seed');
+  const chevEl = document.getElementById('p-schedule-lp-chevron');
+  const detailEl = document.getElementById('p-schedule-lp-phase-detail');
+
+  const phases = _lpPhaseTasks();
+  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : true;
+
+  // 初回展開（タスク0件）
+  if (!_pScheduleTasks || _pScheduleTasks.length === 0) {
+    if (seedEl) {
+      seedEl.style.display = canEdit ? '' : 'none';
+      const btn = document.getElementById('p-schedule-lp-seed-btn');
+      if (btn) btn.disabled = !canEdit;
+    }
+    if (chevEl) { chevEl.style.display = 'none'; chevEl.innerHTML = ''; }
+    if (detailEl) { detailEl.style.display = 'none'; detailEl.innerHTML = ''; }
+    return;
+  }
+
+  if (seedEl) seedEl.style.display = 'none';
+
+  // フェーズ見出しが無い（手動タスクだけのレア状態）
+  if (!phases.length) {
+    if (chevEl) { chevEl.style.display = 'none'; chevEl.innerHTML = ''; }
+    if (detailEl) { detailEl.style.display = 'none'; detailEl.innerHTML = ''; }
+    return;
+  }
+
+  // ボール状態定義をロード（カテゴリ単位）
+  const defs = await _loadBallStateDefsForCurrentProject();
+
+  // シェブロン描画
+  if (chevEl) {
+    chevEl.style.display = '';
+    chevEl.innerHTML = _renderLpPhaseChevronHtml(phases);
+  }
+
+  // 詳細描画（選択中フェーズ or 自動）
+  const selectedPhase = _pScheduleSelectedPhaseId
+    ? phases.find(p => p.id === _pScheduleSelectedPhaseId)
+    : null;
+  const targetPhase = selectedPhase || _lpCurrentPhase(phases);
+  if (detailEl) {
+    detailEl.style.display = '';
+    detailEl.innerHTML = _renderLpPhaseDetailHtml(targetPhase, defs, canEdit);
+  }
+}
+
+function _renderLpPhaseChevronHtml(phases) {
+  const current = _pScheduleSelectedPhaseId
+    ? phases.find(p => p.id === _pScheduleSelectedPhaseId)
+    : _lpCurrentPhase(phases);
+  const currentId = current ? current.id : null;
+  const items = phases.map((p) => {
+    const isFixed = p.ball_state_code === 'fixed' || p.is_done;
+    const isActive = p.id === currentId && !isFixed;
+    const bg = isFixed ? '#DCFCE7' : (isActive ? '#DBEAFE' : '#F3F4F6');
+    const fg = isFixed ? '#166534' : (isActive ? '#1E40AF' : '#6B7280');
+    const border = isFixed ? '#86EFAC' : (isActive ? '#93C5FD' : '#E5E7EB');
+    const icon = isFixed ? '✅' : (isActive ? '▶' : '□');
+    return `
+      <button type="button" data-phase-id="${esc(p.id)}" onclick="selectLpSchedulePhase('${esc(p.id)}')"
+        style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:6px;border:1px solid ${border};background:${bg};color:${fg};font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap"
+        title="${esc(p.title || '')}">
+        <span style="font-size:11px">${icon}</span>
+        <span>${esc(p.title || '')}</span>
+      </button>
+    `;
+  });
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${items.join('<span style="color:#9CA3AF;font-size:14px">▸</span>')}</div>`;
+}
+
+function _renderLpPhaseDetailHtml(phase, defs, canEdit) {
+  if (!phase) return '<div style="font-size:12px;color:var(--text-muted)">フェーズが見つかりません</div>';
+  const code = phase.ball_state_code || null;
+  const def = defs.find(d => d.code === code) || null;
+
+  // 期日（元日程 / 新日程 + 差分）
+  const orig = phase.original_end_date ? String(phase.original_end_date).slice(0, 10) : '';
+  const curr = phase.current_end_date ? String(phase.current_end_date).slice(0, 10) : '';
+  const start = phase.start_date ? String(phase.start_date).slice(0, 10) : '';
+  let delayText = '';
+  if (orig && curr && orig !== curr) {
+    const o = new Date(orig + 'T00:00:00').getTime();
+    const c = new Date(curr + 'T00:00:00').getTime();
+    const diffDays = Math.round((c - o) / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) delayText = `<span style="margin-left:8px;color:#DC2626;font-weight:600">+${diffDays}日遅延</span>`;
+    else if (diffDays < 0) delayText = `<span style="margin-left:8px;color:#0EA5A5;font-weight:600">${diffDays}日前倒し</span>`;
+  }
+  const datesHtml = `
+    <div style="font-size:12px;color:var(--text-muted)">
+      期日:
+      <span style="color:#0F172A">${esc(start || '—')} 〜 ${esc(curr || '—')}</span>
+      ${orig && curr && orig !== curr ? `<span style="margin-left:8px;color:#9CA3AF;text-decoration:line-through">${esc(orig)}</span>` : ''}
+      ${delayText}
+    </div>
+  `;
+
+  // 担当（assignee_type アイコン + assignee ユーザー）
+  const at = phase.assignee_type || 'us';
+  const aLabel = TASK_ASSIGNEE_LABEL[at] || TASK_ASSIGNEE_LABEL.us;
+  const assigneeUserName = phase.assignee
+    ? esc((window.NameDisplay && NameDisplay.full(phase.assignee)) || phase.assignee.nickname || phase.assignee.full_name || '')
+    : '';
+  const assigneeHtml = `
+    <div style="font-size:12px;color:var(--text-muted)">
+      担当:
+      <span style="color:${aLabel.color};font-weight:700;margin:0 4px">${aLabel.icon}</span>
+      <span style="color:#0F172A">${esc(aLabel.label)}${assigneeUserName ? `（${assigneeUserName}）` : ''}</span>
+    </div>
+  `;
+
+  // 状態（ボール状態 + 保持者）
+  const holderUser = phase.ball_holder || null;
+  const holderName = holderUser
+    ? esc((window.NameDisplay && NameDisplay.full(holderUser)) || holderUser.nickname || holderUser.full_name || '')
+    : '';
+  const stateLabel = def ? def.label : (code || '未開始');
+  const stateBg = (code === 'fixed') ? '#DCFCE7' : (def && def.holder_type === 'client' ? '#FEF3C7' : (code ? '#DBEAFE' : '#F3F4F6'));
+  const stateFg = (code === 'fixed') ? '#166534' : (def && def.holder_type === 'client' ? '#92400E' : (code ? '#1E40AF' : '#6B7280'));
+  const stateIcon = (code === 'fixed') ? '✅' : (def && def.holder_type === 'client' ? '📤' : (def && def.holder_type === 'internal' ? '🏠' : '—'));
+
+  // ボール遷移ボタン群
+  const transitionsHtml = defs.map(d => {
+    const isCurrent = d.code === code;
+    const bg = isCurrent
+      ? (d.code === 'fixed' ? '#16A34A' : '#2563EB')
+      : '#fff';
+    const fg = isCurrent ? '#fff' : '#0F172A';
+    const border = isCurrent
+      ? (d.code === 'fixed' ? '#16A34A' : '#2563EB')
+      : '#CBD5E1';
+    const icon = d.holder_type === 'client' ? '📤' : (d.holder_type === 'done' ? '✅' : '🏠');
+    const disabled = isCurrent || !canEdit;
+    return `
+      <button type="button"
+        ${disabled ? 'disabled' : ''}
+        onclick="transitionLpPhaseBallState('${esc(phase.id)}', '${esc(d.code)}')"
+        style="display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:6px;border:1px solid ${border};background:${bg};color:${fg};font-size:12px;font-weight:${isCurrent ? '700' : '500'};cursor:${disabled ? 'default' : 'pointer'};opacity:${(!isCurrent && !canEdit) ? '0.5' : '1'};white-space:nowrap"
+        title="${esc(d.label)}">
+        <span>${icon}</span><span>${esc(d.label)}</span>
+      </button>
+    `;
+  }).join(' ');
+
+  // メモ（編集可）
+  const noteHtml = `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #E5E7EB">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">メモ</div>
+      <textarea ${canEdit ? '' : 'disabled'}
+        onblur="updateTaskField('${esc(phase.id)}', 'note', this.value || null)"
+        rows="2"
+        style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;background:${canEdit ? '#fff' : '#F9FAFB'}"
+        placeholder="このフェーズについてのメモ">${esc(phase.note || '')}</textarea>
+    </div>
+  `;
+
+  return `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#0F172A">▶ ${esc(phase.title || '')}</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:${stateBg};color:${stateFg};font-size:11px;font-weight:600">
+          ${stateIcon}<span>${esc(stateLabel)}</span>
+        </span>
+        ${holderName ? `<span style="font-size:11px;color:var(--text-muted)">（${holderName}${phase.ball_moved_at ? ' / ' + _formatBallMovedAt(phase.ball_moved_at) : ''}）</span>` : ''}
+      </div>
+
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">ボールの遷移:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">${transitionsHtml}</div>
+        ${!canEdit ? '<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">※ 編集権限がありません</div>' : ''}
+      </div>
+
+      ${datesHtml}
+      ${assigneeHtml}
+      ${noteHtml}
+    </div>
+  `;
+}
+
+function _formatBallMovedAt(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const mm = d.getMonth() + 1;
+    const dd = d.getDate();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${mi}〜`;
+  } catch (_) { return ''; }
+}
+
+// シェブロンクリック → 詳細ペインの対象フェーズを切替
+function selectLpSchedulePhase(phaseId) {
+  _pScheduleSelectedPhaseId = phaseId || null;
+  renderLpScheduleUi();
+}
+
+// 初回展開（テンプレ seed）
+async function seedLpScheduleFromTemplate() {
+  if (!_pScheduleProjectId) {
+    showToast('案件を保存してから工程表を作成してください', 'warn');
+    return;
+  }
+  if (typeof hasPermission === 'function' && !hasPermission('project.create_edit')) {
+    showToast('工程表を作成する権限がありません', 'warn');
+    return;
+  }
+  // 案件開始日を最新の input から拾う（保存 onchange に依存しない）
+  const startInput = document.getElementById('p-scheduled-start-date');
+  const startDate = startInput && startInput.value ? startInput.value : null;
+  if (!startDate) {
+    if (!confirm('案件開始日が未設定です。日付なしで工程表を生成しますか？\n（後でタスクごとに日付を設定する必要があります）')) return;
+  } else {
+    // サーバー側が project.scheduled_start_date を読むので先に保存する
+    try {
+      await apiFetch(`${API}/projects/${_pScheduleProjectId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduled_start_date: startDate }),
+      });
+      if (_pScheduleProject) _pScheduleProject.scheduled_start_date = startDate;
+    } catch (_) { /* 失敗しても seed 自体は試みる */ }
+  }
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/seed-from-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (res.status === 409) {
+      // 既存タスクあり: force で再展開するか確認
+      const err = await res.json().catch(() => ({}));
+      const cnt = err.existing_count || 0;
+      if (!confirm(`既存タスクが ${cnt} 件あります。すべて削除してテンプレから作り直しますか？`)) return;
+      const res2 = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/seed-from-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      if (!res2.ok) {
+        const err2 = await res2.json().catch(() => ({}));
+        showToast(`生成に失敗: ${err2.error || res2.status}`, 'warn');
+        return;
+      }
+      const data = await res2.json();
+      showToast(`${data.inserted_count || 0} 件のタスクを再生成しました`, 'ok');
+    } else if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`生成に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    } else {
+      const data = await res.json();
+      showToast(`${data.inserted_count || 0} 件のタスクを作成しました`, 'ok');
+    }
+    _pScheduleSelectedPhaseId = null;
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`生成に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+// ボール状態遷移（MemberPicker でボール保持者を選んでから PATCH）
+async function transitionLpPhaseBallState(taskId, newCode) {
+  if (!_pScheduleProjectId || !taskId || !newCode) return;
+  const phase = (_pScheduleTasks || []).find(t => t.id === taskId);
+  if (!phase) return;
+
+  // 権限: project.create_edit 持ち or 現在のボール保持者本人（サーバー側でも検証）
+  // ADR 015 例外: 「実ユーザー判定が必須」なので currentUser.id を直接参照する。
+  // ロール判定は effectiveRole() ベースの hasPermission() に委譲し、ここでは個人判定のみ。
+  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : true;
+  const isHolder = phase.ball_holder_user_id && currentUser && phase.ball_holder_user_id === currentUser.id;
+  if (!canEdit && !isHolder) {
+    showToast('ボール状態を変更する権限がありません', 'warn');
+    return;
+  }
+
+  const defs = await _loadBallStateDefsForCurrentProject();
+  const def = defs.find(d => d.code === newCode) || null;
+  if (!def) {
+    showToast(`未定義のボール状態です: ${newCode}`, 'warn');
+    return;
+  }
+
+  // ボール保持者の決定:
+  //   - fixed への遷移 → 保持者 = null（完了なので持ち主不要）
+  //   - holder_type='internal' or 'client' なら MemberPicker でユーザーを選ばせる
+  if (newCode === 'fixed') {
+    await _patchLpBallState(taskId, newCode, null);
+    return;
+  }
+
+  // MemberPicker で保持者を選ぶ
+  if (!window.MemberPicker || typeof MemberPicker.open !== 'function') {
+    // フォールバック: 保持者を変更せず状態だけ遷移
+    await _patchLpBallState(taskId, newCode, undefined);
+    return;
+  }
+  // 保持者の初期値: 現在のボール持ち / 無ければアサイニー
+  const initialHolder = phase.ball_holder_user_id || phase.assignee_user_id || null;
+  // client 状態なら、選択候補は全メンバー（クライアント側ユーザーが users にいないため、社内側の窓口担当を入れる用途）
+  const allowedRoles = null; // 全ロール
+
+  // 一時的にトリガー要素を作る（MemberPicker.open はトリガーDOM位置で表示する）
+  // 既存のクリックされたボタン要素は this 引きづらいので document.activeElement を試す。なければ body。
+  const trigger = document.activeElement && document.body.contains(document.activeElement)
+    ? document.activeElement
+    : document.body;
+
+  MemberPicker.open(trigger, {
+    mode: 'single',
+    value: initialHolder,
+    allowedRoles,
+    emptyLabel: '（持ち主なし）',
+    title: `「${def.label}」のボール持ちを選択`,
+    onChange: async (val) => {
+      const holderId = (typeof val === 'string') ? val : (Array.isArray(val) ? (val[0] || null) : null);
+      await _patchLpBallState(taskId, newCode, holderId || null);
+    },
+  });
+}
+
+async function _patchLpBallState(taskId, code, holderId /* undefined=変更しない */) {
+  const body = { ball_state_code: code };
+  if (holderId !== undefined) body.ball_holder_user_id = holderId;
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/${taskId}/ball-state`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`ボール状態の更新に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    }
+    showToast('ボール状態を更新しました', 'ok');
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`ボール状態の更新に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+// ==================== /ADR 016: LP UI ====================
 
 async function applyPhaseTemplate() {
   if (!_pScheduleProjectId) {
