@@ -4971,7 +4971,8 @@ router.get('/creatives', async (req, res) => {
     console.warn('[creatives] optional列なし → fallback で再取得:', error.message);
     ({ data, error, count } = await buildAndApply(false));
   }
-  const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(full_name), team_members(user_id)');
+  // ボール保持者にアバター画像を出すため director user オブジェクト（avatar_url 等）も一括取得する
+  const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)');
   if (error) return res.status(500).json({ error: error.message });
 
   // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
@@ -4979,30 +4980,36 @@ router.get('/creatives', async (req, res) => {
   const directorByUserId    = new Map();
   const directorIdByTeamId  = new Map();
   const directorIdByUserId  = new Map();
+  // ボール保持者のアバター解決用 user オブジェクト Map（チーム代表ディレクター経由フォールバック）
+  const directorUserByTeamId = new Map();
+  const directorUserByUserId = new Map();
   const teamById            = new Map();
   (teamsRaw || []).forEach(t => {
     const name = t.director?.full_name || '';
     if (t.director_id) {
       directorByTeamId.set(t.id, name);
       directorIdByTeamId.set(t.id, t.director_id);
+      if (t.director) directorUserByTeamId.set(t.id, t.director);
     }
     (t.team_members || []).forEach(tm => {
       if (tm.user_id && !directorByUserId.has(tm.user_id)) {
         directorByUserId.set(tm.user_id, name);
         directorIdByUserId.set(tm.user_id, t.director_id || null);
+        if (t.director) directorUserByUserId.set(tm.user_id, t.director);
       }
     });
     teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
   });
 
   // 案件専用ディレクター/プロデューサー解決用に projects.director_id / producer_id 集合を一括取得
+  // ボール表示のアバター画像で使うため avatar_url / nickname も含める
   const projUserIds = Array.from(new Set(
     (data || []).flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
   ));
   const userById = new Map();
   if (projUserIds.length) {
     const { data: dirUsers } = await supabase
-      .from('users').select('id, full_name').in('id', projUserIds);
+      .from('users').select('id, full_name, nickname, avatar_url').in('id', projUserIds);
     (dirUsers || []).forEach(u => userById.set(u.id, u));
   }
 
@@ -5016,7 +5023,8 @@ router.get('/creatives', async (req, res) => {
       ball_holder: getBallHolder(
         c.status, c.creative_assignments,
         directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
-        projectDirector, projectProducer
+        projectDirector, projectProducer,
+        { directorUserByTeamId, directorUserByUserId }
       ),
     };
   });
@@ -5282,11 +5290,12 @@ router.get('/creatives/:id', async (req, res) => {
 
   // (E) ball_holder 計算用 teams 全件 + team_members
   // （一覧 /creatives と完全一致させるため getBallHolder() に渡す Map を作る）
+  // ボール保持者のアバター画像表示のため director の avatar_url / nickname も取得する
   const taskBallHolder = (async () => {
     try {
       const { data: teamsRaw } = await supabase
         .from('teams')
-        .select('id, director_id, director:director_id(full_name), team_members(user_id)');
+        .select('id, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)');
       return teamsRaw || [];
     } catch (e) {
       console.warn('[creatives/:id] teams 取得失敗（ball_holder用）:', e.message);
@@ -5338,16 +5347,21 @@ router.get('/creatives/:id', async (req, res) => {
       const directorByUserId   = new Map();
       const directorIdByTeamId = new Map();
       const directorIdByUserId = new Map();
+      // ボール保持者のアバター解決用 user オブジェクト Map
+      const directorUserByTeamId = new Map();
+      const directorUserByUserId = new Map();
       teamsRaw.forEach(t => {
         const name = t.director?.full_name || '';
         if (t.director_id) {
           directorByTeamId.set(t.id, name);
           directorIdByTeamId.set(t.id, t.director_id);
+          if (t.director) directorUserByTeamId.set(t.id, t.director);
         }
         (t.team_members || []).forEach(tm => {
           if (tm.user_id && !directorByUserId.has(tm.user_id)) {
             directorByUserId.set(tm.user_id, name);
             directorIdByUserId.set(tm.user_id, t.director_id || null);
+            if (t.director) directorUserByUserId.set(tm.user_id, t.director);
           }
         });
       });
@@ -5361,7 +5375,8 @@ router.get('/creatives/:id', async (req, res) => {
         data.status,
         data.creative_assignments,
         directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
-        projectDirector, projectProducer
+        projectDirector, projectProducer,
+        { directorUserByTeamId, directorUserByUserId }
       );
     }
   } catch (e) {
@@ -11311,25 +11326,29 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 // ==================== ボール保持者判定 ====================
 
-function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer) {
+function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer, opts = {}) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
   const dirAssign = assignments?.find(a => a.role === 'director');
   const prodAssign = assignments?.find(a => a.role === 'producer');
 
   const editorName = editor?.users?.full_name || '編集者';
   const editorId = editor?.users?.id || null;
+  // editor の users オブジェクト（avatar_url / nickname 等を含む）。詳細モーダルでアバター表示するために返す。
+  const editorUser = editor?.users || null;
 
-  // ディレクター名 / ID の優先順位:
+  // ディレクター名 / ID / user オブジェクト の優先順位:
   //   1. assignment 直接（role='director' の creative_assignments）
   //   2. projects.director_id（案件専用ディレクター・本来の最優先設定）
   //   3. 編集者のチーム代表ディレクター（フォールバック）
   //   4. 編集者の所属メンバー → チーム代表（フォールバック）
-  //   5. 'ディレクター' リテラル
+  //   5. 'ディレクター' リテラル（user オブジェクトは null）
   let directorName = dirAssign?.users?.full_name;
   let directorId = dirAssign?.users?.id || null;
+  let directorUser = dirAssign?.users || null;
   if (!directorName && projectDirector) {
     directorName = projectDirector.full_name || '';
     directorId   = projectDirector.id || null;
+    directorUser = projectDirector || null;
   }
   if (!directorName && editor?.users) {
     const u = editor.users;
@@ -11339,40 +11358,48 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     directorId = (u.team_id && directorIdByTeamId?.get(u.team_id))
       || (u.id && directorIdByUserId?.get(u.id))
       || null;
+    // チーム経由フォールバックでも user オブジェクト（avatar_url 等）を解決する
+    const dUserByTeamId = opts?.directorUserByTeamId;
+    const dUserByUserId = opts?.directorUserByUserId;
+    directorUser = (u.team_id && dUserByTeamId?.get(u.team_id))
+      || (u.id && dUserByUserId?.get(u.id))
+      || null;
   }
   directorName = directorName || 'ディレクター';
 
-  // プロデューサー名 / ID の優先順位（Dチェックと完全対称）:
+  // プロデューサー名 / ID / user オブジェクト の優先順位（Dチェックと完全対称）:
   //   1. assignment 直接（role='producer' の creative_assignments）
   //   2. projects.producer_id（案件担当プロデューサー）
-  //   3. 'プロデューサー' リテラル
+  //   3. 'プロデューサー' リテラル（user オブジェクトは null）
   // 注: producer はディレクターのような「チーム代表」概念が無いので
   //     team経由フォールバックは行わない。
   let producerName = prodAssign?.users?.full_name;
   let producerId   = prodAssign?.users?.id || null;
+  let producerUser = prodAssign?.users || null;
   if (!producerName && projectProducer) {
     producerName = projectProducer.full_name || '';
     producerId   = projectProducer.id || null;
+    producerUser = projectProducer || null;
   }
   producerName = producerName || 'プロデューサー';
 
   const ballMap = {
-    '未着手': { holder: editorName, type: 'editor', user_id: editorId },
-    '制作中（初稿提出前）': { holder: editorName, type: 'editor', user_id: editorId },
-    '台本制作': { holder: editorName, type: 'editor', user_id: editorId },
-    '素材・ナレ作成': { holder: editorName, type: 'editor', user_id: editorId },
-    '編集': { holder: editorName, type: 'editor', user_id: editorId },
-    'Dチェック': { holder: directorName, type: 'director', user_id: directorId },
-    'Dチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
-    'Pチェック': { holder: producerName, type: 'producer', user_id: producerId },
-    'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
-    'クライアントチェック中': { holder: 'クライアント', type: 'client' },
+    '未着手': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    '制作中（初稿提出前）': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    '台本制作': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    '素材・ナレ作成': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    '編集': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    'Dチェック': { holder: directorName, type: 'director', user_id: directorId, holder_user: directorUser },
+    'Dチェック後修正': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    'Pチェック': { holder: producerName, type: 'producer', user_id: producerId, holder_user: producerUser },
+    'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    'クライアントチェック中': { holder: 'クライアント', type: 'client', holder_user: null },
     // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
     // 次は編集者が修正する段階。よって Dチェック後修正・Pチェック後修正と揃えて editor 単独をボール保持者とする。
-    'クライアントチェック後修正': { holder: editorName, type: 'editor', user_id: editorId },
-    '納品': { holder: '完了', type: 'done' },
+    'クライアントチェック後修正': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
+    '納品': { holder: '完了', type: 'done', holder_user: null },
   };
-  return ballMap[status] || { holder: '不明', type: 'unknown' };
+  return ballMap[status] || { holder: '不明', type: 'unknown', holder_user: null };
 }
 
 // ==================== ball_holder_id キャッシュ同期 ====================
