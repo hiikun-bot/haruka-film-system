@@ -26033,11 +26033,90 @@ async function cdLoadRounds(creativeId) {
     const res = await apiFetch(`${API}/creatives/${creativeId}/rounds`);
     if (!res.ok) { _cdRoundsCache = []; return; }
     const list = await res.json();
-    _cdRoundsCache = Array.isArray(list) ? list : [];
+    _cdRoundsCache = Array.isArray(list) ? _cdDedupRoundsForTimeline(list) : [];
   } catch (e) {
     console.warn('[cd-rounds] fetch failed:', e?.message || e);
     _cdRoundsCache = [];
   }
+}
+
+// PR #(prev-timeline-init-fix) / 髙橋指示 2026-05-10:
+//
+// 「前回」タイムラインのドット位置と内容のズレ対策。
+//
+// 背景:
+//   サーバ側 /api/creatives/:id/rounds は、版（version）と round_stage の組み合わせで
+//   以下のような複数行を吐く:
+//     A) 過去ラウンドの実 snapshot (creative_version_history)
+//     B) 「孤児 handoff」仮想ラウンド (_synthetic_handoff = true)
+//        — 直前の承認/修正依頼 transition のコメントを保持。round_stage は *_handoff
+//     C) 「次工程の初回提出」仮想ラウンド (_synthetic_initial_submit = true)
+//        — Dチェック / Pチェック / CLチェック移行時の「編集者の提出時メモ」を再掲する。
+//          version_num は移行時点の最新ファイル version。次工程ステージの round_stage で並ぶ。
+//
+// バグ症状:
+//   「Pチェック → クライアントチェック中」承認直後の表示で
+//     末尾(N-1)   = cl_check 仮想 (C: 編集者の提出時メモのみ)
+//     末尾(N-2)   = p_check_handoff 仮想 (B: P承認 → CLチェック中 引き継ぎコメント)
+//   と並ぶ。両者は version_num が同じ (例: v3) で、ユーザー視点では
+//   「同じ "P承認 → CLチェック移行" イベント」を2つのドットに分裂させているだけ。
+//   しかも (C) は「編集者がこの版を提出したときのメモ」で、本来の意思決定 (P承認コメント)
+//   は (B) 側にしかない。結果:
+//     - 初期 index (末尾) を選ぶと「編集者の提出メモ」が出てしまい、ユーザーが
+//       「最新の引き継ぎコメントが見えない」と感じる
+//     - 暫定対応で「reviewer/handoff コメントを持つ末尾近辺の round に巻き戻す」と
+//       初期表示が右から2番目に来てしまい、ドット位置と内容の対応が崩れる
+//
+// 修正方針:
+//   同じ creative の rounds 配列の中で、「(B) *_handoff の直後に
+//   同 version の (C) _synthetic_initial_submit が並んでいる」場合、
+//   (C) を **タイムラインから除去** する。
+//   こうすることで:
+//     - ドット数が「実際の意思決定数」と一致する
+//     - 初期 index = 末尾 が常に「最新の handoff/snapshot」を指し、ズレが消える
+//     - (C) が単独で並ぶ場合（snapshot も handoff も無い純粋な初回提出時の編集者メモ）は
+//       残るので、PR #531 の本来意図 (前工程の提出物可視化) は保たれる
+//
+// 注意:
+//   - サーバ API のレスポンスそのものは触らない（ラウンド編集 API などが id を引いて
+//     いる箇所が _cdRoundsCache を参照しているため、ここで除去するだけにする）
+//   - dedup 判定は version_num が一致 かつ stage が対応している ((B) p_check_handoff →
+//     (C) cl_check 等) の場合のみ。stage が対応していない場合は別イベントなので残す
+//   - 中間に挟まる重複ペア（過去の handoff の直後に並ぶ同 version の C）は履歴の
+//     文脈情報として残しておきたいので除去対象は「末尾近辺の連続ペア」だけにする方針もあるが、
+//     現状は「(B)の直後に(C)」全てに適用する。中間に並んでも意味は重複しているため、
+//     ドット位置の混乱を避ける効果のほうが大きい。
+function _cdDedupRoundsForTimeline(rounds) {
+  if (!Array.isArray(rounds) || rounds.length < 2) return rounds || [];
+  // (B) の synthetic_handoff stage → (C) で重複扱いする次工程 stage の対応
+  // d_check_handoff (Dチェック→Pチェック / Dチェック→Dチェック後修正) → 次工程 = p_check or d_check
+  //   ※ revise の場合は次工程ステージが同じ d_check になるので、その場合も重複扱い
+  // 同様に p_check_handoff → cl_check or p_check
+  // 同様に cl_check_handoff → 納品ステージは仮想ラウンド対象外なので cl_check のみ (revise時)
+  const HANDOFF_TO_NEXT_STAGES = {
+    'd_check_handoff':  ['p_check', 'd_check'],   // approve → p_check / revise → d_check
+    'p_check_handoff':  ['cl_check', 'p_check'],
+    'cl_check_handoff': ['cl_check'],             // 承認時は「納品」で次の synthetic は出ない / revise時のみ cl_check
+  };
+  const out = [];
+  for (let i = 0; i < rounds.length; i++) {
+    const cur = rounds[i];
+    if (cur && cur._synthetic_initial_submit) {
+      // 直前 (out 末尾) が同 version の対応 *_handoff か？
+      const prev = out.length > 0 ? out[out.length - 1] : null;
+      if (prev && prev._synthetic_handoff
+          && prev.version_num != null
+          && cur.version_num != null
+          && Number(prev.version_num) === Number(cur.version_num)
+          && Array.isArray(HANDOFF_TO_NEXT_STAGES[prev.round_stage])
+          && HANDOFF_TO_NEXT_STAGES[prev.round_stage].includes(cur.round_stage)) {
+        // 重複イベントとみなして (C) をスキップ
+        continue;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
 }
 
 function _cdMoveRightColumnElements(intoRight) {
@@ -27811,43 +27890,27 @@ async function openCreativeDetail(id) {
     _cdSetLoadingPhase('render');
   }
 
-  // 直近ラウンド (= 一番新しい過去) を初期表示
-  // 修正中（live round が立つ Dチェック後修正 / Pチェック後修正 / CL後修正）は
-  // live round が一番末尾に push されるので素直に length 末尾でよい。
+  // 直近ラウンド (= 一番新しい過去) を初期表示。
   //
-  // 修正中以外（Pチェック / クライアントチェック中 / 納品中 など）は live=null。
-  // この場合、サーバ側ラウンド配列の末尾は「次工程の初回提出 仮想ラウンド」(p_check / cl_check)
-  // になりがちで、編集者の提出時メモしか持たない。
-  // ところが本来見せたいのは「直前のディレクター/プロデューサー承認コメント」(handoff_to_next.comment) や
-  // 「過去ラウンドのレビュアー指摘」(director_comment / client_comment)。
+  // 過去のバグ:
+  //   #555 で「Pチェック中にDチェック承認コメントが見えない」を解消するため、
+  //   修正中以外のときは「コメント保有ラウンドのうち末尾に最も近いもの」を選ぶ
+  //   ロジックを導入していた。しかしこれは結果として、ドット位置と「最新ラウンド」が
+  //   ズレる副作用 (初期表示が右から2番目になる + ドットを最右に動かすと
+  //   編集者の提出時メモしか見えない) を生んだ。
   //
-  // バグ報告 (髙橋指示 2026-05-10): Pチェック中にDチェック承認コメントが見えない。
-  //   再現: 編集者提出 → Dチェック → ディレクターが「OK→Pチェックへ」と承認コメント付きで承認 → Pチェック。
-  //   詳細モーダル「💬 前回（コメント）」タブを開くと、編集者の提出メモしか映らない。
-  //   原因: 末尾が p_check の初回提出仮想 (D承認コメントを持たない) で固定されていた。
+  // 現在の対策:
+  //   cdLoadRounds() の _cdDedupRoundsForTimeline() で
+  //   「同 version の handoff 直後に並ぶ "次工程の初回提出 仮想ラウンド"」を除去している。
+  //   これにより末尾は常に「最新の意思決定 (handoff or snapshot or live)」になる。
+  //   よって初期 index は素直に末尾でよい。
   //
-  // 修正: 修正中以外のときは「コメント保有ラウンドのうち末尾に最も近いもの」を初期 index として選ぶ。
-  //   優先度（時系列で「最後の意思決定」を見せたいので末尾から逆走で探す）:
-  //     (a) handoff_to_next.comment（ディレクター/プロデューサー/クライアントの承認 or 修正依頼コメント）
-  //     (b) director_comment / client_comment（過去ラウンドのレビュアー指摘）
-  //   どちらも持たないラウンドしか無ければ従来通り末尾。
-  if (_cdBuildLiveRound(currentCreativeDetail)) {
-    _cdRoundIndex = Math.max(0, _cdRoundsCache.length + 1 - 1);
-  } else {
-    const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-    let pickedIndex = cache.length - 1;
-    for (let i = cache.length - 1; i >= 0; i--) {
-      const r = cache[i];
-      if (!r) continue;
-      const hasHandoff = r.handoff_to_next && typeof r.handoff_to_next.comment === 'string' && r.handoff_to_next.comment.trim();
-      const hasReviewer = (typeof r.director_comment === 'string' && r.director_comment.trim())
-        || (typeof r.client_comment === 'string' && r.client_comment.trim());
-      if (hasHandoff || hasReviewer) {
-        pickedIndex = i;
-        break;
-      }
-    }
-    _cdRoundIndex = Math.max(0, pickedIndex);
+  // ライブ round (live=true) は cdRenderRoundCompare() 内で末尾 push されるため、
+  // ライブ有無に関係なく `_cdRoundsCache.length + (live ? 1 : 0) - 1` を初期値にする。
+  {
+    const live = _cdBuildLiveRound(currentCreativeDetail);
+    const N = _cdRoundsCache.length + (live ? 1 : 0);
+    _cdRoundIndex = Math.max(0, N - 1);
   }
   // bug-report b9c7c60c: 詳細を開くたびに左カラムタブを 📺 preview にリセット（既定値）
   _cdRoundLeftTab = 'preview';
