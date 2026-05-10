@@ -4268,37 +4268,11 @@ window.showPage = window.showPage || function(name, btn) {
           </select>
         </div>
       </div>
-      <!-- メンバー選択 -->
+      <!-- メンバー選択（ADR 014: 共通 MemberPicker に統一） -->
       <div class="form-group" style="margin-bottom:4px">
-        <label class="form-label" style="margin-bottom:6px">メンバー</label>
-        <div style="position:relative;margin-bottom:8px">
-          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px">🔍</span>
-          <input class="form-input" id="t-member-search" placeholder="名前で検索..." oninput="filterTeamMembers()" style="padding-left:32px">
-        </div>
-        <!-- ロールフィルター -->
-        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
-          <button type="button" class="tm-filter-role" data-value="" onclick="setTeamMemberFilter('role','')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">全員</button>
-          <button type="button" class="tm-filter-role" data-value="admin" onclick="setTeamMemberFilter('role','admin')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">管理者</button>
-          <button type="button" class="tm-filter-role" data-value="secretary" onclick="setTeamMemberFilter('role','secretary')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">秘書</button>
-          <button type="button" class="tm-filter-role" data-value="producer" onclick="setTeamMemberFilter('role','producer')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">P</button>
-          <button type="button" class="tm-filter-role" data-value="producer_director" onclick="setTeamMemberFilter('role','producer_director')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">PD</button>
-          <button type="button" class="tm-filter-role" data-value="director" onclick="setTeamMemberFilter('role','director')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">D</button>
-          <button type="button" class="tm-filter-role" data-value="editor" onclick="setTeamMemberFilter('role','editor')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">編集者</button>
-          <button type="button" class="tm-filter-role" data-value="designer" onclick="setTeamMemberFilter('role','designer')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">デザイナー</button>
-        </div>
-        <!-- ランクフィルター -->
-        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
-          <button type="button" class="tm-filter-rank" data-value="" onclick="setTeamMemberFilter('rank','')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">全ランク</button>
-          <button type="button" class="tm-filter-rank" data-value="S" onclick="setTeamMemberFilter('rank','S')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">S</button>
-          <button type="button" class="tm-filter-rank" data-value="A" onclick="setTeamMemberFilter('rank','A')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">A</button>
-          <button type="button" class="tm-filter-rank" data-value="B" onclick="setTeamMemberFilter('rank','B')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">B</button>
-          <button type="button" class="tm-filter-rank" data-value="C" onclick="setTeamMemberFilter('rank','C')" style="font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">C</button>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:var(--text-muted)">
-          <span id="t-member-count"></span>
-          <button type="button" onclick="toggleAllTeamMembers()" style="background:none;border:none;color:var(--primary);font-size:12px;cursor:pointer;padding:0" id="t-member-toggle-all">すべて選択</button>
-        </div>
-        <div id="t-member-list" style="border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto"></div>
+        <label class="form-label" style="margin-bottom:6px">メンバー <span id="t-member-count" style="font-weight:400;color:var(--text-muted);font-size:12px;margin-left:4px"></span></label>
+        <div id="t-member-list" style="border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;margin-bottom:8px"></div>
+        <button type="button" id="t-member-add-btn" onclick="openTeamMemberPicker(this)" style="font-size:13px;padding:8px 14px;border-radius:8px;border:1px dashed var(--border);background:transparent;color:var(--primary);cursor:pointer;width:100%">＋ メンバーを追加 / 編集</button>
       </div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 0 0;margin-top:8px;border-top:1px solid var(--border);flex-shrink:0">
@@ -12000,20 +11974,10 @@ function openTeamModal(team) {
   updateUserSelectAvatar('t-producer', 't-producer-avatar', 24);
   updateUserSelectAvatar('t-director', 't-director-avatar', 24);
 
-  // メンバーリスト初期化（team_membersから既存メンバーIDを取得）
-  _tmFilterRole = ''; _tmFilterRank = '';
-  document.getElementById('t-member-search').value = '';
-  // フィルターチップをリセット
-  document.querySelectorAll('.tm-filter-role, .tm-filter-rank').forEach(b => {
-    const isAll = b.dataset.value === '';
-    b.style.background = isAll ? 'var(--em-pale)' : 'transparent';
-    b.style.color = isAll ? 'var(--em-dark)' : 'var(--text-muted)';
-    b.style.borderColor = isAll ? 'var(--em-dark)' : 'var(--border)';
-  });
-  // 選択状態は _tmSelectedIds (Set) を単一の真実とする。
-  // フィルター切替・検索・再描画でチェックが消えないよう DOM ではなく state で保持する。
+  // メンバーリスト初期化（ADR 014: 共通 MemberPicker に統一）
+  // 選択中メンバーは _tmSelectedIds (Set) を単一の真実とする。
   _tmSelectedIds = new Set((team?.team_members || []).map(tm => tm.user_id));
-  buildTeamMemberList();
+  renderTeamMemberChips();
 
   // 削除ボタン: 編集モードかつ team.delete 権限保有時のみ表示
   const tDelBtn = document.getElementById('t-delete-btn');
@@ -12039,105 +12003,80 @@ async function deleteCurrentTeam() {
   }
 }
 
-// フィルター状態
-let _tmFilterRole = '', _tmFilterRank = '';
-// 選択中メンバーID（Set）— フィルター/検索/再描画で消えないよう state で保持
+// 選択中メンバーID（Set）— ADR 014: 共通 MemberPicker に統一。state で保持し、保存時に配列化する
 let _tmSelectedIds = new Set();
 
-function buildTeamMemberList() {
-  const search = document.getElementById('t-member-search').value.toLowerCase();
+// ロール短縮表示（MemberPicker.ROLE_DEFS から取得）
+function _tmRoleShort(role) {
+  const defs = (window.MemberPicker && window.MemberPicker.ROLE_DEFS) || [];
+  const def = defs.find(r => r.value === role);
+  return def ? def.short : (role || '');
+}
+
+// 選択中メンバーを chip 形式で再描画。ランクは絶対に出さない。
+function renderTeamMemberChips() {
   const container = document.getElementById('t-member-list');
-  const active = allMembers.filter(m => m.is_active !== false);
-  const filtered = active.filter(m => {
-    if (search && !m.full_name.toLowerCase().includes(search) && !(m.nickname||'').toLowerCase().includes(search)) return false;
-    if (_tmFilterRole && m.role !== _tmFilterRole) return false;
-    if (_tmFilterRank && m.rank !== _tmFilterRank) return false;
-    return true;
-  });
-  const ROLE_SHORT = { admin:'管', producer:'P', producer_director:'PD', director:'D', editor:'編', designer:'デ', secretary:'秘' };
-  if (!filtered.length) {
-    container.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:13px">該当するメンバーがいません</div>';
-  } else {
-    container.innerHTML = filtered.map((m, i) => {
-      const inTeam = _tmSelectedIds.has(m.id);
-      const isLast = i === filtered.length - 1;
-      return `<label style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;${isLast?'':'border-bottom:1px solid var(--border);'}user-select:none">
-        <input type="checkbox" class="t-member-check" value="${m.id}" ${inTeam ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--primary);cursor:pointer;flex-shrink:0" onchange="onTeamMemberCheckToggle(this)">
-        ${avatarHtml(m, 28)}
-        <span style="font-size:13px;flex:1">${m.full_name}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">（${m.nickname}）</span>` : ''}</span>
-        <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:4px">${ROLE_SHORT[m.role] || m.role}</span>
-        ${m.rank ? `<span style="font-size:11px;color:var(--em-dark);font-weight:600;background:var(--em-pale);padding:1px 6px;border-radius:4px">${m.rank}</span>` : ''}
-      </label>`;
-    }).join('');
-  }
-  updateTeamMemberCount();
-}
+  if (!container) return;
+  const ids = Array.from(_tmSelectedIds);
+  // allMembers から id 一致するメンバーを取り出し（順序は allMembers の並び順を維持してブレを防ぐ）
+  const idSet = new Set(ids);
+  const selected = (Array.isArray(allMembers) ? allMembers : []).filter(m => idSet.has(m.id));
+  // 漏れた id（allMembers にいない＝退会者など）は最後に id 文字列で表示
+  const knownIds = new Set(selected.map(m => m.id));
+  const orphans = ids.filter(id => !knownIds.has(id));
 
-// チェックボックス操作で state(_tmSelectedIds) を更新する。DOM の checked だけに頼らない。
-function onTeamMemberCheckToggle(input) {
-  if (!input || !input.value) return;
-  if (input.checked) _tmSelectedIds.add(input.value);
-  else _tmSelectedIds.delete(input.value);
-  updateTeamMemberCount();
-}
-
-function filterTeamMembers() {
-  // _tmSelectedIds は state で保持されているので何もせず再描画するだけで OK
-  buildTeamMemberList();
-}
-
-function setTeamMemberFilter(type, value) {
-  if (type === 'role') _tmFilterRole = value;
-  if (type === 'rank') _tmFilterRank = value;
-  // フィルターチップのアクティブ状態更新
-  document.querySelectorAll('.tm-filter-role').forEach(b => {
-    const isActive = b.dataset.value === _tmFilterRole;
-    b.style.background = isActive ? 'var(--em-pale)' : 'transparent';
-    b.style.color = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
-    b.style.borderColor = isActive ? 'var(--em-dark)' : 'var(--border)';
-  });
-  document.querySelectorAll('.tm-filter-rank').forEach(b => {
-    const isActive = b.dataset.value === _tmFilterRank;
-    b.style.background = isActive ? 'var(--em-pale)' : 'transparent';
-    b.style.color = isActive ? 'var(--em-dark)' : 'var(--text-muted)';
-    b.style.borderColor = isActive ? 'var(--em-dark)' : 'var(--border)';
-  });
-  filterTeamMembers();
-}
-
-function updateTeamMemberCount() {
-  // 表示中（フィルター後）の checkbox 数と、その中で checked のものを数える。
-  // 選択数は _tmSelectedIds（全体のうち選ばれている人数）も併記したいが、
-  // UI 互換のため 既存表示「N 名選択中 / 全 M 名」は表示中ベースのまま維持。
-  // ただし「すべて選択」ボタンの判定も DOM ベースで OK（state は onTeamMemberCheckToggle と toggleAllTeamMembers で常に同期）。
-  const visibleChecks = document.querySelectorAll('.t-member-check');
-  const visibleCheckedCount = document.querySelectorAll('.t-member-check:checked').length;
-  const totalSelected = _tmSelectedIds.size;
   const countEl = document.getElementById('t-member-count');
-  const toggleBtn = document.getElementById('t-member-toggle-all');
-  if (countEl) {
-    // フィルター中で隠れている選択を分かるよう、合計選択数も表示する。
-    const hiddenSelected = totalSelected - visibleCheckedCount;
-    const suffix = (hiddenSelected > 0) ? `<span style="margin-left:6px;color:var(--text-muted)">（うち非表示 ${hiddenSelected} 名）</span>` : '';
-    countEl.innerHTML = `${totalSelected} 名選択中 / 全 ${visibleChecks.length} 名${suffix}`;
+  if (countEl) countEl.textContent = ids.length ? `(${ids.length}名)` : '';
+
+  if (!selected.length && !orphans.length) {
+    container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px">メンバー未選択 — 下のボタンから追加できます</div>';
+    return;
   }
-  if (toggleBtn) toggleBtn.textContent = (visibleChecks.length > 0 && visibleCheckedCount === visibleChecks.length) ? 'すべて解除' : 'すべて選択';
+
+  const rowsHtml = selected.map((m, i) => {
+    const isLast = i === selected.length - 1 && orphans.length === 0;
+    const nameHtml = `<span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.full_name || '')}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">（${esc(m.nickname)}）</span>` : ''}</span>`;
+    const roleShort = _tmRoleShort(m.role);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;${isLast?'':'border-bottom:1px solid var(--border);'}">
+      ${avatarHtml(m, 28)}
+      ${nameHtml}
+      <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:4px;flex-shrink:0">${esc(roleShort)}</span>
+      <button type="button" onclick="removeTeamMember('${m.id}')" title="このチームから外す" style="background:none;border:none;color:var(--text-muted);font-size:18px;line-height:1;cursor:pointer;padding:0 4px;flex-shrink:0">×</button>
+    </div>`;
+  }).join('');
+  const orphanHtml = orphans.map((id, i) => {
+    const isLast = i === orphans.length - 1;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;${isLast?'':'border-bottom:1px solid var(--border);'}color:var(--text-muted);font-size:12px">
+      <span style="flex:1">(不明なメンバー: ${esc(id)})</span>
+      <button type="button" onclick="removeTeamMember('${id}')" style="background:none;border:none;color:var(--text-muted);font-size:18px;line-height:1;cursor:pointer;padding:0 4px">×</button>
+    </div>`;
+  }).join('');
+  container.innerHTML = rowsHtml + orphanHtml;
 }
 
-function toggleAllTeamMembers() {
-  // 現在表示中（フィルター後）の checkbox に対してまとめて on/off。
-  // state(_tmSelectedIds) も同期させる。
-  const checks = document.querySelectorAll('.t-member-check');
-  if (!checks.length) return;
-  const checkedCount = document.querySelectorAll('.t-member-check:checked').length;
-  const toCheck = checkedCount < checks.length;
-  checks.forEach(c => {
-    c.checked = toCheck;
-    if (!c.value) return;
-    if (toCheck) _tmSelectedIds.add(c.value);
-    else _tmSelectedIds.delete(c.value);
+function removeTeamMember(id) {
+  if (!id) return;
+  _tmSelectedIds.delete(id);
+  renderTeamMemberChips();
+}
+
+// 「＋ メンバーを追加 / 編集」ボタンから共通 MemberPicker を開く
+function openTeamMemberPicker(triggerEl) {
+  if (!window.MemberPicker || typeof window.MemberPicker.open !== 'function') {
+    showToast('メンバー選択 UI を読み込めませんでした', 'error');
+    return;
+  }
+  window.MemberPicker.open(triggerEl, {
+    mode: 'multi',
+    value: Array.from(_tmSelectedIds),
+    allowedRoles: null,    // 全ロール
+    showInactive: false,
+    title: 'チームメンバーを選択',
+    onChange: (ids) => {
+      _tmSelectedIds = new Set(Array.isArray(ids) ? ids : []);
+      renderTeamMemberChips();
+    },
   });
-  updateTeamMemberCount();
 }
 
 async function saveTeam() {
@@ -12147,8 +12086,7 @@ async function saveTeam() {
   const team_type = document.getElementById('t-type').value;
   const director_id = document.getElementById('t-director').value || null;
   const producer_id = document.getElementById('t-producer').value || null;
-  // 選択中メンバーは state(_tmSelectedIds) を真とする。
-  // フィルターで非表示の checkbox は DOM に存在しないため、querySelectorAll('.t-member-check:checked') では拾えない。
+  // 選択中メンバーは state(_tmSelectedIds) を真とする（ADR 014: 共通 MemberPicker）
   const member_ids = Array.from(_tmSelectedIds);
   if (!team_name) { showToast('チーム名は必須です', 'warn'); return; }
 
@@ -19882,11 +19820,11 @@ async function loadInvoicePreview() {
           </td>
           <td style="padding:10px 10px;text-align:left;vertical-align:top;color:var(--text-muted);font-size:11px;white-space:nowrap">${deliveryDate}</td>
           <td style="padding:10px 10px;vertical-align:top">
-            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${escapeHtml(item.client_name)} / ${escapeHtml(item.project_name)}</div>
-            <div style="font-family:monospace;font-size:12px;color:#111;word-break:break-all">${escapeHtml(item.file_name)}</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${esc(item.client_name)} / ${esc(item.project_name)}</div>
+            <div style="font-family:monospace;font-size:12px;color:#111;word-break:break-all">${esc(item.file_name)}</div>
           </td>
           <td style="padding:10px 10px;text-align:center;vertical-align:top">
-            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};white-space:nowrap">${escapeHtml(item.status||'—')}</span>
+            <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};white-space:nowrap">${esc(item.status||'—')}</span>
           </td>
           <td style="padding:10px 10px;text-align:right;vertical-align:top;font-weight:600;color:${noBreakdown?'#ccc':'var(--em-dark)'}">
             ${noBreakdown ? '<span style="font-size:10px;color:#F59E0B">単価未設定</span>' : '<span class="gi-subtotal" data-id="'+item.id+'">¥'+(item.total||0).toLocaleString()+'</span>'}
@@ -19895,7 +19833,7 @@ async function loadInvoicePreview() {
         const breakdownRows = (item.breakdown || []).map(b => `<tr style="background:${rowBg};border-bottom:0.5px dashed var(--border)" data-creative-id="${item.id}">
           <td></td>
           <td></td>
-          <td style="padding:4px 10px 4px 10px;color:#444">${escapeHtml(b.label)}</td>
+          <td style="padding:4px 10px 4px 10px;color:#444">${esc(b.label)}</td>
           <td colspan="2" style="padding:4px 10px;text-align:right;white-space:nowrap">
             <input type="number" min="0" step="1" value="${b.unit_price}" class="gi-bd-input" data-id="${item.id}" data-cost-type="${b.cost_type}" data-default="${b.unit_price}" oninput="onInvoiceUnitPriceChange(this)" style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;text-align:right;font-size:12px">
             <span style="font-size:11px;color:var(--text-muted);margin-left:4px">円 / 本</span>
