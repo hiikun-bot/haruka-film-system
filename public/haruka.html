@@ -30160,7 +30160,7 @@ function _renderFpCommentHtml(c, isReply) {
     `<button onclick="fpToggleReplyForm('${c.id}')" class="fp-reply-btn" title="返信">↩ 返信</button>`;
   // 引用ボタン: 親/返信どちらにも表示。クリックで「連絡・確認事項」textarea にコメントを Markdown 引用ブロックで挿入
   const quoteBtn =
-    `<button onclick="quoteCommentToEditorReply('${c.id}')" class="fp-quote-btn" title="連絡・確認事項に引用">💬 引用</button>`;
+    `<button onclick="quoteCommentToEditorReply('${c.id}')" class="fp-quote-btn" title="レビューコメント入力欄に引用">💬 引用</button>`;
   // 役職を avatar の title (ホバー) に含めて、ヘッダーから名前/ロールバッジを取り除いても誰のコメントか分かるようにする
   const roleLabel = (() => {
     const r = c.users?.role;
@@ -30265,8 +30265,8 @@ function renderComments(list) {
   el.scrollTop = 0;
 }
 
-// Frame.io レビューコメントを「連絡・確認事項」textarea (#cd-editor-reply) に挿入する。
-// フォーマットは「タイムコード（あれば）→ コメント本文 → 空行」のシンプル構成。
+// Frame.io レビューコメントをレビューパネルのコメント入力欄 (#fp-comment-text) に挿入する。
+// フォーマットは「タイムコード or 日時（あれば）→ コメント本文 → 空行」のシンプル構成。
 // 投稿者名・役職・> プレフィックスは付けない（PR #393 で簡素化）。
 // 返信コメント（parent_comment_id あり）を引用したときは、自身の timecode/bbox は無いので親から継承する。
 // パネルは閉じない（連続引用したいユースケース）。textarea にフォーカス済みならカーソル位置に挿入、未フォーカス & 既存内容ありなら末尾追記して書きかけを破壊しない。
@@ -30279,9 +30279,9 @@ function quoteCommentToEditorReply(commentId) {
     else alert('コメント情報が取得できませんでした');
     return;
   }
-  const ta = document.getElementById('cd-editor-reply');
+  const ta = document.getElementById('fp-comment-text');
   if (!ta) {
-    if (typeof showToast === 'function') showToast('連絡・確認事項の入力欄が見つかりません', 'warn');
+    if (typeof showToast === 'function') showToast('コメント入力欄が見つかりません', 'warn');
     return;
   }
 
@@ -30304,7 +30304,7 @@ function quoteCommentToEditorReply(commentId) {
   } else if (comment.created_at) {
     const d = new Date(comment.created_at);
     const pad = (n) => String(n).padStart(2, '0');
-    const dateStr = `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    const dateStr = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     headerLine = `${dateStr}${hasBbox ? ' [範囲指定]' : ''}\n`;
   } else if (hasBbox) {
     headerLine = '[範囲指定]\n';
