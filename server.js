@@ -632,11 +632,11 @@ app.post('/api/knowledge/briefing', async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   const allKnowledge = knowledge.all({ projectId, category });
-  if (!allKnowledge.length) return res.json({ briefing: 'まだナレッジがありません。', items: [] });
+  if (!allKnowledge.length) return res.json({ briefing: 'まだ学びが集まっていません。', items: [] });
 
   if (!apiKey) {
     return res.json({
-      briefing: `${allKnowledge.length}件のナレッジがあります。作業前に確認してください。`,
+      briefing: `学び広場に${allKnowledge.length}件の学びがあります。作業前に確認してください。`,
       items: allKnowledge.slice(0, 5),
     });
   }
@@ -652,7 +652,7 @@ app.post('/api/knowledge/briefing', async (req, res) => {
       messages: [{
         role: 'user',
         content: `動画編集者への作業前ブリーフィングを作成してください。
-以下は過去に指摘されたナレッジです：
+以下は学び広場に蓄積されている過去の指摘です：
 
 ${knowledgeText}
 
@@ -686,8 +686,8 @@ app.post('/api/knowledge/weekly-report', async (req, res) => {
   if (!apiKey || !weekItems.length) {
     return res.json({
       report: weekItems.length
-        ? `今週 ${weekItems.length}件の指摘がナレッジ化されました。`
-        : '今週のナレッジはありません。',
+        ? `今週 ${weekItems.length}件の指摘が学び広場に追加されました。`
+        : '今週の学びはありません。',
       items: weekItems,
     });
   }
@@ -704,7 +704,7 @@ app.post('/api/knowledge/weekly-report', async (req, res) => {
         role: 'user',
         content: `動画編集チームの週次品質レポートを日本語で作成してください。
 
-今週のナレッジ（${weekItems.length}件）:
+今週の学び（${weekItems.length}件）:
 ${summary}
 
 以下の構成でまとめてください：
