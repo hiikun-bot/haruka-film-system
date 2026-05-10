@@ -950,6 +950,62 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 /* ローディング */
 .loading{text-align:center;padding:60px;color:var(--text-muted);font-size:15px}
 
+/* ダッシュボード初回ロードのスケルトンシマー（読み込み中アピール） */
+@keyframes dash-skel-shimmer{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+.skel-line{
+  display:block;height:12px;border-radius:6px;
+  background:linear-gradient(90deg,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0.10) 40%,rgba(0,0,0,0.05) 80%);
+  background-size:200% 100%;
+  animation:dash-skel-shimmer 1.4s linear infinite;
+}
+.skel-line + .skel-line{margin-top:8px}
+.skel-row{display:flex;align-items:center;gap:10px;padding:8px 0}
+.skel-row .skel-circle{width:32px;height:32px;border-radius:50%;flex-shrink:0;
+  background:linear-gradient(90deg,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0.10) 40%,rgba(0,0,0,0.05) 80%);
+  background-size:200% 100%;
+  animation:dash-skel-shimmer 1.4s linear infinite;
+}
+.skel-row .skel-line{flex:1}
+/* ヒーロー（カラー背景）上はコントラストを上げる */
+.dash-hero .skel-line{
+  background:linear-gradient(90deg,rgba(255,255,255,0.20) 0%,rgba(255,255,255,0.45) 40%,rgba(255,255,255,0.20) 80%);
+  background-size:200% 100%;
+  animation:dash-skel-shimmer 1.4s linear infinite;
+  height:14px;border-radius:7px;
+}
+/* ヒーロー右側の「データ取得中」ピル */
+.dash-hero-loader{
+  display:inline-flex;align-items:center;gap:10px;
+  padding:10px 16px;border-radius:999px;
+  background:rgba(255,255,255,0.18);
+  backdrop-filter:blur(6px);
+  color:#fff;font-size:12px;font-weight:600;letter-spacing:0.05em;
+  border:1px solid rgba(255,255,255,0.28);
+  box-shadow:0 2px 12px rgba(0,0,0,0.08);
+  z-index:1;
+}
+.dash-hero-loader .dash-hero-loader-spin{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.35);
+  border-top-color:#fff;
+  animation:fp-spin .8s linear infinite;
+}
+.dash-hero-loader .dash-hero-loader-dots::after{
+  content:'';display:inline-block;width:1.6em;text-align:left;
+  animation:dash-loader-dots 1.4s steps(4,end) infinite;
+}
+@keyframes dash-loader-dots{
+  0%{content:''}
+  25%{content:'.'}
+  50%{content:'..'}
+  75%{content:'...'}
+}
+/* スケルトン用のカード内ラッパ */
+.skel-card-body{padding:4px 0 2px}
+
 /* メンバーカード */
 .member-card{background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:8px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px}
 .member-av{width:34px;height:34px;border-radius:50%;background:var(--em-pale);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:var(--em-dark);flex-shrink:0}
@@ -3530,12 +3586,17 @@ window.showPage = window.showPage || function(name, btn) {
 <!-- ダッシュボード -->
 <div id="page-dashboard" class="page active">
   <div class="dash-hero">
-    <div style="z-index:1">
-      <div class="dash-greeting" id="dash-greeting">読み込み中...</div>
-      <div class="dash-date-str" id="dash-date-str"></div>
+    <div style="z-index:1;flex:1;min-width:0">
+      <div class="dash-greeting" id="dash-greeting"><span class="skel-line" style="width:240px;max-width:60%"></span></div>
+      <div class="dash-date-str" id="dash-date-str"><span class="skel-line" style="width:160px;max-width:40%;height:10px"></span></div>
       <div class="dash-quote" id="dash-quote"></div>
     </div>
-    <div class="dash-hero-stats" id="dash-hero-stats"></div>
+    <div class="dash-hero-stats" id="dash-hero-stats">
+      <div class="dash-hero-loader" id="dash-hero-loader" aria-live="polite">
+        <span class="dash-hero-loader-spin"></span>
+        <span>データ取得中<span class="dash-hero-loader-dots"></span></span>
+      </div>
+    </div>
   </div>
   <!-- 全体連絡（全ロール共通） -->
   <div id="dash-announcements" style="margin-bottom:14px"></div>
@@ -3554,14 +3615,26 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
         <ul id="dash-overdue-list"></ul>
       </div>
-      <div id="dash-milestones-by-day"></div>
+      <div id="dash-milestones-by-day">
+        <div class="skel-card-body" data-dash-skeleton="milestones">
+          <div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div>
+          <div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div>
+          <div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div>
+        </div>
+      </div>
     </section>
     <section class="dashboard-card" id="dash-my-tasks">
       <h3>
         ✅ あなたのタスク
         <a class="card-action" href="javascript:void(0)" onclick="window.myTasksPanel?.openPanel()">もっと見る →</a>
       </h3>
-      <div id="dash-my-tasks-body"></div>
+      <div id="dash-my-tasks-body">
+        <div class="skel-card-body" data-dash-skeleton="my-tasks">
+          <div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div>
+          <div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:75%"></span></div>
+          <div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:50%"></span></div>
+        </div>
+      </div>
     </section>
   </div>
   <!-- 年月フィルター（adminのみ） -->
@@ -7880,6 +7953,10 @@ async function init() {
       document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
       document.getElementById('user-role').textContent = roleLabel(currentUser.role);
       renderHeaderAvatar();
+      // ダッシュボード ヒーローを即座に描画して "読み込み中" 体感を短くする。
+      // データ系（loadProjects/loadCreatives 等）の Promise.all 完了を待つ前に
+      // 挨拶・日付・格言を出すことで、無音の数秒を回避する。
+      try { renderDashHeroIdentity(); } catch (e) { console.warn('[HFS] renderDashHeroIdentity failed:', e); }
       // エラー報告ボタンは常時非表示。setupAutoErrorReporter() がエラーを検知したときに
       // 初めて表示するので、ここでは何もしない（投稿FABと重なる問題の解消）。
       // 通知モジュール（bell / realtime）に「認証完了したよ」を伝えて
@@ -17649,18 +17726,28 @@ function pickDashQuote() {
   return DASH_QUOTES[Math.floor(Math.random() * DASH_QUOTES.length)];
 }
 
-function loadDashboard() {
+// ダッシュボード ヒーローのうち、データ非依存の挨拶・日付・格言を描画。
+// init() 直後（currentUser 確定時点）と loadDashboard() の双方から呼ばれる。
+// 何度呼んでも同じ結果になる冪等関数。
+function renderDashHeroIdentity() {
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'おはようございます' : hour < 18 ? 'こんにちは' : 'お疲れさまです';
   const name = currentUser?.name || currentUser?.email?.split('@')[0] || '';
-  document.getElementById('dash-greeting').textContent = `${greet}、${name}さん`;
-  document.getElementById('dash-date-str').textContent =
+  const greetEl = document.getElementById('dash-greeting');
+  if (greetEl) greetEl.textContent = `${greet}、${name}さん`;
+  const dateEl = document.getElementById('dash-date-str');
+  if (dateEl) dateEl.textContent =
     new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
-  const q = pickDashQuote();
   const quoteEl = document.getElementById('dash-quote');
-  if (quoteEl) {
+  if (quoteEl && !quoteEl.dataset.rendered) {
+    const q = pickDashQuote();
     quoteEl.innerHTML = `“${esc(q.t)}”<span class="dash-quote-author">— ${esc(q.a)}</span>`;
+    quoteEl.dataset.rendered = '1';
   }
+}
+
+function loadDashboard() {
+  renderDashHeroIdentity();
 
   initDashFilter(); // 追加
   const role = effectiveRole();
