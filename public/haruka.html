@@ -2671,7 +2671,7 @@ window.showPage = window.showPage || function(name, btn) {
 
 <!-- ==================== バグ報告: 新規/編集モーダル ==================== -->
 <div class="modal-overlay" id="modal-bug-report" data-no-overlay-close="true" style="z-index:250">
-  <div class="modal-card" style="width:min(1100px,96vw);max-height:92vh;display:flex;flex-direction:column">
+  <div class="modal-card" style="width:min(1500px,98vw);max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title">
       <span id="bug-report-modal-title">🦋 バグ報告</span>
       <button class="modal-close" onclick="closeModal('modal-bug-report')">×</button>
@@ -2679,8 +2679,8 @@ window.showPage = window.showPage || function(name, btn) {
     <input type="hidden" id="br-id">
     <div style="overflow-y:auto;flex:1;padding-right:4px">
 
-      <!-- 2カラムレイアウト（PCは左右、スマホは1カラムフォールバック） -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;align-items:start">
+      <!-- 2カラムレイアウト（PC: 左:右 = 1.4:1 でスクショ側を広く / スマホは1カラムフォールバック） -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;align-items:start">
 
         <!-- 【左カラム】対応者 / スクショ / 重要度+至急 -->
         <div>
@@ -2721,7 +2721,7 @@ window.showPage = window.showPage || function(name, btn) {
                 <span style="flex:1"></span>
                 <button type="button" class="btn danger" onclick="bugReportRemoveScreenshot()" style="font-size:11px;padding:4px 8px">❌ 破棄</button>
               </div>
-              <div style="overflow:auto;max-height:50vh;text-align:center;background:#F3F4F6;border-radius:6px">
+              <div style="overflow:auto;max-height:65vh;text-align:center;background:#F3F4F6;border-radius:6px">
                 <canvas id="br-canvas" style="cursor:crosshair;max-width:100%;display:inline-block"></canvas>
               </div>
               <div style="font-size:11px;color:#6B7280;margin-top:6px">💡 画像上をドラッグして範囲指定。バグ箇所を四角や矢印で示してください。</div>
