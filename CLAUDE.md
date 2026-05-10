@@ -35,6 +35,7 @@
 | 商品 / 訴求軸 / appeal_axes / products / ファイル名生成 | [decisions/001](docs/design/decisions/001-creative-first-product-appeal.md) |
 | 見積明細 / 単価 / rates / 粗利 / deliverable / project_*_rates | [decisions/002](docs/design/decisions/002-estimate-lines-unify-deliverable-rates.md) |
 | ロール / users.role / 権限 / roles マスタ | [decisions/003](docs/design/decisions/003-roles-as-master-data.md) |
+| ⭐ **VIEW AS / 権限制御 / 出し分け / currentUser.role / req.user.role / requirePermission / hasPermission / effectiveRole / X-View-As** — 権限・ロール・UI出し分けに**少しでも触れる実装**は本ADRのチェックリストを**必ず通してから PR を出す**（再発バグ抑止のため例外なし） | [decisions/015](docs/design/decisions/015-view-as-development-checklist.md)（**必読・必須**） |
 | 通貨 / 課金タイプ / 時間単価 / %歩合 | [decisions/004](docs/design/decisions/004-pricing-extensibility.md) |
 | 見積ステータス / 契約状態 / 却下 / 進行管理 | [decisions/005](docs/design/decisions/005-estimate-deliverable-lifecycle.md) |
 | 案件固定費 / スタジオ / 機材 / 経費 / project_client_fees | [decisions/006](docs/design/decisions/006-project-fixed-costs.md) |
