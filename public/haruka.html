@@ -11818,36 +11818,197 @@ async function createCreative() {
   if (btn) { btn.textContent = origText; btn.disabled = false; }
 
   if (res.ok) {
+    // 新規作成された creative の情報を取得（id を「詳細を見る」遷移に使う）
+    let createdCreative = null;
+    try { createdCreative = await res.json(); } catch (_) { createdCreative = null; }
+    const createdId = createdCreative?.id || null;
+    const createdName = createdCreative?.file_name || file_name || '';
+
     document.getElementById('filename-status').textContent = '';
-    const fnEl = document.getElementById('c-file-name');
-    if (fnEl) fnEl.value = '';
-    const titleEl = document.getElementById('c-title');
-    if (titleEl) titleEl.value = '';
-    const appealEl = document.getElementById('c-appeal-type');
-    if (appealEl) appealEl.value = '';
-    const cMemoEl = document.getElementById('c-memo');
-    if (cMemoEl) cMemoEl.value = '';
     await loadCreatives();
     const continuous = document.getElementById('continuous-mode').checked;
-    if (!continuous) {
-      closeModal('modal-creative');
+    if (continuous) {
+      // 連続登録モード ON: 従来通り即座に追加モードに入る（後方互換）
+      _resetCreativeFormForContinuous(cat, isLpOrHp);
     } else {
-      // 連続登録モード: 同じ案件・同じ種別を保持して Step 2 のフォームだけクリア
-      // （上で file_name / title / appeal / memo はクリア済み）
-      // LP/HP の場合は連番が増えるので再生成
-      if (isLpOrHp) {
-        generateLpHpFilename(cat);
-      }
-      const statusEl = document.getElementById('filename-status');
-      if (statusEl) {
-        statusEl.style.color = 'var(--em-dark)';
-        statusEl.textContent = '登録しました。続けて登録できます。';
-      }
+      // 連続登録モード OFF: 3択モーダルで次の動線をユーザーに選ばせる
+      // - 詳細を見る / 続けて追加 / 一覧に戻る
+      showCreativeAddedNextActionModal({
+        createdId,
+        createdName,
+        onContinue: () => _resetCreativeFormForContinuous(cat, isLpOrHp),
+      });
     }
   } else {
     const e = await res.json().catch(() => ({ error: '不明なエラー' }));
     showToast('登録エラー: ' + translateError(e?.error), 'error');
   }
+}
+
+// 連続登録モード相当のフォームリセット。
+// createCreative() の従来挙動と「続けて追加する」選択時の挙動を共通化する。
+// 連続登録モードのチェックを ON にして追加した時と完全に同じ状態にする。
+function _resetCreativeFormForContinuous(cat, isLpOrHp) {
+  const fnEl = document.getElementById('c-file-name');
+  if (fnEl) fnEl.value = '';
+  const titleEl = document.getElementById('c-title');
+  if (titleEl) titleEl.value = '';
+  const appealEl = document.getElementById('c-appeal-type');
+  if (appealEl) appealEl.value = '';
+  const cMemoEl = document.getElementById('c-memo');
+  if (cMemoEl) cMemoEl.value = '';
+  // LP/HP の場合は連番が増えるので再生成
+  if (isLpOrHp && typeof generateLpHpFilename === 'function') {
+    generateLpHpFilename(cat);
+  }
+  const statusEl = document.getElementById('filename-status');
+  if (statusEl) {
+    statusEl.style.color = 'var(--em-dark)';
+    statusEl.textContent = '登録しました。続けて登録できます。';
+  }
+}
+
+// クリエイティブ追加成功後の3択モーダル（バグ報告 #bd019f20 ①）。
+// 「連続登録モード」チェックが OFF のときだけ表示し、追加後の動線をユーザーが選べるようにする。
+// 追加画面にファイルアップロード機能は絶対に入れない設計を維持しつつ、追加直後に詳細画面へ
+// すぐ進める動線を提供する。
+function showCreativeAddedNextActionModal({ createdId, createdName, onContinue }) {
+  // 既存モーダルが残っていれば撤去
+  const prev = document.getElementById('modal-creative-added-next');
+  if (prev) prev.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-creative-added-next';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.style.cssText = `
+    position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;
+    display:flex;align-items:center;justify-content:center;padding:16px;
+  `;
+
+  const box = document.createElement('div');
+  box.style.cssText = `
+    background:#fff;border-radius:12px;max-width:440px;width:100%;
+    box-shadow:0 12px 36px rgba(0,0,0,0.18);overflow:hidden;
+    display:flex;flex-direction:column;
+  `;
+
+  const titleEl = document.createElement('div');
+  titleEl.style.cssText = `
+    padding:14px 18px;font-size:15px;font-weight:600;color:var(--text);
+    border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between;
+  `;
+  const titleText = document.createElement('span');
+  titleText.textContent = 'クリエイティブを追加しました';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.textContent = '×';
+  closeBtn.setAttribute('aria-label', 'close');
+  closeBtn.style.cssText = 'background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)';
+  titleEl.appendChild(titleText);
+  titleEl.appendChild(closeBtn);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:16px 18px;display:flex;flex-direction:column;gap:12px';
+
+  const msg = document.createElement('div');
+  msg.style.cssText = 'font-size:13px;color:var(--text);line-height:1.6';
+  // 安全のため textContent で構築（XSS 防止）
+  const nameStrong = document.createElement('strong');
+  nameStrong.textContent = `「${createdName}」`;
+  msg.appendChild(nameStrong);
+  msg.appendChild(document.createTextNode(' を追加しました。次はどうしますか？'));
+
+  const btnDetail = document.createElement('button');
+  btnDetail.type = 'button';
+  btnDetail.style.cssText = `
+    display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:8px;
+    border:1px solid var(--border);background:var(--em-dark);color:#fff;
+    font-size:14px;font-weight:600;cursor:pointer;text-align:left;
+  `;
+  btnDetail.innerHTML = '<span>📂</span><span>このクリエイティブの詳細を見る</span>';
+  btnDetail.disabled = !createdId;
+  if (!createdId) btnDetail.style.opacity = '0.5';
+
+  const btnContinue = document.createElement('button');
+  btnContinue.type = 'button';
+  btnContinue.style.cssText = `
+    display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:8px;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    font-size:14px;font-weight:600;cursor:pointer;text-align:left;
+  `;
+  btnContinue.innerHTML = '<span>➕</span><span>続けてクリエイティブを追加する</span>';
+
+  const btnList = document.createElement('button');
+  btnList.type = 'button';
+  btnList.style.cssText = `
+    display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:8px;
+    border:1px solid var(--border);background:#fff;color:var(--text-muted);
+    font-size:14px;font-weight:500;cursor:pointer;text-align:left;
+  `;
+  btnList.innerHTML = '<span>📋</span><span>一覧に戻る</span>';
+
+  body.appendChild(msg);
+  body.appendChild(btnDetail);
+  body.appendChild(btnContinue);
+  body.appendChild(btnList);
+
+  box.appendChild(titleEl);
+  box.appendChild(body);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function cleanup() {
+    try { overlay.remove(); } catch (_) {}
+    document.removeEventListener('keydown', onKey, true);
+  }
+  function onKey(e) {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      e.preventDefault();
+      cleanup();
+    }
+  }
+  document.addEventListener('keydown', onKey, true);
+
+  // 背景クリックで閉じる（= 一覧に戻る相当）
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) {
+      cleanup();
+      try { closeModal('modal-creative'); } catch (_) {}
+    }
+  });
+
+  closeBtn.addEventListener('click', () => {
+    cleanup();
+    try { closeModal('modal-creative'); } catch (_) {}
+  });
+
+  btnDetail.addEventListener('click', async () => {
+    cleanup();
+    try { closeModal('modal-creative'); } catch (_) {}
+    if (createdId && typeof openCreativeDetail === 'function') {
+      try { await openCreativeDetail(createdId); } catch (e) {
+        console.warn('[creative-added-next] openCreativeDetail failed:', e);
+      }
+    }
+  });
+
+  btnContinue.addEventListener('click', () => {
+    cleanup();
+    if (typeof onContinue === 'function') {
+      try { onContinue(); } catch (e) {
+        console.warn('[creative-added-next] onContinue failed:', e);
+      }
+    }
+  });
+
+  btnList.addEventListener('click', () => {
+    cleanup();
+    try { closeModal('modal-creative'); } catch (_) {}
+  });
+
+  // 詳細を見るに初期フォーカス
+  setTimeout(() => { try { btnDetail.focus(); } catch (_) {} }, 0);
 }
 
 function openTeamModal(team) {
@@ -32199,6 +32360,14 @@ async function submitDCheckPicker() {
   }
   // 追加レビュアー（任意・creatives.additional_reviewer_ids）
   const extraIds = _dcpState.extraReviewerIds ? [..._dcpState.extraReviewerIds] : [];
+
+  // バグ報告 #bd019f20 ②: Dチェック送信前の確認モーダルを挟む
+  // 送信前に「案件名 / 対象クリエイティブ / アップロードファイル / コメント」を一覧表示し、
+  // ユーザーが内容を確認してから送信できるようにする。
+  // 「戻って修正する」を選ぶとピッカーは閉じずに残り、再操作可能。
+  const okConfirmed = await _showDCheckSubmitConfirm({ directorIds: ids, extraIds });
+  if (!okConfirmed) return; // 戻って修正
+
   const onSubmit = _dcpState.onSubmit;
   closeDCheckPicker();
   if (typeof onSubmit === 'function') {
@@ -32211,6 +32380,71 @@ async function submitDCheckPicker() {
       showToast('Dチェックへの遷移に失敗しました', 'error');
     }
   }
+}
+
+// Dチェック送信前の確認モーダル（バグ報告 #bd019f20 ②）。
+// 案件名 / 対象クリエイティブ / アップロードファイル / コメント を一覧表示し、
+// 「送信する」「戻って修正する」の二択を返す（Promise<boolean>）。
+async function _showDCheckSubmitConfirm({ directorIds, extraIds } = {}) {
+  const cre = currentCreativeDetail || {};
+  const projectName =
+    cre.projects?.project_name || cre.project_name || cre.projects?.name || '（案件名 未設定）';
+  const creativeName = cre.file_name || '（クリエイティブ名 未設定）';
+
+  // アップロードファイル一覧:
+  //   1) 編集者がドロップ済みでまだ送信していない uploadFileData (単一)
+  //   2) すでに最新ラウンドの新ファイルがアップロード済みなら _cdFilesCache の最新版
+  //   いずれも無ければ「（添付なし）」
+  const fileLines = [];
+  try {
+    if (typeof uploadFileData !== 'undefined' && uploadFileData?.file?.name) {
+      fileLines.push(uploadFileData.file.name);
+    }
+  } catch (_) {}
+  try {
+    const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    // 「未提出の最新版」(取り消し可能なファイル) があれば表示
+    const latest = files[0] || null;
+    if (latest && typeof _cdCanUndoUpload === 'function' && _cdCanUndoUpload(latest)) {
+      const fname = latest.generated_name || latest.original_filename || latest.file_name;
+      if (fname && !fileLines.includes(fname)) fileLines.push(fname);
+    }
+  } catch (_) {}
+  const filesLabel = fileLines.length > 0 ? fileLines.join('\n   ') : '（添付なし）';
+
+  // コメント（編集者→ディレクター宛のメモ）。空なら「（なし）」
+  let commentText = '';
+  try {
+    commentText = (document.getElementById('cd-comment-field')?.value || '').trim();
+  } catch (_) {}
+  const commentLabel = commentText ? commentText : '（なし）';
+
+  // Dチェック担当人数の補足（任意・送信内容のサマリとして）
+  const dCount = Array.isArray(directorIds) ? directorIds.length : 0;
+  const eCount = Array.isArray(extraIds) ? extraIds.length : 0;
+  const reviewerSummary =
+    `Dチェック担当 ${dCount}名` + (eCount > 0 ? ` / 追加レビュアー ${eCount}名` : '');
+
+  const message =
+    `以下の内容でDチェックへ送信します。\n\n` +
+    `案件名：\n   ${projectName}\n\n` +
+    `対象クリエイティブ：\n   ${creativeName}\n\n` +
+    `アップロードファイル：\n   ${filesLabel}\n\n` +
+    `コメント：\n   ${commentLabel}\n\n` +
+    `${reviewerSummary}\n\n` +
+    `この内容で送信してよろしいですか？`;
+
+  if (typeof window.showConfirmDialog === 'function') {
+    return await window.showConfirmDialog({
+      title: 'Dチェック送信の確認',
+      message,
+      okLabel: '送信する',
+      cancelLabel: '戻って修正する',
+      okVariant: 'primary',
+    });
+  }
+  // フォールバック（confirm-dialog.js が未読込の場合のみ）
+  return window.confirm(message);
 }
 
 // =====================================================================
