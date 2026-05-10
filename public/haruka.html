@@ -34264,13 +34264,35 @@ function _brUserChipHtml(u, size) {
   return `<span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle">${av}<span>${_brEsc(_brUserLabel(u))}</span></span>`;
 }
 
-// ヘッダーの🐛バッジ: open + in_progress 件数を表示
+// ヘッダーの🐛バッジ: open + in_progress 件数を表示。
+// ただし「最後に一覧を開いた時刻」以降に作成されたものだけカウントする
+// （通知ベルや Verup と同じく「確認したらクリア」の挙動）。
+// 初回（タイムスタンプ未保存）は全件表示で従来挙動を維持。
+function _brLastViewedKey() {
+  // ユーザーごとに分けて保持（共用端末で他人の既読が紛れないように）
+  const uid = (window.currentUser && window.currentUser.id) || 'anon';
+  return `bug-report-last-viewed-at:${uid}`;
+}
+function _brGetLastViewedAt() {
+  try { return localStorage.getItem(_brLastViewedKey()) || null; } catch (_) { return null; }
+}
+function _brSetLastViewedAt(iso) {
+  try { localStorage.setItem(_brLastViewedKey(), iso); } catch (_) {}
+}
 async function loadBugReportOpenCount() {
   try {
     const res = await fetch('/api/haruka/bug-reports');
     if (!res.ok) return;
     const all = await res.json();
-    const n = (all || []).filter(r => r.status === 'open' || r.status === 'in_progress').length;
+    const lastViewed = _brGetLastViewedAt();
+    const lastViewedMs = lastViewed ? new Date(lastViewed).getTime() : 0;
+    const n = (all || []).filter(r => {
+      if (r.status !== 'open' && r.status !== 'in_progress') return false;
+      // 初回（lastViewedMs=0）は全件、2回目以降は「最後に開いて以降に作成された」もののみ
+      if (!lastViewedMs) return true;
+      const createdMs = r.created_at ? new Date(r.created_at).getTime() : 0;
+      return createdMs > lastViewedMs;
+    }).length;
     const badge = document.getElementById('bug-report-badge');
     const btn = document.getElementById('bug-report-toggle');
     if (!badge || !btn) return;
@@ -34288,7 +34310,10 @@ async function loadBugReportOpenCount() {
 async function openBugReportListModal() {
   openModal('modal-bug-report-list');
   _brBindFilterAssignee();
+  // 「確認した」とみなしてバッジをクリア。バッジの再評価は loadBugReportList の後で行う。
+  _brSetLastViewedAt(new Date().toISOString());
   await loadBugReportList();
+  loadBugReportOpenCount();
 }
 
 async function loadBugReportList() {
