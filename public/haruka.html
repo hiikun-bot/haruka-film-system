@@ -2445,6 +2445,39 @@ window.showPage = window.showPage || function(name, btn) {
   #modal-creator-detail .role-chip-sub_director{ background: #EDE9FE; color: #5B21B6; }
   #modal-creator-detail .role-chip-director_as_editor { background: #DCFCE7; color: #166534; }
   #modal-creator-detail .role-chip-other       { background: #F1F5F9; color: #334155; }
+
+  /* バグ報告: canvas エディタの全画面表示モード */
+  #br-screenshot-editor.br-fullscreen {
+    position: fixed !important;
+    inset: 16px !important;
+    z-index: 10050 !important;
+    background: #fff !important;
+    border-radius: 12px !important;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4) !important;
+    padding: 16px !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+  #br-screenshot-editor.br-fullscreen #br-canvas-container {
+    flex: 1 !important;
+    max-height: none !important;
+    overflow: auto !important;
+  }
+  #br-screenshot-editor.br-fullscreen #br-canvas {
+    max-width: 100% !important;
+    max-height: calc(100vh - 120px) !important;
+  }
+  /* 全画面時に下のモーダルを暗くするオーバーレイ */
+  body.br-fullscreen-active::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 10049;
+    pointer-events: none;
+  }
 </style>
 <div class="modal-overlay" id="modal-creator-detail">
   <div class="modal-card" style="width:min(1100px,96vw);max-height:88vh;overflow:auto">
@@ -2718,10 +2751,11 @@ window.showPage = window.showPage || function(name, btn) {
                 <button type="button" class="btn" id="br-tool-arrow" onclick="bugReportSetTool('arrow')" style="font-size:11px;padding:4px 8px">↗ 矢印</button>
                 <button type="button" class="btn" onclick="bugReportUndoAnnotation()" style="font-size:11px;padding:4px 8px">↶ 戻す</button>
                 <button type="button" class="btn" onclick="bugReportClearAnnotations()" style="font-size:11px;padding:4px 8px">🗑 全消去</button>
+                <button type="button" class="btn" id="br-fullscreen-toggle" onclick="bugReportToggleFullscreen()" style="font-size:11px;padding:4px 8px">🔍 拡大</button>
                 <span style="flex:1"></span>
                 <button type="button" class="btn danger" onclick="bugReportRemoveScreenshot()" style="font-size:11px;padding:4px 8px">❌ 破棄</button>
               </div>
-              <div style="overflow:auto;max-height:65vh;text-align:center;background:#F3F4F6;border-radius:6px">
+              <div id="br-canvas-container" style="overflow:auto;max-height:65vh;text-align:center;background:#F3F4F6;border-radius:6px">
                 <canvas id="br-canvas" style="cursor:crosshair;max-width:100%;display:inline-block"></canvas>
               </div>
               <div style="font-size:11px;color:#6B7280;margin-top:6px">💡 画像上をドラッグして範囲指定。バグ箇所を四角や矢印で示してください。</div>
@@ -2765,7 +2799,7 @@ window.showPage = window.showPage || function(name, btn) {
                 <button type="button" class="btn" onclick="bugReportInsertTemplate('env')" style="font-size:11px;padding:4px 10px">📋 環境テンプレを挿入</button>
               </div>
             </div>
-            <textarea id="br-description" class="form-input" rows="14" placeholder="気になっていること、いつから起きているか、どのくらいの頻度か など、自由に書いてください" style="resize:vertical"></textarea>
+            <textarea id="br-description" class="form-input" rows="22" placeholder="気になっていること、いつから起きているか、どのくらいの頻度か など、自由に書いてください" style="resize:vertical;min-height:60vh"></textarea>
           </div>
         </div>
       </div>
@@ -34545,21 +34579,57 @@ function renderBugReportList() {
 // 新規 or 編集モーダルを開く
 //   options: { id?: string, description?: string, title?: string }
 async function openBugReportModal(options = {}) {
-  // ADR 014: 共通 MemberPicker で対応者選択を置き換え（初回のみ）
-  const assignSel = document.getElementById('br-assignee');
-  if (assignSel && (!assignSel.dataset || assignSel.dataset.mpBound !== '1') && typeof MemberPicker !== 'undefined') {
-    MemberPicker.bindSelect(assignSel, {
-      placeholder: '— 未割当 —',
-      emptyLabel: '— 未割当 —',
-    });
+  // 拡大表示状態を毎回リセット（前回開いたまま閉じた場合に備える）
+  document.getElementById('br-screenshot-editor')?.classList.remove('br-fullscreen');
+  document.body.classList.remove('br-fullscreen-active');
+  const fsBtn = document.getElementById('br-fullscreen-toggle');
+  if (fsBtn) fsBtn.textContent = '🔍 拡大';
+
+  // 対応者 select を自前で構築（MemberPicker は loadMembers の結果に currentUser が
+  // 含まれない場合「(不明なメンバー)」になるためバイパス）。allMembers + currentUser を毎回再構築。
+  let assignSel = document.getElementById('br-assignee');
+  // 過去に MemberPicker.bindSelect で trigger 化されていた場合、新しい <select> に戻す
+  if (assignSel && assignSel.tagName !== 'SELECT') {
+    const newSel = document.createElement('select');
+    newSel.id = 'br-assignee';
+    newSel.className = 'form-input';
+    newSel.style.cssText = 'flex:1;min-width:160px';
+    assignSel.parentNode.insertBefore(newSel, assignSel);
+    // 隣の hidden input も削除
+    const next = assignSel.nextSibling;
+    if (next && next.tagName === 'INPUT' && next.type === 'hidden') {
+      next.parentNode.removeChild(next);
+    }
+    assignSel.parentNode.removeChild(assignSel);
+    assignSel = newSel;
   }
+  // option 構築: allMembers ベース、currentUser が含まれていなければ追加
+  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+  const memberList = Array.isArray(allMembers) ? allMembers.slice() : [];
+  if (me?.id && !memberList.some(m => m && m.id === me.id)) {
+    memberList.push({ id: me.id, full_name: me.full_name, nickname: me.nickname });
+  }
+  memberList.sort((a, b) => {
+    const la = (a?.nickname || a?.full_name || '');
+    const lb = (b?.nickname || b?.full_name || '');
+    return la.localeCompare(lb, 'ja');
+  });
+  let optHtml = '<option value="">— 未割当 —</option>';
+  for (const m of memberList) {
+    if (!m || !m.id) continue;
+    const isMe = me?.id === m.id;
+    const baseLabel = m.nickname ? `${_brEsc(m.nickname)}（${_brEsc(m.full_name || '')}）` : _brEsc(m.full_name || '');
+    const label = isMe ? `${baseLabel}（自分）` : baseLabel;
+    optHtml += `<option value="${_brEsc(m.id)}">${label}</option>`;
+  }
+  assignSel.innerHTML = optHtml;
 
   // フォーム初期化
   document.getElementById('br-id').value = '';
   document.getElementById('br-title').value = options.title || '';
   document.getElementById('br-severity').value = 'normal';
   // 対応者の初期値: ログイン中のユーザー（自分が対応者として動く想定）
-  const myId = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : '';
+  const myId = me?.id || '';
   document.getElementById('br-assignee').value = myId || '';
   document.getElementById('br-description').value = options.description || '';
   document.getElementById('br-is-anonymous').checked = false;
@@ -34790,6 +34860,27 @@ function bugReportUndoAnnotation() {
 }
 function bugReportClearAnnotations() {
   _bugReportAnnotations = [];
+  bugReportRedrawCanvas();
+}
+
+// canvas エディタを全画面トグル。
+// 拡大すると画面全体に広がって編集しやすくなる。閉じても元の canvas に
+// 編集後のアノテーションが反映されたままになる（同じ _bugReportAnnotations を共有しているため）。
+function bugReportToggleFullscreen() {
+  const editor = document.getElementById('br-screenshot-editor');
+  const btn = document.getElementById('br-fullscreen-toggle');
+  if (!editor) return;
+  const goingFullscreen = !editor.classList.contains('br-fullscreen');
+  if (goingFullscreen) {
+    editor.classList.add('br-fullscreen');
+    document.body.classList.add('br-fullscreen-active');
+    if (btn) btn.textContent = '🔽 縮小';
+  } else {
+    editor.classList.remove('br-fullscreen');
+    document.body.classList.remove('br-fullscreen-active');
+    if (btn) btn.textContent = '🔍 拡大';
+  }
+  // 再描画でレイアウトを最新化（canvas 自体のサイズは元画像に依存して固定）
   bugReportRedrawCanvas();
 }
 
