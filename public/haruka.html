@@ -32823,9 +32823,17 @@ async function _showDCheckSubmitConfirm({ directorIds, extraIds } = {}) {
   const filesLabel = fileLines.length > 0 ? fileLines.join('\n   ') : '（添付なし）';
 
   // コメント（編集者→ディレクター宛のメモ）。空なら「（なし）」
+  // 後修正フェーズ（Dチェック後修正 / Pチェック後修正 / クライアントチェック後修正）では
+  // cd-comment-field には前回のディレクター指示が入っているため、編集者の返信欄
+  // (cd-editor-reply) を読む。通常時（制作中→Dチェック）は cd-comment-field が編集者→ディレクター宛のメモ。
+  const REVISION_STAGES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const isRevision = REVISION_STAGES.includes(currentCreativeDetail?.status);
+  const commentEl = isRevision
+    ? document.getElementById('cd-editor-reply')
+    : document.getElementById('cd-comment-field');
   let commentText = '';
   try {
-    commentText = (document.getElementById('cd-comment-field')?.value || '').trim();
+    commentText = (commentEl?.value || '').trim();
   } catch (_) {}
   const commentLabel = commentText ? commentText : '（なし）';
 
