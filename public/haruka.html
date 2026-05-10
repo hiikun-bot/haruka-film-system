@@ -10035,7 +10035,7 @@ function renderCreatives() {
   const today = new Date();
   tbody.innerHTML = filtered.map(c => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-    const editorName = editor?.users ? NameDisplay.short(editor.users) : '-';
+    const editorName = editor?.users ? NameDisplay.full(editor.users) : '-';
     const rank = editor?.rank_applied || editor?.users?.rank || '-';
     const editorUserId = editor?.users?.id;
     const homeTeamId = editor?.users?.team_id;
@@ -17224,7 +17224,7 @@ function renderTodayDeadlines(today) {
 
   const rows = items.map(c => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-    const editorName = editor?.users ? NameDisplay.short(editor.users) : '';
+    const editorName = editor?.users ? NameDisplay.full(editor.users) : '';
     const projectName = c.projects?.name || '';
     const clientName = c.projects?.clients?.name || '';
     return `<div class="today-dl-row" onclick="openCreativeDetail('${c.id}')" style="align-items:flex-start">
@@ -17679,7 +17679,7 @@ function _renderAnnouncementStatus() {
       ${av}
       <div style="display:flex;flex-direction:column;min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:${isDone ? 'var(--text)' : '#C0392B'};font-weight:${isDone ? '400' : '600'};line-height:1.2">
-          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(NameDisplay.tooltip(m))}">${esc(NameDisplay.short(m))}</span>
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(NameDisplay.tooltip(m))}">${esc(NameDisplay.full(m))}</span>
           ${leaderBadge}
         </div>
         <div style="font-size:9px;color:var(--text-muted);margin-top:1px">${esc(ROLE_LABEL[m.role] || m.role)}</div>
@@ -18873,7 +18873,7 @@ async function renderAdminDash(today) {
   const alertHtml = alerts.length
     ? alerts.map(({c,diff}) => {
         const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-        const editorName = editor?.users ? NameDisplay.short(editor.users) : '';
+        const editorName = editor?.users ? NameDisplay.full(editor.users) : '';
         const projectName = c.projects?.name || '';
         const clientName = c.projects?.clients?.name || '';
         return `
@@ -19152,7 +19152,7 @@ async function loadAdminInvoices() {
         : `<span style="color:var(--text-muted);font-size:12px">1件</span>`;
       const rowBg = ri % 2 === 0 ? '#fff' : '#F7FFFE';
       const isClient = inv.invoice_type === 'client';
-      const issuerName = inv.issuer ? NameDisplay.short(inv.issuer) : '-';
+      const issuerName = inv.issuer ? NameDisplay.full(inv.issuer) : '-';
       const issuerCell = isClient
         ? `<span style="font-size:11px;padding:2px 7px;border-radius:8px;background:#E8F0FE;color:#1A56DB;font-weight:600;margin-right:6px">発行</span>${esc(issuerName)}`
         : esc(issuerName);
@@ -25328,18 +25328,18 @@ function cdRefreshCommentLabel() {
   const label = document.getElementById('cd-comment-label');
   if (!label || !currentCreativeDetail) return;
   const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
-  const editorName = editorAssign?.users ? NameDisplay.short(editorAssign.users) : '';
+  const editorName = editorAssign?.users ? NameDisplay.full(editorAssign.users) : '';
   // チェック担当者セレクトは廃止（Dチェック進行時のモーダルで都度選択）。
   // ラベル表示は assignment 内 director（既に上書き済み）→ 案件 director の順で解決。
   let directorName = '';
   const dirAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'director');
   if (dirAssign?.users?.full_name) {
-    directorName = NameDisplay.short(dirAssign.users);
+    directorName = NameDisplay.full(dirAssign.users);
   } else {
     const defaultDirId = cdResolveDefaultDirectorId();
     if (defaultDirId) {
       const m = allMembers.find(m => m.id === defaultDirId);
-      directorName = m ? NameDisplay.short(m) : '';
+      directorName = m ? NameDisplay.full(m) : '';
     }
   }
   const fromPart = editorName ? `<span style="font-weight:700;color:var(--text)">${editorName}</span> → ` : '';
@@ -29763,7 +29763,7 @@ function renderCreatorSummaryTable(data) {
           ? `<span title="単価未設定のため金額未集計（本数はカウント済）" style="color:var(--text-muted)">— <small style="font-size:10px">(単価未設定)</small></span>`
           : '—');
     return `<tr style="border-bottom:1px solid var(--border-light)">
-      <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer">${u.nickname ? `${esc(u.nickname)}<span style="font-size:11px;color:var(--text-muted);margin-left:6px">（${esc(u.full_name)}）</span>` : esc(u.full_name)}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
+      <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer;text-align:left">${esc(NameDisplay.full(u))}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-align:center">${esc(u.rank || '-')}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#0369a1">${u.video_count > 0 ? `📹${u.video_count}` : '—'}</td>
@@ -30696,7 +30696,7 @@ function renderLearningVideos() {
   grid.innerHTML = _kvAllData.map(v => {
     const thumb = v.thumbnail_url || '';
     const cat = v.learning_video_categories?.name || '';
-    const poster = v.poster ? NameDisplay.short(v.poster) : '不明';
+    const poster = v.poster ? NameDisplay.full(v.poster) : '不明';
     const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
     const viewBadge = (v.view_count !== null && v.view_count !== undefined)
       ? `<span title="再生回数（管理者のみ表示）" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text-muted)">👁 ${v.view_count}</span>`
@@ -30853,7 +30853,7 @@ async function openVideoPlayer(videoId) {
   // メタ情報
   const meta = document.getElementById('kv-player-meta');
   const cat = v.learning_video_categories?.name || '';
-  const poster = v.poster ? NameDisplay.short(v.poster) : '不明';
+  const poster = v.poster ? NameDisplay.full(v.poster) : '不明';
   const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
   const viewLine = (v.view_count !== null && v.view_count !== undefined)
     ? `<span title="管理者のみ表示">👁 再生 ${v.view_count} 回</span>` : '';
