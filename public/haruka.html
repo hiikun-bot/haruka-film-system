@@ -1835,6 +1835,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- カスタム確認モーダル: window.showConfirmDialog を提供（ネイティブ confirm() の代替） -->
 <script src="/js/confirm-dialog.js"></script>
+<!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
+<script src="/js/name-display.js"></script>
 </head>
 <body>
 <div id="toast-container"></div>
@@ -7255,6 +7257,7 @@ function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 // avatar_url があれば <img>、なければイニシャル円を返す
 function avatarHtml(user, size, opts) {
   const u = user || {};
+  // initial 用は full_name 優先（イニシャルが安定するため）
   const name = u.full_name || u.name || u.nickname || '';
   const initial = (name || '?').trim().charAt(0).toUpperCase();
   const url = u.avatar_url;
@@ -7266,8 +7269,11 @@ function avatarHtml(user, size, opts) {
     cls.push('avatar-' + (size || 'sm'));
   }
   const extraCls = opts?.className ? ' ' + opts.className : '';
-  // opts.title が指定されていればそちらを優先（フルネーム＋ニックネームなど呼び出し側で整形した文字列を使う）
-  const titleText = (opts && typeof opts.title === 'string' && opts.title) ? opts.title : name;
+  // opts.title 優先。未指定なら NameDisplay.full（ニックネーム（名前））を tooltip にする（Tier 1 仕様）
+  const defaultTitle = (typeof window !== 'undefined' && window.NameDisplay)
+    ? (u.id || u.full_name || u.nickname ? window.NameDisplay.full(u) : '')
+    : name;
+  const titleText = (opts && typeof opts.title === 'string' && opts.title) ? opts.title : defaultTitle;
   const titleAttr = titleText ? ` title="${esc(titleText)}"` : '';
   if (url) {
     return `<span class="${cls.join(' ')}${extraCls}" style="${style}"${titleAttr}><img src="${esc(url)}" alt="${esc(name)}" loading="lazy" onerror="this.parentNode.innerHTML='${esc(initial)}'"></span>`;
@@ -7308,9 +7314,10 @@ function bindMemberPickerSelect(selectId, opts) {
 // ユーザー名 + アバターをまとめて返す（横並び、avatar-name のクラスで装飾可）
 function avatarWithName(user, size, opts) {
   const u = user || {};
-  const name = u.full_name || u.name || u.nickname || '';
+  // 表示名は NameDisplay.short（Tier 2: アイコン＋ニックネーム）。tooltip は full（ニックネーム（名前））。
+  const display = (typeof window !== 'undefined' && window.NameDisplay) ? window.NameDisplay.short(u) : (u.full_name || u.name || u.nickname || '');
   const nameStyle = opts?.nameStyle || '';
-  return `<span style="display:inline-flex;align-items:center;gap:6px;min-width:0">${avatarHtml(u, size, opts)}<span style="${nameStyle};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></span>`;
+  return `<span style="display:inline-flex;align-items:center;gap:6px;min-width:0">${avatarHtml(u, size, opts)}<span style="${nameStyle};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(display)}</span></span>`;
 }
 
 let currentUser = null;
@@ -8434,7 +8441,7 @@ async function loadProjects() {
     const projectRows = clientProjects.length
       ? clientProjects.map(p => {
           const period = fmtPeriod(p.start_date, p.end_date);
-          const pd = [p.producer?.full_name ? p.producer.full_name+' P' : null, p.director?.full_name ? p.director.full_name+' D' : null].filter(Boolean).join(' / ');
+          const pd = [p.producer ? NameDisplay.short(p.producer)+' P' : null, p.director ? NameDisplay.short(p.director)+' D' : null].filter(Boolean).join(' / ');
           const regDt = p.created_at ? (() => { const dt=new Date(p.created_at); return `${dt.getFullYear()}年${dt.getMonth()+1}月${dt.getDate()}日登録`; })() : '';
           const cwIcon = p.chatwork_room_id ? `<span title="Chatwork: ${p.chatwork_room_id}" style="font-size:11px;background:#E8F5E9;color:#2E7D32;padding:2px 7px;border-radius:5px;font-weight:500">CW</span>` : '';
           const slIcon = p.slack_channel_url ? `<span title="Slack: ${p.slack_channel_url}" style="font-size:11px;background:#EDE7F6;color:#4527A0;padding:2px 7px;border-radius:5px;font-weight:500">SL</span>` : '';
@@ -9241,7 +9248,7 @@ function renderTeamsList() {
       const canEdit = canEditMember(m);
       return `<div onclick="event.stopPropagation();${canEdit ? `openEditMemberById('${m.id}')` : ''}" style="display:inline-flex;align-items:center;gap:8px;background:var(--em-pale);border-radius:24px;padding:4px 12px 4px 4px;font-size:12px;color:var(--em-dark);${canEdit ? 'cursor:pointer;' : ''}transition:opacity .15s" onmouseenter="${canEdit ? "this.style.opacity='0.75'" : ''}" onmouseleave="${canEdit ? "this.style.opacity='1'" : ''}">
         ${avatarHtml(m, 36)}
-        <span style="color:var(--text);font-weight:500">${esc(m.full_name||'')}</span>
+        <span style="color:var(--text);font-weight:500" title="${esc(NameDisplay.tooltip(m))}">${esc(NameDisplay.short(m))}</span>
         <span style="color:var(--text-muted)">${ROLE_LABEL_SHORT[m.role]||''}</span>
       </div>`;
     }).join('');
@@ -9256,8 +9263,8 @@ function renderTeamsList() {
     const teamName = esc(t.team_name || '');
     const typeLabelMap = { video: '動画チーム', design: 'デザインチーム', secretary: '秘書チーム' };
     const typeLabel = typeLabelMap[t.team_type] || '動画チーム';
-    const producerName = t.producer?.full_name ? esc(t.producer.full_name) : '';
-    const directorName = t.director?.full_name ? esc(t.director.full_name) : '';
+    const producerName = t.producer ? esc(NameDisplay.short(t.producer)) : '';
+    const directorName = t.director ? esc(NameDisplay.short(t.director)) : '';
     return `
     <div class="team-card" id="team-card-${t.id}" onclick="toggleTeamAccordion('${t.id}')">
       <div class="team-card-head">
@@ -9583,7 +9590,7 @@ function renderMemberList() {
           <td style="padding:8px 12px;text-align:center"><span class="status-chip s-teal" style="font-size:11px;padding:2px 8px">${roleLabel(m.role)}</span></td>
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
-          <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.full_name||''}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${m.nickname}）</span>` : ''}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
+          <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.nickname ? `${esc(m.nickname)}<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${esc(m.full_name||'')}）</span>` : esc(m.full_name||'')}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
             // ADR 008 Stage 2: leader_rank バッジ（ロールチップとは別の業務窓口表示）
             m.leader_rank === 'leader' ? ' <span style="font-size:10px;background:#FFE082;color:#7C5800;padding:1px 6px;border-radius:6px;font-weight:600">👑 リーダー</span>'
             : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
@@ -9761,7 +9768,7 @@ function refreshAssigneeMultiLabel() {
   } else if (count === 1) {
     const id = [...currentAssigneeIds][0];
     const m = (allMembers || []).find(x => x.id === id);
-    const name = m ? (m.nickname || m.full_name || '1名選択中') : '1名選択中';
+    const name = m ? NameDisplay.short(m) : '1名選択中';
     labelEl.textContent = `担当者: ${name}`;
     if (badgeEl) { badgeEl.textContent = '1'; badgeEl.style.display = ''; }
   } else {
@@ -9952,7 +9959,7 @@ function renderCreatives() {
   const today = new Date();
   tbody.innerHTML = filtered.map(c => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-    const editorName = editor?.users?.full_name || '-';
+    const editorName = editor?.users ? NameDisplay.short(editor.users) : '-';
     const rank = editor?.rank_applied || editor?.users?.rank || '-';
     const editorUserId = editor?.users?.id;
     const homeTeamId = editor?.users?.team_id;
@@ -10589,7 +10596,7 @@ function renderCreativesGantt(filtered, warningSource) {
     let key, label, meta = null;
     if (currentCreativeGroup === 'assignee') {
       key = r.editorUser?.id || 'unassigned';
-      label = r.editorUser?.full_name ? (r.editorUser.nickname ? `${r.editorUser.nickname}（${r.editorUser.full_name}）` : r.editorUser.full_name) : '未アサイン';
+      label = r.editorUser ? NameDisplay.full(r.editorUser) : '未アサイン';
       meta = { kind: 'assignee', user: r.editorUser, team: r.team };
     } else if (currentCreativeGroup === 'client') {
       const cliObj = r.c.projects?.clients;
@@ -10753,14 +10760,8 @@ function renderCreativesGantt(filtered, warningSource) {
     const cliObj = c.projects?.clients;
     const clientName = cliObj?.name || '-';
     const projName = c.projects?.name || '';
-    // ホバー時のラベル: 「フルネーム（ニックネーム） / 〇〇チーム」 形式。フルネームが取れない場合はニックネームのみ。
-    let personLabel = '';
-    if (editorUser) {
-      const fn = editorUser.full_name || '';
-      const nn = editorUser.nickname || '';
-      if (fn && nn && fn !== nn) personLabel = `${fn}（${nn}）`;
-      else personLabel = fn || nn || '';
-    }
+    // ホバー時のラベル: 「ニックネーム（名前） / 〇〇チーム」形式（NameDisplay.full）
+    const personLabel = editorUser ? NameDisplay.full(editorUser) : '';
     // 「〜チームチーム」二重表記を防ぐ。team_name または team_code に既に「チーム」が含まれていればそのまま使う。
     const _teamFullLabel = (() => {
       if (!team) return '';
@@ -10867,19 +10868,15 @@ function renderCreativesGantt(filtered, warningSource) {
       const u = meta.user;
       const team = meta.team;
       const teamLabel = formatTeamLabel(team);
-      // グループ見出しアバターのホバー: 「フルネーム（ニックネーム）」 / チーム情報
+      // グループ見出しアバターのホバー: 「ニックネーム（名前）」 / チーム情報（NameDisplay.full）
       let groupTitle = '未アサイン';
       if (u) {
-        const fn = u.full_name || '';
-        const nn = u.nickname || '';
-        let pl = '';
-        if (fn && nn && fn !== nn) pl = `${fn}（${nn}）`;
-        else pl = fn || nn || '名無し';
+        const pl = NameDisplay.full(u);
         groupTitle = teamLabel ? `${pl} / ${teamLabel}` : pl;
       }
       const av = u ? (typeof avatarHtml === 'function' ? avatarHtml(u, 24, { title: groupTitle }) : '')
                    : `<span class="cv-g-unassigned" style="width:24px;height:24px;font-size:11px" title="未アサイン">未</span>`;
-      const dispName = u ? (u.full_name || u.nickname || '名無し') : '未アサイン';
+      const dispName = u ? NameDisplay.short(u) : '未アサイン';
       return `<div class="cv-g-group-row is-assignee" style="width:${FIXED_W}px">
         ${av}
         <span class="ga-name">${esc(dispName)}</span>
@@ -11031,7 +11028,7 @@ function _cvSidePanelHtml(rows) {
     if (_cvBallHolderName(r.c)) ballRows.push(r);
     if ((r.loadMax || 0) >= 3) {
       const key = r.editorUser?.id || 'unassigned';
-      const cur = assigneeLoad.get(key) || { name: r.editorUser?.full_name || '未アサイン', team: _cvTeamShort(r.team), count: 0, max: 0 };
+      const cur = assigneeLoad.get(key) || { name: r.editorUser ? NameDisplay.short(r.editorUser) : '未アサイン', team: _cvTeamShort(r.team), count: 0, max: 0 };
       cur.count++;
       cur.max = Math.max(cur.max, r.loadMax || 0);
       assigneeLoad.set(key, cur);
@@ -11342,7 +11339,7 @@ function renderAlerts(rows) {
   if (!late.length) { el.innerHTML=''; return; }
   const chips = late.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
-    const person = e?.users?.full_name || '?';
+    const person = e?.users ? NameDisplay.short(e.users) : '?';
     const client = c.projects?.clients?.name || '?';
     const raw = c.file_name || '';
     const shortName = raw.length > 22 ? `${raw.slice(0,8)}…${raw.slice(-10)}` : raw;
@@ -11775,7 +11772,7 @@ function renderTeamMemberChips() {
 
   const rowsHtml = selected.map((m, i) => {
     const isLast = i === selected.length - 1 && orphans.length === 0;
-    const nameHtml = `<span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.full_name || '')}${m.nickname ? `<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">（${esc(m.nickname)}）</span>` : ''}</span>`;
+    const nameHtml = `<span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.nickname ? `${esc(m.nickname)}<span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px">（${esc(m.full_name || '')}）</span>` : esc(m.full_name || '')}</span>`;
     const roleShort = _tmRoleShort(m.role);
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;${isLast?'':'border-bottom:1px solid var(--border);'}">
       ${avatarHtml(m, 28)}
@@ -13493,8 +13490,8 @@ function _renderSubMemberChips(targetId, ids, onRemove) {
   }
   wrap.innerHTML = ids.map(id => {
     const m = _findMemberById(id);
-    const name = m ? (m.full_name || m.nickname || '(名前未設定)') : '(不明なメンバー)';
-    const nick = m && m.nickname && m.nickname !== m.full_name ? `（${m.nickname}）` : '';
+    const name = m ? NameDisplay.full(m) : '(不明なメンバー)';
+    const nick = '';
     const role = m ? _roleShort(m.role) : '';
     const roleBadge = role
       ? `<span style="font-size:10px;color:var(--text-muted);background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(role)}</span>`
@@ -14250,7 +14247,7 @@ function renderLineCostsBody(line) {
     const user = lc.user || null;
     const roleLabel = role?.label || role?.code || 'ロール未設定';
     const ownerLabel = user
-      ? `${esc(user.full_name || user.email || 'ユーザー')}`
+      ? `${esc(NameDisplay.short(user) || user.email || 'ユーザー')}`
       : `<span style="color:var(--text-muted)">(ロール固定)</span>`;
     const unitText = formatLineCostUnit(lc);
     const totalCost = calcLineCostFront(lc, line);
@@ -14657,7 +14654,7 @@ function openProjectLineCostDeleteConfirm(lineId, costId) {
   const role = cost.role;
   const user = cost.user;
   const roleLabel = role?.label || role?.code || 'ロール未設定';
-  const ownerLabel = user ? (user.full_name || user.email || 'ユーザー') : '(ロール固定)';
+  const ownerLabel = user ? (NameDisplay.short(user) || user.email || 'ユーザー') : '(ロール固定)';
   const unitText = formatLineCostUnit(cost);
   document.getElementById('plc-del-message').innerHTML = `
     <div style="margin-bottom:6px"><strong>${esc(roleLabel)}</strong> ${esc(ownerLabel)}</div>
@@ -15058,7 +15055,7 @@ function renderProjectScheduleTasks() {
     return;
   }
   const userOpts = (allMembers || []).filter(m => m.is_active !== false)
-    .map(m => `<option value="${m.id}">${esc(m.full_name || '')}</option>`).join('');
+    .map(m => `<option value="${m.id}">${esc(NameDisplay.full(m))}</option>`).join('');
 
   const rows = tasks.map((t, idx) => {
     const isPhase = !!t.is_phase_header;
@@ -15083,7 +15080,7 @@ function renderProjectScheduleTasks() {
       ? `<select onchange="updateTaskField('${t.id}', 'assignee_user_id', this.value || null)" style="border:none;background:transparent;font-size:10px;max-width:80px">
            <option value="">未設定</option>
            ${(allMembers || []).filter(m => m.is_active !== false).map(m =>
-              `<option value="${m.id}"${m.id === t.assignee_user_id ? ' selected' : ''}>${esc(m.full_name || '')}</option>`
+              `<option value="${m.id}"${m.id === t.assignee_user_id ? ' selected' : ''}>${esc(NameDisplay.full(m))}</option>`
            ).join('')}
          </select>`
       : '';
@@ -17151,7 +17148,7 @@ function renderTodayDeadlines(today) {
 
   const rows = items.map(c => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-    const editorName = editor?.users?.full_name || '';
+    const editorName = editor?.users ? NameDisplay.short(editor.users) : '';
     const projectName = c.projects?.name || '';
     const clientName = c.projects?.clients?.name || '';
     return `<div class="today-dl-row" onclick="openCreativeDetail('${c.id}')" style="align-items:flex-start">
@@ -17233,7 +17230,7 @@ async function loadAnnouncements() {
       const av = pu.avatar_url
         ? `<img src="${esc(pu.avatar_url)}" style="width:18px;height:18px;border-radius:50%;object-fit:cover;flex-shrink:0">`
         : `<div style="width:18px;height:18px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0">${esc((pu.full_name || '?').charAt(0))}</div>`;
-      posterAvatar = `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;color:var(--text-muted);vertical-align:middle">${av}<span>${esc(pu.full_name)}</span></span>`;
+      posterAvatar = `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;color:var(--text-muted);vertical-align:middle" title="${esc(NameDisplay.tooltip(pu))}">${av}<span>${esc(NameDisplay.short(pu))}</span></span>`;
     }
     const ctaBlock = done
       ? `<div class="ann-cta-row"><button class="ann-cta-done" onclick="undoAnnouncementAck('${a.id}')">✅ 完了済み <span style="opacity:0.7;font-weight:500">(タップで取消)</span></button></div>`
@@ -17404,7 +17401,7 @@ async function sendAnnouncementLeaderRemind(opts = {}) {
       const teamLabel = `${g.team_code}チーム${g.team_name ? ' / ' + g.team_name : ''}`;
       leaderTargets.push({
         teamLabel,
-        leaderName: leaderMember?.full_name || '(不明)',
+        leaderName: leaderMember ? NameDisplay.short(leaderMember) : '(不明)',
         memberCount: unackedMembers.length,
       });
     } else {
@@ -17606,7 +17603,7 @@ function _renderAnnouncementStatus() {
       ${av}
       <div style="display:flex;flex-direction:column;min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:${isDone ? 'var(--text)' : '#C0392B'};font-weight:${isDone ? '400' : '600'};line-height:1.2">
-          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.full_name)}</span>
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(NameDisplay.tooltip(m))}">${esc(NameDisplay.short(m))}</span>
           ${leaderBadge}
         </div>
         <div style="font-size:9px;color:var(--text-muted);margin-top:1px">${esc(ROLE_LABEL[m.role] || m.role)}</div>
@@ -18315,7 +18312,7 @@ function renderTweetCard(t) {
       ${av}
       <div class="tweet-meta">
         <div class="tweet-meta-row">
-          <span class="tweet-author">${esc(u.full_name || '不明')}</span>
+          <span class="tweet-author" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
           ${roleBadge}
           ${pinBadge}
           <span class="tweet-time">${_twTimeAgo(t.created_at)}</span>
@@ -18417,7 +18414,7 @@ async function loadTweetCommentsPage(tweetId) {
       ${av}
       <div style="flex:1;min-width:0">
         <div class="tw-comment-meta">
-          <span class="tw-comment-author">${esc(u.full_name || '不明')}</span>
+          <span class="tw-comment-author" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
           <span>${_twTimeAgo(c.created_at)}</span>
           ${delBtn}
         </div>
@@ -18505,12 +18502,12 @@ async function loadDashboardBirthdays() {
     const people = todays.map(p => `
       <div class="bc-person">
         ${avatarHtml(p, 'bc-avatar')}
-        <div class="bc-pname">${esc(p.full_name)}</div>
+        <div class="bc-pname" title="${esc(NameDisplay.tooltip(p))}">${esc(NameDisplay.short(p))}</div>
         <div class="bc-page">おめでとう！</div>
       </div>`).join('');
     const titleNames = todays.length === 1
-      ? `${esc(todays[0].full_name)}さん`
-      : `${todays.map(p => esc(p.full_name) + 'さん').join('・')}`;
+      ? `${esc(NameDisplay.short(todays[0]))}さん`
+      : `${todays.map(p => esc(NameDisplay.short(p)) + 'さん').join('・')}`;
     // 軽い紙吹雪（CSSのみ）
     const emojis = ['🎂','🎉','🎊','🎈','🎁','✨'];
     const confetti = Array.from({length: 12}, (_, i) => {
@@ -18540,7 +18537,7 @@ async function loadDashboardBirthdays() {
       return `<div class="bday-card">
         ${avatarHtml(p, 'bday-avatar')}
         <div style="flex:1;min-width:0">
-          <div class="bday-name">${esc(p.full_name)}</div>
+          <div class="bday-name" title="${esc(NameDisplay.tooltip(p))}">${esc(NameDisplay.short(p))}</div>
           <div class="bday-meta">${p.month}/${p.day}${ageLabel}</div>
         </div>
         <span class="bday-days${urgent}">${daysLabel}</span>
@@ -18800,7 +18797,7 @@ async function renderAdminDash(today) {
   const alertHtml = alerts.length
     ? alerts.map(({c,diff}) => {
         const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-        const editorName = editor?.users?.full_name || '';
+        const editorName = editor?.users ? NameDisplay.short(editor.users) : '';
         const projectName = c.projects?.name || '';
         const clientName = c.projects?.clients?.name || '';
         return `
@@ -19079,9 +19076,10 @@ async function loadAdminInvoices() {
         : `<span style="color:var(--text-muted);font-size:12px">1件</span>`;
       const rowBg = ri % 2 === 0 ? '#fff' : '#F7FFFE';
       const isClient = inv.invoice_type === 'client';
+      const issuerName = inv.issuer ? NameDisplay.short(inv.issuer) : '-';
       const issuerCell = isClient
-        ? `<span style="font-size:11px;padding:2px 7px;border-radius:8px;background:#E8F0FE;color:#1A56DB;font-weight:600;margin-right:6px">発行</span>${inv.issuer?.full_name||'-'}`
-        : (inv.issuer?.full_name||'-');
+        ? `<span style="font-size:11px;padding:2px 7px;border-radius:8px;background:#E8F0FE;color:#1A56DB;font-weight:600;margin-right:6px">発行</span>${esc(issuerName)}`
+        : esc(issuerName);
       return `<tr style="background:${isClient?'#F0F7FF':rowBg};border-bottom:0.5px solid var(--border)">
         <td style="padding:10px 12px;font-weight:600;font-size:13px;white-space:nowrap">${issuerCell}</td>
         <td style="padding:10px 12px;text-align:center">${isClient?'<span style="color:#1A56DB;font-size:11px">→クライアント</span>':nthLabel}</td>
@@ -21214,7 +21212,7 @@ function updateAssigneeSelect() {
   sel.innerHTML = '<option value="">担当者を選択</option>';
   sel.innerHTML += candidates.map(m => {
     const label = ROLE_LABEL[m.role] ? `（${ROLE_LABEL[m.role]}）` : '';
-    return `<option value="${m.id}">${m.full_name}${label}</option>`;
+    return `<option value="${m.id}">${esc(NameDisplay.full(m))}${label}</option>`;
   }).join('');
   if (prev) {
     sel.value = prev;
@@ -21372,7 +21370,7 @@ async function renderUserStatsPage() {
       <td style="padding:8px 12px;font-size:13px;font-weight:500;white-space:nowrap">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="width:8px;height:8px;border-radius:50%;background:${u.is_online ? '#22c55e' : '#d1d5db'};flex-shrink:0;display:inline-block"></span>
-          ${esc(u.full_name || u.email)}
+          <span title="${esc(NameDisplay.tooltip(u))}">${esc(NameDisplay.short(u) || u.email)}</span>
         </div>
       </td>
       <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${esc(u.email)}</td>
@@ -25254,16 +25252,19 @@ function cdRefreshCommentLabel() {
   const label = document.getElementById('cd-comment-label');
   if (!label || !currentCreativeDetail) return;
   const editorAssign = (currentCreativeDetail.creative_assignments || []).find(a => ['editor','designer','director_as_editor'].includes(a.role));
-  const editorName = editorAssign?.users?.full_name || '';
+  const editorName = editorAssign?.users ? NameDisplay.short(editorAssign.users) : '';
   // チェック担当者セレクトは廃止（Dチェック進行時のモーダルで都度選択）。
   // ラベル表示は assignment 内 director（既に上書き済み）→ 案件 director の順で解決。
   let directorName = '';
   const dirAssign = (currentCreativeDetail.creative_assignments || []).find(a => a.role === 'director');
   if (dirAssign?.users?.full_name) {
-    directorName = dirAssign.users.full_name;
+    directorName = NameDisplay.short(dirAssign.users);
   } else {
     const defaultDirId = cdResolveDefaultDirectorId();
-    if (defaultDirId) directorName = allMembers.find(m => m.id === defaultDirId)?.full_name || '';
+    if (defaultDirId) {
+      const m = allMembers.find(m => m.id === defaultDirId);
+      directorName = m ? NameDisplay.short(m) : '';
+    }
   }
   const fromPart = editorName ? `<span style="font-weight:700;color:var(--text)">${editorName}</span> → ` : '';
   const toPart   = directorName ? `ディレクター（<span style="font-weight:700;color:var(--text)">${directorName}</span>）` : 'ディレクター';
@@ -25277,7 +25278,7 @@ function cdUpdateAssigneeSelect() {
   const members = allMembers.filter(m => m.is_active !== false &&
     (!teamId || m.team_id === teamId || m.role === 'admin'));
   sel.innerHTML = '<option value="">（未設定）</option>' +
-    members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+    members.map(m => `<option value="${m.id}">${esc(NameDisplay.full(m))}</option>`).join('');
 }
 
 function fillCommentTemplate() {
@@ -25415,7 +25416,7 @@ function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback, timestam
   const chip = (user, fallback) => {
     if (user && (user.full_name || user.id)) {
       // avatar(20px) + 名前。flex-wrap 対応で長い名前でも崩れない。
-      return `<span style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:0.5px solid var(--border);border-radius:14px;padding:2px 9px 2px 3px;max-width:100%">${avatarHtml(user, 20)}<span style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${esc(user.full_name || '?')}</span></span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:0.5px solid var(--border);border-radius:14px;padding:2px 9px 2px 3px;max-width:100%" title="${esc(NameDisplay.tooltip(user))}">${avatarHtml(user, 20)}<span style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${esc(NameDisplay.short(user))}</span></span>`;
     }
     return `<span style="font-size:12px;color:var(--text-muted)">${esc(fallback || '-')}</span>`;
   };
@@ -26408,7 +26409,7 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-project-name').textContent = c.projects?.name || '-';
   const cdAssigneeEl = document.getElementById('cd-assignee');
   if (editor?.users?.full_name) {
-    cdAssigneeEl.innerHTML = `<span style="display:inline-flex;align-items:center;gap:8px">担当: ${avatarHtml(editor.users, 40)}<span>${esc(editor.users.full_name)}</span></span>`;
+    cdAssigneeEl.innerHTML = `<span style="display:inline-flex;align-items:center;gap:8px">担当: ${avatarHtml(editor.users, 40)}<span>${esc(NameDisplay.full(editor.users))}</span></span>`;
   } else {
     cdAssigneeEl.textContent = '担当者未設定';
   }
@@ -28155,7 +28156,7 @@ function fpRenderCommentMarkers(comments) {
   Object.entries(byTime).forEach(([sec, list]) => {
     const pct  = (parseFloat(sec) / video.duration) * 100;
     const dot  = document.createElement('div');
-    const names = list.map(c => c.users?.full_name || '不明').join(', ');
+    const names = list.map(c => c.users ? NameDisplay.short(c.users) : '不明').join(', ');
     const preview = list[0].comment.slice(0, 30) + (list[0].comment.length > 30 ? '…' : '');
     dot.style.cssText = `position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:#f87171;cursor:pointer;border:1.5px solid #fff;opacity:0.9;transition:opacity .15s,transform .15s;pointer-events:auto;z-index:5`;
     dot.title = `💬 ${names}: ${preview} @ ${list[0].timecode}`;
@@ -28428,7 +28429,7 @@ function fpRenderChecklist(data, fileId) {
   };
   const itemHtml = (item) => {
     const done = item.result?.is_checked;
-    const who  = item.result?.users?.full_name;
+    const who  = item.result?.users ? NameDisplay.short(item.result.users) : '';
     const at   = fmtCheckedAt(item.result?.checked_at);
     return `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;background:${done ? '#052e16' : '#1c1c1f'};border:1px solid ${done ? '#166534' : '#2a2a2e'};margin-bottom:6px;cursor:pointer;transition:background .15s"
@@ -28889,7 +28890,7 @@ function fpRenderBboxOverlays() {
     const div = document.createElement('div');
     div.className = 'fp-bbox-existing';
     div.dataset.commentId = c.id;
-    div.title = (c.users?.full_name ? c.users.full_name + ': ' : '') + (c.comment || '');
+    div.title = (c.users ? NameDisplay.full(c.users) + ': ' : '') + (c.comment || '');
     div.style.cssText = 'position:absolute;border:' + borderW + 'px solid #f5c518;background:rgba(245,197,24,0.08);box-sizing:border-box;cursor:pointer;pointer-events:auto;transition:background .15s';
     div.style.left   = (b.x * W) + 'px';
     div.style.top    = (b.y * H) + 'px';
@@ -28995,8 +28996,8 @@ function _renderFpCommentHtml(c, isReply) {
   })();
   const userObj = c.users || { full_name: '不明' };
   const avatarTitle = roleLabel
-    ? `${userObj.full_name || '不明'}（${roleLabel}）`
-    : (userObj.full_name || '不明');
+    ? `${NameDisplay.full(userObj)}（${roleLabel}）`
+    : NameDisplay.full(userObj);
   const itemStyle = isReply
     ? `margin:8px 0 0 18px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:2px solid #3ECFCA;border-top:0.5px solid var(--border);border-right:0.5px solid var(--border);border-bottom:0.5px solid var(--border)`
     : `margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s`;
@@ -29315,7 +29316,7 @@ function renderKnowledgeCards(list, compact) {
       <div style="font-size:10px;color:#92400e;margin-bottom:4px;font-weight:500">${esc(c.creative_files?.creatives?.projects?.name || '')} / ${esc(c.creative_files?.generated_name || '')}</div>
       <div style="font-size:${compact?13:14}px;line-height:1.7;white-space:pre-wrap;word-break:break-all;margin-bottom:4px">${esc(c.comment)}</div>
       <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
-        <span>${esc(c.users?.full_name || '')}</span>
+        <span title="${esc(NameDisplay.tooltip(c.users))}">${esc(c.users ? NameDisplay.short(c.users) : '')}</span>
         <span>${new Date(c.created_at).toLocaleDateString('ja-JP')}</span>
       </div>
     </div>`;
@@ -29686,7 +29687,7 @@ function renderCreatorSummaryTable(data) {
           ? `<span title="単価未設定のため金額未集計（本数はカウント済）" style="color:var(--text-muted)">— <small style="font-size:10px">(単価未設定)</small></span>`
           : '—');
     return `<tr style="border-bottom:1px solid var(--border-light)">
-      <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer">${esc(u.full_name)}${u.nickname ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">${esc(u.nickname)}</span>` : ''}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
+      <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer">${u.nickname ? `${esc(u.nickname)}<span style="font-size:11px;color:var(--text-muted);margin-left:6px">（${esc(u.full_name)}）</span>` : esc(u.full_name)}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-align:center">${esc(u.rank || '-')}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#0369a1">${u.video_count > 0 ? `📹${u.video_count}` : '—'}</td>
@@ -29770,7 +29771,7 @@ async function openCreatorDetail(userId) {
 
   const yen = (n) => '¥' + Number(n || 0).toLocaleString();
   const u = data.user;
-  const uname = u.full_name + (u.nickname ? ` (${u.nickname})` : '');
+  const uname = NameDisplay.full(u);
   titleEl.innerHTML = `📋 ${esc(uname)} — ${data.year}年${data.month}月 ${esc(data.status_label)}<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
 
   // 上部サマリーチップ（renderCreatorSummaryTable と同じ色味）
@@ -30418,7 +30419,7 @@ function _knRenderCardChunk(list) {
         <div class="kn-card-filename">${esc(filename)}</div>
         <div class="kn-card-comment">${esc(c.comment || '')}</div>
         <div class="kn-card-foot">
-          <span class="kn-card-author"><span class="kn-avatar">${avatarInner}</span>${esc(author)}</span>
+          <span class="kn-card-author" title="${esc(NameDisplay.tooltip(c.users))}"><span class="kn-avatar">${avatarInner}</span>${esc(c.users ? NameDisplay.short(c.users) : '')}</span>
           <span>${new Date(c.created_at).toLocaleDateString('ja-JP')}</span>
         </div>
         <span class="kn-card-cta">▶ プレビュー</span>
@@ -30459,7 +30460,7 @@ function _knRenderTableChunk(list) {
           ${esc(filename)}
           ${timecode ? `<div style="font-size:10px;color:#92400e;margin-top:2px">⏱ ${esc(timecode)}</div>` : ''}
         </td>
-        <td style="white-space:nowrap"><span class="kn-card-author"><span class="kn-avatar kn-avatar-table">${avatarInner}</span>${esc(author)}</span></td>
+        <td style="white-space:nowrap"><span class="kn-card-author" title="${esc(NameDisplay.tooltip(c.users))}"><span class="kn-avatar kn-avatar-table">${avatarInner}</span>${esc(c.users ? NameDisplay.short(c.users) : '')}</span></td>
         <td><div class="kn-row-comment">${esc(c.comment || '')}</div></td>
         <td>
           <span class="kn-row-act" onclick="event.stopPropagation()">
@@ -30619,7 +30620,7 @@ function renderLearningVideos() {
   grid.innerHTML = _kvAllData.map(v => {
     const thumb = v.thumbnail_url || '';
     const cat = v.learning_video_categories?.name || '';
-    const poster = v.poster?.full_name || '不明';
+    const poster = v.poster ? NameDisplay.short(v.poster) : '不明';
     const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
     const viewBadge = (v.view_count !== null && v.view_count !== undefined)
       ? `<span title="再生回数（管理者のみ表示）" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text-muted)">👁 ${v.view_count}</span>`
@@ -30776,7 +30777,7 @@ async function openVideoPlayer(videoId) {
   // メタ情報
   const meta = document.getElementById('kv-player-meta');
   const cat = v.learning_video_categories?.name || '';
-  const poster = v.poster?.full_name || '不明';
+  const poster = v.poster ? NameDisplay.short(v.poster) : '不明';
   const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
   const viewLine = (v.view_count !== null && v.view_count !== undefined)
     ? `<span title="管理者のみ表示">👁 再生 ${v.view_count} 回</span>` : '';
@@ -31088,7 +31089,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
       usedIds.add(id);
       return {
         id: m.id,
-        name: m.full_name,
+        name: NameDisplay.full(m),
         avatar_url: m.avatar_url || null,
         sub: '案件ディレクター・固定',
         star: true,
@@ -31117,7 +31118,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
       usedIds.add(id);
       return {
         id: m.id,
-        name: m.full_name,
+        name: NameDisplay.full(m),
         avatar_url: m.avatar_url || null,
         sub: 'サブD',
       };
@@ -31174,7 +31175,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: roleLabel(m.role), role: m.role || '' };
+      return { id: m.id, name: NameDisplay.full(m), avatar_url: m.avatar_url || null, sub: roleLabel(m.role), role: m.role || '' };
     });
   if (teamItems.length) {
     leftSections.push({ title: 'チーム内メンバー', items: teamItems, variant: 'team', scrollable: true });
@@ -31186,7 +31187,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: '秘書' };
+      return { id: m.id, name: NameDisplay.full(m), avatar_url: m.avatar_url || null, sub: '秘書' };
     });
   if (secItems.length) {
     rightSections.push({ title: '秘書', items: secItems, variant: 'plain' });
@@ -31199,7 +31200,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers);
   const otherItems = otherUsers.map(m => ({
     id: m.id,
-    name: m.full_name,
+    name: NameDisplay.full(m),
     avatar_url: m.avatar_url || null,
     sub: roleLabel(m.role),
     role: m.role || '',
@@ -31261,7 +31262,7 @@ async function openDCheckPicker({ onSubmit } = {}) {
       .sort(dcpCompareUsers)
       .map(m => ({
         id: m.id,
-        name: m.full_name,
+        name: NameDisplay.full(m),
         avatar_url: m.avatar_url || null,
         sub: roleLabel(m.role),
         role: m.role || '',
@@ -31837,7 +31838,7 @@ async function openPCheckPicker({ onSubmit } = {}) {
       usedIds.add(id);
       return {
         id: m.id,
-        name: m.full_name,
+        name: NameDisplay.full(m),
         avatar_url: m.avatar_url || null,
         sub: '案件プロデューサー・固定',
         star: true,
@@ -31864,7 +31865,7 @@ async function openPCheckPicker({ onSubmit } = {}) {
       usedIds.add(id);
       return {
         id: m.id,
-        name: m.full_name,
+        name: NameDisplay.full(m),
         avatar_url: m.avatar_url || null,
         sub: 'サブP',
       };
@@ -31913,7 +31914,7 @@ async function openPCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: roleLabel(m.role), role: m.role || '' };
+      return { id: m.id, name: NameDisplay.full(m), avatar_url: m.avatar_url || null, sub: roleLabel(m.role), role: m.role || '' };
     });
   if (teamItems.length) {
     leftSections.push({ title: 'チーム内メンバー', items: teamItems, variant: 'team', scrollable: true });
@@ -31925,7 +31926,7 @@ async function openPCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers)
     .map(m => {
       usedIds.add(m.id);
-      return { id: m.id, name: m.full_name, avatar_url: m.avatar_url || null, sub: '秘書' };
+      return { id: m.id, name: NameDisplay.full(m), avatar_url: m.avatar_url || null, sub: '秘書' };
     });
   if (secItems.length) {
     rightSections.push({ title: '秘書', items: secItems, variant: 'plain' });
@@ -31937,7 +31938,7 @@ async function openPCheckPicker({ onSubmit } = {}) {
     .sort(dcpCompareUsers);
   const otherItems = otherUsers.map(m => ({
     id: m.id,
-    name: m.full_name,
+    name: NameDisplay.full(m),
     avatar_url: m.avatar_url || null,
     sub: roleLabel(m.role),
     role: m.role || '',
@@ -32577,7 +32578,7 @@ function ceUpdateAssigneeSelect() {
     members = members.filter(m => teamMemberIds.has(m.id) || m.team_id === teamId);
   }
   sel.innerHTML = '<option value="">（未設定）</option>' +
-    members.map(m => `<option value="${m.id}">${m.full_name}</option>`).join('');
+    members.map(m => `<option value="${m.id}">${esc(NameDisplay.full(m))}</option>`).join('');
 }
 
 async function openCreativeEdit(id) {
