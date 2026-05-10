@@ -2821,8 +2821,11 @@ window.showPage = window.showPage || function(name, btn) {
           </select>
         </div>
 
-        <!-- 改善済みチェック (admin 専用) -->
-        <div class="form-group" id="br-improved-wrap" style="display:none">
+        <!-- 改善済みチェック (admin 専用)
+             ※ Step 3 で「Bug-Report-Id trailer」付きのPRがマージされた瞬間に
+                workflow が improvement_version_log_id / improved_at を自動セットするので、
+                手動チェック UI は基本不要。隠しておき、API 互換のためコードは残す -->
+        <div class="form-group" id="br-improved-wrap" style="display:none !important">
           <label class="form-label">✅ 改善済みチェック <span style="color:var(--text-muted);font-size:11px">（管理者のみ。報告内容に対して改善を実装済みかどうか）</span></label>
           <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;padding:10px">
             <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -2853,15 +2856,15 @@ window.showPage = window.showPage || function(name, btn) {
           <div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:10px">
             <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px">
               <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="radio" name="br-triage" value="to_fix" id="br-triage-to_fix">
+                <input type="radio" name="br-triage" value="to_fix" id="br-triage-to_fix" onchange="_brPreviewStatusFromTriage(this.value)">
                 <span>✅ 対応する</span>
               </label>
               <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="radio" name="br-triage" value="hold" id="br-triage-hold">
+                <input type="radio" name="br-triage" value="hold" id="br-triage-hold" onchange="_brPreviewStatusFromTriage(this.value)">
                 <span>⏸ 保留</span>
               </label>
               <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="radio" name="br-triage" value="wont_fix" id="br-triage-wont_fix">
+                <input type="radio" name="br-triage" value="wont_fix" id="br-triage-wont_fix" onchange="_brPreviewStatusFromTriage(this.value)">
                 <span>❌ 却下</span>
               </label>
             </div>
@@ -34214,10 +34217,10 @@ async function openBugReportModal(options = {}) {
       document.getElementById('br-anonymous-wrap').style.display = 'none';
       document.getElementById('br-status').value = r.status || 'open';
       document.getElementById('br-edit-only').style.display = '';
-      // 削除と改善済みチェックは admin のみ
+      // 削除は admin のみ。改善済みチェックは Step 3 で自動化されるため非表示固定
       const isAdmin = (typeof currentUser !== 'undefined' && currentUser?.role === 'admin');
       document.getElementById('br-delete-btn').style.display = isAdmin ? '' : 'none';
-      document.getElementById('br-improved-wrap').style.display = isAdmin ? '' : 'none';
+      // br-improved-wrap は HTML 側で display:none !important なので明示変更不要
       // 改善済みチェック状態の復元
       document.getElementById('br-improved').checked = !!r.improved_at;
       if (isAdmin) {
@@ -34242,11 +34245,18 @@ async function openBugReportModal(options = {}) {
       _brLoadComments(r.id);
 
       // メタ情報（reporter_user_id は「保存ボタンを押した人＝入力者」を意味する）
+      // 入力者は初回作成時のみセットされ、以降の更新では絶対に上書きされない。
+      // 最終更新者は last_updated_by_user_id で別途管理（admin が見てくれた／編集した最後の人）。
       const enteredByLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
       const improverLabel = r.improved_at ? (_brUserLabel(r.improver) || '—') : '';
+      const lastUpdaterLabel = r.last_updater ? _brUserLabel(r.last_updater) : '';
       const meta = [
         `入力: ${enteredByLabel}`,
         `日時: ${_brFmtDate(r.created_at)}`,
+        // 最終更新者がいて、かつ作成者と異なる、または更新時刻が異なる場合に表示
+        lastUpdaterLabel && r.updated_at && r.updated_at !== r.created_at
+          ? `最終更新: ${lastUpdaterLabel}（${_brFmtDate(r.updated_at)}）`
+          : '',
         r.url ? `URL: ${r.url}` : '',
         r.resolved_at ? `解決日時: ${_brFmtDate(r.resolved_at)}` : '',
         r.improved_at ? `✅ 改善済み: ${_brFmtDate(r.improved_at)}（${improverLabel}）` : '',
@@ -34641,6 +34651,25 @@ function _brRestoreTriageState(r) {
   }
   _brSyncClaudeButton(decision);
 }
+
+// 対応方針ラジオの選択変更で 対応ステータス select を即時プレビュー反映
+// （実際にDB保存されるのは「対応方針を確定」ボタン押下時。プレビューは確認用）
+function _brPreviewStatusFromTriage(decision) {
+  const sel = document.getElementById('br-status');
+  if (!sel) return;
+  // 既に resolved/duplicate のものは方針で勝手に上書きしない
+  const cur = sel.value;
+  if (cur === 'resolved' || cur === 'duplicate') return;
+  if (decision === 'to_fix') {
+    if (cur === 'open') sel.value = 'in_progress';
+  } else if (decision === 'wont_fix') {
+    sel.value = 'wont_fix';
+  } else if (decision === 'hold') {
+    // 保留は status に触らない
+  }
+  _brSyncClaudeButton(decision);
+}
+window._brPreviewStatusFromTriage = _brPreviewStatusFromTriage;
 
 // triage_decision に応じて Claude依頼ボタンの活性化を切り替え
 function _brSyncClaudeButton(decision) {

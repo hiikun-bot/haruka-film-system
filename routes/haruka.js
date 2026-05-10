@@ -14165,7 +14165,7 @@ router.get('/bug-reports', requireAuth, async (req, res) => {
     const { status, assignee_user_id, mine } = req.query;
     let q = supabase
       .from('bug_reports')
-      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url )')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, last_updated_by_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url )')
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
@@ -14190,7 +14190,7 @@ router.get('/bug-reports/:id', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('bug_reports')
-      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url )')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url )')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
@@ -14245,6 +14245,8 @@ router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), asy
     }
 
     payload.updated_at = new Date().toISOString();
+    // 最終更新者を記録（reporter_user_id = 入力者は不変・上書きしない）
+    payload.last_updated_by_user_id = req.user?.id || null;
 
     // ステータスが resolved に遷移したら resolved_at を自動セット
     if (payload.status && payload.status !== row.status) {
@@ -14299,6 +14301,8 @@ router.patch('/bug-reports/:id/triage', requireAuth, express.json(), async (req,
       triage_decision,
       triage_decided_at: nowIso,
       triage_decided_by_user_id: req.user?.id || null,
+      // 最終更新者も合わせて記録
+      last_updated_by_user_id: req.user?.id || null,
       updated_at: nowIso,
     };
 
