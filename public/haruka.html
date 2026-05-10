@@ -26793,7 +26793,7 @@ function _cdRenderRoundLeftPreviewPanel(file, round) {
            alt="${esc(filename)}"
            title="クリックで拡大（コメント・ズーム可）"
            style="cursor:zoom-in"
-           onclick="${imgClick}"
+           onclick="${esc(imgClick)}"
            onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
       <div class="cd-round-left-preview-empty" style="display:none;margin-top:6px">画像の読み込みに失敗しました</div>`;
   }
