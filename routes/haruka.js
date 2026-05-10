@@ -14061,7 +14061,9 @@ router.post('/version-logs/:id/visibility', requireAuth, async (req, res) => {
 // ============================================================
 
 const BUG_REPORT_SEVERITIES = ['low', 'normal', 'high', 'critical'];
-const BUG_REPORT_STATUSES = ['open', 'in_progress', 'resolved', 'wont_fix', 'duplicate'];
+// 'implemented' (実装済み) は workflow が PR本文の Bug-Report-Id trailer を見て
+// 自動セットする中間ステータス。人による検証が完了したら admin が 'resolved' に進める。
+const BUG_REPORT_STATUSES = ['open', 'in_progress', 'implemented', 'resolved', 'wont_fix', 'duplicate'];
 
 // data URL の最大サイズ（base64 で約 8MB ≒ 元画像 6MB）。
 // クライアント側で 1600px に縮小してから送る前提。

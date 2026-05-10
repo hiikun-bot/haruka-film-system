@@ -2684,6 +2684,7 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="">すべての状態</option>
         <option value="open" selected>🟥 未対応</option>
         <option value="in_progress">🟦 対応中</option>
+        <option value="implemented">🟪 実装済み</option>
         <option value="resolved">🟩 解決</option>
         <option value="wont_fix">⬜ 対応しない</option>
         <option value="duplicate">🔁 重複</option>
@@ -2839,6 +2840,7 @@ window.showPage = window.showPage || function(name, btn) {
           <select id="br-status" class="form-input">
             <option value="open">🟥 未対応 (open)</option>
             <option value="in_progress">🟦 対応中 (in_progress)</option>
+            <option value="implemented">🟪 実装済み (implemented)</option>
             <option value="resolved">🟩 解決 (resolved)</option>
             <option value="wont_fix">⬜ 対応しない (wont_fix)</option>
             <option value="duplicate">🔁 重複 (duplicate)</option>
@@ -33975,8 +33977,9 @@ let _bugReportDrag = null;          // {startX, startY}
 
 const BUG_SEVERITY_LABEL = { low: '🟢 低', normal: '🟡 通常', high: '🔴 高', critical: '🚨 致命的' };
 const BUG_SEVERITY_COLOR = { low: '#10B981', normal: '#F59E0B', high: '#EF4444', critical: '#991B1B' };
-const BUG_STATUS_LABEL = { open: '🟥 未対応', in_progress: '🟦 対応中', resolved: '🟩 解決', wont_fix: '⬜ 対応しない', duplicate: '🔁 重複' };
-const BUG_STATUS_COLOR = { open: '#EF4444', in_progress: '#3B82F6', resolved: '#10B981', wont_fix: '#9CA3AF', duplicate: '#6B7280' };
+// 'implemented' = リリース済みだが人による動作確認待ち（admin が verified したら 'resolved' に進める）
+const BUG_STATUS_LABEL = { open: '🟥 未対応', in_progress: '🟦 対応中', implemented: '🟪 実装済み', resolved: '🟩 解決', wont_fix: '⬜ 対応しない', duplicate: '🔁 重複' };
+const BUG_STATUS_COLOR = { open: '#EF4444', in_progress: '#3B82F6', implemented: '#8B5CF6', resolved: '#10B981', wont_fix: '#9CA3AF', duplicate: '#6B7280' };
 
 function _brEsc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function _brFmtDate(s) {

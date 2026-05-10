@@ -269,8 +269,97 @@ async function main() {
     process.exit(1);
   }
   const inserted = await insRes.json();
+  const insertedRow = Array.isArray(inserted) ? inserted[0] : inserted;
   console.log(`[verup] inserted version_log #${row.revision_no} for PR #${PR_NUMBER}`);
-  console.log(JSON.stringify(inserted[0] || inserted, null, 2));
+  console.log(JSON.stringify(insertedRow, null, 2));
+
+  // ============================================================
+  // バグ報告の自動紐付け（Bug-Report-Id trailer 処理）
+  // ============================================================
+  // PR本文に "Bug-Report-Id: <uuid>" もしくは
+  //          "Bug-Report-Id: <uuid1>, <uuid2>" があれば
+  // 該当 bug_reports を以下のように更新:
+  //   - improvement_version_log_id = <今回 INSERT した version_log の id>
+  //   - improved_at = now (まだ null だったときだけ)
+  //   - status = 'implemented' (現在 open / in_progress のときだけ。
+  //     resolved / wont_fix / duplicate を上書きしない)
+  //
+  // 失敗してもメインフロー(version_logs INSERT)は成功扱いにする(警告のみ)。
+  // ============================================================
+  await linkBugReports(PR_BODY, insertedRow?.id, headers);
+}
+
+async function linkBugReports(prBody, versionLogId, headers) {
+  if (!prBody || !versionLogId) return;
+  const ids = extractBugReportIds(prBody);
+  if (ids.length === 0) return;
+  console.log(`[bug-link] Bug-Report-Id trailer から ${ids.length} 件抽出: ${ids.join(', ')}`);
+
+  const nowIso = new Date().toISOString();
+  for (const bugId of ids) {
+    try {
+      // 現在の status と improved_at を取得
+      const getRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/bug_reports?select=id,status,improved_at&id=eq.${encodeURIComponent(bugId)}`,
+        { headers }
+      );
+      if (!getRes.ok) {
+        console.warn(`[bug-link] GET 失敗: bug=${bugId} status=${getRes.status}`);
+        continue;
+      }
+      const rows = await getRes.json();
+      if (!rows || rows.length === 0) {
+        console.warn(`[bug-link] bug_reports に該当なし: ${bugId}`);
+        continue;
+      }
+      const cur = rows[0];
+
+      const patch = {
+        improvement_version_log_id: versionLogId,
+        updated_at: nowIso,
+      };
+      // improved_at はまだ未セットのときだけ最初のリンク時刻を残す
+      if (!cur.improved_at) patch.improved_at = nowIso;
+
+      // status は open / in_progress のときだけ 'implemented' に上書き
+      // resolved (人が検証済み) や wont_fix / duplicate は触らない
+      if (cur.status === 'open' || cur.status === 'in_progress') {
+        patch.status = 'implemented';
+      }
+
+      const updRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/bug_reports?id=eq.${encodeURIComponent(bugId)}`,
+        {
+          method: 'PATCH',
+          headers: { ...headers, Prefer: 'return=minimal' },
+          body: JSON.stringify(patch),
+        }
+      );
+      if (!updRes.ok) {
+        console.warn(`[bug-link] PATCH 失敗: bug=${bugId} status=${updRes.status} body=${await updRes.text()}`);
+        continue;
+      }
+      console.log(`[bug-link] 紐付け完了: bug=${bugId} → version_log=${versionLogId}, status=${patch.status || cur.status}`);
+    } catch (e) {
+      console.warn(`[bug-link] 例外: bug=${bugId} err=${e.message}`);
+    }
+  }
+}
+
+// PR本文から Bug-Report-Id: <uuid>[, <uuid>...] を抽出
+// trailer は複数行あっても各行ごとに UUID を集約
+function extractBugReportIds(body) {
+  if (!body) return [];
+  const lines = body.split(/\r?\n/);
+  const ids = new Set();
+  const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  for (const line of lines) {
+    const m = line.match(/^\s*Bug-Report-Id\s*:\s*(.+?)\s*$/i);
+    if (!m) continue;
+    const uuids = m[1].match(UUID_RE) || [];
+    for (const u of uuids) ids.add(u.toLowerCase());
+  }
+  return Array.from(ids);
 }
 
 main().catch(err => {
