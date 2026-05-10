@@ -2843,6 +2843,67 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
 
         <div id="br-meta-info" style="font-size:11px;color:var(--text-muted);background:#F9FAFB;border-radius:6px;padding:8px 10px;margin-top:8px"></div>
+
+        <!-- ========= 🦋 対応方針（admin 専用） ========= -->
+        <!-- バグ報告された後 admin が「対応する / 保留 / 却下」を判断するセクション。
+             方針確定すると status を自動遷移＋system コメント自動追記。
+             Claude修正依頼ボタンは triage_decision='to_fix' のときだけ活性化する -->
+        <div class="form-group" id="br-triage-wrap" style="display:none">
+          <label class="form-label">🦋 対応方針 <span style="color:var(--text-muted);font-size:11px">（管理者のみ）</span></label>
+          <div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:10px">
+            <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px">
+              <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="radio" name="br-triage" value="to_fix" id="br-triage-to_fix">
+                <span>✅ 対応する</span>
+              </label>
+              <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="radio" name="br-triage" value="hold" id="br-triage-hold">
+                <span>⏸ 保留</span>
+              </label>
+              <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="radio" name="br-triage" value="wont_fix" id="br-triage-wont_fix">
+                <span>❌ 却下</span>
+              </label>
+            </div>
+            <textarea id="br-triage-comment" class="form-input" rows="2" placeholder="任意: 方針の理由・補足コメント" style="resize:vertical;font-size:12px"></textarea>
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="submitBugReportTriage()">対応方針を確定</button>
+              <span id="br-triage-current" style="font-size:11px;color:#92400E"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========= 🤖 Claude Code 修正依頼（admin 専用） ========= -->
+        <!-- triage_decision='to_fix' のときだけ活性化。
+             押すとクリップボードへ「報告内容＋Bug-Report-Id trailer の指示」をコピー。
+             ユーザーはそれを Claude Code に貼り付けて修正依頼する想定 -->
+        <div class="form-group" id="br-claude-wrap" style="display:none">
+          <label class="form-label">🤖 Claude Code 修正依頼 <span style="color:var(--text-muted);font-size:11px">（管理者のみ・対応方針=「対応する」のとき有効）</span></label>
+          <div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px">
+            <button type="button" id="br-claude-copy-btn" class="btn" style="font-size:13px;padding:8px 16px" onclick="bugReportCopyClaudePrompt()">
+              📋 Claude Code 修正依頼テキストをコピー
+            </button>
+            <div style="font-size:11px;color:#1E40AF;margin-top:6px">
+              💡 コピーされたテキストには <code>Bug-Report-Id: ...</code> trailer の指示が含まれます。<br>
+              Claude が PR を作成しマージされた瞬間に、このバグ報告と Verup# が自動紐付されます。
+            </div>
+            <div id="br-claude-disabled-msg" style="font-size:11px;color:#9A3412;margin-top:6px;display:none">
+              ⚠️ 先に対応方針で「対応する」を選んでから利用してください
+            </div>
+          </div>
+        </div>
+
+        <!-- ========= 💬 コメント（全員投稿可） ========= -->
+        <div class="form-group" id="br-comments-wrap" style="display:none">
+          <label class="form-label">💬 コメント <span id="br-comments-count" style="color:var(--text-muted);font-size:11px">(0)</span></label>
+          <div id="br-comments-list" style="background:#fff;border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;padding:6px">
+            <div style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中…</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <textarea id="br-comment-input" class="form-input" rows="2" maxlength="2000" placeholder="コメントを入力（全員が見られます）" style="resize:vertical;font-size:12px;flex:1"></textarea>
+            <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="postBugReportComment()">送信</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -7673,6 +7734,18 @@ async function applyDeepLinkOnLoad() {
       }, 300);
       return;
     }
+    // バグ報告 deep link（24h SLA 通知のリンクから開く）
+    const bugReportId = params.get('bug-report');
+    if (bugReportId) {
+      setTimeout(() => {
+        try {
+          if (typeof openBugReportListModal === 'function') openBugReportListModal();
+          if (typeof openBugReportModal === 'function') openBugReportModal({ id: bugReportId });
+        } catch (e) { console.warn('[deepLink bug-report]', e); }
+      }, 300);
+      return;
+    }
+
     const creativeId = params.get('creative');
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {
@@ -34109,6 +34182,19 @@ async function openBugReportModal(options = {}) {
   bugReportRemoveScreenshot();
   _bugReportEditing = null;
 
+  // 対応方針 / コメント欄 / Claude依頼ボタン は新規時は非表示（保存後初めて使える）
+  document.getElementById('br-triage-wrap').style.display = 'none';
+  document.getElementById('br-claude-wrap').style.display = 'none';
+  document.getElementById('br-comments-wrap').style.display = 'none';
+  // ラジオ選択をクリア
+  ['br-triage-to_fix', 'br-triage-hold', 'br-triage-wont_fix'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = false;
+  });
+  document.getElementById('br-triage-comment').value = '';
+  document.getElementById('br-triage-current').textContent = '';
+  document.getElementById('br-comment-input').value = '';
+
   if (options.id) {
     // 編集モード: 詳細取得
     document.getElementById('bug-report-modal-title').textContent = '🦋 バグ報告 — 編集';
@@ -34145,6 +34231,16 @@ async function openBugReportModal(options = {}) {
           `現在の紐付け: <strong>#${log.revision_no}</strong> ${_brEsc(log.screen || '')} / ${_brEsc(log.feature || '')}`;
       }
       bugReportSyncImprovedUI();
+
+      // 対応方針セクション (admin only)
+      document.getElementById('br-triage-wrap').style.display = isAdmin ? '' : 'none';
+      document.getElementById('br-claude-wrap').style.display = isAdmin ? '' : 'none';
+      _brRestoreTriageState(r);
+
+      // コメント欄は全員に表示・投稿可
+      document.getElementById('br-comments-wrap').style.display = '';
+      _brLoadComments(r.id);
+
       // メタ情報（reporter_user_id は「保存ボタンを押した人＝入力者」を意味する）
       const enteredByLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
       const improverLabel = r.improved_at ? (_brUserLabel(r.improver) || '—') : '';
@@ -34519,6 +34615,202 @@ async function submitBugReport() {
     loadBugReportOpenCount();
   } catch (e) { alert(e.message); }
 }
+
+// ============================================================
+// バグ報告: 対応方針 / コメント / Claude修正依頼
+// ============================================================
+
+const _brTriageLabel = { to_fix: '✅ 対応する', hold: '⏸ 保留', wont_fix: '❌ 却下' };
+
+// 開いた報告のtriage状態をUIに反映
+function _brRestoreTriageState(r) {
+  const decision = r.triage_decision || null;
+  ['to_fix', 'hold', 'wont_fix'].forEach(v => {
+    const el = document.getElementById('br-triage-' + v);
+    if (el) el.checked = (decision === v);
+  });
+  document.getElementById('br-triage-comment').value = '';
+  const cur = document.getElementById('br-triage-current');
+  if (cur) {
+    if (decision) {
+      const decider = _brUserLabel(r.triage_decider) || '—';
+      cur.textContent = `現在の方針: ${_brTriageLabel[decision]}（${decider} / ${_brFmtDate(r.triage_decided_at)}）`;
+    } else {
+      cur.textContent = '※ まだ方針未確定です';
+    }
+  }
+  _brSyncClaudeButton(decision);
+}
+
+// triage_decision に応じて Claude依頼ボタンの活性化を切り替え
+function _brSyncClaudeButton(decision) {
+  const btn = document.getElementById('br-claude-copy-btn');
+  const msg = document.getElementById('br-claude-disabled-msg');
+  if (!btn) return;
+  const enabled = decision === 'to_fix';
+  btn.disabled = !enabled;
+  btn.style.opacity = enabled ? '1' : '0.5';
+  btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  if (msg) msg.style.display = enabled ? 'none' : '';
+}
+
+// 対応方針確定（admin が押下）
+async function submitBugReportTriage() {
+  const id = document.getElementById('br-id').value;
+  if (!id) return;
+  const decision = document.querySelector('input[name="br-triage"]:checked')?.value;
+  if (!decision) { showToast('対応方針を選択してください', 'warn'); return; }
+  const comment = document.getElementById('br-triage-comment').value.trim();
+  try {
+    const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(id)}/triage`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ triage_decision: decision, comment }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '対応方針の確定に失敗しました');
+      return;
+    }
+    const r = await res.json();
+    showToast(`対応方針を「${_brTriageLabel[decision]}」に確定しました`, 'success');
+    document.getElementById('br-triage-comment').value = '';
+    if (r.status) document.getElementById('br-status').value = r.status;
+    // 詳細を再取得して triage_decider / triage_decided_at を反映
+    const detailRes = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(id)}`);
+    if (detailRes.ok) {
+      const detail = await detailRes.json();
+      _bugReportEditing = detail;
+      _brRestoreTriageState(detail);
+    } else {
+      _brSyncClaudeButton(decision);
+    }
+    await _brLoadComments(id);
+  } catch (e) { alert(e.message); }
+}
+
+// コメント一覧読み込み
+async function _brLoadComments(bugId) {
+  const list = document.getElementById('br-comments-list');
+  if (!list) return;
+  list.innerHTML = `<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中…</div>`;
+  try {
+    const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(bugId)}/comments`);
+    if (!res.ok) throw new Error('コメント取得失敗');
+    const rows = await res.json();
+    document.getElementById('br-comments-count').textContent = `(${rows.length})`;
+    if (!rows.length) {
+      list.innerHTML = `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">まだコメントはありません</div>`;
+      return;
+    }
+    list.innerHTML = rows.map(c => {
+      const isSystem = c.kind === 'system';
+      const author = c.author ? (_brUserLabel(c.author) || '—') : '—';
+      const date = _brFmtDate(c.created_at);
+      const bodyEsc = _brEsc(c.body || '').replace(/\n/g, '<br>');
+      if (isSystem) {
+        return `
+          <div style="padding:6px 8px;margin:4px 0;background:#F3F4F6;border-radius:6px;font-size:11px;color:#4B5563">
+            🤖 <strong>${_brEsc(author)}</strong> <span style="color:#9CA3AF">${_brEsc(date)}</span><br>
+            ${bodyEsc}
+          </div>`;
+      }
+      return `
+        <div style="padding:8px 10px;margin:6px 0;background:#FAFAFA;border:1px solid #F3F4F6;border-radius:6px;font-size:13px">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">
+            <strong style="color:#111827">${_brEsc(author)}</strong> ・ ${_brEsc(date)}
+          </div>
+          <div style="color:#1F2937;line-height:1.45">${bodyEsc}</div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = `<div style="padding:12px;text-align:center;color:#C0392B;font-size:12px">${_brEsc(e.message)}</div>`;
+  }
+}
+
+// コメント送信（全員可）
+async function postBugReportComment() {
+  const id = document.getElementById('br-id').value;
+  if (!id) return;
+  const ta = document.getElementById('br-comment-input');
+  const body = (ta?.value || '').trim();
+  if (!body) { showToast('コメントを入力してください', 'warn'); return; }
+  try {
+    const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(id)}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'コメント送信に失敗しました');
+      return;
+    }
+    ta.value = '';
+    await _brLoadComments(id);
+  } catch (e) { alert(e.message); }
+}
+
+// Claude Code 修正依頼テキストをクリップボードへ
+// 将来 workflow が PR本文を grep して Bug-Report-Id を抽出 → bug_reports を自動紐付ける前提
+async function bugReportCopyClaudePrompt() {
+  const r = _bugReportEditing;
+  if (!r) return;
+  if (r.triage_decision !== 'to_fix') {
+    showToast('対応方針で「対応する」を選んでから利用してください', 'warn');
+    return;
+  }
+  const shortId = String(r.id || '').replace(/-/g, '').slice(0, 8);
+  const lines = [
+    `# バグ報告 #${shortId} の修正依頼`,
+    ``,
+    `## タイトル`,
+    r.title || '(無題)',
+    ``,
+    `## 詳細`,
+    r.description || '(詳細なし)',
+    ``,
+  ];
+  if (r.url) {
+    lines.push(`## 報告された画面URL`, r.url, ``);
+  }
+  lines.push(
+    `## 重要度 / 至急`,
+    `重要度: ${r.severity || '-'}${r.is_urgent ? ' 🚨 至急' : ''}`,
+    ``,
+    `---`,
+    ``,
+    `## ⚠️ PRを作る際の必須事項`,
+    `この修正PRを main にマージする際、PR本文の末尾に必ず以下の trailer を含めてください。`,
+    `これがないとバグ報告との自動紐付けが行われません:`,
+    ``,
+    '```',
+    `Bug-Report-Id: ${r.id}`,
+    '```',
+    ``,
+    `※ 関連する別のバグ報告も同じPRで一緒に直す場合はカンマ区切りで併記:`,
+    '```',
+    `Bug-Report-Id: ${r.id}, <別のバグ報告UUID>`,
+    '```',
+  );
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('📋 Claude Code 修正依頼テキストをコピーしました', 'success');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('📋 コピーしました', 'success'); }
+    catch (_) { alert('クリップボードへのコピーに失敗しました'); }
+    finally { ta.remove(); }
+  }
+}
+
+window.submitBugReportTriage = submitBugReportTriage;
+window.postBugReportComment = postBugReportComment;
+window.bugReportCopyClaudePrompt = bugReportCopyClaudePrompt;
 
 // 「改善済み」チェックの ON/OFF に応じて Verup 選択欄を表示/非表示
 function bugReportSyncImprovedUI() {

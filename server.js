@@ -1227,5 +1227,12 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] notification-scheduler 起動失敗:', e.message);
     }
+    // バグ報告: 24h トリアージSLA チェッカ（1時間ごとに admin へ通知）
+    try {
+      const { startBugTriageSlaChecker } = require('./workers/bug-triage-sla-checker');
+      startBugTriageSlaChecker();
+    } catch (e) {
+      console.error('[startup] bug-triage-sla-checker 起動失敗:', e.message);
+    }
   });
 })();
