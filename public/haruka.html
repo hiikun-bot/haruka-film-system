@@ -796,6 +796,21 @@ tr.row-help td{background:#FFFBF2}
   border-top-color:#3ECFCA;
   animation:fp-spin .9s linear infinite;
 }
+/* クリエイティブ詳細モーダル: クリック直後に出すローディングオーバーレイ。
+   クリックしてから API レスポンスが返るまでの "押した瞬間に反応が見える" UX 担保。 */
+.cd-loading-overlay{
+  position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+  background:rgba(255,255,255,0.86);z-index:50;gap:14px;border-radius:16px;
+  transition:opacity .2s ease;
+}
+.cd-loading-overlay.show{display:flex}
+.cd-loading-spinner{
+  width:42px;height:42px;border-radius:50%;
+  border:3px solid rgba(62,207,202,0.18);
+  border-top-color:#3ECFCA;
+  animation:fp-spin .9s linear infinite;
+}
+.cd-loading-text{font-size:12.5px;color:var(--text-muted);letter-spacing:0.04em;font-weight:600}
 #fp-loading-text{color:#A8EDEA;font-size:12px;font-family:'Noto Sans JP',sans-serif;letter-spacing:0.04em;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
 #fp-loading-progress{width:160px;height:3px;background:rgba(168,237,234,0.18);border-radius:2px;overflow:hidden;display:none}
 #fp-loading-progress > div{height:100%;width:0%;background:linear-gradient(90deg,#3ECFCA,#A8EDEA);border-radius:2px;transition:width .2s ease}
@@ -6759,7 +6774,14 @@ window.showPage = window.showPage || function(name, btn) {
 <!-- Esc キー / × ボタン / 「閉じる」ボタンも、入力 dirty なときは confirm を出してから閉じる -->
 <div class="modal-overlay" id="modal-creative-detail" data-no-overlay-close="true" style="z-index:310">
   <!-- ADR 011: cd-2col-mode クラスが付与されると幅が広がる（左右比較レイアウト時） -->
-  <div class="modal" id="cd-modal-body" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
+  <div class="modal" id="cd-modal-body" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh;position:relative">
+
+    <!-- クリック直後に出るローディングオーバーレイ。openCreativeDetail() が API 取得中のあいだ表示。
+         #fp-loading-overlay と分けているのは、こちらは詳細モーダル限定（ヘッダー/フッターも含めて隠す）のため。 -->
+    <div class="cd-loading-overlay" id="cd-loading-overlay" aria-hidden="true">
+      <div class="cd-loading-spinner"></div>
+      <div class="cd-loading-text">読み込み中…</div>
+    </div>
 
     <!-- ヘッダー（固定） -->
     <!-- bug-report b9c7c60c: スクロール時にファイル名・ステータス・案件名が見えなくなる問題への対応として、
@@ -11648,6 +11670,7 @@ async function updateStatus() {
   if (c) { c.status = status; renderCreatives(); }
   const res = await apiFetch(`${API}/creatives/${selectedCreativeId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status}) });
   if (res.ok) {
+    try { _cdInvalidateCache(selectedCreativeId); } catch (_) {}
     closeModal('modal-status');
     // ball_holder 等の派生情報を反映するため、対象1件だけ取得して差し替え
     try {
@@ -13595,6 +13618,8 @@ function closeModal(id) {
     __cdSkipDirtyCheck = false;
     __cdDraftCurrentId = null;
     __cdInitialSnapshot = null;
+    // 次回 open に向けてスピナーを下げる（連打中に close→reopen された場合の保険）
+    try { _cdShowOverlay(false); } catch (_) {}
     // ADR 011: 移動した DOM を元の親に戻す（次回 open 時の状態整合性）
     try {
       _cdMoveRightColumnElements(false);
@@ -27016,14 +27041,114 @@ async function saveCreativeCustomFields(creativeId) {
   }
 }
 
+// =====================================================================
+// クリエイティブ詳細モーダルの「クリック→表示」体感速度対策
+// （PR claude/feat-creatives-detail-perf-and-loading）
+// 1) 同じ creative_id を連打しても fetch は1回（in-flight Promise を共有）
+// 2) 直近開いた payload は短時間メモリにキャッシュ（戻る/別開く/戻る で瞬時再表示）
+// 3) クリック直後にモーダル＋スピナーを即表示し、API レスポンスを待たない
+// 4) 主取得後の 3つの追加 fetch (files / rounds / category-fields) を Promise.all で並列化
+// =====================================================================
+const _cdInFlight = new Map();        // id -> Promise<creative-data>
+const _cdPayloadCache = new Map();    // id -> { data, ts }
+const CD_CACHE_TTL_MS = 30 * 1000;    // 30秒
+const CD_CACHE_MAX = 20;
+
+function _cdSetCache(id, data) {
+  if (!id || !data) return;
+  // 上限超え -> 最古を捨てる
+  if (_cdPayloadCache.size >= CD_CACHE_MAX) {
+    const firstKey = _cdPayloadCache.keys().next().value;
+    if (firstKey) _cdPayloadCache.delete(firstKey);
+  }
+  _cdPayloadCache.set(id, { data, ts: Date.now() });
+}
+function _cdGetCache(id) {
+  const ent = _cdPayloadCache.get(id);
+  if (!ent) return null;
+  if (Date.now() - ent.ts > CD_CACHE_TTL_MS) {
+    _cdPayloadCache.delete(id);
+    return null;
+  }
+  return ent.data;
+}
+function _cdInvalidateCache(id) {
+  if (!id) { _cdPayloadCache.clear(); return; }
+  _cdPayloadCache.delete(id);
+}
+// 保存・ステータス遷移・ファイルアップロード等で詳細が変わった可能性があるときに呼ぶ。
+window._cdInvalidateCache = _cdInvalidateCache;
+
+function _cdShowOverlay(show) {
+  const ov = document.getElementById('cd-loading-overlay');
+  if (!ov) return;
+  ov.classList.toggle('show', !!show);
+  ov.setAttribute('aria-hidden', show ? 'false' : 'true');
+}
+
+// メイン取得（dedup + TTL cache 付き）。
+// 戻り値: 詳細 payload。404 や fetch 失敗時は null を投げて呼び出し側でハンドル。
+async function _cdFetchPayload(id, { force = false } = {}) {
+  if (!force) {
+    const cached = _cdGetCache(id);
+    if (cached) return cached;
+    if (_cdInFlight.has(id)) return _cdInFlight.get(id);
+  }
+  const p = (async () => {
+    const res = await apiFetch(`${API}/creatives/${id}`);
+    if (res.status === 404) {
+      const err = new Error('NOT_FOUND'); err.code = 404; throw err;
+    }
+    if (!res.ok) {
+      const err = new Error('FETCH_FAILED'); err.code = res.status; throw err;
+    }
+    const json = await res.json();
+    _cdSetCache(id, json);
+    return json;
+  })();
+  _cdInFlight.set(id, p);
+  try {
+    const json = await p;
+    return json;
+  } finally {
+    _cdInFlight.delete(id);
+  }
+}
+
 async function openCreativeDetail(id) {
-  const res = await apiFetch(`${API}/creatives/${id}`);
-  if (res.status === 404) {
-    showToast('このクリエイティブは削除されています', 'info');
+  if (!id) return;
+  // 1) クリック直後に即モーダル + スピナー表示（API 待たない）
+  // 既に開いている同じ id を連打しても、二重に開いたりはしない。
+  openModal('modal-creative-detail');
+  _cdShowOverlay(true);
+  // ヘッダー右上の閉じるボタンは「最低限のフィードバック」として常に押せる状態にする。
+  // 中身（cd-filename 等）はロード後に書き換わる前提なので、明示的にクリアしないでもOK。
+  // ただし前回開いたデータが一瞬見える「ゴースト」を避けるため、ファイル名と基本情報を一度プレースホルダ化する。
+  // ヘッダー基本情報の "前回内容残り" を空に
+  try {
+    const fn = document.getElementById('cd-filename');
+    if (fn) { fn.value = ''; fn.dataset.original = ''; fn.dataset.creativeId = ''; }
+    const sc = document.getElementById('cd-status-chip'); if (sc) sc.innerHTML = '';
+    const pn = document.getElementById('cd-project-name'); if (pn) pn.textContent = '';
+    const as = document.getElementById('cd-assignee');     if (as) as.textContent = '';
+    const bh = document.getElementById('cd-ball-holder');  if (bh) { bh.style.display = 'none'; bh.innerHTML = ''; }
+  } catch (_) {}
+
+  // 2) payload 取得（dedup + cache）
+  let c;
+  try {
+    c = await _cdFetchPayload(id);
+  } catch (e) {
+    _cdShowOverlay(false);
+    if (e?.code === 404) {
+      showToast('このクリエイティブは削除されています', 'info');
+      try { closeModal('modal-creative-detail'); } catch (_) {}
+      return;
+    }
+    showToast('データの取得に失敗しました', 'error');
+    try { closeModal('modal-creative-detail'); } catch (_) {}
     return;
   }
-  if (!res.ok) { showToast('データの取得に失敗しました', 'error'); return; }
-  const c = await res.json();
   currentCreativeDetail = c;
 
   // 基本情報
@@ -27180,31 +27305,39 @@ async function openCreativeDetail(id) {
     regNone.style.display = '';
   }
 
-  // アップロード済みファイル
-  await loadCreativeFiles(id);
+  // 主取得後の追加 fetch を並列化（旧:直列だったため 3RTT × 詳細1RTT = 4RTT 待ち）
+  //  - loadCreativeFiles: GET /creatives/:id/files
+  //  - cdLoadRounds:      GET /creatives/:id/rounds
+  //  - applyCreativeDetailFieldVisibility:
+  //       GET /categories/:id/fields  (※カテゴリ未設定時はスキップ)
+  //       GET /creatives/:id/custom-fields
+  // 失敗しても本フローは止めない（個別に try/catch）。
+  const _filesP = loadCreativeFiles(id).catch(e => console.warn('[loadCreativeFiles]', e));
+  const _roundsP = cdLoadRounds(id).catch(e => console.warn('[cdLoadRounds]', e));
+  const _visibilityP = applyCreativeDetailFieldVisibility(
+    c.category_id || c.projects?.primary_category_id || null, id
+  ).catch(e => console.warn('[applyCreativeDetailFieldVisibility]', e));
 
-  // ADR 011: ラウンド比較型UI 履歴ロード + 描画
-  // 失敗しても本フローは止めない。
-  await cdLoadRounds(id);
+  // ADR 011 ラウンド比較UI: rounds 取得が終わってから初期 index 計算 + 再描画。
+  // files も終わってから cdRenderRoundCompare を呼びたいので両方 await。
+  // visibility は描画タイミングに依存しないので Promise.all に混ぜるだけで OK。
+  await Promise.all([_filesP, _roundsP, _visibilityP]);
+
   // 直近ラウンド (= 一番新しい過去) を初期表示
   _cdRoundIndex = Math.max(0, _cdRoundsCache.length + (_cdBuildLiveRound(currentCreativeDetail) ? 1 : 0) - 1);
   // bug-report b9c7c60c: 詳細を開くたびに左カラムタブを 📺 preview にリセット（既定値）
   _cdRoundLeftTab = 'preview';
   try { cdRenderRoundCompare(); } catch (e) { console.warn('[cd-round-compare] render failed:', e); }
 
-  // 事後修正モード: ボタン表示制御 + 編集履歴ロード（並列・失敗しても無視）
+  // 事後修正モード: ボタン表示制御 + 編集履歴ロード（モーダル下部の追加情報なので非同期で OK・失敗しても無視）
   refreshCreativePostEditButton(id).catch(() => {});
   refreshCreativeEditHistory(id).catch(() => {});
 
-  // ADR 012: カテゴリ別フィールド可視性を適用（builtin DOM の表示/ラベル + custom 動的生成）
-  // 失敗してもフローは止めない（フェイルセーフで全表示）
-  try {
-    await applyCreativeDetailFieldVisibility(c.category_id || c.projects?.primary_category_id || null, id);
-  } catch (e) { console.warn('[applyCreativeDetailFieldVisibility]', e); }
+  // 中身が描画され終わったのでスピナーを下げる
+  _cdShowOverlay(false);
 
-  openModal('modal-creative-detail');
   // 入力保護: 初期スナップショット取得 + localStorage 下書き復元
-  // openModal の直後に呼ぶ（モーダルが open になってからでないと dirty 判定が動かない）
+  // モーダルは関数冒頭で open 済み（open 状態でないと dirty 判定が動かない）
   try { __cdAfterOpen(id); } catch (e) { console.warn('[creative-detail-draft] afterOpen failed:', e); }
 }
 
@@ -33025,6 +33158,8 @@ async function executeUpload() {
             statusEl.textContent = `DB記録完了（${versionLabel} / Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
             statusEl.style.color = '#d97706';
           }
+          // アップロードでファイル一覧が変わるので payload キャッシュを無効化
+          try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
           await loadCreativeFiles(currentCreativeDetail.id);
           document.getElementById('cd-upload-input').value = '';
           document.getElementById('cd-upload-preview').style.display = 'none';
@@ -33883,6 +34018,8 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   if (res.ok) {
     // ADR 012: カスタムフィールドの値も保存（失敗しても本フローは止めない）
     try { await saveCreativeCustomFields(currentCreativeDetail.id); } catch (_) {}
+    // 詳細モーダルメモリキャッシュを無効化（次に開く時は最新を取得）
+    try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
     // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;

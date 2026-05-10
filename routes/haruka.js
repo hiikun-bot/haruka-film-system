@@ -5130,7 +5130,15 @@ router.get('/creatives/counts', async (req, res) => {
 });
 
 // クリエイティブ単体取得
+//
+// パフォーマンス最適化（PR claude/feat-creatives-detail-perf-and-loading）:
+//   旧: 主取得後に「カテゴリ→status_template→teams(own)→projects.sub_director_ids→
+//       projects.sub_producer_ids→sub_users→client_teams→teams(全件)」を
+//       直列に await していたため、本番環境で 8〜9 RTT を要していた。
+//   新: 主取得が終わったら、互いに依存しない 5 ブロックを Promise.all で並列に走らせる。
+//       ロジックそのものは変えていない（出力 JSON 形状も完全一致）。
 router.get('/creatives/:id', async (req, res) => {
+  const creativeId = req.params.id;
   const { data, error } = await supabase
     .from('creatives')
     .select(`
@@ -5147,28 +5155,29 @@ router.get('/creatives/:id', async (req, res) => {
         users(id, full_name, nickname, role, team_id, avatar_url)
       )
     `)
-    .eq('id', req.params.id)
+    .eq('id', creativeId)
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) {
     return res.status(404).json({ error: 'このクリエイティブは見つかりません（削除されている可能性があります）' });
   }
 
-  // primary_category（カテゴリ別チェブロン用）+ status_template_items を埋め込む。
-  // LP/HP/LINE 等の専用工程をフロント側で描画するために使う。
-  // schema-sync 未適用 / テーブル無し環境でもフローは止めない（フォールバックで video/image 既存挙動）。
-  if (data && data.projects?.primary_category_id) {
+  // ─── 並列実行する 5 ブロック ─────────────────────────────────
+  const projectId = data.projects?.id || null;
+  const primaryCategoryId = data.projects?.primary_category_id || null;
+  const clientId = data.projects?.clients?.id || null;
+
+  // (A) primary_category + status_template_items
+  const taskCategory = (async () => {
+    if (!primaryCategoryId) return { primary_category: null, status_template: null };
     try {
       const { data: catData } = await supabase
         .from('creative_categories')
         .select('id, code, name, color')
-        .eq('id', data.projects.primary_category_id)
+        .eq('id', primaryCategoryId)
         .maybeSingle();
-      data.projects.primary_category = catData || null;
-
-      // LP / HP / LINE 用の status_template_items を一緒に返す。
-      // video / image 用は既存ハードコード STEPS で描画されるため不要。
       const code = catData?.code;
+      let status_template = null;
       if (code && ['lp', 'hp', 'line'].includes(code)) {
         const { data: tpls } = await supabase
           .from('creative_status_templates')
@@ -5179,81 +5188,62 @@ router.get('/creatives/:id', async (req, res) => {
         const tpl = (tpls || []).find(t => t.is_default) || (tpls || [])[0] || null;
         if (tpl) {
           const items = (tpl.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-          data.status_template_items = items;
-          data.status_template_id = tpl.id;
-          // status_code が NULL の場合は first item の code を表示用フォールバックとして埋める
-          // （DB は触らず、レスポンス上のみ。Backfill migration で本体は埋まる）
-          if (!data.status_code && items.length) {
-            data.status_code = items[0].code;
-          }
+          status_template = { id: tpl.id, items };
         } else {
-          data.status_template_items = [];
+          status_template = { id: null, items: [] };
         }
       }
+      return { primary_category: catData || null, status_template };
     } catch (e) {
       console.warn('[creatives/:id] primary_category / status_template embed 失敗:', e.message);
-      data.projects.primary_category = null;
-      data.status_template_items = [];
+      return { primary_category: null, status_template: { id: null, items: [] } };
     }
-  }
+  })();
 
-  // teams を別クエリで取得（FK 不要にするため PostgREST の埋め込みは使わない）
-  if (data && data.team_id) {
-    const { data: teamData } = await supabase
-      .from('teams')
-      .select('id, team_code, team_name')
-      .eq('id', data.team_id)
-      .maybeSingle();
-    data.teams = teamData || null;
-  } else if (data) {
-    data.teams = null;
-  }
+  // (B) creatives.teams（自身の team_id 紐付け）
+  const taskOwnTeam = (async () => {
+    if (!data.team_id) return null;
+    try {
+      const { data: teamData } = await supabase
+        .from('teams')
+        .select('id, team_code, team_name')
+        .eq('id', data.team_id)
+        .maybeSingle();
+      return teamData || null;
+    } catch (_) {
+      return null;
+    }
+  })();
 
-  // projects.sub_director_ids / sub_producer_ids を別クエリで取得
-  // （migration 未適用環境では空配列扱い）
-  // projects には UUID[] として追加される予定。列が無い・schema-cache 未更新の場合は無視。
-  // sub_producer_ids は projects-worker が並行実装中の列。未適用なら try/catch で握りつぶす。
-  if (data && data.projects?.id) {
-    // sub_director_ids（既存）
+  // (C) projects.sub_director_ids + sub_producer_ids + サブD/Pユーザー情報
+  // sub_*_ids 2列を1クエリで取得し、和集合のユーザーも1クエリで取得（N+1解消継続）。
+  const taskSubDP = (async () => {
+    if (!projectId) return { sub_director_ids: [], sub_producer_ids: [], sub_directors: [], sub_producers: [] };
+    let subDIds = [], subPIds = [];
+    // 2列を一括取得。列欠損 (migration 未適用) でも try/catch でフォールバック。
     try {
       const { data: projExt, error: projExtErr } = await supabase
         .from('projects')
-        .select('sub_director_ids')
-        .eq('id', data.projects.id)
+        .select('sub_director_ids, sub_producer_ids')
+        .eq('id', projectId)
         .maybeSingle();
       if (!projExtErr && projExt) {
-        data.projects.sub_director_ids = Array.isArray(projExt.sub_director_ids) ? projExt.sub_director_ids : [];
-      } else {
-        data.projects.sub_director_ids = [];
+        subDIds = Array.isArray(projExt.sub_director_ids) ? projExt.sub_director_ids : [];
+        subPIds = Array.isArray(projExt.sub_producer_ids) ? projExt.sub_producer_ids : [];
       }
     } catch (_) {
-      data.projects.sub_director_ids = [];
+      // 両方とも欠損している可能性 → 個別 select でフォールバック
+      try {
+        const { data: projD } = await supabase
+          .from('projects').select('sub_director_ids').eq('id', projectId).maybeSingle();
+        subDIds = Array.isArray(projD?.sub_director_ids) ? projD.sub_director_ids : [];
+      } catch (_) {}
+      try {
+        const { data: projP } = await supabase
+          .from('projects').select('sub_producer_ids').eq('id', projectId).maybeSingle();
+        subPIds = Array.isArray(projP?.sub_producer_ids) ? projP.sub_producer_ids : [];
+      } catch (_) {}
     }
-
-    // sub_producer_ids（新規・projects-worker と並行実装）
-    // 列が無い場合（migration 未適用）は空配列にフォールバック → Pチェックピッカーで
-    // サブPセクションが非表示になるだけで、メインPだけは固定表示される。
-    try {
-      const { data: projP, error: projPErr } = await supabase
-        .from('projects')
-        .select('sub_producer_ids')
-        .eq('id', data.projects.id)
-        .maybeSingle();
-      if (!projPErr && projP) {
-        data.projects.sub_producer_ids = Array.isArray(projP.sub_producer_ids) ? projP.sub_producer_ids : [];
-      } else {
-        data.projects.sub_producer_ids = [];
-      }
-    } catch (_) {
-      data.projects.sub_producer_ids = [];
-    }
-
-    // サブディレクター/サブプロデューサーのユーザー情報を埋め込み
-    // （離職者・権限制限ユーザーでも常に表示できるように）
-    // D/Pピッカーで「案件D/P・サブD/P」セクションが allMembers の状態に依存しないようにするのが目的。
-    // 一括取得（N+1 解消）— sub_director_ids と sub_producer_ids の和集合を1クエリで。
-    const subDIds = Array.isArray(data.projects.sub_director_ids) ? data.projects.sub_director_ids : [];
-    const subPIds = Array.isArray(data.projects.sub_producer_ids) ? data.projects.sub_producer_ids : [];
     const allSubIds = [...new Set([...subDIds, ...subPIds].filter(Boolean))];
     let userById = new Map();
     if (allSubIds.length) {
@@ -5265,64 +5255,111 @@ router.get('/creatives/:id', async (req, res) => {
         if (!subErr && Array.isArray(subUsers)) {
           userById = new Map(subUsers.map(u => [u.id, u]));
         }
-      } catch (_) {
-        // userById は空のまま
-      }
+      } catch (_) {}
     }
-    // 順序維持しつつフィルタ
-    data.projects.sub_directors = subDIds.map(id => userById.get(id)).filter(Boolean);
-    data.projects.sub_producers = subPIds.map(id => userById.get(id)).filter(Boolean);
-  }
+    return {
+      sub_director_ids: subDIds,
+      sub_producer_ids: subPIds,
+      sub_directors: subDIds.map(id => userById.get(id)).filter(Boolean),
+      sub_producers: subPIds.map(id => userById.get(id)).filter(Boolean),
+    };
+  })();
 
-  // 案件 → client_teams → teams のルートで担当チーム ID を埋め込み
-  // （Dチェック担当者選択モーダルでチーム所属ディレクターを既定チェックするために使う）
-  if (data && data.projects?.clients?.id) {
+  // (D) client_teams（Dチェック担当者選択用）
+  const taskClientTeams = (async () => {
+    if (!clientId) return [];
     try {
       const { data: ctRows } = await supabase
         .from('client_teams')
         .select('team_id')
-        .eq('client_id', data.projects.clients.id);
-      data.projects.client_teams = (ctRows || []).map(r => ({ team_id: r.team_id })).filter(r => r.team_id);
+        .eq('client_id', clientId);
+      return (ctRows || []).map(r => ({ team_id: r.team_id })).filter(r => r.team_id);
     } catch (_) {
-      data.projects.client_teams = [];
+      return [];
     }
-  } else if (data?.projects) {
-    data.projects.client_teams = [];
+  })();
+
+  // (E) ball_holder 計算用 teams 全件 + team_members
+  // （一覧 /creatives と完全一致させるため getBallHolder() に渡す Map を作る）
+  const taskBallHolder = (async () => {
+    try {
+      const { data: teamsRaw } = await supabase
+        .from('teams')
+        .select('id, director_id, director:director_id(full_name), team_members(user_id)');
+      return teamsRaw || [];
+    } catch (e) {
+      console.warn('[creatives/:id] teams 取得失敗（ball_holder用）:', e.message);
+      return null;
+    }
+  })();
+
+  // ─── 並列実行 → 結果をマージ ─────────────────────────────────
+  const [catRes, ownTeam, subDP, clientTeams, teamsRaw] = await Promise.all([
+    taskCategory, taskOwnTeam, taskSubDP, taskClientTeams, taskBallHolder,
+  ]);
+
+  // (A) primary_category + status_template_items
+  if (data.projects && primaryCategoryId) {
+    data.projects.primary_category = catRes.primary_category;
+    if (catRes.status_template) {
+      data.status_template_items = catRes.status_template.items || [];
+      data.status_template_id = catRes.status_template.id || null;
+      // status_code が NULL の場合は first item の code を表示用フォールバックとして埋める
+      // （DB は触らず、レスポンス上のみ。Backfill migration で本体は埋まる）
+      if (!data.status_code && (catRes.status_template.items || []).length) {
+        data.status_code = catRes.status_template.items[0].code;
+      }
+    }
   }
 
-  // ball_holder（派生表示用）を一覧と同じ getBallHolder() で計算して返す。
-  // 詳細モーダルのヘッダーに「現在のボール保持者」を表示する用途。
-  // 一覧 (/creatives) のフォーマットと完全一致させて、表示揺れを防ぐ。
+  // (B) own team
+  data.teams = ownTeam;
+
+  // (C) sub D/P
+  if (data.projects) {
+    data.projects.sub_director_ids = subDP.sub_director_ids;
+    data.projects.sub_producer_ids = subDP.sub_producer_ids;
+    data.projects.sub_directors = subDP.sub_directors;
+    data.projects.sub_producers = subDP.sub_producers;
+  }
+
+  // (D) client_teams
+  if (data.projects) {
+    data.projects.client_teams = clientTeams;
+  }
+
+  // (E) ball_holder
   try {
-    const { data: teamsRaw } = await supabase
-      .from('teams')
-      .select('id, director_id, director:director_id(full_name), team_members(user_id)');
-    const directorByTeamId   = new Map();
-    const directorByUserId   = new Map();
-    const directorIdByTeamId = new Map();
-    const directorIdByUserId = new Map();
-    (teamsRaw || []).forEach(t => {
-      const name = t.director?.full_name || '';
-      if (t.director_id) {
-        directorByTeamId.set(t.id, name);
-        directorIdByTeamId.set(t.id, t.director_id);
-      }
-      (t.team_members || []).forEach(tm => {
-        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
-          directorByUserId.set(tm.user_id, name);
-          directorIdByUserId.set(tm.user_id, t.director_id || null);
+    if (teamsRaw === null) {
+      data.ball_holder = null;
+    } else {
+      const directorByTeamId   = new Map();
+      const directorByUserId   = new Map();
+      const directorIdByTeamId = new Map();
+      const directorIdByUserId = new Map();
+      teamsRaw.forEach(t => {
+        const name = t.director?.full_name || '';
+        if (t.director_id) {
+          directorByTeamId.set(t.id, name);
+          directorIdByTeamId.set(t.id, t.director_id);
         }
+        (t.team_members || []).forEach(tm => {
+          if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+            directorByUserId.set(tm.user_id, name);
+            directorIdByUserId.set(tm.user_id, t.director_id || null);
+          }
+        });
       });
-    });
-    const projectDirector = data.projects?.director_id
-      ? (data.projects.director || null)
-      : null;
-    data.ball_holder = getBallHolder(
-      data.status,
-      data.creative_assignments,
-      directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
-      projectDirector
-    );
+      const projectDirector = data.projects?.director_id
+        ? (data.projects.director || null)
+        : null;
+      data.ball_holder = getBallHolder(
+        data.status,
+        data.creative_assignments,
+        directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+        projectDirector
+      );
+    }
   } catch (e) {
     console.warn('[creatives/:id] ball_holder 計算失敗:', e.message);
     data.ball_holder = null;
