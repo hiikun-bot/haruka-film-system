@@ -105,6 +105,8 @@
       .mp-item:hover { background: #F8FAFC; }
       .mp-item.mp-item-selected { background: #ECFEFF; }
       .mp-item input { margin: 0; flex: 0 0 auto; cursor: pointer; }
+      .mp-item-avatar { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; background: #E2E8F0; color: #475569; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; overflow: hidden; }
+      .mp-item-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .mp-item-name { flex: 1 1 auto; font-size: 13.5px; color: #0F172A; }
       .mp-item-role { flex: 0 0 auto; font-size: 11px; color: #64748B; padding: 2px 8px; border-radius: 999px; background: #F1F5F9; }
       .mp-divider { padding: 6px 12px; font-size: 11px; color: #94A3B8; border-top: 1px dashed #E5E7EB; margin-top: 6px; }
@@ -127,6 +129,8 @@
       .mp-trigger-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .mp-trigger-placeholder { color: #94A3B8; }
       .mp-trigger-caret { flex: 0 0 auto; color: #94A3B8; font-size: 10px; }
+      .mp-trigger-avatar { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; background: #E2E8F0; color: #475569; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; overflow: hidden; }
+      .mp-trigger-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
       @media (max-width: 768px) {
         .mp-modal { max-height: 90vh; width: 100%; border-radius: 12px 12px 0 0; align-self: flex-end; }
@@ -292,6 +296,12 @@
       const activeMembers = filtered.filter(m => m.is_active !== false);
       const inactiveMembers = filtered.filter(m => m.is_active === false);
 
+      const avatarMarkup = (m) => {
+        const url = m.avatar_url;
+        const initial = (m.full_name || m.nickname || '?').trim().charAt(0).toUpperCase();
+        if (url) return `<span class="mp-item-avatar"><img src="${escapeHtml(url)}" alt="" loading="lazy"></span>`;
+        return `<span class="mp-item-avatar">${escapeHtml(initial)}</span>`;
+      };
       const renderItem = (m) => {
         const sel = session.selectedIds.has(String(m.id));
         const inputType = opts.mode === 'multi' ? 'checkbox' : 'radio';
@@ -299,6 +309,7 @@
         const roleShort = roleDef ? roleDef.short : (m.role || '');
         return `<label class="mp-item${sel ? ' mp-item-selected' : ''}" data-id="${escapeHtml(m.id)}">
           <input type="${inputType}" name="mp-pick" ${sel ? 'checked' : ''} />
+          ${avatarMarkup(m)}
           <span class="mp-item-name">${escapeHtml(memberLabel(m))}</span>
           ${roleShort ? `<span class="mp-item-role">${escapeHtml(roleShort)}</span>` : ''}
         </label>`;
@@ -310,6 +321,7 @@
         const sel = session.includeEmpty;
         html += `<label class="mp-item${sel ? ' mp-item-selected' : ''}" data-empty="1">
           <input type="${opts.mode === 'multi' ? 'checkbox' : 'radio'}" name="mp-pick" ${sel ? 'checked' : ''} />
+          <span class="mp-item-avatar" style="background:transparent;color:#94A3B8">—</span>
           <span class="mp-item-name" style="color:#64748B">${escapeHtml(opts.emptyLabel)}</span>
         </label>`;
       }
