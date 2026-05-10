@@ -34670,10 +34670,36 @@ window.addEventListener('load', () => {
 });
 
 // 送信
+// 同時2回押し / Enter連打 / clipboard ペースト直後の送信などで二重 INSERT が発生していた
+// fix(bug-reports): 二重送信ガード（フラグ + ボタンdisable）
+let _brSubmitInFlight = false;
+
 async function submitBugReport() {
+  if (_brSubmitInFlight) return; // 既に処理中なら何もしない（先勝ち）
   const id = document.getElementById('br-id').value || null;
   const title = document.getElementById('br-title').value.trim();
   if (!title) { alert('タイトルは必須です'); return; }
+
+  // 保存ボタンを disable して見た目でも進行中と分かるように
+  const saveBtn = document.querySelector('#modal-bug-report .modal-footer .btn-primary');
+  const origLabel = saveBtn ? saveBtn.textContent : '';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = id ? '保存中…' : '送信中…';
+  }
+  _brSubmitInFlight = true;
+  try {
+    return await _submitBugReportInner(id, title);
+  } finally {
+    _brSubmitInFlight = false;
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = origLabel || '保存';
+    }
+  }
+}
+
+async function _submitBugReportInner(id, title) {
 
   // canvas をPNG data URLに（画像があれば）
   let screenshotDataUrl = null;
