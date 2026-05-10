@@ -5526,7 +5526,7 @@ window.showPage = window.showPage || function(name, btn) {
           </div>
 
           <!-- サブプロデューサー（複数）— Pチェック依頼可能者 -->
-          <!-- サブディレクターと完全パラレルなUI -->
+          <!-- ADR 014: 共通 MemberPicker(multi) を呼び出す形に統一。chips + 編集ボタン + 警告のみ -->
           <div class="form-group" style="margin-bottom:0;margin-top:14px">
             <label class="form-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
               <span style="display:flex;align-items:center;gap:6px">
@@ -5536,17 +5536,16 @@ window.showPage = window.showPage || function(name, btn) {
               <span id="p-sub-producers-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap;font-weight:400"></span>
             </label>
             <div style="border:1.5px solid var(--border);border-radius:8px;padding:10px;background:var(--bg-soft, #fafafa)">
-              <div id="p-sub-producers-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
-              <input type="text" id="p-sub-producers-search" placeholder="🔍 名前で検索..." style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
-              <div id="p-sub-producers-list" style="max-height:240px;overflow-y:auto">
-                <div style="padding:8px;color:var(--text-muted);font-size:12px">候補を読み込み中...</div>
+              <div id="p-sub-producers-chips" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px"></div>
+              <div style="display:flex;justify-content:flex-end;margin-top:8px">
+                <button type="button" id="p-sub-producers-edit-btn" onclick="openProjectSubProducerPicker(this)" class="btn btn-secondary" style="padding:6px 14px;font-size:12px">編集</button>
               </div>
               <div id="p-sub-producers-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
             </div>
           </div>
 
           <!-- サブディレクター（複数）— Dチェック依頼可能者 -->
-          <!-- UI仕様: Dチェックピッカーの「その他から選ぶ」と同等のロールフィルタチップ＋名前検索＋チェックボックスリスト -->
+          <!-- ADR 014: 共通 MemberPicker(multi) を呼び出す形に統一 -->
           <div class="form-group" style="margin-bottom:0;margin-top:14px">
             <label class="form-label" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
               <span style="display:flex;align-items:center;gap:6px">
@@ -5556,13 +5555,9 @@ window.showPage = window.showPage || function(name, btn) {
               <span id="p-sub-directors-counter" style="font-size:11px;color:var(--text-muted);white-space:nowrap;font-weight:400"></span>
             </label>
             <div style="border:1.5px solid var(--border);border-radius:8px;padding:10px;background:var(--bg-soft, #fafafa)">
-              <!-- ロールフィルタチップ -->
-              <div id="p-sub-directors-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
-              <!-- 名前検索 -->
-              <input type="text" id="p-sub-directors-search" placeholder="🔍 名前で検索..." style="width:100%;padding:8px 12px;border:0.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px;box-sizing:border-box">
-              <!-- メンバーリスト -->
-              <div id="p-sub-directors-list" style="max-height:240px;overflow-y:auto">
-                <div style="padding:8px;color:var(--text-muted);font-size:12px">クライアントを選択するとチームメンバーが表示されます</div>
+              <div id="p-sub-directors-chips" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px"></div>
+              <div style="display:flex;justify-content:flex-end;margin-top:8px">
+                <button type="button" id="p-sub-directors-edit-btn" onclick="openProjectSubDirectorPicker(this)" class="btn btn-secondary" style="padding:6px 14px;font-size:12px">編集</button>
               </div>
               <div id="p-sub-directors-warn" style="display:none;font-size:11px;color:#E24B4A;margin-top:6px;padding:6px;background:#FFF1F0;border-radius:4px"></div>
             </div>
@@ -13765,389 +13760,184 @@ function clearDateFilter() {
   loadProjects();
 }
 
-// ===== 案件モーダル: サブディレクター（複数）ピッカー =====
-// projects.sub_director_ids（UUID[]）を編集する用のクライアントサイド状態管理。
-// 候補は「案件のクライアントに紐づくチームのメンバー」— ディレクター本人は除外する。
-// チームを変更（クライアント切替で間接的に変わる）したらピッカーをリフレッシュし、
-// チーム外になったIDが残っていたら警告表示+自動クリアする。
-//
-// UI仕様: Dチェックピッカー（dcp）と同じ「ロールフィルタチップ + 名前検索 + チェックボックスリスト」。
-// IME バグ対策のため、検索 input は一度しか描画せず、フィルタ変更時はリスト部分だけ更新する。
+// ===== 案件モーダル: サブディレクター / サブプロデューサー（共通 MemberPicker 版） =====
+// ADR 014 Stage 4-2: 旧 dcp 風の常時表示 UI（chips + 検索 + リスト）を撤去し、
+// 共通 MemberPicker(multi) を呼び出す形に統一。残したのは:
+//   - 選択中 chip 一覧（個別 [×] で削除可）
+//   - カウンター
+//   - メイン P/D との重複警告
+//   - [編集] ボタン（クリックで MemberPicker.open）
+// state は _editingProjectSubDirectorIds / _editingProjectSubProducerIds のみ。
 let _editingProjectSubDirectorIds = [];
-let _psdState = {
-  roleFilter: '__all__',
-  search: '',
-  isComposing: false,
-  searchWired: false,
-};
+let _editingProjectSubProducerIds = [];
 
-// 候補メンバー一覧を計算
-// 仕様: 全アクティブユーザーから案件メインディレクター本人だけを除外する。
-// （旧仕様のクライアントチーム制約は撤廃。Dチェックピッカーの「その他から選ぶ」と同じプール）
+// allMembers から id を引く（描画用ユーティリティ）
+function _findMemberById(id) {
+  if (!id) return null;
+  return (allMembers || []).find(m => m && m.id === id) || null;
+}
+
+// MemberPicker.ROLE_DEFS から role 短縮形を取得
+function _roleShort(role) {
+  if (!role) return '';
+  const defs = (window.MemberPicker && window.MemberPicker.ROLE_DEFS) || [];
+  const def = defs.find(d => d.value === role);
+  return def ? def.short : role;
+}
+
+// 候補メンバー一覧（main P/D 本人を除いた active な全ユーザー）
+// MemberPicker 側の filter にも渡すが、警告判定用にここでも使う。
 function getProjectSubDirectorCandidates() {
   const directorId = document.getElementById('p-director-id')?.value || '';
   const candidates = (allMembers || [])
-    .filter(m => m && m.is_active !== false && m.id && m.id !== directorId)
-    .slice()
-    .sort(typeof dcpCompareUsers === 'function'
-      ? dcpCompareUsers
-      : (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+    .filter(m => m && m.is_active !== false && m.id && m.id !== directorId);
   return { candidates };
 }
-
-// メイン: 全体描画（チップ＋リスト）。検索 input の DOM は触らないが
-// 値は state から書き戻す（クライアント切り替え/モーダル開閉時にリセットしたい場合用）。
-function renderProjectSubDirectorPicker() {
-  const list = document.getElementById('p-sub-directors-list');
-  const counter = document.getElementById('p-sub-directors-counter');
-  const warn = document.getElementById('p-sub-directors-warn');
-  const chipsWrap = document.getElementById('p-sub-directors-chips');
-  if (!list) return;
-  const { candidates } = getProjectSubDirectorCandidates();
-  const directorId = document.getElementById('p-director-id')?.value || '';
-
-  // ディレクター本人と重複した（あるいは無効化された）IDを検出してクリア
-  const allowedSet = new Set(candidates.map(c => c.id));
-  const dropped = _editingProjectSubDirectorIds.filter(id => !allowedSet.has(id) || id === directorId);
-  if (dropped.length) {
-    _editingProjectSubDirectorIds = _editingProjectSubDirectorIds.filter(id => allowedSet.has(id) && id !== directorId);
-    if (warn) {
-      warn.style.display = '';
-      warn.textContent = `ディレクター本人と重複した / 無効化された ${dropped.length} 名をサブディレクターから外しました。`;
-    }
-  } else if (warn) {
-    warn.style.display = 'none';
-    warn.textContent = '';
-  }
-
-  // 検索 input の wiring（1回だけ）
-  psdWireSearchInput();
-
-  // 候補ゼロ時の表示（ユーザー未ロード等のフォールバック）
-  if (!candidates.length) {
-    if (chipsWrap) chipsWrap.innerHTML = '';
-    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">候補ユーザーがいません</div>';
-    if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中`;
-    return;
-  }
-
-  // ロールチップ描画（dcp と同じ helper を再利用: dcpCountByRole / dcpChipDefs / roleLabel）
-  if (chipsWrap) {
-    const counts = dcpCountByRole(candidates.map(m => ({ role: m.role || '' })));
-    const cur = _psdState.roleFilter || '__all__';
-    chipsWrap.innerHTML = dcpChipDefs(counts).map(c => {
-      const active = (cur === c.value);
-      return `<button type="button" data-role="${esc(c.value)}" onclick="psdSetRoleFilter('${esc(c.value)}')"
-        style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
-               background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
-               color:${active ? '#fff' : 'var(--text)'};
-               font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
-        ${esc(c.label)}(${c.count})
-      </button>`;
-    }).join('');
-  }
-
-  psdRenderList();
-
-  if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中 / 候補 ${candidates.length} 名`;
-}
-
-// リストだけ更新（検索 input には触らない＝IME 中断回避）
-function psdRenderList() {
-  const list = document.getElementById('p-sub-directors-list');
-  if (!list) return;
-  const { candidates } = getProjectSubDirectorCandidates();
-  const roleFilter = _psdState.roleFilter || '__all__';
-  const search = (_psdState.search || '').trim().toLowerCase();
-
-  let filtered = candidates;
-  if (roleFilter && roleFilter !== '__all__') {
-    if (roleFilter === '__other__') {
-      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
-      filtered = filtered.filter(m => !known.has(m.role || ''));
-    } else {
-      filtered = filtered.filter(m => (m.role || '') === roleFilter);
-    }
-  }
-  if (search) {
-    filtered = filtered.filter(m =>
-      (m.full_name || '').toLowerCase().includes(search) ||
-      (m.nickname || '').toLowerCase().includes(search)
-    );
-  }
-
-  if (!filtered.length) {
-    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px;text-align:center">該当なし</div>';
-    return;
-  }
-
-  list.innerHTML = filtered.map(m => {
-    const isChecked = _editingProjectSubDirectorIds.includes(m.id);
-    const idEsc = esc(m.id);
-    const name = esc(m.full_name || '(名前未設定)');
-    const role = m.role || '';
-    const roleBadge = role
-      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(roleLabel(role))}</span>`
-      : '';
-    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
-      <input type="checkbox" value="${idEsc}" ${isChecked ? 'checked' : ''} onchange="toggleProjectSubDirector('${idEsc}')" style="margin:0;width:16px;height:16px;cursor:pointer">
-      ${avatarHtml(m, 28)}
-      <span style="font-size:13px;font-weight:500;color:var(--text)">${name}</span>
-      ${roleBadge}
-    </label>`;
-  }).join('');
-}
-
-// チップの active 表示だけ更新（input/list には触らない）
-function psdUpdateChipsActive() {
-  const wrap = document.getElementById('p-sub-directors-chips');
-  if (!wrap) return;
-  const cur = _psdState.roleFilter || '__all__';
-  wrap.querySelectorAll('button[data-role]').forEach(btn => {
-    const active = (btn.getAttribute('data-role') === cur);
-    btn.style.background  = active ? 'var(--em-dark, #0d9488)' : '#fff';
-    btn.style.color       = active ? '#fff' : 'var(--text)';
-    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
-    btn.style.fontWeight  = active ? '600' : '500';
-  });
-}
-
-// 検索 input の IME 安全 wiring（1度だけ）
-function psdWireSearchInput() {
-  const ipt = document.getElementById('p-sub-directors-search');
-  if (!ipt || _psdState.searchWired) return;
-  _psdState.searchWired = true;
-  ipt.addEventListener('compositionstart', () => { _psdState.isComposing = true; });
-  ipt.addEventListener('compositionend', (ev) => {
-    _psdState.isComposing = false;
-    _psdState.search = ev.target.value;
-    psdRenderList();
-  });
-  ipt.addEventListener('input', (ev) => {
-    if (_psdState.isComposing) return;
-    _psdState.search = ev.target.value;
-    psdRenderList();
-  });
-}
-
-function psdSetRoleFilter(role) {
-  _psdState.roleFilter = role || '__all__';
-  psdUpdateChipsActive();
-  psdRenderList();
-}
-
-function toggleProjectSubDirector(userId) {
-  if (!Array.isArray(_editingProjectSubDirectorIds)) _editingProjectSubDirectorIds = [];
-  const idx = _editingProjectSubDirectorIds.indexOf(userId);
-  if (idx >= 0) {
-    _editingProjectSubDirectorIds.splice(idx, 1);
-  } else {
-    _editingProjectSubDirectorIds.push(userId);
-  }
-  // チェック状態は <label> の background だけ更新（再描画でフォーカス飛ばさない）
-  document.querySelectorAll(`#p-sub-directors-list input[type="checkbox"][value="${CSS.escape(userId)}"]`).forEach(inp => {
-    const label = inp.closest('label');
-    if (label) {
-      label.style.background = _editingProjectSubDirectorIds.includes(userId) ? 'var(--em-pale, #ecfdfb)' : '#fff';
-    }
-  });
-  // counter だけ更新
-  const counter = document.getElementById('p-sub-directors-counter');
-  if (counter) {
-    const { candidates } = getProjectSubDirectorCandidates();
-    counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中 / 候補 ${candidates.length} 名`;
-  }
-}
-
-// クライアント変更時 — サブディレクター/サブプロデューサー候補をリフレッシュ
-function onProjectClientChange() {
-  // 検索・フィルタはリセット
-  const searchEl = document.getElementById('p-sub-directors-search');
-  if (searchEl) searchEl.value = '';
-  _psdState.search = '';
-  _psdState.roleFilter = '__all__';
-  renderProjectSubDirectorPicker();
-  // サブプロデューサーも同様にリセット
-  const ppSearchEl = document.getElementById('p-sub-producers-search');
-  if (ppSearchEl) ppSearchEl.value = '';
-  _pspState.search = '';
-  _pspState.roleFilter = '__all__';
-  renderProjectSubProducerPicker();
-}
-
-// ===== 案件モーダル: サブプロデューサー（複数）ピッカー =====
-// projects.sub_producer_ids（UUID[]）を編集する用のクライアントサイド状態管理。
-// サブディレクターと完全パラレルな実装。プロデューサー本人は除外。
-let _editingProjectSubProducerIds = [];
-let _pspState = {
-  roleFilter: '__all__',
-  search: '',
-  isComposing: false,
-  searchWired: false,
-};
-
 function getProjectSubProducerCandidates() {
   const producerId = document.getElementById('p-producer-id')?.value || '';
   const candidates = (allMembers || [])
-    .filter(m => m && m.is_active !== false && m.id && m.id !== producerId)
-    .slice()
-    .sort(typeof dcpCompareUsers === 'function'
-      ? dcpCompareUsers
-      : (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+    .filter(m => m && m.is_active !== false && m.id && m.id !== producerId);
   return { candidates };
 }
 
-function renderProjectSubProducerPicker() {
-  const list = document.getElementById('p-sub-producers-list');
-  const counter = document.getElementById('p-sub-producers-counter');
-  const warn = document.getElementById('p-sub-producers-warn');
-  const chipsWrap = document.getElementById('p-sub-producers-chips');
-  if (!list) return;
-  const { candidates } = getProjectSubProducerCandidates();
-  const producerId = document.getElementById('p-producer-id')?.value || '';
-
-  const allowedSet = new Set(candidates.map(c => c.id));
-  const dropped = _editingProjectSubProducerIds.filter(id => !allowedSet.has(id) || id === producerId);
-  if (dropped.length) {
-    _editingProjectSubProducerIds = _editingProjectSubProducerIds.filter(id => allowedSet.has(id) && id !== producerId);
-    if (warn) {
-      warn.style.display = '';
-      warn.textContent = `プロデューサー本人と重複した / 無効化された ${dropped.length} 名をサブプロデューサーから外しました。`;
-    }
-  } else if (warn) {
-    warn.style.display = 'none';
-    warn.textContent = '';
-  }
-
-  pspWireSearchInput();
-
-  if (!candidates.length) {
-    if (chipsWrap) chipsWrap.innerHTML = '';
-    list.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">候補ユーザーがいません</div>';
-    if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中`;
+// chips（選択中メンバー）を描画。各 chip には個別削除 [×] を付ける。
+function _renderSubMemberChips(targetId, ids, onRemove) {
+  const wrap = document.getElementById(targetId);
+  if (!wrap) return;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    wrap.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">未選択</span>';
     return;
   }
-
-  if (chipsWrap) {
-    const counts = dcpCountByRole(candidates.map(m => ({ role: m.role || '' })));
-    const cur = _pspState.roleFilter || '__all__';
-    chipsWrap.innerHTML = dcpChipDefs(counts).map(c => {
-      const active = (cur === c.value);
-      return `<button type="button" data-role="${esc(c.value)}" onclick="pspSetRoleFilter('${esc(c.value)}')"
-        style="border:0.5px solid ${active ? 'var(--em-dark, #0d9488)' : 'var(--border)'};
-               background:${active ? 'var(--em-dark, #0d9488)' : '#fff'};
-               color:${active ? '#fff' : 'var(--text)'};
-               font-size:11px;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:${active ? '600' : '500'}">
-        ${esc(c.label)}(${c.count})
-      </button>`;
-    }).join('');
-  }
-
-  pspRenderList();
-
-  if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中 / 候補 ${candidates.length} 名`;
-}
-
-function pspRenderList() {
-  const list = document.getElementById('p-sub-producers-list');
-  if (!list) return;
-  const { candidates } = getProjectSubProducerCandidates();
-  const roleFilter = _pspState.roleFilter || '__all__';
-  const search = (_pspState.search || '').trim().toLowerCase();
-
-  let filtered = candidates;
-  if (roleFilter && roleFilter !== '__all__') {
-    if (roleFilter === '__other__') {
-      const known = new Set(['admin','secretary','producer_director','producer','director','editor','designer']);
-      filtered = filtered.filter(m => !known.has(m.role || ''));
-    } else {
-      filtered = filtered.filter(m => (m.role || '') === roleFilter);
-    }
-  }
-  if (search) {
-    filtered = filtered.filter(m =>
-      (m.full_name || '').toLowerCase().includes(search) ||
-      (m.nickname || '').toLowerCase().includes(search)
-    );
-  }
-
-  if (!filtered.length) {
-    list.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px;text-align:center">該当なし</div>';
-    return;
-  }
-
-  list.innerHTML = filtered.map(m => {
-    const isChecked = _editingProjectSubProducerIds.includes(m.id);
-    const idEsc = esc(m.id);
-    const name = esc(m.full_name || '(名前未設定)');
-    const role = m.role || '';
+  wrap.innerHTML = ids.map(id => {
+    const m = _findMemberById(id);
+    const name = m ? (m.full_name || m.nickname || '(名前未設定)') : '(不明なメンバー)';
+    const nick = m && m.nickname && m.nickname !== m.full_name ? `（${m.nickname}）` : '';
+    const role = m ? _roleShort(m.role) : '';
     const roleBadge = role
-      ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(roleLabel(role))}</span>`
+      ? `<span style="font-size:10px;color:var(--text-muted);background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(role)}</span>`
       : '';
-    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0.5px solid var(--border);margin-bottom:6px;background:${isChecked ? 'var(--em-pale, #ecfdfb)' : '#fff'}">
-      <input type="checkbox" value="${idEsc}" ${isChecked ? 'checked' : ''} onchange="toggleProjectSubProducer('${idEsc}')" style="margin:0;width:16px;height:16px;cursor:pointer">
-      ${avatarHtml(m, 28)}
-      <span style="font-size:13px;font-weight:500;color:var(--text)">${name}</span>
+    return `<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:999px;padding:3px 8px 3px 4px;font-size:12px">
+      ${m ? avatarHtml(m, 22) : ''}
+      <span style="color:var(--text)">${esc(name)}${esc(nick)}</span>
       ${roleBadge}
-    </label>`;
+      <button type="button" aria-label="外す" onclick="${onRemove}('${esc(id)}')" style="border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">×</button>
+    </span>`;
   }).join('');
 }
 
-function pspUpdateChipsActive() {
-  const wrap = document.getElementById('p-sub-producers-chips');
-  if (!wrap) return;
-  const cur = _pspState.roleFilter || '__all__';
-  wrap.querySelectorAll('button[data-role]').forEach(btn => {
-    const active = (btn.getAttribute('data-role') === cur);
-    btn.style.background  = active ? 'var(--em-dark, #0d9488)' : '#fff';
-    btn.style.color       = active ? '#fff' : 'var(--text)';
-    btn.style.borderColor = active ? 'var(--em-dark, #0d9488)' : 'var(--border)';
-    btn.style.fontWeight  = active ? '600' : '500';
-  });
-}
+// メイン: サブディレクターの chip + 警告 + counter を再描画
+function renderProjectSubDirectorPicker() {
+  const directorId = document.getElementById('p-director-id')?.value || '';
+  const { candidates } = getProjectSubDirectorCandidates();
+  const allowedSet = new Set(candidates.map(c => c.id));
 
-function pspWireSearchInput() {
-  const ipt = document.getElementById('p-sub-producers-search');
-  if (!ipt || _pspState.searchWired) return;
-  _pspState.searchWired = true;
-  ipt.addEventListener('compositionstart', () => { _pspState.isComposing = true; });
-  ipt.addEventListener('compositionend', (ev) => {
-    _pspState.isComposing = false;
-    _pspState.search = ev.target.value;
-    pspRenderList();
-  });
-  ipt.addEventListener('input', (ev) => {
-    if (_pspState.isComposing) return;
-    _pspState.search = ev.target.value;
-    pspRenderList();
-  });
-}
-
-function pspSetRoleFilter(role) {
-  _pspState.roleFilter = role || '__all__';
-  pspUpdateChipsActive();
-  pspRenderList();
-}
-
-function toggleProjectSubProducer(userId) {
-  if (!Array.isArray(_editingProjectSubProducerIds)) _editingProjectSubProducerIds = [];
-  const idx = _editingProjectSubProducerIds.indexOf(userId);
-  if (idx >= 0) {
-    _editingProjectSubProducerIds.splice(idx, 1);
-  } else {
-    _editingProjectSubProducerIds.push(userId);
+  // ディレクター本人と重複 / 非アクティブ化された ID を検出してクリア
+  const dropped = _editingProjectSubDirectorIds.filter(id => !allowedSet.has(id) || id === directorId);
+  if (dropped.length) {
+    _editingProjectSubDirectorIds = _editingProjectSubDirectorIds.filter(id => allowedSet.has(id) && id !== directorId);
   }
-  document.querySelectorAll(`#p-sub-producers-list input[type="checkbox"][value="${CSS.escape(userId)}"]`).forEach(inp => {
-    const label = inp.closest('label');
-    if (label) {
-      label.style.background = _editingProjectSubProducerIds.includes(userId) ? 'var(--em-pale, #ecfdfb)' : '#fff';
+  const warn = document.getElementById('p-sub-directors-warn');
+  if (warn) {
+    if (dropped.length) {
+      warn.style.display = '';
+      warn.textContent = `ディレクター本人と重複 / 非アクティブ化された ${dropped.length} 名をサブディレクターから外しました。`;
+    } else {
+      warn.style.display = 'none';
+      warn.textContent = '';
     }
-  });
-  const counter = document.getElementById('p-sub-producers-counter');
-  if (counter) {
-    const { candidates } = getProjectSubProducerCandidates();
-    counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中 / 候補 ${candidates.length} 名`;
   }
+
+  _renderSubMemberChips('p-sub-directors-chips', _editingProjectSubDirectorIds, 'removeProjectSubDirector');
+
+  const counter = document.getElementById('p-sub-directors-counter');
+  if (counter) counter.textContent = `${_editingProjectSubDirectorIds.length} 名選択中`;
+}
+
+// メイン: サブプロデューサーの chip + 警告 + counter を再描画
+function renderProjectSubProducerPicker() {
+  const producerId = document.getElementById('p-producer-id')?.value || '';
+  const { candidates } = getProjectSubProducerCandidates();
+  const allowedSet = new Set(candidates.map(c => c.id));
+
+  const dropped = _editingProjectSubProducerIds.filter(id => !allowedSet.has(id) || id === producerId);
+  if (dropped.length) {
+    _editingProjectSubProducerIds = _editingProjectSubProducerIds.filter(id => allowedSet.has(id) && id !== producerId);
+  }
+  const warn = document.getElementById('p-sub-producers-warn');
+  if (warn) {
+    if (dropped.length) {
+      warn.style.display = '';
+      warn.textContent = `プロデューサー本人と重複 / 非アクティブ化された ${dropped.length} 名をサブプロデューサーから外しました。`;
+    } else {
+      warn.style.display = 'none';
+      warn.textContent = '';
+    }
+  }
+
+  _renderSubMemberChips('p-sub-producers-chips', _editingProjectSubProducerIds, 'removeProjectSubProducer');
+
+  const counter = document.getElementById('p-sub-producers-counter');
+  if (counter) counter.textContent = `${_editingProjectSubProducerIds.length} 名選択中`;
+}
+
+// chip 個別削除
+function removeProjectSubDirector(userId) {
+  _editingProjectSubDirectorIds = (_editingProjectSubDirectorIds || []).filter(x => x !== userId);
+  renderProjectSubDirectorPicker();
+}
+function removeProjectSubProducer(userId) {
+  _editingProjectSubProducerIds = (_editingProjectSubProducerIds || []).filter(x => x !== userId);
+  renderProjectSubProducerPicker();
+}
+
+// [編集] ボタン: 共通 MemberPicker(multi) を開く
+function openProjectSubDirectorPicker(triggerEl) {
+  if (typeof MemberPicker === 'undefined') {
+    console.error('[sub-director] MemberPicker is not loaded');
+    return;
+  }
+  const directorId = document.getElementById('p-director-id')?.value || '';
+  // メイン D 本人を候補から除外するため、allowedRoles ではなく後段の選択結果から弾く。
+  // allowedRoles は「Dチェックを依頼しうる役割プール」(admin / P / P/D / D)。
+  MemberPicker.open(triggerEl, {
+    mode: 'multi',
+    title: 'サブディレクターを選択',
+    value: Array.isArray(_editingProjectSubDirectorIds) ? [..._editingProjectSubDirectorIds] : [],
+    allowedRoles: ['admin','producer','producer_director','director','editor','designer'],
+    showInactive: false,
+    onChange: (ids) => {
+      // メイン D 本人は除外する
+      const filtered = (Array.isArray(ids) ? ids : []).filter(id => id && id !== directorId);
+      _editingProjectSubDirectorIds = filtered;
+      renderProjectSubDirectorPicker();
+    },
+  });
+}
+
+function openProjectSubProducerPicker(triggerEl) {
+  if (typeof MemberPicker === 'undefined') {
+    console.error('[sub-producer] MemberPicker is not loaded');
+    return;
+  }
+  const producerId = document.getElementById('p-producer-id')?.value || '';
+  MemberPicker.open(triggerEl, {
+    mode: 'multi',
+    title: 'サブプロデューサーを選択',
+    value: Array.isArray(_editingProjectSubProducerIds) ? [..._editingProjectSubProducerIds] : [],
+    allowedRoles: ['admin','producer','producer_director'],
+    showInactive: false,
+    onChange: (ids) => {
+      const filtered = (Array.isArray(ids) ? ids : []).filter(id => id && id !== producerId);
+      _editingProjectSubProducerIds = filtered;
+      renderProjectSubProducerPicker();
+    },
+  });
+}
+
+// クライアント変更時 — メイン P/D が変わる可能性があるので chip と警告を再判定
+function onProjectClientChange() {
+  renderProjectSubDirectorPicker();
+  renderProjectSubProducerPicker();
 }
 
 function openProjectModal(preClientId) {
@@ -14214,21 +14004,12 @@ function openProjectModal(preClientId) {
   { const _sd = document.getElementById('p-serial-digits'); if (_sd) _sd.value = '3'; }
   selectDeadlineUnit('monthly');
   document.getElementById('p-deadline-weekday').value = '';
-  // サブディレクター: 新規は空で初期化
+  // サブディレクター / サブプロデューサー: 新規は空で初期化（ADR 014: 共通 MemberPicker 経由）
   _editingProjectSubDirectorIds = [];
-  _psdState.search = '';
-  _psdState.roleFilter = '__all__';
-  const subSearch = document.getElementById('p-sub-directors-search');
-  if (subSearch) subSearch.value = '';
   const subWarn = document.getElementById('p-sub-directors-warn');
   if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
   renderProjectSubDirectorPicker();
-  // サブプロデューサー: 新規は空で初期化
   _editingProjectSubProducerIds = [];
-  _pspState.search = '';
-  _pspState.roleFilter = '__all__';
-  const ppSearch = document.getElementById('p-sub-producers-search');
-  if (ppSearch) ppSearch.value = '';
   const ppWarn = document.getElementById('p-sub-producers-warn');
   if (ppWarn) { ppWarn.style.display = 'none'; ppWarn.textContent = ''; }
   renderProjectSubProducerPicker();
@@ -14339,21 +14120,13 @@ function openEditProject(p) {
     if (_sd) _sd.value = (p.serial_digits != null && p.serial_digits !== '') ? String(p.serial_digits) : '3';
   }
 
-  // サブディレクター: DB値を復元（クライアント外IDが残っていれば render 側で警告クリア）
+  // サブディレクター: DB値を復元（無効化IDが残っていれば render 側で警告クリア）
   _editingProjectSubDirectorIds = Array.isArray(p.sub_director_ids) ? [...p.sub_director_ids] : [];
-  _psdState.search = '';
-  _psdState.roleFilter = '__all__';
-  const subSearch = document.getElementById('p-sub-directors-search');
-  if (subSearch) subSearch.value = '';
   const subWarn = document.getElementById('p-sub-directors-warn');
   if (subWarn) { subWarn.style.display = 'none'; subWarn.textContent = ''; }
   renderProjectSubDirectorPicker();
   // サブプロデューサー: DB値を復元
   _editingProjectSubProducerIds = Array.isArray(p.sub_producer_ids) ? [...p.sub_producer_ids] : [];
-  _pspState.search = '';
-  _pspState.roleFilter = '__all__';
-  const ppSearch = document.getElementById('p-sub-producers-search');
-  if (ppSearch) ppSearch.value = '';
   const ppWarn = document.getElementById('p-sub-producers-warn');
   if (ppWarn) { ppWarn.style.display = 'none'; ppWarn.textContent = ''; }
   renderProjectSubProducerPicker();
