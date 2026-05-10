@@ -42,7 +42,7 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 
 ### 設計思想（ユーザー判断）
 
-ロール別ダッシュボードを設計するにあたり、以下3点をすべての画面で同居させる。
+ロール別ダッシュボードを設計するにあたり、以下4点をすべての画面で同居させる。
 
 1. **自分の仕事を全うする**ブロック（タスク・ボール・納期）
 2. **一つ上の役職の視座を覗ける**ブロック
@@ -51,6 +51,10 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 3. **モチベーションとなる数値**
    - 累計納品本数、リピート率、回収率など「追いかけたくなる数字」
    - 「数値を追い求める人にとっては有益な情報」を提供する
+4. **ユーザー個別カスタマイズ可能**（後述）
+   - ロール別マトリクスは **推奨デフォルト**。ユーザーは表示ウィジェットを ON/OFF・並び替え可能
+   - ただし「ロール権限ゲート」によって、権限のないウィジェットは🔒ロック表示（選択不可・存在は見える）
+   - ロック表示自体が「上のロールになるとこの情報が見られる」というキャリアモチベに繋がる
 
 ## Decision
 
@@ -166,6 +170,102 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 - ブロック内に「もっと詳しく → VIEW AS で切り替え」リンク（admin のみ表示）
 - 表示ロジックは `effectiveRole()` ベース（ADR 015 準拠）
 
+### ウィジェット制御モデル（3層構造）
+
+ロール別マトリクスは固定ではなく、以下の3層で動的に決まる。
+
+#### Layer 1: ウィジェット定義（マスタ）
+
+`dashboard_widgets` テーブル（新設）：
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `widget_id` | text PK | `'sales_forecast'`, `'my_task_queue'`, `'cumulative_deliveries'` 等 |
+| `label` | text | UI表示名 |
+| `description` | text | 設定画面で説明文として表示 |
+| `category` | text | `'own_work'` / `'peek_above'` / `'motivation'` / `'common'` |
+| `required_permission_key` | text NULL | 権限ゲート。NULLなら全員アクセス可。例: `'dashboard.sales_summary'` |
+| `default_sort_order` | int | デフォルトの並び順 |
+| `mobile_visible` | boolean | スマホでも表示するか |
+
+#### Layer 2: ロール別推奨デフォルト
+
+`role_dashboard_defaults` テーブル（新設）：
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `role_code` | text | `'editor'`, `'producer'` 等（roles.role_code 参照） |
+| `widget_id` | text | dashboard_widgets 参照 |
+| `enabled_by_default` | boolean | このロールでデフォルト ON か |
+| `sort_order` | int | このロールでの推奨並び順 |
+
+→ ロール別マトリクス（本ADRの上部表）はこのテーブルの **シード値** として登録する。
+
+#### Layer 3: ユーザー個別カスタマイズ
+
+`user_dashboard_preferences` テーブル（新設）：
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `user_id` | uuid | users 参照 |
+| `widget_id` | text | dashboard_widgets 参照 |
+| `enabled` | boolean | ユーザーがONにしたか |
+| `sort_order` | int | ユーザーの並び順 |
+| `updated_at` | timestamptz | 最終変更 |
+
+**解決ロジック**：
+
+```
+表示するウィジェットの最終リスト = 
+  dashboard_widgets を全件取得
+  ├ required_permission_key が NULL または ユーザーが権限を持っている → 表示可
+  └ 権限なし → 🔒ロック表示で項目だけ見せる（選択不可）
+  
+  enabled の判定:
+  user_dashboard_preferences に行があれば → それを使う
+  なければ → role_dashboard_defaults の enabled_by_default を使う
+```
+
+#### 設定画面のUI（絵コンテ）
+
+```
+┌─ ホーム表示設定（editor として）─────────────────────┐
+│ 自分の仕事                                          │
+│  ✅ 自分のタスクキュー                              │
+│  ✅ 今週の納期                                      │
+│  ☐ 修正回数の多い案件アラート                       │
+│                                                    │
+│ 一つ上の視座                                        │
+│  ☐ ↑ 案件全体の進捗ミニ表（sub_director視座）       │
+│                                                    │
+│ モチベーション数値                                  │
+│  ✅ 年間累計納品本数                                │
+│  ✅ 1発OK率                                         │
+│  ☐ 月間最高記録                                    │
+│                                                    │
+│ ─── 上位ロールで解放される項目 ──────────────────  │
+│  🔒 全社売上予実 — admin 権限が必要                 │
+│  🔒 担当案件粗利ランキング — producer 権限が必要    │
+│  🔒 請求書アラート — secretary 権限が必要           │
+│                                                    │
+│  [ロール推奨に戻す]  [変更を保存]                   │
+└────────────────────────────────────────────────────┘
+```
+
+**並び替えはドラッグ&ドロップ**（カテゴリ内のみ。`own_work` / `peek_above` / `motivation` の3カテゴリ順序は固定）。
+
+#### 権限ゲートの実装
+
+- 各ウィジェットの `required_permission_key` は `permission_keys` マスタに登録（ADR 015 準拠）
+- フロント: `hasPermission(widget.required_permission_key)` で🔒/通常表示を切替
+- サーバー: ウィジェット用 API も `requirePermission(key)` で保護（フロントだけでなくサーバー側でも漏洩防止）
+
+### 命名の正準形
+
+- 「ホーム表示設定」（ユーザー設定画面の正式名称）
+- 「推奨デフォルト」（ロール別シード値の呼称）
+- 「ロック項目 / 🔒ロック表示」（権限なしウィジェットの状態）
+
 ## Consequences
 
 ### Positive
@@ -173,9 +273,13 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 - 「一つ上の視座」が現場の主体性を促進し、キャリア形成と意思決定の質が上がる
 - モチベーション数値により、編集者・デザイナーが「数字で評価される」実感を持てる
 - secretary が請求業務に集中できる（admin と同じ画面を出さない）
+- ユーザーが自分にとって重要な情報を選べる（個別最適化）
+- 🔒ロック項目が「上位ロールで解放される情報」を可視化し、キャリアパスのモチベになる
 
 ### Negative
-- ダッシュボードの実装量が増える（5パターン × ブロック単位）
+- ウィジェット定義（`dashboard_widgets`）が新マスタとして増え、新ウィジェット追加のたびに seed 更新が必要
+- 「ロール推奨デフォルト」と「ユーザー個別カスタマイズ」の優先順位ロジックが複雑化
+- 設定画面を作る工数が増える（Stage 0 として先行実装が必要）
 - モチベ数値（累計・最高記録）の集計クエリは重い → マテリアライズドビューや日次バッチが必要になる可能性
 - 「一つ上の視座」の集計が誤って詳細レコードを漏らさないよう、API レイヤーでの集計強制が必要
 
@@ -185,13 +289,15 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 
 | Stage | 内容 |
 |---|---|
-| **Stage 1** | secretary 専用ダッシュボード（請求・支払いブロック）。最も乖離が大きい |
-| **Stage 2** | editor / designer のモチベ数値（年間累計・1発OK率）+ ボール来てる順並び替え |
-| **Stage 3** | producer / director の「自分の案件」フォーカス + 粗利ランキング |
-| **Stage 4** | 「↑ 一つ上の視座」ブロックを全ロールに展開 |
-| **Stage 5** | admin の「未来予測」ブロック（受注見込み・粗利予測） |
+| **Stage 0** | ウィジェット制御モデルの DB 基盤（`dashboard_widgets` / `role_dashboard_defaults` / `user_dashboard_preferences`）と「ホーム表示設定」画面 |
+| **Stage 1** | secretary 専用ウィジェット群（請求・支払いブロック）を seed 投入 |
+| **Stage 2** | editor / designer のモチベ数値ウィジェット（年間累計・1発OK率）+ ボール来てる順並び替え |
+| **Stage 3** | producer / director の「自分の案件」フォーカス + 粗利ランキング ウィジェット |
+| **Stage 4** | 「↑ 一つ上の視座」ウィジェット群を全ロールに展開 |
+| **Stage 5** | admin の「未来予測」ウィジェット（受注見込み・粗利予測） |
 
 各 Stage で集計に必要な DB ビュー / インデックス / 集計バッチを同 PR で追加する。
+**Stage 0 が他すべての前提**。Stage 0 完了前は既存の二項分岐ロジックがそのまま動く。
 
 ## Alternatives Considered
 
@@ -203,9 +309,13 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 
 **却下理由**：「数値で追い求めたい人へのワクワクを提供する」というユーザー要望と矛盾。タスク管理ツールではなく、組織の状態を映すホームを作る。
 
-### C案: ロール別ではなく、ユーザー個別にウィジェット選択させる（カスタマイズ式）
+### C案: ロール別固定レイアウト（カスタマイズ不可）
 
-**却下理由**：自由度が高すぎて誰も整理しない。ロール別の「推奨レイアウト」を提供したほうが組織の標準が育つ。Stage 5 以降の拡張余地として残す。
+**却下理由**：ユーザーごとに「自分が見たい数字」は異なる。固定レイアウトでは「不要なブロックが視界を埋める」「見たい数字が無い」が同時に起きる。本ADRでは **ロール別 = 推奨デフォルト** とし、個別カスタマイズを正式採用した（設計思想 4 番）。
+
+### D案: 完全自由カスタマイズ（推奨デフォルトなし・最初は空）
+
+**却下理由**：自由度が高すぎて新規ユーザーが何も設定せず空画面のまま放置する。ロール推奨を「初期表示」として配ることで、設定しなくてもまず使える状態を保証する。
 
 ## Open Questions
 
@@ -213,6 +323,11 @@ if (['admin','secretary','producer','producer_director'].includes(role)) {
 - 「1発OK率」は `creative_versions.round_number = 0` で納品確定したクリエイティブ数 / 総納品数 でよいか？
 - secretary が「全体納期」を読み取り専用で見る場合、どこまでの詳細（金額・担当者）を見せるか？
 - 「↑ 一つ上の視座」ブロックは折りたたみ式 vs 常時展開どちらがよいか？（モバイル考慮）
+- 「ホーム表示設定」画面はマスタータブ配下 vs ヘッダーから直接 vs ダッシュボード右上の歯車のどこから入るか？
+- ロール変更（昇進・配置転換）時、`user_dashboard_preferences` をリセットするか保持するか？
+  - 案A: 保持（その人のカスタマイズを尊重）
+  - 案B: リセット（新ロールの推奨デフォルトを再適用）
+  - 案C: 保持＋「新ロールの推奨に戻しますか？」プロンプト表示
 
 ## References
 
