@@ -6,7 +6,10 @@ tags: [projects, schedule, tasks, gantt, lp, hp, phases, milestones]
 related_tables: [projects, creative_categories, project_tasks, project_phase_templates, project_phase_template_items]
 supersedes: null
 superseded_by: null
+extended_by: 016
 ---
+
+> **NOTE**: 本ADR で定義した `project_tasks` 系テーブルは、[ADR 016](016-project-work-type-and-ball-state.md) で「業務種別（制作/保守）」と「フェーズ × ボール状態モデル」が追加拡張されている。LP/HP 制作系は ADR 016 の方針で実装する。
 
 # 010. 案件スケジュール / フェーズ・タスク管理（LP・HP 等カテゴリ横断）
 
