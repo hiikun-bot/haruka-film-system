@@ -26248,12 +26248,43 @@ function _cdResolveRoundLeftFile(round) {
   }
 
   // (4) ライブラウンド（snapshot 未挿入の修正中フェーズ）。
-  //     未完了の修正中なので「いま指摘の対象になっている version」は
-  //     完了済みラウンド数 + 1（一度も snapshot されていなければ 1）。
+  //     後修正ステータス（Dチェック後修正/Pチェック後修正/CL後修正）の左カラムは
+  //     「直前にチェックされた version」(= レビュー対象だった成果物) を表示すべき。
+  //
+  //     旧計算: targetVer = _cdRoundsCache.length + 1
+  //       ・PR #531 で _cdRoundsCache に「初回提出」仮想ラウンド (_synthetic_initial_submit)
+  //         や「孤児 handoff」(_synthetic_handoff) が追加されてから、length が膨らんで
+  //         実在しないバージョン (例: v3) を引きにいき null になるバグが発生した
+  //         （バグ報告: 「Dチェック→Dチェック後修正」直後に左カラム『前回（クリエイティブ）』が空）。
+  //
+  //     新ロジック (PR #(prev-creative-after-revision) / 髙橋指示 2026-05-10):
+  //       (a) 同じ round_stage の snapshot/仮想ラウンドのうち、最大 version_num を採用
+  //           （ = 直前のチェック対象 = ユーザー視点の「前回」と一致）
+  //       (b) 該当が無ければ _cdFilesCache の最新 version（アップロード済の最新成果物）
+  //       (c) どちらも無ければ null（ファイルカードを出さない）
   if (round._live && cache.length > 0) {
-    const targetVer = Math.max(1, (Array.isArray(_cdRoundsCache) ? _cdRoundsCache.length : 0) + 1);
-    const f4 = cache.find(x => x && Number(x.version) === targetVer) || null;
-    if (f4) return f4;
+    let targetVer = 0;
+    const stage = round.round_stage || '';
+    const rcache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+    for (const r of rcache) {
+      if (!r || r._live) continue;
+      if (stage && r.round_stage !== stage) continue;
+      const v = Number(r.version_num) || 0;
+      if (v > targetVer) targetVer = v;
+    }
+    // フォールバック: 同 stage の snapshot/仮想が無い → 最新ファイルを使う
+    if (!targetVer) {
+      let maxVer = 0;
+      for (const f of cache) {
+        const v = Number(f && f.version) || 0;
+        if (v > maxVer) maxVer = v;
+      }
+      targetVer = maxVer;
+    }
+    if (targetVer > 0) {
+      const f4 = cache.find(x => x && Number(x.version) === targetVer) || null;
+      if (f4) return f4;
+    }
   }
 
   // (5) latest fallback は削除（ラウンド紐付けバージョンの整合性優先）。
