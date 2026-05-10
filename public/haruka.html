@@ -26460,11 +26460,66 @@ function _cdRoundEntryHtml(round) {
   return orderedBlocks.join('');
 }
 
-// ライブの「直前のチェック段階で書かれた指摘」を 1 ラウンドとして仮想生成する。
+// ライブの「直前のチェック段階で書かれた指摘 / 承認コメント」を 1 ラウンドとして仮想生成する。
 // 後修正ステータス中で、まだ snapshot されていない（再提出前）の段階。
+//
+// 加えて 2026-05-10 修正で「クライアントチェック中」も対象に追加した（後述）。
 function _cdBuildLiveRound(creative) {
   if (!creative) return null;
   const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+
+  // 「クライアントチェック中」の P→CL 承認コメント救済 (髙橋指示 2026-05-10 / PR #555 同型):
+  //   PR #555 で「Pチェック中で D→P 承認コメントが『前回』タブに見えない」問題は、
+  //   _cdRoundIndex 選択ロジックを「末尾から逆走で handoff/reviewer 持ちラウンドを優先 pick」に
+  //   変更することで解決した。これはサーバ側 `/creatives/:id/rounds` が `*_handoff` 孤児仮想
+  //   ラウンドを生成している前提で動く。
+  //
+  //   ところが「クライアントチェック中」突入時には P→CL 承認コメントが本来見えるべきなのに
+  //   末尾の `cl_check` 初回提出仮想（editor_comment しか持たない）が選ばれず、さらに
+  //   `p_check_handoff` 孤児仮想がデータ条件によって生成されない／古いデータで欠落しているケース
+  //   （PR #462 リリース前のレガシー / transition 行欠落 / director_comment_at_change が空など）
+  //   では、より前の `d_check_handoff` までフォールバックしてしまい、
+  //   「ディレクター→プロデューサー」の D→P 承認コメントが見えるバグになっていた。
+  //
+  //   ここでは「クライアントチェック中」を _cdBuildLiveRound の対象に追加し、
+  //   `creatives.director_comment` (= P→CL 承認時に saveCreativeDetail が書き込む列) を
+  //   `p_check_handoff` 相当の live round として末尾に push する。
+  //   live round は cdRenderRoundCompare の初期 index が常に末尾を指すため、
+  //   PR #555 の逆走ロジックを経由せず確実に表示される。
+  //
+  //   重複抑止: サーバ側で既に `p_check_handoff` (kind='approve' / comment 入り) の孤児が
+  //   生成されていれば live は出さない。
+  if (creative.status === 'クライアントチェック中') {
+    const comment = creative.director_comment;
+    if (!comment || !String(comment).trim()) return null;
+    const cached = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+    const hasApproveHandoff = cached.some(r =>
+      r && r.round_stage === 'p_check_handoff' &&
+      r.handoff_to_next && r.handoff_to_next.kind === 'approve' &&
+      r.handoff_to_next.comment && String(r.handoff_to_next.comment).trim()
+    );
+    if (hasApproveHandoff) return null;
+    return {
+      version_num: null,
+      round_stage: 'p_check_handoff',
+      director_comment: null,
+      client_comment: null,
+      editor_comment: null,
+      created_at: creative.updated_at || null,
+      file: null,
+      _live: true,
+      handoff_to_next: {
+        stage: 'p_to_cl',
+        from_status: 'Pチェック',
+        to_status: 'クライアントチェック中',
+        kind: 'approve',
+        comment,
+        changed_at: creative.updated_at || null,
+        changed_by: null,
+      },
+    };
+  }
+
   if (!REVISION_STATUSES.includes(creative.status)) return null;
   // 「クライアントチェック後修正」の comment ソースについて (PR #(cl-prev-comment-source) / 髙橋指示 2026-05-10):
   //   現在の saveCreativeDetail() は status='クライアントチェック中' でも
