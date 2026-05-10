@@ -34273,6 +34273,10 @@ async function saveCreativePostEdit() {
   if (res.ok) {
     closeModal('modal-creative-postedit');
     showToast('事後修正を保存しました', 'success');
+    // 詳細モーダルのメモリキャッシュを無効化（30秒TTL のキャッシュ HIT で古い値が
+    // 表示される不具合の修正）。openCreativeDetail() は内部で _cdFetchPayload() を
+    // 呼ぶが、未invalidate だとキャッシュを返してしまうため、再オープン前に必ず捨てる。
+    try { _cdInvalidateCache(id); } catch (_) {}
     // 詳細モーダルを開き直して反映
     try { await openCreativeDetail(id); } catch (_) {}
     // 一覧キャッシュも更新
