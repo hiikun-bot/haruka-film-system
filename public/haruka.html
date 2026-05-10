@@ -30493,7 +30493,10 @@ function renderAnalyticsTable(data) {
 }
 
 // =============== バグ報告件数 ===============
-// 対象月に作成された bug_reports を、報告者ごとにグルーピングして表示する。
+// 対象月に作成された bug_reports を「報告者(=assignee_user_id)」ごとにグルーピングして表示する。
+// PR #493 で「対応者→報告者 / 報告者→入力者」の用語整理をしたため、
+// バックエンド aggregateBugReports() は assignee_user_id でグルーピングしている。
+// （JSON 互換性のため API 出力 key は `by_reporter` / `reporter_user_id` のまま維持）
 // 匿名報告は `__anonymous__` キーで集約し、個別報告者を特定しない。
 // 各報告は番号（短縮 UUID）として表示され、クリックでバグ報告編集モーダルを開く。
 function renderBugReportsAnalytics(data) {

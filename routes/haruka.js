@@ -4669,8 +4669,16 @@ router.get('/analytics/cost-coverage', requireAuth, requirePermission('analytics
 });
 
 // ==================== バグ報告件数（月次） ====================
-// 対象月に作成された bug_reports を、報告者ごとにグルーピングして集計する。
+// 対象月に作成された bug_reports を「報告者」ごとにグルーピングして集計する。
+//
+// 用語整理（PR #493 のリネーム以後）:
+//   - 報告者 = assignee_user_id (フォームのドロップダウンで選ばれた、実際にバグに気づいた人)
+//   - 入力者 = reporter_user_id (保存ボタンを押したログインユーザー。代理入力されたケースを区別する)
+// 統計は「誰が一番バグを見つけているか」を可視化したいので assignee_user_id でグルーピング。
+//
 // 匿名報告は __anonymous__ キーで集約し、誰の報告かは特定しない。
+// 匿名は元々「入力者を隠す」フラグだが、現状は報告者表示にも使い回している
+// （TODO: 入力者と報告者で別個の匿名フラグが必要か別件で再検討）。
 // 各報告には改善済みフラグ（improved_at）と 紐付いた Verup（version_logs.revision_no）も含める。
 async function aggregateBugReports({ year, month }) {
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
@@ -4680,9 +4688,9 @@ async function aggregateBugReports({ year, month }) {
     .from('bug_reports')
     .select(`
       id, title, severity, status, is_anonymous, created_at,
-      reporter_user_id,
+      reporter_user_id, assignee_user_id,
       improved_at, improved_by_user_id, improvement_version_log_id,
-      reporter:reporter_user_id ( id, full_name, nickname ),
+      assignee:assignee_user_id ( id, full_name, nickname ),
       improvement_log:improvement_version_log_id ( id, revision_no, screen, feature )
     `)
     .gte('created_at', startDate.toISOString())
@@ -4701,13 +4709,17 @@ async function aggregateBugReports({ year, month }) {
     if (r.improved_at) totalImproved++;
 
     const isAnon = !!r.is_anonymous;
-    const key = isAnon ? '__anonymous__' : (r.reporter_user_id || '__unknown__');
+    // 報告者(assignee_user_id) でグルーピング。null なら __unspecified__
+    const key = isAnon ? '__anonymous__' : (r.assignee_user_id || '__unspecified__');
     if (!groups.has(key)) {
       const label = isAnon
         ? '🕵️ 匿名（集約）'
-        : (r.reporter?.nickname || r.reporter?.full_name || '— 不明 —');
+        : (r.assignee_user_id
+            ? (r.assignee?.nickname || r.assignee?.full_name || '— 不明 —')
+            : '— 報告者未指定 —');
       groups.set(key, {
-        reporter_user_id: isAnon ? null : r.reporter_user_id,
+        // フロント互換のため key 名は reporter_user_id のまま維持（中身は assignee_user_id 値）
+        reporter_user_id: isAnon ? null : r.assignee_user_id,
         is_anonymous: isAnon,
         label,
         count: 0,
