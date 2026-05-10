@@ -34629,6 +34629,7 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-title').value = options.title || '';
   document.getElementById('br-severity').value = 'normal';
   // 対応者の初期値: ログイン中のユーザー（自分が対応者として動く想定）
+  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
   const myId = me?.id || '';
   document.getElementById('br-assignee').value = myId || '';
   document.getElementById('br-description').value = options.description || '';
