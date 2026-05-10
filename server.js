@@ -201,7 +201,9 @@ app.use(async (req, res, next) => {
 
 // Webhookエンドポイントはraw bodyが必要なため、先に定義
 app.use('/webhook/frameio', express.raw({ type: 'application/json' }));
-app.use(express.json());
+// limit を上げる: バグ報告のスクリーンショット (data URL) が 1〜数 MB になるため。
+// デフォルト 100kb だと bug_reports POST が 413 (request entity too large) で失敗する。
+app.use(express.json({ limit: '15mb' }));
 
 // last_seen_at 更新ミドルウェア（認証済みAPIリクエストのみ、5分ごと）
 const _lastSeenCache = new Map();
