@@ -842,6 +842,9 @@ tr.row-help td{background:#FFFBF2}
 /* モーダル */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;align-items:center;justify-content:center;padding:24px 0;overflow-y:auto}
 .modal-overlay.open{display:flex}
+/* バグ報告モーダル: タブ */
+.br-tab-btn:hover{background:rgba(45,212,191,0.06) !important}
+.br-tab-btn.br-tab-active{color:var(--em-dark) !important;border-bottom-color:var(--em-dark) !important}
 .modal,.modal-card{background:var(--white);border-radius:14px;padding:24px;width:560px;max-width:95vw;max-height:calc(100vh - 48px);overflow-y:auto;border:0.5px solid var(--border);margin:auto}
 .modal-title{font-size:16px;font-weight:500;color:var(--text);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
 .modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)}
@@ -2712,7 +2715,26 @@ window.showPage = window.showPage || function(name, btn) {
       <button class="modal-close" onclick="closeBugReportModal()">×</button>
     </div>
     <input type="hidden" id="br-id">
+
+    <!-- ========= タブ（編集モードでのみ表示） =========
+         非admin: 「バグ報告」タブだけ
+         admin:   「バグ報告」+「🦋 対応方針」の2タブ
+         スクロール量が増えすぎないよう、admin専用UIは別タブに退避 -->
+    <div id="br-tabs" style="display:none;gap:0;border-bottom:1px solid var(--border);margin:6px 0 10px;padding:0 4px">
+      <button type="button" class="br-tab-btn" data-tab="main" onclick="_brSwitchTab('main')"
+        style="background:transparent;border:none;border-bottom:3px solid transparent;padding:8px 18px;font-size:13px;font-weight:600;color:#374151;cursor:pointer">
+        🦋 バグ報告
+      </button>
+      <button type="button" class="br-tab-btn" id="br-tab-btn-triage" data-tab="triage" onclick="_brSwitchTab('triage')"
+        style="background:transparent;border:none;border-bottom:3px solid transparent;padding:8px 18px;font-size:13px;font-weight:600;color:#374151;cursor:pointer">
+        🛠 対応方針 <span style="color:var(--text-muted);font-size:10px">(管理者)</span>
+      </button>
+    </div>
+
     <div style="overflow-y:auto;flex:1;padding-right:4px">
+
+    <!-- ========= タブ1: バグ報告（誰でも見れる/編集権限ある人は編集可） ========= -->
+    <div id="br-tab-main" data-tab-panel="main">
 
       <!-- 2カラムレイアウト（PC: 左:右 = 1.4:1 でスクショ側を広く / スマホは1カラムフォールバック） -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;align-items:start">
@@ -2847,12 +2869,32 @@ window.showPage = window.showPage || function(name, btn) {
 
         <div id="br-meta-info" style="font-size:11px;color:var(--text-muted);background:#F9FAFB;border-radius:6px;padding:8px 10px;margin-top:8px"></div>
 
-        <!-- ========= 🦋 対応方針（admin 専用） ========= -->
+        <!-- ========= 💬 コメント（全員投稿可・バグ報告タブ内） ========= -->
+        <div class="form-group" id="br-comments-wrap" style="display:none">
+          <label class="form-label">💬 コメント <span id="br-comments-count" style="color:var(--text-muted);font-size:11px">(0)</span></label>
+          <div id="br-comments-list" style="background:#fff;border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;padding:6px">
+            <div style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中…</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <textarea id="br-comment-input" class="form-input" rows="2" maxlength="2000" placeholder="コメントを入力（全員が見られます）" style="resize:vertical;font-size:12px;flex:1"></textarea>
+            <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="postBugReportComment()">送信</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /br-tab-main -->
+
+    <!-- ========= タブ2: 🛠 対応方針（admin 専用） ========= -->
+    <div id="br-tab-triage" data-tab-panel="triage" style="display:none">
+      <!-- 編集時のみ表示。display は JS で「タブが triage かつ admin かつ 編集モード」のときに '' にする -->
+      <div id="br-edit-only-triage">
+
+        <!-- ========= 🦋 対応方針 ========= -->
         <!-- バグ報告された後 admin が「対応する / 保留 / 却下」を判断するセクション。
              方針確定すると status を自動遷移＋system コメント自動追記。
              Claude修正依頼ボタンは triage_decision='to_fix' のときだけ活性化する -->
-        <div class="form-group" id="br-triage-wrap" style="display:none">
-          <label class="form-label">🦋 対応方針 <span style="color:var(--text-muted);font-size:11px">（管理者のみ）</span></label>
+        <div class="form-group" id="br-triage-wrap">
+          <label class="form-label">🦋 対応方針</label>
           <div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:10px">
             <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px">
               <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
@@ -2876,12 +2918,9 @@ window.showPage = window.showPage || function(name, btn) {
           </div>
         </div>
 
-        <!-- ========= 🤖 Claude Code 修正依頼（admin 専用） ========= -->
-        <!-- triage_decision='to_fix' のときだけ活性化。
-             押すとクリップボードへ「報告内容＋Bug-Report-Id trailer の指示」をコピー。
-             ユーザーはそれを Claude Code に貼り付けて修正依頼する想定 -->
-        <div class="form-group" id="br-claude-wrap" style="display:none">
-          <label class="form-label">🤖 Claude Code 修正依頼 <span style="color:var(--text-muted);font-size:11px">（管理者のみ・対応方針=「対応する」のとき有効）</span></label>
+        <!-- ========= 🤖 Claude Code 修正依頼 ========= -->
+        <div class="form-group" id="br-claude-wrap">
+          <label class="form-label">🤖 Claude Code 修正依頼 <span style="color:var(--text-muted);font-size:11px">（対応方針=「対応する」のとき有効）</span></label>
           <div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px">
             <button type="button" id="br-claude-copy-btn" class="btn" style="font-size:13px;padding:8px 16px" onclick="bugReportCopyClaudePrompt()">
               📋 Claude Code 修正依頼テキストをコピー
@@ -2895,20 +2934,11 @@ window.showPage = window.showPage || function(name, btn) {
             </div>
           </div>
         </div>
-
-        <!-- ========= 💬 コメント（全員投稿可） ========= -->
-        <div class="form-group" id="br-comments-wrap" style="display:none">
-          <label class="form-label">💬 コメント <span id="br-comments-count" style="color:var(--text-muted);font-size:11px">(0)</span></label>
-          <div id="br-comments-list" style="background:#fff;border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;padding:6px">
-            <div style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中…</div>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:6px">
-            <textarea id="br-comment-input" class="form-input" rows="2" maxlength="2000" placeholder="コメントを入力（全員が見られます）" style="resize:vertical;font-size:12px;flex:1"></textarea>
-            <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="postBugReportComment()">送信</button>
-          </div>
-        </div>
       </div>
     </div>
+    <!-- /br-tab-triage -->
+    </div>
+    <!-- /scroll wrapper -->
 
     <div class="modal-footer">
       <button id="br-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteBugReport()">削除</button>
@@ -34175,6 +34205,10 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-is-urgent').checked = false;
   document.getElementById('br-status').value = 'open';
   document.getElementById('br-edit-only').style.display = 'none';
+  // タブとtriageパネル: 新規時は両方非表示。編集モードに入った時に表示する
+  document.getElementById('br-tabs').style.display = 'none';
+  document.getElementById('br-tab-triage').style.display = 'none';
+  _brSwitchTab('main');
   document.getElementById('br-delete-btn').style.display = 'none';
   document.getElementById('br-meta-info').textContent = '';
   document.getElementById('br-improved-wrap').style.display = 'none';
@@ -34220,6 +34254,10 @@ async function openBugReportModal(options = {}) {
       // 削除は admin のみ。改善済みチェックは Step 3 で自動化されるため非表示固定
       const isAdmin = (typeof currentUser !== 'undefined' && currentUser?.role === 'admin');
       document.getElementById('br-delete-btn').style.display = isAdmin ? '' : 'none';
+      // タブを編集モードで表示。対応方針タブのボタンは admin のみ表示
+      document.getElementById('br-tabs').style.display = 'flex';
+      document.getElementById('br-tab-btn-triage').style.display = isAdmin ? '' : 'none';
+      _brSwitchTab('main');
       // br-improved-wrap は HTML 側で display:none !important なので明示変更不要
       // 改善済みチェック状態の復元
       document.getElementById('br-improved').checked = !!r.improved_at;
@@ -34651,6 +34689,21 @@ function _brRestoreTriageState(r) {
   }
   _brSyncClaudeButton(decision);
 }
+
+// バグ報告モーダルのタブ切り替え
+//  name: 'main' | 'triage'
+//  - main:   バグ報告タブ（誰でも見れる）
+//  - triage: 対応方針タブ（admin のみ表示）
+function _brSwitchTab(name) {
+  const tabs = ['main', 'triage'];
+  for (const t of tabs) {
+    const panel = document.querySelector(`[data-tab-panel="${t}"]`);
+    if (panel) panel.style.display = (t === name) ? '' : 'none';
+    const btn = document.querySelector(`.br-tab-btn[data-tab="${t}"]`);
+    if (btn) btn.classList.toggle('br-tab-active', t === name);
+  }
+}
+window._brSwitchTab = _brSwitchTab;
 
 // 対応方針ラジオの選択変更で 対応ステータス select を即時プレビュー反映
 // （実際にDB保存されるのは「対応方針を確定」ボタン押下時。プレビューは確認用）
