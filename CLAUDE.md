@@ -182,6 +182,7 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - 理由: Railway のデプロイ一覧 / Slack 等でタイトルが長いと末尾の `(#N)` が truncate されて PR 特定不能になる。先頭にあれば必ず見える
 - squash merge 時に GitHub が末尾にも `(#N)` を再付与するが、重複は許容（先頭が見えることが優先）
 - サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker など）も例外なく従うこと
+- **CI セーフティネット**: `.github/workflows/pr-title-prefix.yml` が `pull_request: opened/reopened/edited` で発火し、先頭に `#<PR番号>` が無ければ自動で付与する（取りこぼし防止）。ただしこれは保険であり、エージェントは自力で `gh pr edit --title` するのが原則
 
 ### 自動マージ（auto-merge ラベル）
 - PR に `auto-merge` ラベルを付与すると、CI 通過後に **自動で squash merge + ブランチ削除** されます（`.github/workflows/auto-merge.yml`）
