@@ -266,13 +266,18 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
     : '（コメントなし）';
 
   // Slack 本文（mrkdwn）。ファイル名は <url|name> 形式で青リンク化済み。
+  // 見出しを区切り線で挟み、本文項目は装飾なしで1行ずつ並べる（バグ報告 #82b1c20d）。
+  // メンション行は呼び出し側が body の前に `${mentions}\n\n` で連結する。
+  const SEP = '━━━━━━━━━━━━━━━';
   const slackBody = [
+    SEP,
     `${emoji} *${kind}*`,
-    `*案件*: ${projectLabel}`,
-    `*ファイル*: ${slackName}`,
-    `*担当者*: ${fromTo}`,
-    `*コメント*:`,
-    `> ${commentBlock.replace(/\n/g, '\n> ')}`,
+    SEP,
+    '',
+    `案件: ${projectLabel}`,
+    `ファイル: ${slackName}`,
+    `担当者: ${fromTo}`,
+    `コメント: ${commentBlock}`,
   ].join('\n');
 
   // Chatwork 本文（[info][title]...[/title]...[/info]）。
@@ -371,7 +376,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const sendNotif = async (user, slackBody, cwBody) => {
     if (!user) return;
     if (channelUrl && user.slack_dm_id) {
-      await sendSlackChannel(channelUrl, `<@${user.slack_dm_id}> ${slackBody}`);
+      await sendSlackChannel(channelUrl, `<@${user.slack_dm_id}>\n\n${slackBody}`);
     }
     if (roomId && user.chatwork_dm_id) {
       await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody, { token: chatworkPost.token });
@@ -398,7 +403,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       result.reachableSlackCount = slackUsers.length;
       if (slackUsers.length) {
         const mentions = slackUsers.map(u => `<@${u.slack_dm_id}>`).join(' ');
-        await sendSlackChannel(channelUrl, `${mentions} ${slackBody}`);
+        await sendSlackChannel(channelUrl, `${mentions}\n\n${slackBody}`);
       }
     }
     if (roomId) {
@@ -419,7 +424,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // ディレクターが任命されていない / DM ID 未設定の案件で、誰かが必ず気づける状態にする。
   const sendChannelMention = async (slackBody, cwBody) => {
     if (channelUrl) {
-      await sendSlackChannel(channelUrl, `<!here> ${slackBody}`);
+      await sendSlackChannel(channelUrl, `<!here>\n\n${slackBody}`);
     }
     if (roomId) {
       await sendChatworkRoom(roomId, `[toall]\n${cwBody}`, { token: chatworkPost.token });
@@ -679,13 +684,13 @@ ${cwUrlLine2}
 ※送信前に必ず内容を確認してください。[/info]`;
       await sendNotif(actor, slackTpl, cwTpl);
     }
-    // 編集者・デザイナーへの「クライアントチェックに進みます！」お知らせ
+    // 編集者・デザイナーへの「クライアントチェックに進みました！」お知らせ
     // actor は既にテンプレ案内を受け取っているので重複送信を避ける
-    const assigneeSlack = `🎉 クライアントチェックに進みました！\nファイル: ${slackName}\nお疲れ様です！D/Pチェックを通過し、クライアント確認版の共有に進みます ☺️`;
-    const assigneeCw = `[info][title]🎉 クライアントチェックに進みました[/title]ファイル: ${fileName}${cwUrlLine}\nお疲れ様です！\nD/Pチェックを通過し、クライアント確認版の共有に進みます ☺️[/info]`;
-    for (const ed of editorAssignees) {
-      if (!ed || (actor && ed.id === actor.id)) continue;
-      await sendNotif(ed, assigneeSlack, assigneeCw);
+    // 統一フォーマット（buildCreativeNotifBody 経由）に揃える（バグ報告 #82b1c20d）。
+    const assigneeTargets = editorAssignees.filter(ed => ed && (!actor || ed.id !== actor.id));
+    if (assigneeTargets.length > 0) {
+      const { slackBody, cwBody } = tpl('クライアントチェックに進みました', '🎉', assigneeTargets);
+      await sendNotifMulti(assigneeTargets, slackBody, cwBody);
     }
 
     // 5-b) in-app 通知（通知ベル / notification_logs）
@@ -727,17 +732,10 @@ ${cwUrlLine2}
   // 6) → 納品（クリエイター向けにお祝いメッセージ）
   //    PR #67 で削除されていたが、クリエイターは「クライアントOKが出たかどうか」を
   //    把握する手段がほぼ唯一この通知のため復活。assignees（担当者全員）に送る。
+  //    バグ報告 #82b1c20d で統一フォーマットへ揃える。クライアント承認コメントは
+  //    buildCreativeNotifBody の comment フィールドにそのまま流し込む。
   else if (newStatus === '納品') {
-    const trimmedComment = (comment && String(comment).trim()) ? String(comment).trim() : '';
-    // クライアントの承認コメントが付いていれば本文に含める（無ければコメント行ごと省略）
-    const slackCommentBlock = trimmedComment
-      ? `\n*クライアントコメント*:\n> ${trimmedComment.replace(/\n/g, '\n> ')}`
-      : '';
-    const cwCommentBlock = trimmedComment
-      ? `\nクライアントコメント:\n${trimmedComment}`
-      : '';
-    const slackBody = `🎉 クライアントOK！納品完了\nファイル: ${slackName}${slackCommentBlock}\nお疲れ様でした！クライアントから承認をいただき納品となりました ☺️✨`;
-    const cwBody = `[info][title]🎉 クライアントOK！納品完了[/title]ファイル: ${fileName}${cwUrlLine}${cwCommentBlock}\nお疲れ様でした！\nクライアントから承認をいただき納品となりました ☺️✨[/info]`;
+    const { slackBody, cwBody } = tpl('クライアントOK！納品完了', '🎉', editorAssignees);
     // 担当者全員（editor・designer）に1メッセージで通知
     await sendNotifMulti(editorAssignees, slackBody, cwBody);
   }
