@@ -26098,19 +26098,59 @@ function _cdDedupRoundsForTimeline(rounds) {
     'p_check_handoff':  ['cl_check', 'p_check'],
     'cl_check_handoff': ['cl_check'],             // 承認時は「納品」で次の synthetic は出ない / revise時のみ cl_check
   };
+  // PR #(prev-merge-real-snapshot-handoff) / 髙橋指示 2026-05-10 追記:
+  //   実 snapshot 行 (creative_version_history) が前 stage に存在する場合、サーバ側で
+  //   その snapshot.handoff_to_next に承認コメントが直接バインドされる
+  //   (routes/haruka.js l.12780)。この場合「孤児 handoff」(_synthetic_handoff) は
+  //   生成されず、(C) _synthetic_initial_submit だけが「次工程の初回提出」として末尾に
+  //   現れる。
+  //
+  //   結果: 既存 dedup は (B)→(C) ペアしか潰さないため、
+  //     [... v3 p_check (real, handoff入り) , v3 cl_check (C, 編集者メモのみ)]
+  //   というレイアウトでは (C) が最右に残り、ユーザーが「最新ドット = P→CL承認コメント」
+  //   を見られない不具合になる (PR #559 後に発覚)。
+  //
+  //   対策: prev が _synthetic_handoff でなくても、prev.handoff_to_next.stage が
+  //   cur.round_stage に対応する承認 (d_to_p→p_check / p_to_cl→cl_check) であれば
+  //   同様に「同じ意思決定イベント」とみなして (C) を除去する。
+  //   除去するときに prev._cdDisplayStage = cur.round_stage を立て、ヘッダー描画
+  //   (_cdRenderRoundLeftHeader) が「CLチェック / v3」のような次工程ラベルを表示する。
+  //   round_stage 自身は触らない (編集権限判定 _cdCanEditRoundEditorComment 等が
+  //   round_stage を参照しているため、識別性を保つ)。
+  const HANDOFF_NEXT_STAGE_TO_CUR = {
+    'd_to_p':  'p_check',
+    'p_to_cl': 'cl_check',
+    // 'cl_to_delivered' → 納品 (synthetic_initial_submit 対象外)
+    // revise 系は server で initial_submit を出さないので対応不要
+  };
   const out = [];
   for (let i = 0; i < rounds.length; i++) {
     const cur = rounds[i];
     if (cur && cur._synthetic_initial_submit) {
-      // 直前 (out 末尾) が同 version の対応 *_handoff か？
       const prev = out.length > 0 ? out[out.length - 1] : null;
-      if (prev && prev._synthetic_handoff
-          && prev.version_num != null
-          && cur.version_num != null
-          && Number(prev.version_num) === Number(cur.version_num)
-          && Array.isArray(HANDOFF_TO_NEXT_STAGES[prev.round_stage])
-          && HANDOFF_TO_NEXT_STAGES[prev.round_stage].includes(cur.round_stage)) {
-        // 重複イベントとみなして (C) をスキップ
+      const sameVersion = !!(prev
+        && prev.version_num != null
+        && cur.version_num != null
+        && Number(prev.version_num) === Number(cur.version_num));
+      // (1) 旧パス: 直前が同 version の synthetic_handoff
+      const matchSynthetic = sameVersion
+        && prev._synthetic_handoff
+        && Array.isArray(HANDOFF_TO_NEXT_STAGES[prev.round_stage])
+        && HANDOFF_TO_NEXT_STAGES[prev.round_stage].includes(cur.round_stage);
+      // (2) 新パス: 直前が同 version の実 snapshot で、その handoff_to_next が
+      //     cur.round_stage に対応する approve handoff
+      const matchRealSnapshot = sameVersion
+        && !prev._synthetic_handoff
+        && !prev._synthetic_initial_submit
+        && prev.handoff_to_next
+        && prev.handoff_to_next.kind === 'approve'
+        && HANDOFF_NEXT_STAGE_TO_CUR[prev.handoff_to_next.stage] === cur.round_stage;
+      if (matchSynthetic || matchRealSnapshot) {
+        // 重複イベントとみなして (C) をスキップし、prev のヘッダーラベルだけ
+        // 次工程 (cur.round_stage) に書き換える
+        if (prev && !prev._cdDisplayStage) {
+          prev._cdDisplayStage = cur.round_stage;
+        }
         continue;
       }
     }
@@ -26963,7 +27003,12 @@ function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round, resolvedFile =
     const verNumForBadge = (resolvedFile && resolvedFile.version != null)
       ? resolvedFile.version
       : (round.version_num || null);
-    const stageLabel = _CD_ROUND_STAGE_LABEL[round.round_stage] || (verNumForBadge ? `v${verNumForBadge}` : '');
+    // round_stage を直接使うと、dedup で「次工程の初回提出 (C)」を吸収した実 snapshot が
+    // 「Pチェック / v3」と表示されてしまい、ユーザー視点の「ここまで進んだ＝CLチェック」と
+    // ズレる。_cdDedupRoundsForTimeline で立てた _cdDisplayStage を最優先する
+    // (PR #(prev-merge-real-snapshot-handoff))。
+    const displayStage = round._cdDisplayStage || round.round_stage;
+    const stageLabel = _CD_ROUND_STAGE_LABEL[displayStage] || (verNumForBadge ? `v${verNumForBadge}` : '');
     const verLabel = verNumForBadge ? `v${verNumForBadge}` : '';
     const parts = [];
     if (stageLabel) parts.push(stageLabel);
@@ -26972,7 +27017,15 @@ function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round, resolvedFile =
     if (parts.length) titleSuffix = `<span class="cd-rh-sub">${esc(parts.join(' / '))}</span>`;
   }
 
-  const dateStr = round && round.created_at ? _cdFormatRoundDate(round.created_at) : '';
+  // 日時: 通常は snapshot.created_at。ただし dedup で次工程ラベルへ昇格 (_cdDisplayStage)
+  // した場合、表示文脈は「次工程に進入した瞬間」なので handoff_to_next.changed_at を優先する
+  // (PR #(prev-merge-real-snapshot-handoff))。これによりラベル「CLチェック / v3」と
+  // 日時「P→CL承認時刻」が一致して時系列の混乱を避けられる。
+  let dateSourceIso = round && round.created_at ? round.created_at : null;
+  if (round && round._cdDisplayStage && round.handoff_to_next && round.handoff_to_next.changed_at) {
+    dateSourceIso = round.handoff_to_next.changed_at;
+  }
+  const dateStr = dateSourceIso ? _cdFormatRoundDate(dateSourceIso) : '';
 
   // ◀▶ ＋ ●○ ナビ（複数ラウンドあるときのみ意味あり。1件以下なら隠す）
   let navHtml = '';
