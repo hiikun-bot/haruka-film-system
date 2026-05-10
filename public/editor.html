@@ -715,7 +715,7 @@ function renderComments() {
     const badges = [
       c.is_pinned ? '<span class="c-badge c-badge-pin">📌 ピン</span>' : '',
       c.resolved ? '<span class="c-badge c-badge-resolved">✅ 解決済</span>' : '',
-      c.promoted_to_knowledge ? '<span class="c-badge c-badge-promoted">🧠 ナレッジ化</span>' : '',
+      c.promoted_to_knowledge ? '<span class="c-badge c-badge-promoted">🧠 学び広場入り</span>' : '',
     ].filter(Boolean).join('');
 
     const tsHtml = c.timestamp_seconds != null
@@ -735,7 +735,7 @@ function renderComments() {
       <div class="c-actions">
         ${!c.resolved ? `<button class="btn btn-ghost btn-sm" onclick="resolveComment('${esc(c.id)}')">✅ 解決済みにする</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="pinComment('${esc(c.id)}', ${!c.is_pinned})">${c.is_pinned?'📌 ピン解除':'📌 ピン留め'}</button>
-        ${!c.promoted_to_knowledge ? `<button class="btn btn-purple btn-sm" onclick="promoteComment('${esc(c.id)}')">🧠 ナレッジ化</button>` : ''}
+        ${!c.promoted_to_knowledge ? `<button class="btn btn-purple btn-sm" onclick="promoteComment('${esc(c.id)}')">🧠 学び広場に追加</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="deleteComment('${esc(c.id)}')">×</button>
       </div>
     </div>`;
@@ -780,10 +780,10 @@ async function resolveComment(id) {
 }
 
 async function promoteComment(id) {
-  toast('🧠 AIでナレッジ化中...');
+  toast('🧠 AIで学びをまとめ中...');
   try {
     const r = await api('POST', `/api/video-comments/${id}/promote`, {});
-    toast('✅ ナレッジベースに追加しました');
+    toast('✅ 学び広場に追加しました');
     await loadComments();
   } catch(e) {}
 }
