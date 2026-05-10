@@ -26212,12 +26212,27 @@ function _cdBuildLiveRound(creative) {
   const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   if (!REVISION_STATUSES.includes(creative.status)) return null;
   const stageMap = {
-    'Dチェック後修正':            { stage: 'd_check',  comment: creative.director_comment },
-    'Pチェック後修正':            { stage: 'p_check',  comment: creative.director_comment },
-    'クライアントチェック後修正': { stage: 'cl_check', comment: creative.client_comment   },
+    'Dチェック後修正':            { stage: 'd_check',  comment: creative.director_comment, syntheticStage: 'd_check_handoff'  },
+    'Pチェック後修正':            { stage: 'p_check',  comment: creative.director_comment, syntheticStage: 'p_check_handoff'  },
+    'クライアントチェック後修正': { stage: 'cl_check', comment: creative.client_comment,   syntheticStage: 'cl_check_handoff' },
   };
   const m = stageMap[creative.status];
   if (!m || !m.comment) return null;
+
+  // 重複抑止: 修正依頼 transition の孤児 handoff 仮想ラウンドが既に
+  // _cdRoundsCache に含まれている場合は live round を出さない（同じ修正依頼コメントが
+  // creatives.director_comment / client_comment と handoff_to_next.comment の双方に
+  // 残っており、両方を出すとラウンド比較UIで同じ内容が2ページ並ぶため）。
+  // PR #531 で初稿提出仮想ラウンドが追加された後、3段目に重複ページが見える事象として顕在化した。
+  // レガシーデータ（creative_status_transitions 行が無く director_comment だけが残るケース）
+  // では hasReviseHandoff=false となり、引き続き live round を出す（救済 fallback として残す）。
+  const cached = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+  const hasReviseHandoff = cached.some(r =>
+    r && r.round_stage === m.syntheticStage &&
+    r.handoff_to_next && r.handoff_to_next.kind === 'revise'
+  );
+  if (hasReviseHandoff) return null;
+
   return {
     version_num: null,
     round_stage: m.stage,
