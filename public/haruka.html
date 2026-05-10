@@ -27812,7 +27812,43 @@ async function openCreativeDetail(id) {
   }
 
   // 直近ラウンド (= 一番新しい過去) を初期表示
-  _cdRoundIndex = Math.max(0, _cdRoundsCache.length + (_cdBuildLiveRound(currentCreativeDetail) ? 1 : 0) - 1);
+  // 修正中（live round が立つ Dチェック後修正 / Pチェック後修正 / CL後修正）は
+  // live round が一番末尾に push されるので素直に length 末尾でよい。
+  //
+  // 修正中以外（Pチェック / クライアントチェック中 / 納品中 など）は live=null。
+  // この場合、サーバ側ラウンド配列の末尾は「次工程の初回提出 仮想ラウンド」(p_check / cl_check)
+  // になりがちで、編集者の提出時メモしか持たない。
+  // ところが本来見せたいのは「直前のディレクター/プロデューサー承認コメント」(handoff_to_next.comment) や
+  // 「過去ラウンドのレビュアー指摘」(director_comment / client_comment)。
+  //
+  // バグ報告 (髙橋指示 2026-05-10): Pチェック中にDチェック承認コメントが見えない。
+  //   再現: 編集者提出 → Dチェック → ディレクターが「OK→Pチェックへ」と承認コメント付きで承認 → Pチェック。
+  //   詳細モーダル「💬 前回（コメント）」タブを開くと、編集者の提出メモしか映らない。
+  //   原因: 末尾が p_check の初回提出仮想 (D承認コメントを持たない) で固定されていた。
+  //
+  // 修正: 修正中以外のときは「コメント保有ラウンドのうち末尾に最も近いもの」を初期 index として選ぶ。
+  //   優先度（時系列で「最後の意思決定」を見せたいので末尾から逆走で探す）:
+  //     (a) handoff_to_next.comment（ディレクター/プロデューサー/クライアントの承認 or 修正依頼コメント）
+  //     (b) director_comment / client_comment（過去ラウンドのレビュアー指摘）
+  //   どちらも持たないラウンドしか無ければ従来通り末尾。
+  if (_cdBuildLiveRound(currentCreativeDetail)) {
+    _cdRoundIndex = Math.max(0, _cdRoundsCache.length + 1 - 1);
+  } else {
+    const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+    let pickedIndex = cache.length - 1;
+    for (let i = cache.length - 1; i >= 0; i--) {
+      const r = cache[i];
+      if (!r) continue;
+      const hasHandoff = r.handoff_to_next && typeof r.handoff_to_next.comment === 'string' && r.handoff_to_next.comment.trim();
+      const hasReviewer = (typeof r.director_comment === 'string' && r.director_comment.trim())
+        || (typeof r.client_comment === 'string' && r.client_comment.trim());
+      if (hasHandoff || hasReviewer) {
+        pickedIndex = i;
+        break;
+      }
+    }
+    _cdRoundIndex = Math.max(0, pickedIndex);
+  }
   // bug-report b9c7c60c: 詳細を開くたびに左カラムタブを 📺 preview にリセット（既定値）
   _cdRoundLeftTab = 'preview';
   try { cdRenderRoundCompare(); } catch (e) { console.warn('[cd-round-compare] render failed:', e); }
