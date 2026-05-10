@@ -2715,6 +2715,12 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal-card" style="width:min(1500px,98vw);max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title">
       <span id="bug-report-modal-title">🦋 バグ報告</span>
+      <span style="flex:1"></span>
+      <!-- 編集モード時のみ表示。Slack/Chatwork等にバグ報告のリンクを貼って個人送信するための共有ボタン -->
+      <button id="br-share-btn" type="button" onclick="bugReportCopyShareLink()" title="このバグ報告のリンクをコピー（Slack/Chatwork等で共有用）"
+        style="display:none;background:transparent;border:1px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;color:#374151;cursor:pointer;margin-right:8px">
+        🔗 共有リンクをコピー
+      </button>
       <button class="modal-close" onclick="closeBugReportModal()">×</button>
     </div>
     <input type="hidden" id="br-id">
@@ -34292,6 +34298,9 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-tab-triage').style.display = 'none';
   _brSwitchTab('main');
   document.getElementById('br-delete-btn').style.display = 'none';
+  // 共有リンクボタンは「保存済み(=編集モード)」のときだけ意味があるので新規時は隠す
+  const shareBtn = document.getElementById('br-share-btn');
+  if (shareBtn) shareBtn.style.display = 'none';
   document.getElementById('br-meta-info').textContent = '';
   document.getElementById('br-improved-wrap').style.display = 'none';
   document.getElementById('br-improved').checked = false;
@@ -34347,6 +34356,9 @@ async function openBugReportModal(options = {}) {
       document.getElementById('br-tabs').style.display = 'flex';
       document.getElementById('br-tab-btn-triage').style.display = isAdmin ? '' : 'none';
       _brSwitchTab('main');
+      // 共有リンクボタンを編集モードで表示
+      const shareBtn = document.getElementById('br-share-btn');
+      if (shareBtn) shareBtn.style.display = '';
       // br-improved-wrap は HTML 側で display:none !important なので明示変更不要
       // 改善済みチェック状態の復元
       document.getElementById('br-improved').checked = !!r.improved_at;
@@ -35142,6 +35154,35 @@ async function postBugReportComment() {
     await _brLoadComments(id);
   } catch (e) { alert(e.message); }
 }
+
+// バグ報告の共有リンク（deep link）をクリップボードへ
+// Slack / Chatwork 等の個人メッセージで「これ見てくれない？」と相手に貼る用途。
+// クリック先: /haruka.html?bug-report=<id> → applyDeepLinkOnLoad で詳細モーダル直開き
+// 形式: 「タイトル\nURL」 → そのまま貼って送信できる。本文不要なら URL 行だけ残せばOK
+async function bugReportCopyShareLink() {
+  const r = _bugReportEditing;
+  if (!r) {
+    showToast('保存後に共有できます', 'warn');
+    return;
+  }
+  const url = `${location.origin}/haruka.html?bug-report=${encodeURIComponent(r.id)}`;
+  const title = (r.title || '').trim();
+  const text = title ? `🦋 ${title}\n${url}` : url;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('🔗 共有リンクをコピーしました', 'success');
+  } catch (e) {
+    // フォールバック
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('🔗 リンクをコピーしました', 'success'); }
+    catch (_) { alert('クリップボードへのコピーに失敗しました'); }
+    finally { ta.remove(); }
+  }
+}
+window.bugReportCopyShareLink = bugReportCopyShareLink;
 
 // Claude Code 修正依頼テキストをクリップボードへ
 // 将来 workflow が PR本文を grep して Bug-Report-Id を抽出 → bug_reports を自動紐付ける前提
