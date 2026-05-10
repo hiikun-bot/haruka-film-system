@@ -34557,7 +34557,6 @@ function renderBugReportList() {
         <th style="padding:8px 6px;text-align:left;width:120px">報告者</th>
         <th style="padding:8px 6px;text-align:left;width:120px">報告日時</th>
         <th style="padding:8px 6px;text-align:right;width:60px">経過</th>
-        <th style="padding:8px 6px;text-align:center;width:60px">スクショ</th>
       </tr>
     </thead>`;
 
@@ -34569,9 +34568,6 @@ function renderBugReportList() {
     const reporterLabel = r.is_anonymous ? '🕵️ 匿名' : (_brUserLabel(r.reporter) || '—');
     const assigneeLabel = r.assignee ? `👤 ${_brEsc(_brUserLabel(r.assignee))}` : '<span style="color:#9CA3AF">未割当</span>';
     const rowBg = r.is_urgent ? '#FEF2F2' : '#fff';
-    const thumb = r.screenshot_data_url
-      ? `<img src="${_brEsc(r.screenshot_data_url)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #E5E7EB" loading="lazy">`
-      : '<span style="color:#D1D5DB;font-size:18px">—</span>';
     // PR #479: 改善済バッジ + Verup#バッジ
     const improvedBadge = r.improved_at
       ? `<span style="background:#10B981;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap">✅</span>`
@@ -34591,7 +34587,6 @@ function renderBugReportList() {
         <td style="padding:8px 6px;font-size:12px;color:#374151">${assigneeLabel}</td>
         <td style="padding:8px 6px;font-size:11px;color:#6B7280;white-space:nowrap">${_brEsc(_brFmtDate(r.created_at))}</td>
         <td style="padding:8px 6px;font-size:11px;color:#6B7280;text-align:right;white-space:nowrap">${_brElapsedLabel(r)}</td>
-        <td style="padding:8px 6px;text-align:center">${thumb}</td>
       </tr>`;
   }).join('');
 
