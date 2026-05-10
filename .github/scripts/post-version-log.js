@@ -498,6 +498,12 @@ async function notifyBugFixesToSlack(prBody, prNumber, prTitle, supabaseUrl, hea
       const sev = bug.severity ? (BUG_SEV_LABEL[bug.severity] || bug.severity) : '';
       const dupNote = bug.duplicate_of_id ? '（重複報告として登録されていた件）' : '';
 
+      // 修正履歴(Verup#) の deep link。クリックすると HARUKA FILM SYSTEM 内で
+      // 修正履歴モーダルが開いて該当行がハイライトされる。
+      // PRODUCTION_URL は env で上書き可能（Railway URL 変更時の保険）
+      const productionUrl = (process.env.HARUKA_PRODUCTION_URL || 'https://haruka-film-system-production.up.railway.app').replace(/\/+$/, '');
+      const verupDeepLink = `${productionUrl}/haruka.html?verup=${encodeURIComponent(prNumber)}`;
+
       const lines = [
         mentionStr ? mentionStr : '',
         `✅ あなたの報告が改善されました ${dupNote}`.trim(),
@@ -505,7 +511,8 @@ async function notifyBugFixesToSlack(prBody, prNumber, prTitle, supabaseUrl, hea
         `🦋 *${bug.title || ''}*`,
         `報告者: ${reporterLabel}`,
         sev ? `重要度: ${sev}` : '',
-        `対応: 🆙 #${prNumber} ${prTitle || ''}`,
+        // Slack 形式 <URL|表示名> でリンク化。クリックで修正履歴モーダルへ遷移
+        `対応: <${verupDeepLink}|🆙 #${prNumber}> ${prTitle || ''}`,
         '',
         '_動作確認のうえ、問題なければバグ報告画面で「🟩 解決」へ進めてください_',
       ].filter(Boolean);
