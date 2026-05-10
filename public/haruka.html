@@ -242,7 +242,8 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-bar.done{background:linear-gradient(90deg,#D1F0DA,#7FA68A);opacity:0.7}
 .cv-g-bar.dashed{background:transparent;border:1px dashed var(--em-dark);height:8px}
 /* マイルストーン */
-.cv-g-ms{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;font-weight:700;color:#fff;z-index:2;cursor:default}
+/* 同日重なり時は --ms-top を JS から書き換えて縦オフセットで積む（横ずらしは隣セル食い込みのため廃止） */
+.cv-g-ms{position:absolute;top:var(--ms-top,50%);transform:translate(-50%,-50%);width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;font-weight:700;color:#fff;z-index:2;cursor:default}
 .cv-g-ms.is-estimated{opacity:0.5}
 .cv-g-ms.ms-start{background:#7CC9C5;clip-path:polygon(0 0,100% 50%,0 100%);width:12px;height:12px;border-radius:0}
 .cv-g-ms.ms-draft{width:14px;height:14px;background:#F2A93B;transform:translate(-50%,-50%) rotate(45deg)}
@@ -252,8 +253,8 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-ms.ms-dp{width:10px;height:10px;background:#5ABDB9;border-radius:50%;font-size:8px}
 .cv-g-ms.ms-dp.ms-d{background:#1E88B0}
 .cv-g-ms.ms-dp.ms-p{background:#7E57C2}
-/* マイルストーンが小さくなる時の縮小（重複時） */
-.cv-g-ms.is-mini{width:8px !important;height:8px !important;clip-path:none !important;border-radius:50% !important;font-size:0;background-clip:padding-box}
+/* 同日4件以上の集約バッジ（●N）。final ★ は集約に含めず単独表示する */
+.cv-g-ms.cv-g-ms-cluster{width:14px;height:14px;background:#0F7C78;border-radius:50%;font-size:9px;color:#fff;font-weight:700;clip-path:none;box-shadow:0 0 0 1px #fff}
 .cv-g-today-line{position:absolute;top:0;bottom:0;width:0;border-left:2px solid #E89B0E;z-index:3;pointer-events:none}
 .cv-g-today-label{position:absolute;top:-2px;background:#E89B0E;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:700;transform:translateX(-50%);white-space:nowrap;z-index:4;box-shadow:0 1px 2px rgba(0,0,0,.15)}
 /* 凡例（旧・下部用 / 現在は cv-g-legend-top を使用） */
@@ -274,6 +275,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-legend-top .lg-bar-overlap{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 0 0 2px rgba(232,155,14,0.30)}
 .cv-g-legend-top .lg-ms{position:static !important;transform:none !important;flex-shrink:0;width:10px;height:10px}
 .cv-g-legend-top .lg-ms.ms-draft{transform:rotate(45deg) !important}
+.cv-g-legend-top .lg-ms.cv-g-ms-cluster{width:14px;height:14px;font-size:9px}
 .cv-g-legend-top .lg-est{color:var(--text-faint);font-size:10px}
 /* 凡例グループ間の見出し・区切り（CSS未定義だった分の補完） */
 .cv-g-legend-top .lg-group{display:inline-flex;align-items:center;gap:8px;flex-shrink:0}
@@ -10982,36 +10984,51 @@ function renderCreativesGantt(filtered, warningSource) {
       if (!byDay.has(idx)) byDay.set(idx, []);
       byDay.get(idx).push(m);
     });
+    // 同日重なりのレンダリング（ハイブリッド方式）
+    //  A) 1〜3件: すべて通常サイズで縦オフセット（中央→上→下）し、横ずらしは行わない（隣セル食い込み防止）
+    //  B) 4件以上: 「●N」集約バッジ1つにまとめる。ただし final（★最終納品）は重要度が高いので集約に含めず常に単独表示
+    //     例) 5件 (start/draft/client/d/final) → ★単独 + 残り4件をクラスタ「●4」
+    //  クラスタバッジが単独 final と縦に重なる場合は A の縦オフセットルールで積む
+    const VERT_OFFSETS = ['50%', '30%', '70%']; // 中央 → 上 → 下（行高36px想定で約7pxステップ相当）
+    const renderSingle = (m, base, topVar) => {
+      let cls = '';
+      if (m.kind === 'start')       cls = 'ms-start';
+      else if (m.kind === 'draft')  cls = 'ms-draft';
+      else if (m.kind === 'client') cls = 'ms-client';
+      else if (m.kind === 'final')  { cls = 'ms-final'; if (m.late) cls += ' is-late'; }
+      else if (m.kind === 'd')      cls = 'ms-dp ms-d';
+      else if (m.kind === 'p')      cls = 'ms-dp ms-p';
+      const estCls = m.est ? 'is-estimated' : '';
+      const style = `left:${base}px;--ms-top:${topVar};`;
+      segments.push(`<div class="cv-g-ms ${cls} ${estCls}" style="${style}" title="${esc(m.title)}"></div>`);
+    };
     byDay.forEach((arr, idx) => {
       arr.sort((a,b) => b.prio - a.prio); // 高優先が先頭
       const base = idx * dayPx + dayPx/2;
-      arr.forEach((m, i) => {
-        const isMain = (i === 0);
-        const isMini = !isMain;
-        const offset = isMain ? 0 : (i * 9); // 後ろに小さく並べる
-        let cls = '';
-        let title = m.title;
-        if (m.kind === 'start')  cls = 'ms-start';
-        else if (m.kind === 'draft')  cls = 'ms-draft';
-        else if (m.kind === 'client') cls = 'ms-client';
-        else if (m.kind === 'final')  { cls = 'ms-final'; if (m.late) cls += ' is-late'; }
-        else if (m.kind === 'd')      cls = 'ms-dp ms-d';
-        else if (m.kind === 'p')      cls = 'ms-dp ms-p';
-        const estCls = m.est ? 'is-estimated' : '';
-        const miniCls = isMini ? 'is-mini' : '';
-        // mini はバックグラウンド色を維持するために class で対応
-        // 横方向に並べるときは px ずらし
-        let style;
-        if (isMain) {
-          style = `left:${base}px`;
-          // 回転は CSS で行う
-          if (m.kind === 'draft') {
-            style += '';
-          }
+      if (arr.length <= 3) {
+        // A) 縦オフセットで積む。すべて通常サイズ
+        arr.forEach((m, i) => renderSingle(m, base, VERT_OFFSETS[i] || '50%'));
+        return;
+      }
+      // B) 4件以上 → final だけ単独 + 残りをクラスタ化
+      const finalItem = arr.find(m => m.kind === 'final');
+      const others = finalItem ? arr.filter(m => m !== finalItem) : arr.slice();
+      const renderQueue = []; // {type:'single'|'cluster', payload}
+      if (finalItem) renderQueue.push({ type: 'single', payload: finalItem });
+      if (others.length >= 1) {
+        // 残りが1件でも、4件以上のうち final 抜いた残りは少なくとも3件なのでクラスタ化（finalなしのときは元 arr.length>=4）
+        renderQueue.push({ type: 'cluster', payload: others });
+      }
+      renderQueue.forEach((item, i) => {
+        const topVar = VERT_OFFSETS[i] || '50%';
+        if (item.type === 'single') {
+          renderSingle(item.payload, base, topVar);
         } else {
-          style = `left:${base + offset}px;`;
+          const list = item.payload;
+          const titleLines = list.map(x => x.title).join('\n');
+          const style = `left:${base}px;--ms-top:${topVar};`;
+          segments.push(`<div class="cv-g-ms cv-g-ms-cluster" style="${style}" title="${esc(`同日 ${list.length} 件:\n${titleLines}`)}">${list.length}</div>`);
         }
-        segments.push(`<div class="cv-g-ms ${cls} ${estCls} ${miniCls}" style="${style}" title="${esc(title)}"></div>`);
       });
     });
     return segments.join('');
@@ -11241,6 +11258,7 @@ function renderCreativesGantt(filtered, warningSource) {
           <span class="lg-item"><span class="cv-g-ms ms-final lg-ms"></span>最終納品</span>
           ${showDp ? `<span class="lg-item"><span class="cv-g-ms ms-dp ms-d lg-ms"></span>Dチェック</span>
           <span class="lg-item"><span class="cv-g-ms ms-dp ms-p lg-ms"></span>Pチェック</span>` : ''}
+          <span class="lg-item"><span class="cv-g-ms cv-g-ms-cluster lg-ms">3</span>同日まとめ</span>
         </span>
         <span class="lg-divider"></span>
         <span class="lg-group">
