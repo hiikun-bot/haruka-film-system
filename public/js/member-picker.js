@@ -64,8 +64,9 @@
     if (!m) return '';
     const nick = (m.nickname || '').trim();
     const full = (m.full_name || '').trim();
-    if (nick && full && nick !== full) return `${nick}（${full}）`;
-    return nick || full || '(名前未設定)';
+    // 名前を主、ニックネームを括弧書きで補助情報として表示
+    if (nick && full && nick !== full) return `${full}（${nick}）`;
+    return full || nick || '(名前未設定)';
   }
   function escapeHtml(s) {
     return String(s == null ? '' : s)
