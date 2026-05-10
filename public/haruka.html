@@ -2707,7 +2707,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal-card" style="width:min(1500px,98vw);max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title">
       <span id="bug-report-modal-title">🦋 バグ報告</span>
-      <button class="modal-close" onclick="closeModal('modal-bug-report')">×</button>
+      <button class="modal-close" onclick="closeBugReportModal()">×</button>
     </div>
     <input type="hidden" id="br-id">
     <div style="overflow-y:auto;flex:1;padding-right:4px">
@@ -2844,7 +2844,7 @@ window.showPage = window.showPage || function(name, btn) {
 
     <div class="modal-footer">
       <button id="br-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteBugReport()">削除</button>
-      <button class="btn" onclick="closeModal('modal-bug-report')">キャンセル</button>
+      <button class="btn" onclick="closeBugReportModal()">キャンセル</button>
       <button class="btn-primary" onclick="submitBugReport()">保存</button>
     </div>
   </div>
@@ -34578,51 +34578,51 @@ function renderBugReportList() {
 
 // 新規 or 編集モーダルを開く
 //   options: { id?: string, description?: string, title?: string }
+// バグ報告モーダルを閉じる（拡大状態もクリーンアップ）
+function closeBugReportModal() {
+  document.getElementById('br-screenshot-editor')?.classList.remove('br-fullscreen');
+  document.body.classList.remove('br-fullscreen-active');
+  const fsBtn = document.getElementById('br-fullscreen-toggle');
+  if (fsBtn) fsBtn.textContent = '🔍 拡大';
+  closeModal('modal-bug-report');
+}
+window.closeBugReportModal = closeBugReportModal;
+
+// 背景クリック / ESC など closeBugReportModal を経由しない経路の保険として、
+// modal-bug-report の .open class が外れたら必ず拡大状態をクリーンアップする
+window.addEventListener('load', () => {
+  const m = document.getElementById('modal-bug-report');
+  if (!m || typeof MutationObserver === 'undefined') return;
+  new MutationObserver(() => {
+    if (!m.classList.contains('open')) {
+      document.getElementById('br-screenshot-editor')?.classList.remove('br-fullscreen');
+      document.body.classList.remove('br-fullscreen-active');
+      const fsBtn = document.getElementById('br-fullscreen-toggle');
+      if (fsBtn) fsBtn.textContent = '🔍 拡大';
+    }
+  }).observe(m, { attributes: true, attributeFilter: ['class'] });
+});
+
 async function openBugReportModal(options = {}) {
-  // 拡大表示状態を毎回リセット（前回開いたまま閉じた場合に備える）
+  // 拡大表示状態を毎回リセット（前回開いたまま閉じた場合の保険）
   document.getElementById('br-screenshot-editor')?.classList.remove('br-fullscreen');
   document.body.classList.remove('br-fullscreen-active');
   const fsBtn = document.getElementById('br-fullscreen-toggle');
   if (fsBtn) fsBtn.textContent = '🔍 拡大';
 
-  // 対応者 select を自前で構築（MemberPicker は loadMembers の結果に currentUser が
-  // 含まれない場合「(不明なメンバー)」になるためバイパス）。allMembers + currentUser を毎回再構築。
-  let assignSel = document.getElementById('br-assignee');
-  // 過去に MemberPicker.bindSelect で trigger 化されていた場合、新しい <select> に戻す
-  if (assignSel && assignSel.tagName !== 'SELECT') {
-    const newSel = document.createElement('select');
-    newSel.id = 'br-assignee';
-    newSel.className = 'form-input';
-    newSel.style.cssText = 'flex:1;min-width:160px';
-    assignSel.parentNode.insertBefore(newSel, assignSel);
-    // 隣の hidden input も削除
-    const next = assignSel.nextSibling;
-    if (next && next.tagName === 'INPUT' && next.type === 'hidden') {
-      next.parentNode.removeChild(next);
+  // ADR 014: 共通 MemberPicker で対応者選択を統一（初回のみ bindSelect）
+  const assignSel = document.getElementById('br-assignee');
+  if (assignSel && (!assignSel.dataset || assignSel.dataset.mpBound !== '1') && typeof MemberPicker !== 'undefined') {
+    MemberPicker.bindSelect(assignSel, {
+      placeholder: '— 未割当 —',
+      emptyLabel: '— 未割当 —',
+    });
+    // MemberPicker のキャッシュに currentUser が含まれていない場合の保険として
+    // キャッシュを invalidate して /api/haruka/members を再取得（次の refreshTriggerLabel で正しい名前が出る）
+    if (typeof MemberPicker.invalidateCache === 'function') {
+      MemberPicker.invalidateCache();
     }
-    assignSel.parentNode.removeChild(assignSel);
-    assignSel = newSel;
   }
-  // option 構築: allMembers ベース、currentUser が含まれていなければ追加
-  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
-  const memberList = Array.isArray(allMembers) ? allMembers.slice() : [];
-  if (me?.id && !memberList.some(m => m && m.id === me.id)) {
-    memberList.push({ id: me.id, full_name: me.full_name, nickname: me.nickname });
-  }
-  memberList.sort((a, b) => {
-    const la = (a?.nickname || a?.full_name || '');
-    const lb = (b?.nickname || b?.full_name || '');
-    return la.localeCompare(lb, 'ja');
-  });
-  let optHtml = '<option value="">— 未割当 —</option>';
-  for (const m of memberList) {
-    if (!m || !m.id) continue;
-    const isMe = me?.id === m.id;
-    const baseLabel = m.nickname ? `${_brEsc(m.nickname)}（${_brEsc(m.full_name || '')}）` : _brEsc(m.full_name || '');
-    const label = isMe ? `${baseLabel}（自分）` : baseLabel;
-    optHtml += `<option value="${_brEsc(m.id)}">${label}</option>`;
-  }
-  assignSel.innerHTML = optHtml;
 
   // フォーム初期化
   document.getElementById('br-id').value = '';
@@ -35033,7 +35033,7 @@ async function submitBugReport() {
       alert(err.error || '保存に失敗しました');
       return;
     }
-    closeModal('modal-bug-report');
+    closeBugReportModal();
     showToast(id ? 'バグ報告を更新しました' : 'バグ報告を送信しました（ご報告ありがとうございます）', 'success');
     if (document.getElementById('modal-bug-report-list')?.style.display === 'flex') {
       await loadBugReportList();
@@ -35086,7 +35086,7 @@ async function deleteBugReport() {
       alert(err.error || '削除に失敗しました');
       return;
     }
-    closeModal('modal-bug-report');
+    closeBugReportModal();
     if (document.getElementById('modal-bug-report-list')?.style.display === 'flex') {
       await loadBugReportList();
     }
