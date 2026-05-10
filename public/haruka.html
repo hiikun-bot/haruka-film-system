@@ -9647,8 +9647,8 @@ function renderTeamsList() {
     const teamName = esc(t.team_name || '');
     const typeLabelMap = { video: '動画チーム', design: 'デザインチーム', secretary: '秘書チーム' };
     const typeLabel = typeLabelMap[t.team_type] || '動画チーム';
-    const producerName = t.producer ? esc(NameDisplay.short(t.producer)) : '';
-    const directorName = t.director ? esc(NameDisplay.short(t.director)) : '';
+    const producerName = t.producer ? esc(NameDisplay.full(t.producer)) : '';
+    const directorName = t.director ? esc(NameDisplay.full(t.director)) : '';
     return `
     <div class="team-card" id="team-card-${t.id}" onclick="toggleTeamAccordion('${t.id}')">
       <div class="team-card-head">
