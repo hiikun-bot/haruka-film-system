@@ -7795,6 +7795,20 @@ async function applyDeepLinkOnLoad() {
       }, 300);
       return;
     }
+    // Verup情報 deep link（Slack 通知の「対応: #518」をクリックで該当行へジャンプ）
+    const verupRev = params.get('verup');
+    if (verupRev) {
+      setTimeout(() => {
+        try {
+          if (typeof openVerupModalAtRevision === 'function') {
+            openVerupModalAtRevision(Number(verupRev));
+          } else if (typeof openVerupModal === 'function') {
+            openVerupModal();
+          }
+        } catch (e) { console.warn('[deepLink verup]', e); }
+      }, 300);
+      return;
+    }
 
     const creativeId = params.get('creative');
     if (!creativeId) return;
