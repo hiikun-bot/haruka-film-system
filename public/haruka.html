@@ -31251,7 +31251,8 @@ function kvUpdateThumbPreview(url) {
     img.src = url;
     wrap.style.display = '';
   } else {
-    img.src = '';
+    // img.src = '' は現在のページURLを再取得しに行き <img> リソースエラーを誘発するため removeAttribute を使う
+    img.removeAttribute('src');
     wrap.style.display = 'none';
   }
 }
