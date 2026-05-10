@@ -14165,7 +14165,7 @@ router.get('/bug-reports', requireAuth, async (req, res) => {
     const { status, assignee_user_id, mine } = req.query;
     let q = supabase
       .from('bug_reports')
-      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description )')
+      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url )')
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
@@ -14190,7 +14190,7 @@ router.get('/bug-reports/:id', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('bug_reports')
-      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description )')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url )')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
@@ -14257,6 +14257,132 @@ router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), asy
 
     const { data, error } = await supabase
       .from('bug_reports').update(payload).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// バグ報告: 対応方針 (triage_decision) 更新
+// ============================================================
+// admin 専用。
+//   body: { triage_decision: 'to_fix'|'hold'|'wont_fix', comment?: string }
+// 副作用:
+//   - bug_reports.triage_decision / triage_decided_at / triage_decided_by_user_id 更新
+//   - status を方針に合わせて自動遷移:
+//       'to_fix'   → status を in_progress に進める（既に resolved/wont_fix なら触らない）
+//       'hold'     → status は open のまま
+//       'wont_fix' → status を wont_fix に遷移、resolved_at を設定
+//   - bug_report_comments に system 種別のコメントを自動 INSERT
+//   - admin が任意でコメントも添えていれば、続けて comment 種別を INSERT
+// ============================================================
+router.patch('/bug-reports/:id/triage', requireAuth, express.json(), async (req, res) => {
+  try {
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    if (!isAdmin) return res.status(403).json({ error: '管理者のみ対応方針を決定できます' });
+
+    const { triage_decision, comment } = req.body || {};
+    const allowed = ['to_fix', 'hold', 'wont_fix'];
+    if (!allowed.includes(triage_decision)) {
+      return res.status(400).json({ error: 'triage_decision は to_fix / hold / wont_fix のいずれか' });
+    }
+
+    const { data: row, error: getErr } = await supabase
+      .from('bug_reports').select('id, status').eq('id', req.params.id).maybeSingle();
+    if (getErr) return res.status(500).json({ error: getErr.message });
+    if (!row) return res.status(404).json({ error: 'not found' });
+
+    const nowIso = new Date().toISOString();
+    const updates = {
+      triage_decision,
+      triage_decided_at: nowIso,
+      triage_decided_by_user_id: req.user?.id || null,
+      updated_at: nowIso,
+    };
+
+    // status の自動遷移ルール
+    if (triage_decision === 'to_fix') {
+      if (row.status === 'open') updates.status = 'in_progress';
+    } else if (triage_decision === 'wont_fix') {
+      updates.status = 'wont_fix';
+      updates.resolved_at = nowIso;
+    }
+    // 'hold' は status を触らない
+
+    const { error: updErr } = await supabase
+      .from('bug_reports').update(updates).eq('id', req.params.id);
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // システムコメントの自動 INSERT
+    const decisionLabel = { to_fix: '対応する', hold: '保留', wont_fix: '却下' }[triage_decision];
+    const sysBody = `[対応方針: ${decisionLabel}]`;
+    await supabase.from('bug_report_comments').insert({
+      bug_report_id: req.params.id,
+      author_user_id: req.user?.id || null,
+      body: sysBody,
+      kind: 'system',
+    });
+
+    // 任意の admin コメントが添えられていればさらに INSERT
+    const trimmed = (comment || '').trim();
+    if (trimmed) {
+      await supabase.from('bug_report_comments').insert({
+        bug_report_id: req.params.id,
+        author_user_id: req.user?.id || null,
+        body: trimmed,
+        kind: 'comment',
+      });
+    }
+
+    res.json({ ok: true, triage_decision, status: updates.status || row.status });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// バグ報告: コメント GET / POST
+// ============================================================
+// 全員投稿可（つぶやき的な議論場所）。system 種別もそのまま返す。
+// ============================================================
+router.get('/bug-reports/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('bug_report_comments')
+      .select('id, bug_report_id, author_user_id, body, kind, created_at, author:author_user_id ( id, full_name, nickname, avatar_url )')
+      .eq('bug_report_id', req.params.id)
+      .order('created_at', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/bug-reports/:id/comments', requireAuth, express.json(), async (req, res) => {
+  try {
+    const body = (req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: '本文は必須です' });
+    if (body.length > 2000) return res.status(400).json({ error: '本文は2000文字以内' });
+
+    // 親レコード存在チェック
+    const { data: parent, error: pErr } = await supabase
+      .from('bug_reports').select('id').eq('id', req.params.id).maybeSingle();
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    if (!parent) return res.status(404).json({ error: 'バグ報告が見つかりません' });
+
+    const { data, error } = await supabase
+      .from('bug_report_comments')
+      .insert({
+        bug_report_id: req.params.id,
+        author_user_id: req.user?.id || null,
+        body,
+        kind: 'comment',
+      })
+      .select('id, bug_report_id, author_user_id, body, kind, created_at, author:author_user_id ( id, full_name, nickname, avatar_url )')
+      .single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   } catch (e) {
