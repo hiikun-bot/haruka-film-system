@@ -12644,411 +12644,346 @@ router.get('/creative-versions/:creativeId', async (req, res) => {
   res.json(data);
 });
 
-// ADR 011: ラウンド比較型UI 用エンドポイント
-// クリエイティブのラウンド履歴（過去）を昇順で返す。
-// レスポンス: [{ id, version_num, round_stage, director_comment, editor_comment, client_comment,
-//                creative_file_id, recorded_by, created_at, file: { id, version, drive_url, drive_file_id, generated_name } | null }]
+// ============================================================
+// ADR 011 v2: 「前回」セクション 時系列ページング型レスポンス
+// ============================================================
+// PR #(prev-comment-pagination) / 髙橋指示 2026-05-10:
+//
+// 旧仕様 (廃止):
+//   - creative_version_history の snapshot を中心に、孤児 handoff・初回提出仮想ラウンドを
+//     合成して「ラウンド単位」のレコードを並べる。
+//   - フロントで dedup や live round 合成、ドット表示などの複雑な後処理を行っていた。
+//   - 結果: 初稿提出メモが「前回」に表示されない・初期表示が右から2番目になる等の
+//     再発バグが続発 (PR #555/#559/#560/#563)。
+//
+// 新仕様 (本実装):
+//   - 「コメント1個 = 1要素」の **時系列順フラット配列** を返す。
+//   - kind: 'submit' | 'revise' | 'approve_handoff' | 'deliver'
+//   - フロントは 1要素 = 1ページとしてそのまま順番に表示。dedup なし。
+//   - 初期表示は最新ページ (N/N)。◀ で過去、▶ で最新へ。
+//
+// データソース:
+//   主要ソースは creative_status_transitions（全ステータス遷移の audit log）。
+//   creative_version_history は補助的にファイル特定にだけ使う（recorded_by や file 紐付け）。
+//
+// 「ライブの修正依頼」(*_後修正 ステータス中で transition がまだ発火していない最新の指摘):
+//   - 通常は status 遷移時に transitions に書き込まれるため、ほぼ全ての修正依頼は
+//     transition 由来で出る。
+//   - レガシーデータ（transition 行が存在せず creatives.director_comment にのみ
+//     値が残っているケース）の救済として、後修正ステータス中で
+//     「最新 transition より新しい コメント」が creatives 側にあれば live コメントとして末尾追加。
+//
+// レスポンス要素 (idx は時系列順、0 が最古、length-1 が最新):
+//   {
+//     idx, kind,
+//     comment, occurred_at,
+//     from_role, to_role,            // 'editor'|'director'|'producer'|'client'|'completed'
+//     from_user_id, to_user_id,      // null 可
+//     version_num,                    // 関連 version (submit なら提出版, それ以外は実行時の版)
+//     file: { id, version, drive_url, drive_file_id, generated_name } | null,
+//     source, source_id              // デバッグ用
+//   }
+// ============================================================
 router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
-  // schema 拡張済み環境では editor_comment / round_stage / creative_file_id / recorded_by が select 可能。
-  // 列欠損環境でも 500 で詰まないように 2 段フォールバック。
-  let { data, error } = await supabase
-    .from('creative_version_history')
-    .select('*')
-    .eq('creative_id', req.params.id)
-    .order('version_num', { ascending: true })
-    .order('created_at', { ascending: true });
-  if (error) {
-    const msg = error.message || '';
-    if (/column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || error.code === 'PGRST204') {
-      // 列欠損フォールバック（migration 未適用環境）: 旧スキーマ列のみで再取得
-      ({ data, error } = await supabase
-        .from('creative_version_history')
-        .select('id, creative_id, version_num, director_comment, client_comment, created_at')
-        .eq('creative_id', req.params.id)
-        .order('version_num', { ascending: true })
-        .order('created_at', { ascending: true }));
-    }
-  }
-  if (error) return res.status(500).json({ error: error.message });
+  const creativeId = req.params.id;
 
-  // 関連 creative_files をまとめて取得（N+1 解消）
-  const fileIds = [...new Set((data || []).map(r => r.creative_file_id).filter(Boolean))];
-  let filesById = {};
-  if (fileIds.length > 0) {
-    const { data: files } = await supabase
-      .from('creative_files')
-      .select('id, version, drive_url, drive_file_id, generated_name')
-      .in('id', fileIds);
-    filesById = Object.fromEntries((files || []).map(f => [f.id, f]));
-  }
-
-  // 引き継ぎ承認コメント (handoff_to_next) を creative_status_transitions から付与
-  // (PR #(d-to-p-handoff-comment) / 代表 髙橋指示・2026-05-09):
-  //   各 round_stage にとっての「次工程への承認・引き継ぎ遷移」を探し、
-  //   そのときディレクター/プロデューサー/クライアントが書いたコメントを
-  //   round.handoff_to_next として埋め込む。フロントは round_stage が
-  //   d_check/p_check/cl_check の round 本文の一番上に「Dチェック→Pチェック 承認」
-  //   等のラベルとともに表示する（ラウンド比較UI）。
-  //
-  //   stage → 引き継ぎ遷移 (from_status → to_status):
-  //     d_check  → 'Dチェック' → 'Pチェック'
-  //     p_check  → 'Pチェック' → 'クライアントチェック中'
-  //     cl_check → 'クライアントチェック中' → '納品'
-  //
-  //   コメント取得元:
-  //     d_to_p / p_to_cl: director_comment_at_change（director_comment は
-  //                       D/P が共有する単一フィールド）
-  //     cl_to_delivered : client_comment_at_change
-  //
-  //   対応する snapshot round は「changed_at > round.created_at」の最早の transition。
-  //   schema 未適用環境（creative_status_transitions テーブル無し）でも本処理は止めない。
-  let transitions = [];
+  // 1) creative の現状（live フォールバック判定用）と関連メンバーを軽く取得
+  let creativeRow = null;
   try {
-    const { data: trans, error: transErr } = await supabase
-      .from('creative_status_transitions')
-      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
-      .eq('creative_id', req.params.id)
-      .order('changed_at', { ascending: true });
-    if (!transErr && Array.isArray(trans)) {
-      transitions = trans;
-    } else if (transErr) {
-      console.warn('[creative_status_transitions] fetch failed:', transErr.message);
-    }
-  } catch (e) {
-    console.warn('[creative_status_transitions] fetch block failed:', e?.message || e);
+    const { data: cRow } = await supabase
+      .from('creatives')
+      .select('id, status, director_comment, client_comment, editor_comment, updated_at, project_id')
+      .eq('id', creativeId)
+      .maybeSingle();
+    creativeRow = cRow || null;
+  } catch (_) {}
+
+  // project の director_id / producer_id を取得（from/to の user_id 解決用）
+  let projectDirectorId = null;
+  let projectProducerId = null;
+  if (creativeRow && creativeRow.project_id) {
+    try {
+      const { data: pRow } = await supabase
+        .from('projects')
+        .select('id, director_id, producer_id')
+        .eq('id', creativeRow.project_id)
+        .maybeSingle();
+      projectDirectorId = pRow?.director_id || null;
+      projectProducerId = pRow?.producer_id || null;
+    } catch (_) {}
   }
 
-  // round_stage → 引き継ぎ遷移定義（承認系）+ 修正依頼系
-  // (PR #(revision-request-handoff) / 髙橋指示 2026-05-09):
-  //   従来は承認系（Dチェック→Pチェック など）だけを表示していたが、
-  //   修正依頼系（Dチェック→Dチェック後修正 など）も同じ仕組みでラウンド比較に紐付ける。
-  //   修正依頼系の合流先は元の round_stage と同じ（差し戻しなので next stage は無い）が、
-  //   handoff key としては別スロット ('d_to_d_revise' / 'p_to_p_revise' / 'cl_to_cl_revise') に分ける。
-  const HANDOFF_BY_STAGE_APPROVE = {
-    'd_check':  { from: 'Dチェック',                 to: 'Pチェック',                  next: 'd_to_p',          commentField: 'director_comment_at_change' },
-    'p_check':  { from: 'Pチェック',                 to: 'クライアントチェック中',     next: 'p_to_cl',         commentField: 'director_comment_at_change' },
-    'cl_check': { from: 'クライアントチェック中',     to: '納品',                       next: 'cl_to_delivered', commentField: 'client_comment_at_change'   },
-  };
-  const HANDOFF_BY_STAGE_REVISE = {
-    'd_check':  { from: 'Dチェック',                 to: 'Dチェック後修正',            next: 'd_to_d_revise',   commentField: 'director_comment_at_change' },
-    'p_check':  { from: 'Pチェック',                 to: 'Pチェック後修正',            next: 'p_to_p_revise',   commentField: 'director_comment_at_change' },
-    'cl_check': { from: 'クライアントチェック中',     to: 'クライアントチェック後修正', next: 'cl_to_cl_revise', commentField: 'client_comment_at_change'   },
-  };
-  // transition.to_status から逆算して、紐付け対象の round_stage と種別を求める
-  const TRANSITION_TO_FROM_STAGE = {
-    // 承認系
-    'Pチェック':                   'd_check',
-    'クライアントチェック中':      'p_check',
-    '納品':                        'cl_check',
-    // 修正依頼系
-    'Dチェック後修正':             'd_check',
-    'Pチェック後修正':             'p_check',
-    'クライアントチェック後修正':  'cl_check',
-  };
-  const TRANSITION_KIND = {
-    'Pチェック':                   'approve',
-    'クライアントチェック中':      'approve',
-    '納品':                        'approve',
-    'Dチェック後修正':             'revise',
-    'Pチェック後修正':             'revise',
-    'クライアントチェック後修正':  'revise',
-  };
+  // creative_assignments から editor を解決（fallback 用）
+  let editorUserIdFallback = null;
+  try {
+    const { data: caRows } = await supabase
+      .from('creative_assignments')
+      .select('user_id, role')
+      .eq('creative_id', creativeId);
+    const editorAssign = (caRows || []).find(a => ['editor','designer','director_as_editor'].includes(a?.role));
+    editorUserIdFallback = editorAssign?.user_id || null;
+  } catch (_) {}
 
-  // 先に rounds 出力配列を作る（handoff_to_next は後段で埋める）
-  const result = (data || []).map(r => ({
-    ...r,
-    file: r.creative_file_id ? (filesById[r.creative_file_id] || null) : null,
-    handoff_to_next: null,
-  }));
-
-  // 紐付け規則 (PR #(handoff-attach-fix) / 髙橋指示 2026-05-09):
-  //   各 transition について、changed_at より **前** の同じ round_stage snapshot のうち
-  //   **最も新しいもの** に handoff_to_next を貼り付ける。これにより再提出シナリオで
-  //     v1 D→P transition (#1) → v1 d_check round に紐づく
-  //     v3 D→P transition (#2) → v3 d_check round に紐づく
-  //   と個別バインドされる。
-  //   旧実装「round.created_at より後の最早 transition」は v1/v3 両方に同じ transition が
-  //   マッチして表示崩れの原因になっていた。
-  //
-  //   data は version_num asc → created_at asc 済み（select の order 参照）。result も同順。
-  //   transitions は changed_at asc 済み。
-  //
-  //   PR #462 リリース前の transition 行は director_comment_at_change が「前ラウンドの指摘内容」
-  //   になっているケースがあるが、無いよりマシ（ユーザー確認済み）。
-  //   creatives.director_comment へはフォールバックしない（最新値で時刻が合わない可能性）。
-  const usedTransitionIds = new Set();
-  for (const tr of transitions) {
-    const fromStage = TRANSITION_TO_FROM_STAGE[tr.to_status];
-    if (!fromStage) continue;
-    const kind = TRANSITION_KIND[tr.to_status];
-    if (!kind) continue;
-    const def = (kind === 'revise' ? HANDOFF_BY_STAGE_REVISE : HANDOFF_BY_STAGE_APPROVE)[fromStage];
-    if (!def) continue;
-    if (tr.from_status !== def.from || tr.to_status !== def.to) continue; // 異常 from→to を弾く
-    const trTime = tr.changed_at ? Date.parse(tr.changed_at) : NaN;
-    if (Number.isNaN(trTime)) continue;
-    // result を走査し、changed_at <= tr.changed_at を満たす同 stage snapshot のうち最新を採用。
-    let target = null;
-    for (const r of result) {
-      if (r.round_stage !== fromStage) continue;
-      const rTime = r.created_at ? Date.parse(r.created_at) : NaN;
-      if (Number.isNaN(rTime)) continue;
-      if (rTime <= trTime) {
-        target = r; // ソート済みなので走査末尾の合致が最新
-      }
-    }
-    if (!target) continue; // snapshot 無し → 後段の「孤児 handoff」処理で仮想ラウンド化
-    // 同 round に複数 transition が当たる場合は最後（最新）の判断で上書き。
-    // 注: 承認 transition と修正依頼 transition が同じ round に紐づく事は通常ない
-    //   （承認したら次 stage に進むので、その snapshot 後に発生する transition は別 round 用）。
-    //   よって kind の混在による上書き競合は実用上発生しない。
-    usedTransitionIds.add(tr.id);
-    let comment = tr[def.commentField] ?? null;
-    // CL の指摘/承認は本来 client_comment_at_change に入るべきだが、フロント
-    // saveCreativeDetail の isCheck 分岐が CLチェック中でも body.director_comment で
-    // 送るため、実体は director_comment_at_change に残っている (ADR 011 既知の歪み)。
-    // client_comment_at_change が空の場合は director_comment_at_change にフォールバックする
-    // (PR #(cl-handoff-comment-fallback) / 髙橋指示 2026-05-10)。
-    if ((!comment || !String(comment).trim()) && fromStage === 'cl_check') {
-      const fb = tr.director_comment_at_change;
-      if (fb && String(fb).trim()) comment = fb;
-    }
-    target.handoff_to_next = {
-      stage:       def.next, // 'd_to_p' | 'p_to_cl' | 'cl_to_delivered' | 'd_to_d_revise' | 'p_to_p_revise' | 'cl_to_cl_revise'
-      from_status: tr.from_status,
-      to_status:   tr.to_status,
-      kind, // 'approve' | 'revise' — フロントで色/アイコン/ラベル切替に使う
-      comment,
-      changed_at:  tr.changed_at,
-      changed_by:  tr.changed_by,
-    };
-  }
-
-  // 孤児 handoff を仮想ラウンドとして追加 (PR #(d-to-p-handoff-comment)):
-  //   修正なし直行ケース（制作中→Dチェック→Pチェック など、d_check スナップショット無し）
-  //   でも引き継ぎ承認コメントを表示するために、対応する snapshot に紐付かない transition を
-  //   「コメントだけのラウンド」として返す。
-  //   editor_comment / director_comment / client_comment は NULL（編集者の提出メモも reviewer 指摘も無い）。
-  //   handoff_to_next にだけ情報を入れることで、フロント `_cdRoundEntryHtml` が
-  //   引き継ぎ承認ブロックのみを描画する。
-  //   version_num は version_at_change（その時点の最新ファイル version）を採用し、
-  //   ソート (version_num asc, created_at asc) で正しい位置に並ぶようにする。
-  const HANDOFF_TRANSITIONS_TO_STAGE = {
-    // 承認系
-    'Dチェック→Pチェック':                          { stage: 'd_to_p',          kind: 'approve', synthetic_stage: 'd_check_handoff',  commentField: 'director_comment_at_change' },
-    'Pチェック→クライアントチェック中':              { stage: 'p_to_cl',         kind: 'approve', synthetic_stage: 'p_check_handoff',  commentField: 'director_comment_at_change' },
-    'クライアントチェック中→納品':                   { stage: 'cl_to_delivered', kind: 'approve', synthetic_stage: 'cl_check_handoff', commentField: 'client_comment_at_change'   },
-    // 修正依頼系（PR #(revision-request-handoff)）: snapshot が無い直行ケースでも修正依頼コメントを表示
-    'Dチェック→Dチェック後修正':                    { stage: 'd_to_d_revise',   kind: 'revise',  synthetic_stage: 'd_check_handoff',  commentField: 'director_comment_at_change' },
-    'Pチェック→Pチェック後修正':                    { stage: 'p_to_p_revise',   kind: 'revise',  synthetic_stage: 'p_check_handoff',  commentField: 'director_comment_at_change' },
-    'クライアントチェック中→クライアントチェック後修正': { stage: 'cl_to_cl_revise', kind: 'revise',  synthetic_stage: 'cl_check_handoff', commentField: 'client_comment_at_change'   },
-  };
-  for (const t of transitions) {
-    if (usedTransitionIds.has(t.id)) continue;
-    const key = `${t.from_status}→${t.to_status}`;
-    const def = HANDOFF_TRANSITIONS_TO_STAGE[key];
-    if (!def) continue;
-    // 通常は def.commentField を読む。
-    // ただし CL の指摘 (cl_to_cl_revise / cl_to_delivered) は本来 client_comment_at_change に
-    // 入るべきだが、フロント saveCreativeDetail の isCheck 分岐が CLチェック中でも
-    // body.director_comment = noteValue で送っているため、実体は director_comment_at_change に
-    // 残っている (ADR 011 既知の歪み)。client_comment_at_change が空なら
-    // director_comment_at_change へフォールバックして CL の指摘を救済する
-    // (PR #(cl-handoff-comment-fallback) / 髙橋指示 2026-05-10)。
-    let comment = t[def.commentField] || null;
-    const CL_HANDOFF_KEYS = new Set([
-      'クライアントチェック中→クライアントチェック後修正',
-      'クライアントチェック中→納品',
-    ]);
-    if ((!comment || !String(comment).trim()) && CL_HANDOFF_KEYS.has(key)) {
-      const fallback = t.director_comment_at_change;
-      if (fallback && String(fallback).trim()) comment = fallback;
-    }
-    if (!comment || !String(comment).trim()) continue; // 空コメントの孤児は出さない
-    result.push({
-      id:               `handoff-${t.id}`,
-      creative_id:      req.params.id,
-      version_num:      t.version_at_change ?? null,
-      director_comment: null,
-      client_comment:   null,
-      editor_comment:   null,
-      round_stage:      def.synthetic_stage,
-      creative_file_id: null,
-      recorded_by:      null,
-      created_at:       t.changed_at,
-      file:             null,
-      _synthetic_handoff: true,
-      handoff_to_next: {
-        stage:       def.stage,
-        from_status: t.from_status,
-        to_status:   t.to_status,
-        kind:        def.kind,
-        comment,
-        changed_at:  t.changed_at,
-        changed_by:  t.changed_by,
-      },
-    });
-  }
-
-  // 「初回提出」仮想ラウンド (PR #(prev-panel-show-initial-submission) / 髙橋指示 2026-05-10):
-  //   既存の snapshot ロジックは「修正後 → 再チェック」の往復ループに突入してから初めて
-  //   creative_version_history に行を入れる。つまり**初回 Dチェック / Pチェック / クライアントチェック**で
-  //   は snapshot が無く、ラウンド比較UIの「前回」パネルに「前工程で提出されたファイルと
-  //   編集者の提出メモ」が表示されない（バグ報告 b9c7c60c に類似のレビュアー視点の盲点）。
-  //
-  //   ここでは creative_status_transitions から「初回チェックフェーズ突入」を検出し、
-  //   仮想ラウンドを result に追加する。これにより前工程の提出物 (creative_files) と提出メモが
-  //   「前回」として可視化される。
-  //
-  //   仮想化条件:
-  //     ・to_status が 'Dチェック' / 'Pチェック' / 'クライアントチェック中'
-  //     ・from_status が修正系（Dチェック後修正 / Pチェック後修正 / クライアントチェック後修正）でない
-  //       → 修正→再チェックの往復は既存 snapshot で扱う
-  //     ・version_at_change が NULL でない
-  //     ・同じ (creative_id, version_num, round_stage) の既存 snapshot が無い
-  //       → 既に snapshot 済みなら重複させない
-  //
-  //   ファイル紐付け:
-  //     creative_file_id は version_at_change と一致する creative_files から逆引きして埋める。
-  //     見つからなければ null（フロントの version_num フォールバック解決に任せる）。
-  //
-  //   editor_comment 解決の優先度:
-  //     (a) transition.editor_comment_at_change（PR #(editor-comment-at-change) 以後）
-  //     (b) (a) が NULL の旧データ: その transition より前の **同 creative_file (version_at_change)** に
-  //         紐づく editor_comment（creatives.editor_comment は揮発的なので確実ではないが、
-  //         無いより良い）。簡略化のため fallback は省略（旧データは editor_comment 空表示で許容）。
-  //
-  //   合流先 round_stage:
-  //     to_status='Dチェック'                 → 'd_check'
-  //     to_status='Pチェック'                 → 'p_check'
-  //     to_status='クライアントチェック中'    → 'cl_check'
-  //
-  //   _synthetic_initial_submit=true マークでフロント側で「編集ボタンを出さない」「ライブと混同しない」等の判定に使える。
-  const TO_STAGE_INITIAL = {
-    'Dチェック':                   'd_check',
-    'Pチェック':                   'p_check',
-    'クライアントチェック中':      'cl_check',
-  };
-  const REVISION_FROM_STATUSES = new Set([
-    'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正',
-  ]);
-  // PR #(d-check-prev-comment-initial-submit) / 髙橋指示 2026-05-10:
-  //   レガシー fallback 用: from_status が「制作・未着手系」のとき、cd-comment-field は
-  //   UI 上は「編集者→ディレクター宛の提出メモ」として書かれているはず（updateCreativeCommentLabel
-  //   のラベル運用）。
-  //   ところが旧 doDCheckTransition / directToClientCheck はこの値を payload.director_comment に
-  //   入れて送ってしまっており、creative_status_transitions.editor_comment_at_change が NULL、
-  //   director_comment_at_change に編集者のメモが乗る歪んだ状態で記録されているデータがある。
-  //   フロント修正以後の新規データは正しく editor_comment_at_change に入るが、過去データは
-  //   そのままでは「前回」セクションが空になってしまうため、ここで as-if で再解釈する:
-  //     ・editor_comment_at_change が空
-  //     ・かつ from_status が下記の制作系
-  //     ・かつ director_comment_at_change に値がある
-  //   → director_comment_at_change を編集者の提出メモとして表示にまわす。
-  const PRODUCTION_FROM_STATUSES_FOR_LEGACY = new Set([
-    '未着手', '制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集',
-  ]);
-  // creative_files を version_num→{id,...} マップ化（version_at_change からの逆引き用）。
-  // N+1 解消のため上位スコープで一括取得済みの filesById は creative_file_id 引きなので
-  // 別途 version で引けるマップを作る。
+  // 2) creative_files を version 順にロード（submit メモに紐づくファイル特定用）
   let filesByVersion = {};
   try {
     const { data: cfRows } = await supabase
       .from('creative_files')
-      .select('id, version, drive_url, drive_file_id, generated_name')
-      .eq('creative_id', req.params.id);
+      .select('id, version, drive_url, drive_file_id, generated_name, created_at')
+      .eq('creative_id', creativeId)
+      .order('version', { ascending: true });
     (cfRows || []).forEach(f => {
-      if (f && f.version != null) {
-        filesByVersion[Number(f.version)] = f;
-      }
+      if (f && f.version != null) filesByVersion[Number(f.version)] = f;
     });
-  } catch (_) { /* 無くてもバグらない（ファイルカードは空欄になるだけ） */ }
+  } catch (_) {}
 
-  // 既存 snapshot の (version_num, round_stage) セット
-  const existingSnapKeys = new Set(
-    (data || []).map(r => `${r.version_num ?? ''}::${r.round_stage ?? ''}`)
-  );
+  // 3) creative_status_transitions を時系列で全件
+  let transitions = [];
+  try {
+    const { data: trRows, error: trErr } = await supabase
+      .from('creative_status_transitions')
+      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
+      .eq('creative_id', creativeId)
+      .order('changed_at', { ascending: true });
+    if (!trErr) transitions = trRows || [];
+  } catch (_) {}
+
+  // 4) creative_version_history を recorded_by 補完用に取得（submit の編集者ユーザー特定）
+  //    snapshot は「修正→再チェック」遷移時に INSERT されるので、その transition の
+  //    changed_at とほぼ同時刻 + 同 version_num で recorded_by が紐づく。
+  let history = [];
+  try {
+    const { data: hRows, error: hErr } = await supabase
+      .from('creative_version_history')
+      .select('id, version_num, round_stage, recorded_by, editor_comment, created_at, creative_file_id')
+      .eq('creative_id', creativeId)
+      .order('created_at', { ascending: true });
+    if (!hErr) history = hRows || [];
+  } catch (_) {}
+
+  // 5) transition から「コメント1個 = 1要素」の配列を組み立てる
+  // 役割マッピング:
+  //   to_status='Dチェック' (from が制作系/D後修正)            → editor → director (submit)
+  //   to_status='Pチェック' (from='P後修正')                    → editor → producer (submit)
+  //   to_status='クライアントチェック中' (from='CL後修正')      → editor → client   (submit)
+  //   from='Dチェック'    → to='Pチェック'                     → director → producer (approve_handoff)
+  //   from='Pチェック'    → to='クライアントチェック中'         → producer → client   (approve_handoff)
+  //   from='クライアントチェック中' → to='納品'                → client → completed  (deliver)
+  //   from='Dチェック'    → to='Dチェック後修正'               → director → editor (revise)
+  //   from='Pチェック'    → to='Pチェック後修正'               → producer → editor (revise)
+  //   from='クライアントチェック中' → to='クライアントチェック後修正' → client → editor (revise)
+  const PRODUCTION_FROM = new Set(['未着手', '制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集']);
+
+  const items = [];
+
   for (const tr of transitions) {
-    const stage = TO_STAGE_INITIAL[tr.to_status];
-    if (!stage) continue;
-    if (REVISION_FROM_STATUSES.has(tr.from_status)) continue;
-    if (tr.version_at_change == null) continue;
-    const key = `${tr.version_at_change}::${stage}`;
-    if (existingSnapKeys.has(key)) continue;
-    // 仮想ラウンドの editor_comment は transition.editor_comment_at_change を採用。
-    // NULL のままでも arrival ラウンドとして file カードは出すので有用。
-    const file = filesByVersion[Number(tr.version_at_change)] || null;
-    let editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
-      ? tr.editor_comment_at_change
-      : null;
-    // レガシー fallback（上のコメント参照）: 旧 doDCheckTransition / directToClientCheck バグで
-    // 編集者メモが director_comment_at_change に入っているケースを救済。
-    if (!editorComment
-        && PRODUCTION_FROM_STATUSES_FOR_LEGACY.has(tr.from_status)
-        && typeof tr.director_comment_at_change === 'string'
-        && tr.director_comment_at_change.trim()) {
-      editorComment = tr.director_comment_at_change;
+    if (!tr || !tr.changed_at) continue;
+    const from = tr.from_status || '';
+    const to   = tr.to_status   || '';
+
+    // --- submit (編集者の提出メモ) ---
+    // 初稿提出: PRODUCTION_FROM → Dチェック / Pチェック / クライアントチェック中
+    // 再提出: *_後修正 → 対応する _チェック
+    let submitTarget = null; // 'director'|'producer'|'client'
+    if (PRODUCTION_FROM.has(from) || from === 'Dチェック後修正') {
+      if (to === 'Dチェック') submitTarget = 'director';
     }
-    result.push({
-      id:                    `initial-submit-${tr.id}`,
-      creative_id:           req.params.id,
-      version_num:           tr.version_at_change,
-      director_comment:      null,
-      client_comment:        null,
-      editor_comment:        editorComment,
-      round_stage:           stage,
-      creative_file_id:      file ? file.id : null,
-      recorded_by:           null,
-      editor_submitted_at:   tr.changed_at || null,
-      director_commented_at: null,
-      client_commented_at:   null,
-      created_at:            tr.changed_at || null,
-      file:                  file,
-      handoff_to_next:       null,
-      _synthetic_initial_submit: true,
-    });
-    existingSnapKeys.add(key); // 同 transition 重複ガード
+    if (PRODUCTION_FROM.has(from) || from === 'Pチェック後修正') {
+      if (to === 'Pチェック') submitTarget = 'producer';
+    }
+    if (PRODUCTION_FROM.has(from) || from === 'クライアントチェック後修正') {
+      if (to === 'クライアントチェック中') submitTarget = 'client';
+    }
+    if (submitTarget) {
+      // editor_comment 解決優先度:
+      //   (a) tr.editor_comment_at_change
+      //   (b) PRODUCTION_FROM の旧データ救済: director_comment_at_change を編集者メモとして再解釈
+      //       (旧 doDCheckTransition / directToClientCheck が body.director_comment で送っていた歪みデータ)
+      let editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
+        ? tr.editor_comment_at_change
+        : '';
+      if (!editorComment
+          && PRODUCTION_FROM.has(from)
+          && typeof tr.director_comment_at_change === 'string'
+          && tr.director_comment_at_change.trim()) {
+        editorComment = tr.director_comment_at_change;
+      }
+      // 「[動画なし]」プレフィックスは UI 側で trim するためそのまま渡す
+      // 添付ファイル: version_at_change から逆引き
+      const file = (tr.version_at_change != null) ? (filesByVersion[Number(tr.version_at_change)] || null) : null;
+      // recorded_by 補完: 同 version + 直近の history.recorded_by
+      let fromUserId = tr.changed_by || null;
+      if (!fromUserId && tr.version_at_change != null) {
+        const h = history.find(h => Number(h.version_num) === Number(tr.version_at_change) && h.recorded_by);
+        if (h) fromUserId = h.recorded_by;
+      }
+      if (!fromUserId) fromUserId = editorUserIdFallback;
+      const toUserId = (submitTarget === 'director')
+        ? projectDirectorId
+        : (submitTarget === 'producer')
+          ? projectProducerId
+          : null; // client は user_id 無し
+      items.push({
+        kind:        'submit',
+        comment:     editorComment || '',
+        occurred_at: tr.changed_at,
+        from_role:   'editor',
+        to_role:     submitTarget,
+        from_user_id: fromUserId || null,
+        to_user_id:   toUserId  || null,
+        version_num: tr.version_at_change ?? null,
+        file:        file ? { id: file.id, version: file.version, drive_url: file.drive_url, drive_file_id: file.drive_file_id, generated_name: file.generated_name } : null,
+        source:      'transition',
+        source_id:   tr.id,
+      });
+      continue;
+    }
+
+    // --- revise (修正依頼) ---
+    let reviseFromRole = null; // 'director'|'producer'|'client'
+    if (from === 'Dチェック'                && to === 'Dチェック後修正')               reviseFromRole = 'director';
+    else if (from === 'Pチェック'           && to === 'Pチェック後修正')               reviseFromRole = 'producer';
+    else if (from === 'クライアントチェック中' && to === 'クライアントチェック後修正') reviseFromRole = 'client';
+    if (reviseFromRole) {
+      // コメント抽出:
+      //   D/P → director_comment_at_change
+      //   CL  → client_comment_at_change（空なら director_comment_at_change へ fallback / ADR 011 既知の歪み）
+      let comment = '';
+      if (reviseFromRole === 'client') {
+        const c1 = (typeof tr.client_comment_at_change === 'string' ? tr.client_comment_at_change : '').trim();
+        if (c1) comment = c1;
+        else {
+          const c2 = (typeof tr.director_comment_at_change === 'string' ? tr.director_comment_at_change : '').trim();
+          if (c2) comment = c2;
+        }
+      } else {
+        comment = (typeof tr.director_comment_at_change === 'string' ? tr.director_comment_at_change : '').trim();
+      }
+      if (!comment) continue; // 空の修正依頼は出さない
+      const fromUserId = (reviseFromRole === 'director')
+        ? (tr.changed_by || projectDirectorId)
+        : (reviseFromRole === 'producer')
+          ? (tr.changed_by || projectProducerId)
+          : null;
+      items.push({
+        kind:        'revise',
+        comment,
+        occurred_at: tr.changed_at,
+        from_role:   reviseFromRole,
+        to_role:     'editor',
+        from_user_id: fromUserId || null,
+        to_user_id:   editorUserIdFallback,
+        version_num: tr.version_at_change ?? null,
+        file:        null,
+        source:      'transition',
+        source_id:   tr.id,
+      });
+      continue;
+    }
+
+    // --- approve_handoff / deliver (承認引継・納品承認) ---
+    let approveDef = null; // { fromRole, toRole, kind }
+    if (from === 'Dチェック'                && to === 'Pチェック')                  approveDef = { fromRole: 'director', toRole: 'producer', kind: 'approve_handoff' };
+    else if (from === 'Pチェック'           && to === 'クライアントチェック中')    approveDef = { fromRole: 'producer', toRole: 'client',   kind: 'approve_handoff' };
+    else if (from === 'クライアントチェック中' && to === '納品')                   approveDef = { fromRole: 'client',   toRole: 'completed', kind: 'deliver' };
+    if (approveDef) {
+      // コメント抽出（CL は client_comment_at_change → director_comment_at_change fallback）
+      let comment = '';
+      if (approveDef.fromRole === 'client') {
+        const c1 = (typeof tr.client_comment_at_change === 'string' ? tr.client_comment_at_change : '').trim();
+        if (c1) comment = c1;
+        else {
+          const c2 = (typeof tr.director_comment_at_change === 'string' ? tr.director_comment_at_change : '').trim();
+          if (c2) comment = c2;
+        }
+      } else {
+        comment = (typeof tr.director_comment_at_change === 'string' ? tr.director_comment_at_change : '').trim();
+      }
+      // 承認は「コメント無くても引き継ぎ事実は表示したい」のでコメント空でも item を作る
+      const fromUserId = (approveDef.fromRole === 'director')
+        ? (tr.changed_by || projectDirectorId)
+        : (approveDef.fromRole === 'producer')
+          ? (tr.changed_by || projectProducerId)
+          : null;
+      const toUserId = (approveDef.toRole === 'producer')
+        ? projectProducerId
+        : (approveDef.toRole === 'editor')
+          ? editorUserIdFallback
+          : null;
+      items.push({
+        kind:        approveDef.kind,
+        comment,
+        occurred_at: tr.changed_at,
+        from_role:   approveDef.fromRole,
+        to_role:     approveDef.toRole,
+        from_user_id: fromUserId || null,
+        to_user_id:   toUserId  || null,
+        version_num: tr.version_at_change ?? null,
+        file:        null,
+        source:      'transition',
+        source_id:   tr.id,
+      });
+      continue;
+    }
+
+    // それ以外の遷移 (Dチェック → 制作中 への戻し等) は表示しない
   }
 
-  // 並び順を再保証（snapshot + 孤児 handoff + 初回提出 仮想 の混在ソート）:
-  //   version_num asc (NULL は末尾) → created_at asc → round_stage の意味的順序（tertiary key）。
-  //
-  //   Tertiary key を入れた理由（PR #(d-approval-visible-on-p-check) / 髙橋指示 2026-05-10）:
-  //     ディレクターが「OK→Pチェックへ」と承認した直後、同 version で
-  //       (1) v=N stage='d_check'         (初回提出 仮想 or snapshot)
-  //       (2) v=N stage='d_check_handoff' (D承認コメント入りの孤児 handoff)
-  //       (3) v=N stage='p_check'         (Pチェック突入の初回提出 仮想)
-  //     が並ぶ。created_at が同一になるケースもあり、その場合 'd_check' < 'd_check_handoff'
-  //     のアルファベット順になり、(2) と (3) の前後が不安定になる。
-  //     フロントは末尾を「最新」として `_cdRoundIndex = length - 1` で初期表示するため、
-  //     (3) の p_check (編集者の提出時メモしか持たない) が選ばれてしまうと
-  //     「Pチェック画面で D承認コメントが見えない」不具合になる。
-  //
-  //   stage の意味的順序（小さいほど時系列で先）:
-  //     'd_check'(1)         < 'd_check_handoff'(2)   ← 提出 → 承認/差戻し
-  //     'p_check'(3)         < 'p_check_handoff'(4)
-  //     'cl_check'(5)        < 'cl_check_handoff'(6)
-  //   この順序で並べると、同 created_at でも「承認 handoff」が直前の提出 stage の直後に来て
-  //   「次工程の初回提出 仮想」より前に並ぶ。
-  const stageOrder = (s) => {
-    const order = {
-      'd_check': 1, 'd_check_handoff': 2,
-      'p_check': 3, 'p_check_handoff': 4,
-      'cl_check': 5, 'cl_check_handoff': 6,
+  // 6) ライブ救済: 後修正ステータス中で creatives.director_comment / client_comment に
+  //    値があるが、items に対応する revise (同コメント文 / 直近時刻) が存在しないとき末尾に追加。
+  //    transition が落ちていた旧データや、status と comment を別 PUT で書き分けたケース対策。
+  if (creativeRow) {
+    const REVISION_LIVE = {
+      'Dチェック後修正':            { fromRole: 'director', commentField: 'director_comment' },
+      'Pチェック後修正':            { fromRole: 'producer', commentField: 'director_comment' },
+      'クライアントチェック後修正': { fromRole: 'client',   commentField: 'director_comment' }, // ADR 011 既知の歪み: CL も director_comment 列に保存される
     };
-    return order[s] ?? 99;
-  };
-  result.sort((a, b) => {
-    const av = a.version_num == null ? Infinity : Number(a.version_num);
-    const bv = b.version_num == null ? Infinity : Number(b.version_num);
-    if (av !== bv) return av - bv;
-    const tCmp = (a.created_at || '').localeCompare(b.created_at || '');
-    if (tCmp !== 0) return tCmp;
-    return stageOrder(a.round_stage) - stageOrder(b.round_stage);
-  });
+    const def = REVISION_LIVE[creativeRow.status];
+    if (def) {
+      const liveComment = (typeof creativeRow[def.commentField] === 'string' ? creativeRow[def.commentField] : '').trim()
+        || (def.fromRole === 'client' && typeof creativeRow.client_comment === 'string' ? creativeRow.client_comment.trim() : '');
+      if (liveComment) {
+        // items の末尾 revise が同コメント・同 fromRole なら重複なので追加しない
+        const last = items.length > 0 ? items[items.length - 1] : null;
+        const isDup = last && last.kind === 'revise' && last.from_role === def.fromRole && (last.comment || '').trim() === liveComment;
+        if (!isDup) {
+          const fromUserId = (def.fromRole === 'director')
+            ? projectDirectorId
+            : (def.fromRole === 'producer')
+              ? projectProducerId
+              : null;
+          items.push({
+            kind:        'revise',
+            comment:     liveComment,
+            occurred_at: creativeRow.updated_at || new Date().toISOString(),
+            from_role:   def.fromRole,
+            to_role:     'editor',
+            from_user_id: fromUserId || null,
+            to_user_id:   editorUserIdFallback,
+            version_num: null,
+            file:        null,
+            source:      'live',
+            source_id:   `live-${creativeRow.id}`,
+          });
+        }
+      }
+    }
+  }
 
-  res.json(result);
+  // 7) 時系列ソート（昇順）+ idx 付与
+  items.sort((a, b) => {
+    const ta = a.occurred_at ? Date.parse(a.occurred_at) : 0;
+    const tb = b.occurred_at ? Date.parse(b.occurred_at) : 0;
+    if (ta !== tb) return ta - tb;
+    // 同時刻は kind 順 (submit → approve_handoff → deliver → revise) で安定化
+    const order = { submit: 1, approve_handoff: 2, deliver: 3, revise: 4 };
+    return (order[a.kind] || 99) - (order[b.kind] || 99);
+  });
+  items.forEach((it, i) => { it.idx = i; });
+
+  res.json(items);
 });
+
 
 // ============================================================
 // PATCH /api/creatives/:creativeId/versions/:versionId
