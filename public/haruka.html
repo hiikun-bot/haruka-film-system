@@ -34253,7 +34253,10 @@ async function openBugReportModal(options = {}) {
       document.getElementById('br-status').value = r.status || 'open';
       document.getElementById('br-edit-only').style.display = '';
       // 削除は admin のみ。改善済みチェックは Step 3 で自動化されるため非表示固定
-      const isAdmin = (typeof currentUser !== 'undefined' && currentUser?.role === 'admin');
+      // VIEW AS プレビュー中は effectiveRole() が秘書/ディレクター等を返すので、
+      // 実ロールが admin でもプレビュー中は admin 用 UI を出さない
+      const _effRole = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+      const isAdmin = _effRole === 'admin';
       document.getElementById('br-delete-btn').style.display = isAdmin ? '' : 'none';
       // タブを編集モードで表示。対応方針タブのボタンは admin のみ表示
       document.getElementById('br-tabs').style.display = 'flex';
@@ -34803,7 +34806,9 @@ async function _brLoadComments(bugId) {
     }
     const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
     const myId = me?.id || null;
-    const isAdmin = me?.role === 'admin';
+    // VIEW AS プレビュー中はその役割で見えるよう effectiveRole() を使う
+    const _effRole = (typeof effectiveRole === 'function') ? effectiveRole() : (me?.role || '');
+    const isAdmin = _effRole === 'admin';
     list.innerHTML = rows.map(c => {
       const isSystem = c.kind === 'system';
       const author = _brCommentAuthorLabel(c.author);
