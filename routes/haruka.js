@@ -14322,7 +14322,10 @@ router.patch('/bug-reports/:id/triage', requireAuth, express.json(), async (req,
     }
 
     const { data: row, error: getErr } = await supabase
-      .from('bug_reports').select('id, status').eq('id', req.params.id).maybeSingle();
+      .from('bug_reports')
+      .select('id, status, title, assignee_user_id, reporter_user_id, is_anonymous')
+      .eq('id', req.params.id)
+      .maybeSingle();
     if (getErr) return res.status(500).json({ error: getErr.message });
     if (!row) return res.status(404).json({ error: 'not found' });
 
@@ -14360,6 +14363,9 @@ router.patch('/bug-reports/:id/triage', requireAuth, express.json(), async (req,
     });
 
     // 任意の admin コメントが添えられていればさらに INSERT
+    // ここで入る kind='comment' は「人が手で書いた本物のコメント」なので、
+    // POST /comments と同じく報告者+入力者へ内部通知を飛ばす。
+    // （直前の system コメントは通知対象外）
     const trimmed = (comment || '').trim();
     if (trimmed) {
       await supabase.from('bug_report_comments').insert({
@@ -14368,6 +14374,7 @@ router.patch('/bug-reports/:id/triage', requireAuth, express.json(), async (req,
         body: trimmed,
         kind: 'comment',
       });
+      await _notifyBugReportComment(row, trimmed, req.user);
     }
 
     res.json({ ok: true, triage_decision, status: updates.status || row.status });
@@ -14401,9 +14408,12 @@ router.post('/bug-reports/:id/comments', requireAuth, express.json(), async (req
     if (!body) return res.status(400).json({ error: '本文は必須です' });
     if (body.length > 2000) return res.status(400).json({ error: '本文は2000文字以内' });
 
-    // 親レコード存在チェック
+    // 親レコード存在チェック（通知のため title / 報告者情報も一緒に取得）
     const { data: parent, error: pErr } = await supabase
-      .from('bug_reports').select('id').eq('id', req.params.id).maybeSingle();
+      .from('bug_reports')
+      .select('id, title, assignee_user_id, reporter_user_id, is_anonymous')
+      .eq('id', req.params.id)
+      .maybeSingle();
     if (pErr) return res.status(500).json({ error: pErr.message });
     if (!parent) return res.status(404).json({ error: 'バグ報告が見つかりません' });
 
@@ -14418,11 +14428,52 @@ router.post('/bug-reports/:id/comments', requireAuth, express.json(), async (req
       .select('id, bug_report_id, author_user_id, body, kind, created_at, author:author_user_id ( id, full_name, nickname, avatar_url )')
       .single();
     if (error) return res.status(500).json({ error: error.message });
+
+    // 内部通知（🔔 ベル）を発火（system kind は呼び出し元で除外）
+    await _notifyBugReportComment(parent, body, req.user);
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
+// バグ報告のコメント投稿時に「報告者」と「入力者」へ内部通知を飛ばす共通ヘルパー
+//   parent: bug_reports の id, title, assignee_user_id, reporter_user_id, is_anonymous を含む行
+//   body:   コメント本文
+//   actor:  req.user（投稿者本人。本人には通知しない）
+// system kind のコメントには使わない（呼び出し側で分岐）
+async function _notifyBugReportComment(parent, body, actor) {
+  if (!parent || !body) return;
+  try {
+    const commenterId = actor?.id || null;
+    const targetIds = new Set();
+    if (parent.assignee_user_id && parent.assignee_user_id !== commenterId) {
+      targetIds.add(parent.assignee_user_id);
+    }
+    if (!parent.is_anonymous && parent.reporter_user_id && parent.reporter_user_id !== commenterId) {
+      targetIds.add(parent.reporter_user_id);
+    }
+    if (targetIds.size === 0) return;
+    const commenterLabel = actor?.nickname || actor?.full_name || '誰か';
+    const titleShort = (parent.title || '').slice(0, 40);
+    const bodySnippet = body.length > 80 ? `${body.slice(0, 80)}…` : body;
+    const linkUrl = `/haruka.html?bug-report=${encodeURIComponent(parent.id)}`;
+    for (const targetId of targetIds) {
+      await createNotification({
+        userId: targetId,
+        type: 'global',
+        title: `💬 バグ報告にコメント: ${titleShort}`,
+        body: `${commenterLabel}: ${bodySnippet}`,
+        linkUrl,
+        senderId: commenterId,
+        meta: { bug_report_id: parent.id, kind: 'bug_report_comment' },
+      });
+    }
+  } catch (notifErr) {
+    console.error('[bug-comments notify失敗（投稿は成功扱い）]', notifErr.message);
+  }
+}
 
 // PATCH /api/haruka/bug-report-comments/:commentId
 // 編集権限: 投稿者本人 or admin
