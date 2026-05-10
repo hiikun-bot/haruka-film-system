@@ -12881,6 +12881,22 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   const REVISION_FROM_STATUSES = new Set([
     'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正',
   ]);
+  // PR #(d-check-prev-comment-initial-submit) / 髙橋指示 2026-05-10:
+  //   レガシー fallback 用: from_status が「制作・未着手系」のとき、cd-comment-field は
+  //   UI 上は「編集者→ディレクター宛の提出メモ」として書かれているはず（updateCreativeCommentLabel
+  //   のラベル運用）。
+  //   ところが旧 doDCheckTransition / directToClientCheck はこの値を payload.director_comment に
+  //   入れて送ってしまっており、creative_status_transitions.editor_comment_at_change が NULL、
+  //   director_comment_at_change に編集者のメモが乗る歪んだ状態で記録されているデータがある。
+  //   フロント修正以後の新規データは正しく editor_comment_at_change に入るが、過去データは
+  //   そのままでは「前回」セクションが空になってしまうため、ここで as-if で再解釈する:
+  //     ・editor_comment_at_change が空
+  //     ・かつ from_status が下記の制作系
+  //     ・かつ director_comment_at_change に値がある
+  //   → director_comment_at_change を編集者の提出メモとして表示にまわす。
+  const PRODUCTION_FROM_STATUSES_FOR_LEGACY = new Set([
+    '未着手', '制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集',
+  ]);
   // creative_files を version_num→{id,...} マップ化（version_at_change からの逆引き用）。
   // N+1 解消のため上位スコープで一括取得済みの filesById は creative_file_id 引きなので
   // 別途 version で引けるマップを作る。
@@ -12911,9 +12927,17 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     // 仮想ラウンドの editor_comment は transition.editor_comment_at_change を採用。
     // NULL のままでも arrival ラウンドとして file カードは出すので有用。
     const file = filesByVersion[Number(tr.version_at_change)] || null;
-    const editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
+    let editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
       ? tr.editor_comment_at_change
       : null;
+    // レガシー fallback（上のコメント参照）: 旧 doDCheckTransition / directToClientCheck バグで
+    // 編集者メモが director_comment_at_change に入っているケースを救済。
+    if (!editorComment
+        && PRODUCTION_FROM_STATUSES_FOR_LEGACY.has(tr.from_status)
+        && typeof tr.director_comment_at_change === 'string'
+        && tr.director_comment_at_change.trim()) {
+      editorComment = tr.director_comment_at_change;
+    }
     result.push({
       id:                    `initial-submit-${tr.id}`,
       creative_id:           req.params.id,
