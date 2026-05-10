@@ -29286,7 +29286,19 @@ function quoteCommentToEditorReply(commentId) {
     }
   }
 
-  const headerLine = timecode ? `${timecode}\n` : (hasBbox ? '[範囲指定]\n' : '');
+  // 動画 (timecode あり) はそのままタイムコードヘッダー。
+  // 静止画 (timecode なし) は日時ヘッダーで「いつのコメントか」を分かるようにする（範囲指定の有無は問わない）。
+  let headerLine = '';
+  if (timecode) {
+    headerLine = `${timecode}\n`;
+  } else if (comment.created_at) {
+    const d = new Date(comment.created_at);
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    headerLine = `${dateStr}${hasBbox ? ' [範囲指定]' : ''}\n`;
+  } else if (hasBbox) {
+    headerLine = '[範囲指定]\n';
+  }
   const block = `${headerLine}${comment.comment || ''}\n\n`;
 
   // textarea のカーソル位置に挿入。未フォーカス & 既存内容ありなら末尾追記
