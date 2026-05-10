@@ -213,11 +213,18 @@ async function loadUser(userId) {
 }
 
 // クリエイティブ詳細モーダルを開くディープリンク URL を生成
-// APP_URL が未設定の場合は null を返す（呼び出し側でフォールバック）
+// 優先順: APP_URL → RAILWAY_PUBLIC_DOMAIN（Railway が自動付与）。
+// バグ報告 #e05aa52b: 本番で APP_URL が未設定だと通知に URL 行が出ず、
+// チャットワーク/Slack の通知から該当クリエイティブに飛べないという声が複数。
+// Railway は `RAILWAY_PUBLIC_DOMAIN` を自動で env に入れてくれるので、
+// APP_URL を明示設定し忘れていてもフォールバックで URL を確実に含める。
 function buildCreativeUrl(creativeId) {
-  const baseUrl = (process.env.APP_URL || '').replace(/\/$/, '');
-  if (!baseUrl || !creativeId) return null;
-  return `${baseUrl}/haruka.html?creative=${creativeId}`;
+  if (!creativeId) return null;
+  const explicit = (process.env.APP_URL || '').replace(/\/$/, '');
+  if (explicit) return `${explicit}/haruka.html?creative=${creativeId}`;
+  const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  if (railwayDomain) return `https://${railwayDomain}/haruka.html?creative=${creativeId}`;
+  return null;
 }
 
 // Slack 用: ファイル名をクリッカブルなリンクに変換
@@ -227,10 +234,10 @@ function slackFileLink(fileName, url) {
   return `*${fileName}*`;
 }
 
-// 起動時に APP_URL 未設定なら一度だけ警告。
+// 起動時に APP_URL / RAILWAY_PUBLIC_DOMAIN いずれも未設定なら一度だけ警告。
 // （URL が含まれない通知は受信者がクリエイティブを特定する手がかりが減るため）
-if (!process.env.APP_URL) {
-  console.warn('[notif] APP_URL 未設定: 通知 URL が含まれません');
+if (!process.env.APP_URL && !process.env.RAILWAY_PUBLIC_DOMAIN) {
+  console.warn('[notif] APP_URL / RAILWAY_PUBLIC_DOMAIN いずれも未設定: 通知 URL が含まれません');
 }
 
 // 通知本文テンプレート: D/P チェック 系（クライアント確認・納品は別テンプレ）
