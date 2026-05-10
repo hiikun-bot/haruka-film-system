@@ -42,6 +42,7 @@
 | ファイル名テンプレート / filename_templates / トークン / 案件別命名規約 | [decisions/007](docs/design/decisions/007-filename-templates.md) |
 | 案件スケジュール / フェーズ / タスク / ガント / LP / HP / マイルストーン / 工程表 | [decisions/010](docs/design/decisions/010-project-schedule-tasks.md) |
 | カテゴリ別フィールド可視性 / creative_category_fields / カスタム項目 / 詳細モーダル | [decisions/012](docs/design/decisions/012-creative-category-field-visibility.md) |
+| ダッシュボード / ホーム画面 / ロール別表示 / モチベ数値 / 一つ上の視座 / dash-* | [decisions/017](docs/design/decisions/017-role-based-dashboard.md) |
 | 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
 | ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
 | 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
