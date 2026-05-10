@@ -6211,6 +6211,23 @@ window.showPage = window.showPage || function(name, btn) {
   .cd-round-col-footer{ margin-top:0; }
 }
 
+/* bug-report b9c7c60c: 左カラムのタブ（📺 前回(クリエイティブ) / 💬 前回(コメント)）。
+   active 時は em color の下線でマーク。disabled は preview ファイルが解決できない時だけ。 */
+.cd-round-left-tab.is-active{ color:var(--em-dark); border-bottom-color:var(--em) !important; }
+.cd-round-left-tab:not(.is-active):hover{ color:var(--text); }
+.cd-round-left-tab[disabled]{ opacity:.4; cursor:not-allowed; }
+.cd-round-left-tab[disabled]:hover{ color:var(--text-muted); }
+/* preview パネル内の動画/画像 */
+.cd-round-left-preview-media{
+  display:block; width:100%; max-width:100%; max-height:340px;
+  background:#000; border-radius:8px; object-fit:contain;
+}
+.cd-round-left-preview-empty{
+  font-size:12px; color:var(--text-muted); font-style:italic;
+  background:#fff; border:0.5px dashed var(--border); border-radius:8px;
+  padding:24px 14px; text-align:center; line-height:1.6;
+}
+
 .an-menu-btn:hover{background:rgba(255,255,255,0.6)}
 .an-menu-btn.an-menu-active{background:var(--em);color:#fff;font-weight:600}
 @media(max-width:768px){
@@ -6745,20 +6762,17 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal" id="cd-modal-body" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
 
     <!-- ヘッダー（固定） -->
+    <!-- bug-report b9c7c60c: スクロール時にファイル名・ステータス・案件名が見えなくなる問題への対応として、
+         基本情報バナー（cd-filename / cd-status-chip / cd-project-name / cd-assignee / cd-ball-holder /
+         cd-revision-count-badge / cd-postedit-btn）をヘッダー固定領域へ移動。 -->
     <div style="padding:20px 24px 16px;flex-shrink:0;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div style="font-size:15px;font-weight:700;color:var(--text)">クリエイティブ詳細</div>
         <button class="modal-close" onclick="closeModal('modal-creative-detail')">×</button>
       </div>
-      <!-- ステップインジケーター -->
-      <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
-    </div>
 
-    <!-- スクロール可能コンテンツ -->
-    <div id="cd-scroll-area" style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px">
-
-      <!-- 基本情報バナー -->
-      <div style="background:var(--em-pale);border-radius:10px;padding:12px 16px;margin-bottom:18px">
+      <!-- 基本情報バナー（ヘッダー固定・スクロールしても常時表示） -->
+      <div style="background:var(--em-pale);border-radius:10px;padding:10px 14px;margin-bottom:14px">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
           <!-- ADR 008 Phase 4: file_name は編集可能 input。focusout で PUT。変更時 Slack 通知。 -->
           <div style="flex:1;min-width:0">
@@ -6767,7 +6781,7 @@ window.showPage = window.showPage || function(name, btn) {
                    onfocus="this.dataset.editing='1';this.style.borderColor='var(--em)'"
                    onblur="onCreativeFileNameBlur(this)"
                    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-                   style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;word-break:break-all;width:100%;background:transparent;border:1px dashed transparent;border-radius:6px;padding:4px 8px;outline:none"
+                   style="font-size:14px;font-weight:600;color:var(--text);font-family:monospace;width:100%;background:transparent;border:1px dashed transparent;border-radius:6px;padding:4px 8px;outline:none;text-overflow:ellipsis;white-space:nowrap;overflow:hidden"
                    onmouseover="if(this.dataset.editing!=='1')this.style.borderColor='var(--border)'"
                    onmouseout="if(this.dataset.editing!=='1')this.style.borderColor='transparent'"
                    title="クリックでファイル名を編集できます（変更時 Slack 通知）">
@@ -6780,7 +6794,7 @@ window.showPage = window.showPage || function(name, btn) {
             ✎ 事後修正
           </button>
         </div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-top:4px">
           <span id="cd-status-chip"></span>
           <span style="color:var(--text-muted)" id="cd-project-name"></span>
           <span style="color:var(--text-muted)" id="cd-assignee"></span>
@@ -6793,6 +6807,13 @@ window.showPage = window.showPage || function(name, btn) {
              ヘッダーの ball-dot + ball-name で「いま誰にボールがあるか」が見えるため重複情報になっていた。
              creative_assignments[role='director'] のデータ自体は status 遷移・通知・返信モーダルで引き続き使用する。 -->
       </div>
+
+      <!-- ステップインジケーター -->
+      <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
+    </div>
+
+    <!-- スクロール可能コンテンツ -->
+    <div id="cd-scroll-area" style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px">
 
       <!-- 納期表示（一目で見落とさないよう拡大表示） -->
       <div id="cd-deadline-bar" style="display:none;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center"></div>
@@ -6876,9 +6897,28 @@ window.showPage = window.showPage || function(name, btn) {
           <div id="cd-round-left-col" class="cd-round-col cd-round-col-left" style="min-width:0">
             <!-- 左ヘッダー（cdRenderRoundCompare() で動的描画） -->
             <div id="cd-round-left-header" class="cd-round-col-header"></div>
-            <!-- 左本体（過去ラウンドの指摘・コメント） -->
-            <div id="cd-round-left" class="cd-round-col-body" style="background:#fafafa;border:0.5px solid var(--border);border-radius:10px;padding:14px 14px 14px;min-height:100px;overflow:hidden;min-width:0">
-              <!-- cdRenderRoundCompare() で動的描画 -->
+            <!-- bug-report b9c7c60c: 「📺 前回（クリエイティブ）」「💬 前回（コメント）」タブ。
+                 初期は preview。ラウンドにファイルが無い場合は preview タブが disabled で
+                 自動的に comments へフォールバックする。 -->
+            <div id="cd-round-left-tabs" class="cd-round-left-tabs" style="display:flex;gap:0;background:#fafafa;border:0.5px solid var(--border);border-bottom:none;border-radius:10px 10px 0 0;overflow:hidden">
+              <button type="button" id="cd-round-left-tab-preview"
+                      class="cd-round-left-tab"
+                      data-tab="preview"
+                      onclick="cdSetRoundLeftTab('preview')"
+                      style="flex:1;background:transparent;border:none;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;letter-spacing:0.02em;transition:color .15s,border-color .15s">
+                📺 前回（クリエイティブ）
+              </button>
+              <button type="button" id="cd-round-left-tab-comments"
+                      class="cd-round-left-tab"
+                      data-tab="comments"
+                      onclick="cdSetRoundLeftTab('comments')"
+                      style="flex:1;background:transparent;border:none;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;letter-spacing:0.02em;transition:color .15s,border-color .15s">
+                💬 前回（コメント）
+              </button>
+            </div>
+            <!-- 左本体（タブ切替: preview = クリエイティブプレビュー / comments = 過去ラウンド指摘） -->
+            <div id="cd-round-left" class="cd-round-col-body" style="background:#fafafa;border:0.5px solid var(--border);border-top:none;border-radius:0 0 10px 10px;padding:14px;min-height:100px;overflow:hidden;min-width:0">
+              <!-- cdRenderRoundCompare() で動的描画（タブ別パネル） -->
             </div>
             <!-- 左フッター（過去ラウンドの提出物カード）。flex の margin-top:auto で下端固定 -->
             <div id="cd-round-left-footer" class="cd-round-col-footer" style="min-width:0"></div>
@@ -25488,6 +25528,9 @@ function fillCommentTemplate() {
 let _cdRoundsCache = [];   // [{ version_num, round_stage, director_comment, editor_comment, client_comment, file, created_at, ... }]
 let _cdRoundIndex  = 0;    // 表示中の左カラム ラウンド (0 = 一番古い、長さ-1 = 一番新しい)
 let _cdFilesCache  = [];   // loadCreativeFiles() でキャッシュ。ラウンド左右カラムへ振り分けるときに参照
+// bug-report b9c7c60c: 左カラムのタブ状態。'preview' = 📺 前回(クリエイティブ) / 'comments' = 💬 前回(コメント)。
+// 初期は 'preview'。ラウンド ◀▶ 切替時もユーザーの選択は維持する（同じ意図：プレビューを見続けたい）。
+let _cdRoundLeftTab = 'preview';
 
 const _CD_ROUND_RIGHT_TARGETS = [
   'cd-comment-section',
@@ -26392,6 +26435,79 @@ function _cdRenderRoundRightHeader(creative) {
     </div>`;
 }
 
+// bug-report b9c7c60c: 左カラム📺タブのプレビューパネル HTML を返す。
+// 動画 (mp4/mov/webm/avi/mkv/m4v): faststart プレビュー版があればそれを <video> で、
+// 無ければ /api/files/:driveFileId/stream を <video> で再生（preload=metadata）。
+// 静止画 (jpg/png/gif/webp/svg): /api/files/:driveFileId/stream を <img> で表示。
+// drive_file_id が解決できない（旧データ等）時は Drive リンクへの誘導フォールバック。
+function _cdRenderRoundLeftPreviewPanel(file, round) {
+  if (!file) {
+    return `<div class="cd-round-left-preview-empty">
+      このラウンドには提出ファイルがありません<br>
+      <span style="font-size:11px">（💬タブでコメントのみ表示できます）</span>
+    </div>`;
+  }
+  const filename = file.generated_name || file.original_name || '';
+  const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
+  const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
+  const driveFileId = file.drive_file_id
+    || (file.drive_url ? (file.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
+  const verNum = file.version || (round && round.version_num) || '';
+  const verLabel = verNum ? `バージョン ${verNum}` : '';
+
+  // faststart 720p プレビューの drive_file_id を抽出（あれば優先して再生）。
+  const fsUrl = file.faststart_drive_url || '';
+  const fsDriveId = fsUrl ? ((fsUrl.match(/\/d\/([^/]+)/) || [])[1] || null) : null;
+  const fsStatus = file.faststart_status || null;
+
+  // ヘッダー（ファイル名 + バージョンバッジ + Drive リンク）
+  const headerHtml = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      ${verLabel ? `<span style="font-size:11px;font-weight:700;color:var(--em-dark);background:var(--em-pale);border-radius:4px;padding:2px 8px;letter-spacing:0.04em;white-space:nowrap">${esc(verLabel)}</span>` : ''}
+      <span style="flex:1;min-width:0;font-family:monospace;font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(filename)}">${esc(filename)}</span>
+      ${file.drive_url ? `<a href="${esc(file.drive_url)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--em-dark);text-decoration:none;border:0.5px solid var(--em);border-radius:5px;padding:2px 8px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
+    </div>`;
+
+  if (driveFileId && isVideo) {
+    // 720p faststart 版が done なら最優先（feedback_video_playback_architecture）。
+    // それ以外は元動画 stream を <video preload=metadata> で。
+    const playSrcDriveId = (fsStatus === 'done' && fsDriveId) ? fsDriveId : driveFileId;
+    const fsBadge = (fsStatus === 'done' && fsDriveId)
+      ? `<span style="font-size:10px;color:#065f46;background:#d1fae5;border:0.5px solid #6ee7b7;border-radius:5px;padding:2px 6px;white-space:nowrap;margin-left:6px">✅ 720pプレビュー</span>`
+      : (fsStatus === 'pending' || fsStatus === 'processing')
+        ? `<span style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;margin-left:6px">⏳ プレビュー版生成中（元動画で再生）</span>`
+        : '';
+    return `${headerHtml}
+      ${fsBadge ? `<div style="margin-bottom:6px">${fsBadge}</div>` : ''}
+      <video class="cd-round-left-preview-media" controls preload="metadata"
+             src="${API}/files/${esc(playSrcDriveId)}/stream"
+             playsinline></video>`;
+  }
+  if (driveFileId && isImage) {
+    return `${headerHtml}
+      <img class="cd-round-left-preview-media" src="${API}/files/${esc(driveFileId)}/stream"
+           alt="${esc(filename)}"
+           onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+      <div class="cd-round-left-preview-empty" style="display:none;margin-top:6px">画像の読み込みに失敗しました</div>`;
+  }
+  // drive 連携無し or 未対応形式 → リンクのみ
+  return `${headerHtml}
+    <div class="cd-round-left-preview-empty">
+      このファイルはモーダル内でのプレビューに対応していません。<br>
+      ${file.drive_url ? `<a href="${esc(file.drive_url)}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:underline">Drive で開く ↗</a>` : '（Drive 連携なし）'}
+    </div>`;
+}
+
+// bug-report b9c7c60c: 左カラムのタブ切替ハンドラ。タブ選択は ◀▶ ラウンド移動を跨いで維持される。
+function cdSetRoundLeftTab(tab) {
+  if (tab !== 'preview' && tab !== 'comments') return;
+  const btn = (tab === 'preview') ? document.getElementById('cd-round-left-tab-preview') : null;
+  // disabled (= ファイル無し) のときは preview に切替えない（comments のまま）
+  if (tab === 'preview' && btn && btn.hasAttribute('disabled')) return;
+  _cdRoundLeftTab = tab;
+  try { cdRenderRoundCompare(); } catch (_) {}
+}
+
 function cdRenderRoundCompare() {
   const c = currentCreativeDetail;
   const wrap = document.getElementById('cd-round-compare');
@@ -26448,14 +26564,51 @@ function cdRenderRoundCompare() {
     rightHeader.innerHTML = _cdRenderRoundRightHeader(c);
   }
 
-  // 左カラム本体描画（過去ラウンドの指摘・コメントのみ）。提出物カードはフッターへ。
+  // 左カラム本体描画（タブ切替: preview = クリエイティブプレビュー / comments = 過去ラウンド指摘・コメント）
+  // bug-report b9c7c60c: 静止画案件で「前回のクリエイティブをサッと見たい」要望に対応。
+  // ラウンドが解決できる提出ファイル (動画 / 画像) があれば📺タブで再生・表示し、無ければ
+  // 自動で💬タブへ寄せる。
   const left = document.getElementById('cd-round-left');
-  if (left) {
+  const tabsWrap = document.getElementById('cd-round-left-tabs');
+  if (left && tabsWrap) {
     if (N === 0) {
+      // ラウンド0件: タブごと隠して空メッセージのみ（既存挙動を維持）
+      tabsWrap.style.display = 'none';
+      left.style.borderTop = '0.5px solid var(--border)';
+      left.style.borderRadius = '10px';
       left.innerHTML = `<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（修正・再提出が行われると、ここに前回の指摘と提出メモが残ります）</span></div>`;
     } else {
       const round = allRounds[_cdRoundIndex];
-      left.innerHTML = _cdRoundEntryHtml(round);
+      const resolvedFile = _cdResolveRoundLeftFile(round);
+      const previewAvailable = !!resolvedFile;
+      tabsWrap.style.display = 'flex';
+      // タブの上に乗るので border-top は外し、左本体の角を下だけ丸める（CSS 側で設定済）
+      left.style.borderTop = 'none';
+      left.style.borderRadius = '0 0 10px 10px';
+
+      // タブの active / disabled 状態を更新
+      const tabPreviewBtn = document.getElementById('cd-round-left-tab-preview');
+      const tabCommentsBtn = document.getElementById('cd-round-left-tab-comments');
+      if (tabPreviewBtn) {
+        if (previewAvailable) {
+          tabPreviewBtn.removeAttribute('disabled');
+          tabPreviewBtn.title = '';
+        } else {
+          tabPreviewBtn.setAttribute('disabled', 'disabled');
+          tabPreviewBtn.title = 'このラウンドには提出ファイルがありません';
+        }
+      }
+      // disabled 時は強制的に comments へ
+      let activeTab = _cdRoundLeftTab;
+      if (activeTab === 'preview' && !previewAvailable) activeTab = 'comments';
+      if (tabPreviewBtn) tabPreviewBtn.classList.toggle('is-active', activeTab === 'preview');
+      if (tabCommentsBtn) tabCommentsBtn.classList.toggle('is-active', activeTab === 'comments');
+
+      if (activeTab === 'preview') {
+        left.innerHTML = _cdRenderRoundLeftPreviewPanel(resolvedFile, round);
+      } else {
+        left.innerHTML = _cdRoundEntryHtml(round);
+      }
     }
   }
   // 左カラムフッター（過去ラウンドの提出物カード）。flex:margin-top:auto で下端に張り付く。
@@ -26873,6 +27026,8 @@ async function openCreativeDetail(id) {
   await cdLoadRounds(id);
   // 直近ラウンド (= 一番新しい過去) を初期表示
   _cdRoundIndex = Math.max(0, _cdRoundsCache.length + (_cdBuildLiveRound(currentCreativeDetail) ? 1 : 0) - 1);
+  // bug-report b9c7c60c: 詳細を開くたびに左カラムタブを 📺 preview にリセット（既定値）
+  _cdRoundLeftTab = 'preview';
   try { cdRenderRoundCompare(); } catch (e) { console.warn('[cd-round-compare] render failed:', e); }
 
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（並列・失敗しても無視）
