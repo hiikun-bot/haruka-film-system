@@ -28987,7 +28987,10 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     || currentCreativeDetail?.creative_assignments
         ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role
     || '';
-  const isDesignPreview = _resolvedCreativeType.startsWith('design') || _resolvedAssigneeRole === 'designer';
+  // 静止画ファイルなら必ず design 扱い（案件メタが video でも、ファイル種別を最優先）
+  // 動画ファイル＋design系 creative_type/assignee → 既存通り design
+  // 動画ファイル＋video案件 → 既存通り video
+  const isDesignPreview = isImage || _resolvedCreativeType.startsWith('design') || _resolvedAssigneeRole === 'designer';
   const fpCatCode = isDesignPreview ? 'COMMENT_CAT_DESIGN' : 'COMMENT_CAT_VIDEO';
   const fpCatTab  = isDesignPreview ? 'design' : 'video';
   loadKnowledgeCategories(fpCatTab).then(items => {
