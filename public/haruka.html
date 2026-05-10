@@ -27463,12 +27463,31 @@ async function openCreativeDetail(id) {
   // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
   // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
   // 通知・返信モーダル（renderFromToAvatar フォールバック）で引き続き使用するため、保存・read 経路は無変更。
-  // 修正回数バッジ
+  // 修正回数バッジ（社内 / CL に分けて並記 - PR #(revision-count-split)）
+  //   internal_revision_count = D後修正 + P後修正 への遷移回数
+  //   client_revision_count   = CL後修正 への遷移回数
+  //   両方とも 0 → 非表示。片方だけ 0 のときはその辺を省略して並記する。
+  //   旧 revision_count（合計）も後方互換として残しているが、新2列がある場合は新2列を優先。
+  //   schema-sync 未適用の本番でも、新2列が undefined / null になるだけで旧 revision_count にフォールバック。
   const revBadge = document.getElementById('cd-revision-count-badge');
   if (revBadge) {
-    const cnt = c.revision_count || 0;
-    if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
-    else revBadge.style.display = 'none';
+    const internalCnt = Number(c.internal_revision_count) || 0;
+    const clientCnt   = Number(c.client_revision_count)   || 0;
+    const legacyCnt   = Number(c.revision_count)          || 0;
+    const hasNewCols  = (c.internal_revision_count != null) || (c.client_revision_count != null);
+    if (hasNewCols && (internalCnt > 0 || clientCnt > 0)) {
+      const parts = [];
+      if (internalCnt > 0) parts.push(`社内 ${internalCnt}回`);
+      if (clientCnt   > 0) parts.push(`CL ${clientCnt}回`);
+      revBadge.textContent = parts.join(' · ');
+      revBadge.style.display = '';
+    } else if (!hasNewCols && legacyCnt > 0) {
+      // schema-sync 未適用環境のフォールバック（新2列が NULL）。旧表示維持。
+      revBadge.textContent = `修正 ${legacyCnt}回`;
+      revBadge.style.display = '';
+    } else {
+      revBadge.style.display = 'none';
+    }
   }
 
   // 納期バー（一目で見落とさないよう font-size を大きく / 緊急度に応じて段階的に色分け）
@@ -28077,7 +28096,22 @@ function updateCreativeCommentLabel(status) {
     if (assigneeSection)  assigneeSection.style.display  = 'none';
     if (uploadSection)   uploadSection.style.display   = 'none';
     if (noteGroup)       noteGroup.style.display       = '';
-    if (editorRplyGroup) editorRplyGroup.style.display = 'none';
+    // PR #(cl-check-editor-reply): クライアントチェック中のときは「クライアントへの提出時メモ・連絡事項」
+    // を編集できるよう右側に textarea を出す。これは creatives.editor_comment にバインドされ、
+    // 仮想 cl_check ラウンドの editor_comment（前回コメントタブ表示）の元になる。
+    // D/P チェック中は従来通り非表示（編集者が指摘前に書き換える UX 不要のため）。
+    if (editorRplyGroup) editorRplyGroup.style.display = (status === 'クライアントチェック中') ? '' : 'none';
+    if (status === 'クライアントチェック中' && editorRplyLabel) {
+      editorRplyLabel.textContent = 'クライアントへの提出時メモ・連絡事項';
+    }
+    if (status === 'クライアントチェック中') {
+      // 値は openCreativeDetail() で空に reset されているので、
+      // ここで現在値（c.editor_comment）を流し込む。
+      const replyTa = document.getElementById('cd-editor-reply');
+      if (replyTa && (!replyTa.value || replyTa.value.trim() === '')) {
+        replyTa.value = (currentCreativeDetail && currentCreativeDetail.editor_comment) || '';
+      }
+    }
     if (noteLabel) {
       const stageMap = { 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
       const senderMap = { 'Dチェック': 'ディレクター', 'Pチェック': 'プロデューサー', 'クライアントチェック中': 'クライアント' };
@@ -34325,6 +34359,13 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   if (isCheck) {
     // ディレクター/CLからの修正指示・承認コメントのみ更新（編集者コメントは保持）
     body.director_comment = noteValue;
+    // PR #(cl-check-editor-reply): クライアントチェック中のときは右側に「クライアントへの提出時メモ」
+    // が表示される。値が変わっていれば creatives.editor_comment にも反映する（=仮想 cl_check
+    // ラウンドの editor_comment 表示が更新される）。値が空の場合は触らない（director_comment 系の
+    // 単独更新を妨げないため）。
+    if (currentCreativeDetail.status === 'クライアントチェック中' && editorReplyValue !== null) {
+      body.editor_comment = editorReplyValue;
+    }
   } else if (isRevision) {
     // 編集者/デザイナーの返信のみ更新（ディレクターの指示は保持）
     body.editor_comment = editorReplyValue;
@@ -34334,8 +34375,20 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   }
   if (overrideStatus) {
     body.status = overrideStatus;
+    // 修正回数の社内/CL分離 (PR #(revision-count-split)):
+    //   ・Dチェック後修正 / Pチェック後修正 → internal_revision_count を +1（社内ループ）
+    //   ・クライアントチェック後修正        → client_revision_count を +1（CLループ）
+    //   ・revision_count（合計）も互換のため +1
     if (REVISION_STATUSES.includes(overrideStatus)) {
-      body.revision_count = (currentCreativeDetail.revision_count || 0) + 1;
+      const prevInternal = Number(currentCreativeDetail.internal_revision_count) || 0;
+      const prevClient   = Number(currentCreativeDetail.client_revision_count)   || 0;
+      const prevTotal    = Number(currentCreativeDetail.revision_count)          || 0;
+      if (overrideStatus === 'Dチェック後修正' || overrideStatus === 'Pチェック後修正') {
+        body.internal_revision_count = prevInternal + 1;
+      } else if (overrideStatus === 'クライアントチェック後修正') {
+        body.client_revision_count = prevClient + 1;
+      }
+      body.revision_count = prevTotal + 1; // 後方互換
     }
   }
   // Dチェック遷移時の担当者上書き（modal で選んだ user_id を creative_assignments role='director' に反映）
