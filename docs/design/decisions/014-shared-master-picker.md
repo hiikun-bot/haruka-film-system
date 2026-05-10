@@ -63,7 +63,7 @@ window.MemberPicker = {
 **画面ごとに変えない仕様（共通部品が固定）**
 - 検索は `full_name` + `nickname` 両方を対象（部分一致・大文字小文字無視）
 - ロールフィルタ chip の並び順・配色・ラベル表記
-- 表示は `nickname（full_name）` 形式（nickname が無ければ `full_name` のみ）
+- 表示は `full_name（nickname）` 形式（nickname が無ければ `full_name` のみ）。本名を主、ニックネームを補助とする
 - 非アクティブメンバーは区切り線の下にまとめる（`showInactive: true` のときのみ）
 - キーボード操作（↑↓ で移動、Enter で確定、Escape で閉じる）
 - ロード状態・空状態のメッセージ文言
@@ -139,7 +139,7 @@ window.MemberPicker = {
 ## Consequences
 
 ### 良い面
-- 同じユーザーが全画面で同じ表記（`nickname（full_name）`）になる
+- 同じユーザーが全画面で同じ表記（`full_name（nickname）`）になる
 - 「検索したい」「ロールで絞りたい」が全画面で同じ操作で実現
 - 6 種類のロジック重複が 1 箇所に集約 → バグ修正も 1 箇所
 - 将来 `MasterPicker<Client>` `MasterPicker<Product>` への展開も同じ思想で揃う
