@@ -4781,7 +4781,7 @@ async function aggregateBugReports({ year, month }) {
   };
 }
 
-router.get('/analytics/bug-reports', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+router.get('/analytics/bug-reports', requireAuth, requirePermission('analytics.bug_reports.view'), async (req, res) => {
   const year = parseInt(req.query.year, 10);
   const month = parseInt(req.query.month, 10);
   if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
@@ -4790,7 +4790,7 @@ router.get('/analytics/bug-reports', requireAuth, requirePermission('analytics.v
   } catch (e) { res.status(500).json({ error: e.message || '集計に失敗しました' }); }
 });
 
-router.post('/analytics/bug-reports/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+router.post('/analytics/bug-reports/export-sheet', requireAuth, requirePermission('analytics.bug_reports.view'), async (req, res) => {
   const year = parseInt(req.body?.year ?? req.query.year, 10);
   const month = parseInt(req.body?.month ?? req.query.month, 10);
   if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
@@ -13502,6 +13502,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'master.page','master.sys_config',
   'system.view_as',
   'analytics.view',
+  'analytics.bug_reports.view',
 ]);
 
 // ロール権限保存（最高管理者のみ・ホワイトリスト検証あり）

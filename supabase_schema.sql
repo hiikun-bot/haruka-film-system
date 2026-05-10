@@ -1008,7 +1008,12 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   -- システム
   ('admin','system.view_as',true),
   -- 分析・集計（管理者・秘書のみ閲覧）
-  ('admin','analytics.view',true),('secretary','analytics.view',true)
+  ('admin','analytics.view',true),('secretary','analytics.view',true),
+  -- 分析メニュー: バグ報告件数のみ全ロール開放
+  ('admin','analytics.bug_reports.view',true),('secretary','analytics.bug_reports.view',true),
+  ('producer','analytics.bug_reports.view',true),('producer_director','analytics.bug_reports.view',true),
+  ('director','analytics.bug_reports.view',true),('editor','analytics.bug_reports.view',true),
+  ('designer','analytics.bug_reports.view',true)
 ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
 -- ==================== 請求書明細：自由編集対応（Step 1） ====================
