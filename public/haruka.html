@@ -27062,67 +27062,151 @@ function _cdRenderPageHtml(page) {
   </div>`;
 }
 
+// バグ報告 #2a29fba5 (2026-05-11):
+//   修正依頼 (revise) や承認引き継ぎ (approve_handoff) ページが「最新」になっている状態で
+//   モーダルを開くと、編集者は「修正依頼を受けた状態」になるが
+//   そのページに付随するファイルカード（自分が前回提出した動画）が左カラムに出ず、
+//   ◀ を押さないと「📋 バージョンNを確認・コメントを見る」ボタンに辿り着けなかった。
+//   タイムスタンプコメント (動画内コメント) を見落とす事故の温床になっていたため、
+//   revise / approve_handoff ページでも「そのコメントの対象になった提出物」を
+//   自動解決して左フッターに表示する。
+//
+//   解決ロジック:
+//     1) page.version_num が分かっていれば、それと一致する _cdFilesCache の version を採用
+//     2) 不明なら _cdRoundsCache を遡って直近の submit ページを探し、その file / version_num を採用
+//     3) どちらでも見つからなければカード非表示（従来挙動）
+function _cdResolveRelatedSubmittedFile(page) {
+  if (!page) return { file: null, versionNum: null };
+  const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  const rounds = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+
+  // (A) page.version_num が指定されていればそれを優先（最も信頼できる）
+  if (page.version_num != null) {
+    const v = Number(page.version_num);
+    const f = cache.find(x => x && Number(x.version) === v) || null;
+    if (f) return { file: f, versionNum: v };
+  }
+
+  // (B) _cdRoundsCache を occurred_at / idx で「自分より前」を逆順に走査し、
+  //     最初に見つかる submit ページに紐づくファイルを採用する。
+  //     idx は時系列順 (0 が最古, length-1 が最新) になっているので
+  //     page.idx が無いケースに備えて occurred_at でもフォールバック。
+  const pageIdx = (typeof page.idx === 'number') ? page.idx : null;
+  const pageTs  = page.occurred_at ? Date.parse(page.occurred_at) : null;
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const r = rounds[i];
+    if (!r || r.kind !== 'submit') continue;
+    // 自分自身より「前」のラウンドだけを採用
+    if (pageIdx != null && typeof r.idx === 'number' && r.idx >= pageIdx) continue;
+    if (pageIdx == null && pageTs != null && r.occurred_at) {
+      const rt = Date.parse(r.occurred_at);
+      if (Number.isFinite(rt) && rt >= pageTs) continue;
+    }
+    // 「[動画なし]」提出はファイル無しなのでスキップ（カードを出しても紫ボタン無しの空カードになる）
+    const rc = (typeof r.comment === 'string') ? r.comment : '';
+    if (!r.file && /^\s*\[動画なし\]/.test(rc)) continue;
+
+    let f = r.file || null;
+    if (!f && r.version_num != null) {
+      f = cache.find(x => x && Number(x.version) === Number(r.version_num)) || null;
+    }
+    if (f && f.id) {
+      const richer = cache.find(x => x && x.id === f.id);
+      if (richer) f = richer;
+    }
+    if (f) return { file: f, versionNum: f.version || r.version_num || null };
+  }
+  return { file: null, versionNum: null };
+}
+
 // 提出メモ (kind='submit') のページに紐づく成果物ファイルを左カラム下部のカードとして描画。
-// それ以外の kind ではファイル無し（カード非表示）。
+// revise / approve_handoff / deliver ページでも「そのコメントの対象になった直近の提出物」を
+// 自動解決して同じ位置に表示する (バグ報告 #2a29fba5)。
 function _cdRenderPageFileCard(page) {
-  if (!page || page.kind !== 'submit') return '';
+  if (!page) return '';
 
-  // 「[動画なし]」プレースホルダ
+  // 「[動画なし]」プレースホルダ（submit のみ）
   const editorComment = (page && typeof page.comment === 'string') ? page.comment : '';
-  const isFileless = !page.file && /^\s*\[動画なし\]/.test(editorComment);
-  if (isFileless) {
-    const m = editorComment.match(/^\s*\[動画なし\][ \t　]*([^\n]*)/);
-    const reasonRaw = (m && m[1]) ? m[1].trim() : '';
-    const reason = reasonRaw || '理由未入力';
-    const verLabel = page.version_num ? `バージョン ${page.version_num}` : '今回ラウンド';
-    return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 提出された成果物</div>
-      <div style="background:#FFFBEB;border:1px dashed #F59E0B;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:88px;justify-content:center">
-        <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
-        <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
-      </div>
-    </div>`;
+  if (page.kind === 'submit') {
+    const isFileless = !page.file && /^\s*\[動画なし\]/.test(editorComment);
+    if (isFileless) {
+      const m = editorComment.match(/^\s*\[動画なし\][ \t　]*([^\n]*)/);
+      const reasonRaw = (m && m[1]) ? m[1].trim() : '';
+      const reason = reasonRaw || '理由未入力';
+      const verLabel = page.version_num ? `バージョン ${page.version_num}` : '今回ラウンド';
+      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 提出された成果物</div>
+        <div style="background:#FFFBEB;border:1px dashed #F59E0B;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:88px;justify-content:center">
+          <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
+          <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
+        </div>
+      </div>`;
+    }
   }
 
-  // page.file が無くても _cdFilesCache から version_num 一致で再解決を試みる（旧データ救済）
-  let f = page.file || null;
-  if (!f && page.version_num != null) {
-    const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
-    f = cache.find(x => x && Number(x.version) === Number(page.version_num)) || null;
+  // submit / revise / approve_handoff / deliver いずれも「関連する提出ファイル」を解決
+  let f = null;
+  let resolvedVer = null;
+  if (page.kind === 'submit') {
+    // submit は自分自身の page.file / version_num を見る
+    f = page.file || null;
+    if (!f && page.version_num != null) {
+      const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+      f = cache.find(x => x && Number(x.version) === Number(page.version_num)) || null;
+    }
+    if (f && f.id) {
+      const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+      const richer = cache.find(x => x && x.id === f.id);
+      if (richer) f = richer;
+    }
+    resolvedVer = (f && f.version) || page.version_num || null;
+  } else if (page.kind === 'revise' || page.kind === 'approve_handoff' || page.kind === 'deliver') {
+    // revise / approve_handoff / deliver は「その判定の対象になった直近の提出物」を解決
+    const resolved = _cdResolveRelatedSubmittedFile(page);
+    f = resolved.file;
+    resolvedVer = resolved.versionNum;
+  } else {
+    return '';
   }
-  // page.file（軽量プロジェクション）がある場合でも、_cdFilesCache 側に同 id の
-  // フル情報（faststart_status 等）があればそちらを優先する（プレビュー再生品質向上）
-  if (f && f.id) {
-    const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
-    const richer = cache.find(x => x && x.id === f.id);
-    if (richer) f = richer;
-  }
+
   if (!f) return '';
 
-  const verNum = f.version || page.version_num || '?';
+  const verNum = resolvedVer || f.version || '?';
+  // revise / approve_handoff / deliver ページでは「コメント対象」であることを見出しで明示
+  const headerLabel = (page.kind === 'revise' || page.kind === 'approve_handoff' || page.kind === 'deliver')
+    ? '🎬 このコメントの対象になった提出物'
+    : '📎 提出された成果物';
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-    <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 提出された成果物</div>
+    <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">${headerLabel}</div>
     ${_cdRenderFileCard(f, { verLabel: `バージョン ${verNum}`, isLatest: false, hideCheckBtn: true })}
   </div>`;
 }
 
 // 「右カラム成果物カード」用の左ファイル解決ヘルパー（dedup 判定で利用）。
-// 新仕様では「最新ページ (= 末尾) が submit のとき、そのファイル」が左カラム提出物に相当する。
+// 新仕様 (バグ報告 #2a29fba5 以降): 左カラムは submit / revise / approve_handoff / deliver
+// いずれの kind でも「コメント対象の提出物」を表示するようになったので、dedup 判定もそれに合わせる。
 function _cdResolveLatestPageFile(page) {
-  if (!page || page.kind !== 'submit') return null;
-  // [動画なし] は dedup 対象外
-  const editorComment = (page && typeof page.comment === 'string') ? page.comment : '';
-  if (!page.file && /^\s*\[動画なし\]/.test(editorComment)) return null;
-  let f = page.file || null;
-  const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
-  if (!f && page.version_num != null) {
-    f = cache.find(x => x && Number(x.version) === Number(page.version_num)) || null;
+  if (!page) return null;
+  if (page.kind === 'submit') {
+    // [動画なし] は dedup 対象外
+    const editorComment = (page && typeof page.comment === 'string') ? page.comment : '';
+    if (!page.file && /^\s*\[動画なし\]/.test(editorComment)) return null;
+    let f = page.file || null;
+    const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    if (!f && page.version_num != null) {
+      f = cache.find(x => x && Number(x.version) === Number(page.version_num)) || null;
+    }
+    if (f && f.id) {
+      const richer = cache.find(x => x && x.id === f.id);
+      if (richer) f = richer;
+    }
+    return f || null;
   }
-  if (f && f.id) {
-    const richer = cache.find(x => x && x.id === f.id);
-    if (richer) f = richer;
+  // revise / approve_handoff / deliver: 直近の提出物を解決
+  if (page.kind === 'revise' || page.kind === 'approve_handoff' || page.kind === 'deliver') {
+    return _cdResolveRelatedSubmittedFile(page).file || null;
   }
-  return f || null;
+  return null;
 }
 
 // ラウンド右カラムに表示する「今回の成果物カード」HTML を返す。
@@ -27266,7 +27350,10 @@ function _cdRenderRoundRightFileCard(currentRound) {
   //   左カラム最新ページが「submit (= 提出メモ)」で、その成果物バージョンが
   //   _cdFilesCache の latest と一致する場合、右カラムを丸ごと非表示にする。
   //   - 動画なし提出ページは file=null なので dedup 対象外（右はそのまま latest を出す）。
-  if (latest && currentRound) {
+  //   - 後修正中 (isRevision=true) はスキップ: 右カラムが「修正版アップロード placeholder」/
+  //     「新しくアップした V2 カード」など独立した意味を持つため、左 V1 と一致しても右は出す。
+  //     (バグ報告 #2a29fba5: revise ページでも左に提出物が出るようになったため明示)
+  if (latest && currentRound && !isRevision) {
     const leftFile = _cdResolveLatestPageFile(currentRound);
     if (leftFile) {
       const sameId = leftFile.id && latest.id && leftFile.id === latest.id;
