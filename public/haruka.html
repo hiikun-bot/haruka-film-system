@@ -8202,9 +8202,20 @@ async function init() {
 // 通知メール/チャットからの ?creative=<id> リンクで該当クリエイティブの詳細モーダルを開く
 async function applyDeepLinkOnLoad() {
   try {
+    const stripQueryParam = (name) => {
+      try {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.has(name)) return;
+        url.searchParams.delete(name);
+        const qs = url.searchParams.toString();
+        const newUrl = url.pathname + (qs ? '?' + qs : '') + url.hash;
+        window.history.replaceState(null, '', newUrl);
+      } catch (e) { /* noop */ }
+    };
     const params = new URLSearchParams(window.location.search);
     const announcementId = params.get('announcement');
     if (announcementId && typeof openAnnouncementStatus === 'function') {
+      stripQueryParam('announcement');
       // データ・DOM 準備のため少し遅延
       setTimeout(() => {
         try { openAnnouncementStatus(announcementId); }
@@ -8214,6 +8225,7 @@ async function applyDeepLinkOnLoad() {
     }
     const videoId = params.get('video');
     if (videoId) {
+      stripQueryParam('video');
       // ナレッジページ → 動画視聴モードへ遷移してから再生モーダルを開く
       setTimeout(async () => {
         try {
@@ -8231,6 +8243,7 @@ async function applyDeepLinkOnLoad() {
     // バグ報告 deep link（24h SLA 通知のリンクから開く）
     const bugReportId = params.get('bug-report');
     if (bugReportId) {
+      stripQueryParam('bug-report');
       setTimeout(() => {
         try {
           if (typeof openBugReportListModal === 'function') openBugReportListModal();
@@ -8242,6 +8255,7 @@ async function applyDeepLinkOnLoad() {
     // Verup情報 deep link（Slack 通知の「対応: #518」をクリックで該当行へジャンプ）
     const verupRev = params.get('verup');
     if (verupRev) {
+      stripQueryParam('verup');
       setTimeout(() => {
         try {
           if (typeof openVerupModalAtRevision === 'function') {
@@ -8257,6 +8271,7 @@ async function applyDeepLinkOnLoad() {
     const creativeId = params.get('creative');
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {
+      stripQueryParam('creative');
       // データ・DOM 準備のため少し遅延
       setTimeout(() => {
         try { openCreativeDetail(creativeId); } catch (e) { console.warn('[deepLink open]', e); }
