@@ -9,7 +9,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 - 商材マスタ、訴求軸マスタ、ファイル名命名ヘルプ
 - クライアント別の単価・契約条件
 - 対応branch: `feature/clients`
-- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/haruka-clients`
+- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/HARUKA-FILM-SYSTEM/clients`
 
 # 作業手順（必ずこの順序）
 1. **最新化**: `cd` で worktree に入り、`git fetch origin main && git checkout feature/clients && git pull origin main --no-rebase`

@@ -9,7 +9,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 - 動画再生（プレビュー・本編）、Google Drive連携
 - レビューコメント、承認フロー
 - 対応branch: `feature/creatives`
-- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/haruka-creatives`
+- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/HARUKA-FILM-SYSTEM/creatives`
 
 # 作業手順（必ずこの順序）
 1. **最新化**: `cd` で worktree に入り、`git fetch origin main && git checkout feature/creatives && git pull origin main --no-rebase`

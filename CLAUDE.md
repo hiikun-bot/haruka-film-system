@@ -8,14 +8,15 @@
 ## 並行開発の構成
 | フォルダ | branch | 担当機能 | 責任範囲 |
 |---|---|---|---|
-| `haruka_film_system/` | main | 統合・リリース（このフォルダ） | マージ・リリース |
-| `haruka-projects/` | feature/projects | 案件画面 | 案件ロジック全般（DB含む） |
-| `haruka-clients/` | feature/clients | クライアント画面 | クライアントロジック |
-| `haruka-teams/` | feature/teams | チーム・メンバー画面 | チーム・メンバー |
-| `haruka-creatives/` | feature/creatives | クリエイティブ画面 | クリエイティブ |
-| `haruka-invoices/` | feature/invoices | 請求画面 | 請求 |
-| `haruka-pc/` | feature/pc | PC版共有ロジック | 共有JS/HTML/サーバー |
-| `haruka-mobile/` | feature/mobile または claude/mobile-* | スマホ版UI | `@media` CSS + スマホ専用HTML |
+| `HARUKA-FILM-SYSTEM/_main/` | main | 統合・リリース（このフォルダ） | マージ・リリース |
+| `HARUKA-FILM-SYSTEM/projects/` | feature/projects | 案件画面 | 案件ロジック全般（DB含む） |
+| `HARUKA-FILM-SYSTEM/clients/` | feature/clients | クライアント画面 | クライアントロジック |
+| `HARUKA-FILM-SYSTEM/teams/` | feature/teams | チーム・メンバー画面 | チーム・メンバー |
+| `HARUKA-FILM-SYSTEM/creatives/` | feature/creatives | クリエイティブ画面 | クリエイティブ |
+| `HARUKA-FILM-SYSTEM/invoices/` | feature/invoices | 請求画面 | 請求 |
+| `HARUKA-FILM-SYSTEM/pc/` | feature/pc | PC版共有ロジック | 共有JS/HTML/サーバー |
+| `HARUKA-FILM-SYSTEM/mobile/` | feature/mobile または claude/mobile-* | スマホ版UI | `@media` CSS + スマホ専用HTML |
+（パスは `/Users/takahashi_satoru/Documents/40.プログラミング/` 配下）
 
 ## 開発の進め方ルール（必ず守ること）
 
