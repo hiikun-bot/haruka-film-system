@@ -28,3 +28,6 @@ npm-debug.log*
 # README.md は git 管理する（運用ルール記載）
 pending-migrations/*
 !pending-migrations/README.md
+
+# Claude Code のサブエージェント worktree（ローカル作業用、共有しない）
+.claude/worktrees/
