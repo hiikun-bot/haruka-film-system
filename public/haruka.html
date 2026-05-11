@@ -6843,41 +6843,161 @@ window.showPage = window.showPage || function(name, btn) {
 </div>
 
 <!-- ==================== 🗂️ 素材広場（admin限定 / test・experimental） ==================== -->
-<!-- 将来「素材一覧」「タグ検索」等を増やせるよう、タブ内をセクション分けで作る。
-     初期 MVP は「動画整理ツール」セクション 1 つだけ。
-     Vertex AI Gemini の従量課金事故と Drive 上の事故リネーム/移動を防ぐため、
-     登録 → AI解析（要承認）→ 適用（DRY_RUN=true で予定だけ表示） の 3 段階 UI。-->
+<!-- Phase 2: 一覧画面（左 2/3）＋ 右プレビューパネル（1/3）＋「+ 新規追加」画面切替。
+     検索・タグフィルタ・状態フィルタ。動画3秒ループ自動再生は Drive プロキシ経由（admin セッション内）。
+     アップロード対応（動画 mp4 / 画像 jpg/jpeg/png/webp/heic、heic は jpeg 自動変換）。-->
+<style>
+  /* スタイル: 素材広場固有（既存スタイルに影響しない局所スコープ） */
+  #page-material-square .ms-layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; align-items: start; }
+  @media (max-width: 1024px) { #page-material-square .ms-layout { grid-template-columns: 1fr; } }
+  #page-material-square .ms-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  #page-material-square .ms-toolbar input,
+  #page-material-square .ms-toolbar select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }
+  #page-material-square .ms-toolbar input[type="search"] { min-width: 260px; }
+  #page-material-square table.ms-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  #page-material-square table.ms-table thead th { text-align: left; padding: 10px 8px; background: #f8f9fb; color: var(--text-muted); font-weight: 600; font-size: 12px; border-bottom: 1px solid var(--border); }
+  #page-material-square table.ms-table tbody td { padding: 10px 8px; border-bottom: 1px solid #f0f1f4; vertical-align: middle; }
+  #page-material-square table.ms-table tbody tr { cursor: pointer; }
+  #page-material-square table.ms-table tbody tr:hover { background: #f8f9fb; }
+  #page-material-square table.ms-table tbody tr.ms-selected { background: #eaf6f5; }
+  #page-material-square .ms-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #fff; }
+  #page-material-square .ms-tag { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px; font-size: 11px; background: #eef2f7; color: #334; cursor: pointer; }
+  #page-material-square .ms-tag:hover { background: #dbe4ef; }
+  #page-material-square .ms-tag.active { background: var(--primary, #3ECFCA); color: #fff; }
+  #page-material-square .ms-preview { position: sticky; top: 16px; background: #fff; border-radius: 8px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  #page-material-square .ms-preview .ms-media { width: 100%; aspect-ratio: 16/9; background: #1a1a1a; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #888; font-size: 12px; }
+  #page-material-square .ms-preview .ms-media video,
+  #page-material-square .ms-preview .ms-media img { width: 100%; height: 100%; object-fit: contain; }
+  #page-material-square .ms-preview h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text-muted); font-weight: 600; }
+  #page-material-square .ms-preview .ms-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  #page-material-square .ms-preview .ms-summary { font-size: 13px; line-height: 1.6; color: var(--text); }
+  #page-material-square .ms-preview .ms-scenes li { font-size: 12px; padding: 3px 0; color: var(--text); list-style: none; }
+  #page-material-square .ms-preview .ms-scenes li .ms-time { font-family: monospace; color: var(--primary, #3ECFCA); margin-right: 6px; }
+  #page-material-square .ms-preview .ms-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  #page-material-square .ms-preview button { font-size: 12px; padding: 6px 10px; }
+  #page-material-square .ms-drop { border: 2px dashed var(--border); border-radius: 12px; padding: 36px 16px; text-align: center; background: #fafbfd; color: var(--text-muted); transition: all .15s; }
+  #page-material-square .ms-drop.ms-drag-over { border-color: var(--primary, #3ECFCA); background: #eaf6f5; color: var(--text); }
+  #page-material-square .ms-drop .ms-drop-icon { font-size: 48px; }
+  #page-material-square .ms-upload-list .ms-upload-item { padding: 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; font-size: 13px; }
+  #page-material-square .ms-upload-list .ms-bar { height: 6px; background: #eef2f7; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  #page-material-square .ms-upload-list .ms-bar > div { height: 100%; background: var(--primary, #3ECFCA); transition: width .2s; }
+</style>
 <div id="page-material-square" class="page">
-  <div class="page-header">
-    <h2>🗂️ 素材広場 <span style="font-size:12px;color:var(--text-muted);font-weight:normal;margin-left:8px">（test / experimental）</span></h2>
+
+  <!-- ===== view: 一覧（default） ===== -->
+  <div id="ms-view-list">
+    <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+      <h2 style="margin:0">🗂️ 素材広場 <span style="font-size:12px;color:var(--text-muted);font-weight:normal;margin-left:8px">（test / experimental）</span></h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="ms-daily-counter" style="font-size:12px;color:var(--text-muted)"></span>
+        <button class="btn-primary" onclick="msShowUpload()">+ 新規追加</button>
+      </div>
+    </div>
+
+    <div class="ms-toolbar" style="margin-top:8px">
+      <input type="search" id="ms-search" placeholder="🔍 タグ・ファイル名・シーンで検索…" oninput="msDebouncedReload()">
+      <select id="ms-filter-status" onchange="msReloadList()">
+        <option value="">状態: すべて</option>
+        <option value="waiting_approval">AI解析の承認待ち</option>
+        <option value="processing">AI解析中</option>
+        <option value="analysis_completed">候補確認待ち</option>
+        <option value="applied">適用済み</option>
+        <option value="failed">失敗</option>
+        <option value="skipped">スキップ</option>
+      </select>
+      <select id="ms-filter-kind" onchange="msReloadList()">
+        <option value="">種別: すべて</option>
+        <option value="video">🎬 動画</option>
+        <option value="image">🖼️ 画像</option>
+      </select>
+      <span id="ms-active-tags" style="display:flex;gap:4px;flex-wrap:wrap"></span>
+    </div>
+
+    <div class="ms-layout">
+      <div>
+        <table class="ms-table">
+          <thead>
+            <tr>
+              <th style="width:80px">状態</th>
+              <th style="width:36px"></th>
+              <th>ファイル名</th>
+              <th style="width:100px">尺/容量</th>
+              <th style="width:200px">タグ</th>
+              <th>シーン概要</th>
+              <th style="width:80px">日時</th>
+            </tr>
+          </thead>
+          <tbody id="ms-tbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:32px">読み込み中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <aside class="ms-preview" id="ms-preview">
+        <div class="ms-media" id="ms-preview-media">行を選択するとここに表示されます</div>
+        <div id="ms-preview-body" style="display:none">
+          <div style="margin-top:10px;font-weight:600;font-size:14px;word-break:break-all" id="ms-preview-filename">-</div>
+          <div class="ms-meta" id="ms-preview-meta">-</div>
+
+          <h4>シーン概要</h4>
+          <div class="ms-summary" id="ms-preview-summary">-</div>
+
+          <h4>タグ</h4>
+          <div id="ms-preview-tags">-</div>
+
+          <h4>キーモーメント</h4>
+          <ul class="ms-scenes" id="ms-preview-scenes"><li>-</li></ul>
+
+          <h4>トーン</h4>
+          <div id="ms-preview-mood">-</div>
+
+          <h4>振り分け提案</h4>
+          <div style="font-size:13px;line-height:1.6">
+            📄 <span id="ms-preview-new-name">-</span><br>
+            📁 <span id="ms-preview-new-folder">-</span>
+          </div>
+
+          <div class="ms-actions">
+            <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
+            <button class="btn-primary" id="ms-btn-apply" onclick="msApplySelected()">✅ 適用する</button>
+            <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
+          </div>
+        </div>
+      </aside>
+    </div>
   </div>
 
-  <!-- セクション: 動画整理ツール -->
-  <section class="card" style="margin-top:12px">
-    <div class="card-header" style="display:flex;align-items:center;gap:8px">
-      <h3 style="margin:0">🧪 動画整理ツール</h3>
-      <span id="vot-daily-counter" style="font-size:12px;color:var(--text-muted)"></span>
+  <!-- ===== view: 新規追加（D&D アップロード） ===== -->
+  <div id="ms-view-upload" style="display:none">
+    <div class="page-header" style="display:flex;align-items:center;justify-content:space-between">
+      <h2 style="margin:0">🗂️ 素材広場 / 新規追加 <span style="font-size:12px;color:var(--text-muted);font-weight:normal">（test / experimental）</span></h2>
+      <button class="btn-secondary" onclick="msShowList()">← 一覧に戻る</button>
     </div>
-    <div class="card-body">
-      <p style="color:var(--text-muted);font-size:13px;margin:0 0 12px">
-        Google Drive 上の動画ファイル ID を入力して登録 → AI解析を承認 → 提案を確認 → 適用 の順で動かします。
-        Vertex AI Gemini は <b>「🤖 AI解析する」ボタンを押した時だけ</b>呼び出されます（従量課金）。
-        現在の運用フラグ: <code id="vot-mode-badge"></code>
-      </p>
 
-      <!-- 登録フォーム -->
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
-        <input type="text" id="vot-fileid-input" placeholder="Google Drive の fileId（例: 1aBcDeFgHi...）"
-               style="flex:1;min-width:300px;padding:8px;border:1px solid var(--border);border-radius:6px;font-family:monospace;font-size:13px">
-        <button type="button" class="btn-primary" onclick="votRegister()">🔍 登録（解析しない）</button>
+    <div class="ms-layout" style="margin-top:12px">
+      <div>
+        <div class="ms-drop" id="ms-drop"
+             ondragover="event.preventDefault();this.classList.add('ms-drag-over')"
+             ondragleave="this.classList.remove('ms-drag-over')"
+             ondrop="msHandleDrop(event)">
+          <div class="ms-drop-icon">⬆ 🎬 🖼️</div>
+          <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
+          <p style="margin:0;font-size:12px">複数ファイル同時OK / 1ファイル 50MB まで</p>
+          <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
+          <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
+          <input type="file" id="ms-file-input" multiple style="display:none"
+                 accept="video/mp4,image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+                 onchange="msHandleFileInput(event)">
+        </div>
       </div>
-
-      <!-- 一覧 -->
-      <div id="vot-list" style="display:flex;flex-direction:column;gap:12px">
-        <div style="color:var(--text-muted);font-size:13px">読み込み中…</div>
-      </div>
+      <aside class="ms-preview">
+        <h4 style="margin-top:0">アップロード状況</h4>
+        <div class="ms-upload-list" id="ms-upload-list">
+          <div style="color:var(--text-muted);font-size:12px">まだファイルがありません</div>
+        </div>
+      </aside>
     </div>
-  </section>
+  </div>
 </div>
 
 <!-- ==================== つぶやき独立タブ（リベシティ風） ==================== -->
@@ -37319,11 +37439,12 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ==================== 🗂️ 素材広場 / 動画整理ツール（test / experimental） ====================
+// ==================== 🗂️ 素材広場 Phase 2（D&D アップロード + プレビュー + 検索） ====================
 // 設計の核:
 //   - 全 API は /api/admin/video-organization-test/* に集約
-//   - register → analyze（要承認）→ apply（DRY_RUN=true で予定差分のみ）
-//   - サーバ側で feature flag OFF なら 404 が返り、UI は無効化メッセージを出すだけ
+//   - upload / register → analyze（要承認）→ apply（DRY_RUN=true で予定差分のみ）
+//   - 一覧画面（左 2/3 テーブル + 右 1/3 プレビュー）と新規追加画面（D&D）を切り替え
+//   - 動画3秒ループ再生は /preview/:fileId プロキシ経由（admin セッション内）
 const VOT_API_BASE = '/api/admin/video-organization-test';
 
 async function votFetch(path, opts) {
@@ -37341,29 +37462,295 @@ async function votFetch(path, opts) {
   return body;
 }
 
-async function loadMaterialSquarePage() {
-  const listEl = document.getElementById('vot-list');
-  const counterEl = document.getElementById('vot-daily-counter');
-  const modeEl = document.getElementById('vot-mode-badge');
-  if (!listEl) return;
-  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">読み込み中…</div>';
+// ==================== ビュー切替（一覧 ⇄ 新規追加） ====================
+let msSelectedFileId = null;
+let msItemsCache = [];
+let msActiveTag = '';
+
+function loadMaterialSquarePage() { msShowList(); msReloadList(); }
+
+function msShowList() {
+  document.getElementById('ms-view-list').style.display = '';
+  document.getElementById('ms-view-upload').style.display = 'none';
+}
+function msShowUpload() {
+  document.getElementById('ms-view-list').style.display = 'none';
+  document.getElementById('ms-view-upload').style.display = '';
+  // 入ったタイミングでアップロード一覧をクリア
+  msResetUploadList();
+}
+
+let _msReloadTimer = null;
+function msDebouncedReload() {
+  clearTimeout(_msReloadTimer);
+  _msReloadTimer = setTimeout(msReloadList, 250);
+}
+
+async function msReloadList() {
+  const tbody = document.getElementById('ms-tbody');
+  if (!tbody) return;
+  const counter = document.getElementById('ms-daily-counter');
   try {
-    const data = await votFetch('/list');
-    const items = data.items || [];
+    const q = document.getElementById('ms-search')?.value?.trim();
+    const status = document.getElementById('ms-filter-status')?.value;
+    const kind = document.getElementById('ms-filter-kind')?.value;
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    if (kind) params.set('mediaKind', kind);
+    if (msActiveTag) params.set('tag', msActiveTag);
+    const data = await votFetch('/list' + (params.toString() ? '?' + params.toString() : ''));
+    msItemsCache = data.items || [];
     const daily = data.daily || {};
-    if (counterEl) counterEl.textContent = `本日のAI解析: ${daily.count || 0} / ${daily.limit || 5}`;
-    if (modeEl) {
-      const mode = (daily.exceeded ? '⚠️ 日次上限到達' : 'OK');
-      modeEl.textContent = mode;
-    }
-    if (items.length === 0) {
-      listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:24px;text-align:center;border:1px dashed var(--border);border-radius:8px">まだ登録された動画はありません</div>';
+    if (counter) counter.textContent = `本日のAI解析: ${daily.count || 0} / ${daily.limit || 5}${daily.exceeded ? ' ⚠️' : ''}`;
+    msRenderActiveTags();
+    if (msItemsCache.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:32px">該当する素材がありません</td></tr>';
+      msClearPreview();
       return;
     }
-    listEl.innerHTML = items.map(votRenderItem).join('');
+    tbody.innerHTML = msItemsCache.map(msRenderRow).join('');
+    // 既に選択中の行があれば preview を更新（既に消えていればクリア）
+    if (msSelectedFileId && msItemsCache.find(x => x.drive_file_id === msSelectedFileId)) {
+      msSelectItem(msSelectedFileId, false);
+    } else {
+      msClearPreview();
+    }
   } catch (e) {
-    listEl.innerHTML = `<div style="color:var(--danger);font-size:13px">読み込み失敗: ${escapeHtml(e.message)}</div>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:16px">読み込み失敗: ${votEscape(e.message)}</td></tr>`;
   }
+}
+
+function msRenderActiveTags() {
+  const el = document.getElementById('ms-active-tags');
+  if (!el) return;
+  if (!msActiveTag) { el.innerHTML = ''; return; }
+  el.innerHTML = `<span class="ms-tag active" onclick="msClearTagFilter()">${votEscape(msActiveTag)} ×</span>`;
+}
+function msClearTagFilter() { msActiveTag = ''; msReloadList(); }
+function msFilterByTag(tag) { msActiveTag = tag; msReloadList(); }
+
+function msKindIcon(kind) { return kind === 'image' ? '🖼️' : '🎬'; }
+function msFmtSpec(item) {
+  const dur = item.media_kind === 'video' && item.video_duration_seconds
+    ? `${item.video_duration_seconds}s / ` : '';
+  return `${dur}${votFmtSize(item.file_size)}`;
+}
+function msFmtDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMin = Math.floor((now - d) / 60000);
+  if (diffMin < 1) return 'たった今';
+  if (diffMin < 60) return `${diffMin}分前`;
+  if (diffMin < 24*60) return `${Math.floor(diffMin/60)}時間前`;
+  if (diffMin < 7*24*60) return `${Math.floor(diffMin/(24*60))}日前`;
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
+function msTagsCell(item) {
+  const tags = Array.isArray(item.tags) ? item.tags : [];
+  if (tags.length === 0) return '<span style="color:var(--text-muted)">-</span>';
+  const visible = tags.slice(0, 3);
+  const extra = tags.length > 3 ? ` <span style="color:var(--text-muted);font-size:11px">+${tags.length - 3}</span>` : '';
+  return visible.map(t => `<span class="ms-tag" onclick="event.stopPropagation();msFilterByTag('${votEscape(t)}')">${votEscape(t)}</span>`).join('') + extra;
+}
+
+function msRenderRow(item) {
+  const fid = votEscape(item.drive_file_id);
+  const selected = item.drive_file_id === msSelectedFileId ? ' ms-selected' : '';
+  return `
+    <tr class="${selected.trim()}" onclick="msSelectItem('${fid}')">
+      <td>${votStatusBadge(item.status)}</td>
+      <td style="font-size:20px;text-align:center">${msKindIcon(item.media_kind)}</td>
+      <td style="word-break:break-all">${votEscape(item.current_filename || item.original_filename || '-')}</td>
+      <td style="color:var(--text-muted)">${msFmtSpec(item)}</td>
+      <td>${msTagsCell(item)}</td>
+      <td style="color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px" title="${votEscape(item.summary || '')}">${votEscape(item.summary || '-')}</td>
+      <td style="color:var(--text-muted);font-size:12px">${msFmtDate(item.created_at)}</td>
+    </tr>
+  `;
+}
+
+// ==================== プレビューパネル ====================
+function msClearPreview() {
+  msSelectedFileId = null;
+  const media = document.getElementById('ms-preview-media');
+  const body = document.getElementById('ms-preview-body');
+  if (media) media.innerHTML = '行を選択するとここに表示されます';
+  if (body) body.style.display = 'none';
+}
+
+function msSelectItem(fileId, scroll = true) {
+  msSelectedFileId = fileId;
+  // 行のハイライト
+  document.querySelectorAll('#ms-tbody tr').forEach(tr => tr.classList.remove('ms-selected'));
+  document.querySelectorAll('#ms-tbody tr').forEach((tr, i) => {
+    if (msItemsCache[i] && msItemsCache[i].drive_file_id === fileId) tr.classList.add('ms-selected');
+  });
+
+  const item = msItemsCache.find(x => x.drive_file_id === fileId);
+  if (!item) { msClearPreview(); return; }
+
+  const media = document.getElementById('ms-preview-media');
+  const body = document.getElementById('ms-preview-body');
+  if (!media || !body) return;
+
+  // メディア再生（動画は 3秒ループ自動再生・無音、画像はそのまま表示）
+  if (item.media_kind === 'image') {
+    media.innerHTML = `<img alt="" src="${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}">`;
+  } else {
+    media.innerHTML = `
+      <video id="ms-preview-video" muted autoplay loop playsinline preload="metadata"
+             style="background:#000">
+        <source src="${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}" type="${votEscape(item.mime_type || 'video/mp4')}">
+      </video>
+    `;
+    // 3 秒ループ: timeupdate で 3秒超えたら頭に戻す
+    setTimeout(() => {
+      const v = document.getElementById('ms-preview-video');
+      if (!v) return;
+      v.addEventListener('timeupdate', () => {
+        if (v.currentTime > 3) v.currentTime = 0;
+      });
+    }, 100);
+  }
+  body.style.display = '';
+  document.getElementById('ms-preview-filename').textContent = item.current_filename || item.original_filename || '-';
+  document.getElementById('ms-preview-meta').textContent =
+    `${msKindIcon(item.media_kind)} ${msFmtSpec(item)} / ${item.status}`;
+  document.getElementById('ms-preview-summary').textContent = item.summary || '（未解析）';
+  const tagsEl = document.getElementById('ms-preview-tags');
+  const tags = Array.isArray(item.tags) ? item.tags : [];
+  tagsEl.innerHTML = tags.length ? tags.map(t => `<span class="ms-tag" onclick="msFilterByTag('${votEscape(t)}')">${votEscape(t)}</span>`).join('') : '<span style="color:var(--text-muted)">-</span>';
+  const scenesEl = document.getElementById('ms-preview-scenes');
+  const scenes = Array.isArray(item.scenes) ? item.scenes : [];
+  scenesEl.innerHTML = scenes.length
+    ? scenes.map(s => `<li><span class="ms-time">${votEscape(s.time || '0:00')}</span>${votEscape(s.description || '')}</li>`).join('')
+    : '<li style="color:var(--text-muted)">-</li>';
+  document.getElementById('ms-preview-mood').textContent = item.mood || '-';
+  document.getElementById('ms-preview-new-name').textContent = item.recommended_filename || '-';
+  document.getElementById('ms-preview-new-folder').textContent = item.recommended_folder || '-';
+
+  // ボタン表示制御
+  const isWaiting = item.status === 'waiting_approval' || item.status === 'failed';
+  const canApply = item.status === 'analysis_completed';
+  document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
+  document.getElementById('ms-btn-apply').style.display = canApply ? '' : 'none';
+}
+
+// ==================== アクション（解析・適用・削除）====================
+async function msAnalyzeSelected() {
+  if (!msSelectedFileId) return;
+  if (!confirm('Vertex AI Gemini で解析します。\n従量課金が発生します。\n本当に実行しますか？')) return;
+  try {
+    showToast('AI解析を開始しました…', 'info');
+    await votFetch('/analyze', { method: 'POST', body: JSON.stringify({ fileId: msSelectedFileId }) });
+    showToast('AI解析が完了しました', 'success');
+    msReloadList();
+  } catch (e) {
+    showToast('解析失敗: ' + e.message, 'error');
+    msReloadList();
+  }
+}
+async function msApplySelected() {
+  if (!msSelectedFileId) return;
+  if (!confirm('提案内容を適用します。\n（DRY_RUN=true の間は予定差分のみ返ります）\n実行しますか？')) return;
+  try {
+    const result = await votFetch('/apply', { method: 'POST', body: JSON.stringify({ fileId: msSelectedFileId }) });
+    showToast(result?.dry_run ? 'DRY_RUN: 適用予定だけ確認しました（Drive 上は無変更）' : '適用しました', 'success');
+    msReloadList();
+  } catch (e) {
+    showToast('適用失敗: ' + e.message, 'error');
+  }
+}
+async function msDeleteSelected() {
+  if (!msSelectedFileId) return;
+  if (!confirm('このレコードを削除しますか？（Drive 上のファイルは消えません）')) return;
+  try {
+    await votFetch('/item/' + encodeURIComponent(msSelectedFileId), { method: 'DELETE' });
+    showToast('削除しました', 'success');
+    msSelectedFileId = null;
+    msReloadList();
+  } catch (e) {
+    showToast('削除失敗: ' + e.message, 'error');
+  }
+}
+
+// ==================== アップロード（D&D） ====================
+function msResetUploadList() {
+  const el = document.getElementById('ms-upload-list');
+  if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:12px">まだファイルがありません</div>';
+}
+function msHandleFileInput(ev) {
+  msHandleFiles(Array.from(ev.target.files || []));
+  ev.target.value = '';
+}
+function msHandleDrop(ev) {
+  ev.preventDefault();
+  document.getElementById('ms-drop')?.classList.remove('ms-drag-over');
+  const files = Array.from(ev.dataTransfer?.files || []);
+  msHandleFiles(files);
+}
+async function msHandleFiles(files) {
+  if (!files.length) return;
+  const list = document.getElementById('ms-upload-list');
+  if (!list) return;
+  list.innerHTML = '';
+  // 各ファイルごとに 1 リクエスト（進捗が個別に見える / 一括 50MB の制約回避）
+  for (const f of files) {
+    const row = document.createElement('div');
+    row.className = 'ms-upload-item';
+    row.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <div style="word-break:break-all">${votEscape(f.name)}</div>
+        <div style="color:var(--text-muted);font-size:11px;white-space:nowrap">${votFmtSize(f.size)}</div>
+      </div>
+      <div class="ms-bar"><div style="width:0%"></div></div>
+      <div class="ms-status" style="font-size:11px;color:var(--text-muted);margin-top:4px">待機中…</div>
+    `;
+    list.appendChild(row);
+    const bar = row.querySelector('.ms-bar > div');
+    const stat = row.querySelector('.ms-status');
+    try {
+      stat.textContent = 'アップロード中…';
+      await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
+      bar.style.width = '100%';
+      bar.style.background = '#10b981';
+      stat.textContent = '✅ 完了（解析はまだ未実行）';
+    } catch (e) {
+      bar.style.background = '#dc2626';
+      stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
+      stat.style.color = '#dc2626';
+    }
+  }
+  // 一覧側を再読み込み（バックグラウンド）
+  msReloadList();
+}
+
+function msUploadOne(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', VOT_API_BASE + '/upload', true);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      let body = null; try { body = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300) {
+        // results[0] が ok でない場合もある（HEIC変換失敗など）
+        const r0 = body?.results?.[0];
+        if (r0 && r0.ok === false) return reject(new Error(r0.error || '失敗'));
+        resolve(body);
+      } else {
+        reject(new Error(body?.error || `HTTP ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('ネットワークエラー'));
+    const fd = new FormData();
+    fd.append('files', file);
+    xhr.send(fd);
+  });
 }
 
 function votEscape(s) {
@@ -37394,110 +37781,6 @@ function votStatusBadge(status) {
   return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;color:#fff;background:${s.color}">${votEscape(s.label)}</span>`;
 }
 
-function votRenderItem(item) {
-  const fid = votEscape(item.drive_file_id);
-  const isWaiting = item.status === 'waiting_approval' || item.status === 'failed';
-  const canApply = item.status === 'analysis_completed';
-  const proposal = canApply ? `
-    <div style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-subtle)">
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">📝 提案</div>
-      <div style="font-size:13px;line-height:1.6">
-        <div><b>現:</b> <span style="color:var(--text-muted)">${votEscape(item.current_filename || '-')}</span></div>
-        <div><b>新:</b> ${votEscape(item.recommended_filename || '-')}</div>
-        <div style="margin-top:4px"><b>現フォルダ:</b> <span style="color:var(--text-muted)">${votEscape(item.current_parent_folder_name || '-')}</span></div>
-        <div><b>移動先:</b> ${votEscape(item.recommended_folder || '-')}</div>
-        <div style="margin-top:4px">
-          <b>confidence:</b> ${item.confidence == null ? '-' : item.confidence}
-          ${item.needs_human_review ? '<span style="color:#dc2626;margin-left:8px">⚠ 要人間確認</span>' : ''}
-        </div>
-        <div style="margin-top:4px"><b>理由:</b> <span style="color:var(--text-muted)">${votEscape(item.reason || '-')}</span></div>
-        <div style="margin-top:4px"><b>要約:</b> <span style="color:var(--text-muted)">${votEscape(item.summary || '-')}</span></div>
-      </div>
-    </div>
-  ` : '';
-
-  const errorBlock = item.error_message ? `
-    <div style="margin-top:8px;font-size:12px;color:var(--danger)">エラー: ${votEscape(item.error_message)}</div>
-  ` : '';
-
-  return `
-    <div class="card" style="padding:12px" data-fid="${fid}">
-      <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:14px;word-break:break-all">📹 ${votEscape(item.current_filename || item.original_filename || fid)}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
-            ${votStatusBadge(item.status)}
-            <span style="margin-left:8px">size: ${votFmtSize(item.file_size)}</span>
-            ${item.video_duration_seconds ? `<span style="margin-left:8px">${item.video_duration_seconds}s</span>` : ''}
-            ${item.dry_run ? '<span style="margin-left:8px;color:#f59e0b">DRY_RUN</span>' : ''}
-            <span style="margin-left:8px">attempts: ${item.attempt_count || 0}</span>
-          </div>
-          ${item.drive_url ? `<div style="font-size:12px;margin-top:4px"><a href="${votEscape(item.drive_url)}" target="_blank" rel="noopener">Drive で開く ↗</a></div>` : ''}
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-          ${isWaiting ? `<button class="btn-primary" style="font-size:12px;padding:6px 10px" onclick="votAnalyze('${fid}')">🤖 AI解析する（課金発生）</button>` : ''}
-          ${canApply ? `<button class="btn-primary" style="font-size:12px;padding:6px 10px" onclick="votApply('${fid}')">✅ 適用する</button>` : ''}
-          <button class="btn-secondary" style="font-size:12px;padding:6px 10px" onclick="votDelete('${fid}')">🗑 削除</button>
-        </div>
-      </div>
-      ${proposal}
-      ${errorBlock}
-    </div>
-  `;
-}
-
-async function votRegister() {
-  const input = document.getElementById('vot-fileid-input');
-  const fileId = (input?.value || '').trim();
-  if (!fileId) { showToast('fileId を入力してください', 'error'); return; }
-  try {
-    await votFetch('/register', { method: 'POST', body: JSON.stringify({ fileId }) });
-    showToast('登録しました（まだ AI には送っていません）', 'success');
-    if (input) input.value = '';
-    loadMaterialSquarePage();
-  } catch (e) {
-    showToast('登録失敗: ' + e.message, 'error');
-  }
-}
-
-async function votAnalyze(fileId) {
-  if (!confirm('Vertex AI Gemini で解析します。\n従量課金が発生します。\n本当に実行しますか？')) return;
-  try {
-    showToast('AI解析を開始しました…', 'info');
-    await votFetch('/analyze', { method: 'POST', body: JSON.stringify({ fileId }) });
-    showToast('AI解析が完了しました', 'success');
-    loadMaterialSquarePage();
-  } catch (e) {
-    showToast('解析失敗: ' + e.message, 'error');
-    loadMaterialSquarePage();
-  }
-}
-
-async function votApply(fileId) {
-  if (!confirm('提案内容を適用します。\n（DRY_RUN=true の間は予定差分のみ返ります）\n実行しますか？')) return;
-  try {
-    const result = await votFetch('/apply', { method: 'POST', body: JSON.stringify({ fileId }) });
-    if (result?.dry_run) {
-      showToast('DRY_RUN: 適用予定だけ確認しました（Drive 上は無変更）', 'success');
-    } else {
-      showToast('適用しました', 'success');
-    }
-    loadMaterialSquarePage();
-  } catch (e) {
-    showToast('適用失敗: ' + e.message, 'error');
-  }
-}
-
-async function votDelete(fileId) {
-  if (!confirm('この登録レコードを削除しますか？（Drive 上のファイルは消えません）')) return;
-  try {
-    await votFetch('/' + encodeURIComponent(fileId), { method: 'DELETE' });
-    showToast('削除しました', 'success');
-    loadMaterialSquarePage();
-  } catch (e) {
-    showToast('削除失敗: ' + e.message, 'error');
-  }
-}
 </script>
 
 <!-- 共通マスター選択 UI（ADR 014）— メンバー選択は全画面でこれを使う -->
