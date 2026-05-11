@@ -99,26 +99,37 @@ router.get('/list', async (req, res) => {
 // ==================== プレビューストリーム（Drive 動画/画像を proxy）====================
 // /preview/:fileId  — Range 対応で動画を返す。3 秒ループ再生用。
 // 認証必須・admin のみ（router.use 済み）。レスポンスを公開化せず HARUKA セッション経由で配信する。
+//
+// 重要: <video> は metadata 取得時に Range: bytes=0- を投げてくる。これに 206
+// を返さないと <video> が「seekable」と認識せず再生できなくなる。Drive から
+// 返ってきたステータスをそのまま転送する設計に変更（旧版は手動 200/206 判定
+// で不整合が出ていた）。
 router.get('/preview/:fileId', async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!fileId) return res.status(400).end();
   try {
     const range = req.headers.range || null;
     const { stream, status, headers } = await driveLib.getFileStream(fileId, range);
-    if (headers['content-type']) res.setHeader('Content-Type', headers['content-type']);
-    if (headers['content-length']) res.setHeader('Content-Length', headers['content-length']);
-    if (headers['content-range']) res.setHeader('Content-Range', headers['content-range']);
+    // Drive レスポンスから必要なヘッダのみ転送
+    const passthrough = ['content-type', 'content-length', 'content-range', 'last-modified', 'etag'];
+    for (const k of passthrough) {
+      if (headers[k]) res.setHeader(k, headers[k]);
+    }
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=60');
-    res.status(status === 206 || range ? 206 : 200);
+    // Drive 側のステータスをそのまま転送（206 / 200 / 304 など）
+    res.status(status || 200);
     stream.on('error', (e) => {
       console.error('[video-org] preview stream error:', e.message);
       try { res.end(); } catch (_) {}
     });
+    req.on('close', () => {
+      try { stream.destroy(); } catch (_) {}
+    });
     stream.pipe(res);
   } catch (e) {
     console.error('[video-org] preview error:', e.message);
-    res.status(404).end();
+    if (!res.headersSent) res.status(404).end();
   }
 });
 
