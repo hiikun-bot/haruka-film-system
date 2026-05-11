@@ -233,6 +233,23 @@ async function activateCard(cardEl, options = {}) {
     return;
   }
 
+  // つぶやき通知: /haruka.html?tweet=<id> 形式。
+  // haruka.html 内なら showPage('tweets') でタブだけ切り替える（リロード不要）。
+  // showPage が無い（ログイン画面等）の場合は通常遷移にフォールバック。
+  if (/^\/haruka\.html\?tweet=/.test(linkUrl)) {
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    if (typeof window.showPage === 'function') {
+      try {
+        window.showPage('tweets');
+        return;
+      } catch (e) {
+        console.warn('[notification-card] showPage(tweets) 失敗', e);
+      }
+    }
+    window.location.href = linkUrl;
+    return;
+  }
+
   // /announcements/* 等の社内URLはそのまま遷移（クエリ ?creative= でディープリンクを保つ既存仕組みあり）
   if (linkUrl.startsWith('/')) {
     window.location.href = linkUrl;
