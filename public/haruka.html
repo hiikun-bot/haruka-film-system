@@ -7351,6 +7351,14 @@ window.showPage = window.showPage || function(name, btn) {
                    onmouseout="if(this.dataset.editing!=='1')this.style.borderColor='transparent'"
                    title="クリックでファイル名を編集できます（変更時 Slack 通知）">
           </div>
+          <!-- 共有リンクコピーボタン: 詳細モーダルを直接開ける ?creative=<ID> URL をコピー。
+               秘書などへ「このクリエイティブをクライアントへ提出して」と指示する際に使う。 -->
+          <button id="cd-share-btn"
+                  onclick="copyCreativeShareLink()"
+                  style="flex-shrink:0;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11.5px;color:var(--em-dark);cursor:pointer;white-space:nowrap;margin-right:6px"
+                  title="このクリエイティブを直接開けるリンクをコピーします">
+            🔗 共有
+          </button>
           <!-- 事後修正モード起動ボタン（権限ありのみ表示） -->
           <button id="cd-postedit-btn"
                   onclick="openCreativePostEdit()"
@@ -35002,6 +35010,24 @@ async function refreshCreativeEditHistory(creativeId) {
 
   list.innerHTML = html;
   sec.style.display = '';
+}
+
+// クリエイティブ詳細を直接開く共有リンクをクリップボードへコピー。
+// 受け取った URL を開くと applyDeepLinkOnLoad() 相当の処理（?creative=<id>）で詳細モーダルが自動で開く。
+async function copyCreativeShareLink() {
+  if (!currentCreativeDetail || !currentCreativeDetail.id) return;
+  const url = `${location.origin}${location.pathname}?creative=${encodeURIComponent(currentCreativeDetail.id)}`;
+  const btn = document.getElementById('cd-share-btn');
+  const restore = () => { if (btn) { btn.textContent = '🔗 共有'; btn.disabled = false; } };
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { btn.textContent = '✅ コピー済み'; btn.disabled = true; }
+    showToast('共有リンクをコピーしました', 'success');
+    setTimeout(restore, 2000);
+  } catch (e) {
+    try { window.prompt('この URL をコピーして共有してください', url); } catch (_) {}
+    showToast('クリップボード API が使えないため URL を表示しました', 'info');
+  }
 }
 
 // 事後修正モーダルを開く
