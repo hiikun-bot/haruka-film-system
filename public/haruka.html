@@ -10743,7 +10743,8 @@ function renderCreatives() {
   }));
 
   const today = new Date();
-  tbody.innerHTML = filtered.map(c => {
+  // 1行分の <tr> HTML を生成する関数（フラット描画とグルーピング描画で共用）
+  const renderCreativeRow = (c) => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
     const editorName = editor?.users ? NameDisplay.full(editor.users) : '-';
     const rank = editor?.rank_applied || editor?.users?.rank || '-';
@@ -10824,8 +10825,79 @@ function renderCreatives() {
       </td>
       <td onclick="event.stopPropagation()"><button onclick="openCreativeEdit('${c.id}')" style="font-size:11px;padding:4px 10px;background:#fff;border:0.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--text-muted);white-space:nowrap">修正</button></td>
     </tr>`;
+  };
 
-  }).join('');
+  // ── グルーピング用の補助（リスト表示専用） ──
+  const teamForCreative = (c) => {
+    const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+    const editorUserId = editor?.users?.id;
+    const homeTeamId = editor?.users?.team_id;
+    return (c.team_id ? teamById.get(c.team_id) : null)
+      || (homeTeamId ? teamById.get(homeTeamId) : null)
+      || (editorUserId ? teamByMember.get(editorUserId) : null);
+  };
+  const editorForCreative = (c) => c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+
+  // colspan は常に 14（チェックボックス + 13カラム）。
+  // ランクは showRank=false でも CSS で非表示にしているだけで <td> は生成されるので colspan は変えない。
+  const GROUP_COLSPAN = 14;
+  const teamLabelFor = (team) => {
+    if (!team) return 'チーム未設定';
+    const code = team.team_code || '';
+    const name = team.team_name || '';
+    const baseRaw = name || code;
+    if (/チーム$/.test(baseRaw)) {
+      return (name && code && name !== code) ? `${code} / ${name}` : baseRaw;
+    } else if (code && name && name !== code) {
+      return `${code} / ${name}チーム`;
+    } else {
+      return `${baseRaw}チーム`;
+    }
+  };
+  const groupKeyLabel = (c) => {
+    if (currentCreativeGroup === 'assignee') {
+      const ed = editorForCreative(c);
+      const u  = ed?.users;
+      return { key: u?.id || 'unassigned', label: u ? NameDisplay.full(u) : '未アサイン', sort: u ? NameDisplay.full(u) : 'zzz_未アサイン' };
+    }
+    if (currentCreativeGroup === 'client') {
+      const cli = c.projects?.clients;
+      return { key: cli?.id || 'unknown-client', label: cli?.name || '不明クライアント', sort: cli?.name || 'zzz_不明' };
+    }
+    if (currentCreativeGroup === 'team') {
+      const team = teamForCreative(c);
+      return { key: team?.id || 'no-team', label: teamLabelFor(team), sort: team?.team_code || team?.team_name || 'zzz_未設定' };
+    }
+    // 既定: 案件別（クライアント名 / 案件名）
+    const cli  = c.projects?.clients;
+    const proj = c.projects?.name || '案件未設定';
+    const cliName = cli?.name || '不明クライアント';
+    return {
+      key: `${c.projects?.id || 'none'}::${cli?.id || 'none'}`,
+      label: `${cliName} / ${proj}`,
+      sort: `${cliName}__${proj}`,
+    };
+  };
+
+  const inListMode = (currentCreativeMode === 'list');
+  if (!inListMode) {
+    // ガント表示中はリスト自体が隠れているのでフラット描画で十分
+    tbody.innerHTML = filtered.map(renderCreativeRow).join('');
+  } else {
+    // リスト表示: ガントと同じ currentCreativeGroup でグループ見出しを差し込む
+    const groups = new Map();
+    filtered.forEach(c => {
+      const { key, label, sort } = groupKeyLabel(c);
+      if (!groups.has(key)) groups.set(key, { label, sort, items: [] });
+      groups.get(key).items.push(c);
+    });
+    // グループ順は名称ベースで安定ソート（未アサイン/未設定は末尾に寄せる）
+    const ordered = Array.from(groups.values()).sort((a, b) => String(a.sort).localeCompare(String(b.sort), 'ja'));
+    tbody.innerHTML = ordered.map(g => {
+      const head = `<tr class="cv-list-group-head"><td colspan="${GROUP_COLSPAN}" style="background:var(--em-pale,#f6f0ff);padding:8px 12px;font-size:12px;font-weight:700;color:var(--em-dark,#5E35B1);border-top:0.5px solid var(--border);border-bottom:0.5px solid var(--border);letter-spacing:.04em">${esc(g.label)} <span style="color:var(--text-muted);font-weight:500;margin-left:6px">(${g.items.length}件)</span></td></tr>`;
+      return head + g.items.map(renderCreativeRow).join('');
+    }).join('');
+  }
   initTableScrollHint();
   renderCreativeLoadMore();
 }
@@ -10897,8 +10969,9 @@ function setCreativeMode(mode) {
   const list = document.getElementById('creative-view-list');
   if (gantt) gantt.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
   if (list)  list.style.display  = (currentCreativeMode === 'gantt') ? 'none' : '';
-  // ガント専用UI（グループ/期間/期間ナビ）はリスト時に隠す
-  const ganttOnly = ['cv-group-seg-wrap','cv-group-divider','cv-range-seg-wrap','cv-range-divider','cv-tb-period-nav'];
+  // ガント専用UI（期間/期間ナビ）はリスト時に隠す。
+  // グループ切替（案件別/クライアント別/担当者別/チーム別）はリスト表示でも有効なので残す。
+  const ganttOnly = ['cv-range-seg-wrap','cv-range-divider','cv-tb-period-nav'];
   ganttOnly.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = (currentCreativeMode === 'gantt') ? '' : 'none';
