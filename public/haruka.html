@@ -35410,6 +35410,13 @@ function _verupRebuildReporterFilter(resetReporterValue) {
       emptyValue: '',
       title: '報告者で絞り込み',
       allowedRoles: roleFilter ? [roleFilter] : null,
+      // ピッカーを開いた瞬間にログイン中の自分で検索ボックスを初期化（モーダル開く度に再評価）。
+      // 「自分の報告したやつだけ見たい」が一番多い動線のため。クリアすれば従来通り全員から選べる。
+      initialQuery: () => {
+        const me = currentUser || (typeof window !== 'undefined' ? window.currentUser : null);
+        if (!me) return '';
+        return (me.nickname || me.full_name || '').trim();
+      },
       onChange: () => { try { renderVerupList(); } catch (_) {} },
     });
     _verupReporterPickerBound = true;
