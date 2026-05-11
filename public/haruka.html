@@ -3585,6 +3585,7 @@ window.showPage = window.showPage || function(name, btn) {
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
+    <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
   </div>
   <div class="header-right">
     <!-- ロールプレビュー（管理者のみ）。ヘッダー幅圧迫を避けるためポップオーバーに圧縮 -->
@@ -3755,6 +3756,7 @@ window.showPage = window.showPage || function(name, btn) {
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
+    <button class="nav-drawer-btn" id="nav-drawer-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">🗂️ 素材広場</button>
     <div class="nav-drawer-account">
       <a class="nav-drawer-btn nav-drawer-account-btn" href="/guide.html" target="_blank" style="text-decoration:none">📖 新メンバー向けガイド</a>
       <button class="nav-drawer-btn nav-drawer-account-btn" onclick="closeNavDrawer();openChangePasswordModal()">🔑 パスワード変更</button>
@@ -6838,6 +6840,44 @@ window.showPage = window.showPage || function(name, btn) {
     <div id="kv-player-meta" style="margin-top:12px;font-size:13px;color:var(--text-muted);display:flex;gap:12px;align-items:center;flex-wrap:wrap"></div>
     <div id="kv-player-description" style="margin-top:8px;font-size:13px;color:var(--text);white-space:pre-wrap"></div>
   </div>
+</div>
+
+<!-- ==================== 🗂️ 素材広場（admin限定 / test・experimental） ==================== -->
+<!-- 将来「素材一覧」「タグ検索」等を増やせるよう、タブ内をセクション分けで作る。
+     初期 MVP は「動画整理ツール」セクション 1 つだけ。
+     Vertex AI Gemini の従量課金事故と Drive 上の事故リネーム/移動を防ぐため、
+     登録 → AI解析（要承認）→ 適用（DRY_RUN=true で予定だけ表示） の 3 段階 UI。-->
+<div id="page-material-square" class="page">
+  <div class="page-header">
+    <h2>🗂️ 素材広場 <span style="font-size:12px;color:var(--text-muted);font-weight:normal;margin-left:8px">（test / experimental）</span></h2>
+  </div>
+
+  <!-- セクション: 動画整理ツール -->
+  <section class="card" style="margin-top:12px">
+    <div class="card-header" style="display:flex;align-items:center;gap:8px">
+      <h3 style="margin:0">🧪 動画整理ツール</h3>
+      <span id="vot-daily-counter" style="font-size:12px;color:var(--text-muted)"></span>
+    </div>
+    <div class="card-body">
+      <p style="color:var(--text-muted);font-size:13px;margin:0 0 12px">
+        Google Drive 上の動画ファイル ID を入力して登録 → AI解析を承認 → 提案を確認 → 適用 の順で動かします。
+        Vertex AI Gemini は <b>「🤖 AI解析する」ボタンを押した時だけ</b>呼び出されます（従量課金）。
+        現在の運用フラグ: <code id="vot-mode-badge"></code>
+      </p>
+
+      <!-- 登録フォーム -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+        <input type="text" id="vot-fileid-input" placeholder="Google Drive の fileId（例: 1aBcDeFgHi...）"
+               style="flex:1;min-width:300px;padding:8px;border:1px solid var(--border);border-radius:6px;font-family:monospace;font-size:13px">
+        <button type="button" class="btn-primary" onclick="votRegister()">🔍 登録（解析しない）</button>
+      </div>
+
+      <!-- 一覧 -->
+      <div id="vot-list" style="display:flex;flex-direction:column;gap:12px">
+        <div style="color:var(--text-muted);font-size:13px">読み込み中…</div>
+      </div>
+    </div>
+  </section>
 </div>
 
 <!-- ==================== つぶやき独立タブ（リベシティ風） ==================== -->
@@ -14277,6 +14317,15 @@ function applyRoleBasedUI() {
   if (masterNav) masterNav.style.display = hasPermission('master.page') ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
   if (drawerMaster) drawerMaster.style.display = hasPermission('master.page') ? '' : 'none';
+  // 素材広場ナビ — admin のみ（VIEW AS にも追従するため effectiveRole で判定）
+  // ADR 015 (VIEW AS チェックリスト) に従い、currentUser.role の直書きを避け
+  // effectiveRole() で出し分ける。サーバ側も requireRole('admin') で重ねがけ。
+  const canMaterialSquare = effectiveRole() === 'admin';
+  const materialSquareNav = document.getElementById('nav-material-square');
+  if (materialSquareNav) materialSquareNav.style.display = canMaterialSquare ? '' : 'none';
+  const drawerMaterialSquare = document.getElementById('nav-drawer-material-square');
+  if (drawerMaterialSquare) drawerMaterialSquare.style.display = canMaterialSquare ? '' : 'none';
+
   // 分析・集計ナビ
   // - analytics.view (経営系・全集計): admin / secretary のみ
   // - analytics.bug_reports.view (バグ報告件数): 全ロール開放
@@ -18640,6 +18689,7 @@ function showPage(name, btn) {
   if(name==='knowledge') initKnowledgePage();
   if(name==='analytics') initAnalyticsPage();
   if(name==='tweets')   loadTweetsPage();
+  if(name==='material-square') loadMaterialSquarePage();
 
   // つぶやき独立ページの FAB 表示制御（このページの時だけ表示）
   const tweetsFab = document.getElementById('tweets-fab');
@@ -37269,6 +37319,186 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   });
+}
+
+// ==================== 🗂️ 素材広場 / 動画整理ツール（test / experimental） ====================
+// 設計の核:
+//   - 全 API は /api/admin/video-organization-test/* に集約
+//   - register → analyze（要承認）→ apply（DRY_RUN=true で予定差分のみ）
+//   - サーバ側で feature flag OFF なら 404 が返り、UI は無効化メッセージを出すだけ
+const VOT_API_BASE = '/api/admin/video-organization-test';
+
+async function votFetch(path, opts) {
+  const res = await fetch(VOT_API_BASE + path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    ...(opts || {}),
+  });
+  let body = null;
+  try { body = await res.json(); } catch (_) { body = null; }
+  if (!res.ok) {
+    const msg = body?.error || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+async function loadMaterialSquarePage() {
+  const listEl = document.getElementById('vot-list');
+  const counterEl = document.getElementById('vot-daily-counter');
+  const modeEl = document.getElementById('vot-mode-badge');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">読み込み中…</div>';
+  try {
+    const data = await votFetch('/list');
+    const items = data.items || [];
+    const daily = data.daily || {};
+    if (counterEl) counterEl.textContent = `本日のAI解析: ${daily.count || 0} / ${daily.limit || 5}`;
+    if (modeEl) {
+      const mode = (daily.exceeded ? '⚠️ 日次上限到達' : 'OK');
+      modeEl.textContent = mode;
+    }
+    if (items.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:24px;text-align:center;border:1px dashed var(--border);border-radius:8px">まだ登録された動画はありません</div>';
+      return;
+    }
+    listEl.innerHTML = items.map(votRenderItem).join('');
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:var(--danger);font-size:13px">読み込み失敗: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function votEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function votFmtSize(bytes) {
+  if (!bytes) return '-';
+  const mb = Number(bytes) / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(Number(bytes) / 1024).toFixed(1)} KB`;
+}
+
+function votStatusBadge(status) {
+  const map = {
+    pending:             { label: 'pending',             color: '#6b7280' },
+    waiting_approval:    { label: 'AI解析の承認待ち',     color: '#f59e0b' },
+    processing:          { label: 'AI解析中',             color: '#3b82f6' },
+    analysis_completed:  { label: '候補確認待ち',         color: '#10b981' },
+    apply_pending:       { label: '適用承認待ち',         color: '#8b5cf6' },
+    applied:             { label: '適用済み',             color: '#059669' },
+    failed:              { label: '失敗',                 color: '#dc2626' },
+    skipped:             { label: 'スキップ',             color: '#6b7280' },
+    stopped:             { label: 'STOP_ALL停止',         color: '#dc2626' },
+  };
+  const s = map[status] || { label: status, color: '#6b7280' };
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;color:#fff;background:${s.color}">${votEscape(s.label)}</span>`;
+}
+
+function votRenderItem(item) {
+  const fid = votEscape(item.drive_file_id);
+  const isWaiting = item.status === 'waiting_approval' || item.status === 'failed';
+  const canApply = item.status === 'analysis_completed';
+  const proposal = canApply ? `
+    <div style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-subtle)">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">📝 提案</div>
+      <div style="font-size:13px;line-height:1.6">
+        <div><b>現:</b> <span style="color:var(--text-muted)">${votEscape(item.current_filename || '-')}</span></div>
+        <div><b>新:</b> ${votEscape(item.recommended_filename || '-')}</div>
+        <div style="margin-top:4px"><b>現フォルダ:</b> <span style="color:var(--text-muted)">${votEscape(item.current_parent_folder_name || '-')}</span></div>
+        <div><b>移動先:</b> ${votEscape(item.recommended_folder || '-')}</div>
+        <div style="margin-top:4px">
+          <b>confidence:</b> ${item.confidence == null ? '-' : item.confidence}
+          ${item.needs_human_review ? '<span style="color:#dc2626;margin-left:8px">⚠ 要人間確認</span>' : ''}
+        </div>
+        <div style="margin-top:4px"><b>理由:</b> <span style="color:var(--text-muted)">${votEscape(item.reason || '-')}</span></div>
+        <div style="margin-top:4px"><b>要約:</b> <span style="color:var(--text-muted)">${votEscape(item.summary || '-')}</span></div>
+      </div>
+    </div>
+  ` : '';
+
+  const errorBlock = item.error_message ? `
+    <div style="margin-top:8px;font-size:12px;color:var(--danger)">エラー: ${votEscape(item.error_message)}</div>
+  ` : '';
+
+  return `
+    <div class="card" style="padding:12px" data-fid="${fid}">
+      <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:14px;word-break:break-all">📹 ${votEscape(item.current_filename || item.original_filename || fid)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+            ${votStatusBadge(item.status)}
+            <span style="margin-left:8px">size: ${votFmtSize(item.file_size)}</span>
+            ${item.video_duration_seconds ? `<span style="margin-left:8px">${item.video_duration_seconds}s</span>` : ''}
+            ${item.dry_run ? '<span style="margin-left:8px;color:#f59e0b">DRY_RUN</span>' : ''}
+            <span style="margin-left:8px">attempts: ${item.attempt_count || 0}</span>
+          </div>
+          ${item.drive_url ? `<div style="font-size:12px;margin-top:4px"><a href="${votEscape(item.drive_url)}" target="_blank" rel="noopener">Drive で開く ↗</a></div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+          ${isWaiting ? `<button class="btn-primary" style="font-size:12px;padding:6px 10px" onclick="votAnalyze('${fid}')">🤖 AI解析する（課金発生）</button>` : ''}
+          ${canApply ? `<button class="btn-primary" style="font-size:12px;padding:6px 10px" onclick="votApply('${fid}')">✅ 適用する</button>` : ''}
+          <button class="btn-secondary" style="font-size:12px;padding:6px 10px" onclick="votDelete('${fid}')">🗑 削除</button>
+        </div>
+      </div>
+      ${proposal}
+      ${errorBlock}
+    </div>
+  `;
+}
+
+async function votRegister() {
+  const input = document.getElementById('vot-fileid-input');
+  const fileId = (input?.value || '').trim();
+  if (!fileId) { showToast('fileId を入力してください', 'error'); return; }
+  try {
+    await votFetch('/register', { method: 'POST', body: JSON.stringify({ fileId }) });
+    showToast('登録しました（まだ AI には送っていません）', 'success');
+    if (input) input.value = '';
+    loadMaterialSquarePage();
+  } catch (e) {
+    showToast('登録失敗: ' + e.message, 'error');
+  }
+}
+
+async function votAnalyze(fileId) {
+  if (!confirm('Vertex AI Gemini で解析します。\n従量課金が発生します。\n本当に実行しますか？')) return;
+  try {
+    showToast('AI解析を開始しました…', 'info');
+    await votFetch('/analyze', { method: 'POST', body: JSON.stringify({ fileId }) });
+    showToast('AI解析が完了しました', 'success');
+    loadMaterialSquarePage();
+  } catch (e) {
+    showToast('解析失敗: ' + e.message, 'error');
+    loadMaterialSquarePage();
+  }
+}
+
+async function votApply(fileId) {
+  if (!confirm('提案内容を適用します。\n（DRY_RUN=true の間は予定差分のみ返ります）\n実行しますか？')) return;
+  try {
+    const result = await votFetch('/apply', { method: 'POST', body: JSON.stringify({ fileId }) });
+    if (result?.dry_run) {
+      showToast('DRY_RUN: 適用予定だけ確認しました（Drive 上は無変更）', 'success');
+    } else {
+      showToast('適用しました', 'success');
+    }
+    loadMaterialSquarePage();
+  } catch (e) {
+    showToast('適用失敗: ' + e.message, 'error');
+  }
+}
+
+async function votDelete(fileId) {
+  if (!confirm('この登録レコードを削除しますか？（Drive 上のファイルは消えません）')) return;
+  try {
+    await votFetch('/' + encodeURIComponent(fileId), { method: 'DELETE' });
+    showToast('削除しました', 'success');
+    loadMaterialSquarePage();
+  } catch (e) {
+    showToast('削除失敗: ' + e.message, 'error');
+  }
 }
 </script>
 
