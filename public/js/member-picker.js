@@ -203,10 +203,15 @@
     el.classList.remove('hidden');
     el.querySelector('.mp-title').textContent = opts.title;
     const searchInput = el.querySelector('.mp-search-input');
-    searchInput.value = '';
+    // 検索ボックスの初期値: opts.initialQuery が関数なら毎回評価、文字列ならそのまま。
+    // ピッカーを開いた瞬間に「自分の名前で絞り込み」たいケース（Verup の報告者ピッカー等）で使用。
+    const initialQuery = typeof opts.initialQuery === 'function'
+      ? (opts.initialQuery() || '')
+      : (opts.initialQuery || '');
+    searchInput.value = initialQuery;
 
     const session = {
-      query: '',
+      query: initialQuery,
       activeRoles: new Set(),
       selectedIds: new Set(),
       includeEmpty: false,

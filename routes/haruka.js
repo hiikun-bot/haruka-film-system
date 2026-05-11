@@ -15139,7 +15139,7 @@ router.get('/bug-reports/:id', requireAuth, async (req, res) => {
   }
 });
 
-// PUT /api/haruka/bug-reports/:id - 更新（admin or assignee or 報告者本人）
+// PUT /api/haruka/bug-reports/:id - 更新（admin/secretary or assignee or 報告者本人）
 router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   try {
     const { data: row, error: getErr } = await supabase
@@ -15148,10 +15148,11 @@ router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), asy
     if (!row) return res.status(404).json({ error: 'not found' });
 
     const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isSecretary = await requesterHasAnyRole(req, ['secretary']);
     const isReporter = !row.is_anonymous && row.reporter_user_id && req.user?.id === row.reporter_user_id;
     const isAssignee = row.assignee_user_id && req.user?.id === row.assignee_user_id;
-    if (!isAdmin && !isReporter && !isAssignee) {
-      return res.status(403).json({ error: '編集権限がありません（報告者本人 or 対応者 or 管理者のみ）' });
+    if (!isAdmin && !isSecretary && !isReporter && !isAssignee) {
+      return res.status(403).json({ error: '編集権限がありません（報告者本人 or 対応者 or 管理者・秘書のみ）' });
     }
 
     let payload;
