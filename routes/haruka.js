@@ -11752,16 +11752,19 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer, opts = {}) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-  const dirAssign = assignments?.find(a => a.role === 'director');
-  const prodAssign = assignments?.find(a => a.role === 'producer');
+  // Dチェック・Pチェック は複数アサイン可。代表（先頭）に加え holders[] / user_ids[] / holder_users[] を全員分返す。
+  const dirAssignsAll  = (assignments || []).filter(a => a.role === 'director'  && a.users);
+  const prodAssignsAll = (assignments || []).filter(a => a.role === 'producer' && a.users);
+  const dirAssign  = dirAssignsAll[0]  || null;
+  const prodAssign = prodAssignsAll[0] || null;
 
   const editorName = editor?.users?.full_name || '編集者';
   const editorId = editor?.users?.id || null;
   // editor の users オブジェクト（avatar_url / nickname 等を含む）。詳細モーダルでアバター表示するために返す。
   const editorUser = editor?.users || null;
 
-  // ディレクター名 / ID / user オブジェクト の優先順位:
-  //   1. assignment 直接（role='director' の creative_assignments）
+  // ディレクター名 / ID / user オブジェクト の優先順位（代表 = holders[0]）:
+  //   1. assignment 直接（role='director' の creative_assignments）— 複数可
   //   2. projects.director_id（案件専用ディレクター・本来の最優先設定）
   //   3. 編集者のチーム代表ディレクター（フォールバック）
   //   4. 編集者の所属メンバー → チーム代表（フォールバック）
@@ -11769,10 +11772,14 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
   let directorName = dirAssign?.users?.full_name;
   let directorId = dirAssign?.users?.id || null;
   let directorUser = dirAssign?.users || null;
+  let directorNames = dirAssignsAll.map(a => a.users?.full_name).filter(Boolean);
+  let directorIds   = dirAssignsAll.map(a => a.users?.id).filter(Boolean);
+  let directorUsers = dirAssignsAll.map(a => a.users).filter(Boolean);
   if (!directorName && projectDirector) {
     directorName = projectDirector.full_name || '';
     directorId   = projectDirector.id || null;
     directorUser = projectDirector || null;
+    if (directorName) { directorNames = [directorName]; directorIds = directorId ? [directorId] : []; directorUsers = directorUser ? [directorUser] : []; }
   }
   if (!directorName && editor?.users) {
     const u = editor.users;
@@ -11788,11 +11795,12 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     directorUser = (u.team_id && dUserByTeamId?.get(u.team_id))
       || (u.id && dUserByUserId?.get(u.id))
       || null;
+    if (directorName) { directorNames = [directorName]; directorIds = directorId ? [directorId] : []; directorUsers = directorUser ? [directorUser] : []; }
   }
   directorName = directorName || 'ディレクター';
 
-  // プロデューサー名 / ID / user オブジェクト の優先順位（Dチェックと完全対称）:
-  //   1. assignment 直接（role='producer' の creative_assignments）
+  // プロデューサー名 / ID / user オブジェクト の優先順位（Dチェックと完全対称・代表 = holders[0]）:
+  //   1. assignment 直接（role='producer' の creative_assignments）— 複数可
   //   2. projects.producer_id（案件担当プロデューサー）
   //   3. 'プロデューサー' リテラル（user オブジェクトは null）
   // 注: producer はディレクターのような「チーム代表」概念が無いので
@@ -11800,30 +11808,47 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
   let producerName = prodAssign?.users?.full_name;
   let producerId   = prodAssign?.users?.id || null;
   let producerUser = prodAssign?.users || null;
+  let producerNames = prodAssignsAll.map(a => a.users?.full_name).filter(Boolean);
+  let producerIds   = prodAssignsAll.map(a => a.users?.id).filter(Boolean);
+  let producerUsers = prodAssignsAll.map(a => a.users).filter(Boolean);
   if (!producerName && projectProducer) {
     producerName = projectProducer.full_name || '';
     producerId   = projectProducer.id || null;
     producerUser = projectProducer || null;
+    if (producerName) { producerNames = [producerName]; producerIds = producerId ? [producerId] : []; producerUsers = producerUser ? [producerUser] : []; }
   }
   producerName = producerName || 'プロデューサー';
 
+  // 単独ホルダー用 shape（holders/user_ids/holder_users は1件 or 空のリスト）
+  const single = (name, type, id, user) => ({
+    holder: name, type, user_id: id, holder_user: user,
+    holders: name ? [name] : [], user_ids: id ? [id] : [], holder_users: user ? [user] : [],
+  });
+  // 複数ホルダー shape（代表は先頭、配列に全員を含む）
+  const multi = (name, type, id, user, names, ids, users) => ({
+    holder: name, type, user_id: id, holder_user: user,
+    holders: names.length ? names : (name ? [name] : []),
+    user_ids: ids,
+    holder_users: users,
+  });
+
   const ballMap = {
-    '未着手': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    '制作中（初稿提出前）': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    '台本制作': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    '素材・ナレ作成': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    '編集': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    'Dチェック': { holder: directorName, type: 'director', user_id: directorId, holder_user: directorUser },
-    'Dチェック後修正': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    'Pチェック': { holder: producerName, type: 'producer', user_id: producerId, holder_user: producerUser },
-    'Pチェック後修正': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    'クライアントチェック中': { holder: 'クライアント', type: 'client', holder_user: null },
+    '未着手': single(editorName, 'editor', editorId, editorUser),
+    '制作中（初稿提出前）': single(editorName, 'editor', editorId, editorUser),
+    '台本制作': single(editorName, 'editor', editorId, editorUser),
+    '素材・ナレ作成': single(editorName, 'editor', editorId, editorUser),
+    '編集': single(editorName, 'editor', editorId, editorUser),
+    'Dチェック': multi(directorName, 'director', directorId, directorUser, directorNames, directorIds, directorUsers),
+    'Dチェック後修正': single(editorName, 'editor', editorId, editorUser),
+    'Pチェック': multi(producerName, 'producer', producerId, producerUser, producerNames, producerIds, producerUsers),
+    'Pチェック後修正': single(editorName, 'editor', editorId, editorUser),
+    'クライアントチェック中': { holder: 'クライアント', type: 'client', holder_user: null, holders: ['クライアント'], user_ids: [], holder_users: [] },
     // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
     // 次は編集者が修正する段階。よって Dチェック後修正・Pチェック後修正と揃えて editor 単独をボール保持者とする。
-    'クライアントチェック後修正': { holder: editorName, type: 'editor', user_id: editorId, holder_user: editorUser },
-    '納品': { holder: '完了', type: 'done', holder_user: null },
+    'クライアントチェック後修正': single(editorName, 'editor', editorId, editorUser),
+    '納品': { holder: '完了', type: 'done', holder_user: null, holders: ['完了'], user_ids: [], holder_users: [] },
   };
-  return ballMap[status] || { holder: '不明', type: 'unknown', holder_user: null };
+  return ballMap[status] || { holder: '不明', type: 'unknown', holder_user: null, holders: ['不明'], user_ids: [], holder_users: [] };
 }
 
 // ==================== ball_holder_id キャッシュ同期 ====================

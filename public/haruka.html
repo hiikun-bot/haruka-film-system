@@ -10869,16 +10869,18 @@ function renderCreatives() {
       if (!isAssignee && !isProjectDirector && !isProjectProducer) return false;
     }
     if (currentView === 'ball') {
-      // ball_holder.user_id (editor/director) や user_ids ('all') で厳密判定。
-      // producer タイプは特定ユーザーに紐づかないので role で判定（admin/producer をプロデューサーと見なす）。
+      // ball_holder.user_ids[] を優先的に判定（Dチェック/Pチェック は複数アサイン可）。
+      // 旧 user_id（代表1人）も後方互換でチェック。
+      // producer タイプは role でも判定（admin/producer をプロデューサーと見なす）。
       const bh = c.ball_holder || {};
       const myId = currentUser?.id;
       const myRole = effectiveRole();
       const isProducerLike = ['producer','admin'].includes(myRole);
+      const myIdsHit = !!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId);
       let hasBall = false;
-      if (bh.type === 'editor' || bh.type === 'director') hasBall = !!myId && bh.user_id === myId;
-      else if (bh.type === 'producer') hasBall = isProducerLike;
-      else if (bh.type === 'all') hasBall = (!!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId)) || isProducerLike;
+      if (bh.type === 'editor' || bh.type === 'director') hasBall = myIdsHit || (!!myId && bh.user_id === myId);
+      else if (bh.type === 'producer') hasBall = myIdsHit || isProducerLike;
+      else if (bh.type === 'all') hasBall = myIdsHit || isProducerLike;
       if (!hasBall) return false;
     }
     return true;
@@ -10972,7 +10974,7 @@ function renderCreatives() {
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
       <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
       <td title="${esc(c.memo || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${esc(c.memo || '—')}</td>
-      <td><span class="ball-dot ${dotClass}"></span><span class="ball-name">${ball.holder}</span></td>
+      <td><span class="ball-dot ${dotClass}"></span><span class="ball-name" title="${esc((ball.holders||[ball.holder]).join('、'))}">${esc(ball.holder)}${(ball.holders && ball.holders.length>1) ? `<span style="color:var(--text-muted);font-size:12px;font-weight:400;margin-left:4px">+${ball.holders.length-1}</span>` : ''}</span></td>
       <td>
         ${draftDeadline ? `<div class="${draftDueClass}" style="font-size:13px;font-weight:500">${draftDeadline.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}</div><div style="font-size:11px;color:#B4B2A9;margin-top:2px">${draftLabel}</div>` : '<span style="color:#B4B2A9">-</span>'}
       </td>
@@ -11321,6 +11323,10 @@ function _cvIsFinalSoon(r, today) {
 function _cvBallHolderName(c) {
   const holder = c?.ball_holder;
   if (!holder || holder.type === 'done') return '';
+  // 複数アサイン時は「代表 +N」で簡潔に。サイドバー警告は横幅が限られるため。
+  if (Array.isArray(holder.holders) && holder.holders.length > 1) {
+    return `${holder.holders[0]} +${holder.holders.length - 1}`;
+  }
   return holder.holder || '';
 }
 function _cvGroupStats(items, today) {
@@ -28418,12 +28424,17 @@ async function openCreativeDetail(id) {
       return;
     }
     const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
-    // bh.holder_user が解決できているとき（editor / director / producer）のみアバター表示。
-    // クライアント / done / unknown は holder_user=null なのでアバター無しでフォールバック。
+    // bh.holder_users[] に全員（Dチェック / Pチェック は複数アサイン可）。
+    // 単独のときは従来通り「アバター22px + 名前」。複数のときは「アバター22px×N（重ね無し横並び）+ 全員の名前を読点区切り」。
+    // クライアント / done / unknown は holder_users=[] なのでアバター無しでフォールバック。
     // 担当ラベルが 40px なのに対しボール側は 22px で控えめに（担当との対比で「別人かどうか」を視認しやすく）。
-    const avatarPart = bh.holder_user ? avatarHtml(bh.holder_user, 22) : '';
+    const holderUsers = Array.isArray(bh.holder_users) && bh.holder_users.length ? bh.holder_users : (bh.holder_user ? [bh.holder_user] : []);
+    const names = Array.isArray(bh.holders) && bh.holders.length ? bh.holders : [bh.holder];
+    const avatarPart = holderUsers.length
+      ? `<span style="display:inline-flex;align-items:center;gap:3px">${holderUsers.map(u => avatarHtml(u, 22)).join('')}</span>`
+      : '';
     el.style.display = '';
-    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(bh.holder)}</span></span>`;
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(names.join('、'))}</span></span>`;
   })();
   // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
   // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
