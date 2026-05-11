@@ -35566,17 +35566,15 @@ async function openVerupModal(opts) {
   if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
   await loadVerupList();
 
-  // 報告者フィルタの初期値: ログイン中の自分（モーダルを開くたびにセット）。
+  // 報告者フィルタの初期値: 「すべての報告者」（空）。
   // 呼び出し側が initialReporter を明示した場合（revision ジャンプ等）はそれを優先。
   try {
     const hasOverride = opts && Object.prototype.hasOwnProperty.call(opts, 'initialReporter');
-    const initialReporter = hasOverride
-      ? opts.initialReporter
-      : ((typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null);
-    if (initialReporter !== null && initialReporter !== undefined) {
+    if (hasOverride) {
+      const initialReporter = opts.initialReporter;
       const sel = document.getElementById('verup-filter-reporter');
-      if (sel && String(sel.value || '') !== String(initialReporter)) {
-        sel.value = initialReporter;
+      if (sel && String(sel.value || '') !== String(initialReporter ?? '')) {
+        sel.value = initialReporter ?? '';
         renderVerupList();
       }
     }
