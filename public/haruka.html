@@ -6848,7 +6848,8 @@ window.showPage = window.showPage || function(name, btn) {
      アップロード対応（動画 mp4 / 画像 jpg/jpeg/png/webp/heic、heic は jpeg 自動変換）。-->
 <style>
   /* スタイル: 素材広場固有（既存スタイルに影響しない局所スコープ） */
-  #page-material-square .ms-layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; align-items: start; }
+  /* 左テーブル : 右プレビュー ≒ 1.4 : 1。1280px 画面で右が ~500px 確保される。 */
+  #page-material-square .ms-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(440px, 1fr); gap: 16px; align-items: start; }
   @media (max-width: 1024px) { #page-material-square .ms-layout { grid-template-columns: 1fr; } }
   #page-material-square .ms-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
   #page-material-square .ms-toolbar input,
@@ -6864,10 +6865,11 @@ window.showPage = window.showPage || function(name, btn) {
   #page-material-square .ms-tag { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px; font-size: 11px; background: #eef2f7; color: #334; cursor: pointer; }
   #page-material-square .ms-tag:hover { background: #dbe4ef; }
   #page-material-square .ms-tag.active { background: var(--primary, #3ECFCA); color: #fff; }
-  #page-material-square .ms-preview { position: sticky; top: 16px; background: #fff; border-radius: 8px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  #page-material-square .ms-preview { position: sticky; top: 16px; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  /* プレビュー領域は 16:9。幅 440-600px だと高さは 247-337px 出る。動画が見やすい */
   #page-material-square .ms-preview .ms-media { width: 100%; aspect-ratio: 16/9; background: #1a1a1a; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #888; font-size: 12px; }
   #page-material-square .ms-preview .ms-media video,
-  #page-material-square .ms-preview .ms-media img { width: 100%; height: 100%; object-fit: contain; }
+  #page-material-square .ms-preview .ms-media img { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
   #page-material-square .ms-preview h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text-muted); font-weight: 600; }
   #page-material-square .ms-preview .ms-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
   #page-material-square .ms-preview .ms-summary { font-size: 13px; line-height: 1.6; color: var(--text); }
@@ -37596,23 +37598,26 @@ function msSelectItem(fileId, scroll = true) {
   if (!media || !body) return;
 
   // メディア再生（動画は 3秒ループ自動再生・無音、画像はそのまま表示）
+  // 注意: <source> 経由だと一部ブラウザで autoplay 失敗するので src 直書きに変更。
+  // また preload="auto" にして metadata だけでなく実際のバイトを先読みさせる。
   if (item.media_kind === 'image') {
     media.innerHTML = `<img alt="" src="${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}">`;
   } else {
-    media.innerHTML = `
-      <video id="ms-preview-video" muted autoplay loop playsinline preload="metadata"
-             style="background:#000">
-        <source src="${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}" type="${votEscape(item.mime_type || 'video/mp4')}">
-      </video>
-    `;
-    // 3 秒ループ: timeupdate で 3秒超えたら頭に戻す
+    const src = `${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}`;
+    media.innerHTML = `<video id="ms-preview-video" src="${src}" muted autoplay loop playsinline preload="auto" controls></video>`;
     setTimeout(() => {
       const v = document.getElementById('ms-preview-video');
       if (!v) return;
+      // 3 秒ループ（最初の 3 秒をリピート）
       v.addEventListener('timeupdate', () => {
         if (v.currentTime > 3) v.currentTime = 0;
       });
-    }, 100);
+      // autoplay が抑止された場合の保険
+      const tryPlay = () => v.play().catch(() => {});
+      v.addEventListener('loadedmetadata', tryPlay);
+      v.addEventListener('canplay', tryPlay);
+      tryPlay();
+    }, 50);
   }
   body.style.display = '';
   document.getElementById('ms-preview-filename').textContent = item.current_filename || item.original_filename || '-';
