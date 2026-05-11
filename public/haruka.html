@@ -19553,6 +19553,8 @@ const _twPageState = {
   roleGroups: new Set(),
 };
 const _twPageOpenComments = new Set();
+// 直近の API レスポンス（カード単位の差分再描画 / 楽観的更新で参照）
+let _twPageList = [];
 const _TW_FILTER_LS_KEY = 'haruka.tweets.roleFilters.v1';
 // ロールグループ → users.role 値の対応
 //   producer は producer / producer_director の両方を対象（兼任カバー）
@@ -19726,10 +19728,45 @@ async function loadTweetsPage() {
     return;
   }
 
+  _twPageList = list;
   el.innerHTML = list.map(renderTweetCard).join('');
 
   // 開いていたコメント欄を再ロード
   _twPageOpenComments.forEach(id => loadTweetCommentsPage(id));
+}
+
+// 楽観的更新: 該当カードのリアクションを即座に反映する。
+// action: 'add' | 'remove'。他カードや並び順には触らない。
+// 戻り値: true = 反映した / false = 対象が見つからない or 既に同期済み（API スキップ可）
+function _twApplyReactionLocal(tweetId, type, action) {
+  const t = _twPageList.find(x => x.id === tweetId);
+  if (!t) return false;
+  const my = new Set(t.my_reactions || []);
+  const counts = { ...(t.reaction_counts || {}) };
+  if (action === 'add') {
+    if (my.has(type)) return false;
+    my.add(type);
+    counts[type] = (counts[type] || 0) + 1;
+  } else {
+    if (!my.has(type)) return false;
+    my.delete(type);
+    counts[type] = Math.max(0, (counts[type] || 0) - 1);
+  }
+  t.my_reactions = Array.from(my);
+  t.reaction_counts = counts;
+
+  const card = document.querySelector(`article.tweet-card[data-tweet-id="${tweetId}"]`);
+  if (!card) return true;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = renderTweetCard(t);
+  const newCard = wrap.firstElementChild;
+  if (!newCard) return true;
+  // 開いているコメント欄の中身は引き継ぐ（再フェッチで読み込み中チラつかせない）
+  const oldComments = card.querySelector('.tweet-comments-wrap');
+  const newComments = newCard.querySelector('.tweet-comments-wrap');
+  if (oldComments && newComments) newComments.innerHTML = oldComments.innerHTML;
+  card.replaceWith(newCard);
+  return true;
 }
 
 function renderTweetCard(t) {
@@ -19847,26 +19884,40 @@ document.addEventListener('click', (e) => {
 });
 
 async function addTweetReactionFromCard(tweetId, type) {
-  const res = await apiFetch(`${API}/tweets/${tweetId}/reactions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reaction_type: type }),
-  });
-  if (res.ok || res.status === 409) {
+  // 楽観的更新: 該当カードだけ即座に反映 → API は裏で投げる。
+  // 失敗時のみ loadTweetsPage() で真値同期する。
+  _twApplyReactionLocal(tweetId, type, 'add');
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction_type: type }),
+    });
+    if (!res.ok && res.status !== 409) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+      loadTweetsPage();
+    }
+  } catch (e) {
+    console.warn('[tweets-page] reaction add failed', e);
+    showToast('通信エラー', 'error');
     loadTweetsPage();
-  } else {
-    const e = await res.json().catch(() => ({}));
-    showToast('エラー: ' + (e.error || '失敗'), 'error');
   }
 }
 
 async function removeTweetReactionFromCard(tweetId, type) {
-  const res = await apiFetch(`${API}/tweets/${tweetId}/reactions/${type}`, { method: 'DELETE' });
-  if (res.ok) {
+  _twApplyReactionLocal(tweetId, type, 'remove');
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/reactions/${type}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+      loadTweetsPage();
+    }
+  } catch (e) {
+    console.warn('[tweets-page] reaction remove failed', e);
+    showToast('通信エラー', 'error');
     loadTweetsPage();
-  } else {
-    const e = await res.json().catch(() => ({}));
-    showToast('エラー: ' + (e.error || '失敗'), 'error');
   }
 }
 
