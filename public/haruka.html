@@ -35330,19 +35330,36 @@ async function loadVerupUnreadCount() {
   } catch (_) {}
 }
 
-async function openVerupModal() {
+async function openVerupModal(opts) {
   openModal('modal-verup');
   // 「新規追加」ボタンは admin のみ
   const addBtn = document.getElementById('verup-add-btn');
   const isAdmin = _verupIsAdmin();
   if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
   await loadVerupList();
+
+  // 報告者フィルタの初期値: ログイン中の自分（モーダルを開くたびにセット）。
+  // 呼び出し側が initialReporter を明示した場合（revision ジャンプ等）はそれを優先。
+  try {
+    const hasOverride = opts && Object.prototype.hasOwnProperty.call(opts, 'initialReporter');
+    const initialReporter = hasOverride
+      ? opts.initialReporter
+      : ((typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null);
+    if (initialReporter !== null && initialReporter !== undefined) {
+      const sel = document.getElementById('verup-filter-reporter');
+      if (sel && String(sel.value || '') !== String(initialReporter)) {
+        sel.value = initialReporter;
+        renderVerupList();
+      }
+    }
+  } catch (_) {}
 }
 
 // 修正履歴モーダルを開いて指定 revision_no の行へスクロール＋ハイライト
 // 用途: バグ報告の「🆙 #508」バッジをクリックすると該当 Verup のカードへ飛ぶ
 async function openVerupModalAtRevision(revisionNo) {
-  if (typeof openVerupModal === 'function') await openVerupModal();
+  // 他人の改訂にもジャンプできるよう、報告者フィルタは「全員」で開く
+  if (typeof openVerupModal === 'function') await openVerupModal({ initialReporter: '' });
   // renderVerupList が DOM を生成するまで少し待つ
   setTimeout(() => {
     try {
