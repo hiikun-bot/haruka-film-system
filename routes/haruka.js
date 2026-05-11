@@ -13216,6 +13216,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   //   to_status='Pチェック' (from='P後修正')                    → editor → producer (submit)
   //   to_status='クライアントチェック中' (from='CL後修正')      → editor → client   (submit)
   //   from='Dチェック'    → to='Pチェック'                     → director → producer (approve_handoff)
+  //   from='Dチェック'    → to='クライアントチェック中'         → director → client   (approve_handoff)  ※ Pスキップ
   //   from='Pチェック'    → to='クライアントチェック中'         → producer → client   (approve_handoff)
   //   from='クライアントチェック中' → to='納品'                → client → completed  (deliver)
   //   from='Dチェック'    → to='Dチェック後修正'               → director → editor (revise)
@@ -13333,6 +13334,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     // --- approve_handoff / deliver (承認引継・納品承認) ---
     let approveDef = null; // { fromRole, toRole, kind }
     if (from === 'Dチェック'                && to === 'Pチェック')                  approveDef = { fromRole: 'director', toRole: 'producer', kind: 'approve_handoff' };
+    else if (from === 'Dチェック'           && to === 'クライアントチェック中')    approveDef = { fromRole: 'director', toRole: 'client',   kind: 'approve_handoff' };
     else if (from === 'Pチェック'           && to === 'クライアントチェック中')    approveDef = { fromRole: 'producer', toRole: 'client',   kind: 'approve_handoff' };
     else if (from === 'クライアントチェック中' && to === '納品')                   approveDef = { fromRole: 'client',   toRole: 'completed', kind: 'deliver' };
     if (approveDef) {
