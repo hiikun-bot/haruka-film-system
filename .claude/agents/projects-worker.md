@@ -9,7 +9,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 - レギュレーション、商材、訴求軸、モデル管理
 - 案件収支・報酬モーダル
 - 対応branch: `feature/projects`
-- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/haruka-projects`
+- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/HARUKA-FILM-SYSTEM/projects`
 
 # 作業手順（必ずこの順序）
 1. **最新化**: `cd` で worktree に入り、`git fetch origin main && git checkout feature/projects && git pull origin main --no-rebase`

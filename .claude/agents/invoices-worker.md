@@ -9,7 +9,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 - インボイス制度対応、適格請求書
 - 支払い状況管理、入金消込
 - 対応branch: `feature/invoices`
-- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/haruka-invoices`
+- worktree: `/Users/takahashi_satoru/Documents/40.プログラミング/HARUKA-FILM-SYSTEM/invoices`
 
 # 作業手順（必ずこの順序）
 1. **最新化**: `cd` で worktree に入り、`git fetch origin main && git checkout feature/invoices && git pull origin main --no-rebase`
