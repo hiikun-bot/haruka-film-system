@@ -35330,36 +35330,19 @@ async function loadVerupUnreadCount() {
   } catch (_) {}
 }
 
-async function openVerupModal(opts) {
+async function openVerupModal() {
   openModal('modal-verup');
   // 「新規追加」ボタンは admin のみ
   const addBtn = document.getElementById('verup-add-btn');
   const isAdmin = _verupIsAdmin();
   if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
   await loadVerupList();
-
-  // 報告者フィルタの初期値: ログイン中の自分（モーダルを開くたびにセット）。
-  // 呼び出し側が initialReporter を明示した場合（revision ジャンプ等）はそれを優先。
-  try {
-    const hasOverride = opts && Object.prototype.hasOwnProperty.call(opts, 'initialReporter');
-    const initialReporter = hasOverride
-      ? opts.initialReporter
-      : ((typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null);
-    if (initialReporter !== null && initialReporter !== undefined) {
-      const sel = document.getElementById('verup-filter-reporter');
-      if (sel && String(sel.value || '') !== String(initialReporter)) {
-        sel.value = initialReporter;
-        renderVerupList();
-      }
-    }
-  } catch (_) {}
 }
 
 // 修正履歴モーダルを開いて指定 revision_no の行へスクロール＋ハイライト
 // 用途: バグ報告の「🆙 #508」バッジをクリックすると該当 Verup のカードへ飛ぶ
 async function openVerupModalAtRevision(revisionNo) {
-  // 他人の改訂にもジャンプできるよう、報告者フィルタは「全員」で開く
-  if (typeof openVerupModal === 'function') await openVerupModal({ initialReporter: '' });
+  if (typeof openVerupModal === 'function') await openVerupModal();
   // renderVerupList が DOM を生成するまで少し待つ
   setTimeout(() => {
     try {
@@ -35410,6 +35393,13 @@ function _verupRebuildReporterFilter(resetReporterValue) {
       emptyValue: '',
       title: '報告者で絞り込み',
       allowedRoles: roleFilter ? [roleFilter] : null,
+      // ピッカーを開いた瞬間にログイン中の自分で検索ボックスを初期化（モーダル開く度に再評価）。
+      // 「自分の報告したやつだけ見たい」が一番多い動線のため。クリアすれば従来通り全員から選べる。
+      initialQuery: () => {
+        const me = currentUser || (typeof window !== 'undefined' ? window.currentUser : null);
+        if (!me) return '';
+        return (me.nickname || me.full_name || '').trim();
+      },
       onChange: () => { try { renderVerupList(); } catch (_) {} },
     });
     _verupReporterPickerBound = true;
