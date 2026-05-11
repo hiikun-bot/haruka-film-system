@@ -2454,6 +2454,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
         var isResource = !!(e && e.target && e.target !== window && e.target.nodeType === 1);
         if (isResource) {
           var t = e.target;
+          // 素材広場プレビューは専用ハンドラ msHandlePreviewError が
+          // HTTP ステータス付きで詳細レポートを送るので、グローバル側はスキップして重複報告を避ける
+          var _src = t.src || t.currentSrc || '';
+          if (_src.indexOf('/api/admin/video-organization-test/preview/') !== -1) {
+            return;
+          }
           postAutoError({
             kind: 'resource.error',
             message: '[resource load failed] <' + (t.tagName || '?').toLowerCase() + '> ' +
@@ -37588,6 +37594,60 @@ function msClearPreview() {
   if (body) body.style.display = 'none';
 }
 
+// プレビュー読み込み失敗時のハンドラ。
+// 1) 同URLを HEAD で叩いて HTTP ステータスと content-type を取得し、Slack 自動通知に乗せる
+// 2) UI 側はエラーメッセージに差し替え（無言で空白になるのを防ぐ）
+async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
+  // <video>.error.code は MEDIA_ERR_* の数値（1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED）
+  const mediaErrCode = videoEl && videoEl.error ? videoEl.error.code : null;
+  let probe = { status: null, contentType: null, body: null, fetchError: null };
+  try {
+    const r = await fetch(src, { method: 'GET', credentials: 'same-origin', headers: { Range: 'bytes=0-1023' } });
+    probe.status = r.status;
+    probe.contentType = r.headers.get('content-type');
+    if (r.status >= 400) {
+      try { probe.body = (await r.text()).slice(0, 300); } catch (_) {}
+    }
+  } catch (e) {
+    probe.fetchError = e && e.message ? e.message : String(e);
+  }
+  // UI に失敗理由を表示
+  if (container) {
+    const statusLabel = probe.status === null ? '通信エラー'
+      : probe.status === 404 ? 'ファイルが見つかりません (404)'
+      : probe.status === 403 ? '権限エラー (403)'
+      : probe.status >= 500 ? `サーバーエラー (${probe.status})`
+      : `読み込み失敗 (${probe.status})`;
+    container.innerHTML = `<div style="padding:24px;color:var(--text-muted);font-size:13px;text-align:center;line-height:1.6">
+      <div style="font-size:24px;margin-bottom:8px">⚠️</div>
+      プレビューを読み込めませんでした<br>
+      <span style="font-size:11px">${statusLabel}</span>
+    </div>`;
+  }
+  // 自動エラーレポート（ms-preview-* 専用情報を resourceTarget に詰める）
+  try {
+    if (window.__postAutoError) {
+      window.__postAutoError({
+        kind: 'resource.error',
+        message: `[material-square preview failed] <${tag}> ${src}`,
+        stack: null,
+        url: location.href,
+        filename: src,
+        lineno: null,
+        colno: null,
+        resourceTarget: {
+          tagName: tag,
+          src,
+          id: tag === 'video' ? 'ms-preview-video' : null,
+          previewProbe: probe,
+          mediaErrorCode: mediaErrCode,
+          fileId,
+        },
+      });
+    }
+  } catch (_) {}
+}
+
 function msSelectItem(fileId, scroll = true) {
   msSelectedFileId = fileId;
   // 行のハイライト
@@ -37606,11 +37666,13 @@ function msSelectItem(fileId, scroll = true) {
   // メディア再生（動画は 3秒ループ自動再生・無音、画像はそのまま表示）
   // 注意: <source> 経由だと一部ブラウザで autoplay 失敗するので src 直書きに変更。
   // また preload="auto" にして metadata だけでなく実際のバイトを先読みさせる。
+  const previewSrc = `${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}`;
   if (item.media_kind === 'image') {
-    media.innerHTML = `<img alt="" src="${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}">`;
+    media.innerHTML = `<img alt="" src="${previewSrc}">`;
+    const img = media.querySelector('img');
+    if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
   } else {
-    const src = `${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}`;
-    media.innerHTML = `<video id="ms-preview-video" src="${src}" muted autoplay loop playsinline preload="auto" controls></video>`;
+    media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="auto" controls></video>`;
     setTimeout(() => {
       const v = document.getElementById('ms-preview-video');
       if (!v) return;
@@ -37618,6 +37680,8 @@ function msSelectItem(fileId, scroll = true) {
       v.addEventListener('timeupdate', () => {
         if (v.currentTime > 3) v.currentTime = 0;
       });
+      // 再生エラー検知（resource error）
+      v.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'video', media, v));
       // autoplay が抑止された場合の保険
       const tryPlay = () => v.play().catch(() => {});
       v.addEventListener('loadedmetadata', tryPlay);
