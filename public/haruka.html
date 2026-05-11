@@ -771,6 +771,192 @@ tr.row-help td{background:#FFFBF2}
 }
 .team-card.is-open .team-card-chev{transform:rotate(180deg)}
 
+/* ============================================================ */
+/* メンバー一覧 ビュー切替トグル（ポスター棚 / テーブル）           */
+/* ============================================================ */
+.mview-toggle{
+  display:inline-flex;align-items:center;gap:4px;
+  background:var(--em-pale);border-radius:10px;padding:3px;
+}
+.mview-toggle .mview-btn{
+  font-size:11px;padding:5px 12px;border-radius:7px;
+  border:1px solid transparent;background:transparent;color:var(--text-muted);
+  cursor:pointer;font-weight:700;transition:background .15s, color .15s, box-shadow .15s, border-color .15s;
+}
+.mview-toggle .mview-btn.active{
+  background:var(--em);color:#fff;border-color:var(--em);
+  box-shadow:0 2px 6px rgba(43,184,180,.30);
+}
+.mview-toggle .mview-btn:not(.active){border-color:rgba(15,110,86,0.18)}
+.mview-toggle .mview-btn:not(.active):hover{background:rgba(43,184,180,.10);color:var(--em-dark);border-color:rgba(43,184,180,.35)}
+
+/* ============================================================ */
+/* Netflix風 メンバーポスター棚（ロール別グリッド: 最大8列で折返し） */
+/* ============================================================ */
+.mroster-wrap{display:flex;flex-direction:column;gap:28px;padding:4px 0 80px}
+.mroster-row{position:relative}
+.mroster-row-head{
+  display:flex;align-items:baseline;justify-content:space-between;
+  padding:0 6px;margin-bottom:10px;
+}
+.mroster-row-title{
+  display:inline-flex;align-items:center;gap:10px;
+  font-size:17px;font-weight:800;color:var(--text);
+  letter-spacing:0.01em;
+}
+.mroster-row-title .mroster-emoji{font-size:18px;line-height:1}
+.mroster-row-title .mroster-count{
+  font-size:11px;font-weight:600;color:var(--em-dark);
+  background:var(--em-pale);border-radius:12px;padding:2px 9px;letter-spacing:0;
+}
+/* グリッド本体: 最大8列で折返し、横スクロールは出さない */
+.mroster-strip{
+  position:relative;
+  /* hover時の拡大カード + 下にせり出す pop（詳細パネル）がクリップされないよう
+     上下左右に余裕を持たせる。overflow:visible で外側に展開可能にする。
+     水平スクロールは .mroster-grid の max-width で発生させない設計（要件）。 */
+  padding:24px 14px 240px;
+  margin:-24px -14px -240px;
+  overflow:visible;
+}
+.mroster-grid{
+  display:grid;
+  /* 最大8列、画面幅に応じて自動で列数を減らす（widescreen 8 → 中 6 → 狭 4 → スマホ 2-3） */
+  grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
+  gap:14px;
+  /* 上限を 8 列に固定（auto-fill が 9 列以上にならないようにする） */
+  max-width:calc(8 * 172px + 7 * 14px);
+  /* grid row height はカード中身（art+info）で固定。pop は absolute なので
+     行高には算入されず、下の行は押し下げられない。 */
+  grid-auto-rows:max-content;
+}
+/* 自分カードをロール行先頭に固定するためのハイライト（控えめ） */
+.mposter.is-self{box-shadow:0 2px 10px rgba(43,184,180,0.30), 0 0 0 2px var(--em-pale)}
+
+/* ポスターカード本体 */
+.mposter{
+  position:relative;
+  width:100%;        /* グリッドのカラム幅に合わせて伸縮 */
+  min-width:0;
+  border-radius:12px;
+  background:#fff;
+  border:1px solid var(--border);
+  box-shadow:0 2px 6px rgba(15,110,86,0.06);
+  overflow:hidden;
+  cursor:pointer;
+  scroll-snap-align:start;
+  transition:transform 250ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 250ms ease;
+  display:flex;flex-direction:column;
+  /* デフォルトは中央スケール。行頭/行末は JS で data-edge を付与し、transform-origin を切り替える */
+  transform-origin:top center;
+}
+.mposter:hover{
+  /* シンプル化: ホバーは「軽く浮き上がる」だけにとどめる（旧 .mposter-pop 詳細パネルは削除）。
+     scale 1.08 + 影濃く + z-index 前面化。クリックで編集モーダルが開く。 */
+  transform:scale(1.08);
+  box-shadow:0 24px 50px rgba(15,110,86,0.22), 0 8px 16px rgba(15,110,86,0.10);
+  z-index:20;
+  transition:transform 250ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 250ms ease, z-index 0s linear 0s;
+}
+/* 行頭（左端）: 右方向に拡大して左にはみ出さない */
+.mposter[data-edge~="start"]{transform-origin:top left}
+/* 行末（右端 / 8列目）: 左方向に拡大して右にはみ出さない */
+.mposter[data-edge~="end"]{transform-origin:top right}
+
+.mposter-art{
+  position:relative;
+  height:230px; /* 約 2:3 ポスター比 */
+  border-radius:12px 12px 0 0;
+  overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(160deg, #f2fbfa 0%, #fff 100%);
+}
+.mposter-art .avatar{
+  --avatar-size:128px;
+  width:128px;height:128px;
+  font-size:48px;
+  border:3px solid rgba(255,255,255,0.85);
+  box-shadow:0 10px 24px rgba(0,0,0,0.16);
+}
+/* ロールごとのグラデーション（控えめ） */
+.mposter[data-role-grad="director"]   .mposter-art{background:linear-gradient(165deg, #DCE6F5 0%, #F4F8FE 65%, #fff 100%)}
+.mposter[data-role-grad="producer"]   .mposter-art{background:linear-gradient(165deg, #FDE4CC 0%, #FFF4E8 65%, #fff 100%)}
+.mposter[data-role-grad="editor"]     .mposter-art{background:linear-gradient(165deg, #E4D7F2 0%, #F6EFFC 65%, #fff 100%)}
+.mposter[data-role-grad="designer"]   .mposter-art{background:linear-gradient(165deg, #FAD2DD 0%, #FCEAF0 65%, #fff 100%)}
+.mposter[data-role-grad="secretary"]  .mposter-art{background:linear-gradient(165deg, #D7EBD8 0%, #F0F8F1 65%, #fff 100%)}
+.mposter[data-role-grad="admin"]      .mposter-art{background:linear-gradient(165deg, #F4E9C7 0%, #FAF5E3 65%, #fff 100%)}
+.mposter-art-icon{
+  font-size:64px;opacity:0.55;line-height:1;
+}
+.mposter-leader-badge{
+  position:absolute;top:8px;right:8px;
+  font-size:10px;font-weight:700;
+  padding:3px 7px;border-radius:10px;
+  background:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,0.15);
+  z-index:2;
+}
+.mposter-leader-badge.lb-leader{color:#7C5800;background:#FFE082}
+.mposter-leader-badge.lb-sub{color:#0D47A1;background:#BBDEFB}
+.mposter-resigned-badge{
+  position:absolute;top:8px;left:8px;
+  font-size:10px;font-weight:700;color:#A32D2D;background:#FCEBEB;
+  padding:2px 7px;border-radius:8px;z-index:2;
+}
+.mposter[data-resigned="1"] .mposter-art{filter:grayscale(0.55);opacity:0.85}
+.mposter-info{
+  padding:8px 10px 10px;
+  display:flex;flex-direction:column;gap:3px;
+  border-top:1px solid var(--border);
+  background:#fff;
+  border-radius:0 0 12px 12px;
+}
+.mposter-name{
+  font-size:13px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.mposter-name .mposter-name-sub{
+  font-size:10.5px;font-weight:400;color:var(--text-muted);margin-left:3px;
+}
+.mposter-meta{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  font-size:10.5px;color:var(--text-muted);
+  min-height:16px;
+}
+.mposter-role-chip{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:1px 6px;border-radius:8px;
+  background:var(--em-pale);color:var(--em-dark);
+  font-size:10px;font-weight:600;
+}
+.mposter-rank-chip{
+  padding:1px 5px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:0.02em;
+}
+.mposter-rank-chip.r-s{background:#FFE082;color:#7C5800}
+.mposter-rank-chip.r-a{background:#FFCCBC;color:#A12B0A}
+.mposter-rank-chip.r-b{background:#C8E6C9;color:#1B5E20}
+.mposter-rank-chip.r-c{background:#B3E5FC;color:#01579B}
+.mposter-rank-chip.r-d{background:#E1BEE7;color:#4A148C}
+.mposter-team-chip{
+  font-size:10px;font-weight:600;color:var(--em-dark);
+  background:#E6F6F5;border-radius:6px;padding:1px 5px;
+}
+
+/* レスポンシブ：スマホ */
+@media (max-width:768px){
+  .mposter{width:auto}
+  .mposter-art{height:190px}
+  .mposter-art .avatar{--avatar-size:96px;width:96px;height:96px;font-size:36px}
+  .mposter:hover{transform:none;box-shadow:0 2px 6px rgba(15,110,86,0.06)}
+  .mroster-strip{padding:8px 6px;margin:0}
+  .mroster-grid{
+    /* スマホは 2-3列 */
+    grid-template-columns:repeat(auto-fill, minmax(120px, 1fr));
+    gap:10px;
+    max-width:100%;
+  }
+}
+
 /* メンバーモーダル タブ */
 .m-tab-btn{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--text-muted);cursor:pointer;transition:color .15s,border-color .15s;white-space:nowrap}
 .m-tab-btn.active{color:var(--em-dark);border-bottom-color:var(--em-dark);font-weight:600}
@@ -4006,6 +4192,10 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="sec-label">メンバー一覧</div>
         <span id="members-count" style="font-size:12px;color:var(--text-muted);background:var(--em-pale);padding:2px 10px;border-radius:20px"></span>
         <button class="btn" id="btn-show-resigned" onclick="toggleShowResigned()" style="font-size:11px;padding:3px 10px;color:#999;border-color:#ddd">退職者を表示</button>
+        <div class="mview-toggle" role="tablist" aria-label="表示形式">
+          <button type="button" id="mview-btn-poster" class="mview-btn active" onclick="setMemberViewMode('poster')" title="ポスター棚">🎬 ポスター</button>
+          <button type="button" id="mview-btn-table" class="mview-btn" onclick="setMemberViewMode('table')" title="一覧（テーブル）">📋 一覧</button>
+        </div>
         <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
           <span>並び替え：</span>
           <button id="sort-btn-default" onclick="setMemberSort('default')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">登録順</button>
@@ -5989,19 +6179,46 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </div>
 
-      <!-- 案件開始日 + テンプレ適用 -->
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--em-pale);border-radius:8px">
+      <!-- 案件開始日 + テンプレ適用（LP/非LP 共通） -->
+      <div id="p-schedule-start-bar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--em-pale);border-radius:8px">
         <label style="font-size:12px;color:var(--text-muted);white-space:nowrap">案件開始日</label>
         <input type="date" id="p-scheduled-start-date" class="form-input" style="width:140px;padding:5px 8px;font-size:13px">
-        <span style="width:1px;height:18px;background:var(--border)"></span>
-        <label style="font-size:12px;color:var(--text-muted);white-space:nowrap">テンプレ</label>
+        <!-- ▼ 非LP 用テンプレ select。LP では JS 側で hide する -->
+        <span id="p-active-template-divider" style="width:1px;height:18px;background:var(--border)"></span>
+        <label id="p-active-template-label" style="font-size:12px;color:var(--text-muted);white-space:nowrap">テンプレ</label>
         <select id="p-active-template" class="form-input" style="min-width:200px;padding:5px 8px;font-size:13px">
           <option value="">テンプレ選択...</option>
         </select>
-        <button type="button" class="btn-primary" onclick="applyPhaseTemplate()" style="padding:5px 12px;font-size:12px;white-space:nowrap">テンプレから生成</button>
+        <button type="button" id="p-active-template-apply-btn" class="btn-primary" onclick="applyPhaseTemplate()" style="padding:5px 12px;font-size:12px;white-space:nowrap">テンプレから生成</button>
       </div>
 
-      <!-- コンパクトガント帯 -->
+      <!-- ===== LP 専用: フェーズ × ボール状態 UI（ADR 016 / PR-3） =====
+           LP 案件 (primary_category.code === 'lp') のみ表示。それ以外では JS で hidden に。
+           - 初回展開ボタン（タスク0件時）
+           - フェーズシェブロン（カテゴリの phase テンプレ 5フェーズ）
+           - 現在のフェーズ詳細（5段階のボール状態切替）
+           その下に「全タスク一覧テーブル」として既存の #p-schedule-tasks-table が続く。 -->
+      <div id="p-schedule-lp-block" style="display:none;margin-bottom:14px">
+        <!-- ▼ 初回展開（タスク0件時のみ表示） -->
+        <div id="p-schedule-lp-seed" style="display:none;padding:14px 16px;background:#EFF6FF;border:1px dashed #93C5FD;border-radius:8px;margin-bottom:12px">
+          <div style="font-size:13px;color:#1E3A8A;margin-bottom:8px">
+            この案件にはまだ工程表が作成されていません。<br>
+            カテゴリ「LP」の標準テンプレ（5フェーズ）から展開しますか？
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px">
+            <span style="font-size:11px;color:var(--text-muted)">起点日は上の「案件開始日」を使います</span>
+            <button type="button" id="p-schedule-lp-seed-btn" class="btn-primary" onclick="seedLpScheduleFromTemplate()" style="padding:6px 14px;font-size:12px;white-space:nowrap">📋 テンプレから工程表を作成</button>
+          </div>
+        </div>
+
+        <!-- ▼ フェーズシェブロン -->
+        <div id="p-schedule-lp-chevron" style="display:none;padding:12px;background:#fff;border:0.5px solid var(--border);border-radius:8px;margin-bottom:12px;overflow-x:auto"></div>
+
+        <!-- ▼ 現在のフェーズ詳細 -->
+        <div id="p-schedule-lp-phase-detail" style="display:none;padding:14px 16px;background:#fff;border:0.5px solid var(--border);border-radius:8px;margin-bottom:14px"></div>
+      </div>
+
+      <!-- コンパクトガント帯（LP では非表示） -->
       <div id="p-schedule-compact-gantt" style="margin-bottom:14px;padding:10px 12px;background:#fff;border:0.5px solid var(--border);border-radius:8px;overflow-x:auto"></div>
 
       <!-- タスクテーブル -->
@@ -6329,6 +6546,12 @@ window.showPage = window.showPage || function(name, btn) {
 }
 .cd-round-col-header .cd-rh-nav button[disabled]{ opacity:.35; cursor:not-allowed; }
 .cd-round-col-header .cd-rh-dots{ display:flex; gap:5px; align-items:center; }
+/* PR #(prev-comment-pagination): [◀ K/N ▶] の K/N 表示 */
+.cd-round-col-header .cd-rh-pageno{
+  font-size:12px; font-weight:700; color:var(--text);
+  min-width:38px; text-align:center; letter-spacing:0.04em;
+  font-variant-numeric: tabular-nums;
+}
 /* 縦セパレーター: 右カラムの左辺に細いラインを引く（PCの2カラム時のみ） */
 .cd-round-col-right{ border-left:1px solid #e0e0e0; padding-left:16px; }
 /* スマホ: 2カラム維持は厳しいので 1カラム積み上げに退避（feature/mobile で別途タブUI化予定）
@@ -7069,26 +7292,10 @@ window.showPage = window.showPage || function(name, btn) {
           <div id="cd-round-left-col" class="cd-round-col cd-round-col-left" style="min-width:0">
             <!-- 左ヘッダー（cdRenderRoundCompare() で動的描画） -->
             <div id="cd-round-left-header" class="cd-round-col-header"></div>
-            <!-- bug-report b9c7c60c: 「📺 前回（クリエイティブ）」「💬 前回（コメント）」タブ。
-                 初期は preview。ラウンドにファイルが無い場合は preview タブが disabled で
-                 自動的に comments へフォールバックする。 -->
-            <div id="cd-round-left-tabs" class="cd-round-left-tabs" style="display:flex;gap:0;background:#fafafa;border:0.5px solid var(--border);border-bottom:none;border-radius:10px 10px 0 0;overflow:hidden">
-              <button type="button" id="cd-round-left-tab-preview"
-                      class="cd-round-left-tab"
-                      data-tab="preview"
-                      onclick="cdSetRoundLeftTab('preview')"
-                      style="flex:1;background:transparent;border:none;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;letter-spacing:0.02em;transition:color .15s,border-color .15s">
-                📺 前回（クリエイティブ）
-              </button>
-              <button type="button" id="cd-round-left-tab-comments"
-                      class="cd-round-left-tab"
-                      data-tab="comments"
-                      onclick="cdSetRoundLeftTab('comments')"
-                      style="flex:1;background:transparent;border:none;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;letter-spacing:0.02em;transition:color .15s,border-color .15s">
-                💬 前回（コメント）
-              </button>
-            </div>
-            <!-- 左本体（タブ切替: preview = クリエイティブプレビュー / comments = 過去ラウンド指摘） -->
+            <!-- PR #(prev-comment-pagination): 旧 📺/💬 タブは廃止 (1ページ=1コメント時系列ページング)。
+                 タブ要素は cdRenderRoundCompare() が常に display:none で隠す。 -->
+            <div id="cd-round-left-tabs" class="cd-round-left-tabs" style="display:none"></div>
+            <!-- 左本体（コメント1個=1ページの本文 + 提出メモなら成果物カード） -->
             <div id="cd-round-left" class="cd-round-col-body" style="background:#fafafa;border:0.5px solid var(--border);border-top:none;border-radius:0 0 10px 10px;padding:14px;min-height:100px;overflow:hidden;min-width:0">
               <!-- cdRenderRoundCompare() で動的描画（タブ別パネル） -->
             </div>
@@ -9630,8 +9837,8 @@ function renderTeamsList() {
     const teamName = esc(t.team_name || '');
     const typeLabelMap = { video: '動画チーム', design: 'デザインチーム', secretary: '秘書チーム' };
     const typeLabel = typeLabelMap[t.team_type] || '動画チーム';
-    const producerName = t.producer ? esc(NameDisplay.short(t.producer)) : '';
-    const directorName = t.director ? esc(NameDisplay.short(t.director)) : '';
+    const producerName = t.producer ? esc(NameDisplay.full(t.producer)) : '';
+    const directorName = t.director ? esc(NameDisplay.full(t.director)) : '';
     return `
     <div class="team-card" id="team-card-${t.id}" onclick="toggleTeamAccordion('${t.id}')">
       <div class="team-card-head">
@@ -9724,6 +9931,32 @@ async function loadTeams() {
 // メンバー
 let showResigned = false;
 let memberSortBy = 'role';
+// 表示モード: 'poster' (Netflix風) または 'table' (テーブル一覧)
+// localStorage に永続化（タブ切替・再読み込みでも維持）
+let memberViewMode = (function(){
+  try {
+    const v = localStorage.getItem('harukaMemberViewMode');
+    return (v === 'table' || v === 'poster') ? v : 'poster';
+  } catch(_) { return 'poster'; }
+})();
+function setMemberViewMode(mode) {
+  if (mode !== 'poster' && mode !== 'table') return;
+  memberViewMode = mode;
+  try { localStorage.setItem('harukaMemberViewMode', mode); } catch(_) {}
+  // ボタンの active 切替
+  const btnP = document.getElementById('mview-btn-poster');
+  const btnT = document.getElementById('mview-btn-table');
+  if (btnP) btnP.classList.toggle('active', mode === 'poster');
+  if (btnT) btnT.classList.toggle('active', mode === 'table');
+  renderMemberList();
+}
+// 初期表示時にトグルの active 状態を同期（DOMContentLoaded 後）
+document.addEventListener('DOMContentLoaded', () => {
+  const btnP = document.getElementById('mview-btn-poster');
+  const btnT = document.getElementById('mview-btn-table');
+  if (btnP) btnP.classList.toggle('active', memberViewMode === 'poster');
+  if (btnT) btnT.classList.toggle('active', memberViewMode === 'table');
+});
 // 列ヘッダクリックによるソート上書き。null のときは memberSortBy（ピル）が使われる。
 // 値: { col: 'role'|'rank'|'team'|'name', dir: 'asc'|'desc' }
 let memberHeaderSort = null;
@@ -9896,6 +10129,20 @@ function renderMemberList() {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
   }
+  // ビューモードで分岐:
+  //   poster = Netflix風ポスター棚（ロール別グリッド、自分は左上ピン留め）
+  //   table  = テーブル一覧（旧レイアウト）
+  if (memberViewMode === 'table') {
+    renderMemberTable(list, visibleMembers);
+  } else {
+    renderMemberRoster(list, visibleMembers);
+  }
+}
+
+// テーブル一覧モード（旧 renderMemberList を復元）
+// memberSortHeaderHtml は上で既に定義済み（PR #570 で renderMemberList から呼ばれなくなったが残存していた）
+// 並び替えロジックは renderMemberList 内で適用済み。ここはレンダリングのみ。
+function renderMemberTable(list, visibleMembers) {
   const showRankCol = hasPermission('creative.rank_price_column');
   list.innerHTML = `
   <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -9958,7 +10205,6 @@ function renderMemberList() {
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.nickname ? `${esc(m.nickname)}<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${esc(m.full_name||'')}）</span>` : esc(m.full_name||'')}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
-            // ADR 008 Stage 2: leader_rank バッジ（ロールチップとは別の業務窓口表示）
             m.leader_rank === 'leader' ? ' <span style="font-size:10px;background:#FFE082;color:#7C5800;padding:1px 6px;border-radius:6px;font-weight:600">👑 リーダー</span>'
             : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
             : ''
@@ -9978,6 +10224,162 @@ function renderMemberList() {
       }).join('')}
     </tbody>
   </table>`;
+}
+
+// ---- Netflix風 ポスター棚 ----------------------------------------
+// roles マスタにはコードしか無いので、表示用のメタはこの table に集約。
+// data-role-grad はカードの背景グラデ用キー（CSSの .mposter[data-role-grad="..."]）。
+const _MROSTER_ROW_DEFS = [
+  { key:'directors',  emoji:'🎬', label:'DIRECTORS', grad:'director',  roles:['director','producer_director'] },
+  { key:'producers',  emoji:'🎥', label:'PRODUCERS', grad:'producer',  roles:['producer'] },
+  { key:'editors',    emoji:'✂️', label:'EDITORS',   grad:'editor',    roles:['editor'] },
+  { key:'designers',  emoji:'🎨', label:'DESIGNERS', grad:'designer',  roles:['designer'] },
+  { key:'secretary',  emoji:'📝', label:'秘書陣',     grad:'secretary', roles:['secretary'] },
+  { key:'admin',      emoji:'🛡️', label:'管理者',     grad:'admin',     roles:['admin'] },
+];
+
+function _mrosterRoleIcon(grad) {
+  return { director:'🎬', producer:'🎥', editor:'✂️', designer:'🎨', secretary:'📝', admin:'🛡️' }[grad] || '🎬';
+}
+
+function renderMemberRoster(list, members) {
+  // 各行用にグルーピング（並び順は members の順を保つ）
+  const groups = new Map();
+  _MROSTER_ROW_DEFS.forEach(def => groups.set(def.key, []));
+  members.forEach(m => {
+    const def = _MROSTER_ROW_DEFS.find(d => d.roles.includes(m.role));
+    if (!def) return; // 未知のロールは無視（client 等）
+    groups.get(def.key).push(m);
+  });
+
+  // 自分カードを各ロール行の先頭にピン留め
+  // - VIEW AS でロールをプレビュー中でも、ピン留めは「実際のログインユーザー」基準（ADR 015）
+  //   currentUser はそもそも実ユーザー情報なので effectiveRole() ではなく currentUser.id をそのまま使う
+  // - id の型差（uuid 文字列同士のはずだが防御的に String() で吸収）
+  // - currentUser がまだ未取得の race 対策として window.currentUser も fallback で見る
+  // - 他ロール行のソート順は memberSortBy / memberHeaderSort のまま、自分のロール行だけ unshift
+  const _self = currentUser || (typeof window !== 'undefined' ? window.currentUser : null);
+  const selfIdRaw = _self?.id;
+  const selfIdStr = selfIdRaw != null ? String(selfIdRaw) : null;
+  const isSelfMember = (m) => selfIdStr !== null && String(m.id) === selfIdStr;
+  if (selfIdStr) {
+    groups.forEach((arr) => {
+      const idx = arr.findIndex(isSelfMember);
+      if (idx > 0) {
+        const [self] = arr.splice(idx, 1);
+        arr.unshift(self);
+      }
+    });
+  }
+
+  const rowsHtml = _MROSTER_ROW_DEFS.map(def => {
+    const arr = groups.get(def.key) || [];
+    if (!arr.length) return '';
+    const cards = arr.map(m => _mrosterCardHtml(m, def, isSelfMember(m))).join('');
+    return `
+      <div class="mroster-row" data-row="${def.key}">
+        <div class="mroster-row-head">
+          <div class="mroster-row-title">
+            <span class="mroster-emoji">${def.emoji}</span>
+            <span>${esc(def.label)}</span>
+            <span class="mroster-count">${arr.length}名</span>
+          </div>
+        </div>
+        <div class="mroster-strip">
+          <div class="mroster-grid" id="mroster-grid-${def.key}">
+            ${cards}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  list.innerHTML = `<div class="mroster-wrap">${rowsHtml || '<div class="loading">該当するメンバーがいません</div>'}</div>`;
+
+  // 行頭/行末/最終行に data-edge を付与（hover overlay の transform-origin と pop の上下展開を制御）。
+  // grid auto-fill のためレスポンシブで列数が変わるので、各カードの offsetTop / offsetLeft から
+  // 同じ行のグループを動的に検出して両端を判定する。
+  _mrosterApplyEdges();
+}
+
+// hover overlay の transform-origin を制御するための edge 属性を再計算する。
+// 行頭/行末カードは hover 拡大時にグリッド外にはみ出さないよう transform-origin を切り替える。
+// resize でも呼び直す。
+function _mrosterApplyEdges() {
+  const wrap = document.querySelector('.mroster-wrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.mroster-grid').forEach(grid => {
+    const cards = Array.from(grid.querySelectorAll('.mposter'));
+    if (!cards.length) return;
+    // 同 offsetTop でグルーピング = 同じ行
+    const rows = [];
+    let cur = null;
+    let curTop = null;
+    cards.forEach(c => {
+      if (curTop === null || Math.abs(c.offsetTop - curTop) > 4) {
+        cur = [c];
+        rows.push(cur);
+        curTop = c.offsetTop;
+      } else {
+        cur.push(c);
+      }
+    });
+    rows.forEach((row) => {
+      row.forEach((card, colIdx) => {
+        const edges = [];
+        if (colIdx === 0) edges.push('start');
+        if (colIdx === row.length - 1) edges.push('end');
+        if (edges.length) card.setAttribute('data-edge', edges.join(' '));
+        else card.removeAttribute('data-edge');
+      });
+    });
+  });
+}
+
+// resize で edge を再計算（debounce）
+(function() {
+  let _t = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_t);
+    _t = setTimeout(_mrosterApplyEdges, 120);
+  });
+})();
+
+function _mrosterCardHtml(m, def, isSelf) {
+  const team = allTeams.find(t => t.id === m.team_id);
+  const canEdit = canEditMember(m);
+  const isResigned = m.is_active === false;
+  const nameMain = m.nickname ? esc(m.nickname) : esc(m.full_name || '');
+  const nameSub = m.nickname && m.full_name ? `<span class="mposter-name-sub">${esc(m.full_name)}</span>` : '';
+  const roleShort = ROLE_LABEL_SHORT[m.role] || '';
+  const roleChip = `<span class="mposter-role-chip">${esc(def.emoji)} ${esc(roleShort)}</span>`;
+  const rankChip = m.rank ? `<span class="mposter-rank-chip r-${esc(m.rank.toLowerCase())}">${esc(m.rank)}</span>` : '';
+  const teamChip = team ? `<span class="mposter-team-chip">${esc(team.team_code)}</span>` : '';
+  const leaderBadge =
+    m.leader_rank === 'leader' ? '<span class="mposter-leader-badge lb-leader">👑 リーダー</span>'
+    : m.leader_rank === 'sub_leader' ? '<span class="mposter-leader-badge lb-sub">🥈 サブ</span>'
+    : '';
+  const resignedBadge = isResigned ? '<span class="mposter-resigned-badge">退職</span>' : '';
+  // アート: アバター画像 or 大型ロールアイコン
+  const hasAvatar = !!m.avatar_url;
+  const art = hasAvatar
+    ? avatarHtml(m, 128, { className: isResigned ? 'avatar-inactive' : '' })
+    : `<div class="mposter-art-icon" aria-hidden="true">${_mrosterRoleIcon(def.grad)}</div>`;
+  // クリックは編集モーダルへ（PW/退職/削除/編集はモーダル内で完結する）。
+  // 編集権限が無いメンバー（=他人のカード）の場合もタイトル属性で情報は出るので click なし。
+  const cardClick = canEdit ? `onclick="openEditMemberById('${m.id}')"` : '';
+  return `
+    <div class="mposter${isSelf ? ' is-self' : ''}" data-role-grad="${esc(def.grad)}" data-resigned="${isResigned ? '1' : '0'}" ${cardClick}
+         title="${esc((m.nickname||'') + (m.nickname && m.full_name ? '（' + m.full_name + '）' : (m.full_name||'')))}">
+      <div class="mposter-art">
+        ${resignedBadge}
+        ${leaderBadge}
+        ${art}
+      </div>
+      <div class="mposter-info">
+        <div class="mposter-name">${nameMain}${nameSub}</div>
+        <div class="mposter-meta">${roleChip}${rankChip}${teamChip}</div>
+      </div>
+    </div>`;
 }
 
 async function loadMembers() {
@@ -15612,6 +16014,12 @@ async function executeProjectFixedItemDelete() {
 
 let _pScheduleTasks = [];
 let _pScheduleProjectId = null;
+// ADR 016: 現在モーダルで開いている案件のキャッシュ（カテゴリ判定とボール状態 UI に必要）
+let _pScheduleProject = null;
+// LP シェブロンで現在「選んでいる」フェーズ task_id（クリックで切替）。null なら自動算出。
+let _pScheduleSelectedPhaseId = null;
+// LP のボール状態定義キャッシュ（カテゴリ毎）
+const _pBallStateDefsCache = new Map(); // categoryId -> [{code,label,holder_type,sort_order}, ...]
 
 const TASK_ASSIGNEE_LABEL = {
   us:        { icon: '●', color: '#6B7280', label: '自社' },
@@ -15620,10 +16028,25 @@ const TASK_ASSIGNEE_LABEL = {
   milestone: { icon: '■', color: '#111827', label: 'マイルストーン' },
 };
 
+// ADR 016: 現在モーダルの案件が LP かどうか
+function _pScheduleIsLp() {
+  if (!_pScheduleProject) return false;
+  // primary_category（埋め込み）→ getCategory(id) の順で解決（getProjectCategory と同じ流儀）
+  const cat = (_pScheduleProject.primary_category)
+    || (typeof getCategory === 'function' ? getCategory(_pScheduleProject.primary_category_id) : null);
+  return !!(cat && cat.code === 'lp');
+}
+
 async function loadProjectSchedule(p) {
   const projectId = (p && p.id) || document.getElementById('p-id')?.value;
   if (!projectId) return;
   _pScheduleProjectId = projectId;
+  _pScheduleProject = p || null;
+  _pScheduleSelectedPhaseId = null;
+  // カテゴリキャッシュを確保（_pScheduleIsLp() で getCategory を引くため）
+  if (typeof loadCategories === 'function') {
+    try { await loadCategories(); } catch (_) {}
+  }
 
   const startInput = document.getElementById('p-scheduled-start-date');
   if (startInput) {
@@ -15639,6 +16062,8 @@ async function loadProjectSchedule(p) {
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           showToast(`開始日の保存に失敗: ${err.error || res.status}`, 'warn');
+        } else {
+          if (_pScheduleProject) _pScheduleProject.scheduled_start_date = val;
         }
       } catch (e) {
         showToast(`開始日の保存に失敗: ${e.message || ''}`, 'warn');
@@ -15646,8 +16071,24 @@ async function loadProjectSchedule(p) {
     };
   }
 
+  // LP の場合は「テンプレ select 帯」を隠す（LP は seed-from-template で default テンプレを自動採用）
+  _applyLpScheduleVisibility();
+
   await populatePhaseTemplateSelect(p);
   await reloadProjectTasks(projectId);
+}
+
+// LP モードでは UI の上段を「LP ブロック」に切り替える
+function _applyLpScheduleVisibility() {
+  const isLp = _pScheduleIsLp();
+  const lpBlock = document.getElementById('p-schedule-lp-block');
+  if (lpBlock) lpBlock.style.display = isLp ? '' : 'none';
+  // 非LP 用のテンプレ select 帯を LP では非表示に
+  ['p-active-template-divider', 'p-active-template-label', 'p-active-template', 'p-active-template-apply-btn']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = isLp ? 'none' : ''; });
+  // 既存のコンパクトガントは LP では使わない（フェーズ詳細が代替）
+  const gantt = document.getElementById('p-schedule-compact-gantt');
+  if (gantt) gantt.style.display = isLp ? 'none' : '';
 }
 
 async function populatePhaseTemplateSelect(p) {
@@ -15679,6 +16120,8 @@ async function reloadProjectTasks(projectId) {
   }
   renderProjectScheduleTasks();
   renderProjectScheduleCompactGantt();
+  // ADR 016: LP 案件はフェーズ × ボール状態 UI に追加描画
+  await renderLpScheduleUi();
 }
 
 function renderProjectScheduleTasks() {
@@ -15761,8 +16204,10 @@ function renderProjectScheduleTasks() {
             style="border:none;background:transparent;font-size:11px;width:100%">
         </td>
         <td style="padding:6px 4px;text-align:center">
-          <button type="button" onclick="deleteProjectTask('${t.id}')" title="削除"
-            style="border:none;background:transparent;cursor:pointer;color:#9CA3AF;font-size:12px;padding:2px 4px">🗑️</button>
+          ${(isPhase && t.template_item_id)
+            ? '<span title="テンプレ由来のフェーズ見出しは削除できません" style="color:#D1D5DB;font-size:12px;padding:2px 4px">🔒</span>'
+            : `<button type="button" onclick="deleteProjectTask('${t.id}')" title="削除"
+                style="border:none;background:transparent;cursor:pointer;color:#9CA3AF;font-size:12px;padding:2px 4px">🗑️</button>`}
         </td>
       </tr>
     `;
@@ -15892,6 +16337,412 @@ async function deleteProjectTask(taskId) {
     showToast(`削除に失敗: ${e.message || ''}`, 'warn');
   }
 }
+
+// ==================== ADR 016: LP フェーズ × ボール状態 UI ====================
+// LP 案件専用。フェーズシェブロン + 現在のフェーズ詳細（5段階のボール状態切替）。
+// API:
+//   - POST /api/projects/:id/tasks/seed-from-template    初回展開（既存があれば 409 → force confirm）
+//   - GET  /api/categories/:id/ball-state-definitions    ボール状態定義（カテゴリ別）
+//   - PATCH /api/projects/:id/tasks/:task_id/ball-state  ボール状態遷移
+// 権限: 編集系は hasPermission('project.create_edit') で判定（ADR 015）。
+
+const _BALL_STATE_FALLBACK_LP = [
+  { code: 'in_progress',    label: '社内作業',     holder_type: 'internal', sort_order: 1 },
+  { code: 'internal_review', label: '社内チェック', holder_type: 'internal', sort_order: 2 },
+  { code: 'client_review',  label: '先方確認',     holder_type: 'client',   sort_order: 3 },
+  { code: 'revising',       label: '修正対応',     holder_type: 'internal', sort_order: 4 },
+  { code: 'fixed',          label: 'FIX',          holder_type: 'done',     sort_order: 5 },
+];
+
+async function _loadBallStateDefsForCurrentProject() {
+  if (!_pScheduleProject) return _BALL_STATE_FALLBACK_LP;
+  const catId = _pScheduleProject.primary_category_id
+    || (_pScheduleProject.primary_category && _pScheduleProject.primary_category.id)
+    || null;
+  if (!catId) return _BALL_STATE_FALLBACK_LP;
+  if (_pBallStateDefsCache.has(catId)) return _pBallStateDefsCache.get(catId);
+  try {
+    const res = await apiFetch(`${API}/categories/${encodeURIComponent(catId)}/ball-state-definitions`);
+    const data = res.ok ? await res.json() : null;
+    const defs = (data && Array.isArray(data.definitions) && data.definitions.length)
+      ? data.definitions
+      : _BALL_STATE_FALLBACK_LP;
+    _pBallStateDefsCache.set(catId, defs);
+    return defs;
+  } catch (_) {
+    return _BALL_STATE_FALLBACK_LP;
+  }
+}
+
+function _lpPhaseTasks() {
+  // フェーズ見出し = parent_task_id IS NULL AND is_phase_header=true。sort_order 昇順。
+  return (_pScheduleTasks || [])
+    .filter(t => t.is_phase_header && !t.parent_task_id)
+    .slice()
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
+
+function _lpCurrentPhase(phases) {
+  // ball_state_code !== 'fixed' な最初のフェーズ。全 fixed なら末尾を返す（完了表示）。
+  if (!phases || !phases.length) return null;
+  const found = phases.find(p => p.ball_state_code !== 'fixed');
+  return found || phases[phases.length - 1];
+}
+
+// ADR 016: LP UI のメイン描画（reloadProjectTasks の末尾で呼ばれる）
+async function renderLpScheduleUi() {
+  _applyLpScheduleVisibility();
+  if (!_pScheduleIsLp()) return;
+
+  const lpBlock = document.getElementById('p-schedule-lp-block');
+  if (!lpBlock) return;
+
+  const seedEl = document.getElementById('p-schedule-lp-seed');
+  const chevEl = document.getElementById('p-schedule-lp-chevron');
+  const detailEl = document.getElementById('p-schedule-lp-phase-detail');
+
+  const phases = _lpPhaseTasks();
+  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : true;
+
+  // 初回展開（タスク0件）
+  if (!_pScheduleTasks || _pScheduleTasks.length === 0) {
+    if (seedEl) {
+      seedEl.style.display = canEdit ? '' : 'none';
+      const btn = document.getElementById('p-schedule-lp-seed-btn');
+      if (btn) btn.disabled = !canEdit;
+    }
+    if (chevEl) { chevEl.style.display = 'none'; chevEl.innerHTML = ''; }
+    if (detailEl) { detailEl.style.display = 'none'; detailEl.innerHTML = ''; }
+    return;
+  }
+
+  if (seedEl) seedEl.style.display = 'none';
+
+  // フェーズ見出しが無い（手動タスクだけのレア状態）
+  if (!phases.length) {
+    if (chevEl) { chevEl.style.display = 'none'; chevEl.innerHTML = ''; }
+    if (detailEl) { detailEl.style.display = 'none'; detailEl.innerHTML = ''; }
+    return;
+  }
+
+  // ボール状態定義をロード（カテゴリ単位）
+  const defs = await _loadBallStateDefsForCurrentProject();
+
+  // シェブロン描画
+  if (chevEl) {
+    chevEl.style.display = '';
+    chevEl.innerHTML = _renderLpPhaseChevronHtml(phases);
+  }
+
+  // 詳細描画（選択中フェーズ or 自動）
+  const selectedPhase = _pScheduleSelectedPhaseId
+    ? phases.find(p => p.id === _pScheduleSelectedPhaseId)
+    : null;
+  const targetPhase = selectedPhase || _lpCurrentPhase(phases);
+  if (detailEl) {
+    detailEl.style.display = '';
+    detailEl.innerHTML = _renderLpPhaseDetailHtml(targetPhase, defs, canEdit);
+  }
+}
+
+function _renderLpPhaseChevronHtml(phases) {
+  const current = _pScheduleSelectedPhaseId
+    ? phases.find(p => p.id === _pScheduleSelectedPhaseId)
+    : _lpCurrentPhase(phases);
+  const currentId = current ? current.id : null;
+  const items = phases.map((p) => {
+    const isFixed = p.ball_state_code === 'fixed' || p.is_done;
+    const isActive = p.id === currentId && !isFixed;
+    const bg = isFixed ? '#DCFCE7' : (isActive ? '#DBEAFE' : '#F3F4F6');
+    const fg = isFixed ? '#166534' : (isActive ? '#1E40AF' : '#6B7280');
+    const border = isFixed ? '#86EFAC' : (isActive ? '#93C5FD' : '#E5E7EB');
+    const icon = isFixed ? '✅' : (isActive ? '▶' : '□');
+    return `
+      <button type="button" data-phase-id="${esc(p.id)}" onclick="selectLpSchedulePhase('${esc(p.id)}')"
+        style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:6px;border:1px solid ${border};background:${bg};color:${fg};font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap"
+        title="${esc(p.title || '')}">
+        <span style="font-size:11px">${icon}</span>
+        <span>${esc(p.title || '')}</span>
+      </button>
+    `;
+  });
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${items.join('<span style="color:#9CA3AF;font-size:14px">▸</span>')}</div>`;
+}
+
+function _renderLpPhaseDetailHtml(phase, defs, canEdit) {
+  if (!phase) return '<div style="font-size:12px;color:var(--text-muted)">フェーズが見つかりません</div>';
+  const code = phase.ball_state_code || null;
+  const def = defs.find(d => d.code === code) || null;
+
+  // 期日（元日程 / 新日程 + 差分）
+  const orig = phase.original_end_date ? String(phase.original_end_date).slice(0, 10) : '';
+  const curr = phase.current_end_date ? String(phase.current_end_date).slice(0, 10) : '';
+  const start = phase.start_date ? String(phase.start_date).slice(0, 10) : '';
+  let delayText = '';
+  if (orig && curr && orig !== curr) {
+    const o = new Date(orig + 'T00:00:00').getTime();
+    const c = new Date(curr + 'T00:00:00').getTime();
+    const diffDays = Math.round((c - o) / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) delayText = `<span style="margin-left:8px;color:#DC2626;font-weight:600">+${diffDays}日遅延</span>`;
+    else if (diffDays < 0) delayText = `<span style="margin-left:8px;color:#0EA5A5;font-weight:600">${diffDays}日前倒し</span>`;
+  }
+  const datesHtml = `
+    <div style="font-size:12px;color:var(--text-muted)">
+      期日:
+      <span style="color:#0F172A">${esc(start || '—')} 〜 ${esc(curr || '—')}</span>
+      ${orig && curr && orig !== curr ? `<span style="margin-left:8px;color:#9CA3AF;text-decoration:line-through">${esc(orig)}</span>` : ''}
+      ${delayText}
+    </div>
+  `;
+
+  // 担当（assignee_type アイコン + assignee ユーザー）
+  const at = phase.assignee_type || 'us';
+  const aLabel = TASK_ASSIGNEE_LABEL[at] || TASK_ASSIGNEE_LABEL.us;
+  const assigneeUserName = phase.assignee
+    ? esc((window.NameDisplay && NameDisplay.full(phase.assignee)) || phase.assignee.nickname || phase.assignee.full_name || '')
+    : '';
+  const assigneeHtml = `
+    <div style="font-size:12px;color:var(--text-muted)">
+      担当:
+      <span style="color:${aLabel.color};font-weight:700;margin:0 4px">${aLabel.icon}</span>
+      <span style="color:#0F172A">${esc(aLabel.label)}${assigneeUserName ? `（${assigneeUserName}）` : ''}</span>
+    </div>
+  `;
+
+  // 状態（ボール状態 + 保持者）
+  const holderUser = phase.ball_holder || null;
+  const holderName = holderUser
+    ? esc((window.NameDisplay && NameDisplay.full(holderUser)) || holderUser.nickname || holderUser.full_name || '')
+    : '';
+  const stateLabel = def ? def.label : (code || '未開始');
+  const stateBg = (code === 'fixed') ? '#DCFCE7' : (def && def.holder_type === 'client' ? '#FEF3C7' : (code ? '#DBEAFE' : '#F3F4F6'));
+  const stateFg = (code === 'fixed') ? '#166534' : (def && def.holder_type === 'client' ? '#92400E' : (code ? '#1E40AF' : '#6B7280'));
+  const stateIcon = (code === 'fixed') ? '✅' : (def && def.holder_type === 'client' ? '📤' : (def && def.holder_type === 'internal' ? '🏠' : '—'));
+
+  // ボール遷移ボタン群
+  const transitionsHtml = defs.map(d => {
+    const isCurrent = d.code === code;
+    const bg = isCurrent
+      ? (d.code === 'fixed' ? '#16A34A' : '#2563EB')
+      : '#fff';
+    const fg = isCurrent ? '#fff' : '#0F172A';
+    const border = isCurrent
+      ? (d.code === 'fixed' ? '#16A34A' : '#2563EB')
+      : '#CBD5E1';
+    const icon = d.holder_type === 'client' ? '📤' : (d.holder_type === 'done' ? '✅' : '🏠');
+    const disabled = isCurrent || !canEdit;
+    return `
+      <button type="button"
+        ${disabled ? 'disabled' : ''}
+        onclick="transitionLpPhaseBallState('${esc(phase.id)}', '${esc(d.code)}')"
+        style="display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:6px;border:1px solid ${border};background:${bg};color:${fg};font-size:12px;font-weight:${isCurrent ? '700' : '500'};cursor:${disabled ? 'default' : 'pointer'};opacity:${(!isCurrent && !canEdit) ? '0.5' : '1'};white-space:nowrap"
+        title="${esc(d.label)}">
+        <span>${icon}</span><span>${esc(d.label)}</span>
+      </button>
+    `;
+  }).join(' ');
+
+  // メモ（編集可）
+  const noteHtml = `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #E5E7EB">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">メモ</div>
+      <textarea ${canEdit ? '' : 'disabled'}
+        onblur="updateTaskField('${esc(phase.id)}', 'note', this.value || null)"
+        rows="2"
+        style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;resize:vertical;background:${canEdit ? '#fff' : '#F9FAFB'}"
+        placeholder="このフェーズについてのメモ">${esc(phase.note || '')}</textarea>
+    </div>
+  `;
+
+  return `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#0F172A">▶ ${esc(phase.title || '')}</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:${stateBg};color:${stateFg};font-size:11px;font-weight:600">
+          ${stateIcon}<span>${esc(stateLabel)}</span>
+        </span>
+        ${holderName ? `<span style="font-size:11px;color:var(--text-muted)">（${holderName}${phase.ball_moved_at ? ' / ' + _formatBallMovedAt(phase.ball_moved_at) : ''}）</span>` : ''}
+      </div>
+
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">ボールの遷移:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">${transitionsHtml}</div>
+        ${!canEdit ? '<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">※ 編集権限がありません</div>' : ''}
+      </div>
+
+      ${datesHtml}
+      ${assigneeHtml}
+      ${noteHtml}
+    </div>
+  `;
+}
+
+function _formatBallMovedAt(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const mm = d.getMonth() + 1;
+    const dd = d.getDate();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${mi}〜`;
+  } catch (_) { return ''; }
+}
+
+// シェブロンクリック → 詳細ペインの対象フェーズを切替
+function selectLpSchedulePhase(phaseId) {
+  _pScheduleSelectedPhaseId = phaseId || null;
+  renderLpScheduleUi();
+}
+
+// 初回展開（テンプレ seed）
+async function seedLpScheduleFromTemplate() {
+  if (!_pScheduleProjectId) {
+    showToast('案件を保存してから工程表を作成してください', 'warn');
+    return;
+  }
+  if (typeof hasPermission === 'function' && !hasPermission('project.create_edit')) {
+    showToast('工程表を作成する権限がありません', 'warn');
+    return;
+  }
+  // 案件開始日を最新の input から拾う（保存 onchange に依存しない）
+  const startInput = document.getElementById('p-scheduled-start-date');
+  const startDate = startInput && startInput.value ? startInput.value : null;
+  if (!startDate) {
+    if (!confirm('案件開始日が未設定です。日付なしで工程表を生成しますか？\n（後でタスクごとに日付を設定する必要があります）')) return;
+  } else {
+    // サーバー側が project.scheduled_start_date を読むので先に保存する
+    try {
+      await apiFetch(`${API}/projects/${_pScheduleProjectId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduled_start_date: startDate }),
+      });
+      if (_pScheduleProject) _pScheduleProject.scheduled_start_date = startDate;
+    } catch (_) { /* 失敗しても seed 自体は試みる */ }
+  }
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/seed-from-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (res.status === 409) {
+      // 既存タスクあり: force で再展開するか確認
+      const err = await res.json().catch(() => ({}));
+      const cnt = err.existing_count || 0;
+      if (!confirm(`既存タスクが ${cnt} 件あります。すべて削除してテンプレから作り直しますか？`)) return;
+      const res2 = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/seed-from-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      if (!res2.ok) {
+        const err2 = await res2.json().catch(() => ({}));
+        showToast(`生成に失敗: ${err2.error || res2.status}`, 'warn');
+        return;
+      }
+      const data = await res2.json();
+      showToast(`${data.inserted_count || 0} 件のタスクを再生成しました`, 'ok');
+    } else if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`生成に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    } else {
+      const data = await res.json();
+      showToast(`${data.inserted_count || 0} 件のタスクを作成しました`, 'ok');
+    }
+    _pScheduleSelectedPhaseId = null;
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`生成に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+// ボール状態遷移（MemberPicker でボール保持者を選んでから PATCH）
+async function transitionLpPhaseBallState(taskId, newCode) {
+  if (!_pScheduleProjectId || !taskId || !newCode) return;
+  const phase = (_pScheduleTasks || []).find(t => t.id === taskId);
+  if (!phase) return;
+
+  // 権限: project.create_edit 持ち or 現在のボール保持者本人（サーバー側でも検証）
+  // ADR 015 例外: 「実ユーザー判定が必須」なので currentUser.id を直接参照する。
+  // ロール判定は effectiveRole() ベースの hasPermission() に委譲し、ここでは個人判定のみ。
+  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : true;
+  const isHolder = phase.ball_holder_user_id && currentUser && phase.ball_holder_user_id === currentUser.id;
+  if (!canEdit && !isHolder) {
+    showToast('ボール状態を変更する権限がありません', 'warn');
+    return;
+  }
+
+  const defs = await _loadBallStateDefsForCurrentProject();
+  const def = defs.find(d => d.code === newCode) || null;
+  if (!def) {
+    showToast(`未定義のボール状態です: ${newCode}`, 'warn');
+    return;
+  }
+
+  // ボール保持者の決定:
+  //   - fixed への遷移 → 保持者 = null（完了なので持ち主不要）
+  //   - holder_type='internal' or 'client' なら MemberPicker でユーザーを選ばせる
+  if (newCode === 'fixed') {
+    await _patchLpBallState(taskId, newCode, null);
+    return;
+  }
+
+  // MemberPicker で保持者を選ぶ
+  if (!window.MemberPicker || typeof MemberPicker.open !== 'function') {
+    // フォールバック: 保持者を変更せず状態だけ遷移
+    await _patchLpBallState(taskId, newCode, undefined);
+    return;
+  }
+  // 保持者の初期値: 現在のボール持ち / 無ければアサイニー
+  const initialHolder = phase.ball_holder_user_id || phase.assignee_user_id || null;
+  // client 状態なら、選択候補は全メンバー（クライアント側ユーザーが users にいないため、社内側の窓口担当を入れる用途）
+  const allowedRoles = null; // 全ロール
+
+  // 一時的にトリガー要素を作る（MemberPicker.open はトリガーDOM位置で表示する）
+  // 既存のクリックされたボタン要素は this 引きづらいので document.activeElement を試す。なければ body。
+  const trigger = document.activeElement && document.body.contains(document.activeElement)
+    ? document.activeElement
+    : document.body;
+
+  MemberPicker.open(trigger, {
+    mode: 'single',
+    value: initialHolder,
+    allowedRoles,
+    emptyLabel: '（持ち主なし）',
+    title: `「${def.label}」のボール持ちを選択`,
+    onChange: async (val) => {
+      const holderId = (typeof val === 'string') ? val : (Array.isArray(val) ? (val[0] || null) : null);
+      await _patchLpBallState(taskId, newCode, holderId || null);
+    },
+  });
+}
+
+async function _patchLpBallState(taskId, code, holderId /* undefined=変更しない */) {
+  const body = { ball_state_code: code };
+  if (holderId !== undefined) body.ball_holder_user_id = holderId;
+  try {
+    const res = await apiFetch(`${API}/projects/${_pScheduleProjectId}/tasks/${taskId}/ball-state`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`ボール状態の更新に失敗: ${err.error || res.status}`, 'warn');
+      return;
+    }
+    showToast('ボール状態を更新しました', 'ok');
+    await reloadProjectTasks(_pScheduleProjectId);
+  } catch (e) {
+    showToast(`ボール状態の更新に失敗: ${e.message || ''}`, 'warn');
+  }
+}
+
+// ==================== /ADR 016: LP UI ====================
 
 async function applyPhaseTemplate() {
   if (!_pScheduleProjectId) {
@@ -25969,25 +26820,39 @@ function fillCommentTemplate() {
 }
 
 // ============================================================
-// ADR 011: クリエイティブ詳細モーダル ラウンド比較型UI
+// ADR 011 v2: クリエイティブ詳細モーダル「前回」セクション
+//             時系列ページング型 UI
 // ============================================================
 //
+// PR #(prev-comment-pagination) / 髙橋指示 2026-05-10:
+//   旧 dedup ベース（snapshot+孤児handoff+初回提出仮想ラウンド合成）は撤廃。
+//   新仕様: GET /api/creatives/:id/rounds が返す
+//     [{ idx, kind, comment, occurred_at, from_role, to_role,
+//        from_user_id, to_user_id, version_num, file? }]
+//   をそのまま 1要素 = 1ページ として時系列順に表示する。
+//
+//   - kind: 'submit' / 'revise' / 'approve_handoff' / 'deliver'
+//   - ナビ表記: [◀ K/N ▶]  (1=最古, N=最新)
+//   - 初期表示: 必ず最新ページ (N/N)
+//   - dedup, ライブ合成, タブ (📺/💬) は撤廃
+//
 // 仕組み:
-//   1. openCreativeDetail() が GET /creatives/:id/rounds で過去ラウンドを取得
+//   1. openCreativeDetail() が GET /creatives/:id/rounds でコメント配列取得
 //   2. _cdRoundsCache に保存し、cdRenderRoundCompare() で左カラムを描画
-//   3. ラウンド数 N >= 1 のとき、#cd-round-compare を表示し
-//      右カラム (#cd-round-right) へ既存のフォーム要素 (cd-comment-section /
-//      cd-editor-reply-group / cd-director-note-group / cd-upload-section) を
-//      DOM move する。モーダルにも cd-2col-mode クラスを付与して幅拡大。
-//   4. ラウンド数 N == 0 のとき、要素を元の親に戻す（1カラム表示維持）。
+//   3. コメント数 N >= 1 のとき、#cd-round-compare を表示し
+//      右カラム (#cd-round-right) へ既存のフォーム要素を DOM move する。
+//   4. N == 0 のとき、要素を元の親に戻す（1カラム表示維持）。
 //   5. ◀▶ で _cdRoundIndex を増減し再描画。
+//
+// 「今回」セクション側:
+//   フォーム要素 (cd-comment-section / cd-editor-reply-group /
+//   cd-director-note-group / cd-upload-section) を引き続き右カラムへ移動。
+//   ただし「編集者の提出時メモブロック」「ライブ修正依頼ブロック」は
+//   サーバー側で「前回」最新ページに含まれるため、UI 上は重複しない。
 
-let _cdRoundsCache = [];   // [{ version_num, round_stage, director_comment, editor_comment, client_comment, file, created_at, ... }]
-let _cdRoundIndex  = 0;    // 表示中の左カラム ラウンド (0 = 一番古い、長さ-1 = 一番新しい)
-let _cdFilesCache  = [];   // loadCreativeFiles() でキャッシュ。ラウンド左右カラムへ振り分けるときに参照
-// bug-report b9c7c60c: 左カラムのタブ状態。'preview' = 📺 前回(クリエイティブ) / 'comments' = 💬 前回(コメント)。
-// 初期は 'preview'。ラウンド ◀▶ 切替時もユーザーの選択は維持する（同じ意図：プレビューを見続けたい）。
-let _cdRoundLeftTab = 'preview';
+let _cdRoundsCache = [];   // [{ idx, kind, comment, occurred_at, from_role, to_role, version_num, file?, ... }]
+let _cdRoundIndex  = 0;    // 表示中ページ (0 = 一番古い / length-1 = 最新)
+let _cdFilesCache  = [];   // loadCreativeFiles() でキャッシュ。右カラム成果物カードで参照
 
 const _CD_ROUND_RIGHT_TARGETS = [
   'cd-comment-section',
@@ -25995,54 +26860,63 @@ const _CD_ROUND_RIGHT_TARGETS = [
   'cd-director-note-group',
   'cd-upload-section',
 ];
-const _CD_ROUND_STAGE_LABEL = {
-  'd_check':  'Dチェック',
-  'p_check':  'Pチェック',
-  'cl_check': 'CLチェック',
-  // 孤児 handoff 用 (PR #(d-to-p-handoff-comment))。
-  // 修正なし直行（制作中→Dチェック→Pチェック）等で snapshot が無くても、
-  // 引き継ぎ承認コメントを単独ラウンドとして表示する場合に使うバッジラベル。
-  // 注: この approve ラベルは「kind=approve のとき」用。kind=revise の場合は
-  // _cdRenderRoundLeftHeader で「修正依頼」ラベルへ動的に差し替える
-  // (PR #(handoff-label-by-kind) / 髙橋指示 2026-05-10)。
-  'd_check_handoff':  'Dチェック承認',
-  'p_check_handoff':  'Pチェック承認',
-  'cl_check_handoff': 'CLチェック承認',
-  // dedup により snapshot を「次工程」ラベルへ昇格するときの追加バッジ。
-  // 'delivered' は cl_check snapshot に handoff_to_next.stage='cl_to_delivered' が
-  // 紐づいたケース (CL承認→納品 直後) で使う (PR #(handoff-label-delivered))。
-  'delivered': '納品完了',
+
+// kind ごとの見た目定義（ラベル / アイコン / 色）
+const _CD_PAGE_KIND_DEF = {
+  submit: {
+    icon: '📝', label: '提出メモ',
+    accent: '#0EA5E9', bg: '#F0F9FF', // sky
+    fromFb: '担当者', toFb: '次工程',
+  },
+  revise: {
+    icon: '🔁', label: '修正依頼',
+    accent: '#F59E0B', bg: '#FFFBEB', // amber
+    fromFb: 'レビュアー', toFb: '担当者',
+  },
+  approve_handoff: {
+    icon: '✅', label: '承認・引き継ぎ',
+    accent: '#10B981', bg: '#F0FDF4', // emerald
+    fromFb: '承認者', toFb: '次工程担当',
+  },
+  deliver: {
+    icon: '🎉', label: '納品承認',
+    accent: '#7C3AED', bg: '#F5F3FF', // violet
+    fromFb: 'クライアント', toFb: '完了',
+  },
 };
 
-// _synthetic_handoff の kind=revise バッジラベル
-// (PR #(handoff-label-by-kind) / 髙橋指示 2026-05-10):
-// 修正依頼コメントしか持たない孤児 handoff (シナリオ #2/#5/#8 直後の最右ドット) の
-// ヘッダラベルとして使う。承認/修正依頼の混同を防ぐ。
-const _CD_ROUND_STAGE_LABEL_REVISE = {
-  'd_check_handoff':  'Dチェック修正依頼',
-  'p_check_handoff':  'Pチェック修正依頼',
-  'cl_check_handoff': 'CLチェック修正依頼',
+const _CD_ROLE_LABEL = {
+  editor:    '担当者',
+  director:  'ディレクター',
+  producer:  'プロデューサー',
+  client:    'クライアント',
+  completed: '完了',
 };
+
+// _cdRoundsCache のうち kind='submit' で実在 version_num を持つものの
+// バージョン集合を返す（右カラム成果物カードの「提出済み」判定に使う）。
+function _cdSubmittedVersionSet() {
+  const set = new Set();
+  const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+  for (const it of cache) {
+    if (it && it.kind === 'submit' && it.version_num != null) {
+      set.add(Number(it.version_num));
+    }
+  }
+  return set;
+}
 
 // 「現在は2カラム比較を有効にすべきか」を判定。
-// - 制作中（初稿提出前）/ 未着手 → 1枚絵（false）
-// - それ以外でラウンド履歴が 1 件以上 → true
-// - ライブの director_comment / client_comment があるが履歴未記録（修正中の最初の往復）→ true
+// - 制作中（初稿提出前）/ 未着手 系で コメント数 0 → 1枚絵（false）
+// - それ以外 → true（左が空でも枠は出す）
 function _cdShouldShowRoundCompare(creative, rounds) {
   if (!creative) return false;
   const status = creative.status || '';
+  const N = (rounds && rounds.length) || 0;
   if (['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'].includes(status)) {
-    // 制作中フェーズで履歴がない場合は1枚絵
-    return (rounds && rounds.length > 0);
+    return N > 0;
   }
-  if (rounds && rounds.length > 0) return true;
-  // 履歴未記録だが「直前のチェック段階で書かれた指摘」がライブで残っているケース
-  // （後修正状態で履歴に1度も snapshot されていない遺物データなど）
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
-  if (REVISION_STATUSES.includes(status) && (creative.director_comment || creative.client_comment)) {
-    return true;
-  }
-  return true; // チェック段階・納品 等もデフォルトで2カラム化（左は空でも枠は出す）
+  return true;
 }
 
 async function cdLoadRounds(creativeId) {
@@ -26050,148 +26924,15 @@ async function cdLoadRounds(creativeId) {
     const res = await apiFetch(`${API}/creatives/${creativeId}/rounds`);
     if (!res.ok) { _cdRoundsCache = []; return; }
     const list = await res.json();
-    _cdRoundsCache = Array.isArray(list) ? _cdDedupRoundsForTimeline(list) : [];
+    // 新仕様: サーバが時系列順 (idx 昇順) のフラット配列を返す。
+    // 旧 dedup ロジックは撤廃 (PR #(prev-comment-pagination))。
+    _cdRoundsCache = Array.isArray(list) ? list : [];
   } catch (e) {
     console.warn('[cd-rounds] fetch failed:', e?.message || e);
     _cdRoundsCache = [];
   }
 }
 
-// PR #(prev-timeline-init-fix) / 髙橋指示 2026-05-10:
-//
-// 「前回」タイムラインのドット位置と内容のズレ対策。
-//
-// 背景:
-//   サーバ側 /api/creatives/:id/rounds は、版（version）と round_stage の組み合わせで
-//   以下のような複数行を吐く:
-//     A) 過去ラウンドの実 snapshot (creative_version_history)
-//     B) 「孤児 handoff」仮想ラウンド (_synthetic_handoff = true)
-//        — 直前の承認/修正依頼 transition のコメントを保持。round_stage は *_handoff
-//     C) 「次工程の初回提出」仮想ラウンド (_synthetic_initial_submit = true)
-//        — Dチェック / Pチェック / CLチェック移行時の「編集者の提出時メモ」を再掲する。
-//          version_num は移行時点の最新ファイル version。次工程ステージの round_stage で並ぶ。
-//
-// バグ症状:
-//   「Pチェック → クライアントチェック中」承認直後の表示で
-//     末尾(N-1)   = cl_check 仮想 (C: 編集者の提出時メモのみ)
-//     末尾(N-2)   = p_check_handoff 仮想 (B: P承認 → CLチェック中 引き継ぎコメント)
-//   と並ぶ。両者は version_num が同じ (例: v3) で、ユーザー視点では
-//   「同じ "P承認 → CLチェック移行" イベント」を2つのドットに分裂させているだけ。
-//   しかも (C) は「編集者がこの版を提出したときのメモ」で、本来の意思決定 (P承認コメント)
-//   は (B) 側にしかない。結果:
-//     - 初期 index (末尾) を選ぶと「編集者の提出メモ」が出てしまい、ユーザーが
-//       「最新の引き継ぎコメントが見えない」と感じる
-//     - 暫定対応で「reviewer/handoff コメントを持つ末尾近辺の round に巻き戻す」と
-//       初期表示が右から2番目に来てしまい、ドット位置と内容の対応が崩れる
-//
-// 修正方針:
-//   同じ creative の rounds 配列の中で、「(B) *_handoff の直後に
-//   同 version の (C) _synthetic_initial_submit が並んでいる」場合、
-//   (C) を **タイムラインから除去** する。
-//   こうすることで:
-//     - ドット数が「実際の意思決定数」と一致する
-//     - 初期 index = 末尾 が常に「最新の handoff/snapshot」を指し、ズレが消える
-//     - (C) が単独で並ぶ場合（snapshot も handoff も無い純粋な初回提出時の編集者メモ）は
-//       残るので、PR #531 の本来意図 (前工程の提出物可視化) は保たれる
-//
-// 注意:
-//   - サーバ API のレスポンスそのものは触らない（ラウンド編集 API などが id を引いて
-//     いる箇所が _cdRoundsCache を参照しているため、ここで除去するだけにする）
-//   - dedup 判定は version_num が一致 かつ stage が対応している ((B) p_check_handoff →
-//     (C) cl_check 等) の場合のみ。stage が対応していない場合は別イベントなので残す
-//   - 中間に挟まる重複ペア（過去の handoff の直後に並ぶ同 version の C）は履歴の
-//     文脈情報として残しておきたいので除去対象は「末尾近辺の連続ペア」だけにする方針もあるが、
-//     現状は「(B)の直後に(C)」全てに適用する。中間に並んでも意味は重複しているため、
-//     ドット位置の混乱を避ける効果のほうが大きい。
-function _cdDedupRoundsForTimeline(rounds) {
-  if (!Array.isArray(rounds) || rounds.length < 2) return rounds || [];
-  // (B) の synthetic_handoff stage → (C) で重複扱いする次工程 stage の対応
-  // d_check_handoff (Dチェック→Pチェック / Dチェック→Dチェック後修正) → 次工程 = p_check or d_check
-  //   ※ revise の場合は次工程ステージが同じ d_check になるので、その場合も重複扱い
-  // 同様に p_check_handoff → cl_check or p_check
-  // 同様に cl_check_handoff → 納品ステージは仮想ラウンド対象外なので cl_check のみ (revise時)
-  const HANDOFF_TO_NEXT_STAGES = {
-    'd_check_handoff':  ['p_check', 'd_check'],   // approve → p_check / revise → d_check
-    'p_check_handoff':  ['cl_check', 'p_check'],
-    'cl_check_handoff': ['cl_check'],             // 承認時は「納品」で次の synthetic は出ない / revise時のみ cl_check
-  };
-  // PR #(prev-merge-real-snapshot-handoff) / 髙橋指示 2026-05-10 追記:
-  //   実 snapshot 行 (creative_version_history) が前 stage に存在する場合、サーバ側で
-  //   その snapshot.handoff_to_next に承認コメントが直接バインドされる
-  //   (routes/haruka.js l.12780)。この場合「孤児 handoff」(_synthetic_handoff) は
-  //   生成されず、(C) _synthetic_initial_submit だけが「次工程の初回提出」として末尾に
-  //   現れる。
-  //
-  //   結果: 既存 dedup は (B)→(C) ペアしか潰さないため、
-  //     [... v3 p_check (real, handoff入り) , v3 cl_check (C, 編集者メモのみ)]
-  //   というレイアウトでは (C) が最右に残り、ユーザーが「最新ドット = P→CL承認コメント」
-  //   を見られない不具合になる (PR #559 後に発覚)。
-  //
-  //   対策: prev が _synthetic_handoff でなくても、prev.handoff_to_next.stage が
-  //   cur.round_stage に対応する承認 (d_to_p→p_check / p_to_cl→cl_check) であれば
-  //   同様に「同じ意思決定イベント」とみなして (C) を除去する。
-  //   除去するときに prev._cdDisplayStage = cur.round_stage を立て、ヘッダー描画
-  //   (_cdRenderRoundLeftHeader) が「CLチェック / v3」のような次工程ラベルを表示する。
-  //   round_stage 自身は触らない (編集権限判定 _cdCanEditRoundEditorComment 等が
-  //   round_stage を参照しているため、識別性を保つ)。
-  const HANDOFF_NEXT_STAGE_TO_CUR = {
-    'd_to_p':  'p_check',
-    'p_to_cl': 'cl_check',
-    // 'cl_to_delivered' → 納品 (synthetic_initial_submit 対象外)
-    // revise 系は server で initial_submit を出さないので対応不要
-  };
-  const out = [];
-  for (let i = 0; i < rounds.length; i++) {
-    const cur = rounds[i];
-    // PR #(handoff-label-delivered) / 髙橋指示 2026-05-10:
-    //   CL承認→納品 の直後 (シナリオ #10) は cl_check snapshot に
-    //   handoff_to_next.stage='cl_to_delivered' が紐づくが、TO_STAGE_INITIAL に
-    //   '納品' は無いので _synthetic_initial_submit は生成されず、
-    //   既存の dedup 経路 (matchRealSnapshot) も発火しない。結果ラベルは「CLチェック / v4」のままで
-    //   ユーザー視点の「ここまで進んだ＝納品完了」とズレる。
-    //   ここで cur 自身に「納品昇格マーク」を立て、ヘッダラベルだけを「納品完了」に切替える。
-    //   round_stage 自身は触らない (編集権限判定や ID 引きで参照されるため)。
-    if (cur
-        && !cur._synthetic_initial_submit
-        && !cur._synthetic_handoff
-        && !cur._cdDisplayStage
-        && cur.handoff_to_next
-        && cur.handoff_to_next.kind === 'approve'
-        && cur.handoff_to_next.stage === 'cl_to_delivered') {
-      cur._cdDisplayStage = 'delivered';
-    }
-    if (cur && cur._synthetic_initial_submit) {
-      const prev = out.length > 0 ? out[out.length - 1] : null;
-      const sameVersion = !!(prev
-        && prev.version_num != null
-        && cur.version_num != null
-        && Number(prev.version_num) === Number(cur.version_num));
-      // (1) 旧パス: 直前が同 version の synthetic_handoff
-      const matchSynthetic = sameVersion
-        && prev._synthetic_handoff
-        && Array.isArray(HANDOFF_TO_NEXT_STAGES[prev.round_stage])
-        && HANDOFF_TO_NEXT_STAGES[prev.round_stage].includes(cur.round_stage);
-      // (2) 新パス: 直前が同 version の実 snapshot で、その handoff_to_next が
-      //     cur.round_stage に対応する approve handoff
-      const matchRealSnapshot = sameVersion
-        && !prev._synthetic_handoff
-        && !prev._synthetic_initial_submit
-        && prev.handoff_to_next
-        && prev.handoff_to_next.kind === 'approve'
-        && HANDOFF_NEXT_STAGE_TO_CUR[prev.handoff_to_next.stage] === cur.round_stage;
-      if (matchSynthetic || matchRealSnapshot) {
-        // 重複イベントとみなして (C) をスキップし、prev のヘッダーラベルだけ
-        // 次工程 (cur.round_stage) に書き換える
-        if (prev && !prev._cdDisplayStage) {
-          prev._cdDisplayStage = cur.round_stage;
-        }
-        continue;
-      }
-    }
-    out.push(cur);
-  }
-  return out;
-}
 
 function _cdMoveRightColumnElements(intoRight) {
   // 既存フォーム要素を 右カラム (#cd-round-right) ↔ 元のスクロール領域 へ移動。
@@ -26260,528 +27001,82 @@ function renderFromToAvatar(fromUser, toUser, fromFallback, toFallback, timestam
   </span>`;
 }
 
-// 過去ラウンドの「指摘」「提出時メモ・連絡事項」ブロックに付ける From/To 用に、
-// そのラウンド時点での編集者(=recorded_by 推定) と ディレクター(=projects.director_id) を
-// allMembers から解決する。recorded_by が無い古いデータは editor を null にして、
-// 呼び出し元で「From/To 行を出さない」ようフォールバックさせる。
-//
-// 戻り値: { editor: {id, full_name, avatar_url}|null, director: {...}|null }
-function _cdResolveRoundUsers(round) {
-  const out = { editor: null, director: null, producer: null };
-  const membersArr = Array.isArray(allMembers) ? allMembers : [];
-  // 1) recorded_by（その提出を行った編集者ユーザー）。snapshot は「修正済→再チェック」の
-  //    遷移で INSERT されるので、recorded_by はそのラウンドの editor 担当を最も正確に表す。
-  if (round && round.recorded_by) {
-    out.editor = membersArr.find(m => m && m.id === round.recorded_by) || null;
-  }
-  // 2) 編集者の最終フォールバック: 現在の creative_assignments から editor/designer/director_as_editor を拾う
-  if (!out.editor && currentCreativeDetail) {
-    const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
-    const assignee = (Array.isArray(assigns) ? assigns : []).find(a => a && ['editor','designer','director_as_editor'].includes(a.role)) || null;
-    out.editor = (assignee && assignee.users) || null;
-  }
-  // 3) ディレクター: 案件の projects.director_id（右カラムと同じ解決ロジック）
-  if (currentCreativeDetail) {
-    const projectDirectorId = currentCreativeDetail?.projects?.director_id || null;
-    if (projectDirectorId) {
-      out.director = membersArr.find(m => m && m.id === projectDirectorId) || null;
-    }
-    // ディレクターの最終フォールバック: creative_assignments.role='director'
-    if (!out.director) {
-      const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
-      const dirAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'director') || null;
-      out.director = (dirAssign && dirAssign.users) || null;
-    }
-    // 4) プロデューサー: 案件の projects.producer_id 優先、無ければ creative_assignments.role='producer'
-    //    （引き継ぎ承認コメントの From/To 表示で D→P / P→CL に必要・PR #(d-to-p-handoff-comment)）
-    const projectProducerId = currentCreativeDetail?.projects?.producer_id || null;
-    if (projectProducerId) {
-      out.producer = membersArr.find(m => m && m.id === projectProducerId) || null;
-    }
-    if (!out.producer) {
-      const assigns = (currentCreativeDetail && currentCreativeDetail.creative_assignments) || [];
-      const prodAssign = (Array.isArray(assigns) ? assigns : []).find(a => a && a.role === 'producer') || null;
-      out.producer = (prodAssign && prodAssign.users) || null;
-    }
-  }
-  return out;
+// ============================================================
+// 「前回」セクション v2 用レンダリング (PR #(prev-comment-pagination))
+// ============================================================
+
+// allMembers から user_id でユーザー風オブジェクトを引く（NameDisplay 用）
+function _cdResolveUserById(userId) {
+  if (!userId) return null;
+  const arr = Array.isArray(allMembers) ? allMembers : [];
+  return arr.find(m => m && m.id === userId) || null;
 }
 
-// バグ報告 #baed5d71 対応:
-//   過去ラウンドの editor_comment を「いま自分が出したばかりで、
-//   相手がまだ受け取って次に進めていない」場合に限り編集可能にする。
-//
-//   許可条件（フロント側の見せかけ判定。最終判定はサーバ側で再度行う）:
-//     1. round に id があり、_synthetic_handoff でない（snapshot 行）
-//     2. round_stage が 'd_check' / 'p_check' / 'cl_check'
-//     3. round.recorded_by === currentUser.id  または effectiveRole() === 'admin'
-//     4. _cdRoundsCache の中で round が「最新 snapshot」(version_num が最大、
-//        同 version_num なら created_at が最新)
-//     5. currentCreativeDetail.status が round_stage の対応する待機ステータス
-//
-//   いずれか欠けた瞬間に編集ボタンを出さない。サーバ側 PATCH は同条件＋本人判定で
-//   再チェックするので、ここを甘くしても権限漏れは起きない（fail-closed）。
-function _cdCanEditRoundEditorComment(round) {
-  try {
-    if (!round || !round.id) return false;
-    if (round._synthetic_handoff) return false;
-    if (round._synthetic_initial_submit) return false;
-    if (round._live) return false;
-    if (!['d_check', 'p_check', 'cl_check'].includes(round.round_stage || '')) return false;
-    // 認可: 本人 or admin（VIEW AS 反映）
-    const isOwner = !!(typeof currentUser !== 'undefined' && currentUser && round.recorded_by && currentUser.id === round.recorded_by);
-    const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
-    const isAdmin = role === 'admin';
-    if (!isOwner && !isAdmin) return false;
-    // 最新 snapshot 判定（_cdRoundsCache 内で、round.id を除いて
-    //   - version_num がより大きい snapshot
-    //   - 同 version_num で created_at がより新しい snapshot
-    // が存在しないこと。synthetic_handoff / live は無視）
-    const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-    const targetVer = Number(round.version_num) || 0;
-    for (const r of cache) {
-      if (!r || r.id === round.id) continue;
-      if (r._synthetic_handoff || r._synthetic_initial_submit || r._live) continue;
-      const v = Number(r.version_num) || 0;
-      if (v > targetVer) return false;
-      if (v === targetVer && (r.created_at || '') > (round.created_at || '')) return false;
-    }
-    // 受け手側待ちステータスのままか
-    const ROUND_TO_STATUS = {
-      d_check:  'Dチェック',
-      p_check:  'Pチェック',
-      cl_check: 'クライアントチェック中',
-    };
-    const expected = ROUND_TO_STATUS[round.round_stage];
-    const actual = currentCreativeDetail?.status || '';
-    if (actual !== expected) return false;
-    return true;
-  } catch (_) {
-    return false;
-  }
+// from_role / from_user_id / to_role / to_user_id から表示用オブジェクトを返す
+function _cdResolvePageFromTo(page) {
+  const fromUser = _cdResolveUserById(page?.from_user_id);
+  const toUser   = _cdResolveUserById(page?.to_user_id);
+  const fromFb = _CD_ROLE_LABEL[page?.from_role] || (_CD_PAGE_KIND_DEF[page?.kind]?.fromFb || '-');
+  const toFb   = _CD_ROLE_LABEL[page?.to_role]   || (_CD_PAGE_KIND_DEF[page?.kind]?.toFb   || '-');
+  return { fromUser, toUser, fromFb, toFb };
 }
 
-// インライン編集モーダルを開く。
-// 軽量実装: 一時 modal を body に append → 保存で PATCH /creatives/:cid/versions/:vid
-async function editRoundEditorComment(roundId) {
-  const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-  const round = cache.find(r => r && r.id === roundId);
-  if (!round) {
-    alert('対象のラウンドが見つかりませんでした。画面を再読み込みしてください。');
-    return;
+// 「前回」1ページ分の HTML を返す。
+// page = { kind, comment, occurred_at, from_role, to_role, from_user_id, to_user_id, version_num, file? }
+function _cdRenderPageHtml(page) {
+  if (!page) {
+    return '<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（ここにコメント・提出メモが時系列で表示されます）</span></div>';
   }
-  // 編集対象の元コメント（[動画なし] プレフィックスは保持して編集可とする
-  //   — プレフィックスはサーバ生成だが、現時点で動画なしフローはこのボタンの
-  //     対象に通常ならないが、保険として元の値で開く）
-  const original = String(round.editor_comment || '');
-  // モーダル
-  const overlay = document.createElement('div');
-  overlay.className = 'cd-round-edit-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:10px;max-width:520px;width:100%;padding:18px 20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 6px 24px rgba(0,0,0,0.18)">
-      <div style="font-size:15px;font-weight:700;color:var(--text)">✏️ 提出時メモ・連絡事項を編集</div>
-      <div style="font-size:12px;color:var(--text-muted);line-height:1.55">
-        相手がまだアクションする前のため、今ならコメントを直せます。<br>
-        保存すると、相手に「修正されました」と再通知されます。
-      </div>
-      <textarea id="cd-round-edit-textarea" rows="5" style="width:100%;resize:vertical;font-size:13.5px;line-height:1.6;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-family:inherit"></textarea>
-      <div style="display:flex;justify-content:flex-end;gap:8px">
-        <button class="btn-sm" id="cd-round-edit-cancel" type="button" style="font-size:12.5px;padding:6px 14px">キャンセル</button>
-        <button class="btn btn-primary" id="cd-round-edit-save" type="button" style="font-size:12.5px;padding:6px 16px">保存（再通知される）</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const ta = overlay.querySelector('#cd-round-edit-textarea');
-  ta.value = original;
-  setTimeout(() => { try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch(_){} }, 30);
+  const def = _CD_PAGE_KIND_DEF[page.kind] || _CD_PAGE_KIND_DEF.submit;
+  const { fromUser, toUser, fromFb, toFb } = _cdResolvePageFromTo(page);
 
-  const close = () => { try { overlay.remove(); } catch(_){} };
-  overlay.querySelector('#cd-round-edit-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
-
-  overlay.querySelector('#cd-round-edit-save').addEventListener('click', async () => {
-    const next = (ta.value || '').trim();
-    if (!next) { alert('コメントを入力してください。'); return; }
-    if (next === original.trim()) { close(); return; }
-    const btn = overlay.querySelector('#cd-round-edit-save');
-    btn.disabled = true;
-    btn.textContent = '保存中…';
-    try {
-      const creativeId = currentCreativeDetail?.id;
-      if (!creativeId) throw new Error('creative_id 不明');
-      const res = await apiFetch(`${API}/creatives/${creativeId}/versions/${roundId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ editor_comment: next }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const data = await res.json().catch(() => ({}));
-      // キャッシュ更新（同一 id の round.editor_comment を上書き）
-      const idx = (_cdRoundsCache || []).findIndex(r => r && r.id === roundId);
-      if (idx >= 0) _cdRoundsCache[idx].editor_comment = next;
-      // 編集済みマーカーを保持
-      window._cdRoundEditedAt = window._cdRoundEditedAt || {};
-      if (data.edited_at) window._cdRoundEditedAt[roundId] = data.edited_at;
-      close();
-      // 再描画
-      try { cdRenderRoundCompare(); } catch (_) {}
-      try { showToast && showToast('コメントを更新しました（受け手に再通知しました）'); } catch (_) {}
-    } catch (e) {
-      btn.disabled = false;
-      btn.textContent = '保存（再通知される）';
-      alert('保存に失敗しました: ' + (e?.message || e));
-    }
-  });
-}
-
-function _cdRoundEntryHtml(round) {
-  if (!round) {
-    return '<div class="cd-round-empty">過去ラウンドはありません</div>';
-  }
-  // ヘッダー（ステージバッジ + ファイルバージョン + 日時）は左カラムヘッダー
-  // (cd-round-left-header) に移したので、本体ブロックでは省略する（PR #(round-header-split)）。
-  const fileLink = round.file ? (round.file.drive_url || (round.file.drive_file_id ? `https://drive.google.com/file/d/${round.file.drive_file_id}/view` : '')) : '';
-
-  const reviewerComment = round.director_comment || round.client_comment || '';
-  const isClient        = !!(round.client_comment && !round.director_comment);
-  const reviewerLabel   = isClient ? 'クライアントの指摘' : 'ディレクターの指摘';
-
-  // From/To 用ユーザー解決（右カラムと同じスタイルで前回側にも表示する）
-  // - 「指摘」: From=ディレクター/クライアント → To=編集者（右カラム line 24975 と対応）
-  // - 「編集者の提出時メモ・連絡事項」: From=編集者 → To=ディレクター（右カラム line 25076 と対応）
-  // historical fallback でユーザー解決できなかったブロックは From/To 行ごと非表示にする（renderFromToAvatar が空文字を返す）
-  const users = _cdResolveRoundUsers(round);
-  const reviewerFrom = isClient ? null : users.director; // クライアント指摘の場合は client ユーザーを保持していないので null
-  // クライアント指摘でも、編集者(To) は出せる方が情報量があるが、From が出ないと From/To のスタイルが片肺になるため、
-  // クライアント指摘では From/To 行を出さない（renderFromToAvatar(null, x) は何かは出るが意味が薄いので明示的にスキップ）
-  // タイムスタンプ分離 (PR #446 v2 / ADR 011 補足 2026-05-09):
-  //   ・編集者の提出時メモ → editor_submitted_at（= snapshot 確定時刻 / 再提出時刻）
-  //   ・ディレクターの指摘 → director_commented_at（= 過去にディレクターが書いた時刻）
-  //   ・クライアントの指摘 → client_commented_at  （= 過去にクライアントが書いた時刻）
-  //   どれも NULL（migration 未適用 or 旧データ）の場合は created_at にフォールバックして
-  //   何も出ないより共通時刻を出す方を優先する。
-  const editorTsIso   = (round && round.editor_submitted_at)   || (round && round.created_at) || null;
-  const reviewerTsIso = isClient
-    ? ((round && round.client_commented_at)   || (round && round.created_at) || null)
-    : ((round && round.director_commented_at) || (round && round.created_at) || null);
-  const reviewerFromToHtml = (!isClient && users.director && users.editor)
-    ? renderFromToAvatar(users.director, users.editor, 'ディレクター', '担当者', reviewerTsIso)
-    : '';
-  const editorFromToHtml = (users.editor && users.director)
-    ? renderFromToAvatar(users.editor, users.director, '担当者', 'ディレクター', editorTsIso)
-    : '';
-
-  // ブロックを「時刻」と「役割」付きで一旦集める → 時系列ソート → 描画。
-  // 正しいモデル: 1 ラウンドの中で時系列は
-  //   (1) ディレクター/クライアントが指摘を書く（reviewerTsIso）
-  //   (2) 編集者が修正版を提出してメモを残す（editorTsIso）
-  // よって通常は reviewer ブロックが上、editor ブロックが下になる。
-  // 時刻が NULL or 同一の場合は固定順（editor → reviewer）にフォールバック。
-  // ※ "固定順" の旧挙動は editor → reviewer だったが、ユーザー報告どおり
-  //   時系列が分かれば reviewer → editor が自然なので、_updated_at が入っている場合は
-  //   時系列、入っていない場合のみ旧固定順を保つ。
-  const orderedBlocks = [];
-
-  // editor block
-  // バグ報告 #baed5d71 対応:
-  //   提出済みラウンドの editor_comment を「相手がまだアクションする前」なら編集できるよう
-  //   ✏️ ボタンを差し込む。判定は _cdCanEditRoundEditorComment(round) に集約。
-  //   ボタンクリックで editRoundEditorComment(roundId) を起動 → 軽量モーダルで保存。
-  let editorBlockHtml = null;
-  if (round.editor_comment) {
-    let editorCommentDisplay = String(round.editor_comment || '');
-    if (/^\s*\[動画なし\]/.test(editorCommentDisplay)) {
-      editorCommentDisplay = editorCommentDisplay.replace(/^\s*\[動画なし\][^\n]*\n?/, '').trim();
-    }
-    if (editorCommentDisplay) {
-      const canEdit = _cdCanEditRoundEditorComment(round);
-      const editBtnHtml = canEdit
-        ? `<button class="cd-round-edit-btn" onclick="editRoundEditorComment('${esc(round.id)}')" title="このコメントを編集">✏️ 編集</button>`
-        : '';
-      // 編集済みマーカー（保存後にクライアント側だけで保持）
-      const editedAtIso = (window._cdRoundEditedAt && window._cdRoundEditedAt[round.id]) || null;
-      const editedMark = editedAtIso ? `<span class="cd-round-edited-mark">（編集済み ${esc(_cdFormatRoundDate(editedAtIso))}）</span>` : '';
-      editorBlockHtml = `<div class="cd-round-block" data-round-id="${esc(round.id || '')}">
-        <div class="cd-round-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <span>編集者の提出時メモ・連絡事項${editedMark}</span>
-          ${editBtnHtml}
-        </div>
-        ${editorFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${editorFromToHtml}</div>` : ''}
-        <div class="cd-round-text">${esc(editorCommentDisplay)}</div>
-      </div>`;
-    }
+  // submit の場合「[動画なし]」プレフィックスは UI 上で隠す（理由はファイルカード側で出す）
+  let body = page.comment || '';
+  if (page.kind === 'submit' && /^\s*\[動画なし\]/.test(body)) {
+    body = body.replace(/^\s*\[動画なし\][^\n]*\n?/, '').trim();
   }
 
-  // reviewer block (director or client)
-  let reviewerBlockHtml = null;
-  if (reviewerComment) {
-    reviewerBlockHtml = `<div class="cd-round-block">
-      <div class="cd-round-label">${esc(reviewerLabel)}</div>
-      ${reviewerFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${reviewerFromToHtml}</div>` : ''}
-      <div class="cd-round-text">${esc(reviewerComment)}</div>
-    </div>`;
-  }
-
-  // 時系列ソート判定: 両方の _updated_at 系が解決できた場合だけ時刻順に並べる。
-  // どちらかが round.created_at へのフォールバックの場合は同時刻になりやすいので
-  // 旧固定順（editor → reviewer）は使わず、reviewer → editor を優先する。
-  // 理由: ユーザーモデル上、ラウンド比較の左カラム（過去ラウンド）は
-  //   1) 過去にディレクター/クライアントが指摘
-  //   2) その後、編集者が再提出
-  // が時系列なので、「上=指摘 / 下=編集者メモ」が直感に一致する。
-  const editorTsMs   = editorTsIso   ? Date.parse(editorTsIso)   : NaN;
-  const reviewerTsMs = reviewerTsIso ? Date.parse(reviewerTsIso) : NaN;
-  let editorFirst = false;
-  if (Number.isFinite(editorTsMs) && Number.isFinite(reviewerTsMs) && editorTsMs !== reviewerTsMs) {
-    editorFirst = editorTsMs < reviewerTsMs;
-  }
-  // editorFirst === false（時系列または同時刻 fallback）→ reviewer 上 / editor 下
-  if (editorFirst) {
-    if (editorBlockHtml)   orderedBlocks.push(editorBlockHtml);
-    if (reviewerBlockHtml) orderedBlocks.push(reviewerBlockHtml);
-  } else {
-    if (reviewerBlockHtml) orderedBlocks.push(reviewerBlockHtml);
-    if (editorBlockHtml)   orderedBlocks.push(editorBlockHtml);
-  }
-
-  // 引き継ぎ承認コメント (handoff_to_next) を**本文の一番上**に挿入する
-  // (PR #(d-to-p-handoff-comment) / 代表 髙橋指示・2026-05-09):
-  //   サーバ側 GET /creatives/:id/rounds が round.handoff_to_next に
-  //   { stage, from_status, to_status, comment, changed_at, changed_by } を埋めて返す。
-  //   stage: 'd_to_p' | 'p_to_cl' | 'cl_to_delivered'
-  //
-  //   表示は「<from_status> → <to_status> 承認・引き継ぎコメント」とラベリング、
-  //   From/To アバターは:
-  //     d_to_p          → ディレクター → プロデューサー
-  //     p_to_cl         → プロデューサー → クライアント
-  //     cl_to_delivered → クライアント → 担当者（編集者）
-  //
-  //   コメントが空（NULL or 空文字）の場合は表示抑制（"承認のみ" 履歴を作っても情報量が薄いため）。
-  //   left カラム本文の冒頭に出ることで「過去ラウンドで何が承認されて次工程に進んだか」を一目で確認できる。
-  const handoff = round.handoff_to_next;
-  if (handoff && handoff.comment && String(handoff.comment).trim()) {
-    // 承認系 + 修正依頼系（PR #(revision-request-handoff) / 髙橋指示 2026-05-09）
-    //   修正依頼系は元の担当者(編集者)に差し戻されるので To = users.editor。
-    //   D→D後修正: ディレクターが編集者に差し戻し
-    //   P→P後修正: プロデューサーが編集者に差し戻し
-    //   CL→CL後修正: クライアントの指摘を編集者へ（From はクライアントなので解決不能 → fallback ラベル）
-    const HANDOFF_FROMTO = {
-      // 承認系
-      'd_to_p':          { from: users.director, to: users.producer, fromFb: 'ディレクター',   toFb: 'プロデューサー' },
-      'p_to_cl':         { from: users.producer, to: null,           fromFb: 'プロデューサー', toFb: 'クライアント'   },
-      'cl_to_delivered': { from: null,           to: users.editor,   fromFb: 'クライアント',   toFb: '担当者'         },
-      // 修正依頼系
-      'd_to_d_revise':   { from: users.director, to: users.editor,   fromFb: 'ディレクター',   toFb: '担当者'         },
-      'p_to_p_revise':   { from: users.producer, to: users.editor,   fromFb: 'プロデューサー', toFb: '担当者'         },
-      'cl_to_cl_revise': { from: null,           to: users.editor,   fromFb: 'クライアント',   toFb: '担当者'         },
-    };
-    const ft = HANDOFF_FROMTO[handoff.stage] || null;
-    const handoffFromToHtml = ft
-      ? renderFromToAvatar(ft.from, ft.to, ft.fromFb, ft.toFb, handoff.changed_at || null)
-      : '';
-    const labelFrom = handoff.from_status || '';
-    const labelTo   = handoff.to_status   || '';
-    const isRevise = handoff.kind === 'revise';
-    const handoffLabel = (labelFrom && labelTo)
-      ? `${labelFrom} → ${labelTo} ${isRevise ? '修正依頼コメント' : '承認・引き継ぎコメント'}`
-      : (isRevise ? '修正依頼コメント' : '次工程への承認・引き継ぎコメント');
-    const icon        = isRevise ? '🔄' : '✅';
-    const accentColor = isRevise ? '#F59E0B' : 'var(--em-dark)';
-    const bgColor     = isRevise ? '#FFFBEB' : '#F0FDF4';
-    const handoffBlockHtml = `<div class="cd-round-block cd-round-handoff" style="border-left:3px solid ${accentColor};padding-left:10px;background:${bgColor}">
-      <div class="cd-round-label" style="color:${accentColor}">${icon} ${esc(handoffLabel)}</div>
-      ${handoffFromToHtml ? `<div class="cd-round-fromto" style="margin:4px 0 6px">${handoffFromToHtml}</div>` : ''}
-      <div class="cd-round-text">${esc(String(handoff.comment))}</div>
-    </div>`;
-    // **本文の一番上**に必ず差し込む（PR #(d-to-p-handoff-comment)）。
-    // 時系列としては「reviewer 指摘 → editor 提出 → reviewer 承認 → 次工程移行」なので
-    // 厳密には末尾に置くべきだが、ユーザー指示「左カラム本文の一番上に」を優先する。
-    // (1) その方が「このラウンドが承認されて次工程に進んだ」事実が即座にわかる
-    // (2) 過去ラウンド比較で「何が決まったか」を最初に見せる方が議事録として読みやすい
-    orderedBlocks.unshift(handoffBlockHtml);
-  }
-
-  // 提出物（ファイル）は左カラム下部に _cdRenderFileCard で別ブロックとして表示するため、
-  // ここでは「ファイル名のリンク」だけは出さない（重複を避ける）。
-  if (orderedBlocks.length === 0 && !fileLink) {
-    orderedBlocks.push(`<div class="cd-round-empty">このラウンドには記録された内容がありません</div>`);
-  }
-  return orderedBlocks.join('');
-}
-
-// ライブの「直前のチェック段階で書かれた指摘」を 1 ラウンドとして仮想生成する。
-// 後修正ステータス中で、まだ snapshot されていない（再提出前）の段階。
-function _cdBuildLiveRound(creative) {
-  if (!creative) return null;
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
-  if (!REVISION_STATUSES.includes(creative.status)) return null;
-  // 「クライアントチェック後修正」の comment ソースについて (PR #(cl-prev-comment-source) / 髙橋指示 2026-05-10):
-  //   現在の saveCreativeDetail() は status='クライアントチェック中' でも
-  //   `body.director_comment = noteValue` で送っているため (line 34316-34318)、
-  //   CL の指摘は実体として `creatives.director_comment` 列に保存される。
-  //   そのため live round の comment ソースも `creative.director_comment` を優先し、
-  //   将来 client_comment 列に直接書く実装に変わった場合のために `client_comment` を fallback で受ける。
-  //   旧実装は `creative.client_comment` のみを参照していたため、CL→CL後修正 直後に
-  //   live round が build されず、左カラム「💬 前回（コメント）」タブが
-  //   1つ前の cl_check 仮想ラウンド（編集者の提出時メモ）にフォールバックして見える不具合があった。
-  const stageMap = {
-    'Dチェック後修正':            { stage: 'd_check',  comment: creative.director_comment, syntheticStage: 'd_check_handoff'  },
-    'Pチェック後修正':            { stage: 'p_check',  comment: creative.director_comment, syntheticStage: 'p_check_handoff'  },
-    'クライアントチェック後修正': { stage: 'cl_check', comment: (creative.director_comment || creative.client_comment), syntheticStage: 'cl_check_handoff' },
-  };
-  const m = stageMap[creative.status];
-  if (!m || !m.comment) return null;
-
-  // 重複抑止: 修正依頼 transition の孤児 handoff 仮想ラウンドが既に
-  // _cdRoundsCache に含まれている場合は live round を出さない（同じ修正依頼コメントが
-  // creatives.director_comment / client_comment と handoff_to_next.comment の双方に
-  // 残っており、両方を出すとラウンド比較UIで同じ内容が2ページ並ぶため）。
-  // PR #531 で初稿提出仮想ラウンドが追加された後、3段目に重複ページが見える事象として顕在化した。
-  // レガシーデータ（creative_status_transitions 行が無く director_comment だけが残るケース）
-  // では hasReviseHandoff=false となり、引き続き live round を出す（救済 fallback として残す）。
-  const cached = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-  const hasReviseHandoff = cached.some(r =>
-    r && r.round_stage === m.syntheticStage &&
-    r.handoff_to_next && r.handoff_to_next.kind === 'revise'
+  const fromToHtml = renderFromToAvatar(
+    fromUser, toUser,
+    fromFb, toFb,
+    page.occurred_at || null
   );
-  if (hasReviseHandoff) return null;
 
-  return {
-    version_num: null,
-    round_stage: m.stage,
-    director_comment: m.stage === 'cl_check' ? null : m.comment,
-    client_comment:   m.stage === 'cl_check' ? m.comment : null,
-    editor_comment: null,
-    created_at: creative.updated_at || null,
-    file: null,
-    _live: true,
-  };
+  const labelText = (page.kind === 'approve_handoff' || page.kind === 'deliver')
+    ? `${esc(_CD_ROLE_LABEL[page.from_role] || '')} → ${esc(_CD_ROLE_LABEL[page.to_role] || '')} ${def.label}コメント`
+    : (page.kind === 'revise')
+      ? `${esc(_CD_ROLE_LABEL[page.from_role] || 'レビュアー')}からの${def.label}`
+      : `${esc(_CD_ROLE_LABEL[page.from_role] || '担当者')}の${def.label}`;
+
+  const bodyHtml = body
+    ? `<div class="cd-round-text" style="white-space:pre-wrap">${esc(body)}</div>`
+    : `<div class="cd-round-text" style="color:var(--text-muted);font-style:italic">（コメント本文はありません）</div>`;
+
+  return `<div class="cd-round-block" style="border-left:3px solid ${def.accent};padding-left:10px;background:${def.bg}">
+    <div class="cd-round-label" style="color:${def.accent};display:flex;align-items:center;gap:6px">
+      <span style="font-size:15px">${def.icon}</span>
+      <span>${labelText}</span>
+    </div>
+    ${fromToHtml ? `<div class="cd-round-fromto" style="margin:6px 0 8px">${fromToHtml}</div>` : ''}
+    ${bodyHtml}
+  </div>`;
 }
 
-// ラウンド左カラムに表示する「過去ラウンドの提出物カード」HTML を返す。
-// _cdFilesCache（loadCreativeFiles でキャッシュ済の creative_files 全件）から
-// round.creative_file_id で実体を引く（width/height/uploaded_at/faststart_status 等を保持）。
-//
-// 解決ロジックは _cdResolveRoundLeftFile() に集約:
-//   1) creative_file_id 直引き（PR #422 以後の正規パス）
-//   2) round.file（rounds API の軽量プロジェクション）
-//   3) round.version_num が一致する _cdFilesCache を引く（PR #422 以前の遺物データ救済）
-//   4) ライブラウンド (round._live === true): 仮 version で _cdFilesCache を引く
-//
-// PR #(round-tied-version) で旧 (5) latest fallback は撤去。
-// version 不明のラウンドを別バージョンに化けさせるとユーザー困惑の元
-// （creative_file_id=V1 のラウンドが V2 と表示される事故）。
-// 解決できない場合は何も出さない（return ''）。
-// 左カラムが解決する「過去ラウンド提出ファイル」を返す共通ヘルパー。
-// _cdRenderRoundLeftFileCard と _cdRenderRoundRightFileCard の dedup 判定で
-// 同じロジックを使うために切り出した（代表 髙橋指示・ADR 011 補足: 左右が
-// 同一バージョンを指したら右の「今回の成果物」を抑制する）。
-//
-// 解決順（PR #(round-tied-version) で latest fallback を撤去・厳格化）:
-//   (1) creative_file_id 直引き → 見つかれば即 return（最優先）
-//   (2) round.file（軽量プロジェクション）
-//   (3) version_num 一致（PR #422 以前の creative_file_id 欠損データ救済）
-//   (4) ライブラウンドの仮 version
-//
-// 重要な変更: 旧 (5) "cache 末尾フォールバック (= 最古ファイルにすり替え)" は
-// **削除済み**。version 不明のラウンドを latest や別バージョンに化けさせるのは
-// ユーザー困惑の原因 (creative_file_id=V1 が誤って V2 と表示される事故)。
-// (1)-(4) で解決できなければ null を返し、呼び出し元に「ファイル無し」として扱わせる。
-//
-// 動画なし提出 (isFileless) のラウンドは null を返す（左は "[動画なし]" カード
-// になり、右の dedup 対象外。右はそのまま latest を出してよい）。
-function _cdResolveRoundLeftFile(round) {
-  if (!round) return null;
-  const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+// 提出メモ (kind='submit') のページに紐づく成果物ファイルを左カラム下部のカードとして描画。
+// それ以外の kind ではファイル無し（カード非表示）。
+function _cdRenderPageFileCard(page) {
+  if (!page || page.kind !== 'submit') return '';
 
-  // 動画なし提出ラウンドは解決対象外
-  const editorComment = (round && typeof round.editor_comment === 'string') ? round.editor_comment : '';
-  const isFileless = !round.creative_file_id && /^\s*\[動画なし\]/.test(editorComment);
-  if (isFileless) return null;
-
-  // (1) creative_file_id 直引き（正規パス）— 見つかったら即 return。
-  // ここで「creative_file_id が指す実体」をそのまま使うことで、
-  // ラウンドに紐づいたバージョンが latest に化ける事故を防ぐ。
-  if (round.creative_file_id && cache.length > 0) {
-    const f1 = cache.find(x => x && x.id === round.creative_file_id) || null;
-    if (f1) return f1;
-  }
-
-  // (2) rounds API の軽量プロジェクション（faststart 等は欠落するがファイル特定はできる）
-  if (round.file) return round.file;
-
-  // (3) version_num 一致でフォールバック（creative_file_id が NULL の旧データ用）
-  if (round.version_num && cache.length > 0) {
-    const f3 = cache.find(x => x && Number(x.version) === Number(round.version_num)) || null;
-    if (f3) return f3;
-  }
-
-  // (4) ライブラウンド（snapshot 未挿入の修正中フェーズ）。
-  //     後修正ステータス（Dチェック後修正/Pチェック後修正/CL後修正）の左カラムは
-  //     「直前にチェックされた version」(= レビュー対象だった成果物) を表示すべき。
-  //
-  //     旧計算: targetVer = _cdRoundsCache.length + 1
-  //       ・PR #531 で _cdRoundsCache に「初回提出」仮想ラウンド (_synthetic_initial_submit)
-  //         や「孤児 handoff」(_synthetic_handoff) が追加されてから、length が膨らんで
-  //         実在しないバージョン (例: v3) を引きにいき null になるバグが発生した
-  //         （バグ報告: 「Dチェック→Dチェック後修正」直後に左カラム『前回（クリエイティブ）』が空）。
-  //
-  //     新ロジック (PR #(prev-creative-after-revision) / 髙橋指示 2026-05-10):
-  //       (a) 同じ round_stage の snapshot/仮想ラウンドのうち、最大 version_num を採用
-  //           （ = 直前のチェック対象 = ユーザー視点の「前回」と一致）
-  //       (b) 該当が無ければ _cdFilesCache の最新 version（アップロード済の最新成果物）
-  //       (c) どちらも無ければ null（ファイルカードを出さない）
-  if (round._live && cache.length > 0) {
-    let targetVer = 0;
-    const stage = round.round_stage || '';
-    const rcache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-    for (const r of rcache) {
-      if (!r || r._live) continue;
-      if (stage && r.round_stage !== stage) continue;
-      const v = Number(r.version_num) || 0;
-      if (v > targetVer) targetVer = v;
-    }
-    // フォールバック: 同 stage の snapshot/仮想が無い → 最新ファイルを使う
-    if (!targetVer) {
-      let maxVer = 0;
-      for (const f of cache) {
-        const v = Number(f && f.version) || 0;
-        if (v > maxVer) maxVer = v;
-      }
-      targetVer = maxVer;
-    }
-    if (targetVer > 0) {
-      const f4 = cache.find(x => x && Number(x.version) === targetVer) || null;
-      if (f4) return f4;
-    }
-  }
-
-  // (5) latest fallback は削除（ラウンド紐付けバージョンの整合性優先）。
-  return null;
-}
-
-function _cdRenderRoundLeftFileCard(round) {
-  if (!round) return '';
-
-  // 動画なし提出のラウンドは creative_file_id=null かつ editor_comment が "[動画なし]" で
-  // 始まる（routes/haruka.js 側で固定プレフィックス付き保存）。
-  // 該当ラウンドはファイルカードのフォールバック検索を行わず、プレースホルダを返す。
-  // これによりラウンド比較UIの左右フッター3層構造（タグ/ファイル/底辺）の高さが揃う。
-  // 代表 髙橋指示（2026-05-09 補足・ADR 011）。
-  const editorComment = (round && typeof round.editor_comment === 'string') ? round.editor_comment : '';
-  const isFileless = !round.creative_file_id && /^\s*\[動画なし\]/.test(editorComment);
+  // 「[動画なし]」プレースホルダ
+  const editorComment = (page && typeof page.comment === 'string') ? page.comment : '';
+  const isFileless = !page.file && /^\s*\[動画なし\]/.test(editorComment);
   if (isFileless) {
-    // 理由部分だけ抽出（"[動画なし] xxx" の "xxx"）。理由が無ければ "理由未入力" 表示。
     const m = editorComment.match(/^\s*\[動画なし\][ \t　]*([^\n]*)/);
     const reasonRaw = (m && m[1]) ? m[1].trim() : '';
     const reason = reasonRaw || '理由未入力';
-    const verLabel = round.version_num ? `バージョン ${round.version_num}` : '今回ラウンド';
+    const verLabel = page.version_num ? `バージョン ${page.version_num}` : '今回ラウンド';
     return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
+      <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 提出された成果物</div>
       <div style="background:#FFFBEB;border:1px dashed #F59E0B;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:88px;justify-content:center">
         <div style="font-size:12px;font-weight:600;color:#92400E;letter-spacing:0.04em">📋 動画ファイルなし提出（${esc(verLabel)}）</div>
         <div style="font-size:11.5px;color:#78350F;line-height:1.55;white-space:pre-wrap">理由: ${esc(reason)}</div>
@@ -26789,15 +27084,45 @@ function _cdRenderRoundLeftFileCard(round) {
     </div>`;
   }
 
-  // (1)〜(5) のフォールバック解決は共通ヘルパーへ集約（dedup と完全一致させる）。
-  const f = _cdResolveRoundLeftFile(round);
-  if (!f) return ''; // 本当にファイル 0 件 (= 初回提出前の制作中フェーズ)。指摘のみのケース。
+  // page.file が無くても _cdFilesCache から version_num 一致で再解決を試みる（旧データ救済）
+  let f = page.file || null;
+  if (!f && page.version_num != null) {
+    const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    f = cache.find(x => x && Number(x.version) === Number(page.version_num)) || null;
+  }
+  // page.file（軽量プロジェクション）がある場合でも、_cdFilesCache 側に同 id の
+  // フル情報（faststart_status 等）があればそちらを優先する（プレビュー再生品質向上）
+  if (f && f.id) {
+    const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    const richer = cache.find(x => x && x.id === f.id);
+    if (richer) f = richer;
+  }
+  if (!f) return '';
 
-  const verNum = f.version || round.version_num || '?';
+  const verNum = f.version || page.version_num || '?';
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-    <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 自分が提出した成果物</div>
+    <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 提出された成果物</div>
     ${_cdRenderFileCard(f, { verLabel: `バージョン ${verNum}`, isLatest: false, hideCheckBtn: true })}
   </div>`;
+}
+
+// 「右カラム成果物カード」用の左ファイル解決ヘルパー（dedup 判定で利用）。
+// 新仕様では「最新ページ (= 末尾) が submit のとき、そのファイル」が左カラム提出物に相当する。
+function _cdResolveLatestPageFile(page) {
+  if (!page || page.kind !== 'submit') return null;
+  // [動画なし] は dedup 対象外
+  const editorComment = (page && typeof page.comment === 'string') ? page.comment : '';
+  if (!page.file && /^\s*\[動画なし\]/.test(editorComment)) return null;
+  let f = page.file || null;
+  const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  if (!f && page.version_num != null) {
+    f = cache.find(x => x && Number(x.version) === Number(page.version_num)) || null;
+  }
+  if (f && f.id) {
+    const richer = cache.find(x => x && x.id === f.id);
+    if (richer) f = richer;
+  }
+  return f || null;
 }
 
 // ラウンド右カラムに表示する「今回の成果物カード」HTML を返す。
@@ -26833,22 +27158,22 @@ function _cdCanUndoUpload(file) {
   const fileVer = Number(file.version) || 0;
   if (fileVer !== maxVer) return false;
 
-  // スナップショット済 (= 提出済) なら取り消し不可
-  const rounds = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-  const isSubmitted = rounds.some(r => Number(r?.version_num) === fileVer);
-  if (isSubmitted) return false;
+  // 提出済 (= 編集者の submit ページに出ているバージョン) なら取り消し不可
+  // 新仕様 (PR #(prev-comment-pagination)): _cdRoundsCache は kind='submit' 要素を含む。
+  // 他 kind (revise/approve_handoff/deliver) も version_num に「その時点の最新版」が
+  // 入っているが、submit ではないので取り消し可否判定には使わない。
+  const submittedSet = _cdSubmittedVersionSet();
+  if (submittedSet.has(fileVer)) return false;
 
-  // 後修正中 (Dチェック後修正等) で snapshot がまだ無いケースの補正:
-  //   V1 を提出 (Dチェック移行) → D指摘 → D後修正 へ来た時点では V1 はまだ snapshot 無し。
-  //   このとき最新ファイル = V1 で _cdRoundsCache に V1 が含まれない状態だが、V1 は
-  //   既に提出済みなので取り消せてはいけない。
-  //   補正: 後修正系 status のときは「最新ファイルが既存の最大ラウンド以下なら提出済扱い」。
+  // 後修正中 (Dチェック後修正等) で submit がまだ無いケースの補正:
+  //   V1 を提出 (Dチェック移行) → D指摘 → D後修正 へ来た時点では V1 は submit 済。
+  //   ここでは submittedSet に V1 が入っているので上の return false で弾かれる想定。
+  //   レガシーデータ救済: submit が見つからない後修正状態で fileVer<=maxSubmittedVer なら提出済扱い。
   const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   const status = currentCreativeDetail?.status || '';
   if (REVISION_STATUSES.includes(status)) {
     let maxSnapVer = 0;
-    for (const r of rounds) {
-      const v = Number(r?.version_num) || 0;
+    for (const v of submittedSet) {
       if (v > maxSnapVer) maxSnapVer = v;
     }
     // 後修正中で fileVer <= maxSnapVer (snapshot 済の範囲内 / または snapshot 0件で V1 のみ)
@@ -26891,10 +27216,9 @@ function _cdComputeNextVersion() {
     if (v > M) M = v;
   }
   if (M === 0) return 1;
-  // M がスナップショット済か判定（_cdRoundsCache のいずれかに version_num=M が含まれるか）
-  const rounds = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
-  const hasSnapshotForM = rounds.some(r => Number(r?.version_num) === M);
-  if (hasSnapshotForM) return M + 1; // M が提出済 → 次ラウンドへ
+  // M が提出済か判定（kind='submit' の submitted version 集合を見る）
+  const submittedSet = _cdSubmittedVersionSet();
+  if (submittedSet.has(M)) return M + 1; // M が提出済 → 次ラウンドへ
   // 後修正系 status 中の "初めての修正版アップ" は M+1 にする補正
   // （snapshot は再提出時に確定するため、D後修正中は M=1 / snapshot=0 の状態。
   //  ここで M を返すと V1 と衝突する。サーバ側採番ロジックと完全に一致させる。）
@@ -26939,16 +27263,11 @@ function _cdRenderRoundRightFileCard(currentRound) {
   const latest = files[0] || null; // 一覧は新しい順
 
   // dedup（代表 髙橋指示・ADR 011 補足）:
-  //   左カラムが解決した「自分が提出した成果物」と、右カラムが描画する「今回の成果物」が
-  //   同じバージョンの同じファイルを指している場合、右カラムを丸ごと非表示にする。
-  //   - 制作中で V1 が 1 件アップ済 / ラウンド snapshot 0 件 / live ラウンド無し
-  //     → 左 V1 (fallback (5)) / 右 V1 がそのまま重複していたケースを解消する。
-  //   - 「右が placeholder（修正版アップロード待ち）」のときは latest が左と一致しない or null
-  //     なので dedup ロジックは発火せず placeholder は維持される。
-  //   - 後修正で V2 アップ済のケースは latest=V2 / 左=V1 で一致しないので右は残る。
-  //   - 動画なし提出ラウンドは _cdResolveRoundLeftFile が null を返すので dedup 対象外。
+  //   左カラム最新ページが「submit (= 提出メモ)」で、その成果物バージョンが
+  //   _cdFilesCache の latest と一致する場合、右カラムを丸ごと非表示にする。
+  //   - 動画なし提出ページは file=null なので dedup 対象外（右はそのまま latest を出す）。
   if (latest && currentRound) {
-    const leftFile = _cdResolveRoundLeftFile(currentRound);
+    const leftFile = _cdResolveLatestPageFile(currentRound);
     if (leftFile) {
       const sameId = leftFile.id && latest.id && leftFile.id === latest.id;
       const sameVer = (leftFile.version != null && latest.version != null
@@ -27015,76 +27334,39 @@ function _cdFormatRoundDate(iso) {
   } catch (_) { return ''; }
 }
 
-// 左カラム（過去ラウンド）ヘッダー HTML を組み立てる。
-//   - currentRoundIdx: 現在表示中ラウンド index (0..N-1)
-//   - totalN: ラウンド総数
-//   - round: 表示中ラウンドオブジェクト（null 可: 履歴0件のとき）
-//   - resolvedFile: _cdResolveRoundLeftFile() の解決結果（null 可）。
-//     渡されたときバッジの version はこの実ファイルの f.version を優先する。
-//     これにより "v2 紐付け表示なのに実は V1 が表示されている" というズレを防ぐ
-//     （PR #(round-tied-version)）。
-// ナビ（◀▶ + ●○）と日時 + ラウンド種別バッジを内包する。
-function _cdRenderRoundLeftHeader(currentRoundIdx, totalN, round, resolvedFile = null) {
-  // 「Nラウンド前」表記: 末尾(=最新の過去ラウンド)が0、その1つ前が1...
-  // ただし「直前」が一番自然なので、末尾は表記なし、それ以前は「Nラウンド前」と書く
-  const stepsBack = totalN - 1 - currentRoundIdx;
+// 左カラム（前回）ヘッダー HTML を組み立てる。
+//   - currentIdx: 現在表示中ページ index (0..N-1)
+//   - totalN: ページ総数
+//   - page: 表示中ページ（null 可: 履歴0件のとき）
+// ナビは [◀ K/N ▶] 表記（K=currentIdx+1, N=totalN, 1=最古, N=最新）。
+function _cdRenderRoundLeftHeader(currentIdx, totalN, page) {
   let titleSuffix = '';
-  if (totalN === 0) {
-    titleSuffix = '';
-  } else if (round) {
-    // バッジ用 version: 解決された実ファイルの version を最優先（カード表示と一致させる）。
-    // 解決失敗時のみ round.version_num にフォールバック。
-    const verNumForBadge = (resolvedFile && resolvedFile.version != null)
-      ? resolvedFile.version
-      : (round.version_num || null);
-    // round_stage を直接使うと、dedup で「次工程の初回提出 (C)」を吸収した実 snapshot が
-    // 「Pチェック / v3」と表示されてしまい、ユーザー視点の「ここまで進んだ＝CLチェック」と
-    // ズレる。_cdDedupRoundsForTimeline で立てた _cdDisplayStage を最優先する
-    // (PR #(prev-merge-real-snapshot-handoff))。
-    const displayStage = round._cdDisplayStage || round.round_stage;
-    // kind=revise の孤児 handoff は「修正依頼」ラベルを使う
-    // (PR #(handoff-label-by-kind) / 髙橋指示 2026-05-10):
-    //   旧実装は _CD_ROUND_STAGE_LABEL の '*_handoff' を一律「Dチェック承認/Pチェック承認/...」と
-    //   出していたため、シナリオ #2/#5 (D修正依頼/P修正依頼の直後) で「Dチェック承認」「Pチェック承認」と
-    //   表示されてしまい、本文 (handoff revise コメント) と矛盾する不具合があった。
-    //   round.handoff_to_next.kind === 'revise' のときは _CD_ROUND_STAGE_LABEL_REVISE を優先する。
-    const isReviseHandoff = !!(round && round.handoff_to_next && round.handoff_to_next.kind === 'revise');
-    const stageLabel = (isReviseHandoff && _CD_ROUND_STAGE_LABEL_REVISE[displayStage])
-      ? _CD_ROUND_STAGE_LABEL_REVISE[displayStage]
-      : (_CD_ROUND_STAGE_LABEL[displayStage] || (verNumForBadge ? `v${verNumForBadge}` : ''));
-    const verLabel = verNumForBadge ? `v${verNumForBadge}` : '';
-    const parts = [];
-    if (stageLabel) parts.push(stageLabel);
-    if (verLabel && verLabel !== stageLabel) parts.push(verLabel);
-    if (stepsBack >= 1) parts.push(`${stepsBack}ラウンド前`);
-    if (parts.length) titleSuffix = `<span class="cd-rh-sub">${esc(parts.join(' / '))}</span>`;
+  if (page) {
+    const def = _CD_PAGE_KIND_DEF[page.kind] || _CD_PAGE_KIND_DEF.submit;
+    const verLabel = page.version_num ? `v${page.version_num}` : '';
+    const parts = [`${def.icon} ${def.label}`];
+    if (verLabel) parts.push(verLabel);
+    titleSuffix = `<span class="cd-rh-sub">${esc(parts.join(' / '))}</span>`;
   }
 
-  // 日時: 通常は snapshot.created_at。ただし dedup で次工程ラベルへ昇格 (_cdDisplayStage)
-  // した場合、表示文脈は「次工程に進入した瞬間」なので handoff_to_next.changed_at を優先する
-  // (PR #(prev-merge-real-snapshot-handoff))。これによりラベル「CLチェック / v3」と
-  // 日時「P→CL承認時刻」が一致して時系列の混乱を避けられる。
-  let dateSourceIso = round && round.created_at ? round.created_at : null;
-  if (round && round._cdDisplayStage && round.handoff_to_next && round.handoff_to_next.changed_at) {
-    dateSourceIso = round.handoff_to_next.changed_at;
-  }
+  // 日時: occurred_at
+  const dateSourceIso = page && page.occurred_at ? page.occurred_at : null;
   const dateStr = dateSourceIso ? _cdFormatRoundDate(dateSourceIso) : '';
 
-  // ◀▶ ＋ ●○ ナビ（複数ラウンドあるときのみ意味あり。1件以下なら隠す）
+  // ナビ [◀ K/N ▶]: 1要素以下なら省略
   let navHtml = '';
   if (totalN > 1) {
-    const prevDisabled = (currentRoundIdx <= 0) ? 'disabled' : '';
-    const nextDisabled = (currentRoundIdx >= totalN - 1) ? 'disabled' : '';
-    let dotsHtml = '';
-    for (let i = 0; i < totalN; i++) {
-      dotsHtml += `<span class="cd-round-dot${i === currentRoundIdx ? ' active' : ''}" data-idx="${i}" onclick="cdRoundJump(${i})" title="ラウンド ${i + 1}/${totalN}"></span>`;
-    }
+    const prevDisabled = (currentIdx <= 0) ? 'disabled' : '';
+    const nextDisabled = (currentIdx >= totalN - 1) ? 'disabled' : '';
+    const k = currentIdx + 1;
     navHtml = `
       <div class="cd-rh-nav">
-        <button type="button" id="cd-round-prev" onclick="cdRoundShift(-1)" title="前のラウンド" ${prevDisabled}>◀</button>
-        <div id="cd-round-dots" class="cd-rh-dots">${dotsHtml}</div>
-        <button type="button" id="cd-round-next" onclick="cdRoundShift(1)" title="次のラウンド" ${nextDisabled}>▶</button>
+        <button type="button" id="cd-round-prev" onclick="cdRoundShift(-1)" title="前のコメント" ${prevDisabled}>◀</button>
+        <span class="cd-rh-pageno" title="現在ページ / 総ページ数（1=最古, ${totalN}=最新）">${k}/${totalN}</span>
+        <button type="button" id="cd-round-next" onclick="cdRoundShift(1)" title="次のコメント" ${nextDisabled}>▶</button>
       </div>`;
+  } else if (totalN === 1) {
+    navHtml = `<div class="cd-rh-nav"><span class="cd-rh-pageno">1/1</span></div>`;
   }
 
   return `
@@ -27121,88 +27403,9 @@ function _cdRenderRoundRightHeader(creative) {
     </div>`;
 }
 
-// bug-report b9c7c60c: 左カラム📺タブのプレビューパネル HTML を返す。
-// 動画 (mp4/mov/webm/avi/mkv/m4v): faststart プレビュー版があればそれを <video> で、
-// 無ければ /api/files/:driveFileId/stream を <video> で再生（preload=metadata）。
-// 静止画 (jpg/png/gif/webp/svg): /api/files/:driveFileId/stream を <img> で表示。
-// drive_file_id が解決できない（旧データ等）時は Drive リンクへの誘導フォールバック。
-function _cdRenderRoundLeftPreviewPanel(file, round) {
-  if (!file) {
-    return `<div class="cd-round-left-preview-empty">
-      このラウンドには提出ファイルがありません<br>
-      <span style="font-size:11px">（💬タブでコメントのみ表示できます）</span>
-    </div>`;
-  }
-  const filename = file.generated_name || file.original_name || '';
-  const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
-  const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
-  const driveFileId = file.drive_file_id
-    || (file.drive_url ? (file.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
-  const verNum = file.version || (round && round.version_num) || '';
-  const verLabel = verNum ? `バージョン ${verNum}` : '';
-
-  // faststart 720p プレビューの drive_file_id を抽出（あれば優先して再生）。
-  const fsUrl = file.faststart_drive_url || '';
-  const fsDriveId = fsUrl ? ((fsUrl.match(/\/d\/([^/]+)/) || [])[1] || null) : null;
-  const fsStatus = file.faststart_status || null;
-
-  // ヘッダー（ファイル名 + バージョンバッジ + Drive リンク）
-  const headerHtml = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-      ${verLabel ? `<span style="font-size:11px;font-weight:700;color:var(--em-dark);background:var(--em-pale);border-radius:4px;padding:2px 8px;letter-spacing:0.04em;white-space:nowrap">${esc(verLabel)}</span>` : ''}
-      <span style="flex:1;min-width:0;font-family:monospace;font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(filename)}">${esc(filename)}</span>
-      ${file.drive_url ? `<a href="${esc(file.drive_url)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--em-dark);text-decoration:none;border:0.5px solid var(--em);border-radius:5px;padding:2px 8px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
-    </div>`;
-
-  if (driveFileId && isVideo) {
-    // 720p faststart 版が done なら最優先（feedback_video_playback_architecture）。
-    // それ以外は元動画 stream を <video preload=metadata> で。
-    const playSrcDriveId = (fsStatus === 'done' && fsDriveId) ? fsDriveId : driveFileId;
-    const fsBadge = (fsStatus === 'done' && fsDriveId)
-      ? `<span style="font-size:10px;color:#065f46;background:#d1fae5;border:0.5px solid #6ee7b7;border-radius:5px;padding:2px 6px;white-space:nowrap;margin-left:6px">✅ 720pプレビュー</span>`
-      : (fsStatus === 'pending' || fsStatus === 'processing')
-        ? `<span style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;margin-left:6px">⏳ プレビュー版生成中（元動画で再生）</span>`
-        : '';
-    return `${headerHtml}
-      ${fsBadge ? `<div style="margin-bottom:6px">${fsBadge}</div>` : ''}
-      <video class="cd-round-left-preview-media" controls preload="metadata"
-             src="${API}/files/${esc(playSrcDriveId)}/stream"
-             playsinline></video>`;
-  }
-  if (driveFileId && isImage) {
-    // 画像クリックで既存の openFilePreview（zoom/pan/コメント機能つき）を開く。
-    // 引数の組み立て方は _cdRenderFileCard の checkBtnClick と完全に揃える。
-    const _ct = currentCreativeDetail?.creative_type || '';
-    const _assigneeRoleRender = currentCreativeDetail?.creative_assignments
-      ?.find(a => ['editor','designer','director_as_editor'].includes(a.role))?.users?.role || '';
-    const imgClick = `openFilePreview(${JSON.stringify(driveFileId)},${JSON.stringify(filename)},${JSON.stringify(file.drive_url||'')},${JSON.stringify(file.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`;
-    return `${headerHtml}
-      <img class="cd-round-left-preview-media" src="${API}/files/${esc(driveFileId)}/stream"
-           alt="${esc(filename)}"
-           title="クリックで拡大（コメント・ズーム可）"
-           style="cursor:zoom-in"
-           onclick="${esc(imgClick)}"
-           onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-      <div class="cd-round-left-preview-empty" style="display:none;margin-top:6px">画像の読み込みに失敗しました</div>`;
-  }
-  // drive 連携無し or 未対応形式 → リンクのみ
-  return `${headerHtml}
-    <div class="cd-round-left-preview-empty">
-      このファイルはモーダル内でのプレビューに対応していません。<br>
-      ${file.drive_url ? `<a href="${esc(file.drive_url)}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:underline">Drive で開く ↗</a>` : '（Drive 連携なし）'}
-    </div>`;
-}
-
-// bug-report b9c7c60c: 左カラムのタブ切替ハンドラ。タブ選択は ◀▶ ラウンド移動を跨いで維持される。
-function cdSetRoundLeftTab(tab) {
-  if (tab !== 'preview' && tab !== 'comments') return;
-  const btn = (tab === 'preview') ? document.getElementById('cd-round-left-tab-preview') : null;
-  // disabled (= ファイル無し) のときは preview に切替えない（comments のまま）
-  if (tab === 'preview' && btn && btn.hasAttribute('disabled')) return;
-  _cdRoundLeftTab = tab;
-  try { cdRenderRoundCompare(); } catch (_) {}
-}
-
+// ============================================================
+// 「前回」セクション 描画エントリポイント (PR #(prev-comment-pagination))
+// ============================================================
 function cdRenderRoundCompare() {
   const c = currentCreativeDetail;
   const wrap = document.getElementById('cd-round-compare');
@@ -27210,24 +27413,18 @@ function cdRenderRoundCompare() {
   const filesSection = document.getElementById('cd-files-section');
   if (!wrap || !c) return;
 
-  // 履歴 + ライブ仮想ラウンドを連結（ライブは末尾＝最新の過去ラウンド扱い）
-  const live = _cdBuildLiveRound(c);
-  const allRounds = [..._cdRoundsCache];
-  if (live) allRounds.push(live);
+  const pages = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
 
-  const enable = _cdShouldShowRoundCompare(c, allRounds);
+  const enable = _cdShouldShowRoundCompare(c, pages);
   if (!enable) {
     wrap.style.display = 'none';
     if (modal) modal.classList.remove('cd-2col-mode');
     _cdMoveRightColumnElements(false);
-    // 右カラムに差し込んだ「今回の成果物」カードを除去
     document.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
-    // PR #(round-3layer): 左/右フッターも掃除しておく（次回 enable 時に再描画される）
     const lf = document.getElementById('cd-round-left-footer');
     if (lf) lf.innerHTML = '';
     const rf = document.getElementById('cd-round-right-footer');
     if (rf) rf.innerHTML = '';
-    // 1カラム時は元の「アップロード済みファイル」一覧をそのまま見せる
     if (filesSection && Array.isArray(_cdFilesCache) && _cdFilesCache.length > 0) {
       filesSection.style.display = '';
     }
@@ -27238,116 +27435,70 @@ function cdRenderRoundCompare() {
   if (modal) modal.classList.add('cd-2col-mode');
   _cdMoveRightColumnElements(true);
 
-  const N = allRounds.length;
+  const N = pages.length;
 
   // 初期 index は最新（末尾）。範囲外を補正。
   if (_cdRoundIndex >= N) _cdRoundIndex = Math.max(0, N - 1);
   if (_cdRoundIndex < 0)  _cdRoundIndex = 0;
 
-  const currentRound = (N > 0) ? allRounds[_cdRoundIndex] : null;
+  const currentPage = (N > 0) ? pages[_cdRoundIndex] : null;
 
-  // 左ヘッダー描画（前回ラベル + 種別 + 日時 + ◀▶ + ●○）
-  // 解決済の左カラムファイルを渡してバッジ version を一致させる（PR #(round-tied-version)）
+  // 旧仕様にあった「📺/💬 タブ」は新仕様で不要 (1ページ=1コメント)。タブ要素は完全に隠す。
+  const tabsWrap = document.getElementById('cd-round-left-tabs');
+  if (tabsWrap) tabsWrap.style.display = 'none';
+
+  // 左ヘッダー
   const leftHeader = document.getElementById('cd-round-left-header');
   if (leftHeader) {
-    const resolvedLeftFile = currentRound ? _cdResolveRoundLeftFile(currentRound) : null;
-    leftHeader.innerHTML = _cdRenderRoundLeftHeader(_cdRoundIndex, N, currentRound, resolvedLeftFile);
+    leftHeader.innerHTML = _cdRenderRoundLeftHeader(_cdRoundIndex, N, currentPage);
   }
-  // 右ヘッダー描画（今回ラベル + ステータス + 日時）
+  // 右ヘッダー（既存）
   const rightHeader = document.getElementById('cd-round-right-header');
   if (rightHeader) {
     rightHeader.innerHTML = _cdRenderRoundRightHeader(c);
   }
 
-  // 左カラム本体描画（タブ切替: preview = クリエイティブプレビュー / comments = 過去ラウンド指摘・コメント）
-  // bug-report b9c7c60c: 静止画案件で「前回のクリエイティブをサッと見たい」要望に対応。
-  // ラウンドが解決できる提出ファイル (動画 / 画像) があれば📺タブで再生・表示し、無ければ
-  // 自動で💬タブへ寄せる。
+  // 左本体: 1ページ分の HTML
   const left = document.getElementById('cd-round-left');
-  const tabsWrap = document.getElementById('cd-round-left-tabs');
-  if (left && tabsWrap) {
+  if (left) {
+    // タブは隠したので border-top を復活
+    left.style.borderTop = '0.5px solid var(--border)';
+    left.style.borderRadius = '10px';
     if (N === 0) {
-      // ラウンド0件: タブごと隠して空メッセージのみ（既存挙動を維持）
-      tabsWrap.style.display = 'none';
-      left.style.borderTop = '0.5px solid var(--border)';
-      left.style.borderRadius = '10px';
-      left.innerHTML = `<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（修正・再提出が行われると、ここに前回の指摘と提出メモが残ります）</span></div>`;
+      left.innerHTML = `<div class="cd-round-empty">前回までの往復はまだありません<br><span style="font-size:11px">（コメント・提出メモが時系列で1ページずつ表示されます）</span></div>`;
     } else {
-      const round = allRounds[_cdRoundIndex];
-      const resolvedFile = _cdResolveRoundLeftFile(round);
-      const previewAvailable = !!resolvedFile;
-      tabsWrap.style.display = 'flex';
-      // タブの上に乗るので border-top は外し、左本体の角を下だけ丸める（CSS 側で設定済）
-      left.style.borderTop = 'none';
-      left.style.borderRadius = '0 0 10px 10px';
-
-      // タブの active / disabled 状態を更新
-      const tabPreviewBtn = document.getElementById('cd-round-left-tab-preview');
-      const tabCommentsBtn = document.getElementById('cd-round-left-tab-comments');
-      if (tabPreviewBtn) {
-        if (previewAvailable) {
-          tabPreviewBtn.removeAttribute('disabled');
-          tabPreviewBtn.title = '';
-        } else {
-          tabPreviewBtn.setAttribute('disabled', 'disabled');
-          tabPreviewBtn.title = 'このラウンドには提出ファイルがありません';
-        }
-      }
-      // disabled 時は強制的に comments へ
-      let activeTab = _cdRoundLeftTab;
-      if (activeTab === 'preview' && !previewAvailable) activeTab = 'comments';
-      if (tabPreviewBtn) tabPreviewBtn.classList.toggle('is-active', activeTab === 'preview');
-      if (tabCommentsBtn) tabCommentsBtn.classList.toggle('is-active', activeTab === 'comments');
-
-      if (activeTab === 'preview') {
-        left.innerHTML = _cdRenderRoundLeftPreviewPanel(resolvedFile, round);
-      } else {
-        left.innerHTML = _cdRoundEntryHtml(round);
-      }
+      left.innerHTML = _cdRenderPageHtml(currentPage);
     }
   }
-  // 左カラムフッター（過去ラウンドの提出物カード）。flex:margin-top:auto で下端に張り付く。
-  // ラウンド切り替え（◀▶）時もここが差し替わって左右の高さ揃いを維持する。
+
+  // 左フッター: ページが kind='submit' なら成果物カード、それ以外は空
   const leftFooter = document.getElementById('cd-round-left-footer');
   if (leftFooter) {
-    if (N === 0) {
-      leftFooter.innerHTML = '';
-    } else {
-      const round = allRounds[_cdRoundIndex];
-      leftFooter.innerHTML = _cdRenderRoundLeftFileCard(round);
-    }
+    leftFooter.innerHTML = (N === 0) ? '' : _cdRenderPageFileCard(currentPage);
   }
 
-  // 2カラムモードでは下部の `#cd-files-section`（縦並び）を畳んで、
-  // 代わりに「今回の成果物」を右カラムのフッターに挿し込む。
-  // PR #(round-3layer) 以前は body (#cd-round-right) の末尾に append していたが、
-  // それだと body が縦に伸びて 左右で footer 位置がズレる原因になっていた。
+  // 右フッター: 「今回の成果物」（最新ファイル + 取消ボタン or アップロード待ち placeholder）
   if (filesSection) filesSection.style.display = 'none';
-  // 既存の body 内差し込みが残っていれば撤去（PR #(round-3layer) 以前の遺物対策・冪等）
   const rightBody = document.getElementById('cd-round-right');
   if (rightBody) {
     rightBody.querySelectorAll('[data-cd-round-right-file="1"]').forEach(el => el.remove());
   }
   const rightFooter = document.getElementById('cd-round-right-footer');
   if (rightFooter) {
-    // currentRound を渡して、左右が同じバージョンを指すときは右カードを抑制する
-    // （ADR 011 補足・代表 髙橋指示）。
-    const html = _cdRenderRoundRightFileCard(currentRound);
+    const html = _cdRenderRoundRightFileCard(currentPage);
     rightFooter.innerHTML = html ? `<div data-cd-round-right-file="1">${html}</div>` : '';
   }
 }
 
 function cdRoundShift(delta) {
-  const live = _cdBuildLiveRound(currentCreativeDetail);
-  const N = _cdRoundsCache.length + (live ? 1 : 0);
+  const N = (_cdRoundsCache || []).length;
   if (N <= 1) return;
   _cdRoundIndex = Math.max(0, Math.min(N - 1, _cdRoundIndex + delta));
   cdRenderRoundCompare();
 }
 
 function cdRoundJump(idx) {
-  const live = _cdBuildLiveRound(currentCreativeDetail);
-  const N = _cdRoundsCache.length + (live ? 1 : 0);
+  const N = (_cdRoundsCache || []).length;
   if (idx < 0 || idx >= N) return;
   _cdRoundIndex = idx;
   cdRenderRoundCompare();
@@ -27990,30 +28141,13 @@ async function openCreativeDetail(id) {
     _cdSetLoadingPhase('render');
   }
 
-  // 直近ラウンド (= 一番新しい過去) を初期表示。
-  //
-  // 過去のバグ:
-  //   #555 で「Pチェック中にDチェック承認コメントが見えない」を解消するため、
-  //   修正中以外のときは「コメント保有ラウンドのうち末尾に最も近いもの」を選ぶ
-  //   ロジックを導入していた。しかしこれは結果として、ドット位置と「最新ラウンド」が
-  //   ズレる副作用 (初期表示が右から2番目になる + ドットを最右に動かすと
-  //   編集者の提出時メモしか見えない) を生んだ。
-  //
-  // 現在の対策:
-  //   cdLoadRounds() の _cdDedupRoundsForTimeline() で
-  //   「同 version の handoff 直後に並ぶ "次工程の初回提出 仮想ラウンド"」を除去している。
-  //   これにより末尾は常に「最新の意思決定 (handoff or snapshot or live)」になる。
-  //   よって初期 index は素直に末尾でよい。
-  //
-  // ライブ round (live=true) は cdRenderRoundCompare() 内で末尾 push されるため、
-  // ライブ有無に関係なく `_cdRoundsCache.length + (live ? 1 : 0) - 1` を初期値にする。
+  // 「前回」初期ページ = 最新（末尾, N/N）。
+  // 新仕様 (PR #(prev-comment-pagination)): _cdRoundsCache はコメント1個=1要素の
+  // 時系列順フラット配列なので、末尾が常に「最新の意思決定」になる。
   {
-    const live = _cdBuildLiveRound(currentCreativeDetail);
-    const N = _cdRoundsCache.length + (live ? 1 : 0);
+    const N = (_cdRoundsCache || []).length;
     _cdRoundIndex = Math.max(0, N - 1);
   }
-  // bug-report b9c7c60c: 詳細を開くたびに左カラムタブを 📺 preview にリセット（既定値）
-  _cdRoundLeftTab = 'preview';
   try { cdRenderRoundCompare(); } catch (e) { console.warn('[cd-round-compare] render failed:', e); }
 
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（モーダル下部の追加情報なので非同期で OK・失敗しても無視）
@@ -30456,7 +30590,7 @@ function _renderFpCommentHtml(c, isReply) {
     const r = c.users?.role;
     switch(r) {
       case 'admin': return '管理者';
-      case 'secretary': return '事務';
+      case 'secretary': return '秘書';
       case 'producer': return 'プロデューサー';
       case 'producer_director': return 'P/D';
       case 'director': return 'ディレクター';

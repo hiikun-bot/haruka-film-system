@@ -23,7 +23,7 @@
   // ───────── ロール定義（ADR 003 / users.role の正準形）─────────
   const ROLE_DEFS = [
     { value: 'admin',             short: '管理',     order: 1 },
-    { value: 'secretary',         short: '事務',     order: 2 },
+    { value: 'secretary',         short: '秘書',     order: 2 },
     { value: 'producer',          short: 'P',        order: 3 },
     { value: 'producer_director', short: 'P/D',      order: 4 },
     { value: 'director',          short: 'D',        order: 5 },
