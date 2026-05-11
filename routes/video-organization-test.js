@@ -1,14 +1,22 @@
 // routes/video-organization-test.js — 素材広場 / 動画整理ツール（test / experimental）
 //
 // 設計の核:
-//   - 4 endpoint すべて admin のみ（requireRole('admin')）
-//   - register（登録）→ analyze（承認＋AI解析）→ apply（承認＋Drive変更）の 3 段階承認
-//   - register 段階では Gemini を 1 度も叩かない（waiting_approval）
+//   - 全 endpoint admin のみ（requireRole('admin')）
+//   - フロー: upload（D&D アップロード）/ register（既存 Drive ID）→
+//             analyze（承認＋AI解析）→ apply（承認＋Drive変更）の 3 段階承認
+//   - upload / register 段階では Gemini を 1 度も叩かない（waiting_approval）
 //   - analyze は STOP_ALL / DAILY_LIMIT / duration / mime / status / attempt_count を
 //     すべて pass してから初めて Vertex AI を呼ぶ
 //   - apply は DRY_RUN=true の間は提案差分だけ返す（Drive 上は何も触らない）
+//
+// Phase 2 追加:
+//   - POST /upload  : multer で受けた動画/画像を Drive にアップロード（HEIC→jpeg 変換）
+//   - GET  /preview/:fileId : Drive のファイルを Range 対応で stream（プレビュー再生用）
+//   - 画像対応（jpg/jpeg/png/webp/heic）
+//   - Gemini プロンプト拡張で tags / scenes / mood を保存
 
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 
 const supabase = require('../supabase');
@@ -16,6 +24,7 @@ const { requireAuth, requireRole } = require('../auth');
 const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
+const heicLib = require('../lib/video-organization/heic');
 
 // 共通: feature flag ガード（ENABLE_VIDEO_ORGANIZATION_TEST=false なら 404）
 router.use((req, res, next) => {
@@ -29,21 +38,56 @@ router.use((req, res, next) => {
 router.use(requireAuth);
 router.use(requireRole('admin'));
 
-const SUPPORTED_MIMES = new Set(['video/mp4']);
+// アップロードを受ける upload エリア
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+});
+
+const VIDEO_MIMES = new Set(['video/mp4']);
+const IMAGE_MIMES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+const HEIC_MIMES  = new Set(['image/heic', 'image/heif']);
+
+function mimeToKind(mimeType, filename) {
+  const mt = String(mimeType || '').toLowerCase();
+  if (VIDEO_MIMES.has(mt)) return 'video';
+  if (IMAGE_MIMES.has(mt) || HEIC_MIMES.has(mt)) return 'image';
+  if (heicLib.isHeic(mt, filename)) return 'image';
+  return null;
+}
 
 function logCtx(prefix, payload) {
-  // 監査ログ: 仕様で要求された項目を最低限カバー
   console.log(`[video-org] ${prefix}`, JSON.stringify(payload));
 }
 
-// 一覧取得 — 管理画面の一覧表示用
+function getUploadFolderId() {
+  return process.env.VIDEO_ORG_UPLOAD_FOLDER_ID
+      || process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+      || '';
+}
+
+// ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { q, status, mediaKind, tag } = req.query || {};
+    let query = supabase
       .from('video_file_organization_tests')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(200);
+
+    if (status) query = query.eq('status', String(status));
+    if (mediaKind) query = query.eq('media_kind', String(mediaKind));
+    if (tag) query = query.contains('tags', [String(tag)]);
+    if (q) {
+      // ファイル名・summary・tags での自由検索
+      const safe = String(q).replace(/%/g, '\\%').replace(/_/g, '\\_');
+      query = query.or(
+        `original_filename.ilike.%${safe}%,current_filename.ilike.%${safe}%,summary.ilike.%${safe}%`
+      );
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
     res.json({ items: data || [], daily: await guards.checkDailyLimit() });
   } catch (e) {
@@ -52,56 +96,139 @@ router.get('/list', async (req, res) => {
   }
 });
 
-// 単一取得 — 提案内容の最終確認用
-router.get('/:fileId', async (req, res) => {
+// ==================== プレビューストリーム（Drive 動画/画像を proxy）====================
+// /preview/:fileId  — Range 対応で動画を返す。3 秒ループ再生用。
+// 認証必須・admin のみ（router.use 済み）。レスポンスを公開化せず HARUKA セッション経由で配信する。
+router.get('/preview/:fileId', async (req, res) => {
+  const fileId = String(req.params.fileId);
+  if (!fileId) return res.status(400).end();
   try {
-    const fileId = String(req.params.fileId);
-    const { data, error } = await supabase
-      .from('video_file_organization_tests')
-      .select('*')
-      .eq('drive_file_id', fileId)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: '登録されていません' });
-    res.json({ item: data });
+    const range = req.headers.range || null;
+    const { stream, status, headers } = await driveLib.getFileStream(fileId, range);
+    if (headers['content-type']) res.setHeader('Content-Type', headers['content-type']);
+    if (headers['content-length']) res.setHeader('Content-Length', headers['content-length']);
+    if (headers['content-range']) res.setHeader('Content-Range', headers['content-range']);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.status(status === 206 || range ? 206 : 200);
+    stream.on('error', (e) => {
+      console.error('[video-org] preview stream error:', e.message);
+      try { res.end(); } catch (_) {}
+    });
+    stream.pipe(res);
   } catch (e) {
-    console.error('[video-org] get error:', e);
-    res.status(500).json({ error: e.message });
+    console.error('[video-org] preview error:', e.message);
+    res.status(404).end();
   }
 });
 
-// 登録（Gemini を叩かない・Drive メタ取得のみ）
+// ==================== アップロード（複数ファイル D&D）====================
+router.post('/upload', upload.array('files', 20), async (req, res) => {
+  const folderId = getUploadFolderId();
+  if (!folderId) {
+    return res.status(500).json({ error: 'VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID が未設定です' });
+  }
+  const files = req.files || [];
+  if (files.length === 0) return res.status(400).json({ error: 'ファイルが添付されていません' });
+
+  const results = [];
+  for (const f of files) {
+    try {
+      const kind = mimeToKind(f.mimetype, f.originalname);
+      if (!kind) {
+        results.push({ filename: f.originalname, ok: false, error: `未対応の MIME: ${f.mimetype}` });
+        continue;
+      }
+
+      // HEIC → JPEG 変換（mime と filename を差し替え）
+      let buffer = f.buffer;
+      let mimeType = f.mimetype;
+      let filename = f.originalname;
+      if (heicLib.isHeic(f.mimetype, f.originalname)) {
+        try {
+          buffer = await heicLib.convertHeicToJpeg(f.buffer);
+          mimeType = 'image/jpeg';
+          filename = heicLib.jpegFilenameFor(f.originalname);
+        } catch (e) {
+          results.push({ filename: f.originalname, ok: false, error: `HEIC 変換失敗: ${e.message}` });
+          continue;
+        }
+      }
+
+      // Drive アップロード
+      const uploaded = await driveLib.uploadFile({
+        buffer, filename, mimeType, parentFolderId: folderId,
+      });
+
+      // DB 登録
+      const parentName = await driveLib.getParentFolderName(uploaded.parents[0] || folderId);
+      const row = {
+        drive_file_id: uploaded.fileId,
+        original_filename: uploaded.fileName,
+        current_filename: uploaded.fileName,
+        mime_type: uploaded.mimeType,
+        file_size: uploaded.size,
+        drive_url: uploaded.webViewLink,
+        current_parent_folder_id: uploaded.parents[0] || folderId,
+        current_parent_folder_name: parentName,
+        video_duration_seconds: uploaded.durationSeconds,
+        media_kind: kind,
+        thumbnail_url: uploaded.thumbnailLink,
+        status: 'waiting_approval',
+        dry_run: guards.isDryRun(),
+        created_by: req.user?.id || null,
+      };
+      const { data: inserted, error: insertError } = await supabase
+        .from('video_file_organization_tests')
+        .insert(row)
+        .select()
+        .single();
+      if (insertError) throw insertError;
+
+      logCtx('upload', {
+        at: new Date().toISOString(),
+        by: req.user?.email,
+        fileId: uploaded.fileId,
+        fileName: uploaded.fileName,
+        size: uploaded.size,
+        kind,
+      });
+      results.push({ filename: f.originalname, ok: true, item: inserted });
+    } catch (e) {
+      console.error('[video-org] upload file error:', f.originalname, e);
+      results.push({ filename: f.originalname, ok: false, error: e.message });
+    }
+  }
+  res.json({ results });
+});
+
+// ==================== fileId による既存 Drive 登録（旧互換）====================
 router.post('/register', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
 
   try {
-    // 重複登録チェック
     const { data: existing } = await supabase
       .from('video_file_organization_tests')
       .select('id, status')
       .eq('drive_file_id', fileId)
       .maybeSingle();
     if (existing) {
-      return res.status(409).json({
-        error: '既に登録済みです',
-        existing_status: existing.status,
-      });
+      return res.status(409).json({ error: '既に登録済みです', existing_status: existing.status });
     }
 
-    // Drive メタ取得
     const meta = await driveLib.getVideoFileMeta(fileId);
     if (!meta || !meta.fileId) {
       return res.status(404).json({ error: 'Google Drive 上に該当ファイルが見つかりません' });
     }
-    if (!SUPPORTED_MIMES.has(meta.mimeType)) {
-      return res.status(422).json({
-        error: `対象外の MIME タイプ: ${meta.mimeType}（現在は video/mp4 のみ対応）`,
-      });
+    const kind = mimeToKind(meta.mimeType, meta.fileName);
+    if (!kind) {
+      return res.status(422).json({ error: `対象外の MIME: ${meta.mimeType}` });
     }
 
     const parentId = (meta.parents && meta.parents[0]) || null;
     const parentName = await driveLib.getParentFolderName(parentId);
+    const thumb = await driveLib.getThumbnailLink(fileId);
 
     const row = {
       drive_file_id: fileId,
@@ -113,6 +240,8 @@ router.post('/register', async (req, res) => {
       current_parent_folder_id: parentId,
       current_parent_folder_name: parentName,
       video_duration_seconds: meta.durationSeconds,
+      media_kind: kind,
+      thumbnail_url: thumb,
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
@@ -120,22 +249,13 @@ router.post('/register', async (req, res) => {
 
     const { data: inserted, error: insertError } = await supabase
       .from('video_file_organization_tests')
-      .insert(row)
-      .select()
-      .single();
+      .insert(row).select().single();
     if (insertError) throw insertError;
 
     logCtx('register', {
-      at: new Date().toISOString(),
-      by: req.user?.email,
-      fileId,
-      fileName: meta.fileName,
-      size: meta.size,
-      duration: meta.durationSeconds,
-      dry_run: row.dry_run,
-      stop_all: guards.isStopAll(),
+      at: new Date().toISOString(), by: req.user?.email,
+      fileId, fileName: meta.fileName, size: meta.size, kind,
     });
-
     res.json({ item: inserted });
   } catch (e) {
     console.error('[video-org] register error:', e);
@@ -143,7 +263,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// AI 解析（承認後にここを呼ぶ。ここで初めて Vertex AI に課金が発生）
+// ==================== AI 解析（要承認）====================
 router.post('/analyze', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
@@ -155,49 +275,33 @@ router.post('/analyze', async (req, res) => {
 
     const { data: item, error: fetchError } = await supabase
       .from('video_file_organization_tests')
-      .select('*')
-      .eq('drive_file_id', fileId)
-      .maybeSingle();
+      .select('*').eq('drive_file_id', fileId).maybeSingle();
     if (fetchError) throw fetchError;
-    if (!item) return res.status(404).json({ error: '先に register が必要です' });
+    if (!item) return res.status(404).json({ error: '先に register / upload が必要です' });
 
-    // status ガード — 連続解析・既完了の再解析を禁止（force は MVP では非対応）
     if (!['waiting_approval', 'failed'].includes(item.status)) {
-      return res.status(409).json({
-        error: `現在の status (${item.status}) からは解析できません`,
-      });
+      return res.status(409).json({ error: `現在の status (${item.status}) からは解析できません` });
     }
 
-    // 動画時間ガード
+    // 動画のみ長さガード（画像は対象外）
     const maxDuration = guards.getMaxDurationSeconds();
-    if (item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
-      await supabase
-        .from('video_file_organization_tests')
+    if (item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
+      await supabase.from('video_file_organization_tests')
         .update({ status: 'skipped', error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s` })
         .eq('id', item.id);
-      return res.status(422).json({
-        error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)`,
-      });
+      return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)` });
     }
 
-    // リトライ上限
     if ((item.attempt_count || 0) >= guards.getMaxRetryCount()) {
-      return res.status(429).json({
-        error: `MAX_RETRY_COUNT (${guards.getMaxRetryCount()}) に到達しています`,
-      });
+      return res.status(429).json({ error: `MAX_RETRY_COUNT (${guards.getMaxRetryCount()}) に到達しています` });
     }
 
-    // 日次上限
     const daily = await guards.checkDailyLimit();
     if (daily.exceeded) {
-      return res.status(429).json({
-        error: `DAILY_ANALYSIS_LIMIT に到達しました (${daily.count}/${daily.limit})`,
-      });
+      return res.status(429).json({ error: `DAILY_ANALYSIS_LIMIT に到達しました (${daily.count}/${daily.limit})` });
     }
 
-    // ここまでで安全装置を通過。status を processing に遷移。
-    await supabase
-      .from('video_file_organization_tests')
+    await supabase.from('video_file_organization_tests')
       .update({
         status: 'processing',
         attempt_count: (item.attempt_count || 0) + 1,
@@ -207,70 +311,45 @@ router.post('/analyze', async (req, res) => {
       .eq('id', item.id);
 
     logCtx('analyze-start', {
-      at: new Date().toISOString(),
-      by: req.user?.email,
-      fileId,
-      fileName: item.original_filename,
-      size: item.file_size,
-      duration: item.video_duration_seconds,
-      model: guards.getModelName(),
-      dry_run: guards.isDryRun(),
+      at: new Date().toISOString(), by: req.user?.email,
+      fileId, fileName: item.original_filename, size: item.file_size,
+      duration: item.video_duration_seconds, kind: item.media_kind,
+      model: guards.getModelName(), dry_run: guards.isDryRun(),
       stop_all: guards.isStopAll(),
-      daily_count: daily.count,
-      daily_limit: daily.limit,
+      daily_count: daily.count, daily_limit: daily.limit,
     });
 
-    // Drive ダウンロード
     const buffer = await driveLib.downloadFileBuffer(fileId);
-    // 20MB 超は inline data に乗らないので skipped
     const MAX_INLINE_BYTES = 20 * 1024 * 1024;
     if (buffer.length > MAX_INLINE_BYTES) {
-      await supabase
-        .from('video_file_organization_tests')
-        .update({
-          status: 'skipped',
-          error_message: `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes)`,
-        })
+      await supabase.from('video_file_organization_tests')
+        .update({ status: 'skipped', error_message: `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes)` })
         .eq('id', item.id);
-      return res.status(422).json({
-        error: `動画が大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)。GCS bucket 経由は将来対応`,
-      });
+      return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)` });
     }
 
-    // Gemini 呼び出し（ここで課金）
     let analysis;
     try {
-      analysis = await geminiLib.analyzeVideo({
-        videoBuffer: buffer,
-        mimeType: item.mime_type || 'video/mp4',
+      analysis = await geminiLib.analyzeMedia({
+        mediaBuffer: buffer,
+        mimeType: item.mime_type,
+        mediaKind: item.media_kind || 'video',
         originalFilename: item.original_filename,
       });
     } catch (e) {
-      await supabase
-        .from('video_file_organization_tests')
-        .update({
-          status: 'failed',
-          error_message: e.message,
-          processed_at: new Date().toISOString(),
-        })
+      await supabase.from('video_file_organization_tests')
+        .update({ status: 'failed', error_message: e.message, processed_at: new Date().toISOString() })
         .eq('id', item.id);
       logCtx('analyze-failed', { fileId, error: e.message });
       return res.status(502).json({ error: `Gemini 呼び出し失敗: ${e.message}` });
     }
 
-    logCtx('analyze-response', {
-      fileId,
-      model: analysis.model,
-      jsonParsed: !!analysis.parsed,
-    });
+    logCtx('analyze-response', { fileId, model: analysis.model, jsonParsed: !!analysis.parsed });
 
     if (!analysis.parsed) {
-      await supabase
-        .from('video_file_organization_tests')
+      await supabase.from('video_file_organization_tests')
         .update({
-          status: 'failed',
-          model: analysis.model,
-          prompt_version: analysis.promptVersion,
+          status: 'failed', model: analysis.model, prompt_version: analysis.promptVersion,
           raw_response: { raw: analysis.raw },
           error_message: 'Gemini レスポンスが JSON としてパースできませんでした',
           processed_at: new Date().toISOString(),
@@ -280,6 +359,20 @@ router.post('/analyze', async (req, res) => {
     }
 
     const p = analysis.parsed;
+    // tags: 配列で、各要素を文字列化し # 始まり保証
+    const tagsRaw = Array.isArray(p.tags) ? p.tags : [];
+    const tags = tagsRaw
+      .map(t => String(t || '').trim())
+      .filter(Boolean)
+      .map(t => t.startsWith('#') ? t : '#' + t)
+      .slice(0, 12);
+    // scenes: 配列で {time, description} だけ抽出
+    const scenesRaw = Array.isArray(p.scenes) ? p.scenes : [];
+    const scenes = scenesRaw.slice(0, 8).map(s => ({
+      time: String(s?.time || '').slice(0, 12),
+      description: String(s?.description || '').slice(0, 200),
+    })).filter(s => s.description);
+
     const { data: updated, error: updateError } = await supabase
       .from('video_file_organization_tests')
       .update({
@@ -291,15 +384,16 @@ router.post('/analyze', async (req, res) => {
         video_type: String(p.video_type || ''),
         recommended_folder: String(p.recommended_folder || ''),
         recommended_filename: String(p.recommended_filename || ''),
+        mood: String(p.mood || ''),
+        tags,
+        scenes,
         confidence: Number.isFinite(Number(p.confidence)) ? Math.min(95, Math.round(Number(p.confidence))) : null,
         needs_human_review: !!p.needs_human_review,
         reason: String(p.reason || ''),
         raw_response: analysis.parsed,
         processed_at: new Date().toISOString(),
       })
-      .eq('id', item.id)
-      .select()
-      .single();
+      .eq('id', item.id).select().single();
     if (updateError) throw updateError;
 
     res.json({ item: updated });
@@ -309,7 +403,7 @@ router.post('/analyze', async (req, res) => {
   }
 });
 
-// 適用（提案を Drive に適用）— DRY_RUN=true の間はプレビュー差分のみ返す
+// ==================== 適用（DRY_RUN プレビュー）====================
 router.post('/apply', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
@@ -321,9 +415,7 @@ router.post('/apply', async (req, res) => {
 
     const { data: item } = await supabase
       .from('video_file_organization_tests')
-      .select('*')
-      .eq('drive_file_id', fileId)
-      .maybeSingle();
+      .select('*').eq('drive_file_id', fileId).maybeSingle();
     if (!item) return res.status(404).json({ error: '登録されていません' });
     if (item.status !== 'analysis_completed') {
       return res.status(409).json({ error: `status=${item.status} は適用対象外（analysis_completed のみ）` });
@@ -345,23 +437,13 @@ router.post('/apply', async (req, res) => {
     };
 
     logCtx('apply', {
-      at: new Date().toISOString(),
-      by: req.user?.email,
-      fileId,
-      dry_run: dryRun,
-      diff,
+      at: new Date().toISOString(), by: req.user?.email,
+      fileId, dry_run: dryRun, diff,
     });
 
-    if (dryRun) {
-      // 実適用しない。status は analysis_completed のまま据え置く
-      // （何度プレビューしても安全）。
-      return res.json({ applied: false, dry_run: true, diff });
-    }
+    if (dryRun) return res.json({ applied: false, dry_run: true, diff });
 
-    // 本適用は MVP 範囲外（仕様: 「実際のリネーム・移動は、まだ本番実行しなくてOK」）
-    // ここに到達するのは DRY_RUN=false に手動で切り替えた場合のみ。
-    // それでも事故防止のため、現状は明示的に 501 で止める設計とする。
-    // 本番実行を解禁する際は Stage 2 で別 PR を切り、drive.files.update / move を実装する。
+    // 本適用は Stage 2 で別 PR
     return res.status(501).json({
       error: 'DRY_RUN=false での本適用は MVP 範囲外です。次フェーズで実装します',
       diff,
@@ -372,14 +454,31 @@ router.post('/apply', async (req, res) => {
   }
 });
 
-// 削除（テスト中の手動掃除用）
-router.delete('/:fileId', async (req, res) => {
+// ==================== 単一取得 ====================
+// 注意: 上の /preview/:fileId / /list / /upload / /register / /analyze / /apply の後に置く
+// （ルートマッチング順序事故防止）
+router.get('/item/:fileId', async (req, res) => {
+  try {
+    const fileId = String(req.params.fileId);
+    const { data, error } = await supabase
+      .from('video_file_organization_tests')
+      .select('*').eq('drive_file_id', fileId).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: '登録されていません' });
+    res.json({ item: data });
+  } catch (e) {
+    console.error('[video-org] get error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== 削除 ====================
+router.delete('/item/:fileId', async (req, res) => {
   try {
     const fileId = String(req.params.fileId);
     const { error } = await supabase
       .from('video_file_organization_tests')
-      .delete()
-      .eq('drive_file_id', fileId);
+      .delete().eq('drive_file_id', fileId);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
