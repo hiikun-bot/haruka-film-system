@@ -132,7 +132,7 @@ router.get('/preview/:fileId', async (req, res) => {
     // Drive 側のステータスをそのまま転送（206 / 200 / 304 など）
     res.status(status || 200);
     stream.on('error', (e) => {
-      console.error('[video-org] preview stream error:', e.message);
+      console.error('[video-org] preview stream error:', { fileId, message: e.message, code: e.code });
       try { res.end(); } catch (_) {}
     });
     req.on('close', () => {
@@ -140,8 +140,30 @@ router.get('/preview/:fileId', async (req, res) => {
     });
     stream.pipe(res);
   } catch (e) {
-    console.error('[video-org] preview error:', e.message);
-    if (!res.headersSent) res.status(404).end();
+    // Drive API のエラーをコード別にハンドリング（次のエラー報告で原因を絞り込みやすくする）
+    // googleapis 例外は e.code に HTTP ステータス、e.errors[0].reason に reason 文字列が入る
+    const upstreamStatus = Number(e?.code) || null;
+    const reason = e?.errors?.[0]?.reason || null;
+    console.error('[video-org] preview error:', {
+      fileId,
+      message: e?.message,
+      upstreamStatus,
+      reason,
+    });
+    if (!res.headersSent) {
+      // 404=ファイルなし、403=権限/quota、429=rate limit、5xx=Drive側障害
+      let outStatus = 502;
+      if (upstreamStatus === 404) outStatus = 404;
+      else if (upstreamStatus === 403) outStatus = 403;
+      else if (upstreamStatus === 401) outStatus = 401;
+      else if (upstreamStatus === 429) outStatus = 429;
+      else if (upstreamStatus && upstreamStatus >= 500) outStatus = 502;
+      res.status(outStatus).json({
+        error: 'preview_failed',
+        upstreamStatus,
+        reason,
+      });
+    }
   }
 });
 
