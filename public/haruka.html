@@ -37600,6 +37600,12 @@ function msClearPreview() {
 async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
   // <video>.error.code は MEDIA_ERR_* の数値（1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED）
   const mediaErrCode = videoEl && videoEl.error ? videoEl.error.code : null;
+  const MEDIA_ERR_LABEL = {
+    1: '読み込み中断',
+    2: '通信エラー',
+    3: 'デコード失敗（mp4 の moov atom が末尾にある等、faststart 未処理動画で起きやすい）',
+    4: 'この形式をブラウザが再生できません',
+  };
   let probe = { status: null, contentType: null, body: null, fetchError: null };
   try {
     const r = await fetch(src, { method: 'GET', credentials: 'same-origin', headers: { Range: 'bytes=0-1023' } });
@@ -37613,15 +37619,39 @@ async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
   }
   // UI に失敗理由を表示
   if (container) {
-    const statusLabel = probe.status === null ? '通信エラー'
-      : probe.status === 404 ? 'ファイルが見つかりません (404)'
-      : probe.status === 403 ? '権限エラー (403)'
-      : probe.status >= 500 ? `サーバーエラー (${probe.status})`
-      : `読み込み失敗 (${probe.status})`;
+    // probe が 2xx の時は配信は正常 → 再生側（コーデック / faststart 未処理）の問題
+    const probeOk = probe.status !== null && probe.status >= 200 && probe.status < 300;
+    let statusLabel;
+    if (probe.status === null) {
+      statusLabel = '通信エラー' + (probe.fetchError ? `: ${probe.fetchError}` : '');
+    } else if (probe.status === 404) {
+      statusLabel = 'ファイルが見つかりません (404)';
+    } else if (probe.status === 403) {
+      statusLabel = '権限エラー (403)';
+    } else if (probe.status >= 500) {
+      statusLabel = `サーバーエラー (${probe.status})`;
+    } else if (probeOk) {
+      statusLabel = mediaErrCode
+        ? `ブラウザで再生不可: ${MEDIA_ERR_LABEL[mediaErrCode] || `コード ${mediaErrCode}`}`
+        : 'ブラウザで再生不可（コーデック非対応の可能性）';
+    } else {
+      statusLabel = `読み込み失敗 (${probe.status})`;
+    }
+    // フォールバック: Drive サムネ + Drive で開くリンク
+    const item = msItemsCache.find(x => x.drive_file_id === fileId);
+    const thumbUrl = item?.thumbnail_url || null;
+    const driveUrl = item?.drive_url || null;
+    const thumbHtml = thumbUrl
+      ? `<img src="${votEscape(thumbUrl)}" alt="" style="max-width:280px;max-height:180px;display:block;margin:0 auto 12px;border-radius:6px;background:#000" onerror="this.style.display='none'">`
+      : '<div style="font-size:24px;margin-bottom:8px">⚠️</div>';
+    const driveLink = driveUrl
+      ? `<br><a href="${votEscape(driveUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;color:var(--accent);font-size:12px;text-decoration:underline">Drive で開く ↗</a>`
+      : '';
     container.innerHTML = `<div style="padding:24px;color:var(--text-muted);font-size:13px;text-align:center;line-height:1.6">
-      <div style="font-size:24px;margin-bottom:8px">⚠️</div>
+      ${thumbHtml}
       プレビューを読み込めませんでした<br>
-      <span style="font-size:11px">${statusLabel}</span>
+      <span style="font-size:11px">${votEscape(statusLabel)}</span>
+      ${driveLink}
     </div>`;
   }
   // 自動エラーレポート（ms-preview-* 専用情報を resourceTarget に詰める）
