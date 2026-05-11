@@ -235,6 +235,16 @@ if (accountingRouter) {
   console.log('[accounting] feature flag DISABLED — set ENABLE_PROJECT_ACCOUNTING=true to enable');
 }
 
+// 素材広場 / 動画整理ツール API（feature flag: ENABLE_VIDEO_ORGANIZATION_TEST）
+// test / experimental。flag OFF 時はマウント自体しない（事故防止のため）。
+const videoOrgEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_VIDEO_ORGANIZATION_TEST || '').toLowerCase());
+if (videoOrgEnabled) {
+  app.use('/api/admin/video-organization-test', require('./routes/video-organization-test'));
+  console.log('[video-org] feature flag ENABLED — /api/admin/video-organization-test/* available (admin only)');
+} else {
+  console.log('[video-org] feature flag DISABLED — set ENABLE_VIDEO_ORGANIZATION_TEST=true to enable');
+}
+
 // login.html: 認証済みユーザーは haruka.html へリダイレクト
 // （?next=/haruka.html?creative=xxx で来た場合はディープリンク先へ）
 app.get('/login.html', (req, res) => {
