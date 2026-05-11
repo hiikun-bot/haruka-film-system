@@ -1,5 +1,23 @@
 # HARUKA FILM SYSTEM - メイン（統合・リリース用）
 
+> ## ⚠️ 重要 — 2026-05-12 フォルダ統合あり（必ず最初に読む）
+>
+> ローカル開発フォルダを `HARUKA-FILM-SYSTEM/` 親フォルダ配下に統合しました。
+>
+> **新パス（現行）**
+> - 本体: `/Users/takahashi_satoru/Documents/40.プログラミング/HARUKA-FILM-SYSTEM/_main`
+> - feature worktree: `HARUKA-FILM-SYSTEM/{projects,clients,creatives,teams,invoices,pc,master,tweets-page,tweets-rich,name-display,material-square,material-square-v2,vertex-global,upload-limits,kv-thumb-fix,preview-bigger}`
+> - 別repo: `HARUKA-FILM-SYSTEM/premiere`（旧 `haruka-premiere`、Premiere UXP）
+>
+> **旧パス（消滅）**: `haruka_film_system/`, `haruka-projects/`, `haruka-clients/`, `haruka-creatives/`, `haruka-teams/`, `haruka-invoices/`, `haruka-pc/`, `haruka-master/`, `haruka-tweets-page/`, `haruka-tweets-rich/`, `haruka-name-display/`, `haruka-material-square*/`, `haruka-vertex-global/`, `haruka-upload-limits/`, `haruka-kv-thumb-fix/`, `haruka-preview-bigger/`, `haruka-premiere/`
+>
+> **agent/Claude Code セッションでの確認手順（毎ターン）**
+> 1. 現在の `cwd` を確認。`/haruka_film_system` / `/haruka-{機能}` を含むなら **そのセッションは旧パス前提で動いている**
+> 2. その場合: 作業を**いったん停止**し、ユーザーに「セッションを閉じて新パスで開き直してください」と報告
+> 3. 新パスで開き直されたら、本CLAUDE.mdが再読込されるのでそのまま継続OK
+>
+> **指示文中の旧パス**: ユーザーが `haruka-projects/` 等と書いた場合、自動的に `HARUKA-FILM-SYSTEM/projects/` と読み替えてよい（旧パスは存在しないので衝突しない）
+
 ## このフォルダの役割
 - **branch**: `main`
 - **用途**: 指示・相談・マージ専用
