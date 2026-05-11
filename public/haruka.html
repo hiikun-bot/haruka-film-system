@@ -3006,6 +3006,8 @@ window.showPage = window.showPage || function(name, btn) {
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-urgent" onchange="renderBugReportList()">🚨 至急のみ</label>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-mine" onchange="renderBugReportList()">自分の報告のみ</label>
       <span style="flex:1"></span>
+      <button class="btn" type="button" onclick="loadBugReportList()" title="一覧を最新化"
+              style="font-size:13px;padding:6px 10px;line-height:1">🔄</button>
       <button class="btn-primary" onclick="openBugReportModal()">＋ 新規報告</button>
     </div>
     <div id="bug-report-list" style="overflow:auto;flex:1">
@@ -36028,6 +36030,7 @@ function closeBugReportModal() {
   const fsBtn = document.getElementById('br-fullscreen-toggle');
   if (fsBtn) fsBtn.textContent = '🔍 拡大';
   closeModal('modal-bug-report');
+  // 裏の一覧モーダル再読込は MutationObserver 側に集約（ESC や背景クリック経由でも発火させるため）
 }
 window.closeBugReportModal = closeBugReportModal;
 
@@ -36042,6 +36045,12 @@ window.addEventListener('load', () => {
       document.body.classList.remove('br-fullscreen-active');
       const fsBtn = document.getElementById('br-fullscreen-toggle');
       if (fsBtn) fsBtn.textContent = '🔍 拡大';
+      // 編集モーダルが閉じたとき、裏で一覧モーダルが開いていれば再読込して
+      // ステータス/対応方針/コメント等の変更を反映する（× / ESC / キャンセル / 保存すべて経路）。
+      // submitBugReport は自前で loadBugReportList を呼ぶが _bugReportLoading ガードで二重発火しない。
+      if (document.getElementById('modal-bug-report-list')?.classList.contains('open')) {
+        if (typeof loadBugReportList === 'function') loadBugReportList();
+      }
     }
   }).observe(m, { attributes: true, attributeFilter: ['class'] });
 });
