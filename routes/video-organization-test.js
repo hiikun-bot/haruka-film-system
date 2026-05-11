@@ -39,9 +39,21 @@ router.use(requireAuth);
 router.use(requireRole('admin'));
 
 // アップロードを受ける upload エリア
+// limits.fileSize は guards.getMaxUploadSizeBytes() で env 連動（既定 25MB）。
+// multer の limits は per-file。複数アップロード時の合計はクライアント側で 1 件ずつ送る運用。
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: guards.getMaxUploadSizeBytes() },
+});
+
+// フロントが起動時に取得する上限値。クライアント側の事前バリデーション用。
+router.get('/limits', (req, res) => {
+  res.json({
+    max_upload_size_mb: guards.getMaxUploadSizeMB(),
+    max_upload_duration_seconds: guards.getMaxUploadDurationSeconds(),
+    max_analysis_duration_seconds: guards.getMaxDurationSeconds(),
+    daily_analysis_limit: guards.getDailyLimit(),
+  });
 });
 
 const VIDEO_MIMES = new Set(['video/mp4']);
@@ -134,7 +146,22 @@ router.get('/preview/:fileId', async (req, res) => {
 });
 
 // ==================== アップロード（複数ファイル D&D）====================
-router.post('/upload', upload.array('files', 20), async (req, res) => {
+// multer が LIMIT_FILE_SIZE で reject した時に 413 で返すラッパー
+function uploadWithSizeGuard(req, res, next) {
+  upload.array('files', 20)(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      const mb = guards.getMaxUploadSizeMB();
+      return res.status(413).json({
+        error: `ファイルサイズが上限 ${mb}MB を超えています。短く編集するか圧縮してから再アップロードしてください`,
+      });
+    }
+    console.error('[video-org] upload middleware error:', err);
+    return res.status(400).json({ error: err.message || 'アップロード処理でエラーが発生しました' });
+  });
+}
+
+router.post('/upload', uploadWithSizeGuard, async (req, res) => {
   const folderId = getUploadFolderId();
   if (!folderId) {
     return res.status(500).json({ error: 'VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID が未設定です' });
@@ -170,6 +197,26 @@ router.post('/upload', upload.array('files', 20), async (req, res) => {
       const uploaded = await driveLib.uploadFile({
         buffer, filename, mimeType, parentFolderId: folderId,
       });
+
+      // 動画長の上限チェック（アップロード直後に Drive メタの durationMillis を見る）
+      // 上限超過なら課金事故防止のため Drive から削除して 422 相当を返す。
+      // durationSeconds が取得できないケース（Drive がまだ処理中など）はそのまま通し、
+      // analyze 段階で再度 MAX_DURATION_SECONDS で弾く（多層防御）。
+      const maxDur = guards.getMaxUploadDurationSeconds();
+      if (kind === 'video' && uploaded.durationSeconds && uploaded.durationSeconds > maxDur) {
+        await driveLib.deleteFile(uploaded.fileId);
+        logCtx('upload-rejected-too-long', {
+          at: new Date().toISOString(), by: req.user?.email,
+          filename: f.originalname,
+          duration: uploaded.durationSeconds,
+          limit: maxDur,
+        });
+        results.push({
+          filename: f.originalname, ok: false,
+          error: `動画長 ${uploaded.durationSeconds}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`,
+        });
+        continue;
+      }
 
       // DB 登録
       const parentName = await driveLib.getParentFolderName(uploaded.parents[0] || folderId);

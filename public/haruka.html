@@ -6984,7 +6984,7 @@ window.showPage = window.showPage || function(name, btn) {
              ondrop="msHandleDrop(event)">
           <div class="ms-drop-icon">⬆ 🎬 🖼️</div>
           <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
-          <p style="margin:0;font-size:12px">複数ファイル同時OK / 1ファイル 50MB まで</p>
+          <p style="margin:0;font-size:12px" id="ms-upload-limits-hint">複数ファイル同時OK / 1ファイル <span id="ms-hint-mb">25</span>MB まで / 動画は <span id="ms-hint-sec">30</span>秒以内</p>
           <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
           <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
           <input type="file" id="ms-file-input" multiple style="display:none"
@@ -37478,8 +37478,14 @@ function msShowList() {
 function msShowUpload() {
   document.getElementById('ms-view-list').style.display = 'none';
   document.getElementById('ms-view-upload').style.display = '';
-  // 入ったタイミングでアップロード一覧をクリア
   msResetUploadList();
+  // 上限ヒントを env 連動値に更新
+  msEnsureLimits().then((l) => {
+    const mb = document.getElementById('ms-hint-mb');
+    const sec = document.getElementById('ms-hint-sec');
+    if (mb) mb.textContent = String(l.max_upload_size_mb || 25);
+    if (sec) sec.textContent = String(l.max_upload_duration_seconds || 30);
+  });
 }
 
 let _msReloadTimer = null;
@@ -37682,6 +37688,18 @@ async function msDeleteSelected() {
 }
 
 // ==================== アップロード（D&D） ====================
+// サーバから取得した上限値（初回 /limits 取得後にキャッシュ）
+let msLimits = null;
+async function msEnsureLimits() {
+  if (msLimits) return msLimits;
+  try {
+    msLimits = await votFetch('/limits');
+  } catch (_) {
+    msLimits = { max_upload_size_mb: 25, max_upload_duration_seconds: 30 };
+  }
+  return msLimits;
+}
+
 function msResetUploadList() {
   const el = document.getElementById('ms-upload-list');
   if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:12px">まだファイルがありません</div>';
@@ -37696,10 +37714,33 @@ function msHandleDrop(ev) {
   const files = Array.from(ev.dataTransfer?.files || []);
   msHandleFiles(files);
 }
+
+// 動画ファイルの長さ（秒）をブラウザ内で取得する。
+// 大きい動画でも metadata までしか読まないので軽量。
+function msProbeVideoDuration(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    v.src = url;
+    const cleanup = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
+    v.onloadedmetadata = () => { cleanup(); resolve(Number.isFinite(v.duration) ? v.duration : null); };
+    v.onerror = () => { cleanup(); resolve(null); };
+    // 5秒で取れなければ諦める（サーバ側で再チェックされる）
+    setTimeout(() => { cleanup(); resolve(null); }, 5000);
+  });
+}
+
 async function msHandleFiles(files) {
   if (!files.length) return;
   const list = document.getElementById('ms-upload-list');
   if (!list) return;
+  const limits = await msEnsureLimits();
+  const maxMb = limits.max_upload_size_mb || 25;
+  const maxDur = limits.max_upload_duration_seconds || 30;
+  const maxBytes = maxMb * 1024 * 1024;
+
   list.innerHTML = '';
   // 各ファイルごとに 1 リクエスト（進捗が個別に見える / 一括 50MB の制約回避）
   for (const f of files) {
@@ -37716,6 +37757,28 @@ async function msHandleFiles(files) {
     list.appendChild(row);
     const bar = row.querySelector('.ms-bar > div');
     const stat = row.querySelector('.ms-status');
+
+    // 事前チェック①: ファイルサイズ
+    if (f.size > maxBytes) {
+      bar.style.background = '#dc2626'; bar.style.width = '100%';
+      stat.style.color = '#dc2626';
+      stat.textContent = `❌ ${maxMb}MB 上限超過（${votFmtSize(f.size)}）。短く編集または圧縮してから再アップロードしてください`;
+      continue;
+    }
+
+    // 事前チェック②: 動画長（mp4 のみ。画像はスキップ）
+    const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
+    if (isVideo) {
+      stat.textContent = '動画長を確認中…';
+      const dur = await msProbeVideoDuration(f);
+      if (dur && dur > maxDur) {
+        bar.style.background = '#dc2626'; bar.style.width = '100%';
+        stat.style.color = '#dc2626';
+        stat.textContent = `❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`;
+        continue;
+      }
+    }
+
     try {
       stat.textContent = 'アップロード中…';
       await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
@@ -37728,7 +37791,6 @@ async function msHandleFiles(files) {
       stat.style.color = '#dc2626';
     }
   }
-  // 一覧側を再読み込み（バックグラウンド）
   msReloadList();
 }
 
