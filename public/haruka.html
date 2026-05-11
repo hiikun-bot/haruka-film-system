@@ -11398,7 +11398,7 @@ function renderCreativesGantt(filtered, warningSource) {
       const proj = r.c.projects?.name || '案件未設定';
       key = `${r.c.projects?.id || 'none'}::${cliObj?.id || 'none'}`;
       label = `${cli} / ${proj}`;
-      meta = { kind: 'project', client: cliObj || null, projectName: proj, team: r.team };
+      meta = { kind: 'project', client: cliObj || null, projectName: proj, team: r.team, projectId: r.c.projects?.id || null };
     }
     if (!groups.has(key)) groups.set(key, { label, items: [], meta });
     const grp = groups.get(key);
@@ -11672,8 +11672,16 @@ function renderCreativesGantt(filtered, warningSource) {
       const cliName = meta.client?.name || '不明クライアント';
       const projName = meta.projectName || '案件未設定';
       const team = meta.team;
+      // 案件カテゴリ（動画 / デザイン / LP / HP / その他）に応じてアイコンを出し分ける。
+      // allProjects から projectId で引いて primary_category を解決。未解決時は 🎬（フォールバック）。
+      const projObj = (meta.projectId && Array.isArray(allProjects))
+        ? allProjects.find(p => p.id === meta.projectId)
+        : null;
+      const icon = (typeof getCreativeCategoryIcon === 'function')
+        ? getCreativeCategoryIcon(projObj)
+        : '🎬';
       return `<div class="cv-g-group-row is-project" style="width:${FIXED_W}px">
-        <span class="ga-icon" aria-hidden="true">🎬</span>
+        <span class="ga-icon" aria-hidden="true">${icon}</span>
         <span class="ga-name" title="${esc(cliName)} ・ ${esc(projName)}">${esc(cliName)} ・ ${esc(projName)}</span>
         ${teamDotChip(team)}
         ${statsHtml}
@@ -13581,6 +13589,35 @@ const PROJECT_TYPE_META = {
   hp:     { label: 'HP',       icon: '🌐', cls: 'badge-hp',     title: 'HP制作案件' },
   other:  { label: 'その他',   icon: '📦', cls: 'badge-other',  title: 'その他案件' },
 };
+
+// 案件カテゴリ（creative_categories）/ project / 種別 code からアイコン絵文字を返す。
+// ガント・一覧の案件グループヘッダー行のアイコン出し分けに使う（動画 → 🎬 / デザイン → 🎨 等）。
+// 引数は以下のいずれでも可:
+//   - project オブジェクト（primary_category / primary_category_id を持つ）
+//   - creative_categories レコード（code / name を直接持つ）
+//   - 文字列（'video' | 'design' | 'image' | 'line' | 'lp' | 'hp' | 'other' 等）
+// 解決不能時は 🎬（既存挙動踏襲のフォールバック）。
+function getCreativeCategoryIcon(input) {
+  if (!input) return PROJECT_TYPE_META.video.icon;
+  let type = null;
+  if (typeof input === 'string') {
+    const code = input;
+    if (PROJECT_TYPE_META[code]) type = code;
+    else if (code === 'image' || code === 'line') type = 'design';
+  } else if (typeof input === 'object') {
+    // creative_categories レコード（code を直接持つ）と project を区別
+    if (input.code && !('primary_category' in input) && !('primary_category_id' in input)) {
+      const c = input.code;
+      if (PROJECT_TYPE_META[c]) type = c;
+      else if (c === 'image' || c === 'line') type = 'design';
+    } else {
+      // project とみなして primary_category 経由で解決（未解決は 'video' フォールバック）
+      type = getProjectType(input);
+    }
+  }
+  const m = PROJECT_TYPE_META[type] || PROJECT_TYPE_META.video;
+  return m.icon;
+}
 
 // 案件種別バッジHTMLを返す。
 // project が primary_category（または primary_category_id）を持っていれば
