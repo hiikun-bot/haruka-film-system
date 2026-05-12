@@ -6968,6 +6968,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
             <button class="btn-primary" id="ms-btn-apply" onclick="msApplySelected()">✅ 適用する</button>
+            <button class="btn-secondary" id="ms-btn-faststart" onclick="msRegenerateFaststart()" title="H.265等で再生できない動画を H.264 に変換">⚡ 再生用に変換</button>
             <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
           </div>
         </div>
@@ -37731,15 +37732,16 @@ function msSelectItem(fileId, scroll = true) {
   if (!media || !body) return;
 
   // メディア再生（動画は 3秒ループ自動再生・無音、画像はそのまま表示）
-  // 注意: <source> 経由だと一部ブラウザで autoplay 失敗するので src 直書きに変更。
-  // また preload="auto" にして metadata だけでなく実際のバイトを先読みさせる。
+  // - <source> 経由だと一部ブラウザで autoplay 失敗するので src 直書き
+  // - preload="metadata" でクリエイティブ詳細（Frame.io 風）と統一。faststart 版を
+  //   配信側がサーブするのでメタデータだけ先読みすれば 3秒ループも即時に始まる
   const previewSrc = `${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}`;
   if (item.media_kind === 'image') {
     media.innerHTML = `<img alt="" src="${previewSrc}">`;
     const img = media.querySelector('img');
     if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
   } else {
-    media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="auto" controls></video>`;
+    media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="metadata" controls></video>`;
     setTimeout(() => {
       const v = document.getElementById('ms-preview-video');
       if (!v) return;
@@ -37778,6 +37780,10 @@ function msSelectItem(fileId, scroll = true) {
   const canApply = item.status === 'analysis_completed';
   document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
   document.getElementById('ms-btn-apply').style.display = canApply ? '' : 'none';
+  // faststart 再生成は動画 & 未生成 / 失敗時のみ
+  const isVideo = item.media_kind === 'video';
+  const needsFaststart = isVideo && (!item.faststart_status || ['failed', 'pending'].includes(item.faststart_status));
+  document.getElementById('ms-btn-faststart').style.display = needsFaststart ? '' : 'none';
 }
 
 // ==================== アクション（解析・適用・削除）====================
@@ -37792,6 +37798,28 @@ async function msAnalyzeSelected() {
   } catch (e) {
     showToast('解析失敗: ' + e.message, 'error');
     msReloadList();
+  }
+}
+async function msRegenerateFaststart() {
+  if (!msSelectedFileId) return;
+  const btn = document.getElementById('ms-btn-faststart');
+  const prevLabel = btn?.textContent;
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = '⚡ 変換中… (数十秒〜数分)'; }
+    showToast('faststart 変換を開始しました（H.264+AAC に再エンコード）', 'info');
+    const result = await votFetch('/faststart/' + encodeURIComponent(msSelectedFileId), { method: 'POST' });
+    if (result?.result?.ok) {
+      showToast(`変換完了（${result.result.mode === 'copy' ? '再エンコード無し' : '再エンコードあり'}）`, 'success');
+    } else if (result?.result?.skipped) {
+      showToast('スキップ: ' + (result.result.reason || '対象外'), 'info');
+    } else {
+      showToast('変換失敗: ' + (result?.result?.error || '不明なエラー'), 'error');
+    }
+    msReloadList();
+  } catch (e) {
+    showToast('変換失敗: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; if (prevLabel) btn.textContent = prevLabel; }
   }
 }
 async function msApplySelected() {
