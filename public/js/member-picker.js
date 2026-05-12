@@ -256,19 +256,22 @@
     el.querySelector('[data-mp-action="clear"]').onclick = () => {
       session.selectedIds.clear();
       session.includeEmpty = false;
+      // 単一モードでは即時確定（フィルタ系で「絞り込み解除」を picker 内から行えるようにするため）
+      if (opts.mode === 'single') { commit(); return; }
       renderList();
     };
 
-    // 単一選択は apply ボタン非表示（即時確定）
+    // 単一選択は apply ボタン非表示（即時確定）。clear ボタンは両モードで表示する
     const applyBtn = el.querySelector('[data-mp-action="apply"]');
     const clearBtn = el.querySelector('[data-mp-action="clear"]');
     if (opts.mode === 'single') {
       applyBtn.style.display = 'none';
-      clearBtn.style.display = 'none';
+      clearBtn.textContent = 'クリア';
     } else {
       applyBtn.style.display = '';
-      clearBtn.style.display = '';
+      clearBtn.textContent = '全解除';
     }
+    clearBtn.style.display = '';
 
     function commit() {
       let value;
