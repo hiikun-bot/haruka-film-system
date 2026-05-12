@@ -266,6 +266,7 @@ CREATE TABLE IF NOT EXISTS creatives (
   delivery_url TEXT,
   final_delivery_url TEXT,
   client_review_url TEXT,
+  material_folder_url TEXT,
   help_flag BOOLEAN DEFAULT false,
   talent_flag BOOLEAN DEFAULT false,
   note TEXT,
