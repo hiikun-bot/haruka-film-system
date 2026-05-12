@@ -292,12 +292,10 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         kind,
       });
 
-      // fire-and-forget で faststart 版生成（動画のみ。失敗時は内部で握りつぶし）
-      if (kind === 'video') {
-        generateFaststartForVideoOrg({ rowId: inserted.id }).catch((err) => {
-          console.error('[video-org] faststart trigger failed:', inserted.id, err?.message || err);
-        });
-      }
+      // 素材広場は大半が H.264 で素直に再生できるので、アップロード時の自動変換は行わない。
+      // ブラウザで再生不可だった素材だけ、プレビューパネルの「⚡ 再生用に変換」ボタンで
+      // ユーザーが手動発動する。これで Drive 容量2倍化を回避（クリエイティブ詳細は
+      // 校了動画の永久保管前提なので auto 変換のままで OK）。
 
       results.push({ filename: f.originalname, ok: true, item: inserted });
     } catch (e) {
@@ -363,12 +361,7 @@ router.post('/register', async (req, res) => {
       fileId, fileName: meta.fileName, size: meta.size, kind,
     });
 
-    // fire-and-forget で faststart 版生成（動画のみ）
-    if (kind === 'video') {
-      generateFaststartForVideoOrg({ rowId: inserted.id }).catch((err) => {
-        console.error('[video-org] faststart trigger failed:', inserted.id, err?.message || err);
-      });
-    }
+    // 自動変換はしない（容量2倍化回避）。再生できない素材は手動ボタンで個別に変換する。
 
     res.json({ item: inserted });
   } catch (e) {
