@@ -256,22 +256,19 @@
     el.querySelector('[data-mp-action="clear"]').onclick = () => {
       session.selectedIds.clear();
       session.includeEmpty = false;
-      // 単一モードでは即時確定（フィルタ系で「絞り込み解除」を picker 内から行えるようにするため）
-      if (opts.mode === 'single') { commit(); return; }
       renderList();
     };
 
-    // 単一選択は apply ボタン非表示（即時確定）。clear ボタンは両モードで表示する
+    // 単一選択は apply ボタン非表示（即時確定）
     const applyBtn = el.querySelector('[data-mp-action="apply"]');
     const clearBtn = el.querySelector('[data-mp-action="clear"]');
     if (opts.mode === 'single') {
       applyBtn.style.display = 'none';
-      clearBtn.textContent = 'クリア';
+      clearBtn.style.display = 'none';
     } else {
       applyBtn.style.display = '';
-      clearBtn.textContent = '全解除';
+      clearBtn.style.display = '';
     }
-    clearBtn.style.display = '';
 
     function commit() {
       let value;
@@ -325,6 +322,17 @@
 
       const listEl = el.querySelector('.mp-list');
       let html = '';
+      // clearLabel: 単一モード専用の「絞り込み解除」アイテム（emptyLabel とは別物）。
+      // フィルタ系（placeholder="すべての対応者" + emptyValue="__none__" 等）で、
+      // 「未割当のみ」と「全件表示」が別の状態であることを picker 内で表現するため。
+      if (opts.clearLabel != null && opts.mode === 'single') {
+        const sel = !session.includeEmpty && session.selectedIds.size === 0;
+        html += `<label class="mp-item${sel ? ' mp-item-selected' : ''}" data-clear="1">
+          <input type="radio" name="mp-pick" ${sel ? 'checked' : ''} />
+          <span class="mp-item-avatar" style="background:transparent;color:#0EA5A5">✓</span>
+          <span class="mp-item-name" style="color:#0F172A;font-weight:600">${escapeHtml(opts.clearLabel)}</span>
+        </label>`;
+      }
       if (opts.emptyLabel != null) {
         const sel = session.includeEmpty;
         html += `<label class="mp-item${sel ? ' mp-item-selected' : ''}" data-empty="1">
@@ -343,6 +351,13 @@
       listEl.querySelectorAll('.mp-item').forEach(item => {
         item.addEventListener('click', (e) => {
           e.preventDefault();
+          if (item.dataset.clear === '1') {
+            // 「絞り込み解除」: 値を完全にクリアして即確定（trigger は placeholder に戻る）
+            session.selectedIds.clear();
+            session.includeEmpty = false;
+            commit();
+            return;
+          }
           if (item.dataset.empty === '1') {
             if (opts.mode === 'multi') {
               session.includeEmpty = !session.includeEmpty;

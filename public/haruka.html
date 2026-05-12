@@ -36241,6 +36241,7 @@ function _brBindFilterAssignee() {
   if (typeof MemberPicker === 'undefined') return;
   MemberPicker.bindSelect(el, {
     placeholder: 'すべての対応者',
+    clearLabel: 'すべての対応者',
     emptyLabel: '— 未割当のみ —',
     emptyValue: '__none__',
     onChange: () => renderBugReportList(),
