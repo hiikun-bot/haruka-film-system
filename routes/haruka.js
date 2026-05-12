@@ -3896,10 +3896,10 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   if (error) throw new Error(error.message);
 
   // 集計
-  // matrix[projectKey][userId] = { video, design, total }
+  // matrix[projectKey][userId] = { video, design, creatives: [...] }
   const projectMap = new Map(); // projectId -> { id, name, client_name }
   const userMap    = new Map(); // userId -> { id, name, role }
-  const cell       = new Map(); // `${pid}|${uid}` -> { video, design }
+  const cell       = new Map(); // `${pid}|${uid}` -> { video, design, creatives: [] }
 
   for (const c of (data || [])) {
     const pid = c.project_id;
@@ -3911,14 +3911,24 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
       });
     }
     const isVideo = c.creative_type?.startsWith('video') || (!c.creative_type?.startsWith('design'));
+    const creativeRef = {
+      id: c.id,
+      file_name: c.file_name,
+      status: c.status,
+      creative_type: c.creative_type,
+      final_deadline: c.final_deadline,
+      created_at: c.created_at,
+      is_video: isVideo,
+    };
     const assignees = (c.creative_assignments || [])
       .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role))
       .map(a => a.users);
     if (assignees.length === 0) {
       // 担当者未設定はそのまま「(担当未設定)」として集計
       const key = `${pid}|__none__`;
-      const ent = cell.get(key) || { video: 0, design: 0 };
+      const ent = cell.get(key) || { video: 0, design: 0, creatives: [] };
       if (isVideo) ent.video++; else ent.design++;
+      ent.creatives.push(creativeRef);
       cell.set(key, ent);
       if (!userMap.has('__none__')) {
         userMap.set('__none__', { id: '__none__', name: '(担当未設定)', role: '-' });
@@ -3930,8 +3940,9 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
           userMap.set(u.id, { id: u.id, name: u.full_name, role: u.role });
         }
         const key = `${pid}|${u.id}`;
-        const ent = cell.get(key) || { video: 0, design: 0 };
+        const ent = cell.get(key) || { video: 0, design: 0, creatives: [] };
         if (isVideo) ent.video++; else ent.design++;
+        ent.creatives.push(creativeRef);
         cell.set(key, ent);
       }
     }
@@ -3947,7 +3958,7 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   const matrix = projects.map(p => {
     const row = { project: p, cells: {} };
     for (const u of users) {
-      row.cells[u.id] = cell.get(`${p.id}|${u.id}`) || { video: 0, design: 0 };
+      row.cells[u.id] = cell.get(`${p.id}|${u.id}`) || { video: 0, design: 0, creatives: [] };
     }
     return row;
   });
