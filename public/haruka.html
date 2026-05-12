@@ -31446,13 +31446,20 @@ function shiftAnalyticsMonth(delta) {
   }
 }
 
-function initAnalyticsPage() {
-  // 前月をデフォルトセット（請求書は月締め後に確認することが多いため）
+// 分析メニュー別の対象月デフォルト
+//   monthly-revenue: 月締め後に確認することが多いので「先月」
+//   それ以外: 進行中の状況を見るため「当月」
+function getDefaultYmForView(view) {
   const now = new Date();
-  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const ym = `${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}`;
+  const base = (view === 'monthly-revenue')
+    ? new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    : now;
+  return `${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}`;
+}
+
+function initAnalyticsPage() {
   const monthEl = document.getElementById('an-month');
-  if (monthEl && !monthEl.value) monthEl.value = ym;
+  if (monthEl && !monthEl.value) monthEl.value = getDefaultYmForView(_analyticsView);
   // クライアント select を埋める（既存 allClients を流用）
   const sel = document.getElementById('an-client');
   if (sel && sel.options.length <= 1 && Array.isArray(allClients)) {
@@ -31471,6 +31478,10 @@ function switchAnalyticsView(view, skipReset) {
   _analyticsView = view;
   document.querySelectorAll('.an-menu-btn').forEach(b =>
     b.classList.toggle('an-menu-active', b.dataset.view === view));
+  // メニュー切り替え時は、そのビューのデフォルト月で上書きする
+  // （月次売上は先月 / それ以外は当月）
+  const monthEl = document.getElementById('an-month');
+  if (monthEl) monthEl.value = getDefaultYmForView(view);
   const titleEl = document.getElementById('an-view-title');
   const descEl = document.getElementById('an-view-desc');
   const clientWrap = document.getElementById('an-client-wrap');
