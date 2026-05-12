@@ -3864,11 +3864,13 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   // 期間: 当月の 00:00:00 から 翌月 00:00:00 未満
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+  const startIso = startDate.toISOString();
+  const endIso   = endDate.toISOString();
 
-  // 集計対象は「いつのクリエイティブか」を、納品なら final_deadline、
-  // 全件なら created_at で判定する（実態に近い）
-  const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
-
+  // 集計対象月の判定列：
+  //   - 「納品済」モード: final_deadline（納品月＝実態）
+  //   - 「全件」モード:   final_deadline 優先、未設定なら created_at にフォールバック
+  //     （後から登録した過去納品分が created_at の月に寄って集計されるバグの対策）
   let query = supabase
     .from('creatives')
     .select(`
@@ -3876,10 +3878,18 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
       final_deadline, created_at,
       projects!inner(id, name, client_id, clients(id, name)),
       creative_assignments(role, users(id, full_name, nickname, role))
-    `)
-    .gte(dateColForFilter, startDate.toISOString())
-    .lt(dateColForFilter, endDate.toISOString());
-  if (statusFilter === 'delivered') query = query.eq('status', '納品');
+    `);
+  if (statusFilter === 'delivered') {
+    query = query
+      .gte('final_deadline', startIso)
+      .lt('final_deadline', endIso)
+      .eq('status', '納品');
+  } else {
+    query = query.or(
+      `and(final_deadline.gte.${startIso},final_deadline.lt.${endIso}),` +
+      `and(final_deadline.is.null,created_at.gte.${startIso},created_at.lt.${endIso})`
+    );
+  }
   if (client_id) query = query.eq('projects.client_id', client_id);
 
   const { data, error } = await query;
