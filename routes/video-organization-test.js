@@ -25,6 +25,7 @@ const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
 const heicLib = require('../lib/video-organization/heic');
+const { generateFaststartForVideoOrg } = require('../lib/faststart');
 
 // 共通: feature flag ガード（ENABLE_VIDEO_ORGANIZATION_TEST=false なら 404）
 router.use((req, res, next) => {
@@ -115,13 +116,28 @@ router.get('/list', async (req, res) => {
 // 重要: <video> は metadata 取得時に Range: bytes=0- を投げてくる。これに 206
 // を返さないと <video> が「seekable」と認識せず再生できなくなる。Drive から
 // 返ってきたステータスをそのまま転送する設計に変更（旧版は手動 200/206 判定
-// で不整合が出ていた）。
+// で不整合が出いた）。
+//
+// faststart 切替: クリエイティブ詳細（Frame.io 風）と同じく、faststart_drive_file_id
+// が DB にあれば原本ではなくそちらをサーブする。H.265/HEVC など Web 再生不可な
+// 原本もここで H.264+AAC 版にすり替わって再生可能になる。
+// ?original=1 を付ければ強制的に原本を返す（検証用）。
 router.get('/preview/:fileId', async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!fileId) return res.status(400).end();
   try {
+    // DB に faststart 版があればそれを配信
+    const { data: row } = await supabase
+      .from('video_file_organization_tests')
+      .select('faststart_drive_file_id')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
+
+    const wantsOriginal = req.query.original === '1';
+    const effectiveFileId = (!wantsOriginal && row?.faststart_drive_file_id) || fileId;
+
     const range = req.headers.range || null;
-    const { stream, status, headers } = await driveLib.getFileStream(fileId, range);
+    const { stream, status, headers } = await driveLib.getFileStream(effectiveFileId, range);
     // Drive レスポンスから必要なヘッダのみ転送
     const passthrough = ['content-type', 'content-length', 'content-range', 'last-modified', 'etag'];
     for (const k of passthrough) {
@@ -132,7 +148,9 @@ router.get('/preview/:fileId', async (req, res) => {
     // Drive 側のステータスをそのまま転送（206 / 200 / 304 など）
     res.status(status || 200);
     stream.on('error', (e) => {
-      console.error('[video-org] preview stream error:', { fileId, message: e.message, code: e.code });
+      console.error('[video-org] preview stream error:', {
+        fileId, effectiveFileId, message: e.message, code: e.code,
+      });
       try { res.end(); } catch (_) {}
     });
     req.on('close', () => {
@@ -273,6 +291,14 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         size: uploaded.size,
         kind,
       });
+
+      // fire-and-forget で faststart 版生成（動画のみ。失敗時は内部で握りつぶし）
+      if (kind === 'video') {
+        generateFaststartForVideoOrg({ rowId: inserted.id }).catch((err) => {
+          console.error('[video-org] faststart trigger failed:', inserted.id, err?.message || err);
+        });
+      }
+
       results.push({ filename: f.originalname, ok: true, item: inserted });
     } catch (e) {
       console.error('[video-org] upload file error:', f.originalname, e);
@@ -336,6 +362,14 @@ router.post('/register', async (req, res) => {
       at: new Date().toISOString(), by: req.user?.email,
       fileId, fileName: meta.fileName, size: meta.size, kind,
     });
+
+    // fire-and-forget で faststart 版生成（動画のみ）
+    if (kind === 'video') {
+      generateFaststartForVideoOrg({ rowId: inserted.id }).catch((err) => {
+        console.error('[video-org] faststart trigger failed:', inserted.id, err?.message || err);
+      });
+    }
+
     res.json({ item: inserted });
   } catch (e) {
     console.error('[video-org] register error:', e);
@@ -549,6 +583,32 @@ router.get('/item/:fileId', async (req, res) => {
   } catch (e) {
     console.error('[video-org] get error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== faststart バックフィル ====================
+// 既存行に対して faststart 版を改めて生成する。アップロード時の fire-and-forget が
+// 失敗していた場合や、新規仕様適用前にアップロードされた行を救う用途。
+router.post('/faststart/:fileId', async (req, res) => {
+  const fileId = String(req.params.fileId);
+  if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  try {
+    const { data: row, error: fetchError } = await supabase
+      .from('video_file_organization_tests')
+      .select('id, media_kind, faststart_status')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!row) return res.status(404).json({ error: '対象の素材が見つかりません' });
+    if (row.media_kind !== 'video') {
+      return res.status(422).json({ error: '動画以外は faststart 化できません' });
+    }
+    // 同期的に await（バックフィルは結果を返したい）。タイムアウトはクライアント側で許容する想定。
+    const result = await generateFaststartForVideoOrg({ rowId: row.id });
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('[video-org] faststart backfill error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
   }
 });
 
