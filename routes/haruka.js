@@ -5919,7 +5919,7 @@ router.post('/creatives/bulk', async (req, res) => {
     count, draft_deadline, final_deadline, note,
     product_id, product_code, media_code, creative_fmt, creative_size,
     assignee_id, team_id, talent_flag,
-    serial_start
+    serial_start, material_folder_url
   } = req.body;
   // 訴求軸（appeal_type_id）は任意化: 未確定状態でも一括登録できるようにする
   if (!project_id || !creative_type || !count) {
@@ -5976,6 +5976,9 @@ router.post('/creatives/bulk', async (req, res) => {
   const today = new Date();
   const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
 
+  // 素材フォルダURLは bulk 単位で1値（同一 bulk の全件に同じURLを割り当てる）
+  const _bulkMatFolderTrimmed = (material_folder_url && String(material_folder_url).trim()) ? String(material_folder_url).trim() : null;
+
   const inserts = [];
   let nextSeq = startSeq;
   for (let i = 0; i < count; i++) {
@@ -5999,7 +6002,8 @@ router.post('/creatives/bulk', async (req, res) => {
       product_id: product_id || null, media_code: media_code || null,
       creative_fmt: creative_fmt || null, creative_size: creative_size || null,
       talent_flag: talent_flag === true,
-      team_id: team_id || null };
+      team_id: team_id || null,
+      material_folder_url: _bulkMatFolderTrimmed };
     inserts.push(insert);
     nextSeq++;
   }
@@ -6030,7 +6034,7 @@ router.post('/creatives', async (req, res) => {
     draft_deadline, final_deadline, script_url, note, appeal_type_id,
     product_id, media_code, creative_fmt, creative_size,
     assignee_id, internal_code, production_date, talent_flag, team_id, memo,
-    client_review_url
+    client_review_url, material_folder_url
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
@@ -6091,6 +6095,7 @@ router.post('/creatives', async (req, res) => {
     team_id: resolvedTeamId,
     memo: (memo && String(memo).trim()) ? memo : null,
     client_review_url: (client_review_url && String(client_review_url).trim()) ? client_review_url : null,
+    material_folder_url: (material_folder_url && String(material_folder_url).trim()) ? String(material_folder_url).trim() : null,
   };
   if (initialStatusCode) insertPayload.status_code = initialStatusCode;
 
@@ -6163,6 +6168,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   const {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url, client_review_url,
+    material_folder_url,
     help_flag, talent_flag, note, revision_count,
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
@@ -6214,6 +6220,11 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 空文字 → null として保存（フロントの入力体験に合わせる）
     const trimmed = typeof client_review_url === 'string' ? client_review_url.trim() : client_review_url;
     updateData.client_review_url = trimmed ? trimmed : null;
+  }
+  if (material_folder_url !== undefined) {
+    // 空文字 → null として保存（任意項目）
+    const trimmed = typeof material_folder_url === 'string' ? material_folder_url.trim() : material_folder_url;
+    updateData.material_folder_url = trimmed ? trimmed : null;
   }
   if (help_flag !== undefined) updateData.help_flag = help_flag;
   if (talent_flag !== undefined) updateData.talent_flag = talent_flag;

@@ -4455,6 +4455,11 @@ window.showPage = window.showPage || function(name, btn) {
               </div>
             </div>
             <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">素材フォルダURL（任意）</label>
+              <input class="form-input" id="c-material-folder-url" type="url" placeholder="https://drive.google.com/drive/folders/...">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5">素材フォルダ（Google ドライブ等）のURL。memo に書いていた「▶素材」リンクの代わりにここへ。</div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
               <label class="form-label">メモ（任意）</label>
               <textarea class="form-input" id="c-memo" rows="3" style="resize:vertical" placeholder="クライアント要望、参考リンク、撮影メモなど"></textarea>
             </div>
@@ -4577,6 +4582,11 @@ window.showPage = window.showPage || function(name, btn) {
             </select>
           </div>
         </div>
+      </div>
+      <div class="form-group" style="margin-top:14px;margin-bottom:0">
+        <label class="form-label">素材フォルダURL <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・全件共通）</span></label>
+        <input class="form-input" id="bulk-material-folder-url" type="url" placeholder="https://drive.google.com/drive/folders/...">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5">入力すると一括登録されたすべてのクリエイティブに同じURLがセットされます。</div>
       </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:10px 0 4px">10 本を一括登録します</div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;padding-top:14px;border-top:0.5px solid var(--border)">
@@ -12663,6 +12673,7 @@ async function createCreative() {
   // talent_flag は動画/静止画系のみ意味を持つ。LP/HP/LINE は常に false。
   const talent_flag = isVideoOrDesign ? (document.getElementById('c-talent-flag')?.checked || false) : false;
   const memo = document.getElementById('c-memo')?.value?.trim() || null;
+  const material_folder_url = document.getElementById('c-material-folder-url')?.value?.trim() || null;
   // appeal_type_id は動画/静止画系のみ送信
   const send_appeal_type_id = isVideoOrDesign ? (appeal_type_id || null) : null;
 
@@ -12688,6 +12699,7 @@ async function createCreative() {
       production_date,
       talent_flag,
       memo,
+      material_folder_url,
     })
   });
 
@@ -12747,6 +12759,8 @@ function _resetCreativeFormForContinuous(cat, isLpOrHp) {
   if (appealEl) appealEl.value = '';
   const cMemoEl = document.getElementById('c-memo');
   if (cMemoEl) cMemoEl.value = '';
+  const cMatEl = document.getElementById('c-material-folder-url');
+  if (cMatEl) cMatEl.value = '';
   // LP/HP の場合は連番が増えるので再生成
   if (isLpOrHp && typeof generateLpHpFilename === 'function') {
     generateLpHpFilename(cat);
@@ -22960,11 +22974,14 @@ async function bulkPreviewCreative() {
     ? Number(_serialStartRaw)
     : undefined;
 
+  // 素材フォルダURL（任意・全件共通）
+  const material_folder_url = document.getElementById('bulk-material-folder-url')?.value?.trim() || null;
+
   _bulkPayload = { project_id, creative_type, appeal_type_id, count,
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
     product_id, product_code, media_code, creative_fmt, creative_size,
     assignee_id, team_id, talent_flag,
-    serial_start };
+    serial_start, material_folder_url };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
   const origText = btn.textContent;
