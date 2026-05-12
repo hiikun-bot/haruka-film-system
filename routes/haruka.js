@@ -5367,7 +5367,8 @@ router.get('/creatives', async (req, res) => {
       // design_% に加えて lp / hp / line（プレフィックス無し）も含める
       q = q.or('creative_type.like.design_%,creative_type.eq.lp,creative_type.eq.hp,creative_type.eq.line');
     }
-    if (!(include_done === '1' || include_done === 'true')) q = q.neq('status', '納品');
+    // キーワード検索時はユーザーが特定の名前を狙っているので納品済も含める（バグ #db00a22b 対応）
+    if (!(include_done === '1' || include_done === 'true') && !qPat) q = q.neq('status', '納品');
     if (client_id) {
       // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
       const ids = String(client_id).split(',').map(s => s.trim()).filter(Boolean);
