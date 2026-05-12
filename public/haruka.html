@@ -7700,6 +7700,21 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </div>
 
+<!-- 案件×担当者集計 セル内訳モーダル -->
+<div class="modal-overlay" id="modal-analytics-cell" style="z-index:320">
+  <div style="max-width:760px;width:min(95vw,760px);margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.34);display:flex;flex-direction:column;max-height:calc(100vh - 64px)">
+    <div style="padding:14px 20px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <span id="ac-title" style="font-size:15px;font-weight:600;color:var(--text)">集計の内訳</span>
+      <button class="modal-close" onclick="closeModal('modal-analytics-cell')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+    </div>
+    <div id="ac-meta" style="padding:10px 20px;font-size:12px;color:var(--text-muted);border-bottom:0.5px solid var(--border-light);background:var(--em-pale)"></div>
+    <div id="ac-body" style="padding:0;overflow-y:auto;flex:1;min-height:160px"></div>
+    <div style="padding:10px 16px;border-top:0.5px solid var(--border);background:var(--surface);font-size:11px;color:var(--text-muted);text-align:right">
+      ※ファイル名クリックでクリエイティブ詳細を開きます
+    </div>
+  </div>
+</div>
+
 <!-- ファイルプレビューモーダル（Frame.io スタイル） -->
 <div id="modal-file-preview" style="display:none;position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,0.75)">
   <div id="fp-window" style="position:absolute;top:4vh;left:4vw;width:92vw;height:92vh;background:#18181b;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 32px 100px rgba(0,0,0,0.85);border:1px solid #2a2a2e">
@@ -31947,7 +31962,11 @@ async function openCreatorDetail(userId) {
   </table></div>`;
 }
 
+// セルクリック → 内訳モーダルを開くために、最後のレンダリング結果を保持
+window.__analyticsTableData = null;
+
 function renderAnalyticsTable(data) {
+  window.__analyticsTableData = data;
   const sumEl = document.getElementById('an-summary');
   sumEl.innerHTML = `
     <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px">
@@ -31983,11 +32002,14 @@ function renderAnalyticsTable(data) {
     const cells = data.users.map(u => {
       const c = row.cells[u.id] || { video: 0, design: 0 };
       const total = c.video + c.design;
-      const bg = total === 0 ? '' : 'background:var(--em-pale)';
+      const styleExtra = total === 0 ? '' : 'background:var(--em-pale);cursor:pointer;';
+      const onclickAttr = total > 0
+        ? ` onclick="openAnalyticsCell('${row.project.id}','${u.id}')" title="クリックで内訳を表示"`
+        : '';
       const inner = total === 0
         ? '<span style="color:#cbd5e1">—</span>'
         : `${c.video > 0 ? `<span style="color:#0369a1">📹${c.video}</span>` : ''}${c.video > 0 && c.design > 0 ? ' ' : ''}${c.design > 0 ? `<span style="color:#b45309">🎨${c.design}</span>` : ''}`;
-      return `<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:500;${bg}">${inner}</td>`;
+      return `<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:500;${styleExtra}"${onclickAttr}>${inner}</td>`;
     }).join('');
     // 行の合計
     const rowTotal = data.users.reduce((acc, u) => {
@@ -32031,6 +32053,60 @@ function renderAnalyticsTable(data) {
       </tr>
     </tbody>
   </table>`;
+}
+
+// 案件×担当者集計 セルクリック → 内訳モーダル
+function openAnalyticsCell(projectId, userId) {
+  const data = window.__analyticsTableData;
+  if (!data) return;
+  const project = data.projects.find(p => p.id === projectId);
+  const user = data.users.find(u => u.id === userId);
+  const row = data.matrix.find(r => r.project.id === projectId);
+  const cell = row?.cells?.[userId];
+  if (!project || !user || !cell || !(cell.creatives || []).length) return;
+
+  document.getElementById('ac-title').textContent =
+    `${project.client_name} ／ ${project.name}`;
+  document.getElementById('ac-meta').innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+      <span>担当: <strong style="color:var(--text)">${esc(user.name)}</strong>${user.role && user.role !== '-' ? ` <span style="color:var(--text-muted)">(${esc(user.role)})</span>` : ''}</span>
+      <span>対象: <strong style="color:var(--text)">${data.year}年${data.month}月</strong> ・ ${data.status === 'delivered' ? '納品のみ' : '全件（作業中含む）'}</span>
+      <span>合計: ${cell.video > 0 ? `<strong style="color:#0369a1">📹${cell.video}本</strong>` : ''}${cell.video > 0 && cell.design > 0 ? ' / ' : ''}${cell.design > 0 ? `<strong style="color:#b45309">🎨${cell.design}枚</strong>` : ''}</span>
+    </div>
+  `;
+
+  // 一覧（納品月 final_deadline 昇順 → ファイル名）
+  const items = (cell.creatives || []).slice().sort((a, b) => {
+    const fa = a.final_deadline || '9999-99';
+    const fb = b.final_deadline || '9999-99';
+    return fa.localeCompare(fb) || (a.file_name || '').localeCompare(b.file_name || '');
+  });
+  const rows = items.map(c => {
+    const icon = c.is_video ? '<span style="color:#0369a1">📹</span>' : '<span style="color:#b45309">🎨</span>';
+    const dl = c.final_deadline ? c.final_deadline.slice(0, 7) : '<span style="color:#cbd5e1">未設定</span>';
+    const statusColor = c.status === '納品' ? '#16a34a' : '#64748b';
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 12px;text-align:center;font-size:14px;width:36px">${icon}</td>
+      <td style="padding:8px 12px;font-size:12px;font-family:monospace;color:var(--em-dark);text-decoration:underline dotted;cursor:pointer;word-break:break-all" onclick="closeModal('modal-analytics-cell'); openCreativeDetail('${c.id}')" title="${esc(c.file_name || '')}">${esc(c.file_name || '(ファイル名なし)')}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap">${dl}</td>
+      <td style="padding:8px 12px;font-size:12px;color:${statusColor};white-space:nowrap;font-weight:500">${esc(c.status || '-')}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('ac-body').innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <thead style="background:var(--em-pale);position:sticky;top:0;z-index:1">
+        <tr>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);width:36px">種別</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em)">ファイル名</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">納品月</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">状態</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+  openModal('modal-analytics-cell');
 }
 
 // =============== バグ報告件数 ===============
