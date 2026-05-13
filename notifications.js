@@ -739,9 +739,28 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    状態は許容する仕様。
   else if (newStatus === 'クライアントチェック中') {
     if (actor) {
-      // クライアント確認版URL: ユーザーが creatives.client_review_url に手動入力。
+      // 最新バージョンのファイル名を取得（バグ #97cac31d）。
+      // creatives.file_name はベース名（version 抜き）で更新されないため、
+      // クライアントへ送るメッセージ案では最新の creative_files.generated_name を使う。
+      let clientFileName = fileName;
+      try {
+        const { data: latestFile } = await supabase
+          .from('creative_files')
+          .select('generated_name')
+          .eq('creative_id', detail.id)
+          .order('version', { ascending: false })
+          .order('uploaded_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const latestName = latestFile?.generated_name;
+        if (latestName) {
+          clientFileName = String(latestName).replace(/\.[^.]+$/, '');
+        }
+      } catch (_) { /* fallback to creatives.file_name */ }
+      const clientSlackName = slackFileLink(clientFileName, creativeUrl);
+
+      // クライアント確認版URL: lib/drive-share.js が最新版で自動更新済み（バグ #97cac31d）。
       // 未設定時はプレースホルダ行を出して送信前に手動補完してもらう。
-      // （旧実装は "https://drive.google.com/..." をハードコードしており404の原因だった）
       const reviewUrl = (detail.client_review_url && String(detail.client_review_url).trim()) || null;
       const slackUrlLine = reviewUrl
         ? `> ${reviewUrl}`
@@ -751,22 +770,22 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
         : '（URL未設定。確認版のシェアリンクを下に追記してください）';
       const slackTpl =
 `✅ クライアント確認に進めました
-ファイル: ${slackName}
+ファイル: ${clientSlackName}
 
 📝 クライアントへ送るメッセージ案（コピペして調整してください）:
 
 > 〇〇様、いつもお世話になっております。
-> 「${fileName}」のクライアント確認版を共有いたします。
+> 「${clientFileName}」のクライアント確認版を共有いたします。
 ${slackUrlLine}
 > ご確認のほどよろしくお願いいたします。
 
 ⚠️ 送信前に必ず内容を確認してください。`;
       const cwTpl =
-`[info][title]✅ クライアント確認に進めました[/title]ファイル: ${fileName}${cwUrlLine}
+`[info][title]✅ クライアント確認に進めました[/title]ファイル: ${clientFileName}${cwUrlLine}
 
 クライアントへ送るメッセージ案:
 〇〇様、いつもお世話になっております。
-「${fileName}」のクライアント確認版を共有いたします。
+「${clientFileName}」のクライアント確認版を共有いたします。
 ${cwUrlLine2}
 ご確認のほどよろしくお願いいたします。
 
