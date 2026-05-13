@@ -11035,6 +11035,61 @@ router.post('/tweets/:id/comments', requireAuth, async (req, res) => {
   res.json({ ...comment, users: u || null });
 });
 
+// コメント編集（本人のみ）
+//   PUT /api/tweets/:id/comments/:commentId  body: { body }
+//   ・mentioned_user_ids を再抽出して保存
+//   ・新しく追加されたメンション先にのみ mention 通知を発火
+router.put('/tweets/:id/comments/:commentId', requireAuth, async (req, res) => {
+  const body = String(req.body?.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'コメントを入力してください' });
+  if (body.length > TWEET_COMMENT_MAX) {
+    return res.status(400).json({ error: `コメントは ${TWEET_COMMENT_MAX} 字以内にしてください` });
+  }
+
+  const { data: c, error: cErr } = await supabase.from('tweet_comments')
+    .select('id, tweet_id, user_id, body, mentioned_user_ids, deleted_at')
+    .eq('id', req.params.commentId).maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!c || c.deleted_at) return res.status(404).json({ error: 'コメントが見つかりません' });
+  if (c.user_id !== req.user.id) return res.status(403).json({ error: '本人のみ編集できます' });
+
+  const newMentions = await extractMentions(body);
+  const oldSet = new Set(c.mentioned_user_ids || []);
+  const addedMentions = (newMentions || []).filter(uid => !oldSet.has(uid));
+
+  const { data: updated, error } = await supabase.from('tweet_comments')
+    .update({ body, mentioned_user_ids: newMentions })
+    .eq('id', req.params.commentId)
+    .select('id, tweet_id, user_id, body, mentioned_user_ids, created_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // 新たに追加されたメンション先にのみ通知（自分自身は除外）
+  const senderName = req.user.nickname || req.user.full_name || '誰か';
+  const excerpt = body.length > 50 ? body.slice(0, 50) + '…' : body;
+  for (const uid of addedMentions) {
+    if (uid === req.user.id) continue;
+    createNotification({
+      userId: uid,
+      type: 'mention',
+      title: `${senderName}さんがあなたをメンションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${c.tweet_id}`,
+      meta: {
+        tweet_id: c.tweet_id,
+        comment_id: updated.id,
+        mentioned_by_name: senderName,
+        post_excerpt: excerpt,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] mention(comment edit) 通知失敗:', e.message));
+  }
+
+  const { data: u } = await supabase.from('users')
+    .select('id, full_name, avatar_url, role').eq('id', req.user.id).maybeSingle();
+  res.json({ ...updated, users: u || null });
+});
+
 // コメント削除（本人 or admin/secretary、論理削除）
 //   DELETE /api/tweets/:id/comments/:commentId
 router.delete('/tweets/:id/comments/:commentId', requireAuth, async (req, res) => {
