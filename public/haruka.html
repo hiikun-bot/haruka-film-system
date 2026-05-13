@@ -20301,19 +20301,23 @@ async function loadTweetCommentsPage(tweetId) {
     const av = u.avatar_url
       ? `<div class="tw-comment-av"><img src="${esc(u.avatar_url)}" alt=""></div>`
       : `<div class="tw-comment-av">${esc((u.full_name || '?').charAt(0))}</div>`;
-    const canDelete = (c.user_id === myId) || canMod;
+    const isOwn = c.user_id === myId;
+    const canDelete = isOwn || canMod;
+    const editBtn = isOwn
+      ? `<button class="tw-comment-del" onclick="editTweetCommentPage('${tweetId}','${c.id}')" title="編集" style="margin-right:2px">✏️</button>`
+      : '';
     const delBtn = canDelete
       ? `<button class="tw-comment-del" onclick="deleteTweetCommentPage('${tweetId}','${c.id}')" title="削除">🗑️</button>`
       : '';
-    return `<div class="tw-comment">
+    return `<div class="tw-comment" data-comment-id="${esc(c.id)}">
       ${av}
       <div style="flex:1;min-width:0">
         <div class="tw-comment-meta">
           <span class="tw-comment-author" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
           <span>${_twTimeAgo(c.created_at)}</span>
-          ${delBtn}
+          ${editBtn}${delBtn}
         </div>
-        <div class="tw-comment-body">${esc(c.body)}</div>
+        <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
       </div>
     </div>`;
   }).join('');
@@ -20368,6 +20372,56 @@ async function deleteTweetCommentPage(tweetId, commentId) {
   } else {
     const e = await res.json().catch(() => ({}));
     showToast('エラー: ' + (e.error || '失敗'), 'error');
+  }
+}
+
+// コメントを編集モードに切り替え（本人のみ表示される ✏️ ボタンから呼ばれる）
+function editTweetCommentPage(tweetId, commentId) {
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  if (!wrap) return;
+  const row = wrap.querySelector(`.tw-comment[data-comment-id="${commentId}"]`);
+  if (!row) return;
+  const bodyEl = row.querySelector('.tw-comment-body');
+  if (!bodyEl || row.querySelector('.tw-comment-edit-form')) return;
+  const original = bodyEl.dataset.originalBody || bodyEl.textContent || '';
+  bodyEl.style.display = 'none';
+  const form = document.createElement('div');
+  form.className = 'tw-comment-edit-form';
+  form.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+  form.innerHTML = `
+    <input type="text" class="tw-comment-edit-input" maxlength="500" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+    <button class="tw-comment-edit-save" style="padding:6px 12px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">保存</button>
+    <button class="tw-comment-edit-cancel" style="padding:6px 10px;background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">キャンセル</button>
+  `;
+  bodyEl.parentNode.appendChild(form);
+  const input = form.querySelector('.tw-comment-edit-input');
+  input.value = original;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  const cancel = () => { form.remove(); bodyEl.style.display = ''; };
+  form.querySelector('.tw-comment-edit-cancel').addEventListener('click', cancel);
+  form.querySelector('.tw-comment-edit-save').addEventListener('click', () => saveTweetCommentEditPage(tweetId, commentId, input.value));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveTweetCommentEditPage(tweetId, commentId, input.value); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
+async function saveTweetCommentEditPage(tweetId, commentId, body) {
+  const trimmed = (body || '').trim();
+  if (!trimmed) { showToast('コメントを入力してください', 'warn'); return; }
+  if (trimmed.length > 500) { showToast('500字以内にしてください', 'warn'); return; }
+  const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: trimmed }),
+  });
+  if (res.ok) {
+    showToast('更新しました', 'success');
+    await loadTweetCommentsPage(tweetId);
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('エラー: ' + (e.error || '更新失敗'), 'error');
   }
 }
 
