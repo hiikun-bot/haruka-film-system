@@ -27491,6 +27491,37 @@ function _cdResolvePageFromTo(page) {
   return { fromUser, toUser, fromFb, toFb };
 }
 
+// バグ報告 #baed5d71: 提出済み submit ページの editor_comment を後から編集可能にする。
+//
+// 編集可とする条件（サーバ PATCH /api/creatives/:id/versions/:versionId と一致させる）:
+//   1. page.kind === 'submit' かつ page.version_history_id が解決済み
+//   2. _cdRoundsCache の最新要素（後続の transition が無い = 相手が次工程に進んでいない）
+//   3. 現在の creative.status が page.round_stage に対応する「受け手側待ち」と一致
+//        d_check → 'Dチェック' / p_check → 'Pチェック' / cl_check → 'クライアントチェック中'
+//   4. 認可: 自分が recorded_by 本人、または admin 権限あり
+// 失敗しても画面は壊さず編集ボタンを出さないだけにする。
+function _cdCanEditSubmitPage(page) {
+  try {
+    if (!page || page.kind !== 'submit') return false;
+    if (!page.version_history_id) return false;
+    // 最新ページ判定
+    const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
+    if (!cache.length) return false;
+    const lastIdx = cache.length - 1;
+    if (typeof page.idx !== 'number' || page.idx !== lastIdx) return false;
+    // status と round_stage の整合
+    const status = currentCreativeDetail?.status || '';
+    const STAGE_TO_STATUS = { d_check: 'Dチェック', p_check: 'Pチェック', cl_check: 'クライアントチェック中' };
+    if (STAGE_TO_STATUS[page.round_stage] !== status) return false;
+    // 認可（フロント側は表示制御のみ。最終判定はサーバ側 PATCH で行う）
+    const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+    if (role === 'admin') return true;
+    const myId = currentUser?.id || (typeof window !== 'undefined' ? window.currentUser?.id : null);
+    if (!myId) return false;
+    return !!(page.recorded_by && page.recorded_by === myId);
+  } catch (_) { return false; }
+}
+
 // 「前回」1ページ分の HTML を返す。
 // page = { kind, comment, occurred_at, from_role, to_role, from_user_id, to_user_id, version_num, file? }
 function _cdRenderPageHtml(page) {
@@ -27518,19 +27549,118 @@ function _cdRenderPageHtml(page) {
       ? `${esc(_CD_ROLE_LABEL[page.from_role] || 'レビュアー')}からの${def.label}`
       : `${esc(_CD_ROLE_LABEL[page.from_role] || '担当者')}の${def.label}`;
 
+  // バグ報告 #baed5d71: 編集可能なら「✏️ 編集」ボタンを出す
+  const canEdit = _cdCanEditSubmitPage(page);
+  const editBtnHtml = canEdit
+    ? `<button type="button" class="cd-round-edit-btn"
+         data-cd-vhid="${esc(page.version_history_id)}"
+         data-cd-comment="${esc(page.comment || '')}"
+         title="自分が書いた提出時メモを編集（相手がアクションする前のみ可能）"
+         onclick="cdStartEditEditorComment(this)">✏️ 編集</button>`
+    : '';
+
   const bodyHtml = body
-    ? `<div class="cd-round-text" style="white-space:pre-wrap">${esc(body)}</div>`
-    : `<div class="cd-round-text" style="color:var(--text-muted);font-style:italic">（コメント本文はありません）</div>`;
+    ? `<div class="cd-round-text" data-cd-role="body" style="white-space:pre-wrap">${esc(body)}</div>`
+    : `<div class="cd-round-text" data-cd-role="body" style="color:var(--text-muted);font-style:italic">（コメント本文はありません）</div>`;
 
   return `<div class="cd-round-block" style="border-left:3px solid ${def.accent};padding-left:10px;background:${def.bg}">
-    <div class="cd-round-label" style="color:${def.accent};display:flex;align-items:center;gap:6px">
+    <div class="cd-round-label" style="color:${def.accent};display:flex;align-items:center;gap:6px;flex-wrap:wrap">
       <span style="font-size:15px">${def.icon}</span>
       <span>${labelText}</span>
+      ${editBtnHtml ? `<span style="margin-left:auto">${editBtnHtml}</span>` : ''}
     </div>
     ${fromToHtml ? `<div class="cd-round-fromto" style="margin:6px 0 8px">${fromToHtml}</div>` : ''}
     ${bodyHtml}
   </div>`;
 }
+
+// ============================================================
+// 提出時メモ後編集ハンドラ (バグ報告 #baed5d71)
+// ============================================================
+
+// 「✏️ 編集」ボタンを押したら、同じブロック内で textarea + 保存/キャンセル を表示する。
+window.cdStartEditEditorComment = function(btn) {
+  try {
+    const block = btn.closest('.cd-round-block');
+    if (!block) return;
+    if (block.dataset.cdEditing === '1') return; // 二重起動防止
+    block.dataset.cdEditing = '1';
+
+    const versionHistoryId = btn.dataset.cdVhid || '';
+    const original = btn.dataset.cdComment || '';
+    const bodyEl = block.querySelector('[data-cd-role="body"]');
+    if (!bodyEl) { block.dataset.cdEditing = ''; return; }
+
+    // bodyEl を textarea + ボタン行に置き換える
+    const editor = document.createElement('div');
+    editor.dataset.cdRole = 'editor';
+    editor.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:4px';
+    editor.innerHTML = `
+      <textarea data-cd-role="ta" rows="5"
+        style="font-size:12.5px;line-height:1.6;width:100%;box-sizing:border-box;
+               border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+               background:#fff;resize:vertical;font-family:inherit"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" data-cd-role="cancel"
+          style="background:#fff;border:0.5px solid var(--border);color:var(--text);
+                 border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer">キャンセル</button>
+        <button type="button" data-cd-role="save"
+          style="background:var(--em);border:1px solid var(--em-dark);color:#fff;
+                 border-radius:6px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer">保存</button>
+      </div>`;
+    const taEl = editor.querySelector('[data-cd-role="ta"]');
+    taEl.value = original;
+    // 編集中はボタン非表示
+    btn.style.display = 'none';
+
+    bodyEl.replaceWith(editor);
+    setTimeout(() => taEl.focus(), 0);
+
+    const cancel = () => {
+      editor.replaceWith(bodyEl);
+      btn.style.display = '';
+      block.dataset.cdEditing = '';
+    };
+    editor.querySelector('[data-cd-role="cancel"]').onclick = cancel;
+    editor.querySelector('[data-cd-role="save"]').onclick = async () => {
+      const newVal = (taEl.value || '').trim();
+      if (!newVal) { alert('コメントは空にできません'); taEl.focus(); return; }
+      if (newVal === original.trim()) { cancel(); return; }
+      const saveBtn = editor.querySelector('[data-cd-role="save"]');
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中…';
+      try {
+        const creativeId = currentCreativeDetail?.id;
+        if (!creativeId) throw new Error('クリエイティブIDが取得できません');
+        const res = await apiFetch(`${API}/creatives/${creativeId}/versions/${versionHistoryId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ editor_comment: newVal }),
+        });
+        if (!res.ok) {
+          let msg = '保存に失敗しました';
+          try { const j = await res.json(); if (j?.error) msg = j.error; } catch (_) {}
+          throw new Error(msg);
+        }
+        // 成功: rounds を再ロードして左カラムを再描画
+        await cdLoadRounds(creativeId);
+        if (typeof cdRenderRoundCompare === 'function') {
+          cdRenderRoundCompare();
+        }
+        // toast があれば軽い通知、無ければ何もしない
+        if (typeof showToast === 'function') {
+          showToast('提出時メモを更新しました（相手にも通知されます）');
+        }
+      } catch (e) {
+        alert(e?.message || '保存に失敗しました');
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
+      }
+    };
+  } catch (e) {
+    console.warn('[cdStartEditEditorComment] failed:', e?.message || e);
+  }
+};
 
 // バグ報告 #2a29fba5 (2026-05-11):
 //   修正依頼 (revise) や承認引き継ぎ (approve_handoff) ページが「最新」になっている状態で

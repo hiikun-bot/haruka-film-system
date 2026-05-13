@@ -13323,10 +13323,24 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       if (to === 'クライアントチェック中') submitTarget = 'client';
     }
     if (submitTarget) {
+      // 対応する creative_version_history 行を解決（バグ報告 #baed5d71: 編集UI から PATCH /versions/:id を呼ぶため）
+      //   stage マッピング:  director → d_check / producer → p_check / client → cl_check
+      const stageOfSubmit = submitTarget === 'director' ? 'd_check'
+                         : submitTarget === 'producer' ? 'p_check'
+                         : 'cl_check';
+      let historyRow = null;
+      if (tr.version_at_change != null) {
+        historyRow = history.find(h =>
+          Number(h.version_num) === Number(tr.version_at_change) && h.round_stage === stageOfSubmit
+        ) || null;
+      }
+
       // editor_comment 解決優先度:
       //   (a) tr.editor_comment_at_change
       //   (b) PRODUCTION_FROM の旧データ救済: director_comment_at_change を編集者メモとして再解釈
       //       (旧 doDCheckTransition / directToClientCheck が body.director_comment で送っていた歪みデータ)
+      //   (c) バグ報告 #baed5d71: PATCH /versions/:id で historyRow.editor_comment が事後編集されている
+      //       場合、そちらを最終値として優先する（at_change はスナップショットのまま）
       let editorComment = (typeof tr.editor_comment_at_change === 'string' && tr.editor_comment_at_change.trim())
         ? tr.editor_comment_at_change
         : '';
@@ -13336,11 +13350,15 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
           && tr.director_comment_at_change.trim()) {
         editorComment = tr.director_comment_at_change;
       }
+      if (historyRow && typeof historyRow.editor_comment === 'string' && historyRow.editor_comment.trim()) {
+        editorComment = historyRow.editor_comment;
+      }
       // 「[動画なし]」プレフィックスは UI 側で trim するためそのまま渡す
       // 添付ファイル: version_at_change から逆引き
       const file = (tr.version_at_change != null) ? (filesByVersion[Number(tr.version_at_change)] || null) : null;
       // recorded_by 補完: 同 version + 直近の history.recorded_by
       let fromUserId = tr.changed_by || null;
+      if (!fromUserId && historyRow?.recorded_by) fromUserId = historyRow.recorded_by;
       if (!fromUserId && tr.version_at_change != null) {
         const h = history.find(h => Number(h.version_num) === Number(tr.version_at_change) && h.recorded_by);
         if (h) fromUserId = h.recorded_by;
@@ -13361,6 +13379,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         to_user_id:   toUserId  || null,
         version_num: tr.version_at_change ?? null,
         file:        file ? { id: file.id, version: file.version, drive_url: file.drive_url, drive_file_id: file.drive_file_id, generated_name: file.generated_name } : null,
+        version_history_id: historyRow?.id || null,
+        round_stage:        historyRow?.round_stage || stageOfSubmit,
+        recorded_by:        historyRow?.recorded_by || null,
         source:      'transition',
         source_id:   tr.id,
       });
