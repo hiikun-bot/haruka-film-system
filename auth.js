@@ -11,8 +11,9 @@ passport.serializeUser((user, done) => done(null, user.id));
 
 passport.deserializeUser(async (id, done) => {
   try {
-    const { data: user } = await supabase
+    const { data: user, error } = await supabase
       .from('users').select('*').eq('id', id).maybeSingle();
+    if (error) return done(error);
     done(null, user || false);
   } catch(e) { done(e); }
 });
@@ -22,8 +23,16 @@ passport.use(new LocalStrategy(
   { usernameField: 'email', passwordField: 'password' },
   async (email, password, done) => {
     try {
-      const { data: user } = await supabase
+      const { data: user, error } = await supabase
         .from('users').select('*').eq('email', email).maybeSingle();
+
+      // Supabase 接続エラー（タイムアウト・サーキットブレーカー open・5xx 等）を
+      // 「メールアドレスが見つかりません」として握りつぶさない。
+      // login.html はメッセージをそのまま表示するので、ユーザーに状況が伝わる文言を出す。
+      if (error) {
+        console.warn('[auth/local] supabase error:', error.message);
+        return done(null, false, { message: '一時的に接続できません。少し時間をおいて再度お試しください。' });
+      }
 
       if (!user)               return done(null, false, { message: 'メールアドレスが見つかりません' });
       if (!user.password_hash) return done(null, false, { message: 'このアカウントはGoogleログイン専用です' });
