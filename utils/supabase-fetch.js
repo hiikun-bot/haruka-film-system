@@ -25,30 +25,47 @@ const state = {
   halfOpenInflight: false,
 };
 
+// 状態遷移を購読するためのコールバック。
+// 例: 工事中モード切替 / Slack 通知 / メトリクス送出など
+const stateListeners = [];
+
+function emitStateChange(prev, next, reason) {
+  for (const cb of stateListeners) {
+    try { cb({ prev, next, reason, openedAt: state.openedAt }); }
+    catch (e) { console.error('[supabase-cb] listener error:', e && e.message); }
+  }
+}
+
 function logStateChange(next, reason) {
   console.warn(`[supabase-cb] ${state.status} → ${next}${reason ? ` (${reason})` : ''}`);
 }
 
 function toOpen(reason) {
-  if (state.status !== 'open') logStateChange('open', reason);
+  const prev = state.status;
+  if (prev !== 'open') logStateChange('open', reason);
   state.status = 'open';
   state.openedAt = Date.now();
   state.halfOpenInflight = false;
+  if (prev !== 'open') emitStateChange(prev, 'open', reason);
 }
 
 function toClosed() {
-  if (state.status !== 'closed') logStateChange('closed', 'recovered');
+  const prev = state.status;
+  if (prev !== 'closed') logStateChange('closed', 'recovered');
   state.status = 'closed';
   state.failureCount = 0;
   state.openedAt = 0;
   state.halfOpenInflight = false;
+  if (prev !== 'closed') emitStateChange(prev, 'closed', 'recovered');
 }
 
 function tryHalfOpen() {
   if (state.halfOpenInflight) return false;
+  const prev = state.status;
   logStateChange('half-open', 'probe');
   state.status = 'half-open';
   state.halfOpenInflight = true;
+  emitStateChange(prev, 'half-open', 'probe');
   return true;
 }
 
@@ -129,4 +146,7 @@ async function supabaseFetch(input, init = {}) {
 }
 
 module.exports = supabaseFetch;
+module.exports.onStateChange = (cb) => { if (typeof cb === 'function') stateListeners.push(cb); };
+module.exports.getStatus = () => state.status;
+module.exports.getStateSnapshot = () => ({ ...state });
 module.exports.__internal = { state, TIMEOUT_MS, FAILURE_THRESHOLD, OPEN_MS };
