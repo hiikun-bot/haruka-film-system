@@ -20331,9 +20331,10 @@ async function loadTweetCommentsPage(tweetId) {
     <div class="tw-comments-inner">
       ${rows || '<div class="tw-comment-empty">まだコメントはありません</div>'}
       <div class="tw-comment-form">
-        <input type="text" id="tw-page-comment-input-${tweetId}" maxlength="500"
-          placeholder="コメントを入力（500字、@名前 でメンション）"
-          onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitTweetCommentPage('${tweetId}')}">
+        <textarea id="tw-page-comment-input-${tweetId}" maxlength="500" rows="1"
+          placeholder="コメントを入力（500字、@名前 でメンション・Cmd/Ctrl+Enterで送信）"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"
+          onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter' && (event.metaKey||event.ctrlKey)){event.preventDefault();submitTweetCommentPage('${tweetId}')}"></textarea>
         <button onclick="submitTweetCommentPage('${tweetId}')">送信</button>
       </div>
     </div>
@@ -20359,6 +20360,7 @@ async function submitTweetCommentPage(tweetId) {
       return;
     }
     inp.value = '';
+    inp.style.height = '';  // 自動拡張した高さをリセット
     await loadTweetCommentsPage(tweetId);
     // 件数バッジを更新するため一覧も再描画
     loadTweetsPage();
@@ -20392,24 +20394,32 @@ function editTweetCommentPage(tweetId, commentId) {
   bodyEl.style.display = 'none';
   const form = document.createElement('div');
   form.className = 'tw-comment-edit-form';
-  form.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+  form.style.cssText = 'display:flex;gap:6px;margin-top:4px;align-items:flex-start';
   form.innerHTML = `
-    <input type="text" class="tw-comment-edit-input" maxlength="500" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+    <textarea class="tw-comment-edit-input" maxlength="500" rows="2" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;min-height:38px"></textarea>
     <button class="tw-comment-edit-save" style="padding:6px 12px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">保存</button>
     <button class="tw-comment-edit-cancel" style="padding:6px 10px;background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">キャンセル</button>
   `;
   bodyEl.parentNode.appendChild(form);
   const input = form.querySelector('.tw-comment-edit-input');
   input.value = original;
+  // 既存改行に合わせて初期高さを伸ばす
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
   const cancel = () => { form.remove(); bodyEl.style.display = ''; };
   form.querySelector('.tw-comment-edit-cancel').addEventListener('click', cancel);
   form.querySelector('.tw-comment-edit-save').addEventListener('click', () => saveTweetCommentEditPage(tweetId, commentId, input.value));
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+  });
   input.addEventListener('keydown', e => {
     // IME 変換確定の Enter で誤って保存されないように、変換中は無視する
     if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveTweetCommentEditPage(tweetId, commentId, input.value); }
+    // 改行は Enter、保存は Cmd/Ctrl+Enter
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveTweetCommentEditPage(tweetId, commentId, input.value); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
 }
