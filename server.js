@@ -83,6 +83,47 @@ app.get('/api/build-info', (req, res) => {
   res.json({ build: BUILD_ID });
 });
 
+// Supabase サーキットブレーカー連動の工事中モード。
+// require した瞬間に listener が登録され、open/closed 遷移時に Slack 通知される。
+const supabaseFetch = require('./utils/supabase-fetch');
+require('./utils/maintenance-notifier');
+
+// ヘルスチェック: Supabase 接続が open でなければ 200、open のときは 503。
+// Railway の health check と工事中画面の自動リロードから叩かれる。
+app.get('/healthz', (req, res) => {
+  const status = supabaseFetch.getStatus();
+  const ok = status !== 'open';
+  res.status(ok ? 200 : 503).json({ ok, supabase: status });
+});
+
+// 工事中ページは middleware より前に静的配信（middleware で巻き戻されないよう）
+app.use('/maintenance.html', express.static(path.join(__dirname, 'public/maintenance.html')));
+
+// サーキットブレーカーが open のとき:
+//  - /healthz, /maintenance.html, 静的アセット (画像/CSS/フォント) は素通し
+//  - API は 503 JSON
+//  - それ以外（HTML 系）は maintenance.html
+app.use((req, res, next) => {
+  if (supabaseFetch.getStatus() !== 'open') return next();
+  const p = req.path;
+  if (
+    p === '/healthz' ||
+    p === '/maintenance.html' ||
+    p.startsWith('/icon-') ||
+    p.endsWith('.png') ||
+    p.endsWith('.jpg') ||
+    p.endsWith('.svg') ||
+    p.endsWith('.css') ||
+    p.endsWith('.woff2') ||
+    p === '/manifest.json' ||
+    p === '/service-worker.js'
+  ) return next();
+  if (p.startsWith('/api/')) {
+    return res.status(503).json({ error: 'maintenance', message: 'データベース接続が一時的に不安定です。少し待って再試行してください。' });
+  }
+  res.status(503).sendFile(path.join(__dirname, 'public', 'maintenance.html'));
+});
+
 // セッション設定
 // セッション: ログイン状態をサーバー側で管理する仕組み
 // 本番では SESSION_SECRET 必須。未設定で起動するとフォールバック値で署名されてしまうため即時失敗させる。

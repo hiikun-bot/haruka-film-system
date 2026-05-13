@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HARUKA FILM SYSTEM — メンテナンス中</title>
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=2">
+<link rel="apple-touch-icon" href="/icon-180.png?v=2">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Noto Sans JP',sans-serif;
+  min-height:100vh;
+  display:flex;align-items:center;justify-content:center;
+  background:#00c8c4;
+  position:relative;overflow:hidden;
+  color:#fff;
+}
+.bg{
+  position:fixed;inset:0;
+  background:url('/HARUKAFILM背景.png') center/cover no-repeat;
+  z-index:0;
+}
+.bg::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(160deg,rgba(0,200,196,.78),rgba(20,184,166,.62));
+}
+.card{
+  position:relative;z-index:1;
+  max-width:520px;width:90%;
+  background:rgba(255,255,255,.14);
+  backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.25);
+  border-radius:24px;
+  padding:48px 36px 36px;
+  text-align:center;
+  box-shadow:0 20px 60px rgba(0,0,0,.18);
+}
+.icon{font-size:56px;margin-bottom:12px;line-height:1}
+h1{
+  font-family:'Montserrat','Noto Sans JP',sans-serif;
+  font-weight:700;letter-spacing:.06em;
+  font-size:22px;margin-bottom:6px;
+}
+.sub{
+  font-size:13px;opacity:.85;letter-spacing:.08em;margin-bottom:24px;
+}
+p.message{
+  font-size:14.5px;line-height:1.85;margin-bottom:20px;
+  text-align:left;
+  background:rgba(0,0,0,.18);
+  padding:16px 18px;border-radius:12px;
+}
+.meta{
+  font-size:12px;opacity:.8;margin-bottom:24px;
+  display:flex;flex-direction:column;gap:4px;
+}
+.btn{
+  display:inline-block;
+  padding:12px 32px;
+  background:#fff;color:#00908d;
+  font-weight:600;letter-spacing:.04em;
+  border:none;border-radius:999px;
+  cursor:pointer;font-size:14px;
+  transition:transform .15s,box-shadow .15s;
+  box-shadow:0 6px 18px rgba(0,0,0,.18);
+}
+.btn:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(0,0,0,.22)}
+.btn:active{transform:translateY(0)}
+.dots{display:inline-block;width:1.2em;text-align:left}
+@keyframes blink {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+.dots::after{content:'.';animation:blink 1.6s infinite}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="card">
+  <div class="icon">🛠️</div>
+  <h1>メンテナンス中</h1>
+  <div class="sub">UNDER MAINTENANCE</div>
+  <p class="message">
+    現在、データベースへの接続が一時的に不安定になっています。<br>
+    自動復旧を待っているところです<span class="dots"></span><br><br>
+    通常は数分で復旧します。<br>
+    管理者には自動で通知が飛んでいます。
+  </p>
+  <div class="meta">
+    <span id="last-check">最終確認: 取得中...</span>
+  </div>
+  <button class="btn" onclick="location.reload()">再読み込み</button>
+</div>
+<script>
+  // 表示時刻を入れる
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  document.getElementById('last-check').textContent =
+    `最終確認: ${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  // 30秒ごとに自動でヘルスチェック → 復旧したら自動リロード
+  setInterval(async () => {
+    try {
+      const r = await fetch('/healthz', { cache: 'no-store' });
+      if (r.ok) location.reload();
+    } catch (_) {}
+  }, 30000);
+</script>
+</body>
+</html>
