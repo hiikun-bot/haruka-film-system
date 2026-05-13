@@ -6819,7 +6819,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <div class="form-group">
       <label class="form-label">サムネイル URL（任意）</label>
-      <input class="form-input" id="kv-input-thumbnail" placeholder="未入力なら YouTube は自動取得 / 他はプレースホルダ" oninput="kvUpdateThumbPreview(this.value)">
+      <input class="form-input" id="kv-input-thumbnail" placeholder="YouTube は自動 / Drive 共有URLもOK" oninput="kvUpdateThumbPreview(this.value)">
       <div id="kv-thumb-preview" style="margin-top:8px;display:none">
         <img id="kv-thumb-preview-img" alt="" style="max-width:100%;max-height:160px;border-radius:8px;border:0.5px solid var(--border)">
       </div>
@@ -32790,7 +32790,7 @@ function renderLearningVideos() {
   if (status) status.style.display='none';
   grid.style.display = 'grid';
   grid.innerHTML = _kvAllData.map(v => {
-    const thumb = v.thumbnail_url || '';
+    const thumb = kvNormalizeThumbUrl(v.thumbnail_url || '');
     const cat = v.learning_video_categories?.name || '';
     const poster = v.poster ? NameDisplay.full(v.poster) : '不明';
     const date = v.created_at ? new Date(v.created_at).toLocaleDateString('ja-JP') : '';
@@ -32872,12 +32872,26 @@ function kvDeriveYoutubeThumb(url) {
   } catch (_) { return null; }
 }
 
+// Drive 共有URLは <img src> で直接読めないため、サムネ取得用URLに変換する
+function kvNormalizeThumbUrl(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)google\.com$/.test(u.hostname) && !/(^|\.)googleusercontent\.com$/.test(u.hostname)) return url;
+    let id = null;
+    const m = u.pathname.match(/\/file\/d\/([^/]+)/);
+    if (m) id = m[1];
+    else if (u.pathname === '/open' || u.pathname === '/uc' || u.pathname === '/thumbnail') id = u.searchParams.get('id');
+    return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w800` : url;
+  } catch (_) { return url; }
+}
+
 function kvUpdateThumbPreview(url) {
   const wrap = document.getElementById('kv-thumb-preview');
   const img = document.getElementById('kv-thumb-preview-img');
   if (!wrap || !img) return;
   if (url) {
-    img.src = url;
+    img.src = kvNormalizeThumbUrl(url);
     wrap.style.display = '';
   } else {
     // img.src = '' は現在のページURLを再取得しに行き <img> リソースエラーを誘発するため removeAttribute を使う
