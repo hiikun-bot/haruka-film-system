@@ -28,7 +28,7 @@
 // =============================================================
 
 const supabase = require('../supabase');
-const { createNotification } = require('../utils/notification');
+const { createBulkNotifications } = require('../utils/notification');
 
 const TICK_MS = 60 * 60 * 1000; // 1時間
 
@@ -70,7 +70,8 @@ async function checkOverdueTriage() {
     }
     if (!admins || admins.length === 0) return;
 
-    let total = 0;
+    // bugs × admins の通知をまとめて1回の bulk insert にする（N+1 解消）
+    const notifs = [];
     for (const r of rows) {
       const shortId = String(r.id).replace(/-/g, '').slice(0, 8);
       const sevTag = r.is_urgent ? '🚨 至急 ' : '';
@@ -78,19 +79,23 @@ async function checkOverdueTriage() {
       const body = `#${shortId} 「${(r.title || '').slice(0, 80)}」 の対応方針を決めてください`;
       const linkUrl = `/haruka.html?bug-report=${r.id}`;
       for (const a of admins) {
-        try {
-          await createNotification({
-            userId: a.id,
-            type: 'global',
-            title,
-            body,
-            linkUrl,
-            meta: { bug_report_id: r.id, kind: 'triage_sla_24h' },
-          });
-          total++;
-        } catch (e) {
-          console.error('[bug-triage-sla] notify失敗:', e.message);
-        }
+        notifs.push({
+          user_id: a.id,
+          notification_type: 'global',
+          title,
+          body,
+          link_url: linkUrl,
+          meta: { bug_report_id: r.id, kind: 'triage_sla_24h' },
+        });
+      }
+    }
+    let total = 0;
+    if (notifs.length) {
+      try {
+        const created = await createBulkNotifications(notifs);
+        total = Array.isArray(created) ? created.length : notifs.length;
+      } catch (e) {
+        console.error('[bug-triage-sla] bulk notify失敗:', e.message);
       }
     }
     if (total > 0) {
