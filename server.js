@@ -3,6 +3,10 @@
 // このファイルは認証・セッション・静的配信のみを担当し、
 // アプリケーションロジックは routes/haruka.js（Supabase 経由）に集約されている。
 
+// Railway から Supabase への接続が IPv6 経路 (AAAA) で詰まるため、
+// DNS 解決を IPv4 優先に固定する。schema-sync も Supabase REST もこれで救済。
+require('dns').setDefaultResultOrder('ipv4first');
+
 require('dotenv').config();
 const harukaRouter = require('./routes/haruka');
 // 案件収支機能（feature flag: ENABLE_PROJECT_ACCOUNTING）— Step B
