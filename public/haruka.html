@@ -20303,11 +20303,16 @@ async function loadTweetCommentsPage(tweetId) {
       : `<div class="tw-comment-av">${esc((u.full_name || '?').charAt(0))}</div>`;
     const isOwn = c.user_id === myId;
     const canDelete = isOwn || canMod;
+    // editBtn を delBtn の隣に並べるため、margin-left:auto は wrapper に集約する
+    // （.tw-comment-del の margin-left:auto が両ボタンに効くと editBtn だけ中央に浮く）
     const editBtn = isOwn
-      ? `<button class="tw-comment-del" onclick="editTweetCommentPage('${tweetId}','${c.id}')" title="編集" style="margin-right:2px">✏️</button>`
+      ? `<button class="tw-comment-del" onclick="editTweetCommentPage('${tweetId}','${c.id}')" title="編集" style="margin-left:0">✏️</button>`
       : '';
     const delBtn = canDelete
-      ? `<button class="tw-comment-del" onclick="deleteTweetCommentPage('${tweetId}','${c.id}')" title="削除">🗑️</button>`
+      ? `<button class="tw-comment-del" onclick="deleteTweetCommentPage('${tweetId}','${c.id}')" title="削除" style="margin-left:0">🗑️</button>`
+      : '';
+    const actionsWrap = (editBtn || delBtn)
+      ? `<span class="tw-comment-actions" style="margin-left:auto;display:inline-flex;gap:2px">${editBtn}${delBtn}</span>`
       : '';
     return `<div class="tw-comment" data-comment-id="${esc(c.id)}">
       ${av}
@@ -20315,7 +20320,7 @@ async function loadTweetCommentsPage(tweetId) {
         <div class="tw-comment-meta">
           <span class="tw-comment-author" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
           <span>${_twTimeAgo(c.created_at)}</span>
-          ${editBtn}${delBtn}
+          ${actionsWrap}
         </div>
         <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
       </div>
@@ -20328,7 +20333,7 @@ async function loadTweetCommentsPage(tweetId) {
       <div class="tw-comment-form">
         <input type="text" id="tw-page-comment-input-${tweetId}" maxlength="500"
           placeholder="コメントを入力（500字、@名前 でメンション）"
-          onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitTweetCommentPage('${tweetId}')}">
+          onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitTweetCommentPage('${tweetId}')}">
         <button onclick="submitTweetCommentPage('${tweetId}')">送信</button>
       </div>
     </div>
@@ -20402,6 +20407,8 @@ function editTweetCommentPage(tweetId, commentId) {
   form.querySelector('.tw-comment-edit-cancel').addEventListener('click', cancel);
   form.querySelector('.tw-comment-edit-save').addEventListener('click', () => saveTweetCommentEditPage(tweetId, commentId, input.value));
   input.addEventListener('keydown', e => {
+    // IME 変換確定の Enter で誤って保存されないように、変換中は無視する
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveTweetCommentEditPage(tweetId, commentId, input.value); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
