@@ -6058,11 +6058,13 @@ router.post('/creatives', async (req, res) => {
   }
 
   // team_id は明示指定があればそれを採用、なければ assignee の team_id を派生
-  let resolvedTeamId = team_id || null;
-  if (!resolvedTeamId && assignee_id) {
-    const { data: u } = await supabase.from('users').select('team_id').eq('id', assignee_id).single();
-    resolvedTeamId = u?.team_id || null;
+  // assignee_id 指定時は team_id と rank を一度に取り、後段の creative_assignments insert と共有する
+  let assigneeUser = null;
+  if (assignee_id) {
+    const { data: u } = await supabase.from('users').select('team_id, rank').eq('id', assignee_id).maybeSingle();
+    assigneeUser = u || null;
   }
+  const resolvedTeamId = team_id || assigneeUser?.team_id || null;
 
   // LP / HP / LINE カテゴリの案件の場合、初期 status_code を default テンプレの最小 sort_order の code に設定する。
   // 動画 / 静止画 は status_code を入れない（既存の status 駆動を維持）。
@@ -6123,9 +6125,8 @@ router.post('/creatives', async (req, res) => {
     data = retry.data; error = retry.error;
   }
   if (error) return res.status(500).json({ error: error.message });
-  // 担当者を creative_assignments に登録
+  // 担当者を creative_assignments に登録（assigneeUser は team_id 解決時に取得済み）
   if (assignee_id) {
-    const { data: assigneeUser } = await supabase.from('users').select('rank').eq('id', assignee_id).single();
     await supabase.from('creative_assignments').insert({
       creative_id: data.id,
       user_id: assignee_id,
