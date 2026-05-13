@@ -18889,6 +18889,13 @@ const DASH_QUOTES = [
   // 海外: ビジネス・テック
   { t: '夢を見ることができれば、それは実現できる。', a: 'ウォルト・ディズニー' },
   { t: '始める方法はただ一つ、話すのをやめて行動すること。', a: 'ウォルト・ディズニー' },
+  { t: 'すべての夢は、追いかける勇気があれば実現できる。', a: 'ウォルト・ディズニー' },
+  { t: '不可能なことをするのは、ある種の楽しみだ。', a: 'ウォルト・ディズニー' },
+  { t: '我々の最大の財産は、想像力だ。', a: 'ウォルト・ディズニー' },
+  { t: 'ディズニーランドは永遠に完成しない。世界に想像力がある限り、成長し続ける。', a: 'ウォルト・ディズニー' },
+  { t: '失敗から学び、また前に進もう。失敗は次への燃料だ。', a: 'ウォルト・ディズニー' },
+  { t: '過去から学び、今日のために生き、未来に対して希望をもつ。', a: 'ウォルト・ディズニー' },
+  { t: '一番大切なのは、自分自身を信じることだ。', a: 'ウォルト・ディズニー' },
   { t: 'ハングリーであれ、愚かであれ。', a: 'スティーブ・ジョブズ' },
   { t: '時間は限られている。だから他人の人生を生きて無駄にするな。', a: 'スティーブ・ジョブズ' },
   { t: '素晴らしい仕事をする唯一の方法は、自分のやっていることを愛することだ。', a: 'スティーブ・ジョブズ' },
@@ -18908,7 +18915,13 @@ const DASH_QUOTES = [
   { t: '人生とは、ほかの計画を立てているときに起こってしまう出来事のことだ。', a: 'ジョン・レノン' },
 ];
 
-function pickDashQuote() {
+// 瀬川愛里さんはディズニー好きなので 60% でウォルト・ディズニーの名言を引く
+function pickDashQuote(user) {
+  const name = (user?.full_name || user?.name || user?.nickname || '').replace(/[\s　]/g, '');
+  if (name.includes('瀬川愛里') && Math.random() < 0.6) {
+    const disney = DASH_QUOTES.filter(q => q.a === 'ウォルト・ディズニー');
+    if (disney.length) return disney[Math.floor(Math.random() * disney.length)];
+  }
   return DASH_QUOTES[Math.floor(Math.random() * DASH_QUOTES.length)];
 }
 
@@ -18926,7 +18939,7 @@ function renderDashHeroIdentity() {
     new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
   const quoteEl = document.getElementById('dash-quote');
   if (quoteEl && !quoteEl.dataset.rendered) {
-    const q = pickDashQuote();
+    const q = pickDashQuote(currentUser);
     quoteEl.innerHTML = `“${esc(q.t)}”<span class="dash-quote-author">— ${esc(q.a)}</span>`;
     quoteEl.dataset.rendered = '1';
   }
