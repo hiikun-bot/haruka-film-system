@@ -565,23 +565,28 @@
 .tweet-comments-wrap .tw-comment-form {
   display: flex;
   gap: 6px;
-  align-items: center;
+  align-items: flex-end; /* textarea 拡張時に送信ボタンを下端に揃える */
   margin-top: 8px;
   border-top: 1px solid #E5E7EB;
   padding-top: 8px;
 }
 
-.tweet-comments-wrap .tw-comment-form input {
+.tweet-comments-wrap .tw-comment-form input,
+.tweet-comments-wrap .tw-comment-form textarea {
   flex: 1;
   padding: 7px 12px;
   font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
   border: 1px solid #E5E7EB;
-  border-radius: 999px;
+  border-radius: 16px; /* textarea でも違和感が出ないよう、ピル形状ではなく角丸 */
   outline: none;
   background: #FFFFFF;
+  resize: none; /* JS で高さを自動拡張するため手動リサイズは無効 */
 }
 
-.tweet-comments-wrap .tw-comment-form input:focus {
+.tweet-comments-wrap .tw-comment-form input:focus,
+.tweet-comments-wrap .tw-comment-form textarea:focus {
   border-color: #3ECFCA;
 }
 
