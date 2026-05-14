@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>稼働時間 / GCal 連携 - 動作確認（Phase 0）</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans", sans-serif; max-width: 760px; margin: 2em auto; padding: 0 1em; color: #222; line-height: 1.55; }
+  h1 { font-size: 1.4em; }
+  h2 { font-size: 1.1em; margin-top: 2em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 1em 1.2em; margin: 1em 0; }
+  .badge { display: inline-block; padding: 0.15em 0.6em; border-radius: 10px; font-size: 0.85em; }
+  .badge.on { background: #d4edda; color: #155724; }
+  .badge.off { background: #f8d7da; color: #721c24; }
+  button { padding: 0.55em 1em; border: 1px solid #888; background: #fff; border-radius: 6px; cursor: pointer; font-size: 0.95em; margin-right: 0.5em; }
+  button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  button.danger { background: #fff; color: #c62828; border-color: #c62828; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .muted { color: #888; font-size: 0.9em; }
+  pre { background: #f6f8fa; padding: 0.8em; border-radius: 6px; overflow-x: auto; font-size: 0.85em; max-height: 480px; }
+  .note { background: #fffbe6; border: 1px solid #ffe58f; padding: 0.7em 0.9em; border-radius: 6px; font-size: 0.9em; }
+  .input-row { display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; margin: 0.5em 0; }
+  input[type=date] { padding: 0.3em; border: 1px solid #ccc; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<h1>稼働時間 / GCal 連携 動作確認ページ（ADR 017 Phase 0）</h1>
+
+<p class="muted">
+  このページは ADR 017 Phase 0 の動作確認用スタンドアロン画面です。
+  Phase 1 で <code>haruka.html</code> 本体（個人設定タブ）に組み込まれます。
+</p>
+
+<div id="banner-connected" class="note" style="display:none;">
+  Google Calendar に接続しました。
+</div>
+
+<h2>接続状態</h2>
+<div class="card">
+  <p>
+    状態:
+    <span id="status-badge" class="badge off">未接続</span>
+  </p>
+  <p id="status-detail" class="muted">読み込み中...</p>
+  <div>
+    <button id="btn-connect" class="primary">Google Calendar を接続</button>
+    <button id="btn-disconnect" class="danger" style="display:none;">切断する</button>
+  </div>
+</div>
+
+<h2>予定の取得（動作確認）</h2>
+<div class="card">
+  <div class="input-row">
+    <label>from <input type="date" id="from-date"></label>
+    <label>to <input type="date" id="to-date"></label>
+    <button id="btn-fetch">予定を取得</button>
+    <button id="btn-fetch-tomorrow">明日の予定だけ</button>
+  </div>
+  <p class="muted">省略すると 今日〜+7日 の範囲を取得します。</p>
+  <p class="muted" style="color:#2e7d32;">
+    🔒 プライバシー保護のため、<strong>予定の内容（件名・説明・参加者・場所・会議URL 等）は一切取得していません</strong>。取得しているのは時間情報のみ（id / start / end / status / transparency）です。
+  </p>
+  <pre id="events-output">（まだ取得していません）</pre>
+</div>
+
+<h2>セキュリティメモ</h2>
+<ul class="muted" style="font-size: 0.85em;">
+  <li>refresh_token は AES-256-GCM で暗号化して DB 保管。</li>
+  <li>OAuth スコープは <code>calendar.events.readonly</code> + <code>userinfo.email</code> のみ。書き込み不要。</li>
+  <li><strong>取得するのは時間情報のみ</strong>。Google API リクエストの段階で <code>fields</code> パラメータを使い、件名・説明・参加者・場所・会議URL・添付などの「内容」は<strong>そもそも取得していません</strong>（プライバシー保護・全フェーズ共通の原則）。</li>
+  <li>切断ボタンで DB 側のトークンは即削除。Google アカウント側の許可解除は別途
+    <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">マイアカウント</a> から行えます。</li>
+</ul>
+
+<script>
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, { credentials: 'same-origin', ...opts });
+  let body;
+  try { body = await res.json(); } catch (_) { body = null; }
+  return { ok: res.ok, status: res.status, body };
+}
+
+async function refreshStatus() {
+  const detail = document.getElementById('status-detail');
+  const badge = document.getElementById('status-badge');
+  const btnConnect = document.getElementById('btn-connect');
+  const btnDisconnect = document.getElementById('btn-disconnect');
+
+  const r = await apiFetch('/api/auth/google-calendar/connection-status');
+  if (!r.ok) {
+    detail.textContent = '取得失敗: ' + (r.body?.error || r.status);
+    return;
+  }
+  const s = r.body || {};
+  if (s.connected) {
+    badge.className = 'badge on';
+    badge.textContent = '接続中';
+    const parts = [];
+    if (s.account_email) parts.push('アカウント: ' + s.account_email);
+    if (s.last_synced_at) parts.push('最終同期: ' + new Date(s.last_synced_at).toLocaleString('ja-JP'));
+    if (s.last_error) parts.push('エラー: ' + s.last_error);
+    detail.textContent = parts.join(' / ') || '接続済み';
+    btnConnect.style.display = 'none';
+    btnDisconnect.style.display = '';
+  } else {
+    badge.className = 'badge off';
+    badge.textContent = '未接続';
+    detail.textContent = '未接続です。下のボタンから Google Calendar を接続してください。';
+    btnConnect.style.display = '';
+    btnDisconnect.style.display = 'none';
+  }
+}
+
+function fmtDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+document.getElementById('btn-connect').addEventListener('click', () => {
+  window.location.href = '/api/auth/google-calendar/start';
+});
+
+document.getElementById('btn-disconnect').addEventListener('click', async () => {
+  if (!confirm('Google Calendar 連携を切断しますか？')) return;
+  const r = await apiFetch('/api/auth/google-calendar/disconnect', { method: 'POST' });
+  if (!r.ok) {
+    alert('切断に失敗しました: ' + (r.body?.error || r.status));
+    return;
+  }
+  await refreshStatus();
+});
+
+async function fetchEvents(from, to) {
+  const out = document.getElementById('events-output');
+  out.textContent = '取得中...';
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const r = await apiFetch('/api/auth/google-calendar/preview-events?' + params.toString());
+  if (!r.ok) {
+    out.textContent = 'エラー (' + r.status + '): ' + JSON.stringify(r.body, null, 2);
+    return;
+  }
+  out.textContent = JSON.stringify(r.body, null, 2);
+}
+
+document.getElementById('btn-fetch').addEventListener('click', () => {
+  const from = document.getElementById('from-date').value;
+  const to = document.getElementById('to-date').value;
+  fetchEvents(from, to);
+});
+
+document.getElementById('btn-fetch-tomorrow').addEventListener('click', () => {
+  const t = new Date();
+  t.setDate(t.getDate() + 1);
+  const d = fmtDate(t);
+  fetchEvents(d, d);
+});
+
+// 初期化
+(async () => {
+  // ?connected=1 のバナー
+  if (new URLSearchParams(window.location.search).get('connected') === '1') {
+    document.getElementById('banner-connected').style.display = '';
+  }
+  // 日付プレースホルダ
+  const today = new Date();
+  const plus7 = new Date(today.getTime() + 7 * 86400000);
+  document.getElementById('from-date').value = fmtDate(today);
+  document.getElementById('to-date').value = fmtDate(plus7);
+  await refreshStatus();
+})();
+</script>
+
+</body>
+</html>
