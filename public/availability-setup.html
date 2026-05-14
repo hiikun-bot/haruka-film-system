@@ -58,6 +58,9 @@
     <button id="btn-fetch-tomorrow">明日の予定だけ</button>
   </div>
   <p class="muted">省略すると 今日〜+7日 の範囲を取得します。</p>
+  <p class="muted" style="color:#2e7d32;">
+    🔒 プライバシー保護のため、<strong>予定の内容（件名・説明・参加者・場所・会議URL 等）は一切取得していません</strong>。取得しているのは時間情報のみ（id / start / end / status / transparency）です。
+  </p>
   <pre id="events-output">（まだ取得していません）</pre>
 </div>
 
@@ -65,6 +68,7 @@
 <ul class="muted" style="font-size: 0.85em;">
   <li>refresh_token は AES-256-GCM で暗号化して DB 保管。</li>
   <li>OAuth スコープは <code>calendar.events.readonly</code> + <code>userinfo.email</code> のみ。書き込み不要。</li>
+  <li><strong>取得するのは時間情報のみ</strong>。Google API リクエストの段階で <code>fields</code> パラメータを使い、件名・説明・参加者・場所・会議URL・添付などの「内容」は<strong>そもそも取得していません</strong>（プライバシー保護・全フェーズ共通の原則）。</li>
   <li>切断ボタンで DB 側のトークンは即削除。Google アカウント側の許可解除は別途
     <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">マイアカウント</a> から行えます。</li>
 </ul>
