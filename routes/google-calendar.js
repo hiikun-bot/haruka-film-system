@@ -20,10 +20,57 @@ const crypto = require('crypto');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth, requirePermission } = require('../auth');
+const { requireAuth, requirePermission, userHasPermission, getEffectiveRoleCodes } = require('../auth');
 const cryptoAes = require('../utils/crypto-aes');
 const gcal = require('../lib/google-calendar');
 const wh = require('../lib/working-hours');
+
+// 「現在の req（VIEW AS 含む）が指定 permission key を持つか」を判定する。
+// auth.js#userHasPermission は code 単体のため、effective roles の OR を取る。
+async function reqHasPermission(req, key) {
+  try {
+    const codes = await getEffectiveRoleCodes(req);
+    for (const c of codes) {
+      if (await userHasPermission(c, key)) return true;
+    }
+  } catch (_) { /* fall through */ }
+  return false;
+}
+
+// 「現在の req（VIEW AS 含む）の実効ユーザーが leader_rank='leader' として登録されている
+//  基本チーム」の id 集合 と そのメンバー user_id 集合 を返す。
+//   - 基本チーム判定: team_code が単一英字 A〜Z（grid と同じ規約）
+async function fetchLeaderScope(viewerUserId) {
+  const out = { teamIds: new Set(), memberUserIds: new Set() };
+  if (!viewerUserId) return out;
+  // 自分が leader として所属するチーム
+  const { data: leaderRows, error: lErr } = await supabase
+    .from('team_members')
+    .select('team_id, teams!inner(id, team_code, is_active)')
+    .eq('user_id', viewerUserId)
+    .eq('leader_rank', 'leader');
+  if (lErr || !Array.isArray(leaderRows)) return out;
+  const basicTeamIds = [];
+  for (const r of leaderRows) {
+    const t = r.teams;
+    if (!t || t.is_active === false) continue;
+    const code = String(t.team_code || '');
+    if (!/^[A-Za-z]$/.test(code)) continue;
+    basicTeamIds.push(t.id);
+    out.teamIds.add(t.id);
+  }
+  if (!basicTeamIds.length) return out;
+  // それらチームに所属する全 user_id
+  const { data: members, error: mErr } = await supabase
+    .from('team_members')
+    .select('team_id, user_id')
+    .in('team_id', basicTeamIds);
+  if (mErr || !Array.isArray(members)) return out;
+  for (const m of members) {
+    if (m.user_id) out.memberUserIds.add(m.user_id);
+  }
+  return out;
+}
 
 // state 署名鍵: SESSION_SECRET を流用（既に env で必須化されている）
 function getStateSecret() {
@@ -519,7 +566,7 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
     // 日次データ（GCal 連動者 + 手動オーバーライド）
     const { data: daily, error: dErr } = await supabase
       .from('member_working_hours_daily')
-      .select('user_id, date, computed_slots, computed_hours, manual_override, manual_slots, manual_hours, manual_symbol')
+      .select('user_id, date, computed_slots, computed_hours, manual_override, manual_slots, manual_hours, manual_symbol, diverges_from_gcal')
       .in('user_id', userIds)
       .gte('date', from)
       .lte('date', to);
@@ -528,6 +575,10 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
     for (const r of (daily || [])) {
       dailyMap.set(`${r.user_id}|${String(r.date).slice(0,10)}`, r);
     }
+
+    // 編集権限スコープ判定（VIEW AS 反映）
+    const canEditOthers = await reqHasPermission(req, 'availability:edit-others');
+    const leaderScope = await fetchLeaderScope(req.user.id);
 
     // 組み立て
     const orgTotalsByDate = Object.fromEntries(dateList.map(d => [d, 0]));
@@ -570,10 +621,19 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
             source: eff.source,
             is_holiday: base.isHoliday,
             slots: (eff.source === 'gcal' || eff.source === 'manual') ? (eff.slots || []) : [],
+            manual_override: !!(row && row.manual_override),
+            diverges_from_gcal: !!(row && row.diverges_from_gcal),
+            computed_hours: (isGcal && row && row.computed_hours != null) ? Number(row.computed_hours) : null,
+            base_hours: base.hours,
           });
           teamTotalsByDate[dateStr] = Math.round((teamTotalsByDate[dateStr] + eff.hours) * 100) / 100;
           orgTotalsByDate[dateStr]  = Math.round((orgTotalsByDate[dateStr]  + eff.hours) * 100) / 100;
         }
+
+        // 編集権限: 本人 / availability:edit-others / 「このメンバーが所属する基本チームのリーダー」
+        const canEdit = (u.id === req.user.id)
+          || canEditOthers
+          || leaderScope.memberUserIds.has(u.id);
 
         teamTotalWeekday = Math.round((teamTotalWeekday + weekdayDefault) * 100) / 100;
         teamTotalHoliday = Math.round((teamTotalHoliday + holidayDefault) * 100) / 100;
@@ -587,6 +647,7 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
           is_team_leader: tm.leader_rank === 'leader',
           weekday_default_hours: weekdayDefault,
           holiday_default_hours: holidayDefault,
+          can_edit: canEdit,
           days,
         });
       }
@@ -614,6 +675,12 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
       dates: dateList,
       teams: outTeams,
       org_totals_by_date: orgTotalsByDate,
+      viewer: {
+        user_id: req.user.id,
+        can_edit_others: canEditOthers,
+        leader_team_ids: Array.from(leaderScope.teamIds),
+        leader_member_user_ids: Array.from(leaderScope.memberUserIds),
+      },
     });
   } catch (e) {
     console.error('[grid] failed:', e.message);
@@ -623,38 +690,134 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
 
 // ============================================================
 // PATCH /api/availability/daily
-//   body: { user_id, date, hours?, symbol?, slots?, clear?:bool }
+//   body: {
+//     user_id: uuid,
+//     date: 'YYYY-MM-DD',
+//     hours?: number | null,            // 0〜24 / null で削除
+//     symbol?: '×'|'△'|'AM'|'PM' | null,
+//     slots?: [{from,to}] | null,
+//     clear?: boolean                   // 明示クリア（後方互換）
+//   }
 //
-// 手動オーバーライド書き込み。
-// 権限:
-//   - 本人 (自分の行) なら誰でも
-//   - 他人の行は availability:edit-others 持ち（admin/secretary）のみ
+// 手動オーバーライド書き込み（ADR 017 §1.4）。
 //
-// clear=true で manual_override を解除（行は残すが override=false に戻す）。
+// 認可（ADR 015 準拠）:
+//   1) req.user.id === body.user_id              → OK（本人）
+//   2) availability:edit-others 権限あり         → OK（admin / secretary 等）
+//   3) body.user_id が所属する基本チーム（A〜Z）の leader_rank='leader' が req.user.id → OK
+//   4) それ以外                                  → 403
+//
+// 仕様:
+//   - hours / symbol / slots すべて null（または clear=true）の場合 → manual_override 解除
+//   - そうでなければ manual_override = true で記録
+//   - diverges_from_gcal は computed_hours と比較して算出
+//   - レスポンスに更新後のセル状態を返す（フロントで即時反映用）
 // ============================================================
+const VALID_SYMBOLS = new Set(['×', 'x', '△', 'AM', 'PM']);
+
+function normalizeSymbol(s) {
+  if (s == null) return null;
+  const str = String(s).trim();
+  if (!str) return null;
+  if (str === 'x') return '×';
+  if (VALID_SYMBOLS.has(str)) return str;
+  return undefined; // invalid sentinel
+}
+
+function isValidHours(h) {
+  if (h == null) return true; // null OK
+  if (typeof h !== 'number' || !isFinite(h)) return false;
+  if (h < 0 || h > 24) return false;
+  // 半端な精度は許容（小数2桁以内に丸める）
+  return true;
+}
+
+function isValidSlots(slots) {
+  if (slots == null) return true;
+  if (!Array.isArray(slots)) return false;
+  for (const s of slots) {
+    if (!s || typeof s !== 'object') return false;
+    if (typeof s.from !== 'string' || typeof s.to !== 'string') return false;
+    if (!/^\d{1,2}:\d{2}$/.test(s.from) || !/^\d{1,2}:\d{2}$/.test(s.to)) return false;
+  }
+  return true;
+}
+
 router.patch('/daily', requireAuth, async (req, res) => {
   try {
-    const { user_id, date } = req.body || {};
+    const body = req.body || {};
+    const { user_id, date } = body;
     if (!user_id || !date) return res.status(400).json({ error: 'user_id / date が必要です' });
-
-    const isSelf = (req.user.id === user_id);
-    if (!isSelf) {
-      // 他人を編集するには availability:edit-others が必要
-      const { userHasPermission, getEffectiveRoleCodes } = require('../auth');
-      try {
-        const codes = await getEffectiveRoleCodes(req);
-        let ok = false;
-        for (const c of codes) {
-          if (await userHasPermission(c, 'availability:edit-others')) { ok = true; break; }
-        }
-        if (!ok) return res.status(403).json({ error: '他メンバーの稼働時間を編集する権限がありません' });
-      } catch (_) {
-        return res.status(500).json({ error: '権限判定に失敗しました' });
-      }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      return res.status(400).json({ error: 'date は YYYY-MM-DD 形式である必要があります' });
     }
 
+    // ===== 認可 =====
+    const isSelf = (req.user.id === user_id);
+    let authorized = isSelf;
+    if (!authorized) {
+      // 他人 → edit-others 権限あり？
+      authorized = await reqHasPermission(req, 'availability:edit-others');
+    }
+    if (!authorized) {
+      // 他人 → 「対象 user の所属する基本チームのリーダー」か？
+      try {
+        const { data: ownTeams, error: oErr } = await supabase
+          .from('team_members')
+          .select('team_id, teams!inner(id, team_code, is_active)')
+          .eq('user_id', user_id);
+        if (!oErr && Array.isArray(ownTeams)) {
+          const basicTeamIds = ownTeams
+            .filter(r => r.teams && r.teams.is_active !== false && /^[A-Za-z]$/.test(String(r.teams.team_code || '')))
+            .map(r => r.team_id);
+          if (basicTeamIds.length) {
+            const { data: leaderRows } = await supabase
+              .from('team_members')
+              .select('team_id')
+              .in('team_id', basicTeamIds)
+              .eq('user_id', req.user.id)
+              .eq('leader_rank', 'leader');
+            if (leaderRows && leaderRows.length) authorized = true;
+          }
+        }
+      } catch (_) { /* deny */ }
+    }
+    if (!authorized) return res.status(403).json({ error: 'このメンバーの稼働時間を編集する権限がありません' });
+
+    // ===== バリデーション =====
+    const hasClear = body.clear === true;
+    let hours  = (body.hours === undefined) ? null : body.hours;
+    let slots  = (body.slots === undefined) ? null : body.slots;
+    let symbol = (body.symbol === undefined) ? null : body.symbol;
+
+    if (!isValidHours(hours)) {
+      return res.status(400).json({ error: 'hours は 0〜24 の数値、または null です' });
+    }
+    if (typeof hours === 'number') hours = Math.round(hours * 100) / 100;
+
+    const sym = normalizeSymbol(symbol);
+    if (sym === undefined) {
+      return res.status(400).json({ error: 'symbol は × / △ / AM / PM / null のいずれかです' });
+    }
+    symbol = sym;
+
+    if (!isValidSlots(slots)) {
+      return res.status(400).json({ error: 'slots は [{from:"HH:MM", to:"HH:MM"}, ...] 形式です' });
+    }
+
+    // クリア判定: 明示 clear、または 3項すべて null
+    const isClear = hasClear || (hours == null && symbol == null && (slots == null || (Array.isArray(slots) && slots.length === 0)));
+
+    // ===== 既存行を読んで computed_hours と比較 → diverges_from_gcal を算出 =====
     const nowIso = new Date().toISOString();
-    if (req.body.clear === true) {
+    const { data: existing } = await supabase
+      .from('member_working_hours_daily')
+      .select('computed_slots, computed_hours, gcal_synced_at')
+      .eq('user_id', user_id)
+      .eq('date', date)
+      .maybeSingle();
+
+    if (isClear) {
       const { error } = await supabase
         .from('member_working_hours_daily')
         .upsert({
@@ -665,32 +828,103 @@ router.patch('/daily', requireAuth, async (req, res) => {
           manual_symbol: null,
           manual_set_at: nowIso,
           manual_set_by: req.user.id,
+          diverges_from_gcal: false,
         }, { onConflict: 'user_id,date' });
       if (error) return res.status(500).json({ error: error.message });
-      return res.json({ ok: true, cleared: true });
+
+      // === 解除後の effective を返す ===
+      // user 情報（base 計算用）
+      const { data: u } = await supabase
+        .from('users')
+        .select('weekday_hours, weekend_hours, holiday_weekdays')
+        .eq('id', user_id).maybeSingle();
+      const base = wh.getBaseSlotsForDate(u || {}, date);
+      const computed = (existing && existing.computed_hours != null)
+        ? { slots: existing.computed_slots || [], hours: Number(existing.computed_hours) }
+        : null;
+      const eff = wh.resolveEffectiveDaily({ base, computed, manual: null });
+      return res.json({
+        ok: true,
+        cleared: true,
+        cell: {
+          user_id, date,
+          hours: eff.hours,
+          symbol: eff.symbol,
+          source: eff.source,
+          slots: (eff.source === 'gcal' || eff.source === 'manual') ? (eff.slots || []) : [],
+          manual_override: false,
+          diverges_from_gcal: false,
+          computed_hours: computed ? computed.hours : null,
+          base_hours: base.hours,
+        },
+      });
     }
 
-    const hours  = req.body.hours;
-    const symbol = req.body.symbol;
-    const slots  = req.body.slots;
-    if (hours == null && !symbol && !Array.isArray(slots)) {
-      return res.status(400).json({ error: 'hours / symbol / slots のいずれかが必要です' });
+    // === 通常の上書き ===
+    // 表示用 hours の決定: 明示 hours あればそれ、無ければ slots 合計、symbol が × なら 0
+    let effectiveHours = (typeof hours === 'number') ? hours : null;
+    if (effectiveHours == null && Array.isArray(slots) && slots.length) {
+      effectiveHours = wh.totalHours(slots);
+    }
+    if (effectiveHours == null && (symbol === '×' || symbol === 'x')) effectiveHours = 0;
+
+    // diverges 判定（computed_hours と比較）
+    let diverges = false;
+    if (existing && existing.computed_hours != null && effectiveHours != null) {
+      const c = Math.round(Number(existing.computed_hours) * 100) / 100;
+      const m = Math.round(Number(effectiveHours) * 100) / 100;
+      if (c !== m) diverges = true;
+    } else if (existing && existing.computed_hours != null && (symbol === '×' || symbol === 'x')) {
+      // computed があるのに × なら必ず diverges
+      diverges = Number(existing.computed_hours) !== 0;
     }
 
     const payload = {
       user_id, date,
       manual_override: true,
-      manual_slots: Array.isArray(slots) ? slots : null,
+      manual_slots: (Array.isArray(slots) && slots.length) ? slots : null,
       manual_hours: (typeof hours === 'number') ? hours : null,
-      manual_symbol: symbol ? String(symbol) : null,
+      manual_symbol: symbol || null,
       manual_set_at: nowIso,
       manual_set_by: req.user.id,
+      diverges_from_gcal: diverges,
     };
-    const { error } = await supabase
+    const { error: upErr } = await supabase
       .from('member_working_hours_daily')
       .upsert(payload, { onConflict: 'user_id,date' });
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ ok: true, manual_override: true });
+    if (upErr) return res.status(500).json({ error: upErr.message });
+
+    // === effective を返す ===
+    const { data: u } = await supabase
+      .from('users')
+      .select('weekday_hours, weekend_hours, holiday_weekdays')
+      .eq('id', user_id).maybeSingle();
+    const base = wh.getBaseSlotsForDate(u || {}, date);
+    const computed = (existing && existing.computed_hours != null)
+      ? { slots: existing.computed_slots || [], hours: Number(existing.computed_hours) }
+      : null;
+    const manual = {
+      override: true,
+      slots: payload.manual_slots,
+      hours: payload.manual_hours,
+      symbol: payload.manual_symbol,
+    };
+    const eff = wh.resolveEffectiveDaily({ base, computed, manual });
+    return res.json({
+      ok: true,
+      manual_override: true,
+      cell: {
+        user_id, date,
+        hours: eff.hours,
+        symbol: eff.symbol,
+        source: eff.source,
+        slots: (eff.source === 'gcal' || eff.source === 'manual') ? (eff.slots || []) : [],
+        manual_override: true,
+        diverges_from_gcal: diverges,
+        computed_hours: computed ? computed.hours : null,
+        base_hours: base.hours,
+      },
+    });
   } catch (e) {
     console.error('[daily PATCH] failed:', e.message);
     res.status(500).json({ error: e.message });
