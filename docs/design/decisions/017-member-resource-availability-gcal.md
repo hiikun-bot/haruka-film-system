@@ -69,6 +69,29 @@ related_adrs: [008-team-leader-vs-role, 010-project-schedule-tasks, 015-view-as-
   - 定期バッチは Phase 2（初期実装では入れない）
 - **取得範囲**: 今日 - 7 日 〜 今日 + 60 日（2 ヶ月ビューを賄う）
 
+#### 🔒 プライバシー原則（全フェーズ共通・厳守）
+
+Google Calendar から取得するのは **時間情報のみ**。予定の内容に関わる情報は**API リクエストの段階で取得しない**（Google の `fields` パラメータで送信フィールドを制限）。
+
+| 取得する項目 | 取得しない項目（取得・保存・ログ出力すべて禁止） |
+|---|---|
+| `id`（同期判定用） | `summary`（件名） |
+| `start` / `end`（時刻） | `description`（説明） |
+| `status`（`cancelled` 除外用） | `location`（場所） |
+| `transparency`（`transparent` 除外用） | `attendees`（参加者） |
+| | `creator` / `organizer` |
+| | `conferenceData`（会議URL）|
+| | `attachments`（添付） |
+| | 内容に関わるその他全フィールド |
+
+実装上の遵守ポイント:
+
+- `events.list` 呼び出しでは必ず `fields` パラメータで送信項目を制限（例: `items(id,status,transparency,start(dateTime,date,timeZone),end(dateTime,date,timeZone))`）
+- DB 保存項目（`member_working_hours_daily.gcal_raw_slots` 等）にも**時間情報のみ**を保存。`summary` 等の列は作らない
+- `console.log` 等のログ出力でもイベントオブジェクト全体をダンプしない
+- UI 表示でも件名・場所等を出さない。ユーザー透明性のため「予定の内容は取得していません（時間情報のみ）」と明示する
+- `fetchAccountEmail`（接続済みアカウントの email 確認）は**アカウント識別情報**であって予定内容ではないため、本原則の対象外（接続管理 UI で必要）
+
 ### 1.3 日次稼働可能時間の算出ロジック
 
 ```
