@@ -2317,4 +2317,62 @@ CREATE TRIGGER member_working_hours_profile_updated_at
   BEFORE UPDATE ON member_working_hours_profile
   FOR EACH ROW EXECUTE FUNCTION trg_member_working_hours_profile_updated_at();
 
+-- ==================== member_working_hours_daily (ADR 017 Phase 1) ====================
+-- 日次稼働時間（GCal計算結果 + 手動オーバーライド）
+-- migration: migrations/2026-05-14_member_working_hours_daily.sql
+-- 🔒 プライバシー: computed_slots / gcal_raw_slots は時間情報のみ。件名等は保存しない。
+CREATE TABLE IF NOT EXISTS member_working_hours_daily (
+  user_id            uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date               date NOT NULL,
+  computed_slots     jsonb,
+  computed_hours     numeric(5,2),
+  gcal_raw_slots     jsonb,
+  gcal_synced_at     timestamptz,
+  manual_override    boolean NOT NULL DEFAULT false,
+  manual_slots       jsonb,
+  manual_symbol      text,
+  manual_hours       numeric(5,2),
+  manual_set_at      timestamptz,
+  manual_set_by      uuid REFERENCES users(id),
+  diverges_from_gcal boolean NOT NULL DEFAULT false,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_mwh_daily_date ON member_working_hours_daily(date);
+CREATE INDEX IF NOT EXISTS idx_mwh_daily_user_date ON member_working_hours_daily(user_id, date);
+COMMENT ON TABLE member_working_hours_daily IS 'ADR 017 Phase 1: 日次稼働時間（GCal計算結果 + 手動オーバーライド）';
+
+CREATE OR REPLACE FUNCTION trg_member_working_hours_daily_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS member_working_hours_daily_updated_at ON member_working_hours_daily;
+CREATE TRIGGER member_working_hours_daily_updated_at
+  BEFORE UPDATE ON member_working_hours_daily
+  FOR EACH ROW EXECUTE FUNCTION trg_member_working_hours_daily_updated_at();
+
+-- ADR 017 Phase 1.0 権限キー（availability:*）
+INSERT INTO role_permissions (role, permission_key, allowed) VALUES
+  ('admin',             'availability:view-org', true),
+  ('secretary',         'availability:view-org', true),
+  ('producer',          'availability:view-org', true),
+  ('producer_director', 'availability:view-org', true),
+  ('director',          'availability:view-org', true),
+  ('editor',            'availability:view-org', true),
+  ('designer',          'availability:view-org', true),
+  ('admin',             'availability:sync-own', true),
+  ('secretary',         'availability:sync-own', true),
+  ('producer',          'availability:sync-own', true),
+  ('producer_director', 'availability:sync-own', true),
+  ('director',          'availability:sync-own', true),
+  ('editor',            'availability:sync-own', true),
+  ('designer',          'availability:sync-own', true),
+  ('admin',             'availability:edit-others', true),
+  ('secretary',         'availability:edit-others', true)
+ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
+
 NOTIFY pgrst, 'reload schema';

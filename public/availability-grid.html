@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>リソースカレンダー（ADR 017 Phase 1.0）</title>
+<style>
+  :root {
+    --border: #d8dde3;
+    --border-soft: #ecf0f4;
+    --bg-holiday: #fdf3f3;
+    --bg-totalrow: #f3f6fa;
+    --text-muted: #6b7280;
+    --accent: #1a73e8;
+    --gcal: #2e7d32;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans", sans-serif; margin: 1.2em; color: #222; }
+  h1 { font-size: 1.3em; margin: 0 0 0.5em; }
+  .toolbar { display: flex; align-items: center; gap: 1em; flex-wrap: wrap; margin: 0.5em 0 1em; }
+  .tabs { display: flex; gap: 0.3em; flex-wrap: wrap; }
+  .tab { padding: 0.35em 0.9em; border: 1px solid var(--border); border-radius: 999px; background: #fff; cursor: pointer; font-size: 0.9em; }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .nav-range { display: flex; align-items: center; gap: 0.4em; font-size: 0.9em; }
+  .nav-range button { padding: 0.25em 0.6em; border: 1px solid var(--border); background: #fff; border-radius: 6px; cursor: pointer; }
+  .right-buttons { margin-left: auto; display: flex; gap: 0.5em; }
+  button.primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); padding: 0.45em 1em; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.outline { background: #fff; color: #333; border: 1px solid var(--border); padding: 0.45em 1em; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+  .privacy-note { background: #f1f8e9; border: 1px solid #c5e1a5; color: #33691e; padding: 0.5em 0.8em; border-radius: 6px; font-size: 0.82em; margin: 0.5em 0 1em; display: inline-block; }
+  .grid-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 8px; max-height: calc(100vh - 220px); }
+  table.grid { border-collapse: collapse; font-size: 0.82em; min-width: 800px; }
+  table.grid th, table.grid td { border: 1px solid var(--border-soft); padding: 0.25em 0.4em; text-align: center; white-space: nowrap; }
+  table.grid thead th { position: sticky; top: 0; background: #fff; z-index: 2; font-weight: 600; }
+  table.grid thead th.month-head { background: #f6f8fa; font-size: 0.88em; padding: 0.4em 0.5em; }
+  table.grid td.name-col, table.grid th.name-col { position: sticky; left: 0; background: #fff; text-align: left; min-width: 9em; max-width: 14em; overflow: hidden; text-overflow: ellipsis; z-index: 1; }
+  table.grid td.default-col, table.grid th.default-col { position: sticky; background: #fff; color: var(--text-muted); font-size: 0.78em; z-index: 1; }
+  table.grid th.default-weekday, table.grid td.default-weekday { left: 9em; }
+  table.grid th.default-holiday, table.grid td.default-holiday { left: 12em; }
+  table.grid th.total-col, table.grid td.total-col { background: #fafafa; font-weight: 600; min-width: 3em; }
+  table.grid td.is-holiday, table.grid th.is-holiday { background: var(--bg-holiday); }
+  table.grid tr.team-header td { background: #eef3fa; font-weight: 700; text-align: left; padding: 0.4em 0.6em; }
+  table.grid tr.team-total td, table.grid tr.org-total td { background: var(--bg-totalrow); font-weight: 700; }
+  table.grid tr.org-total td { background: #fff3cd; }
+  td.day-cell { min-width: 3em; cursor: default; }
+  td.day-cell.has-slots { cursor: pointer; text-decoration: underline dotted; }
+  td.day-cell.zero { color: #c62828; }
+  .gcal-mark { color: var(--gcal); margin-right: 0.2em; }
+  .leader-mark { color: #ef6c00; margin-right: 0.15em; font-weight: 700; font-size: 0.85em; }
+  #status-bar { font-size: 0.85em; color: var(--text-muted); min-height: 1.4em; margin-top: 0.5em; }
+  /* slot popover */
+  #slot-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 0.6em 0.9em; box-shadow: 0 4px 18px rgba(0,0,0,0.15); font-size: 0.82em; z-index: 10; display: none; max-width: 280px; }
+  #slot-popover h4 { margin: 0 0 0.3em; font-size: 0.9em; }
+  #slot-popover ul { margin: 0; padding-left: 1.2em; }
+</style>
+</head>
+<body>
+
+<h1>📅 リソースカレンダー（ADR 017 Phase 1.0）</h1>
+
+<div class="toolbar">
+  <div class="tabs" id="team-tabs">
+    <button class="tab active" data-scope="org">組織全体</button>
+  </div>
+  <div class="nav-range">
+    <button id="btn-prev">← 前 4 週</button>
+    <span id="range-label">読み込み中...</span>
+    <button id="btn-next">次 4 週 →</button>
+    <button id="btn-today">今日に戻る</button>
+  </div>
+  <div class="right-buttons">
+    <button id="btn-sync" class="primary">🔄 自分のGCalを再同期</button>
+    <a href="/availability-setup.html" class="outline" style="text-decoration:none; display:inline-flex; align-items:center;">基本稼働時間 設定</a>
+  </div>
+</div>
+
+<div class="privacy-note">
+  🔒 GCal連動メンバーの予定について<strong>件名・場所・参加者などの「内容」は取得・表示していません</strong>（時間情報のみ）。
+</div>
+
+<div id="status-bar">…</div>
+
+<div class="grid-wrap">
+  <table class="grid" id="grid"><thead></thead><tbody></tbody></table>
+</div>
+
+<div id="slot-popover"></div>
+
+<script>
+async function apiFetch(url, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  // VIEW AS ヘッダは無し（管理者プレビュー時のみ意味があるため Phase 1.0 は割愛 — 将来追加）
+  const res = await fetch(url, { credentials: 'same-origin', headers, ...opts });
+  let body;
+  try { body = await res.json(); } catch (_) { body = null; }
+  return { ok: res.ok, status: res.status, body };
+}
+
+const state = {
+  from: null, to: null,
+  scope: 'org',
+  data: null,
+  currentUserId: null,
+};
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function parseDate(s) { return new Date(String(s) + 'T00:00:00'); }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+
+function defaultRange() {
+  const today = new Date();
+  // 月曜起点
+  const dow = today.getDay(); // 0=Sun
+  const monday = addDays(today, -((dow + 6) % 7));
+  const from = monday;
+  const to = addDays(from, 69); // ~10週
+  return { from: fmtDate(from), to: fmtDate(to) };
+}
+
+function shiftRange(deltaDays) {
+  state.from = fmtDate(addDays(parseDate(state.from), deltaDays));
+  state.to   = fmtDate(addDays(parseDate(state.to),   deltaDays));
+}
+
+const WEEKDAY_JA = ['日','月','火','水','木','金','土'];
+
+async function load() {
+  document.getElementById('status-bar').textContent = '読み込み中...';
+  const params = new URLSearchParams();
+  params.set('from', state.from);
+  params.set('to',   state.to);
+  params.set('scope', state.scope);
+  const r = await apiFetch('/api/availability/grid?' + params.toString());
+  if (!r.ok) {
+    document.getElementById('status-bar').textContent = '読み込み失敗 (' + r.status + '): ' + (r.body?.error || '');
+    return;
+  }
+  state.data = r.body;
+  renderTabs();
+  renderGrid();
+  document.getElementById('status-bar').textContent = `期間: ${state.from} 〜 ${state.to} ／ チーム数: ${(r.body.teams||[]).length}`;
+  document.getElementById('range-label').textContent = `${state.from} 〜 ${state.to}`;
+}
+
+function renderTabs() {
+  // 一度しか描画しない（チーム一覧は scope=org 時のみ得られるため、初回 org load 時に確定）
+  const wrap = document.getElementById('team-tabs');
+  // 既に複数タブ描画済みなら active のみ更新
+  const built = wrap.dataset.built === '1';
+  if (built) {
+    Array.from(wrap.children).forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.scope === state.scope);
+    });
+    return;
+  }
+  // org の時のみ全チームリストが返るのでそこで構築
+  if (state.scope !== 'org') return;
+  wrap.innerHTML = '';
+  const orgBtn = document.createElement('button');
+  orgBtn.className = 'tab active'; orgBtn.dataset.scope = 'org'; orgBtn.textContent = '組織全体';
+  wrap.appendChild(orgBtn);
+  for (const t of (state.data.teams || [])) {
+    const btn = document.createElement('button');
+    btn.className = 'tab'; btn.dataset.scope = 'team:' + t.id;
+    btn.textContent = `${t.code} ${t.name}`;
+    wrap.appendChild(btn);
+  }
+  wrap.dataset.built = '1';
+  wrap.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab');
+    if (!btn) return;
+    state.scope = btn.dataset.scope;
+    Array.from(wrap.children).forEach(b => b.classList.toggle('active', b === btn));
+    load();
+  });
+}
+
+function renderGrid() {
+  const data = state.data;
+  if (!data) return;
+  const dates = data.dates || [];
+  const thead = document.querySelector('#grid thead');
+  const tbody = document.querySelector('#grid tbody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+
+  // ===== ヘッダ =====
+  // 月ヘッダ行: 「5月」「6月」のように月ごとにスパン
+  const monthRow = document.createElement('tr');
+  const monthHeadFiller = document.createElement('th'); monthHeadFiller.colSpan = 3; monthHeadFiller.textContent = '通常稼働時間';
+  monthHeadFiller.className = 'month-head'; monthRow.appendChild(monthHeadFiller);
+  // 月ごとにグループ
+  let i = 0;
+  while (i < dates.length) {
+    const y = dates[i].slice(0,4), m = dates[i].slice(5,7);
+    let j = i;
+    while (j < dates.length && dates[j].slice(0,7) === `${y}-${m}`) j++;
+    const span = j - i;
+    const th = document.createElement('th'); th.className = 'month-head'; th.colSpan = span;
+    th.textContent = `${parseInt(m,10)}月`;
+    monthRow.appendChild(th);
+    i = j;
+  }
+  const totalMonthHead = document.createElement('th'); totalMonthHead.className = 'month-head'; totalMonthHead.textContent = '合計'; monthRow.appendChild(totalMonthHead);
+  thead.appendChild(monthRow);
+
+  // 日付ヘッダ行
+  const headRow = document.createElement('tr');
+  const thName = document.createElement('th'); thName.className = 'name-col'; thName.textContent = 'メンバー'; headRow.appendChild(thName);
+  const thWeekday = document.createElement('th'); thWeekday.className = 'default-col default-weekday'; thWeekday.textContent = '平日'; headRow.appendChild(thWeekday);
+  const thHoliday = document.createElement('th'); thHoliday.className = 'default-col default-holiday'; thHoliday.textContent = '休日'; headRow.appendChild(thHoliday);
+  for (const ds of dates) {
+    const d = parseDate(ds);
+    const dow = d.getDay();
+    const th = document.createElement('th');
+    th.innerHTML = `${parseInt(ds.slice(8,10),10)}<br>${WEEKDAY_JA[dow]}`;
+    if (dow === 0 || dow === 6) th.classList.add('is-holiday');
+    headRow.appendChild(th);
+  }
+  const thTotal = document.createElement('th'); thTotal.className = 'total-col'; thTotal.textContent = '合計'; headRow.appendChild(thTotal);
+  thead.appendChild(headRow);
+
+  // ===== 本体 =====
+  const teams = data.teams || [];
+  for (const t of teams) {
+    // チームヘッダ行
+    const trH = document.createElement('tr'); trH.className = 'team-header';
+    const tdH = document.createElement('td'); tdH.colSpan = dates.length + 4;
+    tdH.textContent = `【${t.code} ${t.name}】`;
+    trH.appendChild(tdH); tbody.appendChild(trH);
+
+    for (const m of (t.members || [])) {
+      const tr = document.createElement('tr');
+      const tdN = document.createElement('td'); tdN.className = 'name-col';
+      const gcal = m.is_gcal_connected ? `<span class="gcal-mark" title="GCal連動">📅</span>` : '';
+      const leader = m.is_team_leader ? `<span class="leader-mark" title="チームリーダー">★</span>` : '';
+      tdN.innerHTML = `${gcal}${leader}${escapeHtml(m.name)}`;
+      tr.appendChild(tdN);
+      const tdW = document.createElement('td'); tdW.className = 'default-col default-weekday'; tdW.textContent = fmtHours(m.weekday_default_hours); tr.appendChild(tdW);
+      const tdH2 = document.createElement('td'); tdH2.className = 'default-col default-holiday'; tdH2.textContent = fmtHours(m.holiday_default_hours); tr.appendChild(tdH2);
+      let sum = 0;
+      for (const day of (m.days || [])) {
+        const td = document.createElement('td'); td.className = 'day-cell';
+        if (day.is_holiday) td.classList.add('is-holiday');
+        if (day.hours === 0) td.classList.add('zero');
+        if ((day.slots || []).length) {
+          td.classList.add('has-slots');
+          td.dataset.slots = JSON.stringify(day.slots);
+          td.dataset.label = `${m.name} / ${day.date}`;
+          td.addEventListener('click', onCellClick);
+        }
+        td.textContent = day.symbol ? day.symbol : fmtHours(day.hours);
+        sum += Number(day.hours || 0);
+        tr.appendChild(td);
+      }
+      const tdT = document.createElement('td'); tdT.className = 'total-col'; tdT.textContent = fmtHours(sum); tr.appendChild(tdT);
+      tbody.appendChild(tr);
+    }
+
+    // チーム合計行
+    const trT = document.createElement('tr'); trT.className = 'team-total';
+    const tdTLabel = document.createElement('td'); tdTLabel.className = 'name-col'; tdTLabel.textContent = `${t.code}チーム合計`; trT.appendChild(tdTLabel);
+    const tdTW = document.createElement('td'); tdTW.className = 'default-col default-weekday'; tdTW.textContent = fmtHours(t.team_total_weekday); trT.appendChild(tdTW);
+    const tdTH = document.createElement('td'); tdTH.className = 'default-col default-holiday'; tdTH.textContent = fmtHours(t.team_total_holiday); trT.appendChild(tdTH);
+    let teamSum = 0;
+    for (const ds of dates) {
+      const td = document.createElement('td');
+      const v = (t.team_totals_by_date || {})[ds] || 0;
+      teamSum += Number(v);
+      if (parseDate(ds).getDay() % 6 === 0) td.classList.add('is-holiday');
+      td.textContent = fmtHours(v);
+      trT.appendChild(td);
+    }
+    const tdTSum = document.createElement('td'); tdTSum.className = 'total-col'; tdTSum.textContent = fmtHours(teamSum); trT.appendChild(tdTSum);
+    tbody.appendChild(trT);
+  }
+
+  // 組織合計
+  if (state.scope === 'org') {
+    const trO = document.createElement('tr'); trO.className = 'org-total';
+    const tdOLabel = document.createElement('td'); tdOLabel.className = 'name-col'; tdOLabel.textContent = '【組織合計】'; trO.appendChild(tdOLabel);
+    const tdOEmpty1 = document.createElement('td'); tdOEmpty1.className = 'default-col default-weekday'; tdOEmpty1.textContent = ''; trO.appendChild(tdOEmpty1);
+    const tdOEmpty2 = document.createElement('td'); tdOEmpty2.className = 'default-col default-holiday'; tdOEmpty2.textContent = ''; trO.appendChild(tdOEmpty2);
+    let orgSum = 0;
+    for (const ds of dates) {
+      const v = (data.org_totals_by_date || {})[ds] || 0;
+      orgSum += Number(v);
+      const td = document.createElement('td');
+      if (parseDate(ds).getDay() % 6 === 0) td.classList.add('is-holiday');
+      td.textContent = fmtHours(v);
+      trO.appendChild(td);
+    }
+    const tdOSum = document.createElement('td'); tdOSum.className = 'total-col'; tdOSum.textContent = fmtHours(orgSum); trO.appendChild(tdOSum);
+    tbody.appendChild(trO);
+  }
+}
+
+function fmtHours(v) {
+  if (v == null) return '';
+  const n = Number(v);
+  if (!isFinite(n)) return '';
+  if (n === 0) return '0';
+  // 0.5 単位なら整数 or .5 表示
+  const rounded = Math.round(n * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function onCellClick(e) {
+  const td = e.currentTarget;
+  const slots = JSON.parse(td.dataset.slots || '[]');
+  const label = td.dataset.label || '';
+  const pop = document.getElementById('slot-popover');
+  pop.innerHTML = `<h4>${escapeHtml(label)}</h4>` + (slots.length
+    ? '<ul>' + slots.map(s => `<li>${escapeHtml(s.from)} 〜 ${escapeHtml(s.to)}</li>`).join('') + '</ul>'
+    : '<p>時間帯情報なし</p>')
+    + '<p style="font-size:0.78em; color:#888; margin: 0.4em 0 0;">🔒 件名・場所等は表示していません</p>';
+  const rect = td.getBoundingClientRect();
+  pop.style.left = Math.min(window.innerWidth - 300, rect.left) + 'px';
+  pop.style.top  = (rect.bottom + 4) + 'px';
+  pop.style.display = 'block';
+}
+
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('slot-popover');
+  if (!pop) return;
+  if (e.target.closest('.day-cell') || e.target.closest('#slot-popover')) return;
+  pop.style.display = 'none';
+});
+
+document.getElementById('btn-prev').addEventListener('click', () => { shiftRange(-28); load(); });
+document.getElementById('btn-next').addEventListener('click', () => { shiftRange(28); load(); });
+document.getElementById('btn-today').addEventListener('click', () => { const r = defaultRange(); state.from = r.from; state.to = r.to; load(); });
+
+document.getElementById('btn-sync').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-sync');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '同期中...';
+  try {
+    const r = await apiFetch('/api/availability/sync-self', {
+      method: 'POST',
+      body: JSON.stringify({ from: state.from, to: state.to }),
+    });
+    if (!r.ok) {
+      alert('同期に失敗しました (' + r.status + '): ' + (r.body?.error || ''));
+    } else {
+      const s = r.body || {};
+      alert(`同期完了\n対象日数: ${s.upserted}\nスキップ(過去日): ${s.skipped_past}\nスキップ(手動上書): ${s.skipped_manual}\n取得イベント数: ${s.event_count}`);
+      await load();
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+
+(async () => {
+  const r = defaultRange();
+  state.from = r.from; state.to = r.to;
+  await load();
+})();
+</script>
+
+</body>
+</html>

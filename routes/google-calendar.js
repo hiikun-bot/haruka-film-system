@@ -20,9 +20,10 @@ const crypto = require('crypto');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth } = require('../auth');
+const { requireAuth, requirePermission } = require('../auth');
 const cryptoAes = require('../utils/crypto-aes');
 const gcal = require('../lib/google-calendar');
+const wh = require('../lib/working-hours');
 
 // state 署名鍵: SESSION_SECRET を流用（既に env で必須化されている）
 function getStateSecret() {
@@ -275,6 +276,418 @@ router.get('/connection-status', requireAuth, async (req, res) => {
       last_error: data?.gcal_last_error || null,
     });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// 共通: 日付ループ
+// ============================================================
+function eachDate(fromStr, toStr) {
+  const out = [];
+  const from = new Date(String(fromStr) + 'T00:00:00');
+  const to   = new Date(String(toStr)   + 'T00:00:00');
+  for (let d = new Date(from); d.getTime() <= to.getTime(); d.setDate(d.getDate() + 1)) {
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+    out.push(`${y}-${m}-${day}`);
+  }
+  return out;
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function addDaysStr(s, n) {
+  const d = new Date(String(s) + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// ============================================================
+// POST /api/availability/sync-self
+//   body: { from?: 'YYYY-MM-DD', to?: 'YYYY-MM-DD' }
+//   省略時: 今日 〜 +60 日
+//
+// 認証済みの本人の GCal を取得 → 日次稼働時間を算出 →
+//   member_working_hours_daily に upsert する。
+//
+// 仕様:
+//   - manual_override=true の行はスキップ（ADR 017 §1.4）
+//   - 過去日（昨日以前）は再計算しない（ADR 017 §5.3）
+//   - 🔒 保存するのは時間情報 (computed_slots, gcal_raw_slots) のみ
+// ============================================================
+router.post('/sync-self', requireAuth, requirePermission('availability:sync-own'), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const from = String(req.body?.from || todayStr());
+    const to   = String(req.body?.to   || addDaysStr(todayStr(), 60));
+
+    // user の基本稼働時間 / GCal プロフィール取得
+    const { data: user, error: uErr } = await supabase
+      .from('users')
+      .select('id, weekday_hours, weekend_hours, holiday_weekdays')
+      .eq('id', userId)
+      .maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!user) return res.status(404).json({ error: 'user not found' });
+
+    const { data: profile, error: pErr } = await supabase
+      .from('member_working_hours_profile')
+      .select('gcal_connected, gcal_calendar_id, gcal_refresh_token_encrypted, gcal_token_iv, gcal_token_auth_tag')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    if (!profile || !profile.gcal_connected || !profile.gcal_refresh_token_encrypted) {
+      return res.status(400).json({ error: 'Google Calendar が未接続です' });
+    }
+
+    let refreshToken;
+    try {
+      refreshToken = cryptoAes.decrypt({
+        ciphertext: profile.gcal_refresh_token_encrypted,
+        iv: profile.gcal_token_iv,
+        authTag: profile.gcal_token_auth_tag,
+      });
+    } catch (e) {
+      return res.status(500).json({ error: 'トークン復号に失敗しました: ' + e.message });
+    }
+
+    // GCal イベント取得（範囲全体を1回で取る）
+    let events;
+    try {
+      events = await gcal.fetchEventsForRange({
+        refreshToken,
+        calendarId: profile.gcal_calendar_id || 'primary',
+        from: new Date(from + 'T00:00:00'),
+        to:   new Date(to   + 'T23:59:59'),
+      });
+    } catch (e) {
+      supabase.from('member_working_hours_profile')
+        .update({ gcal_last_error: `${e.name || 'Error'}: ${e.message}` })
+        .eq('user_id', userId).then(() => {});
+      if (e.name === 'GCalAuthError')      return res.status(401).json({ error: e.message, code: 'gcal_auth_error' });
+      if (e.name === 'GCalRateLimitError') return res.status(429).json({ error: e.message, code: 'gcal_rate_limit' });
+      return res.status(500).json({ error: e.message });
+    }
+
+    // 既存の manual_override 行を取得（スキップ判定用）
+    const dateList = eachDate(from, to);
+    const { data: existing, error: exErr } = await supabase
+      .from('member_working_hours_daily')
+      .select('date, manual_override')
+      .eq('user_id', userId)
+      .gte('date', from)
+      .lte('date', to);
+    if (exErr) return res.status(500).json({ error: exErr.message });
+    const manualSet = new Set((existing || []).filter(r => r.manual_override).map(r => String(r.date)));
+
+    const today = todayStr();
+    const nowIso = new Date().toISOString();
+    const rows = [];
+    let skippedManual = 0, skippedPast = 0;
+
+    for (const dateStr of dateList) {
+      // 過去日（昨日以前）はスキップ — スナップショット保持
+      if (dateStr < today) { skippedPast++; continue; }
+      // 手動オーバーライド済みはスキップ
+      if (manualSet.has(dateStr)) { skippedManual++; continue; }
+
+      const base = wh.getBaseSlotsForDate(user, dateStr);
+      const sub  = wh.subtractEvents(base.slots, events, { dateStr });
+
+      // gcal_raw_slots: 該当日のイベント時間情報のみ抜粋
+      const rawSlots = [];
+      for (const ev of events) {
+        if (!ev || ev.status === 'cancelled' || ev.transparency === 'transparent') continue;
+        const startStr = (typeof ev.start === 'string') ? ev.start : '';
+        const endStr   = (typeof ev.end === 'string') ? ev.end : '';
+        // 該当日に重なるか軽くフィルタ
+        if (startStr.slice(0,10) <= dateStr && (endStr.slice(0,10) >= dateStr || endStr === '')) {
+          rawSlots.push({ start: startStr, end: endStr, isAllDay: !!ev.isAllDay });
+        }
+      }
+
+      rows.push({
+        user_id: userId,
+        date: dateStr,
+        computed_slots: sub.slots,
+        computed_hours: sub.hours,
+        gcal_raw_slots: rawSlots,
+        gcal_synced_at: nowIso,
+        // manual_override は触らない（既存値が無ければ default false）
+      });
+    }
+
+    let upsertCount = 0;
+    if (rows.length) {
+      // 分割 upsert（一度に大量だと負荷大）
+      const CHUNK = 100;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const chunk = rows.slice(i, i + CHUNK);
+        const { error: upErr } = await supabase
+          .from('member_working_hours_daily')
+          .upsert(chunk, { onConflict: 'user_id,date' });
+        if (upErr) return res.status(500).json({ error: 'upsert failed: ' + upErr.message });
+        upsertCount += chunk.length;
+      }
+    }
+
+    // 同期完了マーク
+    supabase.from('member_working_hours_profile')
+      .update({ gcal_last_synced_at: nowIso, gcal_last_error: null })
+      .eq('user_id', userId).then(() => {});
+
+    return res.json({
+      ok: true,
+      from, to,
+      upserted: upsertCount,
+      skipped_manual: skippedManual,
+      skipped_past: skippedPast,
+      event_count: events.length,
+    });
+  } catch (e) {
+    console.error('[sync-self] failed:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// GET /api/availability/grid?from=&to=&scope=org|team:<teamId>
+//
+// 組織全体 or チーム単位の稼働時間グリッド。
+// レスポンスはネスト構造（teams[].members[].days[]）。
+// ============================================================
+router.get('/grid', requireAuth, requirePermission('availability:view-org'), async (req, res) => {
+  try {
+    const from = String(req.query.from || todayStr());
+    const toBase = req.query.to ? String(req.query.to) : addDaysStr(from, 69); // ~10週
+    const to = toBase;
+    const scope = String(req.query.scope || 'org');
+    const dateList = eachDate(from, to);
+    if (!dateList.length) return res.status(400).json({ error: 'from/to が不正です' });
+
+    // チーム + メンバー取得
+    let teamsQuery = supabase
+      .from('teams')
+      .select('id, team_code, team_name, team_type, is_active, team_members(user_id, leader_rank)')
+      .eq('is_active', true)
+      .order('team_code');
+    if (scope.startsWith('team:')) {
+      const tid = scope.slice(5);
+      teamsQuery = supabase
+        .from('teams')
+        .select('id, team_code, team_name, team_type, is_active, team_members(user_id, leader_rank)')
+        .eq('id', tid);
+    }
+    const { data: teamsRaw, error: tErr } = await teamsQuery;
+    if (tErr) return res.status(500).json({ error: tErr.message });
+
+    // 全 user_id を集める
+    const userIdSet = new Set();
+    for (const t of (teamsRaw || [])) {
+      for (const tm of (t.team_members || [])) userIdSet.add(tm.user_id);
+    }
+    const userIds = Array.from(userIdSet);
+    if (!userIds.length) {
+      return res.json({ from, to, dates: dateList, teams: [], org_totals_by_date: {} });
+    }
+
+    // users 詳細
+    const { data: users, error: uErr } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, weekday_hours, weekend_hours, holiday_weekdays, is_active')
+      .in('id', userIds)
+      .eq('is_active', true);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    const usersById = new Map((users || []).map(u => [u.id, u]));
+
+    // GCal プロフィール（gcal_connected のみ判定に使う）
+    const { data: profiles, error: pErr } = await supabase
+      .from('member_working_hours_profile')
+      .select('user_id, gcal_connected')
+      .in('user_id', userIds);
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    const profByUid = new Map((profiles || []).map(p => [p.user_id, p]));
+
+    // 日次データ（GCal 連動者 + 手動オーバーライド）
+    const { data: daily, error: dErr } = await supabase
+      .from('member_working_hours_daily')
+      .select('user_id, date, computed_slots, computed_hours, manual_override, manual_slots, manual_hours, manual_symbol')
+      .in('user_id', userIds)
+      .gte('date', from)
+      .lte('date', to);
+    if (dErr) return res.status(500).json({ error: dErr.message });
+    const dailyMap = new Map(); // key: `${user_id}|${date}` -> row
+    for (const r of (daily || [])) {
+      dailyMap.set(`${r.user_id}|${String(r.date).slice(0,10)}`, r);
+    }
+
+    // 組み立て
+    const orgTotalsByDate = Object.fromEntries(dateList.map(d => [d, 0]));
+    const outTeams = [];
+
+    for (const t of (teamsRaw || [])) {
+      const memberRows = (t.team_members || []);
+      const teamTotalsByDate = Object.fromEntries(dateList.map(d => [d, 0]));
+      let teamTotalWeekday = 0, teamTotalHoliday = 0;
+      const members = [];
+
+      for (const tm of memberRows) {
+        const u = usersById.get(tm.user_id);
+        if (!u) continue;
+        const prof = profByUid.get(u.id);
+        const isGcal = !!(prof && prof.gcal_connected);
+
+        // ベースの平日/休日デフォルト時間（表ヘッダ用）
+        const weekdayDefault = wh.hoursFromTimeRanges(u.weekday_hours);
+        const holidayDefault = wh.hoursFromTimeRanges(u.weekend_hours);
+
+        const days = [];
+        for (const dateStr of dateList) {
+          const base = wh.getBaseSlotsForDate(u, dateStr);
+          const row = dailyMap.get(`${u.id}|${dateStr}`);
+          const computed = (isGcal && row && row.computed_hours != null)
+            ? { slots: row.computed_slots || [], hours: Number(row.computed_hours) }
+            : null;
+          const manual = (row && row.manual_override) ? {
+            override: true,
+            slots: row.manual_slots || null,
+            hours: row.manual_hours != null ? Number(row.manual_hours) : null,
+            symbol: row.manual_symbol || null,
+          } : null;
+          const eff = wh.resolveEffectiveDaily({ base, computed, manual });
+          days.push({
+            date: dateStr,
+            hours: eff.hours,
+            symbol: eff.symbol,
+            source: eff.source,
+            is_holiday: base.isHoliday,
+            slots: (eff.source === 'gcal' || eff.source === 'manual') ? (eff.slots || []) : [],
+          });
+          teamTotalsByDate[dateStr] = Math.round((teamTotalsByDate[dateStr] + eff.hours) * 100) / 100;
+          orgTotalsByDate[dateStr]  = Math.round((orgTotalsByDate[dateStr]  + eff.hours) * 100) / 100;
+        }
+
+        teamTotalWeekday = Math.round((teamTotalWeekday + weekdayDefault) * 100) / 100;
+        teamTotalHoliday = Math.round((teamTotalHoliday + holidayDefault) * 100) / 100;
+
+        members.push({
+          user_id: u.id,
+          name: u.nickname || u.full_name || '(unnamed)',
+          full_name: u.full_name,
+          nickname: u.nickname,
+          is_gcal_connected: isGcal,
+          is_team_leader: tm.leader_rank === 'leader',
+          weekday_default_hours: weekdayDefault,
+          holiday_default_hours: holidayDefault,
+          days,
+        });
+      }
+
+      // メンバー並び順: leader 先、それ以外は名前
+      members.sort((a, b) => {
+        if (a.is_team_leader !== b.is_team_leader) return a.is_team_leader ? -1 : 1;
+        return String(a.name).localeCompare(String(b.name), 'ja');
+      });
+
+      outTeams.push({
+        id: t.id,
+        code: t.team_code,
+        name: t.team_name,
+        type: t.team_type,
+        members,
+        team_totals_by_date: teamTotalsByDate,
+        team_total_weekday: teamTotalWeekday,
+        team_total_holiday: teamTotalHoliday,
+      });
+    }
+
+    res.json({
+      from, to,
+      dates: dateList,
+      teams: outTeams,
+      org_totals_by_date: orgTotalsByDate,
+    });
+  } catch (e) {
+    console.error('[grid] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// PATCH /api/availability/daily
+//   body: { user_id, date, hours?, symbol?, slots?, clear?:bool }
+//
+// 手動オーバーライド書き込み。
+// 権限:
+//   - 本人 (自分の行) なら誰でも
+//   - 他人の行は availability:edit-others 持ち（admin/secretary）のみ
+//
+// clear=true で manual_override を解除（行は残すが override=false に戻す）。
+// ============================================================
+router.patch('/daily', requireAuth, async (req, res) => {
+  try {
+    const { user_id, date } = req.body || {};
+    if (!user_id || !date) return res.status(400).json({ error: 'user_id / date が必要です' });
+
+    const isSelf = (req.user.id === user_id);
+    if (!isSelf) {
+      // 他人を編集するには availability:edit-others が必要
+      const { userHasPermission, getEffectiveRoleCodes } = require('../auth');
+      try {
+        const codes = await getEffectiveRoleCodes(req);
+        let ok = false;
+        for (const c of codes) {
+          if (await userHasPermission(c, 'availability:edit-others')) { ok = true; break; }
+        }
+        if (!ok) return res.status(403).json({ error: '他メンバーの稼働時間を編集する権限がありません' });
+      } catch (_) {
+        return res.status(500).json({ error: '権限判定に失敗しました' });
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    if (req.body.clear === true) {
+      const { error } = await supabase
+        .from('member_working_hours_daily')
+        .upsert({
+          user_id, date,
+          manual_override: false,
+          manual_slots: null,
+          manual_hours: null,
+          manual_symbol: null,
+          manual_set_at: nowIso,
+          manual_set_by: req.user.id,
+        }, { onConflict: 'user_id,date' });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ ok: true, cleared: true });
+    }
+
+    const hours  = req.body.hours;
+    const symbol = req.body.symbol;
+    const slots  = req.body.slots;
+    if (hours == null && !symbol && !Array.isArray(slots)) {
+      return res.status(400).json({ error: 'hours / symbol / slots のいずれかが必要です' });
+    }
+
+    const payload = {
+      user_id, date,
+      manual_override: true,
+      manual_slots: Array.isArray(slots) ? slots : null,
+      manual_hours: (typeof hours === 'number') ? hours : null,
+      manual_symbol: symbol ? String(symbol) : null,
+      manual_set_at: nowIso,
+      manual_set_by: req.user.id,
+    };
+    const { error } = await supabase
+      .from('member_working_hours_daily')
+      .upsert(payload, { onConflict: 'user_id,date' });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ ok: true, manual_override: true });
+  } catch (e) {
+    console.error('[daily PATCH] failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

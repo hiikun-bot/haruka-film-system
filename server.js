@@ -264,8 +264,10 @@ app.use('/api/notifications', require('./routes/notifications'));
 // ADR 017 Phase 0: Google Calendar 連携基盤
 //   /api/auth/google-calendar/start | /callback | /disconnect | /connection-status
 //   /api/auth/google-calendar/preview-events （動作確認用）
-// preview-events は本来 /api/availability 配下が望ましいが、Phase 0 では同ルーターで一括管理。
+// Phase 1: グリッド・同期 API は /api/availability/* 配下にエイリアス公開（同じ router を再 mount）。
+//   /api/availability/sync-self | /grid | /daily | /preview-events | /connection-status
 app.use('/api/auth/google-calendar', require('./routes/google-calendar'));
+app.use('/api/availability',         require('./routes/google-calendar'));
 
 // クライアント設定 API（Phase 1 段階2）
 // Supabase Realtime 接続用に anon key（公開可能な公開鍵）と URL をフロントへ渡す。
