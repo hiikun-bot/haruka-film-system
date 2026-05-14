@@ -61,6 +61,7 @@
 | ファイル名テンプレート / filename_templates / トークン / 案件別命名規約 | [decisions/007](docs/design/decisions/007-filename-templates.md) |
 | 案件スケジュール / フェーズ / タスク / ガント / LP / HP / マイルストーン / 工程表 | [decisions/010](docs/design/decisions/010-project-schedule-tasks.md) |
 | カテゴリ別フィールド可視性 / creative_category_fields / カスタム項目 / 詳細モーダル | [decisions/012](docs/design/decisions/012-creative-category-field-visibility.md) |
+| 素材ライブラリ / media_assets / Gemini / AI解析 / タグ検索 / 案件横断プール / asset-library | [decisions/018](docs/design/decisions/018-asset-library.md) |
 | 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
 | ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
 | 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
