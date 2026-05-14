@@ -4206,7 +4206,6 @@ window.showPage = window.showPage || function(name, btn) {
           <button type="button" id="mview-btn-poster" class="mview-btn active" onclick="setMemberViewMode('poster')" title="ポスター棚">🎬 ポスター</button>
           <button type="button" id="mview-btn-table" class="mview-btn" onclick="setMemberViewMode('table')" title="一覧（テーブル）">📋 一覧</button>
           <button type="button" id="mview-btn-calendar" class="mview-btn" onclick="setMemberViewMode('calendar')" title="リソースカレンダー">📅 カレンダー</button>
-          <button type="button" id="mview-btn-schedule" class="mview-btn" onclick="setMemberViewMode('schedule')" title="スケジュール（準備中）">🗓 スケジュール</button>
         </div>
         <div id="member-sort-group" style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
           <span>並び替え：</span>
@@ -10142,9 +10141,9 @@ async function loadTeams() {
 // メンバー
 let showResigned = false;
 let memberSortBy = 'role';
-// 表示モード: 'poster' (Netflix風) / 'table' (テーブル) / 'calendar' (リソースカレンダー iframe) / 'schedule' (Phase 1.5 プレースホルダー)
+// 表示モード: 'poster' (Netflix風) / 'table' (テーブル) / 'calendar' (リソースカレンダー iframe)
 // localStorage に永続化（タブ切替・再読み込みでも維持）
-// 注意: 'calendar' / 'schedule' は memberViewMode の永続化対象だが、
+// 注意: 'calendar' は memberViewMode の永続化対象だが、
 //       次回起動時に意図せず iframe が開かないよう poster/table のみ永続化
 let memberViewMode = (function(){
   try {
@@ -10152,7 +10151,7 @@ let memberViewMode = (function(){
     return (v === 'table' || v === 'poster') ? v : 'poster';
   } catch(_) { return 'poster'; }
 })();
-// カレンダー/スケジュール表示時に隠す要素（ポスター/一覧で再表示）
+// カレンダー表示時に隠す要素（ポスター/一覧で再表示）
 function _applyMemberToolbarVisibility(mode) {
   const isListMode = (mode === 'poster' || mode === 'table');
   const sortGroup = document.getElementById('member-sort-group');
@@ -10163,14 +10162,14 @@ function _applyMemberToolbarVisibility(mode) {
   if (showResignedBtn) showResignedBtn.style.display = isListMode ? '' : 'none';
 }
 function _syncMemberViewToggleActive(mode) {
-  const ids = ['poster','table','calendar','schedule'];
+  const ids = ['poster','table','calendar'];
   ids.forEach(id => {
     const btn = document.getElementById('mview-btn-' + id);
     if (btn) btn.classList.toggle('active', mode === id);
   });
 }
 function setMemberViewMode(mode) {
-  if (!['poster','table','calendar','schedule'].includes(mode)) return;
+  if (!['poster','table','calendar'].includes(mode)) return;
   memberViewMode = mode;
   // poster/table のみ永続化（カレンダー系は一時表示扱い）
   if (mode === 'poster' || mode === 'table') {
@@ -10184,21 +10183,6 @@ function setMemberViewMode(mode) {
     if (list) {
       list.classList.remove('loading');
       list.innerHTML = '<iframe src="/availability-grid.html" style="width:100%;height:calc(100vh - 240px);border:0;border-radius:12px;background:#fff" title="リソースカレンダー"></iframe>';
-    }
-    return;
-  }
-
-  if (mode === 'schedule') {
-    const list = document.getElementById('members-list');
-    if (list) {
-      list.classList.remove('loading');
-      list.innerHTML = `
-        <div style="text-align:center;padding:80px 20px;color:var(--text-muted)">
-          <div style="font-size:48px;margin-bottom:16px">🗓</div>
-          <div style="font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text)">スケジュール（受注余力ダッシュボード）</div>
-          <div style="font-size:14px">Phase 1.5 で実装予定。案件の想定工数とリソース余力を週/月単位で可視化します。</div>
-          <div style="margin-top:16px;font-size:12px"><a href="https://github.com/hiikun-bot/haruka-film-system/blob/main/docs/design/decisions/017-member-resource-availability-gcal.md#2-需要側案件シミュレーションphase-15" target="_blank" rel="noopener">ADR 017 §2 を見る</a></div>
-        </div>`;
     }
     return;
   }
