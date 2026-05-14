@@ -261,6 +261,12 @@ app.use('/api/haruka', harukaRouter);
 // /api/notifications 配下: 一覧 / 未読件数 / 既読化 / 全体通知発火
 app.use('/api/notifications', require('./routes/notifications'));
 
+// ADR 017 Phase 0: Google Calendar 連携基盤
+//   /api/auth/google-calendar/start | /callback | /disconnect | /connection-status
+//   /api/auth/google-calendar/preview-events （動作確認用）
+// preview-events は本来 /api/availability 配下が望ましいが、Phase 0 では同ルーターで一括管理。
+app.use('/api/auth/google-calendar', require('./routes/google-calendar'));
+
 // クライアント設定 API（Phase 1 段階2）
 // Supabase Realtime 接続用に anon key（公開可能な公開鍵）と URL をフロントへ渡す。
 // service_role キーは絶対に渡さない。anon キーは Supabase の RLS（行レベルセキュリティ）で
