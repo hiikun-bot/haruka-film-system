@@ -484,9 +484,14 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
     const { data: teamsRaw, error: tErr } = await teamsQuery;
     if (tErr) return res.status(500).json({ error: tErr.message });
 
+    // 基本チームのみ採用（team_code が単一英字 A〜Z）。案件ごとのチーム（ARR, ARRD 等）は除外。
+    // 判定規約は haruka.html の renderTeams ロジックと同じ。
+    const isBasicTeamCode = (code) => typeof code === 'string' && /^[A-Za-z]$/.test(code);
+    const basicTeamsRaw = (teamsRaw || []).filter(t => isBasicTeamCode(t.team_code));
+
     // 全 user_id を集める
     const userIdSet = new Set();
-    for (const t of (teamsRaw || [])) {
+    for (const t of basicTeamsRaw) {
       for (const tm of (t.team_members || [])) userIdSet.add(tm.user_id);
     }
     const userIds = Array.from(userIdSet);
@@ -528,7 +533,7 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
     const orgTotalsByDate = Object.fromEntries(dateList.map(d => [d, 0]));
     const outTeams = [];
 
-    for (const t of (teamsRaw || [])) {
+    for (const t of basicTeamsRaw) {
       const memberRows = (t.team_members || []);
       const teamTotalsByDate = Object.fromEntries(dateList.map(d => [d, 0]));
       let teamTotalWeekday = 0, teamTotalHoliday = 0;
