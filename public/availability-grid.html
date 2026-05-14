@@ -3,16 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>リソースカレンダー（ADR 017 Phase 1.0）</title>
+<title>リソースカレンダー（ADR 017 Phase 1.x）</title>
 <style>
   :root {
     --border: #d8dde3;
     --border-soft: #ecf0f4;
     --bg-holiday: #fdf3f3;
     --bg-totalrow: #f3f6fa;
+    --bg-diverge: #fff3cd;     /* 手動値が GCal 計算と異なる場合の警告色 */
     --text-muted: #6b7280;
     --accent: #1a73e8;
     --gcal: #2e7d32;
+    --manual: #0d6efd;
   }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans", sans-serif; margin: 1.2em; color: #222; }
@@ -28,6 +30,9 @@
   button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   button.outline { background: #fff; color: #333; border: 1px solid var(--border); padding: 0.45em 1em; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
   .privacy-note { background: #f1f8e9; border: 1px solid #c5e1a5; color: #33691e; padding: 0.5em 0.8em; border-radius: 6px; font-size: 0.82em; margin: 0.5em 0 1em; display: inline-block; }
+  .legend { font-size: 0.78em; color: var(--text-muted); margin: 0 0 0.7em; }
+  .legend span { display: inline-block; margin-right: 0.8em; }
+  .legend .lg-manual { color: var(--manual); font-weight: 700; }
   .grid-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 8px; max-height: calc(100vh - 220px); }
   table.grid { border-collapse: collapse; font-size: 0.82em; min-width: 800px; }
   table.grid th, table.grid td { border: 1px solid var(--border-soft); padding: 0.25em 0.4em; text-align: center; white-space: nowrap; }
@@ -42,21 +47,45 @@
   table.grid tr.team-header td { background: #eef3fa; font-weight: 700; text-align: left; padding: 0.4em 0.6em; }
   table.grid tr.team-total td, table.grid tr.org-total td { background: var(--bg-totalrow); font-weight: 700; }
   table.grid tr.org-total td { background: #fff3cd; }
-  td.day-cell { min-width: 3em; cursor: default; }
-  td.day-cell.has-slots { cursor: pointer; text-decoration: underline dotted; }
+  td.day-cell { min-width: 3em; cursor: default; position: relative; }
+  td.day-cell.editable { cursor: pointer; }
+  td.day-cell.editable:hover { background: #eef5ff; }
   td.day-cell.zero { color: #c62828; }
+  td.day-cell.diverge { background: var(--bg-diverge); }
+  td.day-cell.diverge.is-holiday { background: linear-gradient(135deg, var(--bg-diverge) 60%, var(--bg-holiday)); }
+  td.day-cell .manual-mark { color: var(--manual); font-weight: 700; margin-left: 0.15em; font-size: 0.85em; vertical-align: 1px; }
   .gcal-mark { color: var(--gcal); margin-right: 0.2em; }
   .leader-mark { color: #ef6c00; margin-right: 0.15em; font-weight: 700; font-size: 0.85em; }
   #status-bar { font-size: 0.85em; color: var(--text-muted); min-height: 1.4em; margin-top: 0.5em; }
-  /* slot popover */
-  #slot-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 0.6em 0.9em; box-shadow: 0 4px 18px rgba(0,0,0,0.15); font-size: 0.82em; z-index: 10; display: none; max-width: 280px; }
+
+  /* slot popover (read-only) */
+  #slot-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 0.6em 0.9em; box-shadow: 0 4px 18px rgba(0,0,0,0.15); font-size: 0.82em; z-index: 30; display: none; max-width: 280px; }
   #slot-popover h4 { margin: 0 0 0.3em; font-size: 0.9em; }
   #slot-popover ul { margin: 0; padding-left: 1.2em; }
+  #slot-popover .pop-meta { margin-top: 0.45em; font-size: 0.78em; color: var(--text-muted); }
+  #slot-popover .pop-meta .warn { color: #b76a00; font-weight: 700; }
+
+  /* edit popover */
+  #edit-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 0.8em 1em; box-shadow: 0 8px 28px rgba(0,0,0,0.18); font-size: 0.85em; z-index: 50; display: none; width: 300px; }
+  #edit-popover h4 { margin: 0 0 0.5em; font-size: 0.95em; }
+  #edit-popover .ep-row { margin: 0.5em 0; }
+  #edit-popover .ep-input { display: flex; align-items: center; gap: 0.4em; }
+  #edit-popover input[type=number] { width: 5em; padding: 0.3em 0.4em; border: 1px solid var(--border); border-radius: 4px; font-size: 0.95em; }
+  #edit-popover .ep-symbols { display: flex; flex-wrap: wrap; gap: 0.3em; }
+  #edit-popover .ep-sym-btn { padding: 0.3em 0.65em; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-size: 0.85em; }
+  #edit-popover .ep-sym-btn:hover { background: #f1f6ff; }
+  #edit-popover .ep-sym-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #edit-popover .ep-meta { font-size: 0.78em; color: var(--text-muted); margin-top: 0.5em; line-height: 1.5; }
+  #edit-popover .ep-actions { display: flex; gap: 0.4em; margin-top: 0.7em; justify-content: flex-end; flex-wrap: wrap; }
+  #edit-popover .ep-actions button { padding: 0.4em 0.9em; border-radius: 6px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 0.85em; }
+  #edit-popover .ep-actions .save { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #edit-popover .ep-actions .clear { color: #b71c1c; }
+  #edit-popover .ep-err { color: #b71c1c; font-size: 0.78em; margin-top: 0.4em; min-height: 1em; }
 </style>
 </head>
 <body>
 
-<h1>📅 リソースカレンダー（ADR 017 Phase 1.0）</h1>
+<h1>📅 リソースカレンダー（ADR 017 Phase 1.x）</h1>
 
 <div class="toolbar">
   <div class="tabs" id="team-tabs">
@@ -78,18 +107,57 @@
   🔒 GCal連動メンバーの予定について<strong>件名・場所・参加者などの「内容」は取得・表示していません</strong>（時間情報のみ）。
 </div>
 
+<div class="legend">
+  <span><span class="gcal-mark">📅</span> GCal連動</span>
+  <span><span class="leader-mark">★</span> チームリーダー</span>
+  <span><span class="lg-manual">●</span> 手動上書き済</span>
+  <span style="background:var(--bg-diverge);padding:0 6px;border-radius:3px;">▒</span> GCal計算と差分あり
+</div>
+
 <div id="status-bar">…</div>
 
 <div class="grid-wrap">
   <table class="grid" id="grid"><thead></thead><tbody></tbody></table>
 </div>
 
+<!-- 読取専用（スロット表示）ポップオーバー -->
 <div id="slot-popover"></div>
+
+<!-- 編集ポップオーバー -->
+<div id="edit-popover">
+  <h4 id="ep-title">セル編集</h4>
+  <div class="ep-row">
+    <div class="ep-input">
+      <input type="number" id="ep-hours" step="0.1" min="0" max="24" placeholder="2.5">
+      <span>h を手動指定</span>
+    </div>
+  </div>
+  <div class="ep-row">
+    <div style="font-size:0.78em;color:var(--text-muted);margin-bottom:0.3em;">または記号で指定</div>
+    <div class="ep-symbols">
+      <button type="button" class="ep-sym-btn" data-sym="×">× 休み</button>
+      <button type="button" class="ep-sym-btn" data-sym="△">△ 微妙</button>
+      <button type="button" class="ep-sym-btn" data-sym="AM">AM のみ</button>
+      <button type="button" class="ep-sym-btn" data-sym="PM">PM のみ</button>
+    </div>
+  </div>
+  <div class="ep-meta" id="ep-meta"></div>
+  <div class="ep-err" id="ep-err"></div>
+  <div class="ep-actions">
+    <button type="button" class="clear" id="ep-clear" title="手動オーバーライドを解除して GCal計算/基本値 に戻す">クリア</button>
+    <button type="button" id="ep-cancel">キャンセル</button>
+    <button type="button" class="save" id="ep-save">保存</button>
+  </div>
+</div>
 
 <script>
 async function apiFetch(url, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  // VIEW AS ヘッダは無し（管理者プレビュー時のみ意味があるため Phase 1.0 は割愛 — 将来追加）
+  // VIEW AS: localStorage.previewRole があれば送る（管理者のみサーバー側で尊重）
+  try {
+    const pv = window.localStorage && localStorage.getItem('previewRole');
+    if (pv) headers['X-View-As'] = pv;
+  } catch (_) {}
   const res = await fetch(url, { credentials: 'same-origin', headers, ...opts });
   let body;
   try { body = await res.json(); } catch (_) { body = null; }
@@ -100,7 +168,7 @@ const state = {
   from: null, to: null,
   scope: 'org',
   data: null,
-  currentUserId: null,
+  me: null,            // /auth/me の結果
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -110,11 +178,10 @@ function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); retu
 
 function defaultRange() {
   const today = new Date();
-  // 月曜起点
-  const dow = today.getDay(); // 0=Sun
+  const dow = today.getDay();
   const monday = addDays(today, -((dow + 6) % 7));
   const from = monday;
-  const to = addDays(from, 69); // ~10週
+  const to = addDays(from, 69);
   return { from: fmtDate(from), to: fmtDate(to) };
 }
 
@@ -124,6 +191,13 @@ function shiftRange(deltaDays) {
 }
 
 const WEEKDAY_JA = ['日','月','火','水','木','金','土'];
+
+async function fetchMe() {
+  try {
+    const r = await apiFetch('/auth/me');
+    if (r.ok) state.me = r.body || null;
+  } catch (_) {}
+}
 
 async function load() {
   document.getElementById('status-bar').textContent = '読み込み中...';
@@ -144,9 +218,7 @@ async function load() {
 }
 
 function renderTabs() {
-  // 一度しか描画しない（チーム一覧は scope=org 時のみ得られるため、初回 org load 時に確定）
   const wrap = document.getElementById('team-tabs');
-  // 既に複数タブ描画済みなら active のみ更新
   const built = wrap.dataset.built === '1';
   if (built) {
     Array.from(wrap.children).forEach(btn => {
@@ -154,7 +226,6 @@ function renderTabs() {
     });
     return;
   }
-  // org の時のみ全チームリストが返るのでそこで構築
   if (state.scope !== 'org') return;
   wrap.innerHTML = '';
   const orgBtn = document.createElement('button');
@@ -186,11 +257,9 @@ function renderGrid() {
   tbody.innerHTML = '';
 
   // ===== ヘッダ =====
-  // 月ヘッダ行: 「5月」「6月」のように月ごとにスパン
   const monthRow = document.createElement('tr');
   const monthHeadFiller = document.createElement('th'); monthHeadFiller.colSpan = 3; monthHeadFiller.textContent = '通常稼働時間';
   monthHeadFiller.className = 'month-head'; monthRow.appendChild(monthHeadFiller);
-  // 月ごとにグループ
   let i = 0;
   while (i < dates.length) {
     const y = dates[i].slice(0,4), m = dates[i].slice(5,7);
@@ -205,7 +274,6 @@ function renderGrid() {
   const totalMonthHead = document.createElement('th'); totalMonthHead.className = 'month-head'; totalMonthHead.textContent = '合計'; monthRow.appendChild(totalMonthHead);
   thead.appendChild(monthRow);
 
-  // 日付ヘッダ行
   const headRow = document.createElement('tr');
   const thName = document.createElement('th'); thName.className = 'name-col'; thName.textContent = 'メンバー'; headRow.appendChild(thName);
   const thWeekday = document.createElement('th'); thWeekday.className = 'default-col default-weekday'; thWeekday.textContent = '平日'; headRow.appendChild(thWeekday);
@@ -224,7 +292,6 @@ function renderGrid() {
   // ===== 本体 =====
   const teams = data.teams || [];
   for (const t of teams) {
-    // チームヘッダ行
     const trH = document.createElement('tr'); trH.className = 'team-header';
     const tdH = document.createElement('td'); tdH.colSpan = dates.length + 4;
     tdH.textContent = `【${t.code} ${t.name}】`;
@@ -242,15 +309,9 @@ function renderGrid() {
       let sum = 0;
       for (const day of (m.days || [])) {
         const td = document.createElement('td'); td.className = 'day-cell';
-        if (day.is_holiday) td.classList.add('is-holiday');
-        if (day.hours === 0) td.classList.add('zero');
-        if ((day.slots || []).length) {
-          td.classList.add('has-slots');
-          td.dataset.slots = JSON.stringify(day.slots);
-          td.dataset.label = `${m.name} / ${day.date}`;
-          td.addEventListener('click', onCellClick);
-        }
-        td.textContent = day.symbol ? day.symbol : fmtHours(day.hours);
+        td.dataset.userId = m.user_id;
+        td.dataset.date = day.date;
+        applyCellState(td, day, m);
         sum += Number(day.hours || 0);
         tr.appendChild(td);
       }
@@ -258,7 +319,6 @@ function renderGrid() {
       tbody.appendChild(tr);
     }
 
-    // チーム合計行
     const trT = document.createElement('tr'); trT.className = 'team-total';
     const tdTLabel = document.createElement('td'); tdTLabel.className = 'name-col'; tdTLabel.textContent = `${t.code}チーム合計`; trT.appendChild(tdTLabel);
     const tdTW = document.createElement('td'); tdTW.className = 'default-col default-weekday'; tdTW.textContent = fmtHours(t.team_total_weekday); trT.appendChild(tdTW);
@@ -276,7 +336,6 @@ function renderGrid() {
     tbody.appendChild(trT);
   }
 
-  // 組織合計
   if (state.scope === 'org') {
     const trO = document.createElement('tr'); trO.className = 'org-total';
     const tdOLabel = document.createElement('td'); tdOLabel.className = 'name-col'; tdOLabel.textContent = '【組織合計】'; trO.appendChild(tdOLabel);
@@ -296,27 +355,98 @@ function renderGrid() {
   }
 }
 
+/**
+ * day オブジェクトをセルに反映する（再描画にも使う）。
+ *   day = { date, hours, symbol, source, is_holiday, slots, manual_override, diverges_from_gcal, computed_hours, base_hours }
+ *   m   = { name, can_edit, is_gcal_connected, ... }
+ */
+function applyCellState(td, day, m) {
+  // クラスリセット
+  td.className = 'day-cell';
+  if (day.is_holiday) td.classList.add('is-holiday');
+  if (day.hours === 0) td.classList.add('zero');
+  if (day.diverges_from_gcal) td.classList.add('diverge');
+
+  // 内容: 記号があれば記号、無ければ時間 + manual marker
+  const label = day.symbol ? escapeHtml(day.symbol) : escapeHtml(fmtHours(day.hours));
+  const mark = day.manual_override ? '<span class="manual-mark" title="手動上書き済">●</span>' : '';
+  td.innerHTML = `${label}${mark}`;
+
+  // 編集可能性
+  td.dataset.userId = m.user_id;
+  td.dataset.date   = day.date;
+  td.dataset.canEdit = m.can_edit ? '1' : '0';
+
+  // 表示用データ: ホバー時に使う
+  td.dataset.day = JSON.stringify(day);
+  td.dataset.label = `${m.name} / ${day.date}`;
+  td.dataset.memberName = m.name;
+  td.dataset.gcalConnected = m.is_gcal_connected ? '1' : '0';
+
+  // ツールチップ
+  td.title = buildHoverTooltip(day, m);
+
+  // クリックハンドラ
+  td.onclick = null;
+  if (m.can_edit) {
+    td.classList.add('editable');
+    td.addEventListener('click', onCellClickEdit);
+  } else if ((day.slots || []).length) {
+    // 読取専用ポップオーバー
+    td.addEventListener('click', onCellClickReadonly);
+  }
+}
+
+function buildHoverTooltip(day, m) {
+  const lines = [];
+  if (day.manual_override) {
+    lines.push(`手動設定: ${day.symbol ? day.symbol : fmtHours(day.hours) + 'h'}`);
+    if (day.computed_hours != null) lines.push(`GCal計算: ${fmtHours(day.computed_hours)}h`);
+    if (day.diverges_from_gcal) lines.push('⚠ GCal計算と差分あり');
+  } else if (day.source === 'gcal') {
+    lines.push(`GCal計算: ${fmtHours(day.hours)}h`);
+  } else {
+    lines.push(`基本デフォルト: ${fmtHours(day.hours)}h`);
+  }
+  if (m.can_edit) lines.push('（クリックで編集）');
+  return lines.join('\n');
+}
+
 function fmtHours(v) {
   if (v == null) return '';
   const n = Number(v);
   if (!isFinite(n)) return '';
   if (n === 0) return '0';
-  // 0.5 単位なら整数 or .5 表示
   const rounded = Math.round(n * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
 }
 
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-function onCellClick(e) {
+// ====================================
+// 読取専用ポップオーバー（編集権限が無いセル）
+// ====================================
+function onCellClickReadonly(e) {
   const td = e.currentTarget;
-  const slots = JSON.parse(td.dataset.slots || '[]');
+  closeEditPopover();
+  const day = JSON.parse(td.dataset.day || 'null') || {};
+  const slots = day.slots || [];
   const label = td.dataset.label || '';
   const pop = document.getElementById('slot-popover');
+
+  let metaHtml = '';
+  if (day.manual_override) {
+    const sym = day.symbol ? ` (${escapeHtml(day.symbol)})` : '';
+    metaHtml += `<div>手動上書き${sym}</div>`;
+  }
+  if (day.computed_hours != null) metaHtml += `<div>GCal計算: ${escapeHtml(fmtHours(day.computed_hours))}h</div>`;
+  if (day.diverges_from_gcal) metaHtml += `<div class="warn">⚠ GCal計算と差分あり</div>`;
+
   pop.innerHTML = `<h4>${escapeHtml(label)}</h4>` + (slots.length
     ? '<ul>' + slots.map(s => `<li>${escapeHtml(s.from)} 〜 ${escapeHtml(s.to)}</li>`).join('') + '</ul>'
     : '<p>時間帯情報なし</p>')
-    + '<p style="font-size:0.78em; color:#888; margin: 0.4em 0 0;">🔒 件名・場所等は表示していません</p>';
+    + (metaHtml ? `<div class="pop-meta">${metaHtml}</div>` : '')
+    + '<div class="pop-meta">🔒 件名・場所等は表示していません</div>';
   const rect = td.getBoundingClientRect();
   pop.style.left = Math.min(window.innerWidth - 300, rect.left) + 'px';
   pop.style.top  = (rect.bottom + 4) + 'px';
@@ -325,10 +455,264 @@ function onCellClick(e) {
 
 document.addEventListener('click', (e) => {
   const pop = document.getElementById('slot-popover');
-  if (!pop) return;
-  if (e.target.closest('.day-cell') || e.target.closest('#slot-popover')) return;
-  pop.style.display = 'none';
+  if (pop && pop.style.display === 'block') {
+    if (!e.target.closest('.day-cell') && !e.target.closest('#slot-popover')) {
+      pop.style.display = 'none';
+    }
+  }
+  const ep = document.getElementById('edit-popover');
+  if (ep && ep.style.display === 'block') {
+    if (!e.target.closest('.day-cell') && !e.target.closest('#edit-popover')) {
+      closeEditPopover();
+    }
+  }
 });
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeEditPopover();
+    const pop = document.getElementById('slot-popover');
+    if (pop) pop.style.display = 'none';
+  }
+});
+
+// ====================================
+// 編集ポップオーバー
+// ====================================
+const editState = {
+  open: false,
+  userId: null,
+  date: null,
+  memberName: null,
+  td: null,
+  symbol: null, // 仮選択
+};
+
+function onCellClickEdit(e) {
+  e.stopPropagation();
+  const td = e.currentTarget;
+  const day = JSON.parse(td.dataset.day || 'null') || {};
+  openEditPopover(td, day);
+}
+
+function openEditPopover(td, day) {
+  // slot-popover は閉じる
+  const slotPop = document.getElementById('slot-popover');
+  if (slotPop) slotPop.style.display = 'none';
+
+  editState.open = true;
+  editState.userId = td.dataset.userId;
+  editState.date = td.dataset.date;
+  editState.memberName = td.dataset.memberName || '';
+  editState.td = td;
+  editState.symbol = day.manual_override ? (day.symbol || null) : null;
+
+  const ep = document.getElementById('edit-popover');
+  const title = document.getElementById('ep-title');
+  const hoursInput = document.getElementById('ep-hours');
+  const meta = document.getElementById('ep-meta');
+  const err = document.getElementById('ep-err');
+
+  // タイトル
+  const d = parseDate(editState.date);
+  const dowJa = WEEKDAY_JA[d.getDay()];
+  title.textContent = `${editState.date} (${dowJa})  ${editState.memberName}`;
+
+  // 値プリセット
+  if (day.manual_override && day.symbol == null && day.hours != null) {
+    hoursInput.value = String(day.hours);
+  } else if (day.manual_override && day.symbol != null) {
+    hoursInput.value = '';
+  } else if (day.source === 'gcal' && day.computed_hours != null) {
+    hoursInput.value = '';
+    hoursInput.placeholder = String(day.computed_hours);
+  } else {
+    hoursInput.value = '';
+    hoursInput.placeholder = (day.base_hours != null) ? String(day.base_hours) : '2.5';
+  }
+
+  // 記号 active 表示
+  for (const btn of ep.querySelectorAll('.ep-sym-btn')) {
+    btn.classList.toggle('active', btn.dataset.sym === editState.symbol);
+  }
+
+  // メタ
+  const metaLines = [];
+  if (day.computed_hours != null) {
+    const slotsStr = (day.slots && day.slots.length && day.source === 'gcal')
+      ? ' (' + day.slots.map(s => `${s.from}-${s.to}`).join(', ') + ')'
+      : '';
+    metaLines.push(`現在のGCal計算値: ${fmtHours(day.computed_hours)}h${slotsStr}`);
+  }
+  if (day.base_hours != null) {
+    metaLines.push(`基本デフォルト: ${fmtHours(day.base_hours)}h${day.is_holiday ? '（休日）' : '（平日）'}`);
+  }
+  if (day.manual_override) {
+    const cur = day.symbol ? day.symbol : `${fmtHours(day.hours)}h`;
+    metaLines.push(`現在の手動値: ${cur}`);
+  }
+  meta.innerHTML = metaLines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+  err.textContent = '';
+
+  // 配置
+  const rect = td.getBoundingClientRect();
+  ep.style.display = 'block';
+  // 一旦表示してサイズ取得
+  const epRect = ep.getBoundingClientRect();
+  let left = rect.left;
+  if (left + epRect.width > window.innerWidth - 8) left = window.innerWidth - epRect.width - 8;
+  if (left < 8) left = 8;
+  let top = rect.bottom + 4;
+  if (top + epRect.height > window.innerHeight - 8) top = rect.top - epRect.height - 4;
+  if (top < 8) top = 8;
+  ep.style.left = left + 'px';
+  ep.style.top  = top + 'px';
+
+  setTimeout(() => hoursInput.focus(), 30);
+}
+
+function closeEditPopover() {
+  const ep = document.getElementById('edit-popover');
+  if (!ep) return;
+  ep.style.display = 'none';
+  document.getElementById('ep-hours').value = '';
+  document.getElementById('ep-hours').placeholder = '2.5';
+  for (const btn of ep.querySelectorAll('.ep-sym-btn')) btn.classList.remove('active');
+  document.getElementById('ep-err').textContent = '';
+  editState.open = false;
+  editState.userId = null;
+  editState.date = null;
+  editState.td = null;
+  editState.symbol = null;
+}
+
+// 記号ボタン
+document.querySelectorAll('#edit-popover .ep-sym-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const sym = btn.dataset.sym;
+    if (editState.symbol === sym) {
+      editState.symbol = null;
+    } else {
+      editState.symbol = sym;
+      // 記号選択時は hours 入力をクリア
+      document.getElementById('ep-hours').value = '';
+    }
+    document.querySelectorAll('#edit-popover .ep-sym-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.sym === editState.symbol);
+    });
+  });
+});
+
+// hours 入力時は記号選択をクリア
+document.getElementById('ep-hours').addEventListener('input', () => {
+  if (document.getElementById('ep-hours').value !== '') {
+    editState.symbol = null;
+    for (const b of document.querySelectorAll('#edit-popover .ep-sym-btn')) b.classList.remove('active');
+  }
+});
+
+document.getElementById('ep-cancel').addEventListener('click', closeEditPopover);
+
+document.getElementById('ep-clear').addEventListener('click', async () => {
+  await submitEdit({ clear: true });
+});
+
+document.getElementById('ep-save').addEventListener('click', async () => {
+  const errEl = document.getElementById('ep-err');
+  errEl.textContent = '';
+  const hoursStr = document.getElementById('ep-hours').value.trim();
+  let hours = null;
+  if (hoursStr !== '') {
+    const n = parseFloat(hoursStr);
+    if (!isFinite(n) || n < 0 || n > 24) {
+      errEl.textContent = 'hours は 0〜24 の数値で入力してください';
+      return;
+    }
+    hours = Math.round(n * 100) / 100;
+  }
+  const symbol = editState.symbol;
+  if (hours == null && !symbol) {
+    errEl.textContent = '数値か記号のどちらかを指定してください（クリアは「クリア」ボタン）';
+    return;
+  }
+  await submitEdit({ hours, symbol });
+});
+
+async function submitEdit(payload) {
+  if (!editState.userId || !editState.date) return;
+  const errEl = document.getElementById('ep-err');
+  errEl.textContent = '';
+  const body = {
+    user_id: editState.userId,
+    date: editState.date,
+  };
+  if (payload.clear) {
+    body.clear = true;
+  } else {
+    if (payload.hours != null) body.hours = payload.hours;
+    if (payload.symbol) body.symbol = payload.symbol;
+  }
+  const r = await apiFetch('/api/availability/daily', {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    errEl.textContent = `保存失敗 (${r.status}): ${r.body?.error || ''}`;
+    return;
+  }
+  // セル即時反映
+  const cell = r.body && r.body.cell;
+  if (cell && editState.td) {
+    // 既存 day を新 cell でマージ
+    const td = editState.td;
+    const oldDay = JSON.parse(td.dataset.day || 'null') || {};
+    const newDay = Object.assign({}, oldDay, {
+      hours: cell.hours,
+      symbol: cell.symbol,
+      source: cell.source,
+      slots: cell.slots || [],
+      manual_override: !!cell.manual_override,
+      diverges_from_gcal: !!cell.diverges_from_gcal,
+      computed_hours: cell.computed_hours,
+      base_hours: cell.base_hours,
+    });
+    // member 情報は dataset から取り出す
+    const memberShim = {
+      user_id: td.dataset.userId,
+      name: td.dataset.memberName,
+      can_edit: td.dataset.canEdit === '1',
+      is_gcal_connected: td.dataset.gcalConnected === '1',
+    };
+    applyCellState(td, newDay, memberShim);
+  }
+  closeEditPopover();
+  // 合計値は単純再計算が難しいので、状態がズレる場合のみ load() で再取得
+  // ただしユーザー体験向上のため、軽量に行合計のみ再計算する
+  recomputeRowAndTeamTotals();
+}
+
+// セル更新時の合計行を再計算（簡易版）— DOM を読み直して数値合計
+function recomputeRowAndTeamTotals() {
+  // tbody の各 tr を走査
+  const tbody = document.querySelector('#grid tbody');
+  if (!tbody) return;
+  // member 行のみ合計再計算
+  for (const tr of tbody.querySelectorAll('tr')) {
+    if (tr.classList.contains('team-header')) continue;
+    if (tr.classList.contains('team-total')) continue;
+    if (tr.classList.contains('org-total')) continue;
+    const cells = tr.querySelectorAll('td.day-cell');
+    if (!cells.length) continue;
+    let sum = 0;
+    for (const td of cells) {
+      const d = JSON.parse(td.dataset.day || 'null');
+      if (d && typeof d.hours === 'number') sum += d.hours;
+    }
+    const totalCell = tr.querySelector('td.total-col');
+    if (totalCell) totalCell.textContent = fmtHours(sum);
+  }
+  // team / org 合計の正確な再計算は load() に任せる（次回更新時に整合）
+}
 
 document.getElementById('btn-prev').addEventListener('click', () => { shiftRange(-28); load(); });
 document.getElementById('btn-next').addEventListener('click', () => { shiftRange(28); load(); });
@@ -358,6 +742,7 @@ document.getElementById('btn-sync').addEventListener('click', async () => {
 });
 
 (async () => {
+  await fetchMe();
   const r = defaultRange();
   state.from = r.from; state.to = r.to;
   await load();
