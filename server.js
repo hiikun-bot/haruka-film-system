@@ -65,7 +65,7 @@ app.use(helmet({
   // HTTPS 切れに弱いユーザーが残る可能性があるので別 PR で扱う
   strictTransportSecurity: false,
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-  frameguard: { action: 'deny' },
+  frameguard: { action: 'sameorigin' },
 }));
 
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentials: true }));
