@@ -4202,11 +4202,13 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="sec-label">メンバー一覧</div>
         <span id="members-count" style="font-size:12px;color:var(--text-muted);background:var(--em-pale);padding:2px 10px;border-radius:20px"></span>
         <button class="btn" id="btn-show-resigned" onclick="toggleShowResigned()" style="font-size:11px;padding:3px 10px;color:#999;border-color:#ddd">退職者を表示</button>
-        <div class="mview-toggle" role="tablist" aria-label="表示形式">
+        <div class="mview-toggle" role="tablist" aria-label="表示形式" style="white-space:nowrap">
           <button type="button" id="mview-btn-poster" class="mview-btn active" onclick="setMemberViewMode('poster')" title="ポスター棚">🎬 ポスター</button>
           <button type="button" id="mview-btn-table" class="mview-btn" onclick="setMemberViewMode('table')" title="一覧（テーブル）">📋 一覧</button>
+          <button type="button" id="mview-btn-calendar" class="mview-btn" onclick="setMemberViewMode('calendar')" title="リソースカレンダー">📅 カレンダー</button>
+          <button type="button" id="mview-btn-schedule" class="mview-btn" onclick="setMemberViewMode('schedule')" title="スケジュール（準備中）">🗓 スケジュール</button>
         </div>
-        <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
+        <div id="member-sort-group" style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
           <span>並び替え：</span>
           <button id="sort-btn-default" onclick="setMemberSort('default')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">登録順</button>
           <button id="sort-btn-role" onclick="setMemberSort('role')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--em-dark);background:var(--em-pale);color:var(--em-dark);cursor:pointer">ロール順</button>
@@ -4215,11 +4217,11 @@ window.showPage = window.showPage || function(name, btn) {
           <button id="sort-btn-name" onclick="setMemberSort('name')" style="font-size:11px;padding:2px 9px;border-radius:6px;border:0.5px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">名前順</button>
         </div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div id="member-action-group" style="display:flex;gap:8px">
         <button class="btn" id="btn-csv-export" onclick="exportMembersToSheet()">スプレッドシートへエクスポート</button>
         <button class="btn" id="btn-csv-import" onclick="openImportModal()" style="display:none">スプレッドシートからインポート</button>
         <button class="btn" onclick="openInviteModal()" id="btn-invite" style="display:none">＋ 招待リンク発行</button>
-        <button class="btn-primary" onclick="openAddMember()">＋ メンバー追加</button>
+        <button class="btn-primary" id="btn-add-member" onclick="openAddMember()">＋ メンバー追加</button>
       </div>
     </div>
     <div id="members-list" class="loading">読み込み中...</div>
@@ -10140,31 +10142,74 @@ async function loadTeams() {
 // メンバー
 let showResigned = false;
 let memberSortBy = 'role';
-// 表示モード: 'poster' (Netflix風) または 'table' (テーブル一覧)
+// 表示モード: 'poster' (Netflix風) / 'table' (テーブル) / 'calendar' (リソースカレンダー iframe) / 'schedule' (Phase 1.5 プレースホルダー)
 // localStorage に永続化（タブ切替・再読み込みでも維持）
+// 注意: 'calendar' / 'schedule' は memberViewMode の永続化対象だが、
+//       次回起動時に意図せず iframe が開かないよう poster/table のみ永続化
 let memberViewMode = (function(){
   try {
     const v = localStorage.getItem('harukaMemberViewMode');
     return (v === 'table' || v === 'poster') ? v : 'poster';
   } catch(_) { return 'poster'; }
 })();
+// カレンダー/スケジュール表示時に隠す要素（ポスター/一覧で再表示）
+function _applyMemberToolbarVisibility(mode) {
+  const isListMode = (mode === 'poster' || mode === 'table');
+  const sortGroup = document.getElementById('member-sort-group');
+  const actionGroup = document.getElementById('member-action-group');
+  const showResignedBtn = document.getElementById('btn-show-resigned');
+  if (sortGroup) sortGroup.style.display = isListMode ? '' : 'none';
+  if (actionGroup) actionGroup.style.display = isListMode ? 'flex' : 'none';
+  if (showResignedBtn) showResignedBtn.style.display = isListMode ? '' : 'none';
+}
+function _syncMemberViewToggleActive(mode) {
+  const ids = ['poster','table','calendar','schedule'];
+  ids.forEach(id => {
+    const btn = document.getElementById('mview-btn-' + id);
+    if (btn) btn.classList.toggle('active', mode === id);
+  });
+}
 function setMemberViewMode(mode) {
-  if (mode !== 'poster' && mode !== 'table') return;
+  if (!['poster','table','calendar','schedule'].includes(mode)) return;
   memberViewMode = mode;
-  try { localStorage.setItem('harukaMemberViewMode', mode); } catch(_) {}
-  // ボタンの active 切替
-  const btnP = document.getElementById('mview-btn-poster');
-  const btnT = document.getElementById('mview-btn-table');
-  if (btnP) btnP.classList.toggle('active', mode === 'poster');
-  if (btnT) btnT.classList.toggle('active', mode === 'table');
+  // poster/table のみ永続化（カレンダー系は一時表示扱い）
+  if (mode === 'poster' || mode === 'table') {
+    try { localStorage.setItem('harukaMemberViewMode', mode); } catch(_) {}
+  }
+  _syncMemberViewToggleActive(mode);
+  _applyMemberToolbarVisibility(mode);
+
+  if (mode === 'calendar') {
+    const list = document.getElementById('members-list');
+    if (list) {
+      list.classList.remove('loading');
+      list.innerHTML = '<iframe src="/availability-grid.html" style="width:100%;height:calc(100vh - 240px);border:0;border-radius:12px;background:#fff" title="リソースカレンダー"></iframe>';
+    }
+    return;
+  }
+
+  if (mode === 'schedule') {
+    const list = document.getElementById('members-list');
+    if (list) {
+      list.classList.remove('loading');
+      list.innerHTML = `
+        <div style="text-align:center;padding:80px 20px;color:var(--text-muted)">
+          <div style="font-size:48px;margin-bottom:16px">🗓</div>
+          <div style="font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text)">スケジュール（受注余力ダッシュボード）</div>
+          <div style="font-size:14px">Phase 1.5 で実装予定。案件の想定工数とリソース余力を週/月単位で可視化します。</div>
+          <div style="margin-top:16px;font-size:12px"><a href="https://github.com/hiikun-bot/haruka-film-system/blob/main/docs/design/decisions/017-member-resource-availability-gcal.md#2-需要側案件シミュレーションphase-15" target="_blank" rel="noopener">ADR 017 §2 を見る</a></div>
+        </div>`;
+    }
+    return;
+  }
+
+  // poster / table はテーブル/ポスター描画ロジックへ
   renderMemberList();
 }
 // 初期表示時にトグルの active 状態を同期（DOMContentLoaded 後）
 document.addEventListener('DOMContentLoaded', () => {
-  const btnP = document.getElementById('mview-btn-poster');
-  const btnT = document.getElementById('mview-btn-table');
-  if (btnP) btnP.classList.toggle('active', memberViewMode === 'poster');
-  if (btnT) btnT.classList.toggle('active', memberViewMode === 'table');
+  _syncMemberViewToggleActive(memberViewMode);
+  _applyMemberToolbarVisibility(memberViewMode);
 });
 // 列ヘッダクリックによるソート上書き。null のときは memberSortBy（ピル）が使われる。
 // 値: { col: 'role'|'rank'|'team'|'name', dir: 'asc'|'desc' }
