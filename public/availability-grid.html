@@ -163,7 +163,24 @@
   </div>
   <div class="right-buttons">
     <button id="btn-sync" class="primary">🔄 自分のGCalを再同期</button>
+    <button id="btn-debug-events" class="outline" title="GCal から実際に取得できているイベントを表示">🔍 取得イベント確認</button>
     <a href="/availability-setup.html" class="outline" style="text-decoration:none; display:inline-flex; align-items:center;">基本稼働時間 設定</a>
+  </div>
+</div>
+
+<!-- GCal デバッグモーダル -->
+<div id="gcal-debug-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:80"></div>
+<div id="gcal-debug-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,0.22);padding:0;width:min(560px,calc(100vw - 32px));max-height:85vh;z-index:90;display:none;flex-direction:column;overflow:hidden">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:0.7em 1em;border-bottom:1px solid var(--border-soft)">
+    <h3 style="margin:0;font-size:1em">🔍 GCal から取得できているイベント</h3>
+    <button id="gcal-debug-close" style="background:transparent;border:0;font-size:1.2em;cursor:pointer;padding:0.2em 0.5em;color:var(--text-muted)">✕</button>
+  </div>
+  <div id="gcal-debug-body" style="padding:0.8em 1em;overflow-y:auto;flex:1;font-size:0.9em">読み込み中...</div>
+  <div style="padding:0.5em 1em;border-top:1px solid var(--border-soft);background:#fafbfc">
+    <div style="font-size:0.78em;color:var(--text-muted);line-height:1.5">
+      🔒 件名・場所・参加者などは取得していません（時間情報のみ）。<br>
+      ここに自分の予定が出ていない場合は、別の Google アカウント／別カレンダーに予定がある可能性が高いです。
+    </div>
   </div>
 </div>
 
@@ -1019,6 +1036,69 @@ document.getElementById('btn-sync').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = orig;
   }
+});
+
+// 🔍 取得イベント確認モーダル
+function closeGcalDebug() {
+  document.getElementById('gcal-debug-modal').style.display = 'none';
+  document.getElementById('gcal-debug-backdrop').style.display = 'none';
+}
+document.getElementById('gcal-debug-close').addEventListener('click', closeGcalDebug);
+document.getElementById('gcal-debug-backdrop').addEventListener('click', closeGcalDebug);
+document.getElementById('btn-debug-events').addEventListener('click', async () => {
+  const modal = document.getElementById('gcal-debug-modal');
+  const backdrop = document.getElementById('gcal-debug-backdrop');
+  const body = document.getElementById('gcal-debug-body');
+  body.innerHTML = '読み込み中...';
+  modal.style.display = 'flex';
+  backdrop.style.display = 'block';
+  // 今日 + 7 日分（preview-events の既定）で取得
+  const r = await apiFetch('/api/availability/preview-events');
+  if (!r.ok) {
+    body.innerHTML = `<div style="color:#b71c1c">取得に失敗: (${r.status}) ${escapeHtml(r.body?.error || '')}</div>`;
+    return;
+  }
+  const d = r.body || {};
+  const acc = escapeHtml(d.account_email || '(不明)');
+  const cal = escapeHtml(d.calendar_id || 'primary');
+  const events = Array.isArray(d.events) ? d.events : [];
+  // 日付ごとにグルーピング
+  const byDate = new Map();
+  for (const ev of events) {
+    if (!ev || !ev.start) continue;
+    if (ev.status === 'cancelled') continue;
+    const dateStr = String(ev.start).slice(0, 10);
+    if (!byDate.has(dateStr)) byDate.set(dateStr, []);
+    byDate.get(dateStr).push(ev);
+  }
+  const dates = Array.from(byDate.keys()).sort();
+  let html = `
+    <div style="margin-bottom:0.6em;font-size:0.85em;color:var(--text-muted)">
+      <div>接続中のアカウント: <strong>${acc}</strong></div>
+      <div>カレンダー: <strong>${cal}</strong></div>
+      <div>取得イベント数: <strong>${events.length}件</strong>（取得範囲 ${escapeHtml((d.from||'').slice(0,16))} 〜 ${escapeHtml((d.to||'').slice(0,16))}）</div>
+    </div>
+  `;
+  if (!events.length) {
+    html += '<div style="color:#b71c1c">この期間に取得できたイベントは 0 件です。<br>接続中のアカウント／カレンダーに予定が無いか、別のカレンダー（職場別アカウント等）に予定が入っている可能性があります。</div>';
+  } else {
+    for (const dateStr of dates) {
+      html += `<div style="margin-top:0.7em;font-weight:700">${escapeHtml(dateStr)}</div>`;
+      html += '<ul style="margin:0.2em 0 0.5em;padding-left:1.4em">';
+      for (const ev of byDate.get(dateStr)) {
+        const startT = ev.isAllDay ? '終日' : (String(ev.start).slice(11, 16));
+        const endT   = ev.isAllDay ? ''     : (String(ev.end).slice(11, 16));
+        const tag = [];
+        if (ev.isAllDay) tag.push('終日');
+        if (ev.status && ev.status !== 'confirmed') tag.push(ev.status);
+        if (ev.transparency === 'transparent') tag.push('空き予定（減算しません）');
+        const tagStr = tag.length ? ` <span style="color:var(--text-muted);font-size:0.85em">(${tag.join('・')})</span>` : '';
+        html += `<li>${escapeHtml(startT)}${endT ? ' - ' + escapeHtml(endT) : ''}${tagStr}</li>`;
+      }
+      html += '</ul>';
+    }
+  }
+  body.innerHTML = html;
 });
 
 // 連携済みユーザーはページを開くたびに自動同期して最新値で上書き

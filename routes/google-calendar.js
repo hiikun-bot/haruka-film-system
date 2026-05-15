@@ -250,18 +250,19 @@ router.get('/preview-events', requireAuth, async (req, res) => {
       return res.status(500).json({ error: 'トークン復号に失敗しました（暗号鍵が変わった可能性）: ' + e.message });
     }
 
-    // 日付パース
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const fromStr = String(req.query.from || '').trim();
-    const toStr = String(req.query.to || '').trim();
-    const from = fromStr ? new Date(fromStr + 'T00:00:00') : today;
-    const toBase = toStr ? new Date(toStr + 'T00:00:00') : new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-    // to は当日 23:59:59 まで含めたい
-    const to = new Date(toBase.getTime() + 24 * 60 * 60 * 1000 - 1000);
+    // 日付パース（JST 固定。サーバー TZ に依存させない）
+    const fromStr = String(req.query.from || '').trim() || todayStr();
+    const toStr = String(req.query.to || '').trim() || addDaysStr(todayStr(), 7);
+    const fromM = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fromStr);
+    const toM   = /^(\d{4})-(\d{2})-(\d{2})$/.exec(toStr);
+    if (!fromM || !toM) {
+      return res.status(400).json({ error: 'from / to の日付が不正です（YYYY-MM-DD 形式）' });
+    }
+    const from = new Date(fromStr + 'T00:00:00+09:00');
+    const to   = new Date(toStr   + 'T23:59:59+09:00');
 
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
-      return res.status(400).json({ error: 'from / to の日付が不正です（YYYY-MM-DD 形式）' });
+      return res.status(400).json({ error: 'from / to の日時が不正です' });
     }
 
     try {
