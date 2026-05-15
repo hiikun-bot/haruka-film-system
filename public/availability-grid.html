@@ -36,7 +36,10 @@
   .grid-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 8px; max-height: calc(100vh - 220px); }
   table.grid { border-collapse: collapse; font-size: 0.82em; min-width: 800px; }
   table.grid th, table.grid td { border: 1px solid var(--border-soft); padding: 0.25em 0.4em; text-align: center; white-space: nowrap; }
-  table.grid thead th { position: sticky; top: 0; background: #fff; z-index: 2; font-weight: 600; }
+  table.grid thead th { background: #fff; z-index: 2; font-weight: 600; }
+  /* 2段のヘッダーがそれぞれ別の top にスタックするよう調整 */
+  table.grid thead tr:first-child th { position: sticky; top: 0; z-index: 3; }
+  table.grid thead tr:nth-child(2) th { position: sticky; top: 28px; z-index: 2; }
   table.grid thead th.month-head { background: #f6f8fa; font-size: 0.88em; padding: 0.4em 0.5em; }
   table.grid td.name-col, table.grid th.name-col { position: sticky; left: 0; background: #fff; text-align: left; min-width: 9em; max-width: 14em; overflow: hidden; text-overflow: ellipsis; z-index: 1; }
   table.grid td.default-col, table.grid th.default-col { position: sticky; background: #fff; color: var(--text-muted); font-size: 0.78em; z-index: 1; }
@@ -65,22 +68,85 @@
   #slot-popover .pop-meta { margin-top: 0.45em; font-size: 0.78em; color: var(--text-muted); }
   #slot-popover .pop-meta .warn { color: #b76a00; font-weight: 700; }
 
-  /* edit popover */
-  #edit-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 0.8em 1em; box-shadow: 0 8px 28px rgba(0,0,0,0.18); font-size: 0.85em; z-index: 50; display: none; width: 300px; }
-  #edit-popover h4 { margin: 0 0 0.5em; font-size: 0.95em; }
-  #edit-popover .ep-row { margin: 0.5em 0; }
-  #edit-popover .ep-input { display: flex; align-items: center; gap: 0.4em; }
-  #edit-popover input[type=number] { width: 5em; padding: 0.3em 0.4em; border: 1px solid var(--border); border-radius: 4px; font-size: 0.95em; }
-  #edit-popover .ep-symbols { display: flex; flex-wrap: wrap; gap: 0.3em; }
-  #edit-popover .ep-sym-btn { padding: 0.3em 0.65em; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-size: 0.85em; }
-  #edit-popover .ep-sym-btn:hover { background: #f1f6ff; }
-  #edit-popover .ep-sym-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  #edit-popover .ep-meta { font-size: 0.78em; color: var(--text-muted); margin-top: 0.5em; line-height: 1.5; }
-  #edit-popover .ep-actions { display: flex; gap: 0.4em; margin-top: 0.7em; justify-content: flex-end; flex-wrap: wrap; }
-  #edit-popover .ep-actions button { padding: 0.4em 0.9em; border-radius: 6px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 0.85em; }
-  #edit-popover .ep-actions .save { background: var(--accent); color: #fff; border-color: var(--accent); }
-  #edit-popover .ep-actions .clear { color: #b71c1c; }
+  /* edit popover (desktop default) */
+  #edit-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.0); z-index: 49; display: none; }
+  #edit-popover {
+    position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.18); font-size: 0.9em; z-index: 50; display: none;
+    width: 340px; max-height: calc(100vh - 40px); display: none; flex-direction: column; overflow: hidden;
+  }
+  #edit-popover.open { display: flex; }
+  #edit-popover .ep-handle { display: none; }
+  #edit-popover .ep-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75em 1em 0.4em; border-bottom: 1px solid var(--border-soft); }
+  #edit-popover .ep-header h4 { margin: 0; font-size: 0.98em; font-weight: 700; }
+  #edit-popover #ep-close { background: transparent; border: 0; font-size: 1.2em; line-height: 1; color: var(--text-muted); padding: 0.25em 0.4em; border-radius: 6px; cursor: pointer; }
+  #edit-popover #ep-close:hover { background: #f3f4f6; color: #222; }
+  #edit-popover .ep-body { padding: 0.6em 1em 0.6em; overflow-y: auto; flex: 1 1 auto; }
+  #edit-popover .ep-section { margin: 0.6em 0; }
+  #edit-popover .ep-section-label { font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.4em; font-weight: 600; }
+  /* プリセットチップ（2列グリッド） */
+  #edit-popover .ep-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; }
+  #edit-popover .ep-preset {
+    display: flex; flex-direction: column; gap: 0.15em; align-items: center; justify-content: center;
+    padding: 0.7em 0.5em; min-height: 56px;
+    border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer;
+    font-size: 0.92em; line-height: 1.2; transition: background 0.1s, transform 0.05s;
+  }
+  #edit-popover .ep-preset:hover { background: #f1f6ff; border-color: var(--accent); }
+  #edit-popover .ep-preset:active { transform: scale(0.98); background: #e0ecff; }
+  #edit-popover .ep-preset .ep-preset-title { font-weight: 700; }
+  #edit-popover .ep-preset .ep-preset-sub { font-size: 0.78em; color: var(--text-muted); }
+  /* 時間帯エディタ */
+  #edit-popover .ep-slots { display: flex; flex-direction: column; gap: 0.35em; }
+  #edit-popover .ep-slot-row { display: flex; align-items: center; gap: 0.4em; border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.45em 0.55em; background: #fafbfc; }
+  #edit-popover .ep-slot-row input[type=time] { font-size: 0.95em; padding: 0.3em 0.4em; border: 1px solid var(--border); border-radius: 6px; background: #fff; min-width: 5.6em; }
+  #edit-popover .ep-slot-sep { color: var(--text-muted); }
+  #edit-popover .ep-slot-hours { margin-left: auto; font-size: 0.8em; color: var(--text-muted); white-space: nowrap; }
+  #edit-popover .ep-slot-del { background: transparent; border: 0; color: #b71c1c; font-size: 1.05em; padding: 0.2em 0.45em; cursor: pointer; border-radius: 6px; }
+  #edit-popover .ep-slot-del:hover { background: #fde2e2; }
+  #edit-popover .ep-slot-empty { font-size: 0.82em; color: var(--text-muted); padding: 0.5em 0.1em; }
+  #edit-popover .ep-slot-actions { display: flex; gap: 0.8em; margin-top: 0.45em; }
+  #edit-popover .ep-link-btn { background: transparent; border: 0; color: var(--accent); padding: 0.3em 0; cursor: pointer; font-size: 0.85em; }
+  #edit-popover .ep-link-btn:hover { text-decoration: underline; }
+  #edit-popover .ep-slot-total { font-size: 0.85em; color: #222; font-weight: 700; margin-top: 0.4em; }
+  /* 補助の数値入力（折り畳み） */
+  #edit-popover .ep-advanced summary { font-size: 0.82em; color: var(--text-muted); cursor: pointer; padding: 0.3em 0; }
+  #edit-popover .ep-advanced summary::marker { color: var(--text-muted); }
+  #edit-popover .ep-advanced .ep-input { display: flex; align-items: center; gap: 0.4em; margin-top: 0.3em; }
+  #edit-popover input[type=number] { width: 5.5em; padding: 0.35em 0.5em; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95em; }
+  #edit-popover .ep-meta { font-size: 0.78em; color: var(--text-muted); margin-top: 0.6em; line-height: 1.55; }
   #edit-popover .ep-err { color: #b71c1c; font-size: 0.78em; margin-top: 0.4em; min-height: 1em; }
+  /* フッターアクション */
+  #edit-popover .ep-actions { display: flex; gap: 0.5em; padding: 0.6em 1em 0.85em; border-top: 1px solid var(--border-soft); background: #fff; }
+  #edit-popover .ep-actions button { flex: 1; padding: 0.65em 0.9em; border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 0.92em; font-weight: 600; min-height: 44px; }
+  #edit-popover .ep-actions .clear { color: #b71c1c; flex: 0 0 auto; min-width: 4.5em; }
+  #edit-popover .ep-actions #ep-cancel { color: var(--text-muted); }
+  #edit-popover .ep-actions .save { background: var(--accent); color: #fff; border-color: var(--accent); flex: 2 1 auto; }
+
+  /* モバイル: ボトムシート（≤768px） */
+  @media (max-width: 768px) {
+    #edit-backdrop { background: rgba(0,0,0,0.35); }
+    #edit-popover {
+      left: 0 !important; right: 0 !important; top: auto !important; bottom: 0 !important;
+      width: 100% !important; max-width: 100%; border-radius: 16px 16px 0 0;
+      max-height: 90vh; font-size: 1em;
+      box-shadow: 0 -8px 28px rgba(0,0,0,0.22);
+      animation: ep-slide-up 0.22s ease-out;
+    }
+    @keyframes ep-slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    #edit-popover .ep-handle { display: block; width: 40px; height: 4px; background: #d0d4da; border-radius: 2px; margin: 0.5em auto 0.2em; }
+    #edit-popover .ep-header { padding-top: 0.4em; }
+    #edit-popover .ep-header h4 { font-size: 1.02em; }
+    /* タップ領域を全部大きく */
+    #edit-popover .ep-preset { min-height: 64px; font-size: 0.98em; }
+    #edit-popover .ep-preset .ep-preset-sub { font-size: 0.82em; }
+    #edit-popover .ep-slot-row { padding: 0.6em 0.65em; }
+    #edit-popover .ep-slot-row input[type=time] { font-size: 1.05em; padding: 0.5em 0.45em; min-width: 6em; }
+    #edit-popover .ep-slot-del { font-size: 1.2em; padding: 0.5em 0.7em; }
+    #edit-popover .ep-link-btn { font-size: 0.95em; padding: 0.55em 0; }
+    #edit-popover .ep-actions { padding-bottom: max(0.85em, env(safe-area-inset-bottom)); }
+    #edit-popover .ep-actions button { min-height: 50px; font-size: 1em; }
+  }
 </style>
 </head>
 <body>
@@ -88,9 +154,7 @@
 <h1>📅 リソースカレンダー（ADR 017 Phase 1.x）</h1>
 
 <div class="toolbar">
-  <div class="tabs" id="team-tabs">
-    <button class="tab active" data-scope="org">組織全体</button>
-  </div>
+  <div class="tabs" id="team-tabs" role="group" aria-label="表示するチーム（クリックで ON/OFF）"></div>
   <div class="nav-range">
     <button id="btn-prev">← 前 4 週</button>
     <span id="range-label">読み込み中...</span>
@@ -123,28 +187,71 @@
 <!-- 読取専用（スロット表示）ポップオーバー -->
 <div id="slot-popover"></div>
 
-<!-- 編集ポップオーバー -->
-<div id="edit-popover">
-  <h4 id="ep-title">セル編集</h4>
-  <div class="ep-row">
-    <div class="ep-input">
-      <input type="number" id="ep-hours" step="0.1" min="0" max="24" placeholder="2.5">
-      <span>h を手動指定</span>
-    </div>
+<!-- 編集ポップオーバー / モバイルではボトムシート -->
+<div id="edit-backdrop"></div>
+<div id="edit-popover" role="dialog" aria-modal="true">
+  <div class="ep-handle" aria-hidden="true"></div>
+  <div class="ep-header">
+    <h4 id="ep-title">セル編集</h4>
+    <button type="button" id="ep-close" aria-label="閉じる">✕</button>
   </div>
-  <div class="ep-row">
-    <div style="font-size:0.78em;color:var(--text-muted);margin-bottom:0.3em;">または記号で指定</div>
-    <div class="ep-symbols">
-      <button type="button" class="ep-sym-btn" data-sym="×">× 休み</button>
-      <button type="button" class="ep-sym-btn" data-sym="△">△ 微妙</button>
-      <button type="button" class="ep-sym-btn" data-sym="AM">AM のみ</button>
-      <button type="button" class="ep-sym-btn" data-sym="PM">PM のみ</button>
+  <div class="ep-body">
+    <!-- クイック設定 -->
+    <div class="ep-section">
+      <div class="ep-section-label">⚡ クイック設定（タップで即保存）</div>
+      <div class="ep-presets">
+        <button type="button" class="ep-preset" data-preset="all-ok">
+          <span class="ep-preset-title">終日OK</span>
+          <span class="ep-preset-sub" id="ep-preset-allok-sub">—</span>
+        </button>
+        <button type="button" class="ep-preset" data-preset="off">
+          <span class="ep-preset-title">× 休み</span>
+          <span class="ep-preset-sub">0h</span>
+        </button>
+        <button type="button" class="ep-preset" data-preset="am">
+          <span class="ep-preset-title">AM のみ</span>
+          <span class="ep-preset-sub">午前</span>
+        </button>
+        <button type="button" class="ep-preset" data-preset="pm">
+          <span class="ep-preset-title">PM のみ</span>
+          <span class="ep-preset-sub">午後</span>
+        </button>
+        <button type="button" class="ep-preset" data-preset="9to18">
+          <span class="ep-preset-title">9-18 OK</span>
+          <span class="ep-preset-sub">休憩1h</span>
+        </button>
+        <button type="button" class="ep-preset" data-preset="half">
+          <span class="ep-preset-title">△ 微妙</span>
+          <span class="ep-preset-sub">半分</span>
+        </button>
+      </div>
     </div>
+
+    <!-- 時間帯エディタ -->
+    <div class="ep-section">
+      <div class="ep-section-label">🕒 時間帯で細かく</div>
+      <div id="ep-slots" class="ep-slots"></div>
+      <div class="ep-slot-actions">
+        <button type="button" id="ep-slot-add" class="ep-link-btn">＋ 時間帯を追加</button>
+        <button type="button" id="ep-slot-reset-gcal" class="ep-link-btn" title="GCal計算スロットで上書き">↻ GCalから取り直し</button>
+      </div>
+      <div class="ep-slot-total" id="ep-slot-total">合計 0.0h</div>
+    </div>
+
+    <!-- 数値手動入力（補助） -->
+    <details class="ep-section ep-advanced">
+      <summary>その他の指定</summary>
+      <div class="ep-input">
+        <input type="number" id="ep-hours" step="0.1" min="0" max="24" placeholder="例: 2.5">
+        <span>h（合計のみ手動指定）</span>
+      </div>
+    </details>
+
+    <div class="ep-meta" id="ep-meta"></div>
+    <div class="ep-err" id="ep-err"></div>
   </div>
-  <div class="ep-meta" id="ep-meta"></div>
-  <div class="ep-err" id="ep-err"></div>
   <div class="ep-actions">
-    <button type="button" class="clear" id="ep-clear" title="手動オーバーライドを解除して GCal計算/基本値 に戻す">クリア</button>
+    <button type="button" class="clear" id="ep-clear" title="手動オーバーライドを解除">クリア</button>
     <button type="button" id="ep-cancel">キャンセル</button>
     <button type="button" class="save" id="ep-save">保存</button>
   </div>
@@ -166,10 +273,40 @@ async function apiFetch(url, opts = {}) {
 
 const state = {
   from: null, to: null,
-  scope: 'org',
   data: null,
-  me: null,            // /auth/me の結果
+  me: null,                       // /auth/me の結果
+  activeTeamIds: new Set(),       // 表示する team.id（チップが ON のもの）
+  defaultsApplied: false,         // ロール別デフォルト適用済みか
 };
+
+// 全チームを表示扱いにする role
+const FULL_VIEW_ROLES = new Set(['admin', 'secretary', 'producer', 'producer_director']);
+
+// /grid 応答からビューワが所属する team.id を返す（基本チームのみ）
+function findOwnTeamIds(viewerUserId, teams) {
+  const ids = new Set();
+  for (const t of (teams || [])) {
+    for (const m of (t.members || [])) {
+      if (m.user_id === viewerUserId) { ids.add(t.id); break; }
+    }
+  }
+  return ids;
+}
+
+// ロール別デフォルトを activeTeamIds に書き込む
+function applyDefaultActiveTeams() {
+  if (!state.data || !state.me) return;
+  const role = state.me.role || '';
+  const teams = state.data.teams || [];
+  if (FULL_VIEW_ROLES.has(role)) {
+    state.activeTeamIds = new Set(teams.map(t => t.id));
+  } else {
+    const own = findOwnTeamIds(state.me.id, teams);
+    // 自分のチームが無いロール（孤立アカウント等）は全チーム見せる方が親切
+    state.activeTeamIds = own.size ? own : new Set(teams.map(t => t.id));
+  }
+  state.defaultsApplied = true;
+}
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
@@ -204,47 +341,61 @@ async function load() {
   const params = new URLSearchParams();
   params.set('from', state.from);
   params.set('to',   state.to);
-  params.set('scope', state.scope);
+  // 常に org 全体を取り、チップ ON/OFF はフロントで絞り込む
+  params.set('scope', 'org');
   const r = await apiFetch('/api/availability/grid?' + params.toString());
   if (!r.ok) {
     document.getElementById('status-bar').textContent = '読み込み失敗 (' + r.status + '): ' + (r.body?.error || '');
     return;
   }
   state.data = r.body;
+  // 初回ロード時のみロール別デフォルトを適用
+  if (!state.defaultsApplied) applyDefaultActiveTeams();
+  // 新規追加されたチームを取りこぼさないよう、未知 ID は残さず既知のみに整える
+  const known = new Set((r.body.teams || []).map(t => t.id));
+  for (const id of Array.from(state.activeTeamIds)) {
+    if (!known.has(id)) state.activeTeamIds.delete(id);
+  }
   renderTabs();
   renderGrid();
-  document.getElementById('status-bar').textContent = `期間: ${state.from} 〜 ${state.to} ／ チーム数: ${(r.body.teams||[]).length}`;
+  const active = state.activeTeamIds.size;
+  const total = (r.body.teams || []).length;
+  document.getElementById('status-bar').textContent = `期間: ${state.from} 〜 ${state.to} ／ 表示中: ${active}/${total}チーム`;
   document.getElementById('range-label').textContent = `${state.from} 〜 ${state.to}`;
 }
 
 function renderTabs() {
   const wrap = document.getElementById('team-tabs');
-  const built = wrap.dataset.built === '1';
-  if (built) {
-    Array.from(wrap.children).forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.scope === state.scope);
-    });
-    return;
-  }
-  if (state.scope !== 'org') return;
+  const teams = (state.data && state.data.teams) || [];
   wrap.innerHTML = '';
-  const orgBtn = document.createElement('button');
-  orgBtn.className = 'tab active'; orgBtn.dataset.scope = 'org'; orgBtn.textContent = '組織全体';
-  wrap.appendChild(orgBtn);
-  for (const t of (state.data.teams || [])) {
+  for (const t of teams) {
     const btn = document.createElement('button');
-    btn.className = 'tab'; btn.dataset.scope = 'team:' + t.id;
+    btn.className = 'tab';
+    btn.dataset.teamId = t.id;
+    btn.setAttribute('aria-pressed', state.activeTeamIds.has(t.id) ? 'true' : 'false');
+    if (state.activeTeamIds.has(t.id)) btn.classList.add('active');
     btn.textContent = `${t.code} ${t.name}`;
     wrap.appendChild(btn);
   }
-  wrap.dataset.built = '1';
-  wrap.addEventListener('click', (e) => {
-    const btn = e.target.closest('.tab');
-    if (!btn) return;
-    state.scope = btn.dataset.scope;
-    Array.from(wrap.children).forEach(b => b.classList.toggle('active', b === btn));
-    load();
-  });
+  // 一度だけハンドラを設定
+  if (!wrap.dataset.bound) {
+    wrap.addEventListener('click', (e) => {
+      const btn = e.target.closest('.tab');
+      if (!btn) return;
+      const id = btn.dataset.teamId;
+      if (!id) return;
+      if (state.activeTeamIds.has(id)) state.activeTeamIds.delete(id);
+      else state.activeTeamIds.add(id);
+      btn.classList.toggle('active');
+      btn.setAttribute('aria-pressed', state.activeTeamIds.has(id) ? 'true' : 'false');
+      // 再描画（API再呼び出しは不要）
+      renderGrid();
+      const active = state.activeTeamIds.size;
+      const total = (state.data?.teams || []).length;
+      document.getElementById('status-bar').textContent = `期間: ${state.from} 〜 ${state.to} ／ 表示中: ${active}/${total}チーム`;
+    });
+    wrap.dataset.bound = '1';
+  }
 }
 
 function renderGrid() {
@@ -290,7 +441,18 @@ function renderGrid() {
   thead.appendChild(headRow);
 
   // ===== 本体 =====
-  const teams = data.teams || [];
+  // チップ ON のチームだけを描画
+  const allTeams = data.teams || [];
+  const teams = allTeams.filter(t => state.activeTeamIds.has(t.id));
+  if (!teams.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = dates.length + 4;
+    td.style.cssText = 'text-align:center;padding:2em 1em;color:var(--text-muted);';
+    td.textContent = '表示するチームがありません。上のチップでチームを ON にしてください。';
+    tr.appendChild(td); tbody.appendChild(tr);
+    return;
+  }
   for (const t of teams) {
     const trH = document.createElement('tr'); trH.className = 'team-header';
     const tdH = document.createElement('td'); tdH.colSpan = dates.length + 4;
@@ -336,15 +498,21 @@ function renderGrid() {
     tbody.appendChild(trT);
   }
 
-  if (state.scope === 'org') {
+  // 表示中チームが 2 以上のときだけ合計行を出す（1チームのときはチーム合計と同じなので冗長）
+  if (teams.length >= 2) {
     const trO = document.createElement('tr'); trO.className = 'org-total';
-    const tdOLabel = document.createElement('td'); tdOLabel.className = 'name-col'; tdOLabel.textContent = '【組織合計】'; trO.appendChild(tdOLabel);
+    const tdOLabel = document.createElement('td'); tdOLabel.className = 'name-col'; tdOLabel.textContent = '【選択チーム合計】'; trO.appendChild(tdOLabel);
     const tdOEmpty1 = document.createElement('td'); tdOEmpty1.className = 'default-col default-weekday'; tdOEmpty1.textContent = ''; trO.appendChild(tdOEmpty1);
     const tdOEmpty2 = document.createElement('td'); tdOEmpty2.className = 'default-col default-holiday'; tdOEmpty2.textContent = ''; trO.appendChild(tdOEmpty2);
     let orgSum = 0;
     for (const ds of dates) {
-      const v = (data.org_totals_by_date || {})[ds] || 0;
-      orgSum += Number(v);
+      // 選択チームのみで再集計
+      let v = 0;
+      for (const t of teams) {
+        v += Number((t.team_totals_by_date || {})[ds] || 0);
+      }
+      v = Math.round(v * 100) / 100;
+      orgSum += v;
       const td = document.createElement('td');
       if (parseDate(ds).getDay() % 6 === 0) td.classList.add('is-holiday');
       td.textContent = fmtHours(v);
@@ -460,12 +628,6 @@ document.addEventListener('click', (e) => {
       pop.style.display = 'none';
     }
   }
-  const ep = document.getElementById('edit-popover');
-  if (ep && ep.style.display === 'block') {
-    if (!e.target.closest('.day-cell') && !e.target.closest('#edit-popover')) {
-      closeEditPopover();
-    }
-  }
 });
 
 document.addEventListener('keydown', (e) => {
@@ -476,8 +638,11 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// 背景タップで閉じる（モバイルのボトムシート想定）
+document.getElementById('edit-backdrop').addEventListener('click', () => closeEditPopover());
+
 // ====================================
-// 編集ポップオーバー
+// 編集ポップオーバー（プリセット + 時間帯エディタ）
 // ====================================
 const editState = {
   open: false,
@@ -485,8 +650,29 @@ const editState = {
   date: null,
   memberName: null,
   td: null,
-  symbol: null, // 仮選択
+  day: null,         // 現在開いている day オブジェクト
+  slots: [],         // [{from:'HH:MM', to:'HH:MM'}]
 };
+
+// 'HH:MM' を分に変換
+function timeToMin(t) {
+  if (typeof t !== 'string') return NaN;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+  if (!m) return NaN;
+  const h = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+  if (h < 0 || h > 24 || mm < 0 || mm > 59) return NaN;
+  return h * 60 + mm;
+}
+// スロット配列から合計時間（h）を計算
+function slotsTotalHours(slots) {
+  let mins = 0;
+  for (const s of (slots || [])) {
+    const a = timeToMin(s.from), b = timeToMin(s.to);
+    if (!isFinite(a) || !isFinite(b)) continue;
+    if (b > a) mins += (b - a);
+  }
+  return Math.round((mins / 60) * 100) / 100;
+}
 
 function onCellClickEdit(e) {
   e.stopPropagation();
@@ -505,9 +691,10 @@ function openEditPopover(td, day) {
   editState.date = td.dataset.date;
   editState.memberName = td.dataset.memberName || '';
   editState.td = td;
-  editState.symbol = day.manual_override ? (day.symbol || null) : null;
+  editState.day = day;
 
   const ep = document.getElementById('edit-popover');
+  const backdrop = document.getElementById('edit-backdrop');
   const title = document.getElementById('ep-title');
   const hoursInput = document.getElementById('ep-hours');
   const meta = document.getElementById('ep-meta');
@@ -518,29 +705,36 @@ function openEditPopover(td, day) {
   const dowJa = WEEKDAY_JA[d.getDay()];
   title.textContent = `${editState.date} (${dowJa})  ${editState.memberName}`;
 
-  // 値プリセット
-  if (day.manual_override && day.symbol == null && day.hours != null) {
+  // 数値入力（補助）— 既存の手動 hours があれば入れる
+  if (day.manual_override && !day.symbol && day.hours != null) {
     hoursInput.value = String(day.hours);
-  } else if (day.manual_override && day.symbol != null) {
-    hoursInput.value = '';
-  } else if (day.source === 'gcal' && day.computed_hours != null) {
-    hoursInput.value = '';
-    hoursInput.placeholder = String(day.computed_hours);
   } else {
     hoursInput.value = '';
-    hoursInput.placeholder = (day.base_hours != null) ? String(day.base_hours) : '2.5';
   }
+  hoursInput.placeholder = day.base_hours != null ? String(day.base_hours) : '2.5';
 
-  // 記号 active 表示
-  for (const btn of ep.querySelectorAll('.ep-sym-btn')) {
-    btn.classList.toggle('active', btn.dataset.sym === editState.symbol);
+  // 「終日OK」プリセットの副題を更新（基本デフォルト時間）
+  const allOkSub = document.getElementById('ep-preset-allok-sub');
+  if (allOkSub) allOkSub.textContent = (day.base_hours != null ? fmtHours(day.base_hours) + 'h' : '基本値');
+
+  // スロットの初期値:
+  //  - 手動オーバーライドで slots がある → それを編集対象に
+  //  - そうでなければ空（プリセット or 「↻GCalから取り直し」で埋める）
+  let initSlots = [];
+  if (day.manual_override && Array.isArray(day.slots) && day.slots.length && !day.symbol) {
+    initSlots = day.slots.map(s => ({ from: s.from, to: s.to }));
   }
+  editState.slots = initSlots;
+  renderSlots();
 
   // メタ
   const metaLines = [];
   if (day.computed_hours != null) {
-    const slotsStr = (day.slots && day.slots.length && day.source === 'gcal')
-      ? ' (' + day.slots.map(s => `${s.from}-${s.to}`).join(', ') + ')'
+    const gcSlots = (Array.isArray(day.computed_slots) && day.computed_slots.length)
+      ? day.computed_slots
+      : ((day.source === 'gcal' && Array.isArray(day.slots)) ? day.slots : null);
+    const slotsStr = (gcSlots && gcSlots.length)
+      ? ' (' + gcSlots.map(s => `${s.from}-${s.to}`).join(', ') + ')'
       : '';
     metaLines.push(`現在のGCal計算値: ${fmtHours(day.computed_hours)}h${slotsStr}`);
   }
@@ -554,65 +748,148 @@ function openEditPopover(td, day) {
   meta.innerHTML = metaLines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
   err.textContent = '';
 
-  // 配置
-  const rect = td.getBoundingClientRect();
-  ep.style.display = 'block';
-  // 一旦表示してサイズ取得
-  const epRect = ep.getBoundingClientRect();
-  let left = rect.left;
-  if (left + epRect.width > window.innerWidth - 8) left = window.innerWidth - epRect.width - 8;
-  if (left < 8) left = 8;
-  let top = rect.bottom + 4;
-  if (top + epRect.height > window.innerHeight - 8) top = rect.top - epRect.height - 4;
-  if (top < 8) top = 8;
-  ep.style.left = left + 'px';
-  ep.style.top  = top + 'px';
+  // 表示
+  backdrop.style.display = 'block';
+  ep.classList.add('open');
 
-  setTimeout(() => hoursInput.focus(), 30);
+  // デスクトップでは popover をセル近くに配置（モバイルは CSS でボトムシート）
+  const isMobile = window.matchMedia('(max-width: 768px)').matches;
+  if (!isMobile) {
+    const rect = td.getBoundingClientRect();
+    // 一旦表示してサイズ取得
+    const epRect = ep.getBoundingClientRect();
+    let left = rect.left;
+    if (left + epRect.width > window.innerWidth - 8) left = window.innerWidth - epRect.width - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + epRect.height > window.innerHeight - 8) top = rect.top - epRect.height - 4;
+    if (top < 8) top = 8;
+    ep.style.left = left + 'px';
+    ep.style.top  = top + 'px';
+  } else {
+    ep.style.left = '';
+    ep.style.top = '';
+  }
 }
 
 function closeEditPopover() {
   const ep = document.getElementById('edit-popover');
   if (!ep) return;
-  ep.style.display = 'none';
+  ep.classList.remove('open');
+  const backdrop = document.getElementById('edit-backdrop');
+  if (backdrop) backdrop.style.display = 'none';
   document.getElementById('ep-hours').value = '';
   document.getElementById('ep-hours').placeholder = '2.5';
-  for (const btn of ep.querySelectorAll('.ep-sym-btn')) btn.classList.remove('active');
   document.getElementById('ep-err').textContent = '';
   editState.open = false;
   editState.userId = null;
   editState.date = null;
   editState.td = null;
-  editState.symbol = null;
+  editState.day = null;
+  editState.slots = [];
+  renderSlots();
 }
 
-// 記号ボタン
-document.querySelectorAll('#edit-popover .ep-sym-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const sym = btn.dataset.sym;
-    if (editState.symbol === sym) {
-      editState.symbol = null;
-    } else {
-      editState.symbol = sym;
-      // 記号選択時は hours 入力をクリア
-      document.getElementById('ep-hours').value = '';
-    }
-    document.querySelectorAll('#edit-popover .ep-sym-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.sym === editState.symbol);
+// スロット行の描画
+function renderSlots() {
+  const wrap = document.getElementById('ep-slots');
+  const totalEl = document.getElementById('ep-slot-total');
+  if (!wrap) return;
+  if (!editState.slots.length) {
+    wrap.innerHTML = '<div class="ep-slot-empty">時間帯未設定。プリセット or「＋ 時間帯を追加」/「↻ GCalから取り直し」</div>';
+  } else {
+    wrap.innerHTML = editState.slots.map((s, i) => {
+      const a = timeToMin(s.from), b = timeToMin(s.to);
+      const hours = (isFinite(a) && isFinite(b) && b > a) ? Math.round(((b - a) / 60) * 100) / 100 : null;
+      const hoursStr = hours != null ? `${fmtHours(hours)}h` : '—';
+      return `
+        <div class="ep-slot-row" data-idx="${i}">
+          <input type="time" class="ep-slot-from" value="${escapeHtml(s.from)}" step="900" aria-label="開始時刻">
+          <span class="ep-slot-sep">─</span>
+          <input type="time" class="ep-slot-to" value="${escapeHtml(s.to)}" step="900" aria-label="終了時刻">
+          <span class="ep-slot-hours">${hoursStr}</span>
+          <button type="button" class="ep-slot-del" aria-label="この時間帯を削除">✕</button>
+        </div>`;
+    }).join('');
+    // 行内の input / 削除ボタンにイベント
+    wrap.querySelectorAll('.ep-slot-row').forEach(row => {
+      const idx = parseInt(row.dataset.idx, 10);
+      row.querySelector('.ep-slot-from').addEventListener('change', e => {
+        editState.slots[idx].from = e.target.value;
+        renderSlots();
+      });
+      row.querySelector('.ep-slot-to').addEventListener('change', e => {
+        editState.slots[idx].to = e.target.value;
+        renderSlots();
+      });
+      row.querySelector('.ep-slot-del').addEventListener('click', () => {
+        editState.slots.splice(idx, 1);
+        renderSlots();
+      });
     });
+  }
+  if (totalEl) totalEl.textContent = `合計 ${fmtHours(slotsTotalHours(editState.slots))}h`;
+}
+
+// 「＋ 時間帯を追加」
+document.getElementById('ep-slot-add').addEventListener('click', () => {
+  // デフォルト: 直前の to を起点、無ければ 09:00-12:00
+  let from = '09:00', to = '12:00';
+  if (editState.slots.length) {
+    const last = editState.slots[editState.slots.length - 1];
+    const lastTo = timeToMin(last.to);
+    if (isFinite(lastTo)) {
+      const startMin = Math.min(lastTo + 60, 22 * 60);
+      const endMin = Math.min(startMin + 60, 23 * 60);
+      from = `${String(Math.floor(startMin/60)).padStart(2,'0')}:${String(startMin%60).padStart(2,'0')}`;
+      to   = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
+    }
+  }
+  editState.slots.push({ from, to });
+  renderSlots();
+  // 追加した行の開始時刻をフォーカス
+  setTimeout(() => {
+    const rows = document.querySelectorAll('#ep-slots .ep-slot-row');
+    const last = rows[rows.length - 1];
+    if (last) last.querySelector('.ep-slot-from')?.focus();
+  }, 0);
+});
+
+// 「↻ GCalから取り直し」
+document.getElementById('ep-slot-reset-gcal').addEventListener('click', () => {
+  const d = editState.day || {};
+  let slots = null;
+  if (Array.isArray(d.computed_slots) && d.computed_slots.length) slots = d.computed_slots;
+  else if (d.source === 'gcal' && Array.isArray(d.slots) && d.slots.length) slots = d.slots;
+  if (!slots || !slots.length) {
+    document.getElementById('ep-err').textContent = 'GCal計算スロットがありません（連携前 or 当日の予定なし）';
+    return;
+  }
+  editState.slots = slots.map(s => ({ from: s.from, to: s.to }));
+  renderSlots();
+});
+
+// プリセット（タップで即保存）
+document.querySelectorAll('#edit-popover .ep-preset').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const day = editState.day || {};
+    const preset = btn.dataset.preset;
+    let payload = null;
+    if (preset === 'all-ok') {
+      const h = (day.base_hours != null) ? day.base_hours : 8;
+      payload = { hours: h };
+    } else if (preset === 'off')   payload = { symbol: '×' };
+    else if (preset === 'am')      payload = { symbol: 'AM' };
+    else if (preset === 'pm')      payload = { symbol: 'PM' };
+    else if (preset === 'half')    payload = { symbol: '△' };
+    else if (preset === '9to18')   payload = { slots: [{from:'09:00',to:'12:00'},{from:'13:00',to:'18:00'}] };
+    if (!payload) return;
+    await submitEdit(payload);
   });
 });
 
-// hours 入力時は記号選択をクリア
-document.getElementById('ep-hours').addEventListener('input', () => {
-  if (document.getElementById('ep-hours').value !== '') {
-    editState.symbol = null;
-    for (const b of document.querySelectorAll('#edit-popover .ep-sym-btn')) b.classList.remove('active');
-  }
-});
-
+document.getElementById('ep-close').addEventListener('click', closeEditPopover);
 document.getElementById('ep-cancel').addEventListener('click', closeEditPopover);
-
 document.getElementById('ep-clear').addEventListener('click', async () => {
   await submitEdit({ clear: true });
 });
@@ -620,22 +897,27 @@ document.getElementById('ep-clear').addEventListener('click', async () => {
 document.getElementById('ep-save').addEventListener('click', async () => {
   const errEl = document.getElementById('ep-err');
   errEl.textContent = '';
+  // 優先順位: スロット > 数値h
+  // スロットが1件以上あればスロット保存
+  const cleanSlots = (editState.slots || []).filter(s => {
+    const a = timeToMin(s.from), b = timeToMin(s.to);
+    return isFinite(a) && isFinite(b) && b > a;
+  });
+  if (cleanSlots.length) {
+    await submitEdit({ slots: cleanSlots });
+    return;
+  }
   const hoursStr = document.getElementById('ep-hours').value.trim();
-  let hours = null;
   if (hoursStr !== '') {
     const n = parseFloat(hoursStr);
     if (!isFinite(n) || n < 0 || n > 24) {
       errEl.textContent = 'hours は 0〜24 の数値で入力してください';
       return;
     }
-    hours = Math.round(n * 100) / 100;
-  }
-  const symbol = editState.symbol;
-  if (hours == null && !symbol) {
-    errEl.textContent = '数値か記号のどちらかを指定してください（クリアは「クリア」ボタン）';
+    await submitEdit({ hours: Math.round(n * 100) / 100 });
     return;
   }
-  await submitEdit({ hours, symbol });
+  errEl.textContent = 'プリセット／時間帯／合計h のいずれかを指定してください';
 });
 
 async function submitEdit(payload) {
@@ -651,6 +933,7 @@ async function submitEdit(payload) {
   } else {
     if (payload.hours != null) body.hours = payload.hours;
     if (payload.symbol) body.symbol = payload.symbol;
+    if (Array.isArray(payload.slots)) body.slots = payload.slots;
   }
   const r = await apiFetch('/api/availability/daily', {
     method: 'PATCH',
@@ -663,7 +946,6 @@ async function submitEdit(payload) {
   // セル即時反映
   const cell = r.body && r.body.cell;
   if (cell && editState.td) {
-    // 既存 day を新 cell でマージ
     const td = editState.td;
     const oldDay = JSON.parse(td.dataset.day || 'null') || {};
     const newDay = Object.assign({}, oldDay, {
@@ -674,9 +956,9 @@ async function submitEdit(payload) {
       manual_override: !!cell.manual_override,
       diverges_from_gcal: !!cell.diverges_from_gcal,
       computed_hours: cell.computed_hours,
+      computed_slots: cell.computed_slots != null ? cell.computed_slots : oldDay.computed_slots,
       base_hours: cell.base_hours,
     });
-    // member 情報は dataset から取り出す
     const memberShim = {
       user_id: td.dataset.userId,
       name: td.dataset.memberName,
@@ -686,8 +968,6 @@ async function submitEdit(payload) {
     applyCellState(td, newDay, memberShim);
   }
   closeEditPopover();
-  // 合計値は単純再計算が難しいので、状態がズレる場合のみ load() で再取得
-  // ただしユーザー体験向上のため、軽量に行合計のみ再計算する
   recomputeRowAndTeamTotals();
 }
 

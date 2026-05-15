@@ -624,6 +624,7 @@ router.get('/grid', requireAuth, requirePermission('availability:view-org'), asy
             manual_override: !!(row && row.manual_override),
             diverges_from_gcal: !!(row && row.diverges_from_gcal),
             computed_hours: (isGcal && row && row.computed_hours != null) ? Number(row.computed_hours) : null,
+            computed_slots: (isGcal && row && row.computed_slots) ? row.computed_slots : null,
             base_hours: base.hours,
           });
           teamTotalsByDate[dateStr] = Math.round((teamTotalsByDate[dateStr] + eff.hours) * 100) / 100;
