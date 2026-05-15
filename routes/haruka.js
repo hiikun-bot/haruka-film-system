@@ -15310,17 +15310,29 @@ router.put('/bug-reports/:id', requireAuth, express.json({ limit: '10mb' }), asy
     payload.last_updated_by_user_id = req.user?.id || null;
 
     // ステータスが resolved に遷移したら resolved_at を自動セット
+    let statusTransitionedTo = null;
     if (payload.status && payload.status !== row.status) {
       if (payload.status === 'resolved' || payload.status === 'wont_fix') {
         payload.resolved_at = new Date().toISOString();
       } else {
         payload.resolved_at = null;
       }
+      statusTransitionedTo = payload.status;
     }
 
     const { data, error } = await supabase
       .from('bug_reports').update(payload).eq('id', req.params.id).select().single();
     if (error) return res.status(500).json({ error: error.message });
+
+    // ステータス遷移時に「報告者」へ通知（手動マスター追加などで解決した場合に通知が飛ばない問題の対策）
+    if (statusTransitionedTo) {
+      await _notifyBugReportStatusChange(
+        { ...row, title: data.title },
+        statusTransitionedTo,
+        req.user,
+      );
+    }
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -15382,6 +15394,11 @@ router.patch('/bug-reports/:id/triage', requireAuth, express.json(), async (req,
     const { error: updErr } = await supabase
       .from('bug_reports').update(updates).eq('id', req.params.id);
     if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // status が遷移した場合は報告者へ通知（特に wont_fix への自動遷移）
+    if (updates.status && updates.status !== row.status) {
+      await _notifyBugReportStatusChange(row, updates.status, req.user);
+    }
 
     // システムコメントの自動 INSERT
     const decisionLabel = { to_fix: '対応する', hold: '保留', wont_fix: '却下' }[triage_decision];
@@ -15468,6 +15485,45 @@ router.post('/bug-reports/:id/comments', requireAuth, express.json(), async (req
     res.status(500).json({ error: e.message });
   }
 });
+
+// バグ報告のステータス遷移時に「報告者」へ内部通知を飛ばす共通ヘルパー
+//   parent: bug_reports の id, title, reporter_user_id, is_anonymous を含む行
+//   nextStatus: 遷移後のステータス（'open' | 'in_progress' | 'resolved' | 'wont_fix' 等）
+//   actor:  req.user（操作者本人。本人には通知しない）
+// resolved / wont_fix への遷移を最優先で通知。in_progress / open への戻しも通知する。
+async function _notifyBugReportStatusChange(parent, nextStatus, actor) {
+  if (!parent || !nextStatus) return;
+  try {
+    if (parent.is_anonymous) return;
+    const reporterId = parent.reporter_user_id;
+    if (!reporterId) return;
+    const actorId = actor?.id || null;
+    if (reporterId === actorId) return; // 報告者本人が変更した場合は通知不要
+
+    const statusLabelMap = {
+      open: '🆕 未対応に戻りました',
+      in_progress: '🛠 対応中になりました',
+      resolved: '✅ 解決済みになりました',
+      wont_fix: '🚫 却下になりました',
+    };
+    const headline = statusLabelMap[nextStatus] || `状態が ${nextStatus} になりました`;
+    const titleShort = (parent.title || '').slice(0, 40);
+    const actorLabel = actor?.nickname || actor?.full_name || '誰か';
+    const linkUrl = `/haruka.html?bug-report=${encodeURIComponent(parent.id)}`;
+
+    await createNotification({
+      userId: reporterId,
+      type: 'global',
+      title: `${headline}: ${titleShort}`,
+      body: `${actorLabel} が状態を更新しました`,
+      linkUrl,
+      senderId: actorId,
+      meta: { bug_report_id: parent.id, kind: 'bug_report_status_change', status: nextStatus },
+    });
+  } catch (notifErr) {
+    console.error('[bug-report status notify失敗（更新は成功扱い）]', notifErr.message);
+  }
+}
 
 // バグ報告のコメント投稿時に「報告者」と「入力者」へ内部通知を飛ばす共通ヘルパー
 //   parent: bug_reports の id, title, assignee_user_id, reporter_user_id, is_anonymous を含む行
