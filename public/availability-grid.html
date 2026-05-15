@@ -1021,10 +1021,9 @@ document.getElementById('btn-sync').addEventListener('click', async () => {
   }
 });
 
-// 連携済みユーザーは初回ロード後に自動同期（連携してるのに反映されない事故を防ぐ）
-let _autoSyncedThisSession = false;
+// 連携済みユーザーはページを開くたびに自動同期して最新値で上書き
+// （TZ 計算の修正等が deploy されても DB が古い計算結果を残しているケース対策）
 async function autoSyncSelfIfConnected() {
-  if (_autoSyncedThisSession) return;
   if (!state.me || !state.me.id) return;
   const myUid = state.me.id;
   let isGcal = false;
@@ -1033,7 +1032,6 @@ async function autoSyncSelfIfConnected() {
     if (me && me.is_gcal_connected) { isGcal = true; break; }
   }
   if (!isGcal) return;
-  _autoSyncedThisSession = true;
   const bar = document.getElementById('status-bar');
   const prev = bar ? bar.textContent : '';
   if (bar) bar.textContent = (prev ? prev + ' ／ ' : '') + '自分のGCalを同期中…';
@@ -1042,10 +1040,16 @@ async function autoSyncSelfIfConnected() {
       method: 'POST',
       body: JSON.stringify({ from: state.from, to: state.to }),
     });
-    if (r.ok && r.body && r.body.upserted > 0) {
+    if (r.ok && r.body) {
+      // upserted=0 でも load() し直して念のため最新を反映
       await load();
       const b2 = document.getElementById('status-bar');
-      if (b2) b2.textContent = b2.textContent + ' ／ GCal同期反映済み';
+      if (b2) {
+        const s = r.body;
+        b2.textContent = b2.textContent
+          + ` ／ GCal同期: ${s.upserted ?? 0}日上書き`
+          + (s.skipped_manual ? ` (手動${s.skipped_manual}件は保持)` : '');
+      }
     } else if (!r.ok) {
       if (bar) bar.textContent = prev + ' ／ GCal同期失敗: ' + (r.body?.error || r.status);
     } else {
