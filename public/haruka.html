@@ -10168,6 +10168,14 @@ function _syncMemberViewToggleActive(mode) {
     if (btn) btn.classList.toggle('active', mode === id);
   });
 }
+// カレンダー iframe を members-list に描画（idempotent: 既に iframe があれば何もしない）
+function _renderMemberCalendarIframe() {
+  const list = document.getElementById('members-list');
+  if (!list) return;
+  list.classList.remove('loading');
+  if (list.querySelector('iframe[data-mview-calendar="1"]')) return;
+  list.innerHTML = '<iframe data-mview-calendar="1" src="/availability-grid.html" style="width:100%;height:calc(100vh - 240px);border:0;border-radius:12px;background:#fff" title="リソースカレンダー"></iframe>';
+}
 function setMemberViewMode(mode) {
   if (!['poster','table','calendar'].includes(mode)) return;
   memberViewMode = mode;
@@ -10179,11 +10187,7 @@ function setMemberViewMode(mode) {
   _applyMemberToolbarVisibility(mode);
 
   if (mode === 'calendar') {
-    const list = document.getElementById('members-list');
-    if (list) {
-      list.classList.remove('loading');
-      list.innerHTML = '<iframe src="/availability-grid.html" style="width:100%;height:calc(100vh - 240px);border:0;border-radius:12px;background:#fff" title="リソースカレンダー"></iframe>';
-    }
+    _renderMemberCalendarIframe();
     return;
   }
 
@@ -10275,6 +10279,12 @@ function memberSortHeaderHtml(col, label, align) {
 function renderMemberList() {
   const list = document.getElementById('members-list');
   if (!list) return;
+  // カレンダー表示中は iframe を温存（loadMembers/setMemberTab からの再描画で
+  // ポスターに上書きされる事故を防ぐ）
+  if (memberViewMode === 'calendar') {
+    _renderMemberCalendarIframe();
+    return;
+  }
   let visibleMembers = allMembers.filter(m => canSeeMember(m));
   if (!showResigned) visibleMembers = visibleMembers.filter(m => m.is_active !== false);
   // タブによる job_type フィルター（video: video/both/未設定、design: design/both）
