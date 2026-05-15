@@ -741,11 +741,48 @@ document.getElementById('btn-sync').addEventListener('click', async () => {
   }
 });
 
+// 連携済みユーザーは初回ロード後に自動同期（連携してるのに反映されない事故を防ぐ）
+let _autoSyncedThisSession = false;
+async function autoSyncSelfIfConnected() {
+  if (_autoSyncedThisSession) return;
+  if (!state.me || !state.me.id) return;
+  const myUid = state.me.id;
+  let isGcal = false;
+  for (const t of (state.data?.teams || [])) {
+    const me = (t.members || []).find(m => m.user_id === myUid);
+    if (me && me.is_gcal_connected) { isGcal = true; break; }
+  }
+  if (!isGcal) return;
+  _autoSyncedThisSession = true;
+  const bar = document.getElementById('status-bar');
+  const prev = bar ? bar.textContent : '';
+  if (bar) bar.textContent = (prev ? prev + ' ／ ' : '') + '自分のGCalを同期中…';
+  try {
+    const r = await apiFetch('/api/availability/sync-self', {
+      method: 'POST',
+      body: JSON.stringify({ from: state.from, to: state.to }),
+    });
+    if (r.ok && r.body && r.body.upserted > 0) {
+      await load();
+      const b2 = document.getElementById('status-bar');
+      if (b2) b2.textContent = b2.textContent + ' ／ GCal同期反映済み';
+    } else if (!r.ok) {
+      if (bar) bar.textContent = prev + ' ／ GCal同期失敗: ' + (r.body?.error || r.status);
+    } else {
+      if (bar) bar.textContent = prev;
+    }
+  } catch (e) {
+    if (bar) bar.textContent = prev + ' ／ GCal同期エラー';
+  }
+}
+
 (async () => {
   await fetchMe();
   const r = defaultRange();
   state.from = r.from; state.to = r.to;
   await load();
+  // 初回のみバックグラウンド同期（待たない）
+  autoSyncSelfIfConnected();
 })();
 </script>
 
