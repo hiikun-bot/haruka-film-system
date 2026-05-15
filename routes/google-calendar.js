@@ -330,26 +330,35 @@ router.get('/connection-status', requireAuth, async (req, res) => {
 // ============================================================
 // 共通: 日付ループ
 // ============================================================
+// 日付演算は UTC ベースで純粋に行う（サーバー TZ に依存しない）
+function _ymd(d) {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+}
 function eachDate(fromStr, toStr) {
   const out = [];
-  const from = new Date(String(fromStr) + 'T00:00:00');
-  const to   = new Date(String(toStr)   + 'T00:00:00');
-  for (let d = new Date(from); d.getTime() <= to.getTime(); d.setDate(d.getDate() + 1)) {
-    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
-    out.push(`${y}-${m}-${day}`);
+  const fm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fromStr));
+  const tm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(toStr));
+  if (!fm || !tm) return out;
+  const d   = new Date(Date.UTC(+fm[1], +fm[2]-1, +fm[3]));
+  const end = new Date(Date.UTC(+tm[1], +tm[2]-1, +tm[3]));
+  while (d.getTime() <= end.getTime()) {
+    out.push(_ymd(d));
+    d.setUTCDate(d.getUTCDate() + 1);
   }
   return out;
 }
 
+// 今日の日付（JST 基準）。Railway は UTC なので必ず timeZone:'Asia/Tokyo' で取る
 function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 
 function addDaysStr(s, n) {
-  const d = new Date(String(s) + 'T00:00:00');
-  d.setDate(d.getDate() + n);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
+  if (!m) return s;
+  const d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+  d.setUTCDate(d.getUTCDate() + n);
+  return _ymd(d);
 }
 
 // ============================================================
@@ -402,13 +411,14 @@ router.post('/sync-self', requireAuth, requirePermission('availability:sync-own'
     }
 
     // GCal イベント取得（範囲全体を1回で取る）
+    // JST 日付を期待しているので、ISO の TZ オフセットを明示してサーバーローカルに依存させない
     let events;
     try {
       events = await gcal.fetchEventsForRange({
         refreshToken,
         calendarId: profile.gcal_calendar_id || 'primary',
-        from: new Date(from + 'T00:00:00'),
-        to:   new Date(to   + 'T23:59:59'),
+        from: new Date(from + 'T00:00:00+09:00'),
+        to:   new Date(to   + 'T23:59:59+09:00'),
       });
     } catch (e) {
       supabase.from('member_working_hours_profile')
