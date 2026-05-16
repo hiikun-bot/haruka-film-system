@@ -7400,6 +7400,33 @@ window.showPage = window.showPage || function(name, btn) {
                    onmouseout="if(this.dataset.editing!=='1')this.style.borderColor='transparent'"
                    title="クリックでファイル名を編集できます（変更時 Slack 通知）">
           </div>
+          <!-- 📋 レギュレーションアイコン（右上集約）
+               applyCreativeDetailFieldVisibility() の対象になるよう cd-field-group + data-field-key="regulation_url" を保持。
+               未設定時はクリック不可（pointer-events:none）、設定済みなら新タブで開く a タグとして機能する。
+               JS は引き続き #cd-regulation-link / #cd-regulation-none / #cd-regulation-open を読み書きする（既存 ID 維持）。 -->
+          <div class="cd-field-group" data-field-key="regulation_url" style="flex-shrink:0;margin-right:4px">
+            <a id="cd-regulation-icon-btn" href="#" target="_blank" rel="noopener"
+               style="display:inline-flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:13px;text-decoration:none;color:var(--text-muted);opacity:0.6;cursor:default;white-space:nowrap"
+               title="レギュレーションシート（未設定）">📋</a>
+          </div>
+          <!-- 📝 メモアイコン（右上集約、ポップオーバーで textarea 展開）
+               中身（cd-memo / 保存ボタン）はポップオーバー内に保持し、既存JS（getElementById('cd-memo')）と互換。
+               ポップオーバーは absolute positioned で、外側クリックで閉じる（toggleMemoPopover）。 -->
+          <div style="position:relative;flex-shrink:0;margin-right:6px">
+            <button id="cd-memo-icon-btn" type="button" onclick="toggleMemoPopover(event)"
+                    style="position:relative;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:13px;color:var(--em-dark);cursor:pointer;white-space:nowrap"
+                    title="メモ（チームメンバーで共有）">📝<span id="cd-memo-has-dot" style="display:none;position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:#10b981;border:1.5px solid #fff"></span></button>
+            <div id="cd-memo-popover" style="display:none;position:absolute;top:calc(100% + 6px);right:0;width:340px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);padding:14px;z-index:100">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="font-size:12.5px;font-weight:600;color:var(--text)">📝 メモ <span style="font-size:11px;color:var(--text-muted);font-weight:400">（チームメンバーで共有）</span></div>
+                <button type="button" onclick="toggleMemoPopover(event, false)" style="background:transparent;border:none;font-size:16px;color:var(--text-muted);cursor:pointer;padding:0 4px;line-height:1" title="閉じる">×</button>
+              </div>
+              <textarea class="form-input" id="cd-memo" rows="4" style="resize:vertical;width:100%;font-size:12.5px" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
+              <div style="display:flex;justify-content:flex-end;margin-top:8px">
+                <button class="btn" type="button" onclick="saveCreativeDetailMemo()" style="font-size:12px;padding:6px 14px">メモを保存</button>
+              </div>
+            </div>
+          </div>
           <!-- 共有リンクコピーボタン: 詳細モーダルを直接開ける ?creative=<ID> URL をコピー。
                秘書などへ「このクリエイティブをクライアントへ提出して」と指示する際に使う。 -->
           <button id="cd-share-btn"
@@ -7438,26 +7465,18 @@ window.showPage = window.showPage || function(name, btn) {
                flex-wrap:wrap を別途確保したい場合は親 flex-direction:column の方を維持する形にしている。 -->
           <div id="cd-deadline-bar" style="display:none;gap:14px;flex-wrap:wrap;align-items:center"></div>
 
-          <!-- 2行目: レギュレーション
-               applyCreativeDetailFieldVisibility() が `.cd-field-group` の display を '' (=block) / 'none' に切り替えるため、
-               form-group 側は block のままにし、子の wrapper で flex 並びを作る（display:flex を inline で持たせると上書きで失われる）。 -->
-          <div class="form-group cd-field-group" data-field-key="regulation_url" style="margin-bottom:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="color:var(--text-muted);white-space:nowrap"><span class="cd-field-label-text">📋 レギュレーション:</span></span>
-              <div id="cd-regulation-cell" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <div id="cd-regulation-link" style="display:none;align-items:center;gap:6px">
-                  <div style="display:flex;align-items:center;gap:5px;min-width:0">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/></svg>
-                    <span style="font-size:12px;color:var(--em-dark);font-weight:500;white-space:nowrap">設定済み</span>
-                  </div>
-                  <a id="cd-regulation-open" href="#" target="_blank" class="btn" style="font-size:11.5px;padding:2px 8px;text-decoration:none;white-space:nowrap;flex-shrink:0">開く ↗</a>
-                </div>
-                <div id="cd-regulation-none" style="font-size:12px;color:var(--text-muted)">未設定</div>
-              </div>
-            </div>
+          <!-- レギュレーションは右上 📋 アイコンへ移設済（cd-regulation-icon-btn）。
+               JS の getElementById('cd-regulation-open' / 'cd-regulation-link' / 'cd-regulation-none' / 'cd-regulation-cell') が
+               存在前提で書かれているため、互換 DOM を hidden span で残す（applyCreativeDetailFieldVisibility は新アイコン側で効く）。 -->
+          <div style="display:none" aria-hidden="true">
+            <span id="cd-regulation-cell">
+              <span id="cd-regulation-link"></span>
+              <span id="cd-regulation-none"></span>
+              <a id="cd-regulation-open" href="#" target="_blank"></a>
+            </span>
           </div>
 
-          <!-- 3行目: クライアント確認URL -->
+          <!-- クライアント確認URL -->
           <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-bottom:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
               <span style="color:var(--text-muted);white-space:nowrap"><span class="cd-field-label-text">🔗 クライアント確認URL</span></span>
@@ -7568,17 +7587,7 @@ window.showPage = window.showPage || function(name, btn) {
         <textarea class="form-input" id="cd-comment-field" rows="4" style="resize:vertical" placeholder="例: ○○を修正しました / 構成を△△に変えています / □□の確認お願いします"></textarea>
       </div>
 
-      <!-- メモ（チームメンバーで共有: creatives.memo）。ce-note (note) は管理用メモで別カラム -->
-      <div class="form-group" style="margin-bottom:18px">
-        <label class="form-label" style="display:flex;align-items:center;gap:8px">
-          📝 メモ
-          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（チームメンバーで共有）</span>
-        </label>
-        <textarea class="form-input" id="cd-memo" rows="2" style="resize:vertical" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
-        <div style="display:flex;justify-content:flex-end;margin-top:6px">
-          <button class="btn" onclick="saveCreativeDetailMemo()" style="font-size:12px;padding:6px 14px">メモを保存</button>
-        </div>
-      </div>
+      <!-- メモブロックは右上 📝 アイコンのポップオーバーへ移設済（#cd-memo は同 ID で維持） -->
 
       <!-- 編集者の返信コメント（後修正ステータスのみ） -->
       <div class="form-group" id="cd-editor-reply-group" style="display:none;margin-bottom:18px">
@@ -29265,6 +29274,8 @@ async function openCreativeDetail(id) {
   // メモ（チーム共有用 creatives.memo）
   const _memoEl = document.getElementById('cd-memo');
   if (_memoEl) _memoEl.value = c.memo || '';
+  // 右上 📝 アイコンの「メモあり」緑ドット表示
+  try { updateCreativeMemoHasDot(); } catch (_) {}
   updateCreativeCommentLabel(c.status);
 
   // ステップインジケーター
@@ -29279,16 +29290,37 @@ async function openCreativeDetail(id) {
   uploadFileData = null;
 
   // レギュレーションシートリンク
+  // 互換のため hidden な旧 DOM (#cd-regulation-link / #cd-regulation-none / #cd-regulation-open) の値はそのままセット。
+  // 表示は右上の📋アイコン (#cd-regulation-icon-btn) で行う：設定済みなら緑＆href有効、未設定ならグレー＆クリック不可。
   const regulationUrl = c.projects?.regulation_url;
   const regLink = document.getElementById('cd-regulation-link');
   const regNone = document.getElementById('cd-regulation-none');
+  const regOpenA = document.getElementById('cd-regulation-open');
+  const regIcon = document.getElementById('cd-regulation-icon-btn');
   if (regulationUrl) {
-    document.getElementById('cd-regulation-open').href = regulationUrl;
-    regLink.style.display = 'flex';
-    regNone.style.display = 'none';
+    if (regOpenA) regOpenA.href = regulationUrl;
+    if (regLink) regLink.style.display = 'flex';
+    if (regNone) regNone.style.display = 'none';
+    if (regIcon) {
+      regIcon.href = regulationUrl;
+      regIcon.style.color = 'var(--em-dark)';
+      regIcon.style.opacity = '1';
+      regIcon.style.cursor = 'pointer';
+      regIcon.setAttribute('title', 'レギュレーションシート（設定済み・開く）');
+      regIcon.onclick = null; // 通常のリンク動作に任せる
+    }
   } else {
-    regLink.style.display = 'none';
-    regNone.style.display = '';
+    if (regOpenA) regOpenA.href = '#';
+    if (regLink) regLink.style.display = 'none';
+    if (regNone) regNone.style.display = '';
+    if (regIcon) {
+      regIcon.href = '#';
+      regIcon.style.color = 'var(--text-muted)';
+      regIcon.style.opacity = '0.6';
+      regIcon.style.cursor = 'default';
+      regIcon.setAttribute('title', 'レギュレーションシート（未設定）');
+      regIcon.onclick = function(ev) { ev.preventDefault(); return false; };
+    }
   }
 
   // 基本情報描画完了 → basic フェーズ done、extras フェーズ開始
@@ -36240,10 +36272,60 @@ async function saveCreativeDetailMemo() {
     if (__cdInitialSnapshot) __cdInitialSnapshot['cd-memo'] = memo || '';
     // 他フィールドが dirty なままなら下書きは残す（次回 input 時に再 save）
     try { __cdSaveDraftNow(); } catch (_) {}
+    // 右上アイコンの「メモあり」緑ドットを更新
+    try { updateCreativeMemoHasDot(); } catch (_) {}
     showToast('メモを保存しました', 'success');
   } catch (err) {
     showToast('メモの保存に失敗: ' + (err?.message || err), 'error');
   }
+}
+
+// 右上の📝アイコンに付くポップオーバーをトグルする。
+// 第2引数 forceOpen を false にすると強制クローズ、true で強制オープン、未指定でトグル。
+// 外側クリックで自動クローズし、開いた直後に textarea へフォーカスする。
+let __cdMemoOutsideClickHandler = null;
+function toggleMemoPopover(event, forceOpen) {
+  try { if (event && event.stopPropagation) event.stopPropagation(); } catch (_) {}
+  const pop = document.getElementById('cd-memo-popover');
+  if (!pop) return;
+  const isOpen = pop.style.display !== 'none' && pop.style.display !== '';
+  const next = (typeof forceOpen === 'boolean') ? forceOpen : !isOpen;
+  if (next) {
+    pop.style.display = 'block';
+    setTimeout(() => {
+      try { document.getElementById('cd-memo')?.focus(); } catch (_) {}
+    }, 0);
+    // 外側クリックで閉じる（モーダル内のスクロール領域クリックも対象）
+    if (__cdMemoOutsideClickHandler) {
+      document.removeEventListener('mousedown', __cdMemoOutsideClickHandler, true);
+    }
+    __cdMemoOutsideClickHandler = function(ev) {
+      const popEl = document.getElementById('cd-memo-popover');
+      const btnEl = document.getElementById('cd-memo-icon-btn');
+      if (!popEl) return;
+      if (popEl.contains(ev.target)) return; // ポップオーバー内は無視
+      if (btnEl && btnEl.contains(ev.target)) return; // アイコン自身は toggle 側に任せる
+      popEl.style.display = 'none';
+      document.removeEventListener('mousedown', __cdMemoOutsideClickHandler, true);
+      __cdMemoOutsideClickHandler = null;
+    };
+    document.addEventListener('mousedown', __cdMemoOutsideClickHandler, true);
+  } else {
+    pop.style.display = 'none';
+    if (__cdMemoOutsideClickHandler) {
+      document.removeEventListener('mousedown', __cdMemoOutsideClickHandler, true);
+      __cdMemoOutsideClickHandler = null;
+    }
+  }
+}
+
+// 右上の📝アイコンに「メモあり」緑ドットを出すかどうかを cd-memo の現在値で決める。
+function updateCreativeMemoHasDot() {
+  const memoEl = document.getElementById('cd-memo');
+  const dot = document.getElementById('cd-memo-has-dot');
+  if (!dot) return;
+  const has = !!(memoEl && memoEl.value && memoEl.value.trim());
+  dot.style.display = has ? '' : 'none';
 }
 
 // ===== クリエイティブ削除 =====
