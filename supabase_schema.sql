@@ -2375,4 +2375,39 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('secretary',         'availability:edit-others', true)
 ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
+-- ==================== creative_round_replies ====================
+-- 「前回」セクション各メッセージへのスレッド形式返信。
+-- 親メッセージは creative_version_history の 1 行を指す。編集・論理削除可。
+-- migration: migrations/2026-05-16_creative_round_replies.sql
+CREATE TABLE IF NOT EXISTS creative_round_replies (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id        uuid NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  version_history_id uuid NOT NULL REFERENCES creative_version_history(id) ON DELETE CASCADE,
+  body               text NOT NULL CHECK (length(body) > 0 AND length(body) <= 4000),
+  author_user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  deleted_at         timestamptz
+);
+COMMENT ON TABLE creative_round_replies IS
+  'クリエイティブ詳細モーダル「前回」セクション各メッセージへのスレッド返信。親は creative_version_history.id。';
+CREATE INDEX IF NOT EXISTS idx_crr_vhid_created
+  ON creative_round_replies(version_history_id, created_at)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_crr_creative_created
+  ON creative_round_replies(creative_id, created_at)
+  WHERE deleted_at IS NULL;
+
+CREATE OR REPLACE FUNCTION trg_creative_round_replies_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS creative_round_replies_updated_at ON creative_round_replies;
+CREATE TRIGGER creative_round_replies_updated_at
+  BEFORE UPDATE ON creative_round_replies
+  FOR EACH ROW EXECUTE FUNCTION trg_creative_round_replies_updated_at();
+
 NOTIFY pgrst, 'reload schema';
