@@ -2,9 +2,9 @@
 // Supabase が Cloudflare 522 などで応答しなくなると、PostgREST クライアントは
 // デフォルトでは無制限に待ち続け、Railway 側のワーカーがハングする。これを防ぐ。
 
-const DEFAULT_TIMEOUT_MS = 8000;
-const DEFAULT_FAILURE_THRESHOLD = 5;
-const DEFAULT_OPEN_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 15000;       // 瞬断後の遅延応答も拾う
+const DEFAULT_FAILURE_THRESHOLD = 10;   // 短時間バーストで誤発動しない
+const DEFAULT_OPEN_MS = 5000;           // 復活を早期検知（half-open 探査の間隔）
 
 function readPositiveInt(envName, fallback) {
   const raw = process.env[envName];
