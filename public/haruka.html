@@ -27835,9 +27835,9 @@ function _cdRenderReplyThreadInner(source, sourceId) {
         </div>`;
       }).join('');
 
-  // 入力欄（常時表示）
+  // 入力欄は初期は折りたたみ。「💬 補足」ボタンを押すまで前回コメントを広く見せる。
   const inputHtml = `
-    <div class="cd-round-reply-input-row">
+    <div class="cd-round-reply-input-row" style="display:none">
       <textarea class="cd-round-reply-input" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" placeholder="補足を書く..." rows="2"></textarea>
       <button type="button" class="cd-round-reply-send-btn" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdSubmitRoundReply(this)">💬 補足を送る</button>
     </div>`;
@@ -27926,8 +27926,8 @@ window.cdReplyToReviseComment = window.cdQuoteReviseComment;
 // 「前回」セクション スレッド返信ハンドラ (creative_round_replies)
 // ============================================================
 
-// 「↩ 返信」ボタン: 該当スレッドの textarea にフォーカスを当てるだけ。
-//  パターンA（インライン常時表示）のため入力欄は既にある。
+// 「💬 補足」ボタン: 該当スレッドの入力欄を展開して textarea にフォーカス。
+// 初期は折りたたみ（前回コメントを広く見せる）、ボタン押下で展開する。
 window.cdFocusReplyInput = function(btn) {
   try {
     const source   = btn?.dataset?.cdSource;
@@ -27937,6 +27937,8 @@ window.cdFocusReplyInput = function(btn) {
       `#cd-round-left .cd-round-reply-thread[data-cd-source="${source}"][data-cd-source-id="${sourceId}"]`
     );
     if (!thread) return;
+    const inputRow = thread.querySelector('.cd-round-reply-input-row');
+    if (inputRow) inputRow.style.display = '';
     const ta = thread.querySelector('.cd-round-reply-input');
     if (ta) {
       ta.focus();
