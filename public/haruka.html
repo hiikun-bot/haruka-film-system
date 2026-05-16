@@ -27813,8 +27813,10 @@ function _cdRenderReplyThreadInner(source, sourceId) {
         const nameTxt = author ? (typeof NameDisplay !== 'undefined' ? NameDisplay.full(author) : (author.full_name || ''))
                                : '(不明なユーザー)';
         const avHtml = author && typeof avatarHtml === 'function' ? avatarHtml(author, 20) : '';
-        const timeStr = (typeof _cdFormatRoundDate === 'function' && r.created_at) ? _cdFormatRoundDate(r.created_at) : '';
-        const editedMark = (r.updated_at && r.created_at && r.updated_at !== r.created_at)
+        const isEdited = !!(r.updated_at && r.created_at && r.updated_at !== r.created_at);
+        const baseTs = isEdited ? r.updated_at : r.created_at;
+        const timeStr = (typeof _cdFormatRoundDate === 'function' && baseTs) ? _cdFormatRoundDate(baseTs) : '';
+        const editedMark = isEdited
           ? `<span style="margin-left:4px;color:var(--text-muted);font-size:10px">(編集済み)</span>` : '';
         const canMutate = isAdmin || (!!myId && r.author_user_id && r.author_user_id === myId);
         const actionsHtml = canMutate
