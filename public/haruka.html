@@ -7428,6 +7428,51 @@ window.showPage = window.showPage || function(name, btn) {
         <!-- Dチェック担当者一覧は撤去（ボール表示で代替）。
              ヘッダーの ball-dot + ball-name で「いま誰にボールがあるか」が見えるため重複情報になっていた。
              creative_assignments[role='director'] のデータ自体は status 遷移・通知・返信モーダルで引き続き使用する。 -->
+
+        <!-- メタ情報セクション（締切 / レギュ / クライアント確認URL をヘッダーへ集約）
+             ADR 012: 各 form-group は data-field-key を持ち、applyCreativeDetailFieldVisibility() で
+             カテゴリの設定に応じて display:none / ラベル上書きされる。 -->
+        <div style="border-top:1px dashed var(--border-light);margin-top:8px;padding-top:8px;font-size:12.5px;color:var(--text);display:flex;flex-direction:column;gap:6px">
+          <!-- 1行目: 締切（旧 cd-deadline-bar をここへ移植。背景/大きな padding はリセット）
+               JS (line ~29193) で bar.style.display = 'flex' を設定する。flex-wrap は inline style 側で保持されないため
+               flex-wrap:wrap を別途確保したい場合は親 flex-direction:column の方を維持する形にしている。 -->
+          <div id="cd-deadline-bar" style="display:none;gap:14px;flex-wrap:wrap;align-items:center"></div>
+
+          <!-- 2行目: レギュレーション
+               applyCreativeDetailFieldVisibility() が `.cd-field-group` の display を '' (=block) / 'none' に切り替えるため、
+               form-group 側は block のままにし、子の wrapper で flex 並びを作る（display:flex を inline で持たせると上書きで失われる）。 -->
+          <div class="form-group cd-field-group" data-field-key="regulation_url" style="margin-bottom:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="color:var(--text-muted);white-space:nowrap"><span class="cd-field-label-text">📋 レギュレーション:</span></span>
+              <div id="cd-regulation-cell" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <div id="cd-regulation-link" style="display:none;align-items:center;gap:6px">
+                  <div style="display:flex;align-items:center;gap:5px;min-width:0">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/></svg>
+                    <span style="font-size:12px;color:var(--em-dark);font-weight:500;white-space:nowrap">設定済み</span>
+                  </div>
+                  <a id="cd-regulation-open" href="#" target="_blank" class="btn" style="font-size:11.5px;padding:2px 8px;text-decoration:none;white-space:nowrap;flex-shrink:0">開く ↗</a>
+                </div>
+                <div id="cd-regulation-none" style="font-size:12px;color:var(--text-muted)">未設定</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3行目: クライアント確認URL -->
+          <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-bottom:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+              <span style="color:var(--text-muted);white-space:nowrap"><span class="cd-field-label-text">🔗 クライアント確認URL</span></span>
+              <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600">🔗 自動共有済み</span>
+              <span style="cursor:help;color:var(--text-muted);font-size:13px" title="「クライアントチェック中」に進めた瞬間、Drive 上のファイルが自動で「リンクを知っている人なら閲覧可」に設定され、URL がここにセットされます。手動入力済みのURLは上書きされません。">ⓘ</span>
+              <!-- form-label 互換: applyCreativeDetailFieldVisibility がラベル上書き対象として form-label を探すケースに備えてダミーを保持 -->
+              <label class="form-label" data-default-label="クライアント確認URL" style="display:none"></label>
+            </div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+              <input class="form-input" id="cd-client-review-url" placeholder="https://drive.google.com/file/d/.../view" style="min-width:0;flex:1">
+              <button class="btn" onclick="openLink('cd-client-review-url')" style="white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px">開く</button>
+              <button id="cd-client-review-reshare-btn" class="btn" onclick="reshareClientReviewUrl()" style="display:none;white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px" title="Drive 上で公開設定し直して URL を再取得します">再共有</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- ステップインジケーター -->
@@ -7437,14 +7482,11 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- スクロール可能コンテンツ -->
     <div id="cd-scroll-area" style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px">
 
-      <!-- 納期表示（一目で見落とさないよう拡大表示） -->
-      <div id="cd-deadline-bar" style="display:none;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center"></div>
-
-      <!-- URL セクション（2カラム） -->
+      <!-- URL セクション（台本URLのみ。レギュ/クライアント確認URL はヘッダーへ集約済み） -->
       <!-- ADR 012: 各 form-group は data-field-key を持ち、applyCreativeDetailFieldVisibility() で
            カテゴリの設定に応じて display:none / ラベル上書きされる。 -->
       <input type="hidden" id="cd-frameio-url">
-      <div id="cd-builtin-url-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
+      <div id="cd-builtin-url-row" style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:18px">
         <div class="form-group cd-field-group" data-field-key="script_url" style="margin-bottom:0">
           <label class="form-label" data-default-label="台本URL">台本URL</label>
           <div style="display:flex;gap:5px">
@@ -7452,37 +7494,10 @@ window.showPage = window.showPage || function(name, btn) {
             <button class="btn" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
           </div>
         </div>
-        <div class="form-group cd-field-group" data-field-key="regulation_url" style="margin-bottom:0">
-          <label class="form-label" data-default-label="レギュレーションシート">レギュレーションシート</label>
-          <div id="cd-regulation-cell">
-            <div id="cd-regulation-link" style="display:none;align-items:center;gap:6px">
-              <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#34A853"/><path d="M14 2v6h6" fill="#a8d5b5"/></svg>
-                <span style="font-size:12px;color:var(--em-dark);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">設定済み</span>
-              </div>
-              <a id="cd-regulation-open" href="#" target="_blank" class="btn" style="font-size:12px;padding:8px 10px;text-decoration:none;white-space:nowrap;flex-shrink:0">開く ↗</a>
-            </div>
-            <div id="cd-regulation-none" style="font-size:12px;color:var(--text-muted);padding:9px 0">未設定</div>
-          </div>
-        </div>
       </div>
 
       <!-- ADR 012: カスタムフィールドコンテナ（カテゴリ別に動的生成） -->
       <div id="cd-custom-fields" style="display:none;margin-bottom:18px"></div>
-
-      <!-- クライアント確認URL（自動共有 / 手動入力） -->
-      <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-bottom:18px">
-        <label class="form-label" data-default-label="クライアント確認URL">
-          <span class="cd-field-label-text">クライアント確認URL</span>
-          <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:6px">🔗 自動共有済み</span>
-        </label>
-        <div style="display:flex;gap:5px">
-          <input class="form-input" id="cd-client-review-url" placeholder="https://drive.google.com/file/d/.../view" style="min-width:0;flex:1">
-          <button class="btn" onclick="openLink('cd-client-review-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
-          <button id="cd-client-review-reshare-btn" class="btn" onclick="reshareClientReviewUrl()" style="display:none;white-space:nowrap;padding:8px 10px;flex-shrink:0" title="Drive 上で公開設定し直して URL を再取得します">再共有</button>
-        </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">「クライアントチェック中」に進めた瞬間、Drive 上のファイルが自動で「リンクを知っている人なら閲覧可」に設定され、URL がここにセットされます。手動入力済みのURLは上書きされません。</div>
-      </div>
 
       <!-- 担当者セクション（未着手のみ） -->
       <div id="cd-assignee-section" style="display:none;margin-bottom:18px">
