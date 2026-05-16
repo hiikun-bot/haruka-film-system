@@ -992,6 +992,25 @@ function _formatAutoErrorText(payload) {
         `resource.id=${rt.id || '-'}`,
         `resource.crossOrigin=${rt.crossOrigin || '-'}`,
       );
+      // 素材広場 / クリエイティブ詳細などの <video> プレビュー専用情報
+      // msHandlePreviewError が previewProbe (Range fetch の status/contentType/body) と
+      // mediaErrorCode (MEDIA_ERR_* 1=ABORT/2=NETWORK/3=DECODE/4=SRC_NOT_SUPPORTED) を渡す。
+      // これがないと「200 OK で 2MB 落ちてきたのに <video> が error」のように
+      // ネットワーク失敗かブラウザ側のデコード失敗（faststart 未処理 / HEVC 等）か切り分け不能になる。
+      if (rt.fileId) traceLines.push(`resource.fileId=${rt.fileId}`);
+      if (rt.mediaErrorCode != null) {
+        const MEDIA_ERR = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
+        traceLines.push(`media.errorCode=${rt.mediaErrorCode} (${MEDIA_ERR[rt.mediaErrorCode] || '?'})`);
+      }
+      if (rt.previewProbe && typeof rt.previewProbe === 'object') {
+        const pp = rt.previewProbe;
+        traceLines.push(
+          `probe.status=${pp.status ?? '-'}`,
+          `probe.contentType=${pp.contentType || '-'}`,
+        );
+        if (pp.fetchError) traceLines.push(`probe.fetchError=${pp.fetchError}`);
+        if (pp.body) traceLines.push(`probe.body=${String(pp.body).slice(0, 200)}`);
+      }
     }
     lines.push('*原因特定トレース*:');
     lines.push('```' + _truncate(traceLines.join('\n'), 1800) + '```');
