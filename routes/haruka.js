@@ -13799,6 +13799,137 @@ router.patch('/creatives/:creativeId/versions/:versionId', requireAuth, async (r
   });
 });
 
+// ==================== 「前回」セクション スレッド返信 (creative_round_replies) ====================
+// PR #644 で creative_round_replies テーブルを追加済み。
+//   - version_history_id にぶら下がるスレッド形式の返信
+//   - body / author_user_id / 論理削除 (deleted_at)
+//   - updated_at は trigger で自動更新
+// 認可:
+//   POST  : ログイン必須。author_user_id は req.user.id を強制。
+//   PATCH : 自分の reply のみ、または admin。deleted_at IS NULL のみ。
+//   DELETE: 自分の reply のみ、または admin。論理削除。
+// N+1 回避のため GET は author を JOIN で一発取得する。
+const _CD_REPLY_AUTHOR_SELECT = 'author:author_user_id(id, full_name, nickname, role, avatar_url)';
+const _CD_REPLY_BASE_COLS = 'id, creative_id, version_history_id, body, author_user_id, created_at, updated_at';
+
+// 指定 creative の全 reply (論理削除を除く) を時系列で返す。
+// モーダル open 時に 1 回呼んで、フロント側で version_history_id ごとに分配する。
+router.get('/creatives/:creativeId/round-replies', requireAuth, async (req, res) => {
+  const { creativeId } = req.params;
+  if (!creativeId) return res.status(400).json({ error: 'creativeId は必須です' });
+  const { data, error } = await supabase
+    .from('creative_round_replies')
+    .select(`${_CD_REPLY_BASE_COLS}, ${_CD_REPLY_AUTHOR_SELECT}`)
+    .eq('creative_id', creativeId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(Array.isArray(data) ? data : []);
+});
+
+// 1件追加。version_history_id が当該 creative に属するかをサーバ側で必ず確認する。
+router.post('/creatives/:creativeId/versions/:versionHistoryId/round-replies', requireAuth, async (req, res) => {
+  const { creativeId, versionHistoryId } = req.params;
+  const bodyRaw = req.body?.body;
+  if (typeof bodyRaw !== 'string') {
+    return res.status(400).json({ error: 'body（文字列）は必須です' });
+  }
+  const body = bodyRaw.trim();
+  if (!body) return res.status(400).json({ error: 'body は空にできません' });
+  if (body.length > 4000) return res.status(400).json({ error: 'body が長すぎます（4000字以内）' });
+
+  // version_history_id が当該 creative に属することを検証
+  const { data: vRow, error: vErr } = await supabase
+    .from('creative_version_history')
+    .select('id, creative_id')
+    .eq('id', versionHistoryId)
+    .eq('creative_id', creativeId)
+    .maybeSingle();
+  if (vErr) return res.status(500).json({ error: vErr.message });
+  if (!vRow) return res.status(404).json({ error: 'バージョンが見つかりません' });
+
+  const { data, error } = await supabase
+    .from('creative_round_replies')
+    .insert({
+      creative_id: creativeId,
+      version_history_id: versionHistoryId,
+      body,
+      author_user_id: req.user?.id || null,
+    })
+    .select(`${_CD_REPLY_BASE_COLS}, ${_CD_REPLY_AUTHOR_SELECT}`)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 自分の reply を編集。admin も可。
+router.patch('/round-replies/:replyId', requireAuth, async (req, res) => {
+  const { replyId } = req.params;
+  const bodyRaw = req.body?.body;
+  if (typeof bodyRaw !== 'string') {
+    return res.status(400).json({ error: 'body（文字列）は必須です' });
+  }
+  const body = bodyRaw.trim();
+  if (!body) return res.status(400).json({ error: 'body は空にできません' });
+  if (body.length > 4000) return res.status(400).json({ error: 'body が長すぎます（4000字以内）' });
+
+  // 対象を取得（論理削除済みは編集不可）
+  const { data: row, error: rErr } = await supabase
+    .from('creative_round_replies')
+    .select('id, author_user_id, deleted_at')
+    .eq('id', replyId)
+    .maybeSingle();
+  if (rErr) return res.status(500).json({ error: rErr.message });
+  if (!row) return res.status(404).json({ error: '返信が見つかりません' });
+  if (row.deleted_at) return res.status(409).json({ error: 'この返信は削除されています' });
+
+  // 認可
+  let effectiveCodes = [];
+  try { effectiveCodes = await getEffectiveRoleCodes(req); } catch (_) {}
+  const isAdminEffective = effectiveCodes.includes('admin');
+  const isOwner = !!(req.user?.id && row.author_user_id && req.user.id === row.author_user_id);
+  if (!isAdminEffective && !isOwner) {
+    return res.status(403).json({ error: '自分の返信のみ編集できます' });
+  }
+
+  const { data, error } = await supabase
+    .from('creative_round_replies')
+    .update({ body })
+    .eq('id', replyId)
+    .select(`${_CD_REPLY_BASE_COLS}, ${_CD_REPLY_AUTHOR_SELECT}`)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 論理削除。
+router.delete('/round-replies/:replyId', requireAuth, async (req, res) => {
+  const { replyId } = req.params;
+  const { data: row, error: rErr } = await supabase
+    .from('creative_round_replies')
+    .select('id, author_user_id, deleted_at')
+    .eq('id', replyId)
+    .maybeSingle();
+  if (rErr) return res.status(500).json({ error: rErr.message });
+  if (!row) return res.status(404).json({ error: '返信が見つかりません' });
+  if (row.deleted_at) return res.json({ ok: true, id: replyId, already_deleted: true });
+
+  let effectiveCodes = [];
+  try { effectiveCodes = await getEffectiveRoleCodes(req); } catch (_) {}
+  const isAdminEffective = effectiveCodes.includes('admin');
+  const isOwner = !!(req.user?.id && row.author_user_id && req.user.id === row.author_user_id);
+  if (!isAdminEffective && !isOwner) {
+    return res.status(403).json({ error: '自分の返信のみ削除できます' });
+  }
+
+  const { error: upErr } = await supabase
+    .from('creative_round_replies')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', replyId);
+  if (upErr) return res.status(500).json({ error: upErr.message });
+  res.json({ ok: true, id: replyId });
+});
+
 // バージョン履歴保存
 router.post('/creative-versions', async (req, res) => {
   const { creative_id, version_num, director_comment, client_comment } = req.body;

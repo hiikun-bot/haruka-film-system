@@ -6495,6 +6495,46 @@ window.showPage = window.showPage || function(name, btn) {
   border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s;
 }
 #cd-round-left .cd-round-quote-btn:hover{ background:var(--em-dark); color:#fff; }
+/* 「↩ 返信」ボタン: ぴょんカラー（ピンク系）で quote/edit と区別 */
+#cd-round-left .cd-round-reply-btn{
+  font-size:10.5px; line-height:1; color:#EC4899; background:#fff; border:0.5px solid #EC4899;
+  border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s;
+}
+#cd-round-left .cd-round-reply-btn:hover{ background:#EC4899; color:#fff; }
+/* スレッド全体: コメント直下に少しインデントして表示 */
+#cd-round-left .cd-round-reply-thread{
+  margin:8px 0 0 12px; padding:8px 10px 6px; background:#FDF2F8; border-left:2px solid #F9A8D4; border-radius:6px;
+  display:flex; flex-direction:column; gap:6px;
+}
+/* 各 reply カード */
+#cd-round-left .cd-round-reply-item{
+  background:#fff; border:0.5px solid var(--border); border-radius:6px; padding:6px 8px; display:flex; flex-direction:column; gap:4px;
+}
+#cd-round-left .cd-round-reply-item.is-deleted{ opacity:.55; }
+#cd-round-left .cd-round-reply-head{
+  display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted);
+}
+#cd-round-left .cd-round-reply-head .cd-round-reply-name{ font-weight:600; color:var(--text); font-size:11.5px; }
+#cd-round-left .cd-round-reply-head .cd-round-reply-time{ margin-left:4px; }
+#cd-round-left .cd-round-reply-head .cd-round-reply-actions{ margin-left:auto; display:flex; gap:4px; }
+#cd-round-left .cd-round-reply-head .cd-round-reply-actions button{
+  font-size:10.5px; line-height:1; color:var(--text-muted); background:transparent; border:0.5px solid transparent;
+  border-radius:4px; padding:2px 6px; cursor:pointer; transition: background .15s, color .15s, border-color .15s;
+}
+#cd-round-left .cd-round-reply-head .cd-round-reply-actions button:hover{ background:var(--em-pale); color:var(--em-dark); border-color:var(--border); }
+#cd-round-left .cd-round-reply-body{ font-size:12.5px; color:var(--text); white-space:pre-wrap; line-height:1.55; }
+#cd-round-left .cd-round-reply-input{
+  width:100%; box-sizing:border-box; resize:vertical; min-height:48px; font-size:12.5px;
+  font-family:inherit; border:0.5px solid var(--border); border-radius:6px; padding:6px 8px; background:#fff;
+}
+#cd-round-left .cd-round-reply-input-row{ display:flex; gap:6px; align-items:flex-end; }
+#cd-round-left .cd-round-reply-send-btn{
+  font-size:11px; line-height:1; color:#fff; background:#EC4899; border:0.5px solid #EC4899;
+  border-radius:6px; padding:6px 10px; cursor:pointer; white-space:nowrap; font-weight:600;
+}
+#cd-round-left .cd-round-reply-send-btn:hover{ background:#DB2777; border-color:#DB2777; }
+#cd-round-left .cd-round-reply-send-btn:disabled{ opacity:.5; cursor:not-allowed; }
+#cd-round-left .cd-round-reply-empty{ font-size:11.5px; color:var(--text-muted); font-style:italic; padding:2px 0; }
 #cd-round-left .cd-round-edited-mark{
   margin-left:6px; font-size:10px; font-weight:500; color:var(--text-muted); letter-spacing:0; text-transform:none;
 }
@@ -27369,6 +27409,9 @@ function fillCommentTemplate() {
 let _cdRoundsCache = [];   // [{ idx, kind, comment, occurred_at, from_role, to_role, version_num, file?, ... }]
 let _cdRoundIndex  = 0;    // 表示中ページ (0 = 一番古い / length-1 = 最新)
 let _cdFilesCache  = [];   // loadCreativeFiles() でキャッシュ。右カラム成果物カードで参照
+// 「前回」各メッセージへのスレッド返信。version_history_id → reply[] の辞書。
+//  GET /api/creatives/:id/round-replies を 1 回呼んで全件まとめてここに詰める。
+let _cdRoundRepliesByVhid = {};
 
 const _CD_ROUND_RIGHT_TARGETS = [
   'cd-comment-section',
@@ -27447,6 +27490,51 @@ async function cdLoadRounds(creativeId) {
     console.warn('[cd-rounds] fetch failed:', e?.message || e);
     _cdRoundsCache = [];
   }
+}
+
+// 「前回」各メッセージへのスレッド返信を 1 リクエストで全件取得し、
+// version_history_id ごとに辞書化して _cdRoundRepliesByVhid に格納する。
+// 失敗しても画面は壊さず、空辞書のまま続行する。
+async function cdLoadRoundReplies(creativeId) {
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/round-replies`);
+    if (!res.ok) { _cdRoundRepliesByVhid = {}; return; }
+    const list = await res.json();
+    const dict = {};
+    if (Array.isArray(list)) {
+      for (const r of list) {
+        const k = r?.version_history_id;
+        if (!k) continue;
+        (dict[k] ||= []).push(r);
+      }
+      // 念のため created_at 昇順で揃える
+      for (const k of Object.keys(dict)) {
+        dict[k].sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+      }
+    }
+    _cdRoundRepliesByVhid = dict;
+  } catch (e) {
+    console.warn('[cd-round-replies] fetch failed:', e?.message || e);
+    _cdRoundRepliesByVhid = {};
+  }
+}
+
+// ===== スレッド再描画ヘルパー =====
+// 表示中のページに対応するスレッド DOM を取り出し、最新の _cdRoundRepliesByVhid から
+// HTML を作り直す。ページ全体を作り直すと textarea 入力中の内容が消えるため、
+// 個別 reply 操作後はこちらを呼んでスレッド部分だけ差し替える。
+function _cdRefreshReplyThreadForVhid(vhid) {
+  if (!vhid) return;
+  const thread = document.querySelector(
+    `#cd-round-left .cd-round-reply-thread[data-cd-vhid="${vhid}"]`
+  );
+  if (!thread) return;
+  // input の現在値は維持する
+  const ta = thread.querySelector('.cd-round-reply-input');
+  const keepValue = ta ? ta.value : '';
+  thread.innerHTML = _cdRenderReplyThreadInner(vhid);
+  const ta2 = thread.querySelector('.cd-round-reply-input');
+  if (ta2 && keepValue) ta2.value = keepValue;
 }
 
 
@@ -27625,11 +27713,25 @@ function _cdRenderPageHtml(page) {
          onclick="cdQuoteReviseComment(this)">↩ 引用</button>`
     : '';
 
-  const headerActions = [editBtnHtml, quoteBtnHtml].filter(Boolean).join('');
+  // 全 kind で「↩ 返信」ボタンを出す。version_history_id が無いページ（idx しか無い系）は表示しない。
+  const canReply = !!page.version_history_id;
+  const replyBtnHtml = canReply
+    ? `<button type="button" class="cd-round-reply-btn"
+         data-cd-vhid="${esc(page.version_history_id)}"
+         title="このメッセージに返信する"
+         onclick="cdFocusReplyInput(this)">↩ 返信</button>`
+    : '';
+
+  const headerActions = [editBtnHtml, quoteBtnHtml, replyBtnHtml].filter(Boolean).join('');
 
   const bodyHtml = body
     ? `<div class="cd-round-text" data-cd-role="body" style="white-space:pre-wrap">${esc(body)}</div>`
     : `<div class="cd-round-text" data-cd-role="body" style="color:var(--text-muted);font-style:italic">（コメント本文はありません）</div>`;
+
+  // スレッド（返信エリア）— version_history_id が解決できているページのみ描画
+  const threadHtml = canReply
+    ? `<div class="cd-round-reply-thread" data-cd-vhid="${esc(page.version_history_id)}">${_cdRenderReplyThreadInner(page.version_history_id)}</div>`
+    : '';
 
   return `<div class="cd-round-block" style="border-left:3px solid ${def.accent};padding-left:10px;background:${def.bg}">
     <div class="cd-round-label" style="color:${def.accent};display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -27639,7 +27741,58 @@ function _cdRenderPageHtml(page) {
     </div>
     ${fromToHtml ? `<div class="cd-round-fromto" style="margin:6px 0 8px">${fromToHtml}</div>` : ''}
     ${bodyHtml}
+    ${threadHtml}
   </div>`;
+}
+
+// 指定 version_history_id のスレッド (reply 一覧 + 入力欄) の中身 HTML を返す。
+// 親 .cd-round-reply-thread コンテナは _cdRenderPageHtml 側 / _cdRefreshReplyThreadForVhid 側で生成する。
+function _cdRenderReplyThreadInner(vhid) {
+  const replies = Array.isArray(_cdRoundRepliesByVhid?.[vhid]) ? _cdRoundRepliesByVhid[vhid] : [];
+  const myId = (typeof currentUser !== 'undefined' && currentUser?.id)
+    ? currentUser.id
+    : (typeof window !== 'undefined' ? window.currentUser?.id : null);
+  const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+  const isAdmin = role === 'admin';
+
+  const itemsHtml = replies.length === 0
+    ? `<div class="cd-round-reply-empty">まだ返信はありません</div>`
+    : replies.map(r => {
+        // author は API JOIN 結果。allMembers にもフォールバックで引き当て可能。
+        const author = r.author || _cdResolveUserById(r.author_user_id) || null;
+        const nameTxt = author ? (typeof NameDisplay !== 'undefined' ? NameDisplay.full(author) : (author.full_name || ''))
+                               : '(不明なユーザー)';
+        const avHtml = author && typeof avatarHtml === 'function' ? avatarHtml(author, 20) : '';
+        const timeStr = (typeof _cdFormatRoundDate === 'function' && r.created_at) ? _cdFormatRoundDate(r.created_at) : '';
+        const editedMark = (r.updated_at && r.created_at && r.updated_at !== r.created_at)
+          ? `<span style="margin-left:4px;color:var(--text-muted);font-size:10px">(編集済み)</span>` : '';
+        const canMutate = isAdmin || (!!myId && r.author_user_id && r.author_user_id === myId);
+        const actionsHtml = canMutate
+          ? `<span class="cd-round-reply-actions">
+               <button type="button" data-cd-reply-id="${esc(r.id)}" data-cd-vhid="${esc(vhid)}" onclick="cdStartEditRoundReply(this)" title="編集">✏️ 編集</button>
+               <button type="button" data-cd-reply-id="${esc(r.id)}" data-cd-vhid="${esc(vhid)}" onclick="cdDeleteRoundReply(this)" title="削除">🗑 削除</button>
+             </span>`
+          : '';
+        return `<div class="cd-round-reply-item" data-cd-reply-id="${esc(r.id)}">
+          <div class="cd-round-reply-head">
+            ${avHtml}
+            <span class="cd-round-reply-name">${esc(nameTxt)}</span>
+            <span class="cd-round-reply-time">${esc(timeStr)}</span>
+            ${editedMark}
+            ${actionsHtml}
+          </div>
+          <div class="cd-round-reply-body" data-cd-reply-body>${esc(r.body || '')}</div>
+        </div>`;
+      }).join('');
+
+  // 入力欄（常時表示）
+  const inputHtml = `
+    <div class="cd-round-reply-input-row">
+      <textarea class="cd-round-reply-input" data-cd-vhid="${esc(vhid)}" placeholder="返信を書く..." rows="2"></textarea>
+      <button type="button" class="cd-round-reply-send-btn" data-cd-vhid="${esc(vhid)}" onclick="cdSubmitRoundReply(this)">💬 返信を送る</button>
+    </div>`;
+
+  return `${itemsHtml}${inputHtml}`;
 }
 
 // 修正依頼カードの「↩ 引用」ボタンから呼ばれる。
@@ -27718,6 +27871,165 @@ window.cdQuoteReviseComment = function(btn) {
 };
 // 後方互換: 旧名から呼ばれても動くようにエイリアスを残す。
 window.cdReplyToReviseComment = window.cdQuoteReviseComment;
+
+// ============================================================
+// 「前回」セクション スレッド返信ハンドラ (creative_round_replies)
+// ============================================================
+
+// 「↩ 返信」ボタン: 該当スレッドの textarea にフォーカスを当てるだけ。
+//  パターンA（インライン常時表示）のため入力欄は既にある。
+window.cdFocusReplyInput = function(btn) {
+  try {
+    const vhid = btn?.dataset?.cdVhid;
+    if (!vhid) return;
+    const thread = document.querySelector(
+      `#cd-round-left .cd-round-reply-thread[data-cd-vhid="${vhid}"]`
+    );
+    if (!thread) return;
+    const ta = thread.querySelector('.cd-round-reply-input');
+    if (ta) {
+      ta.focus();
+      ta.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  } catch (e) { console.warn('[cdFocusReplyInput] failed', e); }
+};
+
+// 新規返信を送信。成功したら _cdRoundRepliesByVhid を更新してスレッド部分だけ再描画。
+window.cdSubmitRoundReply = async function(btn) {
+  try {
+    const vhid = btn?.dataset?.cdVhid;
+    if (!vhid) return;
+    const creativeId = currentCreativeDetail?.id;
+    if (!creativeId) {
+      if (typeof showToast === 'function') showToast('クリエイティブが特定できません', 'warn');
+      return;
+    }
+    const thread = btn.closest('.cd-round-reply-thread');
+    const ta = thread?.querySelector('.cd-round-reply-input');
+    const body = (ta?.value || '').trim();
+    if (!body) {
+      if (typeof showToast === 'function') showToast('返信内容を入力してください', 'warn');
+      return;
+    }
+    if (body.length > 4000) {
+      if (typeof showToast === 'function') showToast('返信が長すぎます（4000字以内）', 'warn');
+      return;
+    }
+    btn.disabled = true;
+    const res = await apiFetch(`${API}/creatives/${creativeId}/versions/${vhid}/round-replies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error || `HTTP ${res.status}`);
+    }
+    const created = await res.json();
+    (_cdRoundRepliesByVhid[vhid] ||= []).push(created);
+    if (ta) ta.value = '';
+    _cdRefreshReplyThreadForVhid(vhid);
+    if (typeof showToast === 'function') showToast('返信を投稿しました', 'success');
+  } catch (e) {
+    console.error('[cdSubmitRoundReply] failed', e);
+    if (typeof showToast === 'function') showToast(`返信送信に失敗: ${e?.message || e}`, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
+// 既存 reply をインラインで編集モードにする。
+window.cdStartEditRoundReply = function(btn) {
+  try {
+    const replyId = btn?.dataset?.cdReplyId;
+    const vhid    = btn?.dataset?.cdVhid;
+    if (!replyId || !vhid) return;
+    const item = document.querySelector(
+      `#cd-round-left .cd-round-reply-thread[data-cd-vhid="${vhid}"] .cd-round-reply-item[data-cd-reply-id="${replyId}"]`
+    );
+    if (!item) return;
+    if (item.dataset.cdEditing === '1') return;
+    item.dataset.cdEditing = '1';
+    const bodyEl = item.querySelector('[data-cd-reply-body]');
+    const current = bodyEl ? bodyEl.textContent : '';
+    if (bodyEl) {
+      bodyEl.outerHTML = `
+        <textarea class="cd-round-reply-input" data-cd-edit-target="${esc(replyId)}" rows="3">${esc(current)}</textarea>
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          <button type="button" class="cd-round-reply-send-btn" data-cd-reply-id="${esc(replyId)}" data-cd-vhid="${esc(vhid)}" onclick="cdSaveEditRoundReply(this)">保存</button>
+          <button type="button" class="cd-round-reply-btn" data-cd-vhid="${esc(vhid)}" onclick="_cdRefreshReplyThreadForVhid('${esc(vhid)}')">キャンセル</button>
+        </div>`;
+    }
+  } catch (e) { console.warn('[cdStartEditRoundReply] failed', e); }
+};
+
+// 編集モードの保存。
+window.cdSaveEditRoundReply = async function(btn) {
+  try {
+    const replyId = btn?.dataset?.cdReplyId;
+    const vhid    = btn?.dataset?.cdVhid;
+    if (!replyId || !vhid) return;
+    const item = document.querySelector(
+      `#cd-round-left .cd-round-reply-thread[data-cd-vhid="${vhid}"] .cd-round-reply-item[data-cd-reply-id="${replyId}"]`
+    );
+    const ta = item?.querySelector(`textarea[data-cd-edit-target="${replyId}"]`);
+    const body = (ta?.value || '').trim();
+    if (!body) {
+      if (typeof showToast === 'function') showToast('本文を入力してください', 'warn');
+      return;
+    }
+    if (body.length > 4000) {
+      if (typeof showToast === 'function') showToast('返信が長すぎます（4000字以内）', 'warn');
+      return;
+    }
+    btn.disabled = true;
+    const res = await apiFetch(`${API}/round-replies/${replyId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error || `HTTP ${res.status}`);
+    }
+    const updated = await res.json();
+    const arr = _cdRoundRepliesByVhid[vhid] || [];
+    const idx = arr.findIndex(r => r.id === replyId);
+    if (idx >= 0) arr[idx] = updated;
+    _cdRefreshReplyThreadForVhid(vhid);
+    if (typeof showToast === 'function') showToast('返信を更新しました', 'success');
+  } catch (e) {
+    console.error('[cdSaveEditRoundReply] failed', e);
+    if (typeof showToast === 'function') showToast(`更新に失敗: ${e?.message || e}`, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
+// 論理削除。確認ダイアログのあと DELETE → スレッド再描画。
+window.cdDeleteRoundReply = async function(btn) {
+  try {
+    const replyId = btn?.dataset?.cdReplyId;
+    const vhid    = btn?.dataset?.cdVhid;
+    if (!replyId || !vhid) return;
+    if (!confirm('この返信を削除しますか？（取り消せません）')) return;
+    btn.disabled = true;
+    const res = await apiFetch(`${API}/round-replies/${replyId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error || `HTTP ${res.status}`);
+    }
+    const arr = _cdRoundRepliesByVhid[vhid] || [];
+    _cdRoundRepliesByVhid[vhid] = arr.filter(r => r.id !== replyId);
+    _cdRefreshReplyThreadForVhid(vhid);
+    if (typeof showToast === 'function') showToast('返信を削除しました', 'success');
+  } catch (e) {
+    console.error('[cdDeleteRoundReply] failed', e);
+    if (typeof showToast === 'function') showToast(`削除に失敗: ${e?.message || e}`, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
 
 // ============================================================
 // 提出時メモ後編集ハンドラ (バグ報告 #baed5d71)
@@ -28961,6 +29273,20 @@ async function openCreativeDetail(id) {
   const _roundsP = cdLoadRounds(id)
     .catch(e => console.warn('[cdLoadRounds]', e))
     .finally(_cdBumpExtras);
+  // スレッド返信は描画ブロッキングしない（_cdRoundRepliesByVhid が空でもページHTMLは出る）。
+  // 取得完了したら現在表示中のスレッド DOM があれば差し替えるが、無くても次回再描画で反映される。
+  cdLoadRoundReplies(id)
+    .then(() => {
+      // 既に左カラムが描画済みなら、各スレッド DOM を差し替えて即時反映する。
+      try {
+        const threads = document.querySelectorAll('#cd-round-left .cd-round-reply-thread[data-cd-vhid]');
+        threads.forEach(t => {
+          const vhid = t.getAttribute('data-cd-vhid');
+          if (vhid) _cdRefreshReplyThreadForVhid(vhid);
+        });
+      } catch (_) {}
+    })
+    .catch(e => console.warn('[cdLoadRoundReplies]', e));
   const _visibilityP = applyCreativeDetailFieldVisibility(
     c.category_id || c.projects?.primary_category_id || null, id
   )
