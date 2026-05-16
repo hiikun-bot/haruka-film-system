@@ -13369,6 +13369,11 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         : (submitTarget === 'producer')
           ? projectProducerId
           : null; // client は user_id 無し
+      // submit ページの返信スレッド親キーは、可能なら creative_version_history.id を採用する
+      // （source='version'）。historyRow が引けない古いデータは transition フォールバック。
+      const submitParent = historyRow?.id
+        ? { source: 'version',    source_id: historyRow.id }
+        : { source: 'transition', source_id: tr.id };
       items.push({
         kind:        'submit',
         comment:     editorComment || '',
@@ -13382,8 +13387,8 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         version_history_id: historyRow?.id || null,
         round_stage:        historyRow?.round_stage || stageOfSubmit,
         recorded_by:        historyRow?.recorded_by || null,
-        source:      'transition',
-        source_id:   tr.id,
+        source:      submitParent.source,
+        source_id:   submitParent.source_id,
       });
       continue;
     }
@@ -13800,20 +13805,26 @@ router.patch('/creatives/:creativeId/versions/:versionId', requireAuth, async (r
 });
 
 // ==================== 「前回」セクション スレッド返信 (creative_round_replies) ====================
-// PR #644 で creative_round_replies テーブルを追加済み。
-//   - version_history_id にぶら下がるスレッド形式の返信
-//   - body / author_user_id / 論理削除 (deleted_at)
-//   - updated_at は trigger で自動更新
+// PR #644 で creative_round_replies テーブルを追加、PR #(this) で親キーを
+// 汎用化（source + source_id）に変更。理由:
+//   旧 schema は version_history_id (FK → creative_version_history) を NOT NULL で持っていたが、
+//   修正依頼 (kind='revise') / ライブ修正 (kind='live') は creative_version_history に行を持たず、
+//   返信ボタンが出ないバグが PR #645 で発覚した。
+// 親キー仕様:
+//   - source='version'    : source_id = creative_version_history.id (uuid)
+//   - source='transition' : source_id = creative_status_transitions.id (uuid)
+//   - source='live'       : source_id = `live-<creativeId>` (擬似キー / 「制作中ライブ修正依頼」)
 // 認可:
 //   POST  : ログイン必須。author_user_id は req.user.id を強制。
 //   PATCH : 自分の reply のみ、または admin。deleted_at IS NULL のみ。
 //   DELETE: 自分の reply のみ、または admin。論理削除。
 // N+1 回避のため GET は author を JOIN で一発取得する。
 const _CD_REPLY_AUTHOR_SELECT = 'author:author_user_id(id, full_name, nickname, role, avatar_url)';
-const _CD_REPLY_BASE_COLS = 'id, creative_id, version_history_id, body, author_user_id, created_at, updated_at';
+const _CD_REPLY_BASE_COLS = 'id, creative_id, source, source_id, body, author_user_id, created_at, updated_at';
+const _CD_REPLY_SOURCES = new Set(['version', 'transition', 'live']);
 
 // 指定 creative の全 reply (論理削除を除く) を時系列で返す。
-// モーダル open 時に 1 回呼んで、フロント側で version_history_id ごとに分配する。
+// モーダル open 時に 1 回呼んで、フロント側で (source, source_id) ごとに分配する。
 router.get('/creatives/:creativeId/round-replies', requireAuth, async (req, res) => {
   const { creativeId } = req.params;
   if (!creativeId) return res.status(400).json({ error: 'creativeId は必須です' });
@@ -13827,10 +13838,19 @@ router.get('/creatives/:creativeId/round-replies', requireAuth, async (req, res)
   res.json(Array.isArray(data) ? data : []);
 });
 
-// 1件追加。version_history_id が当該 creative に属するかをサーバ側で必ず確認する。
-router.post('/creatives/:creativeId/versions/:versionHistoryId/round-replies', requireAuth, async (req, res) => {
-  const { creativeId, versionHistoryId } = req.params;
-  const bodyRaw = req.body?.body;
+// 1件追加。source/source_id が当該 creative に属するかをサーバ側で必ず確認する。
+router.post('/creatives/:creativeId/round-replies', requireAuth, async (req, res) => {
+  const { creativeId } = req.params;
+  if (!creativeId) return res.status(400).json({ error: 'creativeId は必須です' });
+  const source   = req.body?.source;
+  const sourceId = req.body?.source_id;
+  const bodyRaw  = req.body?.body;
+  if (typeof source !== 'string' || !_CD_REPLY_SOURCES.has(source)) {
+    return res.status(400).json({ error: 'source は version|transition|live のいずれか' });
+  }
+  if (typeof sourceId !== 'string' || sourceId.length < 1 || sourceId.length > 128) {
+    return res.status(400).json({ error: 'source_id（1〜128字の文字列）は必須です' });
+  }
   if (typeof bodyRaw !== 'string') {
     return res.status(400).json({ error: 'body（文字列）は必須です' });
   }
@@ -13838,21 +13858,37 @@ router.post('/creatives/:creativeId/versions/:versionHistoryId/round-replies', r
   if (!body) return res.status(400).json({ error: 'body は空にできません' });
   if (body.length > 4000) return res.status(400).json({ error: 'body が長すぎます（4000字以内）' });
 
-  // version_history_id が当該 creative に属することを検証
-  const { data: vRow, error: vErr } = await supabase
-    .from('creative_version_history')
-    .select('id, creative_id')
-    .eq('id', versionHistoryId)
-    .eq('creative_id', creativeId)
-    .maybeSingle();
-  if (vErr) return res.status(500).json({ error: vErr.message });
-  if (!vRow) return res.status(404).json({ error: 'バージョンが見つかりません' });
+  // 親存在チェック (creative_id と整合)
+  if (source === 'version') {
+    const { data: vRow, error: vErr } = await supabase
+      .from('creative_version_history')
+      .select('id, creative_id')
+      .eq('id', sourceId)
+      .eq('creative_id', creativeId)
+      .maybeSingle();
+    if (vErr) return res.status(500).json({ error: vErr.message });
+    if (!vRow) return res.status(404).json({ error: 'バージョンが見つかりません' });
+  } else if (source === 'transition') {
+    const { data: tRow, error: tErr } = await supabase
+      .from('creative_status_transitions')
+      .select('id, creative_id')
+      .eq('id', sourceId)
+      .eq('creative_id', creativeId)
+      .maybeSingle();
+    if (tErr) return res.status(500).json({ error: tErr.message });
+    if (!tRow) return res.status(404).json({ error: '対象の遷移が見つかりません' });
+  } else if (source === 'live') {
+    if (sourceId !== `live-${creativeId}`) {
+      return res.status(400).json({ error: 'source_id は live-<creativeId> 形式である必要があります' });
+    }
+  }
 
   const { data, error } = await supabase
     .from('creative_round_replies')
     .insert({
       creative_id: creativeId,
-      version_history_id: versionHistoryId,
+      source,
+      source_id: sourceId,
       body,
       author_user_id: req.user?.id || null,
     })
