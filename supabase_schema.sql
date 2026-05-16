@@ -2376,23 +2376,27 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
 ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
 -- ==================== creative_round_replies ====================
--- 「前回」セクション各メッセージへのスレッド形式返信。
--- 親メッセージは creative_version_history の 1 行を指す。編集・論理削除可。
--- migration: migrations/2026-05-16_creative_round_replies.sql
+-- 「前回」セクション各メッセージへのスレッド形式返信。編集・論理削除可。
+-- 親メッセージは (source, source_id) の汎用キーで識別:
+--   'version'    → creative_version_history.id
+--   'transition' → creative_status_transitions.id (修正依頼など)
+--   'live'       → `live-<creative_id>` (制作中ライブ修正依頼、DB 行なし合成 ID)
+-- migrations: 2026-05-16_creative_round_replies.sql → 2026-05-16b_creative_round_replies_parent_source.sql
 CREATE TABLE IF NOT EXISTS creative_round_replies (
-  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  creative_id        uuid NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
-  version_history_id uuid NOT NULL REFERENCES creative_version_history(id) ON DELETE CASCADE,
-  body               text NOT NULL CHECK (length(body) > 0 AND length(body) <= 4000),
-  author_user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
-  created_at         timestamptz NOT NULL DEFAULT now(),
-  updated_at         timestamptz NOT NULL DEFAULT now(),
-  deleted_at         timestamptz
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id    uuid NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  source         text NOT NULL CHECK (source IN ('version', 'transition', 'live')),
+  source_id      text NOT NULL CHECK (length(source_id) > 0 AND length(source_id) <= 128),
+  body           text NOT NULL CHECK (length(body) > 0 AND length(body) <= 4000),
+  author_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  deleted_at     timestamptz
 );
 COMMENT ON TABLE creative_round_replies IS
-  'クリエイティブ詳細モーダル「前回」セクション各メッセージへのスレッド返信。親は creative_version_history.id。';
-CREATE INDEX IF NOT EXISTS idx_crr_vhid_created
-  ON creative_round_replies(version_history_id, created_at)
+  'クリエイティブ詳細モーダル「前回」セクション各メッセージへのスレッド返信。親は (source, source_id) で識別: version=creative_version_history.id / transition=creative_status_transitions.id / live=合成 ID。';
+CREATE INDEX IF NOT EXISTS idx_crr_parent_created
+  ON creative_round_replies(source, source_id, created_at)
   WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_crr_creative_created
   ON creative_round_replies(creative_id, created_at)
