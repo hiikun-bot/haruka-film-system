@@ -557,6 +557,104 @@ router.get('/projects/tag-suggestions', async (req, res) => {
   res.json(list);
 });
 
+// GET /api/projects/schedule-overview  全案件マイルストーンガント用集計（L2）
+// 各案件の id, name, primary_category_id, scheduled_start_date, milestones[], min/max date
+// query: status (default 'in_progress'), category (csv, code)
+// NOTE: /projects/:id より前に定義しないと :id にマッチして UUID パースエラーになる
+router.get('/projects/schedule-overview', requireAuth, async (req, res) => {
+  const statusParam = (req.query.status || 'in_progress').toString();
+  let projQuery = supabase
+    .from('projects')
+    .select('id, name, status, client_id, primary_category_id, scheduled_start_date, active_phase_template_id, is_hidden')
+    .eq('is_hidden', false);
+  if (statusParam !== 'all') {
+    projQuery = projQuery.eq('status', '進行中');
+  }
+  const { data: projects, error: projErr } = await projQuery;
+  if (projErr) {
+    if (/column .+ does not exist/i.test(projErr.message || '')) {
+      console.warn('[schedule-overview] projects 列未適用:', projErr.message);
+      return res.json([]);
+    }
+    return res.status(500).json({ error: projErr.message });
+  }
+
+  let projs = projects || [];
+
+  const categoryParam = req.query.category;
+  if (categoryParam) {
+    const codes = String(categoryParam).split(',').map(s => s.trim()).filter(Boolean);
+    if (codes.length) {
+      const { data: cats } = await supabase
+        .from('creative_categories')
+        .select('id, code')
+        .in('code', codes);
+      const allowedIds = new Set((cats || []).map(c => c.id));
+      projs = projs.filter(p => allowedIds.has(p.primary_category_id));
+    }
+  }
+
+  if (projs.length === 0) return res.json([]);
+
+  // 全案件のタスクを 1 クエリで取得（N+1 解消）
+  const projectIds = projs.map(p => p.id);
+  const { data: tasks, error: tasksErr } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, title, current_end_date, original_end_date, start_date, is_milestone, is_done, sort_order')
+    .in('project_id', projectIds)
+    .order('sort_order', { ascending: true });
+  if (tasksErr) {
+    if (isMissingTasksTable(tasksErr)) {
+      return res.json(projs.map(p => ({ ...p, milestones: [], min_date: null, max_date: null, task_count: 0 })));
+    }
+    return res.status(500).json({ error: tasksErr.message });
+  }
+
+  const byProject = new Map();
+  (tasks || []).forEach(t => {
+    if (!byProject.has(t.project_id)) byProject.set(t.project_id, []);
+    byProject.get(t.project_id).push(t);
+  });
+
+  const out = projs.map(p => {
+    const ts = byProject.get(p.id) || [];
+    const milestones = ts
+      .filter(t => t.is_milestone && t.current_end_date)
+      .map(t => ({
+        id: t.id,
+        title: t.title,
+        current_end_date: t.current_end_date,
+        original_end_date: t.original_end_date,
+        is_done: t.is_done,
+      }))
+      .sort((a, b) => String(a.current_end_date).localeCompare(String(b.current_end_date)));
+
+    const dates = [];
+    ts.forEach(t => {
+      if (t.start_date) dates.push(t.start_date);
+      if (t.current_end_date) dates.push(t.current_end_date);
+    });
+    if (p.scheduled_start_date) dates.push(p.scheduled_start_date);
+    dates.sort();
+    const minDate = dates[0] || null;
+    const maxDate = dates[dates.length - 1] || null;
+
+    return {
+      id: p.id,
+      name: p.name,
+      status: p.status,
+      primary_category_id: p.primary_category_id,
+      scheduled_start_date: p.scheduled_start_date,
+      milestones,
+      min_date: minDate,
+      max_date: maxDate,
+      task_count: ts.length,
+    };
+  });
+
+  res.json(out);
+});
+
 // 案件詳細取得
 //
 // ADR 002 後: project_rates(*) / director_rates(*) を embed していた箇所は
@@ -2979,103 +3077,6 @@ router.post('/projects/:project_id/tasks/seed-from-template', requireAuth, requi
   }
 
   res.status(201).json({ ok: true, inserted_count: rows.length, template_id: templateId, replaced: force && (existingCount || 0) > 0 });
-});
-
-// GET /api/projects/schedule-overview  全案件マイルストーンガント用集計（L2）
-// 各案件の id, name, primary_category_id, scheduled_start_date, milestones[], min/max date
-// query: status (default 'in_progress'), category (csv, code)
-router.get('/projects/schedule-overview', requireAuth, async (req, res) => {
-  const statusParam = (req.query.status || 'in_progress').toString();
-  let projQuery = supabase
-    .from('projects')
-    .select('id, name, status, client_id, primary_category_id, scheduled_start_date, active_phase_template_id, is_hidden')
-    .eq('is_hidden', false);
-  if (statusParam !== 'all') {
-    projQuery = projQuery.eq('status', '進行中');
-  }
-  const { data: projects, error: projErr } = await projQuery;
-  if (projErr) {
-    if (/column .+ does not exist/i.test(projErr.message || '')) {
-      console.warn('[schedule-overview] projects 列未適用:', projErr.message);
-      return res.json([]);
-    }
-    return res.status(500).json({ error: projErr.message });
-  }
-
-  let projs = projects || [];
-
-  const categoryParam = req.query.category;
-  if (categoryParam) {
-    const codes = String(categoryParam).split(',').map(s => s.trim()).filter(Boolean);
-    if (codes.length) {
-      const { data: cats } = await supabase
-        .from('creative_categories')
-        .select('id, code')
-        .in('code', codes);
-      const allowedIds = new Set((cats || []).map(c => c.id));
-      projs = projs.filter(p => allowedIds.has(p.primary_category_id));
-    }
-  }
-
-  if (projs.length === 0) return res.json([]);
-
-  // 全案件のタスクを 1 クエリで取得（N+1 解消）
-  const projectIds = projs.map(p => p.id);
-  const { data: tasks, error: tasksErr } = await supabase
-    .from('project_tasks')
-    .select('id, project_id, title, current_end_date, original_end_date, start_date, is_milestone, is_done, sort_order')
-    .in('project_id', projectIds)
-    .order('sort_order', { ascending: true });
-  if (tasksErr) {
-    if (isMissingTasksTable(tasksErr)) {
-      return res.json(projs.map(p => ({ ...p, milestones: [], min_date: null, max_date: null, task_count: 0 })));
-    }
-    return res.status(500).json({ error: tasksErr.message });
-  }
-
-  const byProject = new Map();
-  (tasks || []).forEach(t => {
-    if (!byProject.has(t.project_id)) byProject.set(t.project_id, []);
-    byProject.get(t.project_id).push(t);
-  });
-
-  const out = projs.map(p => {
-    const ts = byProject.get(p.id) || [];
-    const milestones = ts
-      .filter(t => t.is_milestone && t.current_end_date)
-      .map(t => ({
-        id: t.id,
-        title: t.title,
-        current_end_date: t.current_end_date,
-        original_end_date: t.original_end_date,
-        is_done: t.is_done,
-      }))
-      .sort((a, b) => String(a.current_end_date).localeCompare(String(b.current_end_date)));
-
-    const dates = [];
-    ts.forEach(t => {
-      if (t.start_date) dates.push(t.start_date);
-      if (t.current_end_date) dates.push(t.current_end_date);
-    });
-    if (p.scheduled_start_date) dates.push(p.scheduled_start_date);
-    dates.sort();
-    const minDate = dates[0] || null;
-    const maxDate = dates[dates.length - 1] || null;
-
-    return {
-      id: p.id,
-      name: p.name,
-      status: p.status,
-      primary_category_id: p.primary_category_id,
-      scheduled_start_date: p.scheduled_start_date,
-      milestones,
-      min_date: minDate,
-      max_date: maxDate,
-      task_count: ts.length,
-    };
-  });
-
-  res.json(out);
 });
 
 // ==================== 案件スケジュール Phase 2 — ダッシュボード / マイタスク ====================
