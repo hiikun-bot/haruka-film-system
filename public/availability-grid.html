@@ -168,11 +168,15 @@
     <button id="btn-today">今日に戻る</button>
   </div>
   <div class="right-buttons">
-    <button id="btn-sync" class="primary">🔄 自分のGCalを再同期</button>
-    <button id="btn-debug-events" class="outline" title="GCal から実際に取得できているイベントを表示">🔍 取得イベント確認</button>
+    <button id="btn-connect" class="primary" style="display:none;">📅 Googleカレンダーを接続</button>
+    <button id="btn-sync" class="primary" style="display:none;">🔄 自分のGCalを再同期</button>
+    <button id="btn-debug-events" class="outline" title="GCal から実際に取得できているイベントを表示" style="display:none;">🔍 取得イベント確認</button>
+    <button id="btn-disconnect" class="outline" title="Google Calendar 連携を切断" style="display:none;">⚙ 切断</button>
     <a href="/availability-setup.html" class="outline" style="text-decoration:none; display:inline-flex; align-items:center;">基本稼働時間 設定</a>
   </div>
 </div>
+
+<div id="gcal-connection-info" style="display:none; font-size:0.82em; color:var(--text-muted); margin:0.2em 0 0.6em;"></div>
 
 <!-- GCal デバッグモーダル -->
 <div id="gcal-debug-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:80"></div>
@@ -300,7 +304,53 @@ const state = {
   me: null,                       // /auth/me の結果
   activeTeamIds: new Set(),       // 表示する team.id（チップが ON のもの）
   defaultsApplied: false,         // ロール別デフォルト適用済みか
+  gcalConnection: null,           // { connected, account_email, last_synced_at, last_error }
 };
+
+async function fetchConnectionStatus() {
+  try {
+    const r = await apiFetch('/api/auth/google-calendar/connection-status');
+    if (r.ok) state.gcalConnection = r.body || null;
+  } catch (_) {}
+}
+
+function fmtJstDateTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (_) { return ''; }
+}
+
+function applyGcalConnectionUI() {
+  const conn = state.gcalConnection || { connected: false };
+  const btnConnect = document.getElementById('btn-connect');
+  const btnSync = document.getElementById('btn-sync');
+  const btnDebug = document.getElementById('btn-debug-events');
+  const btnDisconnect = document.getElementById('btn-disconnect');
+  const info = document.getElementById('gcal-connection-info');
+  if (conn.connected) {
+    if (btnConnect) btnConnect.style.display = 'none';
+    if (btnSync) btnSync.style.display = '';
+    if (btnDebug) btnDebug.style.display = '';
+    if (btnDisconnect) btnDisconnect.style.display = '';
+    if (info) {
+      const email = conn.account_email ? String(conn.account_email) : '(不明)';
+      const synced = fmtJstDateTime(conn.last_synced_at);
+      const parts = [`接続中: ${email}`];
+      if (synced) parts.push(`最終同期: ${synced}`);
+      info.textContent = parts.join(' ／ ');
+      info.style.display = '';
+    }
+  } else {
+    if (btnConnect) btnConnect.style.display = '';
+    if (btnSync) btnSync.style.display = 'none';
+    if (btnDebug) btnDebug.style.display = 'none';
+    if (btnDisconnect) btnDisconnect.style.display = 'none';
+    if (info) { info.textContent = ''; info.style.display = 'none'; }
+  }
+}
 
 // 全チームを表示扱いにする role
 const FULL_VIEW_ROLES = new Set(['admin', 'secretary', 'producer', 'producer_director']);
@@ -1027,6 +1077,32 @@ document.getElementById('btn-prev').addEventListener('click', () => { shiftRange
 document.getElementById('btn-next').addEventListener('click', () => { shiftRange(28); load(); });
 document.getElementById('btn-today').addEventListener('click', () => { const r = defaultRange(); state.from = r.from; state.to = r.to; load(); });
 
+document.getElementById('btn-connect').addEventListener('click', () => {
+  window.location.href = '/api/auth/google-calendar/start';
+});
+
+document.getElementById('btn-disconnect').addEventListener('click', async () => {
+  if (!confirm('Google Calendar 連携を切断しますか？')) return;
+  const btn = document.getElementById('btn-disconnect');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '切断中...';
+  try {
+    const r = await apiFetch('/api/auth/google-calendar/disconnect', { method: 'POST' });
+    if (!r.ok) {
+      alert('切断に失敗しました (' + r.status + '): ' + (r.body?.error || ''));
+      btn.disabled = false;
+      btn.textContent = orig;
+      return;
+    }
+    location.reload();
+  } catch (e) {
+    alert('切断に失敗しました: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+
 document.getElementById('btn-sync').addEventListener('click', async () => {
   const btn = document.getElementById('btn-sync');
   btn.disabled = true;
@@ -1153,7 +1229,8 @@ async function autoSyncSelfIfConnected() {
 }
 
 (async () => {
-  await fetchMe();
+  await Promise.all([fetchMe(), fetchConnectionStatus()]);
+  applyGcalConnectionUI();
   const r = defaultRange();
   state.from = r.from; state.to = r.to;
   await load();
