@@ -27724,11 +27724,10 @@ function _cdRenderPageHtml(page) {
          onclick="cdStartEditEditorComment(this)">✏️ 編集</button>`
     : '';
 
-  // クライアント/ディレクターからの修正依頼 (revise) コメントには「↩ 引用」ボタンを出し、
+  // 各ラウンドコメント（revise / approve_handoff / deliver / submit いずれも）に「↩ 引用」ボタンを出し、
   // 右カラム「連絡・確認事項」textarea に Markdown 引用ブロックで挿入できるようにする。
-  // 最新ラウンドの revise でのみ意味があるので、idx が末尾のページに限定する。
+  // 最新ラウンドのページでのみ意味があるので、idx が末尾のページに限定する。
   const canQuote = (() => {
-    if (page.kind !== 'revise') return false;
     if (!body) return false;
     const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
     if (!cache.length) return false;
