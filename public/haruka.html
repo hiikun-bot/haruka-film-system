@@ -6495,7 +6495,7 @@ window.showPage = window.showPage || function(name, btn) {
   border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s;
 }
 #cd-round-left .cd-round-quote-btn:hover{ background:var(--em-dark); color:#fff; }
-/* 「↩ 返信」ボタン: ぴょんカラー（ピンク系）で quote/edit と区別 */
+/* 「💬 補足」ボタン: 本文ボックスの右側に縦長で配置するためサイズ少し大きめ。ぴょんカラー（ピンク系）で quote/edit と区別 */
 #cd-round-left .cd-round-reply-btn{
   font-size:10.5px; line-height:1; color:#EC4899; background:#fff; border:0.5px solid #EC4899;
   border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s;
@@ -27735,22 +27735,33 @@ function _cdRenderPageHtml(page) {
          onclick="cdQuoteReviseComment(this)">↩ 引用</button>`
     : '';
 
-  // 全 kind で「↩ 返信」ボタンを出す。source/source_id が無いページ（idx しか無い系）は表示しない。
-  // PR #(this) で親キーを汎用化したため、revise / live にもボタンが出るようになった。
+  // 全 kind で「💬 補足」ボタンを出す。source/source_id が無いページ（idx しか無い系）は表示しない。
+  // 「返信」というよりはこのメッセージへの補足コメント追加に近い用途のためラベルは「補足」。
   const canReply = !!(page.source && page.source_id);
   const replyBtnHtml = canReply
     ? `<button type="button" class="cd-round-reply-btn"
          data-cd-source="${esc(page.source)}"
          data-cd-source-id="${esc(page.source_id)}"
-         title="このメッセージに返信する"
-         onclick="cdFocusReplyInput(this)">↩ 返信</button>`
+         title="このコメントに補足を追加する"
+         onclick="cdFocusReplyInput(this)">💬 補足</button>`
     : '';
 
-  const headerActions = [editBtnHtml, quoteBtnHtml, replyBtnHtml].filter(Boolean).join('');
+  // ヘッダー右側にはカード全体に対する操作（編集・引用）のみ並べる。
+  // 「返信」はカード本文への返信であることを視覚的に伝えるため、本文ボックスの右隣に配置する。
+  const headerActions = [editBtnHtml, quoteBtnHtml].filter(Boolean).join('');
 
   const bodyHtml = body
     ? `<div class="cd-round-text" data-cd-role="body" style="white-space:pre-wrap">${esc(body)}</div>`
     : `<div class="cd-round-text" data-cd-role="body" style="color:var(--text-muted);font-style:italic">（コメント本文はありません）</div>`;
+
+  // 本文ボックス + 右側の「↩ 返信」ボタンを横並びにする。
+  // 返信ボタンが無いページ (source 未解決) では本文だけ縦に出す。
+  const bodyRowHtml = replyBtnHtml
+    ? `<div class="cd-round-body-row" style="display:flex;gap:8px;align-items:flex-start;margin-top:4px">
+         <div style="flex:1;min-width:0">${bodyHtml}</div>
+         <div class="cd-round-body-aside" style="flex-shrink:0">${replyBtnHtml}</div>
+       </div>`
+    : bodyHtml;
 
   // スレッド（返信エリア）— source/source_id が解決できているページのみ描画
   const threadHtml = canReply
@@ -27764,7 +27775,7 @@ function _cdRenderPageHtml(page) {
       ${headerActions ? `<span style="margin-left:auto;display:flex;gap:6px">${headerActions}</span>` : ''}
     </div>
     ${fromToHtml ? `<div class="cd-round-fromto" style="margin:6px 0 8px">${fromToHtml}</div>` : ''}
-    ${bodyHtml}
+    ${bodyRowHtml}
     ${threadHtml}
   </div>`;
 }
@@ -27781,7 +27792,7 @@ function _cdRenderReplyThreadInner(source, sourceId) {
   const isAdmin = role === 'admin';
 
   const itemsHtml = replies.length === 0
-    ? `<div class="cd-round-reply-empty">まだ返信はありません</div>`
+    ? `<div class="cd-round-reply-empty">まだ補足はありません</div>`
     : replies.map(r => {
         // author は API JOIN 結果。allMembers にもフォールバックで引き当て可能。
         const author = r.author || _cdResolveUserById(r.author_user_id) || null;
@@ -27813,8 +27824,8 @@ function _cdRenderReplyThreadInner(source, sourceId) {
   // 入力欄（常時表示）
   const inputHtml = `
     <div class="cd-round-reply-input-row">
-      <textarea class="cd-round-reply-input" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" placeholder="返信を書く..." rows="2"></textarea>
-      <button type="button" class="cd-round-reply-send-btn" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdSubmitRoundReply(this)">💬 返信を送る</button>
+      <textarea class="cd-round-reply-input" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" placeholder="補足を書く..." rows="2"></textarea>
+      <button type="button" class="cd-round-reply-send-btn" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdSubmitRoundReply(this)">💬 補足を送る</button>
     </div>`;
 
   return `${itemsHtml}${inputHtml}`;
@@ -27935,11 +27946,11 @@ window.cdSubmitRoundReply = async function(btn) {
     const ta = thread?.querySelector('.cd-round-reply-input');
     const body = (ta?.value || '').trim();
     if (!body) {
-      if (typeof showToast === 'function') showToast('返信内容を入力してください', 'warn');
+      if (typeof showToast === 'function') showToast('補足内容を入力してください', 'warn');
       return;
     }
     if (body.length > 4000) {
-      if (typeof showToast === 'function') showToast('返信が長すぎます（4000字以内）', 'warn');
+      if (typeof showToast === 'function') showToast('補足が長すぎます（4000字以内）', 'warn');
       return;
     }
     btn.disabled = true;
@@ -27957,10 +27968,10 @@ window.cdSubmitRoundReply = async function(btn) {
     (_cdRoundRepliesByParent[key] ||= []).push(created);
     if (ta) ta.value = '';
     _cdRefreshReplyThreadForParent(source, sourceId);
-    if (typeof showToast === 'function') showToast('返信を投稿しました', 'success');
+    if (typeof showToast === 'function') showToast('補足を投稿しました', 'success');
   } catch (e) {
     console.error('[cdSubmitRoundReply] failed', e);
-    if (typeof showToast === 'function') showToast(`返信送信に失敗: ${e?.message || e}`, 'error');
+    if (typeof showToast === 'function') showToast(`補足の送信に失敗: ${e?.message || e}`, 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -28009,7 +28020,7 @@ window.cdSaveEditRoundReply = async function(btn) {
       return;
     }
     if (body.length > 4000) {
-      if (typeof showToast === 'function') showToast('返信が長すぎます（4000字以内）', 'warn');
+      if (typeof showToast === 'function') showToast('補足が長すぎます（4000字以内）', 'warn');
       return;
     }
     btn.disabled = true;
@@ -28028,7 +28039,7 @@ window.cdSaveEditRoundReply = async function(btn) {
     const idx = arr.findIndex(r => r.id === replyId);
     if (idx >= 0) arr[idx] = updated;
     _cdRefreshReplyThreadForParent(source, sourceId);
-    if (typeof showToast === 'function') showToast('返信を更新しました', 'success');
+    if (typeof showToast === 'function') showToast('補足を更新しました', 'success');
   } catch (e) {
     console.error('[cdSaveEditRoundReply] failed', e);
     if (typeof showToast === 'function') showToast(`更新に失敗: ${e?.message || e}`, 'error');
@@ -28044,7 +28055,7 @@ window.cdDeleteRoundReply = async function(btn) {
     const source   = btn?.dataset?.cdSource;
     const sourceId = btn?.dataset?.cdSourceId;
     if (!replyId || !source || !sourceId) return;
-    if (!confirm('この返信を削除しますか？（取り消せません）')) return;
+    if (!confirm('この補足を削除しますか？（取り消せません）')) return;
     btn.disabled = true;
     const res = await apiFetch(`${API}/round-replies/${replyId}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -28055,7 +28066,7 @@ window.cdDeleteRoundReply = async function(btn) {
     const arr = _cdRoundRepliesByParent[key] || [];
     _cdRoundRepliesByParent[key] = arr.filter(r => r.id !== replyId);
     _cdRefreshReplyThreadForParent(source, sourceId);
-    if (typeof showToast === 'function') showToast('返信を削除しました', 'success');
+    if (typeof showToast === 'function') showToast('補足を削除しました', 'success');
   } catch (e) {
     console.error('[cdDeleteRoundReply] failed', e);
     if (typeof showToast === 'function') showToast(`削除に失敗: ${e?.message || e}`, 'error');
