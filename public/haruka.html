@@ -27842,7 +27842,9 @@ function _cdRenderReplyThreadInner(source, sourceId) {
 // 修正依頼カードの「↩ 引用」ボタンから呼ばれる。
 // 右カラムの返信先 textarea に Markdown 引用ブロック (> ...) でコメントを挿入し、
 // その下にカーソルを置いた状態でフォーカスする。
-// 返信先の優先順位: 表示中の cd-editor-reply > 表示中の cd-comment-field > いずれかが存在するもの。
+// 返信先の優先順位: 表示中の cd-director-note (CL/D/P チェック側コメント欄)
+//                  > cd-editor-reply (再提出時の編集者→ディレクター連絡事項)
+//                  > cd-comment-field (初稿提出時の編集者メモ) > いずれかが存在するもの。
 window.cdQuoteReviseComment = function(btn) {
   try {
     const comment  = btn?.dataset?.cdComment  || '';
@@ -27850,7 +27852,7 @@ window.cdQuoteReviseComment = function(btn) {
     const fromRole = btn?.dataset?.cdFrom     || '';
 
     // 表示中の入力先を優先して選ぶ
-    const ids = ['cd-editor-reply', 'cd-comment-field'];
+    const ids = ['cd-director-note', 'cd-editor-reply', 'cd-comment-field'];
     let ta = null;
     for (const id of ids) {
       const el = document.getElementById(id);
