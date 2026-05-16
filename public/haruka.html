@@ -6488,13 +6488,13 @@ window.showPage = window.showPage || function(name, btn) {
   border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s, border-color .15s;
 }
 #cd-round-left .cd-round-edit-btn:hover{ background:var(--em-pale); color:var(--em-dark); border-color:var(--border); }
-/* クライアント/ディレクターからの修正依頼コメントに対する返信引用ボタン。
+/* 修正依頼コメントの引用挿入ボタン（連絡・確認事項欄に Markdown 引用ブロックで貼り付ける）。
    編集ボタンと並べても識別できるようティール枠線で常時アウトライン表示する。 */
-#cd-round-left .cd-round-reply-btn{
+#cd-round-left .cd-round-quote-btn{
   font-size:10.5px; line-height:1; color:var(--em-dark); background:#fff; border:0.5px solid var(--em-dark);
   border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; transition: background .15s, color .15s;
 }
-#cd-round-left .cd-round-reply-btn:hover{ background:var(--em-dark); color:#fff; }
+#cd-round-left .cd-round-quote-btn:hover{ background:var(--em-dark); color:#fff; }
 #cd-round-left .cd-round-edited-mark{
   margin-left:6px; font-size:10px; font-weight:500; color:var(--text-muted); letter-spacing:0; text-transform:none;
 }
@@ -27605,10 +27605,10 @@ function _cdRenderPageHtml(page) {
          onclick="cdStartEditEditorComment(this)">✏️ 編集</button>`
     : '';
 
-  // クライアント/ディレクターからの修正依頼 (revise) コメントには「↩ 返信」ボタンを出し、
+  // クライアント/ディレクターからの修正依頼 (revise) コメントには「↩ 引用」ボタンを出し、
   // 右カラム「連絡・確認事項」textarea に Markdown 引用ブロックで挿入できるようにする。
   // 最新ラウンドの revise でのみ意味があるので、idx が末尾のページに限定する。
-  const canReply = (() => {
+  const canQuote = (() => {
     if (page.kind !== 'revise') return false;
     if (!body) return false;
     const cache = Array.isArray(_cdRoundsCache) ? _cdRoundsCache : [];
@@ -27616,16 +27616,16 @@ function _cdRenderPageHtml(page) {
     const lastIdx = cache.length - 1;
     return typeof page.idx === 'number' && page.idx === lastIdx;
   })();
-  const replyBtnHtml = canReply
-    ? `<button type="button" class="cd-round-reply-btn"
+  const quoteBtnHtml = canQuote
+    ? `<button type="button" class="cd-round-quote-btn"
          data-cd-comment="${esc(page.comment || '')}"
          data-cd-occurred="${esc(page.occurred_at || '')}"
          data-cd-from="${esc(_CD_ROLE_LABEL[page.from_role] || '')}"
-         title="このコメントを引用して連絡・確認事項欄に返信を書く"
-         onclick="cdReplyToReviseComment(this)">↩ 返信</button>`
+         title="このコメントを連絡・確認事項欄に引用挿入する"
+         onclick="cdQuoteReviseComment(this)">↩ 引用</button>`
     : '';
 
-  const headerActions = [editBtnHtml, replyBtnHtml].filter(Boolean).join('');
+  const headerActions = [editBtnHtml, quoteBtnHtml].filter(Boolean).join('');
 
   const bodyHtml = body
     ? `<div class="cd-round-text" data-cd-role="body" style="white-space:pre-wrap">${esc(body)}</div>`
@@ -27642,11 +27642,11 @@ function _cdRenderPageHtml(page) {
   </div>`;
 }
 
-// 修正依頼カードの「↩ 返信」ボタンから呼ばれる。
+// 修正依頼カードの「↩ 引用」ボタンから呼ばれる。
 // 右カラムの返信先 textarea に Markdown 引用ブロック (> ...) でコメントを挿入し、
 // その下にカーソルを置いた状態でフォーカスする。
 // 返信先の優先順位: 表示中の cd-editor-reply > 表示中の cd-comment-field > いずれかが存在するもの。
-window.cdReplyToReviseComment = function(btn) {
+window.cdQuoteReviseComment = function(btn) {
   try {
     const comment  = btn?.dataset?.cdComment  || '';
     const occurred = btn?.dataset?.cdOccurred || '';
@@ -27710,12 +27710,14 @@ window.cdReplyToReviseComment = function(btn) {
 
     ta.focus();
     ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (typeof showToast === 'function') showToast('引用を返信欄に挿入しました', 'success');
+    if (typeof showToast === 'function') showToast('引用を挿入しました', 'success');
   } catch (e) {
-    console.error('[cdReplyToReviseComment] failed', e);
-    if (typeof showToast === 'function') showToast('返信の挿入に失敗しました', 'warn');
+    console.error('[cdQuoteReviseComment] failed', e);
+    if (typeof showToast === 'function') showToast('引用の挿入に失敗しました', 'warn');
   }
 };
+// 後方互換: 旧名から呼ばれても動くようにエイリアスを残す。
+window.cdReplyToReviseComment = window.cdQuoteReviseComment;
 
 // ============================================================
 // 提出時メモ後編集ハンドラ (バグ報告 #baed5d71)
