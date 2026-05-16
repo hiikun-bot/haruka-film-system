@@ -7676,16 +7676,12 @@ window.showPage = window.showPage || function(name, btn) {
         <div id="cd-edit-history-list" style="display:flex;flex-direction:column;gap:8px"></div>
       </div>
 
-    </div>
-
-    <!-- フッター（固定）
-         上段: クライアント確認URL（ADR 012: data-field-key="client_review_url" でカテゴリ別可視性に追随）
-         下段: アクションボタン群（下書き保存 / 閉じる / 修正依頼 / 各種ステータス遷移） -->
-    <div style="border-top:1px solid var(--border);flex-shrink:0;background:var(--white);display:flex;flex-direction:column">
-      <!-- クライアント確認URL（旧ヘッダー位置から移設） -->
-      <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin:0;padding:10px 24px 8px;border-bottom:1px dashed var(--border-light)">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-          <span style="color:var(--text-muted);white-space:nowrap;font-size:12px"><span class="cd-field-label-text">🔗 クライアント確認URL</span></span>
+      <!-- クライアント確認URL（明細最下段に配置）
+           固定フッターに置くと常時占有してもったいないので、スクロール領域の最後に表示する。
+           ステータス可視性（D/P/CL確認・CL後修正のみ表示）は #cd-client-review-group.style.display で既存ロジックがそのまま効く。 -->
+      <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-top:24px;padding-top:18px;border-top:1px dashed var(--border);margin-bottom:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="color:var(--text-muted);white-space:nowrap;font-size:12.5px;font-weight:600"><span class="cd-field-label-text">🔗 クライアント確認URL</span></span>
           <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600">🔗 自動共有済み</span>
           <span style="cursor:help;color:var(--text-muted);font-size:13px" title="「クライアントチェック中」に進めた瞬間、Drive 上のファイルが自動で「リンクを知っている人なら閲覧可」に設定され、URL がここにセットされます。手動入力済みのURLは上書きされません。">ⓘ</span>
           <!-- form-label 互換: applyCreativeDetailFieldVisibility がラベル上書き対象として form-label を探すケースに備えてダミーを保持 -->
@@ -7697,8 +7693,11 @@ window.showPage = window.showPage || function(name, btn) {
           <button id="cd-client-review-reshare-btn" class="btn" onclick="reshareClientReviewUrl()" style="display:none;white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px" title="Drive 上で公開設定し直して URL を再取得します">再共有</button>
         </div>
       </div>
-      <!-- アクションボタン行 -->
-      <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:10px">
+
+    </div>
+
+    <!-- フッター（固定） -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
       <button class="btn-primary" onclick="saveCreativeDetail()" style="margin-right:auto">下書き保存</button>
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
       <!-- チェック段階用: 修正依頼 -->
@@ -7713,7 +7712,6 @@ window.showPage = window.showPage || function(name, btn) {
       <button id="cd-force-deliver-btn" onclick="forceDeliver()" style="display:none;background:#fff;color:#16a34a;border:1.5px solid #16a34a;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">納品完了モード</button>
       <!-- 承認 or 次ステップ -->
       <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
-      </div>
     </div>
   </div>
 </div>
