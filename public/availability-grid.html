@@ -9,6 +9,7 @@
     --border: #d8dde3;
     --border-soft: #ecf0f4;
     --bg-holiday: #fdf3f3;
+    --bg-today: #e6f7ec;       /* 今日の列ハイライト（薄緑） */
     --bg-totalrow: #f3f6fa;
     --bg-diverge: #fff3cd;     /* 手動値が GCal 計算と異なる場合の警告色 */
     --text-muted: #6b7280;
@@ -56,6 +57,11 @@
   td.day-cell.zero { color: #c62828; }
   td.day-cell.diverge { background: var(--bg-diverge); }
   td.day-cell.diverge.is-holiday { background: linear-gradient(135deg, var(--bg-diverge) 60%, var(--bg-holiday)); }
+  /* 今日の列ハイライト（休日色・チーム合計色より優先） */
+  table.grid th.is-today,
+  table.grid td.is-today { background: var(--bg-today) !important; }
+  table.grid td.day-cell.is-today.editable:hover { background: #d2efdb !important; }
+  table.grid td.day-cell.is-today.diverge { background: linear-gradient(135deg, var(--bg-today) 55%, var(--bg-diverge)) !important; }
   td.day-cell .manual-mark { color: var(--manual); font-weight: 700; margin-left: 0.15em; font-size: 0.85em; vertical-align: 1px; }
   .gcal-mark { color: var(--gcal); margin-right: 0.2em; }
   .leader-mark { color: #ef6c00; margin-right: 0.15em; font-weight: 700; font-size: 0.85em; }
@@ -419,6 +425,8 @@ function renderGrid() {
   const data = state.data;
   if (!data) return;
   const dates = data.dates || [];
+  // 今日の JST 日付（Railway は UTC なので timeZone 明示）
+  const todayJst = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   const thead = document.querySelector('#grid thead');
   const tbody = document.querySelector('#grid tbody');
   thead.innerHTML = '';
@@ -452,6 +460,7 @@ function renderGrid() {
     const th = document.createElement('th');
     th.innerHTML = `${parseInt(ds.slice(8,10),10)}<br>${WEEKDAY_JA[dow]}`;
     if (dow === 0 || dow === 6) th.classList.add('is-holiday');
+    if (ds === todayJst) th.classList.add('is-today');
     headRow.appendChild(th);
   }
   const thTotal = document.createElement('th'); thTotal.className = 'total-col'; thTotal.textContent = '合計'; headRow.appendChild(thTotal);
@@ -491,6 +500,7 @@ function renderGrid() {
         td.dataset.userId = m.user_id;
         td.dataset.date = day.date;
         applyCellState(td, day, m);
+        if (day.date === todayJst) td.classList.add('is-today');
         sum += Number(day.hours || 0);
         tr.appendChild(td);
       }
@@ -508,6 +518,7 @@ function renderGrid() {
       const v = (t.team_totals_by_date || {})[ds] || 0;
       teamSum += Number(v);
       if (parseDate(ds).getDay() % 6 === 0) td.classList.add('is-holiday');
+      if (ds === todayJst) td.classList.add('is-today');
       td.textContent = fmtHours(v);
       trT.appendChild(td);
     }
@@ -532,6 +543,7 @@ function renderGrid() {
       orgSum += v;
       const td = document.createElement('td');
       if (parseDate(ds).getDay() % 6 === 0) td.classList.add('is-holiday');
+      if (ds === todayJst) td.classList.add('is-today');
       td.textContent = fmtHours(v);
       trO.appendChild(td);
     }
