@@ -7409,24 +7409,8 @@ window.showPage = window.showPage || function(name, btn) {
                style="display:inline-flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:13px;text-decoration:none;color:var(--text-muted);opacity:0.6;cursor:default;white-space:nowrap"
                title="レギュレーションシート（未設定）">📋</a>
           </div>
-          <!-- 📝 メモアイコン（右上集約、ポップオーバーで textarea 展開）
-               中身（cd-memo / 保存ボタン）はポップオーバー内に保持し、既存JS（getElementById('cd-memo')）と互換。
-               ポップオーバーは absolute positioned で、外側クリックで閉じる（toggleMemoPopover）。 -->
-          <div style="position:relative;flex-shrink:0;margin-right:6px">
-            <button id="cd-memo-icon-btn" type="button" onclick="toggleMemoPopover(event)"
-                    style="position:relative;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:13px;color:var(--em-dark);cursor:pointer;white-space:nowrap"
-                    title="メモ（チームメンバーで共有）">📝<span id="cd-memo-has-dot" style="display:none;position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:#10b981;border:1.5px solid #fff"></span></button>
-            <div id="cd-memo-popover" style="display:none;position:absolute;top:calc(100% + 6px);right:0;width:340px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);padding:14px;z-index:100">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                <div style="font-size:12.5px;font-weight:600;color:var(--text)">📝 メモ <span style="font-size:11px;color:var(--text-muted);font-weight:400">（チームメンバーで共有）</span></div>
-                <button type="button" onclick="toggleMemoPopover(event, false)" style="background:transparent;border:none;font-size:16px;color:var(--text-muted);cursor:pointer;padding:0 4px;line-height:1" title="閉じる">×</button>
-              </div>
-              <textarea class="form-input" id="cd-memo" rows="4" style="resize:vertical;width:100%;font-size:12.5px" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
-              <div style="display:flex;justify-content:flex-end;margin-top:8px">
-                <button class="btn" type="button" onclick="saveCreativeDetailMemo()" style="font-size:12px;padding:6px 14px">メモを保存</button>
-              </div>
-            </div>
-          </div>
+          <!-- 📝 メモは旧ポップオーバーからヘッダー本体（メタ情報セクション）へ移設。
+               #cd-memo / #cd-memo-has-dot / #cd-memo-icon-btn 等の互換 DOM は下記メタ情報セクションに置く。 -->
           <!-- 共有リンクコピーボタン: 詳細モーダルを直接開ける ?creative=<ID> URL をコピー。
                秘書などへ「このクリエイティブをクライアントへ提出して」と指示する際に使う。 -->
           <button id="cd-share-btn"
@@ -7476,19 +7460,21 @@ window.showPage = window.showPage || function(name, btn) {
             </span>
           </div>
 
-          <!-- クライアント確認URL -->
-          <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin-bottom:0">
+          <!-- 📝 チーム全体のメモ（旧 ポップオーバーから昇格してメタ情報セクションへ常時表示）
+               creatives.memo をチームメンバー間で共有する自由記入欄。
+               既存 JS（getElementById('cd-memo') / saveCreativeDetailMemo / updateCreativeMemoHasDot 等）と互換。
+               旧 📝 アイコンとポップオーバーは廃止し、ここに textarea を直接表示する。
+               クライアント確認URL はモーダル下部フッターへ移設済（#cd-client-review-group）。 -->
+          <div class="form-group" style="margin-bottom:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-              <span style="color:var(--text-muted);white-space:nowrap"><span class="cd-field-label-text">🔗 クライアント確認URL</span></span>
-              <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600">🔗 自動共有済み</span>
-              <span style="cursor:help;color:var(--text-muted);font-size:13px" title="「クライアントチェック中」に進めた瞬間、Drive 上のファイルが自動で「リンクを知っている人なら閲覧可」に設定され、URL がここにセットされます。手動入力済みのURLは上書きされません。">ⓘ</span>
-              <!-- form-label 互換: applyCreativeDetailFieldVisibility がラベル上書き対象として form-label を探すケースに備えてダミーを保持 -->
-              <label class="form-label" data-default-label="クライアント確認URL" style="display:none"></label>
+              <span style="color:var(--text-muted);white-space:nowrap;font-weight:600">📝 メモ</span>
+              <span style="font-size:11px;color:var(--text-muted)">（チーム全体で共有）</span>
+              <!-- 旧 cd-memo-has-dot 互換用の非表示プレースホルダ。updateCreativeMemoHasDot が getElementById でアクセスする。 -->
+              <span id="cd-memo-has-dot" style="display:none"></span>
             </div>
-            <div style="display:flex;gap:5px;flex-wrap:wrap">
-              <input class="form-input" id="cd-client-review-url" placeholder="https://drive.google.com/file/d/.../view" style="min-width:0;flex:1">
-              <button class="btn" onclick="openLink('cd-client-review-url')" style="white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px">開く</button>
-              <button id="cd-client-review-reshare-btn" class="btn" onclick="reshareClientReviewUrl()" style="display:none;white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px" title="Drive 上で公開設定し直して URL を再取得します">再共有</button>
+            <textarea class="form-input" id="cd-memo" rows="2" style="resize:vertical;width:100%;font-size:12.5px" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:6px">
+              <button class="btn" type="button" onclick="saveCreativeDetailMemo()" style="font-size:12px;padding:6px 14px">メモを保存</button>
             </div>
           </div>
         </div>
@@ -7692,8 +7678,27 @@ window.showPage = window.showPage || function(name, btn) {
 
     </div>
 
-    <!-- フッター（固定） -->
-    <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
+    <!-- フッター（固定）
+         上段: クライアント確認URL（ADR 012: data-field-key="client_review_url" でカテゴリ別可視性に追随）
+         下段: アクションボタン群（下書き保存 / 閉じる / 修正依頼 / 各種ステータス遷移） -->
+    <div style="border-top:1px solid var(--border);flex-shrink:0;background:var(--white);display:flex;flex-direction:column">
+      <!-- クライアント確認URL（旧ヘッダー位置から移設） -->
+      <div class="form-group cd-field-group" id="cd-client-review-group" data-field-key="client_review_url" style="margin:0;padding:10px 24px 8px;border-bottom:1px dashed var(--border-light)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <span style="color:var(--text-muted);white-space:nowrap;font-size:12px"><span class="cd-field-label-text">🔗 クライアント確認URL</span></span>
+          <span id="cd-client-review-auto-badge" style="display:none;font-size:10px;background:#dcfce7;color:#166534;padding:1px 6px;border-radius:4px;font-weight:600">🔗 自動共有済み</span>
+          <span style="cursor:help;color:var(--text-muted);font-size:13px" title="「クライアントチェック中」に進めた瞬間、Drive 上のファイルが自動で「リンクを知っている人なら閲覧可」に設定され、URL がここにセットされます。手動入力済みのURLは上書きされません。">ⓘ</span>
+          <!-- form-label 互換: applyCreativeDetailFieldVisibility がラベル上書き対象として form-label を探すケースに備えてダミーを保持 -->
+          <label class="form-label" data-default-label="クライアント確認URL" style="display:none"></label>
+        </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          <input class="form-input" id="cd-client-review-url" placeholder="https://drive.google.com/file/d/.../view" style="min-width:0;flex:1">
+          <button class="btn" onclick="openLink('cd-client-review-url')" style="white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px">開く</button>
+          <button id="cd-client-review-reshare-btn" class="btn" onclick="reshareClientReviewUrl()" style="display:none;white-space:nowrap;padding:6px 10px;flex-shrink:0;font-size:12px" title="Drive 上で公開設定し直して URL を再取得します">再共有</button>
+        </div>
+      </div>
+      <!-- アクションボタン行 -->
+      <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:10px">
       <button class="btn-primary" onclick="saveCreativeDetail()" style="margin-right:auto">下書き保存</button>
       <button class="btn" onclick="closeModal('modal-creative-detail')">閉じる</button>
       <!-- チェック段階用: 修正依頼 -->
@@ -7708,6 +7713,7 @@ window.showPage = window.showPage || function(name, btn) {
       <button id="cd-force-deliver-btn" onclick="forceDeliver()" style="display:none;background:#fff;color:#16a34a;border:1.5px solid #16a34a;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">納品完了モード</button>
       <!-- 承認 or 次ステップ -->
       <button class="btn-primary" id="cd-next-step-btn" onclick="advanceCreativeStatus()" style="display:none">次へ →</button>
+      </div>
     </div>
   </div>
 </div>
