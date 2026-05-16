@@ -107,6 +107,21 @@ async function sendSlackChannelWithFile(channelUrl, text, fileBuffer, filename) 
   }
 }
 
+// DB 非依存の Slack Incoming Webhook 送信。
+// supabase からの bot_token 取得が不要なので、DB 障害中でも通知を送れる。
+// 用途: maintenance-notifier（Supabase 接続不安定通知）など。
+async function sendSlackWebhook(webhookUrl, text) {
+  if (!webhookUrl) return { ok: false, reason: 'no_url' };
+  try {
+    const res = await axios.post(webhookUrl, { text }, { timeout: 10000 });
+    if (res.status >= 200 && res.status < 300) return { ok: true };
+    return { ok: false, reason: `http_${res.status}` };
+  } catch (e) {
+    console.warn('[notif/slack-webhook]', e.message);
+    return { ok: false, reason: e.message };
+  }
+}
+
 // =============== Chatwork API ===============
 let _chatworkUserTokensCache = null;
 let _chatworkUserTokensRaw = null;
@@ -1063,6 +1078,7 @@ module.exports = {
   parseSlackChannelUrl,
   sendSlackChannel,
   sendSlackChannelWithFile,
+  sendSlackWebhook,
   sendChatworkRoom,
   // テスト・他モジュールから再利用可能にするためエクスポート
   buildCreativeNotifBody,

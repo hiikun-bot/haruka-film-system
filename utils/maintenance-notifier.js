@@ -7,8 +7,9 @@
 // require('./utils/maintenance-notifier') を1行入れれば常駐する。
 
 const supabaseFetch = require('./supabase-fetch');
-const { sendSlackChannel } = require('../notifications');
+const { sendSlackChannel, sendSlackWebhook } = require('../notifications');
 
+const WEBHOOK_URL = process.env.MAINTENANCE_SLACK_WEBHOOK_URL || '';
 const CHANNEL_URL =
   process.env.MAINTENANCE_SLACK_CHANNEL_URL ||
   process.env.ERROR_REPORT_SLACK_CHANNEL_URL ||
@@ -27,8 +28,15 @@ function fmtDuration(ms) {
 }
 
 async function postSafely(text) {
+  // DB 非依存ルート（Incoming Webhook）を最優先。
+  // CB open＝DB 障害中でも届くのが本来の目的。
+  if (WEBHOOK_URL) {
+    const r = await sendSlackWebhook(WEBHOOK_URL, text);
+    if (r?.ok) return;
+    console.warn('[maintenance] Webhook 送信失敗、bot_token ルートにフォールバック:', r?.reason);
+  }
   if (!CHANNEL_URL) {
-    console.warn('[maintenance] Slack 未設定（MAINTENANCE_SLACK_CHANNEL_URL）');
+    if (!WEBHOOK_URL) console.warn('[maintenance] Slack 通知先未設定（MAINTENANCE_SLACK_WEBHOOK_URL or MAINTENANCE_SLACK_CHANNEL_URL）');
     return;
   }
   try {
