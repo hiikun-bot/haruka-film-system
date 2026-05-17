@@ -18,9 +18,13 @@ CREATE TABLE IF NOT EXISTS users (
   birthday DATE,
   weekday_hours JSONB DEFAULT '[{"from":9,"to":18}]',
   weekend_hours JSONB,
+  -- ADR 017: 外部ディレクター案件用の擬似ユーザー
+  is_external BOOLEAN NOT NULL DEFAULT false,
+  external_company TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_users_is_external ON users(is_external) WHERE is_external = TRUE;
 
 -- ==================== teams ====================
 CREATE TABLE IF NOT EXISTS teams (
@@ -89,9 +93,12 @@ CREATE TABLE IF NOT EXISTS projects (
   -- 案件カテゴリは primary_category_id (creative_categories) で管理する。
   -- ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（migrations/2026-05-09_phase1_creatives_export.sql）
   creatives_export_sheet_url TEXT,
+  -- ADR 017: 外部D案件の窓口担当（HARUKA側1名・督促振替/代理操作の主体）
+  liaison_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_projects_liaison_user_id ON projects(liaison_user_id) WHERE liaison_user_id IS NOT NULL;
 
 -- ==================== creative_categories (Stage A) ====================
 -- カテゴリマスタ。案件・クリエイティブの種別をハードコード分岐ではなく
@@ -956,7 +963,9 @@ INSERT INTO roles (code, label, category, sort_order, is_creator, is_internal) V
   ('sub_producer', 'サブプロデューサー', 'staff',   50, TRUE,  TRUE),
   ('sub_director', 'サブディレクター',   'staff',   60, TRUE,  TRUE),
   ('editor',       '編集者',             'creator', 70, TRUE,  TRUE),
-  ('designer',     'デザイナー',         'creator', 80, TRUE,  TRUE)
+  ('designer',     'デザイナー',         'creator', 80, TRUE,  TRUE),
+  -- ADR 017: 外部ディレクター（GND等の代理店経由案件用・擬似ユーザー専用ロール）
+  ('external_director', '外部ディレクター', 'external', 90, FALSE, FALSE)
 ON CONFLICT (code) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS user_roles (
