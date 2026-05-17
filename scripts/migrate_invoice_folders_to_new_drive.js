@@ -136,6 +136,10 @@ async function getRoleCodesOf(userId) {
 // ---------- Drive ヘルパー ----------
 
 async function getOrCreateChildFolder(drive, parentId, name) {
+  // dry-run で親が仮IDの場合は API を叩かず仮IDを返す（祖先が新規作成予定なら子も必ず新規）
+  if (typeof parentId === 'string' && parentId.startsWith('[dry:')) {
+    return { id: `[dry:${name}]`, created: true };
+  }
   const safe = name.replace(/'/g, "\\'");
   const res = await drive.files.list({
     q: `name='${safe}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
@@ -187,12 +191,15 @@ async function copyFileTo(drive, srcFileId, destParentId, name) {
 async function copyFolderRecursive(drive, srcFolderId, destFolderId, depth = 0) {
   let copied = 0, errors = 0, skipped = 0;
   const items = await listChildren(drive, srcFolderId);
+  // dry-run で destFolderId が仮IDなら、件数だけカウントして即終了（API は叩かない）
+  const destIsDry = typeof destFolderId === 'string' && destFolderId.startsWith('[dry:');
   for (const item of items) {
     if (item.mimeType === 'application/vnd.google-apps.folder') {
       const sub = await getOrCreateChildFolder(drive, destFolderId, item.name);
       const r = await copyFolderRecursive(drive, item.id, sub.id, depth + 1);
       copied += r.copied; errors += r.errors; skipped += r.skipped;
     } else {
+      if (destIsDry) { copied++; continue; }
       try {
         // 既に同名ファイルが新フォルダに居れば skip（冪等性）
         const existing = await drive.files.list({
