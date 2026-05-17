@@ -10817,7 +10817,7 @@ async function _paintInvoiceFolderSections(members) {
   for (const [year, monthsSet] of yearToMonths) {
     const monthsCsv = [...monthsSet].sort((a,b)=>a-b).join(',');
     try {
-      const url = `${API}/invoice-folders?year=${year}&months=${monthsCsv}${userIdsParam}`;
+      const url = `${API}/invoice-folders?year=${year}&months=${monthsCsv}${userIdsParam}&include_has_files=true`;
       const res = await apiFetch(url);
       if (!res.ok) continue;
       const json = await res.json();
@@ -10845,17 +10845,27 @@ async function _paintInvoiceFolderSections(members) {
     const btns = triplet.map(t => {
       const slot = userMap.get(`${t.year}-${t.month}`);
       const exists = slot && slot.exists;
-      const cls = exists ? 'btn-folder-exists' : 'btn-folder-missing';
-      const style = exists
-        ? 'background:#e3f2fd;color:#1565c0;border:1px solid #90caf9'
-        : 'background:#f5f5f5;color:#888;border:1px dashed #cfd8d7';
+      const hasFiles = exists && slot && slot.has_files;
+      let cls, style, title;
+      if (!exists) {
+        cls = 'btn-folder-missing';
+        style = 'background:#f5f5f5;color:#888;border:1px dashed #cfd8d7';
+        title = `未生成（${t.year}年${t.month}月）`;
+      } else if (hasFiles) {
+        cls = 'btn-folder-has-files';
+        style = 'background:#e8f5e9;color:#1b5e20;border:1px solid #2e7d32';
+        title = `この月の請求書フォルダ（ファイルあり）を Drive で開く（${t.year}年${t.month}月）`;
+      } else {
+        cls = 'btn-folder-exists';
+        style = 'background:#e3f2fd;color:#1565c0;border:1px solid #90caf9';
+        title = `この月の請求書フォルダ（空）を Drive で開く（${t.year}年${t.month}月）`;
+      }
       const onclick = exists
         ? `event.stopPropagation();window.open(${JSON.stringify(slot.folder_url)},'_blank','noopener')`
         : (canGen
           ? `event.stopPropagation();handleInvoiceFolderMissingClick('${member.id}',${t.year},${t.month})`
           : `event.stopPropagation();showToast('このフォルダは未生成です（生成権限がありません）','warn')`);
-      const title = exists ? `Drive で開く（${t.year}年${t.month}月）` : `未生成（${t.year}年${t.month}月）`;
-      return `<button class="${cls}" type="button" title="${esc(title)}" onclick="${onclick}" style="font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;${style}">📂 ${String(t.month).padStart(2,'0')}月</button>`;
+      return `<button class="${cls}" type="button" title="${esc(title)}" aria-label="${esc(title)}" onclick="${onclick}" style="font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;${style}">📂 ${String(t.month).padStart(2,'0')}月</button>`;
     }).join('');
     const genBtn = canGen
       ? `<button type="button" onclick="event.stopPropagation();openInvoiceFolderGenerateModal('${member.id}')" title="期間を指定して生成" style="font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;background:#fff8e1;color:#e65100;border:1px solid #ffe082">➕ 生成</button>`

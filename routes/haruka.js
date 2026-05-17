@@ -9344,6 +9344,40 @@ function driveFolderUrl(folderId) {
   return `https://drive.google.com/drive/folders/${folderId}`;
 }
 
+// 指定フォルダ配下に trashed=false のアイテムが1個以上あるかを返す
+// エラー時は false（UIブロックしない・ログ警告のみ）
+async function checkFolderHasFiles(drive, folderId) {
+  if (!folderId) return false;
+  try {
+    const r = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id)',
+      pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+    return Array.isArray(r.data.files) && r.data.files.length > 0;
+  } catch (e) {
+    console.warn(`[invoice-folders] checkFolderHasFiles warn folder=${folderId}: ${e.message}`);
+    return false;
+  }
+}
+
+// 並列度制限付き map（p-limit が依存に無いので自前実装）
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let i = 0;
+  const workers = Array(Math.min(limit, items.length || 1)).fill(0).map(async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // 一括取得（自分の行は view_own / 全員分は view_any）
 // GET /api/invoice-folders?year=YYYY&months=4,5,6&user_ids=u1,u2
 //   - months 省略時は 1〜12 全月
@@ -9392,7 +9426,7 @@ router.get('/invoice-folders', requireAuth, async (req, res) => {
     const byUser = {};
     const ensureUser = (uid) => {
       if (!byUser[uid]) {
-        byUser[uid] = months.map(m => ({ month: m, exists: false, folder_id: null, folder_url: null }));
+        byUser[uid] = months.map(m => ({ month: m, exists: false, folder_id: null, folder_url: null, has_files: false }));
       }
       return byUser[uid];
     };
@@ -9406,6 +9440,28 @@ router.get('/invoice-folders', requireAuth, async (req, res) => {
         slot.folder_url = row.folder_url;
       }
     }
+
+    // has_files をオプトインで計算（exists=true の slot だけ Drive API を叩く・並列度20）
+    const includeHasFiles = String(req.query.include_has_files || '').toLowerCase() === 'true';
+    if (includeHasFiles) {
+      const targets = [];
+      for (const uid of Object.keys(byUser)) {
+        for (const slot of byUser[uid]) {
+          if (slot.exists && slot.folder_id) targets.push(slot);
+        }
+      }
+      if (targets.length > 0) {
+        try {
+          const drive = await getDriveService();
+          await mapLimit(targets, 20, async (slot) => {
+            slot.has_files = await checkFolderHasFiles(drive, slot.folder_id);
+          });
+        } catch (e) {
+          console.warn('[invoice-folders] has_files batch warn:', e.message);
+        }
+      }
+    }
+
     res.json({ year, months, folders: byUser });
   } catch (e) {
     console.error('[invoice-folders][GET /invoice-folders]', e);
@@ -9448,9 +9504,26 @@ router.get('/members/:id/invoice-folders', requireAuth, async (req, res) => {
     const folders = months.map(m => {
       const r = map.get(m);
       return r
-        ? { month: m, exists: true,  folder_id: r.folder_id, folder_url: r.folder_url }
-        : { month: m, exists: false, folder_id: null,        folder_url: null };
+        ? { month: m, exists: true,  folder_id: r.folder_id, folder_url: r.folder_url, has_files: false }
+        : { month: m, exists: false, folder_id: null,        folder_url: null,         has_files: false };
     });
+
+    // has_files をオプトインで計算（exists=true の月のみ並列）
+    const includeHasFiles = String(req.query.include_has_files || '').toLowerCase() === 'true';
+    if (includeHasFiles) {
+      const targets = folders.filter(f => f.exists && f.folder_id);
+      if (targets.length > 0) {
+        try {
+          const drive = await getDriveService();
+          await mapLimit(targets, 20, async (slot) => {
+            slot.has_files = await checkFolderHasFiles(drive, slot.folder_id);
+          });
+        } catch (e) {
+          console.warn('[invoice-folders] has_files single-user warn:', e.message);
+        }
+      }
+    }
+
     res.json({ year, folders });
   } catch (e) {
     console.error('[invoice-folders][GET /members/:id/invoice-folders]', e);
@@ -9581,6 +9654,7 @@ router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, re
         month: m,
         folder_id: memberFolderId,
         folder_url: driveFolderUrl(memberFolderId),
+        has_files: false, // 生成直後は空
         created,
       });
     }
