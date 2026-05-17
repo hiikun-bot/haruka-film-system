@@ -10771,18 +10771,42 @@ function _invoiceFolderTriplet() {
     { label: '来月', year: nextY, month: nextM },
   ];
 }
+// 秘書同士の相互閲覧を不可にするためのアプリ層オーバーライド。
+// viewer の実効ロールが secretary（admin でない）のときは、対象が secretary なら不可。
+// ADR 015 (VIEW AS チェックリスト) に従い currentUser.role 直書きを避け、effectiveRole() 経由で判定。
+// メンバー API は legacy 'role' (text) を返す（admin/secretary/director/editor/designer/producer/producer_director/client）
+// ので m.role === 'secretary' で十分（dual-write でこの列は最新）。
+function _isSecretaryViewerNotAdmin() {
+  // ADR 015: currentUser.role 直書きを避け effectiveRole() で判定
+  const r = effectiveRole();
+  return r === 'secretary'; // admin は別 branch で常に許可されるので除外不要
+}
+function _invoiceFolderAppLayerOverrideBlocks(member) {
+  // viewer が secretary 視点のとき、対象が secretary なら隠す。
+  // 自分自身は除外（自分の行は常に見える）
+  if (!member || !currentUser) return false;
+  if (member.id === currentUser.id) return false;
+  if (!_isSecretaryViewerNotAdmin()) return false;
+  return member.role === 'secretary';
+}
 // 現在見えているメンバー行に対して、🧾セクションを表示すべきか
 function _canSeeInvoiceFolderFor(m) {
   if (!m || !m.id) return false;
   const isSelf = currentUser && m.id === currentUser.id;
   if (isSelf) return hasPermission('invoice_folder.view_own');
-  return hasPermission('invoice_folder.view_any');
+  if (!hasPermission('invoice_folder.view_any')) return false;
+  // 秘書同士の相互閲覧オーバーライド
+  if (_invoiceFolderAppLayerOverrideBlocks(m)) return false;
+  return true;
 }
 function _canGenerateInvoiceFolderFor(m) {
   if (!m || !m.id) return false;
   const isSelf = currentUser && m.id === currentUser.id;
   if (isSelf) return hasPermission('invoice_folder.generate_own');
-  return hasPermission('invoice_folder.generate_any');
+  if (!hasPermission('invoice_folder.generate_any')) return false;
+  // 秘書同士の相互生成オーバーライド
+  if (_invoiceFolderAppLayerOverrideBlocks(m)) return false;
+  return true;
 }
 // 行/カードに差し込むスケルトン HTML。実データは _paintInvoiceFolderSections で後から書き換える
 function invoiceFolderSectionHtml(m) {
