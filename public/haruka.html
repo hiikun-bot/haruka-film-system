@@ -4264,6 +4264,26 @@ window.showPage = window.showPage || function(name, btn) {
         <button class="btn-primary" id="btn-add-member" onclick="openAddMember()">＋ メンバー追加</button>
       </div>
     </div>
+    <!-- 🧾 請求書未提出フィルター（緑以外を絞り込み） — invoice_folder.view_any 権限保持者にのみ表示 -->
+    <!-- 表示判定は JS（renderInvoiceUnsubmittedFilterUI）から hasPermission('invoice_folder.view_any') 経由で行う -->
+    <div id="member-invoice-filter-row" style="display:none;margin-bottom:12px;padding:8px 12px;background:#fafafa;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-weight:600;color:var(--text)">🧾 請求書未提出フィルター</span>
+        <span style="font-size:11px;color:var(--text-muted)">（緑以外を絞り込み）</span>
+        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="filter-invoice-prev" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
+          <span id="filter-invoice-prev-label">先月</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="filter-invoice-curr" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
+          <span id="filter-invoice-curr-label">今月</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="filter-invoice-next" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
+          <span id="filter-invoice-next-label">来月</span>
+        </label>
+      </div>
+    </div>
     <div id="members-list" class="loading">読み込み中...</div>
   </div>
 </div>
@@ -10409,6 +10429,14 @@ function renderMemberList() {
   } else {
     visibleMembers = visibleMembers.filter(m => m.job_type === 'design' || m.job_type === 'both');
   }
+  // 🧾 請求書未提出フィルター（最後に適用 / 権限保持者の UI 操作時のみ有効）
+  // UI 表示判定とフィルター適用は別関数（メンバー画面を開く度に UI 同期）
+  try { renderInvoiceUnsubmittedFilterUI(); } catch(_) {}
+  // フィルター適用前のリストを保持（API キャッシュは全候補に対して fetch する必要があるため）
+  const _membersBeforeInvoiceFilter = visibleMembers;
+  if (typeof _isInvoiceUnsubmittedFilterActive === 'function' && _isInvoiceUnsubmittedFilterActive()) {
+    visibleMembers = visibleMembers.filter(memberMatchesInvoiceUnsubmittedFilter);
+  }
   const countEl = document.getElementById('members-count');
   if (countEl) {
     const activeCount = visibleMembers.filter(m => m.is_active !== false).length;
@@ -10502,7 +10530,11 @@ function renderMemberList() {
     renderMemberRoster(list, visibleMembers);
   }
   // 🧾 請求書フォルダセクションは render 後に async でペイント
-  try { _paintInvoiceFolderSections(visibleMembers); } catch (e) { console.warn('[invoice-folder-section]', e); }
+  // 注: フィルター ON 時もキャッシュ更新は「フィルター前の候補全員」に対して行う必要があるため
+  //     _membersBeforeInvoiceFilter を渡す（visibleMembers のサブセットでは未取得メンバーが残り、
+  //     フィルター結果が誤る）。実際のセクション DOM はフィルター後にしか存在しないので、
+  //     paint 内の querySelectorAll はマッチした要素にのみペイントする（無害）。
+  try { _paintInvoiceFolderSections(_membersBeforeInvoiceFilter); } catch (e) { console.warn('[invoice-folder-section]', e); }
 }
 
 // テーブル一覧モード（旧 renderMemberList を復元）
@@ -10771,6 +10803,72 @@ function _invoiceFolderTriplet() {
     { label: '来月', year: nextY, month: nextM },
   ];
 }
+
+// ==================== 🧾 請求書未提出フィルター ====================
+// メンバー画面のフィルター行（filter-invoice-{prev,curr,next}）を制御する。
+// invoice_folder.view_any 権限保持者（admin / secretary）にのみ UI を表示し、
+// チェックされた月の請求書が「緑（has_files=true）」以外のメンバーだけを残す。
+// JST 厳密で月ラベルを動的算出（memory: feedback_time_logic_jst_explicit）。
+function _isInvoiceUnsubmittedFilterActive() {
+  const p = document.getElementById('filter-invoice-prev');
+  const c = document.getElementById('filter-invoice-curr');
+  const n = document.getElementById('filter-invoice-next');
+  return !!((p && p.checked) || (c && c.checked) || (n && n.checked));
+}
+// 「先月/今月/来月のうちチェックされている (year, month) 配列」を返す
+function _getCheckedInvoiceFilterMonths() {
+  const triplet = _invoiceFolderTriplet(); // [先月, 今月, 来月]
+  const ids = ['filter-invoice-prev', 'filter-invoice-curr', 'filter-invoice-next'];
+  const checked = [];
+  ids.forEach((id, idx) => {
+    const el = document.getElementById(id);
+    if (el && el.checked) checked.push(triplet[idx]);
+  });
+  return checked;
+}
+// フィルター UI（行ごと表示/非表示 + ラベルの月数）を再描画。
+// 表示判定は hasPermission('invoice_folder.view_any')（ADR 015: req.user.role 直書きせず権限経由）。
+function renderInvoiceUnsubmittedFilterUI() {
+  const row = document.getElementById('member-invoice-filter-row');
+  if (!row) return;
+  // 権限が無い場合は非表示（一般メンバーには無意味）
+  if (!hasPermission('invoice_folder.view_any')) {
+    row.style.display = 'none';
+    return;
+  }
+  row.style.display = '';
+  // 月ラベル更新（JST 厳密）
+  const triplet = _invoiceFolderTriplet();
+  const setLbl = (id, t, sub) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${String(t.month).padStart(2, '0')}月（${sub}）`;
+  };
+  setLbl('filter-invoice-prev-label', triplet[0], '先月');
+  setLbl('filter-invoice-curr-label', triplet[1], '今月');
+  setLbl('filter-invoice-next-label', triplet[2], '来月');
+}
+// メンバーが「チェック中の月のいずれかが未提出（緑以外）」を満たすか
+// 未提出 = exists=false OR has_files=false。キャッシュ未取得時は「未提出扱い」（多めにヒット）。
+function memberMatchesInvoiceUnsubmittedFilter(member) {
+  const checkedMonths = _getCheckedInvoiceFilterMonths();
+  if (checkedMonths.length === 0) return true; // フィルター無効
+  // 請求書セクションが見えない（権限・秘書相互閲覧除外など）メンバーはフィルター対象外＝表示しない
+  // → 催促対象として無意味なため、未提出フィルター ON 時は一覧から落とす
+  if (!_canSeeInvoiceFolderFor(member)) return false;
+  const cache = window._invoiceFolderCacheByUser;
+  const userMap = (cache && cache.get && cache.get(String(member.id))) || null;
+  return checkedMonths.some(({ year, month }) => {
+    if (!userMap) return true; // データ未取得 = 未提出扱い
+    const slot = userMap.get(`${year}-${month}`);
+    if (!slot) return true; // この月のエントリ無し = 未提出扱い
+    if (!slot.exists) return true; // フォルダ未生成 = 未提出
+    return !slot.has_files; // ファイル無し = 未提出
+  });
+}
+// チェックボックス変更ハンドラ
+function onInvoiceUnsubmittedFilterChange() {
+  try { renderMemberList(); } catch(_) {}
+}
 // 秘書同士の相互閲覧を不可にするためのアプリ層オーバーライド。
 // viewer の実効ロールが secretary（admin でない）のときは、対象が secretary なら不可。
 // ADR 015 (VIEW AS チェックリスト) に従い currentUser.role 直書きを避け、effectiveRole() 経由で判定。
@@ -10819,6 +10917,12 @@ function invoiceFolderSectionHtml(m) {
   </div>`;
 }
 // 一括 fetch して各セクションをペイント
+// グローバルキャッシュ: user_id -> Map<"year-month", slot>
+// 請求書未提出フィルター（renderMemberList → memberMatchesInvoiceUnsubmittedFilter）でも参照する。
+// API レスポンスを受け取り次第ここに格納し、_lastPaintedTriplet と合わせて
+// 「初回 paint 完了後の再フィルター」のトリガーに使う。
+window._invoiceFolderCacheByUser = window._invoiceFolderCacheByUser || new Map();
+let _invoiceFolderCacheReady = false; // 1度でも API レスポンスを受け取ったか
 async function _paintInvoiceFolderSections(members) {
   if (!Array.isArray(members) || members.length === 0) return;
   const visible = members.filter(_canSeeInvoiceFolderFor);
@@ -10856,6 +10960,18 @@ async function _paintInvoiceFolderSections(members) {
     } catch (e) {
       console.warn('[invoice-folders] fetch failed', e);
     }
+  }
+  // グローバルキャッシュへ書き戻し（請求書未提出フィルターロジック用）
+  window._invoiceFolderCacheByUser = foldersByUser;
+  const wasReady = _invoiceFolderCacheReady;
+  _invoiceFolderCacheReady = true;
+  // 初回キャッシュ充填かつフィルターが ON の場合、フィルター結果が確定するように再描画
+  // （無限ループ防止: wasReady=false のときだけ）
+  if (!wasReady && _isInvoiceUnsubmittedFilterActive()) {
+    // 次の tick で renderMemberList → 再 paint を起動。
+    // _paintInvoiceFolderSections は renderMemberList から呼ばれる構造だが、
+    // キャッシュが空のときの「データ未取得=未提出扱い」結果と確定後の結果を一致させるため再描画する。
+    setTimeout(() => { try { renderMemberList(); } catch(_) {} }, 0);
   }
 
   // ペイント
