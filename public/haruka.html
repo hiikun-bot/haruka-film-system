@@ -3022,6 +3022,47 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </div>
 
+<!-- ==================== 請求書フォルダ生成モーダル ==================== -->
+<div class="modal-overlay" id="modal-invoice-folder-generate">
+  <div class="modal-card" style="width:min(520px,96vw)">
+    <div class="modal-title">
+      🧾 請求書フォルダを生成
+      <button class="modal-close" onclick="closeModal('modal-invoice-folder-generate')">×</button>
+    </div>
+    <div style="padding:6px 2px 4px">
+      <div style="margin-bottom:10px;font-size:13px">
+        対象: <strong id="ifg-target-name">—</strong>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <label style="font-size:12px;color:var(--text-muted);min-width:64px">年</label>
+        <select id="ifg-year" class="form-input" style="width:120px"></select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">
+          <input type="radio" name="ifg-range" value="all" checked> 12ヶ月一括（年初の準備：推奨）
+        </label>
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">
+          <input type="radio" name="ifg-range" value="current"> 当月のみ
+        </label>
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px">
+          <input type="radio" name="ifg-range" value="range"> 指定月:
+          <select id="ifg-from-month" class="form-input" style="width:80px"></select>
+          〜
+          <select id="ifg-to-month" class="form-input" style="width:80px"></select>
+        </label>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.7;background:var(--surface);padding:8px 10px;border-radius:6px;margin-bottom:12px">
+        ⚠️ 既存フォルダはそのまま（冪等）<br>
+        ⚠️ 個人フォルダは本人＋管理者＋秘書のみ閲覧
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn" type="button" onclick="closeModal('modal-invoice-folder-generate')">キャンセル</button>
+      <button class="btn-primary" type="button" id="ifg-submit-btn" onclick="submitInvoiceFolderGenerate()">🔨 生成</button>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== バグ報告: 新規/編集モーダル ==================== -->
 <div class="modal-overlay" id="modal-bug-report" data-no-overlay-close="true" style="z-index:250">
   <div class="modal-card" style="width:min(1500px,98vw);max-height:92vh;display:flex;flex-direction:column">
@@ -10460,6 +10501,8 @@ function renderMemberList() {
   } else {
     renderMemberRoster(list, visibleMembers);
   }
+  // 🧾 請求書フォルダセクションは render 後に async でペイント
+  try { _paintInvoiceFolderSections(visibleMembers); } catch (e) { console.warn('[invoice-folder-section]', e); }
 }
 
 // テーブル一覧モード（旧 renderMemberList を復元）
@@ -10542,6 +10585,7 @@ function renderMemberTable(list, visibleMembers) {
               : `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
             ) : ''}
             ${hasPermission('member.delete') && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
+            ${invoiceFolderSectionHtml(m)}
           </td>
         </tr>`;
       }).join('')}
@@ -10701,8 +10745,228 @@ function _mrosterCardHtml(m, def, isSelf) {
       <div class="mposter-info">
         <div class="mposter-name">${nameMain}${nameSub}</div>
         <div class="mposter-meta">${roleChip}${rankChip}${teamChip}</div>
+        <div onclick="event.stopPropagation()">${invoiceFolderSectionHtml(m)}</div>
       </div>
     </div>`;
+}
+
+// ==================== 🧾 メンバー請求書フォルダ ====================
+// 当月（Asia/Tokyo）を基点に「先月 / 今月 / 来月」の {year, month} を返す。
+// Railway は UTC で動くので getMonth() は危険。toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})
+// で 'YYYY-MM-DD' を得てから Date.UTC でズレを発生させずに計算する。
+function _invoiceFolderJstNow() {
+  const jstStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // 'YYYY-MM-DD'
+  const [y, mo] = jstStr.split('-').map(s => parseInt(s, 10));
+  return { year: y, month: mo };
+}
+function _invoiceFolderTriplet() {
+  const now = _invoiceFolderJstNow();
+  // 先月
+  let prevY = now.year, prevM = now.month - 1; if (prevM < 1) { prevM = 12; prevY -= 1; }
+  // 来月
+  let nextY = now.year, nextM = now.month + 1; if (nextM > 12) { nextM = 1; nextY += 1; }
+  return [
+    { label: '先月', year: prevY, month: prevM },
+    { label: '今月', year: now.year, month: now.month },
+    { label: '来月', year: nextY, month: nextM },
+  ];
+}
+// 現在見えているメンバー行に対して、🧾セクションを表示すべきか
+function _canSeeInvoiceFolderFor(m) {
+  if (!m || !m.id) return false;
+  const isSelf = currentUser && m.id === currentUser.id;
+  if (isSelf) return hasPermission('invoice_folder.view_own');
+  return hasPermission('invoice_folder.view_any');
+}
+function _canGenerateInvoiceFolderFor(m) {
+  if (!m || !m.id) return false;
+  const isSelf = currentUser && m.id === currentUser.id;
+  if (isSelf) return hasPermission('invoice_folder.generate_own');
+  return hasPermission('invoice_folder.generate_any');
+}
+// 行/カードに差し込むスケルトン HTML。実データは _paintInvoiceFolderSections で後から書き換える
+function invoiceFolderSectionHtml(m) {
+  if (!_canSeeInvoiceFolderFor(m)) return '';
+  return `<div class="invoice-folder-section" data-invoice-folder-user="${m.id}" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
+    <span style="font-weight:600;color:var(--text-muted)">🧾</span>
+    <span class="invoice-folder-buttons" style="display:inline-flex;gap:3px;flex-wrap:wrap">
+      <span style="color:#bbb">…</span>
+    </span>
+  </div>`;
+}
+// 一括 fetch して各セクションをペイント
+async function _paintInvoiceFolderSections(members) {
+  if (!Array.isArray(members) || members.length === 0) return;
+  const visible = members.filter(_canSeeInvoiceFolderFor);
+  if (visible.length === 0) return;
+
+  const triplet = _invoiceFolderTriplet();
+  // 「先月/今月/来月」の (year, month) ペアを year ごとにまとめる（年跨ぎ対応）
+  const yearToMonths = new Map();
+  triplet.forEach(t => {
+    if (!yearToMonths.has(t.year)) yearToMonths.set(t.year, new Set());
+    yearToMonths.get(t.year).add(t.month);
+  });
+
+  // 自分しか見えない（view_any 無し）場合は user_ids を強制
+  const canViewAny = hasPermission('invoice_folder.view_any');
+  const userIdsParam = canViewAny ? '' : (currentUser ? `&user_ids=${encodeURIComponent(currentUser.id)}` : '');
+
+  // 取得（年ごとに 1〜2 リクエストで済む）
+  const foldersByUser = new Map(); // user_id -> Map<"year-month", {exists, folder_url}>
+  for (const [year, monthsSet] of yearToMonths) {
+    const monthsCsv = [...monthsSet].sort((a,b)=>a-b).join(',');
+    try {
+      const url = `${API}/invoice-folders?year=${year}&months=${monthsCsv}${userIdsParam}`;
+      const res = await apiFetch(url);
+      if (!res.ok) continue;
+      const json = await res.json();
+      // json.folders: { user_id: [{month, exists, folder_url}] }
+      const map = json.folders || {};
+      Object.keys(map).forEach(uid => {
+        if (!foldersByUser.has(uid)) foldersByUser.set(uid, new Map());
+        (map[uid] || []).forEach(slot => {
+          foldersByUser.get(uid).set(`${year}-${slot.month}`, slot);
+        });
+      });
+    } catch (e) {
+      console.warn('[invoice-folders] fetch failed', e);
+    }
+  }
+
+  // ペイント
+  const containers = document.querySelectorAll('.invoice-folder-section[data-invoice-folder-user]');
+  containers.forEach(el => {
+    const uid = el.getAttribute('data-invoice-folder-user');
+    const member = members.find(mm => String(mm.id) === uid);
+    if (!member) return;
+    const userMap = foldersByUser.get(uid) || new Map();
+    const canGen = _canGenerateInvoiceFolderFor(member);
+    const btns = triplet.map(t => {
+      const slot = userMap.get(`${t.year}-${t.month}`);
+      const exists = slot && slot.exists;
+      const cls = exists ? 'btn-folder-exists' : 'btn-folder-missing';
+      const style = exists
+        ? 'background:#e3f2fd;color:#1565c0;border:1px solid #90caf9'
+        : 'background:#f5f5f5;color:#888;border:1px dashed #cfd8d7';
+      const onclick = exists
+        ? `event.stopPropagation();window.open(${JSON.stringify(slot.folder_url)},'_blank','noopener')`
+        : (canGen
+          ? `event.stopPropagation();handleInvoiceFolderMissingClick('${member.id}',${t.year},${t.month})`
+          : `event.stopPropagation();showToast('このフォルダは未生成です（生成権限がありません）','warn')`);
+      const title = exists ? `Drive で開く（${t.year}年${t.month}月）` : `未生成（${t.year}年${t.month}月）`;
+      return `<button class="${cls}" type="button" title="${esc(title)}" onclick="${onclick}" style="font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;${style}">📂 ${String(t.month).padStart(2,'0')}月</button>`;
+    }).join('');
+    const genBtn = canGen
+      ? `<button type="button" onclick="event.stopPropagation();openInvoiceFolderGenerateModal('${member.id}')" title="期間を指定して生成" style="font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;background:#fff8e1;color:#e65100;border:1px solid #ffe082">➕ 生成</button>`
+      : '';
+    const slot = el.querySelector('.invoice-folder-buttons');
+    if (slot) slot.innerHTML = btns + genBtn;
+  });
+}
+// 未生成ボタンクリック時の確認 → 即生成
+async function handleInvoiceFolderMissingClick(userId, year, month) {
+  const member = (allMembers || []).find(m => m.id === userId);
+  const name = member ? (member.full_name || member.nickname || member.email || 'メンバー') : 'メンバー';
+  if (!window.confirm(`${name} の ${year}年${month}月 の請求書フォルダを生成しますか？\n（既存フォルダはそのまま使用されます）`)) return;
+  try {
+    const res = await apiFetch(`${API}/members/${encodeURIComponent(userId)}/invoice-folders/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year, months: [month] }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '生成に失敗しました');
+    showToast(`${year}年${month}月のフォルダを準備しました`, 'success');
+    // 行を再描画 → 新しいフォルダボタンが表示される
+    renderMemberList();
+    // 生成したフォルダを新しいタブで開く
+    const created = (json.folders || []).find(f => f.month === month);
+    if (created && created.folder_url) window.open(created.folder_url, '_blank', 'noopener');
+  } catch (e) {
+    showToast(e.message || '生成に失敗しました', 'error');
+  }
+}
+// 生成モーダルを開く
+let _invoiceFolderModalTargetId = null;
+function openInvoiceFolderGenerateModal(userId) {
+  const member = (allMembers || []).find(m => m.id === userId);
+  if (!member) { showToast('メンバーが見つかりません', 'error'); return; }
+  _invoiceFolderModalTargetId = userId;
+  const nameEl = document.getElementById('ifg-target-name');
+  if (nameEl) nameEl.textContent = member.full_name || member.nickname || member.email || '—';
+
+  // 年セレクト: 今年・来年・前年
+  const now = _invoiceFolderJstNow();
+  const yearSel = document.getElementById('ifg-year');
+  if (yearSel) {
+    yearSel.innerHTML = '';
+    [now.year - 1, now.year, now.year + 1].forEach(y => {
+      const opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = `${y}年`;
+      if (y === now.year) opt.selected = true;
+      yearSel.appendChild(opt);
+    });
+  }
+  const fromSel = document.getElementById('ifg-from-month');
+  const toSel   = document.getElementById('ifg-to-month');
+  [fromSel, toSel].forEach((sel, idx) => {
+    if (!sel) return;
+    sel.innerHTML = '';
+    for (let m = 1; m <= 12; m++) {
+      const opt = document.createElement('option');
+      opt.value = String(m);
+      opt.textContent = `${m}月`;
+      if ((idx === 0 && m === 1) || (idx === 1 && m === 12)) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  });
+  // ラジオを既定値に戻す
+  const radios = document.querySelectorAll('input[name="ifg-range"]');
+  radios.forEach(r => { r.checked = (r.value === 'all'); });
+  openModal('modal-invoice-folder-generate');
+}
+async function submitInvoiceFolderGenerate() {
+  const userId = _invoiceFolderModalTargetId;
+  if (!userId) { showToast('対象が選ばれていません', 'error'); return; }
+  const yearSel = document.getElementById('ifg-year');
+  const year = parseInt(yearSel?.value || '', 10);
+  if (!Number.isFinite(year)) { showToast('年を選択してください', 'error'); return; }
+  const range = (document.querySelector('input[name="ifg-range"]:checked') || {}).value || 'all';
+  let months;
+  if (range === 'all') months = 'all';
+  else if (range === 'current') months = 'current';
+  else {
+    const f = parseInt(document.getElementById('ifg-from-month')?.value || '', 10);
+    const t = parseInt(document.getElementById('ifg-to-month')?.value   || '', 10);
+    if (!Number.isFinite(f) || !Number.isFinite(t) || f < 1 || t > 12 || f > t) {
+      showToast('指定月の範囲が不正です', 'error');
+      return;
+    }
+    months = [];
+    for (let m = f; m <= t; m++) months.push(m);
+  }
+  const btn = document.getElementById('ifg-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '🛠 生成中…'; }
+  try {
+    const res = await apiFetch(`${API}/members/${encodeURIComponent(userId)}/invoice-folders/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year, months }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '生成に失敗しました');
+    const total = (json.folders || []).length;
+    const created = (json.folders || []).filter(f => f.created).length;
+    showToast(`${year}年: ${total}ヶ月分のフォルダを準備しました（新規 ${created}件）`, 'success');
+    closeModal('modal-invoice-folder-generate');
+    renderMemberList();
+  } catch (e) {
+    showToast(e.message || '生成に失敗しました', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔨 生成'; }
+  }
 }
 
 async function loadMembers() {
@@ -14459,6 +14723,13 @@ const _ROLE_PERMS_FALLBACK = {
   'director|analytics.bug_reports.view': true,
   'editor|analytics.bug_reports.view': true,
   'designer|analytics.bug_reports.view': true,
+  // 請求書フォルダ（migration 2026-05-17_member_invoice_folders.sql）
+  'secretary|invoice_folder.view_own': true, 'producer|invoice_folder.view_own': true, 'producer_director|invoice_folder.view_own': true,
+  'director|invoice_folder.view_own': true, 'editor|invoice_folder.view_own': true, 'designer|invoice_folder.view_own': true,
+  'secretary|invoice_folder.generate_own': true, 'producer|invoice_folder.generate_own': true, 'producer_director|invoice_folder.generate_own': true,
+  'director|invoice_folder.generate_own': true, 'editor|invoice_folder.generate_own': true, 'designer|invoice_folder.generate_own': true,
+  'secretary|invoice_folder.view_any': true,
+  'secretary|invoice_folder.generate_any': true,
 };
 async function loadRolePermissions() {
   try {

@@ -9276,6 +9276,353 @@ router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== メンバー請求書フォルダ ====================
+// 関連: scripts/create_invoice_folders.js / migrations/2026-05-17_member_invoice_folders.sql
+// 権限キー: invoice_folder.{view_own,view_any,generate_own,generate_any}
+// 自分の行は view_own / generate_own、他人の行は view_any / generate_any が必要。
+
+// 「請求書」ルートフォルダを取得 or 作成し、system_settings に保存
+async function getInvoiceRootFolderId(drive) {
+  // 1. system_settings から取り出し
+  const { data: setting } = await supabase
+    .from('system_settings').select('value').eq('key', 'invoice_root_folder_id').maybeSingle();
+  if (setting && setting.value) return setting.value;
+  // 2. 無ければ HARUKAFILM ルート配下に作る
+  const harukafilmId = await getDriveRootFolderId();
+  if (!harukafilmId) throw new Error('HARUKAFILM ルートフォルダ ID が未設定です（system_settings.drive_root_folder_id か DRIVE_ROOT_FOLDER_ID env を設定してください）');
+  const folderId = await getOrCreateFolder(drive, harukafilmId, '請求書');
+  await supabase.from('system_settings')
+    .upsert({ key: 'invoice_root_folder_id', value: folderId, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  return folderId;
+}
+
+// permission を idempotent に付与（scripts/create_invoice_folders.js と同じロジック）
+async function ensureUserDrivePermission(drive, fileId, email, role = 'writer') {
+  try {
+    const list = await drive.permissions.list({
+      fileId,
+      fields: 'permissions(id,emailAddress,role,type)',
+      supportsAllDrives: true,
+    });
+    const perms = list.data.permissions || [];
+    const target = email.toLowerCase();
+    const existing = perms.find(p => (p.emailAddress || '').toLowerCase() === target && p.type === 'user');
+    if (existing) {
+      if (existing.role === 'owner' || existing.role === role || existing.role === 'writer') return false;
+      await drive.permissions.update({
+        fileId, permissionId: existing.id, requestBody: { role }, supportsAllDrives: true,
+      });
+      return true;
+    }
+    await drive.permissions.create({
+      fileId,
+      requestBody: { role, type: 'user', emailAddress: email },
+      sendNotificationEmail: false,
+      supportsAllDrives: true,
+    });
+    return true;
+  } catch (e) {
+    const status = e?.code || e?.response?.status;
+    if (status === 400 || status === 403 || status === 409) {
+      console.warn(`[invoice-folders] permission grant warn (${status}) ${email} on ${fileId}: ${e.message}`);
+      return false;
+    }
+    throw e;
+  }
+}
+
+// メンバー名 → フォルダ名
+function buildInvoiceMemberFolderName(u) {
+  const base = (u.full_name && u.full_name.trim())
+    || (u.nickname && u.nickname.trim())
+    || (u.email || '').split('@')[0]
+    || 'member';
+  return base;
+}
+
+function driveFolderUrl(folderId) {
+  return `https://drive.google.com/drive/folders/${folderId}`;
+}
+
+// 一括取得（自分の行は view_own / 全員分は view_any）
+// GET /api/invoice-folders?year=YYYY&months=4,5,6&user_ids=u1,u2
+//   - months 省略時は 1〜12 全月
+//   - user_ids 省略時は全アクティブメンバー（view_any 必須）
+//   - view_any 無い場合は自分の user_id のみ強制
+router.get('/invoice-folders', requireAuth, async (req, res) => {
+  try {
+    const codes = await getEffectiveRoleCodes(req);
+    const { roleCodesHavePermission } = require('../utils/roles');
+    const canViewAny = codes.length > 0
+      ? await roleCodesHavePermission(codes, 'invoice_folder.view_any')
+      : await userHasPermission(getEffectiveRole(req), 'invoice_folder.view_any');
+    const canViewOwn = codes.length > 0
+      ? await roleCodesHavePermission(codes, 'invoice_folder.view_own')
+      : await userHasPermission(getEffectiveRole(req), 'invoice_folder.view_own');
+    if (!canViewAny && !canViewOwn) return res.status(403).json({ error: '請求書フォルダの閲覧権限がありません' });
+
+    const year = parseInt(req.query.year, 10);
+    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'year は 2000〜2100 の範囲で指定してください' });
+    }
+    let months = [];
+    if (req.query.months) {
+      months = String(req.query.months).split(',').map(s => parseInt(s.trim(), 10)).filter(n => n >= 1 && n <= 12);
+    }
+    if (!months.length) months = [1,2,3,4,5,6,7,8,9,10,11,12];
+
+    let userIds = [];
+    if (req.query.user_ids) {
+      userIds = String(req.query.user_ids).split(',').map(s => s.trim()).filter(Boolean);
+    }
+    // view_any なし → 自分の user_id のみに強制
+    if (!canViewAny) {
+      userIds = [req.user.id];
+    }
+
+    let q = supabase.from('member_invoice_folders')
+      .select('user_id, year, month, folder_id, folder_url')
+      .eq('year', year)
+      .in('month', months);
+    if (userIds.length > 0) q = q.in('user_id', userIds);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    // user_id 別にグルーピング、未生成月も埋める
+    const byUser = {};
+    const ensureUser = (uid) => {
+      if (!byUser[uid]) {
+        byUser[uid] = months.map(m => ({ month: m, exists: false, folder_id: null, folder_url: null }));
+      }
+      return byUser[uid];
+    };
+    for (const uid of userIds) ensureUser(uid);
+    for (const row of (data || [])) {
+      const arr = ensureUser(row.user_id);
+      const slot = arr.find(s => s.month === row.month);
+      if (slot) {
+        slot.exists = true;
+        slot.folder_id = row.folder_id;
+        slot.folder_url = row.folder_url;
+      }
+    }
+    res.json({ year, months, folders: byUser });
+  } catch (e) {
+    console.error('[invoice-folders][GET /invoice-folders]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// メンバー単体取得
+// GET /api/members/:id/invoice-folders?year=YYYY&months=4,5,6
+router.get('/members/:id/invoice-folders', requireAuth, async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    const isSelf = targetId === req.user.id;
+    const codes = await getEffectiveRoleCodes(req);
+    const { roleCodesHavePermission } = require('../utils/roles');
+    const needKey = isSelf ? 'invoice_folder.view_own' : 'invoice_folder.view_any';
+    const ok = codes.length > 0
+      ? await roleCodesHavePermission(codes, needKey)
+      : await userHasPermission(getEffectiveRole(req), needKey);
+    if (!ok) return res.status(403).json({ error: '請求書フォルダの閲覧権限がありません' });
+
+    const year = parseInt(req.query.year, 10);
+    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'year は 2000〜2100 の範囲で指定してください' });
+    }
+    let months = [];
+    if (req.query.months) {
+      months = String(req.query.months).split(',').map(s => parseInt(s.trim(), 10)).filter(n => n >= 1 && n <= 12);
+    }
+    if (!months.length) months = [1,2,3,4,5,6,7,8,9,10,11,12];
+
+    const { data, error } = await supabase
+      .from('member_invoice_folders')
+      .select('month, folder_id, folder_url')
+      .eq('user_id', targetId)
+      .eq('year', year)
+      .in('month', months);
+    if (error) return res.status(500).json({ error: error.message });
+    const map = new Map((data || []).map(r => [r.month, r]));
+    const folders = months.map(m => {
+      const r = map.get(m);
+      return r
+        ? { month: m, exists: true,  folder_id: r.folder_id, folder_url: r.folder_url }
+        : { month: m, exists: false, folder_id: null,        folder_url: null };
+    });
+    res.json({ year, folders });
+  } catch (e) {
+    console.error('[invoice-folders][GET /members/:id/invoice-folders]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 生成
+// POST /api/members/:id/invoice-folders/generate
+// body: { year: 2026, months: [4,5,6] | "all" | "current" }
+router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, res) => {
+  const startedAt = Date.now();
+  const targetId = req.params.id;
+  const isSelf = targetId === req.user.id;
+  let auditFoldersCreated = 0;
+  let auditFoldersSkipped = 0;
+  let auditPermsGranted = 0;
+  let auditStatus = 'success';
+  let auditError = null;
+
+  try {
+    const codes = await getEffectiveRoleCodes(req);
+    const { roleCodesHavePermission } = require('../utils/roles');
+    const needKey = isSelf ? 'invoice_folder.generate_own' : 'invoice_folder.generate_any';
+    const ok = codes.length > 0
+      ? await roleCodesHavePermission(codes, needKey)
+      : await userHasPermission(getEffectiveRole(req), needKey);
+    if (!ok) return res.status(403).json({ error: '請求書フォルダの生成権限がありません' });
+
+    const year = parseInt(req.body?.year, 10);
+    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'year は 2000〜2100 の範囲で指定してください' });
+    }
+    // 当月（Asia/Tokyo）を求める（Railway は UTC 動作。memory: feedback_time_logic_jst_explicit）
+    const jstNowStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // 'YYYY-MM-DD'
+    const jstMonth = parseInt(jstNowStr.slice(5, 7), 10);
+
+    let months = [];
+    const rawMonths = req.body?.months;
+    if (rawMonths === 'all' || rawMonths == null) {
+      months = [1,2,3,4,5,6,7,8,9,10,11,12];
+    } else if (rawMonths === 'current') {
+      months = [jstMonth];
+    } else if (Array.isArray(rawMonths)) {
+      months = rawMonths.map(n => parseInt(n, 10)).filter(n => n >= 1 && n <= 12);
+    } else {
+      return res.status(400).json({ error: 'months は [n,...] / "all" / "current" のいずれかを指定してください' });
+    }
+    if (!months.length) return res.status(400).json({ error: '対象月が空です' });
+
+    // 対象メンバー
+    const { data: user, error: userErr } = await supabase
+      .from('users')
+      .select('id, email, full_name, nickname, is_active')
+      .eq('id', targetId)
+      .maybeSingle();
+    if (userErr) throw new Error(`users 取得失敗: ${userErr.message}`);
+    if (!user) return res.status(404).json({ error: 'メンバーが見つかりません' });
+    if (!user.email) return res.status(400).json({ error: 'メンバーに email が設定されていません' });
+
+    const drive = await getDriveService();
+    const invoiceRootId = await getInvoiceRootFolderId(drive);
+
+    // 年フォルダ
+    const yearLabel = `${year}年`;
+    const yearFolderId = await getOrCreateFolder(drive, invoiceRootId, yearLabel);
+
+    // メンバー名衝突回避（同姓同名チェック）
+    const baseName = buildInvoiceMemberFolderName(user);
+    const emailLocal = (user.email || '').split('@')[0];
+    let folderName = baseName;
+    {
+      const { data: clashUsers } = await supabase
+        .from('users')
+        .select('id, full_name, nickname, email, is_active')
+        .neq('id', targetId);
+      const clashes = (clashUsers || []).filter(u => {
+        const b = buildInvoiceMemberFolderName(u);
+        return b === baseName;
+      });
+      if (clashes.length > 0) folderName = `${baseName} (${emailLocal})`;
+    }
+
+    const result = [];
+    for (const m of months) {
+      const monthLabel = `${String(m).padStart(2, '0')}月`;
+      const monthFolderId = await getOrCreateFolder(drive, yearFolderId, monthLabel);
+
+      // 既存マッピングがあれば再利用、なければ Drive 上に getOrCreate
+      const { data: existing } = await supabase
+        .from('member_invoice_folders')
+        .select('folder_id, folder_url')
+        .eq('user_id', targetId).eq('year', year).eq('month', m)
+        .maybeSingle();
+
+      let memberFolderId;
+      let created = false;
+      if (existing && existing.folder_id) {
+        memberFolderId = existing.folder_id;
+        auditFoldersSkipped++;
+      } else {
+        memberFolderId = await getOrCreateFolder(drive, monthFolderId, folderName);
+        // upsert
+        const { error: upErr } = await supabase
+          .from('member_invoice_folders')
+          .upsert({
+            user_id: targetId,
+            year,
+            month: m,
+            folder_id: memberFolderId,
+            folder_url: driveFolderUrl(memberFolderId),
+            created_by: req.user.id,
+          }, { onConflict: 'user_id,year,month' });
+        if (upErr) throw new Error(`member_invoice_folders upsert 失敗: ${upErr.message}`);
+        auditFoldersCreated++;
+        created = true;
+      }
+
+      // 本人に writer 権限を付与（既にあれば skip）
+      try {
+        const granted = await ensureUserDrivePermission(drive, memberFolderId, user.email, 'writer');
+        if (granted) auditPermsGranted++;
+      } catch (e) {
+        console.warn('[invoice-folders] permission grant 失敗:', e.message);
+      }
+
+      result.push({
+        month: m,
+        folder_id: memberFolderId,
+        folder_url: driveFolderUrl(memberFolderId),
+        created,
+      });
+    }
+
+    // 監査ログ
+    try {
+      await supabase.from('invoice_folder_audit_log').insert({
+        approved_by_user_id: req.user.id,
+        command_args: { target_user_id: targetId, year, months, is_self: isSelf },
+        folders_created_count: auditFoldersCreated,
+        folders_skipped_count: auditFoldersSkipped,
+        permissions_granted_count: auditPermsGranted,
+        permissions_revoked_count: 0,
+        duration_ms: Date.now() - startedAt,
+        status: auditStatus,
+      });
+    } catch (e) {
+      console.warn('[invoice-folders] audit log insert 失敗:', e.message);
+    }
+
+    res.json({ year, folders: result });
+  } catch (e) {
+    console.error('[invoice-folders][POST /members/:id/invoice-folders/generate]', e);
+    auditStatus = 'failed';
+    auditError = e.message;
+    try {
+      await supabase.from('invoice_folder_audit_log').insert({
+        approved_by_user_id: req.user.id,
+        command_args: { target_user_id: targetId, body: req.body || null, is_self: isSelf },
+        folders_created_count: auditFoldersCreated,
+        folders_skipped_count: auditFoldersSkipped,
+        permissions_granted_count: auditPermsGranted,
+        permissions_revoked_count: 0,
+        duration_ms: Date.now() - startedAt,
+        status: auditStatus,
+        error_message: auditError,
+      });
+    } catch (_) {}
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ==================== 請求書 ====================
 
 // 請求書一覧
@@ -14700,6 +15047,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'system.view_as',
   'analytics.view',
   'analytics.bug_reports.view',
+  'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
 ]);
 
 // ロール権限保存（最高管理者のみ・ホワイトリスト検証あり）
