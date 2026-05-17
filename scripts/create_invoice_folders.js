@@ -42,7 +42,7 @@
 
 require('dotenv').config();
 const supabase = require('../supabase');
-const { getDriveService, getOrCreateFolder, getDriveRootFolderId, buildMemberFolderName } = require('../routes/haruka');
+const { getDriveService, getOrCreateFolder, getDriveRootFolderId, buildMemberFolderName, getInvoiceFolderExtraAdminEmails } = require('../routes/haruka');
 
 const args = process.argv.slice(2);
 const YEAR_ARG    = args.find(a => a.startsWith('--year='));
@@ -189,6 +189,20 @@ function buildBaseMemberName(u, nameCount) {
   return base;
 }
 
+// Drive permission role の強さ序数（同 email で既存 role が要求以上なら skip するため）
+//   organizer > fileOrganizer > writer > commenter > reader
+function rolePriority(role) {
+  switch (role) {
+    case 'owner':         return 100;
+    case 'organizer':     return 50;
+    case 'fileOrganizer': return 40;
+    case 'writer':        return 30;
+    case 'commenter':     return 20;
+    case 'reader':        return 10;
+    default:              return 0;
+  }
+}
+
 // permissions を idempotent に付与
 async function ensureUserPermission(drive, fileId, email, role = 'writer') {
   if (DRY_RUN) {
@@ -206,8 +220,10 @@ async function ensureUserPermission(drive, fileId, email, role = 'writer') {
     const target = email.toLowerCase();
     const existing = perms.find(p => (p.emailAddress || '').toLowerCase() === target && p.type === 'user');
     if (existing) {
-      // owner はそのまま、writer 以上なら何もしない
-      if (existing.role === 'owner' || existing.role === role || existing.role === 'writer') return;
+      const existingRank = rolePriority(existing.role);
+      const wantedRank   = rolePriority(role);
+      // owner はそのまま、既存 role が要求 role 以上なら何もしない
+      if (existing.role === 'owner' || existingRank >= wantedRank) return;
       // 権限が弱い場合は update
       await drive.permissions.update({
         fileId,
@@ -234,6 +250,25 @@ async function ensureUserPermission(drive, fileId, email, role = 'writer') {
   }
 }
 
+// fileOrganizer など共有ドライブ専用ロールを試し、拒否された場合は writer にフォールバック。
+// 「請求書」ルートへの外部管理者付与で使う。
+async function ensureUserPermissionWithRoleFallback(drive, fileId, email, role = 'fileOrganizer') {
+  if (DRY_RUN) {
+    console.log(`[dry-run] permission grant (fallback): ${email} as ${role} → writer on ${fileId}`);
+    return;
+  }
+  try {
+    return await ensureUserPermission(drive, fileId, email, role);
+  } catch (e) {
+    const msg = e?.message || '';
+    if (msg.includes('shared drive') || msg.includes('not supported') || msg.includes('teamDriveFileOnly')) {
+      console.warn(`[invoice-folders] ${role} grant 拒否、writer にフォールバック: ${email} (${msg})`);
+      return await ensureUserPermission(drive, fileId, email, 'writer');
+    }
+    throw e;
+  }
+}
+
 // 「請求書」ルートフォルダを取得 or 作成
 async function ensureInvoiceRootFolder(drive, harukafilmId) {
   if (DRY_RUN) {
@@ -249,12 +284,20 @@ async function ensureInvoiceRootFolder(drive, harukafilmId) {
   return folderId;
 }
 
-// --sync-roles: ルートフォルダの **admin のみ** writer 権限を DB と同期
+// --sync-roles: ルートフォルダの **admin + 追加管理者** 権限を DB と同期
 // PR #XXX 以降は secretary は root 権限を持たない（個人フォルダ単位で付与する）。
-async function syncRolesOnRoot(drive, invoiceRootId, adminEmails) {
-  console.log(`[invoice-folders] --sync-roles 開始 root=${invoiceRootId} (admin のみ writer)`);
+// 追加管理者（system_settings.invoice_folder_extra_admin_emails）は fileOrganizer
+// （拒否時は writer）を維持する。
+async function syncRolesOnRoot(drive, invoiceRootId, adminEmails, extraAdminEmails = []) {
+  console.log(`[invoice-folders] --sync-roles 開始 root=${invoiceRootId} (admin writer + extra admins fileOrganizer)`);
+  const wantedAdmins = new Set([...adminEmails].map(e => e.toLowerCase()));
+  const wantedExtras = new Set([...extraAdminEmails].map(e => e.toLowerCase()));
+  // 全体の「残すべき」集合（追加管理者は admin と重複しても OK）
+  const wantedAll = new Set([...wantedAdmins, ...wantedExtras]);
+
   if (DRY_RUN) {
-    console.log(`[dry-run] sync admin writers: [${[...adminEmails].join(', ')}]`);
+    console.log(`[dry-run] sync admin writers: [${[...wantedAdmins].join(', ')}]`);
+    console.log(`[dry-run] sync extra admins (fileOrganizer): [${[...wantedExtras].join(', ')}]`);
     return;
   }
   // 既存 permissions を list
@@ -265,15 +308,19 @@ async function syncRolesOnRoot(drive, invoiceRootId, adminEmails) {
   });
   const perms = list.data.permissions || [];
 
-  const wanted = new Set([...adminEmails].map(e => e.toLowerCase()));
-  const found  = new Set();
-  // 剥奪: type=user & role=writer/reader なのに admin にいない → 削除（owner は触らない）
+  const foundAdmin = new Set();
+  const foundExtra = new Set();
+  // 剥奪: type=user & role=writer/reader なのに wantedAll にいない → 削除（owner は触らない）
   for (const p of perms) {
     if (p.role === 'owner') continue;
     if (p.type !== 'user') continue;
     const em = (p.emailAddress || '').toLowerCase();
     if (!em) continue;
-    if (wanted.has(em)) { found.add(em); continue; }
+    if (wantedAll.has(em)) {
+      if (wantedAdmins.has(em)) foundAdmin.add(em);
+      if (wantedExtras.has(em)) foundExtra.add(em);
+      continue;
+    }
     try {
       await drive.permissions.delete({
         fileId: invoiceRootId,
@@ -285,11 +332,19 @@ async function syncRolesOnRoot(drive, invoiceRootId, adminEmails) {
       console.warn(`[invoice-folders] revoke 失敗 ${em}: ${e.message}`);
     }
   }
-  // 追加: admin にいて未付与 → 付与
-  for (const em of wanted) {
-    if (found.has(em)) continue;
+  // 追加: admin にいて未付与 → writer
+  for (const em of wantedAdmins) {
+    if (foundAdmin.has(em)) continue;
     await ensureUserPermission(drive, invoiceRootId, em, 'writer');
     console.log(`[invoice-folders] grant ${em} (writer) ✓`);
+  }
+  // 追加: extra admin → fileOrganizer（拒否時 writer フォールバック）
+  for (const em of wantedExtras) {
+    // 既存 permission がある場合、現在 role が fileOrganizer 未満なら昇格、以上なら skip
+    // ensureUserPermissionWithRoleFallback / ensureUserPermission が rank 比較で skip するので
+    // foundExtra に居ても呼ぶだけで idempotent。
+    await ensureUserPermissionWithRoleFallback(drive, invoiceRootId, em, 'fileOrganizer');
+    console.log(`[invoice-folders] grant ${em} (extra admin: fileOrganizer/writer) ✓`);
   }
   console.log('[invoice-folders] --sync-roles 完了');
 }
@@ -414,9 +469,35 @@ async function main() {
     await ensureUserPermission(drive, invoiceRootId, em, 'writer');
   }
 
+  // 追加管理者（system_settings.invoice_folder_extra_admin_emails）に
+  // fileOrganizer（拒否時は writer）を付与。Drive 階層継承で配下にも反映される。
+  let extraAdminEmails = [];
+  try {
+    extraAdminEmails = await getInvoiceFolderExtraAdminEmails();
+    if (extraAdminEmails.length > 0) {
+      console.log(`[invoice-folders] 追加管理者: ${extraAdminEmails.length} 名 (${extraAdminEmails.join(', ')})`);
+      if (!DRY_RUN && drive) {
+        for (const em of extraAdminEmails) {
+          try {
+            await ensureUserPermissionWithRoleFallback(drive, invoiceRootId, em, 'fileOrganizer');
+            console.log(`[invoice-folders] grant ${em} (fileOrganizer/writer fallback) ✓`);
+          } catch (e) {
+            console.warn(`[invoice-folders] 追加管理者付与失敗 ${em}: ${e.message}`);
+          }
+        }
+      } else if (DRY_RUN) {
+        for (const em of extraAdminEmails) {
+          console.log(`[dry-run] grant ${em} (fileOrganizer/writer fallback) on ${invoiceRootId}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[invoice-folders] 追加管理者取得失敗: ${e.message}`);
+  }
+
   // STEP 5/6
   if (SYNC_ROLES) {
-    await syncRolesOnRoot(drive, invoiceRootId, adminEmails);
+    await syncRolesOnRoot(drive, invoiceRootId, adminEmails, extraAdminEmails);
   } else if (YEAR) {
     await generateYearFolders(drive, invoiceRootId, YEAR, adminEmails);
   }

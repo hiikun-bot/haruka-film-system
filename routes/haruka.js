@@ -9281,22 +9281,64 @@ router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
 // 権限キー: invoice_folder.{view_own,view_any,generate_own,generate_any}
 // 自分の行は view_own / generate_own、他人の行は view_any / generate_any が必要。
 
+// Drive permission role の強さを序数で返す（同 email で既存 role が
+// 要求 role 以上なら skip するための判定に使う）
+//   organizer > fileOrganizer > writer > commenter > reader
+// owner は常に最強として扱う（剥奪・降格しない）。
+function _drivePermissionRoleRank(role) {
+  switch (role) {
+    case 'owner':         return 100;
+    case 'organizer':     return 50;
+    case 'fileOrganizer': return 40;
+    case 'writer':        return 30;
+    case 'commenter':     return 20;
+    case 'reader':        return 10;
+    default:              return 0;
+  }
+}
+
 // 「請求書」ルートフォルダを取得 or 作成し、system_settings に保存
+// 取得・作成いずれの場合も、外部管理者（system_settings.invoice_folder_extra_admin_emails）に
+// fileOrganizer 権限を付与する。fileOrganizer は共有ドライブ専用ロールなので、
+// 非共有ドライブ環境では writer にフォールバックする。
 async function getInvoiceRootFolderId(drive) {
   // 1. system_settings から取り出し
   const { data: setting } = await supabase
     .from('system_settings').select('value').eq('key', 'invoice_root_folder_id').maybeSingle();
-  if (setting && setting.value) return setting.value;
-  // 2. 無ければ HARUKAFILM ルート配下に作る
-  const harukafilmId = await getDriveRootFolderId();
-  if (!harukafilmId) throw new Error('HARUKAFILM ルートフォルダ ID が未設定です（system_settings.drive_root_folder_id か DRIVE_ROOT_FOLDER_ID env を設定してください）');
-  const folderId = await getOrCreateFolder(drive, harukafilmId, '請求書');
-  await supabase.from('system_settings')
-    .upsert({ key: 'invoice_root_folder_id', value: folderId, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  let folderId = setting && setting.value ? setting.value : null;
+
+  if (!folderId) {
+    // 2. 無ければ HARUKAFILM ルート配下に作る
+    const harukafilmId = await getDriveRootFolderId();
+    if (!harukafilmId) throw new Error('HARUKAFILM ルートフォルダ ID が未設定です（system_settings.drive_root_folder_id か DRIVE_ROOT_FOLDER_ID env を設定してください）');
+    folderId = await getOrCreateFolder(drive, harukafilmId, '請求書');
+    await supabase.from('system_settings')
+      .upsert({ key: 'invoice_root_folder_id', value: folderId, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  }
+
+  // 3. 外部管理者（users に居ない hiikun.ascs@gmail.com 等）にコンテンツ管理者権限を付与
+  //    Drive 階層継承により配下のフォルダにも自動反映される。例外で本体処理を止めない。
+  if (drive) {
+    try {
+      const extraAdmins = await getInvoiceFolderExtraAdminEmails();
+      for (const email of extraAdmins) {
+        try {
+          await ensureUserDrivePermissionWithRoleFallback(drive, folderId, email, 'fileOrganizer');
+        } catch (e) {
+          console.warn(`[invoice] extra admin grant 失敗 ${email}: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[invoice] extra admin 取得失敗: ${e.message}`);
+    }
+  }
+
   return folderId;
 }
 
 // permission を idempotent に付与（scripts/create_invoice_folders.js と同じロジック）
+// role 優先度比較は _drivePermissionRoleRank() で行う。
+// 既存 role が要求 role 以上なら skip。弱ければ昇格 update。
 async function ensureUserDrivePermission(drive, fileId, email, role = 'writer') {
   try {
     const list = await drive.permissions.list({
@@ -9308,7 +9350,10 @@ async function ensureUserDrivePermission(drive, fileId, email, role = 'writer') 
     const target = email.toLowerCase();
     const existing = perms.find(p => (p.emailAddress || '').toLowerCase() === target && p.type === 'user');
     if (existing) {
-      if (existing.role === 'owner' || existing.role === role || existing.role === 'writer') return false;
+      const existingRank = _drivePermissionRoleRank(existing.role);
+      const wantedRank   = _drivePermissionRoleRank(role);
+      // owner はそのまま、既存 role が要求 role 以上なら何もしない
+      if (existing.role === 'owner' || existingRank >= wantedRank) return false;
       await drive.permissions.update({
         fileId, permissionId: existing.id, requestBody: { role }, supportsAllDrives: true,
       });
@@ -9328,6 +9373,44 @@ async function ensureUserDrivePermission(drive, fileId, email, role = 'writer') 
       return false;
     }
     throw e;
+  }
+}
+
+// fileOrganizer のような共有ドライブ専用ロールを試し、失敗したら writer にフォールバック。
+// system_settings.invoice_folder_extra_admin_emails のメンバー付与で使う。
+async function ensureUserDrivePermissionWithRoleFallback(drive, fileId, email, role = 'fileOrganizer') {
+  try {
+    return await ensureUserDrivePermission(drive, fileId, email, role);
+  } catch (e) {
+    const msg = e?.message || '';
+    if (msg.includes('shared drive') || msg.includes('not supported') || msg.includes('teamDriveFileOnly')) {
+      console.warn(`[invoice] ${role} grant が拒否されたため writer にフォールバックします: ${email} (${msg})`);
+      return await ensureUserDrivePermission(drive, fileId, email, 'writer');
+    }
+    throw e;
+  }
+}
+
+// system_settings.invoice_folder_extra_admin_emails (JSON 配列文字列) をパースして
+// 有効なメールアドレスのみ返す。失敗時は [] を返し、例外をスローしない
+// （フォルダ作成や同期スクリプトを止めないため）。
+async function getInvoiceFolderExtraAdminEmails() {
+  try {
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'invoice_folder_extra_admin_emails')
+      .maybeSingle();
+    if (!data || !data.value) return [];
+    const parsed = JSON.parse(data.value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(e => typeof e === 'string' && e.includes('@'))
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean);
+  } catch (e) {
+    console.warn('[invoice] getInvoiceFolderExtraAdminEmails parse failed:', e.message);
+    return [];
   }
 }
 
@@ -16420,4 +16503,7 @@ router.getOrCreateFolder   = getOrCreateFolder;
 router.getDriveRootFolderId = getDriveRootFolderId;
 router.buildMemberFolderName = buildMemberFolderName;
 router.buildInvoiceMemberFolderName = buildInvoiceMemberFolderName;
+router.getInvoiceFolderExtraAdminEmails = getInvoiceFolderExtraAdminEmails;
+router.ensureUserDrivePermission = ensureUserDrivePermission;
+router.ensureUserDrivePermissionWithRoleFallback = ensureUserDrivePermissionWithRoleFallback;
 module.exports = router;
