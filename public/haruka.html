@@ -5939,6 +5939,30 @@ window.showPage = window.showPage || function(name, btn) {
               <input class="form-input" id="p-end-date" type="date">
             </div>
           </div>
+
+          <!-- ADR 017: 外部ディレクター案件トグル -->
+          <div style="margin-bottom:12px;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg-soft,#fafafa)">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:0">
+              <input type="checkbox" id="p-is-external-d" onchange="onProjectExternalToggleChange(this.checked)">
+              <span style="font-size:13px;font-weight:600;color:var(--text)">🌐 外部ディレクター案件</span>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:400">— GND等の代理店経由でDがHARUKA外部の案件</span>
+            </label>
+            <div id="p-liaison-row" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="display:flex;align-items:center;gap:6px">
+                  窓口担当 <span style="color:#E24B4A">*</span>
+                  <span style="color:var(--text-muted);font-weight:400;font-size:11px">— HARUKA側で督促・代理操作を担う1名</span>
+                </label>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="p-liaison-avatar" style="flex-shrink:0;display:inline-flex"></span>
+                  <select class="form-select" id="p-liaison-user-id" onchange="updateUserSelectAvatar('p-liaison-user-id','p-liaison-avatar')" style="flex:1;min-width:0">
+                    <option value="">未設定</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="form-row">
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">プロデューサー</label>
@@ -5950,7 +5974,10 @@ window.showPage = window.showPage || function(name, btn) {
               </div>
             </div>
             <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">ディレクター</label>
+              <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+                <span>ディレクター</span>
+                <button type="button" id="p-create-external-d-btn" onclick="openCreateExternalDirector()" style="display:none;padding:2px 8px;font-size:11px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--em-dark);cursor:pointer">＋外部Dを新規登録</button>
+              </label>
               <div style="display:flex;align-items:center;gap:8px">
                 <span id="p-director-avatar" style="flex-shrink:0;display:inline-flex"></span>
                 <select class="form-select" id="p-director-id" onchange="updateUserSelectAvatar('p-director-id','p-director-avatar'); renderProjectSubDirectorPicker()" style="flex:1;min-width:0">
@@ -6424,6 +6451,44 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- ADR 017: 外部ディレクター（擬似ユーザー）新規登録モーダル -->
+<!-- 案件編集モーダル(z-index:200)の上に重ねる -->
+<div class="modal-overlay" id="modal-external-director-create" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal" style="width:min(480px,92vw);padding:0;border-radius:12px;overflow:hidden">
+    <div style="padding:16px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:15px;font-weight:600;color:var(--text)">🌐 外部ディレクターを新規登録</span>
+      <button class="modal-close" onclick="closeModal('modal-external-director-create')">×</button>
+    </div>
+    <div style="padding:18px 22px">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.5">
+        GND等の代理店経由案件で、HARUKA外部のディレクターを擬似ユーザーとして登録します。
+        ログイン不可・通知対象外・採算集計から除外されます。
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-label">氏名 <span style="color:#E24B4A">*</span></label>
+        <input class="form-input" id="ext-d-full-name" type="text" placeholder="例: 中島(GND)">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">所属を含めた表記推奨（例: 中島(GND)）</div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-label">所属（external_company） <span style="color:#E24B4A">*</span></label>
+        <input class="form-input" id="ext-d-company" type="text" placeholder="例: GND">
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-label">ニックネーム（任意）</label>
+        <input class="form-input" id="ext-d-nickname" type="text" placeholder="例: なかじまさん">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">メモ（任意）</label>
+        <textarea class="form-input" id="ext-d-note" rows="2" placeholder="連絡先・備考など"></textarea>
+      </div>
+    </div>
+    <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn" onclick="closeModal('modal-external-director-create')">キャンセル</button>
+      <button class="btn-primary" id="ext-d-submit-btn" onclick="submitCreateExternalDirector()">登録</button>
+    </div>
   </div>
 </div>
 
@@ -15514,6 +15579,45 @@ function onProjectClientChange() {
   renderProjectSubProducerPicker();
 }
 
+// ADR 017: 外部D案件トグルの切替（director picker の候補絞り込みと窓口担当行の表示を連動）
+function onProjectExternalToggleChange(on) {
+  const liaisonRow = document.getElementById('p-liaison-row');
+  const createBtn  = document.getElementById('p-create-external-d-btn');
+  if (liaisonRow) liaisonRow.style.display = on ? '' : 'none';
+  if (createBtn)  createBtn.style.display  = on ? '' : 'none';
+  // director picker に includeExternal / allowedRoles を反映
+  const dirTrigger = document.getElementById('p-director-id');
+  if (dirTrigger && typeof dirTrigger.setMemberPickerOptions === 'function') {
+    if (on) {
+      dirTrigger.setMemberPickerOptions({
+        includeExternal: true,
+        allowedRoles: ['admin','producer','producer_director','director','external_director'],
+      });
+    } else {
+      dirTrigger.setMemberPickerOptions({
+        includeExternal: false,
+        allowedRoles: ['admin','producer','producer_director','director'],
+      });
+      // OFF に戻したとき、選択中が外部Dならクリア
+      const cur = dirTrigger.value;
+      if (cur && Array.isArray(allMembers)) {
+        const m = allMembers.find(x => String(x.id) === String(cur));
+        if (m && m.is_external) {
+          dirTrigger.value = '';
+          updateUserSelectAvatar('p-director-id','p-director-avatar', 24);
+          if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
+        }
+      }
+    }
+  }
+  // OFF にしたら liaison もクリア
+  if (!on) {
+    const lz = document.getElementById('p-liaison-user-id');
+    if (lz) lz.value = '';
+    updateUserSelectAvatar('p-liaison-user-id','p-liaison-avatar', 24);
+  }
+}
+
 function openProjectModal(preClientId) {
   document.getElementById('p-modal-title').textContent = '新規案件';
   document.getElementById('p-id').value = '';
@@ -15541,11 +15645,22 @@ function openProjectModal(preClientId) {
       if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
     },
   });
+  // ADR 017: 窓口担当ピッカー（外部D案件トグルON時のみ表示。バインドだけは常時行う）
+  bindMemberPickerSelect('p-liaison-user-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','secretary','producer','producer_director','director','editor','designer'],
+    onChange: () => updateUserSelectAvatar('p-liaison-user-id', 'p-liaison-avatar', 24),
+  });
   document.getElementById('p-producer-id').value = '';
   document.getElementById('p-director-id').value = '';
+  document.getElementById('p-liaison-user-id').value = '';
+  // ADR 017: 新規は外部Dトグル OFF で開始
+  { const cb = document.getElementById('p-is-external-d'); if (cb) cb.checked = false; }
+  onProjectExternalToggleChange(false);
   // アバタープレビュー初期化（新規は未選択）
   updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
   updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
+  updateUserSelectAvatar('p-liaison-user-id', 'p-liaison-avatar', 24);
 
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
@@ -15652,6 +15767,12 @@ function openEditProject(p) {
       if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
     },
   });
+  // ADR 017: 窓口担当ピッカー（初回のみバインド）
+  bindMemberPickerSelect('p-liaison-user-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    allowedRoles: ['admin','secretary','producer','producer_director','director','editor','designer'],
+    onChange: () => updateUserSelectAvatar('p-liaison-user-id', 'p-liaison-avatar', 24),
+  });
 
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
@@ -15673,10 +15794,18 @@ function openEditProject(p) {
   document.getElementById('p-start-date').value = p.start_date ? p.start_date.slice(0,10) : '';
   document.getElementById('p-end-date').value = p.end_date ? p.end_date.slice(0,10) : '';
   document.getElementById('p-producer-id').value = p.producer_id || '';
+  // ADR 017: 外部D案件判定（director.is_external か liaison_user_id があれば外部D案件と見なす）
+  const _isExtDProject = !!(p.director && p.director.is_external) || !!p.liaison_user_id;
+  { const cb = document.getElementById('p-is-external-d'); if (cb) cb.checked = _isExtDProject; }
+  // director picker に includeExternal を反映してから値を入れる
+  onProjectExternalToggleChange(_isExtDProject);
   document.getElementById('p-director-id').value = p.director_id || '';
+  // 窓口担当を復元
+  document.getElementById('p-liaison-user-id').value = p.liaison_user_id || '';
   // アバタープレビュー反映
   updateUserSelectAvatar('p-producer-id', 'p-producer-avatar', 24);
   updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
+  updateUserSelectAvatar('p-liaison-user-id', 'p-liaison-avatar', 24);
   document.getElementById('p-sheet-url').value = p.sheet_url || '';
   document.getElementById('p-regulation-url').value = p.regulation_url || '';
   document.getElementById('p-chatwork-room-id').value = p.chatwork_room_id || '';
@@ -19180,6 +19309,15 @@ async function submitProject() {
   const end_date = document.getElementById('p-end-date').value || null;
   const producer_id = document.getElementById('p-producer-id').value || null;
   const director_id = document.getElementById('p-director-id').value || null;
+  // ADR 017: 外部D案件トグル + 窓口担当
+  const is_external_d = !!document.getElementById('p-is-external-d')?.checked;
+  const liaison_user_id = is_external_d
+    ? (document.getElementById('p-liaison-user-id').value || null)
+    : null;
+  if (is_external_d && !liaison_user_id) {
+    showToast('外部D案件では窓口担当の指定が必須です', 'warn');
+    return;
+  }
   const sheet_url = document.getElementById('p-sheet-url').value.trim() || null;
   const regulation_url = document.getElementById('p-regulation-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
@@ -19220,7 +19358,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -19232,6 +19370,52 @@ async function submitProject() {
     const e = await res.json();
     showToast('エラー: ' + translateError(e?.error), 'error');
   }
+}
+
+// ADR 017: 外部ディレクター（擬似ユーザー）新規登録モーダルを開く
+function openCreateExternalDirector() {
+  ['ext-d-full-name','ext-d-company','ext-d-nickname','ext-d-note'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  openModal('modal-external-director-create');
+  setTimeout(() => document.getElementById('ext-d-full-name')?.focus(), 50);
+}
+
+async function submitCreateExternalDirector() {
+  const full_name = (document.getElementById('ext-d-full-name')?.value || '').trim();
+  const external_company = (document.getElementById('ext-d-company')?.value || '').trim();
+  const nickname = (document.getElementById('ext-d-nickname')?.value || '').trim() || null;
+  const note = (document.getElementById('ext-d-note')?.value || '').trim() || null;
+  if (!full_name) { showToast('氏名は必須です', 'warn'); return; }
+  if (!external_company) { showToast('所属は必須です', 'warn'); return; }
+  const btn = document.getElementById('ext-d-submit-btn');
+  const orig = btn.textContent; btn.textContent = '登録中...'; btn.disabled = true;
+  const res = await apiFetch(`${API}/external-directors`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ full_name, external_company, nickname, note }),
+  });
+  btn.textContent = orig; btn.disabled = false;
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast('登録失敗: ' + translateError(e?.error), 'error');
+    return;
+  }
+  const created = await res.json();
+  // メンバーキャッシュを破棄し、director picker に新規ユーザーをセット
+  if (typeof MemberPicker !== 'undefined' && typeof MemberPicker.invalidateCache === 'function') {
+    MemberPicker.invalidateCache();
+  }
+  if (typeof loadMembers === 'function') {
+    try { await loadMembers(); } catch (_) {}
+  }
+  const dirTrigger = document.getElementById('p-director-id');
+  if (dirTrigger) {
+    dirTrigger.value = created.id;
+    updateUserSelectAvatar('p-director-id','p-director-avatar', 24);
+  }
+  closeModal('modal-external-director-create');
+  showToast(`外部D「${full_name}」を登録しました`, 'success');
 }
 
 function showPage(name, btn) {
