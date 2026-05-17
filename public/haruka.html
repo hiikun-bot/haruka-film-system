@@ -4172,28 +4172,6 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
 
-    <!-- ===== 全案件マイルストーンガント（L2 / ADR 010 Phase 1b） ===== -->
-    <details id="all-projects-gantt-section" ontoggle="toggleAllProjectsGantt()" style="margin-bottom:14px;background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:8px 14px">
-      <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--em-dark);padding:6px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span>📊 進行中案件ガント（クリックで展開）</span>
-        <span style="font-size:11px;color:var(--text-muted);font-weight:400">— 各案件の納期・マイルストーンを横断俯瞰</span>
-      </summary>
-      <div style="padding-top:10px">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-          <label style="font-size:11px;color:var(--text-muted)">カテゴリ</label>
-          <select id="all-projects-gantt-category-filter" onchange="loadAllProjectsGantt()" class="form-input" style="width:140px;padding:4px 8px;font-size:12px">
-            <option value="">全て</option>
-            <option value="lp">LP</option>
-            <option value="hp">HP</option>
-          </select>
-          <button type="button" class="btn-sm" onclick="loadAllProjectsGantt()" style="font-size:11px">再読み込み</button>
-        </div>
-        <div id="all-projects-gantt-container">
-          <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">展開すると読み込みます</div>
-        </div>
-      </div>
-    </details>
-
     <div id="projects-list" class="loading">読み込み中...</div>
   </div>
 </div>
@@ -17660,125 +17638,6 @@ async function applyPhaseTemplate() {
   }
 }
 
-// ==================== 全案件マイルストーンガント（L2） ====================
-let _allProjectsGanttLoaded = false;
-
-async function loadAllProjectsGantt() {
-  const container = document.getElementById('all-projects-gantt-container');
-  if (!container) return;
-  container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中...</div>';
-  const filterEl = document.getElementById('all-projects-gantt-category-filter');
-  const categoryParam = (filterEl && filterEl.value) ? `&category=${encodeURIComponent(filterEl.value)}` : '';
-  try {
-    const res = await apiFetch(`${API}/projects/schedule-overview?status=in_progress${categoryParam}`);
-    const projects = res.ok ? await res.json() : [];
-    renderAllProjectsGantt(projects);
-    _allProjectsGanttLoaded = true;
-  } catch (e) {
-    container.innerHTML = `<div style="padding:14px;text-align:center;color:#DC2626;font-size:12px">読み込みエラー: ${esc(e.message || '')}</div>`;
-  }
-}
-
-function renderAllProjectsGantt(projects) {
-  const container = document.getElementById('all-projects-gantt-container');
-  if (!container) return;
-  if (!projects || !projects.length) {
-    container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">表示できる案件がありません（進行中・カテゴリフィルタを確認してください）</div>';
-    return;
-  }
-  // 横軸: 今月から +12ヶ月
-  const today = new Date();
-  const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const endMonth = new Date(today.getFullYear(), today.getMonth() + 12, 0);
-  const startMs = startMonth.getTime();
-  const endMs = endMonth.getTime();
-  const totalMs = endMs - startMs;
-  const todayMs = today.getTime();
-
-  const months = [];
-  for (let i = 0; i < 12; i++) {
-    const m = new Date(today.getFullYear(), today.getMonth() + i, 1);
-    months.push({ y: m.getFullYear(), m: m.getMonth() + 1, ms: m.getTime() });
-  }
-  const monthHeaderHtml = months.map(mm => {
-    const pct = ((mm.ms - startMs) / totalMs) * 100;
-    return `<div style="position:absolute;left:${pct}%;top:0;bottom:0;border-left:1px dashed #E5E7EB"></div>
-      <div style="position:absolute;left:${pct}%;top:0;font-size:10px;color:#6B7280;padding:2px 4px">${mm.y % 100}/${mm.m}</div>`;
-  }).join('');
-
-  const rowsHtml = projects.map(p => {
-    const lateMs = p.milestones.filter(m => !m.is_done && new Date(m.current_end_date + 'T00:00:00').getTime() < todayMs).length;
-    const lateBadge = lateMs > 0 ? `<span style="display:inline-block;background:#DC2626;color:#fff;border-radius:8px;padding:0 6px;font-size:10px;margin-left:6px">🔴 ${lateMs}</span>` : '';
-
-    let barHtml = '';
-    if (p.min_date && p.max_date) {
-      const sMs = new Date(p.min_date + 'T00:00:00').getTime();
-      const eMs = new Date(p.max_date + 'T00:00:00').getTime();
-      const left = Math.max(0, ((sMs - startMs) / totalMs) * 100);
-      const right = Math.min(100, ((eMs - startMs) / totalMs) * 100);
-      const width = Math.max(0.5, right - left);
-      barHtml = `<div style="position:absolute;left:${left}%;width:${width}%;top:50%;transform:translateY(-50%);height:6px;background:#BFDBFE;border-radius:3px"></div>`;
-    }
-    const msHtml = p.milestones.map(m => {
-      const ms = new Date(m.current_end_date + 'T00:00:00').getTime();
-      if (ms < startMs || ms > endMs) return '';
-      const pct = ((ms - startMs) / totalMs) * 100;
-      const isLate = !m.is_done && ms < todayMs;
-      const color = isLate ? '#DC2626' : (m.is_done ? '#10B981' : '#1E40AF');
-      const tooltip = `${m.title} (${String(m.current_end_date).slice(0,10)})${m.is_done ? ' ✅' : ''}${isLate ? ' 🔴遅延' : ''}`;
-      return `<div title="${esc(tooltip)}" style="position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);color:${color};font-size:14px;font-weight:700;cursor:default">◆</div>`;
-    }).join('');
-
-    return `
-      <div style="display:grid;grid-template-columns:200px 1fr;border-bottom:0.5px solid #F3F4F6">
-        <div style="padding:8px 10px;font-size:12px;border-right:0.5px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-          <a href="javascript:void(0)" onclick="openEditProjectById('${p.id}')" style="color:var(--em-dark);text-decoration:none;font-weight:500" title="${esc(p.name)}">${esc(p.name)}</a>
-          ${lateBadge}
-        </div>
-        <div style="position:relative;height:32px">
-          ${barHtml}
-          ${msHtml}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  container.innerHTML = `
-    <div style="position:relative;border:0.5px solid var(--border);border-radius:8px;background:#fff;overflow-x:auto">
-      <div style="display:grid;grid-template-columns:200px 1fr;border-bottom:1px solid var(--border);background:#F9FAFB">
-        <div style="padding:8px 10px;font-size:11px;font-weight:600;color:var(--text-muted)">案件名</div>
-        <div style="position:relative;height:24px">${monthHeaderHtml}</div>
-      </div>
-      <div style="position:relative">
-        ${rowsHtml}
-      </div>
-    </div>
-    <div style="margin-top:6px;font-size:10px;color:var(--text-muted)">◆マイルストーン / 🔴遅延 / 緑=完了 / 青バー=進行中の期間</div>
-  `;
-}
-
-function toggleAllProjectsGantt() {
-  const det = document.getElementById('all-projects-gantt-section');
-  if (!det) return;
-  setTimeout(() => {
-    try { localStorage.setItem('haruka_all_projects_gantt_open', det.open ? '1' : '0'); } catch (_) {}
-    if (det.open && !_allProjectsGanttLoaded) {
-      loadAllProjectsGantt();
-    }
-  }, 0);
-}
-
-function initAllProjectsGanttState() {
-  const det = document.getElementById('all-projects-gantt-section');
-  if (!det) return;
-  let open = '0';
-  try { open = localStorage.getItem('haruka_all_projects_gantt_open') || '0'; } catch (_) {}
-  if (open === '1') {
-    det.open = true;
-    if (!_allProjectsGanttLoaded) loadAllProjectsGantt();
-  }
-}
-
 // ==================== 案件収支（Step C） ====================
 // feature flag: ENABLE_PROJECT_ACCOUNTING — サーバー側の /api/accounting/* が
 // 503 を返したらタブを隠す。それ以外は表示。
@@ -19384,7 +19243,7 @@ function showPage(name, btn) {
   if(btn && !btn.dataset.page) btn.classList.add('active'); // 後方互換
   closeNavDrawer();
   if(name==='dashboard') loadDashboard();
-  if(name==='projects') { loadProjects(); initAllProjectsGanttState(); }
+  if(name==='projects') { loadProjects(); }
   if(name==='members') loadMembers();
   if(name==='teams') loadTeams();
   if(name==='invoices') loadInvoices();
