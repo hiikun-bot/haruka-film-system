@@ -3807,11 +3807,10 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
   }
   if (error) return res.status(500).json({ error: error.message });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayY = today.getFullYear();
-  const todayM = today.getMonth() + 1;
-  const todayD = today.getDate();
+  // JST 基準で「今日」を取る（Railway は UTC で動くので getDate() 等のローカル依存は使わない）
+  const jstStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // "YYYY-MM-DD"
+  const [todayY, todayM, todayD] = jstStr.split('-').map(Number);
+  const today = Date.UTC(todayY, todayM - 1, todayD); // ミリ秒数で比較
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
   const list = (data || []).map(u => {
@@ -3822,12 +3821,10 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
     const day = parseInt(bd[2], 10);
     if (!month || !day) return null;
     // 今年の誕生日。すでに過ぎていたら来年
-    let next = new Date(todayY, month - 1, day);
-    next.setHours(0, 0, 0, 0);
+    let next = Date.UTC(todayY, month - 1, day);
     let nextYear = todayY;
     if (next < today) {
-      next = new Date(todayY + 1, month - 1, day);
-      next.setHours(0, 0, 0, 0);
+      next = Date.UTC(todayY + 1, month - 1, day);
       nextYear = todayY + 1;
     }
     const days_until = Math.round((next - today) / MS_PER_DAY);
