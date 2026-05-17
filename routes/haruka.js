@@ -15811,6 +15811,9 @@ router.delete('/bug-reports/:id', requireAuth, async (req, res) => {
 // 用途:
 //   const harukaRouter = require('./routes/haruka');                 // ルーター本体
 //   const { syncBallHolderId, getBallHolder } = require('./routes/haruka'); // ヘルパー
-router.syncBallHolderId = syncBallHolderId;
-router.getBallHolder    = getBallHolder;
+router.syncBallHolderId    = syncBallHolderId;
+router.getBallHolder       = getBallHolder;
+router.getDriveService     = getDriveService;
+router.getOrCreateFolder   = getOrCreateFolder;
+router.getDriveRootFolderId = getDriveRootFolderId;
 module.exports = router;
