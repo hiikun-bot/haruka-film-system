@@ -24,7 +24,7 @@
 
 require('dotenv').config();
 const supabase = require('../supabase');
-const { getDriveService } = require('../routes/haruka');
+const { getDriveService, getInvoiceFolderExtraAdminEmails } = require('../routes/haruka');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
@@ -98,6 +98,19 @@ async function listPermissions(drive, fileId) {
   return res.data.permissions || [];
 }
 
+// Drive permission role 序数
+function rolePriority(role) {
+  switch (role) {
+    case 'owner':         return 100;
+    case 'organizer':     return 50;
+    case 'fileOrganizer': return 40;
+    case 'writer':        return 30;
+    case 'commenter':     return 20;
+    case 'reader':        return 10;
+    default:              return 0;
+  }
+}
+
 async function grantWriter(drive, fileId, email) {
   if (DRY_RUN) { log(`  [dry-run] + grant ${email} (writer) on ${fileId}`); return true; }
   try {
@@ -114,6 +127,86 @@ async function grantWriter(drive, fileId, email) {
     if (status === 400 || status === 403 || status === 409) {
       warn(`  grant warn (${status}) ${email} on ${fileId}: ${e.message}`);
       return false;
+    }
+    throw e;
+  }
+}
+
+// 既存 permission の role を考慮して fileOrganizer（フォールバック writer）を idempotent に付与。
+// すでに同等以上の role があれば skip。
+async function grantFileOrganizerWithFallback(drive, fileId, email, existingPerms) {
+  const target = email.toLowerCase();
+  const existing = (existingPerms || []).find(p => (p.emailAddress || '').toLowerCase() === target && p.type === 'user');
+  const wantedRank = rolePriority('fileOrganizer');
+  if (existing) {
+    const existingRank = rolePriority(existing.role);
+    if (existing.role === 'owner' || existingRank >= wantedRank) {
+      // 既に同等以上なので skip
+      return { changed: false };
+    }
+    // 昇格 update（fileOrganizer 失敗時は writer フォールバック）
+    if (DRY_RUN) { log(`  [dry-run] ~ upgrade ${email} ${existing.role} → fileOrganizer on ${fileId}`); return { changed: true }; }
+    try {
+      await drive.permissions.update({
+        fileId, permissionId: existing.id,
+        requestBody: { role: 'fileOrganizer' },
+        supportsAllDrives: true,
+      });
+      log(`  ~ upgrade ${email} ${existing.role} → fileOrganizer on ${fileId}`);
+      return { changed: true };
+    } catch (e) {
+      const msg = e?.message || '';
+      if (msg.includes('shared drive') || msg.includes('not supported') || msg.includes('teamDriveFileOnly')) {
+        if (rolePriority(existing.role) >= rolePriority('writer')) return { changed: false };
+        try {
+          await drive.permissions.update({
+            fileId, permissionId: existing.id,
+            requestBody: { role: 'writer' },
+            supportsAllDrives: true,
+          });
+          log(`  ~ upgrade ${email} ${existing.role} → writer (fallback) on ${fileId}`);
+          return { changed: true };
+        } catch (e2) {
+          warn(`  fallback writer upgrade 失敗 ${email}: ${e2.message}`);
+          return { changed: false };
+        }
+      }
+      warn(`  fileOrganizer upgrade 失敗 ${email}: ${e.message}`);
+      return { changed: false };
+    }
+  }
+  // 新規付与
+  if (DRY_RUN) { log(`  [dry-run] + grant ${email} (fileOrganizer/writer fallback) on ${fileId}`); return { changed: true }; }
+  try {
+    await drive.permissions.create({
+      fileId,
+      requestBody: { role: 'fileOrganizer', type: 'user', emailAddress: email },
+      sendNotificationEmail: false,
+      supportsAllDrives: true,
+    });
+    log(`  + grant ${email} (fileOrganizer) on ${fileId}`);
+    return { changed: true };
+  } catch (e) {
+    const msg = e?.message || '';
+    if (msg.includes('shared drive') || msg.includes('not supported') || msg.includes('teamDriveFileOnly')) {
+      try {
+        await drive.permissions.create({
+          fileId,
+          requestBody: { role: 'writer', type: 'user', emailAddress: email },
+          sendNotificationEmail: false,
+          supportsAllDrives: true,
+        });
+        log(`  + grant ${email} (writer, fileOrganizer fallback) on ${fileId}`);
+        return { changed: true };
+      } catch (e2) {
+        warn(`  writer fallback 失敗 ${email}: ${e2.message}`);
+        return { changed: false };
+      }
+    }
+    const status = e?.code || e?.response?.status;
+    if (status === 400 || status === 403 || status === 409) {
+      warn(`  fileOrganizer grant warn (${status}) ${email} on ${fileId}: ${e.message}`);
+      return { changed: false };
     }
     throw e;
   }
@@ -137,41 +230,51 @@ async function revokePermission(drive, fileId, permissionId, email, role) {
 
 // -------- メイン --------
 
-async function syncRoot(drive, adminEmails) {
+async function syncRoot(drive, adminEmails, extraAdminEmails) {
   // 「請求書」ルートフォルダ ID を system_settings から取得
   const { data: setting } = await supabase
     .from('system_settings').select('value').eq('key', 'invoice_root_folder_id').maybeSingle();
   if (!setting || !setting.value) {
     warn('system_settings に invoice_root_folder_id が見つかりません。root の同期はスキップ。');
-    return { revoked: 0, granted: 0 };
+    return { revoked: 0, granted: 0, extraGranted: 0 };
   }
   const rootId = setting.value;
   log(`root sync: invoice_root_folder_id=${rootId}`);
 
   const perms = await listPermissions(drive, rootId);
-  let revoked = 0, granted = 0;
-  const wanted = new Set([...adminEmails].map(e => e.toLowerCase()));
-  const found = new Set();
+  let revoked = 0, granted = 0, extraGranted = 0;
+  const wantedAdmins = new Set([...adminEmails].map(e => e.toLowerCase()));
+  const wantedExtras = new Set([...(extraAdminEmails || [])].map(e => e.toLowerCase()));
+  const wantedAll = new Set([...wantedAdmins, ...wantedExtras]);
+  const foundAdmin = new Set();
 
   for (const p of perms) {
     if (p.role === 'owner') continue;
     if (p.type !== 'user') continue;
     const em = (p.emailAddress || '').toLowerCase();
     if (!em) continue;
-    if (wanted.has(em)) { found.add(em); continue; }
-    // wanted（admin）に無い user 権限は剥奪（=secretary だった人や離脱者）
+    if (wantedAll.has(em)) {
+      if (wantedAdmins.has(em)) foundAdmin.add(em);
+      continue;
+    }
+    // wanted（admin + extra admin）に無い user 権限は剥奪（=secretary だった人や離脱者）
     const ok = await revokePermission(drive, rootId, p.id, em, p.role);
     if (ok) revoked++;
   }
-  for (const em of wanted) {
-    if (found.has(em)) continue;
+  for (const em of wantedAdmins) {
+    if (foundAdmin.has(em)) continue;
     const ok = await grantWriter(drive, rootId, em);
     if (ok) granted++;
   }
-  return { revoked, granted };
+  // extra admins は fileOrganizer（拒否時 writer）を idempotent に付与
+  for (const em of wantedExtras) {
+    const r = await grantFileOrganizerWithFallback(drive, rootId, em, perms);
+    if (r.changed) extraGranted++;
+  }
+  return { revoked, granted, extraGranted };
 }
 
-async function syncMemberFolder(drive, folder, target, adminEmails, secretaryEmails) {
+async function syncMemberFolder(drive, folder, target, adminEmails, secretaryEmails, extraAdminEmails) {
   const fileId = folder.folder_id;
   if (!fileId) return { added: 0, removed: 0 };
   const targetEmail = (target?.email || '').toLowerCase();
@@ -184,6 +287,9 @@ async function syncMemberFolder(drive, folder, target, adminEmails, secretaryEma
   if (!targetIsSecretary) {
     for (const em of secretaryEmails) wanted.add(em);
   }
+  // 個人フォルダには extra admin を**重複付与しない**（ルートから階層継承）。
+  // ただし既に extra admin に明示権限がある場合は剥奪しない（ルート権限が消えても見える状態を維持）。
+  const protectedExtras = new Set([...(extraAdminEmails || [])].map(e => e.toLowerCase()));
 
   let perms;
   try {
@@ -201,6 +307,8 @@ async function syncMemberFolder(drive, folder, target, adminEmails, secretaryEma
     const em = (p.emailAddress || '').toLowerCase();
     if (!em) continue;
     if (wanted.has(em)) { found.add(em); continue; }
+    // 追加管理者は剥奪しない（ルート権限の継承を担保するため、既存があるなら維持）
+    if (protectedExtras.has(em)) continue;
     const ok = await revokePermission(drive, fileId, p.id, em, p.role);
     if (ok) removed++;
   }
@@ -215,19 +323,25 @@ async function syncMemberFolder(drive, folder, target, adminEmails, secretaryEma
 async function main() {
   log(`開始 DRY_RUN=${DRY_RUN}${LIMIT ? ` LIMIT=${LIMIT}` : ''}`);
 
-  // 1. 管理者・秘書一覧
+  // 1. 管理者・秘書・追加管理者一覧
   const admins = await fetchUsersByRoles(['admin']);
   const secretaries = await fetchUsersByRoles(['secretary']);
   const adminEmails = new Set(admins.map(a => a.email));
   const secretaryEmails = new Set(secretaries.map(s => s.email));
-  log(`管理者: ${admins.length} 名 / 秘書: ${secretaries.length} 名`);
+  let extraAdminEmails = [];
+  try {
+    extraAdminEmails = await getInvoiceFolderExtraAdminEmails();
+  } catch (e) {
+    warn(`extra admin 取得失敗: ${e.message}`);
+  }
+  log(`管理者: ${admins.length} 名 / 秘書: ${secretaries.length} 名 / 追加管理者: ${extraAdminEmails.length} 名${extraAdminEmails.length ? ` (${extraAdminEmails.join(', ')})` : ''}`);
 
   // 2. Drive
   const drive = await getDriveService();
 
-  // 3. ルートを admin only に同期
-  const rootRes = await syncRoot(drive, adminEmails);
-  log(`root: revoke=${rootRes.revoked}, grant=${rootRes.granted}`);
+  // 3. ルートを admin + extra admin に同期（extra admin は fileOrganizer/writer）
+  const rootRes = await syncRoot(drive, adminEmails, extraAdminEmails);
+  log(`root: revoke=${rootRes.revoked}, grant=${rootRes.granted}, extraGrant=${rootRes.extraGranted}`);
 
   // 4. member_invoice_folders を全件取得（folder_id がある行のみ）
   let q = supabase
@@ -264,7 +378,7 @@ async function main() {
       if (codes.has('secretary')) targetSecretaryCount++;
       log(`[${idx + 1}/${folders.length}] user=${u?.email || folder.user_id} ${folder.year}/${folder.month} file=${folder.folder_id} target_secretary=${codes.has('secretary')}`);
       try {
-        const r = await syncMemberFolder(drive, folder, target, adminEmails, secretaryEmails);
+        const r = await syncMemberFolder(drive, folder, target, adminEmails, secretaryEmails, extraAdminEmails);
         added += r.added; removed += r.removed;
         if (r.error) errors++;
       } catch (e) {
@@ -277,7 +391,7 @@ async function main() {
   await Promise.all(Array(concurrency).fill(0).map(() => worker()));
 
   log('========== サマリ ==========');
-  log(`root: revoked=${rootRes.revoked} / granted=${rootRes.granted}`);
+  log(`root: revoked=${rootRes.revoked} / granted=${rootRes.granted} / extraGranted=${rootRes.extraGranted}`);
   log(`folders processed: ${processed}`);
   log(`  - target secretary folders: ${targetSecretaryCount}`);
   log(`  - grants added:   ${added}`);
