@@ -32367,7 +32367,14 @@ function renderComments(list) {
   el.scrollTop = 0;
 }
 
-// Frame.io レビューコメントをレビューパネルのコメント入力欄 (#fp-comment-text) に挿入する。
+// Frame.io レビューコメントを「裏のクリエイティブ詳細モーダル」の連絡・確認事項系 textarea に引用挿入する。
+// 挿入先の優先順位（表示中のものを優先、無ければ存在するもの）:
+//   1) cd-director-note  (CL/D/P チェック画面のコメント欄)
+//   2) cd-editor-reply   (編集者の返信欄)
+//   3) cd-comment-field  (連絡・確認事項)
+//   4) fp-comment-text   (Frame.io レビューパネル自身の入力欄 — 最終フォールバック)
+// PR #553 で fp-comment-text 固定にしたが、Frame.io パネルを閉じて裏画面に戻ったときに引用が消えたように見える事故が起きたため、
+// 裏画面側の textarea を優先する形に戻す（PR #553 の動機だった「連絡・確認事項が非表示」のケースは fp-comment-text フォールバックでカバー）。
 // フォーマットは「タイムコード or 日時（あれば）→ コメント本文 → 空行」のシンプル構成。
 // 投稿者名・役職・> プレフィックスは付けない（PR #393 で簡素化）。
 // 返信コメント（parent_comment_id あり）を引用したときは、自身の timecode/bbox は無いので親から継承する。
@@ -32381,7 +32388,18 @@ function quoteCommentToEditorReply(commentId) {
     else alert('コメント情報が取得できませんでした');
     return;
   }
-  const ta = document.getElementById('fp-comment-text');
+  const candidateIds = ['cd-director-note', 'cd-editor-reply', 'cd-comment-field', 'fp-comment-text'];
+  let ta = null;
+  for (const id of candidateIds) {
+    const el = document.getElementById(id);
+    if (el && el.offsetParent !== null) { ta = el; break; }
+  }
+  if (!ta) {
+    for (const id of candidateIds) {
+      const el = document.getElementById(id);
+      if (el) { ta = el; break; }
+    }
+  }
   if (!ta) {
     if (typeof showToast === 'function') showToast('コメント入力欄が見つかりません', 'warn');
     return;
@@ -32426,6 +32444,9 @@ function quoteCommentToEditorReply(commentId) {
     ta.selectionStart = newPos;
     ta.selectionEnd = newPos;
   }
+
+  // 下書き保存等の input リスナにも値変更を伝える
+  try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
 
   // textarea にフォーカス + スクロール（Frame.io パネルは閉じない）
   ta.focus();
