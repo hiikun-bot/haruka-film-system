@@ -5,8 +5,14 @@
 //   Google Workspace の HARUKAFILM フォルダ配下に
 //     HARUKAFILM/請求書/{年}/{月}/{メンバー氏名}/
 //   の階層を一括生成する。
-//   管理者・秘書は「請求書」ルートフォルダから permission を継承して全閲覧可。
-//   各メンバーは自分のフォルダのみ writer 権限を持つ（他メンバーの請求書は見えない）。
+//
+//   権限ポリシー（PR #XXX 以降。秘書同士の相互閲覧を不可にした版）:
+//     - 「請求書」ルート: **admin のみ** writer（秘書は剥奪）
+//     - 各メンバー個人フォルダ:
+//         target が secretary       → admin + 本人のみ writer
+//         target が secretary 以外  → admin + secretary 全員 + 本人 writer
+//   こうすることで「秘書の請求書は他の秘書から見えない」「一般メンバーの請求書は
+//   秘書全員が代理対応できる」状態を実現する。
 //
 // 実行方法:
 //   cd HARUKA-FILM-SYSTEM/_main
@@ -79,55 +85,97 @@ if (YEAR && (YEAR < 2000 || YEAR > 2100)) {
 
 // ---------- ヘルパー ----------
 
-// 管理者・秘書のメール一覧を取得（user_roles + users）
-async function fetchStaffMembers() {
-  // 1. roles マスタから admin / secretary の id を取得
+// 指定した legacy role コード（'admin' 等）に属するユーザーを user_roles + users.role dual-read で取得
+async function fetchUsersByRoles(roleCodes) {
+  if (!Array.isArray(roleCodes) || roleCodes.length === 0) return [];
+  // 1. roles マスタから対象 role の id を引く
   const { data: rolesRows, error: rolesErr } = await supabase
-    .from('roles').select('id, code').in('code', ['admin', 'secretary']);
+    .from('roles').select('id, code').in('code', roleCodes);
   if (rolesErr) throw new Error(`roles 取得失敗: ${rolesErr.message}`);
-  const staffRoleIds = (rolesRows || []).map(r => r.id);
-  if (staffRoleIds.length === 0) {
-    console.warn('[invoice-folders] roles に admin/secretary が見つかりません');
-    return [];
+  const ids = (rolesRows || []).map(r => r.id);
+
+  const userIdSet = new Set();
+  // 2. user_roles
+  if (ids.length > 0) {
+    const { data: urRows, error: urErr } = await supabase
+      .from('user_roles').select('user_id').in('role_id', ids);
+    if (urErr) throw new Error(`user_roles 取得失敗: ${urErr.message}`);
+    (urRows || []).forEach(r => userIdSet.add(r.user_id));
   }
-
-  // 2. user_roles から user_id を引く
-  const { data: urRows, error: urErr } = await supabase
-    .from('user_roles').select('user_id').in('role_id', staffRoleIds);
-  if (urErr) throw new Error(`user_roles 取得失敗: ${urErr.message}`);
-  const userIdsFromUserRoles = new Set((urRows || []).map(r => r.user_id));
-
-  // 3. dual-read fallback: users.role が admin/secretary の users も拾う
-  const { data: legacyUsers, error: legacyErr } = await supabase
-    .from('users').select('id').in('role', ['admin', 'secretary']);
+  // 3. legacy users.role fallback
+  const { data: legacy, error: legacyErr } = await supabase
+    .from('users').select('id').in('role', roleCodes);
   if (legacyErr) throw new Error(`users(legacy role) 取得失敗: ${legacyErr.message}`);
-  (legacyUsers || []).forEach(u => userIdsFromUserRoles.add(u.id));
+  (legacy || []).forEach(u => userIdSet.add(u.id));
 
-  if (userIdsFromUserRoles.size === 0) return [];
+  if (userIdSet.size === 0) return [];
 
-  // 4. users 本体から email/full_name/is_active を引く
   const { data: users, error: usersErr } = await supabase
     .from('users')
     .select('id, email, full_name, nickname, is_active')
-    .in('id', Array.from(userIdsFromUserRoles));
+    .in('id', Array.from(userIdSet));
   if (usersErr) throw new Error(`users 取得失敗: ${usersErr.message}`);
-
-  // active & email 有りのみ
   return (users || [])
     .filter(u => u.is_active !== false && u.email)
     .map(u => ({ id: u.id, email: u.email.trim().toLowerCase(), full_name: u.full_name, nickname: u.nickname }));
 }
 
+// 管理者のメール一覧（ルートフォルダ writer 用）
+async function fetchAdminMembers() {
+  return fetchUsersByRoles(['admin']);
+}
+// 秘書のメール一覧（一般メンバーのフォルダ writer 用）
+async function fetchSecretaryMembers() {
+  return fetchUsersByRoles(['secretary']);
+}
+// 互換: 既存呼び出し箇所向け（admin のみ返すように変更）
+async function fetchStaffMembers() {
+  return fetchAdminMembers();
+}
+
 // アクティブな全メンバーを取得（個人フォルダ生成対象）
+// role_codes も dual-read で付与する（target が secretary か判定するため）。
 async function fetchAllActiveMembers() {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, full_name, nickname, is_active')
+    .select('id, email, full_name, nickname, is_active, role')
     .eq('is_active', true);
   if (error) throw new Error(`users 取得失敗: ${error.message}`);
-  return (data || [])
+  const members = (data || [])
     .filter(u => u.email)
-    .map(u => ({ id: u.id, email: u.email.trim().toLowerCase(), full_name: u.full_name, nickname: u.nickname }));
+    .map(u => ({
+      id: u.id,
+      email: u.email.trim().toLowerCase(),
+      full_name: u.full_name,
+      nickname: u.nickname,
+      legacy_role: u.role || null,
+      role_codes: [],
+    }));
+  // user_roles 経由で role_codes を埋める
+  if (members.length > 0) {
+    const { data: urRows, error: urErr } = await supabase
+      .from('user_roles').select('user_id, roles(code)').in('user_id', members.map(m => m.id));
+    if (!urErr) {
+      const byUser = new Map();
+      (urRows || []).forEach(r => {
+        const code = r.roles && r.roles.code;
+        if (!code) return;
+        if (!byUser.has(r.user_id)) byUser.set(r.user_id, new Set());
+        byUser.get(r.user_id).add(code);
+      });
+      members.forEach(m => {
+        const set = byUser.get(m.id);
+        if (set && set.size > 0) {
+          m.role_codes = Array.from(set);
+        } else if (m.legacy_role) {
+          // dual-read fallback
+          if (m.legacy_role === 'producer_director') m.role_codes = ['producer', 'director'];
+          else m.role_codes = [m.legacy_role];
+        }
+      });
+    }
+  }
+  return members;
 }
 
 // 同名衝突を回避したベースのメンバー名を返す（年月は付かない）
@@ -201,11 +249,12 @@ async function ensureInvoiceRootFolder(drive, harukafilmId) {
   return folderId;
 }
 
-// --sync-roles: ルートフォルダの管理者・秘書 writer 権限を DB と同期
-async function syncRolesOnRoot(drive, invoiceRootId, staffEmails) {
-  console.log(`[invoice-folders] --sync-roles 開始 root=${invoiceRootId}`);
+// --sync-roles: ルートフォルダの **admin のみ** writer 権限を DB と同期
+// PR #XXX 以降は secretary は root 権限を持たない（個人フォルダ単位で付与する）。
+async function syncRolesOnRoot(drive, invoiceRootId, adminEmails) {
+  console.log(`[invoice-folders] --sync-roles 開始 root=${invoiceRootId} (admin のみ writer)`);
   if (DRY_RUN) {
-    console.log(`[dry-run] sync staff writers: [${[...staffEmails].join(', ')}]`);
+    console.log(`[dry-run] sync admin writers: [${[...adminEmails].join(', ')}]`);
     return;
   }
   // 既存 permissions を list
@@ -216,16 +265,15 @@ async function syncRolesOnRoot(drive, invoiceRootId, staffEmails) {
   });
   const perms = list.data.permissions || [];
 
-  const wanted = new Set([...staffEmails].map(e => e.toLowerCase()));
+  const wanted = new Set([...adminEmails].map(e => e.toLowerCase()));
   const found  = new Set();
-  // 剥奪: type=user & role=writer なのに staff にいない → 削除
+  // 剥奪: type=user & role=writer/reader なのに admin にいない → 削除（owner は触らない）
   for (const p of perms) {
     if (p.role === 'owner') continue;
     if (p.type !== 'user') continue;
     const em = (p.emailAddress || '').toLowerCase();
     if (!em) continue;
     if (wanted.has(em)) { found.add(em); continue; }
-    // staff 一覧に無い writer/reader は削除
     try {
       await drive.permissions.delete({
         fileId: invoiceRootId,
@@ -237,7 +285,7 @@ async function syncRolesOnRoot(drive, invoiceRootId, staffEmails) {
       console.warn(`[invoice-folders] revoke 失敗 ${em}: ${e.message}`);
     }
   }
-  // 追加: staff にいて未付与 → 付与
+  // 追加: admin にいて未付与 → 付与
   for (const em of wanted) {
     if (found.has(em)) continue;
     await ensureUserPermission(drive, invoiceRootId, em, 'writer');
@@ -247,10 +295,17 @@ async function syncRolesOnRoot(drive, invoiceRootId, staffEmails) {
 }
 
 // --year: 年・月・メンバー個人フォルダを生成
-async function generateYearFolders(drive, invoiceRootId, year, staffEmails) {
-  // 全メンバー
+//   各個人フォルダには admin 全員 + 本人 を必ず付与する。
+//   target が secretary でなければ secretary 全員も付与（秘書代理対応のため）。
+async function generateYearFolders(drive, invoiceRootId, year, adminEmails) {
+  // 全メンバー（role_codes 付き）
   const members = await fetchAllActiveMembers();
   console.log(`[invoice-folders] アクティブメンバー: ${members.length} 名`);
+
+  // 秘書一覧（一般メンバーのフォルダに付与する writer 群）
+  const secretaries = await fetchSecretaryMembers();
+  const secretaryEmails = new Set(secretaries.map(s => s.email));
+  console.log(`[invoice-folders] 秘書: ${secretaries.length} 名`);
 
   // 同名カウント（衝突回避用）
   const nameCount = new Map();
@@ -288,14 +343,35 @@ async function generateYearFolders(drive, invoiceRootId, year, staffEmails) {
       const baseName = buildBaseMemberName(u, nameCount);
       const folderName = buildMemberFolderName(baseName, year, m);
       let memberFolderId;
+      const targetIsSecretaryDry = (u.role_codes || []).includes('secretary');
       if (DRY_RUN) {
         console.log(`[dry-run] ensure folder: 請求書/${yearLabel}/${monthLabel}/${folderName}`);
         console.log(`[dry-run] grant ${u.email} (writer) on member folder`);
+        for (const em of adminEmails) console.log(`[dry-run] grant ${em} (admin, writer)`);
+        if (!targetIsSecretaryDry) {
+          for (const em of secretaryEmails) console.log(`[dry-run] grant ${em} (secretary, writer)`);
+        } else {
+          console.log(`[dry-run] target=${u.email} は secretary のため secretary 群は付与しない`);
+        }
         continue;
       }
       memberFolderId = await getOrCreateFolder(drive, monthFolderId, folderName);
+      // 1) 本人
       await ensureUserPermission(drive, memberFolderId, u.email, 'writer');
-      console.log(`[invoice-folders] ${yearLabel}/${monthLabel}/${folderName} ✓`);
+      // 2) 管理者全員（ルート権限を秘書から剥奪したため、admin も明示付与）
+      for (const em of adminEmails) {
+        if (em === u.email) continue;
+        await ensureUserPermission(drive, memberFolderId, em, 'writer');
+      }
+      // 3) target が secretary でなければ secretary 全員にも付与
+      const targetIsSecretary = (u.role_codes || []).includes('secretary');
+      if (!targetIsSecretary) {
+        for (const em of secretaryEmails) {
+          if (em === u.email) continue;
+          await ensureUserPermission(drive, memberFolderId, em, 'writer');
+        }
+      }
+      console.log(`[invoice-folders] ${yearLabel}/${monthLabel}/${folderName} ✓ (target_secretary=${targetIsSecretary})`);
     }
   }
 }
@@ -324,25 +400,25 @@ async function main() {
     drive = await getDriveService();
   }
 
-  // STEP 3: 管理者・秘書一覧
-  const staff = await fetchStaffMembers();
-  const staffEmails = new Set(staff.map(s => s.email));
-  console.log(`[invoice-folders] 管理者・秘書: ${staff.length} 名`);
+  // STEP 3: 管理者一覧（ルート writer 用）
+  const admins = await fetchAdminMembers();
+  const adminEmails = new Set(admins.map(s => s.email));
+  console.log(`[invoice-folders] 管理者: ${admins.length} 名`);
 
   // STEP 4: 「請求書」ルートフォルダ
   const invoiceRootId = await ensureInvoiceRootFolder(drive, harukafilmId);
   console.log(`[invoice-folders] 請求書 root: ${invoiceRootId}`);
 
-  // ルートに staff の writer 権限を idempotent に付与（初回および新規 staff 取り込み）
-  for (const em of staffEmails) {
+  // ルートに admin の writer 権限を idempotent に付与（secretary はルートに権限を持たない）
+  for (const em of adminEmails) {
     await ensureUserPermission(drive, invoiceRootId, em, 'writer');
   }
 
   // STEP 5/6
   if (SYNC_ROLES) {
-    await syncRolesOnRoot(drive, invoiceRootId, staffEmails);
+    await syncRolesOnRoot(drive, invoiceRootId, adminEmails);
   } else if (YEAR) {
-    await generateYearFolders(drive, invoiceRootId, YEAR, staffEmails);
+    await generateYearFolders(drive, invoiceRootId, YEAR, adminEmails);
   }
 
   console.log('[invoice-folders] 完了');

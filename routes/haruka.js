@@ -9331,6 +9331,89 @@ async function ensureUserDrivePermission(drive, fileId, email, role = 'writer') 
   }
 }
 
+// ---------- 請求書フォルダのアクセス制御（秘書同士の相互閲覧を不可にする） ----------
+// PR #XXX で導入。
+//
+// ルール:
+//   - 自分自身は常に OK
+//   - admin は常に OK
+//   - secretary は target が secretary でない場合のみ OK（秘書同士は不可）
+//   - それ以外は NG
+//
+// 設計判断（アプリ層オーバーライド方式）:
+//   role_permissions テーブル上は secretary も invoice_folder.{view,generate}_any を保有する
+//   ままにしている。「秘書は基本的に view_any を持つが相手が秘書のときだけ無効」という
+//   ルールは権限テーブルでは表現しづらいため、ここで集約してオーバーライドする。
+//
+// 引数:
+//   viewer = { id, role_codes: string[] }
+//   target = { id, role_codes: string[] }
+function canAccessInvoiceFolderFor(viewer, target) {
+  if (!viewer || !target) return false;
+  if (viewer.id === target.id) return true;
+  const vCodes = Array.isArray(viewer.role_codes) ? viewer.role_codes : [];
+  const tCodes = Array.isArray(target.role_codes) ? target.role_codes : [];
+  if (vCodes.includes('admin')) return true;
+  if (vCodes.includes('secretary')) {
+    return !tCodes.includes('secretary');
+  }
+  return false;
+}
+
+// dual-read で user_id のロールコード集合を返す（user_roles 優先、空なら users.role 1要素）。
+async function getUserRoleCodesDualRead(userId) {
+  if (!userId) return [];
+  const codes = await getUserRoleCodes(userId);
+  if (codes.length > 0) return codes;
+  const { data } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
+  const legacy = data?.role;
+  if (!legacy) return [];
+  if (legacy === 'producer_director') return ['producer', 'director'];
+  return [legacy];
+}
+
+// 個人請求書フォルダに付与すべき writer のメール一覧を返す。
+//   - target が secretary: admin 全員のみ
+//   - target が secretary でない: admin 全員 + secretary 全員
+// すべて is_active=true, email あり、メールは lower-case で重複排除。
+async function getInvoiceFolderManagerEmails(targetUserId) {
+  // 1. target のロール（dual-read）
+  const targetCodes = await getUserRoleCodesDualRead(targetUserId);
+  const targetIsSecretary = targetCodes.includes('secretary');
+  const wantedRoleCodes = targetIsSecretary ? ['admin'] : ['admin', 'secretary'];
+
+  // 2. roles マスタから対象 role の id を引く
+  const { data: rolesRows } = await supabase
+    .from('roles').select('id, code').in('code', wantedRoleCodes);
+  const roleIds = (rolesRows || []).map(r => r.id);
+
+  // 3. user_roles 経由
+  const userIds = new Set();
+  if (roleIds.length > 0) {
+    const { data: urRows } = await supabase
+      .from('user_roles').select('user_id').in('role_id', roleIds);
+    (urRows || []).forEach(r => { if (r.user_id) userIds.add(r.user_id); });
+  }
+
+  // 4. legacy users.role fallback
+  const { data: legacyUsers } = await supabase
+    .from('users').select('id').in('role', wantedRoleCodes);
+  (legacyUsers || []).forEach(u => userIds.add(u.id));
+
+  if (userIds.size === 0) return [];
+
+  // 5. email/is_active を引く
+  const { data: users } = await supabase
+    .from('users').select('id, email, is_active').in('id', Array.from(userIds));
+  const out = new Set();
+  (users || []).forEach(u => {
+    if (u.is_active === false) return;
+    if (!u.email) return;
+    out.add(u.email.trim().toLowerCase());
+  });
+  return Array.from(out);
+}
+
 // メンバー名 → フォルダ名
 function buildInvoiceMemberFolderName(u) {
   const base = (u.full_name && u.full_name.trim())
@@ -9424,6 +9507,50 @@ router.get('/invoice-folders', requireAuth, async (req, res) => {
       userIds = [req.user.id];
     }
 
+    // 秘書同士の相互閲覧を不可にするオーバーライド:
+    // viewer が secretary（admin でない）のとき、対象 user_ids から他 secretary を除外する。
+    // userIds が空（= 全員対象）の場合は他 secretary の id を列挙して除外する。
+    const viewerCodes = codes.length > 0 ? codes : (req.user?.role ? [req.user.role] : []);
+    const isViewerAdmin = viewerCodes.includes('admin');
+    const isViewerSecretaryOnly = viewerCodes.includes('secretary') && !isViewerAdmin;
+    if (canViewAny && isViewerSecretaryOnly) {
+      // 他 secretary の user_id 集合を取得（user_roles 経由 + dual-read legacy users.role）
+      const secretaryIds = new Set();
+      try {
+        const { data: secRole } = await supabase
+          .from('roles').select('id').eq('code', 'secretary').maybeSingle();
+        if (secRole && secRole.id) {
+          const { data: urRows } = await supabase
+            .from('user_roles').select('user_id').eq('role_id', secRole.id);
+          (urRows || []).forEach(r => { if (r.user_id) secretaryIds.add(r.user_id); });
+        }
+      } catch (_) {}
+      try {
+        const { data: legacy } = await supabase
+          .from('users').select('id').eq('role', 'secretary');
+        (legacy || []).forEach(u => secretaryIds.add(u.id));
+      } catch (_) {}
+      // 自分は除外対象から外す（自分は常に見える）
+      secretaryIds.delete(req.user.id);
+      if (userIds.length > 0) {
+        userIds = userIds.filter(uid => !secretaryIds.has(uid));
+      } else {
+        // userIds 空 = 全員対象。アプリ層で「他 secretary を除外」を表現するため、
+        // 「対象 user_ids = 全アクティブユーザー - 他 secretary」を作って in() に渡す。
+        try {
+          const { data: allUsers } = await supabase
+            .from('users').select('id').eq('is_active', true);
+          const allowed = (allUsers || [])
+            .map(u => u.id)
+            .filter(uid => !secretaryIds.has(uid));
+          userIds = allowed;
+        } catch (_) {
+          // フォールバック: 自分のみ
+          userIds = [req.user.id];
+        }
+      }
+    }
+
     let q = supabase.from('member_invoice_folders')
       .select('user_id, year, month, folder_id, folder_url')
       .eq('year', year)
@@ -9493,6 +9620,16 @@ router.get('/members/:id/invoice-folders', requireAuth, async (req, res) => {
       ? await roleCodesHavePermission(codes, needKey)
       : await userHasPermission(getEffectiveRole(req), needKey);
     if (!ok) return res.status(403).json({ error: '請求書フォルダの閲覧権限がありません' });
+    // 秘書同士の相互閲覧を不可にするオーバーライド
+    if (!isSelf) {
+      const targetCodes = await getUserRoleCodesDualRead(targetId);
+      const viewerCodes = codes.length > 0 ? codes : (req.user?.role ? [req.user.role] : []);
+      const allowed = canAccessInvoiceFolderFor(
+        { id: req.user.id, role_codes: viewerCodes },
+        { id: targetId, role_codes: targetCodes },
+      );
+      if (!allowed) return res.status(403).json({ error: '請求書フォルダの閲覧権限がありません' });
+    }
 
     const year = parseInt(req.query.year, 10);
     if (!Number.isFinite(year) || year < 2000 || year > 2100) {
@@ -9564,6 +9701,16 @@ router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, re
       ? await roleCodesHavePermission(codes, needKey)
       : await userHasPermission(getEffectiveRole(req), needKey);
     if (!ok) return res.status(403).json({ error: '請求書フォルダの生成権限がありません' });
+    // 秘書同士の相互生成を不可にするオーバーライド
+    if (!isSelf) {
+      const targetCodes = await getUserRoleCodesDualRead(targetId);
+      const viewerCodes = codes.length > 0 ? codes : (req.user?.role ? [req.user.role] : []);
+      const allowed = canAccessInvoiceFolderFor(
+        { id: req.user.id, role_codes: viewerCodes },
+        { id: targetId, role_codes: targetCodes },
+      );
+      if (!allowed) return res.status(403).json({ error: '請求書フォルダの生成権限がありません' });
+    }
 
     const year = parseInt(req.body?.year, 10);
     if (!Number.isFinite(year) || year < 2000 || year > 2100) {
@@ -9664,6 +9811,23 @@ router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, re
         if (granted) auditPermsGranted++;
       } catch (e) {
         console.warn('[invoice-folders] permission grant 失敗:', e.message);
+      }
+
+      // 管理者群 (+ secretary 群、target が secretary でない場合のみ) にも writer 付与。
+      // 親フォルダ「請求書」ルートには admin のみが writer なので、個人フォルダ単位で明示的に付与する。
+      try {
+        const managerEmails = await getInvoiceFolderManagerEmails(targetId);
+        for (const em of managerEmails) {
+          if (em === (user.email || '').toLowerCase()) continue; // 本人は別途処理済み
+          try {
+            const g = await ensureUserDrivePermission(drive, memberFolderId, em, 'writer');
+            if (g) auditPermsGranted++;
+          } catch (e2) {
+            console.warn('[invoice-folders] manager permission grant 失敗:', em, e2.message);
+          }
+        }
+      } catch (e) {
+        console.warn('[invoice-folders] getInvoiceFolderManagerEmails 失敗:', e.message);
       }
 
       result.push({
