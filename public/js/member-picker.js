@@ -9,13 +9,14 @@
  *   MemberPicker.memberLabel(member)              "ニックネーム（名前）" 形式（= NameDisplay.full）
  *
  * options:
- *   mode:          'single' | 'multi'             既定 'single'
- *   value:         id | id[] | null
- *   allowedRoles:  ['producer', ...] | null       null なら全ロール
- *   showInactive:  boolean                        既定 false
- *   emptyLabel:    string | null                  null 許容の選択肢ラベル
- *   onChange:      (value) => void
- *   title:         string                         モーダルのタイトル
+ *   mode:           'single' | 'multi'             既定 'single'
+ *   value:          id | id[] | null
+ *   allowedRoles:   ['producer', ...] | null       null なら全ロール
+ *   showInactive:   boolean                        既定 false
+ *   includeExternal: boolean                       既定 false。true で外部D（is_external）候補も表示（ADR 017）
+ *   emptyLabel:     string | null                  null 許容の選択肢ラベル
+ *   onChange:       (value) => void
+ *   title:          string                         モーダルのタイトル
  */
 (function () {
   'use strict';
@@ -29,6 +30,8 @@
     { value: 'director',          short: 'D',        order: 5 },
     { value: 'editor',            short: '編集',     order: 6 },
     { value: 'designer',          short: 'デザイン', order: 7 },
+    // ADR 017: 外部ディレクター（擬似ユーザー専用ロール）
+    { value: 'external_director', short: '外部D',    order: 8 },
   ];
   const ROLE_BY_VALUE = Object.fromEntries(ROLE_DEFS.map(r => [r.value, r]));
 
@@ -290,6 +293,8 @@
     function renderList() {
       const filtered = members
         .filter(m => opts.showInactive || m.is_active !== false)
+        // ADR 017: 外部D（擬似ユーザー）は明示的に includeExternal=true のときだけ表示
+        .filter(m => opts.includeExternal || m.is_external !== true)
         .filter(m => !allowedRoles || allowedRoles.includes(m.role))
         .filter(m => session.activeRoles.size === 0 || session.activeRoles.has(m.role))
         .filter(m => matchSearch(m, session.query));

@@ -461,18 +461,32 @@ router.get('/projects', async (req, res) => {
   // --- 案件本体 ---
   // primary_category_id は Stage A で追加。テーブル/列が無い環境では select で落ちる可能性が
   // あるため、まず join 付きで試し、失敗したら join 無しでリトライする。
+  // ADR 017: liaison（外部D案件の窓口担当）を embed。
+  // liaison_user_id 列が未適用の環境では SELECT が落ちうるため fallback で外す。
   const baseSelect = `
+    *,
+    clients(id, name),
+    producer:users!projects_producer_id_fkey(id, full_name),
+    director:users!projects_director_id_fkey(id, full_name, is_external, external_company),
+    liaison:users!projects_liaison_user_id_fkey(id, full_name)
+  `;
+  const fallbackSelect = `
     *,
     clients(id, name),
     producer:users!projects_producer_id_fkey(id, full_name),
     director:users!projects_director_id_fkey(id, full_name)
   `;
-  const query = supabase
+  let { data, error } = await supabase
     .from('projects')
     .select(baseSelect)
     .order('created_at', { ascending: false });
-
-  const { data, error } = await query;
+  // ADR 017 migration 未適用 / schema-sync 失敗環境のフォールバック
+  if (error && /liaison_user_id|projects_liaison_user_id_fkey|is_external|external_company/i.test(error.message || '')) {
+    ({ data, error } = await supabase
+      .from('projects')
+      .select(fallbackSelect)
+      .order('created_at', { ascending: false }));
+  }
   if (error) return res.status(500).json({ error: error.message });
   let projects = data || [];
 
@@ -661,9 +675,24 @@ router.get('/projects/schedule-overview', requireAuth, async (req, res) => {
 // project_estimate_lines(*, project_estimate_line_costs(*, role:roles(code,label))) に置換。
 // クライアント側はこのレスポンスから単価モーダル等の表示を構築する。
 router.get('/projects/:id', async (req, res) => {
-  const { data, error } = await supabase
-    .from('projects')
-    .select(`
+  // ADR 017: liaison + director に is_external / external_company を含めて返す
+  const detailSelectWith = `
+      *,
+      clients(id, name),
+      producer:users!projects_producer_id_fkey(id, full_name),
+      director:users!projects_director_id_fkey(id, full_name, is_external, external_company),
+      liaison:users!projects_liaison_user_id_fkey(id, full_name),
+      project_estimate_lines(
+        id, project_id, category_id, name, planned_count, client_unit_price,
+        sort_order, status, status_changed_at, currency, tax_included, created_at,
+        project_estimate_line_costs(
+          id, line_id, role_id, user_id, unit_price, currency,
+          pricing_type, percentage, actual_hours, created_at,
+          role:roles(id, code, label)
+        )
+      )
+    `;
+  const detailSelectFallback = `
       *,
       clients(id, name),
       producer:users!projects_producer_id_fkey(id, full_name),
@@ -677,9 +706,19 @@ router.get('/projects/:id', async (req, res) => {
           role:roles(id, code, label)
         )
       )
-    `)
+    `;
+  let { data, error } = await supabase
+    .from('projects')
+    .select(detailSelectWith)
     .eq('id', req.params.id)
     .single();
+  if (error && /liaison_user_id|projects_liaison_user_id_fkey|is_external|external_company/i.test(error.message || '')) {
+    ({ data, error } = await supabase
+      .from('projects')
+      .select(detailSelectFallback)
+      .eq('id', req.params.id)
+      .single());
+  }
   if (error) return res.status(500).json({ error: error.message });
 
   // primary_category 情報を別クエリで補完（FK join に依存しないフォールバック）
@@ -746,6 +785,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
+    liaison_user_id,
     tags,
     filename_template_id, filename_token_overrides
   } = req.body;
@@ -773,6 +813,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_weekday: deadline_weekday ?? null,
     primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
+    liaison_user_id: liaison_user_id || null, // ADR 017: 外部D案件の窓口担当
   };
   // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
   if (filename_template_id !== undefined && filename_template_id !== null && filename_template_id !== '') {
@@ -806,6 +847,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const retry3 = await supabase.from('projects').insert(fallback3).select().single();
     data = retry3.data; error = retry3.error;
   }
+  // ADR 017 migration 未適用環境のフォールバック
+  if (error && /liaison_user_id/i.test(error.message || '')) {
+    const { liaison_user_id: _o4, ...fallback4 } = insertPayload;
+    const retry4 = await supabase.from('projects').insert(fallback4).select().single();
+    data = retry4.data; error = retry4.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
   if (data?.id) {
@@ -826,6 +873,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
+    liaison_user_id, // ADR 017
     tags,
     filename_template_id, filename_token_overrides,
     scheduled_start_date, active_phase_template_id,
@@ -918,6 +966,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   if (creatives_export_sheet_url !== undefined) {
     updateData.creatives_export_sheet_url = creatives_export_sheet_url || null;
   }
+  // ADR 017: 窓口担当（liaison_user_id）— 明示時のみ反映（外部D案件OFF時は null が送られて NULL 化）
+  if (liaison_user_id !== undefined) {
+    updateData.liaison_user_id = liaison_user_id || null;
+  }
   // サブディレクター: 部分更新リクエスト（is_hidden だけ送る等）に影響を与えないよう
   // フィールドが渡ってきた時のみ正規化して反映する。
   if (sub_director_ids !== undefined) {
@@ -963,6 +1015,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { creatives_export_sheet_url: _oExp, ...fallbackExp } = updateData;
     const retryExp = await supabase.from('projects').update(fallbackExp).eq('id', req.params.id).select().single();
     data = retryExp.data; error = retryExp.error;
+  }
+  // ADR 017 migration 未適用ガード
+  if (error && /liaison_user_id/i.test(error.message || '')) {
+    const { liaison_user_id: _oL, ...fallbackL } = updateData;
+    const retryL = await supabase.from('projects').update(fallbackL).eq('id', req.params.id).select().single();
+    data = retryL.data; error = retryL.error;
   }
   // ADR 010 Phase 1 migration 未適用ガード（schema-sync 失敗時）
   if (error && /scheduled_start_date|active_phase_template_id/i.test(error.message || '')) {
@@ -8474,7 +8532,7 @@ router.get('/members', requireAuth, async (req, res) => {
   // 機材情報・休日曜日はチーム設計に必要なので一覧API でも返す（機微情報ではないので非機微列）。
   // default_creative_tab は最も新しい列なので baseColsWith にだけ含めて、未適用環境では fallback で外す
   // creative_default_* (PR #277) はメンバーマスターでクリエイティブ画面の初期表示状態を保持。未適用環境では fallback で外す
-  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types';
+  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types, is_external, external_company';
   // hide_birth_year がない環境向けフォールバック（default_creative_tab も同様に外す）
   const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
   // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
@@ -8682,6 +8740,52 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
   if (droppedColumns.length > 0) {
     console.warn(`[members:create] silent drop された列: ${droppedColumns.join(', ')}`);
     return res.json({ ...data, _droppedColumns: droppedColumns });
+  }
+  res.json(data);
+});
+
+// ============================================================
+// 外部ディレクター（擬似ユーザー）作成 — ADR 017
+// ------------------------------------------------------------
+// GND等の代理店経由スポット案件で、外部Dをログイン不可・通知対象外の
+// 擬似ユーザーとして登録する専用エンドポイント。
+// 通常の POST /members とは別にすることで:
+//   - email は自動生成（外部Dは HFS にログインしない）
+//   - role は強制的に external_director
+//   - is_external = true / external_company が必須
+//   - 採算集計・通知ルーティングから安全に除外できる
+// ============================================================
+router.post('/external-directors', requireAuth, requirePermission('member.edit_password'), async (req, res) => {
+  const { full_name, external_company, nickname, note, slack_dm_id, chatwork_dm_id } = req.body || {};
+  if (!full_name || !String(full_name).trim()) return res.status(400).json({ error: '氏名は必須です' });
+  if (!external_company || !String(external_company).trim()) return res.status(400).json({ error: '所属（external_company）は必須です' });
+  // ログイン不可の擬似ユーザーなので email は合成する。UNIQUE制約に通すため uuid を含める
+  const synth = `external+${require('crypto').randomUUID()}@external.local`;
+  const insertPayload = {
+    email: synth,
+    full_name: String(full_name).trim(),
+    nickname: nickname ? String(nickname).trim() : null,
+    role: 'external_director',
+    is_active: true,
+    is_external: true,
+    external_company: String(external_company).trim(),
+    note: note || null,
+    slack_dm_id: slack_dm_id || null,
+    chatwork_dm_id: chatwork_dm_id || null,
+  };
+  const { data, error } = await supabase.from('users').insert(insertPayload).select().single();
+  if (error) {
+    if (/is_external|external_company/i.test(error.message || '')) {
+      return res.status(500).json({ error: 'users.is_external / external_company 列が未適用です（ADR 017 migration を本番に適用してください）' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  // dual-write: user_roles に external_director を作成
+  try {
+    await syncUserRolesForLegacyRole(data.id, 'external_director');
+    invalidateRolesCache();
+  } catch (e) {
+    console.warn('[external-directors:create] user_roles sync skipped:', e.message);
   }
   res.json(data);
 });
