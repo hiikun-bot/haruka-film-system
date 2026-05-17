@@ -36,7 +36,7 @@
 
 require('dotenv').config();
 const supabase = require('../supabase');
-const { getDriveService, getOrCreateFolder, getDriveRootFolderId } = require('../routes/haruka');
+const { getDriveService, getOrCreateFolder, getDriveRootFolderId, buildMemberFolderName } = require('../routes/haruka');
 
 const args = process.argv.slice(2);
 const YEAR_ARG    = args.find(a => a.startsWith('--year='));
@@ -130,8 +130,8 @@ async function fetchAllActiveMembers() {
     .map(u => ({ id: u.id, email: u.email.trim().toLowerCase(), full_name: u.full_name, nickname: u.nickname }));
 }
 
-// 同名衝突を回避したフォルダ名にする
-function buildMemberFolderName(u, nameCount) {
+// 同名衝突を回避したベースのメンバー名を返す（年月は付かない）
+function buildBaseMemberName(u, nameCount) {
   const base = (u.full_name && u.full_name.trim())
     || (u.nickname && u.nickname.trim())
     || u.email.split('@')[0];
@@ -285,7 +285,8 @@ async function generateYearFolders(drive, invoiceRootId, year, staffEmails) {
 
     // 月フォルダには個別 permission 付与はしない（親「請求書」から継承）
     for (const u of members) {
-      const folderName = buildMemberFolderName(u, nameCount);
+      const baseName = buildBaseMemberName(u, nameCount);
+      const folderName = buildMemberFolderName(baseName, year, m);
       let memberFolderId;
       if (DRY_RUN) {
         console.log(`[dry-run] ensure folder: 請求書/${yearLabel}/${monthLabel}/${folderName}`);

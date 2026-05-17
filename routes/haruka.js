@@ -9340,6 +9340,16 @@ function buildInvoiceMemberFolderName(u) {
   return base;
 }
 
+// メンバー個人請求書フォルダ名を「氏名 YYYY年MM月」形式で生成する。
+// Drive の「共有アイテム」「マイドライブ」から直接開いたときに
+// 「氏名」だけだと何月分のフォルダか分からない問題への対応。
+//   buildMemberFolderName('安齋 智光', 2026, 4) => '安齋 智光 2026年04月'
+// 半角スペース1個区切り、月は2桁ゼロパディング。
+function buildMemberFolderName(userDisplayName, year, month) {
+  const mm = String(month).padStart(2, '0');
+  return `${userDisplayName} ${year}年${mm}月`;
+}
+
 function driveFolderUrl(folderId) {
   return `https://drive.google.com/drive/folders/${folderId}`;
 }
@@ -9621,13 +9631,17 @@ router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, re
         .eq('user_id', targetId).eq('year', year).eq('month', m)
         .maybeSingle();
 
+      // 個人フォルダ名は「氏名 YYYY年MM月」形式で生成する
+      // （Drive 直開きで月が分からない問題への対応）
+      const memberFolderNameWithMonth = buildMemberFolderName(folderName, year, m);
+
       let memberFolderId;
       let created = false;
       if (existing && existing.folder_id) {
         memberFolderId = existing.folder_id;
         auditFoldersSkipped++;
       } else {
-        memberFolderId = await getOrCreateFolder(drive, monthFolderId, folderName);
+        memberFolderId = await getOrCreateFolder(drive, monthFolderId, memberFolderNameWithMonth);
         // upsert
         const { error: upErr } = await supabase
           .from('member_invoice_folders')
@@ -16240,4 +16254,6 @@ router.getBallHolder       = getBallHolder;
 router.getDriveService     = getDriveService;
 router.getOrCreateFolder   = getOrCreateFolder;
 router.getDriveRootFolderId = getDriveRootFolderId;
+router.buildMemberFolderName = buildMemberFolderName;
+router.buildInvoiceMemberFolderName = buildInvoiceMemberFolderName;
 module.exports = router;
