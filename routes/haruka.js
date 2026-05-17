@@ -9437,7 +9437,8 @@ router.get('/invoice-folders', requireAuth, async (req, res) => {
       if (slot) {
         slot.exists = true;
         slot.folder_id = row.folder_id;
-        slot.folder_url = row.folder_url;
+        // 防御的フォールバック: folder_url が DB に未保存でも folder_id があれば組み立てる
+        slot.folder_url = row.folder_url || (row.folder_id ? driveFolderUrl(row.folder_id) : null);
       }
     }
 
@@ -9503,8 +9504,9 @@ router.get('/members/:id/invoice-folders', requireAuth, async (req, res) => {
     const map = new Map((data || []).map(r => [r.month, r]));
     const folders = months.map(m => {
       const r = map.get(m);
+      // 防御的フォールバック: folder_url が DB に未保存でも folder_id があれば組み立てる
       return r
-        ? { month: m, exists: true,  folder_id: r.folder_id, folder_url: r.folder_url, has_files: false }
+        ? { month: m, exists: true,  folder_id: r.folder_id, folder_url: r.folder_url || (r.folder_id ? driveFolderUrl(r.folder_id) : null), has_files: false }
         : { month: m, exists: false, folder_id: null,        folder_url: null,         has_files: false };
     });
 
