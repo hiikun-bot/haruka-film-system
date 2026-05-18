@@ -28821,6 +28821,33 @@ function _cdResolveLatestPageFile(page) {
 // サーバ側 DELETE /creatives/:cid/files/:fid が同条件で 409 を返すため、UI の
 // 表示条件はそれと完全一致させる。これでユーザーが過去の v1 カードに「取り消し」
 // ボタンを見て押下→失敗トースト という UX を防ぐ。
+// バグ報告 #0ca5e567 補助: 「修正版アップロード」プレースホルダへスクロールし、
+// 短時間ハイライト点滅させて編集者の視線をそこへ誘導する。プレースホルダが描画
+// されていない（既に修正版アップ済み）場合は何もしない。
+function _cdFlashRevisionUploadHint() {
+  const el = document.getElementById('cd-revision-upload-hint');
+  if (!el) return;
+  try {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (_) {
+    el.scrollIntoView();
+  }
+  const prevTransition = el.style.transition;
+  const prevBoxShadow = el.style.boxShadow;
+  el.style.transition = 'box-shadow .25s ease';
+  el.style.boxShadow = '0 0 0 4px rgba(245, 158, 11, 0.45)';
+  setTimeout(() => {
+    el.style.boxShadow = 'none';
+    setTimeout(() => {
+      el.style.boxShadow = '0 0 0 4px rgba(245, 158, 11, 0.45)';
+      setTimeout(() => {
+        el.style.boxShadow = prevBoxShadow;
+        el.style.transition = prevTransition;
+      }, 320);
+    }, 220);
+  }, 320);
+}
+
 function _cdCanUndoUpload(file) {
   if (!file?.id) return false;
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
@@ -28957,10 +28984,14 @@ function _cdRenderRoundRightFileCard(currentRound) {
   if (!latest) {
     // ファイルがまだ1件も無い: 後修正中なら placeholder、それ以外は何も出さない
     if (isRevision) {
-      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-        <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
-        <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
-          上のドロップゾーンに修正版をアップロードしてください
+      // バグ報告 #0ca5e567: プレースホルダがグレー破線で目立たず、ユーザーが
+      // 下部に残る「前回提出ファイル」を自分のアップロード済みファイルと誤認する
+      // 事故あり。警告調（オレンジ枠+背景色）+ 明確な行動指示文に変更。
+      return `<div id="cd-revision-upload-hint" style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+        <div style="font-size:10px;font-weight:700;color:#d97706;letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード（未完了）</div>
+        <div style="font-size:12.5px;color:#92400e;background:#FEF3C7;border:1px solid #f59e0b;border-radius:8px;padding:12px;text-align:center;line-height:1.55">
+          <div style="font-weight:700;margin-bottom:4px">⚠️ 今回ラウンドの修正版がまだアップロードされていません</div>
+          <div style="font-size:11.5px;color:#78350f">下の「前回提出ファイル」は参考表示です。上のドロップゾーンに修正版をドロップしてください。</div>
         </div>
       </div>`;
     }
@@ -28973,10 +29004,14 @@ function _cdRenderRoundRightFileCard(currentRound) {
     const newVersionUploaded = _cdCanUndoUpload(latest);
     if (!newVersionUploaded) {
       // 修正版未アップロード: placeholder を出して編集者にドロップを促す
-      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
-        <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード</div>
-        <div style="font-size:12px;color:var(--text-muted);background:#fff;border:0.5px dashed var(--border);border-radius:8px;padding:10px 12px;text-align:center">
-          上のドロップゾーンに修正版をアップロードしてください
+      // バグ報告 #0ca5e567: プレースホルダがグレー破線で目立たず、ユーザーが
+      // 下部に残る「前回提出ファイル」を自分のアップロード済みファイルと誤認する
+      // 事故あり。警告調（オレンジ枠+背景色）+ 明確な行動指示文に変更。
+      return `<div id="cd-revision-upload-hint" style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+        <div style="font-size:10px;font-weight:700;color:#d97706;letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">📎 修正版アップロード（未完了）</div>
+        <div style="font-size:12.5px;color:#92400e;background:#FEF3C7;border:1px solid #f59e0b;border-radius:8px;padding:12px;text-align:center;line-height:1.55">
+          <div style="font-weight:700;margin-bottom:4px">⚠️ 今回ラウンドの修正版がまだアップロードされていません</div>
+          <div style="font-size:11.5px;color:#78350f">下の「前回提出ファイル」は参考表示です。上のドロップゾーンに修正版をドロップしてください。</div>
         </div>
       </div>`;
     }
@@ -30549,10 +30584,15 @@ async function skipToClientCheck() {
 // ケースで、ファイルなしでも工程だけを進めたい運用がある。理由入力は任意。
 // 動画・静止画どちらのクリエイティブでも使うため、文言は「ファイル」で統一。
 //
+// mode='revision' (バグ報告 #0ca5e567): 後修正中はモーダル下部に「前回提出ファイル」が
+// 残っているため、ユーザーが「アップロード済み」と誤認しやすい。修正版コンテキストでは
+// 文言を明示的に「修正版」と書き、前回ファイルは参考表示である旨を補足する。
+//
 // 戻り値: Promise<{ ok: boolean, reason: string }>
 //   - キャンセル / 背景クリック / Esc → { ok:false, reason:'' }
 //   - [ファイルなしで進む] → { ok:true, reason:<入力テキスト> }
-function showFilelessProgressDialog(target) {
+function showFilelessProgressDialog(target, opts = {}) {
+  const mode = opts.mode === 'revision' ? 'revision' : 'initial';
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'haruka-confirm-overlay';
@@ -30564,7 +30604,9 @@ function showFilelessProgressDialog(target) {
     const title = document.createElement('div');
     title.style.cssText = 'font-size:16px;font-weight:600;color:var(--text,#1a6b68);margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:12px';
     const titleText = document.createElement('span');
-    titleText.textContent = 'ファイルなしで進めますか？';
+    titleText.textContent = mode === 'revision'
+      ? '修正版ファイルが未アップロードです'
+      : 'ファイルなしで進めますか？';
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.textContent = '×';
@@ -30574,7 +30616,14 @@ function showFilelessProgressDialog(target) {
 
     const msg = document.createElement('div');
     msg.style.cssText = 'font-size:13.5px;line-height:1.65;color:var(--text,#1a6b68);margin:0 0 14px;white-space:pre-wrap';
-    msg.textContent = `ファイルがアップロードされていません。\nこのまま「${target}」に進みますか？`;
+    if (mode === 'revision') {
+      msg.textContent =
+        `今回ラウンドの修正版ファイルがまだアップロードされていません。\n` +
+        `（モーダル下部に表示されている前回提出ファイルは参考表示です）\n\n` +
+        `修正版を上げずに、このまま「${target}」に進みますか？`;
+    } else {
+      msg.textContent = `ファイルがアップロードされていません。\nこのまま「${target}」に進みますか？`;
+    }
 
     const reasonLabel = document.createElement('label');
     reasonLabel.style.cssText = 'display:block;font-size:11px;font-weight:600;color:var(--em-dark,#2BB8B4);letter-spacing:0.04em;margin:6px 0 6px';
@@ -30720,7 +30769,11 @@ async function advanceCreativeStatus() {
       const hasNewRevisionFile = latest ? _cdCanUndoUpload(latest) : false;
       const hasPending = !!uploadFileData;
       if (!hasNewRevisionFile && !hasPending) {
-        const r = await showFilelessProgressDialog(target);
+        // バグ報告 #0ca5e567: ユーザーが「修正版アップロード」プレースホルダに気付かず
+        // 前回提出ファイルを誤認 → ダイアログ表示前に該当エリアへスクロール+フラッシュして
+        // 「ここに修正版を上げる必要がある」を視覚的に示す。
+        try { _cdFlashRevisionUploadHint(); } catch (_) {}
+        const r = await showFilelessProgressDialog(target, { mode: 'revision' });
         if (!r.ok) return;
         _filelessExtra = { fileless_progression: true, fileless_reason: r.reason };
       } else if (!hasNewRevisionFile && hasPending) {
