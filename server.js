@@ -288,6 +288,10 @@ if (accountingRouter) {
   console.log('[accounting] feature flag DISABLED — set ENABLE_PROJECT_ACCOUNTING=true to enable');
 }
 
+// Google OAuth（ユーザー本人のDrive直送アップロード用）。常時マウント。
+// 実際の連携可否は GOOGLE_OAUTH_CLIENT_ID 等の env 設定有無で判定される。
+app.use('/oauth', require('./routes/oauth'));
+
 // 素材広場 / 動画整理ツール API（feature flag: ENABLE_VIDEO_ORGANIZATION_TEST）
 // test / experimental。flag OFF 時はマウント自体しない（事故防止のため）。
 const videoOrgEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_VIDEO_ORGANIZATION_TEST || '').toLowerCase());
