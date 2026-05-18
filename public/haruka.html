@@ -7120,7 +7120,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
             <button class="btn-primary" id="ms-btn-apply" onclick="msApplySelected()">✅ 適用する</button>
-            <button class="btn-secondary" id="ms-btn-faststart" onclick="msRegenerateFaststart()" title="H.265等で再生できない動画を H.264 に変換">⚡ 再生用に変換</button>
+            <button class="btn-secondary" id="ms-btn-preview-regen" onclick="msRegeneratePreview()" title="短尺は H.264 faststart、長尺は 60枚WebPストーリーボードを再生成">⚡ プレビュー再生成</button>
             <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
           </div>
         </div>
@@ -39101,8 +39101,10 @@ function msClearPreview() {
 }
 
 // プレビュー読み込み失敗時のハンドラ。
-// 1) 同URLを HEAD で叩いて HTTP ステータスと content-type を取得し、Slack 自動通知に乗せる
+// 1) 同URLを GET (Range) で叩いて HTTP ステータスと content-type を取得し、Slack 自動通知に乗せる
 // 2) UI 側はエラーメッセージに差し替え（無言で空白になるのを防ぐ）
+// 3) 失敗 UI 内に「⚡ プレビュー再生成」CTA を常時表示
+// 4) 想定内エラー（probe 2xx かつ mediaErrorCode=4 で preview_status が done でない）は Slack 通知抑制
 async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
   // <video>.error.code は MEDIA_ERR_* の数値（1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED）
   const mediaErrCode = videoEl && videoEl.error ? videoEl.error.code : null;
@@ -39124,9 +39126,10 @@ async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
     probe.fetchError = e && e.message ? e.message : String(e);
   }
   // UI に失敗理由を表示
+  const item = msItemsCache.find(x => x.drive_file_id === fileId);
+  const probeOk = probe.status !== null && probe.status >= 200 && probe.status < 300;
   if (container) {
     // probe が 2xx の時は配信は正常 → 再生側（コーデック / faststart 未処理）の問題
-    const probeOk = probe.status !== null && probe.status >= 200 && probe.status < 300;
     let statusLabel;
     if (probe.status === null) {
       statusLabel = '通信エラー' + (probe.fetchError ? `: ${probe.fetchError}` : '');
@@ -39143,24 +39146,34 @@ async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
     } else {
       statusLabel = `読み込み失敗 (${probe.status})`;
     }
-    // フォールバック: Drive サムネ + Drive で開くリンク
-    const item = msItemsCache.find(x => x.drive_file_id === fileId);
+    // フォールバック: Drive サムネ + 再生成 CTA + Drive で開くリンク
     const thumbUrl = item?.thumbnail_url || null;
     const driveUrl = item?.drive_url || null;
     const thumbHtml = thumbUrl
       ? `<img src="${votEscape(thumbUrl)}" alt="" style="max-width:280px;max-height:180px;display:block;margin:0 auto 12px;border-radius:6px;background:#000" onerror="this.style.display='none'">`
       : '<div style="font-size:24px;margin-bottom:8px">⚠️</div>';
+    // エラー UI 内にも「⚡ プレビュー再生成」CTA を常時表示（パネル下のボタンと別に分かりやすく）
+    const regenBtnHtml = (item && item.media_kind === 'video')
+      ? `<div style="margin-top:10px"><button class="btn-secondary" onclick="msRegeneratePreview()" style="font-size:12px">⚡ プレビュー再生成</button></div>`
+      : '';
     const driveLink = driveUrl
-      ? `<br><a href="${votEscape(driveUrl)}" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;color:var(--accent);font-size:12px;text-decoration:underline">Drive で開く ↗</a>`
+      ? `<div style="margin-top:8px"><a href="${votEscape(driveUrl)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px;text-decoration:underline">Drive で開く ↗</a></div>`
       : '';
     container.innerHTML = `<div style="padding:24px;color:var(--text-muted);font-size:13px;text-align:center;line-height:1.6">
       ${thumbHtml}
       プレビューを読み込めませんでした<br>
       <span style="font-size:11px">${votEscape(statusLabel)}</span>
+      ${regenBtnHtml}
       ${driveLink}
     </div>`;
   }
-  // 自動エラーレポート（ms-preview-* 専用情報を resourceTarget に詰める）
+  // 自動エラーレポート（想定内エラーは抑制して通知ノイズを減らす）
+  //   - probe.status が 2xx かつ mediaErrorCode=4（コーデック非対応）で preview_status が done でない
+  //     → 配信は正常で「これから faststart/webp 化される」想定の状態。Slack 通知不要
+  //   - probe.status が 500 等のサーバーエラーは引き続き通知
+  const previewStatus = item?.preview_status || null;
+  const suppressNotify = probeOk && mediaErrCode === 4 && previewStatus !== 'done';
+  if (suppressNotify) return;
   try {
     if (window.__postAutoError) {
       window.__postAutoError({
@@ -39177,6 +39190,8 @@ async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
           id: tag === 'video' ? 'ms-preview-video' : null,
           previewProbe: probe,
           mediaErrorCode: mediaErrCode,
+          previewStatus,
+          previewStrategy: item?.preview_strategy || null,
           fileId,
         },
       });
@@ -39203,28 +39218,83 @@ function msSelectItem(fileId, scroll = true) {
   // - <source> 経由だと一部ブラウザで autoplay 失敗するので src 直書き
   // - preload="metadata" でクリエイティブ詳細（Frame.io 風）と統一。faststart 版を
   //   配信側がサーブするのでメタデータだけ先読みすれば 3秒ループも即時に始まる
+  // - 長尺は preview_strategy='webp_storyboard'（60枚パラパラ）→ <img>
+  //   短尺は preview_strategy='h264_faststart' → <video>
+  //   preview_drive_file_id が無い / preview_status が pending/processing/failed の場合は
+  //   既存挙動（faststart_drive_file_id 経由）にフォールバック
   const previewSrc = `${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}`;
+  // パネル下に出す補足説明（長尺ストーリーボード時の元動画長など）。デフォルトは消す
+  let previewCaption = '';
   if (item.media_kind === 'image') {
     media.innerHTML = `<img alt="" src="${previewSrc}">`;
     const img = media.querySelector('img');
     if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
   } else {
-    media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="metadata" controls></video>`;
-    setTimeout(() => {
-      const v = document.getElementById('ms-preview-video');
-      if (!v) return;
-      // 3 秒ループ（最初の 3 秒をリピート）
-      v.addEventListener('timeupdate', () => {
-        if (v.currentTime > 3) v.currentTime = 0;
-      });
-      // 再生エラー検知（resource error）
-      v.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'video', media, v));
-      // autoplay が抑止された場合の保険
-      const tryPlay = () => v.play().catch(() => {});
-      v.addEventListener('loadedmetadata', tryPlay);
-      v.addEventListener('canplay', tryPlay);
-      tryPlay();
-    }, 50);
+    // 動画：strategy で <img> / <video> を切替
+    const previewReady = item.preview_status === 'done' && item.preview_drive_file_id;
+    const isStoryboard = previewReady && item.preview_strategy === 'webp_storyboard';
+    const isPending = item.preview_status === 'pending' || item.preview_status === 'processing';
+
+    if (isStoryboard) {
+      // 長尺：60枚パラパラ WebP ストーリーボード
+      media.innerHTML = `<img id="ms-preview-storyboard" src="${previewSrc}" alt="" style="width:100%;max-width:100%;height:auto;border-radius:6px;background:#000" loading="lazy">`;
+      const img = document.getElementById('ms-preview-storyboard');
+      if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
+      // 元動画長を「H:MM:SS（×N倍速プレビュー）」として表示
+      const dur = Number(item.video_duration_seconds) || 0;
+      if (dur > 0) {
+        const h = Math.floor(dur / 3600);
+        const m = Math.floor((dur % 3600) / 60);
+        const s = Math.floor(dur % 60);
+        const durText = h > 0
+          ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+          : `${m}:${String(s).padStart(2, '0')}`;
+        // ストーリーボードは 60枚を 6 秒（10fps）で流すので倍速率は dur/6 ≒ 倍速
+        const speed = Math.max(1, Math.round(dur / 6));
+        previewCaption = `元動画 ${durText}（×${speed}倍速プレビュー / 60枚ダイジェスト）`;
+      } else {
+        previewCaption = '60枚ストーリーボードプレビュー';
+      }
+    } else if (isPending) {
+      // 生成中：簡易プレースホルダ
+      media.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;line-height:1.6">
+        <div style="font-size:24px;margin-bottom:8px">⏳</div>
+        プレビュー生成中…<br>
+        <span style="font-size:11px">数十秒〜数分後に再読込してください</span>
+      </div>`;
+      previewCaption = 'プレビュー生成中';
+    } else {
+      // 短尺 h264_faststart、または未定義（既存挙動：faststart_drive_file_id 経由フォールバック）
+      media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="metadata" controls></video>`;
+      setTimeout(() => {
+        const v = document.getElementById('ms-preview-video');
+        if (!v) return;
+        // 3 秒ループ（最初の 3 秒をリピート）
+        v.addEventListener('timeupdate', () => {
+          if (v.currentTime > 3) v.currentTime = 0;
+        });
+        // 再生エラー検知（resource error）
+        v.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'video', media, v));
+        // autoplay が抑止された場合の保険
+        const tryPlay = () => v.play().catch(() => {});
+        v.addEventListener('loadedmetadata', tryPlay);
+        v.addEventListener('canplay', tryPlay);
+        tryPlay();
+      }, 50);
+    }
+  }
+  // パネル下の補足説明を更新（要素が無ければスキップ）
+  const capEl = document.getElementById('ms-preview-caption');
+  if (capEl) {
+    capEl.textContent = previewCaption;
+    capEl.style.display = previewCaption ? '' : 'none';
+  } else if (previewCaption) {
+    // 既存DOMに caption 要素が無い場合、media 直下に差し込む（HTML側に追加するのが正だが保険）
+    const cap = document.createElement('div');
+    cap.id = 'ms-preview-caption';
+    cap.style.cssText = 'font-size:11px;color:var(--text-muted);margin-top:6px;text-align:center';
+    cap.textContent = previewCaption;
+    media.parentNode && media.parentNode.insertBefore(cap, media.nextSibling);
   }
   body.style.display = '';
   document.getElementById('ms-preview-filename').textContent = item.current_filename || item.original_filename || '-';
@@ -39248,10 +39318,14 @@ function msSelectItem(fileId, scroll = true) {
   const canApply = item.status === 'analysis_completed';
   document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
   document.getElementById('ms-btn-apply').style.display = canApply ? '' : 'none';
-  // faststart 再生成は動画 & 未生成 / 失敗時のみ
+  // プレビュー再生成は動画 & preview_status が done でなければ表示
+  //   （新カラム preview_status を主に見るが、過渡期で未定義のときは旧 faststart_status を併用）
   const isVideo = item.media_kind === 'video';
-  const needsFaststart = isVideo && (!item.faststart_status || ['failed', 'pending'].includes(item.faststart_status));
-  document.getElementById('ms-btn-faststart').style.display = needsFaststart ? '' : 'none';
+  const previewDone = item.preview_status === 'done';
+  const legacyDone = item.faststart_status === 'done';
+  const needsRegen = isVideo && !(previewDone || legacyDone);
+  const regenBtn = document.getElementById('ms-btn-preview-regen');
+  if (regenBtn) regenBtn.style.display = needsRegen ? '' : 'none';
 }
 
 // ==================== アクション（解析・適用・削除）====================
@@ -39268,28 +39342,46 @@ async function msAnalyzeSelected() {
     msReloadList();
   }
 }
-async function msRegenerateFaststart() {
+// プレビュー再生成（短尺は H.264 faststart、長尺は 60枚 WebP ストーリーボードを生成）
+// - 新規実装は POST /preview/:fileId を呼ぶ（PR-BC で追加予定）
+// - サーバ側に /preview/:fileId が無い場合は旧 POST /faststart/:fileId にフォールバック
+async function msRegeneratePreview() {
   if (!msSelectedFileId) return;
-  const btn = document.getElementById('ms-btn-faststart');
+  const btn = document.getElementById('ms-btn-preview-regen');
   const prevLabel = btn?.textContent;
   try {
-    if (btn) { btn.disabled = true; btn.textContent = '⚡ 変換中… (数十秒〜数分)'; }
-    showToast('faststart 変換を開始しました（H.264+AAC に再エンコード）', 'info');
-    const result = await votFetch('/faststart/' + encodeURIComponent(msSelectedFileId), { method: 'POST' });
+    if (btn) { btn.disabled = true; btn.textContent = '⚡ 再生成中… (数十秒〜数分)'; }
+    showToast('プレビュー再生成を開始しました（長尺はストーリーボード、短尺は H.264 faststart）', 'info');
+    let result;
+    try {
+      result = await votFetch('/preview/' + encodeURIComponent(msSelectedFileId), { method: 'POST' });
+    } catch (e) {
+      // /preview endpoint が未配備のサーバへの互換フォールバック
+      if (e && /404|Not Found/i.test(String(e.message))) {
+        result = await votFetch('/faststart/' + encodeURIComponent(msSelectedFileId), { method: 'POST' });
+      } else {
+        throw e;
+      }
+    }
     if (result?.result?.ok) {
-      showToast(`変換完了（${result.result.mode === 'copy' ? '再エンコード無し' : '再エンコードあり'}）`, 'success');
+      const mode = result.result.strategy || result.result.mode;
+      showToast(`再生成完了（${mode || '完了'}）`, 'success');
     } else if (result?.result?.skipped) {
       showToast('スキップ: ' + (result.result.reason || '対象外'), 'info');
+    } else if (result?.ok) {
+      showToast('再生成を開始しました', 'success');
     } else {
-      showToast('変換失敗: ' + (result?.result?.error || '不明なエラー'), 'error');
+      showToast('再生成失敗: ' + (result?.result?.error || result?.error || '不明なエラー'), 'error');
     }
     msReloadList();
   } catch (e) {
-    showToast('変換失敗: ' + e.message, 'error');
+    showToast('再生成失敗: ' + e.message, 'error');
   } finally {
     if (btn) { btn.disabled = false; if (prevLabel) btn.textContent = prevLabel; }
   }
 }
+// 後方互換: 古い呼び出し箇所が残っていても動くように alias を残す
+const msRegenerateFaststart = msRegeneratePreview;
 async function msApplySelected() {
   if (!msSelectedFileId) return;
   if (!confirm('提案内容を適用します。\n（DRY_RUN=true の間は予定差分のみ返ります）\n実行しますか？')) return;
