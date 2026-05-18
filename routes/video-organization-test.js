@@ -25,7 +25,7 @@ const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
 const heicLib = require('../lib/video-organization/heic');
-const { generateFaststartForVideoOrg } = require('../lib/faststart');
+const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
 
 // 共通: feature flag ガード（ENABLE_VIDEO_ORGANIZATION_TEST=false なら 404）
 router.use((req, res, next) => {
@@ -118,23 +118,35 @@ router.get('/list', async (req, res) => {
 // 返ってきたステータスをそのまま転送する設計に変更（旧版は手動 200/206 判定
 // で不整合が出いた）。
 //
-// faststart 切替: クリエイティブ詳細（Frame.io 風）と同じく、faststart_drive_file_id
-// が DB にあれば原本ではなくそちらをサーブする。H.265/HEVC など Web 再生不可な
-// 原本もここで H.264+AAC 版にすり替わって再生可能になる。
+// プレビュー切替の優先順位:
+//   1) preview_drive_file_id (新方式: H.264 faststart or WebP 60枚)
+//   2) faststart_drive_file_id (旧方式: 常に H.264。互換のため残す)
+//   3) 原本 fileId
 // ?original=1 を付ければ強制的に原本を返す（検証用）。
+// preview が WebP の場合は preview_mime_type を Content-Type にセットして返すので、
+// フロントは <img> でも <video> でも受け取れる（image/webp のときは <img>）。
 router.get('/preview/:fileId', async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!fileId) return res.status(400).end();
   try {
-    // DB に faststart 版があればそれを配信
+    // DB に preview 版 / faststart 版があればそれを配信
     const { data: row } = await supabase
       .from('video_file_organization_tests')
-      .select('faststart_drive_file_id')
+      .select('preview_drive_file_id, preview_mime_type, preview_strategy, faststart_drive_file_id')
       .eq('drive_file_id', fileId)
       .maybeSingle();
 
     const wantsOriginal = req.query.original === '1';
-    const effectiveFileId = (!wantsOriginal && row?.faststart_drive_file_id) || fileId;
+    let effectiveFileId = fileId;
+    let overrideContentType = null;
+    if (!wantsOriginal) {
+      if (row?.preview_drive_file_id) {
+        effectiveFileId = row.preview_drive_file_id;
+        overrideContentType = row.preview_mime_type || null;
+      } else if (row?.faststart_drive_file_id) {
+        effectiveFileId = row.faststart_drive_file_id;
+      }
+    }
 
     const range = req.headers.range || null;
     const { stream, status, headers } = await driveLib.getFileStream(effectiveFileId, range);
@@ -142,6 +154,10 @@ router.get('/preview/:fileId', async (req, res) => {
     const passthrough = ['content-type', 'content-length', 'content-range', 'last-modified', 'etag'];
     for (const k of passthrough) {
       if (headers[k]) res.setHeader(k, headers[k]);
+    }
+    // preview_mime_type が DB に明示されていればそちらを優先（WebP storyboard の保険）
+    if (overrideContentType) {
+      res.setHeader('Content-Type', overrideContentType);
     }
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=60');
@@ -292,10 +308,17 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         kind,
       });
 
-      // 素材広場は大半が H.264 で素直に再生できるので、アップロード時の自動変換は行わない。
-      // ブラウザで再生不可だった素材だけ、プレビューパネルの「⚡ 再生用に変換」ボタンで
-      // ユーザーが手動発動する。これで Drive 容量2倍化を回避（クリエイティブ詳細は
-      // 校了動画の永久保管前提なので auto 変換のままで OK）。
+      // プレビュー自動生成: 動画かつ短尺 (< 180秒) のみ fire-and-forget で H.264 化。
+      // 長尺は容量・処理時間が読めないのでユーザーが UI ボタンから明示的に実行する。
+      try {
+        const dur = uploaded.durationSeconds;
+        if (kind === 'video' && dur && dur < 180) {
+          generatePreviewForVideoOrg({ rowId: inserted.id })
+            .catch(err => console.error('[video-org] preview autogen failed:', err?.message || err));
+        }
+      } catch (e) {
+        console.warn('[video-org] preview autogen kick failed:', e.message);
+      }
 
       results.push({ filename: f.originalname, ok: true, item: inserted });
     } catch (e) {
@@ -361,7 +384,17 @@ router.post('/register', async (req, res) => {
       fileId, fileName: meta.fileName, size: meta.size, kind,
     });
 
-    // 自動変換はしない（容量2倍化回避）。再生できない素材は手動ボタンで個別に変換する。
+    // プレビュー自動生成: 動画かつ短尺 (< 180秒) のみ fire-and-forget で H.264 化。
+    // 長尺は容量・処理時間が読めないのでユーザーが UI ボタンから明示的に実行する。
+    try {
+      const dur = meta.durationSeconds;
+      if (kind === 'video' && dur && dur < 180) {
+        generatePreviewForVideoOrg({ rowId: inserted.id })
+          .catch(err => console.error('[video-org] preview autogen failed:', err?.message || err));
+      }
+    } catch (e) {
+      console.warn('[video-org] preview autogen kick failed:', e.message);
+    }
 
     res.json({ item: inserted });
   } catch (e) {
@@ -579,9 +612,36 @@ router.get('/item/:fileId', async (req, res) => {
   }
 });
 
-// ==================== faststart バックフィル ====================
-// 既存行に対して faststart 版を改めて生成する。アップロード時の fire-and-forget が
-// 失敗していた場合や、新規仕様適用前にアップロードされた行を救う用途。
+// ==================== プレビュー バックフィル（新方式） ====================
+// 既存行に対してプレビュー版を改めて生成する。動画長で分岐:
+//   - 短尺 (< 180s): H.264 faststart
+//   - 長尺 (>= 180s): WebP 60フレーム ダイジェスト
+router.post('/preview/:fileId', async (req, res) => {
+  const fileId = String(req.params.fileId);
+  if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  try {
+    const { data: row, error: fetchError } = await supabase
+      .from('video_file_organization_tests')
+      .select('id, media_kind, preview_status')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!row) return res.status(404).json({ error: '対象の素材が見つかりません' });
+    if (row.media_kind !== 'video') {
+      return res.status(422).json({ error: '動画以外はプレビュー化できません' });
+    }
+    // 同期的に await（バックフィルは結果を返したい）。タイムアウトはクライアント側で許容する想定。
+    const result = await generatePreviewForVideoOrg({ rowId: row.id });
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('[video-org] preview backfill error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ==================== faststart バックフィル（旧方式 / 互換）====================
+// 既存フロントの ⚡ ボタンが叩いている旧エンドポイント。内部実装を新方式 (preview)
+// に切替えて、UI 側を変えなくても同じ操作で WebP/H.264 両対応する。
 router.post('/faststart/:fileId', async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
@@ -594,10 +654,11 @@ router.post('/faststart/:fileId', async (req, res) => {
     if (fetchError) throw fetchError;
     if (!row) return res.status(404).json({ error: '対象の素材が見つかりません' });
     if (row.media_kind !== 'video') {
-      return res.status(422).json({ error: '動画以外は faststart 化できません' });
+      return res.status(422).json({ error: '動画以外はプレビュー化できません' });
     }
-    // 同期的に await（バックフィルは結果を返したい）。タイムアウトはクライアント側で許容する想定。
-    const result = await generateFaststartForVideoOrg({ rowId: row.id });
+    // 互換: 新方式 generatePreviewForVideoOrg を呼ぶ（旧 generateFaststartForVideoOrg は
+    // 関数自体は残してあるが、ルートは新方式に切替）。
+    const result = await generatePreviewForVideoOrg({ rowId: row.id });
     res.json({ ok: true, result });
   } catch (e) {
     console.error('[video-org] faststart backfill error:', e);
