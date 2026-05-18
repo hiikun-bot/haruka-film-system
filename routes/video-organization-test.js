@@ -26,6 +26,15 @@ const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
 const heicLib = require('../lib/video-organization/heic');
 const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
+const googleOAuth = require('../lib/google-oauth');
+
+// 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
+// 本番初期は false で出して、別ターンで true に切り替える運用とする。
+function isResumableUploadEnabled() {
+  return ['true', '1', 'on', 'yes'].includes(
+    String(process.env.ENABLE_RESUMABLE_UPLOAD || '').toLowerCase()
+  );
+}
 
 // 共通: feature flag ガード（ENABLE_VIDEO_ORGANIZATION_TEST=false なら 404）
 router.use((req, res, next) => {
@@ -54,6 +63,10 @@ router.get('/limits', (req, res) => {
     max_upload_duration_seconds: guards.getMaxUploadDurationSeconds(),
     max_analysis_duration_seconds: guards.getMaxDurationSeconds(),
     daily_analysis_limit: guards.getDailyLimit(),
+    // 大容量 D&D（>=500MB）を Resumable Upload で Drive 直送するか
+    resumable_upload_enabled: isResumableUploadEnabled(),
+    // 経路分岐サイズ（バイト）。500MB を超えたら Resumable Upload に倒す
+    resumable_upload_threshold_bytes: 500 * 1024 * 1024,
   });
 });
 
@@ -678,6 +691,384 @@ router.delete('/item/:fileId', async (req, res) => {
   } catch (e) {
     console.error('[video-org] delete error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== Resumable Upload セッション（>=500MB 向け）====================
+//
+// フロー:
+//   1) POST /upload-session/init
+//      → サーバーがユーザーOAuthトークンで Drive Resumable Upload セッションを発行
+//      → 返ってきた Location（drive_session_url）を DB に保存し、ブラウザに返す
+//   2) ブラウザは drive_session_url に対してチャンク PUT（Content-Range 指定）
+//      → 最終チャンクのレスポンス JSON から drive_file_id を得る
+//   3) POST /upload-session/:sessionId/complete
+//      → status=completed に更新し、内部で /register 相当（DB INSERT＋短尺ならプレビュー生成 fire-and-forget）を実行
+//   4) （オプション）POST /upload-session/:sessionId/cancel
+//      → status=cancelled に更新。Drive セッションをキャンセル（DELETE）
+//
+// 既存 /upload (multipart, Railway 経由) はそのまま残し、フロント側でファイルサイズに応じて分岐する。
+
+const RESUMABLE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3/files';
+
+// 共通ガード: 環境フラグ + ユーザーOAuth未連携の判定
+async function ensureResumableContext(req, res) {
+  if (!isResumableUploadEnabled()) {
+    res.status(503).json({
+      error: 'Resumable Upload は無効化されています（ENABLE_RESUMABLE_UPLOAD=true を設定してください）',
+      reason: 'feature_disabled',
+    });
+    return null;
+  }
+  if (!googleOAuth.isConfigured()) {
+    res.status(503).json({
+      error: 'Google OAuth が未設定です（管理者向け: GOOGLE_OAUTH_CLIENT_ID 等の環境変数を設定してください）',
+      reason: 'oauth_not_configured',
+    });
+    return null;
+  }
+  const token = await googleOAuth.getValidAccessToken({
+    userId: req.user.id,
+    scopeKey: 'drive.file',
+  });
+  if (!token) {
+    res.status(401).json({
+      error: 'Drive 連携が必要です。/oauth/google/start から連携してください。',
+      reason: 'oauth_not_connected',
+      consent_url: '/oauth/google/start?next=/haruka.html',
+    });
+    return null;
+  }
+  return token;
+}
+
+// ----- 1) セッション発行 -----
+// Body: { filename, fileSize, mimeType, parentFolderId? }
+router.post('/upload-session/init', async (req, res) => {
+  try {
+    const token = await ensureResumableContext(req, res);
+    if (!token) return; // ensureResumableContext が既にレスポンス送信済み
+
+    const filename = String(req.body?.filename || '').trim();
+    const fileSize = Number(req.body?.fileSize);
+    const mimeType = String(req.body?.mimeType || 'application/octet-stream');
+    const parentFolderId = String(
+      req.body?.parentFolderId || getUploadFolderId() || ''
+    ).trim();
+
+    if (!filename) return res.status(400).json({ error: 'filename が必要です' });
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      return res.status(400).json({ error: 'fileSize が不正です' });
+    }
+    if (!parentFolderId) {
+      return res.status(400).json({
+        error: 'parentFolderId が指定されておらず、VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID も未設定です',
+      });
+    }
+    // mime からアップロード対象種別を判定（未対応なら拒否）
+    const kind = mimeToKind(mimeType, filename);
+    if (!kind) {
+      return res.status(422).json({ error: `未対応の MIME: ${mimeType}` });
+    }
+
+    // Drive Resumable Upload セッションを発行
+    // ref: https://developers.google.com/drive/api/guides/manage-uploads#resumable
+    const metadata = {
+      name: filename,
+      parents: [parentFolderId],
+      mimeType,
+    };
+    const initResp = await fetch(
+      `${RESUMABLE_UPLOAD_BASE}?uploadType=resumable&supportsAllDrives=true`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token.accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': String(fileSize),
+        },
+        body: JSON.stringify(metadata),
+      }
+    );
+    if (!initResp.ok) {
+      const text = await initResp.text().catch(() => '');
+      console.error('[video-org] resumable init failed:', initResp.status, text);
+      return res.status(502).json({
+        error: 'Drive Resumable Upload セッション発行に失敗しました',
+        upstream_status: initResp.status,
+        upstream_body: text.slice(0, 500),
+      });
+    }
+    const driveSessionUrl = initResp.headers.get('location');
+    if (!driveSessionUrl) {
+      return res.status(502).json({
+        error: 'Drive から セッションURL（Location ヘッダ）が返りませんでした',
+      });
+    }
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('video_org_upload_sessions')
+      .insert({
+        user_id: req.user.id,
+        filename,
+        file_size: fileSize,
+        mime_type: mimeType,
+        parent_folder_id: parentFolderId,
+        drive_session_url: driveSessionUrl,
+        status: 'pending',
+      })
+      .select()
+      .single();
+    if (insertError) throw insertError;
+
+    logCtx('upload-session-init', {
+      at: new Date().toISOString(),
+      by: req.user?.email,
+      sessionId: inserted.id,
+      filename,
+      fileSize,
+      mimeType,
+      parentFolderId,
+    });
+
+    res.json({
+      sessionId: inserted.id,
+      driveSessionUrl,
+      parentFolderId,
+      // ブラウザ側のチャンク分割推奨サイズ（256MB の倍数を Drive が要求）
+      recommended_chunk_size_bytes: 256 * 1024 * 1024,
+      session_expires_at: inserted.session_expires_at,
+    });
+  } catch (e) {
+    console.error('[video-org] upload-session/init error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ----- セッション取得（進捗確認・再開）-----
+router.get('/upload-session/:sessionId', async (req, res) => {
+  try {
+    const sessionId = String(req.params.sessionId);
+    const { data, error } = await supabase
+      .from('video_org_upload_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'セッションが見つかりません' });
+    // 別ユーザーのセッションを覗かれないようガード（admin 同士でも他人のは見せない）
+    if (data.user_id !== req.user.id) {
+      return res.status(403).json({ error: '他ユーザーのセッションは参照できません' });
+    }
+    res.json({ session: data });
+  } catch (e) {
+    console.error('[video-org] upload-session/get error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ----- 進捗（uploaded_bytes 更新）-----
+// ブラウザがチャンク単位で叩いて DB に進捗を保存する任意エンドポイント。
+// （無くても動くが、再開やダッシュボード表示の精度が上がる）
+router.post('/upload-session/:sessionId/progress', async (req, res) => {
+  try {
+    const sessionId = String(req.params.sessionId);
+    const uploadedBytes = Number(req.body?.uploadedBytes);
+    if (!Number.isFinite(uploadedBytes) || uploadedBytes < 0) {
+      return res.status(400).json({ error: 'uploadedBytes が不正です' });
+    }
+    const { data: existing } = await supabase
+      .from('video_org_upload_sessions')
+      .select('id, user_id, file_size, status')
+      .eq('id', sessionId)
+      .maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'セッションが見つかりません' });
+    if (existing.user_id !== req.user.id) {
+      return res.status(403).json({ error: '他ユーザーのセッションは更新できません' });
+    }
+    if (['completed', 'cancelled', 'failed', 'expired'].includes(existing.status)) {
+      return res.status(409).json({ error: `status=${existing.status} の進捗は更新できません` });
+    }
+    await supabase
+      .from('video_org_upload_sessions')
+      .update({
+        status: 'uploading',
+        uploaded_bytes: Math.min(uploadedBytes, existing.file_size),
+      })
+      .eq('id', sessionId);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[video-org] upload-session/progress error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ----- 3) 完了 → DB登録 -----
+// Body: { driveFileId }
+// 既存 /register と同じく video_file_organization_tests に INSERT し、短尺なら preview を fire-and-forget で開始。
+router.post('/upload-session/:sessionId/complete', async (req, res) => {
+  try {
+    const sessionId = String(req.params.sessionId);
+    const driveFileId = String(req.body?.driveFileId || '').trim();
+    if (!driveFileId) return res.status(400).json({ error: 'driveFileId が必要です' });
+
+    const { data: sess, error: sessError } = await supabase
+      .from('video_org_upload_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .maybeSingle();
+    if (sessError) throw sessError;
+    if (!sess) return res.status(404).json({ error: 'セッションが見つかりません' });
+    if (sess.user_id !== req.user.id) {
+      return res.status(403).json({ error: '他ユーザーのセッションは完了できません' });
+    }
+    if (sess.status === 'completed' && sess.drive_file_id) {
+      // 冪等: 既に完了している場合は現在の row をそのまま返す
+      const { data: existing } = await supabase
+        .from('video_file_organization_tests')
+        .select('*')
+        .eq('drive_file_id', sess.drive_file_id)
+        .maybeSingle();
+      if (existing) return res.json({ item: existing, idempotent: true });
+    }
+
+    // 既に同 drive_file_id が登録されていないか
+    const { data: existed } = await supabase
+      .from('video_file_organization_tests')
+      .select('id, status')
+      .eq('drive_file_id', driveFileId)
+      .maybeSingle();
+    if (existed) {
+      // セッション側だけ completed に更新して、既存行を返す
+      await supabase
+        .from('video_org_upload_sessions')
+        .update({
+          status: 'completed',
+          drive_file_id: driveFileId,
+          uploaded_bytes: sess.file_size,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', sessionId);
+      const { data: existingFull } = await supabase
+        .from('video_file_organization_tests')
+        .select('*')
+        .eq('drive_file_id', driveFileId)
+        .maybeSingle();
+      return res.json({ item: existingFull, already_registered: true });
+    }
+
+    // Drive メタを取得（SA で）
+    let meta;
+    try {
+      meta = await driveLib.getVideoFileMeta(driveFileId);
+    } catch (e) {
+      console.error('[video-org] upload-session/complete getVideoFileMeta failed:', e);
+      return res.status(502).json({
+        error: 'Drive 上のメタ取得に失敗しました。ユーザーOAuthでアップロードされたファイルにサービスアカウントが drive.file スコープでアクセスできるか確認してください',
+        upstream: e?.message,
+      });
+    }
+    if (!meta || !meta.fileId) {
+      return res.status(404).json({ error: 'Drive 上に該当ファイルが見つかりません' });
+    }
+    const kind = mimeToKind(meta.mimeType, meta.fileName);
+    if (!kind) return res.status(422).json({ error: `対象外の MIME: ${meta.mimeType}` });
+
+    const parentId = (meta.parents && meta.parents[0]) || sess.parent_folder_id || null;
+    const parentName = await driveLib.getParentFolderName(parentId);
+    const thumb = await driveLib.getThumbnailLink(driveFileId);
+
+    const row = {
+      drive_file_id: driveFileId,
+      original_filename: meta.fileName,
+      current_filename: meta.fileName,
+      mime_type: meta.mimeType,
+      file_size: meta.size,
+      drive_url: meta.webViewLink,
+      current_parent_folder_id: parentId,
+      current_parent_folder_name: parentName,
+      video_duration_seconds: meta.durationSeconds,
+      media_kind: kind,
+      thumbnail_url: thumb,
+      status: 'waiting_approval',
+      dry_run: guards.isDryRun(),
+      created_by: req.user?.id || null,
+    };
+    const { data: inserted, error: insertError } = await supabase
+      .from('video_file_organization_tests')
+      .insert(row)
+      .select()
+      .single();
+    if (insertError) throw insertError;
+
+    // セッションを completed に更新
+    await supabase
+      .from('video_org_upload_sessions')
+      .update({
+        status: 'completed',
+        drive_file_id: driveFileId,
+        uploaded_bytes: sess.file_size,
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', sessionId);
+
+    logCtx('upload-session-complete', {
+      at: new Date().toISOString(),
+      by: req.user?.email,
+      sessionId,
+      driveFileId,
+      size: meta.size,
+      kind,
+    });
+
+    res.json({ item: inserted });
+  } catch (e) {
+    console.error('[video-org] upload-session/complete error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ----- 4) キャンセル -----
+router.post('/upload-session/:sessionId/cancel', async (req, res) => {
+  try {
+    const sessionId = String(req.params.sessionId);
+    const { data: sess } = await supabase
+      .from('video_org_upload_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .maybeSingle();
+    if (!sess) return res.status(404).json({ error: 'セッションが見つかりません' });
+    if (sess.user_id !== req.user.id) {
+      return res.status(403).json({ error: '他ユーザーのセッションはキャンセルできません' });
+    }
+    if (['completed', 'cancelled', 'failed', 'expired'].includes(sess.status)) {
+      // 冪等
+      return res.json({ ok: true, status: sess.status });
+    }
+
+    // Drive 側のセッションを DELETE（ベストエフォート）
+    try {
+      await fetch(sess.drive_session_url, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('[video-org] upload-session DELETE failed:', e?.message);
+    }
+
+    await supabase
+      .from('video_org_upload_sessions')
+      .update({ status: 'cancelled' })
+      .eq('id', sessionId);
+
+    logCtx('upload-session-cancel', {
+      at: new Date().toISOString(),
+      by: req.user?.email,
+      sessionId,
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[video-org] upload-session/cancel error:', e);
+    res.status(500).json({ error: e?.message || String(e) });
   }
 });
 

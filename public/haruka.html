@@ -7144,6 +7144,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-drop-icon">⬆ 🎬 🖼️</div>
           <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
           <p style="margin:0;font-size:12px" id="ms-upload-limits-hint">複数ファイル同時OK / 1ファイル <span id="ms-hint-mb">25</span>MB まで / 動画は <span id="ms-hint-sec">30</span>秒以内</p>
+          <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ 500MB超の大容量ファイルは Drive 直送でアップロード（数十GBの 4K 素材も OK）</p>
           <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
           <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
           <input type="file" id="ms-file-input" multiple style="display:none"
@@ -38997,6 +38998,9 @@ function msShowUpload() {
     const sec = document.getElementById('ms-hint-sec');
     if (mb) mb.textContent = String(l.max_upload_size_mb || 25);
     if (sec) sec.textContent = String(l.max_upload_duration_seconds || 30);
+    // 大容量直送が有効ならヒント表示
+    const resumableHint = document.getElementById('ms-resumable-hint');
+    if (resumableHint) resumableHint.style.display = l.resumable_upload_enabled ? '' : 'none';
   });
 }
 
@@ -39451,6 +39455,21 @@ function msProbeVideoDuration(file) {
   });
 }
 
+// 大容量分岐の閾値（バイト）。/limits からも返ってくるが、初回フェッチ前のフォールバック用に持つ。
+const MS_RESUMABLE_THRESHOLD_BYTES = 500 * 1024 * 1024;
+// チャンクサイズは 256MB の倍数（Drive Resumable Upload の要件）
+const MS_CHUNK_SIZE_BYTES = 256 * 1024 * 1024;
+// アクティブな大容量アップロード（ブラウザ閉じ防止用）
+const msActiveResumableUploads = new Set();
+
+window.addEventListener('beforeunload', (e) => {
+  if (msActiveResumableUploads.size > 0) {
+    e.preventDefault();
+    e.returnValue = 'アップロード中です。閉じてもよいですか？';
+    return e.returnValue;
+  }
+});
+
 async function msHandleFiles(files) {
   if (!files.length) return;
   const list = document.getElementById('ms-upload-list');
@@ -39459,9 +39478,10 @@ async function msHandleFiles(files) {
   const maxMb = limits.max_upload_size_mb || 25;
   const maxDur = limits.max_upload_duration_seconds || 30;
   const maxBytes = maxMb * 1024 * 1024;
+  const resumableEnabled = !!limits.resumable_upload_enabled;
+  const resumableThreshold = Number(limits.resumable_upload_threshold_bytes) || MS_RESUMABLE_THRESHOLD_BYTES;
 
   list.innerHTML = '';
-  // 各ファイルごとに 1 リクエスト（進捗が個別に見える / 一括 50MB の制約回避）
   for (const f of files) {
     const row = document.createElement('div');
     row.className = 'ms-upload-item';
@@ -39472,12 +39492,59 @@ async function msHandleFiles(files) {
       </div>
       <div class="ms-bar"><div style="width:0%"></div></div>
       <div class="ms-status" style="font-size:11px;color:var(--text-muted);margin-top:4px">待機中…</div>
+      <div class="ms-controls" style="margin-top:6px;display:none">
+        <button type="button" class="btn btn-small" data-action="cancel">キャンセル</button>
+      </div>
+      <div class="ms-warn" style="font-size:11px;color:#b45309;margin-top:4px;display:none">⚠ 大容量ファイルです。アップロード中はこのタブを閉じないでください</div>
     `;
     list.appendChild(row);
     const bar = row.querySelector('.ms-bar > div');
     const stat = row.querySelector('.ms-status');
+    const controls = row.querySelector('.ms-controls');
+    const warn = row.querySelector('.ms-warn');
 
-    // 事前チェック①: ファイルサイズ
+    // 大容量分岐
+    const isLarge = f.size >= resumableThreshold;
+    if (isLarge) {
+      // 大容量経路（Resumable Upload）— 有効でなければ明示エラーで止める
+      if (!resumableEnabled) {
+        bar.style.background = '#dc2626'; bar.style.width = '100%';
+        stat.style.color = '#dc2626';
+        stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=500MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
+        continue;
+      }
+      warn.style.display = '';
+      controls.style.display = '';
+      const cancelBtn = controls.querySelector('[data-action="cancel"]');
+      try {
+        stat.textContent = 'Drive セッションを発行中…';
+        const meta = { aborted: false };
+        cancelBtn.addEventListener('click', () => {
+          meta.aborted = true;
+          stat.textContent = 'キャンセル中…';
+        });
+        await msUploadResumable(f, {
+          onStatus: (msg) => { stat.textContent = msg; },
+          onProgress: (pct) => { bar.style.width = pct + '%'; },
+          shouldAbort: () => meta.aborted,
+        });
+        bar.style.width = '100%';
+        bar.style.background = '#10b981';
+        stat.textContent = '✅ 完了（解析はまだ未実行）';
+        controls.style.display = 'none';
+        warn.style.display = 'none';
+      } catch (e) {
+        bar.style.background = '#dc2626';
+        stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
+        stat.style.color = '#dc2626';
+        controls.style.display = 'none';
+        warn.style.display = 'none';
+      }
+      continue;
+    }
+
+    // 既存（短尺・<500MB）経路 ===========================================
+    // 事前チェック①: 既存上限（multer の MAX_UPLOAD_SIZE_MB）
     if (f.size > maxBytes) {
       bar.style.background = '#dc2626'; bar.style.width = '100%';
       stat.style.color = '#dc2626';
@@ -39485,7 +39552,7 @@ async function msHandleFiles(files) {
       continue;
     }
 
-    // 事前チェック②: 動画長（mp4 のみ。画像はスキップ）
+    // 事前チェック②: 動画長
     const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
     if (isVideo) {
       stat.textContent = '動画長を確認中…';
@@ -39511,6 +39578,164 @@ async function msHandleFiles(files) {
     }
   }
   msReloadList();
+}
+
+// ==================== Resumable Upload（>=500MB ブラウザ→Drive 直送） ====================
+//
+// 流れ:
+//   1) POST /upload-session/init で Drive セッションURLを得る
+//   2) 256MB 単位でチャンクを driveSessionUrl に PUT（Content-Range 必須）
+//      - 各チャンクごとに進捗バー更新
+//      - 失敗時は同チャンクをリトライ（指数バックオフ、最大5回）
+//   3) 最終チャンクのレスポンスJSONから driveFileId を取得
+//   4) POST /upload-session/:sessionId/complete に driveFileId を渡す
+async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {}) {
+  const opId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  msActiveResumableUploads.add(opId);
+  let sessionId = null;
+  try {
+    // 1) セッション発行
+    onStatus && onStatus('Drive セッションを発行中…');
+    let initBody;
+    try {
+      initBody = await votFetch('/upload-session/init', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: file.name,
+          fileSize: file.size,
+          mimeType: file.type || 'application/octet-stream',
+        }),
+      });
+    } catch (e) {
+      // OAuth 未連携の場合、サーバーは consent_url を返す。それを使って案内する
+      const msg = String(e.message || '');
+      if (/Drive 連携が必要/.test(msg)) {
+        if (confirm('Drive と連携してアップロードしますか？\nGoogle の同意画面で「許可」を押してください。')) {
+          // 戻り先を haruka.html?ms_resume=1 として、戻った後にユーザーが再操作する
+          window.location.href = '/oauth/google/start?next=' + encodeURIComponent('/haruka.html');
+          throw new Error('Drive 連携画面に移動しました。連携後に再度アップロードしてください');
+        }
+      }
+      throw e;
+    }
+    sessionId = initBody.sessionId;
+    const driveSessionUrl = initBody.driveSessionUrl;
+    const chunkSize = Number(initBody.recommended_chunk_size_bytes) || MS_CHUNK_SIZE_BYTES;
+
+    // 2) チャンク PUT
+    const totalSize = file.size;
+    let uploaded = 0;
+    let driveFileId = null;
+    let lastReportedSec = Date.now();
+    let lastReportedBytes = 0;
+
+    while (uploaded < totalSize) {
+      if (shouldAbort && shouldAbort()) {
+        try { await votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/cancel', { method: 'POST' }); } catch (_) {}
+        throw new Error('キャンセルされました');
+      }
+      const end = Math.min(uploaded + chunkSize, totalSize);
+      const chunk = file.slice(uploaded, end);
+      const contentRange = `bytes ${uploaded}-${end - 1}/${totalSize}`;
+
+      let attempt = 0;
+      const MAX_ATTEMPTS = 5;
+      let putOk = false;
+      let putRes = null;
+      while (attempt < MAX_ATTEMPTS) {
+        attempt++;
+        try {
+          putRes = await fetch(driveSessionUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Range': contentRange,
+              // Content-Length / Content-Type は fetch が自動付与
+            },
+            body: chunk,
+          });
+          // 308 = 部分受領（次チャンクへ）、200/201 = 全部完了
+          if (putRes.status === 308 || putRes.status === 200 || putRes.status === 201) {
+            putOk = true;
+            break;
+          }
+          // 5xx はリトライ。4xx はリトライしても無駄なので即時 throw
+          if (putRes.status >= 400 && putRes.status < 500) {
+            const text = await putRes.text().catch(() => '');
+            throw new Error(`Drive エラー (${putRes.status}): ${text.slice(0, 200)}`);
+          }
+          throw new Error(`Drive 応答 ${putRes.status}`);
+        } catch (e) {
+          if (attempt >= MAX_ATTEMPTS) throw e;
+          const backoffMs = Math.min(30000, 500 * Math.pow(2, attempt - 1));
+          onStatus && onStatus(`リトライ中… (${attempt}/${MAX_ATTEMPTS}) — ${e.message || e}`);
+          await new Promise(r => setTimeout(r, backoffMs));
+        }
+      }
+      if (!putOk) throw new Error('チャンク送信に失敗しました');
+
+      // 進捗計算（Range ヘッダ "bytes=0-NNN" / 308 の場合は受領済みの末尾）
+      if (putRes.status === 308) {
+        // 308 の Range ヘッダから received-up-to を取得（無ければ end を仮置き）
+        const rangeHdr = putRes.headers.get('range');
+        const m = rangeHdr && /bytes=0-(\d+)/.exec(rangeHdr);
+        uploaded = m ? Number(m[1]) + 1 : end;
+      } else {
+        // 200/201: 完了。レスポンス JSON から fileId を取得
+        try {
+          const respJson = await putRes.json();
+          driveFileId = respJson?.id || null;
+        } catch (_) {}
+        uploaded = totalSize;
+      }
+
+      // 進捗 UI
+      const pct = Math.min(100, Math.round((uploaded / totalSize) * 100));
+      onProgress && onProgress(pct);
+
+      // スループット表示（直近インターバル）
+      const now = Date.now();
+      const dtSec = (now - lastReportedSec) / 1000;
+      if (dtSec >= 0.5) {
+        const dBytes = uploaded - lastReportedBytes;
+        const mbps = dtSec > 0 ? (dBytes / 1024 / 1024) / dtSec : 0;
+        const remainingBytes = Math.max(0, totalSize - uploaded);
+        const etaSec = mbps > 0 ? Math.round(remainingBytes / 1024 / 1024 / mbps) : null;
+        const etaText = etaSec != null && Number.isFinite(etaSec)
+          ? `残り ${msFormatEta(etaSec)}` : '残り計測中';
+        onStatus && onStatus(`アップロード中 ${pct}% ・ 上り ${mbps.toFixed(1)}MB/s ・ ${etaText}`);
+        lastReportedSec = now;
+        lastReportedBytes = uploaded;
+      }
+
+      // 任意: サーバー側の進捗 DB を更新（ベストエフォート）
+      votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/progress', {
+        method: 'POST',
+        body: JSON.stringify({ uploadedBytes: uploaded }),
+      }).catch(() => {});
+    }
+
+    if (!driveFileId) {
+      throw new Error('Drive から fileId が返りませんでした');
+    }
+
+    // 3) DB 登録（/complete）
+    onStatus && onStatus('登録中…');
+    const completed = await votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/complete', {
+      method: 'POST',
+      body: JSON.stringify({ driveFileId }),
+    });
+    return completed;
+  } finally {
+    msActiveResumableUploads.delete(opId);
+  }
+}
+
+function msFormatEta(sec) {
+  if (sec < 60) return `${sec}秒`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}分${sec % 60}秒`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec - h * 3600) / 60);
+  return `${h}時間${m}分`;
 }
 
 function msUploadOne(file, onProgress) {
