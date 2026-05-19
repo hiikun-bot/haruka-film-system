@@ -39094,9 +39094,15 @@ let msListPollingTimer = null;
 const MS_LIST_POLL_INTERVAL_MS = 5000;
 
 function msListHasActivePreview() {
+  // PR #695: プレビュー or AI解析 のいずれかが pending/processing なら継続ポーリング。
+  // どちらかのフェーズの進捗バーを動かし続けるため。
   return Array.isArray(msItemsCache) && msItemsCache.some(it => {
-    const s = it && it.preview_status;
-    return s === 'pending' || s === 'processing';
+    if (!it) return false;
+    const ps = it.preview_status;
+    if (ps === 'pending' || ps === 'processing') return true;
+    const as = it.analysis_status;
+    if (as === 'pending' || as === 'processing') return true;
+    return false;
   });
 }
 
@@ -39254,20 +39260,61 @@ function msPreviewProgressCell(item) {
     const pct = Math.floor(raw);
     return `<div class="ms-preview-progress" title="プレビュー生成中: ${pct}%">
       <progress value="${pct}" max="100"></progress>
-      <span class="ms-preview-progress-label">生成中 ${pct}%</span>
+      <span class="ms-preview-progress-label">🎞 プレビュー生成中 ${pct}%</span>
     </div>`;
   }
   // NULL → 不定進捗バー
   return `<div class="ms-preview-progress" title="プレビュー生成中">
     <progress></progress>
-    <span class="ms-preview-progress-label">生成中…</span>
+    <span class="ms-preview-progress-label">🎞 プレビュー生成中…</span>
   </div>`;
+}
+
+// AI 解析中の行に進捗バーを描画（PR #695: フェーズ2）。
+//   - analysis_status が 'pending' / 'processing' のときだけ表示
+//   - analysis_progress_percent が数値なら <progress value max> + %ラベル
+//   - NULL のときは <progress> のみ（不定進捗、アニメーション）
+//   - それ以外（done/failed/skipped/null status）は空文字
+function msAnalysisProgressCell(item) {
+  const st = item.analysis_status;
+  if (st !== 'pending' && st !== 'processing') return '';
+  // 既に analysis_completed まで進んでいるなら出さない（保険：レース対策）
+  if (item.status === 'analysis_completed' || item.status === 'applied') return '';
+  const raw = item.analysis_progress_percent;
+  const hasPct = (typeof raw === 'number' && raw >= 0 && raw <= 100);
+  if (hasPct) {
+    const pct = Math.floor(raw);
+    return `<div class="ms-preview-progress" title="AI解析中: ${pct}%">
+      <progress value="${pct}" max="100"></progress>
+      <span class="ms-preview-progress-label">🧠 AI解析中 ${pct}%</span>
+    </div>`;
+  }
+  return `<div class="ms-preview-progress" title="AI解析中">
+    <progress></progress>
+    <span class="ms-preview-progress-label">🧠 AI解析中…</span>
+  </div>`;
+}
+
+// 状態列の進捗表示を、プレビュー → AI解析 の優先順位で1つだけ返す。
+//   priority 1: プレビュー生成中 / プレビュー失敗時のフォールバック
+//   priority 2: AI 解析中
+//   priority 3: なし（既存の votStatusBadge のみで OK）
+// プレビューが先に動き、終わったら AI 解析の進捗に切り替わる、というユーザー体験。
+function msPhaseProgressCell(item) {
+  // フェーズ1: プレビュー進捗（優先）
+  const previewCell = msPreviewProgressCell(item);
+  if (previewCell) return previewCell;
+  // フェーズ2: AI 解析進捗
+  const analysisCell = msAnalysisProgressCell(item);
+  if (analysisCell) return analysisCell;
+  return '';
 }
 
 function msRenderRow(item) {
   const fid = votEscape(item.drive_file_id);
   const selected = item.drive_file_id === msSelectedFileId ? ' ms-selected' : '';
-  const previewProgress = msPreviewProgressCell(item);
+  // PR #695: プレビュー → AI解析 の順で進捗を1つだけ表示（フェーズ切り替え）
+  const previewProgress = msPhaseProgressCell(item);
   return `
     <tr class="${selected.trim()}" onclick="msSelectItem('${fid}')">
       <td>${votStatusBadge(item.status)}${previewProgress}</td>
