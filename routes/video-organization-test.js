@@ -27,6 +27,7 @@ const geminiLib = require('../lib/video-organization/gemini');
 const heicLib = require('../lib/video-organization/heic');
 const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
 const googleOAuth = require('../lib/google-oauth');
+const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
 
 // 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
 // 本番初期は false で出して、別ターンで true に切り替える運用とする。
@@ -325,13 +326,19 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
       // プレビュー自動生成: 動画なら無条件で fire-and-forget で起動。
       // generatePreviewForVideoOrg() 内部で短尺=H.264 / 長尺=WebPストーリーボードを動画長で自動分岐する。
       // フロントは preview_status を 5s ポーリングして完了したら自動再描画する設計。
+      // Phase 1 (ENABLE_AUTO_ANALYZE=true): プレビュー完了後に AI 解析を fire-and-forget で連鎖キック。
       try {
         if (kind === 'video') {
           generatePreviewForVideoOrg({ rowId: inserted.id })
-            .catch(err => console.error('[video-org] preview autogen failed:', err?.message || err));
+            .then(() => triggerAutoAnalyzeIfEligible({ rowId: inserted.id }))
+            .catch(err => console.error('[video-org] preview/auto-analyze chain failed:', err?.message || err));
+        } else if (kind === 'image') {
+          // 画像はプレビュー生成不要なので直接 auto-analyze をキック
+          triggerAutoAnalyzeIfEligible({ rowId: inserted.id })
+            .catch(err => console.error('[video-org] auto-analyze (image) failed:', err?.message || err));
         }
       } catch (e) {
-        console.warn('[video-org] preview autogen kick failed:', e.message);
+        console.warn('[video-org] preview/auto-analyze kick failed:', e.message);
       }
 
       results.push({ filename: f.originalname, ok: true, item: inserted });
@@ -400,13 +407,18 @@ router.post('/register', async (req, res) => {
 
     // プレビュー自動生成: 動画なら無条件で fire-and-forget で起動。
     // generatePreviewForVideoOrg() 内部で短尺=H.264 / 長尺=WebPストーリーボードを動画長で自動分岐する。
+    // Phase 1 (ENABLE_AUTO_ANALYZE=true): プレビュー完了後に AI 解析を fire-and-forget で連鎖キック。
     try {
       if (kind === 'video') {
         generatePreviewForVideoOrg({ rowId: inserted.id })
-          .catch(err => console.error('[video-org] preview autogen failed:', err?.message || err));
+          .then(() => triggerAutoAnalyzeIfEligible({ rowId: inserted.id }))
+          .catch(err => console.error('[video-org] preview/auto-analyze chain failed:', err?.message || err));
+      } else if (kind === 'image') {
+        triggerAutoAnalyzeIfEligible({ rowId: inserted.id })
+          .catch(err => console.error('[video-org] auto-analyze (image) failed:', err?.message || err));
       }
     } catch (e) {
-      console.warn('[video-org] preview autogen kick failed:', e.message);
+      console.warn('[video-org] preview/auto-analyze kick failed:', e.message);
     }
 
     res.json({ item: inserted });
@@ -1079,13 +1091,18 @@ router.post('/upload-session/:sessionId/complete', async (req, res) => {
     // プレビュー自動生成: 動画なら無条件で fire-and-forget で起動。
     // 既存 /upload, /register と同じ挙動を Resumable Upload 経路でも揃える。
     // 短尺=H.264 / 長尺=WebP は generatePreviewForVideoOrg() 内部で動画長から自動分岐。
+    // Phase 1 (ENABLE_AUTO_ANALYZE=true): プレビュー完了後に AI 解析を fire-and-forget で連鎖キック。
     try {
       if (kind === 'video') {
         generatePreviewForVideoOrg({ rowId: inserted.id })
-          .catch(err => console.error('[video-org] preview autogen (resumable) failed:', err?.message || err));
+          .then(() => triggerAutoAnalyzeIfEligible({ rowId: inserted.id }))
+          .catch(err => console.error('[video-org] preview/auto-analyze chain (resumable) failed:', err?.message || err));
+      } else if (kind === 'image') {
+        triggerAutoAnalyzeIfEligible({ rowId: inserted.id })
+          .catch(err => console.error('[video-org] auto-analyze (image, resumable) failed:', err?.message || err));
       }
     } catch (e) {
-      console.warn('[video-org] preview autogen (resumable) kick failed:', e.message);
+      console.warn('[video-org] preview/auto-analyze (resumable) kick failed:', e.message);
     }
 
     res.json({ item: inserted });
