@@ -39577,7 +39577,8 @@ function msSelectItem(fileId, scroll = true) {
   document.getElementById('ms-preview-new-folder').textContent = item.recommended_folder || '-';
 
   // ボタン表示制御
-  const isWaiting = item.status === 'waiting_approval' || item.status === 'failed';
+  // ADR 018: skipped レコードも WebP プレビュー経由で救済可能なので解析ボタンを出す
+  const isWaiting = item.status === 'waiting_approval' || item.status === 'failed' || item.status === 'skipped';
   const canApply = item.status === 'analysis_completed';
   document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
   document.getElementById('ms-btn-apply').style.display = canApply ? '' : 'none';
