@@ -6584,7 +6584,10 @@ window.showPage = window.showPage || function(name, btn) {
 #cd-modal-body.cd-2col-mode{ width: 1080px !important; max-width: 95vw; }
 #cd-round-left .cd-round-block + .cd-round-block{ margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); }
 #cd-round-left .cd-round-label{ font-size:10px; font-weight:700; color:var(--em-dark); letter-spacing:0.08em; margin-bottom:4px; text-transform:uppercase; }
-#cd-round-left .cd-round-text{ font-size:12.5px; color:var(--text); white-space:pre-wrap; line-height:1.6; background:#fff; border-radius:6px; padding:8px 10px; border:0.5px solid var(--border); max-height:160px; overflow:auto; }
+/* PR #(round-linkify): 修正依頼/前回ラウンドの本文ボックス。
+   - 長い URL や英単語が水平スクロールを発生させていたため、overflow-wrap:anywhere で強制改行
+   - 水平スクロールバーは禁止 (overflow-x:hidden)、縦方向は max-height 超過時のみ出す */
+#cd-round-left .cd-round-text{ font-size:12.5px; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.6; background:#fff; border-radius:6px; padding:8px 10px; border:0.5px solid var(--border); max-height:160px; overflow-x:hidden; overflow-y:auto; }
 #cd-round-left .cd-round-empty{ font-size:12px; color:var(--text-muted); font-style:italic; padding:6px 0; }
 /* バグ報告 #baed5d71: 過去ラウンド editor_comment 編集ボタン（控えめ・ホバーで強調） */
 #cd-round-left .cd-round-edit-btn{
@@ -6626,7 +6629,7 @@ window.showPage = window.showPage || function(name, btn) {
   border-radius:4px; padding:2px 6px; cursor:pointer; transition: background .15s, color .15s, border-color .15s;
 }
 #cd-round-left .cd-round-reply-head .cd-round-reply-actions button:hover{ background:var(--em-pale); color:var(--em-dark); border-color:var(--border); }
-#cd-round-left .cd-round-reply-body{ font-size:12.5px; color:var(--text); white-space:pre-wrap; line-height:1.55; }
+#cd-round-left .cd-round-reply-body{ font-size:12.5px; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.55; }
 #cd-round-left .cd-round-reply-input{
   width:100%; box-sizing:border-box; resize:vertical; min-height:48px; font-size:12.5px;
   font-family:inherit; border:0.5px solid var(--border); border-radius:6px; padding:6px 8px; background:#fff;
@@ -8206,6 +8209,19 @@ function translateError(err) {
 const API = '/api/haruka';
 // HTML エスケープ（テンプレートリテラル内で使用）
 function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// HTML エスケープ + URL を <a> リンクに変換。本文（修正依頼・補足コメント等）の表示で使う。
+// http(s):// で始まる URL のみ対象。trailing の句読点（。、,. !?）はリンクに含めない。
+function escWithLinks(v) {
+  const safe = esc(v);
+  return safe.replace(/(https?:\/\/[^\s<>"'）)】」]+)/g, (m) => {
+    // 末尾の句読点はリンクから除外し、テキストとして残す
+    const trail = m.match(/[\.,;:!?。、)\]]+$/);
+    const url = trail ? m.slice(0, -trail[0].length) : m;
+    const tail = trail ? trail[0] : '';
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:var(--em-dark);text-decoration:underline;word-break:break-all">${url}</a>${tail}`;
+  });
+}
 
 // ==================== アバター共通ヘルパー ====================
 // user: { full_name, name, avatar_url } など。size: 'xs'|'sm'|'md'|'lg'|'xl' or 数値(px)
@@ -28275,7 +28291,7 @@ function _cdRenderPageHtml(page) {
   const headerActions = [editBtnHtml, quoteBtnHtml].filter(Boolean).join('');
 
   const bodyHtml = body
-    ? `<div class="cd-round-text" data-cd-role="body" style="white-space:pre-wrap">${esc(body)}</div>`
+    ? `<div class="cd-round-text" data-cd-role="body">${escWithLinks(body)}</div>`
     : `<div class="cd-round-text" data-cd-role="body" style="color:var(--text-muted);font-style:italic">（コメント本文はありません）</div>`;
 
   // 本文ボックス + 右側の「↩ 返信」ボタンを横並びにする。
@@ -28343,7 +28359,7 @@ function _cdRenderReplyThreadInner(source, sourceId) {
             ${editedMark}
             ${actionsHtml}
           </div>
-          <div class="cd-round-reply-body" data-cd-reply-body>${esc(r.body || '')}</div>
+          <div class="cd-round-reply-body" data-cd-reply-body>${escWithLinks(r.body || '')}</div>
         </div>`;
       }).join('');
 
