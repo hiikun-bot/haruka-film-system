@@ -445,22 +445,33 @@ router.post('/analyze', async (req, res) => {
     if (fetchError) throw fetchError;
     if (!item) return res.status(404).json({ error: '先に register / upload が必要です' });
 
-    if (!['waiting_approval', 'failed'].includes(item.status)) {
+    // ADR 018: skipped 状態のレコードも、WebP プレビュー経由で救済可能なので再解析を許可。
+    if (!['waiting_approval', 'failed', 'skipped'].includes(item.status)) {
       return res.status(409).json({ error: `現在の status (${item.status}) からは解析できません` });
     }
 
-    // 動画のみ長さガード（画像は対象外）
+    // ADR 018: 解析ソース選定。preview_status='done' なら WebP（60枚ストーリーボード）を使う。
+    //   - 動画長制限が実質撤廃される（WebP は画像扱い）
+    //   - 20MB 制限にも通常通る（WebP ~3MB）
+    const useWebpPreview = !!(item.preview_status === 'done' && item.preview_drive_file_id);
+    const analyzeFileId = useWebpPreview ? item.preview_drive_file_id : fileId;
+    const sourceMimeType = useWebpPreview
+      ? (item.preview_mime_type || 'image/webp')
+      : item.mime_type;
+    const sourceMediaKind = useWebpPreview ? 'image' : (item.media_kind || 'video');
+
+    // 動画のみ長さガード（画像は対象外、WebP プレビュー使用時もスキップ）
     const maxDuration = guards.getMaxDurationSeconds();
-    if (item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
+    if (!useWebpPreview && item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
       await supabase.from('video_file_organization_tests')
         .update({
           status: 'skipped',
-          error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s`,
+          error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s（プレビューWebP未生成のため原本でも解析不可）`,
           analysis_status: 'skipped',
           analysis_progress_percent: null,
         })
         .eq('id', item.id);
-      return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)` });
+      return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)。プレビュー生成後に再試行してください。` });
     }
 
     if ((item.attempt_count || 0) >= guards.getMaxRetryCount()) {
@@ -488,23 +499,29 @@ router.post('/analyze', async (req, res) => {
       at: new Date().toISOString(), by: req.user?.email,
       fileId, fileName: item.original_filename, size: item.file_size,
       duration: item.video_duration_seconds, kind: item.media_kind,
+      source: useWebpPreview ? 'preview-webp' : 'original',
+      sourceFileId: analyzeFileId,
+      sourceMimeType, sourceMediaKind,
       model: guards.getModelName(), dry_run: guards.isDryRun(),
       stop_all: guards.isStopAll(),
       daily_count: daily.count, daily_limit: daily.limit,
     });
 
-    const buffer = await driveLib.downloadFileBuffer(fileId);
+    const buffer = await driveLib.downloadFileBuffer(analyzeFileId);
     const MAX_INLINE_BYTES = 20 * 1024 * 1024;
     if (buffer.length > MAX_INLINE_BYTES) {
+      const note = useWebpPreview
+        ? `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (preview webp が ${buffer.length} bytes)`
+        : `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes) — プレビューWebP未生成のため原本でも解析不可`;
       await supabase.from('video_file_organization_tests')
         .update({
           status: 'skipped',
-          error_message: `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes)`,
+          error_message: note,
           analysis_status: 'skipped',
           analysis_progress_percent: null,
         })
         .eq('id', item.id);
-      return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)` });
+      return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)。プレビュー生成後に再試行してください。` });
     }
 
     // Gemini 呼び出し直前: 20%
@@ -518,9 +535,12 @@ router.post('/analyze', async (req, res) => {
     try {
       analysis = await geminiLib.analyzeMedia({
         mediaBuffer: buffer,
-        mimeType: item.mime_type,
-        mediaKind: item.media_kind || 'video',
+        mimeType: sourceMimeType,
+        mediaKind: sourceMediaKind,
         originalFilename: item.original_filename,
+        // ADR 018: WebP プレビューを使うときはプロンプトを動画ストーリーボード用に切替
+        sourceVariant: useWebpPreview ? 'video-storyboard-webp' : null,
+        originalMediaKind: item.media_kind || 'video',
       });
     } catch (e) {
       await supabase.from('video_file_organization_tests')
