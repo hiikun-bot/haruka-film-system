@@ -7067,8 +7067,10 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="">状態: すべて</option>
         <option value="waiting_approval">AI解析の承認待ち</option>
         <option value="processing">AI解析中</option>
-        <option value="analysis_completed">候補確認待ち</option>
+        <option value="analysis_completed">振り分け中</option>
+        <option value="awaiting_review">確認待ち</option>
         <option value="applied">適用済み</option>
+        <option value="apply_failed">適用失敗</option>
         <option value="failed">失敗</option>
         <option value="skipped">スキップ</option>
       </select>
@@ -7126,7 +7128,8 @@ window.showPage = window.showPage || function(name, btn) {
 
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
-            <button class="btn-primary" id="ms-btn-apply" onclick="msApplySelected()">✅ 適用する</button>
+            <button class="btn-primary" id="ms-btn-apply-review" onclick="msApplySelected()" style="display:none">✅ 確認して適用する</button>
+            <button class="btn-primary" id="ms-btn-apply-retry" onclick="msApplySelected()" style="display:none">↻ 再適用</button>
             <button class="btn-secondary" id="ms-btn-preview-regen" onclick="msRegeneratePreview()" title="60枚WebPストーリーボードを再生成">⚡ プレビュー再生成</button>
             <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
           </div>
@@ -39578,10 +39581,16 @@ function msSelectItem(fileId, scroll = true) {
 
   // ボタン表示制御
   // ADR 018: skipped レコードも WebP プレビュー経由で救済可能なので解析ボタンを出す
+  // ADR 019: AI解析完了で自動振り分けが走るため、analysis_completed には適用ボタン不要。
+  //   awaiting_review (確認待ち) と apply_failed (失敗) だけ手動操作口を出す。
   const isWaiting = item.status === 'waiting_approval' || item.status === 'failed' || item.status === 'skipped';
-  const canApply = item.status === 'analysis_completed';
+  const canReview = item.status === 'awaiting_review';
+  const canRetry = item.status === 'apply_failed';
   document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
-  document.getElementById('ms-btn-apply').style.display = canApply ? '' : 'none';
+  const reviewBtn = document.getElementById('ms-btn-apply-review');
+  const retryBtn = document.getElementById('ms-btn-apply-retry');
+  if (reviewBtn) reviewBtn.style.display = canReview ? '' : 'none';
+  if (retryBtn) retryBtn.style.display = canRetry ? '' : 'none';
   // プレビュー再生成ボタンの可視性ルール:
   //   - done   : 表示（手動再生成バックフィル用途）
   //   - failed : 表示（ユーザーが再試行できる）
@@ -39649,12 +39658,20 @@ async function msRegeneratePreview() {
 }
 // 後方互換: 古い呼び出し箇所が残っていても動くように alias を残す
 const msRegenerateFaststart = msRegeneratePreview;
+// ADR 019: AI解析完了で自動振り分けが走るため、msApplySelected は
+//   - awaiting_review (確認して適用)
+//   - apply_failed   (再適用)
+// の手動再実行口として動く。
 async function msApplySelected() {
   if (!msSelectedFileId) return;
-  if (!confirm('提案内容を適用します。\n（DRY_RUN=true の間は予定差分のみ返ります）\n実行しますか？')) return;
+  if (!confirm('Drive 上で振り分けを実行します。\n（ファイル名変更＋フォルダ移動）\n実行しますか？')) return;
   try {
     const result = await votFetch('/apply', { method: 'POST', body: JSON.stringify({ fileId: msSelectedFileId }) });
-    showToast(result?.dry_run ? 'DRY_RUN: 適用予定だけ確認しました（Drive 上は無変更）' : '適用しました', 'success');
+    if (result?.status === 'awaiting_review') {
+      showToast('確認待ちに戻りました', 'info');
+    } else {
+      showToast('適用しました', 'success');
+    }
     msReloadList();
   } catch (e) {
     showToast('適用失敗: ' + e.message, 'error');
@@ -40128,9 +40145,11 @@ function votStatusBadge(status) {
     pending:             { label: 'pending',             color: '#6b7280' },
     waiting_approval:    { label: 'AI解析の承認待ち',     color: '#f59e0b' },
     processing:          { label: 'AI解析中',             color: '#3b82f6' },
-    analysis_completed:  { label: '候補確認待ち',         color: '#10b981' },
+    analysis_completed:  { label: '振り分け中',           color: '#3b82f6' },
     apply_pending:       { label: '適用承認待ち',         color: '#8b5cf6' },
+    awaiting_review:     { label: '確認待ち',             color: '#f59e0b' },
     applied:             { label: '適用済み',             color: '#059669' },
+    apply_failed:        { label: '適用失敗',             color: '#dc2626' },
     failed:              { label: '失敗',                 color: '#dc2626' },
     skipped:             { label: 'スキップ',             color: '#6b7280' },
     stopped:             { label: 'STOP_ALL停止',         color: '#dc2626' },
