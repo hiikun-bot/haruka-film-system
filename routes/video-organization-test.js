@@ -453,7 +453,12 @@ router.post('/analyze', async (req, res) => {
     const maxDuration = guards.getMaxDurationSeconds();
     if (item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
       await supabase.from('video_file_organization_tests')
-        .update({ status: 'skipped', error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s` })
+        .update({
+          status: 'skipped',
+          error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s`,
+          analysis_status: 'skipped',
+          analysis_progress_percent: null,
+        })
         .eq('id', item.id);
       return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)` });
     }
@@ -473,6 +478,9 @@ router.post('/analyze', async (req, res) => {
         attempt_count: (item.attempt_count || 0) + 1,
         approved_by: req.user?.id || null,
         approved_at: new Date().toISOString(),
+        // PR #695: AI 解析フェーズ進捗（手動 trigger でも更新）
+        analysis_status: 'processing',
+        analysis_progress_percent: 0,
       })
       .eq('id', item.id);
 
@@ -489,10 +497,22 @@ router.post('/analyze', async (req, res) => {
     const MAX_INLINE_BYTES = 20 * 1024 * 1024;
     if (buffer.length > MAX_INLINE_BYTES) {
       await supabase.from('video_file_organization_tests')
-        .update({ status: 'skipped', error_message: `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes)` })
+        .update({
+          status: 'skipped',
+          error_message: `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes)`,
+          analysis_status: 'skipped',
+          analysis_progress_percent: null,
+        })
         .eq('id', item.id);
       return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)` });
     }
+
+    // Gemini 呼び出し直前: 20%
+    try {
+      await supabase.from('video_file_organization_tests')
+        .update({ analysis_progress_percent: 20 })
+        .eq('id', item.id);
+    } catch (_) {}
 
     let analysis;
     try {
@@ -504,11 +524,24 @@ router.post('/analyze', async (req, res) => {
       });
     } catch (e) {
       await supabase.from('video_file_organization_tests')
-        .update({ status: 'failed', error_message: e.message, processed_at: new Date().toISOString() })
+        .update({
+          status: 'failed',
+          error_message: e.message,
+          processed_at: new Date().toISOString(),
+          analysis_status: 'failed',
+          analysis_progress_percent: null,
+        })
         .eq('id', item.id);
       logCtx('analyze-failed', { fileId, error: e.message });
       return res.status(502).json({ error: `Gemini 呼び出し失敗: ${e.message}` });
     }
+
+    // Gemini 結果取得直後: 70%
+    try {
+      await supabase.from('video_file_organization_tests')
+        .update({ analysis_progress_percent: 70 })
+        .eq('id', item.id);
+    } catch (_) {}
 
     logCtx('analyze-response', { fileId, model: analysis.model, jsonParsed: !!analysis.parsed });
 
@@ -519,6 +552,8 @@ router.post('/analyze', async (req, res) => {
           raw_response: { raw: analysis.raw },
           error_message: 'Gemini レスポンスが JSON としてパースできませんでした',
           processed_at: new Date().toISOString(),
+          analysis_status: 'failed',
+          analysis_progress_percent: null,
         })
         .eq('id', item.id);
       return res.status(502).json({ error: 'Gemini レスポンスが JSON ではありません', raw: analysis.raw });
@@ -558,6 +593,9 @@ router.post('/analyze', async (req, res) => {
         reason: String(p.reason || ''),
         raw_response: analysis.parsed,
         processed_at: new Date().toISOString(),
+        // PR #695: フェーズ2 完了を最終 UPDATE と同時にアトミックに書く
+        analysis_status: 'done',
+        analysis_progress_percent: null,
       })
       .eq('id', item.id).select().single();
     if (updateError) throw updateError;
