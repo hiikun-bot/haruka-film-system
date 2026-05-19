@@ -520,6 +520,18 @@ ALTER TABLE creative_file_comments
   ADD COLUMN IF NOT EXISTS parent_comment_id UUID
   REFERENCES creative_file_comments(id) ON DELETE CASCADE;
 
+-- コメント時間範囲・ペイント・対応済み（migrations/2026-05-20_creative_file_comments_range_and_drawing.sql）
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS timecode_end TEXT;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS drawing JSONB;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS resolved BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS resolved_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
 CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
@@ -528,6 +540,15 @@ CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
 CREATE INDEX IF NOT EXISTS idx_cfc_parent_comment_id
   ON creative_file_comments(parent_comment_id)
   WHERE parent_comment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_timecode_end_not_null
+  ON creative_file_comments ((timecode_end IS NOT NULL))
+  WHERE timecode_end IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_drawing_not_null
+  ON creative_file_comments ((drawing IS NOT NULL))
+  WHERE drawing IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_unresolved
+  ON creative_file_comments (creative_file_id)
+  WHERE resolved = false;
 
 -- ==================== creative_file_likes ====================
 -- タイムコード別いいね（routes/haruka.js の /creative-files/:id/likes 系で使用）
