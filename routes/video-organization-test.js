@@ -28,6 +28,7 @@ const heicLib = require('../lib/video-organization/heic');
 const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
 const googleOAuth = require('../lib/google-oauth');
 const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
+const autoApplyLib = require('../lib/video-organization/auto-apply');
 
 // 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
 // 本番初期は false で出して、別ターンで true に切り替える運用とする。
@@ -620,6 +621,15 @@ router.post('/analyze', async (req, res) => {
       .eq('id', item.id).select().single();
     if (updateError) throw updateError;
 
+    // 解析完了 → 自動振り分け（fire-and-forget）。needs_human_review なら applyForRow 内部で
+    // awaiting_review に倒す。手動 /analyze からも自動振り分けを連動させる。
+    autoApplyLib.applyForRow({
+      rowId: updated.id,
+      userId: req.user?.id,
+      actorUserId: req.user?.id,
+      source: 'manual-analyze',
+    }).catch(err => console.error('[video-org] auto-apply after manual analyze failed:', err?.message || err));
+
     res.json({ item: updated });
   } catch (e) {
     console.error('[video-org] analyze error:', e);
@@ -627,7 +637,14 @@ router.post('/analyze', async (req, res) => {
   }
 });
 
-// ==================== 適用（DRY_RUN プレビュー）====================
+// ==================== 適用（手動再実行: awaiting_review / apply_failed からの復帰用）====================
+//
+// 旧仕様: analysis_completed の DRY_RUN プレビューを返す MVP。
+// 新仕様 (PR #TBD): AI 解析完了で auto-apply が自動的に走るため、analysis_completed では呼ばない。
+//   - awaiting_review: 確認後に手動で適用するための再実行口
+//   - apply_failed   : Drive 操作失敗からの再試行口
+//   - analysis_completed: 409（auto-apply が走るはずなので手動 /apply は不要）
+//   - applied        : 409（既に適用済み）
 router.post('/apply', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
@@ -641,37 +658,31 @@ router.post('/apply', async (req, res) => {
       .from('video_file_organization_tests')
       .select('*').eq('drive_file_id', fileId).maybeSingle();
     if (!item) return res.status(404).json({ error: '登録されていません' });
-    if (item.status !== 'analysis_completed') {
-      return res.status(409).json({ error: `status=${item.status} は適用対象外（analysis_completed のみ）` });
+
+    if (!['awaiting_review', 'apply_failed'].includes(item.status)) {
+      return res.status(409).json({
+        error: `status=${item.status} は手動適用対象外（awaiting_review / apply_failed のみ。analysis_completed は自動で適用されます）`,
+      });
     }
     if (!item.recommended_filename || !item.recommended_folder) {
       return res.status(422).json({ error: '提案ファイル名 / フォルダが空です' });
     }
 
-    const dryRun = guards.isDryRun();
-    const diff = {
-      current_filename: item.current_filename,
-      new_filename: item.recommended_filename,
-      current_folder: item.current_parent_folder_name,
-      new_folder: item.recommended_folder,
-      confidence: item.confidence,
-      needs_human_review: item.needs_human_review,
-      reason: item.reason,
-      dry_run: dryRun,
-    };
-
-    logCtx('apply', {
+    logCtx('apply-manual', {
       at: new Date().toISOString(), by: req.user?.email,
-      fileId, dry_run: dryRun, diff,
+      fileId, prev_status: item.status,
     });
 
-    if (dryRun) return res.json({ applied: false, dry_run: true, diff });
-
-    // 本適用は Stage 2 で別 PR
-    return res.status(501).json({
-      error: 'DRY_RUN=false での本適用は MVP 範囲外です。次フェーズで実装します',
-      diff,
+    const result = await autoApplyLib.applyForRow({
+      rowId: item.id,
+      userId: req.user?.id,
+      actorUserId: req.user?.id,
+      source: 'manual-retry',
     });
+    if (!result.ok) {
+      return res.status(502).json({ error: result.error || '適用に失敗しました', result });
+    }
+    res.json({ applied: result.status === 'applied', status: result.status, diff: result.diff });
   } catch (e) {
     console.error('[video-org] apply error:', e);
     res.status(500).json({ error: e.message });
