@@ -7120,7 +7120,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
             <button class="btn-primary" id="ms-btn-apply" onclick="msApplySelected()">✅ 適用する</button>
-            <button class="btn-secondary" id="ms-btn-preview-regen" onclick="msRegeneratePreview()" title="短尺は H.264 faststart、長尺は 60枚WebPストーリーボードを再生成">⚡ プレビュー再生成</button>
+            <button class="btn-secondary" id="ms-btn-preview-regen" onclick="msRegeneratePreview()" title="60枚WebPストーリーボードを再生成">⚡ プレビュー再生成</button>
             <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
           </div>
         </div>
@@ -39291,30 +39291,27 @@ function msSelectItem(fileId, scroll = true) {
   const body = document.getElementById('ms-preview-body');
   if (!media || !body) return;
 
-  // メディア再生（動画は 3秒ループ自動再生・無音、画像はそのまま表示）
-  // - <source> 経由だと一部ブラウザで autoplay 失敗するので src 直書き
-  // - preload="metadata" でクリエイティブ詳細（Frame.io 風）と統一。faststart 版を
-  //   配信側がサーブするのでメタデータだけ先読みすれば 3秒ループも即時に始まる
-  // - 長尺は preview_strategy='webp_storyboard'（60枚パラパラ）→ <img>
-  //   短尺は preview_strategy='h264_faststart' → <video>
-  //   preview_drive_file_id が無い / preview_status が pending/processing/failed の場合は
-  //   既存挙動（faststart_drive_file_id 経由）にフォールバック
+  // メディア再生（動画は 60枚パラパラ <img> 一律表示、画像はそのまま）
+  // - 旧設計の「短尺=H.264 / 長尺=WebP」分岐は Drive 容量2倍化を招くため撤廃
+  // - 全動画一律 preview_strategy='webp_storyboard' なので、preview_status='done' なら常に <img>
+  // - preview_drive_file_id が無い / pending / processing / null の場合は生成中プレースホルダ
+  // - failed の場合はエラー UI（再生成 CTA あり）
   const previewSrc = `${VOT_API_BASE}/preview/${encodeURIComponent(fileId)}`;
-  // パネル下に出す補足説明（長尺ストーリーボード時の元動画長など）。デフォルトは消す
+  // パネル下に出す補足説明（元動画長と倍速倍率）。デフォルトは消す
   let previewCaption = '';
   if (item.media_kind === 'image') {
     media.innerHTML = `<img alt="" src="${previewSrc}">`;
     const img = media.querySelector('img');
     if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
   } else {
-    // 動画：preview_status で分岐（done のときだけ実プレビューを描画）
-    //   - done       : strategy=webp_storyboard なら <img>、それ以外は <video>
+    // 動画：preview_status で分岐（done のときは常に <img> ストーリーボード）
+    //   - done       : 常に WebP 60枚パラパラ <img>
     //   - pending / processing / null : 生成中プレースホルダ＋ポーリング開始（自動再描画）
     //   - failed     : エラー UI（msHandlePreviewError 内に再生成 CTA あり）
-    //   - skipped    : 既存挙動（faststart_drive_file_id 経由のフォールバック表示）
+    //   - skipped    : フォールバック（原本 stream を <video> で配信）
     const previewStatus = item.preview_status || null;
     const previewReady = previewStatus === 'done' && item.preview_drive_file_id;
-    const isStoryboard = previewReady && item.preview_strategy === 'webp_storyboard';
+    const isStoryboard = previewReady; // 全動画一律ストーリーボード
     const isPending = previewStatus === 'pending' || previewStatus === 'processing' || previewStatus === null;
     const isFailed = previewStatus === 'failed';
 
@@ -39324,7 +39321,8 @@ function msSelectItem(fileId, scroll = true) {
       const img = document.getElementById('ms-preview-storyboard');
       if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
       // 元動画長を「H:MM:SS（×N倍速プレビュー）」として表示
-      const dur = Number(item.video_duration_seconds) || 0;
+      // 全動画一律 60枚パラパラなので、短尺なら倍速率は小さく（×1〜×3 程度）、長尺なら大きくなる
+      const dur = Number(item.preview_duration_seconds) || Number(item.video_duration_seconds) || 0;
       if (dur > 0) {
         const h = Math.floor(dur / 3600);
         const m = Math.floor((dur % 3600) / 60);
@@ -39342,12 +39340,7 @@ function msSelectItem(fileId, scroll = true) {
       // 生成中：プレースホルダ（Drive サムネが取れていれば添える）＋自動ポーリング開始
       const thumbUrl = item.thumbnail_url || null;
       const driveUrl = item.drive_url || null;
-      const dur = Number(item.video_duration_seconds) || 0;
-      const hintText = dur > 0 && dur >= 180
-        ? '長尺なので 1〜3 分かかります。完了次第ここに自動表示されます。'
-        : (dur > 0 && dur < 180
-          ? '短尺なので数秒で完了します。完了次第ここに自動表示されます。'
-          : '完了次第ここに自動表示されます（短尺は数秒、長尺は数分）。');
+      const hintText = '数十秒〜数分で完了します。完了次第ここに自動表示されます。';
       const thumbHtml = thumbUrl
         ? `<img src="${votEscape(thumbUrl)}" alt="" style="max-width:280px;max-height:180px;display:block;margin:8px auto 12px;border-radius:6px;background:#000" onerror="this.style.display='none'">`
         : '';
@@ -39369,8 +39362,9 @@ function msSelectItem(fileId, scroll = true) {
       msHandlePreviewError(fileId, previewSrc, 'video', media, null);
       previewCaption = 'プレビュー生成に失敗しました';
     } else {
-      // 短尺 h264_faststart、または preview_status が done/skipped/未定義
-      // （既存挙動：faststart_drive_file_id 経由のフォールバックも /preview/:fileId 配信に任せる）
+      // preview_status が 'skipped' 等のフォールバック経路。
+      // /preview/:fileId サーブが原本へフォールバックするので <video> で受ける。
+      // 全動画一律 webp_storyboard 化以降、通常は経由しないはずだが安全網として残す。
       media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="metadata" controls></video>`;
       setTimeout(() => {
         const v = document.getElementById('ms-preview-video');
@@ -39451,7 +39445,7 @@ async function msAnalyzeSelected() {
     msReloadList();
   }
 }
-// プレビュー再生成（短尺は H.264 faststart、長尺は 60枚 WebP ストーリーボードを生成）
+// プレビュー再生成（全動画一律 60枚 WebP ストーリーボードを生成）
 // - 新規実装は POST /preview/:fileId を呼ぶ（PR-BC で追加予定）
 // - サーバ側に /preview/:fileId が無い場合は旧 POST /faststart/:fileId にフォールバック
 async function msRegeneratePreview() {
@@ -39460,7 +39454,7 @@ async function msRegeneratePreview() {
   const prevLabel = btn?.textContent;
   try {
     if (btn) { btn.disabled = true; btn.textContent = '⚡ 再生成中… (数十秒〜数分)'; }
-    showToast('プレビュー再生成を開始しました（長尺はストーリーボード、短尺は H.264 faststart）', 'info');
+    showToast('プレビュー再生成を開始しました（60枚WebPストーリーボード）', 'info');
     let result;
     try {
       result = await votFetch('/preview/' + encodeURIComponent(msSelectedFileId), { method: 'POST' });
