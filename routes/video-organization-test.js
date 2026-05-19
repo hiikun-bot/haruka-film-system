@@ -680,14 +680,59 @@ router.post('/faststart/:fileId', async (req, res) => {
 });
 
 // ==================== 削除 ====================
+//
+// クエリ ?deleteFromDrive=true|false で Drive 上の実体ファイルを連動削除するか分岐する。
+// - true（既定）: drive_file_id / preview_drive_file_id / faststart_drive_file_id を順次 Drive から削除
+//   404 等の「既に消えている」系は握りつぶしてログのみ。本当に消せなかった id は
+//   レスポンスの drive_deleted を false で返してフロントで通知できるようにする。
+// - false: DB レコードのみ削除（旧挙動。Drive にファイルは残る）。
+//
+// 既定で deleteFromDrive=true にしているのは、片方だけ消えると HARUKA と Drive が
+// 乖離して「素材広場で削除してもサーバーに残り続ける」という UX バグになるため。
 router.delete('/item/:fileId', async (req, res) => {
   try {
     const fileId = String(req.params.fileId);
+    const deleteFromDrive = !['false', '0', 'no', 'off']
+      .includes(String(req.query.deleteFromDrive ?? 'true').toLowerCase());
+
+    // 削除対象の drive id 群を先に取得（DB delete 後だと取得できないため）
+    const { data: row, error: fetchError } = await supabase
+      .from('video_file_organization_tests')
+      .select('drive_file_id, preview_drive_file_id, faststart_drive_file_id')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+
+    const driveDeleted = { source: false, preview: false, faststart: false };
+    if (deleteFromDrive && row) {
+      const targets = [
+        ['source', row.drive_file_id],
+        ['preview', row.preview_drive_file_id],
+        ['faststart', row.faststart_drive_file_id],
+      ].filter(([, id]) => !!id);
+      // 並列で削除（順序保証は不要）
+      const results = await Promise.allSettled(
+        targets.map(([, id]) => driveLib.deleteFile(id))
+      );
+      results.forEach((r, idx) => {
+        const key = targets[idx][0];
+        if (r.status === 'fulfilled') driveDeleted[key] = !!r.value;
+        else driveDeleted[key] = false;
+      });
+    }
+
+    // 最後に DB レコードを削除（Drive 削除に部分失敗しても、UI 上の整合性を優先して DB は消す）
     const { error } = await supabase
       .from('video_file_organization_tests')
       .delete().eq('drive_file_id', fileId);
     if (error) throw error;
-    res.json({ ok: true });
+
+    logCtx('delete', {
+      at: new Date().toISOString(), by: req.user?.email,
+      fileId, deleteFromDrive, drive_deleted: driveDeleted,
+    });
+
+    res.json({ ok: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
   } catch (e) {
     console.error('[video-org] delete error:', e);
     res.status(500).json({ error: e.message });
