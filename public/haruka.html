@@ -39241,7 +39241,13 @@ function msTagsCell(item) {
 function msPreviewProgressCell(item) {
   if (item.media_kind && item.media_kind !== 'video') return '';
   const st = item.preview_status;
+  // 'done' / 'failed' / 'skipped' / null 等のときは進捗バーを出さない。
+  // ★ DB に preview_progress_percent が残っていても（旧データやレース由来）絶対に <progress> を描画しない（二重保険）。
   if (st !== 'pending' && st !== 'processing') return '';
+  // さらに「ファイル ID が付いている = 既に WebP が生成済み」なら進捗バーを出さない。
+  // バックエンドが status を done に書き換える前に preview_drive_file_id だけ書いた瞬間や、
+  // 逆に done を書いた直後に何かが percent を上書きしてしまった場合の保険。
+  if (item.preview_drive_file_id) return '';
   const raw = item.preview_progress_percent;
   const hasPct = (typeof raw === 'number' && raw >= 0 && raw <= 100);
   if (hasPct) {
