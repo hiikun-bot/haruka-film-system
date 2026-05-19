@@ -14799,6 +14799,37 @@ function _validateBbox(bbox) {
   return { ok: true, value: { x, y, w, h } };
 }
 
+// timecode 文字列バリデーション ("HH:MM:SS:FF" / "HH:MM:SS" / "MM:SS")
+function _validateTimecode(tc) {
+  if (tc == null || tc === '') return { ok: true, value: null };
+  if (typeof tc !== 'string') return { ok: false, error: 'timecode は文字列で指定してください' };
+  const trimmed = tc.trim();
+  if (!/^\d{1,3}(:\d{1,3}){1,3}$/.test(trimmed)) {
+    return { ok: false, error: 'timecode の形式が不正です' };
+  }
+  return { ok: true, value: trimmed };
+}
+
+// ペイント描画データ ({dataUrl: string, w: number, h: number}) のバリデーション
+// 巨大な dataUrl をブロックするため上限を設ける（およそ 4MB = base64 で 5.3M 文字程度）
+const _DRAWING_MAX_LEN = 6_000_000;
+function _validateDrawing(drawing) {
+  if (drawing == null) return { ok: true, value: null };
+  if (typeof drawing !== 'object') return { ok: false, error: 'drawing は object である必要があります' };
+  const { dataUrl, w, h } = drawing;
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return { ok: false, error: 'drawing.dataUrl は data:image/... の文字列である必要があります' };
+  }
+  if (dataUrl.length > _DRAWING_MAX_LEN) {
+    return { ok: false, error: 'drawing.dataUrl が大きすぎます（最大 6MB 程度）' };
+  }
+  const okNum = (v) => typeof v === 'number' && isFinite(v) && v > 0 && v < 100000;
+  if (!okNum(w) || !okNum(h)) {
+    return { ok: false, error: 'drawing.w / drawing.h は正の数値である必要があります' };
+  }
+  return { ok: true, value: { dataUrl, w, h } };
+}
+
 // ファイルのコメント一覧
 //
 // レスポンスには parent_comment_id を含む（フロント側でツリー化する flat 設計）。
@@ -14810,7 +14841,7 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     .select('*, users(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
-  // bbox / parent_comment_id 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
+  // bbox / parent_comment_id / timecode_end / drawing 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
   if (_isMissingCfcColumn(error)) {
     console.warn('[creative-file-comments] 列欠損疑い → 明示列指定で再取得:', error.message);
     ({ data, error } = await supabase
@@ -14831,10 +14862,14 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 // parent_comment_id が無い場合は新規ルートコメント:
 //   ・通知は creative_assignments の編集者全員に飛ばす（自分自身は除外）
 router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { comment, timecode, is_knowledge, category_id, bbox, parent_comment_id } = req.body;
+  const { comment, timecode, timecode_end, is_knowledge, category_id, bbox, drawing, parent_comment_id } = req.body;
   if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
   const bboxCheck = _validateBbox(bbox);
   if (!bboxCheck.ok) return res.status(400).json({ error: bboxCheck.error });
+  const tcEndCheck = _validateTimecode(timecode_end);
+  if (!tcEndCheck.ok) return res.status(400).json({ error: tcEndCheck.error });
+  const drawingCheck = _validateDrawing(drawing);
+  if (!drawingCheck.ok) return res.status(400).json({ error: drawingCheck.error });
 
   // 返信の場合: 親コメントが同じファイルに属することを確認
   let parentComment = null;
@@ -14861,33 +14896,54 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     category_id: category_id || null,
   };
   if (parent_comment_id) basePayload.parent_comment_id = parent_comment_id;
-  const fullPayload = bboxCheck.value
-    ? { ...basePayload, bbox: bboxCheck.value }
-    : basePayload;
+  let fullPayload = { ...basePayload };
+  if (bboxCheck.value) fullPayload.bbox = bboxCheck.value;
+  if (tcEndCheck.value) fullPayload.timecode_end = tcEndCheck.value;
+  if (drawingCheck.value) fullPayload.drawing = drawingCheck.value;
 
   let { data, error } = await supabase
     .from('creative_file_comments')
     .insert(fullPayload)
     .select('*, users(id, full_name, role, avatar_url)')
     .single();
-  // bbox / parent_comment_id 列が未追加の環境では順番にフォールバック（500を返さない）
+  // bbox / parent_comment_id / timecode_end / drawing 列が未追加の環境では段階的にフォールバック（500を返さない）
   if (_isMissingCfcColumn(error)) {
     console.warn('[creative-file-comments] 列欠損 → 列を外して再試行:', error.message);
-    // まず parent_comment_id を外す（migration 未適用ケース）
-    const fallbackPayload = { ...fullPayload };
-    delete fallbackPayload.parent_comment_id;
+    // まず drawing を外す（Stage A 未適用ケース）
+    const fb1 = { ...fullPayload };
+    delete fb1.drawing;
     ({ data, error } = await supabase
       .from('creative_file_comments')
-      .insert(fallbackPayload)
+      .insert(fb1)
       .select('*, users(id, full_name, role, avatar_url)')
       .single());
-    // それでもダメなら bbox も外す
-    if (_isMissingCfcColumn(error) && bboxCheck.value) {
+    // 次に timecode_end を外す
+    if (_isMissingCfcColumn(error)) {
+      const fb2 = { ...fb1 };
+      delete fb2.timecode_end;
       ({ data, error } = await supabase
         .from('creative_file_comments')
-        .insert(basePayload)
+        .insert(fb2)
         .select('*, users(id, full_name, role, avatar_url)')
         .single());
+      // 次に parent_comment_id を外す（旧 migration 未適用ケース）
+      if (_isMissingCfcColumn(error)) {
+        const fb3 = { ...fb2 };
+        delete fb3.parent_comment_id;
+        ({ data, error } = await supabase
+          .from('creative_file_comments')
+          .insert(fb3)
+          .select('*, users(id, full_name, role, avatar_url)')
+          .single());
+        // それでもダメなら bbox も外す
+        if (_isMissingCfcColumn(error) && bboxCheck.value) {
+          ({ data, error } = await supabase
+            .from('creative_file_comments')
+            .insert(basePayload)
+            .select('*, users(id, full_name, role, avatar_url)')
+            .single());
+        }
+      }
     }
   }
   if (error) return res.status(500).json({ error: error.message });
@@ -14970,12 +15026,25 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 });
 
 // コメント編集（投稿者本人のみ）
+// 本文 (comment) に加え、timecode_end / drawing の後付け更新も受け付ける
+// （シークバー上の葉アイコンを左右ドラッグして範囲化したケース等）
 router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
   const userId = req.user?.id;
-  const { comment } = req.body || {};
-  if (!comment || typeof comment !== 'string' || !comment.trim()) {
+  const body = req.body || {};
+  const hasComment = Object.prototype.hasOwnProperty.call(body, 'comment');
+  const hasTcEnd   = Object.prototype.hasOwnProperty.call(body, 'timecode_end');
+  const hasDrawing = Object.prototype.hasOwnProperty.call(body, 'drawing');
+  if (!hasComment && !hasTcEnd && !hasDrawing) {
+    return res.status(400).json({ error: '更新する項目がありません' });
+  }
+  if (hasComment && (typeof body.comment !== 'string' || !body.comment.trim())) {
     return res.status(400).json({ error: 'comment は必須です' });
   }
+  const tcEndCheck = hasTcEnd ? _validateTimecode(body.timecode_end) : { ok: true };
+  if (!tcEndCheck.ok) return res.status(400).json({ error: tcEndCheck.error });
+  const drawingCheck = hasDrawing ? _validateDrawing(body.drawing) : { ok: true };
+  if (!drawingCheck.ok) return res.status(400).json({ error: drawingCheck.error });
+
   const { data: existing } = await supabase
     .from('creative_file_comments')
     .select('user_id')
@@ -14983,12 +15052,34 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
     .single();
   if (!existing) return res.status(404).json({ error: 'コメントが見つかりません' });
   if (existing.user_id !== userId) return res.status(403).json({ error: '自分の投稿のみ編集できます' });
-  const { data, error } = await supabase
+
+  const updates = {};
+  if (hasComment) updates.comment = body.comment.trim();
+  if (hasTcEnd)   updates.timecode_end = tcEndCheck.value; // null 許容（範囲解除）
+  if (hasDrawing) updates.drawing = drawingCheck.value;     // null 許容（ペイント削除）
+
+  let { data, error } = await supabase
     .from('creative_file_comments')
-    .update({ comment: comment.trim() })
+    .update(updates)
     .eq('id', req.params.id)
     .select('*, users(id, full_name, role, avatar_url)')
     .single();
+  // timecode_end / drawing 列未追加環境では該当列を外して再試行（comment だけ更新する形に縮退）
+  if (_isMissingCfcColumn(error) && (hasTcEnd || hasDrawing)) {
+    console.warn('[creative-file-comments] PATCH 列欠損 → drawing/timecode_end を除去:', error.message);
+    const fb = { ...updates };
+    delete fb.drawing;
+    delete fb.timecode_end;
+    if (Object.keys(fb).length === 0) {
+      return res.status(400).json({ error: 'Stage A migration が未適用のため timecode_end / drawing は保存できません' });
+    }
+    ({ data, error } = await supabase
+      .from('creative_file_comments')
+      .update(fb)
+      .eq('id', req.params.id)
+      .select('*, users(id, full_name, role, avatar_url)')
+      .single());
+  }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
