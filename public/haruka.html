@@ -7041,6 +7041,13 @@ window.showPage = window.showPage || function(name, btn) {
   #page-material-square .ms-upload-list .ms-upload-item { padding: 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; font-size: 13px; }
   #page-material-square .ms-upload-list .ms-bar { height: 6px; background: #eef2f7; border-radius: 3px; overflow: hidden; margin-top: 6px; }
   #page-material-square .ms-upload-list .ms-bar > div { height: 100%; background: var(--primary, #3ECFCA); transition: width .2s; }
+  /* 一覧行の「状態」列に表示するプレビュー生成進捗バー（pending/processing 中だけ） */
+  #page-material-square .ms-preview-progress { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  #page-material-square .ms-preview-progress progress { width: 80px; height: 6px; appearance: none; -webkit-appearance: none; border: none; background: #eef2f7; border-radius: 3px; overflow: hidden; accent-color: var(--primary, #3ECFCA); }
+  #page-material-square .ms-preview-progress progress::-webkit-progress-bar { background: #eef2f7; border-radius: 3px; }
+  #page-material-square .ms-preview-progress progress::-webkit-progress-value { background: var(--primary, #3ECFCA); border-radius: 3px; transition: width .2s; }
+  #page-material-square .ms-preview-progress progress::-moz-progress-bar { background: var(--primary, #3ECFCA); border-radius: 3px; }
+  #page-material-square .ms-preview-progress-label { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
 </style>
 <div id="page-material-square" class="page">
 
@@ -19463,6 +19470,7 @@ function showPage(name, btn) {
   if(name==='analytics') initAnalyticsPage();
   if(name==='tweets')   loadTweetsPage();
   if(name==='material-square') loadMaterialSquarePage();
+  else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
   // つぶやき独立ページの FAB 表示制御（このページの時だけ表示）
   const tweetsFab = document.getElementById('tweets-fab');
@@ -39074,6 +39082,50 @@ function msStartPreviewPolling(fileId) {
 
 function loadMaterialSquarePage() { msShowList(); msReloadList(); }
 
+// ---- 一覧全体の進捗ポーリング（preview_status pending/processing がある間だけ）----
+// 仕様:
+//   - msReloadList の最後で、preview_status が pending/processing の行が1つでもあれば 5秒ごとに
+//     /list を再 fetch して preview_progress_percent を更新する。
+//   - 一覧上の全ての preview が done/failed/skipped/null になったら停止する。
+//   - 素材広場ページから別ページに遷移したら停止する（showPage 経由で msStopListPolling を呼ぶ）。
+//   - 行の選択中（プレビューパネル）は別ポーラ msStartPreviewPolling が動いているので干渉しない
+//     （こちらは一覧全体の進捗バー描画のためだけ）。
+let msListPollingTimer = null;
+const MS_LIST_POLL_INTERVAL_MS = 5000;
+
+function msListHasActivePreview() {
+  return Array.isArray(msItemsCache) && msItemsCache.some(it => {
+    const s = it && it.preview_status;
+    return s === 'pending' || s === 'processing';
+  });
+}
+
+function msStopListPolling() {
+  if (msListPollingTimer) {
+    clearInterval(msListPollingTimer);
+    msListPollingTimer = null;
+  }
+}
+
+function msMaybeStartListPolling() {
+  // 既に走っていれば何もしない（msReloadList が成功するたびに呼ばれる前提）
+  if (msListPollingTimer) {
+    // 一覧上に対象が無くなっていれば停止
+    if (!msListHasActivePreview()) msStopListPolling();
+    return;
+  }
+  if (!msListHasActivePreview()) return;
+  msListPollingTimer = setInterval(() => {
+    // 素材広場ページがアクティブでないなら停止（保険）
+    const page = document.getElementById('page-material-square');
+    if (!page || !page.classList.contains('active')) { msStopListPolling(); return; }
+    // 対象が無くなっていれば停止
+    if (!msListHasActivePreview()) { msStopListPolling(); return; }
+    // 5秒ごとに一覧を再 fetch（msReloadList が完了時に再判定して必要なら停止する）
+    msReloadList();
+  }, MS_LIST_POLL_INTERVAL_MS);
+}
+
 function msShowList() {
   document.getElementById('ms-view-list').style.display = '';
   document.getElementById('ms-view-upload').style.display = 'none';
@@ -39081,6 +39133,8 @@ function msShowList() {
 function msShowUpload() {
   document.getElementById('ms-view-list').style.display = 'none';
   document.getElementById('ms-view-upload').style.display = '';
+  // 一覧を見ていない間はポーリング停止（戻ってきた時に msReloadList で再開）
+  try { msStopListPolling(); } catch (_) {}
   msResetUploadList();
   // 上限ヒントを env 連動値に更新
   msEnsureLimits().then((l) => {
@@ -39127,6 +39181,7 @@ async function msReloadList() {
     if (msItemsCache.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:32px">該当する素材がありません</td></tr>';
       msClearPreview();
+      msStopListPolling();
       return;
     }
     tbody.innerHTML = msItemsCache.map(msRenderRow).join('');
@@ -39136,6 +39191,8 @@ async function msReloadList() {
     } else {
       msClearPreview();
     }
+    // pending/processing が1つでもあれば5秒間隔で再 fetch を開始（既存スレッドはそのまま継続）
+    msMaybeStartListPolling();
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:16px">読み込み失敗: ${votEscape(e.message)}</td></tr>`;
   }
@@ -39175,12 +39232,39 @@ function msTagsCell(item) {
   return visible.map(t => `<span class="ms-tag" onclick="event.stopPropagation();msFilterByTag('${votEscape(t)}')">${votEscape(t)}</span>`).join('') + extra;
 }
 
+// プレビュー生成中の行に進捗バーを描画。
+//   - preview_status が 'pending' / 'processing' のときだけ表示
+//   - preview_progress_percent が数値なら <progress value max> + %ラベル
+//   - NULL のときは <progress> のみ（不定進捗、アニメーション）
+//   - それ以外（done/failed/skipped/null status）は空文字
+// 「状態」列の votStatusBadge の下に縦に積む（細い行を保つ）
+function msPreviewProgressCell(item) {
+  if (item.media_kind && item.media_kind !== 'video') return '';
+  const st = item.preview_status;
+  if (st !== 'pending' && st !== 'processing') return '';
+  const raw = item.preview_progress_percent;
+  const hasPct = (typeof raw === 'number' && raw >= 0 && raw <= 100);
+  if (hasPct) {
+    const pct = Math.floor(raw);
+    return `<div class="ms-preview-progress" title="プレビュー生成中: ${pct}%">
+      <progress value="${pct}" max="100"></progress>
+      <span class="ms-preview-progress-label">生成中 ${pct}%</span>
+    </div>`;
+  }
+  // NULL → 不定進捗バー
+  return `<div class="ms-preview-progress" title="プレビュー生成中">
+    <progress></progress>
+    <span class="ms-preview-progress-label">生成中…</span>
+  </div>`;
+}
+
 function msRenderRow(item) {
   const fid = votEscape(item.drive_file_id);
   const selected = item.drive_file_id === msSelectedFileId ? ' ms-selected' : '';
+  const previewProgress = msPreviewProgressCell(item);
   return `
     <tr class="${selected.trim()}" onclick="msSelectItem('${fid}')">
-      <td>${votStatusBadge(item.status)}</td>
+      <td>${votStatusBadge(item.status)}${previewProgress}</td>
       <td style="font-size:20px;text-align:center">${msKindIcon(item.media_kind)}</td>
       <td style="word-break:break-all">${votEscape(item.current_filename || item.original_filename || '-')}</td>
       <td style="color:var(--text-muted)">${msFmtSpec(item)}</td>
