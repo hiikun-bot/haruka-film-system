@@ -63,10 +63,11 @@ router.get('/limits', (req, res) => {
     max_upload_duration_seconds: guards.getMaxUploadDurationSeconds(),
     max_analysis_duration_seconds: guards.getMaxDurationSeconds(),
     daily_analysis_limit: guards.getDailyLimit(),
-    // 大容量 D&D（>=500MB）を Resumable Upload で Drive 直送するか
+    // 大容量 D&D を Resumable Upload で Drive 直送するか
     resumable_upload_enabled: isResumableUploadEnabled(),
-    // 経路分岐サイズ（バイト）。500MB を超えたら Resumable Upload に倒す
-    resumable_upload_threshold_bytes: 500 * 1024 * 1024,
+    // 経路分岐サイズ（バイト）。multer 上限と同値（既定）にして「中間ゾーン」を消滅させる。
+    // RESUMABLE_UPLOAD_THRESHOLD_BYTES で個別調整可（guards.getResumableUploadThresholdBytes 参照）。
+    resumable_upload_threshold_bytes: guards.getResumableUploadThresholdBytes(),
   });
 });
 
@@ -694,7 +695,7 @@ router.delete('/item/:fileId', async (req, res) => {
   }
 });
 
-// ==================== Resumable Upload セッション（>=500MB 向け）====================
+// ==================== Resumable Upload セッション（閾値以上の大容量向け）====================
 //
 // フロー:
 //   1) POST /upload-session/init
