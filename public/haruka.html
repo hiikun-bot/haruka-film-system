@@ -39724,7 +39724,7 @@ async function msDeleteConfirmSubmit() {
     msDeletePendingFileId = null;
     if (deleteFromDrive) {
       // サーバは drive_deleted = { source: {ok,verified,…}, preview: {…}, faststart: {…} } を返す
-      //   - { ok: true, verified: true } / { ok: true, already_gone: true } / { ok: true, via: 'user_oauth' } は成功
+      //   - { ok: true, verified: true } / { ok: true, already_gone: true } / { ok: true, via: 'user_oauth' } / { ok: true, via: 'sa_fallback' } は成功
       //   - { ok: false, status, reason, message, verified: false } は失敗（権限不足 or "消えたフリ" など）
       //   - キー自体が無ければ「そもそも対象なし」（preview/faststart が未生成等の通常ケース）
       // verified は「files.delete 後に files.get で 404 を確認したか」のフラグ。
@@ -39751,6 +39751,7 @@ async function msDeleteConfirmSubmit() {
           const d = dd[k];
           let s = labelOf(k);
           if (d.already_gone) s += '（既に削除済）';
+          else if (d.via === 'sa_fallback') s += '（SA経由）';
           else if (d.via === 'user_oauth') s += '（ユーザーOAuth）';
           return s;
         }).join('・');
