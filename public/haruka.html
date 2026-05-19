@@ -7144,7 +7144,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-drop-icon">⬆ 🎬 🖼️</div>
           <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
           <p style="margin:0;font-size:12px" id="ms-upload-limits-hint">複数ファイル同時OK / 1ファイル <span id="ms-hint-mb">25</span>MB まで / 動画は <span id="ms-hint-sec">30</span>秒以内</p>
-          <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ 500MB超の大容量ファイルは Drive 直送でアップロード（数十GBの 4K 素材も OK）</p>
+          <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ <span id="ms-hint-resumable-mb">25</span>MB 超の大容量ファイルは Drive 直送でアップロード（数十GBの 4K 素材も OK）</p>
           <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
           <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
           <input type="file" id="ms-file-input" multiple style="display:none"
@@ -39001,6 +39001,12 @@ function msShowUpload() {
     // 大容量直送が有効ならヒント表示
     const resumableHint = document.getElementById('ms-resumable-hint');
     if (resumableHint) resumableHint.style.display = l.resumable_upload_enabled ? '' : 'none';
+    // 閾値 MB（既定は multer 上限と同値）を表示に反映
+    const resumableMb = document.getElementById('ms-hint-resumable-mb');
+    if (resumableMb) {
+      const bytes = Number(l.resumable_upload_threshold_bytes) || (Number(l.max_upload_size_mb || 25) * 1024 * 1024);
+      resumableMb.textContent = String(Math.floor(bytes / (1024 * 1024)));
+    }
   });
 }
 
@@ -39456,7 +39462,9 @@ function msProbeVideoDuration(file) {
 }
 
 // 大容量分岐の閾値（バイト）。/limits からも返ってくるが、初回フェッチ前のフォールバック用に持つ。
-const MS_RESUMABLE_THRESHOLD_BYTES = 500 * 1024 * 1024;
+// フォールバックは「安全側」= 25MB（multer 既定上限と同値）にして、
+// limits が取れていない状態で 25MB 超のファイルが Railway /upload に倒れて弾かれる事故を防ぐ。
+const MS_RESUMABLE_THRESHOLD_BYTES = 25 * 1024 * 1024;
 // チャンクサイズは 256MB の倍数（Drive Resumable Upload の要件）
 const MS_CHUNK_SIZE_BYTES = 256 * 1024 * 1024;
 // アクティブな大容量アップロード（ブラウザ閉じ防止用）
@@ -39510,7 +39518,8 @@ async function msHandleFiles(files) {
       if (!resumableEnabled) {
         bar.style.background = '#dc2626'; bar.style.width = '100%';
         stat.style.color = '#dc2626';
-        stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=500MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
+        const thresholdMb = Math.floor(resumableThreshold / (1024 * 1024));
+        stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=${thresholdMb}MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
         continue;
       }
       warn.style.display = '';
@@ -39543,7 +39552,7 @@ async function msHandleFiles(files) {
       continue;
     }
 
-    // 既存（短尺・<500MB）経路 ===========================================
+    // 既存（短尺・閾値未満）経路 — multer 経由 /upload ===================
     // 事前チェック①: 既存上限（multer の MAX_UPLOAD_SIZE_MB）
     if (f.size > maxBytes) {
       bar.style.background = '#dc2626'; bar.style.width = '100%';
@@ -39580,7 +39589,7 @@ async function msHandleFiles(files) {
   msReloadList();
 }
 
-// ==================== Resumable Upload（>=500MB ブラウザ→Drive 直送） ====================
+// ==================== Resumable Upload（閾値以上はブラウザ→Drive 直送） ====================
 //
 // 流れ:
 //   1) POST /upload-session/init で Drive セッションURLを得る
