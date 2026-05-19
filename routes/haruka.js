@@ -14851,6 +14851,22 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       .order('created_at', { ascending: true }));
   }
   if (error) return res.status(500).json({ error: error.message });
+  // resolved_by の名前表示用に対応者ユーザー情報を別クエリで埋め込み（FK 名指定の不安定さを避けるため）
+  if (Array.isArray(data) && data.length) {
+    const resolverIds = Array.from(new Set(data.map(c => c?.resolved_by).filter(Boolean)));
+    if (resolverIds.length) {
+      try {
+        const { data: resolvers } = await supabase
+          .from('users')
+          .select('id, full_name, nickname, role, avatar_url')
+          .in('id', resolverIds);
+        const map = Object.fromEntries((resolvers || []).map(u => [u.id, u]));
+        data = data.map(c => c?.resolved_by ? { ...c, resolved_by_user: map[c.resolved_by] || null } : c);
+      } catch (e) {
+        console.warn('[creative-file-comments] resolved_by_user 取得失敗（無視）:', e.message);
+      }
+    }
+  }
   res.json(await enrichCommentCategories(data));
 });
 
@@ -15031,10 +15047,11 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
   const userId = req.user?.id;
   const body = req.body || {};
-  const hasComment = Object.prototype.hasOwnProperty.call(body, 'comment');
-  const hasTcEnd   = Object.prototype.hasOwnProperty.call(body, 'timecode_end');
-  const hasDrawing = Object.prototype.hasOwnProperty.call(body, 'drawing');
-  if (!hasComment && !hasTcEnd && !hasDrawing) {
+  const hasComment  = Object.prototype.hasOwnProperty.call(body, 'comment');
+  const hasTcEnd    = Object.prototype.hasOwnProperty.call(body, 'timecode_end');
+  const hasDrawing  = Object.prototype.hasOwnProperty.call(body, 'drawing');
+  const hasResolved = Object.prototype.hasOwnProperty.call(body, 'resolved');
+  if (!hasComment && !hasTcEnd && !hasDrawing && !hasResolved) {
     return res.status(400).json({ error: '更新する項目がありません' });
   }
   if (hasComment && (typeof body.comment !== 'string' || !body.comment.trim())) {
@@ -15044,6 +15061,9 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
   if (!tcEndCheck.ok) return res.status(400).json({ error: tcEndCheck.error });
   const drawingCheck = hasDrawing ? _validateDrawing(body.drawing) : { ok: true };
   if (!drawingCheck.ok) return res.status(400).json({ error: drawingCheck.error });
+  if (hasResolved && typeof body.resolved !== 'boolean') {
+    return res.status(400).json({ error: 'resolved は boolean で指定してください' });
+  }
 
   const { data: existing } = await supabase
     .from('creative_file_comments')
@@ -15051,12 +15071,28 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
     .eq('id', req.params.id)
     .single();
   if (!existing) return res.status(404).json({ error: 'コメントが見つかりません' });
-  if (existing.user_id !== userId) return res.status(403).json({ error: '自分の投稿のみ編集できます' });
+
+  // comment / timecode_end / drawing は投稿者本人のみ。
+  // resolved は誰でもトグル可（ファイルアクセス権の delegate＝ requireAuth で十分）。
+  const ownerOnlyChange = hasComment || hasTcEnd || hasDrawing;
+  if (ownerOnlyChange && existing.user_id !== userId) {
+    return res.status(403).json({ error: '自分の投稿のみ編集できます' });
+  }
 
   const updates = {};
-  if (hasComment) updates.comment = body.comment.trim();
-  if (hasTcEnd)   updates.timecode_end = tcEndCheck.value; // null 許容（範囲解除）
-  if (hasDrawing) updates.drawing = drawingCheck.value;     // null 許容（ペイント削除）
+  if (hasComment)  updates.comment = body.comment.trim();
+  if (hasTcEnd)    updates.timecode_end = tcEndCheck.value; // null 許容（範囲解除）
+  if (hasDrawing)  updates.drawing = drawingCheck.value;     // null 許容（ペイント削除）
+  if (hasResolved) {
+    updates.resolved = body.resolved;
+    if (body.resolved) {
+      updates.resolved_at = new Date().toISOString();
+      updates.resolved_by = userId || null;
+    } else {
+      updates.resolved_at = null;
+      updates.resolved_by = null;
+    }
+  }
 
   let { data, error } = await supabase
     .from('creative_file_comments')
@@ -15064,14 +15100,17 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
     .eq('id', req.params.id)
     .select('*, users(id, full_name, role, avatar_url)')
     .single();
-  // timecode_end / drawing 列未追加環境では該当列を外して再試行（comment だけ更新する形に縮退）
-  if (_isMissingCfcColumn(error) && (hasTcEnd || hasDrawing)) {
-    console.warn('[creative-file-comments] PATCH 列欠損 → drawing/timecode_end を除去:', error.message);
+  // timecode_end / drawing / resolved 列未追加環境では該当列を外して再試行
+  if (_isMissingCfcColumn(error) && (hasTcEnd || hasDrawing || hasResolved)) {
+    console.warn('[creative-file-comments] PATCH 列欠損 → drawing/timecode_end/resolved を除去:', error.message);
     const fb = { ...updates };
     delete fb.drawing;
     delete fb.timecode_end;
+    delete fb.resolved;
+    delete fb.resolved_at;
+    delete fb.resolved_by;
     if (Object.keys(fb).length === 0) {
-      return res.status(400).json({ error: 'Stage A migration が未適用のため timecode_end / drawing は保存できません' });
+      return res.status(400).json({ error: 'Stage A migration が未適用のため timecode_end / drawing / resolved は保存できません' });
     }
     ({ data, error } = await supabase
       .from('creative_file_comments')
@@ -15081,6 +15120,18 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
       .single());
   }
   if (error) return res.status(500).json({ error: error.message });
+
+  // resolved_by の名前表示用に対応者ユーザー情報を埋め込み
+  if (data && data.resolved_by) {
+    try {
+      const { data: resolver } = await supabase
+        .from('users')
+        .select('id, full_name, nickname, role, avatar_url')
+        .eq('id', data.resolved_by)
+        .maybeSingle();
+      if (resolver) data.resolved_by_user = resolver;
+    } catch (_) {}
+  }
   res.json(data);
 });
 

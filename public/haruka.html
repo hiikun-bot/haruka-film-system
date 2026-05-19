@@ -32926,8 +32926,27 @@ function _renderFpCommentHtml(c, isReply) {
   const itemStyle = isReply
     ? `margin:8px 0 0 18px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:2px solid #3ECFCA;border-top:0.5px solid var(--border);border-right:0.5px solid var(--border);border-bottom:0.5px solid var(--border)`
     : `margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s`;
+
+  // 対応済みチェック (Frame.io Completed 相当)。返信にも個別に付けられる。
+  const isResolved = !!c.resolved;
+  const resolvedBtn = `<button onclick="event.stopPropagation();fpToggleResolved('${c.id}')" title="${isResolved ? '対応済（クリックで戻す）' : '対応済にする'}" style="width:22px;height:22px;border-radius:50%;border:1.5px solid ${isResolved ? '#10b981' : '#a1a1aa'};background:${isResolved ? '#10b981' : 'transparent'};color:${isResolved ? '#fff' : 'transparent'};cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;line-height:1;padding:0;flex-shrink:0">${isResolved ? '✓' : ''}</button>`;
+  const textStyle = `font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all${isResolved ? ';opacity:0.55;text-decoration:line-through' : ''}`;
+
+  // フッター行: 対応済の場合は「✓ 対応済 <名前> <相対時刻>」を表示
+  let resolvedFooter = '';
+  if (isResolved) {
+    const ru = c.resolved_by_user || null;
+    const ruName = ru ? (window.NameDisplay ? window.NameDisplay.short(ru) : (ru.full_name || ru.nickname || '')) : '';
+    const rt = c.resolved_at ? _twTimeAgo(c.resolved_at) : '';
+    resolvedFooter = `<div style="margin-top:4px;font-size:10px;color:#10b981;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span>✓ 対応済</span>
+      ${ruName ? `<span style="color:var(--text-muted);font-weight:500">${esc(ruName)}</span>` : ''}
+      ${rt ? `<span style="color:var(--text-muted);font-weight:400">${esc(rt)}</span>` : ''}
+    </div>`;
+  }
+
   return `
-    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" data-parent-id="${c.parent_comment_id || ''}" style="${itemStyle}">
+    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" data-parent-id="${c.parent_comment_id || ''}" data-resolved="${isResolved ? '1' : '0'}" style="${itemStyle}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0">
           ${tcBadge}
@@ -32942,11 +32961,70 @@ function _renderFpCommentHtml(c, isReply) {
           <span style="font-size:10px;color:var(--text-muted);white-space:nowrap">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
           ${c.user_id === currentUser?.id ? `<button onclick="startEditComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:12px;padding:0;line-height:1;flex-shrink:0" title="編集">✏️</button>` : ''}
           ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1;flex-shrink:0" title="削除">✕</button>` : ''}
+          ${resolvedBtn}
         </div>
       </div>
-      <div id="fp-comment-text-${c.id}" style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
+      <div id="fp-comment-text-${c.id}" style="${textStyle}">${esc(c.comment)}</div>
+      ${resolvedFooter}
     </div>
   `;
+}
+
+// 対応済チェックのトグル（楽観的 UI）。誰でも全コメントに対してトグル可能。
+async function fpToggleResolved(commentId) {
+  if (!Array.isArray(_fpComments)) return;
+  const idx = _fpComments.findIndex(x => x && x.id === commentId);
+  if (idx < 0) return;
+  const cur = _fpComments[idx];
+  const prev = {
+    resolved: !!cur.resolved,
+    resolved_at: cur.resolved_at || null,
+    resolved_by: cur.resolved_by || null,
+    resolved_by_user: cur.resolved_by_user || null,
+  };
+  const next = !prev.resolved;
+  // 楽観的に書き換え
+  cur.resolved = next;
+  if (next) {
+    cur.resolved_at = new Date().toISOString();
+    cur.resolved_by = currentUser?.id || null;
+    cur.resolved_by_user = currentUser ? {
+      id: currentUser.id,
+      full_name: currentUser.full_name || currentUser.name || '',
+      nickname: currentUser.nickname || '',
+      role: currentUser.role || '',
+      avatar_url: currentUser.avatar_url || null,
+    } : null;
+  } else {
+    cur.resolved_at = null;
+    cur.resolved_by = null;
+    cur.resolved_by_user = null;
+  }
+  renderComments(_fpComments);
+
+  try {
+    const res = await apiFetch(`${API}/creative-file-comments/${commentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolved: next }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e?.error || `HTTP ${res.status}`);
+    }
+    const updated = await res.json().catch(() => null);
+    if (updated && _fpComments[idx]) {
+      // サーバー値で上書き（タイムスタンプ整合性）
+      _fpComments[idx] = { ..._fpComments[idx], ...updated, resolved_by_user: updated.resolved_by_user || _fpComments[idx].resolved_by_user };
+      renderComments(_fpComments);
+    }
+  } catch (e) {
+    // ロールバック
+    _fpComments[idx] = { ..._fpComments[idx], ...prev };
+    renderComments(_fpComments);
+    if (typeof showToast === 'function') showToast('対応済の更新に失敗: ' + (e.message || ''), 'error');
+    else alert('対応済の更新に失敗: ' + (e.message || ''));
+  }
 }
 
 // "HH:MM:SS:FF" / "HH:MM:SS" / "MM:SS" 形式の timecode を秒数に変換。
@@ -32964,6 +33042,14 @@ function fpTimecodeToSec(tc) {
 // flat な list を「親 → 返信群（インデント）」のツリー HTML にする。
 // _fpComments には flat 配列をそのまま入れて、ツリー化はレンダ時に行う。
 function renderComments(list) {
+  // タブヘッダーの未対応カウントバッジを更新（0件なら付けない）
+  try {
+    const tab = document.getElementById('fp-tab-review');
+    if (tab) {
+      const unresolved = (list || []).filter(c => c && !c.resolved).length;
+      tab.textContent = unresolved > 0 ? `レビューコメント (${unresolved} 未対応)` : 'レビューコメント';
+    }
+  } catch(_) {}
   const el = document.getElementById('fp-comments-list');
   if (!list.length) {
     el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">まだコメントがありません</div>';
