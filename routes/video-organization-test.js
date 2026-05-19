@@ -779,6 +779,14 @@ router.post('/upload-session/init', async (req, res) => {
       parents: [parentFolderId],
       mimeType,
     };
+    // Drive Resumable Upload は「セッション発行時の Origin ヘッダ」を記録し、
+    // 後続のブラウザ→セッションURL の PUT で同じ Origin から来ているか CORS 検証する。
+    // Node からの fetch では Origin が自動付与されないため、ブラウザの Origin を明示転送する。
+    // これを忘れると ブラウザの PUT が "No 'Access-Control-Allow-Origin'" で全部弾かれる。
+    const browserOrigin = req.headers.origin
+      || (req.headers.referer ? new URL(req.headers.referer).origin : null)
+      || `${req.protocol}://${req.get('host')}`;
+
     const initResp = await fetch(
       `${RESUMABLE_UPLOAD_BASE}?uploadType=resumable&supportsAllDrives=true`,
       {
@@ -788,6 +796,7 @@ router.post('/upload-session/init', async (req, res) => {
           'Content-Type': 'application/json; charset=UTF-8',
           'X-Upload-Content-Type': mimeType,
           'X-Upload-Content-Length': String(fileSize),
+          'Origin': browserOrigin,
         },
         body: JSON.stringify(metadata),
       }
