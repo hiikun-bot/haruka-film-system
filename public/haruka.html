@@ -39652,11 +39652,40 @@ async function msDeleteConfirmSubmit() {
     closeModal('modal-ms-delete-confirm');
     msDeletePendingFileId = null;
     if (deleteFromDrive) {
+      // サーバは drive_deleted = { source: {ok,…}, preview: {…}, faststart: {…} } を返す
+      //   - { ok: true } / { ok: true, already_gone: true } / { ok: true, via: 'user_oauth' } は成功
+      //   - { ok: false, status, reason, message } は失敗（権限不足など）
+      //   - キー自体が無ければ「そもそも対象なし」（preview/faststart が未生成等の通常ケース）
       const dd = result?.drive_deleted || {};
-      const okCount = ['source', 'preview', 'faststart'].filter(k => dd[k]).length;
-      showToast(okCount > 0
-        ? `素材を削除しました（Drive 上のファイルも ${okCount} 件削除）`
-        : '素材を削除しました（Drive 上に対象ファイルはありませんでした）', 'success');
+      const KEYS = ['source', 'preview', 'faststart'];
+      const labelOf = k => k === 'source' ? '原本' : k === 'preview' ? 'プレビュー' : 'faststart版';
+
+      const okList = KEYS.filter(k => dd[k] && dd[k].ok === true);
+      const failList = KEYS.filter(k => dd[k] && dd[k].ok === false);
+
+      if (failList.length > 0) {
+        const detail = failList.map(k => {
+          const d = dd[k];
+          const parts = [labelOf(k)];
+          if (d.status) parts.push(String(d.status));
+          if (d.reason) parts.push(d.reason);
+          if (d.message) parts.push(d.message);
+          return parts.join(' ');
+        }).join(' / ');
+        showToast(`Drive 削除に一部失敗: ${detail}`, 'error');
+      } else if (okList.length > 0) {
+        const summary = okList.map(k => {
+          const d = dd[k];
+          let s = labelOf(k);
+          if (d.already_gone) s += '（既に削除済）';
+          else if (d.via === 'user_oauth') s += '（ユーザーOAuth）';
+          return s;
+        }).join('・');
+        showToast(`素材を削除しました（Drive: ${summary}）`, 'success');
+      } else {
+        // DB レコードはあったが、関連付いた Drive id が一つも無かったケース
+        showToast('素材を削除しました（DB のみ）', 'success');
+      }
     } else {
       showToast('素材を削除しました（DB のみ / Drive には残っています）', 'success');
     }
