@@ -843,6 +843,11 @@ router.delete('/item/:fileId', async (req, res) => {
         );
 
         const userAttempts = {};
+        const saFallbackAttempts = {};
+        // 第二段: user OAuth で 404 だった対象は、SA で実在確認してから SA で削除を試みる。
+        // 理由: プレビュー webp など SA がアップロードしたファイルは、user OAuth (drive.file スコープ)
+        //       からは「自分が作っていないファイル」として 404 になる。SA から見える＝ Drive に残っているケース。
+        const saDrive = await driveLib.getDriveService();
         for (let idx = 0; idx < targets.length; idx++) {
           const [key, id] = targets[idx];
           const r = userResults[idx];
@@ -862,13 +867,42 @@ router.delete('/item/:fileId', async (req, res) => {
             driveDeleted[key] = { ok: true, via: 'user_oauth', verified: result.verified === true };
             continue;
           }
-          // user OAuth で 404 が返ったときは「本当に既に存在しない」と確定できる
-          // （アップロード主体の権限で見えないということは Shared Drive 上にも無い）
+          // user OAuth で 404 が返ったときは SA で実在確認 → 存在すれば SA で削除（Hybrid フォールバック）
           if (result.status === 404 || result.reason === 'notFound') {
-            driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth', verified: true };
+            const existence = await driveLib.getFile(id, { client: saDrive });
+            saFallbackAttempts[key] = {
+              id,
+              probe: { ok: existence.ok, status: existence.status, reason: existence.reason || null },
+            };
+            if (!existence.ok) {
+              // SA からも見えない（=本当に Drive に存在しない）
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth', verified: true };
+              continue;
+            }
+            // SA からは見える = SA 所有のファイル（プレビュー webp 等）。SA で削除を試みる
+            const saDel = await driveLib.deleteFile(id, { client: saDrive });
+            saFallbackAttempts[key].delete = {
+              ok: saDel.ok,
+              status: saDel.status,
+              reason: saDel.reason || null,
+              verified: saDel.verified === true,
+              message: saDel.message,
+            };
+            if (saDel.ok) {
+              driveDeleted[key] = { ok: true, via: 'sa_fallback', verified: saDel.verified === true };
+              continue;
+            }
+            driveDeleted[key] = {
+              ok: false,
+              status: saDel.status,
+              reason: saDel.reason || 'sa_delete_failed',
+              message: saDel.message || 'SA fallback delete failed',
+              verified: false,
+              via: 'sa_fallback',
+            };
             continue;
           }
-          // それ以外は失敗詳細をそのまま返す（403/401/5xx/not_actually_deleted/verify_failed 等）
+          // それ以外（403/401/5xx/not_actually_deleted/verify_failed 等）は失敗詳細をそのまま返す
           driveDeleted[key] = {
             ok: false,
             status: result.status,
@@ -883,6 +917,7 @@ router.delete('/item/:fileId', async (req, res) => {
           fileId,
           targets: targets.map(([k, id]) => ({ key: k, id })),
           user_oauth: userAttempts,
+          sa_fallback: saFallbackAttempts,
           result: driveDeleted,
         });
       }
