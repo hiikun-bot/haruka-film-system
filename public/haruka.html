@@ -8026,7 +8026,8 @@ window.showPage = window.showPage || function(name, btn) {
           <div id="fp-tc-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:22px;flex-wrap:wrap">
             <span id="fp-timecode-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:13px;font-weight:700;padding:3px 12px;border-radius:6px;font-family:monospace;cursor:pointer;letter-spacing:0.06em;border:1px solid #92400e" onclick="fpClearTimecode()" title="クリックで削除">00:00:00:00</span>
             <span id="fp-bbox-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;border:1px solid #f5c518;letter-spacing:0.04em" onclick="fpClearBbox()" title="クリックで範囲選択を解除">📍 範囲選択中 ×</span>
-            <span id="fp-timecode-hint" style="font-size:11px;color:#3f3f46">— 一時停止でタイムコードを記録 —</span>
+            <span id="fp-drawing-badge" style="display:none;background:#1e3a8a;color:#93c5fd;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;border:1px solid #3b82f6;letter-spacing:0.04em" onclick="fpOpenPaintFromBadge()" title="クリックで再編集（右クリックで削除）" oncontextmenu="event.preventDefault();fpClearDrawing();return false">🎨 ペイント有 ×</span>
+            <span id="fp-timecode-hint" style="font-size:11px;color:#3f3f46">— 一時停止でタイムコードを記録 / 葉を引いて範囲指定 —</span>
             <span id="fp-bbox-hint" style="display:none;font-size:11px;color:#3f3f46">— 画像をドラッグして範囲を選択 —</span>
           </div>
           <select id="fp-comment-category" style="width:100%;font-size:12px;margin-bottom:6px;background:#2a2a2e;color:#e4e4e7;border:1px solid #3f3f46;border-radius:6px;padding:6px 8px">
@@ -8038,7 +8039,42 @@ window.showPage = window.showPage || function(name, btn) {
               <input type="checkbox" id="fp-is-knowledge" style="cursor:pointer;accent-color:#3ECFCA">
               📚 学び広場
             </label>
-            <button onclick="submitFileComment()" style="background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;border-radius:8px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">送信</button>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <button id="fp-paint-btn" onclick="fpOpenPaintOverlay()" title="現在のフレームにペイント注釈を描く" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;line-height:1" onmouseover="this.style.color='#3ECFCA';this.style.borderColor='#3ECFCA'" onmouseout="if(!this.dataset.has)this.style.color='#a1a1aa';if(!this.dataset.has)this.style.borderColor='#3f3f46'">🎨</button>
+              <button onclick="submitFileComment()" style="background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;border-radius:8px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">送信</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ペイントオーバーレイ（🎨 クリックで表示） -->
+        <div id="fp-paint-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:10020;align-items:center;justify-content:center;padding:20px;box-sizing:border-box">
+          <div style="background:#18181b;border:1px solid #2a2a2e;border-radius:12px;display:flex;flex-direction:column;max-width:90vw;max-height:90vh;overflow:hidden;box-shadow:0 32px 100px rgba(0,0,0,0.8)">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#1e1e22;border-bottom:1px solid #2a2a2e">
+              <span style="font-size:12px;color:#e4e4e7;font-weight:600">🎨 ペイント注釈</span>
+              <button onclick="fpClosePaintOverlay()" style="background:none;border:none;color:#71717a;font-size:18px;cursor:pointer;line-height:1;padding:2px 6px" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#71717a'" title="閉じる">×</button>
+            </div>
+            <div id="fp-paint-canvas-wrap" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;position:relative;overflow:hidden">
+              <canvas id="fp-paint-canvas" style="display:block;max-width:100%;max-height:100%;cursor:crosshair;touch-action:none;background:#000"></canvas>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:#1e1e22;border-top:1px solid #2a2a2e;flex-wrap:wrap">
+              <button id="fp-paint-undo" onclick="fpPaintUndo()" title="戻る (Ctrl+Z)" style="background:#2a2a2e;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">↶</button>
+              <button id="fp-paint-redo" onclick="fpPaintRedo()" title="進む (Ctrl+Y)" style="background:#2a2a2e;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">↷</button>
+              <div style="display:flex;align-items:center;gap:4px;margin-left:6px" id="fp-paint-colors">
+                <button data-color="#3b82f6" onclick="fpPaintSetColor('#3b82f6')" title="青" style="width:18px;height:18px;border-radius:50%;background:#3b82f6;border:2px solid #fff;cursor:pointer;padding:0"></button>
+                <button data-color="#22c55e" onclick="fpPaintSetColor('#22c55e')" title="緑" style="width:18px;height:18px;border-radius:50%;background:#22c55e;border:2px solid transparent;cursor:pointer;padding:0"></button>
+                <button data-color="#f97316" onclick="fpPaintSetColor('#f97316')" title="橙" style="width:18px;height:18px;border-radius:50%;background:#f97316;border:2px solid transparent;cursor:pointer;padding:0"></button>
+                <button data-color="#ef4444" onclick="fpPaintSetColor('#ef4444')" title="赤" style="width:18px;height:18px;border-radius:50%;background:#ef4444;border:2px solid transparent;cursor:pointer;padding:0"></button>
+              </div>
+              <div style="display:flex;align-items:center;gap:4px;margin-left:6px" id="fp-paint-tools">
+                <button data-tool="brush" onclick="fpPaintSetTool('brush')" title="筆" style="background:#3ECFCA;border:1px solid #3ECFCA;color:#000;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer">🖌</button>
+                <button data-tool="arrow" onclick="fpPaintSetTool('arrow')" title="矢印" style="background:#2a2a2e;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer">↗</button>
+                <button data-tool="rect" onclick="fpPaintSetTool('rect')" title="四角" style="background:#2a2a2e;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer">□</button>
+                <button data-tool="line" onclick="fpPaintSetTool('line')" title="直線" style="background:#2a2a2e;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer">／</button>
+              </div>
+              <button onclick="fpPaintClear()" style="background:#2a2a2e;border:1px solid #3f3f46;color:#f87171;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;margin-left:6px" title="全消去">✕ クリア</button>
+              <div style="flex:1"></div>
+              <button onclick="fpPaintConfirm()" style="background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">確定 → 入力欄へ</button>
+            </div>
           </div>
         </div>
 
@@ -31572,31 +31608,182 @@ function fpRenderCommentMarkers(comments) {
     return;
   }
   container.innerHTML = '';
-  // タイムコードを持つルートコメント（返信は親に従うのでドット非表示）のみ、秒単位でグルーピング
-  const byTime = {};
+  // ① 範囲付きコメント（timecode_end あり）はバー表示（自分の投稿だけ左右ハンドルで再ドラッグ可能）
+  // ② 単点コメント（timecode のみ）は従来通り秒単位でグルーピングしてドット表示
+  const ranged = [];
+  const dotComments = [];
   comments.forEach(c => {
     if (!c.timecode) return;
     if (c.parent_comment_id) return; // 返信はマーカー出さない
-    const parts = c.timecode.split(':').map(Number);
-    let sec = 0;
-    if (parts.length === 4) sec = parts[0]*3600 + parts[1]*60 + parts[2] + parts[3]/30;
-    else if (parts.length === 3) sec = parts[0]*3600 + parts[1]*60 + parts[2];
-    else sec = parts[0]*60 + parts[1];
-    const key = Math.round(sec * 10) / 10;
+    const startSec = fpTimecodeToSec(c.timecode);
+    if (!isFinite(startSec)) return;
+    if (c.timecode_end) {
+      const endSec = fpTimecodeToSec(c.timecode_end);
+      if (isFinite(endSec) && endSec > startSec) {
+        ranged.push({ c, startSec, endSec });
+        return;
+      }
+    }
+    dotComments.push({ c, startSec });
+  });
+
+  // 単点コメント（dot）
+  const byTime = {};
+  dotComments.forEach(({ c, startSec }) => {
+    const key = Math.round(startSec * 10) / 10;
     if (!byTime[key]) byTime[key] = [];
     byTime[key].push(c);
   });
   Object.entries(byTime).forEach(([sec, list]) => {
-    const pct  = (parseFloat(sec) / video.duration) * 100;
-    const dot  = document.createElement('div');
-    const names = list.map(c => c.users ? NameDisplay.short(c.users) : '不明').join(', ');
-    const preview = list[0].comment.slice(0, 30) + (list[0].comment.length > 30 ? '…' : '');
-    dot.style.cssText = `position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:#f87171;cursor:pointer;border:1.5px solid #fff;opacity:0.9;transition:opacity .15s,transform .15s;pointer-events:auto;z-index:5`;
-    dot.title = `💬 ${names}: ${preview} @ ${list[0].timecode}`;
-    dot.onmouseover = () => { dot.style.opacity = '1'; dot.style.transform = 'translate(-50%,-50%) scale(1.4)'; };
-    dot.onmouseout  = () => { dot.style.opacity = '0.9'; dot.style.transform = 'translate(-50%,-50%)'; };
-    dot.onclick = (e) => { e.stopPropagation(); fpSeekTo(list[0].timecode); };
+    const secNum = parseFloat(sec);
+    const pct = (secNum / video.duration) * 100;
+    const dot = _fpBuildCommentDot(list, pct, sec);
     container.appendChild(dot);
+    // 自分の単点コメントだけホバー時の {右ハンドル} を出して範囲化可能にする
+    const own = list.find(c => c.user_id === currentUser?.id);
+    if (own) _fpAttachDotRangeHandles(dot, own, secNum, video.duration);
+  });
+
+  // 範囲付きコメント（バー）
+  ranged.forEach(({ c, startSec, endSec }) => {
+    container.appendChild(_fpBuildCommentRangeBar(c, startSec, endSec, video.duration));
+  });
+}
+
+// 1 点コメント表示用の赤いドット
+function _fpBuildCommentDot(list, pct, secKey) {
+  const dot = document.createElement('div');
+  const names = list.map(c => c.users ? NameDisplay.short(c.users) : '不明').join(', ');
+  const preview = list[0].comment.slice(0, 30) + (list[0].comment.length > 30 ? '…' : '');
+  dot.style.cssText = `position:absolute;left:${pct}%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:#f87171;cursor:pointer;border:1.5px solid #fff;opacity:0.9;transition:opacity .15s,transform .15s;pointer-events:auto;z-index:5`;
+  dot.title = `💬 ${names}: ${preview} @ ${list[0].timecode}`;
+  dot.dataset.fpDotKey = String(secKey);
+  dot.onmouseover = () => { dot.style.opacity = '1'; dot.style.transform = 'translate(-50%,-50%) scale(1.4)'; };
+  dot.onmouseout  = () => { dot.style.opacity = '0.9'; dot.style.transform = 'translate(-50%,-50%)'; };
+  dot.onclick = (e) => { e.stopPropagation(); fpSeekTo(list[0].timecode); };
+  return dot;
+}
+
+// 範囲付きコメント（葉 + 横バー + 終端ハンドル）。自分の投稿のみハンドルでリサイズ可能
+function _fpBuildCommentRangeBar(c, startSec, endSec, duration) {
+  const wrap = document.createElement('div');
+  const leftPct  = (startSec / duration) * 100;
+  const rightPct = (endSec / duration) * 100;
+  wrap.style.cssText = `position:absolute;left:0;right:0;top:50%;height:0;pointer-events:none;z-index:5`;
+
+  // バー本体（半透明の赤帯）
+  const bar = document.createElement('div');
+  bar.style.cssText = `position:absolute;left:${leftPct}%;width:${Math.max(0.2, rightPct-leftPct)}%;top:-3px;height:6px;background:rgba(248,113,113,0.5);border:1px solid #f87171;border-radius:3px;cursor:pointer;pointer-events:auto`;
+  bar.title = `💬 ${c.timecode} - ${c.timecode_end}: ${(c.comment||'').slice(0,30)}`;
+  bar.onclick = (e) => { e.stopPropagation(); fpSeekTo(c.timecode); };
+  wrap.appendChild(bar);
+
+  // 左端の葉（既存ドットと同じ見た目）
+  const startDot = document.createElement('div');
+  startDot.style.cssText = `position:absolute;left:${leftPct}%;top:-1px;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:#f87171;border:1.5px solid #fff;pointer-events:auto;cursor:pointer;z-index:6`;
+  startDot.title = `${c.timecode}`;
+  startDot.onclick = (e) => { e.stopPropagation(); fpSeekTo(c.timecode); };
+  wrap.appendChild(startDot);
+
+  // 終端ハンドル（自分の投稿のみドラッグ可能。他人は表示のみ）
+  const endHandle = document.createElement('div');
+  const isOwn = c.user_id === currentUser?.id;
+  endHandle.style.cssText = `position:absolute;left:${rightPct}%;top:-1px;transform:translate(-50%,-50%);width:8px;height:14px;background:${isOwn?'#fbbf24':'#f87171'};border:1px solid #fff;border-radius:2px;pointer-events:auto;${isOwn?'cursor:ew-resize':'cursor:pointer'};z-index:6`;
+  endHandle.title = isOwn ? '左右ドラッグで範囲を調整' : `${c.timecode_end}`;
+  if (isOwn) _fpAttachRangeHandleDrag(endHandle, c, startSec, duration, 'end');
+  else endHandle.onclick = (e) => { e.stopPropagation(); fpSeekTo(c.timecode_end); };
+  wrap.appendChild(endHandle);
+
+  return wrap;
+}
+
+// 単点ドットにホバー時の {右ハンドル} を取り付け、左右ドラッグで範囲化（自分の投稿のみ）
+function _fpAttachDotRangeHandles(dot, comment, startSec, duration) {
+  // ホバー領域：dot 周辺 ±10px を覆う透明 hit-area
+  const handle = document.createElement('div');
+  handle.style.cssText = `position:absolute;left:calc(${(startSec/duration)*100}% + 6px);top:-1px;transform:translate(0,-50%);width:8px;height:14px;background:rgba(251,191,36,0);border:1px dashed rgba(251,191,36,0);border-radius:2px;pointer-events:auto;cursor:ew-resize;z-index:6;transition:background .15s,border-color .15s`;
+  handle.title = '右へドラッグして範囲化';
+  dot.parentElement.appendChild(handle);
+  // dot ホバー or handle ホバー で見える化
+  const reveal = () => { handle.style.background = 'rgba(251,191,36,0.8)'; handle.style.borderColor = '#fff'; };
+  const hide   = () => { handle.style.background = 'rgba(251,191,36,0)';   handle.style.borderColor = 'rgba(251,191,36,0)'; };
+  dot.addEventListener('mouseenter', reveal);
+  dot.addEventListener('mouseleave', () => setTimeout(hide, 100));
+  handle.addEventListener('mouseenter', reveal);
+  handle.addEventListener('mouseleave', hide);
+  _fpAttachRangeHandleDrag(handle, comment, startSec, duration, 'create');
+}
+
+// ドラッグ処理：handle を左右ドラッグ → 終端秒を変更 → PATCH 保存
+// kind: 'end' (既存範囲の終端変更) / 'create' (単点→範囲新規作成)
+function _fpAttachRangeHandleDrag(handle, comment, startSec, duration, kind) {
+  let dragging = false;
+  let tooltip = null;
+  const video = document.getElementById('fp-video');
+  const seekbar = document.getElementById('fp-seekbar');
+  if (!seekbar) return;
+
+  function clientXToSec(clientX) {
+    const rect = seekbar.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * duration;
+  }
+
+  function fmtSec(sec) {
+    return fpTimecodeStr(Math.max(0, sec));
+  }
+
+  handle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation(); e.preventDefault();
+    dragging = true;
+    try { handle.setPointerCapture(e.pointerId); } catch(_) {}
+    tooltip = document.createElement('div');
+    tooltip.style.cssText = 'position:fixed;background:#1e1e22;color:#fbbf24;font-family:monospace;font-size:11px;padding:4px 8px;border:1px solid #3f3f46;border-radius:6px;z-index:10030;pointer-events:none;letter-spacing:0.04em';
+    document.body.appendChild(tooltip);
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    let newEnd = clientXToSec(e.clientX);
+    // SHIFT で 0.1s 精度、通常は frame 精度
+    const precise = !e.shiftKey;
+    if (precise) newEnd = Math.round(newEnd * _fpFps) / _fpFps;
+    else newEnd = Math.round(newEnd * 10) / 10;
+    if (newEnd <= startSec + 0.05) newEnd = startSec + 0.05;
+    handle.style.left = `${(newEnd / duration) * 100}%`;
+    handle.dataset.pendingEnd = String(newEnd);
+    if (tooltip) {
+      tooltip.textContent = `${fmtSec(newEnd)} ${precise?'(frame)':'(0.1s)'}`;
+      tooltip.style.left = `${e.clientX + 12}px`;
+      tooltip.style.top  = `${e.clientY - 28}px`;
+    }
+  });
+
+  handle.addEventListener('pointerup', async (e) => {
+    if (!dragging) return;
+    dragging = false;
+    try { handle.releasePointerCapture(e.pointerId); } catch(_) {}
+    if (tooltip) { tooltip.remove(); tooltip = null; }
+    const pending = parseFloat(handle.dataset.pendingEnd || '');
+    if (!isFinite(pending) || pending <= startSec) return;
+    const newEndTc = fpTimecodeStr(pending);
+    try {
+      const res = await apiFetch(`${API}/creative-file-comments/${comment.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timecode_end: newEndTc }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast('範囲の保存に失敗: ' + (translateError(err?.error) || ''), 'error');
+      } else {
+        // ローカル state を更新して再描画
+        comment.timecode_end = newEndTc;
+        if (currentPreviewFileId) await loadFileComments(currentPreviewFileId);
+      }
+    } catch(_) {
+      showToast('ネットワークエラー', 'error');
+    }
   });
 }
 
@@ -32026,6 +32213,300 @@ function fpClearTimecode() {
   if (ta) ta.style.borderColor = '#3f3f46';
 }
 
+// "HH:MM:SS:FF" / "HH:MM:SS" / "MM:SS" → "MM:SS" の短縮表示
+function _fpTcToShort(tc) {
+  if (!tc || typeof tc !== 'string') return '';
+  const parts = tc.split(':').map(Number);
+  let totalSec = 0;
+  if (parts.length === 4) totalSec = parts[0]*3600 + parts[1]*60 + parts[2] + (parts[3]||0)/_fpFps;
+  else if (parts.length === 3) totalSec = parts[0]*3600 + parts[1]*60 + parts[2];
+  else if (parts.length === 2) totalSec = parts[0]*60 + parts[1];
+  else return tc;
+  const s = Math.floor(totalSec);
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  // 1時間以上なら "H:MM:SS"、未満なら "MM:SS"
+  if (mm >= 60) {
+    const hh = Math.floor(mm / 60);
+    const mr = mm % 60;
+    return `${hh}:${String(mr).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+  }
+  return `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+}
+
+// ============================================================
+// ペイント注釈（Frame.io 風）
+//   現在の <video id="fp-video"> のフレームを canvas に描画し、その上に
+//   筆/矢印/四角/直線でストロークを重ねる。「確定」で dataURL を _fpPendingDrawing に
+//   保存し、submitFileComment 時に POST 本体へ含める。
+// ============================================================
+let _fpPendingDrawing = null;       // {dataUrl, w, h} | null
+let _fpPaintState = null;            // { ctx, baseImage, strokes, redo, color, tool, drawing, startX, startY }
+
+function fpOpenPaintOverlay() {
+  const video = document.getElementById('fp-video');
+  if (!video || !video.videoWidth) {
+    showToast('動画フレームを読み込めません', 'warn');
+    return;
+  }
+  const ov = document.getElementById('fp-paint-overlay');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  const canvas = document.getElementById('fp-paint-canvas');
+  // 動画解像度をそのまま canvas のピクセルサイズに（高画質）
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  // 動画フレームを背景としてキャプチャ（CORS 設定不要 — same-origin /files プロキシ前提）
+  try {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  } catch (e) {
+    console.warn('[paint] drawImage 失敗', e);
+    showToast('動画フレームのキャプチャに失敗しました', 'error');
+  }
+  const baseImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  _fpPaintState = {
+    canvas, ctx, baseImage,
+    strokes: [],   // 確定済み（{tool,color,points|rect|line}）
+    redo: [],
+    color: '#3b82f6',
+    tool: 'brush',
+    drawing: false,
+    current: null,
+  };
+  // 既存の pending drawing があれば上書き編集対象として読み込む（再編集）
+  if (_fpPendingDrawing && _fpPendingDrawing.dataUrl) {
+    const img = new Image();
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // 既存ペイントを 1 つの "image" ストロークとして扱い、undo の起点にする
+      _fpPaintState.strokes.push({ tool: 'image', dataUrl: _fpPendingDrawing.dataUrl });
+      _fpPaintState.baseImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    };
+    img.src = _fpPendingDrawing.dataUrl;
+  }
+  _fpAttachPaintHandlers();
+}
+
+function fpClosePaintOverlay() {
+  const ov = document.getElementById('fp-paint-overlay');
+  if (ov) ov.style.display = 'none';
+  _fpPaintState = null;
+}
+
+function fpOpenPaintFromBadge() {
+  fpOpenPaintOverlay();
+}
+
+function fpClearDrawing() {
+  _fpPendingDrawing = null;
+  const badge = document.getElementById('fp-drawing-badge');
+  if (badge) badge.style.display = 'none';
+  const btn = document.getElementById('fp-paint-btn');
+  if (btn) {
+    delete btn.dataset.has;
+    btn.style.color = '#a1a1aa';
+    btn.style.borderColor = '#3f3f46';
+  }
+}
+
+function fpPaintSetColor(c) {
+  if (!_fpPaintState) return;
+  _fpPaintState.color = c;
+  document.querySelectorAll('#fp-paint-colors button').forEach(b => {
+    b.style.border = b.dataset.color === c ? '2px solid #fff' : '2px solid transparent';
+  });
+}
+
+function fpPaintSetTool(t) {
+  if (!_fpPaintState) return;
+  _fpPaintState.tool = t;
+  document.querySelectorAll('#fp-paint-tools button').forEach(b => {
+    const active = b.dataset.tool === t;
+    b.style.background = active ? '#3ECFCA' : '#2a2a2e';
+    b.style.color = active ? '#000' : '#a1a1aa';
+    b.style.borderColor = active ? '#3ECFCA' : '#3f3f46';
+  });
+}
+
+function _fpAttachPaintHandlers() {
+  const s = _fpPaintState;
+  if (!s) return;
+  const canvas = s.canvas;
+  // 表示座標 → canvas ピクセル座標
+  function evToCanvas(e) {
+    const r = canvas.getBoundingClientRect();
+    const x = (e.clientX - r.left) * (canvas.width / r.width);
+    const y = (e.clientY - r.top)  * (canvas.height / r.height);
+    return { x, y };
+  }
+  canvas.onpointerdown = (e) => {
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch(_) {}
+    const p = evToCanvas(e);
+    s.drawing = true;
+    s.current = { tool: s.tool, color: s.color, points: [p], startX: p.x, startY: p.y, endX: p.x, endY: p.y };
+  };
+  canvas.onpointermove = (e) => {
+    if (!s.drawing) return;
+    const p = evToCanvas(e);
+    s.current.endX = p.x; s.current.endY = p.y;
+    if (s.current.tool === 'brush') s.current.points.push(p);
+    _fpPaintRedraw(true);
+  };
+  canvas.onpointerup = (e) => {
+    if (!s.drawing) return;
+    s.drawing = false;
+    try { canvas.releasePointerCapture(e.pointerId); } catch(_) {}
+    if (s.current) {
+      s.strokes.push(s.current);
+      s.redo = [];
+      s.current = null;
+    }
+    _fpPaintRedraw(false);
+  };
+  // 初期色強調
+  fpPaintSetColor(s.color);
+  fpPaintSetTool(s.tool);
+}
+
+// 全ストロークを baseImage に重ねて再描画
+function _fpPaintRedraw(withCurrent) {
+  const s = _fpPaintState;
+  if (!s) return;
+  const { ctx, baseImage } = s;
+  ctx.putImageData(baseImage, 0, 0);
+  const all = withCurrent && s.current ? s.strokes.concat([s.current]) : s.strokes;
+  for (const stroke of all) {
+    _fpPaintDrawStroke(ctx, stroke);
+  }
+}
+
+function _fpPaintDrawStroke(ctx, st) {
+  if (st.tool === 'image') {
+    // 既存 pending image は baseImage に組み込み済みなのでスキップ
+    return;
+  }
+  ctx.save();
+  ctx.strokeStyle = st.color;
+  ctx.fillStyle = st.color;
+  ctx.lineWidth = Math.max(3, Math.round(ctx.canvas.width / 480));
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (st.tool === 'brush') {
+    ctx.beginPath();
+    const pts = st.points || [];
+    if (pts.length) {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    }
+  } else if (st.tool === 'rect') {
+    const x = Math.min(st.startX, st.endX);
+    const y = Math.min(st.startY, st.endY);
+    const w = Math.abs(st.endX - st.startX);
+    const h = Math.abs(st.endY - st.startY);
+    ctx.strokeRect(x, y, w, h);
+  } else if (st.tool === 'line') {
+    ctx.beginPath();
+    ctx.moveTo(st.startX, st.startY);
+    ctx.lineTo(st.endX, st.endY);
+    ctx.stroke();
+  } else if (st.tool === 'arrow') {
+    const dx = st.endX - st.startX;
+    const dy = st.endY - st.startY;
+    const len = Math.hypot(dx, dy) || 1;
+    const ang = Math.atan2(dy, dx);
+    const head = Math.min(40, Math.max(12, len * 0.18));
+    ctx.beginPath();
+    ctx.moveTo(st.startX, st.startY);
+    ctx.lineTo(st.endX, st.endY);
+    ctx.stroke();
+    // 矢じり（三角形）
+    ctx.beginPath();
+    ctx.moveTo(st.endX, st.endY);
+    ctx.lineTo(st.endX - head * Math.cos(ang - Math.PI/6), st.endY - head * Math.sin(ang - Math.PI/6));
+    ctx.lineTo(st.endX - head * Math.cos(ang + Math.PI/6), st.endY - head * Math.sin(ang + Math.PI/6));
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function fpPaintUndo() {
+  const s = _fpPaintState;
+  if (!s || !s.strokes.length) return;
+  const last = s.strokes.pop();
+  s.redo.push(last);
+  _fpPaintRedraw(false);
+}
+function fpPaintRedo() {
+  const s = _fpPaintState;
+  if (!s || !s.redo.length) return;
+  const next = s.redo.pop();
+  s.strokes.push(next);
+  _fpPaintRedraw(false);
+}
+function fpPaintClear() {
+  const s = _fpPaintState;
+  if (!s) return;
+  s.strokes = [];
+  s.redo = [];
+  _fpPaintRedraw(false);
+}
+
+function fpPaintConfirm() {
+  const s = _fpPaintState;
+  if (!s) { fpClosePaintOverlay(); return; }
+  // 何も描かれていない（既存 image も無し）場合は保存しない
+  const nonImageStrokes = s.strokes.filter(x => x.tool !== 'image');
+  if (!nonImageStrokes.length && !_fpPendingDrawing) {
+    fpClosePaintOverlay();
+    return;
+  }
+  // dataURL を生成（JPEG: 動画フレーム+ペイントなので JPEG で十分小さい）
+  let dataUrl;
+  try {
+    dataUrl = s.canvas.toDataURL('image/jpeg', 0.82);
+  } catch (e) {
+    console.warn('[paint] toDataURL 失敗', e);
+    showToast('ペイントの保存に失敗しました（動画の CORS 制限の可能性）', 'error');
+    return;
+  }
+  _fpPendingDrawing = { dataUrl, w: s.canvas.width, h: s.canvas.height };
+  // バッジ表示
+  const badge = document.getElementById('fp-drawing-badge');
+  if (badge) badge.style.display = '';
+  const btn = document.getElementById('fp-paint-btn');
+  if (btn) {
+    btn.dataset.has = '1';
+    btn.style.color = '#3b82f6';
+    btn.style.borderColor = '#3b82f6';
+  }
+  fpClosePaintOverlay();
+}
+
+// 既存コメントのペイントを読み取り専用で表示
+function fpShowDrawing(commentId) {
+  const c = (_fpComments || []).find(x => x.id === commentId);
+  if (!c || !c.drawing || !c.drawing.dataUrl) return;
+  // 簡易ライトボックス（既存 overlay を再利用せず、独立 div を都度生成）
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10025;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;cursor:zoom-out';
+  modal.onclick = () => modal.remove();
+  const img = document.createElement('img');
+  img.src = c.drawing.dataUrl;
+  img.style.cssText = 'max-width:96vw;max-height:92vh;border-radius:8px;box-shadow:0 24px 80px rgba(0,0,0,0.6);background:#000';
+  img.alt = 'ペイント注釈';
+  modal.appendChild(img);
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.style.cssText = 'position:absolute;top:16px;right:16px;background:rgba(0,0,0,0.6);border:1px solid #fff;color:#fff;font-size:20px;width:32px;height:32px;border-radius:50%;cursor:pointer;line-height:1';
+  close.onclick = () => modal.remove();
+  modal.appendChild(close);
+  document.body.appendChild(modal);
+}
+
 // ============================================================
 // 画像コメントの範囲選択（bounding box / Drive 風）
 // ============================================================
@@ -32402,10 +32883,21 @@ function fpSeekTo(tc) {
 //     ・「↩ 返信」ボタンは出さない（返信への返信はサポートしない）
 //     ・左に縦線 + インデント
 function _renderFpCommentHtml(c, isReply) {
-  const tcBadge = (!isReply && c.timecode)
-    ? `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>` : '';
+  // timecode バッジ: 範囲付き (timecode_end あり) なら "MM:SS - MM:SS" 表記、無ければ従来通り
+  let tcBadge = '';
+  if (!isReply && c.timecode) {
+    if (c.timecode_end) {
+      const startShort = _fpTcToShort(c.timecode);
+      const endShort   = _fpTcToShort(c.timecode_end);
+      tcBadge = `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックで開始位置にシーク">${esc(startShort)} - ${esc(endShort)}</span>`;
+    } else {
+      tcBadge = `<span onclick="fpSeekTo('${esc(c.timecode)}')" style="background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:monospace;cursor:pointer;letter-spacing:0.04em" title="クリックでシーク">${esc(c.timecode)}</span>`;
+    }
+  }
   const bboxBadge = (!isReply && c.bbox)
     ? `<span onclick="fpHighlightBbox('${c.id}')" style="background:rgba(245,197,24,0.18);color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #f5c518" title="クリックで画像上の範囲をハイライト">📍 範囲</span>` : '';
+  const drawingBadge = (!isReply && c.drawing && c.drawing.dataUrl)
+    ? `<span onclick="fpShowDrawing('${c.id}')" style="background:rgba(59,130,246,0.18);color:#1e3a8a;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #3b82f6" title="クリックでペイントを表示">🎨</span>` : '';
   const knowledgeBadge = (!isReply && c.is_knowledge)
     ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 学び広場</span>' : '';
   const replyBtn = isReply ? '' :
@@ -32434,11 +32926,31 @@ function _renderFpCommentHtml(c, isReply) {
   const itemStyle = isReply
     ? `margin:8px 0 0 18px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:2px solid #3ECFCA;border-top:0.5px solid var(--border);border-right:0.5px solid var(--border);border-bottom:0.5px solid var(--border)`
     : `margin-bottom:12px;padding:10px 12px;background:${c.is_knowledge ? '#fffbeb' : 'var(--surface)'};border-radius:8px;border:0.5px solid ${c.is_knowledge ? '#fcd34d' : 'var(--border)'};transition:box-shadow .2s`;
+
+  // 対応済みチェック (Frame.io Completed 相当)。返信にも個別に付けられる。
+  const isResolved = !!c.resolved;
+  const resolvedBtn = `<button onclick="event.stopPropagation();fpToggleResolved('${c.id}')" title="${isResolved ? '対応済（クリックで戻す）' : '対応済にする'}" style="width:22px;height:22px;border-radius:50%;border:1.5px solid ${isResolved ? '#10b981' : '#a1a1aa'};background:${isResolved ? '#10b981' : 'transparent'};color:${isResolved ? '#fff' : 'transparent'};cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;line-height:1;padding:0;flex-shrink:0">${isResolved ? '✓' : ''}</button>`;
+  const textStyle = `font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all${isResolved ? ';opacity:0.55;text-decoration:line-through' : ''}`;
+
+  // フッター行: 対応済の場合は「✓ 対応済 <名前> <相対時刻>」を表示
+  let resolvedFooter = '';
+  if (isResolved) {
+    const ru = c.resolved_by_user || null;
+    const ruName = ru ? (window.NameDisplay ? window.NameDisplay.short(ru) : (ru.full_name || ru.nickname || '')) : '';
+    const rt = c.resolved_at ? _twTimeAgo(c.resolved_at) : '';
+    resolvedFooter = `<div style="margin-top:4px;font-size:10px;color:#10b981;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span>✓ 対応済</span>
+      ${ruName ? `<span style="color:var(--text-muted);font-weight:500">${esc(ruName)}</span>` : ''}
+      ${rt ? `<span style="color:var(--text-muted);font-weight:400">${esc(rt)}</span>` : ''}
+    </div>`;
+  }
+
   return `
-    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" data-parent-id="${c.parent_comment_id || ''}" style="${itemStyle}">
+    <div id="fp-comment-item-${c.id}" data-comment-id="${c.id}" data-parent-id="${c.parent_comment_id || ''}" data-resolved="${isResolved ? '1' : '0'}" style="${itemStyle}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0">
           ${tcBadge}
+          ${drawingBadge}
           ${bboxBadge}
           ${avatarHtml(userObj, isReply ? 28 : 32, { title: avatarTitle })}
           ${knowledgeBadge}
@@ -32449,11 +32961,70 @@ function _renderFpCommentHtml(c, isReply) {
           <span style="font-size:10px;color:var(--text-muted);white-space:nowrap">${new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
           ${c.user_id === currentUser?.id ? `<button onclick="startEditComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#9ca3af;font-size:12px;padding:0;line-height:1;flex-shrink:0" title="編集">✏️</button>` : ''}
           ${c.user_id === currentUser?.id ? `<button onclick="deleteFileComment('${c.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0;line-height:1;flex-shrink:0" title="削除">✕</button>` : ''}
+          ${resolvedBtn}
         </div>
       </div>
-      <div id="fp-comment-text-${c.id}" style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all">${esc(c.comment)}</div>
+      <div id="fp-comment-text-${c.id}" style="${textStyle}">${esc(c.comment)}</div>
+      ${resolvedFooter}
     </div>
   `;
+}
+
+// 対応済チェックのトグル（楽観的 UI）。誰でも全コメントに対してトグル可能。
+async function fpToggleResolved(commentId) {
+  if (!Array.isArray(_fpComments)) return;
+  const idx = _fpComments.findIndex(x => x && x.id === commentId);
+  if (idx < 0) return;
+  const cur = _fpComments[idx];
+  const prev = {
+    resolved: !!cur.resolved,
+    resolved_at: cur.resolved_at || null,
+    resolved_by: cur.resolved_by || null,
+    resolved_by_user: cur.resolved_by_user || null,
+  };
+  const next = !prev.resolved;
+  // 楽観的に書き換え
+  cur.resolved = next;
+  if (next) {
+    cur.resolved_at = new Date().toISOString();
+    cur.resolved_by = currentUser?.id || null;
+    cur.resolved_by_user = currentUser ? {
+      id: currentUser.id,
+      full_name: currentUser.full_name || currentUser.name || '',
+      nickname: currentUser.nickname || '',
+      role: currentUser.role || '',
+      avatar_url: currentUser.avatar_url || null,
+    } : null;
+  } else {
+    cur.resolved_at = null;
+    cur.resolved_by = null;
+    cur.resolved_by_user = null;
+  }
+  renderComments(_fpComments);
+
+  try {
+    const res = await apiFetch(`${API}/creative-file-comments/${commentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolved: next }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e?.error || `HTTP ${res.status}`);
+    }
+    const updated = await res.json().catch(() => null);
+    if (updated && _fpComments[idx]) {
+      // サーバー値で上書き（タイムスタンプ整合性）
+      _fpComments[idx] = { ..._fpComments[idx], ...updated, resolved_by_user: updated.resolved_by_user || _fpComments[idx].resolved_by_user };
+      renderComments(_fpComments);
+    }
+  } catch (e) {
+    // ロールバック
+    _fpComments[idx] = { ..._fpComments[idx], ...prev };
+    renderComments(_fpComments);
+    if (typeof showToast === 'function') showToast('対応済の更新に失敗: ' + (e.message || ''), 'error');
+    else alert('対応済の更新に失敗: ' + (e.message || ''));
+  }
 }
 
 // "HH:MM:SS:FF" / "HH:MM:SS" / "MM:SS" 形式の timecode を秒数に変換。
@@ -32471,6 +33042,14 @@ function fpTimecodeToSec(tc) {
 // flat な list を「親 → 返信群（インデント）」のツリー HTML にする。
 // _fpComments には flat 配列をそのまま入れて、ツリー化はレンダ時に行う。
 function renderComments(list) {
+  // タブヘッダーの未対応カウントバッジを更新（0件なら付けない）
+  try {
+    const tab = document.getElementById('fp-tab-review');
+    if (tab) {
+      const unresolved = (list || []).filter(c => c && !c.resolved).length;
+      tab.textContent = unresolved > 0 ? `レビューコメント (${unresolved} 未対応)` : 'レビューコメント';
+    }
+  } catch(_) {}
   const el = document.getElementById('fp-comments-list');
   if (!list.length) {
     el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">まだコメントがありません</div>';
@@ -32737,19 +33316,23 @@ async function submitFileComment() {
   }
   // 画像の範囲選択（bbox）を payload に含める
   const bbox = (_fpPendingBbox && typeof _fpPendingBbox === 'object') ? _fpPendingBbox : null;
-  const btn = document.querySelector('#fp-comment-input-area button');
-  btn.disabled = true; btn.textContent = '送信中...';
+  // ペイント注釈（pending drawing）を payload に含める
+  const drawing = (_fpPendingDrawing && typeof _fpPendingDrawing === 'object') ? _fpPendingDrawing : null;
+  // 送信ボタンを特定（旧: input-area 内の最初のボタン → 🎨 アイコンも button のため明示的に最後の button を取る）
+  const btn = document.querySelector('#fp-comment-input-area button:last-of-type');
+  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
   const res = await apiFetch(`${API}/creative-files/${currentPreviewFileId}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode, bbox }),
+    body: JSON.stringify({ comment: text, is_knowledge: isKnowledge, category_id: categoryId, timecode, bbox, drawing }),
   });
-  btn.disabled = false; btn.textContent = '送信';
+  if (btn) { btn.disabled = false; btn.textContent = '送信'; }
   if (res.ok) {
     document.getElementById('fp-comment-text').value = '';
     document.getElementById('fp-is-knowledge').checked = false;
     fpClearTimecode();
     fpClearBbox();
+    fpClearDrawing();
     await loadFileComments(currentPreviewFileId);
   } else {
     const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error');
