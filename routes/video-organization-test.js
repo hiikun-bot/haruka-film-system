@@ -322,11 +322,11 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         kind,
       });
 
-      // プレビュー自動生成: 動画かつ短尺 (< 180秒) のみ fire-and-forget で H.264 化。
-      // 長尺は容量・処理時間が読めないのでユーザーが UI ボタンから明示的に実行する。
+      // プレビュー自動生成: 動画なら無条件で fire-and-forget で起動。
+      // generatePreviewForVideoOrg() 内部で短尺=H.264 / 長尺=WebPストーリーボードを動画長で自動分岐する。
+      // フロントは preview_status を 5s ポーリングして完了したら自動再描画する設計。
       try {
-        const dur = uploaded.durationSeconds;
-        if (kind === 'video' && dur && dur < 180) {
+        if (kind === 'video') {
           generatePreviewForVideoOrg({ rowId: inserted.id })
             .catch(err => console.error('[video-org] preview autogen failed:', err?.message || err));
         }
@@ -398,11 +398,10 @@ router.post('/register', async (req, res) => {
       fileId, fileName: meta.fileName, size: meta.size, kind,
     });
 
-    // プレビュー自動生成: 動画かつ短尺 (< 180秒) のみ fire-and-forget で H.264 化。
-    // 長尺は容量・処理時間が読めないのでユーザーが UI ボタンから明示的に実行する。
+    // プレビュー自動生成: 動画なら無条件で fire-and-forget で起動。
+    // generatePreviewForVideoOrg() 内部で短尺=H.264 / 長尺=WebPストーリーボードを動画長で自動分岐する。
     try {
-      const dur = meta.durationSeconds;
-      if (kind === 'video' && dur && dur < 180) {
+      if (kind === 'video') {
         generatePreviewForVideoOrg({ rowId: inserted.id })
           .catch(err => console.error('[video-org] preview autogen failed:', err?.message || err));
       }
@@ -1031,6 +1030,18 @@ router.post('/upload-session/:sessionId/complete', async (req, res) => {
       size: meta.size,
       kind,
     });
+
+    // プレビュー自動生成: 動画なら無条件で fire-and-forget で起動。
+    // 既存 /upload, /register と同じ挙動を Resumable Upload 経路でも揃える。
+    // 短尺=H.264 / 長尺=WebP は generatePreviewForVideoOrg() 内部で動画長から自動分岐。
+    try {
+      if (kind === 'video') {
+        generatePreviewForVideoOrg({ rowId: inserted.id })
+          .catch(err => console.error('[video-org] preview autogen (resumable) failed:', err?.message || err));
+      }
+    } catch (e) {
+      console.warn('[video-org] preview autogen (resumable) kick failed:', e.message);
+    }
 
     res.json({ item: inserted });
   } catch (e) {

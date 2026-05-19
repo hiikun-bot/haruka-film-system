@@ -38982,6 +38982,70 @@ let msSelectedFileId = null;
 let msItemsCache = [];
 let msActiveTag = '';
 
+// ---- プレビュー自動ポーリング（preview_status が pending/processing の間だけ）----
+// 仕様（PR #687 系）:
+//   - msSelectItem で生成中（pending / processing / null）を検知したら setInterval 開始
+//   - 5秒ごとに /item/:fileId を叩いて preview_status を確認
+//   - done になったら msItemsCache を更新して msSelectItem を再実行（自動再描画）
+//   - failed になったら停止して、エラーUI に切り替わるよう再描画
+//   - 最大 3 分（36回）でタイムアウトして停止（CTAでユーザーが手動再生成可能）
+//   - 別の素材を選択 / 一覧再読込が起きたら旧ポーリングを必ず停止（リーク防止）
+let msPreviewPollingTimer = null;
+let msPreviewPollingFileId = null;
+let msPreviewPollingCount = 0;
+const MS_PREVIEW_POLL_INTERVAL_MS = 5000;
+const MS_PREVIEW_POLL_MAX_TICKS = 36; // 5s × 36 = 180s
+
+function msStopPreviewPolling() {
+  if (msPreviewPollingTimer) {
+    clearInterval(msPreviewPollingTimer);
+    msPreviewPollingTimer = null;
+  }
+  msPreviewPollingFileId = null;
+  msPreviewPollingCount = 0;
+}
+
+function msStartPreviewPolling(fileId) {
+  // 同じ fileId のポーリングが既に走っていれば何もしない
+  if (msPreviewPollingTimer && msPreviewPollingFileId === fileId) return;
+  msStopPreviewPolling();
+  msPreviewPollingFileId = fileId;
+  msPreviewPollingCount = 0;
+  msPreviewPollingTimer = setInterval(async () => {
+    msPreviewPollingCount += 1;
+    // ユーザーが別の行を選んでいたら停止（保険：msSelectItem 側でも停止しているはず）
+    if (msSelectedFileId !== fileId) { msStopPreviewPolling(); return; }
+    // タイムアウト
+    if (msPreviewPollingCount > MS_PREVIEW_POLL_MAX_TICKS) {
+      msStopPreviewPolling();
+      const cap = document.getElementById('ms-preview-caption');
+      if (cap) {
+        cap.textContent = 'プレビュー生成が長引いています。完了次第 / 失敗時に表示が切り替わります。一覧の再読込でも反映されます。';
+        cap.style.display = '';
+      }
+      return;
+    }
+    try {
+      const data = await votFetch('/item/' + encodeURIComponent(fileId));
+      const fresh = data?.item;
+      if (!fresh) return;
+      // キャッシュ差し替え
+      const idx = msItemsCache.findIndex(x => x.drive_file_id === fileId);
+      if (idx >= 0) msItemsCache[idx] = fresh;
+      const st = fresh.preview_status;
+      if (st === 'done' || st === 'failed' || st === 'skipped') {
+        // ターミナル状態：ポーリングを止めて再描画
+        msStopPreviewPolling();
+        if (msSelectedFileId === fileId) msSelectItem(fileId, false);
+      }
+      // pending / processing / null はそのまま継続
+    } catch (e) {
+      // 単発の通信エラーは無視（次の tick で再試行）。連続失敗時もタイムアウトで止まる
+      console.warn('[material-square] preview polling fetch failed:', e?.message || e);
+    }
+  }, MS_PREVIEW_POLL_INTERVAL_MS);
+}
+
 function loadMaterialSquarePage() { msShowList(); msReloadList(); }
 
 function msShowList() {
@@ -39103,6 +39167,7 @@ function msRenderRow(item) {
 
 // ==================== プレビューパネル ====================
 function msClearPreview() {
+  msStopPreviewPolling();
   msSelectedFileId = null;
   const media = document.getElementById('ms-preview-media');
   const body = document.getElementById('ms-preview-body');
@@ -39210,6 +39275,8 @@ async function msHandlePreviewError(fileId, src, tag, container, videoEl) {
 }
 
 function msSelectItem(fileId, scroll = true) {
+  // fileId が変わったら既存ポーリングを必ず停止（リーク防止）
+  if (msPreviewPollingFileId && msPreviewPollingFileId !== fileId) msStopPreviewPolling();
   msSelectedFileId = fileId;
   // 行のハイライト
   document.querySelectorAll('#ms-tbody tr').forEach(tr => tr.classList.remove('ms-selected'));
@@ -39240,10 +39307,16 @@ function msSelectItem(fileId, scroll = true) {
     const img = media.querySelector('img');
     if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
   } else {
-    // 動画：strategy で <img> / <video> を切替
-    const previewReady = item.preview_status === 'done' && item.preview_drive_file_id;
+    // 動画：preview_status で分岐（done のときだけ実プレビューを描画）
+    //   - done       : strategy=webp_storyboard なら <img>、それ以外は <video>
+    //   - pending / processing / null : 生成中プレースホルダ＋ポーリング開始（自動再描画）
+    //   - failed     : エラー UI（msHandlePreviewError 内に再生成 CTA あり）
+    //   - skipped    : 既存挙動（faststart_drive_file_id 経由のフォールバック表示）
+    const previewStatus = item.preview_status || null;
+    const previewReady = previewStatus === 'done' && item.preview_drive_file_id;
     const isStoryboard = previewReady && item.preview_strategy === 'webp_storyboard';
-    const isPending = item.preview_status === 'pending' || item.preview_status === 'processing';
+    const isPending = previewStatus === 'pending' || previewStatus === 'processing' || previewStatus === null;
+    const isFailed = previewStatus === 'failed';
 
     if (isStoryboard) {
       // 長尺：60枚パラパラ WebP ストーリーボード
@@ -39266,15 +39339,38 @@ function msSelectItem(fileId, scroll = true) {
         previewCaption = '60枚ストーリーボードプレビュー';
       }
     } else if (isPending) {
-      // 生成中：簡易プレースホルダ
-      media.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;line-height:1.6">
-        <div style="font-size:24px;margin-bottom:8px">⏳</div>
-        プレビュー生成中…<br>
-        <span style="font-size:11px">数十秒〜数分後に再読込してください</span>
+      // 生成中：プレースホルダ（Drive サムネが取れていれば添える）＋自動ポーリング開始
+      const thumbUrl = item.thumbnail_url || null;
+      const driveUrl = item.drive_url || null;
+      const dur = Number(item.video_duration_seconds) || 0;
+      const hintText = dur > 0 && dur >= 180
+        ? '長尺なので 1〜3 分かかります。完了次第ここに自動表示されます。'
+        : (dur > 0 && dur < 180
+          ? '短尺なので数秒で完了します。完了次第ここに自動表示されます。'
+          : '完了次第ここに自動表示されます（短尺は数秒、長尺は数分）。');
+      const thumbHtml = thumbUrl
+        ? `<img src="${votEscape(thumbUrl)}" alt="" style="max-width:280px;max-height:180px;display:block;margin:8px auto 12px;border-radius:6px;background:#000" onerror="this.style.display='none'">`
+        : '';
+      const driveLink = driveUrl
+        ? `<div style="margin-top:8px"><a href="${votEscape(driveUrl)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px;text-decoration:underline">Drive で開く ↗</a></div>`
+        : '';
+      media.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;line-height:1.7">
+        <div style="font-size:28px;margin-bottom:8px">⏳</div>
+        <div style="font-weight:600;color:var(--text-primary)">プレビュー生成中…</div>
+        <div style="font-size:11px;margin-top:4px">${votEscape(hintText)}</div>
+        ${thumbHtml}
+        ${driveLink}
       </div>`;
-      previewCaption = 'プレビュー生成中';
+      previewCaption = '完了したら自動でプレビューが表示されます';
+      // 5秒ごとに /item/:fileId を叩いて preview_status が done / failed に変わったら自動再描画
+      msStartPreviewPolling(fileId);
+    } else if (isFailed) {
+      // 生成失敗：エラーUI（再生成CTA含む）。msHandlePreviewError を「<video> エラー扱い」で呼ぶ
+      msHandlePreviewError(fileId, previewSrc, 'video', media, null);
+      previewCaption = 'プレビュー生成に失敗しました';
     } else {
-      // 短尺 h264_faststart、または未定義（既存挙動：faststart_drive_file_id 経由フォールバック）
+      // 短尺 h264_faststart、または preview_status が done/skipped/未定義
+      // （既存挙動：faststart_drive_file_id 経由のフォールバックも /preview/:fileId 配信に任せる）
       media.innerHTML = `<video id="ms-preview-video" src="${previewSrc}" muted autoplay loop playsinline preload="metadata" controls></video>`;
       setTimeout(() => {
         const v = document.getElementById('ms-preview-video');
@@ -39328,14 +39424,17 @@ function msSelectItem(fileId, scroll = true) {
   const canApply = item.status === 'analysis_completed';
   document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
   document.getElementById('ms-btn-apply').style.display = canApply ? '' : 'none';
-  // プレビュー再生成は動画 & preview_status が done でなければ表示
-  //   （新カラム preview_status を主に見るが、過渡期で未定義のときは旧 faststart_status を併用）
+  // プレビュー再生成ボタンの可視性ルール:
+  //   - done   : 表示（手動再生成バックフィル用途）
+  //   - failed : 表示（ユーザーが再試行できる）
+  //   - pending / processing : 非表示（自動生成中なので押すと混乱する）
+  //   - skipped / null : 表示（動画なら手動キック可能）
+  //   - 旧 faststart_status が done でも上記同様の判定にフォールバック
   const isVideo = item.media_kind === 'video';
-  const previewDone = item.preview_status === 'done';
-  const legacyDone = item.faststart_status === 'done';
-  const needsRegen = isVideo && !(previewDone || legacyDone);
+  const previewStatus = item.preview_status || null;
+  const inProgress = previewStatus === 'pending' || previewStatus === 'processing';
   const regenBtn = document.getElementById('ms-btn-preview-regen');
-  if (regenBtn) regenBtn.style.display = needsRegen ? '' : 'none';
+  if (regenBtn) regenBtn.style.display = (isVideo && !inProgress) ? '' : 'none';
 }
 
 // ==================== アクション（解析・適用・削除）====================
