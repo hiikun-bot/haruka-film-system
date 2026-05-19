@@ -7162,6 +7162,32 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </div>
 
+<!-- 素材広場: 削除確認モーダル（Drive 連動削除オプション付き） -->
+<div class="modal-overlay" id="modal-ms-delete-confirm" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal-card" style="width:480px">
+    <div class="modal-title">
+      <span>🗑 素材を削除しますか？</span>
+      <button class="modal-close" onclick="msDeleteConfirmCancel()">×</button>
+    </div>
+    <div style="padding:4px 0 12px;font-size:14px;color:var(--text);line-height:1.7">
+      <div id="ms-delete-confirm-filename" style="font-weight:600;word-break:break-all">-</div>
+      <div id="ms-delete-confirm-spec" style="font-size:12px;color:var(--text-muted);margin-top:2px">-</div>
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;padding:10px;background:#f8f9fb;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+        <input type="checkbox" id="ms-delete-confirm-drive" checked style="margin-top:2px">
+        <span>
+          <strong>Drive 上のファイルも削除する</strong>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">原本＋自動生成されたプレビュー版（WebP / faststart）も一緒に消します。チェックを外すと HARUKA から見えなくなるだけで Drive には残ります。</div>
+        </span>
+      </label>
+      <div id="ms-delete-confirm-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="msDeleteConfirmCancel()">キャンセル</button>
+      <button class="btn-primary" id="ms-delete-confirm-submit" style="background:#E24B4A" onclick="msDeleteConfirmSubmit()">削除する</button>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== つぶやき独立タブ（リベシティ風） ==================== -->
 <!-- ダッシュボード内のつぶやき欄とは別に、独立画面として提供する。
      既存リアクション/コメント API をそのまま活用。
@@ -39496,16 +39522,66 @@ async function msApplySelected() {
     showToast('適用失敗: ' + e.message, 'error');
   }
 }
+// 素材削除フロー:
+//   1) msDeleteSelected が確認モーダルを開く（Drive 連動削除チェック付き）
+//   2) ユーザーが「削除する」を押すと msDeleteConfirmSubmit が走り、
+//      ?deleteFromDrive=true|false 付きで DELETE /item/:fileId を叩く
+//   3) サーバが drive_deleted を返してくるので、トーストに何を消したか表示
+//
+// 旧仕様 (confirm() 直叩き＋Drive 残り) の非対称を解消するための再設計。
+let msDeletePendingFileId = null;
 async function msDeleteSelected() {
   if (!msSelectedFileId) return;
-  if (!confirm('このレコードを削除しますか？（Drive 上のファイルは消えません）')) return;
+  msDeleteOpenConfirm(msSelectedFileId);
+}
+function msDeleteOpenConfirm(fileId) {
+  const item = (msItemsCache || []).find(x => x.drive_file_id === fileId);
+  msDeletePendingFileId = fileId;
+  const nameEl = document.getElementById('ms-delete-confirm-filename');
+  const specEl = document.getElementById('ms-delete-confirm-spec');
+  const errEl = document.getElementById('ms-delete-confirm-error');
+  const chk = document.getElementById('ms-delete-confirm-drive');
+  if (nameEl) nameEl.textContent = item ? (item.current_filename || item.original_filename || fileId) : fileId;
+  if (specEl) specEl.textContent = item ? msFmtSpec(item) : '';
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (chk) chk.checked = true; // memory[基本的には一緒に消す前提] = デフォルトON
+  openModal('modal-ms-delete-confirm');
+}
+function msDeleteConfirmCancel() {
+  msDeletePendingFileId = null;
+  closeModal('modal-ms-delete-confirm');
+}
+async function msDeleteConfirmSubmit() {
+  const fileId = msDeletePendingFileId;
+  if (!fileId) { closeModal('modal-ms-delete-confirm'); return; }
+  const chk = document.getElementById('ms-delete-confirm-drive');
+  const deleteFromDrive = !!(chk && chk.checked);
+  const btn = document.getElementById('ms-delete-confirm-submit');
+  const errEl = document.getElementById('ms-delete-confirm-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (btn) { btn.disabled = true; btn.textContent = '削除中…'; }
   try {
-    await votFetch('/item/' + encodeURIComponent(msSelectedFileId), { method: 'DELETE' });
-    showToast('削除しました', 'success');
-    msSelectedFileId = null;
+    const result = await votFetch(
+      '/item/' + encodeURIComponent(fileId) + '?deleteFromDrive=' + (deleteFromDrive ? 'true' : 'false'),
+      { method: 'DELETE' }
+    );
+    closeModal('modal-ms-delete-confirm');
+    msDeletePendingFileId = null;
+    if (deleteFromDrive) {
+      const dd = result?.drive_deleted || {};
+      const okCount = ['source', 'preview', 'faststart'].filter(k => dd[k]).length;
+      showToast(okCount > 0
+        ? `素材を削除しました（Drive 上のファイルも ${okCount} 件削除）`
+        : '素材を削除しました（Drive 上に対象ファイルはありませんでした）', 'success');
+    } else {
+      showToast('素材を削除しました（DB のみ / Drive には残っています）', 'success');
+    }
+    if (msSelectedFileId === fileId) msSelectedFileId = null;
     msReloadList();
   } catch (e) {
-    showToast('削除失敗: ' + e.message, 'error');
+    if (errEl) { errEl.textContent = '削除失敗: ' + (e?.message || e); errEl.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '削除する'; }
   }
 }
 
