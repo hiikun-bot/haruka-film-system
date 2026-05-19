@@ -794,47 +794,83 @@ router.delete('/item/:fileId', async (req, res) => {
         targets.map(([, id]) => driveLib.deleteFile(id))
       );
 
-      // 1パス目を集計しつつ、403/insufficientFilePermissions のみユーザーOAuthでリトライ
+      // 1パス目を集計しつつ、以下のケースはユーザーOAuthでリトライ:
+      //   - 403/insufficientFilePermissions: SA に削除権限なし（典型: drive.file スコープで他者所有）
+      //   - not_actually_deleted: SA で 204 が返ったが verify で残存確認（権限不足を 204 で返す Drive の挙動）
+      //   - verify_failed: verify 自体が失敗（保守的にユーザーOAuth でリトライ）
+      // SA の試行結果・ユーザーOAuth リトライ結果は saAttempts/userAttempts に集約してログへ。
+      const saAttempts = {};
+      const userAttempts = {};
       for (let idx = 0; idx < targets.length; idx++) {
         const [key, id] = targets[idx];
         const r = saResults[idx];
         const result = r.status === 'fulfilled'
           ? r.value
-          : { ok: false, status: null, message: r.reason?.message || String(r.reason) };
+          : { ok: false, status: null, message: r.reason?.message || String(r.reason), verified: false };
+        saAttempts[key] = {
+          id,
+          ok: result.ok,
+          status: result.status,
+          reason: result.reason || null,
+          verified: result.verified === true,
+          message: result.message,
+        };
 
         if (result.ok) {
-          driveDeleted[key] = { ok: true };
+          driveDeleted[key] = { ok: true, verified: result.verified === true };
           continue;
         }
         // 既に消えていれば HARUKA と Drive が整合する方向なので成功扱い
         if (result.status === 404 || result.reason === 'notFound') {
-          driveDeleted[key] = { ok: true, already_gone: true };
+          driveDeleted[key] = { ok: true, already_gone: true, verified: true };
           continue;
         }
-        // SA に削除権限がない（Resumable Upload で drive.file スコープにより所有権がユーザー側）
-        // → ユーザー OAuth でリトライ
-        if (result.status === 403 || result.reason === 'insufficientFilePermissions') {
+        // 以下はユーザーOAuth でリトライする値の対象:
+        //   - 権限不足 (403/insufficientFilePermissions)
+        //   - 消えたフリ (not_actually_deleted) ← 今回の主要バグ
+        //   - verify 自体が失敗 (verify_failed) → 念のため OAuth で再試行
+        const shouldUserRetry = (
+          result.status === 403
+          || result.reason === 'insufficientFilePermissions'
+          || result.status === 'not_actually_deleted'
+          || result.reason === 'not_actually_deleted'
+          || result.status === 'verify_failed'
+          || result.reason === 'verify_failed'
+        );
+        if (shouldUserRetry) {
           const userClient = await getUserDriveClientOnce();
           if (!userClient) {
             driveDeleted[key] = {
               ok: false,
-              status: 403,
+              status: result.status || 403,
               reason: result.reason || 'insufficientFilePermissions',
-              message: `SA に削除権限がなく、ユーザーOAuthも不可: ${userOAuthError || 'unknown'}`,
+              message: `SA で削除確定できず、ユーザーOAuthも不可: ${userOAuthError || 'unknown'} / SA結果: ${result.message || ''}`,
+              verified: false,
             };
+            userAttempts[key] = { attempted: false, oauth_error: userOAuthError || 'unknown' };
             continue;
           }
           const retry = await driveLib.deleteFile(id, { client: userClient });
+          userAttempts[key] = {
+            attempted: true,
+            ok: retry.ok,
+            status: retry.status,
+            reason: retry.reason || null,
+            verified: retry.verified === true,
+            message: retry.message,
+          };
           if (retry.ok) {
-            driveDeleted[key] = { ok: true, via: 'user_oauth' };
+            driveDeleted[key] = { ok: true, via: 'user_oauth', verified: retry.verified === true };
           } else if (retry.status === 404 || retry.reason === 'notFound') {
-            driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth' };
+            driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth', verified: true };
           } else {
             driveDeleted[key] = {
               ok: false,
               status: retry.status,
               reason: retry.reason,
               message: `SA→ユーザーOAuth リトライも失敗: ${retry.message}`,
+              verified: false,
+              sa_result: { status: result.status, reason: result.reason || null },
             };
           }
           continue;
@@ -845,8 +881,19 @@ router.delete('/item/:fileId', async (req, res) => {
           status: result.status,
           reason: result.reason || null,
           message: result.message,
+          verified: false,
         };
       }
+      // ループ完了後、ログにまとめる
+      logCtx('delete-drive-attempts', {
+        at: new Date().toISOString(), by: req.user?.email,
+        fileId,
+        targets: targets.map(([k, id]) => ({ key: k, id })),
+        sa: saAttempts,
+        user_oauth: userAttempts,
+        result: driveDeleted,
+        user_oauth_error: userOAuthError,
+      });
     }
 
     // 最後に DB レコードを削除（Drive 削除に部分失敗しても、UI 上の整合性を優先して DB は消す）
