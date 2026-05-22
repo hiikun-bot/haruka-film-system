@@ -98,6 +98,10 @@ app.get('/healthz', (req, res) => {
 
 // 工事中ページは middleware より前に静的配信（middleware で巻き戻されないよう）
 app.use('/maintenance.html', express.static(path.join(__dirname, 'public/maintenance.html')));
+// プライバシーポリシー / 利用規約 は Google OAuth 審査要件として常時 publicly accessible である必要があるため
+// 認証ミドルウェアもサーキットブレーカーも経由させない
+app.use('/privacy.html', express.static(path.join(__dirname, 'public/privacy.html')));
+app.use('/terms.html',   express.static(path.join(__dirname, 'public/terms.html')));
 
 // サーキットブレーカーが open のとき:
 //  - /healthz, /maintenance.html, 静的アセット (画像/CSS/フォント) は素通し
