@@ -7563,6 +7563,14 @@ window.showPage = window.showPage || function(name, btn) {
                   title="このクリエイティブを直接開けるリンクをコピーします">
             🔗 共有
           </button>
+          <!-- Drive フォルダを開くボタン: 最新ファイルの親フォルダにジャンプ。
+               クライアント確認URLが個別ファイル単位なのに対し、こちらは「素材一式・過去稿が入った箱」を開く用途。 -->
+          <button id="cd-drive-folder-btn"
+                  onclick="openCreativeDriveFolder()"
+                  style="flex-shrink:0;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11.5px;color:var(--em-dark);cursor:pointer;white-space:nowrap;margin-right:6px"
+                  title="このクリエイティブのファイルが入っている Drive フォルダを開きます">
+            📁 フォルダ
+          </button>
           <!-- 事後修正モード起動ボタン（権限ありのみ表示） -->
           <button id="cd-postedit-btn"
                   onclick="openCreativePostEdit()"
@@ -37157,6 +37165,43 @@ async function copyCreativeShareLink() {
   } catch (e) {
     try { window.prompt('この URL をコピーして共有してください', url); } catch (_) {}
     showToast('クリップボード API が使えないため URL を表示しました', 'info');
+  }
+}
+
+// Drive 親フォルダを新タブで開く
+// サーバ側で最新の creative_files から parents を都度解決する設計（理由は routes/haruka.js のコメント参照）
+async function openCreativeDriveFolder() {
+  if (!currentCreativeDetail || !currentCreativeDetail.id) return;
+  const btn = document.getElementById('cd-drive-folder-btn');
+  const original = btn ? btn.textContent : '';
+  const restore = () => { if (btn) { btn.textContent = original || '📁 フォルダ'; btn.disabled = false; } };
+  try {
+    if (btn) { btn.textContent = '⏳ 取得中…'; btn.disabled = true; }
+    const res = await fetch(`/api/creatives/${encodeURIComponent(currentCreativeDetail.id)}/drive-folder`);
+    if (res.status === 404) {
+      let msg = 'まだファイルがアップロードされていません';
+      try { const j = await res.json(); if (j?.error) msg = j.error; } catch (_) {}
+      showToast(msg, 'warn');
+      restore();
+      return;
+    }
+    if (!res.ok) {
+      let msg = 'Drive フォルダの取得に失敗しました';
+      try { const j = await res.json(); if (j?.error) msg = j.error; } catch (_) {}
+      showToast(msg, 'error');
+      restore();
+      return;
+    }
+    const data = await res.json();
+    if (data?.folder_url) {
+      window.open(data.folder_url, '_blank', 'noopener');
+    } else {
+      showToast('フォルダ URL が取得できませんでした', 'error');
+    }
+    restore();
+  } catch (e) {
+    showToast('Drive フォルダの取得に失敗: ' + (e?.message || e), 'error');
+    restore();
   }
 }
 

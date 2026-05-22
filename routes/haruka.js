@@ -7874,6 +7874,43 @@ router.get('/creatives/:id/files', async (req, res) => {
   res.json(data);
 });
 
+// Drive の親フォルダ URL を返すエンドポイント
+// WHY: クライアント確認URLは個別ファイル単位なので、編集者が「素材一式・過去稿が入っているフォルダ」を開きたいユースケースをカバーできない。
+//      creative_files に直接 parent_folder_id を持たせる案もあるが、(1) 既存アップロード分の埋め戻しが要る (2) Drive 側で親が動くと不整合になる
+//      という理由で、最新ファイルから動的に parents を解決する方式にしている。
+router.get('/creatives/:id/drive-folder', requireAuth, async (req, res) => {
+  try {
+    const { data: files, error } = await supabase
+      .from('creative_files')
+      .select('drive_file_id')
+      .eq('creative_id', req.params.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) return res.status(500).json({ error: error.message });
+    const latest = files && files[0];
+    if (!latest || !latest.drive_file_id) {
+      return res.status(404).json({ error: 'まだファイルがアップロードされていません' });
+    }
+    const drive = await getDriveService();
+    const meta = await drive.files.get({
+      fileId: latest.drive_file_id,
+      fields: 'parents',
+      supportsAllDrives: true,
+    });
+    const parentId = (meta.data.parents || [])[0];
+    if (!parentId) {
+      return res.status(404).json({ error: '親フォルダが見つかりませんでした' });
+    }
+    res.json({
+      folder_id: parentId,
+      folder_url: `https://drive.google.com/drive/folders/${parentId}`,
+    });
+  } catch (err) {
+    console.error('[drive-folder] failed:', err?.stack || err?.message || err, { creativeId: req.params.id });
+    res.status(500).json({ error: err?.message || 'drive folder lookup failed' });
+  }
+});
+
 // ファイルアップロード（Google Drive）
 router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => {
   const creativeId = req.params.id;
