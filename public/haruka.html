@@ -31395,6 +31395,14 @@ function fpShowLoadingError(msg) {
 }
 
 function fpKeyHandler(e) {
+  // SELECT (例: カテゴリプルダウン) の Space は再生トグル優先
+  // pause→fpCaptureTimecode で select に focus が移っても Space で再生再開できるようにする
+  if (e.code === 'Space' && e.target.tagName === 'SELECT') {
+    e.preventDefault();
+    try { e.target.blur(); } catch(_) {}
+    fpTogglePlay();
+    return;
+  }
   if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
     if (e.code === 'Escape') { e.target.blur(); e.preventDefault(); }
     return;
@@ -32192,15 +32200,10 @@ function fpCaptureTimecode() {
       ta.removeEventListener('blur', _once);
     });
   }
-  // カテゴリープルダウンを先にフォーカス＋強制展開（スペース停止後すぐにカテゴリー選択可能に）
-  const cat = document.getElementById('fp-comment-category');
-  if (cat) {
-    cat.focus();
-    // showPicker() は Chrome99+/Safari17+/Firefox113+ で対応。非対応環境では何もしない
-    if (typeof cat.showPicker === 'function') {
-      try { cat.showPicker(); } catch(e) {}
-    }
-  } else if (ta) ta.focus();
+  // カテゴリプルダウンは focus / showPicker しない:
+  // pause 毎に select が focus されると Space が select に吸われて再生再開できなくなるため
+  // （fpKeyHandler 側で SELECT の Space を再生トグルに転送しているが、
+  //   showPicker() で開いた picker UI は keyboard event を完全に飲み込んでしまうので根本対策）
 }
 
 function fpClearTimecode() {

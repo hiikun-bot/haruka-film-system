@@ -14836,9 +14836,10 @@ function _validateDrawing(drawing) {
 // migration 未適用環境では parent_comment_id 列が無いため、同じ _isMissingCfcColumn
 // フォールバックで列指定取得に切り替える。
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
+  // users!user_id で FK を明示（resolved_by も users を参照しているため曖昧回避）
   let { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users(id, full_name, role, avatar_url)')
+    .select('*, users!user_id(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
   // bbox / parent_comment_id / timecode_end / drawing 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
@@ -14846,7 +14847,7 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     console.warn('[creative-file-comments] 列欠損疑い → 明示列指定で再取得:', error.message);
     ({ data, error } = await supabase
       .from('creative_file_comments')
-      .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users(id, full_name, role, avatar_url)')
+      .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users!user_id(id, full_name, role, avatar_url)')
       .eq('creative_file_id', req.params.fid)
       .order('created_at', { ascending: true }));
   }
@@ -14920,7 +14921,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   let { data, error } = await supabase
     .from('creative_file_comments')
     .insert(fullPayload)
-    .select('*, users(id, full_name, role, avatar_url)')
+    .select('*, users!user_id(id, full_name, role, avatar_url)')
     .single();
   // bbox / parent_comment_id / timecode_end / drawing 列が未追加の環境では段階的にフォールバック（500を返さない）
   if (_isMissingCfcColumn(error)) {
@@ -14931,7 +14932,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     ({ data, error } = await supabase
       .from('creative_file_comments')
       .insert(fb1)
-      .select('*, users(id, full_name, role, avatar_url)')
+      .select('*, users!user_id(id, full_name, role, avatar_url)')
       .single());
     // 次に timecode_end を外す
     if (_isMissingCfcColumn(error)) {
@@ -14940,7 +14941,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       ({ data, error } = await supabase
         .from('creative_file_comments')
         .insert(fb2)
-        .select('*, users(id, full_name, role, avatar_url)')
+        .select('*, users!user_id(id, full_name, role, avatar_url)')
         .single());
       // 次に parent_comment_id を外す（旧 migration 未適用ケース）
       if (_isMissingCfcColumn(error)) {
@@ -14949,14 +14950,14 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
         ({ data, error } = await supabase
           .from('creative_file_comments')
           .insert(fb3)
-          .select('*, users(id, full_name, role, avatar_url)')
+          .select('*, users!user_id(id, full_name, role, avatar_url)')
           .single());
         // それでもダメなら bbox も外す
         if (_isMissingCfcColumn(error) && bboxCheck.value) {
           ({ data, error } = await supabase
             .from('creative_file_comments')
             .insert(basePayload)
-            .select('*, users(id, full_name, role, avatar_url)')
+            .select('*, users!user_id(id, full_name, role, avatar_url)')
             .single());
         }
       }
@@ -15098,7 +15099,7 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
     .from('creative_file_comments')
     .update(updates)
     .eq('id', req.params.id)
-    .select('*, users(id, full_name, role, avatar_url)')
+    .select('*, users!user_id(id, full_name, role, avatar_url)')
     .single();
   // timecode_end / drawing / resolved 列未追加環境では該当列を外して再試行
   if (_isMissingCfcColumn(error) && (hasTcEnd || hasDrawing || hasResolved)) {
@@ -15116,7 +15117,7 @@ router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
       .from('creative_file_comments')
       .update(fb)
       .eq('id', req.params.id)
-      .select('*, users(id, full_name, role, avatar_url)')
+      .select('*, users!user_id(id, full_name, role, avatar_url)')
       .single());
   }
   if (error) return res.status(500).json({ error: error.message });
@@ -15153,7 +15154,7 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   const { category_id } = req.query;
   let query = supabase
     .from('creative_file_comments')
-    .select('*, users(id, full_name, role, avatar_url), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
+    .select('*, users!user_id(id, full_name, role, avatar_url), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
   if (category_id) query = query.eq('category_id', category_id);
@@ -15347,7 +15348,7 @@ function _tcToSeconds(tc) {
 router.get('/creative-files/:fid/markers.jsx', requireAuth, async (req, res) => {
   const { data: comments, error } = await supabase
     .from('creative_file_comments')
-    .select('comment, timecode, users(full_name)')
+    .select('comment, timecode, users!user_id(full_name)')
     .eq('creative_file_id', req.params.fid)
     .not('timecode', 'is', null)
     .order('created_at', { ascending: true });
@@ -15407,7 +15408,7 @@ router.post('/creative-files/:fid/link-premiere', requireAuth, async (req, res) 
 router.get('/creative-files/:fid/markers', requireAuth, async (req, res) => {
   const { data: comments, error } = await supabase
     .from('creative_file_comments')
-    .select('comment, timecode, users(full_name)')
+    .select('comment, timecode, users!user_id(full_name)')
     .eq('creative_file_id', req.params.fid)
     .not('timecode', 'is', null)
     .order('created_at', { ascending: true });
