@@ -31195,8 +31195,13 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     if (isVideo) {
       // ADR 021: Drive 直リンクを試みる → 取れたら Browser から Drive へ直接 stream（高速）。
       // 失敗時 / 直リンクで再生エラーが出たときは従来の /files/:id/stream プロキシに fallback。
+      //
+      // 注意: crossorigin 属性は付けない。
+      //   ・付けると Drive 直リンクは Access-Control-Allow-Origin ヘッダがないので CORS エラー
+      //   ・プロキシ側も CORS ヘッダを返していないので fallback もエラーになる
+      //   ・ペイント機能の canvas drawImage は same-origin プロキシ経由でしか使わない設計
       const proxyUrl = `${API}/files/${driveFileId}/stream`;
-      player.innerHTML = `<video id="fp-video" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block" crossorigin="anonymous"></video>`;
+      player.innerHTML = `<video id="fp-video" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
       ctrlBar.style.display = '';
       fpShowLoading('動画を読み込み中...');
       // 直リンク取得を試みる（失敗・遅延しても fallback でプロキシ URL を使えるよう保険セット）
