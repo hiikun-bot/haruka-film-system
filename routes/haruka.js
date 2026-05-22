@@ -8359,6 +8359,64 @@ router.get('/files/:fileId/stream', async (req, res) => {
   }
 });
 
+// 動画プレビュー用の Drive 直リンクを発行する（ADR 021）
+//
+// 経路: Browser → Railway (このエンドポイント) で URL を貰い、その後は
+//       Browser → Drive (Google CDN) で直接 stream。Railway のプロキシ帯域を消費しない。
+// セキュリティ: 既存 lib/drive-share.js と同じく anyone-with-link reader を idempotent に付与。
+//              元々クライアントレビュー時にも同じ操作をしている運用と整合。
+// fallback: 失敗時はフロント側で従来の /files/:fileId/stream プロキシに切り替わる。
+router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    // creative_files から faststart 情報を取得（faststart 版があれば優先）
+    const { data: cf } = await supabase
+      .from('creative_files')
+      .select('mime_type, faststart_drive_file_id, faststart_status')
+      .eq('drive_file_id', req.params.fileId)
+      .maybeSingle();
+
+    const wantsOriginal = req.query.original === '1';
+    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
+    const targetFileId  = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
+
+    const drive = await getDriveService();
+
+    // anyone-with-link reader を idempotent に付与
+    try {
+      await drive.permissions.create({
+        fileId: targetFileId,
+        supportsAllDrives: true,
+        requestBody: { role: 'reader', type: 'anyone' },
+      });
+    } catch (e) {
+      const code = e?.code || e?.response?.status;
+      const msg  = e?.message || '';
+      // 既に付与済 / 制限などは致命的でない
+      if (!(code === 400 || code === 403 || /already exists|cannotShareTeamDriveTopFolderWithAnyoneOrDomains|publishOutNotPermitted|sharingRateLimitExceeded/i.test(msg))) {
+        throw e;
+      }
+    }
+
+    const meta = await drive.files.get({
+      fileId: targetFileId,
+      fields: 'id, webContentLink, webViewLink, mimeType, size',
+      supportsAllDrives: true,
+    });
+
+    res.json({
+      contentUrl: meta.data.webContentLink || null,
+      viewUrl:    meta.data.webViewLink || null,
+      mimeType:   meta.data.mimeType || cf?.mime_type || null,
+      size:       meta.data.size ? Number(meta.data.size) : null,
+      source:     useFaststart ? 'faststart' : 'master',
+    });
+  } catch (e) {
+    console.error('[direct-url] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 既存ファイルの faststart 化（バックフィル）
 // 対象: creative_files の動画で faststart_drive_file_id 未設定のもの
 // 管理者のみ実行可。指定 creative_file id 単体 or pending 全件 ?all=1。

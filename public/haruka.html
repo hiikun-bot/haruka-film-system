@@ -31193,9 +31193,32 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
 
   if (driveFileId) {
     if (isVideo) {
-      player.innerHTML = `<video id="fp-video" src="${API}/files/${driveFileId}/stream" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
+      // ADR 021: Drive 直リンクを試みる → 取れたら Browser から Drive へ直接 stream（高速）。
+      // 失敗時 / 直リンクで再生エラーが出たときは従来の /files/:id/stream プロキシに fallback。
+      const proxyUrl = `${API}/files/${driveFileId}/stream`;
+      player.innerHTML = `<video id="fp-video" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block" crossorigin="anonymous"></video>`;
       ctrlBar.style.display = '';
       fpShowLoading('動画を読み込み中...');
+      // 直リンク取得を試みる（失敗・遅延しても fallback でプロキシ URL を使えるよう保険セット）
+      (async () => {
+        const v = document.getElementById('fp-video');
+        if (!v) return;
+        // まずプロキシ URL を保険として埋める（直リンク取得が遅延した場合の保険）
+        v.dataset.fallbackSrc = proxyUrl;
+        v.dataset.directTried = '0';
+        try {
+          const r = await apiFetch(`${API}/files/${driveFileId}/direct-url`);
+          if (r.ok) {
+            const j = await r.json();
+            if (j.contentUrl) {
+              v.src = j.contentUrl;
+              v.dataset.directTried = '1';
+              return;
+            }
+          }
+        } catch (_) { /* fallback へ */ }
+        v.src = proxyUrl;
+      })();
       setTimeout(() => {
         const v = document.getElementById('fp-video');
         if (!v) return;
@@ -31219,6 +31242,15 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
           var code = (v.error && v.error.code) || null;
           var srcUrl = v.currentSrc || v.src || '(unknown)';
           try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error', { code: code, src: String(srcUrl).slice(0,180) }); } catch (_) {}
+          // ADR 021: 直リンク再生でエラーが出たら、まだプロキシを試していない場合だけ自動 fallback
+          if (v.dataset.directTried === '1' && v.dataset.fallbackSrc) {
+            console.warn('[direct-url] 再生失敗 → プロキシへ fallback');
+            v.dataset.directTried = '2';
+            v.src = v.dataset.fallbackSrc;
+            v.load();
+            fpShowLoading('動画を読み込み中（fallback）...');
+            return;
+          }
           fpShowLoadingError(code === 4 ? '動画形式に対応していません' : '動画の読み込みに失敗しました');
         });
         v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
