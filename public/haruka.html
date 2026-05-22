@@ -32259,6 +32259,13 @@ function fpOpenPaintOverlay() {
   // 動画解像度をそのまま canvas のピクセルサイズに（高画質）
   canvas.width  = video.videoWidth;
   canvas.height = video.videoHeight;
+  // CSS 表示サイズは wrap 領域に contain（縦横比保持）。
+  // max-width/max-height だけだとブラウザによって片方向しか縮まず縦長動画が正方形になる事故が起きる。
+  _fpPaintFitCanvas();
+  if (!_fpPaintResizeHandler) {
+    _fpPaintResizeHandler = () => _fpPaintFitCanvas();
+    window.addEventListener('resize', _fpPaintResizeHandler);
+  }
   const ctx = canvas.getContext('2d');
   // 動画フレームを背景としてキャプチャ（CORS 設定不要 — same-origin /files プロキシ前提）
   try {
@@ -32295,6 +32302,33 @@ function fpClosePaintOverlay() {
   const ov = document.getElementById('fp-paint-overlay');
   if (ov) ov.style.display = 'none';
   _fpPaintState = null;
+  if (_fpPaintResizeHandler) {
+    window.removeEventListener('resize', _fpPaintResizeHandler);
+    _fpPaintResizeHandler = null;
+  }
+}
+
+// wrap 領域に canvas を contain でフィットさせる（縦横比保持）
+let _fpPaintResizeHandler = null;
+function _fpPaintFitCanvas() {
+  const canvas = document.getElementById('fp-paint-canvas');
+  const wrap   = document.getElementById('fp-paint-canvas-wrap');
+  if (!canvas || !wrap || !canvas.width || !canvas.height) return;
+  const wrapW = wrap.clientWidth;
+  const wrapH = wrap.clientHeight;
+  if (!wrapW || !wrapH) return;
+  const aspect = canvas.width / canvas.height;
+  let cssW, cssH;
+  if (wrapW / wrapH > aspect) {
+    // 横が余る → 高さフィット
+    cssH = wrapH;
+    cssW = Math.round(wrapH * aspect);
+  } else {
+    cssW = wrapW;
+    cssH = Math.round(wrapW / aspect);
+  }
+  canvas.style.width  = cssW + 'px';
+  canvas.style.height = cssH + 'px';
 }
 
 function fpOpenPaintFromBadge() {
