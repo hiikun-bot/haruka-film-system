@@ -35,6 +35,16 @@ function extractSection(body) {
 }
 
 // "- key: value" 形式の bullet を緩めにパース
+// key/value の前後にある Markdown 装飾 (** / __ / * / _) は剥がしてから処理する。
+// 過去に PR #718 が `- **画面**: ...` で書かれていたため `**画面**` を key とみなし
+// pickKey('画面') で取れず、必須フィールド欠落としてバグ報告自動紐付けが skip された事故あり。
+function stripInlineMarkdown(s) {
+  if (!s) return s;
+  return s
+    .replace(/^\s*(\*\*|__|\*|_)+/, '')
+    .replace(/(\*\*|__|\*|_)+\s*$/, '')
+    .trim();
+}
 function parseBullets(text) {
   const out = {};
   const lines = text.split(/\r?\n/);
@@ -43,8 +53,8 @@ function parseBullets(text) {
     const line = raw.replace(/^\s*[-*]\s*/, '');
     const m = line.match(/^([^:：]+)[:：]\s*(.*)$/);
     if (m) {
-      const key = m[1].trim().toLowerCase();
-      const val = m[2].trim();
+      const key = stripInlineMarkdown(m[1]).toLowerCase();
+      const val = stripInlineMarkdown(m[2]);
       out[key] = val;
       lastKey = key;
     } else if (lastKey && raw.trim()) {
