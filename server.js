@@ -612,6 +612,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] bug-triage-sla-checker 起動失敗:', e.message);
     }
+    // 請求書フォルダ: 月次自動生成（JST 月が変わったら全在籍メンバーの今月フォルダを作る）
+    try {
+      const { startInvoiceFolderMonthlyGen } = require('./workers/invoice-folder-monthly-gen');
+      startInvoiceFolderMonthlyGen();
+    } catch (e) {
+      console.error('[startup] invoice-folder-monthly-gen 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと

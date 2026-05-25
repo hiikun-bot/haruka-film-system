@@ -16845,4 +16845,7 @@ router.buildInvoiceMemberFolderName = buildInvoiceMemberFolderName;
 router.getInvoiceFolderExtraAdminEmails = getInvoiceFolderExtraAdminEmails;
 router.ensureUserDrivePermission = ensureUserDrivePermission;
 router.ensureUserDrivePermissionWithRoleFallback = ensureUserDrivePermissionWithRoleFallback;
+router.getInvoiceRootFolderId = getInvoiceRootFolderId;
+router.getInvoiceFolderManagerEmails = getInvoiceFolderManagerEmails;
+router.driveFolderUrl = driveFolderUrl;
 module.exports = router;
