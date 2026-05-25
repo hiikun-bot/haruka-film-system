@@ -3032,6 +3032,9 @@ window.showPage = window.showPage || function(name, btn) {
     <div style="padding:6px 2px 4px">
       <div style="margin-bottom:10px;font-size:13px">
         対象: <strong id="ifg-target-name">—</strong>
+        <span id="ifg-target-selector-wrap" style="display:none">
+          <select id="ifg-target-select" class="form-input" style="min-width:240px"></select>
+        </span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
         <label style="font-size:12px;color:var(--text-muted);min-width:64px">年</label>
@@ -4245,24 +4248,22 @@ window.showPage = window.showPage || function(name, btn) {
         <button class="btn-primary" id="btn-add-member" onclick="openAddMember()">＋ メンバー追加</button>
       </div>
     </div>
-    <!-- 🧾 請求書未提出フィルター（緑以外を絞り込み） — invoice_folder.view_any 権限保持者にのみ表示 -->
+    <!-- 🧾 請求書フォルダ表示月セレクタ + 未提出フィルター — invoice_folder.view_any 権限保持者にのみ表示 -->
     <!-- 表示判定は JS（renderInvoiceUnsubmittedFilterUI）から hasPermission('invoice_folder.view_any') 経由で行う -->
-    <div id="member-invoice-filter-row" style="display:none;margin-bottom:12px;padding:8px 12px;background:#fafafa;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)">
+    <div id="member-invoice-filter-row" style="display:none;margin-bottom:12px;padding:10px 12px;background:#fafafa;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span style="font-weight:600;color:var(--text)">🧾 請求書未提出フィルター</span>
-        <span style="font-size:11px;color:var(--text-muted)">（緑以外を絞り込み）</span>
-        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="filter-invoice-prev" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
-          <span id="filter-invoice-prev-label">先月</span>
+        <span style="font-weight:600;color:var(--text)">🧾 請求書フォルダ表示月</span>
+        <div style="display:inline-flex;align-items:center;gap:6px">
+          <button type="button" id="invoice-month-prev" onclick="shiftInvoiceFolderViewMonth(-1)" title="先月へ" style="font-size:12px;padding:2px 8px;line-height:1.4;border-radius:4px;cursor:pointer;background:#fff;color:var(--text);border:1px solid var(--border)">◀ 先月</button>
+          <span id="invoice-month-label" style="font-size:13px;font-weight:600;color:var(--text);min-width:140px;text-align:center">―</span>
+          <button type="button" id="invoice-month-next" onclick="shiftInvoiceFolderViewMonth(1)" title="来月へ" style="font-size:12px;padding:2px 8px;line-height:1.4;border-radius:4px;cursor:pointer;background:#fff;color:var(--text);border:1px solid var(--border)">来月 ▶</button>
+          <button type="button" id="invoice-month-today" onclick="resetInvoiceFolderViewMonthToToday()" title="今月へ戻る" style="font-size:11px;padding:2px 8px;line-height:1.4;border-radius:4px;cursor:pointer;background:#fff;color:var(--text-muted);border:1px solid var(--border)">今月</button>
+        </div>
+        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-left:8px">
+          <input type="checkbox" id="filter-invoice-unsubmitted" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
+          <span id="filter-invoice-unsubmitted-label">この月の請求書が未提出のメンバーだけ表示</span>
         </label>
-        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="filter-invoice-curr" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
-          <span id="filter-invoice-curr-label">今月</span>
-        </label>
-        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="filter-invoice-next" onchange="onInvoiceUnsubmittedFilterChange()" style="cursor:pointer">
-          <span id="filter-invoice-next-label">来月</span>
-        </label>
+        <button type="button" id="btn-invoice-folder-bulk-generate" onclick="openInvoiceFolderGenerateModal()" title="期間を指定して複数月のフォルダを生成" style="margin-left:auto;font-size:11px;padding:3px 10px;line-height:1.4;border-radius:4px;cursor:pointer;background:#fff8e1;color:#e65100;border:1px solid #ffe082">🛠️ 期間指定で生成</button>
       </div>
     </div>
     <div id="members-list" class="loading">読み込み中...</div>
@@ -10934,42 +10935,52 @@ function _invoiceFolderJstNow() {
   const [y, mo] = jstStr.split('-').map(s => parseInt(s, 10));
   return { year: y, month: mo };
 }
-function _invoiceFolderTriplet() {
+// グローバル「表示月」セレクタ。初期値は今月（JST 厳密）。
+// 月切替時は renderMemberList() を呼んで再描画する（_paintInvoiceFolderSections も再実行される）。
+window._invoiceFolderViewMonth = window._invoiceFolderViewMonth || null;
+function _getInvoiceFolderViewMonth() {
+  if (!window._invoiceFolderViewMonth) {
+    window._invoiceFolderViewMonth = _invoiceFolderJstNow();
+  }
+  return window._invoiceFolderViewMonth;
+}
+// 表示月を n ヶ月ずらす（前後制限なし）
+function shiftInvoiceFolderViewMonth(delta) {
+  const cur = _getInvoiceFolderViewMonth();
+  let y = cur.year, m = cur.month + (delta | 0);
+  while (m > 12) { m -= 12; y += 1; }
+  while (m < 1)  { m += 12; y -= 1; }
+  window._invoiceFolderViewMonth = { year: y, month: m };
+  try { renderMemberList(); } catch(_) {}
+}
+// 今月（JST）に戻す
+function resetInvoiceFolderViewMonthToToday() {
+  window._invoiceFolderViewMonth = _invoiceFolderJstNow();
+  try { renderMemberList(); } catch(_) {}
+}
+// 「先月／今月／来月」相当の補助ラベル（任意月との関係）
+function _invoiceFolderViewMonthSubLabel() {
+  const view = _getInvoiceFolderViewMonth();
   const now = _invoiceFolderJstNow();
-  // 先月
-  let prevY = now.year, prevM = now.month - 1; if (prevM < 1) { prevM = 12; prevY -= 1; }
-  // 来月
-  let nextY = now.year, nextM = now.month + 1; if (nextM > 12) { nextM = 1; nextY += 1; }
-  return [
-    { label: '先月', year: prevY, month: prevM },
-    { label: '今月', year: now.year, month: now.month },
-    { label: '来月', year: nextY, month: nextM },
-  ];
+  // 月ベースの差分（年込み）
+  const diff = (view.year - now.year) * 12 + (view.month - now.month);
+  if (diff === 0) return '今月';
+  if (diff === -1) return '先月';
+  if (diff === 1) return '来月';
+  if (diff < 0) return `${Math.abs(diff)}ヶ月前`;
+  return `${diff}ヶ月後`;
 }
 
 // ==================== 🧾 請求書未提出フィルター ====================
-// メンバー画面のフィルター行（filter-invoice-{prev,curr,next}）を制御する。
+// メンバー画面のフィルター行（filter-invoice-unsubmitted）を制御する。
 // invoice_folder.view_any 権限保持者（admin / secretary）にのみ UI を表示し、
-// チェックされた月の請求書が「緑（has_files=true）」以外のメンバーだけを残す。
+// チェックされていれば「表示月の請求書が緑（has_files=true）以外」のメンバーだけを残す。
 // JST 厳密で月ラベルを動的算出（memory: feedback_time_logic_jst_explicit）。
 function _isInvoiceUnsubmittedFilterActive() {
-  const p = document.getElementById('filter-invoice-prev');
-  const c = document.getElementById('filter-invoice-curr');
-  const n = document.getElementById('filter-invoice-next');
-  return !!((p && p.checked) || (c && c.checked) || (n && n.checked));
+  const el = document.getElementById('filter-invoice-unsubmitted');
+  return !!(el && el.checked);
 }
-// 「先月/今月/来月のうちチェックされている (year, month) 配列」を返す
-function _getCheckedInvoiceFilterMonths() {
-  const triplet = _invoiceFolderTriplet(); // [先月, 今月, 来月]
-  const ids = ['filter-invoice-prev', 'filter-invoice-curr', 'filter-invoice-next'];
-  const checked = [];
-  ids.forEach((id, idx) => {
-    const el = document.getElementById(id);
-    if (el && el.checked) checked.push(triplet[idx]);
-  });
-  return checked;
-}
-// フィルター UI（行ごと表示/非表示 + ラベルの月数）を再描画。
+// フィルター UI（行ごと表示/非表示 + 月セレクタのラベル）を再描画。
 // 表示判定は hasPermission('invoice_folder.view_any')（ADR 015: req.user.role 直書きせず権限経由）。
 function renderInvoiceUnsubmittedFilterUI() {
   const row = document.getElementById('member-invoice-filter-row');
@@ -10980,33 +10991,29 @@ function renderInvoiceUnsubmittedFilterUI() {
     return;
   }
   row.style.display = '';
-  // 月ラベル更新（JST 厳密）
-  const triplet = _invoiceFolderTriplet();
-  const setLbl = (id, t, sub) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = `${String(t.month).padStart(2, '0')}月（${sub}）`;
-  };
-  setLbl('filter-invoice-prev-label', triplet[0], '先月');
-  setLbl('filter-invoice-curr-label', triplet[1], '今月');
-  setLbl('filter-invoice-next-label', triplet[2], '来月');
+  const view = _getInvoiceFolderViewMonth();
+  const sub = _invoiceFolderViewMonthSubLabel();
+  const label = document.getElementById('invoice-month-label');
+  if (label) label.textContent = `${view.year}年 ${String(view.month).padStart(2, '0')}月（${sub}）`;
+  // 期間指定生成ボタンは generate_any 権限を持つ場合のみ表示
+  const bulkBtn = document.getElementById('btn-invoice-folder-bulk-generate');
+  if (bulkBtn) bulkBtn.style.display = hasPermission('invoice_folder.generate_any') ? '' : 'none';
 }
-// メンバーが「チェック中の月のいずれかが未提出（緑以外）」を満たすか
+// メンバーが「表示月が未提出（緑以外）」を満たすか
 // 未提出 = exists=false OR has_files=false。キャッシュ未取得時は「未提出扱い」（多めにヒット）。
 function memberMatchesInvoiceUnsubmittedFilter(member) {
-  const checkedMonths = _getCheckedInvoiceFilterMonths();
-  if (checkedMonths.length === 0) return true; // フィルター無効
+  if (!_isInvoiceUnsubmittedFilterActive()) return true; // フィルター無効
   // 請求書セクションが見えない（権限・秘書相互閲覧除外など）メンバーはフィルター対象外＝表示しない
   // → 催促対象として無意味なため、未提出フィルター ON 時は一覧から落とす
   if (!_canSeeInvoiceFolderFor(member)) return false;
+  const view = _getInvoiceFolderViewMonth();
   const cache = window._invoiceFolderCacheByUser;
   const userMap = (cache && cache.get && cache.get(String(member.id))) || null;
-  return checkedMonths.some(({ year, month }) => {
-    if (!userMap) return true; // データ未取得 = 未提出扱い
-    const slot = userMap.get(`${year}-${month}`);
-    if (!slot) return true; // この月のエントリ無し = 未提出扱い
-    if (!slot.exists) return true; // フォルダ未生成 = 未提出
-    return !slot.has_files; // ファイル無し = 未提出
-  });
+  if (!userMap) return true; // データ未取得 = 未提出扱い
+  const slot = userMap.get(`${view.year}-${view.month}`);
+  if (!slot) return true; // この月のエントリ無し = 未提出扱い
+  if (!slot.exists) return true; // フォルダ未生成 = 未提出
+  return !slot.has_files; // ファイル無し = 未提出
 }
 // チェックボックス変更ハンドラ
 function onInvoiceUnsubmittedFilterChange() {
@@ -11071,38 +11078,31 @@ async function _paintInvoiceFolderSections(members) {
   const visible = members.filter(_canSeeInvoiceFolderFor);
   if (visible.length === 0) return;
 
-  const triplet = _invoiceFolderTriplet();
-  // 「先月/今月/来月」の (year, month) ペアを year ごとにまとめる（年跨ぎ対応）
-  const yearToMonths = new Map();
-  triplet.forEach(t => {
-    if (!yearToMonths.has(t.year)) yearToMonths.set(t.year, new Set());
-    yearToMonths.get(t.year).add(t.month);
-  });
+  // グローバル月セレクタの選択月のみを取得対象とする（旧: 先月/今月/来月の 3 ヶ月）
+  const view = _getInvoiceFolderViewMonth();
 
   // 自分しか見えない（view_any 無し）場合は user_ids を強制
   const canViewAny = hasPermission('invoice_folder.view_any');
   const userIdsParam = canViewAny ? '' : (currentUser ? `&user_ids=${encodeURIComponent(currentUser.id)}` : '');
 
-  // 取得（年ごとに 1〜2 リクエストで済む）
-  const foldersByUser = new Map(); // user_id -> Map<"year-month", {exists, folder_url}>
-  for (const [year, monthsSet] of yearToMonths) {
-    const monthsCsv = [...monthsSet].sort((a,b)=>a-b).join(',');
-    try {
-      const url = `${API}/invoice-folders?year=${year}&months=${monthsCsv}${userIdsParam}&include_has_files=true`;
-      const res = await apiFetch(url);
-      if (!res.ok) continue;
+  // 取得（単月なので 1 リクエスト）
+  const foldersByUser = new Map(); // user_id -> Map<"year-month", {exists, folder_url, has_files, folder_id}>
+  try {
+    const url = `${API}/invoice-folders?year=${view.year}&months=${view.month}${userIdsParam}&include_has_files=true`;
+    const res = await apiFetch(url);
+    if (res.ok) {
       const json = await res.json();
       // json.folders: { user_id: [{month, exists, folder_url}] }
       const map = json.folders || {};
       Object.keys(map).forEach(uid => {
         if (!foldersByUser.has(uid)) foldersByUser.set(uid, new Map());
         (map[uid] || []).forEach(slot => {
-          foldersByUser.get(uid).set(`${year}-${slot.month}`, slot);
+          foldersByUser.get(uid).set(`${view.year}-${slot.month}`, slot);
         });
       });
-    } catch (e) {
-      console.warn('[invoice-folders] fetch failed', e);
     }
+  } catch (e) {
+    console.warn('[invoice-folders] fetch failed', e);
   }
   // グローバルキャッシュへ書き戻し（請求書未提出フィルターロジック用）
   window._invoiceFolderCacheByUser = foldersByUser;
@@ -11111,60 +11111,44 @@ async function _paintInvoiceFolderSections(members) {
   // 初回キャッシュ充填かつフィルターが ON の場合、フィルター結果が確定するように再描画
   // （無限ループ防止: wasReady=false のときだけ）
   if (!wasReady && _isInvoiceUnsubmittedFilterActive()) {
-    // 次の tick で renderMemberList → 再 paint を起動。
-    // _paintInvoiceFolderSections は renderMemberList から呼ばれる構造だが、
-    // キャッシュが空のときの「データ未取得=未提出扱い」結果と確定後の結果を一致させるため再描画する。
     setTimeout(() => { try { renderMemberList(); } catch(_) {} }, 0);
   }
 
   // ペイント
   const containers = document.querySelectorAll('.invoice-folder-section[data-invoice-folder-user]');
+  const mmLabel = String(view.month).padStart(2, '0');
   containers.forEach(el => {
     const uid = el.getAttribute('data-invoice-folder-user');
     const member = members.find(mm => String(mm.id) === uid);
     if (!member) return;
     const userMap = foldersByUser.get(uid) || new Map();
     const canGen = _canGenerateInvoiceFolderFor(member);
-    const btns = triplet.map(t => {
-      const slot = userMap.get(`${t.year}-${t.month}`);
-      const exists = slot && slot.exists;
-      const hasFiles = exists && slot && slot.has_files;
-      // folder_url が DB に未保存（null/空）でも folder_id があれば組み立て直す（防御的フォールバック）
-      const folderUrl = exists
-        ? (slot.folder_url || (slot.folder_id ? `https://drive.google.com/drive/folders/${slot.folder_id}` : ''))
-        : '';
-      let cls, style, title;
-      if (!exists) {
-        cls = 'btn-folder-missing';
-        style = 'background:#f5f5f5;color:#888;border:1px dashed #cfd8d7';
-        title = `未生成（${t.year}年${t.month}月）`;
-      } else if (hasFiles) {
-        cls = 'btn-folder-has-files';
-        style = 'background:#e8f5e9;color:#1b5e20;border:1px solid #2e7d32';
-        title = `この月の請求書フォルダ（ファイルあり）を Drive で開く（${t.year}年${t.month}月）`;
-      } else {
-        cls = 'btn-folder-exists';
-        style = 'background:#e3f2fd;color:#1565c0;border:1px solid #90caf9';
-        title = `この月の請求書フォルダ（空）を Drive で開く（${t.year}年${t.month}月）`;
-      }
-      const baseStyle = `font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;${style}`;
-      const label = `📂 ${String(t.month).padStart(2,'0')}月`;
-      if (exists && folderUrl) {
-        // 生成済みは <a> タグ化（ポップアップブロッカー耐性 + middle-click 対応）。
-        // 旧実装は JSON.stringify(folder_url) を onclick 属性 (" 区切り) 内に展開していたため
-        // URL 内の " によって属性が早期終了し、クリックしても何も起きないケースがあった。
-        return `<a class="${cls}" href="${esc(folderUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}" aria-label="${esc(title)}" onclick="event.stopPropagation()" style="display:inline-block;text-decoration:none;${baseStyle}">${label}</a>`;
-      }
-      const onclick = canGen
-        ? `event.stopPropagation();handleInvoiceFolderMissingClick('${member.id}',${t.year},${t.month})`
-        : `event.stopPropagation();showToast('このフォルダは未生成です（生成権限がありません）','warn')`;
-      return `<button class="${cls}" type="button" title="${esc(title)}" aria-label="${esc(title)}" onclick="${onclick}" style="${baseStyle}">${label}</button>`;
-    }).join('');
-    const genBtn = canGen
-      ? `<button type="button" onclick="event.stopPropagation();openInvoiceFolderGenerateModal('${member.id}')" title="期間を指定して生成" style="font-size:11px;padding:2px 6px;line-height:1.3;border-radius:4px;cursor:pointer;background:#fff8e1;color:#e65100;border:1px solid #ffe082">➕ 生成</button>`
+    const slotData = userMap.get(`${view.year}-${view.month}`);
+    const exists = !!(slotData && slotData.exists);
+    const hasFiles = exists && slotData && slotData.has_files;
+    const folderUrl = exists
+      ? (slotData.folder_url || (slotData.folder_id ? `https://drive.google.com/drive/folders/${slotData.folder_id}` : ''))
       : '';
+    let html = '';
+    if (exists && hasFiles && folderUrl) {
+      // 緑: ファイルあり
+      const title = `この月の請求書フォルダ（ファイルあり）を Drive で開く（${view.year}年${view.month}月）`;
+      html = `<a class="btn-folder-has-files" href="${esc(folderUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}" aria-label="${esc(title)}" onclick="event.stopPropagation()" style="display:inline-block;text-decoration:none;font-size:11px;padding:2px 8px;line-height:1.3;border-radius:4px;cursor:pointer;background:#e8f5e9;color:#1b5e20;border:1px solid #2e7d32">📂 ${mmLabel}月を開く</a>`;
+    } else if (exists && folderUrl) {
+      // 青: 生成済み・空
+      const title = `この月の請求書フォルダ（空）を Drive で開く（${view.year}年${view.month}月）`;
+      html = `<a class="btn-folder-exists" href="${esc(folderUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}" aria-label="${esc(title)}" onclick="event.stopPropagation()" style="display:inline-block;text-decoration:none;font-size:11px;padding:2px 8px;line-height:1.3;border-radius:4px;cursor:pointer;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9">📂 ${mmLabel}月を開く（空）</a>`;
+    } else if (!exists && canGen) {
+      // オレンジ: 未生成・生成権限あり
+      const title = `未生成（${view.year}年${view.month}月）— クリックで作成`;
+      html = `<button class="btn-folder-missing" type="button" title="${esc(title)}" aria-label="${esc(title)}" onclick="event.stopPropagation();handleInvoiceFolderMissingClick('${member.id}',${view.year},${view.month})" style="font-size:11px;padding:2px 8px;line-height:1.3;border-radius:4px;cursor:pointer;background:#fff8e1;color:#e65100;border:1px solid #ffe082">＋ ${mmLabel}月を作成</button>`;
+    } else {
+      // グレー: 未生成・生成権限なし（表示のみ）
+      const title = `未生成（${view.year}年${view.month}月）`;
+      html = `<span class="btn-folder-missing-readonly" title="${esc(title)}" aria-label="${esc(title)}" style="display:inline-block;font-size:11px;padding:2px 8px;line-height:1.3;border-radius:4px;background:#f5f5f5;color:#888;border:1px dashed #cfd8d7">📂 ${mmLabel}月（未生成）</span>`;
+    }
     const slot = el.querySelector('.invoice-folder-buttons');
-    if (slot) slot.innerHTML = btns + genBtn;
+    if (slot) slot.innerHTML = html;
   });
 }
 // 未生成ボタンクリック時の確認 → 即生成
@@ -11191,13 +11175,51 @@ async function handleInvoiceFolderMissingClick(userId, year, month) {
   }
 }
 // 生成モーダルを開く
+// userId が省略された場合は「メンバー選択セレクト」を表示し、admin/secretary がここで対象を選ぶ。
 let _invoiceFolderModalTargetId = null;
 function openInvoiceFolderGenerateModal(userId) {
-  const member = (allMembers || []).find(m => m.id === userId);
-  if (!member) { showToast('メンバーが見つかりません', 'error'); return; }
-  _invoiceFolderModalTargetId = userId;
   const nameEl = document.getElementById('ifg-target-name');
-  if (nameEl) nameEl.textContent = member.full_name || member.nickname || member.email || '—';
+  const selectorWrap = document.getElementById('ifg-target-selector-wrap');
+  // userId 指定あり = 行内クリック互換（旧仕様）
+  if (userId) {
+    const member = (allMembers || []).find(m => m.id === userId);
+    if (!member) { showToast('メンバーが見つかりません', 'error'); return; }
+    _invoiceFolderModalTargetId = userId;
+    if (nameEl) {
+      nameEl.style.display = '';
+      nameEl.textContent = member.full_name || member.nickname || member.email || '—';
+    }
+    if (selectorWrap) selectorWrap.style.display = 'none';
+  } else {
+    // 上部「期間指定で生成」ボタン経由: メンバー選択セレクトを表示
+    if (!hasPermission('invoice_folder.generate_any')) {
+      showToast('生成権限がありません', 'error');
+      return;
+    }
+    _invoiceFolderModalTargetId = null;
+    if (nameEl) nameEl.style.display = 'none';
+    if (selectorWrap) {
+      selectorWrap.style.display = '';
+      const sel = document.getElementById('ifg-target-select');
+      if (sel) {
+        sel.innerHTML = '<option value="">— メンバーを選択 —</option>';
+        // 生成権限を持って閲覧可能なメンバー一覧（_canGenerateInvoiceFolderFor で絞る）
+        const candidates = (allMembers || [])
+          .filter(m => m.is_active !== false)
+          .filter(m => _canGenerateInvoiceFolderFor(m))
+          .slice()
+          .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ja'));
+        candidates.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          const nick = m.nickname ? `（${m.nickname}）` : '';
+          opt.textContent = `${m.full_name || m.email || m.id}${nick}`;
+          sel.appendChild(opt);
+        });
+        sel.onchange = () => { _invoiceFolderModalTargetId = sel.value || null; };
+      }
+    }
+  }
 
   // 年セレクト: 今年・来年・前年
   const now = _invoiceFolderJstNow();
