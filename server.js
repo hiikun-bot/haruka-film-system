@@ -590,7 +590,7 @@ const runSchemaSync = require('./db/migrate');
   } else {
     console.log('[schema-sync] SCHEMA_AUTO_SYNC=false により自動同期スキップ');
   }
-  app.listen(PORT, async () => {
+  const server = app.listen(PORT, async () => {
     console.log(`
   ╔═══════════════════════════════════════╗
   ║   HARUKA FILM SYSTEM サーバー起動     ║
@@ -613,4 +613,14 @@ const runSchemaSync = require('./db/migrate');
       console.error('[startup] bug-triage-sla-checker 起動失敗:', e.message);
     }
   });
+
+  // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
+  // 遅い回線（家庭用 Wi-Fi で 1Mbps 程度）から数十MBの動画/画像をアップロードする際、
+  // 5分経過した瞬間にサーバが connection をリセットし
+  // 「進捗60%付近で 不明なエラー」になる（バグ報告 #9f208f5d）。
+  // 動画素材のアップロードは数百MBに達するため十分長めにしておく。
+  // - 0 にすると無効化できるが、本物のスタックした接続を残し続けるリスクがあるため 30分上限とする
+  // - headersTimeout は req body より先のヘッダ受信限界。デフォルト 60s のままで OK
+  // - keepAliveTimeout もデフォルトのまま（5s）
+  server.requestTimeout = 30 * 60 * 1000;
 })();

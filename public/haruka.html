@@ -36604,9 +36604,15 @@ async function executeUpload() {
       progressWrap.style.display = 'none';
       uploadBtn.disabled = false;
       progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
-      try {
-        const data = JSON.parse(xhr.responseText);
-        if (xhr.status === 200) {
+      // バグ報告 #9f208f5d で「エラー: 不明なエラー」とだけ出て原因が判らなかったため、
+      // 失敗時は xhr.status / 応答本文の冒頭をユーザーに見せる。
+      // 408/504/0 などタイムアウト系は遅回線が原因と分かりやすい言い回しに変える。
+      const rawStatus = xhr.status;
+      const rawText = xhr.responseText || '';
+      let data = null;
+      try { data = JSON.parse(rawText); } catch (_) { /* 空 / HTML 応答 */ }
+      if (rawStatus === 200 && data) {
+        try {
           // version はサーバ側採番が真（V1 重複事故防止のためフロント値は無視される）。
           // フロントが v1 を送っていてもサーバが v3 を採番していたら "v3 として保存しました" と表示する。
           const confirmedVersion = data.version || data.file?.version || version;
@@ -36634,12 +36640,21 @@ async function executeUpload() {
               if (confirmDCheck) confirmDCheck.style.display = '';
             }
           }
-        } else {
-          statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー');
+        } catch (e) {
+          statusEl.textContent = 'アップロード後の画面更新でエラー: ' + (e?.message || e);
           statusEl.style.color = '#E24B4A';
         }
-      } catch(e) {
-        statusEl.textContent = 'レスポンスの解析に失敗しました';
+      } else {
+        const detail = data?.error
+          || data?.message
+          || (rawText ? rawText.slice(0, 120).replace(/\s+/g, ' ').trim() : '');
+        let hint = '';
+        if (rawStatus === 408 || rawStatus === 504 || rawStatus === 0) {
+          hint = '（回線速度が遅くサーバのタイムアウトに達した可能性。有線接続や別Wi-Fiで再試行してください）';
+        } else if (rawStatus === 413) {
+          hint = '（ファイルサイズが上限超過です）';
+        }
+        statusEl.textContent = `アップロード失敗 [HTTP ${rawStatus || 'n/a'}] ${detail || '応答本文なし'}${hint}`;
         statusEl.style.color = '#E24B4A';
       }
       resolve();
