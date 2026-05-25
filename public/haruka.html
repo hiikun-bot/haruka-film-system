@@ -3286,6 +3286,9 @@ window.showPage = window.showPage || function(name, btn) {
               <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="submitBugReportTriage()">対応方針を確定</button>
               <span id="br-triage-current" style="font-size:11px;color:#92400E"></span>
             </div>
+            <div style="margin-top:6px;font-size:11px;color:#6B7280">
+              💡 右下の「保存」ボタンを押しても、ここで選んだ方針＋コメントが一緒に確定されます
+            </div>
           </div>
         </div>
 
@@ -39173,6 +39176,50 @@ async function _submitBugReportInner(id, title) {
     }
   }
 
+  // 編集モードでは「対応方針タブ」に未確定変更があれば保存ボタンで一緒に確定する。
+  // ユーザー混乱の根本原因: 「対応方針を確定」と「保存」が別アクションで、保存だけ押すと
+  // ラジオ選択もコメントも全てロストしていた。保存=全部保存にすることでトラップを解消。
+  let triagePatched = false;
+  if (id) {
+    const radioVal = document.querySelector('input[name="br-triage"]:checked')?.value || null;
+    const savedDecision = (_bugReportEditing && _bugReportEditing.triage_decision) || null;
+    const triageCommentEl = document.getElementById('br-triage-comment');
+    const triageComment = (triageCommentEl?.value || '').trim();
+    // 「ラジオを選択していて」かつ「方針が変わったか／コメントが書かれている」場合に triage を保存
+    const decisionChanged = radioVal && radioVal !== savedDecision;
+    const commentToAdd = !!triageComment;
+    if (decisionChanged || (commentToAdd && radioVal)) {
+      try {
+        const tRes = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(id)}/triage`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ triage_decision: radioVal, comment: triageComment }),
+        });
+        if (tRes.ok) {
+          triagePatched = true;
+          if (triageCommentEl) triageCommentEl.value = '';
+          // status が triage 側で自動遷移したら、その後の PUT で br-status の値で上書きされないよう先に揃える
+          const tBody = await tRes.json().catch(() => ({}));
+          if (tBody && tBody.status) {
+            const statusEl = document.getElementById('br-status');
+            if (statusEl) statusEl.value = tBody.status;
+            payload.status = tBody.status;
+          }
+        } else if (tRes.status !== 403) {
+          // 403（admin でない）は黙ってスキップ。それ以外は明示エラー
+          const err = await tRes.json().catch(() => ({}));
+          alert((err.error || '対応方針の保存に失敗しました') + '\n（その他の項目の保存は続行します）');
+        }
+      } catch (e) {
+        console.warn('[bug-report] triage save failed:', e);
+      }
+    } else if (commentToAdd && !radioVal) {
+      // コメントだけ書いてラジオ未選択 → 救済不可能なのでユーザーに伝えて中断
+      alert('対応方針コメントを保存するには、「✅ 対応する / ⏸ 保留 / ❌ 却下」のいずれかを選んでください');
+      return;
+    }
+  }
+
   try {
     const url = id ? `/api/haruka/bug-reports/${encodeURIComponent(id)}` : '/api/haruka/bug-reports';
     const method = id ? 'PUT' : 'POST';
@@ -39183,7 +39230,10 @@ async function _submitBugReportInner(id, title) {
       return;
     }
     closeBugReportModal();
-    showToast(id ? 'バグ報告を更新しました' : 'バグ報告を送信しました（ご報告ありがとうございます）', 'success');
+    const okMsg = id
+      ? (triagePatched ? 'バグ報告と対応方針を更新しました' : 'バグ報告を更新しました')
+      : 'バグ報告を送信しました（ご報告ありがとうございます）';
+    showToast(okMsg, 'success');
     // 一覧モーダルが開いていれば即時最新化（openModal は class 制御なので classList で判定）
     if (document.getElementById('modal-bug-report-list')?.classList.contains('open')) {
       await loadBugReportList();
