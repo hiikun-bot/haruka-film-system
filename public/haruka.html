@@ -3012,8 +3012,8 @@ window.showPage = window.showPage || function(name, btn) {
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-urgent" onchange="renderBugReportList()">🚨 至急のみ</label>
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="bug-report-filter-mine" onchange="renderBugReportList()">自分の報告のみ</label>
       <span style="flex:1"></span>
-      <button class="btn" type="button" onclick="loadBugReportList()" title="一覧を最新化"
-              style="font-size:13px;padding:6px 10px;line-height:1">🔄</button>
+      <button class="btn" id="bug-report-reload-btn" type="button" onclick="loadBugReportList({ manual: true })" title="一覧を最新化"
+              style="font-size:13px;padding:6px 10px;line-height:1;min-width:36px"><span id="bug-report-reload-icon">🔄</span></button>
       <button class="btn-primary" onclick="openBugReportModal()">＋ 新規報告</button>
     </div>
     <div id="bug-report-list" style="overflow:auto;flex:1">
@@ -38458,18 +38458,52 @@ async function openBugReportListModal() {
   loadBugReportOpenCount();
 }
 
-async function loadBugReportList() {
+async function loadBugReportList(opts = {}) {
   if (_bugReportLoading) return;
   _bugReportLoading = true;
+  // 🔄 ボタンの視覚フィードバック: 押した瞬間に回転＋無効化、完了で✓を一瞬出す。
+  // 手動押下以外（モーダル open / triage 確定後の自動再読込）は静かに更新する。
+  const btn = document.getElementById('bug-report-reload-btn');
+  const icon = document.getElementById('bug-report-reload-icon');
+  const showFb = !!opts.manual && btn && icon;
+  if (showFb) {
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    icon.style.display = 'inline-block';
+    icon.style.animation = 'fp-spin .8s linear infinite';
+  }
+  const t0 = showFb ? Date.now() : 0;
   try {
     const res = await fetch('/api/haruka/bug-reports');
     if (!res.ok) throw new Error('一覧の取得に失敗しました');
     _bugReports = await res.json();
     renderBugReportList();
+    if (showFb) {
+      // 一瞬で終わると「押した感」が出ないので最低 350ms は回す
+      const elapsed = Date.now() - t0;
+      if (elapsed < 350) await new Promise(r => setTimeout(r, 350 - elapsed));
+      icon.style.animation = '';
+      icon.textContent = '✓';
+      btn.style.background = '#10B981';
+      btn.style.color = '#fff';
+      setTimeout(() => {
+        icon.textContent = '🔄';
+        btn.style.background = '';
+        btn.style.color = '';
+      }, 800);
+    }
   } catch (e) {
     document.getElementById('bug-report-list').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B">${_brEsc(e.message)}</div>`;
+    if (showFb) {
+      icon.style.animation = '';
+      icon.textContent = '🔄';
+    }
   } finally {
     _bugReportLoading = false;
+    if (showFb) {
+      btn.disabled = false;
+      btn.style.opacity = '';
+    }
   }
 }
 
@@ -39351,7 +39385,13 @@ async function submitBugReportTriage() {
       return;
     }
     const r = await res.json();
-    showToast(`対応方針を「${_brTriageLabel[decision]}」に確定しました`, 'success');
+    const hadComment = !!comment;
+    showToast(
+      hadComment
+        ? `対応方針を「${_brTriageLabel[decision]}」に確定し、💬コメント欄にも追記しました`
+        : `対応方針を「${_brTriageLabel[decision]}」に確定しました`,
+      'success'
+    );
     document.getElementById('br-triage-comment').value = '';
     if (r.status) document.getElementById('br-status').value = r.status;
     // 詳細を再取得して triage_decider / triage_decided_at を反映
@@ -39364,6 +39404,30 @@ async function submitBugReportTriage() {
       _brSyncClaudeButton(decision);
     }
     await _brLoadComments(id);
+    // 任意コメントが添えられていた場合だけ「バグ報告タブ」に自動切替して💬コメント欄をスクロール表示。
+    // これにより「対応方針タブで書いたのにどこへ消えた？」を解消する（コメントはバグ報告タブ側の💬欄に追記されている）
+    if (hadComment) {
+      _brSwitchTab('main');
+      // タブ切替直後はレイアウトが固まっていないので次フレームでスクロール
+      requestAnimationFrame(() => {
+        const wrap = document.getElementById('br-comments-wrap');
+        const list = document.getElementById('br-comments-list');
+        if (wrap && wrap.scrollIntoView) {
+          wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        // 最新（最後に追加された人手コメント）を一瞬ハイライトしてどこに追記されたかを示す
+        if (list) {
+          const items = list.querySelectorAll('[data-cid]');
+          const last = items[items.length - 1];
+          if (last) {
+            const orig = last.style.background;
+            last.style.transition = 'background 1.4s ease-out';
+            last.style.background = '#FEF3C7';
+            setTimeout(() => { last.style.background = orig || '#FAFAFA'; }, 1600);
+          }
+        }
+      });
+    }
   } catch (e) { alert(e.message); }
 }
 
