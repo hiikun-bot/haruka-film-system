@@ -2460,6 +2460,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           if (_src.indexOf('/api/admin/video-organization-test/preview/') !== -1) {
             return;
           }
+          // ADR 021: クリエイティブ詳細の <video id="fp-video"> は Drive 直リンクで
+          // 一旦失敗 → プロキシ /files/:id/stream に自動 fallback する設計。
+          // 直リンク試行中（dataset.directTried==='1'）でプロキシ未試行のうちは
+          // 中間状態なので Slack 通知をスキップ（fallback 後の真の失敗は通知する）。
+          try {
+            if (t && t.tagName && t.tagName.toLowerCase() === 'video'
+                && t.id === 'fp-video'
+                && t.dataset && t.dataset.directTried === '1'
+                && t.dataset.fallbackSrc) {
+              try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error_suppressed', 'direct→proxy fallback'); } catch (_) {}
+              return;
+            }
+          } catch (_) { /* 失敗しても通常パスに進む */ }
           postAutoError({
             kind: 'resource.error',
             message: '[resource load failed] <' + (t.tagName || '?').toLowerCase() + '> ' +
