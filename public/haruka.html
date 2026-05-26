@@ -10479,6 +10479,26 @@ document.addEventListener('DOMContentLoaded', () => {
   _syncMemberViewToggleActive(memberViewMode);
   _applyMemberToolbarVisibility(memberViewMode);
 });
+
+// GCal OAuth コールバックから戻ってきた時のハンドラ
+// routes/google-calendar.js が /haruka.html?gcal_connected=1 にリダイレクトしてくる。
+// メンバータブ → カレンダー サブビューに自動遷移し、成功トーストを出す。
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('gcal_connected') !== '1') return;
+    // 古いブラウザ・スタブ showPage 対策で少し遅らせて呼ぶ
+    setTimeout(() => {
+      try { if (typeof showPage === 'function') showPage('members'); } catch (_) {}
+      setTimeout(() => {
+        try { if (typeof setMemberViewMode === 'function') setMemberViewMode('calendar'); } catch (_) {}
+        try { if (typeof showToast === 'function') showToast('Googleカレンダー連携が完了しました', 'success'); } catch (_) {}
+      }, 200);
+    }, 100);
+    // クエリパラメータを URL から消す（リロード時に再発火しないように）
+    history.replaceState({}, '', window.location.pathname);
+  } catch (_) { /* ignore */ }
+});
 // 列ヘッダクリックによるソート上書き。null のときは memberSortBy（ピル）が使われる。
 // 値: { col: 'role'|'rank'|'team'|'name', dir: 'asc'|'desc' }
 let memberHeaderSort = null;
