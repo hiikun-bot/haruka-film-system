@@ -2460,6 +2460,23 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           if (_src.indexOf('/api/admin/video-organization-test/preview/') !== -1) {
             return;
           }
+          // 外部注入スクリプトの読込失敗は通知しない。アドウェア／ブラウザ拡張／マルウェアが
+          // ページに後から差し込む <script>/<img>/<link>（例: https://infird.com/cdn/<uuid>?uuid=...）は
+          // 当方のコードに存在せず直せない外部要因。自オリジン or 既知CDN 以外のホストは Slack 通知から除外する。
+          // 相対パス・data:・blob: は http(s) 絶対URLにマッチしないので従来どおり通知対象のまま。
+          try {
+            var _abs = t.src || t.href || t.currentSrc || '';
+            if (/^https?:\/\//i.test(_abs)) {
+              var _rHost = '';
+              try { _rHost = new URL(_abs).host; } catch (_) { _rHost = ''; }
+              var _ALLOWED_RESOURCE_HOSTS = [location.host, 'cdn.jsdelivr.net'];
+              if (_rHost && _ALLOWED_RESOURCE_HOSTS.indexOf(_rHost) === -1) {
+                try { if (window.__addBreadcrumb) window.__addBreadcrumb('resource_error_suppressed', 'third-party host: ' + _rHost); } catch (_) {}
+                try { console.warn('[auto-error] suppressed third-party resource error:', _rHost, _abs); } catch (_) {}
+                return;
+              }
+            }
+          } catch (_) { /* 判定失敗しても通常パスに進む */ }
           // ADR 021: クリエイティブ詳細の <video id="fp-video"> は Drive 直リンクで
           // 一旦失敗 → プロキシ /files/:id/stream に自動 fallback する設計。
           // 直リンク試行中（dataset.directTried==='1'）でプロキシ未試行のうちは
