@@ -209,6 +209,189 @@ function extractFolderIdFromUrl(url) {
   return m ? m[1] : null;
 }
 
+// ==================== クリエイティブ アップロード共通ヘルパ ====================
+// 旧 multer 経路（POST /creatives/:id/upload）と、新 Resumable 直送経路
+// （POST /creatives/:id/upload-session/{init,complete}）の両方で使う共通ロジック。
+// Resumable 直送は Railway エッジの ~5分 リクエストタイムアウト
+// （502 "Application failed to respond"）を回避するため、動画バイトをバックエンドに
+// 通さずブラウザ → Google Drive へ直接 PUT させる。バックエンドは session 発行と
+// DB 登録だけを担当する。
+
+// サービスアカウントの OAuth2 アクセストークンを取得（Resumable セッション発行の Authorization 用）
+async function getServiceAccountAccessToken() {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY が設定されていません');
+  const credentials = JSON.parse(keyJson);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+  const client = await auth.getClient();
+  const { token } = await client.getAccessToken();
+  if (!token) throw new Error('サービスアカウントのアクセストークン取得に失敗しました');
+  return token;
+}
+
+// バージョン採番（ラウンド番号方式・ADR 011 補足）。creative_files / creative_version_history を
+// 読むだけの副作用なし関数。multer 経路の採番ロジックをそのまま抽出したもの。
+//   M = creative_files の MAX(version)
+//   ・M = 0 → 新規 = 1
+//   ・M がスナップショット済(提出済) → 次ラウンド = M + 1
+//   ・M が未スナップショット(未提出/取消→再アップ) → 現ラウンド維持 = M
+//     （ただし「後修正」status 中の初アップは次ラウンドへ）
+async function deriveCreativeRoundVersion(creativeId) {
+  const { data: maxRow } = await supabase
+    .from('creative_files')
+    .select('version')
+    .eq('creative_id', creativeId)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const M = maxRow?.version || 0;
+  if (M === 0) return { version: 1, M };
+
+  let snapForMCount = 0;
+  try {
+    const { data: snapRows } = await supabase
+      .from('creative_version_history')
+      .select('id')
+      .eq('creative_id', creativeId)
+      .eq('version_num', M)
+      .limit(1);
+    snapForMCount = (snapRows && snapRows.length) || 0;
+  } catch (e) {
+    console.warn('[creatives/upload] cvh check failed → fallback to MAX+1:', e?.message || e);
+    snapForMCount = 1;
+  }
+  if (snapForMCount > 0) return { version: M + 1, M };
+
+  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  let creativeStatus = null;
+  try {
+    const { data: cRow } = await supabase
+      .from('creatives')
+      .select('status')
+      .eq('id', creativeId)
+      .maybeSingle();
+    creativeStatus = cRow?.status || null;
+  } catch (_) { /* 取れなくても続行 */ }
+  if (creativeStatus && REVISION_STATUSES.includes(creativeStatus)) return { version: M + 1, M };
+  return { version: M, M };
+}
+
+// generated_name に埋め込まれた _vN を確定 version で上書き（_vN が無ければそのまま）
+function rewriteGeneratedNameVersion(generatedName, version) {
+  if (!generatedName) return generatedName;
+  return generatedName.replace(/_v\d+(\.[^.]+)$/, `_v${version}$1`);
+}
+
+// 同一 version の未提出 creative_files 行を掃除（取消→再アップ等で version を再利用するケース）。
+// version が新規(M+1)の場合は該当行が無いので no-op。best-effort（Drive 側 orphan は許容）。
+async function cleanupCreativeFilesForVersion(creativeId, version) {
+  try {
+    const { data: stale } = await supabase
+      .from('creative_files')
+      .select('id')
+      .eq('creative_id', creativeId)
+      .eq('version', version);
+    if (stale && stale.length > 0) {
+      const ids = stale.map(r => r.id);
+      console.warn(`[creatives/upload] stale rows for version=${version} (count=${ids.length}) → cleanup`);
+      // 子テーブル best-effort（CASCADE 環境では no-op）
+      try { await supabase.from('creative_file_comments').delete().in('creative_file_id', ids); } catch (_) {}
+      try { await supabase.from('creative_file_likes').delete().in('creative_file_id', ids); } catch (_) {}
+      await supabase.from('creative_files').delete().in('id', ids);
+    }
+  } catch (e) {
+    console.warn('[creatives/upload] version cleanup failed (続行):', e?.message || e);
+  }
+}
+
+// クリエイティブの Drive 格納先フォルダ階層（ルート/クライアント/案件/yyyymm/[週]/種別）を
+// 解決し typeFolderId を返す。multer 経路のフォルダ解決ロジックを抽出したもの。
+// 注: yyyymm / 週番号はサーバローカル時刻（Railway は UTC）に依存する既存挙動を踏襲。
+//     両経路で同一フォルダに着地させるため、ここでは敢えて JST 補正を入れていない。
+async function resolveCreativeTypeFolder(drive, project, isVideo) {
+  const rootFolderId = await getDriveRootFolderId();
+  if (!rootFolderId) throw new Error('drive_root_folder_id が未設定です');
+
+  const clientName = (project?.clients?.name || 'その他').replace(/[/\\?%*:|"<>]/g, '_');
+  const projectName = (project?.name || '案件未設定').replace(/[/\\?%*:|"<>]/g, '_');
+
+  const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
+  if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
+  const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
+  if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
+
+  const now = new Date();
+  const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const typeFolder = isVideo ? '動画' : '静止画';
+
+  const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
+
+  let typeFolderId;
+  if (project?.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
+    const jsTarget = (project.deadline_weekday + 1) % 7;
+    const daysUntil = ((jsTarget - now.getDay()) + 7) % 7 || 7;
+    const deadline = new Date(now);
+    deadline.setDate(deadline.getDate() + daysUntil);
+    const dMonth = deadline.getMonth() + 1;
+    const dDay = deadline.getDate();
+    const firstOfMonth = new Date(deadline.getFullYear(), deadline.getMonth(), 1);
+    const weekNum = Math.ceil((dDay + firstOfMonth.getDay()) / 7);
+    const weekFolderName = `W${weekNum}_${String(dMonth).padStart(2, '0')}${String(dDay).padStart(2, '0')}`;
+    const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
+    typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
+  } else {
+    typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
+  }
+  return typeFolderId;
+}
+
+// creative_files への INSERT（後方追加 optional 列が無い旧 DB は自動フォールバック）。
+// 戻り値 { fileRecord, error, willFaststart }。
+async function insertCreativeFileRow({
+  creativeId, original_name, generated_name, width, height,
+  version, driveFileId, driveUrl, mimeType, fileSize, uploadedBy,
+}) {
+  const willFaststart = shouldFaststart(mimeType, generated_name || original_name);
+  const baseRow = {
+    creative_id: creativeId,
+    original_name: original_name,
+    generated_name: generated_name || original_name,
+    width: parseInt(width) || null,
+    height: parseInt(height) || null,
+    version: version,
+    drive_file_id: driveFileId,
+    drive_url: driveUrl,
+    uploaded_by: uploadedBy,
+  };
+  const optionalRow = {
+    mime_type: mimeType || null,
+    file_size: fileSize || null,
+    faststart_status: willFaststart ? 'pending' : 'skipped',
+  };
+  const isMissingCol = (err) => {
+    if (!err) return false;
+    const msg = err.message || '';
+    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+  };
+  let { data: fileRecord, error } = await supabase
+    .from('creative_files')
+    .insert({ ...baseRow, ...optionalRow })
+    .select()
+    .single();
+  if (isMissingCol(error)) {
+    console.warn('[creative_files] 後方追加列なし → fallback で再試行:', error.message);
+    ({ data: fileRecord, error } = await supabase
+      .from('creative_files')
+      .insert(baseRow)
+      .select()
+      .single());
+  }
+  return { fileRecord, error, willFaststart };
+}
+
 // ==================== クライアント ====================
 
 // クライアント一覧取得
@@ -7938,99 +8121,19 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   //   2) この POST が来た時点で creative_files から該当行は消えている → MAX(version) は M-1
   //   3) M-1 はスナップショット済(提出済) → assignedVersion = (M-1)+1 = M
   //   → 同じバージョン番号で再アップロードされる（V2 取り消し→再アップ → V2 のまま、V3 にはならない）
+  // バージョン採番 + 同ラウンド掃除 + generated_name 書き換えは共通ヘルパへ集約
+  // （Resumable 直送経路 POST /creatives/:id/upload-session/init と同一ロジックを使う）。
+  // 採番ルールの詳細は deriveCreativeRoundVersion() のコメント / ADR 011 補足を参照。
   const requestedVersion = parseInt(req.body.version, 10);
-  const { data: maxRow } = await supabase
-    .from('creative_files')
-    .select('version')
-    .eq('creative_id', creativeId)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const M = maxRow?.version || 0;
-  let version;
-  if (M === 0) {
-    version = 1;
-  } else {
-    // M が snapshot 済か確認
-    let snapForMCount = 0;
-    try {
-      const { data: snapRows } = await supabase
-        .from('creative_version_history')
-        .select('id')
-        .eq('creative_id', creativeId)
-        .eq('version_num', M)
-        .limit(1);
-      snapForMCount = (snapRows && snapRows.length) || 0;
-    } catch (e) {
-      // creative_version_history テーブルが無い環境（旧 DB）は
-      // 旧挙動 (MAX+1) にフォールバック。
-      console.warn('[creatives/upload] cvh check failed → fallback to MAX+1:', e?.message || e);
-      snapForMCount = 1;
-    }
-    if (snapForMCount > 0) {
-      version = M + 1; // M が提出済 → 次ラウンドへ
-    } else {
-      // M が未提出 (snapshot 無し) のとき:
-      //   - 通常: 同ラウンド維持 (= 取り消し→再アップで version=M のまま)
-      //   - ただし「後修正 status」中で初めて修正版をアップする場合は次ラウンドへ進める。
-      //     理由: snapshot は「修正→再チェック」遷移時に確定するため、Dチェック→D後修正
-      //     の遷移時点では V1 は未 snapshot。この間に V2 をアップすると単純な「未 snapshot」
-      //     判定では V1 と衝突する (version=1 採番) ので、status を見て補正する。
-      //     ADR 011 補足セクション参照。
-      const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
-      let creativeStatus = null;
-      try {
-        const { data: cRow } = await supabase
-          .from('creatives')
-          .select('status')
-          .eq('id', creativeId)
-          .maybeSingle();
-        creativeStatus = cRow?.status || null;
-      } catch (_) { /* 取れなくても続行 */ }
-      if (creativeStatus && REVISION_STATUSES.includes(creativeStatus)) {
-        version = M + 1; // 後修正中の初アップ → 次ラウンドへ
-      } else {
-        version = M;     // 同ラウンド維持（取消→再アップ等）
-      }
-    }
-  }
+  const { version } = await deriveCreativeRoundVersion(creativeId);
   if (requestedVersion && requestedVersion !== version) {
-    console.info(
-      `[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId}, M=${M})`
-    );
+    console.info(`[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId})`);
   } else {
-    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId}, M=${M})`);
+    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId})`);
   }
-
-  // 安全装置: 同一ラウンド (=同一 version) で未提出の creative_files 行がまだ残っているケース
-  // （UI ガードを通らずサーバへ直接 POST が来た / DELETE 失敗で取り残されたゴミ等）。
-  // 残っていると同じ version_num で複数行できて _cdRoundsCache の整合が壊れるため、
-  // best-effort で削除してから新しい行を INSERT する。Drive 側の orphan は許容（ロギングのみ）。
-  if (version === M && M > 0) {
-    try {
-      const { data: stale } = await supabase
-        .from('creative_files')
-        .select('id, drive_file_id, faststart_drive_file_id')
-        .eq('creative_id', creativeId)
-        .eq('version', version);
-      if (stale && stale.length > 0) {
-        console.warn(`[creatives/upload] same-round stale rows detected (version=${version}, count=${stale.length}) → cleanup`);
-        const ids = stale.map(r => r.id);
-        // 子テーブル best-effort（CASCADE 環境では no-op）
-        try { await supabase.from('creative_file_comments').delete().in('creative_file_id', ids); } catch (_) {}
-        try { await supabase.from('creative_file_likes').delete().in('creative_file_id', ids); } catch (_) {}
-        await supabase.from('creative_files').delete().in('id', ids);
-      }
-    } catch (e) {
-      console.warn('[creatives/upload] same-round cleanup failed (続行):', e?.message || e);
-    }
-  }
-
-  // generated_name に埋め込まれた _vN を確定 version で上書きする。
-  // 例: フロントが "cool_v1.mp4" を送ってきても、サーバ採番が 3 なら "cool_v3.mp4" にする。
-  // _vN パターンが無ければそのまま使う（保険）。
+  await cleanupCreativeFilesForVersion(creativeId, version);
   if (generated_name) {
-    const replaced = generated_name.replace(/_v\d+(\.[^.]+)$/, `_v${version}$1`);
+    const replaced = rewriteGeneratedNameVersion(generated_name, version);
     if (replaced !== generated_name) {
       console.info(`[creatives/upload] generated_name rewritten: ${generated_name} → ${replaced}`);
     }
@@ -8062,51 +8165,12 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       const drive = await getDriveService();
       driveLog('info', 'Driveサービス認証OK');
 
-      // ルート → クライアント名 → 案件名 を自動作成
-      const clientName = (project?.clients?.name || 'その他').replace(/[/\\?%*:|"<>]/g, '_');
-      const projectName = (project?.name || '案件未設定').replace(/[/\\?%*:|"<>]/g, '_');
-
-      driveStep = 'clientFolder';
-      driveLog('info', `クライアントフォルダ取得/作成: ${clientName}`);
-      const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
-      if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
-      driveLog('info', `クライアントフォルダOK`, { id: clientFolderId });
-
-      driveStep = 'projectFolder';
-      driveLog('info', `案件フォルダ取得/作成: ${projectName}`);
-      const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
-      if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
-      driveLog('info', `案件フォルダOK`, { id: baseFolderId });
-
-      const now = new Date();
-      const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-      // 動画か静止画かでフォルダ名を分ける
-      const isVideo = file.mimetype.startsWith('video/');
-      const typeFolder = isVideo ? '動画' : '静止画';
-
-      driveStep = 'monthFolder';
-      const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
-      driveLog('info', `月フォルダOK: ${yyyymm}`, { id: monthFolderId });
-
+      // ルート → クライアント名 → 案件名 → yyyymm → [週] → 種別 のフォルダ階層を解決
+      // （共通ヘルパ resolveCreativeTypeFolder。Resumable 直送経路と同一）
       driveStep = 'typeFolder';
-      let typeFolderId;
-      if (project.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
-        const jsTarget = (project.deadline_weekday + 1) % 7;
-        const daysUntil = ((jsTarget - now.getDay()) + 7) % 7 || 7;
-        const deadline = new Date(now);
-        deadline.setDate(deadline.getDate() + daysUntil);
-        const dMonth = deadline.getMonth() + 1;
-        const dDay = deadline.getDate();
-        const firstOfMonth = new Date(deadline.getFullYear(), deadline.getMonth(), 1);
-        const weekNum = Math.ceil((dDay + firstOfMonth.getDay()) / 7);
-        const weekFolderName = `W${weekNum}_${String(dMonth).padStart(2,'0')}${String(dDay).padStart(2,'0')}`;
-        const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
-        typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
-      } else {
-        typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
-      }
-      driveLog('info', `タイプフォルダOK: ${typeFolder}`, { id: typeFolderId });
+      const isVideo = file.mimetype.startsWith('video/');
+      const typeFolderId = await resolveCreativeTypeFolder(drive, project, isVideo);
+      driveLog('info', `フォルダ階層OK`, { id: typeFolderId });
       typeFolderId_ = typeFolderId; // faststart 後処理で同フォルダにアップロードするため外側に渡す
       // ファイルは typeFolder に直接格納（workFolder は廃止）
 
@@ -8154,49 +8218,22 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
     else driveLog('warn', '環境変数未設定のためDriveスキップ');
   }
 
-  // creative_files テーブルに記録
+  // creative_files テーブルに記録（共通ヘルパ insertCreativeFileRow。
   // mime_type / file_size をキャッシュしておくと /files/:fileId/stream で
-  // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる
-  const willFaststart = shouldFaststart(file.mimetype, generated_name || file.originalname);
-  const uploadedBy = req.user?.id || null;
-  // 必須フィールド（旧スキーマでも必ず存在する）
-  const baseRow = {
-    creative_id: creativeId,
+  // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる）
+  const { fileRecord, error: fErr, willFaststart } = await insertCreativeFileRow({
+    creativeId,
     original_name: file.originalname,
-    generated_name: generated_name || file.originalname,
-    width: parseInt(width) || null,
-    height: parseInt(height) || null,
-    version: version,
-    drive_file_id: driveFileId,
-    drive_url: driveUrl,
-    uploaded_by: uploadedBy,
-  };
-  // 後方追加した optional 列（mime_type / file_size / faststart_status）。
-  // 本番 DB に列が無い環境では INSERT が PGRST204 で失敗するので、
-  // その場合は optional 列を外して再試行する。
-  const optionalRow = {
-    mime_type: file.mimetype || null,
-    file_size: file.size || file.buffer?.length || null,
-    faststart_status: willFaststart ? 'pending' : 'skipped',
-  };
-  const isMissingCol = (err) => {
-    if (!err) return false;
-    const msg = err.message || '';
-    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
-  };
-  let { data: fileRecord, error: fErr } = await supabase
-    .from('creative_files')
-    .insert({ ...baseRow, ...optionalRow })
-    .select()
-    .single();
-  if (isMissingCol(fErr)) {
-    console.warn('[creative_files] 後方追加列なし → fallback で再試行:', fErr.message);
-    ({ data: fileRecord, error: fErr } = await supabase
-      .from('creative_files')
-      .insert(baseRow)
-      .select()
-      .single());
-  }
+    generated_name,
+    width,
+    height,
+    version,
+    driveFileId,
+    driveUrl,
+    mimeType: file.mimetype,
+    fileSize: file.size || file.buffer?.length || null,
+    uploadedBy: req.user?.id || null,
+  });
   if (fErr) return res.status(500).json({ error: fErr.message });
 
   // version はサーバ側採番が真。フロントはこの値を使ってトースト等を表示する。
@@ -8211,6 +8248,199 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       generateFaststart({ creativeFileId: fileRecord.id })
         .catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
     });
+  }
+});
+
+// ==================== クリエイティブ Resumable 直送アップロード ====================
+// 課題: 動画素材を multer 経由（POST /creatives/:id/upload）で Railway バックエンドに通すと、
+//       遅回線で約5分を超えた瞬間に Railway エッジプロキシのリクエストタイムアウトが発火し、
+//       HTTP 502 "Application failed to respond" でアップロードが中断される（バグ #b7041ffb /
+//       #9f208f5d）。Node の server.requestTimeout を 30分 に延長しても、その手前で Railway
+//       エッジが切るため効果がない（= プラットフォーム側 timeout は変更不可）。
+// 解決: バイトを Railway に通さず、ブラウザ → Google Drive へ直接 Resumable Upload で PUT する。
+//       バックエンドは (1) セッション発行 (init) と (2) DB 登録 (complete) だけを担う。
+//       どちらも短時間で完了するため Railway エッジ timeout に当たらない。
+//
+// フロー:
+//   1) POST /creatives/:id/upload-session/init
+//      → サーバが SA トークンで Drive Resumable セッションを発行し driveSessionUrl を返す
+//   2) ブラウザが driveSessionUrl へチャンク PUT（Content-Range 指定）。最終チャンクの
+//      レスポンス JSON から driveFileId を得る
+//   3) POST /creatives/:id/upload-session/complete
+//      → 公開権限付与 + creative_files INSERT + faststart 起動（multer 経路と同一）
+//
+// SA 連携が無い環境では init が { ok:false, fallback:true } を返し、フロントは従来 multer 経路に
+// 自動フォールバックする（小容量はそのまま動く）。
+
+const CREATIVE_RESUMABLE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3/files';
+
+// ----- 1) Resumable セッション発行 -----
+// Body: { filename, fileSize, mimeType, version? }
+router.post('/creatives/:id/upload-session/init', async (req, res) => {
+  try {
+    const creativeId = req.params.id;
+    const filename = String(req.body?.filename || '').trim();
+    const fileSize = Number(req.body?.fileSize);
+    const mimeType = String(req.body?.mimeType || 'application/octet-stream');
+
+    if (!filename) return res.status(400).json({ error: 'filename が必要です' });
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      return res.status(400).json({ error: 'fileSize が不正です' });
+    }
+
+    // SA / ルートフォルダ未設定 → フロントは multer 経路へフォールバック（エラー扱いにしない）
+    const rootFolderId = await getDriveRootFolderId();
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY || !rootFolderId) {
+      return res.json({
+        ok: false,
+        fallback: true,
+        reason: !process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? 'no_service_account' : 'no_root_folder',
+      });
+    }
+
+    // クリエイティブ + 案件情報
+    const { data: creative, error: cErr } = await supabase
+      .from('creatives')
+      .select('*, projects(id, name, deadline_unit, deadline_weekday, clients(id, name, client_code))')
+      .eq('id', creativeId)
+      .single();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    const project = creative.projects;
+
+    // バージョン採番（サーバ単一ソース）+ generated_name の _vN 上書き
+    const { version } = await deriveCreativeRoundVersion(creativeId);
+    const generated_name = rewriteGeneratedNameVersion(filename, version) || filename;
+
+    // フォルダ階層解決
+    const drive = await getDriveService();
+    const isVideo = (mimeType || '').startsWith('video/');
+    const typeFolderId = await resolveCreativeTypeFolder(drive, project, isVideo);
+
+    // Drive Resumable Upload セッション発行（SA トークン）。
+    // Drive はセッション発行時の Origin を記録し、後続のブラウザ→セッションURL の PUT を
+    // 同 Origin から来ているか CORS 検証する。Node fetch では Origin が自動付与されないため
+    // ブラウザの Origin を明示転送する（忘れると PUT が全て CORS で弾かれる）。
+    const accessToken = await getServiceAccountAccessToken();
+    const browserOrigin = req.headers.origin
+      || (req.headers.referer ? new URL(req.headers.referer).origin : null)
+      || `${req.protocol}://${req.get('host')}`;
+
+    const initResp = await fetch(
+      `${CREATIVE_RESUMABLE_UPLOAD_BASE}?uploadType=resumable&supportsAllDrives=true`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': String(fileSize),
+          'Origin': browserOrigin,
+        },
+        body: JSON.stringify({ name: generated_name, parents: [typeFolderId] }),
+      }
+    );
+    if (!initResp.ok) {
+      const text = await initResp.text().catch(() => '');
+      driveLog('error', `resumable init失敗: ${initResp.status} ${text.slice(0, 200)}`, { creativeId });
+      return res.status(502).json({
+        error: 'Drive Resumable セッション発行に失敗しました',
+        upstream_status: initResp.status,
+        upstream_body: text.slice(0, 500),
+      });
+    }
+    const driveSessionUrl = initResp.headers.get('location');
+    if (!driveSessionUrl) {
+      return res.status(502).json({ error: 'Drive から セッションURL（Location）が返りませんでした' });
+    }
+
+    driveLog('info', 'resumable セッション発行OK', { creativeId, version, generated_name });
+    res.json({
+      ok: true,
+      driveSessionUrl,
+      version,
+      generated_name,
+      // Drive Resumable は最終以外のチャンクを 256KB の倍数で要求する。フロントは独自の
+      // チャンクサイズ（256KB 倍数）を使うのでこの値は上限の目安。
+      recommended_chunk_size_bytes: 256 * 1024 * 1024,
+    });
+  } catch (e) {
+    driveLog('error', `resumable init error: ${e?.message || e}`);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ----- 2) 完了登録（公開権限 + creative_files INSERT + faststart） -----
+// Body: { driveFileId, version, generated_name, original_name?, mimeType?, width?, height?, fileSize? }
+router.post('/creatives/:id/upload-session/complete', async (req, res) => {
+  try {
+    const creativeId = req.params.id;
+    const driveFileId = String(req.body?.driveFileId || '').trim();
+    const version = parseInt(req.body?.version, 10);
+    const generated_name = String(req.body?.generated_name || '').trim();
+    const original_name = String(req.body?.original_name || generated_name || '').trim();
+    const mimeType = String(req.body?.mimeType || '').trim() || null;
+    const width = req.body?.width;
+    const height = req.body?.height;
+    const fileSize = Number(req.body?.fileSize) || null;
+
+    if (!driveFileId) return res.status(400).json({ error: 'driveFileId が必要です' });
+    if (!Number.isFinite(version)) return res.status(400).json({ error: 'version が必要です' });
+
+    // 公開権限付与 + webViewLink 取得（SA）。失敗しても DB 登録は継続する。
+    let driveUrl = null;
+    try {
+      const drive = await getDriveService();
+      try {
+        await drive.permissions.create({
+          fileId: driveFileId,
+          supportsAllDrives: true,
+          requestBody: { role: 'reader', type: 'anyone' },
+        });
+        driveLog('info', '公開権限設定OK(resumable)', { driveFileId });
+      } catch (permErr) {
+        driveLog('warn', `権限設定失敗(resumable, 閲覧には影響なし): ${permErr.message}`);
+      }
+      const meta = await drive.files.get({
+        fileId: driveFileId,
+        fields: 'id, webViewLink',
+        supportsAllDrives: true,
+      });
+      driveUrl = meta.data.webViewLink || null;
+    } catch (e) {
+      driveLog('warn', `resumable complete: Drive 後処理失敗（DB登録は継続）: ${e?.message || e}`);
+    }
+
+    // 同 version の未提出行を掃除してから INSERT（multer 経路と同一）
+    await cleanupCreativeFilesForVersion(creativeId, version);
+
+    const { fileRecord, error: fErr, willFaststart } = await insertCreativeFileRow({
+      creativeId,
+      original_name,
+      generated_name,
+      width,
+      height,
+      version,
+      driveFileId,
+      driveUrl,
+      mimeType,
+      fileSize,
+      uploadedBy: req.user?.id || null,
+    });
+    if (fErr) return res.status(500).json({ error: fErr.message });
+
+    // version はサーバ側採番が真。フロントはこの値を使ってトースト等を表示する。
+    res.json({ ok: true, file: fileRecord, version, drive_url: driveUrl });
+
+    // faststart プレビュー版生成（fire-and-forget、multer 経路と同一）
+    if (willFaststart && fileRecord?.id && faststartIsEnabled()) {
+      setImmediate(() => {
+        generateFaststart({ creativeFileId: fileRecord.id })
+          .catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
+      });
+    }
+  } catch (e) {
+    driveLog('error', `resumable complete error: ${e?.message || e}`);
+    res.status(500).json({ error: e?.message || String(e) });
   }
 });
 
