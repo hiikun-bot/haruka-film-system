@@ -36604,6 +36604,189 @@ function updateGeneratedFilename() {
 let _cdActiveUploadXhr = null;
 // ユーザーが [✕ キャンセル] を押した瞬間 true。xhr.onerror / onabort 共通の判定に使う。
 let _cdUploadCancelled = false;
+// Resumable 直送中のキャンセル判定（チャンクループから参照）
+let _cdResumableCancelled = false;
+
+// アップロード成功後の共通 UI 処理（multer 経路 / Resumable 直送 で共有）。
+// data: サーバ応答（{ version, file, drive_url, drive_error }）, version: フロント表示用フォールバック値。
+async function cdHandleUploadSuccess(data, version, statusEl) {
+  // version はサーバ側採番が真（V1 重複事故防止のためフロント値は無視される）。
+  // フロントが v1 を送っていてもサーバが v3 を採番していたら "v3 として保存しました" と表示する。
+  const confirmedVersion = data.version || data.file?.version || version;
+  const versionLabel = `v${confirmedVersion}`;
+  if (data.drive_url) {
+    statusEl.textContent = `アップロード完了！（${versionLabel} として保存しました）`;
+    statusEl.style.color = 'var(--em-dark)';
+  } else {
+    statusEl.textContent = `DB記録完了（${versionLabel} / Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
+    statusEl.style.color = '#d97706';
+  }
+  // アップロードでファイル一覧が変わるので payload キャッシュを無効化
+  try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
+  await loadCreativeFiles(currentCreativeDetail.id);
+  document.getElementById('cd-upload-input').value = '';
+  document.getElementById('cd-upload-preview').style.display = 'none';
+  uploadFileData = null;
+  if (currentCreativeDetail.status === '制作中（初稿提出前）') {
+    const editorComment = document.getElementById('cd-comment-field').value.trim();
+    if (!editorComment) {
+      statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
+      statusEl.style.color = '#E24B4A';
+    } else {
+      const confirmDCheck = document.getElementById('cd-dcheck-confirm');
+      if (confirmDCheck) confirmDCheck.style.display = '';
+    }
+  }
+}
+
+// ===== 大容量クリエイティブ: Railway を経由しない Resumable 直送（HTTP 502 回避） =====
+// 動画素材を multer 経由で Railway バックエンドに通すと、遅回線で約5分を超えた瞬間に
+// Railway エッジの リクエストタイムアウトが発火し HTTP 502 "Application failed to respond" で
+// 中断される（バグ #b7041ffb）。これを避けるため、しきい値以上のファイルはブラウザから
+// 直接 Google Drive へ PUT する。バックエンドは init / complete だけを短時間で叩く。
+const CD_RESUMABLE_THRESHOLD_BYTES = 20 * 1024 * 1024; // これ以上は Resumable 直送
+const CD_RESUMABLE_CHUNK_BYTES = 16 * 1024 * 1024;     // 16MB（256KB の倍数 = Drive 要件）。進捗の粒度兼リトライ単位
+
+// Drive セッションURLへ 1 チャンクを XHR で PUT（XHR は upload 進捗が取れる）。
+// 解決値: { status, fileId, rangeEnd }。308=部分受領 / 200・201=完了。
+function cdPutChunkToDrive(sessionUrl, chunk, contentRange, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    _cdActiveUploadXhr = xhr; // cancelUpload() から abort できるよう保持
+    xhr.open('PUT', sessionUrl, true);
+    xhr.setRequestHeader('Content-Range', contentRange);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded);
+    };
+    xhr.onload = () => {
+      _cdActiveUploadXhr = null;
+      const status = xhr.status;
+      if (status === 308 || status === 200 || status === 201) {
+        let fileId = null;
+        if (status === 200 || status === 201) {
+          try { fileId = JSON.parse(xhr.responseText)?.id || null; } catch (_) {}
+        }
+        let rangeEnd = null;
+        const r = xhr.getResponseHeader('Range');
+        const m = r && /bytes=0-(\d+)/.exec(r);
+        if (m) rangeEnd = Number(m[1]);
+        resolve({ status, fileId, rangeEnd });
+      } else if (status >= 400 && status < 500) {
+        // 4xx はリトライしても無駄 → 即時 throw（リトライ対象外フラグ）
+        reject(Object.assign(new Error(`Drive エラー (${status}): ${(xhr.responseText || '').slice(0, 200)}`), { __noRetry: true }));
+      } else {
+        reject(new Error(`Drive 応答 ${status}: ${(xhr.responseText || '').slice(0, 200)}`));
+      }
+    };
+    xhr.onerror = () => { _cdActiveUploadXhr = null; reject(new Error('ネットワークエラー（Drive 直送）')); };
+    xhr.onabort = () => { _cdActiveUploadXhr = null; reject(Object.assign(new Error('キャンセルされました'), { __cancelled: true })); };
+    xhr.send(chunk);
+  });
+}
+
+// Resumable 直送の本体。init → チャンク PUT ループ → complete。
+// 戻り値: complete のレスポンス JSON。
+// 例外に .__fallbackToMulter があれば呼び出し側は従来 multer 経路へフォールバックする。
+async function cdUploadResumable({ file, width, height, version, generated, progressBar, progressPct, progressLabel }) {
+  // 1) セッション発行
+  progressLabel.textContent = 'Drive セッションを発行中...';
+  const initRes = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}/upload-session/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      filename: generated,
+      fileSize: file.size,
+      mimeType: file.type || 'application/octet-stream',
+      version,
+    }),
+  });
+  let initData = null;
+  try { initData = await initRes.json(); } catch (_) {}
+  if (!initRes.ok) {
+    throw new Error(`[HTTP ${initRes.status}] ${initData?.error || 'セッション発行に失敗しました'}`);
+  }
+  if (initData?.ok === false && initData?.fallback) {
+    // SA / ルートフォルダ未設定 → 従来 multer 経路へフォールバック
+    throw Object.assign(new Error('resumable 利用不可'), { __fallbackToMulter: true });
+  }
+  const sessionUrl = initData.driveSessionUrl;
+  const srvVersion = initData.version || version;
+  const srvName = initData.generated_name || generated;
+  if (!sessionUrl) throw new Error('セッションURLが取得できませんでした');
+
+  // 2) チャンク PUT ループ
+  const total = file.size;
+  let uploaded = 0;
+  let driveFileId = null;
+  progressLabel.textContent = 'Driveへ直接アップロード中...';
+  while (uploaded < total) {
+    if (_cdResumableCancelled) {
+      throw Object.assign(new Error('キャンセルされました'), { __cancelled: true });
+    }
+    const end = Math.min(uploaded + CD_RESUMABLE_CHUNK_BYTES, total);
+    const chunk = file.slice(uploaded, end);
+    const contentRange = `bytes ${uploaded}-${end - 1}/${total}`;
+
+    let attempt = 0;
+    const MAX_ATTEMPTS = 4;
+    let putRes = null;
+    while (true) {
+      attempt++;
+      try {
+        const base = uploaded;
+        putRes = await cdPutChunkToDrive(sessionUrl, chunk, contentRange, (loadedInChunk) => {
+          const done = Math.min(total, base + loadedInChunk);
+          const pct = Math.min(100, Math.round((done / total) * 100));
+          progressBar.style.width = pct + '%';
+          progressPct.textContent = pct + '%';
+        });
+        break;
+      } catch (e) {
+        if (e.__cancelled || e.__noRetry || attempt >= MAX_ATTEMPTS) throw e;
+        progressLabel.textContent = `リトライ中… (${attempt}/${MAX_ATTEMPTS})`;
+        await new Promise(r => setTimeout(r, Math.min(8000, 500 * Math.pow(2, attempt - 1))));
+      }
+    }
+
+    if (putRes.status === 308) {
+      uploaded = (putRes.rangeEnd != null) ? putRes.rangeEnd + 1 : end;
+    } else {
+      driveFileId = putRes.fileId;
+      uploaded = total;
+    }
+    const pct = Math.min(100, Math.round((uploaded / total) * 100));
+    progressBar.style.width = pct + '%';
+    progressPct.textContent = pct + '%';
+  }
+  if (!driveFileId) throw new Error('Drive から fileId が返りませんでした');
+
+  // 3) 完了登録
+  progressLabel.textContent = '登録中...';
+  progressPct.textContent = '';
+  const compRes = await apiFetch(`${API}/creatives/${currentCreativeDetail.id}/upload-session/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      driveFileId,
+      version: srvVersion,
+      generated_name: srvName,
+      // multer 経路は FormData の filename 上書きにより original_name = generated になる。
+      // 挙動を揃えるため original_name は送らず、サーバ側で generated_name にフォールバックさせる。
+      mimeType: file.type || null,
+      width,
+      height,
+      fileSize: file.size,
+    }),
+  });
+  let compData = null;
+  try { compData = await compRes.json(); } catch (_) {}
+  if (!compRes.ok) {
+    throw new Error(`[HTTP ${compRes.status}] ${compData?.error || '登録に失敗しました'}`);
+  }
+  return compData;
+}
 
 async function executeUpload() {
   if (!uploadFileData || !currentCreativeDetail) return;
@@ -36624,10 +36807,61 @@ async function executeUpload() {
   uploadBtn.disabled = true;
   if (cancelBtn) cancelBtn.disabled = false;
   _cdUploadCancelled = false;
+  _cdResumableCancelled = false;
   progressWrap.style.display = '';
   progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%;transition:width .3s ease';
   progressLabel.textContent = 'サーバーへ送信中...';
   progressPct.textContent = '0%';
+
+  // 大容量（しきい値以上）は Railway を経由しない Resumable 直送を試みる（HTTP 502 回避）。
+  // init が fallback を返す / 設定不備のときだけ従来 multer 経路へ落とす。
+  // 直送中（バイト送信開始後）の失敗は、そのままエラー表示して終了する（multer に落とすと
+  // Railway の 5分 timeout を踏み直すだけで意味がないため）。
+  if (file.size >= CD_RESUMABLE_THRESHOLD_BYTES) {
+    let fellBack = false;
+    try {
+      const data = await cdUploadResumable({ file, width, height, version, generated, progressBar, progressPct, progressLabel });
+      progressWrap.style.display = 'none';
+      uploadBtn.disabled = false;
+      progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
+      try {
+        await cdHandleUploadSuccess(data, version, statusEl);
+      } catch (e) {
+        statusEl.textContent = 'アップロード後の画面更新でエラー: ' + (e?.message || e);
+        statusEl.style.color = '#E24B4A';
+      }
+    } catch (e) {
+      if (e && e.__fallbackToMulter) {
+        fellBack = true; // 設定不備 → 従来 multer 経路へ
+      } else if (e && e.__cancelled) {
+        // キャンセル: ドロップゾーンを初期化して再選択可能に
+        _cdActiveUploadXhr = null;
+        progressWrap.style.display = 'none';
+        uploadBtn.disabled = false;
+        progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
+        document.getElementById('cd-upload-input').value = '';
+        document.getElementById('cd-upload-preview').style.display = 'none';
+        const zone = document.getElementById('cd-drop-zone');
+        if (zone) { const label = zone.querySelector('div:nth-child(2)'); if (label) label.textContent = 'ドラッグ＆ドロップ、またはクリックして選択'; }
+        uploadFileData = null;
+        statusEl.textContent = 'アップロードをキャンセルしました';
+        statusEl.style.color = 'var(--text-muted)';
+      } else {
+        _cdActiveUploadXhr = null;
+        progressWrap.style.display = 'none';
+        uploadBtn.disabled = false;
+        progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
+        statusEl.textContent = `アップロード失敗 ${e?.message || e}（大容量直送）`;
+        statusEl.style.color = '#E24B4A';
+      }
+    }
+    if (!fellBack) return;
+    // フォールバック: 送信中表示に戻して従来 multer 経路へ続行
+    statusEl.textContent = '';
+    progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%;transition:width .3s ease';
+    progressLabel.textContent = 'サーバーへ送信中...';
+    progressPct.textContent = '0%';
+  }
 
   const formData = new FormData();
   formData.append('file', file, generated);
@@ -36671,33 +36905,7 @@ async function executeUpload() {
       try { data = JSON.parse(rawText); } catch (_) { /* 空 / HTML 応答 */ }
       if (rawStatus === 200 && data) {
         try {
-          // version はサーバ側採番が真（V1 重複事故防止のためフロント値は無視される）。
-          // フロントが v1 を送っていてもサーバが v3 を採番していたら "v3 として保存しました" と表示する。
-          const confirmedVersion = data.version || data.file?.version || version;
-          const versionLabel = `v${confirmedVersion}`;
-          if (data.drive_url) {
-            statusEl.textContent = `アップロード完了！（${versionLabel} として保存しました）`;
-            statusEl.style.color = 'var(--em-dark)';
-          } else {
-            statusEl.textContent = `DB記録完了（${versionLabel} / Drive未連携: ${data.drive_error || '設定確認が必要です'}）`;
-            statusEl.style.color = '#d97706';
-          }
-          // アップロードでファイル一覧が変わるので payload キャッシュを無効化
-          try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
-          await loadCreativeFiles(currentCreativeDetail.id);
-          document.getElementById('cd-upload-input').value = '';
-          document.getElementById('cd-upload-preview').style.display = 'none';
-          uploadFileData = null;
-          if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-            const editorComment = document.getElementById('cd-comment-field').value.trim();
-            if (!editorComment) {
-              statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
-              statusEl.style.color = '#E24B4A';
-            } else {
-              const confirmDCheck = document.getElementById('cd-dcheck-confirm');
-              if (confirmDCheck) confirmDCheck.style.display = '';
-            }
-          }
+          await cdHandleUploadSuccess(data, version, statusEl);
         } catch (e) {
           statusEl.textContent = 'アップロード後の画面更新でエラー: ' + (e?.message || e);
           statusEl.style.color = '#E24B4A';
@@ -36764,6 +36972,7 @@ function cancelUpload() {
   const cancelBtn = document.getElementById('cd-upload-cancel-btn');
   if (cancelBtn) cancelBtn.disabled = true;
   _cdUploadCancelled = true;
+  _cdResumableCancelled = true; // Resumable 直送のチャンクループにも停止を伝える
   if (_cdActiveUploadXhr) {
     try { _cdActiveUploadXhr.abort(); } catch (_) {}
   }
