@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS slack_workspaces (
 -- ==================== projects ====================
 CREATE TABLE IF NOT EXISTS projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  client_id UUID REFERENCES clients(id),
+  client_id UUID REFERENCES clients(id) ON DELETE CASCADE, -- クライアント削除で案件ごと連鎖削除（バグ報告 #ecb4215d）
   name TEXT NOT NULL,
   status TEXT DEFAULT '提案中',
   producer_id UUID REFERENCES users(id),
@@ -370,8 +370,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   invoice_number TEXT UNIQUE NOT NULL,
   issuer_id UUID REFERENCES users(id),
-  project_id UUID REFERENCES projects(id),
-  cycle_id UUID REFERENCES project_cycles(id),
+  project_id UUID REFERENCES projects(id) ON DELETE CASCADE, -- 案件削除で請求書ごと連鎖削除（バグ報告 #ecb4215d）
+  cycle_id UUID REFERENCES project_cycles(id) ON DELETE SET NULL,
   total_amount INTEGER DEFAULT 0,
   status TEXT DEFAULT 'draft',
   issued_at TIMESTAMPTZ,
@@ -383,7 +383,7 @@ CREATE TABLE IF NOT EXISTS invoices (
 CREATE TABLE IF NOT EXISTS invoice_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   invoice_id UUID REFERENCES invoices(id) ON DELETE CASCADE,
-  creative_id UUID REFERENCES creatives(id),
+  creative_id UUID REFERENCES creatives(id) ON DELETE CASCADE, -- クリエイティブ削除で請求明細ごと連鎖削除（バグ報告 #ecb4215d）
   total_amount INTEGER DEFAULT 0,
   is_special BOOLEAN DEFAULT false,
   special_reason TEXT,
@@ -2202,11 +2202,11 @@ ALTER TABLE project_fixed_items ENABLE ROW LEVEL SECURITY;
 
 -- creatives / invoice_items に line_id 列を追加（ADR 002 双方向参照）
 ALTER TABLE creatives
-  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
+  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id) ON DELETE SET NULL; -- 見積行削除で連鎖をブロックしない（バグ報告 #ecb4215d）
 CREATE INDEX IF NOT EXISTS idx_creatives_line_id ON creatives(line_id);
 
 ALTER TABLE invoice_items
-  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id);
+  ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES project_estimate_lines(id) ON DELETE SET NULL; -- 見積行削除で連鎖をブロックしない（バグ報告 #ecb4215d）
 CREATE INDEX IF NOT EXISTS idx_invoice_items_line_id ON invoice_items(line_id);
 
 -- ==================== team_members.leader_rank（ADR 008 Stage 1）====================
