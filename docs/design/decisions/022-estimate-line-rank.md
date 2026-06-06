@@ -102,7 +102,7 @@ COMMENT ON TABLE category_rank_rates IS
 - 例: `(動画, A, editor)=¥5,000` `(動画, B, editor)=¥4,500` `(静止画, A, designer)=¥3,000`
 - **自動入力ロジック**: 成果物グループ保存時に `(category_id, rank)` 一致行を引き、該当ロールの `project_estimate_line_costs` を **未設定なら既定値で作成**。手動編集済みの line_cost は上書きしない（誤上書き防止）。rank 変更時は「マスタから再適用」を明示操作で。
 - **client 請求は対象外**（マスタは支払いのみ）。請求は従来どおり line の `client_unit_price`。
-- 編集権限は admin 想定（採算に直結するため。ADR 013 と同方針）。
+- 編集・閲覧権限は **admin / 秘書 / プロデューサー（producer_director 含む）** に限定（採算に直結するため。`effectiveRole` で判定し VIEW AS にも追従。サーバは `requireRole` で同ロールガード）。
 
 ### UI
 
