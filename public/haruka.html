@@ -5910,6 +5910,9 @@ window.showPage = window.showPage || function(name, btn) {
       <button type="button" id="p-subtab-btn-schedule" class="p-subtab-btn"        onclick="switchProjectSubTab('schedule')">👥 期間・担当</button>
       <button type="button" id="p-subtab-btn-settings" class="p-subtab-btn"        onclick="switchProjectSubTab('settings')">⚙️ 設定</button>
       <button type="button" id="p-subtab-btn-link"     class="p-subtab-btn"        onclick="switchProjectSubTab('link')">🔗 連携</button>
+      <!-- ▼ 💰 見積・費用 / 📋 工程表 は案件 id 確定後（編集モード）のみ操作可能なので、新規作成時は JS で非表示にする -->
+      <button type="button" id="p-subtab-btn-estimate" class="p-subtab-btn" style="display:none" onclick="switchProjectSubTab('estimate')">💰 見積・費用</button>
+      <button type="button" id="p-subtab-btn-process"  class="p-subtab-btn" style="display:none" onclick="switchProjectSubTab('process')">📋 工程表</button>
     </div>
 
     <!-- ====== サブタブ：📝 基本（クライアント / ステータス / カテゴリ / 案件名 / タグ） ====== -->
@@ -6236,11 +6239,16 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
     </div><!-- /p-subtab-panel-link -->
 
+    <!-- ====== サブタブ：💰 見積・費用（成果物グループ + 固定費・追加収入） ======
+         旧: サブタブの外側にベタ置きされ全サブタブで常時表示されていた 2 セクションを、
+         専用サブタブにまとめて「見積・費用」タブ選択時のみ表示するようにした。 -->
+    <div id="p-subtab-panel-estimate" class="p-subtab-panel hidden">
+
     <!-- ===== 成果物グループ（project_estimate_lines）Stage 4a ===== -->
     <!-- ADR 002 + 005 に基づく見積行 / deliverable の編集 UI。
          旧単価モーダル（rate / director-rates / producer-rates / client-fee）はこの PR では触らず並走。
          新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
-    <div id="p-lines-section" style="display:none;padding:0 28px 24px">
+    <div id="p-lines-section" style="display:none;padding:0">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
@@ -6260,7 +6268,7 @@ window.showPage = window.showPage || function(name, btn) {
          および別料金収入 (item_type='revenue') を扱う。
          旧単価モーダルの「rate-extras」/「fixed_budget」はこの PR では触らず並走。
          新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
-    <div id="p-fixed-items-section" style="display:none;padding:0 28px 24px">
+    <div id="p-fixed-items-section" style="display:none;padding:0">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="display:inline-block;width:3px;height:14px;background:#7C3AED;border-radius:2px"></span>
@@ -6277,11 +6285,17 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
 
+    </div><!-- /p-subtab-panel-estimate -->
+
+    <!-- ====== サブタブ：📋 工程表（フェーズ・タスク・マイルストーン） ======
+         旧: サブタブの外側にベタ置きされ全サブタブで常時表示されていた工程表を専用サブタブに移設。 -->
+    <div id="p-subtab-panel-process" class="p-subtab-panel hidden">
+
     <!-- ===== 工程表（project_tasks）ADR 010 Phase 1b ===== -->
     <!-- LP/HP 等カテゴリ横断のフェーズ・タスク・マイルストーン管理。
          クリエイティブ単位の進捗管理（creative_status_templates）とは別概念。
          新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
-    <div id="p-schedule-section" style="display:none;padding:0 28px 24px">
+    <div id="p-schedule-section" style="display:none;padding:0">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="display:inline-block;width:3px;height:14px;background:#2563EB;border-radius:2px"></span>
@@ -6361,6 +6375,8 @@ window.showPage = window.showPage || function(name, btn) {
         <button type="button" class="btn" onclick="addProjectTask()" style="padding:6px 14px;font-size:12px">＋ タスク追加</button>
       </div>
     </div>
+
+    </div><!-- /p-subtab-panel-process -->
 
     </div><!-- /p-tab-panel-main -->
 
@@ -15922,6 +15938,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-panel-sync').style.display = 'none';
   // サブタブは新規・編集ともに常に表示。デフォルトは「📝 基本」
   switchProjectSubTab('basic');
+  // 💰 見積・費用 / 📋 工程表 は id 確定後のみ操作可能なので新規作成時は非表示（前回 編集モードの残留を消す）
+  const _estBtn = document.getElementById('p-subtab-btn-estimate'); if (_estBtn) _estBtn.style.display = 'none';
+  const _procBtn = document.getElementById('p-subtab-btn-process'); if (_procBtn) _procBtn.style.display = 'none';
   const _ppPanel = document.getElementById('p-tab-panel-products'); if (_ppPanel) _ppPanel.style.display = 'none';
   const _paPanel = document.getElementById('p-tab-panel-appeal-axes'); if (_paPanel) _paPanel.style.display = 'none';
   const _pcPanel = document.getElementById('p-tab-panel-checklist'); if (_pcPanel) _pcPanel.style.display = 'none';
@@ -16068,6 +16087,11 @@ function openEditProject(p) {
   switchProjectTab('main');
   // サブタブは「📝 基本」をデフォルト表示（モーダル開き直しでも常にリセット）
   switchProjectSubTab('basic');
+  // 💰 見積・費用 / 📋 工程表 サブタブは編集モード（id 確定後）のみ表示する
+  const estBtn = document.getElementById('p-subtab-btn-estimate');
+  if (estBtn) estBtn.style.display = '';
+  const procBtn = document.getElementById('p-subtab-btn-process');
+  if (procBtn) procBtn.style.display = '';
   // 「💰 収支」タブは廃止。案件カードの「報酬」ボタンから直接 modal-project-finance を開く
 
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
@@ -16232,7 +16256,7 @@ function switchProjectTab(tab) {
 
 // 「基本情報」親タブ内のサブタブ切替（display 切替のみ。input/state はリセットしない）
 function switchProjectSubTab(name) {
-  const subtabs = ['basic', 'schedule', 'settings', 'link'];
+  const subtabs = ['basic', 'schedule', 'settings', 'link', 'estimate', 'process'];
   subtabs.forEach(t => {
     const panel = document.getElementById(`p-subtab-panel-${t}`);
     const btn   = document.getElementById(`p-subtab-btn-${t}`);
