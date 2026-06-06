@@ -8082,7 +8082,7 @@ window.showPage = window.showPage || function(name, btn) {
               📚 学び広場
             </label>
             <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-              <button id="fp-paint-btn" onclick="fpOpenPaintOverlay()" title="現在のフレームにペイント注釈を描く" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;line-height:1" onmouseover="this.style.color='#3ECFCA';this.style.borderColor='#3ECFCA'" onmouseout="if(!this.dataset.has)this.style.color='#a1a1aa';if(!this.dataset.has)this.style.borderColor='#3f3f46'">🎨</button>
+              <button id="fp-paint-btn" onclick="fpOpenPaintOverlay()" title="現在の画面（動画フレーム／画像）にペイント注釈を描く" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;line-height:1" onmouseover="this.style.color='#3ECFCA';this.style.borderColor='#3ECFCA'" onmouseout="if(!this.dataset.has)this.style.color='#a1a1aa';if(!this.dataset.has)this.style.borderColor='#3f3f46'">🎨</button>
               <button onclick="submitFileComment()" style="background:linear-gradient(135deg,#3ECFCA,#2BB8B4);color:#fff;border:none;border-radius:8px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">送信</button>
             </div>
           </div>
@@ -32367,32 +32367,41 @@ let _fpPendingDrawing = null;       // {dataUrl, w, h} | null
 let _fpPaintState = null;            // { ctx, baseImage, strokes, redo, color, tool, drawing, startX, startY }
 
 function fpOpenPaintOverlay() {
+  // ペイント背景は「動画なら現在フレーム / 静止画なら画像そのもの」。
+  // どちらも same-origin の /api/haruka/files プロキシ経由で表示されているため
+  // canvas は汚染されず toDataURL まで通る（静止画は常にプロキシ src なので動画より確実）。
   const video = document.getElementById('fp-video');
-  if (!video || !video.videoWidth) {
-    showToast('動画フレームを読み込めません', 'warn');
+  const image = document.getElementById('fp-image');
+  let media, mediaW, mediaH, mediaLabel;
+  if (video && video.videoWidth) {
+    media = video; mediaW = video.videoWidth;   mediaH = video.videoHeight;   mediaLabel = '動画フレーム';
+  } else if (image && image.complete && image.naturalWidth) {
+    media = image; mediaW = image.naturalWidth;  mediaH = image.naturalHeight; mediaLabel = '画像';
+  } else {
+    showToast('ペイント対象を読み込めません', 'warn');
     return;
   }
   const ov = document.getElementById('fp-paint-overlay');
   if (!ov) return;
   ov.style.display = 'flex';
   const canvas = document.getElementById('fp-paint-canvas');
-  // 動画解像度をそのまま canvas のピクセルサイズに（高画質）
-  canvas.width  = video.videoWidth;
-  canvas.height = video.videoHeight;
+  // メディア解像度をそのまま canvas のピクセルサイズに（高画質）
+  canvas.width  = mediaW;
+  canvas.height = mediaH;
   // CSS 表示サイズは wrap 領域に contain（縦横比保持）。
-  // max-width/max-height だけだとブラウザによって片方向しか縮まず縦長動画が正方形になる事故が起きる。
+  // max-width/max-height だけだとブラウザによって片方向しか縮まず縦長メディアが正方形になる事故が起きる。
   _fpPaintFitCanvas();
   if (!_fpPaintResizeHandler) {
     _fpPaintResizeHandler = () => _fpPaintFitCanvas();
     window.addEventListener('resize', _fpPaintResizeHandler);
   }
   const ctx = canvas.getContext('2d');
-  // 動画フレームを背景としてキャプチャ（CORS 設定不要 — same-origin /files プロキシ前提）
+  // 背景としてキャプチャ（CORS 設定不要 — same-origin /files プロキシ前提）
   try {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(media, 0, 0, canvas.width, canvas.height);
   } catch (e) {
     console.warn('[paint] drawImage 失敗', e);
-    showToast('動画フレームのキャプチャに失敗しました', 'error');
+    showToast(mediaLabel + 'のキャプチャに失敗しました', 'error');
   }
   const baseImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
   _fpPaintState = {
