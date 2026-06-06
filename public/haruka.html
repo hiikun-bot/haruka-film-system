@@ -5911,7 +5911,6 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- サブタブナビ（新規・編集ともに常時表示。pill 風で親タブと差別化） -->
     <div id="p-subtab-nav" class="p-subtab-nav">
       <button type="button" id="p-subtab-btn-basic"    class="p-subtab-btn active" onclick="switchProjectSubTab('basic')">📝 基本</button>
-      <button type="button" id="p-subtab-btn-schedule" class="p-subtab-btn"        onclick="switchProjectSubTab('schedule')">👥 期間・担当</button>
       <button type="button" id="p-subtab-btn-settings" class="p-subtab-btn"        onclick="switchProjectSubTab('settings')">⚙️ 設定</button>
       <button type="button" id="p-subtab-btn-link"     class="p-subtab-btn"        onclick="switchProjectSubTab('link')">🔗 連携</button>
     </div>
@@ -5962,10 +5961,11 @@ window.showPage = window.showPage || function(name, btn) {
             <div id="p-tags-preview" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"></div>
           </div>
         </div>
-    </div><!-- /p-subtab-panel-basic -->
-
-    <!-- ====== サブタブ：👥 期間・担当（開始日 / 終了日 / P / D / サブP / サブD） ====== -->
-    <div id="p-subtab-panel-schedule" class="p-subtab-panel hidden">
+        <!-- 👥 期間・担当（旧サブタブを基本タブに統合）— 開始日/終了日 / 外部D / P・D / サブP・サブD -->
+        <div style="display:flex;align-items:center;gap:8px;padding-top:16px;border-top:1px solid var(--border)">
+          <span style="display:inline-block;width:3px;height:14px;background:#7C8DB5;border-radius:2px"></span>
+          <span style="font-size:12px;font-weight:600;color:#46506b">👥 期間・担当</span>
+        </div>
       <div>
           <div class="form-row" style="margin-bottom:10px">
             <div class="form-group" style="margin-bottom:0">
@@ -6063,7 +6063,7 @@ window.showPage = window.showPage || function(name, btn) {
             </div>
           </div>
       </div>
-    </div><!-- /p-subtab-panel-schedule -->
+    </div><!-- /p-subtab-panel-basic（👥 期間・担当 を統合） -->
 
     <!-- ====== サブタブ：⚙️ 設定（締め切り設定 / 管理者メモ / ファイル名テンプレート） ====== -->
     <div id="p-subtab-panel-settings" class="p-subtab-panel hidden">
@@ -16260,7 +16260,7 @@ function switchProjectTab(tab) {
 
 // 「基本情報」親タブ内のサブタブ切替（display 切替のみ。input/state はリセットしない）
 function switchProjectSubTab(name) {
-  const subtabs = ['basic', 'schedule', 'settings', 'link'];
+  const subtabs = ['basic', 'settings', 'link'];
   subtabs.forEach(t => {
     const panel = document.getElementById(`p-subtab-panel-${t}`);
     const btn   = document.getElementById(`p-subtab-btn-${t}`);
