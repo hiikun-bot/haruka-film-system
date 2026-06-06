@@ -8556,7 +8556,13 @@ async function submitErrorReport() {
   try {
     const res = await apiFetch(`${API}/error-report`, { method: 'POST', body: fd });
     if (res.ok) {
-      showToast('エラー報告を送信しました', 'success');
+      // スクショ添付に失敗してもテキスト報告は届いている（サーバー側でフォールバック）。
+      let attached = true;
+      try { const j = await res.json(); if (j && j.screenshot_attached === false) attached = false; } catch (_) {}
+      showToast(
+        attached ? 'エラー報告を送信しました' : 'エラー報告を送信しました（スクリーンショットは添付できませんでした）',
+        'success'
+      );
       closeModal('modal-error-report');
     } else {
       let msg = `HTTP ${res.status}`;
