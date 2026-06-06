@@ -13035,6 +13035,11 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
     // 次は編集者が修正する段階。よって Dチェック後修正・Pチェック後修正と揃えて editor 単独をボール保持者とする。
     'クライアントチェック後修正': single(editorName, 'editor', editorId, editorUser),
+    // 「保留」: 作業を一時停止した状態。ballMap に無いと type:'unknown' になり、
+    // 一覧の activeBalls フィルタ（renderCreatives）で全フィルタ無視で常に除外され、
+    // 「登録/設定したのに一覧に出ない（詳細は見られる）」サイレント消失バグになる（バグ #2db804d7）。
+    // 再開・着手する編集者側にボールを残す（Dチェック後修正 等と同じ editor 単独）。
+    '保留': single(editorName, 'editor', editorId, editorUser),
     '納品': { holder: '完了', type: 'done', holder_user: null, holders: ['完了'], user_ids: [], holder_users: [] },
   };
   return ballMap[status] || { holder: '不明', type: 'unknown', holder_user: null, holders: ['不明'], user_ids: [], holder_users: [] };
