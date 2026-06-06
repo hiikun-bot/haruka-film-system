@@ -8700,8 +8700,32 @@ async function init() {
   // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
   // loadCategories() : Stage A で追加。案件一覧バッジ・モーダルが参照する。
   await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives(), loadCategories()]);
-  loadDashboard();
+  restoreInitialPage();
   applyDeepLinkOnLoad();
+}
+
+// リロード時に「最後に開いていたタブ」を復元する。
+// - localStorage に保存が無い / 'dashboard' のときは従来どおりホームを表示。
+// - 権限ゲートされたタブ（分析・マスター・素材広場）は applyRoleBasedUI() 適用後の
+//   ナビボタンの inline display で判定し、現在のユーザーに非表示なら復元せずホームへフォールバック。
+// - 未知のページ名やページ本体が無い場合もホームへフォールバック。
+// 注意: この関数は applyDeepLinkOnLoad() より前に呼ぶこと。?video= 等のディープリンクは
+//       この後で showPage() を上書きし、ディープリンク先が優先される。
+function restoreInitialPage() {
+  let saved = null;
+  try { saved = localStorage.getItem(ACTIVE_PAGE_LS_KEY); } catch (_) {}
+  // 保存なし / ホーム指定 → 従来動作（HTML 既定で dashboard が active）
+  if (!saved || saved === 'dashboard') { loadDashboard(); return; }
+  // ページ本体が存在しない未知の名前ならフォールバック
+  if (!document.getElementById('page-' + saved)) { loadDashboard(); return; }
+  // 該当ページのナビボタン（PC/ドロワー）が存在し、権限で非表示にされていないか確認。
+  // 権限ゲートされたナビは applyRoleBasedUI() で inline style.display='none' が付く。
+  const navBtns = document.querySelectorAll(`.nav-btn[data-page="${saved}"],.nav-drawer-btn[data-page="${saved}"]`);
+  const accessible = navBtns.length > 0 && Array.from(navBtns).some(b => b.style.display !== 'none');
+  if (!accessible) { loadDashboard(); return; }
+  const navBtn = document.querySelector(`.nav-btn[data-page="${saved}"]`)
+              || document.querySelector(`.nav-drawer-btn[data-page="${saved}"]`);
+  showPage(saved, navBtn || null);
 }
 
 // 通知メール/チャットからの ?creative=<id> リンクで該当クリエイティブの詳細モーダルを開く
@@ -19594,8 +19618,14 @@ async function submitCreateExternalDirector() {
   showToast(`外部D「${full_name}」を登録しました`, 'success');
 }
 
+// 最後に開いていたメインタブを localStorage に保存するキー。
+// ページ更新（リロード）後も同じタブを復元するために使う（restoreInitialPage で参照）。
+const ACTIVE_PAGE_LS_KEY = 'hfs_active_page';
+
 function showPage(name, btn) {
   try { if (window.__addBreadcrumb) window.__addBreadcrumb('page_change', name); } catch (_) {}
+  // 現在のタブを保存。次回リロード時に restoreInitialPage() がこれを読んで同じタブを開く。
+  try { localStorage.setItem(ACTIVE_PAGE_LS_KEY, name); } catch (_) {}
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
   document.querySelectorAll('.nav-btn,.nav-drawer-btn').forEach(b=>b.classList.remove('active'));
