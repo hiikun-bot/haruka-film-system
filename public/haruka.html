@@ -5604,10 +5604,16 @@ window.showPage = window.showPage || function(name, btn) {
       <label class="form-label">名前 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・例: フェーズ1ショート）</span></label>
       <input class="form-input" id="pl-edit-name" placeholder="例: ショートA枠">
     </div>
-    <!-- ADR 022: 予定本数は廃止。売上は「実際に紐づくクリエイティブ本数 × 単価」で集計する -->
-    <div class="form-group" style="margin-bottom:10px">
-      <label class="form-label">クライアント単価（円） <span style="color:var(--text-muted);font-weight:400;font-size:11px">（1本あたりの請求額。売上＝紐づくクリエイティブ本数 × この単価）</span></label>
-      <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
+    <!-- 1本あたりの単価。クライアント＝請求／制作者＝編集者・デザイナーへの支払 -->
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">クライアント単価（円/本）</label>
+        <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
+      </div>
+      <div class="form-group" style="flex:1;margin-bottom:0">
+        <label class="form-label">制作者単価（円/本） <span style="color:var(--text-muted);font-weight:400;font-size:11px">（編集者/デザイナーへの支払）</span></label>
+        <input class="form-input" id="pl-edit-producer-price" type="number" min="0" step="1" value="0">
+      </div>
     </div>
     <div class="form-group" style="margin-bottom:10px">
       <label class="form-label">ステータス</label>
@@ -6261,7 +6267,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="display:flex;align-items:center;gap:8px">
           <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
           <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">成果物グループ</span>
-          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ/ランク別のクライアント単価・進行ステータス。本数は紐づくクリエイティブの実数で集計）</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ/ランク別の1本あたり単価：クライアント請求・制作者支払）</span>
         </div>
         <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
       </div>
@@ -6890,11 +6896,6 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="master-nav-item" onclick="selectMasterNav('item_names')" id="mnav-item_names"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           📦 品目マスター
-        </div>
-        <!-- ADR 022: ランク別 支払単価マスタ（admin/秘書/producer のみ表示） -->
-        <div id="mnav-rank_rates" class="master-nav-item" onclick="selectMasterNav('rank_rates')"
-          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
-          💴 ランク別単価
         </div>
         <div id="mnav-roles" class="master-nav-item" onclick="selectMasterNav('roles')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
@@ -16368,14 +16369,6 @@ async function loadProjectLines(projectId) {
       return;
     }
     _projectLinesCache = await res.json() || [];
-    // ADR 022: 実績ベース集計用に「ライン別の紐づくクリエイティブ件数」を取得して付与
-    try {
-      const cntRes = await apiFetch(`${API}/projects/${projectId}/line-creative-counts`);
-      const counts = cntRes.ok ? (await cntRes.json() || {}) : {};
-      _projectLinesCache.forEach(l => { l._actual_count = counts[l.id] || 0; });
-    } catch (_) {
-      _projectLinesCache.forEach(l => { l._actual_count = 0; });
-    }
     // Stage 4b: 別案件のキャッシュが残らないよう、現案件の line_id だけ残してクリア
     {
       const valid = new Set(_projectLinesCache.map(l => l.id));
@@ -16418,30 +16411,10 @@ function renderProjectLines() {
     const catLabel = cat ? `${esc(cat.name)}` : '<span style="color:var(--text-muted)">カテゴリ未設定</span>';
     const catColor = cat?.color || '#9CA3AF';
     const status = LINE_STATUS_LABELS[line.status] || LINE_STATUS_LABELS.draft;
-    const planned = Number(line._actual_count) || 0; // ADR 022: 実績ベース（紐づくクリエイティブ件数）
-    const unit = Number(line.client_unit_price) || 0;
-    const subtotal = planned * unit;
+    const clientUnit = Number(line.client_unit_price) || 0;
+    const producerUnit = getProducerUnitPrice(line.id);
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
     const rankBadge = line.rank ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap">${esc(line.rank)}ランク</span>` : '';
-
-    // Stage 4b: コスト集計（キャッシュ済の lineCosts から計算）
-    const lineCosts = _projectLineCostsCache[line.id] || null;
-    const isOpen = _projectLineCostsOpen.has(line.id);
-    let econLine = '';
-    if (Array.isArray(lineCosts)) {
-      const totalCost = lineCosts.reduce((s, lc) => s + calcLineCostFront(lc, line), 0);
-      const profit = subtotal - totalCost;
-      const profitPct = subtotal > 0 ? (profit / subtotal * 100) : 0;
-      const profitColor = profit >= 0 ? '#0F7A56' : '#A32D2D';
-      econLine = `<div style="font-size:11px;color:var(--text-muted);margin-top:1px">
-        コスト合計 <strong style="color:#A32D2D">¥${totalCost.toLocaleString()}</strong>
-        粗利 <strong style="color:${profitColor}">¥${profit.toLocaleString()}</strong>${subtotal > 0 ? ` <span style="color:var(--text-muted)">(${profitPct.toFixed(1)}%)</span>` : ''}
-      </div>`;
-    }
-    const costsCount = Array.isArray(lineCosts) ? lineCosts.length : null;
-    const accordionToggleLabel = costsCount === null
-      ? `${isOpen ? '▼' : '▶'} コスト内訳`
-      : `${isOpen ? '▼' : '▶'} コスト内訳 (${costsCount} 件)`;
 
     return `
       <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
@@ -16456,8 +16429,7 @@ function renderProjectLines() {
           ${rankBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
-            <div style="font-size:11px;color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()} = <strong style="color:var(--text)">¥${subtotal.toLocaleString()}</strong></div>
-            ${econLine}
+            <div style="font-size:11px;color:var(--text-muted)">クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ 制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
           </div>
           <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${status.bg};border:1px solid ${status.border};color:${status.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
             ${esc(status.label)}
@@ -16467,16 +16439,20 @@ function renderProjectLines() {
             <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
           </div>
         </div>
-        <!-- Stage 4b: コスト内訳アコーディオン -->
-        <div style="border-top:1px dashed var(--border);background:#FAFAF7">
-          <button type="button" onclick="toggleLineCostsAccordion('${esc(line.id)}')" style="width:100%;text-align:left;padding:6px 14px 6px 44px;background:transparent;border:0;cursor:pointer;font-size:11px;color:var(--em-dark);font-weight:600">
-            ${accordionToggleLabel}
-          </button>
-          ${isOpen ? `<div id="plc-list-${esc(line.id)}" style="padding:0 14px 12px 44px">${renderLineCostsBody(line)}</div>` : ''}
-        </div>
       </div>
     `;
   }).join('');
+}
+
+// 成果物グループに紐づく「制作者単価」を返す（line_cost のうち制作ロール editor/designer を優先・なければ先頭）
+function getProducerUnitPrice(lineId) {
+  const costs = _projectLineCostsCache[lineId];
+  if (!Array.isArray(costs) || !costs.length) return 0;
+  const prod = costs.find(c => {
+    const code = c?.role?.code || c?.roles?.code || c?.role_code;
+    return code === 'editor' || code === 'designer';
+  });
+  return Number((prod || costs[0]).unit_price) || 0;
 }
 
 // アコーディオンを開閉。開く時は lineCosts を fetch（未取得なら）
@@ -16625,6 +16601,7 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-rank').value = line?.rank || '';
   document.getElementById('pl-edit-name').value = line?.name || '';
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
+  document.getElementById('pl-edit-producer-price').value = line ? getProducerUnitPrice(line.id) : 0;
   document.getElementById('pl-edit-status').value = line?.status || 'draft';
   const errEl = document.getElementById('pl-edit-error');
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
@@ -16658,14 +16635,16 @@ async function saveProjectLine() {
   const rank = document.getElementById('pl-edit-rank').value || null;
   const name = document.getElementById('pl-edit-name').value.trim();
   const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
+  const producerPrice = Math.max(0, parseInt(document.getElementById('pl-edit-producer-price').value, 10) || 0);
   const status = document.getElementById('pl-edit-status').value;
 
-  // ADR 022: planned_count は送らない（売上は実クリエイティブ本数ベース）
+  // 制作者単価は backend で line_cost として保存（カテゴリからロール自動判定）
   const payload = {
     category_id: categoryId,
     rank,
     name: name || null,
     client_unit_price: unitPrice,
+    producer_unit_price: producerPrice,
     status,
   };
 
@@ -16705,11 +16684,11 @@ function openProjectLineDeleteConfirm(lineId) {
   const cat = line.category;
   const catName = cat ? cat.name : 'カテゴリ未設定';
   const nameLabel = line.name ? `「${line.name}」` : '（名称未設定）';
-  const planned = Number(line._actual_count) || 0; // ADR 022: 実績ベース（紐づくクリエイティブ件数）
   const unit = Number(line.client_unit_price) || 0;
+  const producerUnit = getProducerUnitPrice(lineId);
   document.getElementById('pl-del-message').innerHTML = `
     <div style="margin-bottom:6px"><strong>${esc(catName)}</strong> ${esc(nameLabel)}</div>
-    <div style="color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()}</div>
+    <div style="color:var(--text-muted)">クライアント ¥${unit.toLocaleString()}/本 ／ 制作者 ¥${producerUnit.toLocaleString()}/本</div>
     <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
       ※ クリエイティブが紐付いている場合は削除できません（先に別グループへ移すか削除してください）。<br>
       ※ ロール別単価（line_costs）は連動して削除されます。
@@ -24135,7 +24114,7 @@ function selectMasterNav(type) {
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
   // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
-  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','rank_rates','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -24163,8 +24142,6 @@ function selectMasterNav(type) {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
     renderItemNameMasterPage();
-  } else if (type === 'rank_rates') {
-    renderRankRatesMasterPage();
   } else if (type === 'roles') {
     renderRolesPage();
   } else if (type === 'userstats') {
@@ -24187,11 +24164,6 @@ async function loadMasterPage() {
   // ADR 008 Phase 1: 出力マッピングは admin のみ
   const exportNav = document.getElementById('mnav-creatives_export');
   if (exportNav) exportNav.style.display = isTopAdmin() ? '' : 'none';
-  // ADR 022: ランク別単価マスタは admin / 秘書 / プロデューサーのみ（effectiveRole で VIEW AS 対応）
-  const rankRatesNav = document.getElementById('mnav-rank_rates');
-  if (rankRatesNav) {
-    rankRatesNav.style.display = ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole()) ? '' : 'none';
-  }
 
   const [catRes, itemRes] = await Promise.all([
     apiFetch(`${API}/master/categories`),
@@ -24200,118 +24172,6 @@ async function loadMasterPage() {
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
   selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
-}
-
-// ==================== ADR 022: ランク別 支払単価マスタ ====================
-let _rankRatesCache = [];
-function _canEditRankRates() {
-  return ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
-}
-async function renderRankRatesMasterPage() {
-  const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
-  const [cats, ratesRes] = await Promise.all([
-    loadCategories(),
-    apiFetch(`${API}/category-rank-rates`),
-  ]);
-  _rankRatesCache = ratesRes.ok ? (await ratesRes.json() || []) : [];
-  let roles = Array.isArray(_rolesMasterRows) ? _rolesMasterRows : [];
-  if (!roles.length) {
-    try { const r = await apiFetch(`${API}/roles`); if (r.ok) roles = await r.json() || []; } catch (_) {}
-  }
-  const canEdit = _canEditRankRates();
-  const categories = Array.isArray(cats) ? cats : [];
-  const catOpts  = categories.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.code ? ` (${esc(c.code)})` : ''}</option>`).join('');
-  const roleOpts = roles.map(r => `<option value="${esc(r.id)}">${esc(r.label || r.code)}</option>`).join('');
-
-  const addForm = canEdit ? `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
-      <div style="font-size:11px;font-weight:600;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:10px">単価を追加</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select class="form-select" id="rr-new-category" style="flex:2;min-width:140px;font-size:13px"><option value="">カテゴリ *</option>${catOpts}</select>
-        <select class="form-select" id="rr-new-rank" style="width:84px;font-size:13px"><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
-        <select class="form-select" id="rr-new-role" style="flex:2;min-width:140px;font-size:13px"><option value="">ロール *</option>${roleOpts}</select>
-        <input class="form-input" id="rr-new-price" type="number" min="0" step="100" placeholder="単価（円）" style="width:130px;font-size:13px">
-        <button class="btn-primary" style="padding:7px 16px;font-size:13px;white-space:nowrap" onclick="addRankRate()">追加</button>
-      </div>
-    </div>` : '';
-
-  let rows;
-  if (!_rankRatesCache.length) {
-    rows = `<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">まだ登録されていません</td></tr>`;
-  } else {
-    rows = _rankRatesCache.map(rt => {
-      const catName  = rt.category ? esc(rt.category.name) : '<span style="color:var(--text-muted)">—</span>';
-      const roleName = rt.role ? esc(rt.role.label || rt.role.code) : '<span style="color:var(--text-muted)">—</span>';
-      const priceCell = canEdit
-        ? `<input type="number" min="0" step="100" value="${Number(rt.unit_price) || 0}" onchange="updateRankRate('${esc(rt.id)}', this.value)" style="width:110px;padding:4px 8px;font-size:13px;text-align:right;border:1px solid var(--border);border-radius:6px"> 円`
-        : `¥${(Number(rt.unit_price) || 0).toLocaleString()}`;
-      return `<tr style="border-top:1px solid var(--border)">
-        <td style="padding:8px 10px;font-size:13px">${catName}</td>
-        <td style="padding:8px 10px"><span style="display:inline-flex;padding:2px 8px;background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:999px;font-size:11px;font-weight:700">${esc(rt.rank)}</span></td>
-        <td style="padding:8px 10px;font-size:13px">${roleName}</td>
-        <td style="padding:8px 10px;font-size:13px;text-align:right">${priceCell}</td>
-        <td style="padding:8px 10px;text-align:center">${canEdit ? `<button class="btn" style="padding:3px 10px;font-size:11px;color:#A32D2D;border-color:#F09595" onclick="deleteRankRate('${esc(rt.id)}')">削除</button>` : ''}</td>
-      </tr>`;
-    }).join('');
-  }
-
-  content.innerHTML = `
-    <div style="max-width:880px">
-      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">💴 ランク別 支払単価マスタ</div>
-      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;line-height:1.7">
-        カテゴリ × ランク × ロールごとの <strong>編集者・デザイナーへの支払単価</strong>。成果物グループにランク（A/B/C）を付けて作成すると、ここの単価が <code>コスト内訳</code> に自動入力されます。<br>
-        ※ クライアント請求額（成果物グループの「クライアント単価」）はランクに依存しません。
-      </p>
-      ${addForm}
-      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff">
-        <table style="width:100%;border-collapse:collapse">
-          <thead style="background:#F8FAFC">
-            <tr>
-              <th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">カテゴリ</th>
-              <th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">ランク</th>
-              <th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">ロール</th>
-              <th style="padding:8px 10px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:600">支払単価</th>
-              <th style="padding:8px 10px;width:60px"></th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-async function addRankRate() {
-  const category_id = document.getElementById('rr-new-category').value;
-  const rank        = document.getElementById('rr-new-rank').value;
-  const role_id     = document.getElementById('rr-new-role').value;
-  const unit_price  = document.getElementById('rr-new-price').value;
-  if (!category_id) { showToast('カテゴリを選択してください', 'warn'); return; }
-  if (!role_id) { showToast('ロールを選択してください', 'warn'); return; }
-  const res = await apiFetch(`${API}/category-rank-rates`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ category_id, rank, role_id, unit_price })
-  });
-  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.error || '追加に失敗しました', 'error'); return; }
-  showToast('単価を追加しました', 'ok');
-  renderRankRatesMasterPage();
-}
-
-async function updateRankRate(id, price) {
-  const res = await apiFetch(`${API}/category-rank-rates/${id}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ unit_price: price })
-  });
-  if (!res.ok) { showToast('更新に失敗しました', 'error'); return; }
-  showToast('単価を更新しました', 'ok');
-}
-
-async function deleteRankRate(id) {
-  if (!confirm('この単価を削除しますか？')) return;
-  const res = await apiFetch(`${API}/category-rank-rates/${id}`, { method: 'DELETE' });
-  if (!res.ok) { showToast('削除に失敗しました', 'error'); return; }
-  showToast('削除しました', 'ok');
-  renderRankRatesMasterPage();
 }
 
 // ==================== ユーザー利用状況 ====================

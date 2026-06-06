@@ -149,3 +149,21 @@ COMMENT ON TABLE category_rank_rates IS
 - 一覧の小計・粗利・`calcLineCostFront` は `planned_count` でなく実件数を使う。フロントは `GET /projects/:id/line-creative-counts`（`{line_id: count}`）で件数を取得。
 - `project_estimate_lines.planned_count` 列は**残す**（後方互換・既存集計の段階移行のため）。新規グループは 0 のまま。
 - **未対応（フォローアップ）**: 採算ダッシュボードの「見込み」列・納期売上見込みは現状まだ `planned_count` を参照（実績列はクリエイティブ実数ベースで既に正しい）。請求書は元々 creative 単位なので影響軽微（`fixed_total`/`hourly` の按分のみ実件数化が必要）。
+
+## 追補（2026-06-07）: 成果物グループを「1本あたり単価の定義」に簡素化
+
+ユーザーフィードバックを受け、成果物グループまわりの過剰なロジックを削いで **1本あたり単価の定義だけ** に整理した。
+
+**確定**
+- 成果物グループは per-unit の単価定義のみを持つ：**クライアント単価/本** ＋ **制作者単価/本**。
+- **制作者単価**はモーダルに直接入力（1グループ=1ロール）。ロールはカテゴリの `render_kind` から自動判定（`video`→editor / それ以外→designer）。**UI ではロールを扱わない**（ユーザー「ロールごとは不要」）。実体は `project_estimate_line_costs` 1 行（`pricing_type='fixed_per_unit'`, `user_id=NULL`）として upsert。
+- 一覧は **per-unit のみ表示**（「クライアント ¥X/本 ／ 制作者 ¥Y/本」）。合計・粗利・本数・コスト内訳アコーディオンは出さない。
+- 合計・粗利・採算は **分析（採算）タブ** で見る（creative 実績ベース・既存）。
+
+**撤去**（前述 2026-06-06 追補の実績件数表示も含む）
+- **ランク別支払単価マスタ**（`category_rank_rates` のマスター画面UI・CRUD API・成果物グループ作成時の自動入力）を全撤去。「ランクで自動入力は不要」との判断。`category_rank_rates` テーブルは未使用として残置（後で DROP 可）。
+- `GET /projects/:id/line-creative-counts` と一覧の実績件数・粗利表示・コスト内訳アコーディオンを撤去。
+
+**残す**
+- `rank`（A/B/C）は成果物グループのラベルとして残す（自動入力なし）。
+- `planned_count` 列・`project_estimate_line_costs` テーブルは引き続き利用（制作者単価の保存先）。
