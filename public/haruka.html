@@ -5896,6 +5896,10 @@ window.showPage = window.showPage || function(name, btn) {
       <button id="p-tab-btn-products" onclick="switchProjectTab('products')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">📦 商材</button>
       <button id="p-tab-btn-appeal-axes" onclick="switchProjectTab('appeal-axes')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">🎯 訴求軸</button>
       <button id="p-tab-btn-checklist" onclick="switchProjectTab('checklist')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">✅ チェックリスト</button>
+      <!-- 💰 見積・費用 / 📋 工程表 は案件 id 確定後（編集モード）にしか操作できない。
+           #p-tab-nav 自体が新規作成時は非表示なので、ボタン個別の出し分けは不要。 -->
+      <button id="p-tab-btn-estimate" onclick="switchProjectTab('estimate')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">💰 見積・費用</button>
+      <button id="p-tab-btn-process" onclick="switchProjectTab('process')" style="padding:10px 20px;font-size:13px;font-weight:500;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;margin-bottom:-1px">📋 工程表</button>
       <!-- 「💰 収支」タブは廃止。報酬ボタンから modal-project-finance を直接開く -->
     </div>
 
@@ -5910,9 +5914,6 @@ window.showPage = window.showPage || function(name, btn) {
       <button type="button" id="p-subtab-btn-schedule" class="p-subtab-btn"        onclick="switchProjectSubTab('schedule')">👥 期間・担当</button>
       <button type="button" id="p-subtab-btn-settings" class="p-subtab-btn"        onclick="switchProjectSubTab('settings')">⚙️ 設定</button>
       <button type="button" id="p-subtab-btn-link"     class="p-subtab-btn"        onclick="switchProjectSubTab('link')">🔗 連携</button>
-      <!-- ▼ 💰 見積・費用 / 📋 工程表 は案件 id 確定後（編集モード）のみ操作可能なので、新規作成時は JS で非表示にする -->
-      <button type="button" id="p-subtab-btn-estimate" class="p-subtab-btn" style="display:none" onclick="switchProjectSubTab('estimate')">💰 見積・費用</button>
-      <button type="button" id="p-subtab-btn-process"  class="p-subtab-btn" style="display:none" onclick="switchProjectSubTab('process')">📋 工程表</button>
     </div>
 
     <!-- ====== サブタブ：📝 基本（クライアント / ステータス / カテゴリ / 案件名 / タグ） ====== -->
@@ -6239,16 +6240,18 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
     </div><!-- /p-subtab-panel-link -->
 
-    <!-- ====== サブタブ：💰 見積・費用（成果物グループ + 固定費・追加収入） ======
-         旧: サブタブの外側にベタ置きされ全サブタブで常時表示されていた 2 セクションを、
-         専用サブタブにまとめて「見積・費用」タブ選択時のみ表示するようにした。 -->
-    <div id="p-subtab-panel-estimate" class="p-subtab-panel hidden">
+    </div><!-- /p-tab-panel-main -->
+
+    <!-- ====== 親タブ：💰 見積・費用（成果物グループ + 固定費・追加収入） ======
+         旧: 「基本情報」サブタブの外側にベタ置きされ全サブタブで常時表示されていた 2 セクションを、
+         親タブに昇格し「見積・費用」タブ選択時のみ表示するようにした。 -->
+    <div id="p-tab-panel-estimate" style="display:none;padding:24px 28px">
 
     <!-- ===== 成果物グループ（project_estimate_lines）Stage 4a ===== -->
     <!-- ADR 002 + 005 に基づく見積行 / deliverable の編集 UI。
          旧単価モーダル（rate / director-rates / producer-rates / client-fee）はこの PR では触らず並走。
          新規案件作成時（p-id 未確定）は非表示。編集モード時のみ表示する。 -->
-    <div id="p-lines-section" style="display:none;padding:0">
+    <div id="p-lines-section" style="display:none;padding:0;margin-bottom:28px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1.5px solid var(--em-pale)">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
@@ -6285,11 +6288,11 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
 
-    </div><!-- /p-subtab-panel-estimate -->
+    </div><!-- /p-tab-panel-estimate -->
 
-    <!-- ====== サブタブ：📋 工程表（フェーズ・タスク・マイルストーン） ======
-         旧: サブタブの外側にベタ置きされ全サブタブで常時表示されていた工程表を専用サブタブに移設。 -->
-    <div id="p-subtab-panel-process" class="p-subtab-panel hidden">
+    <!-- ====== 親タブ：📋 工程表（フェーズ・タスク・マイルストーン） ======
+         旧: 「基本情報」サブタブの外側にベタ置きされ全サブタブで常時表示されていた工程表を親タブに昇格。 -->
+    <div id="p-tab-panel-process" style="display:none;padding:24px 28px">
 
     <!-- ===== 工程表（project_tasks）ADR 010 Phase 1b ===== -->
     <!-- LP/HP 等カテゴリ横断のフェーズ・タスク・マイルストーン管理。
@@ -6376,9 +6379,7 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
 
-    </div><!-- /p-subtab-panel-process -->
-
-    </div><!-- /p-tab-panel-main -->
+    </div><!-- /p-tab-panel-process -->
 
     <!-- ADR 001: 案件は "候補リストの管理" のみ。creativeモーダル側で 1つを選ぶ UI を提供。 -->
 
@@ -15944,9 +15945,9 @@ function openProjectModal(preClientId) {
   document.getElementById('p-tab-panel-sync').style.display = 'none';
   // サブタブは新規・編集ともに常に表示。デフォルトは「📝 基本」
   switchProjectSubTab('basic');
-  // 💰 見積・費用 / 📋 工程表 は id 確定後のみ操作可能なので新規作成時は非表示（前回 編集モードの残留を消す）
-  const _estBtn = document.getElementById('p-subtab-btn-estimate'); if (_estBtn) _estBtn.style.display = 'none';
-  const _procBtn = document.getElementById('p-subtab-btn-process'); if (_procBtn) _procBtn.style.display = 'none';
+  // 💰 見積・費用 / 📋 工程表 親パネルは id 確定後のみ。新規作成時は非表示（前回 編集モードの残留を消す）
+  const _peEstimate = document.getElementById('p-tab-panel-estimate'); if (_peEstimate) _peEstimate.style.display = 'none';
+  const _peProcess = document.getElementById('p-tab-panel-process'); if (_peProcess) _peProcess.style.display = 'none';
   const _ppPanel = document.getElementById('p-tab-panel-products'); if (_ppPanel) _ppPanel.style.display = 'none';
   const _paPanel = document.getElementById('p-tab-panel-appeal-axes'); if (_paPanel) _paPanel.style.display = 'none';
   const _pcPanel = document.getElementById('p-tab-panel-checklist'); if (_pcPanel) _pcPanel.style.display = 'none';
@@ -16093,11 +16094,8 @@ function openEditProject(p) {
   switchProjectTab('main');
   // サブタブは「📝 基本」をデフォルト表示（モーダル開き直しでも常にリセット）
   switchProjectSubTab('basic');
-  // 💰 見積・費用 / 📋 工程表 サブタブは編集モード（id 確定後）のみ表示する
-  const estBtn = document.getElementById('p-subtab-btn-estimate');
-  if (estBtn) estBtn.style.display = '';
-  const procBtn = document.getElementById('p-subtab-btn-process');
-  if (procBtn) procBtn.style.display = '';
+  // 💰 見積・費用 / 📋 工程表 は親タブ。#p-tab-nav 表示で自動的に出るのでここでの個別操作は不要。
+  // switchProjectTab('main') 済みなので両親パネルは非表示・基本情報タブが選択された状態。
   // 「💰 収支」タブは廃止。案件カードの「報酬」ボタンから直接 modal-project-finance を開く
 
   // 削除ボタン: 編集モードかつ project.delete 権限保有時のみ表示
@@ -16235,7 +16233,7 @@ function selectDeadlineWeekday(day) {
 
 function switchProjectTab(tab) {
   // ADR 001: products / appeal-axes は creative-first 設計のためタブ復活。
-  const tabs = ['main', 'products', 'appeal-axes', 'checklist'];
+  const tabs = ['main', 'products', 'appeal-axes', 'checklist', 'estimate', 'process'];
   tabs.forEach(t => {
     const panel = document.getElementById(`p-tab-panel-${t}`);
     const btn   = document.getElementById(`p-tab-btn-${t}`);
@@ -16262,7 +16260,7 @@ function switchProjectTab(tab) {
 
 // 「基本情報」親タブ内のサブタブ切替（display 切替のみ。input/state はリセットしない）
 function switchProjectSubTab(name) {
-  const subtabs = ['basic', 'schedule', 'settings', 'link', 'estimate', 'process'];
+  const subtabs = ['basic', 'schedule', 'settings', 'link'];
   subtabs.forEach(t => {
     const panel = document.getElementById(`p-subtab-panel-${t}`);
     const btn   = document.getElementById(`p-subtab-btn-${t}`);
