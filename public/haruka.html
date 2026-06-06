@@ -11574,6 +11574,10 @@ function renderCreatives() {
     if(b.classList.contains('bf-c')) activeBalls.push('client');
   });
   activeBalls.push('done');
+  // 不明なボール種別（status が getBallHolder の ballMap 未登録 = type:'unknown'）も一覧から消さない。
+  // 過去に status 追加漏れ（例: 「保留」）で「登録/設定したのに一覧に出ない・詳細は見られる」
+  // サイレント消失バグが起きたため、unknown は常に表示対象に含めデータ欠落を防ぐ（バグ #2db804d7 の恒久対策）。
+  activeBalls.push('unknown');
 
   const _role = effectiveRole();
   // タブ別カウント（共通/動画/デザイン）はサーバー側 /api/creatives/counts から取得した
