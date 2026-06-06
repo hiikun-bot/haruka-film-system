@@ -866,7 +866,7 @@ router.get('/projects/:id', async (req, res) => {
       director:users!projects_director_id_fkey(id, full_name, is_external, external_company),
       liaison:users!projects_liaison_user_id_fkey(id, full_name),
       project_estimate_lines(
-        id, project_id, category_id, name, planned_count, client_unit_price,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price,
         sort_order, status, status_changed_at, currency, tax_included, created_at,
         project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, currency,
@@ -881,7 +881,7 @@ router.get('/projects/:id', async (req, res) => {
       producer:users!projects_producer_id_fkey(id, full_name),
       director:users!projects_director_id_fkey(id, full_name),
       project_estimate_lines(
-        id, project_id, category_id, name, planned_count, client_unit_price,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price,
         sort_order, status, status_changed_at, currency, tax_included, created_at,
         project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, currency,
@@ -2029,7 +2029,7 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   const projectId = req.params.project_id;
   const { data, error } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
@@ -2048,6 +2048,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const projectId = req.params.project_id;
   const {
     category_id,
+    rank,
     name,
     planned_count,
     client_unit_price,
@@ -2060,6 +2061,8 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   // バリデーション
   const plannedCount = Math.max(0, parseInt(planned_count, 10) || 0);
   const unitPrice = Math.max(0, parseInt(client_unit_price, 10) || 0);
+  // ADR 022: rank は A/B/C のみ。それ以外（空欄含む）は NULL
+  const lineRank = ['A', 'B', 'C'].includes(String(rank || '').toUpperCase()) ? String(rank).toUpperCase() : null;
   const lineStatus = status || 'draft';
   if (!LINE_STATUSES.has(lineStatus)) {
     return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
@@ -2094,6 +2097,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const insertRow = {
     project_id: projectId,
     category_id: category_id || null,
+    rank: lineRank,
     name: (typeof name === 'string' && name.trim()) ? name.trim() : null,
     planned_count: plannedCount,
     client_unit_price: unitPrice,
@@ -2107,7 +2111,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const { data, error } = await supabase
     .from('project_estimate_lines')
     .insert(insertRow)
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .single();
   if (error) {
     if (isMissingPelTable(error)) {
@@ -2149,6 +2153,11 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     }
     updates.category_id = body.category_id || null;
   }
+  if (Object.prototype.hasOwnProperty.call(body, 'rank')) {
+    // ADR 022: rank は A/B/C のみ。それ以外（空欄含む）は NULL
+    const r = String(body.rank || '').toUpperCase();
+    updates.rank = ['A', 'B', 'C'].includes(r) ? r : null;
+  }
   if (Object.prototype.hasOwnProperty.call(body, 'name')) {
     updates.name = (typeof body.name === 'string' && body.name.trim()) ? body.name.trim() : null;
   }
@@ -2182,7 +2191,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
     const { data: row } = await supabase
       .from('project_estimate_lines')
-      .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+      .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
       .eq('id', lineId)
       .single();
     return res.json(row);
@@ -2192,7 +2201,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     .from('project_estimate_lines')
     .update(updates)
     .eq('id', lineId)
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -2267,7 +2276,7 @@ router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermissi
   // 更新後の一覧を返す
   const { data: updated, error: refErr } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
@@ -10493,7 +10502,7 @@ router.get('/invoices/preview-items', async (req, res) => {
     const { data: lines, error: linesErr } = await supabase
       .from('project_estimate_lines')
       .select(`
-        id, project_id, category_id, name, planned_count, client_unit_price, status, sort_order,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
         category:creative_categories(id, code, name),
         line_costs:project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
@@ -12628,7 +12637,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const { data: lines, error: linesErr } = await supabase
       .from('project_estimate_lines')
       .select(`
-        id, project_id, category_id, name, planned_count, client_unit_price, status, sort_order,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
         category:creative_categories(id, code, name),
         line_costs:project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
