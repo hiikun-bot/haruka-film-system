@@ -7651,15 +7651,25 @@ window.showPage = window.showPage || function(name, btn) {
                既存 JS（getElementById('cd-memo') / saveCreativeDetailMemo / updateCreativeMemoHasDot 等）と互換。
                旧 📝 アイコンとポップオーバーは廃止し、ここに textarea を直接表示する。
                クライアント確認URL はモーダル下部フッターへ移設済（#cd-client-review-group）。 -->
+          <!-- メモは「表示モード（URLを自動リンク化・既定）」と「編集モード（textarea）」のトグル。
+               表示モードでは cdRenderMemo() が #cd-memo の値を linkifyText() で <a> 化して #cd-memo-rendered に出す。
+               編集は ✎ ボタン（または空メモ時の表示エリア）で cdMemoEnterEdit() を呼んで切り替える。
+               #cd-memo textarea 自体は dirty/下書き追跡（CD_DRAFT_FIELDS）の互換のため DOM から外さず display で切替える。 -->
           <div class="form-group" style="margin-bottom:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
               <span style="color:var(--text-muted);white-space:nowrap;font-weight:600">📝 メモ</span>
               <span style="font-size:11px;color:var(--text-muted)">（チーム全体で共有）</span>
               <!-- 旧 cd-memo-has-dot 互換用の非表示プレースホルダ。updateCreativeMemoHasDot が getElementById でアクセスする。 -->
               <span id="cd-memo-has-dot" style="display:none"></span>
+              <!-- 表示モードで出る編集ボタン -->
+              <button type="button" id="cd-memo-edit-btn" onclick="cdMemoEnterEdit()" style="margin-left:auto;font-size:11px;padding:2px 10px;background:#fff;border:0.5px solid var(--border);border-radius:6px;color:var(--text-muted);cursor:pointer;white-space:nowrap">✎ 編集</button>
             </div>
-            <textarea class="form-input" id="cd-memo" rows="2" style="resize:vertical;width:100%;font-size:12.5px" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
-            <div style="display:flex;justify-content:flex-end;margin-top:6px">
+            <!-- 表示モード: URL を自動リンク化したメモ本文（cdRenderMemo() が描画） -->
+            <div id="cd-memo-rendered" onclick="cdMemoRenderedClick(event)" style="font-size:12.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--text);max-height:140px;overflow:auto;padding:2px 0"></div>
+            <!-- 編集モード: textarea（既存 JS 互換のため id="cd-memo" は維持）。既定では非表示。 -->
+            <textarea class="form-input" id="cd-memo" rows="2" style="display:none;resize:vertical;width:100%;font-size:12.5px" placeholder="クライアント要望・撮影メモ・参考リンクなど"></textarea>
+            <div id="cd-memo-edit-actions" style="display:none;justify-content:flex-end;gap:8px;margin-top:6px">
+              <button class="btn" type="button" onclick="cdMemoCancelEdit()" style="font-size:12px;padding:6px 14px;background:#fff;color:var(--text-muted)">キャンセル</button>
               <button class="btn" type="button" onclick="saveCreativeDetailMemo()" style="font-size:12px;padding:6px 14px">メモを保存</button>
             </div>
           </div>
@@ -15529,6 +15539,7 @@ function __cdAfterOpen(creativeId) {
     const parsed = JSON.parse(raw);
     const fields = parsed?.fields || {};
     let restored = false;
+    let memoRestored = false;
     for (const fid of CD_DRAFT_FIELDS) {
       const el = document.getElementById(fid);
       if (!el) continue;
@@ -15538,8 +15549,11 @@ function __cdAfterOpen(creativeId) {
       if (draftVal && draftVal !== initVal) {
         el.value = draftVal;
         restored = true;
+        if (fid === 'cd-memo') memoRestored = true;
       }
     }
+    // メモの下書きが復元されたら、保存ボタンが見えるよう編集モードで開く（未保存に気づけるように）
+    if (memoRestored) { try { cdMemoEnterEdit(); } catch (_) {} }
     if (restored && typeof showToast === 'function') {
       const savedAt = parsed?.saved_at ? new Date(parsed.saved_at) : null;
       const tsLabel = savedAt && !isNaN(savedAt) ? savedAt.toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit', month: '2-digit', day: '2-digit' }) : '';
@@ -29997,6 +30011,8 @@ async function openCreativeDetail(id) {
   // メモ（チーム共有用 creatives.memo）
   const _memoEl = document.getElementById('cd-memo');
   if (_memoEl) _memoEl.value = c.memo || '';
+  // 既定は表示モード（URL をリンク化した本文を描画）。編集は ✎ ボタンで切替。
+  try { cdMemoExitEdit(); } catch (_) {}
   // 右上 📝 アイコンの「メモあり」緑ドット表示
   try { updateCreativeMemoHasDot(); } catch (_) {}
   updateCreativeCommentLabel(c.status);
@@ -37927,6 +37943,8 @@ async function saveCreativeDetailMemo() {
     try { __cdSaveDraftNow(); } catch (_) {}
     // 右上アイコンの「メモあり」緑ドットを更新
     try { updateCreativeMemoHasDot(); } catch (_) {}
+    // 表示モードへ戻して URL をリンク化した本文を再描画
+    try { cdMemoExitEdit(); } catch (_) {}
     showToast('メモを保存しました', 'success');
   } catch (err) {
     showToast('メモの保存に失敗: ' + (err?.message || err), 'error');
@@ -37979,6 +37997,85 @@ function updateCreativeMemoHasDot() {
   if (!dot) return;
   const has = !!(memoEl && memoEl.value && memoEl.value.trim());
   dot.style.display = has ? '' : 'none';
+}
+
+// 自由記入テキストを HTML エスケープした上で http(s) URL を <a>（新タブ）へ変換する。
+// メモ・コメント等の「URL を貼っただけ」のテキストをクリック可能にする用途。XSS 安全（先にエスケープしてから linkify）。
+function linkifyText(raw) {
+  const escd = String(raw ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // URL 本文は日本語（CJK 記号/かな/漢字/全角形）を含まないので、その範囲で停止させる
+  // （URL 直後にスペース無しで日本語が続くケースでの過剰マッチを防ぐ）。さらに末尾の ASCII 句読点・括弧は除外。
+  return escd.replace(/(https?:\/\/[^\s<>"'　-〿぀-鿿＀-￯]+)/g, (m) => {
+    let url = m, tail = '';
+    const t = /[)\]}>,.!?:;'"]+$/.exec(url);
+    if (t) { tail = url.slice(t.index); url = url.slice(0, t.index); }
+    if (!url) return m;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:var(--em-dark);text-decoration:underline;word-break:break-all">${url}</a>${tail}`;
+  });
+}
+
+// 詳細モーダルの📝メモ表示モードを描画する。#cd-memo（textarea）の現在値を linkify して #cd-memo-rendered に出す。
+// 空のときはプレースホルダ的な薄い文言を出し、クリックで編集モードへ入れることを示す。
+function cdRenderMemo() {
+  const ta = document.getElementById('cd-memo');
+  const view = document.getElementById('cd-memo-rendered');
+  if (!view) return;
+  const val = (ta && ta.value || '').trim();
+  if (val) {
+    view.innerHTML = linkifyText(val);
+    view.style.color = 'var(--text)';
+    view.style.cursor = 'auto';
+  } else {
+    view.innerHTML = 'メモはまだありません（クリックで追加）';
+    view.style.color = 'var(--text-muted)';
+    view.style.cursor = 'text';
+  }
+}
+
+// メモ編集モードへ切替（textarea 表示・保存/キャンセル表示・フォーカス）。
+function cdMemoEnterEdit() {
+  const ta = document.getElementById('cd-memo');
+  const view = document.getElementById('cd-memo-rendered');
+  const editBtn = document.getElementById('cd-memo-edit-btn');
+  const actions = document.getElementById('cd-memo-edit-actions');
+  if (!ta) return;
+  if (view) view.style.display = 'none';
+  if (editBtn) editBtn.style.display = 'none';
+  ta.style.display = '';
+  if (actions) actions.style.display = 'flex';
+  try { ta.focus(); } catch (_) {}
+}
+
+// メモ表示モードへ切替（linkify 済みの本文を表示）。保存成功時・キャンセル時に呼ぶ。
+function cdMemoExitEdit() {
+  const ta = document.getElementById('cd-memo');
+  const view = document.getElementById('cd-memo-rendered');
+  const editBtn = document.getElementById('cd-memo-edit-btn');
+  const actions = document.getElementById('cd-memo-edit-actions');
+  if (ta) ta.style.display = 'none';
+  if (actions) actions.style.display = 'none';
+  if (view) view.style.display = '';
+  if (editBtn) editBtn.style.display = '';
+  cdRenderMemo();
+}
+
+// 表示モードのメモ本文クリック。リンク自体のクリックはそのまま新タブで開く。
+// 空メモのプレースホルダ／本文余白クリックは編集モードへ入る。
+function cdMemoRenderedClick(ev) {
+  try { if (ev && ev.target && ev.target.closest && ev.target.closest('a')) return; } catch (_) {}
+  const ta = document.getElementById('cd-memo');
+  // 既にメモがある場合は本文クリックで誤って編集に入らないよう、空のときのみクリック編集を許可。
+  const hasVal = !!(ta && ta.value && ta.value.trim());
+  if (!hasVal) cdMemoEnterEdit();
+}
+
+// メモ編集をキャンセル: 直近サーバー値（currentCreativeDetail.memo）へ戻し、下書きを整理して表示モードへ。
+function cdMemoCancelEdit() {
+  const ta = document.getElementById('cd-memo');
+  if (ta) ta.value = (currentCreativeDetail && currentCreativeDetail.memo) || '';
+  try { __cdSaveDraftNow(); } catch (_) {}   // dirty 解消で下書きが消える
+  try { updateCreativeMemoHasDot(); } catch (_) {}
+  cdMemoExitEdit();
 }
 
 // ===== クリエイティブ削除 =====
