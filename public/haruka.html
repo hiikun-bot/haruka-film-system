@@ -5590,6 +5590,16 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="">読込中...</option>
       </select>
     </div>
+    <!-- ADR 022: ランク（編集者/デザイナーへの支払単価の段階。client 請求とは無関係） -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">ランク <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・編集者/デザイナーへの支払単価の段階。マスタ単価の自動入力に使用）</span></label>
+      <select class="form-select" id="pl-edit-rank">
+        <option value="">なし</option>
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+      </select>
+    </div>
     <div class="form-group" style="margin-bottom:10px">
       <label class="form-label">名前 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・例: フェーズ1ショート）</span></label>
       <input class="form-input" id="pl-edit-name" placeholder="例: ショートA枠">
@@ -16404,6 +16414,7 @@ function renderProjectLines() {
     const unit = Number(line.client_unit_price) || 0;
     const subtotal = planned * unit;
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
+    const rankBadge = line.rank ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap">${esc(line.rank)}ランク</span>` : '';
 
     // Stage 4b: コスト集計（キャッシュ済の lineCosts から計算）
     const lineCosts = _projectLineCostsCache[line.id] || null;
@@ -16434,6 +16445,7 @@ function renderProjectLines() {
           <div style="flex-shrink:0;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${catColor}1A;border:1px solid ${catColor}55;border-radius:999px;font-size:11px;font-weight:600;color:${catColor === '#9CA3AF' ? '#4B5563' : catColor}">
             ${catLabel}
           </div>
+          ${rankBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
             <div style="font-size:11px;color:var(--text-muted)">${planned} 本 × ¥${unit.toLocaleString()} = <strong style="color:var(--text)">¥${subtotal.toLocaleString()}</strong></div>
@@ -16602,6 +16614,7 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-title').textContent = line ? '成果物グループを編集' : '成果物グループを追加';
   document.getElementById('pl-edit-id').value = line ? line.id : '';
   document.getElementById('pl-edit-project-id').value = projectId;
+  document.getElementById('pl-edit-rank').value = line?.rank || '';
   document.getElementById('pl-edit-name').value = line?.name || '';
   document.getElementById('pl-edit-planned-count').value = line ? (line.planned_count ?? 0) : 0;
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
@@ -16635,6 +16648,7 @@ async function saveProjectLine() {
 
   const categoryId = document.getElementById('pl-edit-category').value;
   if (!categoryId) { showErr('カテゴリを選択してください'); return; }
+  const rank = document.getElementById('pl-edit-rank').value || null;
   const name = document.getElementById('pl-edit-name').value.trim();
   const plannedCount = Math.max(0, parseInt(document.getElementById('pl-edit-planned-count').value, 10) || 0);
   const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
@@ -16642,6 +16656,7 @@ async function saveProjectLine() {
 
   const payload = {
     category_id: categoryId,
+    rank,
     name: name || null,
     planned_count: plannedCount,
     client_unit_price: unitPrice,

@@ -227,9 +227,12 @@ function resolveCreativeRoleCost({
   if (!candidates.length) return { unit_price: 0, line_id: null, line_cost_id: null };
 
   // 3) rank マッチを優先順位の先頭に持ってくる（rank が無ければそのまま）
+  //    ADR 022: line.rank 列での一致を優先。rank 列が未設定(NULL)の旧データのみ、
+  //    後方互換で line.name の "Aランク" 文字列マッチにフォールバックする。
   if (rankApplied) {
     const rankMarker = `${rankApplied}ランク`;
-    const idx = candidates.findIndex(l => (l.name || '').includes(rankMarker));
+    const idx = candidates.findIndex(l =>
+      l.rank === rankApplied || (!l.rank && (l.name || '').includes(rankMarker)));
     if (idx > 0) {
       const [rankMatch] = candidates.splice(idx, 1);
       candidates.unshift(rankMatch);
