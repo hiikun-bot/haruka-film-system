@@ -8599,12 +8599,15 @@ router.get('/files/:fileId/stream', async (req, res) => {
     // creative_files から原本のキャッシュとfaststart情報を取得
     const { data: cf } = await supabase
       .from('creative_files')
-      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size')
+      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status')
       .eq('drive_file_id', req.params.fileId)
       .maybeSingle();
 
     const wantsOriginal = req.query.original === '1';
-    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id;
+    // faststart_status==='done' のときだけ faststart 版を使う。
+    // 生成失敗/処理中（failed/processing）で残った不完全な faststart_drive_file_id を
+    // 掴むと再生不能になるため、direct-url 側と条件を揃える（旧コードは status 未チェックだった）。
+    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
     const effectiveFileId = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
     const cachedSize     = useFaststart ? cf.faststart_file_size : cf?.file_size;
     const cachedMimeType = cf?.mime_type; // -c copy なので原本と同じ
@@ -8719,12 +8722,21 @@ router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
       supportsAllDrives: true,
     });
 
+    // webContentLink (drive.google.com/uc?...&export=download) は 25MB 超で
+    // 「ウイルススキャンできません」の確認 HTML ページを挟む仕様。動画はほぼ全て
+    // 該当し <video> が HTML を掴んで再生失敗 → 直リンクが実質ずっと死んでいた。
+    // 確認ページを回避する usercontent ダウンロードエンドポイント + confirm=t を返す。
+    // ※ 効果はファイル/環境依存。失敗時はフロントが /files/:id/stream へ自動 fallback する。
+    const fid = meta.data.id || targetFileId;
+    const directUrl = `https://drive.usercontent.google.com/download?id=${fid}&export=download&confirm=t`;
+
     res.json({
-      contentUrl: meta.data.webContentLink || null,
-      viewUrl:    meta.data.webViewLink || null,
-      mimeType:   meta.data.mimeType || cf?.mime_type || null,
-      size:       meta.data.size ? Number(meta.data.size) : null,
-      source:     useFaststart ? 'faststart' : 'master',
+      contentUrl:     directUrl,
+      webContentLink: meta.data.webContentLink || null, // 参考用（旧来の値）
+      viewUrl:        meta.data.webViewLink || null,
+      mimeType:       meta.data.mimeType || cf?.mime_type || null,
+      size:           meta.data.size ? Number(meta.data.size) : null,
+      source:         useFaststart ? 'faststart' : 'master',
     });
   } catch (e) {
     console.error('[direct-url] failed:', e.message);
