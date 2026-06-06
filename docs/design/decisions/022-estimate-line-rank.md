@@ -140,3 +140,12 @@ COMMENT ON TABLE category_rank_rates IS
 1. **rank は A/B/C のみ（S は使わない）**。列は CHECK 制約なしの TEXT、UI で A/B/C を強制。
 2. **client 請求はランク非依存**（ランク別なのは支払いのみ）。請求もランク別にしたい要望が出たら将来別途。
 3. **(category × rank × role) 支払単価マスタを作る**（`category_rank_rates`）。成果物グループ作成時に line_costs を自動入力する（「ある程度は自動化したい」）。
+
+## 追補（2026-06-06）: 予定本数の廃止・実績ベース売上
+
+成果物グループの **「予定本数（planned_count）」をモーダルから廃止**し、売上・採算は **「実際に紐づくクリエイティブ本数 × クライアント単価」** で集計する（ユーザー確定）。
+
+- **実績本数の定義**: そのグループに紐づく creative の件数（`creatives.line_id` 一致・**status は問わず全件**）。
+- 一覧の小計・粗利・`calcLineCostFront` は `planned_count` でなく実件数を使う。フロントは `GET /projects/:id/line-creative-counts`（`{line_id: count}`）で件数を取得。
+- `project_estimate_lines.planned_count` 列は**残す**（後方互換・既存集計の段階移行のため）。新規グループは 0 のまま。
+- **未対応（フォローアップ）**: 採算ダッシュボードの「見込み」列・納期売上見込みは現状まだ `planned_count` を参照（実績列はクリエイティブ実数ベースで既に正しい）。請求書は元々 creative 単位なので影響軽微（`fixed_total`/`hourly` の按分のみ実件数化が必要）。

@@ -5604,15 +5604,10 @@ window.showPage = window.showPage || function(name, btn) {
       <label class="form-label">名前 <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・例: フェーズ1ショート）</span></label>
       <input class="form-input" id="pl-edit-name" placeholder="例: ショートA枠">
     </div>
-    <div class="form-row" style="margin-bottom:10px">
-      <div class="form-group" style="flex:1;margin-bottom:0">
-        <label class="form-label">予定本数</label>
-        <input class="form-input" id="pl-edit-planned-count" type="number" min="0" step="1" value="0">
-      </div>
-      <div class="form-group" style="flex:1;margin-bottom:0">
-        <label class="form-label">クライアント単価（円）</label>
-        <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
-      </div>
+    <!-- ADR 022: 予定本数は廃止。売上は「実際に紐づくクリエイティブ本数 × 単価」で集計する -->
+    <div class="form-group" style="margin-bottom:10px">
+      <label class="form-label">クライアント単価（円） <span style="color:var(--text-muted);font-weight:400;font-size:11px">（1本あたりの請求額。売上＝紐づくクリエイティブ本数 × この単価）</span></label>
+      <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
     </div>
     <div class="form-group" style="margin-bottom:10px">
       <label class="form-label">ステータス</label>
@@ -6266,7 +6261,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="display:flex;align-items:center;gap:8px">
           <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
           <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">成果物グループ</span>
-          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ別の予定本数・クライアント単価・進行ステータス）</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ/ランク別のクライアント単価・進行ステータス。本数は紐づくクリエイティブの実数で集計）</span>
         </div>
         <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
       </div>
@@ -16329,7 +16324,7 @@ function calcLineCostFront(lc, line) {
   const pct = Number(lc.percentage) || 0;
   const hrs = Number(lc.actual_hours) || 0;
   const cu  = Number(line.client_unit_price) || 0;
-  const pc  = Number(line.planned_count) || 0;
+  const pc  = Number(line._actual_count) || 0; // ADR 022: 実績ベース（紐づくクリエイティブ件数）
   switch (pt) {
     case 'fixed_per_unit': return unit * pc;
     case 'percentage':     return cu * pc * pct / 100;
@@ -16373,6 +16368,14 @@ async function loadProjectLines(projectId) {
       return;
     }
     _projectLinesCache = await res.json() || [];
+    // ADR 022: 実績ベース集計用に「ライン別の紐づくクリエイティブ件数」を取得して付与
+    try {
+      const cntRes = await apiFetch(`${API}/projects/${projectId}/line-creative-counts`);
+      const counts = cntRes.ok ? (await cntRes.json() || {}) : {};
+      _projectLinesCache.forEach(l => { l._actual_count = counts[l.id] || 0; });
+    } catch (_) {
+      _projectLinesCache.forEach(l => { l._actual_count = 0; });
+    }
     // Stage 4b: 別案件のキャッシュが残らないよう、現案件の line_id だけ残してクリア
     {
       const valid = new Set(_projectLinesCache.map(l => l.id));
@@ -16415,7 +16418,7 @@ function renderProjectLines() {
     const catLabel = cat ? `${esc(cat.name)}` : '<span style="color:var(--text-muted)">カテゴリ未設定</span>';
     const catColor = cat?.color || '#9CA3AF';
     const status = LINE_STATUS_LABELS[line.status] || LINE_STATUS_LABELS.draft;
-    const planned = Number(line.planned_count) || 0;
+    const planned = Number(line._actual_count) || 0; // ADR 022: 実績ベース（紐づくクリエイティブ件数）
     const unit = Number(line.client_unit_price) || 0;
     const subtotal = planned * unit;
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
@@ -16621,7 +16624,6 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-project-id').value = projectId;
   document.getElementById('pl-edit-rank').value = line?.rank || '';
   document.getElementById('pl-edit-name').value = line?.name || '';
-  document.getElementById('pl-edit-planned-count').value = line ? (line.planned_count ?? 0) : 0;
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
   document.getElementById('pl-edit-status').value = line?.status || 'draft';
   const errEl = document.getElementById('pl-edit-error');
@@ -16655,15 +16657,14 @@ async function saveProjectLine() {
   if (!categoryId) { showErr('カテゴリを選択してください'); return; }
   const rank = document.getElementById('pl-edit-rank').value || null;
   const name = document.getElementById('pl-edit-name').value.trim();
-  const plannedCount = Math.max(0, parseInt(document.getElementById('pl-edit-planned-count').value, 10) || 0);
   const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
   const status = document.getElementById('pl-edit-status').value;
 
+  // ADR 022: planned_count は送らない（売上は実クリエイティブ本数ベース）
   const payload = {
     category_id: categoryId,
     rank,
     name: name || null,
-    planned_count: plannedCount,
     client_unit_price: unitPrice,
     status,
   };
@@ -16704,7 +16705,7 @@ function openProjectLineDeleteConfirm(lineId) {
   const cat = line.category;
   const catName = cat ? cat.name : 'カテゴリ未設定';
   const nameLabel = line.name ? `「${line.name}」` : '（名称未設定）';
-  const planned = Number(line.planned_count) || 0;
+  const planned = Number(line._actual_count) || 0; // ADR 022: 実績ベース（紐づくクリエイティブ件数）
   const unit = Number(line.client_unit_price) || 0;
   document.getElementById('pl-del-message').innerHTML = `
     <div style="margin-bottom:6px"><strong>${esc(catName)}</strong> ${esc(nameLabel)}</div>
@@ -16787,7 +16788,7 @@ function prepareProjectLineCostEditModal(cost, lineId, projectId) {
   if (summaryEl && line) {
     const cat = line.category;
     const catName = cat ? cat.name : 'カテゴリ未設定';
-    const planned = Number(line.planned_count) || 0;
+    const planned = Number(line._actual_count) || 0; // ADR 022: 実績ベース（紐づくクリエイティブ件数）
     const unit = Number(line.client_unit_price) || 0;
     summaryEl.textContent = `対象line: ${catName}${line.name ? ' / ' + line.name : ''} (${planned}本 × ¥${unit.toLocaleString()})`;
   } else if (summaryEl) {

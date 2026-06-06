@@ -2043,6 +2043,21 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
+// GET /api/projects/:project_id/line-creative-counts  ライン別の紐づくクリエイティブ件数
+// ADR 022: 売上・採算を「予定本数」でなく実クリエイティブ件数で集計するための件数マップ。
+// 返り値: { [line_id]: count }（line_id が NULL の creative は含めない）
+router.get('/projects/:project_id/line-creative-counts', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creatives')
+    .select('line_id')
+    .eq('project_id', req.params.project_id)
+    .not('line_id', 'is', null);
+  if (error) return res.json({}); // 失敗時は空マップ（フロントは 0 件扱いでフォールバック）
+  const counts = {};
+  (data || []).forEach(c => { if (c.line_id) counts[c.line_id] = (counts[c.line_id] || 0) + 1; });
+  res.json(counts);
+});
+
 // POST /api/projects/:project_id/lines  新規作成
 router.post('/projects/:project_id/lines', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const projectId = req.params.project_id;
