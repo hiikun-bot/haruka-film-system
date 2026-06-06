@@ -2119,6 +2119,30 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     }
     return res.status(500).json({ error: error.message });
   }
+
+  // ADR 022: rank が設定されていれば category_rank_rates から line_costs を自動入力（best-effort）
+  if (data && data.rank && data.category_id) {
+    try {
+      const { data: rates } = await supabase
+        .from('category_rank_rates')
+        .select('role_id, unit_price')
+        .eq('category_id', data.category_id)
+        .eq('rank', data.rank);
+      if (Array.isArray(rates) && rates.length) {
+        const costRows = rates.map(r => ({
+          line_id: data.id,
+          role_id: r.role_id,
+          unit_price: Math.max(0, parseInt(r.unit_price, 10) || 0),
+          pricing_type: 'fixed_per_unit',
+          currency: 'JPY',
+        }));
+        await supabase.from('project_estimate_line_costs').insert(costRows);
+      }
+    } catch (e) {
+      console.warn('[lines] rank rate auto-fill failed:', e?.message);
+    }
+  }
+
   res.json(data);
 });
 
@@ -14061,6 +14085,67 @@ router.delete('/master/categories/:id', requireAuth, requirePermission('master.p
     return res.status(403).json({ error: 'このシステム区分は削除できません' });
   }
   const { error } = await supabase.from('master_categories').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ==================== ADR 022: ランク別 支払単価マスタ（category_rank_rates）====================
+// 編集は admin / 秘書 / プロデューサー（producer_director 含む）のみ。読取はログイン者全員。
+const RANK_RATE_SELECT = 'id, category_id, rank, role_id, unit_price, created_at, updated_at, category:creative_categories(id, code, name, color), role:roles(id, code, label)';
+
+// 一覧（編集ロールのみ。支払単価は財務情報のため）
+router.get('/category-rank-rates', requireAuth, requireRole('admin', 'secretary', 'producer', 'producer_director'), async (req, res) => {
+  const { data, error } = await supabase
+    .from('category_rank_rates')
+    .select(RANK_RATE_SELECT)
+    .order('created_at', { ascending: true });
+  if (error) {
+    // テーブル未作成時は空配列で返す（migrations/2026-06-06_estimate_line_rank.sql 未適用環境）
+    if (/category_rank_rates/i.test(error.message) && /(does not exist|schema cache|relation)/i.test(error.message)) return res.json([]);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// 作成
+router.post('/category-rank-rates', requireAuth, requireRole('admin', 'secretary', 'producer', 'producer_director'), async (req, res) => {
+  const { category_id, rank, role_id, unit_price } = req.body || {};
+  if (!category_id) return res.status(400).json({ error: 'category_id は必須です' });
+  const r = String(rank || '').toUpperCase();
+  if (!['A', 'B', 'C'].includes(r)) return res.status(400).json({ error: 'rank は A / B / C で指定してください' });
+  if (!role_id) return res.status(400).json({ error: 'role_id（ロール）は必須です' });
+  const price = Math.max(0, parseInt(unit_price, 10) || 0);
+  const { data, error } = await supabase
+    .from('category_rank_rates')
+    .insert({ category_id, rank: r, role_id, unit_price: price })
+    .select(RANK_RATE_SELECT)
+    .single();
+  if (error) {
+    if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'このカテゴリ × ランク × ロールの単価は既に登録されています' });
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// 更新（単価のみ）
+router.put('/category-rank-rates/:id', requireAuth, requireRole('admin', 'secretary', 'producer', 'producer_director'), async (req, res) => {
+  const updates = { updated_at: new Date().toISOString() };
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'unit_price')) {
+    updates.unit_price = Math.max(0, parseInt(req.body.unit_price, 10) || 0);
+  }
+  const { data, error } = await supabase
+    .from('category_rank_rates')
+    .update(updates)
+    .eq('id', req.params.id)
+    .select(RANK_RATE_SELECT)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 削除
+router.delete('/category-rank-rates/:id', requireAuth, requireRole('admin', 'secretary', 'producer', 'producer_director'), async (req, res) => {
+  const { error } = await supabase.from('category_rank_rates').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
