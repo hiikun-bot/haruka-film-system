@@ -16172,8 +16172,19 @@ ${description || '（記入なし）'}
 \`\`\`${fmtApi}\`\`\``;
 
   let result;
+  let screenshotAttached = false;
   if (screenshot && screenshot.buffer && screenshot.buffer.length) {
     result = await notif.sendSlackChannelWithFile(channelUrl, text, screenshot.buffer, 'screenshot.png');
+    if (result?.ok) {
+      screenshotAttached = true;
+    } else {
+      // スクショ付き送信が失敗（多くは bot に files:write が無い missing_scope）でも
+      // 報告自体は握りつぶさず、テキストのみで必ず届ける。
+      console.warn('[error-report] file upload failed, falling back to text-only:', result?.reason);
+      const note = `\n\n⚠️ スクリーンショットは添付できませんでした（${result?.reason || 'unknown'}）。`
+        + `Slack bot に files:write スコープを付与すると画像も届きます。`;
+      result = await notif.sendSlackChannel(channelUrl, text + note);
+    }
   } else {
     // スクリーンショットが無くても通知は送る
     result = await notif.sendSlackChannel(channelUrl, text);
@@ -16182,7 +16193,7 @@ ${description || '（記入なし）'}
     return res.status(500).json({ error: `Slack送信失敗: ${result?.reason || 'unknown'}` });
   }
   _errorReportLastSentAt.set(userId, now);
-  res.json({ ok: true });
+  res.json({ ok: true, screenshot_attached: screenshotAttached });
 });
 
 // ==================== 自動エラー通知（フロント発信） ====================
