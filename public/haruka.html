@@ -40658,7 +40658,9 @@ function msOnHasProjectToggle() {
 function msApplyUploadTargetVisibility() {
   const picker = document.getElementById('ms-project-picker');
   const free = document.getElementById('ms-freeform-hint');
-  if (picker) picker.style.display = msHasProject ? '' : 'none';
+  // 表示時は 'flex' を明示する（'' にすると HTML 側 inline の display:flex が消え、
+  // block に戻って クライアント/案件 が縦並びになってしまうため）
+  if (picker) picker.style.display = msHasProject ? 'flex' : 'none';
   if (free) free.style.display = msHasProject ? 'none' : '';
 }
 
