@@ -5615,18 +5615,7 @@ window.showPage = window.showPage || function(name, btn) {
         <input class="form-input" id="pl-edit-producer-price" type="number" min="0" step="1" value="0">
       </div>
     </div>
-    <div class="form-group" style="margin-bottom:10px">
-      <label class="form-label">ステータス</label>
-      <select class="form-select" id="pl-edit-status">
-        <option value="draft">下書き</option>
-        <option value="estimated">見積中</option>
-        <option value="contracted">受注</option>
-        <option value="in_progress">進行中</option>
-        <option value="delivered">納品済</option>
-        <option value="cancelled">取消</option>
-        <option value="rejected">失注</option>
-      </select>
-    </div>
+    <!-- ステータスは UI から廃止。新規登録時は常に「採用（受注=contracted）」で作成する -->
     <div id="pl-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
       <button class="btn" onclick="closeModal('modal-project-line-edit')">キャンセル</button>
@@ -16410,7 +16399,6 @@ function renderProjectLines() {
     const cat = line.category || null;
     const catLabel = cat ? `${esc(cat.name)}` : '<span style="color:var(--text-muted)">カテゴリ未設定</span>';
     const catColor = cat?.color || '#9CA3AF';
-    const status = LINE_STATUS_LABELS[line.status] || LINE_STATUS_LABELS.draft;
     const clientUnit = Number(line.client_unit_price) || 0;
     const producerUnit = getProducerUnitPrice(line.id);
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
@@ -16431,9 +16419,6 @@ function renderProjectLines() {
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
             <div style="font-size:11px;color:var(--text-muted)">クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ 制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
           </div>
-          <span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:${status.bg};border:1px solid ${status.border};color:${status.fg};border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap">
-            ${esc(status.label)}
-          </span>
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
             <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
@@ -16602,7 +16587,6 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-name').value = line?.name || '';
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
   document.getElementById('pl-edit-producer-price').value = line ? getProducerUnitPrice(line.id) : 0;
-  document.getElementById('pl-edit-status').value = line?.status || 'draft';
   const errEl = document.getElementById('pl-edit-error');
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
@@ -16636,8 +16620,8 @@ async function saveProjectLine() {
   const name = document.getElementById('pl-edit-name').value.trim();
   const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
   const producerPrice = Math.max(0, parseInt(document.getElementById('pl-edit-producer-price').value, 10) || 0);
-  const status = document.getElementById('pl-edit-status').value;
 
+  // ステータスは送らない。新規は backend 既定で「採用（contracted）」、編集時は既存維持。
   // 制作者単価は backend で line_cost として保存（カテゴリからロール自動判定）
   const payload = {
     category_id: categoryId,
@@ -16645,7 +16629,6 @@ async function saveProjectLine() {
     name: name || null,
     client_unit_price: unitPrice,
     producer_unit_price: producerPrice,
-    status,
   };
 
   const saveBtn = document.getElementById('pl-edit-save-btn');

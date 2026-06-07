@@ -2084,7 +2084,8 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const unitPrice = Math.max(0, parseInt(client_unit_price, 10) || 0);
   // ADR 022: rank は A/B/C のみ。それ以外（空欄含む）は NULL
   const lineRank = ['A', 'B', 'C'].includes(String(rank || '').toUpperCase()) ? String(rank).toUpperCase() : null;
-  const lineStatus = status || 'draft';
+  // ステータスは UI から廃止。未指定時は常に「採用（受注=contracted）」で作成する
+  const lineStatus = status || 'contracted';
   if (!LINE_STATUSES.has(lineStatus)) {
     return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
   }
