@@ -40591,16 +40591,22 @@ let msSelectedProjectId = '';
 
 // クライアント / 案件データが未ロードなら取得（素材広場を直接開いたケースの保険）。
 async function msEnsureClientsProjects() {
-  if (Array.isArray(allClients) && allClients.length && Array.isArray(allProjects) && allProjects.length) return;
-  try {
-    const [pRes, cRes] = await Promise.all([
-      apiFetch(`${API}/projects`),
-      apiFetch(`${API}/clients`),
-    ]);
-    allProjects = await pRes.json();
-    allClients = await cRes.json();
-  } catch (e) {
-    console.error('[ms] クライアント/案件の取得に失敗', e);
+  const haveClients = Array.isArray(allClients) && allClients.length;
+  const haveProjects = Array.isArray(allProjects) && allProjects.length;
+  if (haveClients && haveProjects) return;
+  // 個別に取得する。Promise.all だと片方の失敗で両方とも反映されず、
+  // 「クライアントは出るが案件が出ない」状態に陥るため。配列が返ったときだけ反映。
+  if (!haveProjects) {
+    try {
+      const r = await apiFetch(`${API}/projects`);
+      if (r.ok) { const j = await r.json(); if (Array.isArray(j)) allProjects = j; }
+    } catch (e) { console.error('[ms] 案件の取得に失敗', e); }
+  }
+  if (!haveClients) {
+    try {
+      const r = await apiFetch(`${API}/clients`);
+      if (r.ok) { const j = await r.json(); if (Array.isArray(j)) allClients = j; }
+    } catch (e) { console.error('[ms] クライアントの取得に失敗', e); }
   }
 }
 
@@ -40613,13 +40619,26 @@ async function msInitUploadTarget() {
   msUpdateUploadGate();
 }
 
-// クライアント select を populate（全件・名前順）
+// クライアント select を populate（案件を1件以上持つクライアントのみ・名前順）。
+// 既存の案件タブと同じ方針（haruka.html の visibleClients.filter(...some(p.client_id===c.id))）。
+// 案件のないクライアントや、同名重複レコードのうち案件が紐づかない側を除外し、
+// 「選んでも案件が出ない」状態を防ぐ。
 function msPopulateClientSelect() {
   const sel = document.getElementById('ms-client-select');
   if (!sel) return;
   const prev = msSelectedClientId;
-  const clients = (allClients || []).slice()
+  const projects = Array.isArray(allProjects) ? allProjects : [];
+  const clientIdsWithProjects = new Set(
+    projects.filter(p => !p.is_hidden && p.client_id).map(p => p.client_id)
+  );
+  const clients = (allClients || [])
+    .filter(c => clientIdsWithProjects.has(c.id))
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+  if (clients.length === 0) {
+    sel.innerHTML = '<option value="">（案件のあるクライアントがありません）</option>';
+    msSelectedClientId = '';
+    return;
+  }
   sel.innerHTML = '<option value="">▼ クライアントを選択</option>' +
     clients.map(c => `<option value="${votEscape(c.id)}">${votEscape(c.name || '(名称未設定)')}</option>`).join('');
   if (prev && clients.some(c => c.id === prev)) sel.value = prev;
