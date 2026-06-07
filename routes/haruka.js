@@ -11683,6 +11683,53 @@ const TWEET_BODY_MAX = 280;
 const TWEET_COMMENT_MAX = 500;
 const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 
+// 一覧で取得する列。image_data（base64 data URL・最大 500KB）はここに含めない。
+//   一覧に base64 を載せると 200 件で数 MB になり、転送・JSON パース・<img> デコードが
+//   重かった上、`loading="lazy"` も data URL には効かず全画像が即デコードされていた。
+//   一覧は has_image フラグだけ返し、本体は GET /tweets/:id/image から遅延取得する。
+const TWEET_LIST_COLUMNS =
+  'id, user_id, body, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)';
+
+// tweets 一覧に reaction 集計・自分のリアクション・has_image を付与して返す。
+//   通常一覧 / mine 経路で共通（旧来は両経路に同じ集計ロジックが重複していた）。
+async function enrichTweetList(list, currentUserId) {
+  if (!list || list.length === 0) return [];
+  const ids = list.map(t => t.id);
+  // リアクション全件と「画像を持つ tweet の id」を並列取得（image_data 本体は引かない）
+  const [reactionsRes, imagesRes] = await Promise.all([
+    supabase.from('tweet_reactions').select('tweet_id, user_id, reaction_type').in('tweet_id', ids),
+    supabase.from('tweets').select('id').not('image_data', 'is', null).in('id', ids),
+  ]);
+  const imageIdSet = new Set((imagesRes.data || []).map(r => r.id));
+  const countByType = new Map();    // tweet_id -> { good: n, heart: n, ... }
+  const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
+  (reactionsRes.data || []).forEach(r => {
+    if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
+    const cm = countByType.get(r.tweet_id);
+    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+    if (r.user_id === currentUserId) {
+      if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
+      myReactionsMap.get(r.tweet_id).add(r.reaction_type);
+    }
+  });
+  return list.map(t => {
+    const myReactions = Array.from(myReactionsMap.get(t.id) || []);
+    const counts = countByType.get(t.id) || {};
+    const heartCount = counts.heart || 0;
+    return {
+      ...t,
+      has_image: imageIdSet.has(t.id),
+      reaction_count: t.reaction_count ?? 0,
+      comment_count:  t.comment_count  ?? 0,
+      reaction_counts: counts,           // { good: 3, heart: 2, ... }
+      my_reactions: myReactions,         // ['good','heart']
+      // 互換維持（旧UIが残っても壊れないように）
+      like_count: heartCount,
+      my_liked:   myReactions.includes('heart'),
+    };
+  });
+}
+
 // 自分のいいね状態 + いいね件数を含む一覧
 //   Phase 1 段階4 拡張: my_reactions / reaction_count / comment_count を付与。
 //   既存 like_count / my_liked は heart リアクション数で計算して互換維持。
@@ -11710,7 +11757,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // FK ヒント `users!user_id` を明示。段階4 migration で tweet_reactions / tweet_comments
     // が users への FK を持ったことで PostgREST が relationship を一意に解決できなくなる
     // ため、tweets.user_id を介した埋め込みであることを明示する。
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+    .select(TWEET_LIST_COLUMNS)
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
 
   // ロール絞り込み（運営のみ / 個別ロール）:
@@ -11747,7 +11794,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     const [myCommentsRes, ownAndMentionRes] = await Promise.all([
       supabase.from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null),
       supabase.from('tweets')
-        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .select(TWEET_LIST_COLUMNS)
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`),
     ]);
@@ -11762,7 +11809,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // (c) コメント参加対象 — 取得したコメント tweet_id があるときだけ追加クエリ
     if (commentedTweetIds.length > 0) {
       const { data: commentTweets, error: ctErr } = await supabase.from('tweets')
-        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .select(TWEET_LIST_COLUMNS)
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .in('id', commentedTweetIds);
       if (ctErr) return res.status(500).json({ error: ctErr.message });
@@ -11786,36 +11833,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     list = list.slice(0, 200);
 
     if (!list.length) return res.json([]);
-
-    // 既存 GET と同じロジックでリアクションを付与
-    const ids = list.map(t => t.id);
-    const { data: allReactions } = await supabase.from('tweet_reactions')
-      .select('tweet_id, user_id, reaction_type').in('tweet_id', ids);
-    const countByType = new Map();
-    const myReactionsMap = new Map();
-    (allReactions || []).forEach(r => {
-      if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
-      const cm = countByType.get(r.tweet_id);
-      cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
-      if (r.user_id === req.user.id) {
-        if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
-        myReactionsMap.get(r.tweet_id).add(r.reaction_type);
-      }
-    });
-    return res.json(list.map(t => {
-      const myReactions = Array.from(myReactionsMap.get(t.id) || []);
-      const counts = countByType.get(t.id) || {};
-      const heartCount = counts.heart || 0;
-      return {
-        ...t,
-        reaction_count: t.reaction_count ?? 0,
-        comment_count:  t.comment_count  ?? 0,
-        reaction_counts: counts,
-        my_reactions: myReactions,
-        like_count: heartCount,
-        my_liked:   myReactions.includes('heart'),
-      };
-    }));
+    return res.json(await enrichTweetList(list, req.user.id));
   }
 
   // 通常の一覧
@@ -11827,38 +11845,24 @@ router.get('/tweets', requireAuth, async (req, res) => {
     .limit(200);
   if (error) return res.status(500).json({ error: error.message });
   if (!list || list.length === 0) return res.json([]);
-  const ids = list.map(t => t.id);
+  res.json(await enrichTweetList(list, req.user.id));
+});
 
-  // 5種リアクションを一括取得（種別ごとカウント + 自分が押した種別）
-  const { data: allReactions } = await supabase.from('tweet_reactions')
-    .select('tweet_id, user_id, reaction_type').in('tweet_id', ids);
-  const countByType = new Map();   // tweet_id -> { good: n, heart: n, ... }
-  const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
-  (allReactions || []).forEach(r => {
-    if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
-    const cm = countByType.get(r.tweet_id);
-    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
-    if (r.user_id === req.user.id) {
-      if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
-      myReactionsMap.get(r.tweet_id).add(r.reaction_type);
-    }
-  });
-
-  res.json(list.map(t => {
-    const myReactions = Array.from(myReactionsMap.get(t.id) || []);
-    const counts = countByType.get(t.id) || {};
-    const heartCount = counts.heart || 0;
-    return {
-      ...t,
-      reaction_count: t.reaction_count ?? 0,
-      comment_count:  t.comment_count  ?? 0,
-      reaction_counts: counts,           // { good: 3, heart: 2, ... }
-      my_reactions: myReactions,         // ['good','heart']
-      // 互換維持（旧UIが残っても壊れないように）
-      like_count: heartCount,
-      my_liked:   myReactions.includes('heart'),
-    };
-  }));
+// つぶやき画像をバイナリ配信。一覧 API は has_image だけ返し、本体はこのエンドポイントから
+// <img src="/api/tweets/:id/image"> で遅延取得する（base64 data URL の一覧同梱をやめた）。
+//   - 認証は requireAuth（Passport セッション Cookie）。<img> も同一オリジンなので Cookie が乗る。
+//   - 画像は投稿後に差し替え不可な不変リソースなので長期キャッシュ可。private は社内データのため。
+router.get('/tweets/:id/image', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('tweets').select('image_data').eq('id', req.params.id).single();
+  if (error || !data || !data.image_data) return res.status(404).end();
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
+  if (!m) return res.status(404).end();
+  const buf = Buffer.from(m[2], 'base64');
+  res.setHeader('Content-Type', m[1]);
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.setHeader('Content-Length', buf.length);
+  return res.end(buf);
 });
 
 // つぶやき投稿（写真は任意 + 本文）

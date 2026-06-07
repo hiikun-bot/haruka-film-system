@@ -21021,8 +21021,11 @@ function renderTweetCard(t) {
   // 必要なら以下を有効化:
   // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
 
-  const imageHtml = t.image_data
-    ? `<div class="tweet-image-wrap"><img src="${esc(t.image_data)}" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)"></div>`
+  // 画像は has_image のときだけ別エンドポイントから遅延取得（一覧に base64 を載せない）。
+  // src を data URL → /api/haruka/tweets/:id/image にしたことで loading="lazy" が実際に効き、
+  // ブラウザ HTTP キャッシュ（Cache-Control: immutable）で 2 回目以降は即表示される。
+  const imageHtml = t.has_image
+    ? `<div class="tweet-image-wrap"><img src="${API}/tweets/${t.id}/image" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)"></div>`
     : '';
 
   return `<article class="tweet-card ${t.is_pinned ? 'pinned' : ''}" data-tweet-id="${t.id}">
