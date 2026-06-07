@@ -26852,7 +26852,7 @@ async function deleteCategory(id) {
 //       - プレビュー: ダミー値で生成例
 //       - 保存 / キャンセル
 //
-// 必須トークン: serial / project_name / version。serial は先頭固定。
+// 必須トークン: serial / project_name。serial は先頭固定。version は任意（バグ報告 #271af257）。
 // custom トークンは追加時に key/label/default を入力。
 //
 // Stage 2 で案件モーダルから選択 + override 入力 + bulk/preview の関数置き換え。
@@ -26872,7 +26872,7 @@ const _fnTplState = {
 const FN_SYSTEM_TOKENS = [
   { key: 'serial',       label: '連番',         required: true,  pinFirst: true,  sample: '007' },
   { key: 'project_name', label: '案件名',       required: true,                   sample: 'あるる' },
-  { key: 'version',      label: 'バージョン',   required: true,                   sample: 'v1' },
+  { key: 'version',      label: 'バージョン',                                     sample: 'v1' },
   { key: 'date_yymmdd',  label: '制作日',       sample: '260507' },
   { key: 'client_code',  label: 'クライアント', sample: 'CLT001' },
   { key: 'product',      label: '商品',         sample: 'ドラム' },
@@ -26889,7 +26889,8 @@ function _fnSystemTokenDef(key) {
 // 編集中テンプレが「未保存変更あり」かを雑に判定（ID単位の比較は行わない・seed 対比は省略）
 function _fnTplDraftFromTemplate(tpl) {
   if (!tpl) {
-    // 新規: 必須3トークンだけ入った最小テンプレ
+    // 新規: 必須トークン（serial / project_name）＋ version を初期投入。
+    // version は任意なので不要ならパレットへ戻せる（バグ報告 #271af257）。
     return {
       id: null,
       name: '',
@@ -27389,7 +27390,7 @@ function removeFnBuilderToken(idx) {
   if (!d) return;
   const t = d.tokens[idx];
   if (!t) return;
-  // 必須トークン（serial / project_name / version）は削除不可
+  // 必須トークン（serial / project_name）は削除不可。version は任意なので削除可（#271af257）
   if (t.kind === 'system') {
     const sys = _fnSystemTokenDef(t.key);
     if (sys && sys.required) {
@@ -27441,8 +27442,9 @@ function onFnCustomKindChange() {
 }
 
 // マスター引用ピッカーの選択肢を組み立て
-//   - required: true（serial / project_name / version）は除外
+//   - required: true（serial / project_name）は除外
 //   - 既にビルダーに追加済みの system トークンは除外
+//   - version は任意なので、ビルダーから外すとここに出て再追加できる（#271af257）
 function _fnPopulateMasterRefPicker() {
   const sel = document.getElementById('fn-custom-master-key');
   if (!sel) return;
@@ -27579,8 +27581,9 @@ async function saveFilenameTemplate() {
     return;
   }
   // サーバー側でも検証されるが、UI でも事前チェック
+  // version は任意化済み（バグ報告 #271af257）。必須は serial / project_name のみ。
   const keys = (d.tokens || []).map(t => t.key);
-  for (const k of ['serial', 'project_name', 'version']) {
+  for (const k of ['serial', 'project_name']) {
     if (!keys.includes(k)) {
       showToast(`必須トークン "${k}" が含まれていません`, 'warn');
       return;
