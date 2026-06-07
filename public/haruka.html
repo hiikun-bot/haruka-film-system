@@ -16662,9 +16662,14 @@ async function prepareProjectLineEditModal(line, projectId) {
   if (sel) {
     populateCategorySelect(sel, line?.category_id || null);
     if (!line?.category_id) {
-      // デフォルト: 案件本体の primary_category と揃える / なければ video
+      // デフォルトの優先順位:
+      //  1) 上部「プリセットから一括生成」で選択中のカテゴリ（ユーザーが直前に選んだものを引き継ぐ）
+      //  2) 案件本体の primary_category
+      //  3) video
+      const presetCat = document.getElementById('p-lines-preset-category')?.value;
       const projCat = document.getElementById('p-primary-category')?.value;
-      if (projCat) sel.value = projCat;
+      if (presetCat) sel.value = presetCat;
+      else if (projCat) sel.value = projCat;
       else {
         const videoCat = (typeof getCategoryByCode === 'function') ? getCategoryByCode('video') : null;
         if (videoCat) sel.value = videoCat.id;
