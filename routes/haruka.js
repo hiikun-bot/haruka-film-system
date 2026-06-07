@@ -8190,11 +8190,16 @@ router.get('/creatives/:id/files', async (req, res) => {
 //      という理由で、最新ファイルから動的に parents を解決する方式にしている。
 router.get('/creatives/:id/drive-folder', requireAuth, async (req, res) => {
   try {
+    // NOTE: creative_files の時刻列は uploaded_at（created_at は存在しない）。
+    //       誤って created_at で order すると PostgREST が 42703 を返し、
+    //       ファイルがあっても常に「まだファイルがアップロードされていません」になる（#712 のバグ）。
+    //       drive_file_id が null の行（旧データ等）は除外して、最新の実ファイルを採る。
     const { data: files, error } = await supabase
       .from('creative_files')
       .select('drive_file_id')
       .eq('creative_id', req.params.id)
-      .order('created_at', { ascending: false })
+      .not('drive_file_id', 'is', null)
+      .order('uploaded_at', { ascending: false })
       .limit(1);
     if (error) return res.status(500).json({ error: error.message });
     const latest = files && files[0];
