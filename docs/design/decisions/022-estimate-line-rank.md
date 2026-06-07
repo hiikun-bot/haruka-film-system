@@ -167,3 +167,18 @@ COMMENT ON TABLE category_rank_rates IS
 **残す**
 - `rank`（A/B/C）は成果物グループのラベルとして残す（自動入力なし）。
 - `planned_count` 列・`project_estimate_line_costs` テーブルは引き続き利用（制作者単価の保存先）。
+
+## 追補（2026-06-07 その2）: ランク単価プリセット＋A/B/C 一括生成
+
+動画編集・静止画バナーでは A/B/C × 制作者単価の3パターンが必ず要るため、毎回1個ずつ作らず **プリセットから3グループをまとめて生成** できるようにした（前述で撤去した「見えない自動入力」とは別物＝**見える形で3グループ生成**）。
+
+**確定（ユーザー）**
+- ランク別に変えるのは **制作者単価だけ**（クライアント単価はランク非依存・生成後に案件ごと入力）。
+- 生成は **見積・費用タブの手動ボタン**（新規案件時の自動生成はしない）。
+
+**実装**
+- **プリセット保存**: `category_rank_rates` を再利用（`(category_id, rank, role_id)`、role はカテゴリの `render_kind` から自動＝editor/designer。UI ではロールを扱わない）。マスター画面に「💴 ランク単価プリセット」（カテゴリ × A/B/C グリッド）。編集は admin/秘書/プロデューサー。
+  - `GET /rank-price-presets` / `PUT /rank-price-presets`（1セル upsert）。
+- **一括生成**: `POST /projects/:id/lines/generate-preset { category_id }` が、そのカテゴリの A/B/C 成果物グループを作成（`client_unit_price=0`・`status=contracted`・制作者単価はプリセットから line_cost に保存）。同カテゴリで既存の rank はスキップ（重複作成しない）。
+  - 見積・費用タブの「📋 プリセットから一括生成」＋カテゴリ select（既定は案件の主カテゴリ）。
+- マイグレーション不要（`category_rank_rates` は既存）。

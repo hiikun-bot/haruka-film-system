@@ -6258,7 +6258,11 @@ window.showPage = window.showPage || function(name, btn) {
           <span style="font-size:11px;font-weight:700;color:#0F7A56;letter-spacing:0.12em;text-transform:uppercase">成果物グループ</span>
           <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ/ランク別の1本あたり単価：クライアント請求・制作者支払）</span>
         </div>
-        <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <select id="p-lines-preset-category" class="form-select" style="padding:5px 8px;font-size:12px;width:auto;min-width:110px"><option value="">カテゴリ…</option></select>
+          <button type="button" class="btn" onclick="generateLinesFromPreset()" style="padding:6px 12px;font-size:12px;white-space:nowrap" title="選択カテゴリの A/B/C 成果物グループをプリセット単価で一括生成">📋 プリセットから一括生成</button>
+          <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
+        </div>
       </div>
       <div id="p-lines-list" style="display:flex;flex-direction:column;gap:8px">
         <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
@@ -6885,6 +6889,11 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="master-nav-item" onclick="selectMasterNav('item_names')" id="mnav-item_names"
           style="padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           📦 品目マスター
+        </div>
+        <!-- ランク単価プリセット（admin/秘書/producer のみ表示） -->
+        <div id="mnav-rank_preset" class="master-nav-item" onclick="selectMasterNav('rank_preset')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          💴 ランク単価プリセット
         </div>
         <div id="mnav-roles" class="master-nav-item" onclick="selectMasterNav('roles')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent;margin-top:8px;border-top:1px solid var(--border)">
@@ -16374,9 +16383,38 @@ function getCostRoleOptions() {
   return rows.filter(r => r && r.code !== 'admin' && r.code !== 'producer_director' && r.code !== 'client');
 }
 
+// プリセット一括生成用のカテゴリ select を populate（案件の主カテゴリをデフォルト選択）
+async function populateLinesPresetCategorySelect() {
+  const sel = document.getElementById('p-lines-preset-category');
+  if (!sel) return;
+  try {
+    const cats = await loadCategories();
+    const primary = document.getElementById('p-primary-category')?.value || '';
+    sel.innerHTML = '<option value="">カテゴリ…</option>' + (cats || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    if (primary) sel.value = primary;
+  } catch (_) {}
+}
+
+// プリセット（カテゴリ別 制作者単価 A/B/C）から成果物グループを一括生成
+async function generateLinesFromPreset() {
+  const projectId = document.getElementById('p-id').value;
+  const categoryId = document.getElementById('p-lines-preset-category')?.value;
+  if (!projectId) { showToast('案件を保存してから生成してください', 'warn'); return; }
+  if (!categoryId) { showToast('カテゴリを選択してください', 'warn'); return; }
+  const res = await apiFetch(`${API}/projects/${projectId}/lines/generate-preset`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category_id: categoryId })
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.error || '生成に失敗しました', 'error'); return; }
+  const j = await res.json().catch(() => ({}));
+  showToast(`A/B/C を ${j.created_count || 0} 件生成しました${j.skipped ? `（既存 ${j.skipped} 件はスキップ）` : ''}`, 'ok');
+  loadProjectLines(projectId);
+}
+
 async function loadProjectLines(projectId) {
   const listEl = document.getElementById('p-lines-list');
   if (!listEl || !projectId) return;
+  populateLinesPresetCategorySelect();
   listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>';
   try {
     const res = await apiFetch(`${API}/projects/${projectId}/lines`);
@@ -24128,7 +24166,7 @@ function selectMasterNav(type) {
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
   // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
-  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','rank_preset','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -24156,6 +24194,8 @@ function selectMasterNav(type) {
     renderChecklistMasterPage();
   } else if (type === 'item_names') {
     renderItemNameMasterPage();
+  } else if (type === 'rank_preset') {
+    renderRankPresetMasterPage();
   } else if (type === 'roles') {
     renderRolesPage();
   } else if (type === 'userstats') {
@@ -24178,6 +24218,9 @@ async function loadMasterPage() {
   // ADR 008 Phase 1: 出力マッピングは admin のみ
   const exportNav = document.getElementById('mnav-creatives_export');
   if (exportNav) exportNav.style.display = isTopAdmin() ? '' : 'none';
+  // ランク単価プリセットは admin / 秘書 / プロデューサーのみ（effectiveRole で VIEW AS 対応）
+  const rankPresetNav = document.getElementById('mnav-rank_preset');
+  if (rankPresetNav) rankPresetNav.style.display = ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole()) ? '' : 'none';
 
   const [catRes, itemRes] = await Promise.all([
     apiFetch(`${API}/master/categories`),
@@ -24186,6 +24229,65 @@ async function loadMasterPage() {
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
   selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
+}
+
+// ==================== ランク単価プリセット ====================
+// カテゴリ別に「制作者（編集者/デザイナー）への支払単価」の A/B/C を登録する。
+// 案件の「見積・費用」→「プリセットから一括生成」で A/B/C グループを3つまとめて作る元データ。
+async function renderRankPresetMasterPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  const [cats, presetRes] = await Promise.all([loadCategories(), apiFetch(`${API}/rank-price-presets`)]);
+  const categories = Array.isArray(cats) ? cats : [];
+  const presets = presetRes.ok ? (await presetRes.json() || []) : [];
+  const canEdit = ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
+  const byCat = {};
+  presets.forEach(p => {
+    const cid = p.category_id, r = String(p.rank || '').toUpperCase();
+    if (!byCat[cid]) byCat[cid] = {};
+    byCat[cid][r] = Number(p.unit_price) || 0;
+  });
+  const cell = (cid, rank, v) => canEdit
+    ? `<input type="number" min="0" step="100" value="${v}" onchange="saveRankPreset('${esc(cid)}','${rank}',this.value)" style="width:96px;padding:4px 8px;font-size:13px;text-align:right;border:1px solid var(--border);border-radius:6px">`
+    : `¥${v.toLocaleString()}`;
+  const rows = categories.map(c => {
+    const vals = byCat[c.id] || {};
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:8px 10px;font-size:13px">${esc(c.name)}${c.code ? ` <span style="color:var(--text-muted);font-size:11px">(${esc(c.code)})</span>` : ''}</td>
+      <td style="padding:8px 10px;text-align:right">${cell(c.id, 'A', vals.A || 0)}</td>
+      <td style="padding:8px 10px;text-align:right">${cell(c.id, 'B', vals.B || 0)}</td>
+      <td style="padding:8px 10px;text-align:right">${cell(c.id, 'C', vals.C || 0)}</td>
+    </tr>`;
+  }).join('');
+  content.innerHTML = `
+    <div style="max-width:720px">
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">💴 ランク単価プリセット</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;line-height:1.7">
+        カテゴリ別に <strong>制作者（編集者/デザイナー）への支払単価</strong> の A / B / C を登録します。<br>
+        案件の「見積・費用」→「📋 プリセットから一括生成」で、この単価が入った A/B/C の成果物グループを3つまとめて作れます。<br>
+        ※ クライアント請求単価はランクに依存しないため、生成後に案件ごとに入力してください。
+      </p>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff">
+        <table style="width:100%;border-collapse:collapse">
+          <thead style="background:#F8FAFC"><tr>
+            <th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600">カテゴリ</th>
+            <th style="padding:8px 10px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:600">Aランク</th>
+            <th style="padding:8px 10px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:600">Bランク</th>
+            <th style="padding:8px 10px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:600">Cランク</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">カテゴリがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function saveRankPreset(categoryId, rank, price) {
+  const res = await apiFetch(`${API}/rank-price-presets`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category_id: categoryId, rank, unit_price: price })
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.error || '保存に失敗しました', 'error'); return; }
+  showToast('プリセットを保存しました', 'ok');
 }
 
 // ==================== ユーザー利用状況 ====================
