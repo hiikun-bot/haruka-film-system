@@ -95,6 +95,29 @@ function getUploadFolderId() {
       || '';
 }
 
+// 「案件あり」アップロード時のアップロード先フォルダを解決する。
+//   素材広場ルート（rootFolderId）配下に `クライアント名 > 案件名` を ensure し、
+//   その案件フォルダの id を返す（クリエイティブの Drive 階層と同じ発想。素材広場は専用ルート）。
+//   フォルダ名に使えない文字はサニタイズ（既存クリエイティブと同じ置換規則）。
+// 戻り値: { folderId, project }
+async function resolveProjectFolder(projectId, rootFolderId) {
+  const { data: project, error } = await supabase
+    .from('projects')
+    .select('id, name, clients(id, name)')
+    .eq('id', projectId)
+    .single();
+  if (error || !project) {
+    throw new Error('指定された案件が見つかりません');
+  }
+  const sanitize = (s) => String(s || '').replace(/[/\\?%*:|"<>]/g, '_').trim();
+  const clientName = sanitize(project.clients?.name) || 'クライアント未設定';
+  const projectName = sanitize(project.name) || '案件未設定';
+
+  const clientFolderId = await driveLib.getOrCreateFolder(rootFolderId, clientName);
+  const projectFolderId = await driveLib.getOrCreateFolder(clientFolderId, projectName);
+  return { folderId: projectFolderId, project };
+}
+
 // ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
   try {
@@ -234,9 +257,19 @@ function uploadWithSizeGuard(req, res, next) {
 }
 
 router.post('/upload', uploadWithSizeGuard, async (req, res) => {
-  const folderId = getUploadFolderId();
-  if (!folderId) {
+  const rootFolderId = getUploadFolderId();
+  if (!rootFolderId) {
     return res.status(500).json({ error: 'VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID が未設定です' });
+  }
+  // 案件あり（project_id 指定）ならその案件フォルダ、無ければ素材広場ルート直下（従来の自由アップロード）
+  let folderId = rootFolderId;
+  const projectId = String(req.body?.project_id || '').trim();
+  if (projectId) {
+    try {
+      ({ folderId } = await resolveProjectFolder(projectId, rootFolderId));
+    } catch (e) {
+      return res.status(400).json({ error: e.message || '案件フォルダの解決に失敗しました' });
+    }
   }
   const files = req.files || [];
   if (files.length === 0) return res.status(400).json({ error: 'ファイルが添付されていません' });
@@ -999,9 +1032,21 @@ router.post('/upload-session/init', async (req, res) => {
     const filename = String(req.body?.filename || '').trim();
     const fileSize = Number(req.body?.fileSize);
     const mimeType = String(req.body?.mimeType || 'application/octet-stream');
-    const parentFolderId = String(
-      req.body?.parentFolderId || getUploadFolderId() || ''
-    ).trim();
+    const rootFolderId = getUploadFolderId();
+    // 案件あり（project_id 指定）ならその案件フォルダを ensure。
+    // 後方互換: project_id が無く parentFolderId が直接来たらそれを使う。最後に素材広場ルート。
+    let parentFolderId = String(req.body?.parentFolderId || rootFolderId || '').trim();
+    const projectId = String(req.body?.project_id || '').trim();
+    if (projectId) {
+      if (!rootFolderId) {
+        return res.status(500).json({ error: 'VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID が未設定です' });
+      }
+      try {
+        ({ folderId: parentFolderId } = await resolveProjectFolder(projectId, rootFolderId));
+      } catch (e) {
+        return res.status(400).json({ error: e.message || '案件フォルダの解決に失敗しました' });
+      }
+    }
 
     if (!filename) return res.status(400).json({ error: 'filename が必要です' });
     if (!Number.isFinite(fileSize) || fileSize <= 0) {

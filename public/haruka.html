@@ -7210,6 +7210,34 @@ window.showPage = window.showPage || function(name, btn) {
       <button class="btn-secondary" onclick="msShowList()">← 一覧に戻る</button>
     </div>
 
+    <!-- アップロード先（案件あり/なし）: 案件フォルダへの自動振り分け -->
+    <div id="ms-upload-target" style="margin-top:12px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:14px 16px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:14px">
+        <input type="checkbox" id="ms-has-project" checked onchange="msOnHasProjectToggle()">
+        📁 案件を指定する
+        <span style="font-weight:normal;font-size:12px;color:var(--text-muted)">（素材をクライアント / 案件フォルダに自動で振り分けます）</span>
+      </label>
+
+      <!-- 案件あり: クライアント → 案件 のカスケード選択 -->
+      <div id="ms-project-picker" style="margin-top:12px;display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 12px;align-items:center;max-width:560px">
+        <label style="font-size:13px;color:var(--text-muted)">クライアント</label>
+        <select id="ms-client-select" onchange="msOnClientChange()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#fff">
+          <option value="">▼ クライアントを選択</option>
+        </select>
+        <label style="font-size:13px;color:var(--text-muted)">案件</label>
+        <select id="ms-project-select" onchange="msOnProjectChange()" disabled style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#fff">
+          <option value="">▼ まずクライアントを選択</option>
+        </select>
+        <div></div>
+        <div id="ms-target-hint" style="font-size:12px;color:var(--text-muted)">クライアントと案件を選ぶと保存先が表示されます</div>
+      </div>
+
+      <!-- 案件なし: 自由アップロードの注記 -->
+      <div id="ms-freeform-hint" style="margin-top:10px;font-size:12px;color:var(--text-muted);display:none">
+        案件を指定せず、素材広場の共有フォルダ（従来どおり）に自由アップロードします。
+      </div>
+    </div>
+
     <div class="ms-layout" style="margin-top:12px">
       <div>
         <div class="ms-drop" id="ms-drop"
@@ -40457,6 +40485,130 @@ function msShowUpload() {
       resumableMb.textContent = String(Math.floor(bytes / (1024 * 1024)));
     }
   });
+  // 案件選択（アップロード先）を初期化
+  msInitUploadTarget();
+}
+
+// ==================== アップロード先（案件あり/なし）====================
+// 素材を「クライアント > 案件」フォルダへ振り分けるための選択 UI。
+// デフォルトは「案件を指定する」= ON。OFF にすると従来どおり共有フォルダへ自由アップロード。
+let msHasProject = true;
+let msSelectedClientId = '';
+let msSelectedProjectId = '';
+
+// クライアント / 案件データが未ロードなら取得（素材広場を直接開いたケースの保険）。
+async function msEnsureClientsProjects() {
+  if (Array.isArray(allClients) && allClients.length && Array.isArray(allProjects) && allProjects.length) return;
+  try {
+    const [pRes, cRes] = await Promise.all([
+      apiFetch(`${API}/projects`),
+      apiFetch(`${API}/clients`),
+    ]);
+    allProjects = await pRes.json();
+    allClients = await cRes.json();
+  } catch (e) {
+    console.error('[ms] クライアント/案件の取得に失敗', e);
+  }
+}
+
+async function msInitUploadTarget() {
+  const cb = document.getElementById('ms-has-project');
+  msHasProject = cb ? cb.checked : true;
+  await msEnsureClientsProjects();
+  msPopulateClientSelect();
+  msApplyUploadTargetVisibility();
+  msUpdateUploadGate();
+}
+
+// クライアント select を populate（全件・名前順）
+function msPopulateClientSelect() {
+  const sel = document.getElementById('ms-client-select');
+  if (!sel) return;
+  const prev = msSelectedClientId;
+  const clients = (allClients || []).slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+  sel.innerHTML = '<option value="">▼ クライアントを選択</option>' +
+    clients.map(c => `<option value="${votEscape(c.id)}">${votEscape(c.name || '(名称未設定)')}</option>`).join('');
+  if (prev && clients.some(c => c.id === prev)) sel.value = prev;
+}
+
+// 「案件を指定する」チェック切替
+function msOnHasProjectToggle() {
+  const cb = document.getElementById('ms-has-project');
+  msHasProject = cb ? cb.checked : false;
+  msApplyUploadTargetVisibility();
+  msUpdateUploadGate();
+}
+
+function msApplyUploadTargetVisibility() {
+  const picker = document.getElementById('ms-project-picker');
+  const free = document.getElementById('ms-freeform-hint');
+  if (picker) picker.style.display = msHasProject ? '' : 'none';
+  if (free) free.style.display = msHasProject ? 'none' : '';
+}
+
+// クライアント選択 → 案件 select をそのクライアントの案件で埋める
+function msOnClientChange() {
+  const sel = document.getElementById('ms-client-select');
+  msSelectedClientId = sel ? sel.value : '';
+  msSelectedProjectId = '';
+  const pSel = document.getElementById('ms-project-select');
+  if (pSel) {
+    if (!msSelectedClientId) {
+      pSel.innerHTML = '<option value="">▼ まずクライアントを選択</option>';
+      pSel.disabled = true;
+    } else {
+      const projects = (allProjects || [])
+        .filter(p => p.client_id === msSelectedClientId && !p.is_hidden)
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+      if (projects.length === 0) {
+        pSel.innerHTML = '<option value="">このクライアントに案件がありません</option>';
+        pSel.disabled = true;
+      } else {
+        pSel.innerHTML = '<option value="">▼ 案件を選択</option>' +
+          projects.map(p => `<option value="${votEscape(p.id)}">${votEscape(p.name || '(名称未設定)')}</option>`).join('');
+        pSel.disabled = false;
+      }
+    }
+  }
+  msUpdateTargetHint();
+  msUpdateUploadGate();
+}
+
+function msOnProjectChange() {
+  const sel = document.getElementById('ms-project-select');
+  msSelectedProjectId = sel ? sel.value : '';
+  msUpdateTargetHint();
+  msUpdateUploadGate();
+}
+
+function msUpdateTargetHint() {
+  const hint = document.getElementById('ms-target-hint');
+  if (!hint) return;
+  const c = (allClients || []).find(x => x.id === msSelectedClientId);
+  const p = (allProjects || []).find(x => x.id === msSelectedProjectId);
+  if (c && p) {
+    hint.innerHTML = `→ 📁 <strong>${votEscape(c.name)} / ${votEscape(p.name)}</strong> に保存されます`;
+    hint.style.color = 'var(--text)';
+  } else {
+    hint.textContent = 'クライアントと案件を選ぶと保存先が表示されます';
+    hint.style.color = 'var(--text-muted)';
+  }
+}
+
+// 案件あり かつ 案件未選択ならアップロード操作をブロック（ドロップ/選択を無効化）
+function msUpdateUploadGate() {
+  const drop = document.getElementById('ms-drop');
+  const blocked = msHasProject && !msSelectedProjectId;
+  if (drop) {
+    drop.style.opacity = blocked ? '0.45' : '';
+    drop.style.pointerEvents = blocked ? 'none' : '';
+  }
+}
+
+// 現在の送信用 project_id（案件なし or 未選択なら空文字）
+function msGetUploadProjectId() {
+  return (msHasProject && msSelectedProjectId) ? msSelectedProjectId : '';
 }
 
 let _msReloadTimer = null;
@@ -41132,6 +41284,11 @@ window.addEventListener('beforeunload', (e) => {
 
 async function msHandleFiles(files) {
   if (!files.length) return;
+  // 案件あり かつ 案件未選択ならアップロードを止める（ドロップは pointer-events で抑止済みだが二重ガード）
+  if (msHasProject && !msSelectedProjectId) {
+    alert('先にアップロード先の案件を選択してください。\n（「案件を指定する」のチェックを外すと、共有フォルダへ自由にアップロードできます）');
+    return;
+  }
   const list = document.getElementById('ms-upload-list');
   if (!list) return;
   const limits = await msEnsureLimits();
@@ -41265,6 +41422,7 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
           filename: file.name,
           fileSize: file.size,
           mimeType: file.type || 'application/octet-stream',
+          project_id: msGetUploadProjectId() || undefined,
         }),
       });
     } catch (e) {
@@ -41421,6 +41579,8 @@ function msUploadOne(file, onProgress) {
     xhr.onerror = () => reject(new Error('ネットワークエラー'));
     const fd = new FormData();
     fd.append('files', file);
+    const pid = msGetUploadProjectId();
+    if (pid) fd.append('project_id', pid);
     xhr.send(fd);
   });
 }
