@@ -84,7 +84,7 @@ projects.filename_token_overrides jsonb
 |----------------|-------------------|---------------------------------------|
 | `serial`       | 連番（必須・先頭）| `creatives.internal_code` の数字部    |
 | `project_name` | 案件名（必須）    | `projects.name`                       |
-| `version`      | バージョン（必須）| `creatives.version_number` 等         |
+| `version`      | バージョン（任意）| `creatives.version_number` 等         |
 | `date_yymmdd`  | 制作日 (YYMMDD)   | `creatives.production_date`           |
 | `client_code`  | クライアントコード| `clients.client_code`                 |
 | `product`      | 商品名/コード     | `products.name` または `products.code`|
@@ -112,8 +112,14 @@ projects.filename_token_overrides jsonb
 
 ### 必須トークン制約
 
-`serial` / `project_name` / `version` のいずれかが欠けたテンプレートは保存不可。
+`serial` / `project_name` のいずれかが欠けたテンプレートは保存不可。
 さらに `serial` は配列の先頭でなければならない（DB 側の CHECK 制約 + サーバー側でバリデーション）。
+
+> **追補（2026-06-08・バグ報告 #271af257）**: 当初は `version` も必須としていたが、
+> クライアント提出時にファイル名から Ver を削除する運用があるため `version` を**任意**に変更した。
+> Ver なしのテンプレ（例: `連番_案件名` / `連番_案件名_サイズ`）を保存・展開できる。
+> migration: `migrations/2026-06-08_filename_template_version_optional.sql`
+> （`validate_filename_template_tokens()` を version 不要版に再定義）。
 
 ### UI
 

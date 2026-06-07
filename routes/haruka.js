@@ -1715,7 +1715,7 @@ const ALLOWED_FILENAME_FLAG_SOURCES = new Set(['talent_flag']);
 
 // tokens のサーバー側バリデーション（DB CHECK と二重）
 //   - 配列で要素が 1 件以上
-//   - serial / project_name / version の3キーが含まれる
+//   - serial / project_name の2キーが含まれる（version は任意・バグ報告 #271af257）
 //   - serial が配列の先頭
 //   - 各要素は { kind: "system"|"custom"|"flag", key, ... } の形
 //   - flag は { source: ALLOWED_FILENAME_FLAG_SOURCES, on_value: string, off_value: string }
@@ -1757,7 +1757,8 @@ function validateFilenameTemplateTokens(tokens) {
     }
     keySet.add(k);
   }
-  for (const required of ['serial', 'project_name', 'version']) {
+  // version は任意化（バグ報告 #271af257）。必須は serial / project_name のみ。
+  for (const required of ['serial', 'project_name']) {
     if (!keys.includes(required)) {
       return { ok: false, error: `必須トークン "${required}" が含まれていません` };
     }
