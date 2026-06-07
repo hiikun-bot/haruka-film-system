@@ -2043,26 +2043,108 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
-// 制作者単価（編集者/デザイナーへの1本あたり支払）を 1 つの line_cost として保存する。
-// ロールはカテゴリの render_kind から自動判定（video→editor / それ以外→designer）。UI ではロールを扱わない。
-async function upsertProducerLineCost(lineId, categoryId, unitPrice) {
-  if (!lineId) return;
-  const price = Math.max(0, parseInt(unitPrice, 10) || 0);
+// カテゴリの制作ロール（render_kind が video→editor / それ以外→designer）の role_id を返す。
+async function productionRoleIdForCategory(categoryId) {
   let roleCode = 'editor';
   if (categoryId) {
     const { data: cat } = await supabase.from('creative_categories').select('render_kind').eq('id', categoryId).maybeSingle();
     if (cat && cat.render_kind && cat.render_kind !== 'video') roleCode = 'designer';
   }
   const { data: role } = await supabase.from('roles').select('id').eq('code', roleCode).maybeSingle();
-  if (!role) return;
+  return role ? role.id : null;
+}
+
+// 制作者単価（編集者/デザイナーへの1本あたり支払）を 1 つの line_cost として保存する。
+// ロールはカテゴリの render_kind から自動判定。UI ではロールを扱わない。
+async function upsertProducerLineCost(lineId, categoryId, unitPrice) {
+  if (!lineId) return;
+  const price = Math.max(0, parseInt(unitPrice, 10) || 0);
+  const roleId = await productionRoleIdForCategory(categoryId);
+  if (!roleId) return;
   const { data: existing } = await supabase.from('project_estimate_line_costs')
-    .select('id').eq('line_id', lineId).eq('role_id', role.id).is('user_id', null).maybeSingle();
+    .select('id').eq('line_id', lineId).eq('role_id', roleId).is('user_id', null).maybeSingle();
   if (existing) {
     await supabase.from('project_estimate_line_costs').update({ unit_price: price }).eq('id', existing.id);
   } else {
-    await supabase.from('project_estimate_line_costs').insert({ line_id: lineId, role_id: role.id, unit_price: price, pricing_type: 'fixed_per_unit', currency: 'JPY' });
+    await supabase.from('project_estimate_line_costs').insert({ line_id: lineId, role_id: roleId, unit_price: price, pricing_type: 'fixed_per_unit', currency: 'JPY' });
   }
 }
+
+// ===== ランク単価プリセット（category × rank → 制作者単価）。category_rank_rates を再利用 =====
+// 役割はカテゴリから自動（UI ではロールを扱わない）。編集は admin/秘書/プロデューサーのみ。
+const PRESET_ROLES = ['admin', 'secretary', 'producer', 'producer_director'];
+
+// プリセット一覧
+router.get('/rank-price-presets', requireAuth, requireRole(...PRESET_ROLES), async (req, res) => {
+  const { data, error } = await supabase
+    .from('category_rank_rates')
+    .select('id, category_id, rank, unit_price, category:creative_categories(id, code, name, color, render_kind)')
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (/category_rank_rates/i.test(error.message) && /(does not exist|schema cache|relation)/i.test(error.message)) return res.json([]);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
+});
+
+// プリセット upsert（category × rank の制作者単価を1件設定）
+router.put('/rank-price-presets', requireAuth, requireRole(...PRESET_ROLES), async (req, res) => {
+  const { category_id } = req.body || {};
+  if (!category_id) return res.status(400).json({ error: 'category_id は必須です' });
+  const r = String((req.body || {}).rank || '').toUpperCase();
+  if (!['A', 'B', 'C'].includes(r)) return res.status(400).json({ error: 'rank は A / B / C で指定してください' });
+  const price = Math.max(0, parseInt((req.body || {}).unit_price, 10) || 0);
+  const roleId = await productionRoleIdForCategory(category_id);
+  if (!roleId) return res.status(400).json({ error: '制作ロールが解決できません' });
+  const { data: existing } = await supabase.from('category_rank_rates')
+    .select('id').eq('category_id', category_id).eq('rank', r).eq('role_id', roleId).maybeSingle();
+  if (existing) {
+    const { error } = await supabase.from('category_rank_rates').update({ unit_price: price, updated_at: new Date().toISOString() }).eq('id', existing.id);
+    if (error) return res.status(500).json({ error: error.message });
+  } else {
+    const { error } = await supabase.from('category_rank_rates').insert({ category_id, rank: r, role_id: roleId, unit_price: price });
+    if (error) return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
+});
+
+// POST /api/projects/:project_id/lines/generate-preset  プリセットから A/B/C 成果物グループを一括生成
+// 既に同カテゴリで存在する rank はスキップ（重複作成しない）。client 単価は 0、制作者単価はプリセットから。
+router.post('/projects/:project_id/lines/generate-preset', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const { category_id } = req.body || {};
+  if (!category_id) return res.status(400).json({ error: 'category_id は必須です' });
+  const { data: cat } = await supabase.from('creative_categories').select('id, name').eq('id', category_id).maybeSingle();
+  if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+
+  // プリセット（制作者単価）と既存 line の rank を取得
+  const [{ data: presets }, { data: existingLines }, { data: maxRow }] = await Promise.all([
+    supabase.from('category_rank_rates').select('rank, unit_price').eq('category_id', category_id),
+    supabase.from('project_estimate_lines').select('rank').eq('project_id', projectId).eq('category_id', category_id),
+    supabase.from('project_estimate_lines').select('sort_order').eq('project_id', projectId).order('sort_order', { ascending: false, nullsFirst: false }).limit(1),
+  ]);
+  const priceByRank = {};
+  (presets || []).forEach(p => { priceByRank[String(p.rank || '').toUpperCase()] = Number(p.unit_price) || 0; });
+  const existingRanks = new Set((existingLines || []).map(l => String(l.rank || '').toUpperCase()));
+  let sortOrder = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+
+  let createdCount = 0;
+  for (const rank of ['A', 'B', 'C']) {
+    if (existingRanks.has(rank)) continue; // 既にある rank はスキップ
+    sortOrder += 10;
+    const { data: line, error } = await supabase.from('project_estimate_lines')
+      .insert({ project_id: projectId, category_id, rank, name: null, client_unit_price: 0, sort_order: sortOrder, status: 'contracted', status_changed_at: new Date().toISOString() })
+      .select('id')
+      .single();
+    if (error) {
+      if (isMissingPelTable(error)) return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。' });
+      return res.status(500).json({ error: error.message });
+    }
+    await upsertProducerLineCost(line.id, category_id, priceByRank[rank] || 0);
+    createdCount++;
+  }
+  res.json({ ok: true, created_count: createdCount, skipped: 3 - createdCount });
+});
 
 // POST /api/projects/:project_id/lines  新規作成
 router.post('/projects/:project_id/lines', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
