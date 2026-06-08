@@ -5606,7 +5606,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <!-- 1本あたりの単価。クライアント＝請求／制作者＝編集者・デザイナーへの支払 -->
     <div class="form-row" style="margin-bottom:10px">
-      <div class="form-group" style="flex:1;margin-bottom:0">
+      <div class="form-group" id="pl-edit-unit-price-group" style="flex:1;margin-bottom:0">
         <label class="form-label">クライアント単価（円/本）</label>
         <input class="form-input" id="pl-edit-unit-price" type="number" min="0" step="1" value="0">
       </div>
@@ -16486,7 +16486,7 @@ function renderProjectLines() {
           ${rankBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
-            <div style="font-size:11px;color:var(--text-muted)">クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ 制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
+            <div style="font-size:11px;color:var(--text-muted)">${isTopAdmin() ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
@@ -16656,6 +16656,9 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-name').value = line?.name || '';
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
   document.getElementById('pl-edit-producer-price').value = line ? getProducerUnitPrice(line.id) : 0;
+  // クライアント請求単価は管理者のみ表示・編集可。非adminには行ごと隠す（ADR 015）
+  const upGroup = document.getElementById('pl-edit-unit-price-group');
+  if (upGroup) upGroup.style.display = isTopAdmin() ? '' : 'none';
   const errEl = document.getElementById('pl-edit-error');
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
@@ -16701,9 +16704,10 @@ async function saveProjectLine() {
     category_id: categoryId,
     rank,
     name: name || null,
-    client_unit_price: unitPrice,
     producer_unit_price: producerPrice,
   };
+  // クライアント請求単価は管理者のみ送信（非adminはサーバー側でも無視されるが二重で防ぐ）（ADR 015）
+  if (isTopAdmin()) payload.client_unit_price = unitPrice;
 
   const saveBtn = document.getElementById('pl-edit-save-btn');
   if (saveBtn) saveBtn.disabled = true;
