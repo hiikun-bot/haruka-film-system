@@ -33704,6 +33704,7 @@ async function submitFileComment() {
   if (btn) { btn.disabled = false; btn.textContent = '送信'; }
   if (res.ok) {
     document.getElementById('fp-comment-text').value = '';
+    document.getElementById('fp-comment-category').value = '';
     document.getElementById('fp-is-knowledge').checked = false;
     fpClearTimecode();
     fpClearBbox();
