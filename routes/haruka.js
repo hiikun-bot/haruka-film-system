@@ -6281,8 +6281,9 @@ router.post('/creatives/bulk-preview', async (req, res) => {
     startSeq = n;
   }
 
-  const today = new Date();
-  const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  // 制作日トークン (YYMMDD): Railway は UTC 稼働のため JST で「今日」を確定する
+  // （ローカル getter だと JST 0:00〜8:59 の作成でファイル名の制作日が前日にズレる）
+  const dateStr = _todayStrJST().slice(2).replace(/-/g, '');
 
   const previews = [];
   let nextSeq = startSeq;
@@ -6373,8 +6374,8 @@ router.post('/creatives/bulk', async (req, res) => {
     startSeq = n;
   }
 
-  const today = new Date();
-  const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  // 制作日トークン (YYMMDD): bulk-preview と同じく JST で確定（UTC 稼働の前日ズレ防止）
+  const dateStr = _todayStrJST().slice(2).replace(/-/g, '');
 
   const inserts = [];
   let nextSeq = startSeq;
@@ -13429,12 +13430,19 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
   const internalCode = `${seqStr3}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
 
   // 制作日: YYMMDD
+  // production_date ("YYYY-MM-DD") は UTC midnight として parse されるため UTC getter で
+  // 同じ日付を取り出す（サーバーTZに依存しない）。未指定時の「今日」は JST で確定する。
   const dateStr = (() => {
-    const d = production_date ? new Date(production_date) : new Date();
-    const yy = String(d.getFullYear()).slice(2);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yy}${mm}${dd}`;
+    if (production_date) {
+      const d = new Date(production_date);
+      if (!Number.isNaN(d.getTime())) {
+        const yy = String(d.getUTCFullYear()).slice(2);
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(d.getUTCDate()).padStart(2, '0');
+        return `${yy}${mm}${dd}`;
+      }
+    }
+    return _todayStrJST().slice(2).replace(/-/g, '');
   })();
 
   // ADR 007: ファイル名テンプレ解決
