@@ -7669,6 +7669,15 @@ window.showPage = window.showPage || function(name, btn) {
                   title="案件の取り違え等を後から修正します">
             ✎ 事後修正
           </button>
+          <!-- クリエイティブ削除ボタン（権限ありのみ表示: GET /api/creatives/:id/delete-eligibility が can_delete=true のとき）
+               admin / 秘書 / 担当プロデューサー・ディレクター / 担当作業者のみに表示される。
+               誤登録したクリエイティブをこの場で削除できるようにする導線（従来はリスト表示のチェックボックス経由のみ）。 -->
+          <button id="cd-delete-btn"
+                  onclick="deleteCurrentCreative()"
+                  style="display:none;flex-shrink:0;background:#fff;border:1px solid #fca5a5;border-radius:6px;padding:4px 10px;font-size:11.5px;color:#dc2626;cursor:pointer;white-space:nowrap"
+                  title="このクリエイティブを削除します（誤登録の取り消しなど）">
+            🗑 削除
+          </button>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-top:4px">
           <span id="cd-status-chip"></span>
@@ -30291,6 +30300,8 @@ async function openCreativeDetail(id) {
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（モーダル下部の追加情報なので非同期で OK・失敗しても無視）
   refreshCreativePostEditButton(id).catch(() => {});
   refreshCreativeEditHistory(id).catch(() => {});
+  // 削除ボタン表示制御（権限ありのみ表示・失敗時は黙って非表示のまま）
+  refreshCreativeDeleteButton(id).catch(() => {});
 
   // 中身が描画され終わったので render フェーズ done → overlay フェードアウト
   if (!_cdHasCache) _cdMarkPhaseDone('render');
@@ -37587,6 +37598,68 @@ async function refreshCreativePostEditButton(creativeId) {
   }
 }
 
+// 詳細モーダル内で「🗑 削除」ボタンの可視性を更新（権限ありのみ表示）
+// サーバー側 GET /api/creatives/:id/delete-eligibility が can_delete=true を返したときだけ表示。
+// 表示対象: admin / 秘書 / 担当プロデューサー・ディレクター / 当該クリエイティブの担当作業者。
+// apiFetch 経由なので X-View-As が尊重される（ADR 015）。
+async function refreshCreativeDeleteButton(creativeId) {
+  const btn = document.getElementById('cd-delete-btn');
+  if (!btn) return;
+  btn.style.display = 'none';
+  if (!creativeId) return;
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/delete-eligibility`);
+    if (!res.ok) return;
+    const j = await res.json();
+    if (j?.can_delete) btn.style.display = '';
+  } catch (_) {
+    // 失敗時は黙って非表示のまま
+  }
+}
+
+// 詳細モーダルで開いているクリエイティブを削除する。
+// リスト表示の deleteSelectedCreatives と同じ DELETE /creatives を単一 id で呼ぶ
+// （DB 即削除 / Drive は【削除】リネーム / 請求書紐付きは 409 / 権限不足は 403）。
+async function deleteCurrentCreative() {
+  const c = currentCreativeDetail;
+  if (!c || !c.id) return;
+  const name = c.file_name || 'このクリエイティブ';
+  if (!confirm(
+    `「${name}」を削除しますか？\n\n` +
+    `※ DB 側のクリエイティブ情報は即削除されます。\n` +
+    `※ Google Drive 上のファイルは「【削除】<元のファイル名>」にリネームされます。\n` +
+    `   後ほど Drive 上で確認して手動で削除してください（誤削除防止）。`
+  )) return;
+  const res = await apiFetch(`${API}/creatives`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: [c.id] }),
+  });
+  if (res.ok) {
+    const j = await res.json().catch(() => ({}));
+    const r = j?.drive_rename || {};
+    let msg = 'クリエイティブを削除しました';
+    if (r.renamed > 0) msg += `（Driveファイル ${r.renamed} 件を「【削除】」付きにリネーム）`;
+    if (r.failed > 0)  msg += ` / Driveリネーム失敗 ${r.failed} 件`;
+    // 正規アクション成功 → メモリキャッシュ無効化 + localStorage 下書き削除 + dirty チェックをバイパスして閉じる
+    try { _cdInvalidateCache(c.id); } catch (_) {}
+    try { __cdClearDraft(c.id); } catch (_) {}
+    __cdSkipDirtyCheck = true;
+    closeModal('modal-creative-detail');
+    showToast(msg, 'success');
+    await loadCreatives();
+  } else {
+    const e = await res.json().catch(() => ({}));
+    const raw = String(e?.error || '');
+    // 請求書紐付き(409) / 権限不足(403) は複数行の詳細を alert で表示（toast では読めない）
+    if ((res.status === 409 || res.status === 403) && raw.includes('\n')) {
+      alert('クリエイティブを削除できません\n\n' + raw);
+    } else {
+      showToast('削除エラー: ' + translateError(raw), 'error');
+    }
+  }
+}
+
 // 詳細モーダル下部の「編集履歴」を再描画
 async function refreshCreativeEditHistory(creativeId) {
   const sec = document.getElementById('cd-edit-history-section');
@@ -38288,8 +38361,8 @@ async function deleteSelectedCreatives() {
   } else {
     const e = await res.json().catch(() => ({}));
     const raw = String(e?.error || '');
-    // 請求書紐付きで 409 が返ったときは複数行の詳細を alert で表示（toast では読めない）
-    if (res.status === 409 && raw.includes('\n')) {
+    // 請求書紐付き(409) / 権限不足(403) で複数行の詳細が返ったときは alert で表示（toast では読めない）
+    if ((res.status === 409 || res.status === 403) && raw.includes('\n')) {
       alert('クリエイティブを削除できません\n\n' + raw);
     } else {
       showToast('削除エラー: ' + translateError(raw), 'error');

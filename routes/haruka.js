@@ -7263,6 +7263,62 @@ router.get('/creatives/:id/edit-eligibility', requireAuth, async (req, res) => {
   });
 });
 
+// 「クリエイティブ削除」の可否を判定するヘルパー（権限のみ・整合性ガード〔請求書紐付き等〕は DELETE 本体で実施）
+// 許可:
+//   - admin / secretary は無条件
+//   - それ以外は「案件リーダー本人（projects.director_id / producer_id）」
+//     または「当該クリエイティブに担当としてアサインされている本人（creative_assignments、ロール不問:
+//     director / producer / editor / designer / director_as_editor 等）」
+// ＝ 担当プロデューサー・ディレクター と 担当作業者（編集者・デザイナー）が自分の担当分を削除できる。
+async function evaluateCreativeDeleteEligibility(creativeId, userId, userRole) {
+  const { data: c, error: cErr } = await supabase
+    .from('creatives')
+    .select('id, file_name, project_id, projects:project_id(director_id, producer_id)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (cErr) return { ok: false, status: 500, error: cErr.message };
+  if (!c) return { ok: false, status: 404, error: 'クリエイティブが見つかりません' };
+
+  const ALLOW_ANY = ['admin', 'secretary'];
+  if (ALLOW_ANY.includes(userRole)) return { ok: true, creative: c };
+
+  // 案件リーダー本人
+  const isProjectLeader =
+    (c.projects?.director_id && c.projects.director_id === userId) ||
+    (c.projects?.producer_id && c.projects.producer_id === userId);
+  if (isProjectLeader) return { ok: true, creative: c };
+
+  // 当該クリエイティブの担当本人（ロール不問）
+  if (userId) {
+    const { data: asn } = await supabase
+      .from('creative_assignments')
+      .select('id')
+      .eq('creative_id', creativeId)
+      .eq('user_id', userId)
+      .limit(1);
+    if (asn && asn.length > 0) return { ok: true, creative: c };
+  }
+
+  return {
+    ok: false,
+    status: 403,
+    error: 'このクリエイティブを削除する権限がありません（admin / 秘書 / 担当プロデューサー・ディレクター / 担当作業者のみ削除できます）',
+    creative: c,
+  };
+}
+
+// GET /api/creatives/:id/delete-eligibility
+// フロント: 詳細モーダルの「🗑 削除」ボタン表示制御に使用
+router.get('/creatives/:id/delete-eligibility', requireAuth, async (req, res) => {
+  const role = getEffectiveRole(req);
+  const result = await evaluateCreativeDeleteEligibility(req.params.id, req.user?.id, role);
+  if (!result.ok) {
+    // 403/404/500 はそのまま返す。フロントは「削除」ボタン非表示とする。
+    return res.status(result.status).json({ error: result.error, can_delete: false });
+  }
+  res.json({ can_delete: true });
+});
+
 // PUT /api/creatives/:id/edit-mode
 // 事後修正モード本体。通常の PUT /creatives/:id とは独立した経路で、変更ごとに監査ログを残す。
 router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
@@ -8091,6 +8147,41 @@ router.post('/creatives/:id/back-template-status', requireAuth, async (req, res)
 router.delete('/creatives', requireAuth, async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids は必須です' });
+
+  // 権限ガード（ADR 015）: 削除対象すべてを実効ロール（X-View-As 尊重）で判定。
+  // 1 件でも権限が無ければ全体を 403 で拒否（部分削除による事故を防ぐ）。
+  // admin / 秘書 は無条件。それ以外は案件リーダー本人 or 当該クリエイティブの担当本人のみ。
+  // N+1 を避けるため一括取得（admin/秘書は追加クエリ無しで通過）。
+  const effRole = getEffectiveRole(req);
+  if (!['admin', 'secretary'].includes(effRole)) {
+    const { data: cRows, error: cgErr } = await supabase
+      .from('creatives')
+      .select('id, file_name, projects:project_id(director_id, producer_id)')
+      .in('id', ids);
+    if (cgErr) return res.status(500).json({ error: cgErr.message });
+    const { data: myAsn } = await supabase
+      .from('creative_assignments')
+      .select('creative_id')
+      .in('creative_id', ids)
+      .eq('user_id', req.user.id);
+    const assignedSet = new Set((myAsn || []).map(a => a.creative_id));
+    const notAllowed = [];
+    for (const c of (cRows || [])) {
+      // 存在しない id は cRows に出てこない → 元実装と同じく黙ってスキップ
+      const isLeader =
+        (c.projects?.director_id && c.projects.director_id === req.user.id) ||
+        (c.projects?.producer_id && c.projects.producer_id === req.user.id);
+      if (!isLeader && !assignedSet.has(c.id)) notAllowed.push(c.file_name || c.id);
+    }
+    if (notAllowed.length > 0) {
+      return res.status(403).json({
+        error:
+          '以下のクリエイティブを削除する権限がありません。\n' +
+          '（削除できるのは admin / 秘書 / 担当プロデューサー・ディレクター / 担当作業者のみです）\n\n' +
+          notAllowed.map(n => `・${n}`).join('\n'),
+      });
+    }
+  }
 
   // 請求書明細に紐付いていないか事前チェック（FK 違反を分かりやすいメッセージに変換）
   const { data: linkedItems, error: linkErr } = await supabase
