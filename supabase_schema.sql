@@ -899,6 +899,18 @@ CREATE INDEX IF NOT EXISTS idx_creative_assignments_creative_id ON creative_assi
 CREATE INDEX IF NOT EXISTS idx_invoices_issuer_year_month   ON invoices(issuer_id, year, month);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id     ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(creative_id, uploaded_at DESC);
+-- 2026-06-11_perf_indexes.sql: 頻出クエリの未インデックス列
+-- 案件一覧（GET /api/projects・経理一覧）の created_at DESC ソート
+CREATE INDEX IF NOT EXISTS idx_projects_created_at          ON projects (created_at DESC);
+-- クライアント単位の案件参照（納品実績・削除前チェック等）。FK 未索引だった
+CREATE INDEX IF NOT EXISTS idx_projects_client_id           ON projects (client_id);
+-- GET /api/projects/:id/cycles（project_id 絞り込み + year/month 降順ソート）
+CREATE INDEX IF NOT EXISTS idx_project_cycles_project_year_month ON project_cycles (project_id, year DESC, month DESC);
+-- クリエイター実績サマリーの created_at 月範囲フィルタ
+CREATE INDEX IF NOT EXISTS idx_creatives_created_at         ON creatives (created_at);
+-- ユーザー一覧 / クライアント一覧の created_at ソート
+CREATE INDEX IF NOT EXISTS idx_users_created_at             ON users (created_at);
+CREATE INDEX IF NOT EXISTS idx_clients_created_at           ON clients (created_at DESC);
 
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
