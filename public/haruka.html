@@ -2481,13 +2481,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           // 一旦失敗 → プロキシ /files/:id/stream に自動 fallback する設計。
           // 直リンク試行中（dataset.directTried==='1'）でプロキシ未試行のうちは
           // 中間状態なので Slack 通知をスキップ（fallback 後の真の失敗は通知する）。
+          // さらに fallback 失敗後もアップロード直後レース向けの自動リトライ（最大2回）が
+          // 残っている間は中間状態なので同様にスキップ（リトライも尽きた最終失敗だけ通知）。
           try {
             if (t && t.tagName && t.tagName.toLowerCase() === 'video'
                 && t.id === 'fp-video'
-                && t.dataset && t.dataset.directTried === '1'
-                && t.dataset.fallbackSrc) {
-              try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error_suppressed', 'direct→proxy fallback'); } catch (_) {}
-              return;
+                && t.dataset && t.dataset.fallbackSrc) {
+              if (t.dataset.directTried === '1') {
+                try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error_suppressed', 'direct→proxy fallback'); } catch (_) {}
+                return;
+              }
+              if (parseInt(t.dataset.retryCount || '0', 10) < 2) {
+                try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_error_suppressed', 'retry pending (' + (t.dataset.retryCount || '0') + '/2)'); } catch (_) {}
+                return;
+              }
             }
           } catch (_) { /* 失敗しても通常パスに進む */ }
           postAutoError({
@@ -31548,7 +31555,27 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
             fpShowLoading('動画を読み込み中（fallback）...');
             return;
           }
-          fpShowLoadingError(code === 4 ? '動画形式に対応していません' : '動画の読み込みに失敗しました');
+          // ADR 021 追補: アップロード完了直後は Drive 側の配信準備が間に合わず、
+          // 直リンク・プロキシの両方が数十秒だけ失敗することがある（一時的なレース）。
+          // 即エラー表示にせず 10秒→20秒 の2回までプロキシを自動リトライする。
+          if (v.dataset.fallbackSrc) {
+            var rc = parseInt(v.dataset.retryCount || '0', 10);
+            if (rc < 2) {
+              v.dataset.retryCount = String(rc + 1);
+              try { if (window.__addBreadcrumb) window.__addBreadcrumb('video_retry_scheduled', { attempt: rc + 1 }); } catch (_) {}
+              fpShowLoading('動画の配信準備中です。自動で再試行します...');
+              setTimeout(() => {
+                // モーダルを閉じた / 別ファイルに切り替えた場合は何もしない
+                if (document.getElementById('fp-video') !== v) return;
+                var sep = v.dataset.fallbackSrc.indexOf('?') === -1 ? '?' : '&';
+                v.src = v.dataset.fallbackSrc + sep + 'r=' + v.dataset.retryCount;
+                v.load();
+                fpShowLoading('動画を読み込み中（再試行）...');
+              }, (rc + 1) * 10000);
+              return;
+            }
+          }
+          fpShowLoadingError(code === 4 ? '動画を再生できません（アップロード直後の場合は1分ほど待って開き直してください）' : '動画の読み込みに失敗しました');
         });
         v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
       }, 100);
