@@ -31845,10 +31845,11 @@ function fpSpeedRightClick(e) {
   menu.style.top  = e.clientY + 'px';
   menu.style.display = '';
   setTimeout(() => {
+    // { once: true } で発火後に必ず自動削除（メニューを別経路で閉じても document に残留しない）
     document.addEventListener('click', function _close() {
       menu.style.display = 'none';
       document.removeEventListener('click', _close);
-    });
+    }, { once: true });
   }, 0);
   return false;
 }
@@ -31878,10 +31879,11 @@ function fpToggleQualityMenu(e) {
     menu.style.top = (rect.top - menu.offsetHeight - 8) + 'px';
   });
   setTimeout(() => {
+    // { once: true } で発火後に必ず自動削除（fpSetQuality 等の別経路で閉じても document に残留しない）
     document.addEventListener('click', function _close() {
       menu.style.display = 'none';
       document.removeEventListener('click', _close);
-    });
+    }, { once: true });
   }, 0);
 }
 
@@ -38405,7 +38407,14 @@ async function deleteMemberPermanently(id, name) {
 // ===== ログアウト =====
 async function logout() {
   if (!confirm('ログアウトしますか？')) return;
-  await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+  try {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+  } catch (e) {
+    // ネットワーク断などで fetch 自体が落ちた場合、従来は未処理例外で中断していた。
+    // 挙動（リダイレクトしない）は変えず、例外が未処理で漏れることだけ防ぐ。
+    console.warn('[HFS] /auth/logout failed:', e);
+    return;
+  }
   window.location.href = '/login.html';
 }
 
@@ -38461,23 +38470,37 @@ async function resetMemberPassword(userId, userName) {
   const newPass = prompt(`${userName} さんの新しいパスワードを入力してください\n（8文字以上 / 半角英字・数字・記号 / 全角・スペース不可）:`);
   if (!newPass) return;
   if (newPass.length < 8) { showToast('8文字以上必要です', 'warn'); return; }
-  const res = await apiFetch(`${API}/users/${userId}/reset-password`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newPassword: newPass })
-  });
+  let res;
+  try {
+    res = await apiFetch(`${API}/users/${userId}/reset-password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword: newPass })
+    });
+  } catch (e) {
+    // ネットワーク断時は未処理例外だけ防ぐ（従来どおり何も表示せず中断）
+    console.warn('[HFS] reset-password request failed:', e);
+    return;
+  }
   if (res.ok) showToast(`${userName} さんのパスワードをリセットしました`, 'success');
-  else { const d = await res.json(); showToast('エラー: ' + translateError(d?.error), 'error'); }
+  else { const d = await res.json().catch(() => ({})); showToast('エラー: ' + translateError(d?.error), 'error'); }
 }
 
 async function issueInvite() {
   const email = document.getElementById('inv-email').value.trim();
   const role  = document.getElementById('inv-role').value;
   if (!email) { showToast('メールアドレスを入力してください', 'warn'); return; }
-  const res = await apiFetch('/api/invitations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, role })
-  });
+  let res;
+  try {
+    res = await apiFetch('/api/invitations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, role })
+    });
+  } catch (e) {
+    // ネットワーク断時は未処理例外だけ防ぐ（従来どおり何も表示せず中断）
+    console.warn('[HFS] /api/invitations request failed:', e);
+    return;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     if (res.status === 409) {
