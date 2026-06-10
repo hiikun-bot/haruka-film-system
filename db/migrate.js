@@ -18,6 +18,14 @@
 //   - 文単位で実行し、失敗した文だけログに残して残りの文を継続実行する
 //   - 致命的エラーをログに記録し、{ ok: false, error } を返す
 //   - 呼び出し側はアプリ起動を継続する（緊急時の障害耐性）
+//   - 個別の文（ALTER/CREATE 等）が1件でも失敗した場合は、失敗した文の一覧を
+//     管理者向け Slack（maintenance-notifier と同じ送信先）へ1通にまとめて通知する。
+//     過去に schema-sync の silent skip が原因で「コードは正しいのに保存が反映されない」
+//     事故が起きたため、失敗を即時可視化する（通知失敗でも起動は止めない）。
+//   - 接続自体の失敗（ENETUNREACH / ETIMEDOUT 等のネットワーク系）は恒常的に発生し得る
+//     既知事象（Railway↔Supabase の IPv6 経路）のため Slack 通知せず、ログのみに留める。
+//     DB 全体の障害は utils/maintenance-notifier.js（サーキットブレーカー）が別途通知する。
+//   - 同一内容の失敗はプロセス内で重複通知を抑制する（起動1回 + 手動再実行のスパム防止）
 //
 // 重要:
 //   - pg の simple query protocol でファイル全体を一度に流すと、途中の文が失敗すると
@@ -118,6 +126,82 @@ function splitSqlStatements(sql) {
   return statements;
 }
 
+// ===== schema-sync 失敗の管理者向け Slack 通知 =====
+
+// 接続自体の失敗（ネットワーク系）かどうかを判定する。
+// Railway↔Supabase の IPv6 ENETUNREACH は恒常的に出る既知事象のため、
+// これらは Slack 通知せずログのみに留める（毎デプロイでアラートが鳴り続けるノイズを防ぐ）。
+const NETWORK_ERROR_RE = /ENETUNREACH|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENOTFOUND|ECONNRESET|EAI_AGAIN|EPIPE|connection timeout|Connection terminated/i;
+function isConnectionError(err) {
+  if (!err) return false;
+  return NETWORK_ERROR_RE.test(String(err.code || '')) || NETWORK_ERROR_RE.test(String(err.message || ''));
+}
+
+// プロセス内の重複通知抑制。
+// runSchemaSync は起動時1回 + /api/admin/run-schema-sync の手動再実行で複数回走り得るが、
+// 同一内容の失敗なら2通目以降は送らない（内容が変わったら再通知する）。
+let _lastNotifiedSignature = null;
+
+// 失敗内容を Slack 本文に整形する（どの文が失敗したかを必ず含める）
+function formatFailureText({ errors, okCount, errCount, fatalError }) {
+  const lines = [];
+  if (fatalError) {
+    lines.push('🚨 *HARUKA: schema-sync 実行失敗（起動時スキーマ自動同期）*');
+    lines.push(`致命的エラー: ${fatalError}`);
+    lines.push('アプリは起動を継続していますが、本番DBのスキーマが古い可能性があります。');
+  } else {
+    lines.push('🚨 *HARUKA: schema-sync で一部の文が失敗（起動時スキーマ自動同期）*');
+    lines.push(`supabase_schema.sql の適用結果: OK=${okCount} NG=${errCount}`);
+    lines.push('コードが期待する列/テーブルが本番DBに無い可能性があります（silent skip 警戒）。');
+  }
+  const MAX_LIST = 10;
+  if (errors && errors.length) {
+    lines.push('');
+    lines.push('*失敗した文:*');
+    errors.slice(0, MAX_LIST).forEach((e, i) => {
+      const where = e.phase ? `[${e.phase}]` : '';
+      lines.push(`${i + 1}. ${where} \`${e.preview}\`\n   → ${e.error}`);
+    });
+    if (errors.length > MAX_LIST) {
+      lines.push(`…ほか ${errors.length - MAX_LIST} 件（Railway ログの [schema-sync] を参照）`);
+    }
+  }
+  lines.push('');
+  lines.push('対処: Railway ログで `[schema-sync]` を確認 → 修正後 `POST /api/admin/run-schema-sync` で再実行できます。');
+  return lines.join('\n');
+}
+
+// 失敗があれば管理者向け Slack に1通だけ通知する（通知の失敗でアプリは止めない）
+async function notifySchemaSyncFailure({ errors = [], okCount = 0, errCount = 0, fatalError = null, fatalIsConnection = false }) {
+  try {
+    if (!fatalError && errors.length === 0) {
+      _lastNotifiedSignature = null; // 全成功に戻ったら抑制をリセット（次の失敗は再通知）
+      return { notified: false, reason: 'no_failure' };
+    }
+    // 接続自体の失敗は既知の恒常ノイズ（IPv6 ENETUNREACH 等）になり得るため Slack には流さない
+    if (fatalError && fatalIsConnection) {
+      console.error('[schema-sync] 接続自体の失敗（ネットワーク系）のため Slack 通知はスキップします（恒常 IPv6 ENETUNREACH ノイズ対策）。DB全体の障害は maintenance-notifier が別途通知します');
+      return { notified: false, reason: 'connection_error_suppressed' };
+    }
+    const signature = fatalError
+      ? `fatal:${fatalError}`
+      : errors.map(e => `${e.phase || ''}#${e.idx ?? ''}:${e.error}`).join('|');
+    if (signature === _lastNotifiedSignature) {
+      console.warn('[schema-sync] 前回と同一内容の失敗のため Slack 通知を抑制しました（重複通知抑制）');
+      return { notified: false, reason: 'duplicate_suppressed' };
+    }
+    // 遅延 require: 通知モジュールの読み込み失敗が schema-sync 本体を壊さないようにする
+    const { postMaintenanceAlert } = require('../utils/maintenance-notifier');
+    await postMaintenanceAlert(formatFailureText({ errors, okCount, errCount, fatalError }));
+    _lastNotifiedSignature = signature;
+    console.error(`[schema-sync] 失敗内容を管理者向け Slack へ通知しました（失敗 ${fatalError ? 1 : errors.length} 件）`);
+    return { notified: true };
+  } catch (e) {
+    console.warn('[schema-sync] 失敗通知の送信に失敗（起動は継続）:', e && e.message);
+    return { notified: false, reason: e && e.message };
+  }
+}
+
 async function runSchemaSync() {
   const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
   if (!dbUrl) {
@@ -155,7 +239,7 @@ async function runSchemaSync() {
         okCount++;
       } catch (err) {
         errCount++;
-        errors.push({ idx, preview, error: err.message });
+        errors.push({ idx, preview, error: err.message, phase: '本文' });
         console.warn(`[schema-sync] 文 #${idx + 1} 失敗: ${err.message}`);
         console.warn(`[schema-sync]   SQL: ${preview}${stmt.length > 80 ? '...' : ''}`);
       }
@@ -328,9 +412,15 @@ async function runSchemaSync() {
       "ALTER TABLE projects ADD COLUMN IF NOT EXISTS sub_producer_ids UUID[] DEFAULT '{}'",
       "CREATE INDEX IF NOT EXISTS idx_projects_sub_producers ON projects USING GIN(sub_producer_ids)",
     ];
-    for (const stmt of criticalAlters) {
+    for (let i = 0; i < criticalAlters.length; i++) {
+      const stmt = criticalAlters[i];
       try { await client.query(stmt); console.log(`[schema-sync] 保険ALTER成功: ${stmt.slice(0,80)}`); }
-      catch (err) { console.warn(`[schema-sync] 保険ALTER失敗: ${err.message}`); }
+      catch (err) {
+        errCount++;
+        errors.push({ idx: i, preview: stmt.replace(/\s+/g, ' ').slice(0, 80), error: err.message, phase: '保険ALTER' });
+        console.warn(`[schema-sync] 保険ALTER失敗: ${err.message}`);
+        console.warn(`[schema-sync]   SQL: ${stmt.replace(/\s+/g, ' ').slice(0, 80)}`);
+      }
     }
 
     // 保険ALTERでカラムだけが FK 無しで追加された場合に備え、必須の FK 制約を後付けで保証する。
@@ -361,7 +451,11 @@ $$`,
     ];
     for (const c of criticalConstraints) {
       try { await client.query(c.sql); console.log(`[schema-sync] 保険FK確認成功: ${c.name}`); }
-      catch (err) { console.warn(`[schema-sync] 保険FK確認失敗 (${c.name}): ${err.message}`); }
+      catch (err) {
+        errCount++;
+        errors.push({ preview: c.name, error: err.message, phase: '保険FK' });
+        console.warn(`[schema-sync] 保険FK確認失敗 (${c.name}): ${err.message}`);
+      }
     }
 
     // 既定の権限付与（初期セットアップ用 / 既存値は ON CONFLICT で上書きしない）
@@ -379,6 +473,8 @@ $$`,
       `);
       console.log('[schema-sync] project.delete / team.delete のデフォルト権限を付与');
     } catch (err) {
+      errCount++;
+      errors.push({ preview: 'INSERT INTO role_permissions (デフォルト権限付与)', error: err.message, phase: '権限付与' });
       console.warn(`[schema-sync] デフォルト権限付与失敗: ${err.message}`);
     }
 
@@ -396,6 +492,8 @@ $$`;
       await client.query(rlsBlock);
       console.log('[schema-sync] public スキーマ全テーブルで RLS を有効化');
     } catch (err) {
+      errCount++;
+      errors.push({ preview: 'public スキーマ全テーブルの RLS 一括有効化', error: err.message, phase: 'RLS' });
       console.warn(`[schema-sync] RLS 一括有効化失敗: ${err.message}`);
     }
 
@@ -413,11 +511,19 @@ $$`;
       if (i < 2) await new Promise(r => setTimeout(r, 1000));
     }
 
-    return { ok: errCount === 0, okCount, errCount, errors, elapsedMs: elapsed };
+    // 個別の文（ALTER/CREATE 等）が1件でも失敗していたら、管理者向け Slack に1通にまとめて通知する
+    // （silent skip 可視化。通知の成否はアプリ起動に影響しない）
+    const notify = await notifySchemaSyncFailure({ errors, okCount, errCount });
+
+    return { ok: errCount === 0, okCount, errCount, errors, elapsedMs: elapsed, notified: !!notify.notified };
   } catch (err) {
+    const isConn = isConnectionError(err);
     console.error('[schema-sync] 致命的エラー:', err.message);
     console.error('[schema-sync] アプリは起動を継続しますが、スキーマが古い可能性があります');
-    return { ok: false, error: err.message };
+    // 接続自体の失敗（ENETUNREACH 等）は既知の恒常ノイズのため Slack 通知しない（ログのみ）。
+    // それ以外の致命的エラー（認証失敗・SQLファイル読込失敗など）は通知する。
+    const notify = await notifySchemaSyncFailure({ errors, okCount, errCount, fatalError: err.message, fatalIsConnection: isConn });
+    return { ok: false, error: err.message, errorKind: isConn ? 'connection' : 'fatal', notified: !!notify.notified };
   } finally {
     try { await client.end(); } catch {}
   }
@@ -425,3 +531,7 @@ $$`;
 
 module.exports = runSchemaSync;
 module.exports.splitSqlStatements = splitSqlStatements;
+// テスト・検証用
+module.exports._isConnectionError = isConnectionError;
+module.exports._formatFailureText = formatFailureText;
+module.exports._notifySchemaSyncFailure = notifySchemaSyncFailure;

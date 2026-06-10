@@ -27,6 +27,7 @@ function fmtDuration(ms) {
   return rs ? `${m}分${rs}秒` : `${m}分`;
 }
 
+// Webhook 優先・DB 非依存の Slack 送信。db/migrate.js（schema-sync 失敗通知）からも再利用される。
 async function postSafely(text) {
   // DB 非依存ルート（Incoming Webhook）を最優先。
   // CB open＝DB 障害中でも届くのが本来の目的。
@@ -73,4 +74,8 @@ supabaseFetch.onStateChange(({ prev, next, reason }) => {
   }
 });
 
-module.exports = { isMaintenance: () => supabaseFetch.getStatus() === 'open' };
+module.exports = {
+  isMaintenance: () => supabaseFetch.getStatus() === 'open',
+  // schema-sync 失敗通知などから再利用する管理者向け Slack 送信（Webhook 優先 / DB 非依存）
+  postMaintenanceAlert: postSafely,
+};
