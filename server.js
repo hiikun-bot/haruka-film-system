@@ -16,6 +16,7 @@ const supabase = require('./supabase');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 
 const { passport: passportInstance, requireAuth, requirePermission, isSuperAdminUser } = require('./auth');
@@ -69,6 +70,19 @@ app.use(helmet({
 }));
 
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentials: true }));
+
+// gzip 圧縮（haruka.html は 2.2MB あるため転送量・体感速度の改善が大きい）。
+// - 動画ストリーミング（/api/haruka/files/:id/stream 等の Range リクエスト経路）は
+//   圧縮対象から除外する。206 Partial Content の Content-Range/Content-Length を
+//   壊さないため、Range ヘッダ付きリクエストは無条件でスキップ。
+// - それ以外はデフォルト filter（compressible な Content-Type のみ圧縮。
+//   video/mp4 等のバイナリと Cache-Control: no-transform は自動でスキップ）。
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers.range) return false; // 動画等の Range 配信は素通し
+    return compression.filter(req, res);
+  },
+}));
 
 // すべてのレスポンスに X-Server-Build ヘッダを付与（クライアント側のバージョン照合用）
 app.use((req, res, next) => {
@@ -333,8 +347,20 @@ app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-1
 app.get('/haruka.html', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
 });
-// その他の静的ファイル（ロゴ等）
-app.use(express.static(path.join(__dirname, 'public')));
+// その他の静的ファイル（ロゴ・/js・/css 等）
+// 静的アセットは 1時間キャッシュさせて再訪時の読み込みを高速化する。
+// ただし HTML（login.html / guide.html 等）と service-worker.js は
+// デプロイ後すぐ最新を取らせたいので no-cache（毎回再検証）を維持する。
+// ※ haruka.html 本体は上の requireAuth 付き sendFile ルートが先に処理するため
+//   ここには到達しない（Cache-Control 未付与＝キャッシュされない）。/api も対象外。
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html') || filePath.endsWith('service-worker.js')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 
 // ==================== 認証ルート ====================
@@ -623,4 +649,40 @@ const runSchemaSync = require('./db/migrate');
   // - headersTimeout は req body より先のヘッダ受信限界。デフォルト 60s のままで OK
   // - keepAliveTimeout もデフォルトのまま（5s）
   server.requestTimeout = 30 * 60 * 1000;
+
+  // ==================== graceful shutdown ====================
+  // Railway はデプロイ時に旧コンテナへ SIGTERM を送る。即死せず、
+  // 処理中のリクエスト（アップロード等）を完了させてから終了する。
+  // 30秒以内に終わらなければ強制終了（Railway 側の kill より先に自決）。
+  process.on('SIGTERM', () => {
+    console.log('[shutdown] SIGTERM 受信: graceful shutdown を開始します');
+    // ワーカの setInterval を停止（新規ジョブの発火を止める）
+    try {
+      const { stopNotificationScheduler } = require('./workers/notification-scheduler');
+      stopNotificationScheduler();
+    } catch (e) {
+      console.error('[shutdown] notification-scheduler 停止失敗:', e.message);
+    }
+    try {
+      const { stopBugTriageSlaChecker } = require('./workers/bug-triage-sla-checker');
+      stopBugTriageSlaChecker();
+    } catch (e) {
+      console.error('[shutdown] bug-triage-sla-checker 停止失敗:', e.message);
+    }
+    // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
+    server.close((err) => {
+      if (err) {
+        console.error('[shutdown] server.close エラー:', err.message);
+        process.exit(1);
+      }
+      console.log('[shutdown] 全リクエスト完了: プロセスを終了します');
+      process.exit(0);
+    });
+    // 30秒待っても閉じきらない場合は強制終了（スタックした接続対策）
+    const forceTimer = setTimeout(() => {
+      console.error('[shutdown] 30秒以内に完了しなかったため強制終了します');
+      process.exit(1);
+    }, 30 * 1000);
+    forceTimer.unref();
+  });
 })();
