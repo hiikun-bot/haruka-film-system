@@ -309,8 +309,9 @@ async function cleanupCreativeFilesForVersion(creativeId, version) {
 
 // クリエイティブの Drive 格納先フォルダ階層（ルート/クライアント/案件/yyyymm/[週]/種別）を
 // 解決し typeFolderId を返す。multer 経路のフォルダ解決ロジックを抽出したもの。
-// 注: yyyymm / 週番号はサーバローカル時刻（Railway は UTC）に依存する既存挙動を踏襲。
-//     両経路で同一フォルダに着地させるため、ここでは敢えて JST 補正を入れていない。
+// 注: yyyymm / 週番号は JST 基準で計算する（Railway は UTC 動作のため、サーバーローカル
+//     時刻依存だと JST 0:00〜8:59 のアップロードが前日扱いになっていた）。
+//     multer / Resumable 直送の両経路とも本ヘルパを通るので、ここで直せば両経路一致は保たれる。
 async function resolveCreativeTypeFolder(drive, project, isVideo) {
   const rootFolderId = await getDriveRootFolderId();
   if (!rootFolderId) throw new Error('drive_root_folder_id が未設定です');
@@ -323,8 +324,10 @@ async function resolveCreativeTypeFolder(drive, project, isVideo) {
   const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
   if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
 
-  const now = new Date();
-  const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  // JST の「今日」を UTC 値として保持し、以降は getUTC* で読む（サーバーローカル TZ 非依存）
+  const [jy, jm, jd] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
+  const jstToday = new Date(Date.UTC(jy, jm - 1, jd));
+  const yyyymm = `${jy}${String(jm).padStart(2, '0')}`;
   const typeFolder = isVideo ? '動画' : '静止画';
 
   const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
@@ -332,13 +335,13 @@ async function resolveCreativeTypeFolder(drive, project, isVideo) {
   let typeFolderId;
   if (project?.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
     const jsTarget = (project.deadline_weekday + 1) % 7;
-    const daysUntil = ((jsTarget - now.getDay()) + 7) % 7 || 7;
-    const deadline = new Date(now);
-    deadline.setDate(deadline.getDate() + daysUntil);
-    const dMonth = deadline.getMonth() + 1;
-    const dDay = deadline.getDate();
-    const firstOfMonth = new Date(deadline.getFullYear(), deadline.getMonth(), 1);
-    const weekNum = Math.ceil((dDay + firstOfMonth.getDay()) / 7);
+    const daysUntil = ((jsTarget - jstToday.getUTCDay()) + 7) % 7 || 7;
+    const deadline = new Date(jstToday);
+    deadline.setUTCDate(deadline.getUTCDate() + daysUntil);
+    const dMonth = deadline.getUTCMonth() + 1;
+    const dDay = deadline.getUTCDate();
+    const firstOfMonth = new Date(Date.UTC(deadline.getUTCFullYear(), deadline.getUTCMonth(), 1));
+    const weekNum = Math.ceil((dDay + firstOfMonth.getUTCDay()) / 7);
     const weekFolderName = `W${weekNum}_${String(dMonth).padStart(2, '0')}${String(dDay).padStart(2, '0')}`;
     const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
     typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
@@ -1568,15 +1571,27 @@ router.put('/categories/:id/fields', requireAuth, requirePermission('master.page
   }
 
   // 1) 既存行のうち、送られなかった field_key を削除
+  //    注意: field_key（ユーザー入力）を PostgREST のフィルタ文字列に直結すると
+  //    in 構文を壊せてしまう（注入）。既存行を select して id ベースで削除する。
   const incomingKeys = fields.map(f => f.field_key);
   if (incomingKeys.length > 0) {
-    const { error: delErr } = await supabase
+    const { data: existingRows, error: selErr } = await supabase
       .from('creative_category_fields')
-      .delete()
-      .eq('category_id', cid)
-      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
-    if (delErr && !isMissingCategoryFieldsTable(delErr)) {
-      return res.status(500).json({ error: delErr.message });
+      .select('id, field_key')
+      .eq('category_id', cid);
+    if (selErr && !isMissingCategoryFieldsTable(selErr)) {
+      return res.status(500).json({ error: selErr.message });
+    }
+    const keepKeys = new Set(incomingKeys);
+    const delIds = (existingRows || []).filter(r => !keepKeys.has(r.field_key)).map(r => r.id);
+    if (delIds.length > 0) {
+      const { error: delErr } = await supabase
+        .from('creative_category_fields')
+        .delete()
+        .in('id', delIds);
+      if (delErr && !isMissingCategoryFieldsTable(delErr)) {
+        return res.status(500).json({ error: delErr.message });
+      }
     }
   } else {
     const { error: delErr } = await supabase
@@ -1656,15 +1671,29 @@ router.put('/creatives/:id/custom-fields', requireAuth, async (req, res) => {
   }
 
   // 1) 不要になった行を削除
+  //    注意: field_key（ユーザー入力）を PostgREST のフィルタ文字列に直結すると
+  //    in 構文を壊せてしまう（注入）。既存行を select して差分キーのみ削除する
+  //    （このテーブルは (creative_id, field_key) 複合PKで id 列が無い）。
   const incomingKeys = values.map(v => v.field_key);
   if (incomingKeys.length > 0) {
-    const { error: delErr } = await supabase
+    const { data: existingRows, error: selErr } = await supabase
       .from('creative_custom_field_values')
-      .delete()
-      .eq('creative_id', cid)
-      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
-    if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
-      return res.status(500).json({ error: delErr.message });
+      .select('field_key')
+      .eq('creative_id', cid);
+    if (selErr && !isMissingCustomFieldValuesTable(selErr)) {
+      return res.status(500).json({ error: selErr.message });
+    }
+    const keepKeys = new Set(incomingKeys);
+    const delKeys = (existingRows || []).filter(r => !keepKeys.has(r.field_key)).map(r => r.field_key);
+    if (delKeys.length > 0) {
+      const { error: delErr } = await supabase
+        .from('creative_custom_field_values')
+        .delete()
+        .eq('creative_id', cid)
+        .in('field_key', delKeys);
+      if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
+        return res.status(500).json({ error: delErr.message });
+      }
     }
   } else {
     const { error: delErr } = await supabase
@@ -3477,7 +3506,9 @@ function _thisSundayStrJST() {
   const todayStr = _todayStrJST();
   const today = new Date(`${todayStr}T00:00:00+09:00`);
   // getDay(): 0=Sun, 1=Mon, ... 6=Sat
-  const dow = today.getDay();
+  // 注: getDay() はサーバーローカル TZ で曜日を返すため（Railway は UTC、JST 0:00 = UTC 前日 15:00）、
+  //     JST の日付文字列を UTC として読み直して getUTCDay() で曜日を取る
+  const dow = new Date(`${todayStr}T00:00:00Z`).getUTCDay();
   // 月曜起点: dow が日曜(0)なら今日が日曜＝当日、それ以外は (7 - dow) 日後
   const daysUntilSun = dow === 0 ? 0 : (7 - dow);
   const sun = new Date(today);
@@ -4045,9 +4076,11 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
 //   totalCreatives   = 今月納期の creatives 件数（line_id を問わず）
 //   completedCreatives = 同上 status='納品' の件数
 router.get('/dashboard/revenue-summary', async (req, res) => {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+  // JST 基準で「今月」を決める（Railway は UTC 動作。getFullYear()/getMonth() の
+  // サーバーローカル依存だと JST 月初 0:00〜8:59 に前月扱いになる）
+  const [jstYear, jstMonth] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
+  const startOfMonth = new Date(Date.UTC(jstYear, jstMonth - 1, 1)).toISOString();
+  const endOfMonth = new Date(Date.UTC(jstYear, jstMonth, 0, 23, 59, 59)).toISOString();
 
   // 今月納期のクリエイティブを取得
   const { data: creatives, error: cErr } = await supabase
@@ -4161,7 +4194,7 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
     completedCreatives,
     plannedRevenue,
     actualRevenue,
-    month: `${now.getFullYear()}年${now.getMonth() + 1}月`
+    month: `${jstYear}年${jstMonth}月`
   });
 });
 
@@ -6113,14 +6146,33 @@ router.get('/creatives/:id', async (req, res) => {
     }
   })();
 
-  // (E) ball_holder 計算用 teams 全件 + team_members
+  // (E) ball_holder 計算用 teams + team_members
   // （一覧 /creatives と完全一致させるため getBallHolder() に渡す Map を作る）
+  // getBallHolder() がチーム Map を参照するのは「編集者のチーム代表ディレクターへの
+  // フォールバック」のみ（editor.users.team_id / editor.users.id でしか lookup しない）。
+  // 旧実装は teams 全件 + team_members を SELECT していたが、編集者が所属し得る
+  // チームだけに絞る（結果の Map lookup は従来と同一）。
   // ボール保持者のアバター画像表示のため director の avatar_url / nickname も取得する
   const taskBallHolder = (async () => {
     try {
+      const editorAssign = (data.creative_assignments || [])
+        .find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+      const editorUser = editorAssign?.users || null;
+      if (!editorUser) return []; // 編集者アサインが無ければ Map は参照されない
+      const teamIds = new Set();
+      if (editorUser.team_id) teamIds.add(editorUser.team_id);
+      if (editorUser.id) {
+        const { data: tmRows } = await supabase
+          .from('team_members')
+          .select('team_id')
+          .eq('user_id', editorUser.id);
+        (tmRows || []).forEach(r => { if (r.team_id) teamIds.add(r.team_id); });
+      }
+      if (!teamIds.size) return [];
       const { data: teamsRaw } = await supabase
         .from('teams')
-        .select('id, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)');
+        .select('id, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)')
+        .in('id', [...teamIds]);
       return teamsRaw || [];
     } catch (e) {
       console.warn('[creatives/:id] teams 取得失敗（ball_holder用）:', e.message);
@@ -7350,13 +7402,17 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     return r.data?.name || null;
   }
 
-  const oldProductName = await lookupProductName(before.product_id);
-  const oldAppealName = await lookupAppealName(before.appeal_type_id);
-  const newProjectName = projectChanged
-    ? (await supabase.from('projects').select('name').eq('id', incoming.project_id).maybeSingle()).data?.name || null
-    : (before.projects?.name || null);
-  const newProductName = ('product_id' in incoming) ? await lookupProductName(incoming.product_id) : null;
-  const newAppealName = ('appeal_type_id' in incoming) ? await lookupAppealName(incoming.appeal_type_id) : null;
+  // 互いに依存しない名称 lookup を並列実行（直列 await だと最大 8 RTT かかっていた）
+  const [oldProductName, oldAppealName, newProjectName, newProductName, newAppealName] = await Promise.all([
+    lookupProductName(before.product_id),
+    lookupAppealName(before.appeal_type_id),
+    projectChanged
+      ? supabase.from('projects').select('name').eq('id', incoming.project_id).maybeSingle()
+          .then(r => r.data?.name || null)
+      : Promise.resolve(before.projects?.name || null),
+    ('product_id' in incoming) ? lookupProductName(incoming.product_id) : Promise.resolve(null),
+    ('appeal_type_id' in incoming) ? lookupAppealName(incoming.appeal_type_id) : Promise.resolve(null),
+  ]);
 
   // 差分検出 + ログ行作成
   const editorName = req.user?.full_name || req.user?.nickname || req.user?.email || null;
@@ -12571,7 +12627,11 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
     }
 
     // 更新 / 新規挿入
+    // まず全行のバリデーション + 行データ組み立てを行い（順序は従来どおり）、
+    // その後 新規行は一括 insert / 既存行は並列 update する（1件ずつの直列書き込みを解消）。
     let totalAmount = 0;
+    const insertRows = []; // 新規行（一括 insert）
+    const updateRows = []; // 既存行（{ id, row } を並列 update）
     for (let i = 0; i < line_items.length; i++) {
       const li = line_items[i];
       const quantity   = Number(li.quantity) || 0;
@@ -12624,19 +12684,40 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
         }
       }
 
-      const writeRow = async (payload) => {
-        if (isExisting) {
-          return await supabase.from('invoice_items').update(payload).eq('id', li.id);
-        }
-        return await supabase.from('invoice_items').insert(payload);
-      };
-      let { error: wErr } = await writeRow(row);
-      if (wErr && /original_unit_price|price_change_reason/.test(wErr.message || '')) {
-        // 監査列が未反映の環境向けフォールバック
-        const { original_unit_price: _o, price_change_reason: _r, ...rest } = row;
-        ({ error: wErr } = await writeRow(rest));
+      if (isExisting) {
+        updateRows.push({ id: li.id, row });
+      } else {
+        insertRows.push(row);
       }
-      if (wErr) return res.status(500).json({ error: wErr.message });
+    }
+
+    // 監査列が未反映の環境向けフォールバック（従来と同じ判定・同じ列の除去）
+    const isAuditColErr = (e) => e && /original_unit_price|price_change_reason/.test(e.message || '');
+    const stripAuditCols = (r) => {
+      const { original_unit_price: _o, price_change_reason: _r, ...rest } = r;
+      return rest;
+    };
+
+    // 新規行は一括 insert
+    if (insertRows.length) {
+      let { error: insErr } = await supabase.from('invoice_items').insert(insertRows);
+      if (insErr && isAuditColErr(insErr)) {
+        ({ error: insErr } = await supabase.from('invoice_items').insert(insertRows.map(stripAuditCols)));
+      }
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+
+    // 既存行は並列 update
+    if (updateRows.length) {
+      const updErrs = await Promise.all(updateRows.map(async ({ id, row }) => {
+        let { error: upErr } = await supabase.from('invoice_items').update(row).eq('id', id);
+        if (upErr && isAuditColErr(upErr)) {
+          ({ error: upErr } = await supabase.from('invoice_items').update(stripAuditCols(row)).eq('id', id));
+        }
+        return upErr;
+      }));
+      const firstUpdErr = updErrs.find(Boolean);
+      if (firstUpdErr) return res.status(500).json({ error: firstUpdErr.message });
     }
 
     // invoices.total_amount を再計算
