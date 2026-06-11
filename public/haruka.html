@@ -21882,6 +21882,15 @@ async function _loadDashboardCreatives({ force = false } = {}) {
   const params = new URLSearchParams();
   params.set('include_done', '1');
   params.set('limit', '500');
+  // fields=light: ダッシュボード集計に必要な最小列だけ返す軽量モード。
+  // サーバー側で projects+clients+assignments+users のフル埋め込み・teams 取得・ball_holder 計算を
+  // スキップし、初期表示の転送量・応答時間を大幅に削減する。
+  // light が返す列（renderAdminDash が参照する全列をカバー、表示劣化ゼロ）:
+  //   id / file_name / status / draft_deadline / final_deadline / help_flag /
+  //   creative_type / project_id / created_at /
+  //   projects(id, name, client_id, clients(id, name)) /
+  //   creative_assignments(id, role, users(id, full_name, nickname))
+  params.set('fields', 'light');
   try {
     const res = await apiFetch(`${API}/creatives?${params.toString()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

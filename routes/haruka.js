@@ -5764,6 +5764,15 @@ router.get('/creatives', async (req, res) => {
   const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 50, 1), 500);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
+  // 軽量モード（fields=light）: ダッシュボード集計用の最小レスポンス
+  //   - select はフロント集計が実際に参照する列のみ（projects/clients/assignments は名前解決に必要な最小限）
+  //   - teams 取得・ball_holder 計算・projects.director/producer のユーザー解決をすべてスキップ
+  //   - レスポンスの形 { data, total, limit, offset } は通常モードと同一
+  // 背景: ダッシュボードの円グラフ・件数集計は include_done=1&limit=500 を取るが、
+  // 通常 select（projects+clients+assignments+users 全埋め込み + ball_holder）は最重量で
+  // 初期表示のボトルネックだった。デフォルト（fields 未指定）は完全に従来どおり。
+  const lightMode = String(req.query.fields || '') === 'light';
+
   // タブフィルタ: creative_type の prefix で粗く絞り込む
   //   tab=video  → creative_type LIKE 'video_%'
   //   tab=design → creative_type LIKE 'design_%'
@@ -5818,7 +5827,15 @@ router.get('/creatives', async (req, res) => {
   const projectsRel = client_id ? 'projects!inner' : 'projects';
   // 後から追加された列（schema-sync が失敗していると本番に存在しない可能性がある）
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
-  const buildSelect = (includeOptional) => `
+  // light モードの select: ダッシュボード（renderAdminDash の集計・円グラフ・納期アラート）が
+  // 参照する列のみ。users は NameDisplay 用の full_name / nickname だけ、optional 列は含めない。
+  const buildLightSelect = () => `
+    id, file_name, status, draft_deadline, final_deadline,
+    help_flag, creative_type, project_id, created_at,
+    ${projectsRel}(id, name, client_id, clients(id, name)),
+    creative_assignments(id, role, users(id, full_name, nickname))
+  `;
+  const buildSelect = (includeOptional) => lightMode ? buildLightSelect() : `
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
     creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
@@ -5872,7 +5889,9 @@ router.get('/creatives', async (req, res) => {
   // （ボール保持者にアバター画像を出すため director user オブジェクト（avatar_url 等）も一括取得する）
   // ※ supabase-js のクエリビルダーは lazy（.then が呼ばれるまで fetch しない）なので、
   //    .then(r => r) で即時に実行を開始して本体クエリと並走させる
-  const teamsPromise = supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)').then(r => r);
+  const teamsPromise = lightMode
+    ? Promise.resolve({ data: [] }) // light モードは teams 不要（ball_holder を計算しない）
+    : supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)').then(r => r);
   let { data, error, count } = await buildAndApply(true);
   // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
   if (error && /column .+ does not exist/.test(error.message || '')) {
@@ -5881,6 +5900,11 @@ router.get('/creatives', async (req, res) => {
   }
   const { data: teamsRaw } = await teamsPromise;
   if (error) return res.status(500).json({ error: error.message });
+
+  // light モードはここで即返す（teams stitch / ball_holder / director・producer 解決を全てスキップ）
+  if (lightMode) {
+    return res.json({ data: data || [], total: count ?? (data || []).length, limit, offset });
+  }
 
   // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
   const directorByTeamId    = new Map();
