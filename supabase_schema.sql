@@ -911,6 +911,17 @@ CREATE INDEX IF NOT EXISTS idx_creatives_created_at         ON creatives (create
 -- ユーザー一覧 / クライアント一覧の created_at ソート
 CREATE INDEX IF NOT EXISTS idx_users_created_at             ON users (created_at);
 CREATE INDEX IF NOT EXISTS idx_clients_created_at           ON clients (created_at DESC);
+-- 2026-06-11b_perf_indexes_2.sql: 頻出クエリの未インデックスパターン第2弾
+-- 稼働中クリエイティブ一覧（status <> '納品' + final_deadline ソート）の部分インデックス
+CREATE INDEX IF NOT EXISTS idx_creatives_active_final_deadline ON creatives (final_deadline ASC NULLS LAST) WHERE status <> '納品';
+-- creative_type の LIKE 前方一致（tab=video / tab=design・タブ件数カウント）
+CREATE INDEX IF NOT EXISTS idx_creatives_creative_type_pattern ON creatives (creative_type text_pattern_ops);
+-- 月次売上・原価集計（invoice_type + year + month。IS NULL 検索にも有効）
+CREATE INDEX IF NOT EXISTS idx_invoices_type_year_month     ON invoices (invoice_type, year, month);
+-- 請求書一覧の created_at DESC ソート
+CREATE INDEX IF NOT EXISTS idx_invoices_created_at          ON invoices (created_at DESC);
+-- つぶやき mine フィルタ（user_id 起点・論理削除除外）
+CREATE INDEX IF NOT EXISTS idx_tweet_comments_user_active   ON tweet_comments (user_id) WHERE deleted_at IS NULL;
 
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;
