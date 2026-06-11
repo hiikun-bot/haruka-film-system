@@ -5823,14 +5823,18 @@ router.get('/creatives', async (req, res) => {
   };
 
   // teams を別クエリで取得（PostgREST の FK 推論に依存しない: 本番DBに FK が無くても動作させるため）
+  // パフォーマンス: teams クエリは本体クエリの結果に依存しないので並列で先に投げておく
+  // （ボール保持者にアバター画像を出すため director user オブジェクト（avatar_url 等）も一括取得する）
+  // ※ supabase-js のクエリビルダーは lazy（.then が呼ばれるまで fetch しない）なので、
+  //    .then(r => r) で即時に実行を開始して本体クエリと並走させる
+  const teamsPromise = supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)').then(r => r);
   let { data, error, count } = await buildAndApply(true);
   // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
   if (error && /column .+ does not exist/.test(error.message || '')) {
     console.warn('[creatives] optional列なし → fallback で再取得:', error.message);
     ({ data, error, count } = await buildAndApply(false));
   }
-  // ボール保持者にアバター画像を出すため director user オブジェクト（avatar_url 等）も一括取得する
-  const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)');
+  const { data: teamsRaw } = await teamsPromise;
   if (error) return res.status(500).json({ error: error.message });
 
   // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
@@ -7637,29 +7641,41 @@ router.get('/creatives/:id/rate-overrides', requireAuth, async (req, res) => {
   }
 
   // 担当に存在しないが override だけ残っている行も末尾に追加（孤立データの可視化）
+  // パフォーマンス: 旧実装は孤立 override 1件ごとに roles / users を 1 クエリずつ
+  // 取得していた（N×2 クエリ）。.in() の一括 2 クエリ + Map 参照に変更（出力は同一）。
+  const orphanOverrides = [];
   for (const o of existingOverrides) {
     const key = `${o.role_id}::${o.user_id || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    let roleLabel = null;
-    let userName = null;
-    {
-      const { data: r } = await supabase.from('roles').select('id, code, label').eq('id', o.role_id).maybeSingle();
-      roleLabel = r?.label || null;
+    orphanOverrides.push(o);
+  }
+  if (orphanOverrides.length > 0) {
+    const orphanRoleIds = Array.from(new Set(orphanOverrides.map(o => o.role_id).filter(v => v != null)));
+    const orphanUserIds = Array.from(new Set(orphanOverrides.map(o => o.user_id).filter(Boolean)));
+    const [rolesRes, usersRes] = await Promise.all([
+      orphanRoleIds.length
+        ? supabase.from('roles').select('id, code, label').in('id', orphanRoleIds)
+        : Promise.resolve({ data: [] }),
+      orphanUserIds.length
+        ? supabase.from('users').select('id, full_name, email').in('id', orphanUserIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+    const orphanRoleById = new Map((rolesRes.data || []).map(r => [r.id, r]));
+    const orphanUserById = new Map((usersRes.data || []).map(u => [u.id, u]));
+    for (const o of orphanOverrides) {
+      const r = orphanRoleById.get(o.role_id);
+      const u = o.user_id ? orphanUserById.get(o.user_id) : null;
+      costOverrides.push({
+        role_id: o.role_id,
+        role_code: null,
+        role_name_ja: r?.label || null,
+        user_id: o.user_id || null,
+        user_name: u ? (u.full_name || u.email || null) : null,
+        amount: Number(o.amount),
+        line_amount: null,
+      });
     }
-    if (o.user_id) {
-      const { data: u } = await supabase.from('users').select('id, full_name, email').eq('id', o.user_id).maybeSingle();
-      userName = u?.full_name || u?.email || null;
-    }
-    costOverrides.push({
-      role_id: o.role_id,
-      role_code: null,
-      role_name_ja: roleLabel,
-      user_id: o.user_id || null,
-      user_name: userName,
-      amount: Number(o.amount),
-      line_amount: null,
-    });
   }
 
   res.json({
@@ -10658,8 +10674,31 @@ router.get('/invoices/preview-items', async (req, res) => {
     projects(id, name, director_id, producer_id, clients(name, client_code)),
     creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
   `;
+
+  // 当月範囲（DB側絞り込みと下のJS側フィルタの両方で同じ値を使う）
+  const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+  const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
+
+  // パフォーマンス: 旧実装は creatives をほぼ全件取得して JS でフィルタしていた。
+  // JS フィルタ `dl = final_deadline || draft_deadline; dl >= startDate && dl <= endDate`
+  // と同一の条件を DB 側に押し込む（final_deadline/draft_deadline は共に DATE 列）:
+  //   - final_deadline あり → final_deadline が当月範囲内
+  //   - final_deadline なし(NULL) → draft_deadline が当月範囲内（draft しか無い行の救済）
+  // ※ JS 側フィルタも従来通り残すため、結果は完全に同一。
+  const MONTH_RANGE_OR = [
+    `and(final_deadline.gte.${startDate},final_deadline.lte.${endDate})`,
+    `and(final_deadline.is.null,draft_deadline.gte.${startDate},draft_deadline.lte.${endDate})`,
+  ].join(',');
+
+  // 自分のアサイン絞り込みは aliased inner join（assignee_filter）で行う。
+  // 本体の creative_assignments 埋め込みを !inner + filter にすると埋め込み配列まで
+  // 自分の行だけに切り詰められてしまうため、フィルタ専用の別エイリアスを使い、
+  // 返却データの形（全アサイン入り配列）を旧実装と同一に保つ。
   const [{ data: assignedCreatives, error: cErr }, { data: directedProjects }, { data: producedProjects }] = await Promise.all([
-    supabase.from('creatives').select(CREATIVE_SELECT).not('creative_assignments', 'is', null),
+    supabase.from('creatives')
+      .select(`${CREATIVE_SELECT}, assignee_filter:creative_assignments!inner(user_id)`)
+      .eq('assignee_filter.user_id', uid)
+      .or(MONTH_RANGE_OR),
     supabase.from('projects').select('id').eq('director_id', uid),
     supabase.from('projects').select('id').eq('producer_id', uid),
   ]);
@@ -10675,7 +10714,8 @@ router.get('/invoices/preview-items', async (req, res) => {
     const { data: lc } = await supabase
       .from('creatives')
       .select(CREATIVE_SELECT)
-      .in('project_id', leaderProjectIds);
+      .in('project_id', leaderProjectIds)
+      .or(MONTH_RANGE_OR);
     leaderCreatives = lc || [];
   }
 
@@ -10686,9 +10726,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   const allCreatives = Array.from(creativesById.values());
 
   // 当月final_deadlineフィルタ + （自分がアサイン or ディレクター or プロデューサー）
-  const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
-  const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
-
+  // ※ DB側で同条件を絞り込み済みだが、同一結果保証のため従来のJSフィルタも残す
   const myCreatives = allCreatives.filter(c => {
     const mine = c.creative_assignments?.some(a => a.user_id === uid);
     const isDirector = c.projects?.director_id === uid;
@@ -14580,7 +14618,13 @@ router.get('/creative-versions/:creativeId', async (req, res) => {
 router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   const creativeId = req.params.id;
 
-  // 1) creative の現状（live フォールバック判定用）と関連メンバーを軽く取得
+  // パフォーマンス: 旧実装は 6 クエリを直列に await していた（6 RTT）。
+  // 依存関係があるのは creatives → projects だけなので、1本目（creatives）取得後に
+  // 残り 5 クエリ（projects / assignments / files / transitions / version_history）を
+  // Promise.all で並列実行する（計 2 RTT）。各クエリのエラー握りつぶし挙動は従来通り。
+  // （/creatives/:id 本体の並列化と同方針。出力 JSON 形状は不変）
+
+  // 1) creative の現状（live フォールバック判定用）を取得
   let creativeRow = null;
   try {
     const { data: cRow } = await supabase
@@ -14591,68 +14635,84 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     creativeRow = cRow || null;
   } catch (_) {}
 
-  // project の director_id / producer_id を取得（from/to の user_id 解決用）
-  let projectDirectorId = null;
-  let projectProducerId = null;
-  if (creativeRow && creativeRow.project_id) {
-    try {
-      const { data: pRow } = await supabase
-        .from('projects')
-        .select('id, director_id, producer_id')
-        .eq('id', creativeRow.project_id)
-        .maybeSingle();
-      projectDirectorId = pRow?.director_id || null;
-      projectProducerId = pRow?.producer_id || null;
-    } catch (_) {}
-  }
-
-  // creative_assignments から editor を解決（fallback 用）
-  let editorUserIdFallback = null;
-  try {
-    const { data: caRows } = await supabase
-      .from('creative_assignments')
-      .select('user_id, role')
-      .eq('creative_id', creativeId);
-    const editorAssign = (caRows || []).find(a => ['editor','designer','director_as_editor'].includes(a?.role));
-    editorUserIdFallback = editorAssign?.user_id || null;
-  } catch (_) {}
-
-  // 2) creative_files を version 順にロード（submit メモに紐づくファイル特定用）
-  let filesByVersion = {};
-  try {
-    const { data: cfRows } = await supabase
-      .from('creative_files')
-      .select('id, version, drive_url, drive_file_id, generated_name, created_at')
-      .eq('creative_id', creativeId)
-      .order('version', { ascending: true });
-    (cfRows || []).forEach(f => {
-      if (f && f.version != null) filesByVersion[Number(f.version)] = f;
-    });
-  } catch (_) {}
-
-  // 3) creative_status_transitions を時系列で全件
-  let transitions = [];
-  try {
-    const { data: trRows, error: trErr } = await supabase
-      .from('creative_status_transitions')
-      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
-      .eq('creative_id', creativeId)
-      .order('changed_at', { ascending: true });
-    if (!trErr) transitions = trRows || [];
-  } catch (_) {}
-
-  // 4) creative_version_history を recorded_by 補完用に取得（submit の編集者ユーザー特定）
-  //    snapshot は「修正→再チェック」遷移時に INSERT されるので、その transition の
-  //    changed_at とほぼ同時刻 + 同 version_num で recorded_by が紐づく。
-  let history = [];
-  try {
-    const { data: hRows, error: hErr } = await supabase
-      .from('creative_version_history')
-      .select('id, version_num, round_stage, recorded_by, editor_comment, created_at, creative_file_id')
-      .eq('creative_id', creativeId)
-      .order('created_at', { ascending: true });
-    if (!hErr) history = hRows || [];
-  } catch (_) {}
+  // 2) 互いに独立な 5 クエリを並列実行
+  const [
+    { projectDirectorId, projectProducerId },
+    editorUserIdFallback,
+    filesByVersion,
+    transitions,
+    history,
+  ] = await Promise.all([
+    // project の director_id / producer_id を取得（from/to の user_id 解決用）
+    (async () => {
+      let projectDirectorId = null;
+      let projectProducerId = null;
+      if (creativeRow && creativeRow.project_id) {
+        try {
+          const { data: pRow } = await supabase
+            .from('projects')
+            .select('id, director_id, producer_id')
+            .eq('id', creativeRow.project_id)
+            .maybeSingle();
+          projectDirectorId = pRow?.director_id || null;
+          projectProducerId = pRow?.producer_id || null;
+        } catch (_) {}
+      }
+      return { projectDirectorId, projectProducerId };
+    })(),
+    // creative_assignments から editor を解決（fallback 用）
+    (async () => {
+      try {
+        const { data: caRows } = await supabase
+          .from('creative_assignments')
+          .select('user_id, role')
+          .eq('creative_id', creativeId);
+        const editorAssign = (caRows || []).find(a => ['editor','designer','director_as_editor'].includes(a?.role));
+        return editorAssign?.user_id || null;
+      } catch (_) { return null; }
+    })(),
+    // creative_files を version 順にロード（submit メモに紐づくファイル特定用）
+    (async () => {
+      const byVersion = {};
+      try {
+        const { data: cfRows } = await supabase
+          .from('creative_files')
+          .select('id, version, drive_url, drive_file_id, generated_name, created_at')
+          .eq('creative_id', creativeId)
+          .order('version', { ascending: true });
+        (cfRows || []).forEach(f => {
+          if (f && f.version != null) byVersion[Number(f.version)] = f;
+        });
+      } catch (_) {}
+      return byVersion;
+    })(),
+    // creative_status_transitions を時系列で全件
+    (async () => {
+      try {
+        const { data: trRows, error: trErr } = await supabase
+          .from('creative_status_transitions')
+          .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
+          .eq('creative_id', creativeId)
+          .order('changed_at', { ascending: true });
+        if (!trErr) return trRows || [];
+      } catch (_) {}
+      return [];
+    })(),
+    // creative_version_history を recorded_by 補完用に取得（submit の編集者ユーザー特定）
+    //   snapshot は「修正→再チェック」遷移時に INSERT されるので、その transition の
+    //   changed_at とほぼ同時刻 + 同 version_num で recorded_by が紐づく。
+    (async () => {
+      try {
+        const { data: hRows, error: hErr } = await supabase
+          .from('creative_version_history')
+          .select('id, version_num, round_stage, recorded_by, editor_comment, created_at, creative_file_id')
+          .eq('creative_id', creativeId)
+          .order('created_at', { ascending: true });
+        if (!hErr) return hRows || [];
+      } catch (_) {}
+      return [];
+    })(),
+  ]);
 
   // 5) transition から「コメント1個 = 1要素」の配列を組み立てる
   // 役割マッピング:
