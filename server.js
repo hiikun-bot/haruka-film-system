@@ -392,9 +392,19 @@ app.post('/auth/logout', (req, res) => {
 });
 
 // 現在のログインユーザー情報（fetchからも呼ばれるのでリダイレクトせずJSON返却）
-app.get('/auth/me', (req, res) => {
+// deserializeUser (auth.js) は毎リクエストの軽量化のため列を絞っている（avatar_url 等を含まない）。
+// フロントは avatar_url / creative_default_* / default_creative_tab 等の全列を currentUser として
+// 参照するため、このエンドポイントだけは DB から全列を取り直して従来のレスポンス契約を維持する。
+app.get('/auth/me', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'not authenticated' });
-  res.json(safeUser(req.user));
+  try {
+    const { data: user, error } = await supabase
+      .from('users').select('*').eq('id', req.user.id).maybeSingle();
+    if (error || !user) return res.json(safeUser(req.user)); // 取得失敗時は絞り済みの req.user で代替
+    res.json(safeUser(user));
+  } catch (e) {
+    res.json(safeUser(req.user));
+  }
 });
 
 // ==================== 招待 API ====================

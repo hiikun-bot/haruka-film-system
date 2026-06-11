@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -14,6 +14,7 @@ const { createNotification, extractMentions } = require('../utils/notification')
 const { renderFilename } = require('../utils/filename');
 const {
   getUserRoleCodes,
+  invalidateUserRolesCache,
   userHasRole,
   getUsersRolesMap,
   invalidateRolesCache,
@@ -102,11 +103,15 @@ async function syncUserRolesForLegacyRole(userId, legacyRole) {
       console.warn('[user_roles sync] 既存行削除失敗:', delErr.message);
       return;
     }
+    // ここから先は user_roles が実際に変わっている → 短TTLキャッシュを即時無効化
+    invalidateUserRolesCache(userId);
     if (rows.length === 0) return;
     const { error: insErr } = await supabase.from('user_roles').insert(rows);
     if (insErr) {
       console.warn('[user_roles sync] insert 失敗:', insErr.message);
     }
+    // insert 完了後にもう一度無効化（delete〜insert の間に旧状態が再キャッシュされた場合の保険）
+    invalidateUserRolesCache(userId);
   } catch (e) {
     console.warn('[user_roles sync] 例外:', e.message);
   }
@@ -162,9 +167,16 @@ router.get('/workspace', (_req, res) => {
 });
 
 // ログイン中ユーザー情報
-router.get('/me', (req, res) => {
+// deserializeUser (auth.js) は毎リクエストの軽量化のため avatar_url（base64 で最大300KB）を
+// req.user に載せない。このエンドポイントだけは DB から取り直してレスポンス契約を維持する。
+router.get('/me', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
-  const { id, email, full_name, role, rank, team_id, avatar_url, workspace_id } = req.user;
+  const { id, email, full_name, role, rank, team_id, workspace_id } = req.user;
+  let avatar_url = null;
+  try {
+    const { data } = await supabase.from('users').select('avatar_url').eq('id', id).maybeSingle();
+    avatar_url = data?.avatar_url ?? null;
+  } catch (_) { /* 取得失敗時は null（フロントはイニシャル表示にフォールバック） */ }
   res.json({ id, email, full_name, role, rank, team_id, avatar_url, workspace_id });
 });
 
@@ -9799,12 +9811,17 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     ({ data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
+  // users 行が変わった → deserializeUser の短TTLキャッシュを即時無効化
+  // （role / is_active / rank / team_id / nickname 等、req.user に載る列の変更を即反映）
+  invalidateUserCache(req.params.id);
   // dual-write: users.role が更新された場合は user_roles も同期する。
   // 'role' フィールドが updateData に含まれていた場合のみ実施（admin による変更時のみ）。
   // 失敗してもアプリは止めない（ログ警告のみ）。
   if (Object.prototype.hasOwnProperty.call(updateData, 'role')) {
     await syncUserRolesForLegacyRole(req.params.id, updateData.role);
     invalidateRolesCache();
+    // sync 内でも無効化しているが、sync が早期 return した場合に備えてここでも無効化
+    invalidateUserRolesCache(req.params.id);
   }
   // 列が drop された場合は警告フラグを付ける（フロント側で toast 警告を出せるよう）
   if (droppedColumns.length > 0) {

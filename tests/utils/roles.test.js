@@ -37,6 +37,7 @@ beforeEach(() => {
   supabase.__reset();
   roles.invalidateRolesCache();
   roles.invalidatePermissionsCache();
+  roles.invalidateUserRolesCache(); // user_id → codes 短TTLキャッシュも全クリア
   jest.spyOn(console, 'error').mockImplementation(() => {}); // エラーログを抑制
 });
 
@@ -173,6 +174,74 @@ describe('getUserRoleCodes', () => {
   });
 });
 
+describe('getUserRoleCodes の短TTLキャッシュ', () => {
+  const editorRow = { data: [{ roles: { code: 'editor', sort_order: 1 } }], error: null };
+  const adminRow  = { data: [{ roles: { code: 'admin',  sort_order: 1 } }], error: null };
+
+  test('TTL 内の同一 userId は再クエリしない', async () => {
+    supabase.__setResponse('user_roles', editorRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+    const callsAfterFirst = supabase.from.mock.calls.length;
+    // DB 側を書き換えても TTL 内はキャッシュ値が返る（=クエリ回数が増えない）
+    supabase.__setResponse('user_roles', adminRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+    expect(supabase.from.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  test('userId ごとに独立してキャッシュされる', async () => {
+    supabase.__setResponse('user_roles', editorRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+    supabase.__setResponse('user_roles', adminRow);
+    expect(await roles.getUserRoleCodes('u2')).toEqual(['admin']); // 別 userId は新規クエリ
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']); // u1 はキャッシュ維持
+  });
+
+  test('invalidateUserRolesCache(userId) で当該ユーザーのみ即時無効化', async () => {
+    supabase.__setResponse('user_roles', editorRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+    expect(await roles.getUserRoleCodes('u2')).toEqual(['editor']);
+    supabase.__setResponse('user_roles', adminRow);
+    roles.invalidateUserRolesCache('u1');
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['admin']);  // 再クエリされる
+    expect(await roles.getUserRoleCodes('u2')).toEqual(['editor']); // u2 はキャッシュのまま
+  });
+
+  test('引数なし invalidateUserRolesCache() は全クリア', async () => {
+    supabase.__setResponse('user_roles', editorRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+    supabase.__setResponse('user_roles', adminRow);
+    roles.invalidateUserRolesCache();
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['admin']);
+  });
+
+  test('クエリエラーはキャッシュしない（復旧後に正しい値へ戻る）', async () => {
+    supabase.__setResponse('user_roles', { data: null, error: { message: 'boom' } });
+    expect(await roles.getUserRoleCodes('u1')).toEqual([]);
+    supabase.__setResponse('user_roles', editorRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']); // エラー結果が残らない
+  });
+
+  test('空配列（user_roles 未移行ユーザー）もキャッシュされる', async () => {
+    supabase.__setResponse('user_roles', { data: [], error: null });
+    expect(await roles.getUserRoleCodes('u1')).toEqual([]);
+    const callsAfterFirst = supabase.from.mock.calls.length;
+    expect(await roles.getUserRoleCodes('u1')).toEqual([]);
+    expect(supabase.from.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  test('X-View-As プレビュー（getEffectiveRoleCodes）はキャッシュに乗らない・汚染しない', async () => {
+    // 実ロール editor をキャッシュ
+    supabase.__setResponse('user_roles', editorRow);
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+    // 最高管理者の view-as はキャッシュ手前で分岐して preview ロールを返す
+    const req = { user: { id: 'u1', role: 'admin' }, headers: { 'x-view-as': 'designer' } };
+    const codes = await roles.getEffectiveRoleCodes(req, { isSuperAdminUser: () => true });
+    expect(codes).toEqual(['designer']);
+    // 実ロールのキャッシュは無傷
+    expect(await roles.getUserRoleCodes('u1')).toEqual(['editor']);
+  });
+});
+
 describe('userHasRole / isProducerDirector', () => {
   test('userHasRole は保有コードの includes 判定', async () => {
     supabase.__setResponse('user_roles', {
@@ -195,6 +264,9 @@ describe('userHasRole / isProducerDirector', () => {
     });
     expect(await roles.isProducerDirector('u1')).toBe(true);
 
+    // 短TTLキャッシュ導入後は、同一 userId のロール変更を即時反映させるには
+    // invalidateUserRolesCache を呼ぶ（本番では user_roles 書き換え箇所が呼ぶ）
+    roles.invalidateUserRolesCache('u1');
     supabase.__setResponse('user_roles', {
       data: [{ roles: { code: 'producer', sort_order: 1 } }],
       error: null,

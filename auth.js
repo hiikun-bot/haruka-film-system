@@ -9,11 +9,45 @@ const rolesUtil = require('./utils/roles');
 // ==================== セッションのシリアライズ ====================
 passport.serializeUser((user, done) => done(null, user.id));
 
+// deserializeUser は認証必須のほぼ全リクエストで毎回呼ばれるため、
+//   1) SELECT 列を「サーバー側で req.user 経由で参照する列」のみに絞る
+//      （base64 アバター最大300KB の avatar_url / password_hash を毎回引かない）
+//   2) user_id → userRow の短TTL in-memory キャッシュで users への RTT 自体を省く
+// の 2 段でレイテンシ床を下げる（roles.js の loadRoles キャッシュと同パターン）。
+//
+// 注意:
+//   - avatar_url を返す必要がある /auth/me (server.js) と /api/haruka/me (routes/haruka.js)
+//     はハンドラ側で都度 DB から取り直す（このキャッシュ・列絞りに依存しない）
+//   - ロール変更・無効化 (is_active) の反映は最大 USER_CACHE_TTL_MS 遅れる。
+//     同一プロセス内の更新は invalidateUserCache(userId) で即時反映させること。
+//   - セッション破棄（ログアウト）はセッションストア側の話なのでこのキャッシュと無関係。
+const USER_SESSION_COLUMNS = 'id, email, full_name, nickname, role, rank, team_id, workspace_id, is_active';
+const USER_CACHE_TTL_MS = 30 * 1000; // 30秒
+const USER_CACHE_MAX = 500;          // メモリ保護用の上限（挿入順で雑に退避）
+const _userCache = new Map();        // String(userId) -> { user, at }
+
+function invalidateUserCache(userId) {
+  if (userId === undefined || userId === null) { _userCache.clear(); return; }
+  _userCache.delete(String(userId));
+}
+
 passport.deserializeUser(async (id, done) => {
   try {
+    const key = String(id);
+    const hit = _userCache.get(key);
+    if (hit && Date.now() - hit.at < USER_CACHE_TTL_MS) return done(null, hit.user);
     const { data: user, error } = await supabase
-      .from('users').select('*').eq('id', id).maybeSingle();
+      .from('users').select(USER_SESSION_COLUMNS).eq('id', id).maybeSingle();
     if (error) return done(error);
+    if (user) {
+      if (_userCache.size >= USER_CACHE_MAX && !_userCache.has(key)) {
+        const oldest = _userCache.keys().next().value;
+        if (oldest !== undefined) _userCache.delete(oldest);
+      }
+      _userCache.set(key, { user, at: Date.now() });
+    } else {
+      _userCache.delete(key);
+    }
     done(null, user || false);
   } catch(e) { done(e); }
 });
@@ -300,5 +334,7 @@ module.exports = {
   getEffectiveRolePrimary,
   getEffectiveRoleCodes,
   invalidatePermissionsCache,
+  // deserializeUser の user_id → userRow 短TTLキャッシュの無効化（users 更新系で呼ぶ）
+  invalidateUserCache,
   ROLES,
 };
