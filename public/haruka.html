@@ -1194,6 +1194,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 /* スケルトン用のカード内ラッパ */
 .skel-card-body{padding:4px 0 2px}
 
+/* クリエイティブ一覧の stale-while-revalidate（更新中も表示を消さない） */
+#creative-tbody.is-refreshing{opacity:.6;transition:opacity .15s ease}
+.cv-refreshing-pill{position:absolute;top:6px;right:14px;z-index:5;display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,0.92);border:0.5px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,0.10);font-size:11px;font-weight:600;color:var(--text-muted);pointer-events:none}
+.cv-refreshing-pill .cv-refreshing-spin{width:12px;height:12px;border-radius:50%;border:2px solid rgba(0,0,0,0.12);border-top-color:var(--em-dark,#5E35B1);animation:fp-spin .8s linear infinite}
+
 /* メンバーカード */
 .member-card{background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:8px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px}
 .member-av{width:34px;height:34px;border-radius:50%;background:var(--em-pale);border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:var(--em-dark);flex-shrink:0}
@@ -4144,6 +4149,8 @@ window.showPage = window.showPage || function(name, btn) {
   <!-- リスト表示 -->
   <div id="creative-view-list" style="padding:20px;display:none">
     <div class="table-wrap">
+      <!-- stale-while-revalidate 中の小さな進捗表示（loadCreatives が表示/非表示を制御） -->
+      <div id="creative-refreshing-pill" class="cv-refreshing-pill" style="display:none" role="status" aria-live="polite"><span class="cv-refreshing-spin" aria-hidden="true"></span>更新中…</div>
       <table>
         <thead>
             <tr>
@@ -11537,6 +11544,31 @@ function _renderMembersView() {
 }
 
 // クリエイティブ
+// 一覧再取得中の表示制御（stale-while-revalidate）。
+// on=true:
+//   - 既に行が表示されている → 中身は消さず tbody を薄くして右上に「更新中…」ピルを出す
+//   - まだ行が無い（初回ロード/直前がエラー・0件表示）→ 行スケルトン（.skel-row/.skel-line 流用）
+// on=false: 更新中スタイルとピルを解除（renderCreatives / エラー表示で中身を差し替えた後に呼ぶ）
+function _cvSetListRefreshing(tbody, on) {
+  if (!tbody) return;
+  const pill = document.getElementById('creative-refreshing-pill');
+  if (on) {
+    const hasRows = Array.isArray(allCreatives) && allCreatives.length > 0 && !!tbody.querySelector('tr[data-id]');
+    if (hasRows) {
+      tbody.classList.add('is-refreshing');
+      if (pill) pill.style.display = '';
+    } else {
+      tbody.classList.remove('is-refreshing');
+      if (pill) pill.style.display = 'none';
+      const skelRow = '<tr class="cv-skel-tr"><td colspan="14" style="padding:12px 16px"><div class="skel-row"><div class="skel-circle"></div><span class="skel-line" style="max-width:34%"></span><span class="skel-line" style="max-width:22%"></span><span class="skel-line" style="max-width:16%"></span><span class="skel-line" style="max-width:12%"></span></div></td></tr>';
+      tbody.innerHTML = skelRow.repeat(6);
+    }
+  } else {
+    tbody.classList.remove('is-refreshing');
+    if (pill) pill.style.display = 'none';
+  }
+}
+
 // opts.append=true なら「もっと読み込む」用に既存 allCreatives に追記
 // opts.skipCounts=true なら タブカウンタの再取得をスキップ
 //   （タブ切り替えだけのときはカウンタは不変なので呼ばない）
@@ -11545,8 +11577,10 @@ async function loadCreatives(opts = {}) {
   const skipCounts = !!opts.skipCounts;
   const tbody = document.getElementById('creative-tbody');
   if (!append) {
-    tbody.innerHTML = '<tr><td colspan="12" class="loading">読み込み中...</td></tr>';
     creativesPage.offset = 0;
+    // stale-while-revalidate: 表示中のデータがあれば「読み込み中...」で全消去しない。
+    // フィルタ pill / タブ切替 / 検索などすべての経路がここを通るので挙動は共通。
+    _cvSetListRefreshing(tbody, true);
   }
   // 同時実行時は最後だけ反映（debounce 中の競合対策）
   const seq = ++_creativesLoadSeq;
@@ -11598,10 +11632,77 @@ async function loadCreatives(opts = {}) {
     }
     populateAssigneeFilter();
     renderCreatives(); // 内部で renderAlerts(filtered) を呼ぶのでここでは不要
+    _cvSetListRefreshing(tbody, false); // renderCreatives が中身を差し替えた後に更新中スタイル解除
   } catch(e) {
     if (seq !== _creativesLoadSeq) return;
     if (!append) allCreatives = [];
+    _cvSetListRefreshing(tbody, false);
     tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#E24B4A">エラー: ${e.message}</td></tr>`;
+  }
+}
+
+// =====================================================================
+// 保存後の1件差し替え（体感速度改善・PR claude/perf-ui-creatives-swr）
+// =====================================================================
+// 現在のサーバー側取得条件（loadCreatives が送る query params 相当）に照らして、
+// 差し替え後の行が一覧の取得対象に残るかを判定する。
+// 確実に判定できない条件（検索 q のサーバー実装依存など）は「残す」側に倒し、
+// 表示上の最終絞り込みは renderCreatives() のクライアントフィルタに任せる（正しさ優先）。
+function _creativeStillInListScope(c) {
+  // include_done: 「納品済も表示」トグル OFF のときサーバーは納品済を返さない。
+  // ただしキーワード検索中はサーバーも納品済を含めて返す（バグ #db00a22b 対応と同条件）ため除去しない。
+  if (!cvAdvFilters?.includeDelivered && !searchText && (c.status === '納品' || c.force_delivered)) return false;
+  // 種別タブ（video / design は creative_type prefix 絞り込み。renderCreatives と同条件）
+  const _ct = (c.creative_type || '');
+  const _isVideoType = /^video_/.test(_ct);
+  const _isDesignType = /^design_/.test(_ct) || _ct === 'lp' || _ct === 'hp' || _ct === 'line';
+  if (currentCreativeTab === 'video' && !_isVideoType) return false;
+  if (currentCreativeTab === 'design' && !_isDesignType) return false;
+  // クライアントフィルタ（事後修正で案件＝クライアントが変わるケース）
+  if (currentClientIds && currentClientIds.size > 0 && !currentClientIds.has(c.projects?.clients?.id)) return false;
+  // 担当者フィルタ（複数選択 OR。後方互換: 単一値 currentAssigneeFilter も尊重）
+  const _aids = (currentAssigneeIds && currentAssigneeIds.size > 0)
+    ? currentAssigneeIds
+    : (currentAssigneeFilter ? new Set([currentAssigneeFilter]) : null);
+  if (_aids) {
+    if (!(c.creative_assignments || []).some(a => a.users?.id && _aids.has(a.users.id))) return false;
+  }
+  return true;
+}
+
+// 保存・ステータス遷移の成功後に全件再フェッチ（loadCreatives）する代わりに、
+// 該当1件だけを GET /api/creatives/:id で取り直して allCreatives 内を差し替える共通ヘルパー。
+// updateStatus() に元からあった「1件取得 → Object.assign → renderCreatives()」パターンの横展開。
+//  - _cdFetchPayload(force:true) を使うため、詳細モーダルの payload キャッシュも同時に最新化される
+//  - 差し替え後の行が現在のフィルタ/タブの取得対象外になった場合は配列から除去して再描画
+//  - 404（削除済み）/ fetch 失敗 / 想定外 payload は従来どおり loadCreatives() にフォールバック
+//  - 新規作成・削除の経路では使わない（従来どおり loadCreatives() で全体リロードする）
+async function refreshCreativeInList(id) {
+  try {
+    if (!id) throw new Error('no id');
+    const fresh = await _cdFetchPayload(id, { force: true });
+    if (!fresh || !fresh.id) throw new Error('unexpected payload');
+    const list = Array.isArray(allCreatives) ? allCreatives : [];
+    const idx = list.findIndex(c => c && c.id === id);
+    if (idx >= 0) {
+      if (_creativeStillInListScope(fresh)) {
+        // 参照を維持したままフィールドを上書き（updateStatus と同じ Object.assign 方式）
+        Object.assign(list[idx], fresh);
+      } else {
+        // ステータス変化等で現在のタブ/フィルタの取得対象外 → 配列から除去して再描画
+        list.splice(idx, 1);
+        if (creativesPage && Number.isFinite(creativesPage.total) && creativesPage.total > 0) {
+          creativesPage.total -= 1;
+        }
+      }
+    }
+    renderCreatives();
+    // 種別タブのカウントバッジは creative_type / クライアント / 担当の変更で変わり得るため
+    // 軽量エンドポイントで再取得（fire-and-forget。古いレスポンスは seq ガードで破棄される）
+    try { loadCreativeTabCounts(); } catch (_) {}
+  } catch (e) {
+    // 404 や通信失敗時は従来どおり全件リロードにフォールバック（挙動の正しさ最優先）
+    try { await loadCreatives(); } catch (_) {}
   }
 }
 
@@ -13450,6 +13551,8 @@ async function toggleHelp(id, current) {
       const e = await res.json().catch(() => ({}));
       throw new Error(e?.error || `HTTP ${res.status}`);
     }
+    // 詳細モーダルの payload キャッシュを無効化（TTL 3分化に伴い書込時 invalidate を徹底）
+    try { _cdInvalidateCache(id); } catch (_) {}
   } catch(e) {
     if (c) { c.help_flag = prev; renderCreatives(); }
     showToast('SOSフラグの更新に失敗しました: ' + (e?.message || ''), 'error');
@@ -13474,15 +13577,8 @@ async function updateStatus() {
   if (res.ok) {
     try { _cdInvalidateCache(selectedCreativeId); } catch (_) {}
     closeModal('modal-status');
-    // ball_holder 等の派生情報を反映するため、対象1件だけ取得して差し替え
-    try {
-      const r2 = await apiFetch(`${API}/creatives/${selectedCreativeId}`);
-      if (r2.ok) {
-        const fresh = await r2.json();
-        if (c && fresh) Object.assign(c, fresh);
-        renderCreatives();
-      }
-    } catch(_) { /* 取得失敗は致命的でないので無視 */ }
+    // ball_holder 等の派生情報を反映するため、対象1件だけ取得して差し替え（共通ヘルパー化）
+    await refreshCreativeInList(selectedCreativeId);
   } else {
     if (c) { c.status = prev; renderCreatives(); }
     const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error');
@@ -29852,7 +29948,8 @@ async function onCreativeFileNameBlur(el) {
     el.dataset.original = after;
     if (currentCreativeDetail) currentCreativeDetail.file_name = after;
     showToast('ファイル名を更新しました（Slack に通知）', 'success');
-    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch(_) {}
+    // 全件再フェッチせず該当1件だけ差し替え（payload キャッシュも force 再取得で最新化される）
+    try { refreshCreativeInList(id); } catch(_) {}
   } catch (e) {
     showToast('ファイル名の更新に失敗しました', 'error');
     el.value = before;
@@ -30027,7 +30124,11 @@ async function saveCreativeCustomFields(creativeId) {
 // =====================================================================
 const _cdInFlight = new Map();        // id -> Promise<creative-data>
 const _cdPayloadCache = new Map();    // id -> { data, ts }
-const CD_CACHE_TTL_MS = 30 * 1000;    // 30秒
+// TTL は 3分（旧30秒）。書込系（保存/ステータス遷移/アップロード/リネーム等）は
+// _cdInvalidateCache() か refreshCreativeInList()（force 再取得で上書き）が必ず走るため、
+// TTL を延ばしても自分の操作起因で古い詳細が表示されることはない。
+// 他人の同時編集は最大3分遅れで見える可能性があるが、ホバー先読みと併せた体感速度を優先。
+const CD_CACHE_TTL_MS = 3 * 60 * 1000; // 3分
 const CD_CACHE_MAX = 20;
 
 function _cdSetCache(id, data) {
@@ -30213,6 +30314,41 @@ async function _cdFetchPayload(id, { force = false } = {}) {
     _cdInFlight.delete(id);
   }
 }
+
+// =====================================================================
+// 一覧行のホバー先読み: 行に 150ms 滞留したら詳細 payload を先読みして
+// クリック時のモーダル表示をキャッシュ即ヒットにする。
+//  - _cdFetchPayload は in-flight dedup + TTL キャッシュ付きなので連打/重複は安全
+//  - タッチデバイスでは mouseover が発火しないだけなので特別対応は不要
+//  - 失敗（404等）は握りつぶす（実際に開いたときに正規のエラーハンドリングが走る）
+// =====================================================================
+(function initCreativeRowHoverPrefetch() {
+  const tbody = document.getElementById('creative-tbody');
+  if (!tbody) return;
+  let _timer = null;
+  let _hoverId = null;
+  tbody.addEventListener('mouseover', (ev) => {
+    const tr = ev.target && ev.target.closest ? ev.target.closest('tr[data-id]') : null;
+    const id = tr?.dataset?.id || null;
+    if (!id || id === _hoverId) return; // 同一行内のセル間移動では再スタートしない
+    _hoverId = id;
+    if (_timer) clearTimeout(_timer);
+    _timer = setTimeout(() => {
+      _timer = null;
+      try { _cdFetchPayload(id).catch(() => {}); } catch (_) {}
+    }, 150);
+  });
+  tbody.addEventListener('mouseout', (ev) => {
+    const tr = ev.target && ev.target.closest ? ev.target.closest('tr[data-id]') : null;
+    if (!tr) return;
+    // 行内の子要素間の移動では発火させない（行の外に出たときだけキャンセル）
+    if (ev.relatedTarget && tr.contains(ev.relatedTarget)) return;
+    if (_hoverId === tr.dataset.id) {
+      _hoverId = null;
+      if (_timer) { clearTimeout(_timer); _timer = null; }
+    }
+  });
+})();
 
 async function openCreativeDetail(id) {
   if (!id) return;
@@ -30670,10 +30806,11 @@ async function advanceTemplateStatus() {
       return;
     }
     showToast(`「${j.label || j.status_code}」へ進めました`, 'success');
+    // 1件だけ force 再取得して一覧と payload キャッシュを最新化
+    // → 直後の openCreativeDetail はキャッシュ即ヒット（古いキャッシュで再描画される事故も防ぐ）
+    try { await refreshCreativeInList(id); } catch (_) {}
     // 詳細を再ロード（チェブロン更新 + ボール保持者再計算反映）
     try { await openCreativeDetail(id); } catch (_) {}
-    // 一覧側も再描画（軽量）
-    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch (_) {}
   } catch (e) {
     console.warn('[advance-template-status] failed:', e);
     showToast('通信エラー', 'error');
@@ -30694,8 +30831,9 @@ async function backTemplateStatus() {
       return;
     }
     showToast(`「${j.label || j.status_code}」へ戻しました`, 'info');
+    // 1件だけ force 再取得して一覧と payload キャッシュを最新化 → 詳細はキャッシュ即ヒット
+    try { await refreshCreativeInList(id); } catch (_) {}
     try { await openCreativeDetail(id); } catch (_) {}
-    try { if (typeof loadCreatives === 'function') loadCreatives(); } catch (_) {}
   } catch (e) {
     console.warn('[back-template-status] failed:', e);
     showToast('通信エラー', 'error');
@@ -31077,8 +31215,9 @@ async function adminJumpStatus(targetStatus, stepLabel) {
     showToast(msg, 'success');
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
+    const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
     closeModal('modal-creative-detail');
-    await loadCreatives();
+    await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else {
     const e = await res.json().catch(() => ({}));
     const raw = String(e?.error || '');
@@ -31110,8 +31249,9 @@ async function forceDeliver() {
     showToast('納品完了モードで「納品」にしました', 'success');
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
+    const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
     closeModal('modal-creative-detail');
-    await loadCreatives();
+    await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else {
     const e = await res.json().catch(() => ({}));
     showToast('エラー: ' + translateError(e?.error || '不明'), 'error');
@@ -31153,8 +31293,9 @@ async function directToClientCheck() {
   if (res.ok) {
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
+    const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
     closeModal('modal-creative-detail');
-    await loadCreatives();
+    await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
 }
 
@@ -31316,8 +31457,9 @@ async function advanceCreativeStatus() {
     if (res.ok) {
       try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
       __cdSkipDirtyCheck = true;
+      const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
       closeModal('modal-creative-detail');
-      await loadCreatives();
+      await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
     } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
     return;
   }
@@ -37793,7 +37935,8 @@ async function saveCreativeEdit() {
   });
   if (res.ok) {
     closeModal('modal-creative-edit');
-    await loadCreatives();
+    // 全件再フェッチせず該当1件だけ差し替え（失敗時はヘルパー内で loadCreatives にフォールバック）
+    await refreshCreativeInList(_editingCreativeId);
   } else {
     const e = await res.json();
     showToast('保存エラー: ' + translateError(e?.error), 'error');
@@ -38262,8 +38405,9 @@ async function saveCreativePostEdit() {
     try { _cdInvalidateCache(id); } catch (_) {}
     // 詳細モーダルを開き直して反映
     try { await openCreativeDetail(id); } catch (_) {}
-    // 一覧キャッシュも更新
-    try { await loadCreatives(); } catch (_) {}
+    // 一覧側も該当1件だけ差し替え（事後修正で案件＝クライアントが変わった場合は
+    // _creativeStillInListScope 判定で配列から除去される。失敗時は loadCreatives フォールバック）
+    try { await refreshCreativeInList(id); } catch (_) {}
   } else {
     const e = await res.json().catch(() => ({}));
     showToast('保存エラー: ' + (typeof translateError === 'function' ? translateError(e?.error) : (e?.error || '不明なエラー')), 'error');
@@ -38315,8 +38459,9 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
     // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
+    const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
     closeModal('modal-creative-detail');
-    await loadCreatives();
+    await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else {
     const e = await res.json();
     showToast('保存エラー: ' + translateError(e?.error), 'error');
@@ -38342,6 +38487,8 @@ async function saveCreativeDetailMemo() {
     if (currentCreativeDetail) currentCreativeDetail.memo = memo;
     const cached = allCreatives.find(x => x.id === id);
     if (cached) cached.memo = memo;
+    // 詳細モーダルの payload キャッシュも無効化（TTL 3分化に伴い書込時 invalidate を徹底）
+    try { _cdInvalidateCache(id); } catch (_) {}
     if (typeof renderCreatives === 'function') renderCreatives();
     // 初期スナップショットの memo を更新して、メモ保存後に dirty 扱いにならないようにする
     if (__cdInitialSnapshot) __cdInitialSnapshot['cd-memo'] = memo || '';
