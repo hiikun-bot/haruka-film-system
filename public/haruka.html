@@ -8792,18 +8792,59 @@ async function init() {
       return;
     }
   } catch(e) { console.error('[HFS] /auth/me error:', e); }
-  // ロール権限とロールマスタをDBから並行ロード（hasPermission / roleLabel / VIEW AS の準備）
-  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の表示・並び替えに切り替え
-  await Promise.all([loadRolePermissions(), loadRolesMaster()]);
+  // ── ロール系（段2）とデータ系（段3）を並列起動（初回ロード体感改善）────────────
+  // 依存関係の整理:
+  //  - canUseViewAs / applyRoleBasedUI / restoreInitialPage（権限ゲートされたナビの判定）は
+  //    roles 完了に依存 → rolesReady を await した後に呼ぶ
+  //  - 各 load*（clients/projects/members/teams/creatives/categories）は roles 非依存。
+  //    hasPermission / roleLabel / ROLE_SORT_ORDER 等はフォールバック内蔵のため、
+  //    roles 到着前に描画されても例外にはならない。ただし roles マスタが fallback と
+  //    異なる環境向けに、roles より先に完了した一覧は最後に正のマスタ値で再描画する
+  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の表示・並び替え
+  const rolesReady = Promise.all([loadRolePermissions(), loadRolesMaster()]);
+  let _rolesLoaded = false;
+  rolesReady.then(() => { _rolesLoaded = true; });
+
+  // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
+  // loadCategories() : Stage A で追加。案件一覧バッジ・モーダルが参照する。
+  const _ip = {
+    clients:    loadClients(),
+    projects:   loadProjects(),
+    members:    loadMembers(),
+    teams:      loadTeams(),
+    creatives:  loadCreatives(),
+    categories: loadCategories(),
+  };
+  // loadDashboard() / applyDeepLinkOnLoad() が「依存データの完了」を個別に await するために公開
+  window._initPromises = _ip;
+  // roles マスタより先に完了して fallback 定数（ROLE_SORT_ORDER 等）で描画された一覧を検出
+  const _renderedBeforeRoles = {};
+  ['creatives', 'members', 'teams'].forEach(k => {
+    _ip[k].then(() => { if (!_rolesLoaded) _renderedBeforeRoles[k] = true; }, () => {});
+  });
+  const dataReady = Promise.all(Object.values(_ip)).then(
+    () => { window._initDataLoaded = true; },
+    (e) => { window._initDataLoaded = true; console.error('[init] data load failed:', e); }
+  );
+  window._initDataReady = dataReady;
+
+  await rolesReady;
   if (canUseViewAs()) {
     document.getElementById('role-preview-switcher').style.display = 'flex';
   }
   applyRoleBasedUI();
-  // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
-  // loadCategories() : Stage A で追加。案件一覧バッジ・モーダルが参照する。
-  await Promise.all([loadClients(), loadProjects(), loadMembers(), loadTeams(), loadCreatives(), loadCategories()]);
+  // 先行ペイント: データ系 fetch の完了を待たずにページを表示する。
+  // ダッシュボードのうち自前 fetch を持つセクション（全体連絡・誕生日・あなたのタスク）は
+  // 即時にロードが始まり、allCreatives / allProjects に依存するセクション（今日の納期・
+  // ヒーロー統計・管理者グラフ）は loadDashboard() 内で対応する Promise の完了後に追い描画される。
   restoreInitialPage();
   applyDeepLinkOnLoad();
+
+  await dataReady;
+  // roles マスタが fallback 定数と異なる環境で、roles 到着前に描画された一覧を正で再描画
+  try { if (_renderedBeforeRoles.creatives && typeof renderCreatives  === 'function') renderCreatives();  } catch (e) { console.warn('[init] re-render creatives:', e); }
+  try { if (_renderedBeforeRoles.members   && typeof renderMemberList === 'function') renderMemberList(); } catch (e) { console.warn('[init] re-render members:', e); }
+  try { if (_renderedBeforeRoles.teams     && typeof renderTeamsList  === 'function') renderTeamsList();  } catch (e) { console.warn('[init] re-render teams:', e); }
 }
 
 // リロード時に「最後に開いていたタブ」を復元する。
@@ -8831,6 +8872,8 @@ function restoreInitialPage() {
 }
 
 // 通知メール/チャットからの ?creative=<id> リンクで該当クリエイティブの詳細モーダルを開く
+// 旧実装は一律 setTimeout(300ms) の固定遅延だったが、各 deep link が必要とするデータの
+// Promise 完了を await する方式に置き換えた（自前 fetch で完結するモーダルは即時に開く）。
 async function applyDeepLinkOnLoad() {
   try {
     const stripQueryParam = (name) => {
@@ -8847,55 +8890,48 @@ async function applyDeepLinkOnLoad() {
     const announcementId = params.get('announcement');
     if (announcementId && typeof openAnnouncementStatus === 'function') {
       stripQueryParam('announcement');
-      // データ・DOM 準備のため少し遅延
-      setTimeout(() => {
-        try { openAnnouncementStatus(announcementId); }
-        catch (e) { console.warn('[deepLink announcement]', e); }
-      }, 300);
+      // openAnnouncementStatus は自前 fetch（/announcements/:id/status）で完結する → 即時
+      try { await openAnnouncementStatus(announcementId); }
+      catch (e) { console.warn('[deepLink announcement]', e); }
       return;
     }
     const videoId = params.get('video');
     if (videoId) {
       stripQueryParam('video');
       // ナレッジページ → 動画視聴モードへ遷移してから再生モーダルを開く
-      setTimeout(async () => {
-        try {
-          if (typeof showPage === 'function') {
-            const navBtn = document.querySelector('.nav-btn[data-page="knowledge"]');
-            showPage('knowledge', navBtn || null);
-          }
-          if (typeof setKnowledgeMode === 'function') setKnowledgeMode('videos');
-          if (typeof loadLearningVideosPage === 'function') await loadLearningVideosPage();
-          if (typeof openVideoPlayer === 'function') openVideoPlayer(videoId);
-        } catch (e) { console.warn('[deepLink video]', e); }
-      }, 300);
+      // （loadLearningVideosPage が自前 fetch で完結する → 即時）
+      try {
+        if (typeof showPage === 'function') {
+          const navBtn = document.querySelector('.nav-btn[data-page="knowledge"]');
+          showPage('knowledge', navBtn || null);
+        }
+        if (typeof setKnowledgeMode === 'function') setKnowledgeMode('videos');
+        if (typeof loadLearningVideosPage === 'function') await loadLearningVideosPage();
+        if (typeof openVideoPlayer === 'function') openVideoPlayer(videoId);
+      } catch (e) { console.warn('[deepLink video]', e); }
       return;
     }
-    // バグ報告 deep link（24h SLA 通知のリンクから開く）
+    // バグ報告 deep link（24h SLA 通知のリンクから開く）— 自前 fetch で完結 → 即時
     const bugReportId = params.get('bug-report');
     if (bugReportId) {
       stripQueryParam('bug-report');
-      setTimeout(() => {
-        try {
-          if (typeof openBugReportListModal === 'function') openBugReportListModal();
-          if (typeof openBugReportModal === 'function') openBugReportModal({ id: bugReportId });
-        } catch (e) { console.warn('[deepLink bug-report]', e); }
-      }, 300);
+      try {
+        if (typeof openBugReportListModal === 'function') openBugReportListModal();
+        if (typeof openBugReportModal === 'function') openBugReportModal({ id: bugReportId });
+      } catch (e) { console.warn('[deepLink bug-report]', e); }
       return;
     }
-    // Verup情報 deep link（Slack 通知の「対応: #518」をクリックで該当行へジャンプ）
+    // Verup情報 deep link（Slack 通知の「対応: #518」をクリックで該当行へジャンプ）— 自前 fetch → 即時
     const verupRev = params.get('verup');
     if (verupRev) {
       stripQueryParam('verup');
-      setTimeout(() => {
-        try {
-          if (typeof openVerupModalAtRevision === 'function') {
-            openVerupModalAtRevision(Number(verupRev));
-          } else if (typeof openVerupModal === 'function') {
-            openVerupModal();
-          }
-        } catch (e) { console.warn('[deepLink verup]', e); }
-      }, 300);
+      try {
+        if (typeof openVerupModalAtRevision === 'function') {
+          openVerupModalAtRevision(Number(verupRev));
+        } else if (typeof openVerupModal === 'function') {
+          openVerupModal();
+        }
+      } catch (e) { console.warn('[deepLink verup]', e); }
       return;
     }
 
@@ -8903,10 +8939,11 @@ async function applyDeepLinkOnLoad() {
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {
       stripQueryParam('creative');
-      // データ・DOM 準備のため少し遅延
-      setTimeout(() => {
-        try { openCreativeDetail(creativeId); } catch (e) { console.warn('[deepLink open]', e); }
-      }, 300);
+      // 詳細モーダルは payload を自前 fetch するが、内部でカテゴリ・メンバー等の
+      // グローバルキャッシュを参照するため、初回データロード完了を待ってから開く
+      // （旧フローの「全ロード後 + 300ms」と同等の前提を、固定遅延なしで保証する）
+      await (window._initDataReady || Promise.resolve());
+      try { openCreativeDetail(creativeId); } catch (e) { console.warn('[deepLink open]', e); }
     }
   } catch (e) { console.warn('[deepLink]', e); }
 }
@@ -8937,12 +8974,20 @@ function statusClass(s) {
 }
 
 // クライアント
+// loadClients() 実行中の /clients fetch を loadProjects() と共有するための in-flight Promise。
+// init() で loadClients() と loadProjects() を並列起動したときの二重 fetch を解消する。
+// 完了後は null に戻すので、単独で呼ばれた loadProjects() は従来どおり自前で再取得する（鮮度維持）。
+let _clientsLoadPromise = null;
 async function loadClients() {
-  try {
-    const res = await apiFetch(`${API}/clients`);
-    const data = await res.json();
-    allClients = Array.isArray(data) ? data : [];
-  } catch(e) { allClients = []; console.error('[loadClients]', e); }
+  const p = (async () => {
+    try {
+      const res = await apiFetch(`${API}/clients`);
+      const data = await res.json();
+      allClients = Array.isArray(data) ? data : [];
+    } catch(e) { allClients = []; console.error('[loadClients]', e); }
+  })();
+  _clientsLoadPromise = p;
+  try { await p; } finally { if (_clientsLoadPromise === p) _clientsLoadPromise = null; }
   renderClientSelect();
 }
 
@@ -9579,15 +9624,23 @@ async function loadProjects() {
   if ((Array.isArray(allProjects) && allProjects.length) || (Array.isArray(allClients) && allClients.length)) {
     try { renderProjectsView(); } catch (e) { console.warn('[loadProjects] stale render failed', e); }
   }
-  const [pRes, cRes] = await Promise.all([
-    apiFetch(`${API}/projects`),
-    apiFetch(`${API}/clients`)
-  ]);
-  const projects = await pRes.json();
-  const clients = await cRes.json();
+  // clients は loadClients() が実行中ならその結果（allClients）を共有して二重 fetch を避ける。
+  // 単独で呼ばれた場合（編集後の再読込など）は従来どおり自前で再取得する。
+  const pPromise = apiFetch(`${API}/projects`);
+  const sharedClients = _clientsLoadPromise;
+  let projects;
+  let clients = null;
+  if (sharedClients) {
+    const [pRes] = await Promise.all([pPromise, sharedClients]);
+    projects = await pRes.json();
+  } else {
+    const [pRes, cRes] = await Promise.all([pPromise, apiFetch(`${API}/clients`)]);
+    projects = await pRes.json();
+    clients = await cRes.json();
+  }
   if (seq !== _projectsLoadSeq) return; // 古いレスポンスは破棄（後発の load が描画を担当）
   allProjects = projects;
-  allClients = clients;
+  if (clients) allClients = clients; // 共有経路では loadClients 側が allClients を更新済み
   renderProjectsView();
 }
 
@@ -20019,6 +20072,25 @@ function renderDashHeroIdentity() {
   }
 }
 
+// 初回ロードの依存 Promise（window._initPromises のキー）完了後に fn を呼ぶヘルパー。
+// - init() 前 / 2回目以降（ロード済）は即時（microtask）実行になる
+// - ロード失敗時も fn は呼ぶ（allCreatives 等は catch 内で空配列に初期化済みのため、
+//   空状態で描画する方が「何も出ない」より良い）
+function _whenInitLoaded(keys, fn) {
+  const src = window._initPromises || {};
+  const ps = keys.map(k => src[k]).filter(Boolean)
+    .map(p => p.catch(e => console.warn('[dash] init load failed:', e)));
+  Promise.all(ps).then(() => {
+    try { fn(); } catch (e) { console.warn('[dash] render failed:', e); }
+  });
+}
+
+// 初回ロード中のダッシュボード用プレースホルダ（追い描画までの「読み込み中」表示）
+function _dashLoadingSection(title) {
+  return `<div class="dash-section"><div class="dash-section-title">${title}</div>
+    <div style="text-align:center;font-size:13px;color:var(--text-muted);padding:8px 0">読み込み中…</div></div>`;
+}
+
 function loadDashboard() {
   renderDashHeroIdentity();
 
@@ -20026,22 +20098,36 @@ function loadDashboard() {
   const role = effectiveRole();
   const today = new Date(); today.setHours(0,0,0,0);
 
+  // 自前 fetch を持つセクションはデータ系ロード（loadCreatives 等）の完了を待たずに即時表示する
+  // （初回ロード体感改善: 最遅の loadCreatives を待っている間も連絡事項・誕生日・タスクが先に出る）
   // 全ロール共通: 全体連絡セクション
   loadAnnouncements();
-  // 全ロール共通: 今日の納期セクション
-  renderTodayDeadlines(today);
   // 全ロール共通: 誕生日セクション
   loadDashboardBirthdays();
   // 案件スケジュール Phase 2: 今週の山場 + あなたのタスク（L3 / L4）
   if (window.myTasksPanel?.refreshDashboard) window.myTasksPanel.refreshDashboard();
   // つぶやきは独立タブ（#page-tweets）に集約（PR #209）。ダッシュボード内表示は廃止。
 
+  // 初回ロード中はプレースホルダを出す（既に何か描画済みなら触らない＝再表示時のチラつき防止）。
+  // 注意: #dash-content は中に #dash-charts / #dash-text-content を静的に持つため上書きしない。
+  if (!window._initDataLoaded && window._initPromises) {
+    const todayEl = document.getElementById('dash-today');
+    if (todayEl && !todayEl.innerHTML.trim()) todayEl.innerHTML = _dashLoadingSection('📅 今日の納期');
+    const txtEl = document.getElementById('dash-text-content');
+    if (txtEl && !txtEl.innerHTML.trim()) txtEl.innerHTML = _dashLoadingSection('読み込み中');
+  }
+
+  // 全ロール共通: 今日の納期セクション（allCreatives 依存 → creatives 完了後に追い描画）
+  _whenInitLoaded(['creatives'], () => renderTodayDeadlines(today));
+
   if (['admin','secretary','producer','producer_director'].includes(role)) {
-    renderAdminDash(today);
+    // 管理者ダッシュ: ヒーロー統計が allProjects 依存。
+    // dashCreatives / 売上 / 予実は renderAdminDash 内で自前 fetch（並列発射）する。
+    _whenInitLoaded(['projects'], () => renderAdminDash(today));
   } else if (role === 'director') {
-    renderDirectorDash(today);
+    _whenInitLoaded(['projects'], () => renderDirectorDash(today));
   } else {
-    renderEditorDash(today);
+    _whenInitLoaded(['creatives'], () => renderEditorDash(today));
   }
 }
 
@@ -21813,16 +21899,31 @@ function _invalidateDashboardCreatives() {
   _dashboardCreativesLoadedAt = 0;
 }
 
+// renderAdminDash の再入ガード（年/月フィルター連打・VIEW AS 切替時に
+// 古い非同期描画が新しい描画を上書きしないようにする）
+let _adminDashSeq = 0;
 async function renderAdminDash(today) {
+  const seq = ++_adminDashSeq;
   const yearSel = document.getElementById('dash-filter-year');
   const monthSel = document.getElementById('dash-filter-month');
   const filterYear = yearSel ? parseInt(yearSel.value) : today.getFullYear();
   const filterMonth = monthSel ? parseInt(monthSel.value) : today.getMonth() + 1; // 0=全月
 
+  // ── 3つの fetch を同時発射（直列 await の解消: dashCreatives → 売上 → 予実 が並列になる）──
+  // 各グラフ・統計は自分のデータが到着した時点で順次描画される。
   // ダッシュボードの月次集計（納品本数 / 月別納品 / 完了率 / ステータス円グラフ）には
   // 納品済のクリエイティブが必須だが、allCreatives は #359 以降 既定で納品除外。
   // → dashboard 用に include_done=1 で再フェッチ（60秒キャッシュ付き）
-  const dashCreatives = await _loadDashboardCreatives();
+  const dashCreativesPromise = _loadDashboardCreatives();
+  const revenuePromise = isTopAdmin()
+    ? apiFetch(`${API}/dashboard/revenue-summary`).catch(() => null)
+    : null;
+  const forecastPromise = (isTopAdmin() && filterMonth !== 0)
+    ? apiFetch(`${API}/dashboard/monthly-forecast?year=${filterYear}&month=${filterMonth}`).catch(() => null)
+    : null;
+
+  const dashCreatives = await dashCreativesPromise;
+  if (seq !== _adminDashSeq) return; // 後発の renderAdminDash が走っているので中断
 
   // フィルター対象のクリエイティブ
   // DATE("YYYY-MM-DD")を new Date() に渡すと UTC 解釈で JST だと前日にズレ、
@@ -21868,29 +21969,34 @@ async function renderAdminDash(today) {
   // ===== Chart 1: 売上予実（isTopAdmin のみ） =====
   _destroyChart('revenue');
   if (isTopAdmin()) {
-    const revRes = await apiFetch(`${API}/dashboard/revenue-summary`).catch(() => null);
-    const rev = revRes?.ok ? await revRes.json() : null;
-    if (rev) {
-      const ctx = document.getElementById('chart-revenue').getContext('2d');
-      _charts['revenue'] = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: ['今月'],
-          datasets: [
-            { label: '実績売上', data: [rev.actualRevenue], backgroundColor: '#5C9E8F', borderRadius: 6 },
-            { label: '未達分', data: [Math.max(0, rev.plannedRevenue - rev.actualRevenue)], backgroundColor: '#E8F0EE', borderRadius: 6 }
-          ]
-        },
-        options: {
-          responsive: true,
-          plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
-          scales: {
-            x: { stacked: true, grid: { display: false } },
-            y: { stacked: true, ticks: { callback: v => (v/10000).toFixed(0)+'万' } }
+    // 売上サマリは到着し次第に独立して描画（他のグラフをブロックしない）
+    (async () => {
+      const revRes = await revenuePromise;
+      const rev = revRes?.ok ? await revRes.json().catch(() => null) : null;
+      if (seq !== _adminDashSeq) return; // 後発の描画が始まっていたら破棄
+      if (rev) {
+        _destroyChart('revenue'); // 念のため（再入時の Canvas in use 防止）
+        const ctx = document.getElementById('chart-revenue').getContext('2d');
+        _charts['revenue'] = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['今月'],
+            datasets: [
+              { label: '実績売上', data: [rev.actualRevenue], backgroundColor: '#5C9E8F', borderRadius: 6 },
+              { label: '未達分', data: [Math.max(0, rev.plannedRevenue - rev.actualRevenue)], backgroundColor: '#E8F0EE', borderRadius: 6 }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+            scales: {
+              x: { stacked: true, grid: { display: false } },
+              y: { stacked: true, ticks: { callback: v => (v/10000).toFixed(0)+'万' } }
+            }
           }
-        }
-      });
-    }
+        });
+      }
+    })();
   } else {
     // 売上非表示の場合はクリエイティブ完了率を代替表示
     const ctx = document.getElementById('chart-revenue').getContext('2d');
@@ -22011,11 +22117,13 @@ async function renderAdminDash(today) {
     </div>`;
 
   // ===== 予実管理テーブル（isTopAdmin のみ） =====
+  // 売上グラフ・他チャートと並列で fetch 済み（forecastPromise）。到着し次第に独立して描画。
   const forecastEl = document.getElementById('dash-forecast-content');
   if (forecastEl) {
     if (isTopAdmin() && filterMonth !== 0) {
-      const fRes = await apiFetch(`${API}/dashboard/monthly-forecast?year=${filterYear}&month=${filterMonth}`).catch(() => null);
-      const forecast = fRes?.ok ? await fRes.json() : null;
+      const fRes = await forecastPromise;
+      const forecast = fRes?.ok ? await fRes.json().catch(() => null) : null;
+      if (seq !== _adminDashSeq) return; // 後発の描画が始まっていたら破棄
       if (forecast && forecast.length > 0) {
         const fmt = n => '¥' + (n || 0).toLocaleString('ja-JP');
         const achvClass = r => r >= 100 ? 'color:#22c55e;font-weight:700' : r >= 50 ? 'color:#f97316;font-weight:700' : 'color:#ef4444;font-weight:700';
@@ -34181,9 +34289,19 @@ function initAnalyticsPage() {
   // クライアント select を埋める（既存 allClients を流用）
   const sel = document.getElementById('an-client');
   if (sel && sel.options.length <= 1 && Array.isArray(allClients)) {
-    sel.innerHTML = '<option value="">すべて</option>' +
-      allClients.filter(c => c.status !== 'クライアント取引終了')
-        .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    const fillClientSelect = () => {
+      sel.innerHTML = '<option value="">すべて</option>' +
+        allClients.filter(c => c.status !== 'クライアント取引終了')
+          .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    };
+    fillClientSelect();
+    // 初回ロードの先行ペイントで allClients 未到着のままここに来た場合は、
+    // clients ロード完了後に再充填する（restoreInitialPage が分析タブを復元したケース）
+    if (!allClients.length && window._initPromises?.clients) {
+      window._initPromises.clients
+        .then(() => { if (sel.options.length <= 1) fillClientSelect(); })
+        .catch(() => {});
+    }
   }
   // analytics.view を持たないロールはバグ報告件数しか開放されていないので強制的に bug-reports に寄せる
   if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) {
