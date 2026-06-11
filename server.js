@@ -20,6 +20,7 @@ const compression = require('compression');
 const path = require('path');
 
 const { passport: passportInstance, requireAuth, requirePermission, isSuperAdminUser } = require('./auth');
+const { replaceAvatarDataUrls } = require('./utils/avatar-ref');
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -517,7 +518,9 @@ function safeUser(u) {
   const { password_hash, google_id, ...safe } = u;
   // フロントエンドが参照する name フィールドを補完
   if (!safe.name && safe.full_name) safe.name = safe.full_name;
-  return safe;
+  // avatar_url の base64 data URL（最大300KB）は配信エンドポイント URL に置換して
+  // 転送量を削減する（/auth/me はログイン毎・タブ毎に呼ばれる）。utils/avatar-ref.js 参照
+  return replaceAvatarDataUrls(safe);
 }
 
 // フロントエンドのすべてのルートをindex.htmlに向ける（SPA対応）
