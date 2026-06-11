@@ -9562,14 +9562,30 @@ async function setCreativeAddBulkCapTab(cap) {
 }
 
 // 案件（クライアント→案件の階層表示）
+// 案件タブ SWR 用の世代カウンタ（_creativesLoadSeq と同パターン）。
+// 連続タブ切替・フィルタ連打時に古いレスポンスで新しい描画を上書きしないためのガード。
+let _projectsLoadSeq = 0;
+
 async function loadProjects() {
+  const seq = ++_projectsLoadSeq;
+  // SWR: 手元に既存データがあれば即描画（「読み込み中...」を見せない）→ 裏で再fetch → 確定データで再描画
+  if ((Array.isArray(allProjects) && allProjects.length) || (Array.isArray(allClients) && allClients.length)) {
+    try { renderProjectsView(); } catch (e) { console.warn('[loadProjects] stale render failed', e); }
+  }
   const [pRes, cRes] = await Promise.all([
     apiFetch(`${API}/projects`),
     apiFetch(`${API}/clients`)
   ]);
-  allProjects = await pRes.json();
-  allClients = await cRes.json();
+  const projects = await pRes.json();
+  const clients = await cRes.json();
+  if (seq !== _projectsLoadSeq) return; // 古いレスポンスは破棄（後発の load が描画を担当）
+  allProjects = projects;
+  allClients = clients;
+  renderProjectsView();
+}
 
+// allProjects / allClients から案件タブを描画する（fetch しない純粋な描画部）
+function renderProjectsView() {
   // クリエイティブ追加モーダルのセレクトを更新
   // is_hidden 案件除外 + id 重複排除 + 職種フィルタ（individual/bulk 両方）
   renderCreativeAddProjectDropdowns();
@@ -10549,22 +10565,44 @@ function populateMemberTeamSelect(currentTeamId) {
   sel.value = currentTeamId || '';
 }
 
+// チームタブ SWR 用の世代カウンタ（_creativesLoadSeq と同パターン）
+let _teamsLoadSeq = 0;
+
 async function loadTeams() {
+  const seq = ++_teamsLoadSeq;
+  // SWR: 手元に既存データがあれば即描画 → 裏で再fetch → 確定データで再描画
+  const hasStale = Array.isArray(allTeams) && allTeams.length > 0;
+  if (hasStale) {
+    try { _renderTeamsView(); } catch (e) { console.warn('[loadTeams] stale render failed', e); }
+  }
   try {
     const teamsRes = await apiFetch(`${API}/teams`);
-    if (!teamsRes.ok) { allTeams = []; return; }
-    allTeams = await teamsRes.json();
-    const mSel = document.getElementById('m-team');
-    if (mSel) {
-      // 「所属チーム（基本）」は基本チーム（A〜Z単一英字）のみを候補にする
-      const basics = getBasicTeams();
-      mSel.innerHTML = '<option value="">未設定</option>' + basics.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+    if (!teamsRes.ok) {
+      // 既に手元データで表示済みなら据え置き（次回 fetch で同期）
+      if (seq === _teamsLoadSeq && !hasStale) allTeams = [];
+      return;
     }
-    // 初期タブをロールで決定（デザイナーはデザイン、秘書は秘書、それ以外は動画）
-    const _role = effectiveRole();
-    currentTeamTab = _role === 'designer' ? 'design' : _role === 'secretary' ? 'secretary' : 'video';
-    setTeamTab(currentTeamTab);
-  } catch(e) { allTeams = []; }
+    const data = await teamsRes.json();
+    if (seq !== _teamsLoadSeq) return; // 古いレスポンスは破棄
+    allTeams = data;
+    _renderTeamsView();
+  } catch(e) {
+    if (seq === _teamsLoadSeq && !hasStale) allTeams = [];
+  }
+}
+
+// allTeams からチームタブを描画する（fetch しない純粋な描画部）
+function _renderTeamsView() {
+  const mSel = document.getElementById('m-team');
+  if (mSel) {
+    // 「所属チーム（基本）」は基本チーム（A〜Z単一英字）のみを候補にする
+    const basics = getBasicTeams();
+    mSel.innerHTML = '<option value="">未設定</option>' + basics.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
+  }
+  // 初期タブをロールで決定（デザイナーはデザイン、秘書は秘書、それ以外は動画）
+  const _role = effectiveRole();
+  currentTeamTab = _role === 'designer' ? 'design' : _role === 'secretary' ? 'secretary' : 'video';
+  setTeamTab(currentTeamTab);
 }
 
 // メンバー
@@ -11463,13 +11501,33 @@ async function submitInvoiceFolderGenerate() {
   }
 }
 
+// メンバータブ SWR 用の世代カウンタ（_creativesLoadSeq と同パターン）
+let _membersLoadSeq = 0;
+
 async function loadMembers() {
+  const seq = ++_membersLoadSeq;
+  // SWR: 手元に既存データがあれば即描画 → 裏で再fetch → 確定データで再描画
+  const hasStale = Array.isArray(allMembers) && allMembers.length > 0;
+  if (hasStale) {
+    try { _renderMembersView(); } catch (e) { console.warn('[loadMembers] stale render failed', e); }
+  }
   try {
     const res = await apiFetch(`${API}/members`);
     const data = await res.json();
+    if (seq !== _membersLoadSeq) return; // 古いレスポンスは破棄
     allMembers = Array.isArray(data) ? data : [];
     if (!res.ok) console.error('[loadMembers]', data);
-  } catch(e) { allMembers = []; console.error('[loadMembers]', e); }
+  } catch(e) {
+    if (seq !== _membersLoadSeq) return;
+    // 既に手元データで表示済みなら据え置き（次回 fetch で同期）
+    if (!hasStale) allMembers = [];
+    console.error('[loadMembers]', e);
+  }
+  _renderMembersView();
+}
+
+// allMembers からメンバータブを描画する（fetch しない純粋な描画部）
+function _renderMembersView() {
   const list = document.getElementById('members-list');
   if (!list) return;
   // 初期タブ: デザイナーはデザイン、それ以外は動画
@@ -20724,9 +20782,13 @@ async function submitTweet() {
       showToast('エラー: ' + (e.error || '投稿失敗'), 'error');
       return;
     }
+    const created = await res.json().catch(() => null);
     closeModal('modal-tweet-compose');
     showToast('つぶやきました 💭', 'success');
-    if (typeof loadTweetsPage === 'function') loadTweetsPage();
+    // 楽観的更新: フィード先頭に prepend（全体再fetchせずスクロール位置を保つ）。
+    // 挿入できない場合（一覧未ロード等）のみ従来どおり再読込。
+    const prepended = (typeof _twPrependTweetLocal === 'function') && _twPrependTweetLocal(created);
+    if (!prepended && typeof loadTweetsPage === 'function') loadTweetsPage();
   } finally {
     btn.disabled = false; btn.textContent = '投稿する';
   }
@@ -21037,6 +21099,42 @@ function _twApplyReactionLocal(tweetId, type, action) {
   return true;
 }
 
+// 楽観的更新: 新規つぶやきをフィード先頭（ピン留めの直後）に即時挿入する。
+// フィード全体は再fetchしない＝スクロール位置・開いているコメント欄を保つ。
+// 他人の新着との順序ズレはあり得るが、次回の自然な再fetch（タブ再表示など）で解消される設計。
+// 戻り値: true=挿入した / false=挿入できず（呼び出し側で従来の loadTweetsPage() にフォールバック）
+function _twPrependTweetLocal(created) {
+  if (!created || !created.id) return false;
+  const el = document.getElementById('tweets-list');
+  if (!el) return false;
+  // 一覧が未ロード（読み込み中表示など）の間は通常の再fetchに任せる
+  if (el.querySelector('.tweets-loading')) return false;
+  const u = currentUser || {};
+  const t = {
+    ...created,
+    has_image: !!created.image_data,
+    reaction_counts: created.reaction_counts || {},
+    my_reactions: created.my_reactions || [],
+    comment_count: created.comment_count || 0,
+    // 一覧 API と同じ形の users 埋め込みを自分の情報から組み立てる
+    users: { id: u.id, full_name: u.full_name, avatar_url: u.avatar_url, role: u.role },
+  };
+  delete t.image_data; // 画像本体は一覧に載せず /tweets/:id/image から遅延取得（一覧 API と同形）
+  _twPageList.unshift(t);
+  const holder = document.createElement('div');
+  holder.innerHTML = renderTweetCard(t);
+  const node = holder.firstElementChild;
+  if (!node) return false;
+  // 空表示（まだ投稿はありません）が出ていれば消す
+  const emptyEl = el.querySelector('.tweets-empty');
+  if (emptyEl) emptyEl.remove();
+  // ピン留めカードの後ろ・通常カードの前に挿入
+  const firstNormal = el.querySelector('article.tweet-card:not(.pinned)');
+  if (firstNormal) el.insertBefore(node, firstNormal);
+  else el.appendChild(node);
+  return true;
+}
+
 function renderTweetCard(t) {
   const u = t.users || {};
   const myId = currentUser?.id;
@@ -21206,6 +21304,42 @@ async function openTweetCommentsFromCard(tweetId) {
   await loadTweetCommentsPage(tweetId);
 }
 
+// コメント1行分の HTML を生成（一覧描画と楽観的更新の両方で共用）。
+// opts.pending=true のとき: 楽観的仮表示用（半透明・編集/削除ボタンなし。確定後に置換される）
+function _twRenderCommentRow(tweetId, c, opts = {}) {
+  const pending = !!opts.pending;
+  const myId = currentUser?.id;
+  const canMod = _twCanModerate();
+  const u = c.users || {};
+  const av = u.avatar_url
+    ? `<div class="tw-comment-av"><img src="${esc(u.avatar_url)}" alt=""></div>`
+    : `<div class="tw-comment-av">${esc((u.full_name || '?').charAt(0))}</div>`;
+  const isOwn = c.user_id === myId;
+  const canDelete = isOwn || canMod;
+  // editBtn を delBtn の隣に並べるため、margin-left:auto は wrapper に集約する
+  // （.tw-comment-del の margin-left:auto が両ボタンに効くと editBtn だけ中央に浮く）
+  const editBtn = (isOwn && !pending)
+    ? `<button class="tw-comment-del" onclick="editTweetCommentPage('${tweetId}','${c.id}')" title="編集" style="margin-left:0">✏️</button>`
+    : '';
+  const delBtn = (canDelete && !pending)
+    ? `<button class="tw-comment-del" onclick="deleteTweetCommentPage('${tweetId}','${c.id}')" title="削除" style="margin-left:0">🗑️</button>`
+    : '';
+  const actionsWrap = (editBtn || delBtn)
+    ? `<span class="tw-comment-actions" style="margin-left:auto;display:inline-flex;gap:2px">${editBtn}${delBtn}</span>`
+    : '';
+  return `<div class="tw-comment" data-comment-id="${esc(c.id)}"${pending ? ' data-pending="1" style="opacity:.55"' : ''}>
+    ${av}
+    <div style="flex:1;min-width:0">
+      <div class="tw-comment-meta">
+        <span class="tw-comment-author" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
+        <span>${_twTimeAgo(c.created_at)}</span>
+        ${actionsWrap}
+      </div>
+      <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
+    </div>
+  </div>`;
+}
+
 async function loadTweetCommentsPage(tweetId) {
   const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
   if (!wrap) return;
@@ -21216,39 +21350,7 @@ async function loadTweetCommentsPage(tweetId) {
     if (res.ok) comments = await res.json();
   } catch (e) { console.warn('[tweets-page] comments load failed', e); }
 
-  const myId = currentUser?.id;
-  const canMod = _twCanModerate();
-
-  const rows = (comments || []).map(c => {
-    const u = c.users || {};
-    const av = u.avatar_url
-      ? `<div class="tw-comment-av"><img src="${esc(u.avatar_url)}" alt=""></div>`
-      : `<div class="tw-comment-av">${esc((u.full_name || '?').charAt(0))}</div>`;
-    const isOwn = c.user_id === myId;
-    const canDelete = isOwn || canMod;
-    // editBtn を delBtn の隣に並べるため、margin-left:auto は wrapper に集約する
-    // （.tw-comment-del の margin-left:auto が両ボタンに効くと editBtn だけ中央に浮く）
-    const editBtn = isOwn
-      ? `<button class="tw-comment-del" onclick="editTweetCommentPage('${tweetId}','${c.id}')" title="編集" style="margin-left:0">✏️</button>`
-      : '';
-    const delBtn = canDelete
-      ? `<button class="tw-comment-del" onclick="deleteTweetCommentPage('${tweetId}','${c.id}')" title="削除" style="margin-left:0">🗑️</button>`
-      : '';
-    const actionsWrap = (editBtn || delBtn)
-      ? `<span class="tw-comment-actions" style="margin-left:auto;display:inline-flex;gap:2px">${editBtn}${delBtn}</span>`
-      : '';
-    return `<div class="tw-comment" data-comment-id="${esc(c.id)}">
-      ${av}
-      <div style="flex:1;min-width:0">
-        <div class="tw-comment-meta">
-          <span class="tw-comment-author" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
-          <span>${_twTimeAgo(c.created_at)}</span>
-          ${actionsWrap}
-        </div>
-        <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
-      </div>
-    </div>`;
-  }).join('');
+  const rows = (comments || []).map(c => _twRenderCommentRow(tweetId, c)).join('');
 
   wrap.innerHTML = `
     <div class="tw-comments-inner">
@@ -21264,13 +21366,64 @@ async function loadTweetCommentsPage(tweetId) {
   `;
 }
 
+// 楽観的更新: コメント数バッジを該当ツイートのカード DOM だけ更新する。
+// フィード全体（loadTweetsPage）を再fetchしない＝スクロール位置を保つ。
+function _twUpdateCommentCountLocal(tweetId, delta) {
+  const t = _twPageList.find(x => x.id === tweetId);
+  const next = Math.max(0, ((t && t.comment_count) || 0) + delta);
+  if (t) t.comment_count = next;
+  const card = document.querySelector(`article.tweet-card[data-tweet-id="${tweetId}"]`);
+  const btn = card && card.querySelector('.tweet-footer .tweet-action-btn');
+  if (btn) {
+    btn.innerHTML = `<span>💬</span><span>返信</span>${next > 0 ? `<span class="count">${next}</span>` : ''}`;
+  }
+}
+
 async function submitTweetCommentPage(tweetId) {
   const inp = document.getElementById(`tw-page-comment-input-${tweetId}`);
   if (!inp) return;
   const body = (inp.value || '').trim();
   if (!body) { showToast('コメントを入力してください', 'warn'); return; }
   if (body.length > 500) { showToast('500字以内にしてください', 'warn'); return; }
-  inp.disabled = true;
+
+  // 楽観的更新: 自分のコメントを即時に仮表示（半透明）→ API 確定データで置換。
+  // フィード全体は再fetchしない（スクロール位置・開いているコメント欄を保つ）。
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  const inner = wrap && wrap.querySelector('.tw-comments-inner');
+  const form = inner && inner.querySelector('.tw-comment-form');
+  let tempEl = null;
+  let removedEmptyEl = null;
+  if (inner && form) {
+    const emptyEl = inner.querySelector('.tw-comment-empty');
+    if (emptyEl) { removedEmptyEl = emptyEl; emptyEl.remove(); }
+    const u = currentUser || {};
+    const optimistic = {
+      id: `temp-${Date.now()}`,
+      user_id: u.id,
+      body,
+      created_at: new Date().toISOString(),
+      users: { id: u.id, full_name: u.full_name, nickname: u.nickname, avatar_url: u.avatar_url, role: u.role },
+    };
+    const holder = document.createElement('div');
+    holder.innerHTML = _twRenderCommentRow(tweetId, optimistic, { pending: true });
+    tempEl = holder.firstElementChild;
+    if (tempEl) inner.insertBefore(tempEl, form);
+  }
+  const prevValue = inp.value;
+  inp.value = '';
+  inp.style.height = '';  // 自動拡張した高さをリセット
+  _twUpdateCommentCountLocal(tweetId, +1);
+
+  // 失敗時: 仮表示を取り消して入力値・空表示・バッジを復元する
+  const rollback = () => {
+    if (tempEl) tempEl.remove();
+    if (removedEmptyEl && inner && form && !inner.querySelector('.tw-comment')) {
+      inner.insertBefore(removedEmptyEl, form);
+    }
+    if (!inp.value.trim()) inp.value = prevValue; // 次の入力を始めていたら上書きしない
+    _twUpdateCommentCountLocal(tweetId, -1);
+  };
+
   try {
     const res = await apiFetch(`${API}/tweets/${tweetId}/comments`, {
       method: 'POST',
@@ -21279,29 +21432,78 @@ async function submitTweetCommentPage(tweetId) {
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
+      rollback();
       showToast('エラー: ' + (e.error || '送信失敗'), 'error');
       return;
     }
-    inp.value = '';
-    inp.style.height = '';  // 自動拡張した高さをリセット
-    await loadTweetCommentsPage(tweetId);
-    // 件数バッジを更新するため一覧も再描画
-    loadTweetsPage();
-  } finally {
-    inp.disabled = false;
+    const saved = await res.json().catch(() => null);
+    if (tempEl && saved && saved.id) {
+      // 確定データで置換（半透明解除・編集/削除ボタン付与）
+      const holder = document.createElement('div');
+      holder.innerHTML = _twRenderCommentRow(tweetId, saved);
+      const confirmed = holder.firstElementChild;
+      if (confirmed) tempEl.replaceWith(confirmed);
+      else { tempEl.style.opacity = ''; tempEl.removeAttribute('data-pending'); }
+    } else if (!tempEl) {
+      // コメント欄 DOM が見つからなかったレアケースのみ従来どおり再読込
+      await loadTweetCommentsPage(tweetId);
+    } else {
+      tempEl.style.opacity = '';
+      tempEl.removeAttribute('data-pending');
+    }
+  } catch (e) {
+    console.warn('[tweets-page] comment submit failed', e);
+    rollback();
+    showToast('通信エラー: コメントを送信できませんでした', 'error');
   }
 }
 
 async function deleteTweetCommentPage(tweetId, commentId) {
   if (!confirm('このコメントを削除しますか？')) return;
-  const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, { method: 'DELETE' });
-  if (res.ok) {
-    showToast('削除しました', 'success');
-    await loadTweetCommentsPage(tweetId);
-    loadTweetsPage();
-  } else {
-    const e = await res.json().catch(() => ({}));
-    showToast('エラー: ' + (e.error || '失敗'), 'error');
+
+  // 楽観的更新: 先に DOM から除去 → 失敗時に同じ位置へ復元。
+  // フィード全体は再fetchしない（スクロール位置を保つ）。
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  const inner = wrap && wrap.querySelector('.tw-comments-inner');
+  const row = wrap && wrap.querySelector(`.tw-comment[data-comment-id="${commentId}"]`);
+  let restore = null;
+  if (row) {
+    const parent = row.parentNode;
+    const next = row.nextSibling;
+    row.remove();
+    restore = () => { parent.insertBefore(row, next); };
+  }
+  _twUpdateCommentCountLocal(tweetId, -1);
+
+  const rollback = () => {
+    if (restore) restore();
+    _twUpdateCommentCountLocal(tweetId, +1);
+  };
+
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast('削除しました', 'success');
+      if (!row) {
+        // 行 DOM が見つからなかったレアケースのみ従来どおり再読込
+        await loadTweetCommentsPage(tweetId);
+      } else if (inner && !inner.querySelector('.tw-comment') && !inner.querySelector('.tw-comment-empty')) {
+        // 0件になったら空表示を出す
+        const empty = document.createElement('div');
+        empty.className = 'tw-comment-empty';
+        empty.textContent = 'まだコメントはありません';
+        const form = inner.querySelector('.tw-comment-form');
+        if (form) inner.insertBefore(empty, form); else inner.appendChild(empty);
+      }
+    } else {
+      const e = await res.json().catch(() => ({}));
+      rollback();
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+    }
+  } catch (e) {
+    console.warn('[tweets-page] comment delete failed', e);
+    rollback();
+    showToast('通信エラー: 削除できませんでした', 'error');
   }
 }
 
