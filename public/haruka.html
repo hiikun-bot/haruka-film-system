@@ -15670,6 +15670,8 @@ function closeModal(id) {
     __cdSkipDirtyCheck = false;
     __cdDraftCurrentId = null;
     __cdInitialSnapshot = null;
+    // faststart 再生成ポーリングを停止（リーク防止）
+    try { cdStopFaststartPolling(); } catch (_) {}
     // 次回 open に向けてスピナーを下げる（連打中に close→reopen された場合の保険）
     try { _cdShowOverlay(false); } catch (_) {}
     // ADR 011: 移動した DOM を元の親に戻す（次回 open 時の状態整合性）
@@ -15733,6 +15735,8 @@ document.addEventListener('keydown', (e) => {
     __cdSkipDirtyCheck = false;
     __cdDraftCurrentId = null;
     __cdInitialSnapshot = null;
+    // faststart 再生成ポーリングを停止（リーク防止）
+    try { cdStopFaststartPolling(); } catch (_) {}
     // ADR 011: 移動した DOM を元の親に戻す
     try {
       _cdMoveRightColumnElements(false);
@@ -31833,7 +31837,12 @@ function _cdRenderFileCard(f, opts) {
   const fsUrl    = f.faststart_drive_url || '';
   const isAdmin  = (typeof effectiveRole === 'function' && effectiveRole() === 'admin');
   let fsBadge = '';
-  if (fsStatus === 'pending') {
+  // 再生成ポーリング中（pending/processing）は「自動更新中」であることを明示
+  const isFsPolling = (typeof _cdFsPollingFileId !== 'undefined') && _cdFsPollingFileId === f.id
+    && (fsStatus === 'pending' || fsStatus === 'processing');
+  if (isFsPolling) {
+    fsBadge = `<span title="faststart 再生成中（5秒ごとに自動確認）" style="font-size:10px;color:#1e40af;background:#dbeafe;border:0.5px solid #93c5fd;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⏳ 生成中…（自動更新）</span>`;
+  } else if (fsStatus === 'pending') {
     fsBadge = `<span title="プレビュー版生成待ち" style="font-size:10px;color:#92400e;background:#fef3c7;border:0.5px solid #fcd34d;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⏳ 準備中</span>`;
   } else if (fsStatus === 'processing') {
     fsBadge = `<span title="プレビュー版生成中" style="font-size:10px;color:#1e40af;background:#dbeafe;border:0.5px solid #93c5fd;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">🎞 生成中</span>`;
@@ -31950,6 +31959,75 @@ async function reshareClientReviewUrl() {
   }
 }
 
+// ===== faststart 再生成のステータスポーリング =====
+// 旧実装は fire-and-forget（2秒後に一覧を1回再読込するだけ）で、生成完了/失敗が
+// ユーザーに伝わらなかった。素材広場の msStartPreviewPolling と同じ 5秒間隔で
+// done / failed になるまで自動追跡する。
+//   - ポーリング中のファイルはバッジが「⏳ 生成中…（自動更新）」になる
+//   - done → 「✅ 完了」トースト + 一覧再描画（✅ プレビュー版 バッジに変わる）
+//   - failed → 「❌ 失敗」トースト + 一覧再描画（⚠️ 生成失敗 + 再生成ボタンに戻る）
+//   - モーダルを閉じる / 別のクリエイティブを開く と停止（リーク防止）
+//   - 最大 3 分（5s × 36 回）でタイムアウトして停止（再生成ボタンで再試行可能）
+let _cdFsPollingTimer = null;
+let _cdFsPollingFileId = null;
+let _cdFsPollingCount = 0;
+const CD_FS_POLL_INTERVAL_MS = 5000;
+const CD_FS_POLL_MAX_TICKS = 36; // 5s × 36 = 180s
+
+function cdStopFaststartPolling() {
+  if (_cdFsPollingTimer) {
+    clearInterval(_cdFsPollingTimer);
+    _cdFsPollingTimer = null;
+  }
+  _cdFsPollingFileId = null;
+  _cdFsPollingCount = 0;
+}
+
+function cdStartFaststartPolling(creativeId, creativeFileId) {
+  // 同じファイルのポーリングが既に走っていれば何もしない
+  if (_cdFsPollingTimer && _cdFsPollingFileId === creativeFileId) return;
+  cdStopFaststartPolling();
+  _cdFsPollingFileId = creativeFileId;
+  _cdFsPollingCount = 0;
+  _cdFsPollingTimer = setInterval(async () => {
+    _cdFsPollingCount += 1;
+    // モーダルが閉じられた / 別のクリエイティブが開かれた → 停止
+    const modalOpen = document.getElementById('modal-creative-detail')?.classList.contains('open');
+    if (!modalOpen || currentCreativeDetail?.id !== creativeId) {
+      cdStopFaststartPolling();
+      return;
+    }
+    // タイムアウト（バックエンドの処理は続いているので案内だけ出して止める）
+    if (_cdFsPollingCount > CD_FS_POLL_MAX_TICKS) {
+      cdStopFaststartPolling();
+      showToast('faststart 生成が長引いています。完了次第バッジが変わります（再生成ボタンから再試行も可能）', 'info');
+      try { loadCreativeFiles(creativeId); } catch (_) {}
+      return;
+    }
+    try {
+      const res = await apiFetch(`${API}/creatives/${creativeId}/files`);
+      if (!res.ok) return; // 単発の失敗は次の tick で再試行
+      const files = await res.json();
+      const f = Array.isArray(files) ? files.find(x => x.id === creativeFileId) : null;
+      if (!f) { cdStopFaststartPolling(); return; }
+      const st = f.faststart_status;
+      if (st === 'done') {
+        cdStopFaststartPolling();
+        showToast('✅ faststart プレビュー版の生成が完了しました', 'info');
+        loadCreativeFiles(creativeId); // バッジを「✅ プレビュー版」に更新
+      } else if (st === 'failed') {
+        cdStopFaststartPolling();
+        showToast('❌ faststart 生成に失敗しました（「↻ 再生成」から再試行できます）', 'warn');
+        loadCreativeFiles(creativeId); // 「⚠️ 生成失敗 + 再生成」表示に戻す
+      }
+      // pending / processing はそのまま継続（バッジは「⏳ 生成中…（自動更新）」のまま）
+    } catch (e) {
+      // 単発の通信エラーは無視（次の tick で再試行）。連続失敗してもタイムアウトで止まる
+      console.warn('[creative-detail] faststart polling fetch failed:', e?.message || e);
+    }
+  }, CD_FS_POLL_INTERVAL_MS);
+}
+
 // faststart プレビュー版を再生成（管理者のみ表示される失敗時の再生成ボタン用）
 async function regenerateFaststart(creativeFileId) {
   if (!creativeFileId) return;
@@ -31965,10 +32043,12 @@ async function regenerateFaststart(creativeFileId) {
       showToast(`再生成リクエスト失敗: ${json.error || res.status}`, 'warn');
       return;
     }
-    showToast('faststart 再生成をリクエストしました（バックグラウンド処理中）', 'info');
-    // 数秒後にファイル一覧を再読込してステータスを反映
+    showToast('⏳ faststart 再生成中…（5秒ごとに自動で状態を確認します）', 'info');
+    // done / failed まで 5 秒間隔でポーリング（旧: 2秒後に1回だけ再読込する fire-and-forget）
     if (currentCreativeDetail?.id) {
-      setTimeout(() => loadCreativeFiles(currentCreativeDetail.id), 2000);
+      cdStartFaststartPolling(currentCreativeDetail.id, creativeFileId);
+      // すぐに一覧を再読込してバッジを「⏳ 生成中…（自動更新）」へ
+      loadCreativeFiles(currentCreativeDetail.id);
     }
   } catch (e) {
     showToast(`再生成エラー: ${e.message}`, 'warn');
@@ -37540,18 +37620,24 @@ const CD_RESUMABLE_THRESHOLD_BYTES = 20 * 1024 * 1024; // これ以上は Resuma
 const CD_RESUMABLE_CHUNK_BYTES = 16 * 1024 * 1024;     // 16MB（256KB の倍数 = Drive 要件）。進捗の粒度兼リトライ単位
 
 // Drive セッションURLへ 1 チャンクを XHR で PUT（XHR は upload 進捗が取れる）。
+// クリエイティブ詳細・素材広場の両方から使う共通関数。
 // 解決値: { status, fileId, rangeEnd }。308=部分受領 / 200・201=完了。
-function cdPutChunkToDrive(sessionUrl, chunk, contentRange, onProgress) {
+// 失敗時の reject:
+//   - 4xx → err.__noRetry = true（リトライしても無駄）
+//   - abort → err.__cancelled = true
+// opts.onXhrReady(xhr): send 前に XHR インスタンスを受け取る（キャンセル用に保持する目的）
+// 認証について: Drive resumable セッションURLは URL 自体が認可情報を含むため認証ヘッダ不要。
+// 必要なのは Content-Range のみ（Content-Length / Content-Type は XHR が自動付与 = fetch 版と同じ）。
+function drivePutChunkXhr(sessionUrl, chunk, contentRange, { onProgress, onXhrReady } = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    _cdActiveUploadXhr = xhr; // cancelUpload() から abort できるよう保持
+    if (onXhrReady) onXhrReady(xhr);
     xhr.open('PUT', sessionUrl, true);
     xhr.setRequestHeader('Content-Range', contentRange);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded);
     };
     xhr.onload = () => {
-      _cdActiveUploadXhr = null;
       const status = xhr.status;
       if (status === 308 || status === 200 || status === 201) {
         let fileId = null;
@@ -37570,10 +37656,18 @@ function cdPutChunkToDrive(sessionUrl, chunk, contentRange, onProgress) {
         reject(new Error(`Drive 応答 ${status}: ${(xhr.responseText || '').slice(0, 200)}`));
       }
     };
-    xhr.onerror = () => { _cdActiveUploadXhr = null; reject(new Error('ネットワークエラー（Drive 直送）')); };
-    xhr.onabort = () => { _cdActiveUploadXhr = null; reject(Object.assign(new Error('キャンセルされました'), { __cancelled: true })); };
+    xhr.onerror = () => reject(new Error('ネットワークエラー（Drive 直送）'));
+    xhr.onabort = () => reject(Object.assign(new Error('キャンセルされました'), { __cancelled: true }));
     xhr.send(chunk);
   });
+}
+
+// クリエイティブ詳細用ラッパー: cancelUpload() から abort できるよう _cdActiveUploadXhr を管理
+function cdPutChunkToDrive(sessionUrl, chunk, contentRange, onProgress) {
+  return drivePutChunkXhr(sessionUrl, chunk, contentRange, {
+    onProgress,
+    onXhrReady: (xhr) => { _cdActiveUploadXhr = xhr; },
+  }).finally(() => { _cdActiveUploadXhr = null; });
 }
 
 // Resumable 直送の本体。init → チャンク PUT ループ → complete。
@@ -42120,8 +42214,10 @@ function msProbeVideoDuration(file) {
 // フォールバックは「安全側」= 25MB（multer 既定上限と同値）にして、
 // limits が取れていない状態で 25MB 超のファイルが Railway /upload に倒れて弾かれる事故を防ぐ。
 const MS_RESUMABLE_THRESHOLD_BYTES = 25 * 1024 * 1024;
-// チャンクサイズは 256MB の倍数（Drive Resumable Upload の要件）
-const MS_CHUNK_SIZE_BYTES = 256 * 1024 * 1024;
+// チャンクサイズは 256KB の倍数（Drive Resumable Upload の要件）。
+// 旧 256MB → 32MB に縮小: チャンク内進捗（XHR）の滑らかさと、失敗時のリトライ粒度を改善。
+// GB級でもチャンク跨ぎのオーバーヘッドは数十回程度で誤差。
+const MS_CHUNK_SIZE_BYTES = 32 * 1024 * 1024;
 // アクティブな大容量アップロード（ブラウザ閉じ防止用）
 const msActiveResumableUploads = new Set();
 
@@ -42253,9 +42349,10 @@ async function msHandleFiles(files) {
 //
 // 流れ:
 //   1) POST /upload-session/init で Drive セッションURLを得る
-//   2) 256MB 単位でチャンクを driveSessionUrl に PUT（Content-Range 必須）
-//      - 各チャンクごとに進捗バー更新
-//      - 失敗時は同チャンクをリトライ（指数バックオフ、最大5回）
+//   2) 32MB 単位でチャンクを driveSessionUrl に XHR PUT（Content-Range 必須）
+//      - XHR の upload.onprogress でチャンク内のバイト進捗もバーに反映
+//        （旧 fetch 版はチャンク完了までイベントが無く、GB級で「0%のまま数分」になっていた）
+//      - 失敗時は同チャンクをリトライ（指数バックオフ、最大5回。4xx/キャンセルは即中断）
 //   3) 最終チャンクのレスポンスJSONから driveFileId を取得
 //   4) POST /upload-session/:sessionId/complete に driveFileId を渡す
 async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {}) {
@@ -42298,6 +42395,27 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
     let driveFileId = null;
     let lastReportedSec = Date.now();
     let lastReportedBytes = 0;
+    let activeXhr = null; // 送信中チャンクの XHR（キャンセル時に mid-chunk abort する）
+
+    // チャンク内バイト進捗 → バー% とスループット/残り時間表示（0.5秒スロットル）
+    const reportProgress = (doneBytes) => {
+      const pct = Math.min(100, Math.round((doneBytes / totalSize) * 100));
+      onProgress && onProgress(pct);
+      const now = Date.now();
+      const dtSec = (now - lastReportedSec) / 1000;
+      if (dtSec >= 0.5) {
+        // リトライでチャンク先頭に巻き戻ると差分が負になり得るので 0 でクランプ
+        const dBytes = Math.max(0, doneBytes - lastReportedBytes);
+        const mbps = dtSec > 0 ? (dBytes / 1024 / 1024) / dtSec : 0;
+        const remainingBytes = Math.max(0, totalSize - doneBytes);
+        const etaSec = mbps > 0 ? Math.round(remainingBytes / 1024 / 1024 / mbps) : null;
+        const etaText = etaSec != null && Number.isFinite(etaSec)
+          ? `残り ${msFormatEta(etaSec)}` : '残り計測中';
+        onStatus && onStatus(`アップロード中 ${pct}% ・ 上り ${mbps.toFixed(1)}MB/s ・ ${etaText}`);
+        lastReportedSec = now;
+        lastReportedBytes = doneBytes;
+      }
+    };
 
     while (uploaded < totalSize) {
       if (shouldAbort && shouldAbort()) {
@@ -42310,72 +42428,50 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
 
       let attempt = 0;
       const MAX_ATTEMPTS = 5;
-      let putOk = false;
       let putRes = null;
-      while (attempt < MAX_ATTEMPTS) {
+      const chunkBase = uploaded; // このチャンクの先頭オフセット（進捗計算用に固定）
+      while (true) {
         attempt++;
         try {
-          putRes = await fetch(driveSessionUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Range': contentRange,
-              // Content-Length / Content-Type は fetch が自動付与
+          // XHR で PUT（fetch と違い upload.onprogress でチャンク内進捗が取れる）。
+          // ヘッダは fetch 版と同一: Content-Range のみ明示、Content-Length/Type は自動付与。
+          putRes = await drivePutChunkXhr(driveSessionUrl, chunk, contentRange, {
+            onXhrReady: (xhr) => { activeXhr = xhr; },
+            onProgress: (loadedInChunk) => {
+              // キャンセル要求が来ていたら送信中でも即 abort（onabort → __cancelled で reject）
+              if (shouldAbort && shouldAbort()) {
+                if (activeXhr) { try { activeXhr.abort(); } catch (_) {} }
+                return;
+              }
+              reportProgress(Math.min(totalSize, chunkBase + loadedInChunk));
             },
-            body: chunk,
-          });
-          // 308 = 部分受領（次チャンクへ）、200/201 = 全部完了
-          if (putRes.status === 308 || putRes.status === 200 || putRes.status === 201) {
-            putOk = true;
-            break;
-          }
-          // 5xx はリトライ。4xx はリトライしても無駄なので即時 throw
-          if (putRes.status >= 400 && putRes.status < 500) {
-            const text = await putRes.text().catch(() => '');
-            throw new Error(`Drive エラー (${putRes.status}): ${text.slice(0, 200)}`);
-          }
-          throw new Error(`Drive 応答 ${putRes.status}`);
+          }).finally(() => { activeXhr = null; });
+          break; // 308 / 200 / 201 のみ resolve される
         } catch (e) {
-          if (attempt >= MAX_ATTEMPTS) throw e;
+          if (e.__cancelled) {
+            // mid-chunk キャンセル → サーバー側セッションも掃除して中断
+            try { await votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/cancel', { method: 'POST' }); } catch (_) {}
+            throw new Error('キャンセルされました');
+          }
+          // 4xx（__noRetry）はリトライしても無駄なので即時 throw
+          if (e.__noRetry || attempt >= MAX_ATTEMPTS) throw e;
           const backoffMs = Math.min(30000, 500 * Math.pow(2, attempt - 1));
           onStatus && onStatus(`リトライ中… (${attempt}/${MAX_ATTEMPTS}) — ${e.message || e}`);
           await new Promise(r => setTimeout(r, backoffMs));
         }
       }
-      if (!putOk) throw new Error('チャンク送信に失敗しました');
 
-      // 進捗計算（Range ヘッダ "bytes=0-NNN" / 308 の場合は受領済みの末尾）
+      // 進捗計算（308 の場合は Range ヘッダ由来の受領済み末尾。無ければ end を仮置き）
       if (putRes.status === 308) {
-        // 308 の Range ヘッダから received-up-to を取得（無ければ end を仮置き）
-        const rangeHdr = putRes.headers.get('range');
-        const m = rangeHdr && /bytes=0-(\d+)/.exec(rangeHdr);
-        uploaded = m ? Number(m[1]) + 1 : end;
+        uploaded = (putRes.rangeEnd != null) ? putRes.rangeEnd + 1 : end;
       } else {
-        // 200/201: 完了。レスポンス JSON から fileId を取得
-        try {
-          const respJson = await putRes.json();
-          driveFileId = respJson?.id || null;
-        } catch (_) {}
+        // 200/201: 完了。レスポンス JSON 由来の fileId
+        driveFileId = putRes.fileId;
         uploaded = totalSize;
       }
 
-      // 進捗 UI
-      const pct = Math.min(100, Math.round((uploaded / totalSize) * 100));
-      onProgress && onProgress(pct);
-
-      // スループット表示（直近インターバル）
-      const now = Date.now();
-      const dtSec = (now - lastReportedSec) / 1000;
-      if (dtSec >= 0.5) {
-        const dBytes = uploaded - lastReportedBytes;
-        const mbps = dtSec > 0 ? (dBytes / 1024 / 1024) / dtSec : 0;
-        const remainingBytes = Math.max(0, totalSize - uploaded);
-        const etaSec = mbps > 0 ? Math.round(remainingBytes / 1024 / 1024 / mbps) : null;
-        const etaText = etaSec != null && Number.isFinite(etaSec)
-          ? `残り ${msFormatEta(etaSec)}` : '残り計測中';
-        onStatus && onStatus(`アップロード中 ${pct}% ・ 上り ${mbps.toFixed(1)}MB/s ・ ${etaText}`);
-        lastReportedSec = now;
-        lastReportedBytes = uploaded;
-      }
+      // チャンク確定時点の進捗 UI（Range 巻き戻りがあればここで正確な位置に補正される）
+      reportProgress(uploaded);
 
       // 任意: サーバー側の進捗 DB を更新（ベストエフォート）
       votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/progress', {
