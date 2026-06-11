@@ -17,7 +17,14 @@ const {
   userHasRole,
   getUsersRolesMap,
   invalidateRolesCache,
+  loadRoles,
 } = require('../utils/roles');
+const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
+
+// マスタ系 GET エンドポイント共通の TTL。
+// utils/roles.js（ROLES_TTL_MS = 60s）と同じ「短期キャッシュ + 書き込み時 invalidate」
+// パターンの汎用版（utils/ttl-cache.js）。マスタ編集の反映遅延を最小にするため 30s。
+const MASTER_CACHE_TTL_MS = 30 * 1000;
 const {
   BUILTIN_FIELDS,
   BUILTIN_FIELD_LABELS,
@@ -1366,21 +1373,28 @@ const isMissingCategoriesTable = (err) =>
 //   sort_order 昇順（同値時は name 昇順）。
 router.get('/categories', async (req, res) => {
   const includeInactive = String(req.query.include_inactive || '') === '1';
-  let query = supabase
-    .from('creative_categories')
-    .select('*')
-    .order('sort_order', { ascending: true })
-    .order('name', { ascending: true });
-  if (!includeInactive) query = query.eq('is_active', true);
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingCategoriesTable(error)) {
-      console.warn('[categories] creative_categories table missing. Apply migrations/2026-05-05_creative_categories.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
+  try {
+    const out = await ttlCache(`categories:${includeInactive ? 'all' : 'active'}`, MASTER_CACHE_TTL_MS, async () => {
+      let query = supabase
+        .from('creative_categories')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true });
+      if (!includeInactive) query = query.eq('is_active', true);
+      const { data, error } = await query;
+      if (error) {
+        if (isMissingCategoriesTable(error)) {
+          console.warn('[categories] creative_categories table missing. Apply migrations/2026-05-05_creative_categories.sql');
+          return [];
+        }
+        throw new Error(error.message);
+      }
+      return data || [];
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(data || []);
 });
 
 // GET /api/categories/:id  単件取得
@@ -1426,6 +1440,7 @@ router.post('/categories', requireAuth, requirePermission('master.page'), async 
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('categories:');
   res.json(data);
 });
 
@@ -1458,6 +1473,7 @@ router.put('/categories/:id', requireAuth, requirePermission('master.page'), asy
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('categories:');
   res.json(data);
 });
 
@@ -1485,6 +1501,7 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('categories:');
   res.json({ ok: true });
 });
 
@@ -1803,19 +1820,26 @@ const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
 
 // GET /api/filename-templates  一覧（is_default が先頭、その後 name 昇順）
 router.get('/filename-templates', async (_req, res) => {
-  const { data, error } = await supabase
-    .from('filename_templates')
-    .select('*')
-    .order('is_default', { ascending: false })
-    .order('name', { ascending: true });
-  if (error) {
-    if (isMissingFilenameTemplatesTable(error)) {
-      console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
+  try {
+    const out = await ttlCache('filename-templates:list', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('filename_templates')
+        .select('*')
+        .order('is_default', { ascending: false })
+        .order('name', { ascending: true });
+      if (error) {
+        if (isMissingFilenameTemplatesTable(error)) {
+          console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
+          return [];
+        }
+        throw new Error(error.message);
+      }
+      return data || [];
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(data || []);
 });
 
 // GET /api/filename-templates/:id  単件
@@ -1862,6 +1886,7 @@ router.post('/filename-templates', requireAuth, requirePermission('master.page')
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByKey('filename-templates:list');
   res.json(data);
 });
 
@@ -1905,6 +1930,7 @@ router.put('/filename-templates/:id', requireAuth, requirePermission('master.pag
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByKey('filename-templates:list');
   res.json(data);
 });
 
@@ -1944,6 +1970,7 @@ router.delete('/filename-templates/:id', requireAuth, requirePermission('master.
   }
   const { error } = await supabase.from('filename_templates').delete().eq('id', id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('filename-templates:list');
   res.json({ ok: true });
 });
 
@@ -2013,25 +2040,31 @@ function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr,
 //   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
 router.get('/status-templates', async (req, res) => {
   const { category_id } = req.query;
-  let query = supabase
-    .from('creative_status_templates')
-    .select('*, items:creative_status_template_items(*)')
-    .order('is_default', { ascending: false })
-    .order('name', { ascending: true });
-  if (category_id) query = query.eq('category_id', category_id);
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingCategoriesTable(error) || /relation .*creative_status_templates.* does not exist/i.test(error.message || '')) {
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
+  try {
+    const out = await ttlCache(`status-templates:${category_id || 'all'}`, MASTER_CACHE_TTL_MS, async () => {
+      let query = supabase
+        .from('creative_status_templates')
+        .select('*, items:creative_status_template_items(*)')
+        .order('is_default', { ascending: false })
+        .order('name', { ascending: true });
+      if (category_id) query = query.eq('category_id', category_id);
+      const { data, error } = await query;
+      if (error) {
+        if (isMissingCategoriesTable(error) || /relation .*creative_status_templates.* does not exist/i.test(error.message || '')) {
+          return [];
+        }
+        throw new Error(error.message);
+      }
+      // items を sort_order 昇順に整列して返す
+      return (data || []).map(t => ({
+        ...t,
+        items: (t.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+      }));
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  // items を sort_order 昇順に整列して返す
-  const out = (data || []).map(t => ({
-    ...t,
-    items: (t.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
-  }));
-  res.json(out);
 });
 
 // ==================== 見積行 / 成果物グループ（project_estimate_lines）Stage 4a ====================
@@ -9835,6 +9868,7 @@ router.delete('/members/:id', requireAuth, requirePermission('member.delete'), a
     // ユーザー削除
     const { error } = await supabase.from('users').delete().eq('id', targetId);
     if (error) return res.status(500).json({ error: error.message });
+    invalidateByKey('teams:list'); // teams.director_id / producer_id を null 化したため
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -13441,13 +13475,20 @@ async function syncBallHolderId(creativeId, sb) {
 
 // 訴求タイプマスター一覧
 router.get('/appeal-types', async (req, res) => {
-  const { data, error } = await supabase
-    .from('appeal_types')
-    .select('*')
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache('appeal-types:active', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('appeal_types')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.get('/projects/:id/appeal-types', async (req, res) => {
@@ -13596,32 +13637,39 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
 
 // チーム一覧
 router.get('/teams', async (req, res) => {
-  // team_members.leader_rank はチームカード内のメンバー順序（リーダー優先）に使うので含める。
-  // 旧スキーマ環境（leader_rank 列なし）でも壊れないよう、エラーになったら user_id のみで再取得する。
-  let { data, error } = await supabase
-    .from('teams')
-    .select(`
-      *,
-      director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
-      producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
-      team_members(user_id, leader_rank)
-    `)
-    .order('team_code');
-  if (error) {
-    console.warn('[GET /teams] leader_rank select failed, fallback to user_id only:', error.message);
-    const fb = await supabase
-      .from('teams')
-      .select(`
-        *,
-        director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
-        producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
-        team_members(user_id)
-      `)
-      .order('team_code');
-    if (fb.error) return res.status(500).json({ error: fb.error.message });
-    data = fb.data;
+  try {
+    const out = await ttlCache('teams:list', MASTER_CACHE_TTL_MS, async () => {
+      // team_members.leader_rank はチームカード内のメンバー順序（リーダー優先）に使うので含める。
+      // 旧スキーマ環境（leader_rank 列なし）でも壊れないよう、エラーになったら user_id のみで再取得する。
+      let { data, error } = await supabase
+        .from('teams')
+        .select(`
+          *,
+          director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
+          producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
+          team_members(user_id, leader_rank)
+        `)
+        .order('team_code');
+      if (error) {
+        console.warn('[GET /teams] leader_rank select failed, fallback to user_id only:', error.message);
+        const fb = await supabase
+          .from('teams')
+          .select(`
+            *,
+            director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
+            producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
+            team_members(user_id)
+          `)
+          .order('team_code');
+        if (fb.error) throw new Error(fb.error.message);
+        data = fb.data;
+      }
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(data);
 });
 
 // チーム作成
@@ -13636,6 +13684,7 @@ router.post('/teams', requireAuth, requirePermission('team.manage'), async (req,
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('teams:list');
   res.json(data);
 });
 
@@ -13678,6 +13727,7 @@ router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (r
     }
   }
 
+  invalidateByKey('teams:list');
   res.json(data);
 });
 
@@ -13740,6 +13790,7 @@ router.put('/teams/:team_id/members/:user_id/leader-rank', requireAuth, requireP
     if (insErr) return res.status(500).json({ error: insErr.message });
   }
 
+  invalidateByKey('teams:list');
   res.json({ ok: true, team_id, user_id, leader_rank });
 });
 
@@ -13750,6 +13801,7 @@ router.delete('/teams/:id', requireAuth, requirePermission('team.delete'), async
   const teamId = req.params.id;
   const { error } = await supabase.from('teams').delete().eq('id', teamId);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('teams:list');
   res.json({ ok: true });
 });
 
@@ -14294,12 +14346,19 @@ router.get('/drive-diagnose', requireAuth, async (_req, res) => {
 
 // 区分マスター一覧
 router.get('/master/categories', async (_req, res) => {
-  const { data, error } = await supabase
-    .from('master_categories')
-    .select('*')
-    .order('sort_order').order('created_at');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache('master-categories:list', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('master_categories')
+        .select('*')
+        .order('sort_order').order('created_at');
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 区分マスター作成
@@ -14311,6 +14370,7 @@ router.post('/master/categories', requireAuth, requirePermission('master.page'),
     .insert({ name, code, sort_order: parseInt(sort_order) || 0 })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('master-categories:list');
   res.json(data);
 });
 
@@ -14330,6 +14390,8 @@ router.put('/master/categories/:id', requireAuth, requirePermission('master.page
     .update({ name, code: existing && PROTECTED_CATEGORY_CODES.includes(existing.code) ? existing.code : code, sort_order: parseInt(sort_order) || 0, is_active, updated_at: new Date().toISOString() })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('master-categories:list');
+  invalidateByPrefix('master-items:'); // master_items GET は master_categories(name, code) を embed しているため
   res.json(data);
 });
 
@@ -14341,6 +14403,8 @@ router.delete('/master/categories/:id', requireAuth, requirePermission('master.p
   }
   const { error } = await supabase.from('master_categories').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('master-categories:list');
+  invalidateByPrefix('master-items:'); // CASCADE で master_items も消えるため
   res.json({ ok: true });
 });
 
@@ -14349,36 +14413,53 @@ router.delete('/master/categories/:id', requireAuth, requirePermission('master.p
 // 値一覧（管理用：全件）
 router.get('/master/items', async (req, res) => {
   const { category_id } = req.query;
-  let query = supabase
-    .from('master_items')
-    .select('*, master_categories(id, name, code)')
-    .order('sort_order').order('created_at');
-  if (category_id) query = query.eq('category_id', category_id);
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache(`master-items:all:${category_id || ''}`, MASTER_CACHE_TTL_MS, async () => {
+      let query = supabase
+        .from('master_items')
+        .select('*, master_categories(id, name, code)')
+        .order('sort_order').order('created_at');
+      if (category_id) query = query.eq('category_id', category_id);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 値一覧（プルダウン用：有効かつ期限内のみ）
 router.get('/master/items/active', async (req, res) => {
-  let { category_id, category_code } = req.query;
-  // category_code が指定された場合は先に category_id を解決
-  if (!category_id && category_code) {
-    const { data: cat } = await supabase.from('master_categories').select('id').eq('code', category_code).single();
-    if (cat) category_id = cat.id;
-    else return res.json([]); // 該当カテゴリーなし
+  // expires_at 判定の now はキャッシュ生成時点で固定されるが、TTL 30秒以内の
+  // ズレなので「期限切れ直後に最大30秒だけ表示が残る」程度で実害なし。
+  const cacheKey = `master-items:active:${req.query.category_id || ''}:${req.query.category_code || ''}`;
+  try {
+    const out = await ttlCache(cacheKey, MASTER_CACHE_TTL_MS, async () => {
+      let { category_id, category_code } = req.query;
+      // category_code が指定された場合は先に category_id を解決
+      if (!category_id && category_code) {
+        const { data: cat } = await supabase.from('master_categories').select('id').eq('code', category_code).single();
+        if (cat) category_id = cat.id;
+        else return []; // 該当カテゴリーなし
+      }
+      const now = new Date().toISOString();
+      let query = supabase
+        .from('master_items')
+        .select('*, master_categories(id, name, code)')
+        .eq('is_active', true)
+        .or(`expires_at.is.null,expires_at.gt.${now}`)
+        .order('sort_order').order('created_at');
+      if (category_id) query = query.eq('category_id', category_id);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const now = new Date().toISOString();
-  let query = supabase
-    .from('master_items')
-    .select('*, master_categories(id, name, code)')
-    .eq('is_active', true)
-    .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .order('sort_order').order('created_at');
-  if (category_id) query = query.eq('category_id', category_id);
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
 });
 
 // 値作成
@@ -14396,6 +14477,7 @@ router.post('/master/items', requireAuth, requirePermission('master.page'), asyn
     })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('master-items:');
   res.json(data);
 });
 
@@ -14414,6 +14496,7 @@ router.put('/master/items/:id', requireAuth, requirePermission('master.page'), a
     })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('master-items:');
   res.json(data);
 });
 
@@ -14421,6 +14504,7 @@ router.put('/master/items/:id', requireAuth, requirePermission('master.page'), a
 router.delete('/master/items/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { error } = await supabase.from('master_items').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('master-items:');
   res.json({ ok: true });
 });
 
@@ -16224,13 +16308,14 @@ router.post('/creative-files/:fileId/checklist/toggle', requireAuth, async (req,
 //   ROLE_LABEL_SHORT / VIEW AS ボタン などを roles マスタ駆動に切り替えるための入口。
 //   archived_at IS NULL のみ返す。並び順は sort_order 昇順。
 router.get('/roles', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('roles')
-    .select('id, code, label, category, sort_order, is_creator, is_internal, archived_at')
-    .is('archived_at', null)
-    .order('sort_order', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  // utils/roles.js の 60秒 TTL キャッシュを再利用（loadRoles は失敗時に最後に
+  // 読めたキャッシュへフォールバックするため、ここで素の SELECT を再発行しない）。
+  // フィルタ・並び順は旧実装（archived_at IS NULL / sort_order 昇順）を踏襲。
+  const { byCode } = await loadRoles();
+  const out = Array.from(byCode.values())
+    .filter(r => !r.archived_at)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  res.json(out);
 });
 
 // ロール権限取得（全ユーザーがアクセス可能。自身のUIのために必要）
@@ -16239,20 +16324,28 @@ router.get('/roles', requireAuth, async (req, res) => {
 //   合成値 'producer_director' の行は role_id NULL のまま残るので、フロントは
 //   role TEXT で識別できる。
 router.get('/role-permissions', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('role_permissions')
-    .select('role, permission_key, allowed, role_id, roles(code, label)');
-  if (error) return res.status(500).json({ error: error.message });
-  // 互換のためフラットに展開（roles.code を role_code として並走）
-  const flat = (data || []).map(r => ({
-    role: r.role,
-    role_id: r.role_id,
-    role_code: r.roles ? r.roles.code : null,
-    role_label: r.roles ? r.roles.label : null,
-    permission_key: r.permission_key,
-    allowed: !!r.allowed,
-  }));
-  res.json(flat);
+  // roles.js の loadPermissionsByCode() は Map<"code|key", boolean> 形式で
+  // label / role_id を持たないため、フラット展開済みレスポンスを ttlCache で別途キャッシュする。
+  try {
+    const flat = await ttlCache('role-permissions:flat', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('role_permissions')
+        .select('role, permission_key, allowed, role_id, roles(code, label)');
+      if (error) throw new Error(error.message);
+      // 互換のためフラットに展開（roles.code を role_code として並走）
+      return (data || []).map(r => ({
+        role: r.role,
+        role_id: r.role_id,
+        role_code: r.roles ? r.roles.code : null,
+        role_label: r.roles ? r.roles.label : null,
+        permission_key: r.permission_key,
+        allowed: !!r.allowed,
+      }));
+    });
+    res.json(flat);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 有効なロール／権限キーのホワイトリスト
@@ -16301,7 +16394,8 @@ router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res)
   const { error } = await supabase
     .from('role_permissions').upsert(rows, { onConflict: 'role,permission_key' });
   if (error) return res.status(500).json({ error: error.message });
-  invalidatePermissionsCache(); // 即時反映
+  invalidatePermissionsCache(); // 即時反映（auth.js / utils/roles.js 側のキャッシュ）
+  invalidateByKey('role-permissions:flat'); // GET /role-permissions の TTL キャッシュ
   res.json({ ok: true, count: rows.length });
 });
 
