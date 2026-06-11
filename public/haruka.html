@@ -2210,7 +2210,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   <div style="max-width:560px;width:95vw;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #e0e0e0">
       <span style="font-size:15px;font-weight:600;color:#222">🐛 不具合を報告</span>
-      <button class="modal-close" onclick="closeModal('modal-error-report')" style="background:none;border:none;font-size:20px;cursor:pointer">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-error-report')" style="background:none;border:none;font-size:20px;cursor:pointer">×</button>
     </div>
     <div style="padding:16px 20px;overflow-y:auto">
       <div style="background:#fff7e0;border:1px solid #f0c36d;color:#7a5b00;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px">
@@ -2228,7 +2228,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
       へ（対応者・ステータス管理あり）
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid #e0e0e0;background:#fafafa">
-      <button class="btn" onclick="closeModal('modal-error-report')" style="font-size:13px;padding:8px 16px">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-error-report')" style="font-size:13px;padding:8px 16px">キャンセル</button>
       <button class="btn-primary" id="error-report-submit-btn" onclick="submitErrorReport()" style="font-size:13px;padding:8px 20px">送信</button>
     </div>
   </div>
@@ -2686,7 +2686,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal-card" style="width:1180px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column">
     <div class="modal-title" style="flex-shrink:0">
       <span>請求書を修正 <span id="ei-invoice-num" style="font-size:12px;color:var(--text-muted);font-weight:400;margin-left:8px"></span></span>
-      <button class="modal-close" onclick="closeModal('modal-edit-invoice')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-edit-invoice')">×</button>
     </div>
     <input type="hidden" id="ei-invoice-id">
     <div id="ei-readonly-notice" style="display:none;background:#FFF3F3;border:1px solid #F09595;color:#A32D2D;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px;flex-shrink:0">
@@ -2709,7 +2709,7 @@ window.showPage = window.showPage || function(name, btn) {
         <span id="ei-total" style="font-size:18px;font-weight:700;color:var(--em-dark)">¥0</span>
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn" onclick="closeModal('modal-edit-invoice')">キャンセル</button>
+        <button class="btn" onclick="closeModalGuarded('modal-edit-invoice')">キャンセル</button>
         <button class="btn-primary" id="ei-save-btn" onclick="saveInvoiceEdit()">保存する</button>
       </div>
     </div>
@@ -2730,7 +2730,7 @@ window.showPage = window.showPage || function(name, btn) {
 <!-- 全体連絡: 投稿/編集モーダル -->
 <div class="modal-overlay" id="modal-announcement-compose">
   <div class="modal-card" style="width:680px">
-    <div class="modal-title"><span id="ann-c-modal-title">📢 全体連絡を投稿</span><button class="modal-close" onclick="closeModal('modal-announcement-compose')">×</button></div>
+    <div class="modal-title"><span id="ann-c-modal-title">📢 全体連絡を投稿</span><button class="modal-close" onclick="closeModalGuarded('modal-announcement-compose')">×</button></div>
     <input type="hidden" id="ann-c-id" value="">
     <div class="form-group">
       <label class="form-label">タイトル <span style="color:#C0392B">*</span></label>
@@ -2752,7 +2752,7 @@ window.showPage = window.showPage || function(name, btn) {
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px;margin-left:22px">投稿先はマスター → システム設定で変更できます</div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-announcement-compose')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-announcement-compose')">キャンセル</button>
       <button class="btn-primary" id="ann-c-submit-btn" onclick="submitAnnouncement()">投稿する</button>
     </div>
   </div>
@@ -2799,7 +2799,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal-card" style="width:420px">
     <div class="modal-title">
       <span>配信日時を変更</span>
-      <button class="modal-close" onclick="closeModal('modal-scheduled-reschedule')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-scheduled-reschedule')">×</button>
     </div>
     <div style="padding:6px 0 14px">
       <input type="hidden" id="rs-target-id" value="">
@@ -2809,7 +2809,7 @@ window.showPage = window.showPage || function(name, btn) {
       <div id="rs-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-scheduled-reschedule')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-scheduled-reschedule')">キャンセル</button>
       <button class="btn-primary" id="rs-submit-btn" onclick="submitRescheduleNotification()">変更する</button>
     </div>
   </div>
@@ -2901,7 +2901,7 @@ window.showPage = window.showPage || function(name, btn) {
 <!-- つぶやき: 投稿モーダル -->
 <div class="modal-overlay" id="modal-tweet-compose">
   <div class="modal-card" style="width:520px">
-    <div class="modal-title">💭 つぶやき投稿<button class="modal-close" onclick="closeModal('modal-tweet-compose')">×</button></div>
+    <div class="modal-title">💭 つぶやき投稿<button class="modal-close" onclick="closeModalGuarded('modal-tweet-compose')">×</button></div>
     <div class="form-group">
       <label class="form-label">写真 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
       <div id="tw-image-preview" style="width:100%;aspect-ratio:1/1;max-height:280px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px;text-align:center;padding:8px;transition:border-color .15s,background-color .15s" onclick="document.getElementById('tw-image-input').click()" ondragover="onTweetImageDragOver(event)" ondragenter="onTweetImageDragOver(event)" ondragleave="onTweetImageDragLeave(event)" ondrop="onTweetImageDrop(event)">
@@ -2916,7 +2916,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">投稿は 90 日後に自動で非表示になります</div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-tweet-compose')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-tweet-compose')">キャンセル</button>
       <button class="btn-primary" id="tw-submit-btn" onclick="submitTweet()">投稿する</button>
     </div>
   </div>
@@ -2971,7 +2971,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal-card" style="width:min(720px,95vw);max-height:90vh;overflow-y:auto">
     <div class="modal-title">
       <span id="verup-editor-title">新規追加</span>
-      <button class="modal-close" onclick="closeModal('modal-verup-editor')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-verup-editor')">×</button>
     </div>
     <input type="hidden" id="vle-id">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -3061,7 +3061,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <div class="modal-footer">
       <button id="vle-delete-btn" class="btn danger" style="margin-right:auto;display:none" onclick="deleteVerupEntry()">削除</button>
-      <button class="btn" onclick="closeModal('modal-verup-editor')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-verup-editor')">キャンセル</button>
       <button class="btn-primary" onclick="submitVerupEntry()">保存</button>
     </div>
   </div>
@@ -3434,7 +3434,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal-card" style="width:760px;max-width:96vw">
     <div class="modal-title">
       <span id="fest-editor-title">📋 見積を編集</span>
-      <button class="modal-close" onclick="closeModal('modal-finance-estimate-editor')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-finance-estimate-editor')">×</button>
     </div>
     <input type="hidden" id="fest-id"> <!-- 編集モードならID、新規なら空 -->
 
@@ -3534,7 +3534,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
 
     <div class="modal-footer">
-      <button class="btn" onclick="closeModal('modal-finance-estimate-editor')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-finance-estimate-editor')">キャンセル</button>
       <button class="btn-primary" onclick="submitEstimateEditor()">保存する</button>
     </div>
   </div>
@@ -4782,7 +4782,7 @@ window.showPage = window.showPage || function(name, btn) {
        padding:0 で外側余白を消し、内部の sticky ヘッダー / スクロール領域 / sticky フッター構造を活かす。
        PR #137 の padding/margin 調整も内側ブロックに反映（margin:0 -4px 0 0 でスクロールバー分のはみ出しを抑える）。 -->
   <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;padding:0">
-    <div class="modal-title" id="t-modal-title" style="padding:20px 24px 0;margin-bottom:14px">チーム追加<button class="modal-close" onclick="closeModal('modal-team')">×</button></div>
+    <div class="modal-title" id="t-modal-title" style="padding:20px 24px 0;margin-bottom:14px">チーム追加<button class="modal-close" onclick="closeModalGuarded('modal-team')">×</button></div>
     <div style="overflow-y:auto;flex:1;padding:0 24px 8px;margin:0 -4px 0 0">
 
       <input type="hidden" id="t-id">
@@ -4834,7 +4834,7 @@ window.showPage = window.showPage || function(name, btn) {
       <button class="btn" id="t-delete-btn" onclick="deleteCurrentTeam()" style="display:none;color:#A32D2D;border-color:#F09595">🗑️ 削除</button>
       <div style="display:flex;gap:10px;margin-left:auto">
         <button class="btn-primary" id="t-submit-btn" onclick="saveTeam()">追加する</button>
-        <button class="btn" onclick="closeModal('modal-team')">キャンセル</button>
+        <button class="btn" onclick="closeModalGuarded('modal-team')">キャンセル</button>
       </div>
     </div>
   </div>
@@ -4873,7 +4873,7 @@ window.showPage = window.showPage || function(name, btn) {
 <!-- パスワード変更モーダル -->
 <div class="modal-overlay" id="modal-change-password">
   <div class="modal-card" style="max-width:400px">
-    <div class="modal-title">パスワード変更<button class="modal-close" onclick="closeModal('modal-change-password')">×</button></div>
+    <div class="modal-title">パスワード変更<button class="modal-close" onclick="closeModalGuarded('modal-change-password')">×</button></div>
     <div class="modal-body">
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">現在のパスワード</label>
@@ -4891,7 +4891,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <div class="modal-footer">
       <button class="btn-primary" id="cp-submit-btn" onclick="submitChangePassword()">変更する</button>
-      <button class="btn" onclick="closeModal('modal-change-password')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-change-password')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -4934,7 +4934,7 @@ window.showPage = window.showPage || function(name, btn) {
     <div style="flex-shrink:0;padding:22px 28px 0">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
         <span id="m-modal-title" style="font-size:17px;font-weight:700;color:var(--text)">メンバー追加</span>
-        <button class="modal-close" onclick="closeModal('modal-member')">×</button>
+        <button class="modal-close" onclick="closeModalGuarded('modal-member')">×</button>
       </div>
       <input type="hidden" id="m-id">
       <div style="display:flex;border-bottom:2px solid var(--border);flex-wrap:wrap">
@@ -5276,7 +5276,7 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- フッター -->
     <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 28px;border-top:1px solid var(--border);flex-shrink:0">
       <button class="btn-primary" id="m-submit-btn" onclick="submitMember()">追加する</button>
-      <button class="btn" onclick="closeModal('modal-member')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-member')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -5292,7 +5292,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
           <span id="cl-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">クライアント追加</span>
         </div>
-        <button class="modal-close" onclick="closeModal('modal-client')">×</button>
+        <button class="modal-close" onclick="closeModalGuarded('modal-client')">×</button>
       </div>
       <!-- タブナビ -->
       <div style="display:flex;border-bottom:1px solid var(--border)">
@@ -5556,7 +5556,7 @@ window.showPage = window.showPage || function(name, btn) {
         style="display:none;color:#A32D2D;border-color:#F09595;background:#fff">🗑 クライアントを削除</button>
       <div style="display:flex;gap:10px;margin-left:auto">
         <button class="btn-primary" id="cl-submit-btn" onclick="submitClient()">追加する</button>
-        <button class="btn" onclick="closeModal('modal-client')">閉じる</button>
+        <button class="btn" onclick="closeModalGuarded('modal-client')">閉じる</button>
       </div>
     </div>
 
@@ -5640,7 +5640,7 @@ window.showPage = window.showPage || function(name, btn) {
         <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
         <span id="pl-edit-title" style="font-size:14px;font-weight:700;color:#0F7A56">成果物グループを追加</span>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-project-line-edit')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-project-line-edit')">×</button>
     </div>
     <input type="hidden" id="pl-edit-id">
     <input type="hidden" id="pl-edit-project-id">
@@ -5678,7 +5678,7 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- ステータスは UI から廃止。新規登録時は常に「採用（受注=contracted）」で作成する -->
     <div id="pl-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-      <button class="btn" onclick="closeModal('modal-project-line-edit')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-project-line-edit')">キャンセル</button>
       <button class="btn-primary" id="pl-edit-save-btn" onclick="saveProjectLine()">保存</button>
     </div>
   </div>
@@ -5715,7 +5715,7 @@ window.showPage = window.showPage || function(name, btn) {
         <span style="display:inline-block;width:3px;height:14px;background:#0F9B6E;border-radius:2px"></span>
         <span id="plc-edit-title" style="font-size:14px;font-weight:700;color:#0F7A56">コストを追加</span>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-project-line-cost-edit')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-project-line-cost-edit')">×</button>
     </div>
     <input type="hidden" id="plc-edit-id">
     <input type="hidden" id="plc-edit-project-id">
@@ -5783,7 +5783,7 @@ window.showPage = window.showPage || function(name, btn) {
 
     <div id="plc-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-      <button class="btn" onclick="closeModal('modal-project-line-cost-edit')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-project-line-cost-edit')">キャンセル</button>
       <button class="btn-primary" id="plc-edit-save-btn" onclick="saveProjectLineCost()">保存</button>
     </div>
   </div>
@@ -5820,7 +5820,7 @@ window.showPage = window.showPage || function(name, btn) {
         <span style="display:inline-block;width:3px;height:14px;background:#7C3AED;border-radius:2px"></span>
         <span id="pfi-edit-title" style="font-size:14px;font-weight:700;color:#5B21B6">経費を追加</span>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-project-fixed-item-edit')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-project-fixed-item-edit')">×</button>
     </div>
     <input type="hidden" id="pfi-edit-id">
     <input type="hidden" id="pfi-edit-project-id">
@@ -5904,7 +5904,7 @@ window.showPage = window.showPage || function(name, btn) {
 
     <div id="pfi-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-      <button class="btn" onclick="closeModal('modal-project-fixed-item-edit')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-project-fixed-item-edit')">キャンセル</button>
       <button class="btn-primary" id="pfi-edit-save-btn" onclick="saveProjectFixedItem()">保存</button>
     </div>
   </div>
@@ -5945,7 +5945,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="width:4px;height:20px;background:var(--em);border-radius:2px"></div>
         <span id="p-modal-title" style="font-size:16px;font-weight:600;color:var(--text)">新規案件</span>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-project')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-project')">×</button>
     </div>
     <input type="hidden" id="p-id">
 
@@ -6562,7 +6562,7 @@ window.showPage = window.showPage || function(name, btn) {
       <div style="display:flex;gap:10px;align-items:center">
         <button class="btn" id="p-delete-btn" onclick="openProjectDeleteConfirm()" style="display:none;color:#A32D2D;border-color:#F09595;margin-right:auto">🗑️ 削除</button>
         <button class="btn-primary" id="p-submit-btn" onclick="submitProject()">追加する</button>
-        <button class="btn" onclick="closeModal('modal-project')">キャンセル</button>
+        <button class="btn" onclick="closeModalGuarded('modal-project')">キャンセル</button>
       </div>
     </div>
 
@@ -6575,7 +6575,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal" style="width:min(480px,92vw);padding:0;border-radius:12px;overflow:hidden">
     <div style="padding:16px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:15px;font-weight:600;color:var(--text)">🌐 外部ディレクターを新規登録</span>
-      <button class="modal-close" onclick="closeModal('modal-external-director-create')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-external-director-create')">×</button>
     </div>
     <div style="padding:18px 22px">
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.5">
@@ -6601,7 +6601,7 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
     <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
-      <button class="btn" onclick="closeModal('modal-external-director-create')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-external-director-create')">キャンセル</button>
       <button class="btn-primary" id="ext-d-submit-btn" onclick="submitCreateExternalDirector()">登録</button>
     </div>
   </div>
@@ -7422,7 +7422,7 @@ window.showPage = window.showPage || function(name, btn) {
   <div class="modal" style="width:860px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:15px;font-weight:700;color:var(--text)">クリエイティブ修正</div>
-      <button class="modal-close" onclick="closeModal('modal-creative-edit')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-creative-edit')">×</button>
     </div>
     <div style="padding:20px 24px;display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <!-- 左カラム -->
@@ -7510,7 +7510,7 @@ window.showPage = window.showPage || function(name, btn) {
         <span>🎬 芸能人・インフルエンサー起用</span>
       </label>
       <div style="display:flex;gap:10px">
-        <button class="btn" onclick="closeModal('modal-creative-edit')">キャンセル</button>
+        <button class="btn" onclick="closeModalGuarded('modal-creative-edit')">キャンセル</button>
         <button class="btn-primary" onclick="saveCreativeEdit()">保存</button>
       </div>
     </div>
@@ -7532,7 +7532,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div style="font-size:15px;font-weight:700;color:var(--text)">事後修正モード</div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:2px">案件取り違え等を後から修正します。すべての変更は履歴に残ります。</div>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-creative-postedit')">×</button>
+      <button class="modal-close" onclick="closeModalGuarded('modal-creative-postedit')">×</button>
     </div>
     <div style="flex:1;overflow-y:auto;min-height:0;padding:20px 24px;display:flex;flex-direction:column;gap:16px">
       <div style="font-size:12px;font-family:monospace;color:var(--em-dark);font-weight:600;word-break:break-all" id="pe-filename"></div>
@@ -7636,7 +7636,7 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
     <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--white)">
-      <button class="btn" onclick="closeModal('modal-creative-postedit')">キャンセル</button>
+      <button class="btn" onclick="closeModalGuarded('modal-creative-postedit')">キャンセル</button>
       <button class="btn-primary" onclick="saveCreativePostEdit()">保存</button>
     </div>
   </div>
@@ -15978,6 +15978,8 @@ function openModal(id) {
   const el = document.getElementById(id);
   if (!el) { console.warn('[openModal] no element:', id); return; }
   el.classList.add('open');
+  // 汎用 dirty ガード: 対象モーダルなら開いた時点の入力スナップショットを取得
+  try { __dirtyGuardOnOpen(el); } catch (_) {}
   try { if (window.__addBreadcrumb) window.__addBreadcrumb('modal_open', id); } catch (_) {}
 }
 // クリエイティブ詳細モーダルを「保存後の正規ルート」で閉じるときに立てるフラグ
@@ -16000,6 +16002,8 @@ function closeModal(id) {
     if (!ok) return;
   }
   el.classList.remove('open');
+  // 汎用 dirty ガードの状態をクリア（次回 openModal で再取得される）
+  try { __dirtyGuardState.delete(id); } catch (_) {}
   // 詳細モーダルを閉じたら状態クリア
   if (id === 'modal-creative-detail') {
     __cdSkipDirtyCheck = false;
@@ -16038,6 +16042,13 @@ document.addEventListener('click', (e) => {
   if (e.target !== overlay) return;
   if (!overlay.classList.contains('open')) return;
   if (overlay.dataset.noOverlayClose === 'true') return;
+  // 汎用 dirty ガード対象（入力フォームモーダル）: 入力中なら確認ダイアログを出す
+  if (__dirtyGuardState.has(overlay.id)) {
+    if (__dirtyGuardPrompting) return;
+    if (__isGuardedModalDirty(overlay)) { __dirtyGuardConfirmClose(overlay.id); }
+    else { closeModal(overlay.id); }
+    return;
+  }
   overlay.classList.remove('open');
 });
 document.addEventListener('keydown', (e) => {
@@ -16064,6 +16075,14 @@ document.addEventListener('keydown', (e) => {
     const ok = window.confirm('入力中の内容があります。閉じてもよろしいですか？\n（自動下書きは保存されているので次回開いたときに復元されます）');
     if (!ok) return;
   }
+  // 汎用 dirty ガード対象（入力フォームモーダル / data-no-overlay-close 付き）:
+  // Esc 1打では無確認で閉じない。dirty なら確認ダイアログ、無編集なら閉じる（脱出口は維持）
+  if (__dirtyGuardState.has(top.id)) {
+    if (__dirtyGuardPrompting) return;
+    if (__isGuardedModalDirty(top)) { __dirtyGuardConfirmClose(top.id); }
+    else { closeModal(top.id); }
+    return;
+  }
   top.classList.remove('open');
   // 詳細モーダルを閉じたら状態クリア（closeModal 経由でないので手動で）
   if (top.id === 'modal-creative-detail') {
@@ -16083,6 +16102,122 @@ document.addEventListener('keydown', (e) => {
       _cdFilesCache = [];
     } catch (_) {}
   }
+});
+
+// =============================================================================
+// 汎用 dirty ガード: フォームモーダルの誤操作1回（背景クリック / Esc / × / キャンセル）で
+// 入力内容が無確認で消える問題への対策
+// =============================================================================
+// 設計:
+// - 対象: DIRTY_GUARD_MODAL_IDS の入力フォームモーダル + data-no-overlay-close="true" 付きモーダル
+//   （modal-creative-detail は既存の __isCreativeDetailDirty + 自動下書き機構を優先するため除外）
+// - openModal 時に対象モーダル内の input/textarea/select の値スナップショットを取得。
+//   file/button 系は除外。動的に増減する行（請求明細等）は DOM 順の値配列として比較される。
+//   取得は setTimeout(0): openModal 直後に同期コードでフィールドを埋める編集モーダル
+//   （openEditMember 等）でも「初期値が入った状態」をスナップショットにするため。
+// - dirty 判定 = 「ユーザーが実際に入力した（trusted な input/change イベント）」AND
+//   「現在値がスナップショットと異なる」。プログラムによる非同期の値セット
+//   （ファイル名テンプレ select の遅延ロード等）だけでは dirty にならないため、
+//   無編集で閉じれば確認なし、の挙動が崩れない。
+// - 保存成功などプログラム経由の closeModal(id) は素通し。ユーザー起因の閉じる操作
+//   （closeModalGuarded / 背景クリック / Esc）だけ確認ダイアログを出す。
+const DIRTY_GUARD_MODAL_IDS = new Set([
+  'modal-creative',              // クリエイティブ追加（個別/一括）
+  'modal-project',               // 案件 追加/編集
+  'modal-member',                // メンバー 追加/編集
+  'modal-client',                // クライアント 追加/編集
+  'modal-team',                  // チーム 追加/編集
+  'modal-edit-invoice',          // 請求書編集（明細行）
+  'modal-announcement-compose',  // 全体連絡 作成/編集
+  'modal-tweet-compose',         // つぶやき投稿
+  'modal-creative-edit',         // クリエイティブ編集
+  'modal-creative-postedit',     // クリエイティブ事後修正
+  'modal-verup-editor',          // Verup情報 作成/編集
+  'modal-change-password',       // パスワード変更
+]);
+const __dirtyGuardState = new Map(); // modalId -> { snapshot: string|null, touched: boolean }
+let __dirtyGuardPrompting = false;   // 確認ダイアログ表示中の再入防止
+
+function __dirtyGuardApplies(el) {
+  if (!el || !el.id) return false;
+  if (el.id === 'modal-creative-detail') return false; // 既存の専用機構を優先
+  return DIRTY_GUARD_MODAL_IDS.has(el.id) || el.dataset.noOverlayClose === 'true';
+}
+
+function __dirtyGuardOnOpen(el) {
+  if (!__dirtyGuardApplies(el)) return;
+  const state = { snapshot: null, touched: false };
+  __dirtyGuardState.set(el.id, state);
+  // openModal 直後の同期フィールド代入（編集モーダルの初期値セット）を取り込むため次タスクで取得
+  setTimeout(() => {
+    if (__dirtyGuardState.get(el.id) !== state) return; // 既に閉じた/再オープン済みなら破棄
+    if (!el.classList.contains('open')) return;
+    state.snapshot = __dirtyGuardSerialize(el);
+  }, 0);
+}
+
+// モーダル内のフォーム要素値を DOM 順の配列として直列化（軽量: 対象モーダル内のみ走査）
+function __dirtyGuardSerialize(el) {
+  const values = [];
+  el.querySelectorAll('input, textarea, select').forEach((field) => {
+    const type = (field.type || '').toLowerCase();
+    if (type === 'file' || type === 'button' || type === 'submit' || type === 'reset' || type === 'image') return;
+    if (type === 'checkbox' || type === 'radio') values.push(field.checked ? '1' : '0');
+    else values.push(field.value || '');
+  });
+  return JSON.stringify(values);
+}
+
+function __isGuardedModalDirty(el) {
+  const state = el && __dirtyGuardState.get(el.id);
+  if (!state || !state.touched || state.snapshot == null) return false;
+  return __dirtyGuardSerialize(el) !== state.snapshot;
+}
+
+// 共通確認ダイアログ → 「破棄して閉じる」が選ばれたときだけ実際に閉じる
+function __dirtyGuardConfirmClose(id) {
+  if (__dirtyGuardPrompting) return;
+  __dirtyGuardPrompting = true;
+  const ask = (typeof window.showConfirmDialog === 'function')
+    ? window.showConfirmDialog({
+        title: '入力内容の確認',
+        message: '入力中の内容があります。破棄して閉じますか？',
+        okLabel: '破棄して閉じる',
+        cancelLabel: '編集に戻る',
+        okVariant: 'danger',
+      })
+    : Promise.resolve(window.confirm('入力中の内容があります。破棄して閉じますか？'));
+  ask
+    .then((ok) => { if (ok) closeModal(id); })
+    .catch(() => {})
+    .then(() => {
+      // ダイアログを Esc/背景クリックで閉じた直後に、同じイベントが下のモーダルへ
+      // 突き抜けて再度確認が開くのを防ぐため、少し遅らせてフラグを下ろす
+      setTimeout(() => { __dirtyGuardPrompting = false; }, 250);
+    });
+}
+
+// ユーザー起因の閉じる操作（× / キャンセルボタン）用: dirty なら確認してから閉じる。
+// 保存成功などプログラム経由の close は従来どおり closeModal(id) を直接呼ぶこと（素通し）。
+function closeModalGuarded(id) {
+  const el = document.getElementById(id);
+  if (el && el.classList.contains('open') && __isGuardedModalDirty(el)) {
+    __dirtyGuardConfirmClose(id);
+    return;
+  }
+  closeModal(id);
+}
+
+// trusted（ユーザー操作起因）の input/change イベントだけを「編集された」として記録。
+// capture: 内部で stopPropagation するウィジェット対策
+['input', 'change'].forEach((evt) => {
+  document.addEventListener(evt, (e) => {
+    if (!e.isTrusted) return;
+    const overlay = (e.target && e.target.closest) ? e.target.closest('.modal-overlay.open') : null;
+    if (!overlay) return;
+    const state = __dirtyGuardState.get(overlay.id);
+    if (state) state.touched = true;
+  }, true);
 });
 
 // =============================================================================
@@ -24251,14 +24386,9 @@ function getLastDayOfMonth() {
 }
 
 function cancelCreativeModal() {
-  const hasInput = [
-    document.getElementById('c-file-name')?.value,
-    document.getElementById('c-appeal-type')?.value,
-    document.getElementById('c-title')?.value,
-    document.getElementById('bulk-appeal-type')?.value,
-  ].some(v => v && v.trim());
-  if (hasInput && !confirm('入力中の内容があります。キャンセルしますか？')) return;
-  closeModal('modal-creative');
+  // 旧: 4 フィールドだけの手書きチェック + window.confirm
+  // → 汎用 dirty ガード（モーダル内全フォーム要素のスナップショット比較 + showConfirmDialog）に統一
+  closeModalGuarded('modal-creative');
 }
 
 // ======================================================
@@ -40395,14 +40525,12 @@ function renderBugReportList() {
 
 // 新規 or 編集モーダルを開く
 //   options: { id?: string, description?: string, title?: string }
-// バグ報告モーダルを閉じる（拡大状態もクリーンアップ）
+// バグ報告モーダルを閉じる（× / キャンセル）
+// dirty なら汎用ガードの確認ダイアログを出す。拡大状態のクリーンアップと
+// 裏の一覧モーダル再読込は、実際に .open が外れたときに MutationObserver 側で
+// 実行される（「編集に戻る」を選んだ場合に拡大状態を壊さないため、ここでは触らない）
 function closeBugReportModal() {
-  document.getElementById('br-screenshot-editor')?.classList.remove('br-fullscreen');
-  document.body.classList.remove('br-fullscreen-active');
-  const fsBtn = document.getElementById('br-fullscreen-toggle');
-  if (fsBtn) fsBtn.textContent = '🔍 拡大';
-  closeModal('modal-bug-report');
-  // 裏の一覧モーダル再読込は MutationObserver 側に集約（ESC や背景クリック経由でも発火させるため）
+  closeModalGuarded('modal-bug-report');
 }
 window.closeBugReportModal = closeBugReportModal;
 
