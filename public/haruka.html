@@ -226,9 +226,9 @@ tr.row-help td{background:#FFFBF2}
 /* 土日・今日・月初の縦帯オーバーレイ（行背景の上・期間バー(z-index:1+)の下に描画される） */
 .cv-g-colbands{position:absolute;inset:0;pointer-events:none}
 .cv-g-colband{position:absolute;top:0;bottom:0;pointer-events:none}
-.cv-g-colband.is-weekend{background:rgba(148,163,184,0.10)}
-.cv-g-colband.is-today{background:rgba(232,155,14,0.08)}
-.cv-g-colband.is-month{border-left:1px solid rgba(15,124,120,0.40)}
+.cv-g-colband.is-weekend{background:rgba(148,163,184,0.13)}
+.cv-g-colband.is-today{background:rgba(232,155,14,0.09)}
+.cv-g-colband.is-month{border-left:1px solid rgba(15,124,120,0.55)}
 /* 期間バー: 制作期間と確認・修正期間を主役にする */
 .cv-g-line{position:absolute;left:0;right:0;pointer-events:none}
 .cv-g-line-planned{position:absolute;top:50%;transform:translateY(-1px);border-top:2px dashed rgba(43,184,180,0.55);height:0;pointer-events:none}
@@ -236,17 +236,18 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-line-actual.is-overrun{border-top-color:#E24B4A}
 .cv-g-line-planned.is-late{border-top-color:rgba(226,75,74,0.5)}
 .cv-g-line-actual.is-done {border-top-color:#7FA68A}
-.cv-g-line-production{position:absolute;top:50%;transform:translateY(-7px);height:12px;border-radius:6px;background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 1px 2px rgba(43,184,180,0.25);pointer-events:auto;z-index:1}
-.cv-g-line-production.is-late{background:linear-gradient(90deg,#E24B4A 0%,#F07A78 100%);box-shadow:0 1px 2px rgba(226,75,74,0.30)}
-.cv-g-line-production.is-due-soon{background:linear-gradient(90deg,#F2A93B 0%,#F8C96D 100%);box-shadow:0 1px 2px rgba(242,169,59,0.28)}
-.cv-g-line-production.is-overlap{box-shadow:0 0 0 2px rgba(232,155,14,0.30),0 1px 2px rgba(43,184,180,0.25)}
+/* 制作期間(上段・太)と確認・修正(下段)を上下に隣接配置し、1本の工程バーとして読めるようにする */
+.cv-g-line-production{position:absolute;top:50%;transform:translateY(-9px);height:14px;border-radius:7px;background:linear-gradient(90deg,#13A09B 0%,#3FC3BE 100%);box-shadow:0 1px 3px rgba(19,160,155,0.35);pointer-events:auto;z-index:1}
+.cv-g-line-production.is-late{background:linear-gradient(90deg,#D93A39 0%,#EF6E6C 100%);box-shadow:0 1px 3px rgba(217,58,57,0.40)}
+.cv-g-line-production.is-due-soon{background:linear-gradient(90deg,#ED9A1E 0%,#F6C055 100%);box-shadow:0 1px 3px rgba(237,154,30,0.35)}
+.cv-g-line-production.is-overlap{box-shadow:0 0 0 2px rgba(232,155,14,0.45),0 1px 3px rgba(19,160,155,0.35)}
 .cv-g-line-production.is-done{background:#B7DDC0;box-shadow:none;opacity:.65}
-.cv-g-line-review{position:absolute;top:50%;transform:translateY(4px);height:6px;border-radius:4px;background:linear-gradient(90deg,#9B7BD9 0%,#B7A3E8 100%);box-shadow:0 1px 2px rgba(155,123,217,0.20);pointer-events:auto;z-index:1}
-.cv-g-line-review.is-final-soon{background:linear-gradient(90deg,#E89B0E 0%,#F2B84B 100%)}
-.cv-g-line-review.is-late{background:linear-gradient(90deg,#E24B4A 0%,#F07A78 100%);box-shadow:0 1px 2px rgba(226,75,74,0.30)}
+.cv-g-line-review{position:absolute;top:50%;transform:translateY(5px);height:9px;border-radius:5px;background:linear-gradient(90deg,#7E57C2 0%,#A78BE0 100%);box-shadow:0 1px 3px rgba(126,87,194,0.30);pointer-events:auto;z-index:1}
+.cv-g-line-review.is-final-soon{background:linear-gradient(90deg,#E08C00 0%,#F2B84B 100%)}
+.cv-g-line-review.is-late{background:linear-gradient(90deg,#D93A39 0%,#EF6E6C 100%);box-shadow:0 1px 3px rgba(217,58,57,0.40)}
 .cv-g-line-review.is-done{background:#B7DDC0;box-shadow:none;opacity:.55}
 /* 開始日が推定値の時は左端を明示（実線→開始日不確定） */
-.cv-g-line-production.is-est-start{background:repeating-linear-gradient(135deg,rgba(43,184,180,0.55) 0 6px,rgba(43,184,180,0.30) 6px 12px);box-shadow:none}
+.cv-g-line-production.is-est-start{background:repeating-linear-gradient(135deg,rgba(19,160,155,0.60) 0 6px,rgba(19,160,155,0.32) 6px 12px);box-shadow:none}
 /* 旧バー互換（残しておく。今は未使用） */
 .cv-g-bar{position:absolute;top:50%;transform:translateY(-50%);height:8px;border-radius:4px;background:linear-gradient(90deg,#A8EDEA,#3ECFCA);box-shadow:inset 0 0 0 0.5px var(--em-dark);opacity:0.85}
 .cv-g-bar.late{background:linear-gradient(90deg,#FBC8C8,#E24B4A);box-shadow:inset 0 0 0 0.5px #B23030}
@@ -256,18 +257,19 @@ tr.row-help td{background:#FFFBF2}
 /* 同日重なり時は --ms-top を JS から書き換えて縦オフセットで積む（横ずらしは隣セル食い込みのため廃止） */
 .cv-g-ms{position:absolute;top:var(--ms-top,50%);transform:translate(-50%,-50%);width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;font-weight:700;color:#fff;z-index:2;cursor:default}
 .cv-g-ms.is-estimated{opacity:0.5}
-.cv-g-ms.ms-start{background:#7CC9C5;clip-path:polygon(0 0,100% 50%,0 100%);width:12px;height:12px;border-radius:0}
-.cv-g-ms.ms-draft{width:14px;height:14px;background:#F2A93B;transform:translate(-50%,-50%) rotate(45deg)}
-.cv-g-ms.ms-client{width:14px;height:14px;background:#9B7BD9;border-radius:50%}
-.cv-g-ms.ms-final{width:18px;height:18px;background:#E24B4A;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);box-shadow:none}
-.cv-g-ms.ms-final.is-late{filter:drop-shadow(0 0 3px rgba(226,75,74,0.7))}
-.cv-g-ms.ms-dp{width:10px;height:10px;background:#5ABDB9;border-radius:50%;font-size:8px}
+/* 白フチ: バーの上に重なっても輪郭が潰れないようにする（clip-path 形状は drop-shadow で代用） */
+.cv-g-ms.ms-start{background:#45AFA9;clip-path:polygon(0 0,100% 50%,0 100%);width:14px;height:14px;border-radius:0;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,0.25))}
+.cv-g-ms.ms-draft{width:16px;height:16px;background:#ED9A1E;transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 0 0 1.5px #fff,0 1px 2px rgba(0,0,0,0.18)}
+.cv-g-ms.ms-client{width:16px;height:16px;background:#7E57C2;border-radius:50%;box-shadow:0 0 0 1.5px #fff,0 1px 2px rgba(0,0,0,0.18)}
+.cv-g-ms.ms-final{width:22px;height:22px;background:#E0312F;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);box-shadow:none;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,0.3))}
+.cv-g-ms.ms-final.is-late{filter:drop-shadow(0 0 3px rgba(226,75,74,0.8))}
+.cv-g-ms.ms-dp{width:12px;height:12px;background:#5ABDB9;border-radius:50%;font-size:9px;box-shadow:0 0 0 1.5px #fff}
 .cv-g-ms.ms-dp.ms-d{background:#1E88B0}
 .cv-g-ms.ms-dp.ms-p{background:#7E57C2}
 /* 同日4件以上の集約バッジ（●N）。final ★ は集約に含めず単独表示する */
-.cv-g-ms.cv-g-ms-cluster{width:14px;height:14px;background:#0F7C78;border-radius:50%;font-size:9px;color:#fff;font-weight:700;clip-path:none;box-shadow:0 0 0 1px #fff}
-.cv-g-today-line{position:absolute;top:0;bottom:0;width:0;border-left:2px solid #E89B0E;z-index:3;pointer-events:none}
-.cv-g-today-label{position:absolute;top:-2px;background:#E89B0E;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:700;transform:translateX(-50%);white-space:nowrap;z-index:4;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.cv-g-ms.cv-g-ms-cluster{width:16px;height:16px;background:#0F7C78;border-radius:50%;font-size:10px;color:#fff;font-weight:700;clip-path:none;box-shadow:0 0 0 1.5px #fff}
+.cv-g-today-line{position:absolute;top:0;bottom:0;width:0;border-left:3px solid #E8890C;z-index:3;pointer-events:none}
+.cv-g-today-label{position:absolute;top:-2px;background:#E8890C;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:700;transform:translateX(-50%);white-space:nowrap;z-index:4;box-shadow:0 1px 2px rgba(0,0,0,.15)}
 /* 凡例（旧・下部用 / 現在は cv-g-legend-top を使用） */
 .cv-g-legend{display:flex;flex-wrap:wrap;gap:10px;padding:8px 14px;font-size:11px;color:var(--text-muted);background:#fdfffe;border-top:0.5px solid var(--border-light)}
 .cv-g-legend .lg-item{display:inline-flex;align-items:center;gap:4px}
@@ -278,12 +280,12 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-legend-top .lg-line{display:inline-block;width:18px;height:0;flex-shrink:0}
 .cv-g-legend-top .lg-line-planned{border-top:2px dashed rgba(43,184,180,0.55)}
 .cv-g-legend-top .lg-line-actual{border-top:3px solid #2BB8B4}
-.cv-g-legend-top .lg-line-late{border-top:3px solid #E24B4A}
-.cv-g-legend-top .lg-bar{display:inline-block;width:18px;height:8px;border-radius:4px;flex-shrink:0}
-.cv-g-legend-top .lg-bar-production{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%)}
-.cv-g-legend-top .lg-bar-review{background:linear-gradient(90deg,#9B7BD9 0%,#B7A3E8 100%)}
-.cv-g-legend-top .lg-bar-draft-soon{background:linear-gradient(90deg,#F2A93B 0%,#F8C96D 100%)}
-.cv-g-legend-top .lg-bar-overlap{background:linear-gradient(90deg,#2BB8B4 0%,#5CCEC9 100%);box-shadow:0 0 0 2px rgba(232,155,14,0.30)}
+.cv-g-legend-top .lg-line-late{border-top:3px solid #D93A39}
+.cv-g-legend-top .lg-bar{display:inline-block;width:18px;height:10px;border-radius:5px;flex-shrink:0}
+.cv-g-legend-top .lg-bar-production{background:linear-gradient(90deg,#13A09B 0%,#3FC3BE 100%)}
+.cv-g-legend-top .lg-bar-review{background:linear-gradient(90deg,#7E57C2 0%,#A78BE0 100%)}
+.cv-g-legend-top .lg-bar-draft-soon{background:linear-gradient(90deg,#ED9A1E 0%,#F6C055 100%)}
+.cv-g-legend-top .lg-bar-overlap{background:linear-gradient(90deg,#13A09B 0%,#3FC3BE 100%);box-shadow:0 0 0 2px rgba(232,155,14,0.45)}
 .cv-g-legend-top .lg-ms{position:static !important;transform:none !important;flex-shrink:0;width:10px;height:10px}
 .cv-g-legend-top .lg-ms.ms-draft{transform:rotate(45deg) !important}
 .cv-g-legend-top .lg-ms.cv-g-ms-cluster{width:14px;height:14px;font-size:9px}
