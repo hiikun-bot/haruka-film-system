@@ -15,6 +15,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="HARUKA FILM">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?v=2">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet">
 <!-- 通知UI（Phase 1 段階2） -->
 <link rel="stylesheet" href="/css/notification.css">
@@ -30,12 +32,12 @@
   --white:#fff;--surface:#F5FCFC;
 }
 body{background:var(--em-bg);color:var(--text);min-height:100vh;font-size:15px;position:relative}
-/* ブランディング背景 - HARUKAFILM背景.png を全画面に薄く敷く */
-body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.png') center/cover no-repeat;opacity:0.05;pointer-events:none;z-index:0}
+/* ブランディング背景 - HARUKAFILM背景.jpg（軽量版・元PNGは保持）を全画面に薄く敷く */
+body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.jpg') center/cover no-repeat;opacity:0.05;pointer-events:none;z-index:0}
 .page,.toolbar,.hfs-header,.modal-overlay{position:relative;z-index:1}
 
 /* ヘッダー */
-.hfs-header{background:url('HARUKAFILM背景.png') center/cover no-repeat;height:60px;display:flex;align-items:center;padding:0 18px;position:sticky;top:0;z-index:100;overflow:visible;gap:0}
+.hfs-header{background:url('HARUKAFILM背景.jpg') center/cover no-repeat;height:60px;display:flex;align-items:center;padding:0 18px;position:sticky;top:0;z-index:100;overflow:visible;gap:0}
 .hfs-header::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,30,28,0.06) 0%,rgba(8,40,38,0.04) 100%);pointer-events:none}
 .hfs-header::after{content:none}
 .logo-area{display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:0;z-index:1;flex-shrink:0;padding:0;cursor:default}
@@ -1202,7 +1204,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 /* ダッシュボード */
 .dash-hero{background:linear-gradient(135deg,#1a8c88 0%,#2BB8B4 50%,#3ECFCA 100%);border-radius:16px;padding:28px 32px;margin-bottom:24px;color:#fff;display:flex;align-items:center;justify-content:space-between;position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(62,207,202,0.25)}
-.dash-hero::after{content:'';position:absolute;right:-60px;top:-60px;width:260px;height:260px;background:url('HARUKAFILM背景.png') center/cover;opacity:0.12;border-radius:50%;pointer-events:none}
+.dash-hero::after{content:'';position:absolute;right:-60px;top:-60px;width:260px;height:260px;background:url('HARUKAFILM背景.jpg') center/cover;opacity:0.12;border-radius:50%;pointer-events:none}
 .dash-greeting{font-size:22px;font-weight:700;letter-spacing:0.04em;margin-bottom:4px}
 .dash-date-str{font-size:13px;opacity:0.8;letter-spacing:0.03em}
 .dash-quote{font-size:12px;font-style:italic;opacity:0.85;margin-top:8px;letter-spacing:0.03em;max-width:640px;line-height:1.55}
@@ -2139,7 +2141,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   display: none !important;
 }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- defer: window.Chart の参照はダッシュボードのグラフ描画（renderAdminDash 内・fetch 完了後）のみのためレンダーブロック不要。
+     confirm-dialog.js / name-display.js はインラインJSが先に参照するため defer を付けないこと。 -->
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- カスタム確認モーダル: window.showConfirmDialog を提供（ネイティブ confirm() の代替） -->
 <script src="/js/confirm-dialog.js"></script>
 <!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
@@ -4215,7 +4219,7 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </div>
 
-    <div id="projects-list" class="loading">読み込み中...</div>
+    <div id="projects-list"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:75%"></span></div></div></div>
   </div>
 </div>
 
@@ -4241,7 +4245,7 @@ window.showPage = window.showPage || function(name, btn) {
         📋 秘書チーム
       </button>
     </div>
-    <div id="teams-list" class="loading">読み込み中...</div>
+    <div id="teams-list"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div></div>
   </div>
 </div>
 
@@ -4303,7 +4307,7 @@ window.showPage = window.showPage || function(name, btn) {
         <button type="button" id="btn-invoice-folder-bulk-generate" onclick="openInvoiceFolderGenerateModal()" title="期間を指定して複数月のフォルダを生成" style="margin-left:auto;font-size:11px;padding:3px 10px;line-height:1.4;border-radius:4px;cursor:pointer;background:#fff8e1;color:#e65100;border:1px solid #ffe082">🛠️ 期間指定で生成</button>
       </div>
     </div>
-    <div id="members-list" class="loading">読み込み中...</div>
+    <div id="members-list"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:75%"></span></div></div></div>
   </div>
 </div>
 
@@ -4316,7 +4320,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div class="sec-label">請求書（マイページ）</div>
         <button class="btn-primary" onclick="openGenerateInvoiceModal()">＋ 今月の請求書を作成</button>
       </div>
-      <div id="inv-my-list" class="loading">読み込み中...</div>
+      <div id="inv-my-list"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div></div>
     </div>
 
     <!-- 管理者用: 全員の請求書（adminのみ表示） -->
@@ -6931,7 +6935,7 @@ window.showPage = window.showPage || function(name, btn) {
     </div>
     <!-- 右コンテンツ -->
     <div style="flex:1;padding:20px;overflow:auto">
-      <div id="master-content"><div class="loading">読み込み中...</div></div>
+      <div id="master-content"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:75%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:50%"></span></div></div></div>
     </div>
   </div>
 </div>
@@ -7167,7 +7171,7 @@ window.showPage = window.showPage || function(name, btn) {
             </tr>
           </thead>
           <tbody id="ms-tbody">
-            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:32px">読み込み中…</td></tr>
+            <tr><td colspan="7" style="padding:8px 16px"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -7345,7 +7349,7 @@ window.showPage = window.showPage || function(name, btn) {
       </div>
     </header>
     <div id="tweets-list" class="tweets-list">
-      <div class="tweets-loading">読み込み中…</div>
+      <div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div>
     </div>
   </div>
 </div>
@@ -8361,6 +8365,17 @@ function translateError(err) {
 const API = '/api/haruka';
 // HTML エスケープ（テンプレートリテラル内で使用）
 function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// 行スケルトンHTML生成（一覧の「読み込み中...」テキストの代替）。
+// ダッシュボードの .skel-row / .skel-line シマーCSS を流用。表示専用でロジックには影響しない。
+function skelRows(n = 4) {
+  const widths = [70, 55, 80, 65, 75, 50];
+  let rows = '';
+  for (let i = 0; i < n; i++) {
+    rows += `<div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:${widths[i % widths.length]}%"></span></div>`;
+  }
+  return `<div class="skel-card-body" aria-hidden="true" style="padding:12px 4px">${rows}</div>`;
+}
 
 // HTML エスケープ + URL を <a> リンクに変換。本文（修正依頼・補足コメント等）の表示で使う。
 // http(s):// で始まる URL のみ対象。trailing の句読点（。、,. !?）はリンクに含めない。
@@ -24255,7 +24270,7 @@ async function loadMasterPage() {
 // 案件の「見積・費用」→「プリセットから一括生成」で A/B/C グループを3つまとめて作る元データ。
 async function renderRankPresetMasterPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   const [cats, presetRes] = await Promise.all([loadCategories(), apiFetch(`${API}/rank-price-presets`)]);
   const categories = Array.isArray(cats) ? cats : [];
   const presets = presetRes.ok ? (await presetRes.json() || []) : [];
@@ -24312,7 +24327,7 @@ async function saveRankPreset(categoryId, rank, price) {
 // ==================== ユーザー利用状況 ====================
 async function renderUserStatsPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
 
   const res = await apiFetch(`${API}/admin/user-stats`);
   if (!res.ok) { content.innerHTML = '<div style="color:#E24B4A;padding:20px">アクセス権限がありません</div>'; return; }
@@ -24578,7 +24593,7 @@ let _clEditingId = null;
 
 async function renderChecklistMasterPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   const res = await apiFetch(`${API}/checklist-masters`);
   _clItems = res.ok ? await res.json() : [];
   _clEditingId = null;
@@ -24714,7 +24729,7 @@ let _itemNameMasterCacheAt = 0;
 
 async function renderItemNameMasterPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   // active_only=false で全件取得（is_active=false 含む）— 管理画面なので両方表示
   const res = await apiFetch(`${API}/item-name-master?active_only=false`);
   _imItems = res.ok ? await res.json() : [];
@@ -24888,7 +24903,7 @@ async function renderSysconfigPage() {
     return;
   }
   const el = document.getElementById('master-content');
-  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  el.innerHTML = skelRows(6);
 
   const res = await apiFetch(`${API}/system-settings`);
   const settings = res.ok ? await res.json() : {};
@@ -25054,7 +25069,7 @@ async function renderCreativesExportMappingPage() {
     return;
   }
   const el = document.getElementById('master-content');
-  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  el.innerHTML = skelRows(6);
 
   const res = await apiFetch(`${API}/system-settings`);
   const settings = res.ok ? await res.json() : {};
@@ -25236,7 +25251,7 @@ async function saveBroadcastSlackUrl() {
 // ==================== Slack ワークスペース管理 ====================
 async function renderSlackWorkspacesPage() {
   const el = document.getElementById('master-content');
-  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  el.innerHTML = skelRows(6);
   let res;
   try {
     res = await apiFetch(`${API}/slack-workspaces`);
@@ -26438,7 +26453,7 @@ let showArchivedClientsInMaster = false;
 // 案件モーダル / 案件一覧バッジ / クリエイティブモーダル等に反映される。
 async function renderCategoriesMasterPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   // include_inactive=1 で非アクティブも含めて取得（管理画面では全件表示）
   let cats = [];
   try {
@@ -26925,7 +26940,7 @@ function _fnTplDraftFromTemplate(tpl) {
 
 async function renderFilenameTemplatesPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   let list = [];
   try {
     const res = await apiFetch(`${API}/filename-templates`);
@@ -27646,7 +27661,7 @@ async function deleteFilenameTemplate(id) {
 
 async function renderProductsMasterPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   const archivedStatus = 'クライアント取引終了';
   const activeClients   = allClients.filter(c => c.status !== archivedStatus);
   const archivedClients = allClients.filter(c => c.status === archivedStatus);
@@ -27883,7 +27898,7 @@ let showArchivedClientsInAxesMaster = false;
 
 async function renderAppealAxesMasterPage() {
   const content = document.getElementById('master-content');
-  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  content.innerHTML = skelRows(6);
   const archivedStatus = 'クライアント取引終了';
   const activeClients   = allClients.filter(c => c.status !== archivedStatus);
   const archivedClients = allClients.filter(c => c.status === archivedStatus);
