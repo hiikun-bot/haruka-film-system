@@ -1137,8 +1137,9 @@ router.post('/upload-session/init', async (req, res) => {
       sessionId: inserted.id,
       driveSessionUrl,
       parentFolderId,
-      // ブラウザ側のチャンク分割推奨サイズ（256MB の倍数を Drive が要求）
-      recommended_chunk_size_bytes: 256 * 1024 * 1024,
+      // ブラウザ側のチャンク分割推奨サイズ（Drive の要件は「256KB の倍数」）。
+      // 旧 256MB → 32MB: XHR のチャンク内進捗を滑らかにし、失敗時のリトライ粒度も小さくする。
+      recommended_chunk_size_bytes: 32 * 1024 * 1024,
       session_expires_at: inserted.session_expires_at,
     });
   } catch (e) {
