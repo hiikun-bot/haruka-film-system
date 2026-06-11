@@ -21,6 +21,7 @@ const {
   loadRoles,
 } = require('../utils/roles');
 const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
+const { avatarVer, avatarRefUrl, replaceAvatarDataUrls } = require('../utils/avatar-ref');
 
 // マスタ系 GET エンドポイント共通の TTL。
 // utils/roles.js（ROLES_TTL_MS = 60s）と同じ「短期キャッシュ + 書き込み時 invalidate」
@@ -163,6 +164,20 @@ router.use((req, res, next) => {
   requireAuth(req, res, next);
 });
 
+// ==================== アバター転送量対策（res.json 変換） ====================
+// users.avatar_url は base64 data URL（最大300KB）。一覧系 API が users(avatar_url) を
+// 埋め込むと同一ユーザーのアバターが行数分 JSON に重複して乗り、転送量の支配項になる。
+// ここで全 JSON レスポンスを送出直前に走査し、base64 を
+// `/api/haruka/members/:id/avatar?v=<ver>`（数十バイト）へ置換する。
+// フィールド名は avatar_url のまま値だけ差し替わるため、フロントの
+// `<img src="${u.avatar_url}">` / truthiness 判定はそのまま動く。
+// 詳細・ver の仕様は utils/avatar-ref.js を参照。
+router.use((req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = (body) => origJson(replaceAvatarDataUrls(body));
+  next();
+});
+
 // ==================== ワークスペース情報 ====================
 router.get('/workspace', (_req, res) => {
   res.json({
@@ -176,6 +191,8 @@ router.get('/workspace', (_req, res) => {
 // ログイン中ユーザー情報
 // deserializeUser (auth.js) は毎リクエストの軽量化のため avatar_url（base64 で最大300KB）を
 // req.user に載せない。このエンドポイントだけは DB から取り直してレスポンス契約を維持する。
+// なお avatar_url の base64 は res.json 変換ミドルウェアで配信 URL（?v=<ver> 付き）に
+// 置換されるため、クライアントへ 300KB が流れることはない。
 router.get('/me', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
   const { id, email, full_name, role, rank, team_id, workspace_id } = req.user;
@@ -9951,6 +9968,38 @@ router.post('/members/:id/reactivate', requireAuth, requirePermission('member.de
   res.json(data);
 });
 
+// メンバーアバターをバイナリ配信。
+// 一覧/詳細系 API には base64 を同梱せず（res.json 変換ミドルウェア参照）、
+// `/api/haruka/members/:id/avatar?v=<ver>` を返して本体はここから遅延取得する。
+// /tweets/:id/image と同じパターン。
+//   - 認証: ルーター先頭の requireAuth ガード（<img> も同一オリジンなので Cookie が乗る）
+//   - キャッシュ: アバター更新で ?v が変わる（≒不変リソース）ため 1 日キャッシュ + ETag。
+//     社内データのため private。
+//   - DB 負荷: 一覧表示直後はユーザー数ぶんの <img> リクエストが同時に来るため、
+//     短期 TTL キャッシュで Supabase への 300KB fetch の重複を抑える。
+//     保存/削除時に invalidateByKey で即時破棄。
+const AVATAR_BIN_TTL_MS = 10 * 60 * 1000;
+router.get('/members/:id/avatar', async (req, res) => {
+  const userId = req.params.id;
+  const cached = await ttlCache(`avatar-bin:${userId}`, AVATAR_BIN_TTL_MS, async () => {
+    const { data, error } = await supabase
+      .from('users').select('avatar_url').eq('id', userId).maybeSingle();
+    if (error) throw new Error(error.message);
+    const m = /^data:([^;,]+);base64,(.+)$/s.exec(data?.avatar_url || '');
+    if (!m) return null; // 未設定 → 404（null もキャッシュして DB 連打を防ぐ）
+    return { mime: m[1], buf: Buffer.from(m[2], 'base64'), ver: avatarVer(data.avatar_url) };
+  }).catch(() => undefined);
+  if (cached === undefined) return res.status(500).end();
+  if (cached === null) return res.status(404).end();
+  const etag = `"${cached.ver}"`;
+  res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+  res.setHeader('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.setHeader('Content-Type', cached.mime);
+  res.setHeader('Content-Length', cached.buf.length);
+  return res.end(cached.buf);
+});
+
 // メンバーアバター登録
 // 方針: クライアント側で 300x300 JPEG にリサイズ済の Base64 を data URL 形式で受け取り
 // users.avatar_url にそのまま保存する。
@@ -9987,7 +10036,10 @@ router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (re
     .select('id, avatar_url')
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ avatar_url: data.avatar_url });
+  invalidateByKey(`avatar-bin:${targetId}`); // バイナリ配信キャッシュを即時破棄
+  // base64 は返さず、新しい ver 付きの配信 URL を返す（フロントはそのまま <img src> に使える）
+  const ver = avatarVer(data.avatar_url);
+  res.json({ avatar_url: avatarRefUrl(targetId, ver), avatar_ver: ver });
 });
 
 // メンバーアバター削除
@@ -10004,6 +10056,7 @@ router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
     .update({ avatar_url: null, updated_at: new Date().toISOString() })
     .eq('id', targetId);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey(`avatar-bin:${targetId}`); // バイナリ配信キャッシュを即時破棄
   res.json({ ok: true });
 });
 

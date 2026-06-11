@@ -14556,6 +14556,8 @@ async function handleAvatarSelect(file) {
     }
     const data = await res.json();
     // モーダル内プレビュー更新
+    // data.avatar_url は base64 ではなく配信エンドポイント URL（/api/haruka/members/:id/avatar?v=<ver>）。
+    // 一覧 API も同じ形式の URL を返すため、そのまま <img src> / allMembers / currentUser に流用できる
     const preview = document.getElementById('m-avatar-preview');
     if (preview) preview.innerHTML = `<img src="${esc(data.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`;
     document.getElementById('m-avatar-remove-btn').style.display = '';
