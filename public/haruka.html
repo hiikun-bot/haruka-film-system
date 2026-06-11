@@ -166,12 +166,15 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-fixed.is-group{background:var(--em-bg);font-weight:600;color:var(--em-dark)}
 /* 5列レイアウト（全モード共通）: クライアントコード/案件 + クリエイティブ名 + 担当(アバター) + ステータス + 遅延 */
 .cv-g-row-fixed{display:grid;grid-template-columns:306px 40px 100px 76px;align-items:center;gap:0;border-bottom:0.5px solid var(--border-light);height:40px;min-height:40px;max-height:40px;background:#fff;overflow:hidden}
-.cv-g-row-fixed:hover{background:#f0fbfa}
+.cv-g-row-fixed.is-zebra{background:#F6FBFA}
 .cv-g-row-fixed.is-late{background:rgba(239,68,68,0.05)}
-.cv-g-row-fixed.is-late:hover{background:rgba(239,68,68,0.09)}
+.cv-g-row-fixed:hover,.cv-g-row-fixed.is-hover{background:#E2F4F2}
+.cv-g-row-fixed.is-late:hover,.cv-g-row-fixed.is-late.is-hover{background:rgba(239,68,68,0.11)}
 .cv-g-row-fixed > .c{padding:6px 8px;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .cv-g-row-fixed .c-name{cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;font-size:12px;font-weight:500;letter-spacing:-0.01em;padding-left:10px}
 .cv-g-row-fixed .c-name:hover{color:var(--text);background:var(--em-pale);border-radius:4px}
+/* ファイル名末尾の連番を強調（同名パターンが並んだとき識別しやすく） */
+.cv-g-row-fixed .c-name .c-name-seq{font-weight:800;color:var(--text)}
 .cv-g-row-fixed .c-assignee{display:flex;align-items:center;gap:4px;justify-content:center;padding:2px 4px}
 .cv-g-row-fixed .c-assignee .cv-g-unassigned{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#eee;color:#888;font-size:11px;font-weight:600}
 .cv-g-row-fixed .c-status{overflow:hidden;min-width:0}
@@ -179,7 +182,7 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-row-fixed .c-delay{font-size:11px;font-weight:600;text-align:right;padding-right:12px}
 .cv-g-row-fixed .c-delay.late{color:#E24B4A;font-weight:700}
 .cv-g-row-fixed .c-delay.warn{color:#E89B0E}
-.cv-g-row-fixed .c-delay.ok{color:var(--em-dark)}
+.cv-g-row-fixed .c-delay.ok{color:var(--text-faint);font-weight:500}
 .cv-g-row-fixed .c-delay.done{color:#7FA68A}
 /* グループ見出し — 全モードで 40px 1行コンパクト表示 */
 .cv-g-group-row{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;padding:0 12px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);border-bottom:0.5px solid var(--border);font-size:12px;font-weight:600;color:var(--em-dark);position:sticky;left:0;z-index:4;height:40px;box-sizing:border-box;overflow:hidden}
@@ -215,11 +218,17 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-tl-day.is-narrow .d-num{font-size:11px}
 .cv-g-tl-day.is-narrow .d-dow{font-size:8px;margin-top:0}
 .cv-g-tl-day.is-narrow .d-month{font-size:9px;padding:0 2px}
-/* 行側の土日うっすら背景（タイムライン全体の縦縞を避けるため、ヘッダーのみ着色） */
 .cv-g-row-tl{position:relative;border-bottom:0.5px solid var(--border-light);height:40px;background:#fff}
+.cv-g-row-tl.is-zebra{background:#F6FBFA}
 .cv-g-row-tl.is-late{background:#FFFBFB}
-.cv-g-row-tl:hover{background:#FAFFFF}
-.cv-g-row-tl.is-late:hover{background:#FFF6F6}
+.cv-g-row-tl:hover,.cv-g-row-tl.is-hover{background:#E2F4F2}
+.cv-g-row-tl.is-late:hover,.cv-g-row-tl.is-late.is-hover{background:#FFEFEF}
+/* 土日・今日・月初の縦帯オーバーレイ（行背景の上・期間バー(z-index:1+)の下に描画される） */
+.cv-g-colbands{position:absolute;inset:0;pointer-events:none}
+.cv-g-colband{position:absolute;top:0;bottom:0;pointer-events:none}
+.cv-g-colband.is-weekend{background:rgba(148,163,184,0.10)}
+.cv-g-colband.is-today{background:rgba(232,155,14,0.08)}
+.cv-g-colband.is-month{border-left:1px solid rgba(15,124,120,0.40)}
 /* 期間バー: 制作期間と確認・修正期間を主役にする */
 .cv-g-line{position:absolute;left:0;right:0;pointer-events:none}
 .cv-g-line-planned{position:absolute;top:50%;transform:translateY(-1px);border-top:2px dashed rgba(43,184,180,0.55);height:0;pointer-events:none}
@@ -12807,6 +12816,8 @@ function renderCreativesGantt(filtered, warningSource) {
   const DOW_CHARS = '日月火水木金土';
   const isNarrow = (currentCreativeRange === '2month'); // セル幅が狭い表示はフォント縮小
   const dayCells = [];
+  // タイムライン本体に重ねる縦帯（土日・今日・月初）。行背景の上、期間バーの下に描画。
+  const colBands = [];
   for (let i=0; i<totalDays; i++) {
     const d = _cvDateAdd(win.start, i);
     const isToday = _cvDayDiff(d, win.today) === 0;
@@ -12831,6 +12842,9 @@ function renderCreativesGantt(filtered, warningSource) {
     if (isToday) cls.push('is-today');
     if (isNarrow) cls.push('is-narrow');
     dayCells.push(`<div class="${cls.join(' ')}" style="width:${dayPx}px">${numHtml}${dowHtml}</div>`);
+    if (isWeekend) colBands.push(`<div class="cv-g-colband is-weekend" style="left:${i*dayPx}px;width:${dayPx}px"></div>`);
+    if (isToday)   colBands.push(`<div class="cv-g-colband is-today" style="left:${i*dayPx}px;width:${dayPx}px"></div>`);
+    if (isMonthStart && i > 0) colBands.push(`<div class="cv-g-colband is-month" style="left:${i*dayPx}px"></div>`);
   }
 
   // 行ごとにメタ情報を集約
@@ -13059,7 +13073,7 @@ function renderCreativesGantt(filtered, warningSource) {
 
   // 固定列（左）の HTML — 全グルーピングモードで同じレイアウト（4列：ファイル名/担当/ステータス/遅延）
   // c-client 列は廃止（PR #420）。クライアント/案件/担当はファイル名セルの title に集約してホバー表示。
-  const renderFixedRow = (r) => {
+  const renderFixedRow = (r, zebra) => {
     const { c, info, editorUser, team } = r;
     const cliObj = c.projects?.clients;
     const clientName = cliObj?.name || '-';
@@ -13091,6 +13105,8 @@ function renderCreativesGantt(filtered, warningSource) {
     const displayName = (rawName.length > nameMax)
       ? `${rawName.slice(0, headLen)}…${rawName.slice(-tailLen)}`
       : rawName;
+    // 末尾の連番（3桁以上の数字）を太字強調。共通プレフィックスが並ぶ一覧で行を識別しやすくする。
+    const displayNameHtml = esc(displayName).replace(/(\d{3,})$/, '<span class="c-name-seq">$1</span>');
     // ファイル名セルのツールチップ: ファイル名フル / クライアント・案件 / 担当者
     const nameTitle = [
       rawName,
@@ -13098,8 +13114,8 @@ function renderCreativesGantt(filtered, warningSource) {
       `担当: ${editorUser ? (personLabel || '名無し') : '未割当'}`
     ].join('\n');
     return `
-      <div class="cv-g-row-fixed ${info.isLate?'is-late':''}" data-id="${c.id}" style="grid-template-columns:${fixedColTpl}">
-        <div class="c c-name" title="${esc(nameTitle)}" onclick="openCreativeDetail('${c.id}')">${esc(displayName)}</div>
+      <div class="cv-g-row-fixed ${info.isLate?'is-late':''}${zebra?' is-zebra':''}" data-id="${c.id}" style="grid-template-columns:${fixedColTpl}">
+        <div class="c c-name" title="${esc(nameTitle)}" onclick="openCreativeDetail('${c.id}')">${displayNameHtml}</div>
         <div class="c c-assignee" title="${esc(fullNameTitle)}">${assignee}</div>
         <div class="c c-status" title="${esc(c.status || '')}"><span class="status-chip ${statusClass(c.status)}">${esc(statusShortLabel(c.status))}</span></div>
         <div class="c c-delay ${info.delayClass}" title="${esc(info.delayLabel)}">${esc(info.delayLabel)}</div>
@@ -13107,8 +13123,8 @@ function renderCreativesGantt(filtered, warningSource) {
   };
 
   // タイムライン1行のラッパ
-  const renderTimelineRowWrap = (r) => {
-    return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
+  const renderTimelineRowWrap = (r, zebra) => {
+    return `<div class="cv-g-row-tl ${r.info.isLate?'is-late':''}${zebra?' is-zebra':''}" data-id="${r.c.id}" style="width:${tlWidth}px">${renderTimelineRow(r)}</div>`;
   };
 
   // 固定列の枠（4列）— 全グルーピングモードで同じレイアウト。
@@ -13239,9 +13255,10 @@ function renderCreativesGantt(filtered, warningSource) {
   groups.forEach((g) => {
     fixedHtml += renderGroupHeader(g);
     tlHtml    += `<div class="cv-g-row-tl" style="width:${tlWidth}px;background:linear-gradient(to right,#E5F7F6,#F5FCFC);height:${groupHeadHeight}px"></div>`;
-    g.items.forEach(r => {
-      fixedHtml += renderFixedRow(r);
-      tlHtml    += renderTimelineRowWrap(r);
+    g.items.forEach((r, i) => {
+      const zebra = (i % 2 === 1); // グループ内で1行おきに薄い縞（横方向の行追従を助ける）
+      fixedHtml += renderFixedRow(r, zebra);
+      tlHtml    += renderTimelineRowWrap(r, zebra);
     });
   });
 
@@ -13308,11 +13325,34 @@ function renderCreativesGantt(filtered, warningSource) {
         <div class="cv-g-fixed" style="width:${FIXED_W}px;position:sticky;left:0;z-index:5">${fixedHtml}</div>
         <div style="position:relative;width:${tlWidth}px">
           ${tlHtml}
+          <div class="cv-g-colbands" style="width:${tlWidth}px">${colBands.join('')}</div>
           ${todayLeft >= 0 ? `<div class="cv-g-today-line" style="left:${todayLeft}px"></div><div class="cv-g-today-label" style="left:${todayLeft}px">今日</div>` : ''}
         </div>
       </div>
     </div>
   `;
+
+  // 左固定列とタイムラインは別カラムの兄弟要素なので CSS :hover では行が連動しない。
+  // data-id でペアを探して .is-hover を同期し、どちらに乗せても行全体がハイライトされるようにする。
+  const gridEl = main.querySelector('.cv-g-grid');
+  if (gridEl) {
+    let hoverId = null;
+    const setHover = (id, on) => {
+      gridEl.querySelectorAll(`.cv-g-row-fixed[data-id="${id}"], .cv-g-row-tl[data-id="${id}"]`)
+        .forEach(el => el.classList.toggle('is-hover', on));
+    };
+    gridEl.addEventListener('mouseover', (e) => {
+      const row = e.target.closest('.cv-g-row-fixed[data-id], .cv-g-row-tl[data-id]');
+      const id = row ? row.dataset.id : null;
+      if (id === hoverId) return;
+      if (hoverId) setHover(hoverId, false);
+      hoverId = id;
+      if (hoverId) setHover(hoverId, true);
+    });
+    gridEl.addEventListener('mouseleave', () => {
+      if (hoverId) { setHover(hoverId, false); hoverId = null; }
+    });
+  }
 
   if (side) side.innerHTML = _cvSidePanelHtml(warningRows);
   // 期間ラベル（操作バー右）
