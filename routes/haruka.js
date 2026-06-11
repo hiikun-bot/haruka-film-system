@@ -10728,6 +10728,27 @@ router.get('/invoices', async (req, res) => {
   res.json(data);
 });
 
+// 請求書の存在する年月一覧（管理者一覧の月タブ構築用・軽量。明細ネストを含む全件fetchを避ける）
+// :id ルートより前に定義必須
+router.get('/invoices/months', async (req, res) => {
+  const { status } = req.query;
+  let q = supabase.from('invoices').select('year, month, status');
+  if (status) q = q.eq('status', status);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  // フロントの既存グループ化キー（`${year||0}-${String(month||0).padStart(2,'0')}`）と同一規則で集計
+  const byKey = new Map();
+  (data || []).forEach(r => {
+    const key = `${r.year || 0}-${String(r.month || 0).padStart(2, '0')}`;
+    if (!byKey.has(key)) byKey.set(key, { key, year: r.year, month: r.month, count: 0, submitted_count: 0 });
+    const m = byKey.get(key);
+    m.count++;
+    if (r.status === 'submitted') m.submitted_count++;
+  });
+  const months = [...byKey.values()].sort((a, b) => b.key.localeCompare(a.key));
+  res.json(months);
+});
+
 // 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す（:idより前に定義必須）
 router.get('/invoices/preview-items', async (req, res) => {
   const uid = req.user?.id;
@@ -16782,22 +16803,38 @@ function normalizeVersionLogPayload(body) {
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
     const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    let q = supabase
-      .from('version_logs')
-      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url )')
-      .order('revision_no', { ascending: false });
-    if (!isAdmin) q = q.eq('is_hidden', false);
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
     if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
 
+    // ページネーション（後方互換: limit/offset 未指定なら従来通り全件＋配列で返す）
+    const paged = req.query.limit !== undefined || req.query.offset !== undefined;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    let q = supabase
+      .from('version_logs')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url )')
+      .order('revision_no', { ascending: false });
+    if (!isAdmin) {
+      q = q.eq('is_hidden', false);
+      // target_roles の可視性フィルタを DB 側で適用し、ページ境界の取りこぼしを防ぐ
+      // （target_roles は text[]。'all' を含む / 自ロールと重なる / null（防御）を可視とする）
+      const safeRoles = myRoleCodes.filter(r => /^[a-zA-Z0-9_-]+$/.test(String(r)));
+      const orParts = ['target_roles.is.null', 'target_roles.cs.{all}'];
+      if (safeRoles.length > 0) orParts.push(`target_roles.ov.{${safeRoles.join(',')}}`);
+      q = q.or(orParts.join(','));
+    }
+    if (paged) q = q.range(offset, offset + limit - 1);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
     const userId = req.user?.id;
     let readSet = new Set();
-    if (userId) {
+    if (userId && (data || []).length > 0) {
+      const ids = (data || []).map(r => r.id);
       const { data: reads } = await supabase
-        .from('version_log_reads').select('version_log_id').eq('user_id', userId);
+        .from('version_log_reads').select('version_log_id').eq('user_id', userId).in('version_log_id', ids);
       readSet = new Set((reads || []).map(r => r.version_log_id));
     }
 
@@ -16808,7 +16845,12 @@ router.get('/version-logs', requireAuth, async (req, res) => {
       return tr.some(r => myRoleCodes.includes(r));
     }).map(row => ({ ...row, is_read: readSet.has(row.id) }));
 
-    res.json(filtered);
+    if (!paged) return res.json(filtered); // 旧クライアント互換（配列）
+    res.json({
+      rows: filtered,
+      has_more: (data || []).length === limit,
+      next_offset: offset + (data || []).length,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -16819,8 +16861,10 @@ router.get('/version-logs/unread-count', requireAuth, async (req, res) => {
     const userId = req.user?.id;
     if (!userId) return res.json({ count: 0 });
 
+    // 直近200件のみを対象に軽量化（バッジは 99+ 表示が上限のため実用上の意味は不変）
     const { data: logs, error } = await supabase
-      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false)
+      .order('revision_no', { ascending: false }).limit(200);
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);

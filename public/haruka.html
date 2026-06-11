@@ -22300,54 +22300,99 @@ async function loadMyInvoices() {
 }
 
 let _adminInvoiceActiveTab = null;
+let _adminInvoiceMonths = [];            // GET /invoices/months の結果（タブ構築用）
+let _adminInvoiceMonthCache = {};        // key -> 月別請求書リスト（SWR キャッシュ）
+let _adminInvoiceFetchSeq = 0;           // タブ連打時のレース防止トークン
 
 async function loadAdminInvoices() {
   const status = document.getElementById('inv-filter-status')?.value || '';
-  const url = `${API}/invoices${status ? `?status=${status}` : ''}`;
-  const res = await apiFetch(url);
   const el = document.getElementById('inv-admin-list');
   const tabsEl = document.getElementById('inv-admin-month-tabs');
 
+  // 軽量な月一覧（year/month/件数のみ）でタブを構築。明細ネスト込み全期間 fetch はしない
+  const res = await apiFetch(`${API}/invoices/months${status ? `?status=${encodeURIComponent(status)}` : ''}`);
   if (!res.ok) {
     const err = await res.json().catch(()=>({}));
     el.innerHTML = `<div style="color:#E24B4A;padding:20px;text-align:center;font-size:13px">読み込みエラー: ${err.error||res.status}</div>`;
     return;
   }
-  const list = await res.json();
+  _adminInvoiceMonths = await res.json();
+  _adminInvoiceMonthCache = {}; // フィルタ変更・承認等の再読み込み時はキャッシュを破棄して鮮度を担保
 
-  if (!list.length) {
+  if (!_adminInvoiceMonths.length) {
     if (tabsEl) tabsEl.innerHTML = '';
     el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>';
     return;
   }
 
-  // 年月でグループ化
-  const byMonth = {};
-  list.forEach(inv => {
-    const key = `${inv.year||0}-${String(inv.month||0).padStart(2,'0')}`;
-    if (!byMonth[key]) byMonth[key] = { year: inv.year, month: inv.month, invs: [] };
-    byMonth[key].invs.push(inv);
-  });
-  const monthKeys = Object.keys(byMonth).sort().reverse();
-  const activeKey = (_adminInvoiceActiveTab && byMonth[_adminInvoiceActiveTab]) ? _adminInvoiceActiveTab : monthKeys[0];
+  const monthKeys = _adminInvoiceMonths.map(m => m.key);
+  const activeKey = (_adminInvoiceActiveTab && monthKeys.includes(_adminInvoiceActiveTab)) ? _adminInvoiceActiveTab : monthKeys[0];
+  _adminInvoiceActiveTab = activeKey;
 
-  // タブ描画
+  // タブ描画（バッジ = その月の提出済み件数）
   if (tabsEl) {
-    tabsEl.innerHTML = monthKeys.map(key => {
-      const { year, month, invs } = byMonth[key];
-      const submittedCount = invs.filter(i => i.status === 'submitted').length;
-      const badge = submittedCount > 0 ? `<span style="background:#E53935;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:5px">${submittedCount}</span>` : '';
-      const isActive = key === activeKey;
-      return `<button onclick="switchAdminMonthTab('${key}')" data-mtab="${key}"
+    tabsEl.innerHTML = _adminInvoiceMonths.map(m => {
+      const badge = m.submitted_count > 0 ? `<span style="background:#E53935;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:5px">${m.submitted_count}</span>` : '';
+      const isActive = m.key === activeKey;
+      return `<button onclick="switchAdminMonthTab('${m.key}')" data-mtab="${m.key}"
         style="padding:8px 18px;border:none;background:transparent;cursor:pointer;font-size:13px;font-weight:${isActive?'600':'400'};
         color:${isActive?'var(--em-dark)':'var(--text-muted)'};border-bottom:${isActive?'2px solid var(--em-dark)':'2px solid transparent'};
         margin-bottom:-2px;transition:all .15s;white-space:nowrap">
-        ${year}年${month}月${badge}
+        ${m.year}年${m.month}月${badge}
       </button>`;
     }).join('');
   }
 
-  // テーブル描画（月ごと）
+  // 選択中の月だけ取得して描画
+  await _loadAndRenderAdminMonth(activeKey);
+}
+
+// 指定した月の請求書を fetch（year/month 未設定の旧データはフォールバックで全件から抽出）
+async function _fetchAdminMonthInvoices(monthInfo) {
+  const status = document.getElementById('inv-filter-status')?.value || '';
+  if (monthInfo.year != null && monthInfo.month != null) {
+    const params = new URLSearchParams({ year: monthInfo.year, month: monthInfo.month });
+    if (status) params.set('status', status);
+    const res = await apiFetch(`${API}/invoices?${params}`);
+    if (!res.ok) return null;
+    return await res.json();
+  }
+  // 旧データ（year/month が null）の月キーは eq で引けないため全件から抽出
+  const res = await apiFetch(`${API}/invoices${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+  if (!res.ok) return null;
+  const list = await res.json();
+  return list.filter(inv => `${inv.year||0}-${String(inv.month||0).padStart(2,'0')}` === monthInfo.key);
+}
+
+// SWR: キャッシュがあれば即描画しつつ、裏で最新を取得して差し替える
+async function _loadAndRenderAdminMonth(key) {
+  const el = document.getElementById('inv-admin-list');
+  const monthInfo = _adminInvoiceMonths.find(m => m.key === key);
+  if (!monthInfo) { el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>'; return; }
+
+  const seq = ++_adminInvoiceFetchSeq;
+  const cached = _adminInvoiceMonthCache[key];
+  if (cached) {
+    el.innerHTML = _renderAdminMonthTable(key, cached);
+  } else {
+    el.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;font-size:13px">読み込み中…</div>';
+  }
+
+  const invs = await _fetchAdminMonthInvoices(monthInfo);
+  if (seq !== _adminInvoiceFetchSeq) return;          // 後続のタブ切替が優先
+  if (invs == null) {
+    if (!cached) el.innerHTML = '<div style="color:#E24B4A;padding:20px;text-align:center;font-size:13px">読み込みエラー</div>';
+    return;
+  }
+  _adminInvoiceMonthCache[key] = invs;
+  if (_adminInvoiceActiveTab === key) el.innerHTML = _renderAdminMonthTable(key, invs);
+}
+
+// 1ヶ月分のテーブル HTML を構築（描画内容は従来と同一）
+function _renderAdminMonthTable(key, invs) {
+  if (!invs.length) {
+    return '<div style="color:var(--text-muted);padding:20px;text-align:center">請求書がありません</div>';
+  }
   const statusMap = {
     draft:     { label:'下書き',   color:'#888',    bg:'#f5f5f5' },
     submitted: { label:'提出済み', color:'#1565C0', bg:'#E3F2FD' },
@@ -22355,11 +22400,8 @@ async function loadAdminInvoices() {
     rejected:  { label:'差し戻し', color:'#A32D2D', bg:'#FFEBEE' },
   };
 
-  el.innerHTML = monthKeys.map(key => {
-    const { year, month, invs } = byMonth[key];
-
-    // 発行者ごとに今月N件目をカウント
-    const sorted = [...invs].sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
+  // 発行者ごとに今月N件目をカウント
+  const sorted = [...invs].sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
     const issuerSeq = {};
     sorted.forEach(inv => {
       const iid = inv.issuer_id || '';
@@ -22408,7 +22450,7 @@ async function loadAdminInvoices() {
     const totalAmt = sorted.reduce((s,i) => s + (i.total_amount||0), 0);
     const submittedAmt = sorted.filter(i=>i.status==='submitted').reduce((s,i) => s+(i.total_amount||0), 0);
 
-    return `<div data-mtable="${key}" style="display:${key===activeKey?'':'none'}">
+    return `<div data-mtable="${key}">
       <div style="display:flex;gap:20px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted)">
         <span>合計 <strong style="color:var(--text)">${sorted.length}件</strong></span>
         <span>請求総額 <strong style="color:var(--em-dark)">¥${totalAmt.toLocaleString()}</strong></span>
@@ -22430,7 +22472,6 @@ async function loadAdminInvoices() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
-  }).join('');
 }
 
 function switchAdminMonthTab(key) {
@@ -22441,9 +22482,8 @@ function switchAdminMonthTab(key) {
     b.style.color = active ? 'var(--em-dark)' : 'var(--text-muted)';
     b.style.borderBottom = active ? '2px solid var(--em-dark)' : '2px solid transparent';
   });
-  document.querySelectorAll('[data-mtable]').forEach(d => {
-    d.style.display = d.dataset.mtable === key ? '' : 'none';
-  });
+  // 選択した月だけ fetch（キャッシュ済みなら即描画し裏で更新 = SWR）
+  _loadAndRenderAdminMonth(key);
 }
 
 // ==================== クライアント請求書 ====================
@@ -39037,6 +39077,9 @@ function copyInviteMsg() {
 // ==================== Verup情報（システム改訂履歴） ====================
 let _verupCache = [];
 let _verupLoading = false;
+let _verupHasMore = false;       // サーバーにまだ古い履歴が残っているか
+let _verupNextOffset = 0;        // 次ページ取得用 offset
+const VERUP_PAGE_SIZE = 100;     // 1ページあたりの取得件数
 
 const VERUP_CATEGORY_LABEL = { feature: '✨ 新機能', improvement: '🔧 改善', bugfix: '🐛 バグ修正', spec_change: '📐 仕様変更' };
 const VERUP_CATEGORY_COLOR = { feature: '#1A9E9A', improvement: '#3B82F6', bugfix: '#E24B4A', spec_change: '#9333EA' };
@@ -39116,11 +39159,17 @@ async function openVerupModal(opts) {
 async function openVerupModalAtRevision(revisionNo) {
   // 他人の改訂にもジャンプできるよう、報告者フィルタは「全員」で開く
   if (typeof openVerupModal === 'function') await openVerupModal({ initialReporter: '' });
+  // ページネーション対応: 1ページ目に無い古い revision はページを追い読みして探す（上限あり）
+  const findRow = () => (Array.isArray(_verupCache) ? _verupCache : []).find(r => Number(r.revision_no) === Number(revisionNo));
+  let guard = 30; // 最大 30 ページ（3,000件）まで遡る
+  while (!findRow() && _verupHasMore && guard-- > 0) {
+    const loaded = await loadMoreVerup();
+    if (!loaded) break;
+  }
   // renderVerupList が DOM を生成するまで少し待つ
   setTimeout(() => {
     try {
-      const cache = (typeof _verupCache !== 'undefined' && Array.isArray(_verupCache)) ? _verupCache : null;
-      const row = cache?.find(r => Number(r.revision_no) === Number(revisionNo));
+      const row = findRow();
       if (!row) {
         showToast(`Verup #${revisionNo} は見つかりませんでした`, 'warn');
         return;
@@ -39191,13 +39240,43 @@ async function loadVerupList() {
   if (_verupLoading) return;
   _verupLoading = true;
   try {
-    const res = await fetch('/api/haruka/version-logs');
+    const res = await fetch(`/api/haruka/version-logs?limit=${VERUP_PAGE_SIZE}&offset=0`);
     if (!res.ok) throw new Error('一覧の取得に失敗しました');
-    _verupCache = await res.json();
+    const json = await res.json();
+    // ページネーション形式 { rows, has_more, next_offset }（配列＝旧形式へのフォールバック付き）
+    _verupCache = Array.isArray(json) ? json : (json.rows || []);
+    _verupHasMore = Array.isArray(json) ? false : !!json.has_more;
+    _verupNextOffset = Array.isArray(json) ? _verupCache.length : (json.next_offset || _verupCache.length);
     _verupRebuildReporterFilter();
     renderVerupList();
   } catch (e) {
     document.getElementById('verup-list').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B">${_verupEsc(e.message)}</div>`;
+  } finally {
+    _verupLoading = false;
+  }
+}
+
+// 「もっと見る」: 次ページを取得して既存リストに追記
+async function loadMoreVerup() {
+  if (_verupLoading || !_verupHasMore) return false;
+  _verupLoading = true;
+  try {
+    const btn = document.getElementById('verup-load-more-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '読み込み中…'; }
+    const res = await fetch(`/api/haruka/version-logs?limit=${VERUP_PAGE_SIZE}&offset=${_verupNextOffset}`);
+    if (!res.ok) throw new Error('追加の取得に失敗しました');
+    const json = await res.json();
+    const rows = Array.isArray(json) ? json : (json.rows || []);
+    // 重複防止（境界で同じ行が来た場合に備える）
+    const known = new Set(_verupCache.map(r => r.id));
+    _verupCache = _verupCache.concat(rows.filter(r => !known.has(r.id)));
+    _verupHasMore = Array.isArray(json) ? false : !!json.has_more;
+    _verupNextOffset = Array.isArray(json) ? _verupNextOffset : (json.next_offset || _verupNextOffset + rows.length);
+    renderVerupList();
+    return rows.length > 0;
+  } catch (e) {
+    showToast(e.message, 'warn');
+    return false;
   } finally {
     _verupLoading = false;
   }
@@ -39235,8 +39314,13 @@ function renderVerupList() {
     });
   }
 
+  // サーバーにまだ古い履歴が残っていれば「もっと見る」ボタンを末尾に出す
+  const loadMoreHtml = _verupHasMore
+    ? `<div style="text-align:center;padding:6px 0 2px"><button id="verup-load-more-btn" class="btn" style="padding:6px 24px;font-size:12px" onclick="loadMoreVerup()">📜 もっと見る（過去の履歴を読み込む）</button></div>`
+    : '';
+
   if (rows.length === 0) {
-    list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する履歴はありません</div>`;
+    list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する履歴はありません</div>${loadMoreHtml}`;
     return;
   }
 
@@ -39299,7 +39383,7 @@ function renderVerupList() {
         ${relatedLink}
       </div>
     </div>`;
-  }).join('');
+  }).join('') + loadMoreHtml;
 }
 
 async function markVerupRead(id) {
