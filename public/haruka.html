@@ -21437,40 +21437,42 @@ document.addEventListener('click', (e) => {
 });
 
 async function addTweetReactionFromCard(tweetId, type) {
-  // 楽観的更新: 該当カードだけ即座に反映 → API は裏で投げる。
-  // 失敗時のみ loadTweetsPage() で真値同期する。
-  _twApplyReactionLocal(tweetId, type, 'add');
+  // 楽観的更新: 該当カードだけ即座に反映（数バッジ含む）→ API は裏で投げる。
+  // 失敗時はローカルで逆操作（revert）してトースト表示。フィード全体は再fetchしない。
+  // 反映できなかった場合（既に付与済み＝連打など）は API を投げない＝重複送信ガード。
+  if (!_twApplyReactionLocal(tweetId, type, 'add')) return;
   try {
     const res = await apiFetch(`${API}/tweets/${tweetId}/reactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reaction_type: type }),
     });
-    if (!res.ok && res.status !== 409) {
+    if (!res.ok && res.status !== 409) { // 409 = サーバー側で既に付与済み（楽観的反映と整合）
       const e = await res.json().catch(() => ({}));
       showToast('エラー: ' + (e.error || '失敗'), 'error');
-      loadTweetsPage();
+      _twApplyReactionLocal(tweetId, type, 'remove'); // revert
     }
   } catch (e) {
     console.warn('[tweets-page] reaction add failed', e);
     showToast('通信エラー', 'error');
-    loadTweetsPage();
+    _twApplyReactionLocal(tweetId, type, 'remove'); // revert
   }
 }
 
 async function removeTweetReactionFromCard(tweetId, type) {
-  _twApplyReactionLocal(tweetId, type, 'remove');
+  // 楽観的更新: 即座に外す → 失敗時はローカルで付け直し（revert）。全体再fetchしない。
+  if (!_twApplyReactionLocal(tweetId, type, 'remove')) return; // 既に外れていれば API 不要（連打ガード）
   try {
     const res = await apiFetch(`${API}/tweets/${tweetId}/reactions/${type}`, { method: 'DELETE' });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
       showToast('エラー: ' + (e.error || '失敗'), 'error');
-      loadTweetsPage();
+      _twApplyReactionLocal(tweetId, type, 'add'); // revert
     }
   } catch (e) {
     console.warn('[tweets-page] reaction remove failed', e);
     showToast('通信エラー', 'error');
-    loadTweetsPage();
+    _twApplyReactionLocal(tweetId, type, 'add'); // revert
   }
 }
 
@@ -32694,26 +32696,54 @@ async function fpDownloadMarkers() {
   }
 }
 
+let _fpLikeInflight = false; // 連打ガード（重複送信防止）
+
 async function fpAddLike() {
   const video = document.getElementById('fp-video');
   const fileId = currentPreviewFileId;
   if (!video || !fileId) return;
+  if (_fpLikeInflight) return; // API 往復中の連打は無視
+  _fpLikeInflight = true;
   const timecodeSec = video.currentTime;
   const btn = document.getElementById('fp-like-btn');
+  // 楽観的反映: クリック瞬間にマーカー（カウント）とアイコン状態を更新 → 失敗時に revert
+  const tempLike = { id: `temp-${Date.now()}`, timecode_sec: Math.round(timecodeSec * 100) / 100 };
+  _fpLikes.push(tempLike);
+  fpRenderLikeMarkers(_fpLikes);
+  const prevColor = btn ? btn.style.color : '';
+  if (btn) {
+    btn.style.transition = 'transform .2s,color .2s';
+    btn.style.color = '#f43f5e';
+    btn.style.transform = 'scale(1.5)';
+    setTimeout(() => { btn.style.transform = 'scale(1)'; }, 200);
+  }
   try {
     const res = await apiFetch(`${API}/creative-files/${fileId}/likes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ timecode_sec: timecodeSec }),
     });
-    if (res.ok) {
-      btn.style.transition = 'transform .2s,color .2s';
-      btn.style.color = '#f43f5e';
-      btn.style.transform = 'scale(1.5)';
-      setTimeout(() => { btn.style.transform = 'scale(1)'; }, 200);
-      await fpLoadLikes(fileId);
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(translateError(e?.error) || `HTTP ${res.status}`);
     }
-  } catch(e) {}
+    // サーバー確定値（id / 丸め済み timecode_sec）で temp を上書きして整合を取る
+    const saved = await res.json().catch(() => null);
+    if (saved && saved.id) {
+      tempLike.id = saved.id;
+      if (saved.timecode_sec != null) tempLike.timecode_sec = saved.timecode_sec;
+      if (currentPreviewFileId === fileId) fpRenderLikeMarkers(_fpLikes);
+    }
+  } catch (e) {
+    // 失敗: 楽観的に足したいいねを取り消してエラートースト
+    const idx = _fpLikes.indexOf(tempLike);
+    if (idx >= 0) _fpLikes.splice(idx, 1);
+    if (currentPreviewFileId === fileId) fpRenderLikeMarkers(_fpLikes);
+    if (btn) btn.style.color = prevColor || '#71717a';
+    showToast('いいねの送信に失敗しました: ' + (e?.message || ''), 'error');
+  } finally {
+    _fpLikeInflight = false;
+  }
 }
 
 let _fpClipInterval = null;
@@ -32901,6 +32931,12 @@ function switchPreviewTab(tab) {
 
 // ==================== チェックリスト（プレビュー） ====================
 
+// 楽観的更新用のローカル state（直近に取得したチェックリストと対象ファイル）
+let _fpChecklistData = null;
+let _fpChecklistFileId = null;
+// 連打ガード: API 往復中のアイテムキー（`type:id`）。当該アイテムのみ再入を防ぐ
+const _fpChecklistPending = new Set();
+
 async function fpLoadChecklist(fileId) {
   const el = document.getElementById('fp-comments-list');
   el.innerHTML = '<div style="color:#71717a;font-size:12px;text-align:center;padding:20px">読み込み中...</div>';
@@ -32908,6 +32944,8 @@ async function fpLoadChecklist(fileId) {
     const res = await apiFetch(`${API}/creative-files/${fileId}/checklist`);
     if (!res.ok) throw new Error('取得失敗');
     const data = await res.json();
+    _fpChecklistData = data;
+    _fpChecklistFileId = fileId;
     fpRenderChecklist(data, fileId);
   } catch(e) {
     el.innerHTML = `<div style="color:#f85149;font-size:12px;text-align:center;padding:20px">${e.message}</div>`;
@@ -32935,8 +32973,10 @@ function fpRenderChecklist(data, fileId) {
     const done = item.result?.is_checked;
     const who  = item.result?.users ? NameDisplay.short(item.result.users) : '';
     const at   = fmtCheckedAt(item.result?.checked_at);
+    // API 往復中（楽観的反映済み・未確定）のアイテムは薄く表示
+    const pending = _fpChecklistPending.has(`${item._type}:${item.id}`);
     return `
-    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;background:${done ? '#052e16' : '#1c1c1f'};border:1px solid ${done ? '#166534' : '#2a2a2e'};margin-bottom:6px;cursor:pointer;transition:background .15s"
+    <div data-ck-key="${item._type}:${item.id}" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;background:${done ? '#052e16' : '#1c1c1f'};border:1px solid ${done ? '#166534' : '#2a2a2e'};margin-bottom:6px;cursor:pointer;transition:background .15s${pending ? ';opacity:.6' : ''}"
          onclick="fpToggleChecklistItem('${item.id}','${item._type}','${fileId}',this)">
       <div style="width:18px;height:18px;border-radius:4px;border:2px solid ${done ? '#22c55e' : '#52525b'};background:${done ? '#22c55e' : 'transparent'};flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;transition:all .15s">
         ${done ? '<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : ''}
@@ -32976,15 +33016,74 @@ function fpRenderChecklist(data, fileId) {
   `;
 }
 
+// チェックリストパネルが現在表示中の場合のみローカル state から再描画する。
+// レビュータブ表示中や別ファイルへの切替後はコメント欄を壊さないため DOM には触らない
+// （ローカル state は更新済みなので、次回の fpRenderChecklist で正しく表示される）。
+function _fpRerenderChecklistIfVisible(fileId) {
+  if (currentPreviewFileId !== fileId || _fpChecklistFileId !== fileId || !_fpChecklistData) return;
+  const el = document.getElementById('fp-comments-list');
+  if (!el || !el.querySelector('[data-ck-key]')) return; // チェックリスト非表示（レビュータブ等）
+  fpRenderChecklist(_fpChecklistData, fileId);
+}
+
 async function fpToggleChecklistItem(itemId, itemType, fileId, rowEl) {
+  const key = `${itemType}:${itemId}`;
+  // 連打ガード: 当該アイテムが API 往復中なら無視（他アイテムは操作可能なまま）
+  if (_fpChecklistPending.has(key)) return;
+
+  const data = (_fpChecklistFileId === fileId) ? _fpChecklistData : null;
+  const list = itemType === 'global' ? (data?.globals || []) : (data?.project_items || []);
+  const item = list.find(i => i.id === itemId);
+
+  // ローカル state が無い場合のフォールバック（従来動作: API → 全件リロード）
+  if (!item) {
+    try {
+      const res = await apiFetch(`${API}/creative-files/${fileId}/checklist/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId, item_type: itemType }),
+      });
+      if (res.ok) await fpLoadChecklist(fileId);
+    } catch(e) {}
+    return;
+  }
+
+  // 楽観的反映: クリック瞬間にチェック状態を反転して描画 → 失敗時に revert
+  const prev = item.result ? { ...item.result } : null;
+  const wasChecked = !!prev?.is_checked;
+  item.result = wasChecked
+    ? { ...prev, is_checked: false, checked_by: null, checked_at: null, users: null }
+    : {
+        is_checked: true,
+        checked_by: currentUser?.id || null,
+        checked_at: new Date().toISOString(),
+        users: currentUser ? { full_name: currentUser.full_name, nickname: currentUser.nickname } : null,
+      };
+  _fpChecklistPending.add(key);
+  _fpRerenderChecklistIfVisible(fileId);
+
   try {
     const res = await apiFetch(`${API}/creative-files/${fileId}/checklist/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item_id: itemId, item_type: itemType }),
     });
-    if (res.ok) await fpLoadChecklist(fileId);
-  } catch(e) {}
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(translateError(e?.error) || `HTTP ${res.status}`);
+    }
+    // サーバー確定値（checked_at / users(full_name) 等）で上書きして整合を取る
+    const saved = await res.json().catch(() => null);
+    if (saved && typeof saved === 'object') item.result = saved;
+    _fpChecklistPending.delete(key);
+    _fpRerenderChecklistIfVisible(fileId);
+  } catch (e) {
+    // 失敗: 元の状態に戻してエラートースト
+    item.result = prev;
+    _fpChecklistPending.delete(key);
+    _fpRerenderChecklistIfVisible(fileId);
+    showToast('チェックの更新に失敗しました: ' + (e?.message || ''), 'error');
+  }
 }
 
 async function loadFileComments(fileId) {
