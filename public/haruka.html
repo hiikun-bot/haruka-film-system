@@ -440,6 +440,10 @@ tr.row-help td{background:#FFFBF2}
 /* バッジ類 */
 .proj-tag{font-size:12px;padding:3px 10px;border-radius:8px;white-space:nowrap;font-weight:500;cursor:default}
 .status-chip{font-size:12px;padding:4px 10px;border-radius:8px;font-weight:500;white-space:nowrap;display:inline-block}
+/* 一覧から直接ステータス変更できるチップ（クリック可能の視覚表現） */
+.status-chip-clickable{cursor:pointer;transition:box-shadow .12s ease, filter .12s ease}
+.status-chip-clickable:hover{box-shadow:0 0 0 1.5px currentColor inset;filter:brightness(.96)}
+.status-chip-clickable .status-chip-caret{font-size:9px;margin-left:4px;opacity:.55}
 .s-gray{background:#F1EFE8;color:#5F5E5A}
 .s-pink{background:#FBEAF0;color:#993556}
 .s-teal{background:var(--em-pale);color:#0F6E56}
@@ -4744,26 +4748,28 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </div>
 
-<!-- ステータス更新モーダル -->
+<!-- ステータス更新モーダル（一覧チップからの直接ステータス変更）
+     選択肢は openStatusModal() がロール・現在ステータスに応じて動的生成する。
+     - admin: 全ステータス（工程ジャンプは理由必須 → /creatives/:id/admin-status）
+     - その他: 工程上の次の遷移のみ（コメント等が必須な遷移は詳細モーダルへ誘導） -->
 <div class="modal-overlay" id="modal-status">
   <div class="modal">
-    <div class="modal-title">ステータス更新<button class="modal-close" onclick="closeModal('modal-status')">×</button></div>
+    <div class="modal-title">ステータス変更<button class="modal-close" onclick="closeModal('modal-status')">×</button></div>
     <div class="form-group">
       <label class="form-label">ファイル名</label>
       <div id="status-filename" style="font-size:14px;font-weight:500;color:var(--text);padding:4px 0"></div>
     </div>
     <div class="form-group">
       <label class="form-label">ステータス</label>
-      <select class="form-select" id="status-select">
-        <option>未着手</option><option>台本制作</option><option>素材・ナレ作成</option>
-        <option>編集</option><option>Dチェック</option><option>Dチェック後修正</option>
-        <option>Pチェック</option><option>Pチェック後修正</option>
-        <option>クライアントチェック中</option><option>クライアントチェック後修正</option>
-        <option>納品</option>
-      </select>
+      <select class="form-select" id="status-select" onchange="onQuickStatusSelectChange()"></select>
+      <div id="status-quick-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5"></div>
+    </div>
+    <div class="form-group" id="status-reason-group" style="display:none">
+      <label class="form-label">変更理由（必須・監査ログに残ります）</label>
+      <textarea class="form-input" id="status-reason" rows="2" style="resize:vertical" placeholder="例: クライアント都合で工程を巻き戻し"></textarea>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
-      <button class="btn-primary" onclick="updateStatus()">更新する</button>
+      <button class="btn-primary" id="status-apply-btn" onclick="applyQuickStatusChange()">変更する</button>
       <button class="btn" onclick="closeModal('modal-status')">キャンセル</button>
     </div>
   </div>
@@ -12222,7 +12228,7 @@ function renderCreatives() {
       <td style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : editorName}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
-      <td><span class="status-chip ${statusClass(c.status)}">${c.status}</span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
+      <td><span class="status-chip ${statusClass(c.status)} status-chip-clickable" role="button" tabindex="0" title="クリックしてステータスを変更" onclick="event.stopPropagation();openStatusModal('${c.id}')" onkeydown="if(event.key==='Enter'){event.stopPropagation();openStatusModal('${c.id}')}">${c.status}<span class="status-chip-caret">▾</span></span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
       <td title="${esc(c.memo || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${esc(c.memo || '—')}</td>
       <td><span class="ball-dot ${dotClass}"></span><span class="ball-name" title="${esc((ball.holders||[ball.holder]).join('、'))}">${esc(ball.holder)}${(ball.holders && ball.holders.length>1) ? `<span style="color:var(--text-muted);font-size:12px;font-weight:400;margin-left:4px">+${ball.holders.length-1}</span>` : ''}</span></td>
       <td>
@@ -13750,11 +13756,198 @@ async function toggleHelp(id, current) {
   }
 }
 
-function openStatusModal(id, fileName, status) {
+// ==================== 一覧からの直接ステータス変更（クイック変更） ====================
+// 設計メモ（ADR 015 / 工程ルール準拠）:
+//   - 詳細モーダルの遷移ボタン（advanceCreativeStatus / requestRevision 等）は全ロールに
+//     開放されており、コメント必須・担当者ピッカー等の「工程制約」でガードされている。
+//   - ステップを跨ぐ自由ジャンプだけは admin 限定（isTopAdmin() → adminJumpStatus /
+//     POST /creatives/:id/admin-status。理由必須・請求書整合性チェック・監査ログあり）。
+//   - 一覧チップのクイック変更も同じ基準をそのまま適用する:
+//       admin    → 全ステータスへ変更可。制約のない通常遷移は updateStatus()（楽観更新）、
+//                  それ以外は理由必須で admin-status エンドポイント（adminJumpStatus 相当）
+//       その他   → 工程上の「次の遷移」のみ選択肢に出す。コメント等が必須な遷移を選んだ
+//                  場合は実行せず詳細モーダルへ誘導する（工程ルールを壊さない）
+//   - LP/HP/LINE（工程テンプレ駆動・status_code 運用）は専用エンドポイント
+//     (advance/back-template-status) が別にあるため、チップクリックは詳細モーダルへ誘導。
+//   - ロール判定は effectiveRole() ベースの isTopAdmin() のみ使用（currentUser.role 直書き禁止 / VIEW AS 対応）
+
+// 現行ステータスマスタ（動画/静止画系）。statusClass() / updateCreativeStepIndicator() と同期。
+const QUICK_STATUS_ALL = ['未着手','制作中（初稿提出前）','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
+// 旧ステータス（「制作中」相当のレガシー値）。現在値として残っている場合のみ選択肢に含める。
+const QUICK_PRODUCTION_LEGACY = ['台本制作','素材・ナレ作成','編集'];
+
+let _quickStatusCtx = null; // { id, current, isAdmin, transitions }
+
+// 詳細モーダルの工程ボタン群と同じ遷移表を返す。
+// direct: true  → 一覧から即時変更可（コメント等の必須制約なし）
+// direct: false → 詳細モーダルでのみ可（why に理由）
+function _quickStatusTransitions(c) {
+  const hasProducer = !!c.projects?.producer_id;
+  const s = c.status;
+  const t = [];
+  const production = ['制作中（初稿提出前）', ...QUICK_PRODUCTION_LEGACY];
+  if (s === '未着手') {
+    t.push({ status: '制作中（初稿提出前）', direct: true, requiresAssignee: true });
+  } else if (production.includes(s)) {
+    t.push({ status: 'Dチェック', direct: false, why: '初稿ファイルの提出とチェック担当者の選択が必要です' });
+    t.push({ status: 'クライアントチェック中', direct: false, why: 'CL直行はクライアント確認URL等の確認が必要です' });
+  } else if (s === 'Dチェック') {
+    t.push({ status: hasProducer ? 'Pチェック' : 'クライアントチェック中', direct: false, why: '承認コメントの入力が必要です' });
+    t.push({ status: 'Dチェック後修正', direct: false, why: '修正指示の入力が必要です' });
+    if (hasProducer) t.push({ status: 'クライアントチェック中', direct: false, why: 'Pスキップは承認コメントの入力が必要です' });
+  } else if (s === 'Pチェック') {
+    t.push({ status: 'クライアントチェック中', direct: false, why: '承認コメントの入力が必要です' });
+    t.push({ status: 'Pチェック後修正', direct: false, why: '修正指示の入力が必要です' });
+  } else if (s === 'クライアントチェック中') {
+    t.push({ status: '納品', direct: false, why: '承認コメントの入力が必要です' });
+    t.push({ status: 'クライアントチェック後修正', direct: false, why: '修正指示の入力が必要です' });
+  } else if (s === 'Dチェック後修正') {
+    t.push({ status: 'Dチェック', direct: false, why: '修正版の提出とディレクターへの返信コメントが必要です' });
+  } else if (s === 'Pチェック後修正') {
+    t.push({ status: 'Pチェック', direct: false, why: '修正版の提出とディレクターへの返信コメントが必要です' });
+  } else if (s === 'クライアントチェック後修正') {
+    t.push({ status: 'クライアントチェック中', direct: false, why: '修正版の提出とディレクターへの返信コメントが必要です' });
+    t.push({ status: 'Dチェック', direct: false, why: 'Dチェックへ戻すにはディレクターへの返信コメントが必要です' });
+  }
+  // '納品' からの遷移はなし（admin の工程ジャンプのみ）
+  return t;
+}
+
+function openStatusModal(id) {
+  const c = (allCreatives || []).find(x => x.id === id);
+  if (!c) return;
+
+  // 工程テンプレ駆動カテゴリ（LP/HP/LINE）は status 文字列ではなく status_code 運用のため、
+  // クイック変更は提供せず詳細モーダル（テンプレチェブロン + 次のステップへ）に誘導する。
+  const proj = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === (c.projects?.id || c.project_id));
+  const catCode = proj ? (getProjectCategory(proj)?.code || null) : null;
+  if (catCode && ['lp', 'hp', 'line'].includes(catCode)) {
+    showToast('この案件は工程テンプレで進行します。詳細画面の「次のステップへ」から進めてください', 'info');
+    openCreativeDetail(id);
+    return;
+  }
+
   selectedCreativeId = id;
-  document.getElementById('status-filename').textContent = fileName;
-  document.getElementById('status-select').value = status;
+  const isAdmin = isTopAdmin();
+  const transitions = _quickStatusTransitions(c);
+  _quickStatusCtx = { id, current: c.status, isAdmin, transitions };
+
+  document.getElementById('status-filename').textContent = c.file_name || '';
+
+  const sel = document.getElementById('status-select');
+  let options;
+  if (isAdmin) {
+    // admin: 全ステータス（P無し案件は Pチェック系を除外。adminJumpStatus の STEPS フィルタと同基準）
+    let list = QUICK_STATUS_ALL.slice();
+    if (!c.projects?.producer_id) list = list.filter(s => !s.startsWith('Pチェック'));
+    if (c.status && !list.includes(c.status)) list.unshift(c.status); // レガシー値（編集 等）も現在値として表示
+    options = list.map(s => `<option value="${esc(s)}">${esc(s)}${s === c.status ? '（現在）' : ''}</option>`);
+  } else {
+    // 非admin: 現在値 + 工程上許可されている遷移のみ
+    options = [`<option value="${esc(c.status || '')}">${esc(c.status || '-')}（現在）</option>`]
+      .concat(transitions.map(t => `<option value="${esc(t.status)}">${esc(t.status)}</option>`));
+  }
+  sel.innerHTML = options.join('');
+  sel.value = c.status || '';
+
+  const reasonEl = document.getElementById('status-reason');
+  if (reasonEl) reasonEl.value = '';
+  onQuickStatusSelectChange();
   openModal('modal-status');
+}
+
+// 選択中の遷移に応じてヒント・理由入力欄の表示を切り替える
+function onQuickStatusSelectChange() {
+  const ctx = _quickStatusCtx;
+  if (!ctx) return;
+  const target = document.getElementById('status-select')?.value;
+  const hintEl = document.getElementById('status-quick-hint');
+  const reasonGroup = document.getElementById('status-reason-group');
+  if (!hintEl || !reasonGroup) return;
+
+  const tr = (ctx.transitions || []).find(t => t.status === target);
+  let hint = '';
+  let showReason = false;
+
+  if (!target || target === ctx.current) {
+    hint = '';
+  } else if (tr && tr.direct) {
+    hint = tr.requiresAssignee ? '担当者が設定されている場合のみ進められます' : '';
+  } else if (ctx.isAdmin) {
+    // admin の工程ジャンプ（adminJumpStatus 相当）
+    showReason = true;
+    hint = '⚠️ 工程を跨ぐ管理者ジャンプです。理由が必須です（監査ログに記録・請求書整合性チェックあり）';
+  } else if (tr) {
+    hint = `この遷移は${tr.why}。「変更する」を押すと詳細画面を開きます`;
+  }
+
+  hintEl.textContent = hint;
+  hintEl.style.display = hint ? '' : 'none';
+  reasonGroup.style.display = showReason ? '' : 'none';
+}
+
+// 「変更する」: 遷移の種類に応じて updateStatus / admin-status / 詳細モーダル誘導に振り分け
+async function applyQuickStatusChange() {
+  const ctx = _quickStatusCtx;
+  if (!ctx || !selectedCreativeId) return;
+  const target = document.getElementById('status-select')?.value;
+  if (!target || target === ctx.current) { closeModal('modal-status'); return; }
+  const c = (allCreatives || []).find(x => x.id === selectedCreativeId);
+  if (!c) { closeModal('modal-status'); return; }
+  const tr = (ctx.transitions || []).find(t => t.status === target);
+
+  // 1) 工程上の通常遷移かつ制約なし → 既存の updateStatus()（楽観更新 + 1件差し替え）
+  if (tr && tr.direct) {
+    if (tr.requiresAssignee) {
+      const hasAssignee = (c.creative_assignments || []).some(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+      if (!hasAssignee) {
+        showToast('担当者を設定してください。担当者なしで制作中には進めません。', 'warn');
+        closeModal('modal-status');
+        openCreativeDetail(selectedCreativeId);
+        return;
+      }
+    }
+    await updateStatus();
+    return;
+  }
+
+  // 2) 非admin: コメント必須等の工程制約あり → 実行せず詳細モーダルへ誘導
+  if (!ctx.isAdmin) {
+    showToast(tr?.why ? `${tr.why}。詳細画面から進めてください` : 'この変更は詳細画面から行ってください', 'warn');
+    closeModal('modal-status');
+    openCreativeDetail(selectedCreativeId);
+    return;
+  }
+
+  // 3) admin: 工程ジャンプ（adminJumpStatus 相当）。理由必須・請求書整合性チェック・監査ログ
+  const reason = document.getElementById('status-reason')?.value.trim();
+  if (!reason) {
+    showToast('変更理由を入力してください（必須・監査ログに残ります）', 'warn');
+    document.getElementById('status-reason')?.focus();
+    return;
+  }
+  const res = await apiFetch(`${API}/creatives/${selectedCreativeId}/admin-status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: target, reason }),
+  });
+  if (res.ok) {
+    const j = await res.json().catch(() => ({}));
+    let msg = `ステータスを ${ctx.current} → ${target} に変更しました`;
+    if (j.deleted_invoice_items > 0) msg += `（下書き請求書明細 ${j.deleted_invoice_items} 件を削除）`;
+    showToast(msg, 'success');
+    try { _cdInvalidateCache(selectedCreativeId); } catch (_) {}
+    closeModal('modal-status');
+    await refreshCreativeInList(selectedCreativeId);
+  } else {
+    const e = await res.json().catch(() => ({}));
+    const raw = String(e?.error || '');
+    if (res.status === 409 && raw.includes('\n')) {
+      alert('ステータスを変更できません\n\n' + raw);
+    } else {
+      showToast('エラー: ' + translateError(raw || '不明'), 'error');
+    }
+  }
 }
 
 async function updateStatus() {
