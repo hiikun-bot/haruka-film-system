@@ -1978,6 +1978,42 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   }
 }
 
+/* ===== 処理中表示・二度押し防止（btnBusy / selBusy / グローバル進捗バー） ===== */
+@keyframes spin { to { transform: rotate(360deg); } }
+/* ボタン内スピナー（btnBusy）。currentColor 追従で primary/ghost どちらでも馴染む */
+.busy-spin {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; opacity: .8;
+  animation: spin .7s linear infinite;
+  vertical-align: -2px; margin-right: 6px;
+}
+/* select 横の小スピナー / 完了チェック（selBusy） */
+.sel-busy-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: 6px; vertical-align: middle;
+  font-size: 12px; color: var(--em-dark, #0d9488);
+}
+.sel-busy-mark .busy-spin { margin-right: 0; width: 11px; height: 11px; }
+/* グローバル進捗バー: 非GETの apiFetch が 300ms 超えたら画面最上部に表示。
+   z-index はトースト(99999)より下、ヘッダー・モーダルより上。 */
+#global-busy-bar {
+  position: fixed; top: 0; left: 0; right: 0; height: 2px;
+  z-index: 99990; pointer-events: none;
+  opacity: 0; transition: opacity .3s ease;
+  overflow: hidden; background: transparent;
+}
+#global-busy-bar.on { opacity: 1; }
+#global-busy-bar .global-busy-bar-inner {
+  width: 40%; height: 100%;
+  background: linear-gradient(90deg, transparent, var(--em-dark, #0d9488), transparent);
+  animation: busy-bar-slide 1.1s ease-in-out infinite;
+}
+@keyframes busy-bar-slide {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
 /* ========================================
    クライアントフィルタ / 担当者フィルタ（クリエイティブ画面）
    両者とも .cm-* クラスのポップオーバーUIを共有する
@@ -8468,6 +8504,100 @@ function avatarWithName(user, size, opts) {
 let currentUser = null;
 let previewRole = null; // 管理者用ロールプレビュー
 
+// ==================== 処理中表示・二度押し防止（共通基盤） ====================
+// btnBusy: ボタン押下系の処理を「disabled + スピナー + 文言変化」で包む共通ヘルパー。
+//   - dataset.busy による再入ガード（連打しても promiseFactory は1回しか走らない）
+//   - finally で必ず元の表示・disabled 状態に復帰する
+//   - btn が null（onclick が div 等でボタンを特定できない）場合は実行のみ行う
+async function btnBusy(btn, promiseFactory, busyLabel = '処理中…') {
+  if (!btn) return promiseFactory();
+  if (btn.dataset.busy === '1') return; // 再入ガード（二度押し防止）
+  btn.dataset.busy = '1';
+  const origDisabled = btn.disabled;
+  const origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="busy-spin"></span>' + esc(busyLabel);
+  try {
+    return await promiseFactory();
+  } finally {
+    delete btn.dataset.busy;
+    btn.disabled = origDisabled;
+    btn.innerHTML = origHtml;
+  }
+}
+
+// busyBtnFrom: btnBusy に渡すボタン要素の解決ヘルパー。
+//   id 指定があれば getElementById、無ければ発火中クリックイベントの target.closest('button')。
+function busyBtnFrom(id) {
+  if (id) {
+    const el = document.getElementById(id);
+    if (el) return el;
+  }
+  try {
+    const t = window.event && window.event.target;
+    return (t && t.closest) ? t.closest('button') : null;
+  } catch (_) { return null; }
+}
+
+// selBusy: select 変更系の処理を「disabled + 横スピナー → 完了で0.8秒✓」で包む共通ヘルパー。
+async function selBusy(sel, promise) {
+  if (!sel) return promise;
+  if (sel.dataset.busy === '1') return promise;
+  sel.dataset.busy = '1';
+  const origDisabled = sel.disabled;
+  sel.disabled = true;
+  const mark = document.createElement('span');
+  mark.className = 'sel-busy-mark';
+  mark.innerHTML = '<span class="busy-spin"></span>';
+  try { sel.insertAdjacentElement('afterend', mark); } catch (_) {}
+  let ok = false;
+  try {
+    const result = await promise;
+    ok = true;
+    return result;
+  } finally {
+    delete sel.dataset.busy;
+    sel.disabled = origDisabled;
+    if (ok && mark.isConnected) {
+      mark.textContent = '✓';
+      setTimeout(() => { try { mark.remove(); } catch (_) {} }, 800);
+    } else {
+      try { mark.remove(); } catch (_) {}
+    }
+  }
+}
+
+// グローバル進捗バー（apiFetch 連動）:
+//   非GET/HEAD のリクエストが 300ms を超えたら画面最上部に 2px のアニメーションバーを表示。
+//   参照カウント式で並行リクエストにも対応し、全件完了でフェードアウトする。
+let __gBusyCount = 0;
+let __gBusyShowTimer = null;
+function __gBusyBegin() {
+  __gBusyCount++;
+  if (__gBusyCount === 1 && !__gBusyShowTimer) {
+    __gBusyShowTimer = setTimeout(() => {
+      __gBusyShowTimer = null;
+      if (__gBusyCount <= 0) return;
+      let bar = document.getElementById('global-busy-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'global-busy-bar';
+        bar.innerHTML = '<div class="global-busy-bar-inner"></div>';
+        (document.body || document.documentElement).appendChild(bar);
+      }
+      bar.classList.add('on');
+    }, 300);
+  }
+}
+function __gBusyEnd() {
+  __gBusyCount = Math.max(0, __gBusyCount - 1);
+  if (__gBusyCount === 0) {
+    if (__gBusyShowTimer) { clearTimeout(__gBusyShowTimer); __gBusyShowTimer = null; }
+    const bar = document.getElementById('global-busy-bar');
+    if (bar) bar.classList.remove('on'); // opacity transition でフェードアウト
+  }
+}
+
 // ==================== apiFetch（VIEW AS 対応の fetch ラッパ） ====================
 // previewRole がセットされていれば X-View-As ヘッダを自動付与する。
 // サーバー側 (auth.js#getEffectiveRole) は最高管理者からのリクエストに限りこのヘッダを尊重するため、
@@ -8488,6 +8618,11 @@ async function apiFetch(input, init = {}) {
   const isSafeMethod = method === 'GET' || method === 'HEAD';
   const isStreamBody = opts.body && typeof opts.body.getReader === 'function';
   const canRetry = !isStreamBody;
+
+  // グローバル進捗バー: 更新系（非GET/HEAD）が300msを超えたら画面最上部に表示する（参照カウント式）
+  const trackGlobalBusy = !isSafeMethod;
+  if (trackGlobalBusy) __gBusyBegin();
+  try {
 
   let res;
   try {
@@ -8542,6 +8677,9 @@ async function apiFetch(input, init = {}) {
     } catch (_) {}
   }
   return res;
+  } finally {
+    if (trackGlobalBusy) __gBusyEnd();
+  }
 }
 
 // ==================== ビルドバージョン照合 ====================
@@ -14197,6 +14335,7 @@ function openTeamMemberPicker(triggerEl) {
 }
 
 async function saveTeam() {
+  return btnBusy(busyBtnFrom('t-submit-btn'), async () => {
   const id = document.getElementById('t-id').value;
   const team_code = document.getElementById('t-code').value.trim().toUpperCase();
   const team_name = document.getElementById('t-name').value.trim();
@@ -14223,6 +14362,7 @@ async function saveTeam() {
     }
     closeModal('modal-team'); await loadTeams(); await loadMembers();
   }
+  });
 }
 
 // ---- 稼働時間ヘルパー ----
@@ -14683,6 +14823,7 @@ function goHome() {
 }
 
 async function submitMember() {
+  return btnBusy(busyBtnFrom('m-submit-btn'), async () => {
   const id = document.getElementById('m-id').value;
   const full_name = document.getElementById('m-name').value.trim();
   const nickname = document.getElementById('m-nickname').value.trim() || null;
@@ -14810,6 +14951,7 @@ async function submitMember() {
       : 'エラー: ' + e.error;
     showToast(msg, 'warn');
   }
+  });
 }
 
 function onRoleChange(role) {
@@ -16635,6 +16777,7 @@ async function populateLinesPresetCategorySelect() {
 
 // プリセット（カテゴリ別 制作者単価 A/B/C）から成果物グループを一括生成
 async function generateLinesFromPreset() {
+  return btnBusy(busyBtnFrom(), async () => {
   const projectId = document.getElementById('p-id').value;
   const categoryId = document.getElementById('p-lines-preset-category')?.value;
   if (!projectId) { showToast('案件を保存してから生成してください', 'warn'); return; }
@@ -16647,6 +16790,7 @@ async function generateLinesFromPreset() {
   const j = await res.json().catch(() => ({}));
   showToast(`A/B/C を ${j.created_count || 0} 件生成しました${j.skipped ? `（既存 ${j.skipped} 件はスキップ）` : ''}`, 'ok');
   loadProjectLines(projectId);
+  });
 }
 
 async function loadProjectLines(projectId) {
@@ -19617,12 +19761,14 @@ async function copyAxesFromClient() {
 }
 
 async function toggleHideProject(id, current) {
+  return btnBusy(busyBtnFrom(), async () => {
   await apiFetch(`${API}/projects/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ is_hidden: !current })
   });
   await loadProjects();
+  });
 }
 
 // ===== 案件モーダル: ファイル名テンプレート (ADR 007 Stage 2) =====
@@ -20341,6 +20487,7 @@ function openAnnouncementEdit(id) {
 }
 
 async function submitAnnouncement() {
+  return btnBusy(busyBtnFrom('ann-c-submit-btn'), async () => {
   const id = document.getElementById('ann-c-id').value;
   const title = document.getElementById('ann-c-title').value.trim();
   const body = document.getElementById('ann-c-body').value.trim();
@@ -20364,6 +20511,7 @@ async function submitAnnouncement() {
   else if (data.slack_push_result && data.slack_push_result.startsWith('failed')) showToast(`${verb}（Slack 通知失敗: ` + data.slack_push_result + '）', 'warn');
   else showToast(verb, 'success');
   loadAnnouncements();
+  });
 }
 
 // 対応状況モーダルの表示状態（再描画用）
@@ -22864,6 +23012,7 @@ async function generateMyInvoice() {
 let _pendingSubmitId = null;
 
 async function submitInvoice(id) {
+  return btnBusy(busyBtnFrom(), async () => {
   const uid = currentUser?.supabase_id || currentUser?.id;
   const listRes = await apiFetch(`${API}/invoices?issuer_id=${uid}`);
   const allInvs = listRes.ok ? await listRes.json() : [];
@@ -22895,9 +23044,11 @@ async function submitInvoice(id) {
     return;
   }
   await loadMyInvoices();
+  }, '確認中…');
 }
 
 async function confirmDuplicateSubmit() {
+  return btnBusy(busyBtnFrom(), async () => {
   const reason = document.getElementById('dup-reason').value.trim();
   if (!reason) { showToast('重複理由の入力は必須です', 'warn'); return; }
   const id = _pendingSubmitId;
@@ -22922,6 +23073,7 @@ async function confirmDuplicateSubmit() {
   }
   _pendingSubmitId = null;
   await loadMyInvoices();
+  });
 }
 
 // コスト種別 → 表示ラベル（フロント・サーバー共通の方針）
@@ -23321,13 +23473,16 @@ async function saveInvoiceEdit() {
 }
 
 async function approveInvoice(id) {
+  return btnBusy(busyBtnFrom(), async () => {
   if (!confirm('この請求書を承認しますか？')) return;
   const res = await apiFetch(`${API}/invoices/${id}/approve`, { method: 'POST' });
   if (!res.ok) { showToast('承認に失敗しました', 'error'); return; }
   await loadAdminInvoices();
+  });
 }
 
 async function rejectInvoice(id) {
+  return btnBusy(busyBtnFrom(), async () => {
   const reason = prompt('差し戻し理由を入力してください：');
   if (reason === null) return;
   const res = await apiFetch(`${API}/invoices/${id}/reject`, {
@@ -23337,6 +23492,7 @@ async function rejectInvoice(id) {
   });
   if (!res.ok) { showToast('差し戻しに失敗しました', 'error'); return; }
   await loadAdminInvoices();
+  });
 }
 
 let _printMeta = null;
@@ -26833,6 +26989,7 @@ function renderGeneralMasterPage() {
 }
 
 async function addGeneralCategory() {
+  return btnBusy(busyBtnFrom(), async () => {
   const name = document.getElementById('gen-cat-name').value.trim();
   const code = document.getElementById('gen-cat-code').value.trim();
   const status = document.getElementById('gen-cat-status');
@@ -26848,9 +27005,11 @@ async function addGeneralCategory() {
     if (status) status.textContent = '追加しました';
     renderGeneralMasterPage();
   } else { const e = await res.json(); if (status) status.textContent = 'エラー: ' + e.error; }
+  });
 }
 
 async function addGeneralItem(categoryId) {
+  return btnBusy(busyBtnFrom(), async () => {
   const code = document.getElementById('mia-code').value.trim();
   const name = document.getElementById('mia-name').value.trim();
   const note = document.getElementById('mia-note').value.trim();
@@ -26870,6 +27029,7 @@ async function addGeneralItem(categoryId) {
     document.getElementById('mia-expires').value = '';
     renderGeneralMasterPage();
   } else { const e = await res.json(); if (status) status.textContent = 'エラー: ' + e.error; }
+  });
 }
 
 async function saveGeneralItemEdit(id) {
@@ -28313,6 +28473,7 @@ async function saveProduct(clientId, id) {
 }
 
 async function addClientProductNew() {
+  return btnBusy(busyBtnFrom(), async () => {
   const clientId = productsCurrentClientId;
   if (!clientId) return;
   const sort_order = document.getElementById('prod-new-sort').value;
@@ -28335,6 +28496,7 @@ async function addClientProductNew() {
   } else {
     const d = await res.json(); status.style.color = '#A32D2D'; status.textContent = d.error || '追加に失敗しました';
   }
+  });
 }
 
 function openClientProductModal(clientId, clientName) {
@@ -28349,9 +28511,11 @@ function openClientProductModal(clientId, clientName) {
 }
 
 function deleteClientProduct(clientId, productId) {
+  return btnBusy(busyBtnFrom(), () => {
   if (!confirm('削除しますか？')) return;
-  apiFetch(`${API}/clients/${clientId}/products/${productId}`, { method: 'DELETE' })
+  return apiFetch(`${API}/clients/${clientId}/products/${productId}`, { method: 'DELETE' })
     .then(r => { if (r.ok) loadClientProducts(clientId); });
+  }, '削除中…');
 }
 
 // 訴求軸マスター（クライアント別）
@@ -28530,6 +28694,7 @@ async function loadClientAppealAxes(clientId) {
 }
 
 async function addClientAppealAxis() {
+  return btnBusy(busyBtnFrom(), async () => {
   const clientId = appealAxesCurrentClientId;
   if (!clientId) return;
   const sort_order = document.getElementById('axis-new-sort').value;
@@ -28552,6 +28717,7 @@ async function addClientAppealAxis() {
   } else {
     const d = await res.json(); status.style.color = '#A32D2D'; status.textContent = d.error || '追加に失敗しました';
   }
+  });
 }
 
 function startEditAppealAxis(clientId, id) {
@@ -28591,9 +28757,11 @@ function openClientAppealAxisModal(clientId, clientName) {
 }
 
 function deleteClientAppealAxis(clientId, axisId) {
+  return btnBusy(busyBtnFrom(), () => {
   if (!confirm('削除しますか？')) return;
-  apiFetch(`${API}/clients/${clientId}/appeal-axes/${axisId}`, { method: 'DELETE' })
+  return apiFetch(`${API}/clients/${clientId}/appeal-axes/${axisId}`, { method: 'DELETE' })
     .then(r => { if (r.ok) loadClientAppealAxes(clientId); });
+  }, '削除中…');
 }
 
 async function addMasterCat() {
@@ -31345,6 +31513,7 @@ function updateCreativeCommentLabel(status) {
 // 管理者によるステータス強制ジャンプ（戻し含む）
 // 統計整合性チェック: 提出済請求書に紐付いていればブロック / 下書き請求書のみなら明細削除
 async function adminJumpStatus(targetStatus, stepLabel) {
+  return btnBusy(busyBtnFrom(), async () => {
   if (!currentCreativeDetail) return;
   if (!isTopAdmin()) {
     showToast('管理者のみ実行できます', 'warn');
@@ -31392,11 +31561,13 @@ async function adminJumpStatus(targetStatus, stepLabel) {
       showToast('エラー: ' + translateError(raw || '不明'), 'error');
     }
   }
+  });
 }
 
 // 納品完了モード: 途中工程をすべてスキップして「納品」状態にする。
 // 理由は必須。クリエイティブファイル（CR）が未アップロードでも実行可。
 async function forceDeliver() {
+  return btnBusy(busyBtnFrom('cd-force-deliver-btn'), async () => {
   if (!currentCreativeDetail) return;
   const reason = prompt('納品完了モードに切り替えます。\nこの操作は途中工程（D/P/CL確認）をすべてスキップし、ステータスを「納品」にします。\n\n理由を入力してください（必須）：');
   if (reason === null) return; // キャンセル
@@ -31421,9 +31592,11 @@ async function forceDeliver() {
     const e = await res.json().catch(() => ({}));
     showToast('エラー: ' + translateError(e?.error || '不明'), 'error');
   }
+  });
 }
 
 async function directToClientCheck() {
+  return btnBusy(busyBtnFrom('cd-direct-cl-btn'), async () => {
   if (!currentCreativeDetail) return;
   // クライアント確認URL未設定の警告
   const _crUrlDirect = document.getElementById('cd-client-review-url')?.value.trim();
@@ -31462,6 +31635,7 @@ async function directToClientCheck() {
     closeModal('modal-creative-detail');
     await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); }
+  });
 }
 
 async function skipToClientCheck() {
@@ -36159,6 +36333,7 @@ function confirmUploadNo() {
 }
 
 async function doDCheckTransition() {
+  return btnBusy(busyBtnFrom(), async () => {
   document.getElementById('cd-dcheck-confirm').style.display = 'none';
   // Dチェック担当者選択モーダル経由で実行する（複数選択対応）
   // onSubmit は { directorUserIds, additionalReviewerIds } を受け取る（後方互換のため第1引数が配列のみのケースも吸収）
@@ -36210,6 +36385,7 @@ async function doDCheckTransition() {
         showToast('エラー: ' + translateError(e?.error), 'error');
       }
     },
+  });
   });
 }
 
@@ -39132,6 +39308,7 @@ async function deleteMemberPermanently(id, name) {
 
 // ===== ログアウト =====
 async function logout() {
+  return btnBusy(busyBtnFrom(), async () => {
   if (!confirm('ログアウトしますか？')) return;
   try {
     await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
@@ -39142,6 +39319,7 @@ async function logout() {
     return;
   }
   window.location.href = '/login.html';
+  }, 'ログアウト中…');
 }
 
 // ===== パスワード変更 =====
@@ -41999,6 +42177,7 @@ function msSelectItem(fileId, scroll = true) {
 
 // ==================== アクション（解析・適用・削除）====================
 async function msAnalyzeSelected() {
+  return btnBusy(busyBtnFrom('ms-btn-analyze'), async () => {
   if (!msSelectedFileId) return;
   if (!confirm('Vertex AI Gemini で解析します。\n従量課金が発生します。\n本当に実行しますか？')) return;
   try {
@@ -42010,6 +42189,7 @@ async function msAnalyzeSelected() {
     showToast('解析失敗: ' + e.message, 'error');
     msReloadList();
   }
+  }, '解析中… 約30秒かかります');
 }
 // プレビュー再生成（全動画一律 60枚 WebP ストーリーボードを生成）
 // - 新規実装は POST /preview/:fileId を呼ぶ（PR-BC で追加予定）
@@ -42056,6 +42236,7 @@ const msRegenerateFaststart = msRegeneratePreview;
 //   - apply_failed   (再適用)
 // の手動再実行口として動く。
 async function msApplySelected() {
+  return btnBusy(busyBtnFrom(), async () => {
   if (!msSelectedFileId) return;
   if (!confirm('Drive 上で振り分けを実行します。\n（ファイル名変更＋フォルダ移動）\n実行しますか？')) return;
   try {
@@ -42069,6 +42250,7 @@ async function msApplySelected() {
   } catch (e) {
     showToast('適用失敗: ' + e.message, 'error');
   }
+  });
 }
 // 素材削除フロー:
 //   1) msDeleteSelected が確認モーダルを開く（Drive 連動削除チェック付き）
