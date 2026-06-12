@@ -7740,6 +7740,14 @@ window.showPage = window.showPage || function(name, btn) {
                   title="案件の取り違え等を後から修正します">
             ✎ 事後修正
           </button>
+          <!-- クリエイティブ削除ボタン: リスト表示のチェックボックス削除と同じ DELETE /api/creatives を1件で呼ぶ。
+               ガント表示・詳細モーダルからも不要クリエイティブを消せるようにするための入口（confirm で誤操作防止）。 -->
+          <button id="cd-delete-btn"
+                  onclick="deleteCreativeFromDetail()"
+                  style="flex-shrink:0;background:#fff;border:1px solid #fca5a5;border-radius:6px;padding:4px 10px;font-size:11.5px;color:#dc2626;cursor:pointer;white-space:nowrap;margin-left:6px"
+                  title="このクリエイティブを削除します（Drive ファイルは【削除】リネームのみ）">
+            🗑 削除
+          </button>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin-top:4px">
           <span id="cd-status-chip"></span>
@@ -39556,16 +39564,16 @@ function toggleAllCreativeChecks(master) {
   updateCreativeDeleteBar();
 }
 
-async function deleteSelectedCreatives() {
-  const checked = document.querySelectorAll('.creative-row-check:checked');
-  if (!checked.length) return;
-  const ids = Array.from(checked).map(cb => cb.dataset.id);
+// confirm → DELETE /api/creatives → 結果トースト までの共通部。
+// リスト表示の一括削除と詳細モーダルの単体削除の両方から呼ぶ。成功時 true を返す。
+async function confirmAndDeleteCreatives(ids, targetLabel) {
+  if (!ids.length) return false;
   if (!confirm(
-    `選択した ${ids.length} 件のクリエイティブを削除しますか？\n\n` +
+    `${targetLabel}を削除しますか？\n\n` +
     `※ DB 側のクリエイティブ情報は即削除されます。\n` +
     `※ Google Drive 上のファイルは「【削除】<元のファイル名>」にリネームされます。\n` +
     `   後ほど Drive 上で確認して手動で削除してください（誤削除防止）。`
-  )) return;
+  )) return false;
   const res = await apiFetch(`${API}/creatives`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
@@ -39573,24 +39581,47 @@ async function deleteSelectedCreatives() {
   });
   if (res.ok) {
     const j = await res.json().catch(() => ({}));
-    document.getElementById('creative-check-all').checked = false;
-    document.getElementById('creative-delete-bar').style.display = 'none';
     const r = j?.drive_rename || {};
     let msg = `${j?.deleted || ids.length} 件のクリエイティブを削除しました`;
     if (r.renamed > 0) msg += `（Driveファイル ${r.renamed} 件を「【削除】」付きにリネーム）`;
     if (r.failed > 0)  msg += ` / Driveリネーム失敗 ${r.failed} 件`;
     showToast(msg, 'success');
-    await loadCreatives();
-  } else {
-    const e = await res.json().catch(() => ({}));
-    const raw = String(e?.error || '');
-    // 請求書紐付きで 409 が返ったときは複数行の詳細を alert で表示（toast では読めない）
-    if (res.status === 409 && raw.includes('\n')) {
-      alert('クリエイティブを削除できません\n\n' + raw);
-    } else {
-      showToast('削除エラー: ' + translateError(raw), 'error');
-    }
+    return true;
   }
+  const e = await res.json().catch(() => ({}));
+  const raw = String(e?.error || '');
+  // 請求書紐付きで 409 が返ったときは複数行の詳細を alert で表示（toast では読めない）
+  if (res.status === 409 && raw.includes('\n')) {
+    alert('クリエイティブを削除できません\n\n' + raw);
+  } else {
+    showToast('削除エラー: ' + translateError(raw), 'error');
+  }
+  return false;
+}
+
+async function deleteSelectedCreatives() {
+  const checked = document.querySelectorAll('.creative-row-check:checked');
+  if (!checked.length) return;
+  const ids = Array.from(checked).map(cb => cb.dataset.id);
+  const ok = await confirmAndDeleteCreatives(ids, `選択した ${ids.length} 件のクリエイティブ`);
+  if (!ok) return;
+  document.getElementById('creative-check-all').checked = false;
+  document.getElementById('creative-delete-bar').style.display = 'none';
+  await loadCreatives();
+}
+
+// クリエイティブ詳細モーダルの「🗑 削除」ボタン。
+// 表示中の1件を削除し、成功したらモーダルを閉じて一覧を再読込する。
+async function deleteCreativeFromDetail() {
+  const c = currentCreativeDetail;
+  if (!c?.id) return;
+  const ok = await confirmAndDeleteCreatives([c.id], `「${c.file_name || 'このクリエイティブ'}」`);
+  if (!ok) return;
+  try { _cdInvalidateCache(c.id); } catch (_) {}
+  // 削除済みのデータに対する dirty 確認は不要なのでスキップして閉じる
+  __cdSkipDirtyCheck = true;
+  try { closeModal('modal-creative-detail'); } catch (_) {}
+  await loadCreatives();
 }
 
 function openLink(inputId) {
