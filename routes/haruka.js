@@ -2168,6 +2168,37 @@ async function upsertProducerLineCost(lineId, categoryId, unitPrice) {
   }
 }
 
+// ディレクター報酬（成果物グループ単位の director 支払）を role 固定枠（user_id=null）の
+// 1 line_cost として保存する（ADR 018）。pricing_type で 本あたり/時給/固定/% を選べる。
+// spec.enabled=false の場合は既存の role 固定枠 director 行を削除する。
+// 担当者を個別指定したい場合は「コスト内訳」アコーディオン（user_id 付き別行）を使う。
+async function upsertDirectorLineCost(lineId, spec) {
+  if (!lineId || !spec || typeof spec !== 'object') return;
+  const { data: role } = await supabase.from('roles').select('id').eq('code', 'director').maybeSingle();
+  const roleId = role ? role.id : null;
+  if (!roleId) return;
+  const { data: existing } = await supabase.from('project_estimate_line_costs')
+    .select('id').eq('line_id', lineId).eq('role_id', roleId).is('user_id', null).maybeSingle();
+  // 無効化 → role 固定枠の行があれば削除（個別指定の user_id 付き行は触らない）
+  if (!spec.enabled) {
+    if (existing) await supabase.from('project_estimate_line_costs').delete().eq('id', existing.id);
+    return;
+  }
+  const allowed = ['fixed_per_unit', 'percentage', 'hourly', 'fixed_total'];
+  const pricingType = allowed.includes(spec.pricing_type) ? spec.pricing_type : 'fixed_per_unit';
+  const row = {
+    unit_price: Math.max(0, parseInt(spec.unit_price, 10) || 0),
+    pricing_type: pricingType,
+    percentage: pricingType === 'percentage' ? Math.max(0, Math.min(100, Number(spec.percentage) || 0)) : null,
+    actual_hours: pricingType === 'hourly' ? Math.max(0, Number(spec.actual_hours) || 0) : null,
+  };
+  if (existing) {
+    await supabase.from('project_estimate_line_costs').update(row).eq('id', existing.id);
+  } else {
+    await supabase.from('project_estimate_line_costs').insert({ line_id: lineId, role_id: roleId, currency: 'JPY', ...row });
+  }
+}
+
 // ===== ランク単価プリセット（category × rank → 制作者単価）。category_rank_rates を再利用 =====
 // 役割はカテゴリから自動（UI ではロールを扱わない）。編集は admin/秘書/プロデューサーのみ。
 const PRESET_ROLES = ['admin', 'secretary', 'producer', 'producer_director'];
@@ -2330,6 +2361,12 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     catch (e) { console.warn('[lines] producer cost upsert failed:', e?.message); }
   }
 
+  // ディレクター報酬（ADR 018）を director 固定枠 line_cost として保存（best-effort）
+  if (data && req.body && req.body.director_fee && typeof req.body.director_fee === 'object') {
+    try { await upsertDirectorLineCost(data.id, req.body.director_fee); }
+    catch (e) { console.warn('[lines] director cost upsert failed:', e?.message); }
+  }
+
   res.json(data);
 });
 
@@ -2407,6 +2444,12 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     const catForCost = Object.prototype.hasOwnProperty.call(body, 'category_id') ? (body.category_id || existing.category_id) : existing.category_id;
     try { await upsertProducerLineCost(lineId, catForCost, body.producer_unit_price); }
     catch (e) { console.warn('[lines] producer cost upsert (put) failed:', e?.message); }
+  }
+
+  // ディレクター報酬（ADR 018）を line_cost へ反映（line 列の変更有無に関わらず実行）
+  if (Object.prototype.hasOwnProperty.call(body, 'director_fee') && body.director_fee && typeof body.director_fee === 'object') {
+    try { await upsertDirectorLineCost(lineId, body.director_fee); }
+    catch (e) { console.warn('[lines] director cost upsert (put) failed:', e?.message); }
   }
 
   if (Object.keys(updates).length === 0) {
