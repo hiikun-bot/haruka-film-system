@@ -5716,6 +5716,32 @@ window.showPage = window.showPage || function(name, btn) {
   </div>
 </div>
 
+<!-- 成果物グループに紐付くクリエイティブ一覧モーダル -->
+<!-- 削除が 409 でブロックされたとき「どのクリエイティブが原因か」を検索付きで確認するためのポップアップ。 -->
+<!-- 行クリックでクリエイティブ詳細モーダル（z-index:310）へ遷移する。 -->
+<!-- 削除確認モーダル(z-index:320)の上に重ねるため z-index:330 -->
+<div class="modal-overlay" id="modal-project-line-creatives" data-no-overlay-close="true" style="z-index:330">
+  <div class="modal" style="max-width:560px;width:92vw;padding:22px;border-radius:14px;max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">
+      <div style="flex:1">
+        <div id="pl-creatives-title" style="font-size:14px;font-weight:700">紐付いているクリエイティブ</div>
+        <div id="pl-creatives-line-label" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-project-line-creatives')">×</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);line-height:1.6;margin-bottom:10px">
+      このグループを削除するには、以下のクリエイティブを先に別グループへ移すか削除してください。<br>
+      クリックするとクリエイティブ詳細を開きます。
+    </div>
+    <input type="text" class="form-input" id="pl-creatives-search" placeholder="🔍 ファイル名・ステータスで検索"
+      oninput="renderProjectLineCreatives()" style="margin-bottom:10px">
+    <div id="pl-creatives-list" style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-project-line-creatives')">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- 見積行 × ロール別コスト編集モーダル — Stage 4b -->
 <!-- ADR 002 + 003 + 004: roles マスタ駆動、pricing_type で課金方式を選べる -->
 <!-- 案件編集モーダル(z-index:200)の上に重ねるため z-index:300 -->
@@ -17526,6 +17552,8 @@ async function executeProjectLineDelete() {
       const err = await res.json().catch(() => ({}));
       if (res.status === 409) {
         showToast(err.error || 'クリエイティブが紐付いているため削除できません', 'warn');
+        // どのクリエイティブが紐付いているかを検索付きポップアップで提示
+        openProjectLineCreatives(lineId, projectId);
       } else {
         showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
       }
@@ -17542,6 +17570,79 @@ async function executeProjectLineDelete() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// ==================== 成果物グループ × 紐付きクリエイティブ一覧 ====================
+// 削除が 409 でブロックされたとき「どのクリエイティブが紐付いているのか」を
+// 検索可能なポップアップで表示する。行クリックでクリエイティブ詳細へ遷移。
+
+let _plLinkedCreativesCache = [];
+
+async function openProjectLineCreatives(lineId, projectId) {
+  const searchEl = document.getElementById('pl-creatives-search');
+  if (searchEl) searchEl.value = '';
+  const listEl = document.getElementById('pl-creatives-list');
+  if (listEl) listEl.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中...</div>';
+  // タイトル下にグループ名を出す（_projectLinesCache に居れば）
+  const labelEl = document.getElementById('pl-creatives-line-label');
+  if (labelEl) {
+    const line = _projectLinesCache.find(l => l.id === lineId);
+    const catName = line?.category?.name || '';
+    const lineName = line?.name ? `「${line.name}」` : '';
+    labelEl.textContent = (catName || lineName) ? `成果物グループ: ${catName} ${lineName}`.trim() : '';
+  }
+  openModal('modal-project-line-creatives');
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/creatives`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (listEl) listEl.innerHTML = `<div style="padding:14px;text-align:center;color:#A32D2D;font-size:12px">取得に失敗しました（${esc(err.error || res.status)}）</div>`;
+      return;
+    }
+    _plLinkedCreativesCache = await res.json();
+    const titleEl = document.getElementById('pl-creatives-title');
+    if (titleEl) titleEl.textContent = `紐付いているクリエイティブ（${_plLinkedCreativesCache.length}件）`;
+    renderProjectLineCreatives();
+  } catch (e) {
+    if (listEl) listEl.innerHTML = `<div style="padding:14px;text-align:center;color:#A32D2D;font-size:12px">取得に失敗しました: ${esc(e?.message || '')}</div>`;
+  }
+}
+
+function renderProjectLineCreatives() {
+  const listEl = document.getElementById('pl-creatives-list');
+  if (!listEl) return;
+  const q = (document.getElementById('pl-creatives-search')?.value || '').trim().toLowerCase();
+  const items = _plLinkedCreativesCache.filter(c =>
+    !q
+    || (c.file_name || '').toLowerCase().includes(q)
+    || (c.status || '').toLowerCase().includes(q)
+  );
+  if (!items.length) {
+    listEl.innerHTML = `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">${q ? '検索に一致するクリエイティブがありません' : '紐付いているクリエイティブはありません'}</div>`;
+    return;
+  }
+  listEl.innerHTML = items.map(c => {
+    const delivered = c.status === '納品';
+    const deadline = c.final_deadline || c.draft_deadline;
+    return `
+    <div onclick="openCreativeDetailFromLineList('${c.id}')"
+      style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--bg-card,#fff)"
+      onmouseover="this.style.background='var(--bg-hover,#F4F7F6)'" onmouseout="this.style.background='var(--bg-card,#fff)'">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--em-dark);text-decoration:underline dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.file_name || '')}">${esc(c.file_name || '（名称未設定）')}</div>
+        ${deadline ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">納期: ${esc(deadline)}</div>` : ''}
+      </div>
+      <span style="font-size:10px;padding:2px 8px;border-radius:10px;white-space:nowrap;background:${delivered ? '#E6F4EA' : '#ECEFF1'};color:${delivered ? '#059669' : '#546E7A'}">${esc(c.status || '—')}</span>
+    </div>`;
+  }).join('');
+}
+
+// 一覧の行クリック → 紐付き一覧と削除確認を閉じてクリエイティブ詳細（z-index:310）を開く
+// （閉じないと z-index:320/330 のモーダルが詳細の手前に残ってしまう）
+function openCreativeDetailFromLineList(creativeId) {
+  closeModal('modal-project-line-creatives');
+  closeModal('modal-project-line-delete');
+  openCreativeDetail(creativeId);
 }
 
 // ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================

@@ -2466,6 +2466,20 @@ router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermis
   res.json({ ok: true });
 });
 
+// GET /api/projects/:project_id/lines/:line_id/creatives  紐付くクリエイティブ一覧
+// 削除が 409 でブロックされたとき「どのクリエイティブが紐付いているのか」を
+// ポップアップで確認するために使う。project_id 不一致のデータ不整合も拾えるよう line_id のみで絞る。
+router.get('/projects/:project_id/lines/:line_id/creatives', requireAuth, async (req, res) => {
+  const { line_id: lineId } = req.params;
+  const { data, error } = await supabase
+    .from('creatives')
+    .select('id, file_name, status, creative_type, draft_deadline, final_deadline, created_at')
+    .eq('line_id', lineId)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 // PATCH /api/projects/:project_id/lines/reorder  一括並び替え
 // body: { ids: [<line_id_1>, <line_id_2>, ...] } の順で sort_order を 10, 20, 30, ... に再付番
 router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
