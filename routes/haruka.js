@@ -664,6 +664,40 @@ async function normalizeSubDirectorIds(rawIds, { clientId, directorId } = {}) {
   return { ids: filtered, dropped: cleaned.length - filtered.length };
 }
 
+// サブプロデューサー（複数）正規化ヘルパー — normalizeSubDirectorIds と完全パラレル。
+// PR #235 でフロント・migration のみ実装され、サーバー側の書き込みが欠落していたため
+// 保存時に silent drop されていた（本 PR で write 経路を補完）。
+// 本人除外の基準は producer_id。ロールは制限しない（秘書もPチェック依頼可能者になれる）。
+async function normalizeSubProducerIds(rawIds, { producerId } = {}) {
+  if (!Array.isArray(rawIds)) return { ids: [], dropped: 0 };
+  const seen = new Set();
+  const cleaned = [];
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const v of rawIds) {
+    if (typeof v !== 'string') continue;
+    const id = v.trim();
+    if (!uuidRe.test(id)) continue;
+    if (id === producerId) continue; // プロデューサー本人は除外
+    if (seen.has(id)) continue;
+    seen.add(id);
+    cleaned.push(id);
+  }
+  if (!cleaned.length) return { ids: [], dropped: 0 };
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, is_active')
+    .in('id', cleaned);
+  if (error) {
+    // フェイルセーフ: 検証失敗時は cleaned をそのまま返す（チェック厳しすぎて消えるより安全）
+    return { ids: cleaned, dropped: 0 };
+  }
+  const allowed = new Set(
+    (users || []).filter(u => u && u.is_active !== false).map(u => u.id)
+  );
+  const filtered = cleaned.filter(id => allowed.has(id));
+  return { ids: filtered, dropped: cleaned.length - filtered.length };
+}
+
 // 案件一覧取得
 // has_rates / has_estimates は「単価設定済み」「見積作成済み」の判定フラグ。
 // UI 側で「単価」「見積」ボタンに設定済みかどうかを示すために返す。
@@ -1007,6 +1041,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
+    sub_producer_ids,
     liaison_user_id,
     tags,
     filename_template_id, filename_token_overrides
@@ -1017,6 +1052,10 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
     clientId: client_id,
     directorId: director_id || null,
+  });
+  // サブプロデューサー: 同様の正規化（Pチェック依頼可能者。秘書も可）
+  const { ids: subPIds } = await normalizeSubProducerIds(sub_producer_ids, {
+    producerId: producer_id || null,
   });
   const insertPayload = {
     client_id, name,
@@ -1035,6 +1074,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_weekday: deadline_weekday ?? null,
     primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
+    sub_producer_ids: subPIds,
     liaison_user_id: liaison_user_id || null, // ADR 017: 外部D案件の窓口担当
   };
   // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
@@ -1056,6 +1096,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const { sub_director_ids: _omit, ...fallback } = insertPayload;
     const retry = await supabase.from('projects').insert(fallback).select().single();
     data = retry.data; error = retry.error;
+  }
+  // schema-sync 失敗で sub_producer_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_producer_ids/i.test(error.message || '')) {
+    const { sub_producer_ids: _omitP, ...fallbackP } = insertPayload;
+    const retryP = await supabase.from('projects').insert(fallbackP).select().single();
+    data = retryP.data; error = retryP.error;
   }
   // schema-sync 失敗で primary_category_id 列がまだ無い場合のフォールバック（Stage A migration 未適用）
   if (error && /primary_category_id/i.test(error.message || '')) {
@@ -1095,6 +1141,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
+    sub_producer_ids,
     liaison_user_id, // ADR 017
     tags,
     filename_template_id, filename_token_overrides,
@@ -1208,6 +1255,19 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     });
     updateData.sub_director_ids = subIds;
   }
+  // サブプロデューサー: 同じく明示時のみ正規化して反映（部分更新の巻き込み消失防止）
+  if (sub_producer_ids !== undefined) {
+    const { data: curP } = await supabase
+      .from('projects')
+      .select('producer_id')
+      .eq('id', req.params.id)
+      .single();
+    const effectiveProducerId = (producer_id !== undefined ? producer_id : curP?.producer_id) || null;
+    const { ids: subPIds } = await normalizeSubProducerIds(sub_producer_ids, {
+      producerId: effectiveProducerId,
+    });
+    updateData.sub_producer_ids = subPIds;
+  }
   let { data, error } = await supabase
     .from('projects')
     .update(updateData)
@@ -1219,6 +1279,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { sub_director_ids: _omit, ...fallback } = updateData;
     const retry = await supabase.from('projects').update(fallback).eq('id', req.params.id).select().single();
     data = retry.data; error = retry.error;
+  }
+  // schema-sync 失敗で sub_producer_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_producer_ids/i.test(error.message || '') && updateData.sub_producer_ids !== undefined) {
+    const { sub_producer_ids: _omitP, ...fallbackP } = updateData;
+    const retryP = await supabase.from('projects').update(fallbackP).eq('id', req.params.id).select().single();
+    data = retryP.data; error = retryP.error;
   }
   // schema-sync 失敗で primary_category_id 列がまだ無い場合のフォールバック（Stage A migration 未適用）
   if (error && /primary_category_id/i.test(error.message || '') && updateData.primary_category_id !== undefined) {
