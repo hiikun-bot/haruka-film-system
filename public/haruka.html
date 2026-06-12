@@ -16617,11 +16617,12 @@ function openProjectSubProducerPicker(triggerEl) {
     return;
   }
   const producerId = document.getElementById('p-producer-id')?.value || '';
+  // allowedRoles は「Pチェックを依頼しうる役割プール」。秘書もPチェック代行するため含める（PR #235 の想定ユースケース）。
   MemberPicker.open(triggerEl, {
     mode: 'multi',
     title: 'サブプロデューサーを選択',
     value: Array.isArray(_editingProjectSubProducerIds) ? [..._editingProjectSubProducerIds] : [],
-    allowedRoles: ['admin','producer','producer_director'],
+    allowedRoles: ['admin','secretary','producer','producer_director'],
     showInactive: false,
     onChange: (ids) => {
       const filtered = (Array.isArray(ids) ? ids : []).filter(id => id && id !== producerId);
