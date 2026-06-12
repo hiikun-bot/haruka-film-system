@@ -7389,6 +7389,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 //   - cycle_id（project_id 変更時は必ずクリアし、フロント側で再選択）
 //   - product_id, appeal_type_id（project_id に紐づくため、案件変更時は再選択必須）
 //   - creative_type, file_name, memo, note
+//   - assignee_id（担当者の付け替え。バグ報告 #3138fd6f: 納品前まで変更可・按分なし＝報酬は新担当者に全帰属）
 //
 // 権限:
 //   - admin / secretary は無条件で可
@@ -7450,10 +7451,16 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   }
 
   // 3. 案件変更ガード: 納品済み / force_delivered / 確定済み請求書に紐付く
+  //    担当者変更ガード（バグ報告 #3138fd6f）: 「納品するまでは変更可能」仕様のため同じ条件でブロックする。
+  //    報酬・本数カウントは creative_assignments を正としているので、納品後・請求確定後の付け替えは集計を壊す。
   const DELIVERED_STATUSES = ['納品', '完納', '納品済'];
+  let canChangeAssignee = true;
+  let assigneeChangeBlockedReason = null;
   if (DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true) {
     canChangeProject = false;
     projectChangeBlockedReason = '納品済みのため案件を変更できません（その他項目は変更可）';
+    canChangeAssignee = false;
+    assigneeChangeBlockedReason = '納品済みのため担当者を変更できません（担当者の変更は納品前まで）';
   }
   if (canChangeProject) {
     const { data: linked } = await supabase
@@ -7464,10 +7471,12 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
     if (hasFinalized) {
       canChangeProject = false;
       projectChangeBlockedReason = '請求書が発行・確定済みのため案件を変更できません（その他項目は変更可）';
+      canChangeAssignee = false;
+      assigneeChangeBlockedReason = '請求書が発行・確定済みのため担当者を変更できません';
     }
   }
 
-  return { ok: true, creative: c, canChangeProject, projectChangeBlockedReason };
+  return { ok: true, creative: c, canChangeProject, projectChangeBlockedReason, canChangeAssignee, assigneeChangeBlockedReason };
 }
 
 // GET /api/creatives/:id/edit-eligibility
@@ -7483,6 +7492,8 @@ router.get('/creatives/:id/edit-eligibility', requireAuth, async (req, res) => {
     can_edit: true,
     can_change_project: result.canChangeProject,
     project_change_blocked_reason: result.projectChangeBlockedReason,
+    can_change_assignee: result.canChangeAssignee,
+    assignee_change_blocked_reason: result.assigneeChangeBlockedReason,
   });
 });
 
@@ -7518,7 +7529,12 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       incoming[k] = v;
     }
   }
-  if (Object.keys(incoming).length === 0) {
+  // 担当者（creative_assignments role='editor' 系）は creatives 列ではないため ALLOWED とは別枠で受ける
+  const assigneeProvided = ('assignee_id' in (req.body || {}));
+  const newAssigneeId = assigneeProvided
+    ? ((typeof req.body.assignee_id === 'string' ? req.body.assignee_id.trim() : req.body.assignee_id) || null)
+    : null;
+  if (Object.keys(incoming).length === 0 && !assigneeProvided) {
     return res.status(400).json({ error: '変更項目がありません' });
   }
 
@@ -7552,6 +7568,36 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     // product_id / appeal_type_id がフロントから明示送信されていなければ null にリセット（整合性）
     if (!('product_id' in incoming)) incoming.product_id = null;
     if (!('appeal_type_id' in incoming)) incoming.appeal_type_id = null;
+  }
+
+  // 担当者変更（バグ報告 #3138fd6f）: 差分検出 + ガード
+  // 按分はしない — 付け替えた時点で報酬・本数カウントは新担当者に全帰属する（仕様）。
+  const EDITOR_ROLES = ['editor', 'designer', 'director_as_editor'];
+  let assigneeChange = null; // { oldRows, oldUser, newUser }
+  if (assigneeProvided) {
+    const { data: curAsn } = await supabase
+      .from('creative_assignments')
+      .select('id, role, user_id, users:user_id(id, full_name, nickname)')
+      .eq('creative_id', creativeId)
+      .in('role', EDITOR_ROLES);
+    const currentRow = (curAsn || [])[0] || null;
+    if (!newAssigneeId) {
+      return res.status(400).json({ error: '担当者を選択してください（事後修正で担当者を未設定に戻すことはできません）' });
+    }
+    if (newAssigneeId !== (currentRow?.user_id || null)) {
+      if (!eligibility.canChangeAssignee) {
+        return res.status(400).json({ error: eligibility.assigneeChangeBlockedReason || '担当者を変更できません' });
+      }
+      const { data: newUser } = await supabase
+        .from('users')
+        .select('id, full_name, nickname, rank, team_id')
+        .eq('id', newAssigneeId)
+        .maybeSingle();
+      if (!newUser) return res.status(400).json({ error: '指定された担当者が見つかりません' });
+      assigneeChange = { oldRows: curAsn || [], oldUser: currentRow?.users || null, newUser };
+      // チーム表示は creatives.team_id が最優先のため、新担当者のチームへ追従させる
+      if (newUser.team_id) incoming.team_id = newUser.team_id;
+    }
   }
 
   // 表示用スナップショットを作るために旧 product / appeal の名称を取得
@@ -7602,6 +7648,7 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
   };
   for (const [k, v] of Object.entries(incoming)) {
     if (k === 'cycle_id') continue; // 表示しない（project_id 変更に付随する内部リセット）
+    if (k === 'team_id') continue;  // 表示しない（担当者変更に付随する内部追従。履歴は assignee_id 行で見える）
     const isDate = DATE_FIELDS.has(k);
     const oldRaw = isDate ? _normYmd(before[k] ?? null) : (before[k] ?? null);
     const newRaw = isDate ? _normYmd(v ?? null) : (v ?? null);
@@ -7614,6 +7661,17 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       field_name: k,
       old_value: disp ? (disp.old ?? (oldRaw ? String(oldRaw) : null)) : (oldRaw == null ? null : String(oldRaw)),
       new_value: disp ? (disp.new ?? (newRaw ? String(newRaw) : null)) : (newRaw == null ? null : String(newRaw)),
+      reason: reason,
+    });
+  }
+  if (assigneeChange) {
+    logRows.push({
+      creative_id: creativeId,
+      edited_by: req.user?.id || null,
+      edited_by_name: editorName,
+      field_name: 'assignee_id',
+      old_value: assigneeChange.oldUser ? (assigneeChange.oldUser.full_name || assigneeChange.oldUser.nickname || null) : null,
+      new_value: assigneeChange.newUser.full_name || assigneeChange.newUser.nickname || null,
       reason: reason,
     });
   }
@@ -7641,8 +7699,25 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     .single();
   if (updErr) return res.status(500).json({ error: updErr.message });
 
-  // ボール保持者キャッシュは project 変更でも担当が変わらない限り影響しないが、念のため同期
-  if (projectChanged) {
+  // 担当者の付け替え（旧担当の editor 系 assignment を削除 → 新担当を role='editor' で登録）
+  if (assigneeChange) {
+    const oldIds = assigneeChange.oldRows.map(r => r.id);
+    if (oldIds.length > 0) {
+      const { error: delErr } = await supabase.from('creative_assignments').delete().in('id', oldIds);
+      if (delErr) return res.status(500).json({ error: '旧担当者の解除に失敗しました: ' + delErr.message });
+    }
+    const { error: asnErr } = await supabase.from('creative_assignments').insert({
+      creative_id: creativeId,
+      user_id: assigneeChange.newUser.id,
+      role: 'editor',
+      rank_applied: assigneeChange.newUser.rank || null,
+    });
+    if (asnErr) return res.status(500).json({ error: '新担当者の登録に失敗しました: ' + asnErr.message });
+  }
+
+  // ボール保持者キャッシュは project 変更でも担当が変わらない限り影響しないが、念のため同期。
+  // 担当者変更時はボールが新担当者に移る可能性があるため必ず同期する。
+  if (projectChanged || assigneeChange) {
     syncBallHolderId(creativeId).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
 

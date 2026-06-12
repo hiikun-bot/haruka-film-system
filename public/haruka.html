@@ -7558,7 +7558,7 @@ window.showPage = window.showPage || function(name, btn) {
 <!--
   用途: クリエイティブ追加時に案件を取り違えて登録したケースの救済。
         admin / secretary / 担当プロデューサー / 担当ディレクター のみ表示・操作可能。
-  ガード: 納品済み or 確定請求書に紐付くクリエイティブは「案件変更」のみグレーアウト。
+  ガード: 納品済み or 確定請求書に紐付くクリエイティブは「案件変更」「担当者変更」をグレーアウト。
   監査: 変更ごとに creative_edit_logs に1行ずつ INSERT（サーバー側）。
         案件変更時は「変更理由」が必須。
 -->
@@ -7626,6 +7626,27 @@ window.showPage = window.showPage || function(name, btn) {
           </div>
         </div>
         <div style="font-size:11.5px;color:var(--text-muted)">空欄で保存すると未設定に戻ります。変更は履歴に残ります。</div>
+      </div>
+
+      <!-- 担当者の変更（バグ報告 #3138fd6f: 間違い登録・途中交代の救済。納品前まで変更可・按分なし） -->
+      <div style="border-top:1px dashed var(--border);padding-top:14px;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--em-dark);letter-spacing:0.05em">👤 担当者の変更</div>
+        <div id="pe-assignee-blocked-banner" style="display:none;background:#fef3c7;border:1px solid #f0b429;color:#8a6500;border-radius:8px;padding:10px 14px;font-size:12.5px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">チーム</label>
+            <select class="form-select" id="pe-team-id" onchange="peUpdateAssigneeSelect()">
+              <option value="">（未設定）</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">担当者</label>
+            <select class="form-select" id="pe-assignee-id">
+              <option value="">（未設定）</option>
+            </select>
+          </div>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-muted)">納品前まで変更できます。変更すると報酬・本数カウントは<strong>変更後の担当者に全帰属</strong>します（按分なし）。変更は履歴に残ります。</div>
       </div>
 
       <div class="form-group" style="margin-bottom:0">
@@ -39010,6 +39031,8 @@ async function refreshCreativePostEditButton(creativeId) {
       btn.style.display = '';
       btn.dataset.canChangeProject = j.can_change_project ? '1' : '0';
       btn.dataset.projectBlockedReason = j.project_change_blocked_reason || '';
+      btn.dataset.canChangeAssignee = j.can_change_assignee ? '1' : '0';
+      btn.dataset.assigneeBlockedReason = j.assignee_change_blocked_reason || '';
     }
   } catch (_) {
     // 失敗時は黙って非表示のまま
@@ -39044,6 +39067,7 @@ async function refreshCreativeEditHistory(creativeId) {
     note: 'メモ（管理）',
     draft_deadline: '初稿締切日',
     final_deadline: '最終納品日',
+    assignee_id: '担当者',
   };
 
   // edited_at + edited_by + reason ごとにグルーピング（同一保存の複数列変更を1ブロックに）
@@ -39207,6 +39231,32 @@ async function openCreativePostEdit() {
   // 案件初期値を保持（変更検知用）
   document.getElementById('modal-creative-postedit').dataset.originalProjectId = c.project_id || '';
 
+  // 担当者の変更（バグ報告 #3138fd6f: 納品前まで変更可・按分なし）
+  const canChangeAssignee = btn?.dataset.canChangeAssignee === '1';
+  const assigneeBlockReason = btn?.dataset.assigneeBlockedReason || '';
+  const peTeamSel = document.getElementById('pe-team-id');
+  const peAsnSel = document.getElementById('pe-assignee-id');
+  const peAsnBanner = document.getElementById('pe-assignee-blocked-banner');
+  peTeamSel.innerHTML = '<option value="">（未設定）</option>' +
+    allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${esc(t.team_name)}</option>`).join('');
+  // 現担当者（editor 系 assignment）。詳細 API の users embed に team_id が無いため allMembers から補完する
+  const curAssign = (c.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+  const curAssignUserId = curAssign?.users?.id || '';
+  const curMember = curAssignUserId ? (allMembers || []).find(m => m.id === curAssignUserId) : null;
+  peTeamSel.value = curMember?.team_id || '';
+  peUpdateAssigneeSelect(curAssignUserId);
+  peTeamSel.disabled = !canChangeAssignee;
+  peAsnSel.disabled = !canChangeAssignee;
+  if (!canChangeAssignee && assigneeBlockReason) {
+    peAsnBanner.style.display = '';
+    peAsnBanner.textContent = assigneeBlockReason;
+  } else {
+    peAsnBanner.style.display = 'none';
+    peAsnBanner.textContent = '';
+  }
+  // 担当者初期値を保持（変更検知用）
+  document.getElementById('modal-creative-postedit').dataset.originalAssigneeId = curAssignUserId;
+
   // ADR 013: 単価編集セクション（admin のみ）
   try { await loadCreativeRateOverrides(c.id); } catch (e) { console.warn('[rate-overrides] load failed:', e?.message || e); }
 
@@ -39358,6 +39408,24 @@ async function saveCreativeRateOverrides() {
   }
 }
 
+// 事後修正モーダル: チーム選択に応じて担当者セレクトを再構築（cdUpdateAssigneeSelect の pe 版）
+function peUpdateAssigneeSelect(selectedId) {
+  const teamId = document.getElementById('pe-team-id').value;
+  const sel = document.getElementById('pe-assignee-id');
+  const members = allMembers.filter(m => m.is_active !== false &&
+    (!teamId || m.team_id === teamId || m.role === 'admin'));
+  sel.innerHTML = '<option value="">（未設定）</option>' +
+    members.map(m => `<option value="${m.id}">${esc(NameDisplay.full(m))}</option>`).join('');
+  if (selectedId) {
+    // 現担当者がチーム絞り込みで候補から外れている場合も初期表示できるよう option を補完
+    if (!members.some(m => m.id === selectedId)) {
+      const cur = (allMembers || []).find(m => m.id === selectedId);
+      if (cur) sel.insertAdjacentHTML('beforeend', `<option value="${cur.id}">${esc(NameDisplay.full(cur))}</option>`);
+    }
+    sel.value = selectedId;
+  }
+}
+
 // 商材・訴求軸を当該 project_id 配下で再ロードする
 async function peLoadProductAndAppeal(projectId, currentProductId, currentAppealId) {
   const prodSel = document.getElementById('pe-product-id');
@@ -39430,6 +39498,15 @@ async function saveCreativePostEdit() {
     final_deadline: document.getElementById('pe-final-deadline').value || null,
     reason,
   };
+
+  // 担当者（バグ報告 #3138fd6f）: 実際に変更されたときだけ送る
+  // （未設定に戻す操作はサポートしない — 空のまま保存しても既存担当は維持される）
+  const peAsnSelEl = document.getElementById('pe-assignee-id');
+  const originalAssigneeId = document.getElementById('modal-creative-postedit').dataset.originalAssigneeId || '';
+  const newAssigneeId = peAsnSelEl?.value || '';
+  if (peAsnSelEl && !peAsnSelEl.disabled && newAssigneeId && newAssigneeId !== originalAssigneeId) {
+    body.assignee_id = newAssigneeId;
+  }
 
   const res = await apiFetch(`${API}/creatives/${id}/edit-mode`, {
     method: 'PUT',
