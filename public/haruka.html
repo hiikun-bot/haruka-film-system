@@ -30175,7 +30175,7 @@ function _cdRenderPageFileCard(page) {
     : '📎 提出された成果物';
   return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
     <div style="font-size:10px;font-weight:700;color:var(--em-dark);letter-spacing:0.08em;margin-bottom:6px;text-transform:uppercase">${headerLabel}</div>
-    ${_cdRenderFileCard(f, { verLabel: `バージョン ${verNum}`, isLatest: false, hideCheckBtn: true })}
+    ${_cdRenderFileCard(f, { verLabel: `バージョン ${verNum}`, isLatest: false, hideCheckBtn: true, guardPastClick: true, guardVer: verNum })}
   </div>`;
 }
 
@@ -32352,14 +32352,38 @@ async function requestRevision() {
   await saveCreativeDetail(target);
 }
 
+// ラウンド比較UI 左カラム（前回の提出物）のチェック/確認ボタン誤クリック防止。
+// クリック時点で _cdFilesCache により新しいバージョンが存在する場合のみ、
+// 「過去のクリエイティブを参照しますか？」の確認ダイアログを挟む。
+// 右カラムがアップロード待ち等で新バージョンが無いときは何も聞かずそのまま開く。
+async function _cdGuardPastVersionClick(version, proceed) {
+  const v = Number(version) || 0;
+  const cache = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  const newest = cache.reduce((m, x) => Math.max(m, Number(x?.version) || 0), 0);
+  if (newest > v) {
+    const ok = await showConfirmDialog({
+      title: '過去のバージョンを開こうとしています',
+      message: `新しいクリエイティブ（バージョン ${newest}）が提出されています。\nチェックが必要なのは右側の新しいバージョンです。\n\n過去のクリエイティブ（バージョン ${v || '?'}）を参照しますか？`,
+      okLabel: `過去（バージョン ${v || '?'}）を参照する`,
+      cancelLabel: 'やめる',
+    });
+    if (!ok) return;
+  }
+  if (typeof proceed === 'function') proceed();
+}
+
 // 1ファイル分のカード HTML を生成する。loadCreativeFiles のインライン map を抽出し、
 // ラウンド比較型UI の左/右カラムからも再利用できるようにした（PR #TBD）。
-// opts: { verLabel, isLatest, hideCheckBtn, totalFilesForFallback }
+// opts: { verLabel, isLatest, hideCheckBtn, guardPastClick, guardVer, totalFilesForFallback }
 function _cdRenderFileCard(f, opts) {
   if (!f) return '';
   const verLabel  = opts?.verLabel || `バージョン ${f.version || ''}`;
   const isLatest  = !!opts?.isLatest;
   const hideCheckBtn = !!opts?.hideCheckBtn;
+  // ラウンド比較UIの左カラム（前回の提出物）用: クリック時点でより新しい
+  // バージョンが存在すれば確認ダイアログを挟む（右カラムと取り違えて
+  // 過去版に修正指示を出してしまう誤操作の防止）。
+  const guardPastClick = !!opts?.guardPastClick;
   // 提出前のバージョンに対して [↩ アップロード取り消し] ボタンを追加するかどうか。
   // 呼び出し側で「最新 & 提出前」を判定したうえで true にする。
   const showUndoBtn = !!opts?.showUndoBtn;
@@ -32379,6 +32403,9 @@ function _cdRenderFileCard(f, opts) {
     ? `openFilePreview(${JSON.stringify(driveFileId)},${JSON.stringify(f.generated_name)},${JSON.stringify(f.drive_url||'')},${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`
     : `openFilePreview(null,${JSON.stringify(f.generated_name)},'',${JSON.stringify(f.id)},${JSON.stringify(_ct)},${JSON.stringify(_assigneeRoleRender)})`;
   const checkBtnLabel = canPreview ? `▶ ${verLabel}をチェックする` : `💬 ${verLabel}のコメントを見る`;
+  const checkBtnOnclick = guardPastClick
+    ? `_cdGuardPastVersionClick(${Number(opts?.guardVer ?? f.version) || 0}, () => { ${checkBtnClick} })`
+    : checkBtnClick;
   // faststart プレビュー版の状態バッジ
   const fsStatus = f.faststart_status || null;
   const fsUrl    = f.faststart_drive_url || '';
@@ -32412,10 +32439,10 @@ function _cdRenderFileCard(f, opts) {
     </div>
     <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
       ${hideCheckBtn ? `
-      <button onclick="${esc(checkBtnClick)}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+      <button onclick="${esc(checkBtnOnclick)}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
         📋 ${verLabel}を確認・コメントを見る
       </button>` : `
-      <button onclick="${esc(checkBtnClick)}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+      <button onclick="${esc(checkBtnOnclick)}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
         ${checkBtnLabel}
       </button>`}
     </div>
