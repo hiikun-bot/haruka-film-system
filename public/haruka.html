@@ -41408,7 +41408,10 @@ async function _submitBugReportInner(id, title) {
       alert(err.error || '保存に失敗しました');
       return;
     }
-    closeBugReportModal();
+    // 保存成功時はプログラム経由の close なので dirty guard を素通しする。
+    // closeBugReportModal()（= closeModalGuarded）を呼ぶと、フォームが dirty のまま
+    // 「破棄して閉じますか？」が出てしまい、保存できていないと誤解させてしまう（バグ報告 #84f2ffbf）。
+    closeModal('modal-bug-report');
     const okMsg = id
       ? (triagePatched ? 'バグ報告と対応方針を更新しました' : 'バグ報告を更新しました')
       : 'バグ報告を送信しました（ご報告ありがとうございます）';
@@ -41996,7 +41999,8 @@ async function deleteBugReport() {
       alert(err.error || '削除に失敗しました');
       return;
     }
-    closeBugReportModal();
+    // 削除成功時もプログラム経由の close なので dirty guard を素通しする（#84f2ffbf と同種）
+    closeModal('modal-bug-report');
     if (document.getElementById('modal-bug-report-list')?.classList.contains('open')) {
       await loadBugReportList();
     }
