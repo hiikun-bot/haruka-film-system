@@ -24583,6 +24583,12 @@ async function goToCreativeStep2() {
   document.getElementById('creative-step-1').style.display = 'none';
   document.getElementById('creative-step-2').style.display = '';
 
+  // 案件カテゴリに応じて種別 select の選択肢を組み替える（静止画案件は既定が "ショート動画" に
+  // ならないよう、デザイン種別のみ＝先頭サムネイルに揃える）。表示制御の前に実行する。
+  // FMT は「未選択スタート」を維持したいので、ここでは autoSetCreativeFmt は呼ばない
+  // （ユーザーが種別を手動変更したときの onchange でのみ追従させる）。
+  if (typeof syncCreativeKindOptions === 'function') syncCreativeKindOptions('c');
+
   // 現在の種別に応じた表示制御
   const type = document.getElementById('c-creative-type')?.value || 'video_short';
   applyCreativeTypeVisibility(type);
@@ -24689,15 +24695,45 @@ function getEffectiveCreativeCategory() {
   return getCreativeTypeCategory(kind);
 }
 
-// クリエイティブ種別 select を表示するか（=動画系案件のときだけ表示）。
-// LP/HP/LINE/その他案件では「ショート動画/ロング動画」等の細分類は意味を持たないため非表示。
+// クリエイティブ種別 select を表示するか（=動画・静止画案件のときだけ表示）。
+// 動画案件: ショート動画/ロング動画 等、静止画(image)案件: サムネイル/バナー/投稿画像/ストーリーズ を選ばせる。
+// LP/HP/LINE/その他案件では「種別」の細分類は意味を持たないため非表示。
 function isCreativeKindSelectorVisible() {
   const projectId = document.getElementById('c-project-id')?.value || '';
   if (!projectId) return true; // 案件未選択なら一旦表示しておく
   const project = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
   const cat = project ? (typeof getProjectCategory === 'function' ? getProjectCategory(project) : null) : null;
   const code = cat?.code || 'video';
-  return code === 'video';
+  return code === 'video' || code === 'image';
+}
+
+// 案件カテゴリに応じてクリエイティブ種別 select の選択肢を組み替える。
+//   - 動画(video)案件 : ショート動画/ロング動画（＋デザイン系も選べる）／既定はショート動画
+//   - 静止画(image)案件: サムネイル/バナー/投稿画像/ストーリーズ のみ／既定はサムネイル
+// これにより、静止画案件で種別を選ばないと既定の "ショート動画" が混入してしまう不具合を防ぐ。
+// prefix は 'c'（個別登録）または 'bulk'（一括登録）。
+function syncCreativeKindOptions(prefix) {
+  const projSelId = prefix === 'bulk' ? 'bulk-project-id' : 'c-project-id';
+  const kindSelId = prefix === 'bulk' ? 'bulk-creative-type' : 'c-creative-type';
+  const kindSel = document.getElementById(kindSelId);
+  if (!kindSel) return;
+  const pid = document.getElementById(projSelId)?.value || '';
+  const project = pid ? (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === pid) : null;
+  const cat = project ? (typeof getProjectCategory === 'function' ? getProjectCategory(project) : null) : null;
+  const code = cat?.code || 'video';
+
+  const VIDEO_OPTS = [['video_short', 'ショート動画'], ['video_long', 'ロング動画']];
+  const DESIGN_OPTS = [
+    ['design_thumbnail', 'サムネイル'], ['design_banner', 'バナー'],
+    ['design_post', '投稿画像'], ['design_story', 'ストーリーズ'],
+  ];
+  // 静止画案件はデザイン種別のみ。動画案件は動画＋デザインの全種別（動画を先頭＝既定）。
+  const opts = (code === 'image') ? DESIGN_OPTS : VIDEO_OPTS.concat(DESIGN_OPTS);
+
+  const prev = kindSel.value;
+  kindSel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  // 直前の選択が新しい候補に残っていれば維持、なければ先頭を既定にする。
+  kindSel.value = opts.some(([v]) => v === prev) ? prev : opts[0][0];
 }
 
 // 種別ごとのフィールド表示制御
@@ -25013,6 +25049,8 @@ async function onBulkProjectChange(projectId) {
   const sel = document.getElementById('bulk-appeal-type');
   const prodSel = document.getElementById('bulk-product-id');
   sel.innerHTML = '<option value="">読み込み中...</option>';
+  // 案件カテゴリに応じて種別 select の選択肢を組み替える（静止画案件はデザイン種別＝既定サムネイル）。
+  if (typeof syncCreativeKindOptions === 'function') syncCreativeKindOptions('bulk');
   if (!projectId) {
     sel.innerHTML = '<option value="">案件を先に選択してください</option>';
     if (prodSel) prodSel.innerHTML = '<option value="">案件を先に選択してください</option>';
