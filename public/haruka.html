@@ -16671,12 +16671,12 @@ function onProjectExternalToggleChange(on) {
     if (on) {
       dirTrigger.setMemberPickerOptions({
         includeExternal: true,
-        allowedRoles: ['admin','producer','producer_director','director','external_director'],
+        allowedRoles: ['admin','secretary','producer','producer_director','director','external_director'],
       });
     } else {
       dirTrigger.setMemberPickerOptions({
         includeExternal: false,
-        allowedRoles: ['admin','producer','producer_director','director'],
+        allowedRoles: ['admin','secretary','producer','producer_director','director'],
       });
       // OFF に戻したとき、選択中が外部Dならクリア
       const cur = dirTrigger.value;
@@ -16719,7 +16719,7 @@ function openProjectModal(preClientId) {
   });
   bindMemberPickerSelect('p-director-id', {
     placeholder: '未設定', emptyLabel: '未設定',
-    allowedRoles: ['admin','producer','producer_director','director'],
+    allowedRoles: ['admin','secretary','producer','producer_director','director'],
     onChange: () => {
       updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
       if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
@@ -16844,7 +16844,7 @@ function openEditProject(p) {
   });
   bindMemberPickerSelect('p-director-id', {
     placeholder: '未設定', emptyLabel: '未設定',
-    allowedRoles: ['admin','producer','producer_director','director'],
+    allowedRoles: ['admin','secretary','producer','producer_director','director'],
     onChange: () => {
       updateUserSelectAvatar('p-director-id', 'p-director-avatar', 24);
       if (typeof renderProjectSubDirectorPicker === 'function') renderProjectSubDirectorPicker();
