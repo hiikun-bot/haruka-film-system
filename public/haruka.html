@@ -7185,9 +7185,13 @@ window.showPage = window.showPage || function(name, btn) {
   #page-material-square .ms-tag.active { background: var(--primary, #3ECFCA); color: #fff; }
   #page-material-square .ms-preview { position: sticky; top: 16px; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
   /* プレビュー領域は 16:9。幅 440-600px だと高さは 247-337px 出る。動画が見やすい */
-  #page-material-square .ms-preview .ms-media { width: 100%; aspect-ratio: 16/9; background: #1a1a1a; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #888; font-size: 12px; }
+  /* 縦長(9:16)・横長(16:9)どちらの素材も実アスペクト比のまま表示する。
+     固定 16/9 だと縦長動画が横長枠に押し込まれ「横長に整形」されてしまうため、
+     枠は中身に追従させ、高さだけ max-height でキャップする（縦長が縦に伸びすぎないように）。
+     プレースホルダ表示用に min-height を確保。 */
+  #page-material-square .ms-preview .ms-media { width: 100%; min-height: 200px; max-height: 70vh; background: #1a1a1a; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #888; font-size: 12px; }
   #page-material-square .ms-preview .ms-media video,
-  #page-material-square .ms-preview .ms-media img { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+  #page-material-square .ms-preview .ms-media img { max-width: 100%; max-height: 70vh; width: auto; height: auto; object-fit: contain; display: block; background: #000; }
   #page-material-square .ms-preview h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text-muted); font-weight: 600; }
   #page-material-square .ms-preview .ms-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
   #page-material-square .ms-preview .ms-summary { font-size: 13px; line-height: 1.6; color: var(--text); }
@@ -42708,7 +42712,7 @@ function msSelectItem(fileId, scroll = true) {
 
     if (isStoryboard) {
       // 長尺：60枚パラパラ WebP ストーリーボード
-      media.innerHTML = `<img id="ms-preview-storyboard" src="${previewSrc}" alt="" style="width:100%;max-width:100%;height:auto;border-radius:6px;background:#000" loading="lazy">`;
+      media.innerHTML = `<img id="ms-preview-storyboard" src="${previewSrc}" alt="" style="max-width:100%;max-height:70vh;width:auto;height:auto;border-radius:6px;background:#000" loading="lazy">`;
       const img = document.getElementById('ms-preview-storyboard');
       if (img) img.addEventListener('error', () => msHandlePreviewError(fileId, previewSrc, 'img', media));
       // 元動画長を「H:MM:SS（×N倍速プレビュー）」として表示
@@ -42840,7 +42844,15 @@ async function msAnalyzeSelected() {
     showToast('AI解析が完了しました', 'success');
     msReloadList();
   } catch (e) {
-    showToast('解析失敗: ' + e.message, 'error');
+    const msg = String(e.message || '');
+    // アップロード時の自動解析チェーンが既に完了していると、手動解析は
+    // 「status (awaiting_review) からは解析できません」(409) で弾かれる。
+    // これは失敗ではなく「解析済み」なので、赤エラーではなく案内に切り替える。
+    if (/からは解析できません|awaiting_review|analysis_completed/.test(msg)) {
+      showToast('すでに解析済みです。「✅ 確認して適用する」から振り分けできます', 'info');
+    } else {
+      showToast('解析失敗: ' + e.message, 'error');
+    }
     msReloadList();
   }
   }, '解析中… 約30秒かかります');
