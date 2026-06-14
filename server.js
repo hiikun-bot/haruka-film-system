@@ -651,6 +651,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] bug-triage-sla-checker 起動失敗:', e.message);
     }
+    // R2 再生キャッシュ: 納品済み複製の排出 sweep（6時間ごと。R2未設定なら no-op）
+    try {
+      const { startR2EvictionSweep } = require('./workers/r2-eviction-sweep');
+      startR2EvictionSweep();
+    } catch (e) {
+      console.error('[startup] r2-eviction-sweep 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -681,6 +688,12 @@ const runSchemaSync = require('./db/migrate');
       stopBugTriageSlaChecker();
     } catch (e) {
       console.error('[shutdown] bug-triage-sla-checker 停止失敗:', e.message);
+    }
+    try {
+      const { stopR2EvictionSweep } = require('./workers/r2-eviction-sweep');
+      stopR2EvictionSweep();
+    } catch (e) {
+      console.error('[shutdown] r2-eviction-sweep 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {
