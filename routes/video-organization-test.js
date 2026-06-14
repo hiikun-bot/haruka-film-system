@@ -978,7 +978,7 @@ router.delete('/item/:fileId', async (req, res) => {
 //
 // フロー:
 //   1) POST /upload-session/init
-//      → サーバーがユーザーOAuthトークンで Drive Resumable Upload セッションを発行
+//      → サーバーがサービスアカウントで Drive Resumable Upload セッションを発行
 //      → 返ってきた Location（drive_session_url）を DB に保存し、ブラウザに返す
 //   2) ブラウザは drive_session_url に対してチャンク PUT（Content-Range 指定）
 //      → 最終チャンクのレスポンス JSON から drive_file_id を得る
@@ -991,7 +991,16 @@ router.delete('/item/:fileId', async (req, res) => {
 
 const RESUMABLE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3/files';
 
-// 共通ガード: 環境フラグ + ユーザーOAuth未連携の判定
+// 共通ガード: 環境フラグ + Resumable セッション発行用トークンの取得
+//
+// セッション発行はサービスアカウント（GOOGLE_SERVICE_ACCOUNT_KEY）で行う。
+// 案件フォルダの作成（resolveProjectFolder）・小容量アップロード・complete 時のメタ取得が
+// すべてサービスアカウントなので、発行も同一人格に揃える。
+// 以前はユーザーOAuth（drive.file スコープ）でセッションを発行していたが、
+// 案件フォルダはサービスアカウント所有のため drive.file からは「存在しない」扱いとなり、
+// Drive API が 404 を返して「セッション発行に失敗しました」となっていた（大容量のみ失敗の原因）。
+// ブラウザ→セッションURL への直接 PUT は session URL に認可が埋め込まれており、
+// 発行をサービスアカウントで行っても直送は成立する（Origin ヘッダ転送で CORS も維持）。
 async function ensureResumableContext(req, res) {
   if (!isResumableUploadEnabled()) {
     res.status(503).json({
@@ -1000,26 +1009,17 @@ async function ensureResumableContext(req, res) {
     });
     return null;
   }
-  if (!googleOAuth.isConfigured()) {
+  try {
+    const accessToken = await driveLib.getAccessToken();
+    return { accessToken };
+  } catch (e) {
+    console.error('[video-org] service account token failed:', e?.message || e);
     res.status(503).json({
-      error: 'Google OAuth が未設定です（管理者向け: GOOGLE_OAUTH_CLIENT_ID 等の環境変数を設定してください）',
-      reason: 'oauth_not_configured',
+      error: 'Drive 認証に失敗しました（管理者向け: GOOGLE_SERVICE_ACCOUNT_KEY を確認してください）',
+      reason: 'service_account_unavailable',
     });
     return null;
   }
-  const token = await googleOAuth.getValidAccessToken({
-    userId: req.user.id,
-    scopeKey: 'drive.file',
-  });
-  if (!token) {
-    res.status(401).json({
-      error: 'Drive 連携が必要です。/oauth/google/start から連携してください。',
-      reason: 'oauth_not_connected',
-      consent_url: '/oauth/google/start?next=/haruka.html',
-    });
-    return null;
-  }
-  return token;
 }
 
 // ----- 1) セッション発行 -----
