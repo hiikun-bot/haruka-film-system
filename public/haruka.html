@@ -21914,17 +21914,24 @@ function _twApplyReactionLocal(tweetId, type, action) {
   if (!t) return false;
   const my = new Set(t.my_reactions || []);
   const counts = { ...(t.reaction_counts || {}) };
+  // ホバーの「誰が押したか」も即時整合させる（自分の出入りだけ反映。確定値は次回 fetch で同期）
+  const reactionUsers = { ...(t.reaction_users || {}) };
+  const meId = currentUser?.id;
+  const meUser = { id: meId, full_name: currentUser?.full_name, nickname: currentUser?.nickname };
   if (action === 'add') {
     if (my.has(type)) return false;
     my.add(type);
     counts[type] = (counts[type] || 0) + 1;
+    if (meId) reactionUsers[type] = [...(reactionUsers[type] || []).filter(u => u.id !== meId), meUser];
   } else {
     if (!my.has(type)) return false;
     my.delete(type);
     counts[type] = Math.max(0, (counts[type] || 0) - 1);
+    if (meId) reactionUsers[type] = (reactionUsers[type] || []).filter(u => u.id !== meId);
   }
   t.my_reactions = Array.from(my);
   t.reaction_counts = counts;
+  t.reaction_users = reactionUsers;
 
   const card = document.querySelector(`article.tweet-card[data-tweet-id="${tweetId}"]`);
   if (!card) return true;
@@ -22007,6 +22014,7 @@ function renderTweetCard(t) {
   // リアクションサマリ — 押された種別だけ表示（リベシティ踏襲）
   const myReactions = new Set(t.my_reactions || []);
   const counts = t.reaction_counts || {};
+  const reactionUsers = t.reaction_users || {};
   const summaryPills = TWEET_REACTIONS
     .filter(r => (counts[r.type] || 0) > 0 || myReactions.has(r.type))
     .map(r => {
@@ -22015,8 +22023,16 @@ function renderTweetCard(t) {
       const handler = active
         ? `removeTweetReactionFromCard('${t.id}','${r.type}')`
         : `addTweetReactionFromCard('${t.id}','${r.type}')`;
+      // ホバーで「誰が押したか」を表示する吹き出し（reaction_users が無い古い経路では空）
+      const who = reactionUsers[r.type] || [];
+      const whoPop = who.length
+        ? `<span class="tweet-reaction-who" aria-hidden="true">
+            <span class="tweet-reaction-who-head">${r.emoji} ${esc(r.label)}</span>
+            ${who.map(u => `<span class="tweet-reaction-who-name">${esc(NameDisplay.full(u))}</span>`).join('')}
+          </span>`
+        : '';
       return `<button class="tweet-reaction-pill ${active ? 'active' : ''}" onclick="${handler}" title="${esc(r.label)}">
-        <span class="emoji">${r.emoji}</span>${c > 0 ? `<span class="count">${c}</span>` : ''}
+        <span class="emoji">${r.emoji}</span>${c > 0 ? `<span class="count">${c}</span>` : ''}${whoPop}
       </button>`;
     }).join('');
 

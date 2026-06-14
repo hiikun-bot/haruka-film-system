@@ -12197,16 +12197,26 @@ async function enrichTweetList(list, currentUserId) {
   const ids = list.map(t => t.id);
   // リアクション全件と「画像を持つ tweet の id」を並列取得（image_data 本体は引かない）
   const [reactionsRes, imagesRes] = await Promise.all([
-    supabase.from('tweet_reactions').select('tweet_id, user_id, reaction_type').in('tweet_id', ids),
+    // リアクションした本人の表示名も埋め込む（ホバーで「誰が押したか」を出すため）。
+    // tweet_reactions.user_id → users への FK を `users!user_id` で明示。
+    supabase.from('tweet_reactions')
+      .select('tweet_id, user_id, reaction_type, users!user_id(id, full_name, nickname)')
+      .in('tweet_id', ids),
     supabase.from('tweets').select('id').not('image_data', 'is', null).in('id', ids),
   ]);
   const imageIdSet = new Set((imagesRes.data || []).map(r => r.id));
   const countByType = new Map();    // tweet_id -> { good: n, heart: n, ... }
   const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
+  const usersByType = new Map();    // tweet_id -> { good: [{id,full_name,nickname}], ... }
   (reactionsRes.data || []).forEach(r => {
     if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
     const cm = countByType.get(r.tweet_id);
     cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+    if (r.users) {
+      if (!usersByType.has(r.tweet_id)) usersByType.set(r.tweet_id, {});
+      const um = usersByType.get(r.tweet_id);
+      (um[r.reaction_type] = um[r.reaction_type] || []).push(r.users);
+    }
     if (r.user_id === currentUserId) {
       if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
       myReactionsMap.get(r.tweet_id).add(r.reaction_type);
@@ -12222,6 +12232,7 @@ async function enrichTweetList(list, currentUserId) {
       reaction_count: t.reaction_count ?? 0,
       comment_count:  t.comment_count  ?? 0,
       reaction_counts: counts,           // { good: 3, heart: 2, ... }
+      reaction_users: usersByType.get(t.id) || {}, // { good: [{id,full_name,nickname}], ... }
       my_reactions: myReactions,         // ['good','heart']
       // 互換維持（旧UIが残っても壊れないように）
       like_count: heartCount,
