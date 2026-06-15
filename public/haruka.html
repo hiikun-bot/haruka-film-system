@@ -7271,6 +7271,7 @@ window.showPage = window.showPage || function(name, btn) {
         <div id="ms-preview-body" style="display:none">
           <div style="margin-top:10px;font-weight:600;font-size:14px;word-break:break-all" id="ms-preview-filename">-</div>
           <div class="ms-meta" id="ms-preview-meta">-</div>
+          <a id="ms-preview-folder-link" href="#" target="_blank" rel="noopener" title="Google Drive の保存先フォルダを新しいタブで開く" style="display:none;align-items:center;gap:4px;margin-top:6px;font-size:12px;color:var(--primary,#3ECFCA);text-decoration:none;font-weight:600">📂&nbsp;<span id="ms-preview-folder-link-label">保存先フォルダを開く</span>&nbsp;↗</a>
 
           <h4>シーン概要</h4>
           <div class="ms-summary" id="ms-preview-summary">-</div>
@@ -42811,6 +42812,27 @@ function msSelectItem(fileId, scroll = true) {
   document.getElementById('ms-preview-filename').textContent = item.current_filename || item.original_filename || '-';
   document.getElementById('ms-preview-meta').textContent =
     `${msKindIcon(item.media_kind)} ${msFmtSpec(item)} / ${item.status}`;
+  // 保存先フォルダリンク（Drive のフォルダを新規タブで開く）。
+  // current_parent_folder_id があればフォルダ直リンク、無ければファイル(drive_url)で代用。
+  const folderLink = document.getElementById('ms-preview-folder-link');
+  if (folderLink) {
+    const folderId = item.current_parent_folder_id || null;
+    const folderUrl = folderId
+      ? `https://drive.google.com/drive/folders/${folderId}`
+      : (item.drive_url || null);
+    if (folderUrl) {
+      folderLink.href = folderUrl;
+      const label = document.getElementById('ms-preview-folder-link-label');
+      if (label) {
+        label.textContent = item.current_parent_folder_name
+          ? `保存先フォルダを開く（${item.current_parent_folder_name}）`
+          : (folderId ? '保存先フォルダを開く' : 'Drive で開く');
+      }
+      folderLink.style.display = 'inline-flex';
+    } else {
+      folderLink.style.display = 'none';
+    }
+  }
   document.getElementById('ms-preview-summary').textContent = item.summary || '（未解析）';
   const tagsEl = document.getElementById('ms-preview-tags');
   const tags = Array.isArray(item.tags) ? item.tags : [];
@@ -43093,6 +43115,14 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
+// ==================== アップロードキュー（継ぎ足し対応）====================
+// 仕様:
+//   - ファイルを選択/ドロップするたびに、既存の進行中・完了行は消さずに「追記」する
+//   - 単一ワーカーが順次処理（大容量を並列にすると帯域を食い合うため逐次）
+//   - アップロード中でも続けてファイルを足せる（足した分は自動でキュー末尾に並ぶ）
+const msUploadQueue = [];
+let msUploadWorkerActive = false;
+
 async function msHandleFiles(files) {
   if (!files.length) return;
   // 案件あり かつ 案件未選択ならアップロードを止める（ドロップは pointer-events で抑止済みだが二重ガード）
@@ -43103,13 +43133,11 @@ async function msHandleFiles(files) {
   const list = document.getElementById('ms-upload-list');
   if (!list) return;
   const limits = await msEnsureLimits();
-  const maxMb = limits.max_upload_size_mb || 25;
-  const maxDur = limits.max_upload_duration_seconds || 30;
-  const maxBytes = maxMb * 1024 * 1024;
-  const resumableEnabled = !!limits.resumable_upload_enabled;
-  const resumableThreshold = Number(limits.resumable_upload_threshold_bytes) || MS_RESUMABLE_THRESHOLD_BYTES;
 
-  list.innerHTML = '';
+  // プレースホルダ（「まだファイルがありません」）だけ除去。
+  // 進行中・完了行が既にあるなら消さずに継ぎ足す。
+  if (!list.querySelector('.ms-upload-item')) list.innerHTML = '';
+
   for (const f of files) {
     const row = document.createElement('div');
     row.className = 'ms-upload-item';
@@ -43119,94 +43147,125 @@ async function msHandleFiles(files) {
         <div style="color:var(--text-muted);font-size:11px;white-space:nowrap">${votFmtSize(f.size)}</div>
       </div>
       <div class="ms-bar"><div style="width:0%"></div></div>
-      <div class="ms-status" style="font-size:11px;color:var(--text-muted);margin-top:4px">待機中…</div>
+      <div class="ms-status" style="font-size:11px;color:var(--text-muted);margin-top:4px">キュー待機中…</div>
       <div class="ms-controls" style="margin-top:6px;display:none">
         <button type="button" class="btn btn-small" data-action="cancel">キャンセル</button>
       </div>
       <div class="ms-warn" style="font-size:11px;color:#b45309;margin-top:4px;display:none">⚠ 大容量ファイルです。アップロード中はこのタブを閉じないでください</div>
     `;
     list.appendChild(row);
-    const bar = row.querySelector('.ms-bar > div');
-    const stat = row.querySelector('.ms-status');
-    const controls = row.querySelector('.ms-controls');
-    const warn = row.querySelector('.ms-warn');
+    msUploadQueue.push({ file: f, row, limits });
+  }
+  // ワーカーを起動（既に動いていれば追記分を自動で拾う）
+  msRunUploadQueue();
+}
 
-    // 大容量分岐
-    const isLarge = f.size >= resumableThreshold;
-    if (isLarge) {
-      // 大容量経路（Resumable Upload）— 有効でなければ明示エラーで止める
-      if (!resumableEnabled) {
-        bar.style.background = '#dc2626'; bar.style.width = '100%';
-        stat.style.color = '#dc2626';
-        const thresholdMb = Math.floor(resumableThreshold / (1024 * 1024));
-        stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=${thresholdMb}MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
-        continue;
-      }
-      warn.style.display = '';
-      controls.style.display = '';
-      const cancelBtn = controls.querySelector('[data-action="cancel"]');
+// 単一ワーカー: キューが空になるまで1件ずつ処理する。
+// アップロード中に msHandleFiles で push された分も同じワーカーが続けて処理する。
+async function msRunUploadQueue() {
+  if (msUploadWorkerActive) return;
+  msUploadWorkerActive = true;
+  try {
+    while (msUploadQueue.length) {
+      const job = msUploadQueue.shift();
       try {
-        stat.textContent = 'Drive セッションを発行中…';
-        const meta = { aborted: false };
-        cancelBtn.addEventListener('click', () => {
-          meta.aborted = true;
-          stat.textContent = 'キャンセル中…';
-        });
-        await msUploadResumable(f, {
-          onStatus: (msg) => { stat.textContent = msg; },
-          onProgress: (pct) => { bar.style.width = pct + '%'; },
-          shouldAbort: () => meta.aborted,
-        });
-        bar.style.width = '100%';
-        bar.style.background = '#10b981';
-        stat.textContent = '✅ 完了（解析はまだ未実行）';
-        controls.style.display = 'none';
-        warn.style.display = 'none';
-      } catch (e) {
-        bar.style.background = '#dc2626';
-        stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
-        stat.style.color = '#dc2626';
-        controls.style.display = 'none';
-        warn.style.display = 'none';
-      }
-      continue;
+        await msProcessUploadJob(job);
+      } catch (_) { /* 各 job 内で UI 表示済み。キューは止めない */ }
+      // 1件終わるごとに一覧を更新（アップロード結果を目で見ながら進められる）
+      try { msReloadList(); } catch (_) {}
     }
+  } finally {
+    msUploadWorkerActive = false;
+  }
+}
 
-    // 既存（短尺・閾値未満）経路 — multer 経由 /upload ===================
-    // 事前チェック①: 既存上限（multer の MAX_UPLOAD_SIZE_MB）
-    if (f.size > maxBytes) {
+// 1ファイル分の検証＋アップロード（旧 msHandleFiles の for ループ内ロジックを踏襲）。
+async function msProcessUploadJob({ file: f, row, limits }) {
+  const maxMb = limits.max_upload_size_mb || 25;
+  const maxDur = limits.max_upload_duration_seconds || 30;
+  const maxBytes = maxMb * 1024 * 1024;
+  const resumableEnabled = !!limits.resumable_upload_enabled;
+  const resumableThreshold = Number(limits.resumable_upload_threshold_bytes) || MS_RESUMABLE_THRESHOLD_BYTES;
+
+  const bar = row.querySelector('.ms-bar > div');
+  const stat = row.querySelector('.ms-status');
+  const controls = row.querySelector('.ms-controls');
+  const warn = row.querySelector('.ms-warn');
+
+  // 大容量分岐
+  const isLarge = f.size >= resumableThreshold;
+  if (isLarge) {
+    // 大容量経路（Resumable Upload）— 有効でなければ明示エラーで止める
+    if (!resumableEnabled) {
       bar.style.background = '#dc2626'; bar.style.width = '100%';
       stat.style.color = '#dc2626';
-      stat.textContent = `❌ ${maxMb}MB 上限超過（${votFmtSize(f.size)}）。短く編集または圧縮してから再アップロードしてください`;
-      continue;
+      const thresholdMb = Math.floor(resumableThreshold / (1024 * 1024));
+      stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=${thresholdMb}MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
+      return;
     }
-
-    // 事前チェック②: 動画長
-    const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
-    if (isVideo) {
-      stat.textContent = '動画長を確認中…';
-      const dur = await msProbeVideoDuration(f);
-      if (dur && dur > maxDur) {
-        bar.style.background = '#dc2626'; bar.style.width = '100%';
-        stat.style.color = '#dc2626';
-        stat.textContent = `❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`;
-        continue;
-      }
-    }
-
+    warn.style.display = '';
+    controls.style.display = '';
+    const cancelBtn = controls.querySelector('[data-action="cancel"]');
     try {
-      stat.textContent = 'アップロード中…';
-      await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
+      stat.textContent = 'Drive セッションを発行中…';
+      const meta = { aborted: false };
+      cancelBtn.addEventListener('click', () => {
+        meta.aborted = true;
+        stat.textContent = 'キャンセル中…';
+      });
+      await msUploadResumable(f, {
+        onStatus: (msg) => { stat.textContent = msg; },
+        onProgress: (pct) => { bar.style.width = pct + '%'; },
+        shouldAbort: () => meta.aborted,
+      });
       bar.style.width = '100%';
       bar.style.background = '#10b981';
       stat.textContent = '✅ 完了（解析はまだ未実行）';
+      controls.style.display = 'none';
+      warn.style.display = 'none';
     } catch (e) {
       bar.style.background = '#dc2626';
       stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
       stat.style.color = '#dc2626';
+      controls.style.display = 'none';
+      warn.style.display = 'none';
+    }
+    return;
+  }
+
+  // 既存（短尺・閾値未満）経路 — multer 経由 /upload ===================
+  // 事前チェック①: 既存上限（multer の MAX_UPLOAD_SIZE_MB）
+  if (f.size > maxBytes) {
+    bar.style.background = '#dc2626'; bar.style.width = '100%';
+    stat.style.color = '#dc2626';
+    stat.textContent = `❌ ${maxMb}MB 上限超過（${votFmtSize(f.size)}）。短く編集または圧縮してから再アップロードしてください`;
+    return;
+  }
+
+  // 事前チェック②: 動画長
+  const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
+  if (isVideo) {
+    stat.textContent = '動画長を確認中…';
+    const dur = await msProbeVideoDuration(f);
+    if (dur && dur > maxDur) {
+      bar.style.background = '#dc2626'; bar.style.width = '100%';
+      stat.style.color = '#dc2626';
+      stat.textContent = `❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`;
+      return;
     }
   }
-  msReloadList();
+
+  try {
+    stat.textContent = 'アップロード中…';
+    await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
+    bar.style.width = '100%';
+    bar.style.background = '#10b981';
+    stat.textContent = '✅ 完了（解析はまだ未実行）';
+  } catch (e) {
+    bar.style.background = '#dc2626';
+    stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
+    stat.style.color = '#dc2626';
+  }
 }
 
 // ==================== Resumable Upload（閾値以上はブラウザ→Drive 直送） ====================
