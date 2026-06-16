@@ -737,6 +737,63 @@ router.post('/analyze', async (req, res) => {
   }
 });
 
+// ==================== 承認待ちを一括 AI 解析 ====================
+//
+// 「AI解析の承認待ち」を廃止したので、既にその状態で溜まっているレコードを
+// まとめて解析キックするための口。1 クリックで未解析分を一気に処理する。
+//
+// 安全装置:
+//   - STOP_ALL を尊重
+//   - DAILY_ANALYSIS_LIMIT（既定 5 回/日）を尊重。残り枠ぶんだけ古い順に起動し、
+//     超過分は waiting_approval のまま残す（暴走課金を防ぐ＝ユーザー方針「上限維持」）。
+//   - 実解析は triggerAutoAnalyzeIfEligible に委譲（全ガードを再度通す）。fire-and-forget。
+router.post('/analyze-pending-batch', async (req, res) => {
+  try {
+    if (guards.isStopAll()) {
+      return res.status(423).json({ error: 'STOP_ALL=true のため解析を停止しています' });
+    }
+
+    // 残り日次枠を算出（手動 /analyze と違い、ここは暴走防止のため上限を尊重する）
+    const daily = await guards.checkDailyLimit();
+    const remaining = Math.max(0, (daily.limit || 0) - (daily.count || 0));
+
+    // 未解析（承認待ち）レコードを古い順に取得
+    const { data: pending, error: fetchError } = await supabase
+      .from('video_file_organization_tests')
+      .select('id, drive_file_id, original_filename')
+      .eq('status', 'waiting_approval')
+      .order('created_at', { ascending: true });
+    if (fetchError) throw fetchError;
+
+    const totalWaiting = (pending || []).length;
+    const toRun = (pending || []).slice(0, remaining);
+
+    // fire-and-forget で一括キック。各レコードで全ガードを再度通す（重複起動は status ガードで弾かれる）。
+    // ignoreFeatureFlag=true: 明示操作なので ENABLE_AUTO_ANALYZE の値に関係なく実行する。
+    for (const row of toRun) {
+      triggerAutoAnalyzeIfEligible({ rowId: row.id, ignoreFeatureFlag: true })
+        .catch(err => console.error('[video-org] batch analyze error', row.id, err?.message || err));
+    }
+
+    logCtx('analyze-batch', {
+      at: new Date().toISOString(), by: req.user?.email,
+      totalWaiting, started: toRun.length,
+      daily_count: daily.count, daily_limit: daily.limit, remaining,
+    });
+
+    res.json({
+      started: toRun.length,
+      totalWaiting,
+      remaining,
+      dailyLimit: daily.limit,
+      dailyCount: daily.count,
+    });
+  } catch (e) {
+    console.error('[video-org] analyze-pending-batch error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ==================== 適用（手動再実行: awaiting_review / apply_failed からの復帰用）====================
 //
 // 旧仕様: analysis_completed の DRY_RUN プレビューを返す MVP。

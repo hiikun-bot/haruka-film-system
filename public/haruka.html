@@ -7243,6 +7243,7 @@ window.showPage = window.showPage || function(name, btn) {
            title="Vertex AI / Gemini の従量課金を Google Cloud で確認（要GCPログイン）"
            style="font-size:12px;color:var(--text-muted);text-decoration:none;white-space:nowrap">💰 AI課金を確認 ↗</a>
         <span id="ms-daily-counter" style="font-size:12px;color:var(--text-muted)"></span>
+        <button class="btn-secondary" id="ms-batch-analyze-btn" onclick="msAnalyzeAllPending()" title="まだ解析していない素材（AI解析待ち）をまとめてAI解析します。本日のAI解析上限の残り枠ぶんだけ実行します。">🤖 未解析をまとめて解析</button>
         <button class="btn-secondary" id="ms-refresh-btn" onclick="msManualRefresh()" title="アップロード状況・AI解析の進捗・同期を最新の状態に更新します">🔄 最新</button>
         <button class="btn-primary" onclick="msShowUpload()">+ 新規追加</button>
       </div>
@@ -7252,7 +7253,7 @@ window.showPage = window.showPage || function(name, btn) {
       <input type="search" id="ms-search" placeholder="🔍 タグ・ファイル名・シーンで検索…" oninput="msDebouncedReload()">
       <select id="ms-filter-status" onchange="msReloadList()">
         <option value="">状態: すべて</option>
-        <option value="waiting_approval">AI解析の承認待ち</option>
+        <option value="waiting_approval">AI解析待ち</option>
         <option value="processing">AI解析中</option>
         <option value="analysis_completed">振り分け中</option>
         <option value="awaiting_review">確認待ち</option>
@@ -43108,6 +43109,34 @@ async function msAnalyzeSelected() {
   }
   }, '解析中… 約30秒かかります');
 }
+
+// 「未解析をまとめて解析」: AI解析待ち（waiting_approval）に溜まっている素材を一括でAI解析キック。
+// サーバー側は本日のAI解析上限（DAILY_ANALYSIS_LIMIT）の残り枠ぶんだけ古い順に起動する。
+async function msAnalyzeAllPending() {
+  return btnBusy(busyBtnFrom('ms-batch-analyze-btn'), async () => {
+    if (!confirm('AI解析待ちの素材をまとめて Vertex AI Gemini で解析します。\n従量課金が発生します（本日の解析上限の残り枠ぶんまで）。\n本当に実行しますか？')) return;
+    try {
+      showToast('未解析の一括AI解析を開始しました…', 'info');
+      const r = await votFetch('/analyze-pending-batch', { method: 'POST', body: JSON.stringify({}) });
+      const started = r?.started || 0;
+      const totalWaiting = r?.totalWaiting || 0;
+      const leftover = Math.max(0, totalWaiting - started);
+      if (started === 0 && totalWaiting === 0) {
+        showToast('AI解析待ちの素材はありません', 'info');
+      } else if (started === 0) {
+        showToast(`本日のAI解析上限に達しているため開始できませんでした（待機 ${totalWaiting} 件）。明日以降に再実行してください`, 'info');
+      } else if (leftover > 0) {
+        showToast(`${started} 件のAI解析を開始しました。残り ${leftover} 件は本日の上限超過分のため明日以降に再実行してください`, 'success');
+      } else {
+        showToast(`${started} 件のAI解析を開始しました`, 'success');
+      }
+      msReloadList();
+    } catch (e) {
+      showToast('一括解析の開始に失敗: ' + e.message, 'error');
+      msReloadList();
+    }
+  }, '一括解析を開始中…');
+}
 // プレビュー再生成（全動画一律 60枚 WebP ストーリーボードを生成）
 // - 新規実装は POST /preview/:fileId を呼ぶ（PR-BC で追加予定）
 // - サーバ側に /preview/:fileId が無い場合は旧 POST /faststart/:fileId にフォールバック
@@ -43998,7 +44027,7 @@ function votFmtSize(bytes) {
 function votStatusBadge(status) {
   const map = {
     pending:             { label: 'pending',             color: '#6b7280' },
-    waiting_approval:    { label: 'AI解析の承認待ち',     color: '#f59e0b' },
+    waiting_approval:    { label: 'AI解析待ち',           color: '#f59e0b' },
     processing:          { label: 'AI解析中',             color: '#3b82f6' },
     analysis_completed:  { label: '振り分け中',           color: '#3b82f6' },
     apply_pending:       { label: '適用承認待ち',         color: '#8b5cf6' },
