@@ -576,10 +576,13 @@ router.post('/analyze', async (req, res) => {
       return res.status(429).json({ error: `MAX_RETRY_COUNT (${guards.getMaxRetryCount()}) に到達しています` });
     }
 
+    // DAILY_ANALYSIS_LIMIT は「自動解析（auto-analyze）の暴走課金」を防ぐための安全弁。
+    // この手動 /analyze は本ルーター全体が requireRole('admin') 配下で、管理者が
+    // 1 クリック = 1 解析の明示操作として叩く経路（課金は操作量に比例＝自分で制御可能）。
+    // そのため手動経路では日次上限でブロックしない（管理者＝無制限）。
+    // 自動解析側（lib/video-organization/auto-analyze.js）は引き続き上限を尊重する。
+    // ※ count はログ用に取得のみ（exceeded でも return しない）。
     const daily = await guards.checkDailyLimit();
-    if (daily.exceeded) {
-      return res.status(429).json({ error: `DAILY_ANALYSIS_LIMIT に到達しました (${daily.count}/${daily.limit})` });
-    }
 
     await supabase.from('video_file_organization_tests')
       .update({
