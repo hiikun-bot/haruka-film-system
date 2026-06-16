@@ -7216,6 +7216,15 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="video">🎬 動画</option>
         <option value="image">🖼️ 画像</option>
       </select>
+      <!-- クライアント → 案件 の2段構え絞り込み。
+           クライアント未選択=全体素材。クライアント選択時のみ案件 select を表示し、
+           「案件全体」or 個別案件を選べる（アップロード先ピッカーと同じ作り）。 -->
+      <select id="ms-filter-client" onchange="msOnFilterClientChange()" title="クライアントで絞り込み">
+        <option value="">クライアント: すべて</option>
+      </select>
+      <select id="ms-filter-project" onchange="msOnFilterProjectChange()" title="案件で絞り込み" style="display:none">
+        <option value="">案件: 案件全体</option>
+      </select>
       <span id="ms-active-tags" style="display:flex;gap:4px;flex-wrap:wrap"></span>
     </div>
 
@@ -42064,6 +42073,9 @@ async function votFetch(path, opts) {
 let msSelectedFileId = null;
 let msItemsCache = [];
 let msActiveTag = '';
+// 検索バーの「クライアント → 案件」2段フィルタの選択状態
+let msFilterClientId = '';
+let msFilterProjectId = '';
 
 // ---- プレビュー自動ポーリング（preview_status が pending/processing の間だけ）----
 // 仕様（PR #687 系）:
@@ -42129,7 +42141,12 @@ function msStartPreviewPolling(fileId) {
   }, MS_PREVIEW_POLL_INTERVAL_MS);
 }
 
-function loadMaterialSquarePage() { msShowList(); msReloadList(); }
+function loadMaterialSquarePage() {
+  msShowList();
+  msReloadList();
+  // 検索バーのクライアント/案件 select を初期化（未ロードなら取得してから populate）
+  msEnsureClientsProjects().then(() => msPopulateFilterClientSelect()).catch(() => {});
+}
 
 // ---- 一覧全体の進捗ポーリング（preview_status pending/processing がある間だけ）----
 // 仕様:
@@ -42373,6 +42390,9 @@ async function msReloadList() {
     if (status) params.set('status', status);
     if (kind) params.set('mediaKind', kind);
     if (msActiveTag) params.set('tag', msActiveTag);
+    // 2段フィルタ: 案件選択が優先（その案件のみ）、無ければクライアント（案件全体）。
+    if (msFilterProjectId) params.set('projectId', msFilterProjectId);
+    else if (msFilterClientId) params.set('clientId', msFilterClientId);
     const data = await votFetch('/list' + (params.toString() ? '?' + params.toString() : ''));
     msItemsCache = data.items || [];
     const daily = data.daily || {};
@@ -42406,6 +42426,66 @@ function msRenderActiveTags() {
 }
 function msClearTagFilter() { msActiveTag = ''; msReloadList(); }
 function msFilterByTag(tag) { msActiveTag = tag; msReloadList(); }
+
+// ==================== 検索バー: クライアント → 案件 の2段フィルタ ====================
+// アップロード先ピッカー（msPopulateClientSelect / msOnClientChange）と同じ方針だが、
+// こちらは一覧の絞り込み専用。クライアント未選択=全体素材、選択時のみ案件 select を出す。
+
+// クライアント select を populate（案件を1件以上持つクライアントのみ・名前順）。
+function msPopulateFilterClientSelect() {
+  const sel = document.getElementById('ms-filter-client');
+  if (!sel) return;
+  const prev = msFilterClientId;
+  const projects = Array.isArray(allProjects) ? allProjects : [];
+  const clientIdsWithProjects = new Set(
+    projects.filter(p => !p.is_hidden && p.client_id).map(p => p.client_id)
+  );
+  const clients = (allClients || [])
+    .filter(c => clientIdsWithProjects.has(c.id))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+  sel.innerHTML = '<option value="">クライアント: すべて</option>' +
+    clients.map(c => `<option value="${votEscape(c.id)}">${votEscape(c.name || '(名称未設定)')}</option>`).join('');
+  // 復元できなければ「すべて」に戻す
+  if (prev && clients.some(c => c.id === prev)) sel.value = prev;
+  else msFilterClientId = '';
+  msSyncFilterProjectSelect();
+}
+
+// 選択中クライアントに応じて案件 select を出し分け＋populate。
+function msSyncFilterProjectSelect() {
+  const pSel = document.getElementById('ms-filter-project');
+  if (!pSel) return;
+  if (!msFilterClientId) {
+    // クライアント未指定 = 全体素材。案件 select は隠す。
+    pSel.style.display = 'none';
+    pSel.value = '';
+    msFilterProjectId = '';
+    return;
+  }
+  const prev = msFilterProjectId;
+  const projects = (allProjects || [])
+    .filter(p => p.client_id === msFilterClientId && !p.is_hidden)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+  pSel.innerHTML = '<option value="">案件: 案件全体</option>' +
+    projects.map(p => `<option value="${votEscape(p.id)}">${votEscape(p.name || '(名称未設定)')}</option>`).join('');
+  if (prev && projects.some(p => p.id === prev)) pSel.value = prev;
+  else { msFilterProjectId = ''; pSel.value = ''; }
+  pSel.style.display = '';
+}
+
+function msOnFilterClientChange() {
+  const sel = document.getElementById('ms-filter-client');
+  msFilterClientId = sel ? sel.value : '';
+  msFilterProjectId = ''; // クライアントを変えたら案件選択はリセット
+  msSyncFilterProjectSelect();
+  msReloadList();
+}
+
+function msOnFilterProjectChange() {
+  const sel = document.getElementById('ms-filter-project');
+  msFilterProjectId = sel ? sel.value : '';
+  msReloadList();
+}
 
 function msKindIcon(kind) { return kind === 'image' ? '🖼️' : '🎬'; }
 // 秒数を時分秒に整形（例: 796.796 → "13分17秒" / 7.5 → "8秒" / 3725 → "1時間2分5秒"）。
