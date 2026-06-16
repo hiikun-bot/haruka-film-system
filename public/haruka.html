@@ -7152,6 +7152,17 @@ window.showPage = window.showPage || function(name, btn) {
   #page-material-square table.ms-table tbody tr { cursor: pointer; }
   #page-material-square table.ms-table tbody tr:hover { background: #f8f9fb; }
   #page-material-square table.ms-table tbody tr.ms-selected { background: #eaf6f5; }
+  /* 一括ダウンロード用チェック列 */
+  #page-material-square table.ms-table th.ms-check-col,
+  #page-material-square table.ms-table td.ms-check-col { width: 32px; text-align: center; padding-right: 0; }
+  #page-material-square table.ms-table input.ms-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent, #2bb3a3); }
+  #page-material-square table.ms-table tbody tr.ms-checked { background: #f0fbfa; }
+  /* 選択バー（1件以上チェックで出現・一覧上部に固定） */
+  #page-material-square #ms-bulk-bar { display: none; align-items: center; gap: 12px; margin: 0 0 10px; padding: 8px 14px;
+    background: #eaf6f5; border: 1px solid var(--accent, #2bb3a3); border-radius: 8px; font-size: 13px; position: sticky; top: 0; z-index: 5; }
+  #page-material-square #ms-bulk-bar.visible { display: flex; }
+  #page-material-square #ms-bulk-bar .ms-bulk-count { font-weight: 600; }
+  #page-material-square #ms-bulk-bar .ms-bulk-spacer { flex: 1; }
   #page-material-square .ms-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; color: #fff; }
   #page-material-square .ms-tag { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px; font-size: 11px; background: #eef2f7; color: #334; cursor: pointer; }
   #page-material-square .ms-tag:hover { background: #dbe4ef; }
@@ -7219,11 +7230,20 @@ window.showPage = window.showPage || function(name, btn) {
       <span id="ms-active-tags" style="display:flex;gap:4px;flex-wrap:wrap"></span>
     </div>
 
+    <!-- 選択バー: 1件以上チェックすると出現。1件=ダウンロード / 複数=N件をダウンロード -->
+    <div id="ms-bulk-bar">
+      <span class="ms-bulk-count" id="ms-bulk-count">0件を選択中</span>
+      <button class="btn-secondary" onclick="msClearSelection()" style="padding:3px 10px;font-size:12px">✕ 選択を解除</button>
+      <span class="ms-bulk-spacer"></span>
+      <button class="btn-primary" id="ms-bulk-download-btn" onclick="msDownloadChecked()" style="padding:5px 14px;font-size:13px">⬇ ダウンロード</button>
+    </div>
+
     <div class="ms-layout">
       <div>
         <table class="ms-table">
           <thead>
             <tr>
+              <th class="ms-check-col"><input type="checkbox" class="ms-check" id="ms-check-all" onclick="msToggleSelectAll(this.checked)" title="表示中をすべて選択"></th>
               <th style="width:80px">状態</th>
               <th style="width:36px"></th>
               <th>ファイル名</th>
@@ -7234,7 +7254,7 @@ window.showPage = window.showPage || function(name, btn) {
             </tr>
           </thead>
           <tbody id="ms-tbody">
-            <tr><td colspan="7" style="padding:8px 16px"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div></td></tr>
+            <tr><td colspan="8" style="padding:8px 16px"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -42062,6 +42082,8 @@ async function votFetch(path, opts) {
 let msSelectedFileId = null;
 let msItemsCache = [];
 let msActiveTag = '';
+// 一括ダウンロード用: チェック中の drive_file_id 集合（プレビュー選択とは独立）
+const msCheckedIds = new Set();
 
 // ---- プレビュー自動ポーリング（preview_status が pending/processing の間だけ）----
 // 仕様（PR #687 系）:
@@ -42373,16 +42395,21 @@ async function msReloadList() {
     if (msActiveTag) params.set('tag', msActiveTag);
     const data = await votFetch('/list' + (params.toString() ? '?' + params.toString() : ''));
     msItemsCache = data.items || [];
+    // 検索/フィルタで表示外になった素材のチェックは外す（選択件数を実体に合わせる）
+    const visibleIds = new Set(msItemsCache.map(x => x.drive_file_id));
+    msCheckedIds.forEach(id => { if (!visibleIds.has(id)) msCheckedIds.delete(id); });
     const daily = data.daily || {};
     if (counter) counter.textContent = `本日のAI解析: ${daily.count || 0} / ${daily.limit || 5}${daily.exceeded ? ' ⚠️' : ''}`;
     msRenderActiveTags();
     if (msItemsCache.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:32px">該当する素材がありません</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:32px">該当する素材がありません</td></tr>';
       msClearPreview();
+      msUpdateBulkBar();
       msStopListPolling();
       return;
     }
     tbody.innerHTML = msItemsCache.map(msRenderRow).join('');
+    msUpdateBulkBar();
     // 既に選択中の行があれば preview を更新（既に消えていればクリア）
     if (msSelectedFileId && msItemsCache.find(x => x.drive_file_id === msSelectedFileId)) {
       msSelectItem(msSelectedFileId, false);
@@ -42392,7 +42419,7 @@ async function msReloadList() {
     // pending/processing が1つでもあれば5秒間隔で再 fetch を開始（既存スレッドはそのまま継続）
     msMaybeStartListPolling();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:16px">読み込み失敗: ${votEscape(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger);padding:16px">読み込み失敗: ${votEscape(e.message)}</td></tr>`;
   }
 }
 
@@ -42504,11 +42531,14 @@ function msPhaseProgressCell(item) {
 
 function msRenderRow(item) {
   const fid = votEscape(item.drive_file_id);
+  const checked = msCheckedIds.has(item.drive_file_id);
   const selected = item.drive_file_id === msSelectedFileId ? ' ms-selected' : '';
+  const checkedCls = checked ? ' ms-checked' : '';
   // PR #695: プレビュー → AI解析 の順で進捗を1つだけ表示（フェーズ切り替え）
   const previewProgress = msPhaseProgressCell(item);
   return `
-    <tr class="${selected.trim()}" onclick="msSelectItem('${fid}')">
+    <tr class="${(selected + checkedCls).trim()}" onclick="msSelectItem('${fid}')">
+      <td class="ms-check-col" onclick="event.stopPropagation()"><input type="checkbox" class="ms-check" data-fid="${fid}" ${checked ? 'checked' : ''} onclick="msToggleCheck('${fid}', this.checked)"></td>
       <td>${votStatusBadge(item.status)}${previewProgress}</td>
       <td style="font-size:20px;text-align:center">${msKindIcon(item.media_kind)}</td>
       <td style="word-break:break-all">${votEscape(item.current_filename || item.original_filename || '-')}</td>
@@ -42853,20 +42883,86 @@ function msOpenDriveFolder() {
 
 // ⬇ アップロードした原本をダウンロード。サーバが Content-Disposition: attachment で配信するため
 //   同一オリジンの <a download> でファイル名つき保存ダイアログが出る（数GBの原本も SA 経由で DL 可）。
-function msDownloadSelected() {
-  if (!msSelectedFileId) return;
-  const item = msItemsCache.find(x => x.drive_file_id === msSelectedFileId);
-  if (!item) return;
-  const filename = item.current_filename || item.original_filename || 'download';
-  const url = `${VOT_API_BASE}/download/${encodeURIComponent(msSelectedFileId)}`;
+function msTriggerDownload(fileId, filename) {
+  const url = `${VOT_API_BASE}/download/${encodeURIComponent(fileId)}`;
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = filename || 'download';
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+function msDownloadSelected() {
+  if (!msSelectedFileId) return;
+  const item = msItemsCache.find(x => x.drive_file_id === msSelectedFileId);
+  if (!item) return;
+  msTriggerDownload(msSelectedFileId, item.current_filename || item.original_filename);
   showToast('ダウンロードを開始しました', 'info');
+}
+
+// ==================== 一括ダウンロード（チェックボックス選択） ====================
+// 1件チェック → msSelectedFileId とは独立に、選択バーから DL。
+// 複数チェック → 各原本を順次 <a download> でトリガー（数GB級のため zip 化はせず順次方式）。
+function msToggleCheck(fileId, checked) {
+  if (checked) msCheckedIds.add(fileId);
+  else msCheckedIds.delete(fileId);
+  // 行のハイライトを即時反映（再描画はしない）
+  const tr = document.querySelector(`#ms-tbody input.ms-check[data-fid="${CSS.escape(fileId)}"]`)?.closest('tr');
+  if (tr) tr.classList.toggle('ms-checked', checked);
+  msUpdateBulkBar();
+}
+function msToggleSelectAll(checked) {
+  msItemsCache.forEach(it => { if (checked) msCheckedIds.add(it.drive_file_id); else msCheckedIds.delete(it.drive_file_id); });
+  document.querySelectorAll('#ms-tbody input.ms-check').forEach(cb => {
+    cb.checked = checked;
+    cb.closest('tr')?.classList.toggle('ms-checked', checked);
+  });
+  msUpdateBulkBar();
+}
+function msClearSelection() {
+  msCheckedIds.clear();
+  document.querySelectorAll('#ms-tbody input.ms-check').forEach(cb => {
+    cb.checked = false;
+    cb.closest('tr')?.classList.remove('ms-checked');
+  });
+  const all = document.getElementById('ms-check-all');
+  if (all) { all.checked = false; all.indeterminate = false; }
+  msUpdateBulkBar();
+}
+// 選択バーの表示・件数・ボタン文言・全選択チェックの状態を同期
+function msUpdateBulkBar() {
+  const bar = document.getElementById('ms-bulk-bar');
+  const countEl = document.getElementById('ms-bulk-count');
+  const btn = document.getElementById('ms-bulk-download-btn');
+  const all = document.getElementById('ms-check-all');
+  const n = msCheckedIds.size;
+  if (bar) bar.classList.toggle('visible', n > 0);
+  if (countEl) countEl.textContent = `${n}件を選択中`;
+  if (btn) btn.textContent = n > 1 ? `⬇ ${n}件をダウンロード` : '⬇ ダウンロード';
+  if (all) {
+    const total = msItemsCache.length;
+    all.checked = total > 0 && n >= total;
+    all.indeterminate = n > 0 && n < total;
+  }
+}
+// チェック中の原本を順次ダウンロード（ブラウザの連続DLブロック回避のため間隔を空ける）
+async function msDownloadChecked() {
+  const ids = msItemsCache.filter(it => msCheckedIds.has(it.drive_file_id)).map(it => it.drive_file_id);
+  if (ids.length === 0) return;
+  const btn = document.getElementById('ms-bulk-download-btn');
+  if (btn) btn.disabled = true;
+  showToast(ids.length > 1 ? `${ids.length}件のダウンロードを開始します` : 'ダウンロードを開始しました', 'info');
+  try {
+    for (let i = 0; i < ids.length; i++) {
+      const item = msItemsCache.find(x => x.drive_file_id === ids[i]);
+      msTriggerDownload(ids[i], item?.current_filename || item?.original_filename);
+      // 連続トリガーはブラウザにブロックされやすいので少し間隔を空ける
+      if (i < ids.length - 1) await new Promise(r => setTimeout(r, 800));
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function msRegeneratePreview() {
