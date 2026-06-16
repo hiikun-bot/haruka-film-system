@@ -42407,9 +42407,22 @@ function msClearTagFilter() { msActiveTag = ''; msReloadList(); }
 function msFilterByTag(tag) { msActiveTag = tag; msReloadList(); }
 
 function msKindIcon(kind) { return kind === 'image' ? '🖼️' : '🎬'; }
+// 秒数を時分秒に整形（例: 796.796 → "13分17秒" / 7.5 → "8秒" / 3725 → "1時間2分5秒"）。
+function msFmtDuration(secs) {
+  const total = Math.round(Number(secs));
+  if (!isFinite(total) || total < 0) return '';
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  let out = '';
+  if (h) out += `${h}時間`;
+  if (h || m) out += `${m}分`;
+  out += `${s}秒`;
+  return out;
+}
 function msFmtSpec(item) {
   const dur = item.media_kind === 'video' && item.video_duration_seconds
-    ? `${item.video_duration_seconds}s / ` : '';
+    ? `${msFmtDuration(item.video_duration_seconds)} / ` : '';
   return `${dur}${votFmtSize(item.file_size)}`;
 }
 function msFmtDate(iso) {
