@@ -1078,6 +1078,15 @@ document.getElementById('btn-next').addEventListener('click', () => { shiftRange
 document.getElementById('btn-today').addEventListener('click', () => { const r = defaultRange(); state.from = r.from; state.to = r.to; load(); });
 
 document.getElementById('btn-connect').addEventListener('click', () => {
+  // メンバー→カレンダータブから開いた場合は本ページが iframe 内にある。
+  // Google の OAuth 同意画面は X-Frame-Options:DENY で iframe 読み込みを拒否し
+  // 403 ページを返すため、必ず親ウィンドウを遷移させる。
+  try {
+    if (window.top && window.top !== window.self) {
+      window.top.location.href = '/api/auth/google-calendar/start';
+      return;
+    }
+  } catch (_) { /* cross-origin の場合はフォールバック */ }
   window.location.href = '/api/auth/google-calendar/start';
 });
 

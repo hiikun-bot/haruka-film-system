@@ -16,9 +16,11 @@ const supabase = require('./supabase');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 
 const { passport: passportInstance, requireAuth, requirePermission, isSuperAdminUser } = require('./auth');
+const { replaceAvatarDataUrls } = require('./utils/avatar-ref');
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -70,6 +72,19 @@ app.use(helmet({
 
 app.use(cors({ origin: process.env.APP_URL || 'http://localhost:3000', credentials: true }));
 
+// gzip 圧縮（haruka.html は 2.2MB あるため転送量・体感速度の改善が大きい）。
+// - 動画ストリーミング（/api/haruka/files/:id/stream 等の Range リクエスト経路）は
+//   圧縮対象から除外する。206 Partial Content の Content-Range/Content-Length を
+//   壊さないため、Range ヘッダ付きリクエストは無条件でスキップ。
+// - それ以外はデフォルト filter（compressible な Content-Type のみ圧縮。
+//   video/mp4 等のバイナリと Cache-Control: no-transform は自動でスキップ）。
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers.range) return false; // 動画等の Range 配信は素通し
+    return compression.filter(req, res);
+  },
+}));
+
 // すべてのレスポンスに X-Server-Build ヘッダを付与（クライアント側のバージョン照合用）
 app.use((req, res, next) => {
   res.setHeader('X-Server-Build', BUILD_ID);
@@ -98,6 +113,10 @@ app.get('/healthz', (req, res) => {
 
 // 工事中ページは middleware より前に静的配信（middleware で巻き戻されないよう）
 app.use('/maintenance.html', express.static(path.join(__dirname, 'public/maintenance.html')));
+// プライバシーポリシー / 利用規約 は Google OAuth 審査要件として常時 publicly accessible である必要があるため
+// 認証ミドルウェアもサーキットブレーカーも経由させない
+app.use('/privacy.html', express.static(path.join(__dirname, 'public/privacy.html')));
+app.use('/terms.html',   express.static(path.join(__dirname, 'public/terms.html')));
 
 // サーキットブレーカーが open のとき:
 //  - /healthz, /maintenance.html, 静的アセット (画像/CSS/フォント) は素通し
@@ -297,7 +316,7 @@ app.use('/oauth', require('./routes/oauth'));
 const videoOrgEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_VIDEO_ORGANIZATION_TEST || '').toLowerCase());
 if (videoOrgEnabled) {
   app.use('/api/admin/video-organization-test', require('./routes/video-organization-test'));
-  console.log('[video-org] feature flag ENABLED — /api/admin/video-organization-test/* available (admin only)');
+  console.log('[video-org] feature flag ENABLED — /api/admin/video-organization-test/* available (all logged-in users)');
 } else {
   console.log('[video-org] feature flag DISABLED — set ENABLE_VIDEO_ORGANIZATION_TEST=true to enable');
 }
@@ -329,8 +348,20 @@ app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-1
 app.get('/haruka.html', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
 });
-// その他の静的ファイル（ロゴ等）
-app.use(express.static(path.join(__dirname, 'public')));
+// その他の静的ファイル（ロゴ・/js・/css 等）
+// 静的アセットは 1時間キャッシュさせて再訪時の読み込みを高速化する。
+// ただし HTML（login.html / guide.html 等）と service-worker.js は
+// デプロイ後すぐ最新を取らせたいので no-cache（毎回再検証）を維持する。
+// ※ haruka.html 本体は上の requireAuth 付き sendFile ルートが先に処理するため
+//   ここには到達しない（Cache-Control 未付与＝キャッシュされない）。/api も対象外。
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html') || filePath.endsWith('service-worker.js')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 
 // ==================== 認証ルート ====================
@@ -362,9 +393,19 @@ app.post('/auth/logout', (req, res) => {
 });
 
 // 現在のログインユーザー情報（fetchからも呼ばれるのでリダイレクトせずJSON返却）
-app.get('/auth/me', (req, res) => {
+// deserializeUser (auth.js) は毎リクエストの軽量化のため列を絞っている（avatar_url 等を含まない）。
+// フロントは avatar_url / creative_default_* / default_creative_tab 等の全列を currentUser として
+// 参照するため、このエンドポイントだけは DB から全列を取り直して従来のレスポンス契約を維持する。
+app.get('/auth/me', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'not authenticated' });
-  res.json(safeUser(req.user));
+  try {
+    const { data: user, error } = await supabase
+      .from('users').select('*').eq('id', req.user.id).maybeSingle();
+    if (error || !user) return res.json(safeUser(req.user)); // 取得失敗時は絞り済みの req.user で代替
+    res.json(safeUser(user));
+  } catch (e) {
+    res.json(safeUser(req.user));
+  }
 });
 
 // ==================== 招待 API ====================
@@ -477,7 +518,9 @@ function safeUser(u) {
   const { password_hash, google_id, ...safe } = u;
   // フロントエンドが参照する name フィールドを補完
   if (!safe.name && safe.full_name) safe.name = safe.full_name;
-  return safe;
+  // avatar_url の base64 data URL（最大300KB）は配信エンドポイント URL に置換して
+  // 転送量を削減する（/auth/me はログイン毎・タブ毎に呼ばれる）。utils/avatar-ref.js 参照
+  return replaceAvatarDataUrls(safe);
 }
 
 // フロントエンドのすべてのルートをindex.htmlに向ける（SPA対応）
@@ -586,7 +629,7 @@ const runSchemaSync = require('./db/migrate');
   } else {
     console.log('[schema-sync] SCHEMA_AUTO_SYNC=false により自動同期スキップ');
   }
-  app.listen(PORT, async () => {
+  const server = app.listen(PORT, async () => {
     console.log(`
   ╔═══════════════════════════════════════╗
   ║   HARUKA FILM SYSTEM サーバー起動     ║
@@ -608,5 +651,51 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] bug-triage-sla-checker 起動失敗:', e.message);
     }
+  });
+
+  // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
+  // 遅い回線（家庭用 Wi-Fi で 1Mbps 程度）から数十MBの動画/画像をアップロードする際、
+  // 5分経過した瞬間にサーバが connection をリセットし
+  // 「進捗60%付近で 不明なエラー」になる（バグ報告 #9f208f5d）。
+  // 動画素材のアップロードは数百MBに達するため十分長めにしておく。
+  // - 0 にすると無効化できるが、本物のスタックした接続を残し続けるリスクがあるため 30分上限とする
+  // - headersTimeout は req body より先のヘッダ受信限界。デフォルト 60s のままで OK
+  // - keepAliveTimeout もデフォルトのまま（5s）
+  server.requestTimeout = 30 * 60 * 1000;
+
+  // ==================== graceful shutdown ====================
+  // Railway はデプロイ時に旧コンテナへ SIGTERM を送る。即死せず、
+  // 処理中のリクエスト（アップロード等）を完了させてから終了する。
+  // 30秒以内に終わらなければ強制終了（Railway 側の kill より先に自決）。
+  process.on('SIGTERM', () => {
+    console.log('[shutdown] SIGTERM 受信: graceful shutdown を開始します');
+    // ワーカの setInterval を停止（新規ジョブの発火を止める）
+    try {
+      const { stopNotificationScheduler } = require('./workers/notification-scheduler');
+      stopNotificationScheduler();
+    } catch (e) {
+      console.error('[shutdown] notification-scheduler 停止失敗:', e.message);
+    }
+    try {
+      const { stopBugTriageSlaChecker } = require('./workers/bug-triage-sla-checker');
+      stopBugTriageSlaChecker();
+    } catch (e) {
+      console.error('[shutdown] bug-triage-sla-checker 停止失敗:', e.message);
+    }
+    // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
+    server.close((err) => {
+      if (err) {
+        console.error('[shutdown] server.close エラー:', err.message);
+        process.exit(1);
+      }
+      console.log('[shutdown] 全リクエスト完了: プロセスを終了します');
+      process.exit(0);
+    });
+    // 30秒待っても閉じきらない場合は強制終了（スタックした接続対策）
+    const forceTimer = setTimeout(() => {
+      console.error('[shutdown] 30秒以内に完了しなかったため強制終了します');
+      process.exit(1);
+    }, 30 * 1000);
+    forceTimer.unref();
   });
 })();

@@ -196,26 +196,40 @@ async function sendChatworkRoom(roomId, text, opts={}) {
   if (!token) return { ok: false, reason: 'no_token' };
   if (!roomId) return { ok: false, reason: 'no_room' };
   try {
-    await axios.post(`https://api.chatwork.com/v2/rooms/${roomId}/messages`,
+    // validateStatus: 非2xxでも throw させず、Chatwork API のエラー本文
+    // （{"errors":["You don't have permission to ..."]}等）を診断情報として取り出す。
+    // バグ報告 #f03ba5cd: ルーム不正/Bot未参加で投稿が黙って失敗し原因追跡不能だった。
+    const res = await axios.post(`https://api.chatwork.com/v2/rooms/${roomId}/messages`,
       new URLSearchParams({ body: text, self_unread: '0' }),
-      { headers: { 'X-ChatWorkToken': token }, timeout: 10000 }
+      { headers: { 'X-ChatWorkToken': token }, timeout: 10000, validateStatus: () => true }
     );
-    return { ok: true };
+    if (res.status >= 200 && res.status < 300) return { ok: true, status: res.status };
+    const apiErrors = Array.isArray(res.data?.errors) ? res.data.errors.join(' / ') : '';
+    const reason = `HTTP ${res.status}${apiErrors ? `: ${apiErrors}` : ''}`;
+    console.warn(`[notif/chatwork] room=${roomId} ${reason}`);
+    return { ok: false, status: res.status, reason };
   } catch (e) {
-    console.warn('[notif/chatwork]', e.message);
+    console.warn(`[notif/chatwork] room=${roomId}`, e.message);
     return { ok: false, reason: e.message };
   }
 }
 
-// ルーム内で特定ユーザーをメンション付きで投稿。
-// roomId は送信先のルーム（プロジェクトの chatwork_room_id 等）。
-// accountId は宛先ユーザーの Chatwork account ID（[To:NNN] 形式）。
-// Chatwork API は「他人のマイチャットへ投稿」をサポートしないため、
-// 旧 sendChatworkDM (accountId を roomId 扱い) は実質動作せず、本方式に置換。
-async function sendChatworkMention(roomId, accountId, text, opts={}) {
-  if (!roomId || !accountId) return { ok: false, reason: 'missing_room_or_account' };
-  const body = `[To:${accountId}]\n${text}`;
-  return sendChatworkRoom(roomId, body, opts);
+// Chatwork 投稿失敗時の管理者向けメッセージを組み立てる（バグ報告 #f03ba5cd）。
+// 案件ルームへの投稿失敗・代替送信の結果を1行で要約し、notifyAutoError 経由で
+// Slack エラーチャンネルに流す。純関数としてテスト可能にするため分離。
+function _formatChatworkFailureMessage({ roomId, primary, fallbackRoomId, fallback, creativeId, fileName }) {
+  const parts = [
+    `Chatwork通知の投稿に失敗しました（ルーム ${roomId} / ${primary?.reason || 'unknown'}）。`,
+  ];
+  if (fallback?.ok) {
+    parts.push(`クライアント側ルーム ${fallbackRoomId} へ代替送信しました。案件のChatworkルームID設定（ルームが正しいか・通知用アカウントがルームに参加しているか）を確認してください。`);
+  } else if (fallback) {
+    parts.push(`クライアント側ルーム ${fallbackRoomId} への代替送信も失敗（${fallback.reason || 'unknown'}）。ルームID設定と CHATWORK_API_TOKEN を確認してください。`);
+  } else {
+    parts.push('代替送信先（クライアント側ルーム）はありません。ルームID設定と CHATWORK_API_TOKEN を確認してください。');
+  }
+  parts.push(`creative=${creativeId || '-'} file=${fileName || '-'}`);
+  return parts.join('\n');
 }
 
 // =============== Helpers ===============
@@ -350,6 +364,12 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // 案件レベル優先 → なければクライアント設定にフォールバック
   const channelUrl = project?.slack_channel_url || client?.slack_channel_url;
   const roomId    = project?.chatwork_room_id || client?.chatwork_room_id;
+  // 案件ルームへの投稿が失敗した場合の代替先（バグ報告 #f03ba5cd）。
+  // 案件ルームが不正・通知用アカウント未参加だと投稿が黙って失敗し、
+  // 関係者に一切届かない事故が起きたため、クライアント側ルームに退避する。
+  const fallbackRoomId = (project?.chatwork_room_id && client?.chatwork_room_id
+    && String(project.chatwork_room_id) !== String(client.chatwork_room_id))
+    ? client.chatwork_room_id : null;
   const fileName  = detail.file_name;
 
   // 担当者の解決
@@ -395,6 +415,32 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     actor, recipient, comment, creativeUrl,
   });
 
+  // Chatwork 投稿の耐障害ラッパー（バグ報告 #f03ba5cd）。
+  //   1) まず通常のルーム（案件 > クライアント）へ投稿
+  //   2) 失敗かつ案件・クライアントでルームが異なる場合はクライアント側ルームへ代替送信
+  //   3) それでも届かなければ notifyAutoError で Slack エラーチャンネルへ可視化
+  //      （旧実装は console.warn のみで、設定ミスに誰も気づけなかった）
+  const postChatworkResilient = async (text) => {
+    if (!roomId) return { ok: false, reason: 'no_room' };
+    const primary = await sendChatworkRoom(roomId, text, { token: chatworkPost.token });
+    if (primary.ok) return primary;
+    let fallback = null;
+    if (fallbackRoomId) {
+      const fbToken = await resolveChatworkPostToken(fallbackRoomId, actor);
+      fallback = await sendChatworkRoom(fallbackRoomId, text, { token: fbToken.token });
+    }
+    notifyAutoError({
+      source: 'server',
+      kind: 'chatwork.send_failed',
+      apiPath: `chatwork:room:${roomId}`,
+      message: _formatChatworkFailureMessage({
+        roomId, primary, fallbackRoomId, fallback,
+        creativeId: detail.id, fileName,
+      }),
+    }).catch(() => {});
+    return fallback?.ok ? fallback : primary;
+  };
+
   // 遷移ごとの処理
   // Slack / Chatwork ともに「個人宛通知」として扱うため、
   // 対象ユーザーに DM ID が設定されていない場合はその通知をスキップする。
@@ -406,7 +452,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       await sendSlackChannel(channelUrl, `<@${user.slack_dm_id}>\n\n${slackBody}`);
     }
     if (roomId && user.chatwork_dm_id) {
-      await sendChatworkMention(roomId, user.chatwork_dm_id, cwBody, { token: chatworkPost.token });
+      await postChatworkResilient(`[To:${user.chatwork_dm_id}]\n${cwBody}`);
     }
   };
 
@@ -438,7 +484,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       result.reachableCwCount = cwUsers.length;
       if (cwUsers.length) {
         const mentions = cwUsers.map(u => `[To:${u.chatwork_dm_id}]`).join('');
-        await sendChatworkRoom(roomId, `${mentions}\n${cwBody}`, { token: chatworkPost.token });
+        await postChatworkResilient(`${mentions}\n${cwBody}`);
       }
     }
     result.anyReachable = result.reachableSlackCount > 0 || result.reachableCwCount > 0;
@@ -454,7 +500,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       await sendSlackChannel(channelUrl, `<!here>\n\n${slackBody}`);
     }
     if (roomId) {
-      await sendChatworkRoom(roomId, `[toall]\n${cwBody}`, { token: chatworkPost.token });
+      await postChatworkResilient(`[toall]\n${cwBody}`);
     }
   };
 
@@ -910,6 +956,29 @@ function _autoErrorSignature({ kind, message, url, apiPath }) {
   return `${k}::${m}::${a}::${u}`;
 }
 
+// 古いクライアント（リロードせず数日タブを開きっぱなし等）からの自動エラーは
+// 「既にデプロイ済みの修正で直っているコード由来」の可能性が高く、Slack を誤報で埋める。
+// （例: PR #710 で動画を Drive 直リンク化 → PR #724 で直リンク失敗の通知抑制を追加。
+//   その狭間でロードした端末は #724 を持たず、直リンク失敗を毎回通知してしまう）
+// クライアントが保存した build (`__clientBuild`) とサーバー build が食い違っていれば「古い」と判定する。
+//
+// 比較は前方一致で行う。BUILD_ID は server.js で 12 桁に slice されるが、
+// /auto-error ルートの serverBuild は env のフル SHA(40桁)を渡すため長さが異なる。
+// どちらかがもう一方の prefix なら同一コミットとみなす（長さ違いでの誤抑制を防ぐ）。
+function _isStaleClientBuild(clientBuild, serverBuild) {
+  const c = String(clientBuild || '').trim().toLowerCase();
+  const s = String(serverBuild || '').trim().toLowerCase();
+  // どちらか欠落していれば判定不能 → 抑制しない（通知する側に倒す）
+  if (!c || !s) return false;
+  const n = Math.min(c.length, s.length);
+  if (n < 7) return false; // 短すぎて信頼できない値は判定しない
+  return c.slice(0, n) !== s.slice(0, n);
+}
+
+// 古いクライアント由来として「コード起因のクライアントエラー」だけを抑制対象にする。
+// fetch-5xx は現行サーバーの挙動を映すため build が古くても通知価値がある＝抑制しない。
+const _STALE_SUPPRESSIBLE_KINDS = new Set(['resource.error', 'window.onerror', 'unhandledrejection']);
+
 function _truncate(s, max) {
   if (s == null) return '';
   s = String(s);
@@ -1062,11 +1131,24 @@ function _formatAutoErrorText(payload) {
 //   { ok: true }                          送信成功
 //   { ok: true, skipped: 'no-channel' }   ENV 未設定（no-op）
 //   { ok: true, skipped: 'rate-limited' } 同一シグネチャ抑制
+//   { ok: true, skipped: 'stale-client' } 古いクライアント由来のコードエラー抑制
 //   { ok: false, reason: '...' }          Slack 失敗
 async function notifyAutoError(payload) {
   try {
     const channelUrl = process.env.ERROR_REPORT_SLACK_CHANNEL_URL;
     if (!channelUrl) return { ok: true, skipped: 'no-channel' };
+
+    // 古いクライアント由来のコードエラーは Slack 通知を抑制（誤報削減）。
+    // サーバー発エラー(source==='server')と fetch-5xx は build に依らず通知価値があるため対象外。
+    const p = payload || {};
+    if (p.source !== 'server'
+        && _STALE_SUPPRESSIBLE_KINDS.has(String(p.kind || ''))
+        && _isStaleClientBuild(p.clientBuild, p.serverBuild)) {
+      try {
+        console.warn(`[notif/auto-error] suppressed stale-client error: kind=${p.kind} client=${p.clientBuild} server=${String(p.serverBuild || '').slice(0, 12)}`);
+      } catch (_) {}
+      return { ok: true, skipped: 'stale-client' };
+    }
 
     const sig = _autoErrorSignature(payload || {});
     const now = Date.now();
@@ -1106,4 +1188,6 @@ module.exports = {
   notifyAutoError,
   _formatAutoErrorText,         // テスト用
   _autoErrorSignature,          // テスト用
+  _isStaleClientBuild,          // テスト用
+  _formatChatworkFailureMessage, // テスト用
 };

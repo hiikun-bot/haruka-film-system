@@ -1,7 +1,7 @@
 // routes/video-organization-test.js — 素材広場 / 動画整理ツール（test / experimental）
 //
 // 設計の核:
-//   - 全 endpoint admin のみ（requireRole('admin')）
+//   - 全 endpoint ログイン必須（全ロール開放 / requireAuth のみ。旧: admin 限定）
 //   - フロー: upload（D&D アップロード）/ register（既存 Drive ID）→
 //             analyze（承認＋AI解析）→ apply（承認＋Drive変更）の 3 段階承認
 //   - upload / register 段階では Gemini を 1 度も叩かない（waiting_approval）
@@ -20,7 +20,7 @@ const multer = require('multer');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth, requireRole } = require('../auth');
+const { requireAuth } = require('../auth');
 const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
@@ -28,6 +28,8 @@ const heicLib = require('../lib/video-organization/heic');
 const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
 const googleOAuth = require('../lib/google-oauth');
 const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
+const autoApplyLib = require('../lib/video-organization/auto-apply');
+const { resolveProjectFolder } = require('../lib/video-organization/project-folder');
 
 // 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
 // 本番初期は false で出して、別ターンで true に切り替える運用とする。
@@ -45,9 +47,8 @@ router.use((req, res, next) => {
   next();
 });
 
-// 共通: 認証 + admin
+// 共通: 認証（ログイン必須。ロール制限なし＝全ロール開放）
 router.use(requireAuth);
-router.use(requireRole('admin'));
 
 // アップロードを受ける upload エリア
 // limits.fileSize は guards.getMaxUploadSizeBytes() で env 連動（既定 25MB）。
@@ -94,10 +95,14 @@ function getUploadFolderId() {
       || '';
 }
 
+// 「案件あり」アップロード時のアップロード先フォルダ解決は
+// lib/video-organization/project-folder.js の resolveProjectFolder() に共通化した
+// （アップロードと AI 解析適用の両方で同じ「クライアント > 案件」階層を ensure するため）。
+
 // ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
   try {
-    const { q, status, mediaKind, tag } = req.query || {};
+    const { q, status, mediaKind, tag, clientId, projectId } = req.query || {};
     let query = supabase
       .from('video_file_organization_tests')
       .select('*')
@@ -107,6 +112,28 @@ router.get('/list', async (req, res) => {
     if (status) query = query.eq('status', String(status));
     if (mediaKind) query = query.eq('media_kind', String(mediaKind));
     if (tag) query = query.contains('tags', [String(tag)]);
+
+    // クライアント / 案件での絞り込み（検索バーの2段構えフィルタ）。
+    //   - projectId 指定 … その案件の素材だけ
+    //   - clientId 指定（案件全体）… そのクライアントの全案件の素材
+    //   - どちらも無し … 全体素材（従来どおり全件）
+    // project_id は #815 以降のアップロードで記録される。過去分は
+    // scripts/backfill_msquare_project_id.js でフォルダ照合して埋める。
+    if (projectId) {
+      query = query.eq('project_id', String(projectId));
+    } else if (clientId) {
+      const { data: projRows, error: projErr } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('client_id', String(clientId));
+      if (projErr) throw projErr;
+      const ids = (projRows || []).map(p => p.id);
+      if (ids.length === 0) {
+        // 案件を持たないクライアント → 該当素材なし
+        return res.json({ items: [], daily: await guards.checkDailyLimit() });
+      }
+      query = query.in('project_id', ids);
+    }
     if (q) {
       // ファイル名・summary・tags での自由検索
       const safe = String(q).replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -216,6 +243,61 @@ router.get('/preview/:fileId', async (req, res) => {
   }
 });
 
+// ==================== 原本ダウンロード ====================
+// GET /download/:fileId — アップロード済みの「原本」を Content-Disposition: attachment で配信。
+//   - プレビュー（faststart / WebP storyboard）ではなく drive_file_id の原本をそのまま落とす。
+//   - SA 認証で Drive から stream するため、ファイルが何 GB でも・ユーザーに直接共有されていなくても DL 可能。
+//   - Range 対応（ブラウザのダウンロードマネージャ / レジューム用）。
+router.get('/download/:fileId', async (req, res) => {
+  const fileId = String(req.params.fileId);
+  if (!fileId) return res.status(400).end();
+  try {
+    // ファイル名は DB の current_filename → original_filename の順で採用（無ければ fileId）
+    const { data: row } = await supabase
+      .from('video_file_organization_tests')
+      .select('current_filename, original_filename')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
+    const filename = row?.current_filename || row?.original_filename || `${fileId}`;
+
+    const range = req.headers.range || null;
+    const { stream, status, headers } = await driveLib.getFileStream(fileId, range);
+
+    const passthrough = ['content-type', 'content-length', 'content-range', 'last-modified', 'etag'];
+    for (const k of passthrough) {
+      if (headers[k]) res.setHeader(k, headers[k]);
+    }
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    // ダウンロード強制 + 日本語ファイル名は RFC5987（filename*）で安全にエンコード
+    const asciiName = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
+    res.status(status || 200);
+    stream.on('error', (e) => {
+      console.error('[video-org] download stream error:', { fileId, message: e.message, code: e.code });
+      try { res.end(); } catch (_) {}
+    });
+    req.on('close', () => { try { stream.destroy(); } catch (_) {} });
+    stream.pipe(res);
+  } catch (e) {
+    const upstreamStatus = Number(e?.code) || null;
+    const reason = e?.errors?.[0]?.reason || null;
+    console.error('[video-org] download error:', { fileId, message: e?.message, upstreamStatus, reason });
+    if (!res.headersSent) {
+      let outStatus = 502;
+      if (upstreamStatus === 404) outStatus = 404;
+      else if (upstreamStatus === 403) outStatus = 403;
+      else if (upstreamStatus === 401) outStatus = 401;
+      else if (upstreamStatus === 429) outStatus = 429;
+      else if (upstreamStatus && upstreamStatus >= 500) outStatus = 502;
+      res.status(outStatus).json({ error: 'download_failed', upstreamStatus, reason });
+    }
+  }
+});
+
 // ==================== アップロード（複数ファイル D&D）====================
 // multer が LIMIT_FILE_SIZE で reject した時に 413 で返すラッパー
 function uploadWithSizeGuard(req, res, next) {
@@ -233,9 +315,19 @@ function uploadWithSizeGuard(req, res, next) {
 }
 
 router.post('/upload', uploadWithSizeGuard, async (req, res) => {
-  const folderId = getUploadFolderId();
-  if (!folderId) {
+  const rootFolderId = getUploadFolderId();
+  if (!rootFolderId) {
     return res.status(500).json({ error: 'VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID が未設定です' });
+  }
+  // 案件あり（project_id 指定）ならその案件フォルダ、無ければ素材広場ルート直下（従来の自由アップロード）
+  let folderId = rootFolderId;
+  const projectId = String(req.body?.project_id || '').trim();
+  if (projectId) {
+    try {
+      ({ folderId } = await resolveProjectFolder(projectId, rootFolderId));
+    } catch (e) {
+      return res.status(400).json({ error: e.message || '案件フォルダの解決に失敗しました' });
+    }
   }
   const files = req.files || [];
   if (files.length === 0) return res.status(400).json({ error: 'ファイルが添付されていません' });
@@ -276,7 +368,8 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
       const maxDur = guards.getMaxUploadDurationSeconds();
       if (kind === 'video' && uploaded.durationSeconds && uploaded.durationSeconds > maxDur) {
         // 戻り値は { ok, status, reason, message }。失敗してもログだけ残してフロー継続。
-        await driveLib.deleteFile(uploaded.fileId);
+        // 共有ドライブの SA は canDelete=false のため完全削除は失敗する。ゴミ箱送りで確実に外す。
+        await driveLib.trashFile(uploaded.fileId);
         logCtx('upload-rejected-too-long', {
           at: new Date().toISOString(), by: req.user?.email,
           filename: f.originalname,
@@ -307,6 +400,8 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         status: 'waiting_approval',
         dry_run: guards.isDryRun(),
         created_by: req.user?.id || null,
+        // 案件指定があれば保持。解析適用(auto-apply)で案件フォルダ直下へ配置するために使う。
+        project_id: projectId || null,
       };
       const { data: inserted, error: insertError } = await supabase
         .from('video_file_organization_tests')
@@ -355,6 +450,7 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
 router.post('/register', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  const projectId = String(req.body?.project_id || '').trim();
 
   try {
     const { data: existing } = await supabase
@@ -394,6 +490,8 @@ router.post('/register', async (req, res) => {
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
+      // 案件指定があれば保持。解析適用(auto-apply)で案件フォルダ直下へ配置するために使う。
+      project_id: projectId || null,
     };
 
     const { data: inserted, error: insertError } = await supabase
@@ -445,22 +543,33 @@ router.post('/analyze', async (req, res) => {
     if (fetchError) throw fetchError;
     if (!item) return res.status(404).json({ error: '先に register / upload が必要です' });
 
-    if (!['waiting_approval', 'failed'].includes(item.status)) {
+    // ADR 018: skipped 状態のレコードも、WebP プレビュー経由で救済可能なので再解析を許可。
+    if (!['waiting_approval', 'failed', 'skipped'].includes(item.status)) {
       return res.status(409).json({ error: `現在の status (${item.status}) からは解析できません` });
     }
 
-    // 動画のみ長さガード（画像は対象外）
+    // ADR 018: 解析ソース選定。preview_status='done' なら WebP（60枚ストーリーボード）を使う。
+    //   - 動画長制限が実質撤廃される（WebP は画像扱い）
+    //   - 20MB 制限にも通常通る（WebP ~3MB）
+    const useWebpPreview = !!(item.preview_status === 'done' && item.preview_drive_file_id);
+    const analyzeFileId = useWebpPreview ? item.preview_drive_file_id : fileId;
+    const sourceMimeType = useWebpPreview
+      ? (item.preview_mime_type || 'image/webp')
+      : item.mime_type;
+    const sourceMediaKind = useWebpPreview ? 'image' : (item.media_kind || 'video');
+
+    // 動画のみ長さガード（画像は対象外、WebP プレビュー使用時もスキップ）
     const maxDuration = guards.getMaxDurationSeconds();
-    if (item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
+    if (!useWebpPreview && item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
       await supabase.from('video_file_organization_tests')
         .update({
           status: 'skipped',
-          error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s`,
+          error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s（プレビューWebP未生成のため原本でも解析不可）`,
           analysis_status: 'skipped',
           analysis_progress_percent: null,
         })
         .eq('id', item.id);
-      return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)` });
+      return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)。プレビュー生成後に再試行してください。` });
     }
 
     if ((item.attempt_count || 0) >= guards.getMaxRetryCount()) {
@@ -488,23 +597,29 @@ router.post('/analyze', async (req, res) => {
       at: new Date().toISOString(), by: req.user?.email,
       fileId, fileName: item.original_filename, size: item.file_size,
       duration: item.video_duration_seconds, kind: item.media_kind,
+      source: useWebpPreview ? 'preview-webp' : 'original',
+      sourceFileId: analyzeFileId,
+      sourceMimeType, sourceMediaKind,
       model: guards.getModelName(), dry_run: guards.isDryRun(),
       stop_all: guards.isStopAll(),
       daily_count: daily.count, daily_limit: daily.limit,
     });
 
-    const buffer = await driveLib.downloadFileBuffer(fileId);
+    const buffer = await driveLib.downloadFileBuffer(analyzeFileId);
     const MAX_INLINE_BYTES = 20 * 1024 * 1024;
     if (buffer.length > MAX_INLINE_BYTES) {
+      const note = useWebpPreview
+        ? `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (preview webp が ${buffer.length} bytes)`
+        : `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes) — プレビューWebP未生成のため原本でも解析不可`;
       await supabase.from('video_file_organization_tests')
         .update({
           status: 'skipped',
-          error_message: `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes)`,
+          error_message: note,
           analysis_status: 'skipped',
           analysis_progress_percent: null,
         })
         .eq('id', item.id);
-      return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)` });
+      return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)。プレビュー生成後に再試行してください。` });
     }
 
     // Gemini 呼び出し直前: 20%
@@ -518,9 +633,12 @@ router.post('/analyze', async (req, res) => {
     try {
       analysis = await geminiLib.analyzeMedia({
         mediaBuffer: buffer,
-        mimeType: item.mime_type,
-        mediaKind: item.media_kind || 'video',
+        mimeType: sourceMimeType,
+        mediaKind: sourceMediaKind,
         originalFilename: item.original_filename,
+        // ADR 018: WebP プレビューを使うときはプロンプトを動画ストーリーボード用に切替
+        sourceVariant: useWebpPreview ? 'video-storyboard-webp' : null,
+        originalMediaKind: item.media_kind || 'video',
       });
     } catch (e) {
       await supabase.from('video_file_organization_tests')
@@ -600,6 +718,15 @@ router.post('/analyze', async (req, res) => {
       .eq('id', item.id).select().single();
     if (updateError) throw updateError;
 
+    // 解析完了 → 自動振り分け（fire-and-forget）。needs_human_review なら applyForRow 内部で
+    // awaiting_review に倒す。手動 /analyze からも自動振り分けを連動させる。
+    autoApplyLib.applyForRow({
+      rowId: updated.id,
+      userId: req.user?.id,
+      actorUserId: req.user?.id,
+      source: 'manual-analyze',
+    }).catch(err => console.error('[video-org] auto-apply after manual analyze failed:', err?.message || err));
+
     res.json({ item: updated });
   } catch (e) {
     console.error('[video-org] analyze error:', e);
@@ -607,7 +734,14 @@ router.post('/analyze', async (req, res) => {
   }
 });
 
-// ==================== 適用（DRY_RUN プレビュー）====================
+// ==================== 適用（手動再実行: awaiting_review / apply_failed からの復帰用）====================
+//
+// 旧仕様: analysis_completed の DRY_RUN プレビューを返す MVP。
+// 新仕様 (PR #TBD): AI 解析完了で auto-apply が自動的に走るため、analysis_completed では呼ばない。
+//   - awaiting_review: 確認後に手動で適用するための再実行口
+//   - apply_failed   : Drive 操作失敗からの再試行口
+//   - analysis_completed: 409（auto-apply が走るはずなので手動 /apply は不要）
+//   - applied        : 409（既に適用済み）
 router.post('/apply', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
@@ -621,40 +755,99 @@ router.post('/apply', async (req, res) => {
       .from('video_file_organization_tests')
       .select('*').eq('drive_file_id', fileId).maybeSingle();
     if (!item) return res.status(404).json({ error: '登録されていません' });
-    if (item.status !== 'analysis_completed') {
-      return res.status(409).json({ error: `status=${item.status} は適用対象外（analysis_completed のみ）` });
+
+    if (!['awaiting_review', 'apply_failed'].includes(item.status)) {
+      return res.status(409).json({
+        error: `status=${item.status} は手動適用対象外（awaiting_review / apply_failed のみ。analysis_completed は自動で適用されます）`,
+      });
     }
     if (!item.recommended_filename || !item.recommended_folder) {
       return res.status(422).json({ error: '提案ファイル名 / フォルダが空です' });
     }
 
-    const dryRun = guards.isDryRun();
-    const diff = {
-      current_filename: item.current_filename,
-      new_filename: item.recommended_filename,
-      current_folder: item.current_parent_folder_name,
-      new_folder: item.recommended_folder,
-      confidence: item.confidence,
-      needs_human_review: item.needs_human_review,
-      reason: item.reason,
-      dry_run: dryRun,
-    };
-
-    logCtx('apply', {
+    logCtx('apply-manual', {
       at: new Date().toISOString(), by: req.user?.email,
-      fileId, dry_run: dryRun, diff,
+      fileId, prev_status: item.status,
     });
 
-    if (dryRun) return res.json({ applied: false, dry_run: true, diff });
-
-    // 本適用は Stage 2 で別 PR
-    return res.status(501).json({
-      error: 'DRY_RUN=false での本適用は MVP 範囲外です。次フェーズで実装します',
-      diff,
+    const result = await autoApplyLib.applyForRow({
+      rowId: item.id,
+      userId: req.user?.id,
+      actorUserId: req.user?.id,
+      source: 'manual-retry',
     });
+    if (!result.ok) {
+      return res.status(502).json({ error: result.error || '適用に失敗しました', result });
+    }
+    res.json({ applied: result.status === 'applied', status: result.status, diff: result.diff });
   } catch (e) {
     console.error('[video-org] apply error:', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== ファイル名の手動リネーム ====================
+//
+// 画面の「振り分け提案」欄からファイル名を直接編集して保存する口。
+// Drive 上の実ファイルを SA でリネームし、DB の current_filename / recommended_filename を揃える。
+//   - Drive 操作はアップロード・適用・削除フォールバックと同じ SA 人格（ADR 019 改訂 / PR #804・#812）
+//   - 拡張子はユーザー入力に拡張子が無ければ元ファイルの拡張子を補完して保護する
+router.post('/rename', async (req, res) => {
+  const fileId = String(req.body?.fileId || '').trim();
+  let newName = String(req.body?.newFilename || '').trim();
+  if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  if (!newName) return res.status(400).json({ error: '新しいファイル名が空です' });
+  // パス区切りは Drive のファイル名に使えないので弾く
+  if (/[\/\\]/.test(newName)) {
+    return res.status(422).json({ error: 'ファイル名に / や \\ は使えません' });
+  }
+
+  try {
+    const { data: item } = await supabase
+      .from('video_file_organization_tests')
+      .select('*').eq('drive_file_id', fileId).maybeSingle();
+    if (!item) return res.status(404).json({ error: '登録されていません' });
+
+    // 拡張子の保護: 新ファイル名に拡張子が無ければ元ファイル名の拡張子を補完する
+    const currentName = item.current_filename || item.recommended_filename || item.original_filename || '';
+    const extMatch = currentName.match(/(\.[^.\/\\]+)$/);
+    const currentExt = extMatch ? extMatch[1] : '';
+    if (currentExt && !new RegExp(`\\${currentExt}$`, 'i').test(newName)) {
+      // 別の拡張子で終わっていなければ補完（誤って拡張子を消した場合の救済）
+      if (!/\.[^.\/\\]{1,8}$/.test(newName)) {
+        newName = `${newName}${currentExt}`;
+      }
+    }
+
+    // Drive 上の実ファイルを SA でリネーム
+    const saDrive = await driveLib.getDriveService();
+    await saDrive.files.update({
+      fileId: item.drive_file_id,
+      requestBody: { name: newName },
+      fields: 'id,name',
+      supportsAllDrives: true,
+    });
+
+    // DB を揃える（現在名・提案名の両方を新名に）
+    const { error: upErr } = await supabase
+      .from('video_file_organization_tests')
+      .update({
+        current_filename: newName,
+        recommended_filename: newName,
+      })
+      .eq('id', item.id);
+    if (upErr) throw upErr;
+
+    logCtx('rename', {
+      at: new Date().toISOString(), by: req.user?.email,
+      fileId, from: currentName, to: newName,
+    });
+
+    res.json({ ok: true, filename: newName });
+  } catch (e) {
+    const msg = e?.errors?.[0]?.message || e?.message || String(e);
+    console.error('[video-org] rename error:', msg);
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -740,6 +933,13 @@ router.post('/faststart/:fileId', async (req, res) => {
 //
 // 既定で deleteFromDrive=true にしているのは、片方だけ消えると HARUKA と Drive が
 // 乖離して「素材広場で削除してもサーバーに残り続ける」という UX バグになるため。
+//
+// 【削除パスは user OAuth ファースト】
+// 素材広場フォルダは Shared Drive（folder ID `0A...`）であり、SA はメンバーではないため
+// SA からは大半のファイルが notFound (404) に見えてしまう。SA を主軸にした旧実装では
+// 「いきなり 404 → already_gone（成功扱い）」で early return してしまい、実体が残るのに
+// 「既に削除済」と表示する致命的なバグになっていた（PR #698 でも取りこぼし）。
+// アップロード主体である user OAuth で消すのが正規ルートなので、これを必須化する。
 router.delete('/item/:fileId', async (req, res) => {
   try {
     const fileId = String(req.params.fileId);
@@ -755,32 +955,10 @@ router.delete('/item/:fileId', async (req, res) => {
     if (fetchError) throw fetchError;
 
     // driveDeleted は key ごとに以下のいずれかを格納:
-    //   { ok: true, already_gone?: true, via?: 'user_oauth' } — 削除成功（404 で既消も成功扱い）
-    //   { ok: false, status, reason?, message }              — 失敗（権限不足等）
+    //   { ok: true, already_gone?: true, via: 'user_oauth' } — 削除成功（user OAuth でも 404 なら本当に既消）
+    //   { ok: false, status, reason?, message }              — 失敗
     //   undefined                                            — そもそも対象 id が無かった
     const driveDeleted = {};
-
-    // SA で消せなかった場合のユーザー OAuth リトライ用クライアント（遅延初期化）。
-    let userDriveClient = null;
-    let userOAuthError = null; // 連携無し / refresh 失敗 を 1 度だけ詳細を残す
-    async function getUserDriveClientOnce() {
-      if (userDriveClient || userOAuthError) return userDriveClient;
-      try {
-        const token = await googleOAuth.getValidAccessToken({
-          userId: req.user.id,
-          scopeKey: 'drive.file',
-        });
-        if (!token) {
-          userOAuthError = 'ユーザー Drive 連携なし（/oauth/google/start 未実施 or refresh_token 失効）';
-          return null;
-        }
-        userDriveClient = driveLib.driveClientWithToken(token.accessToken);
-        return userDriveClient;
-      } catch (e) {
-        userOAuthError = e?.message || String(e);
-        return null;
-      }
-    }
 
     if (deleteFromDrive && row) {
       const targets = [
@@ -789,67 +967,161 @@ router.delete('/item/:fileId', async (req, res) => {
         ['faststart', row.faststart_drive_file_id],
       ].filter(([, id]) => !!id);
 
-      // SA で並列削除を試行（順序保証は不要）
-      const saResults = await Promise.allSettled(
-        targets.map(([, id]) => driveLib.deleteFile(id))
-      );
-
-      // 1パス目を集計しつつ、403/insufficientFilePermissions のみユーザーOAuthでリトライ
-      for (let idx = 0; idx < targets.length; idx++) {
-        const [key, id] = targets[idx];
-        const r = saResults[idx];
-        const result = r.status === 'fulfilled'
-          ? r.value
-          : { ok: false, status: null, message: r.reason?.message || String(r.reason) };
-
-        if (result.ok) {
-          driveDeleted[key] = { ok: true };
-          continue;
+      // user OAuth クライアントを先に取得。失敗したら 503 で止める（SA フォールバックは行わない）。
+      // 理由: Shared Drive 上のファイルを SA から削除しようとすると 404（見えない）になり、
+      // それを「既に消えている」と誤判定してしまうため。user OAuth を必須にする。
+      if (targets.length > 0) {
+        let userDriveClient = null;
+        let userOAuthError = null;
+        try {
+          const token = await googleOAuth.getValidAccessToken({
+            userId: req.user.id,
+            scopeKey: 'drive.file',
+          });
+          if (!token) {
+            userOAuthError = 'ユーザー Drive 連携なし（/oauth/google/start 未実施 or refresh_token 失効）';
+          } else {
+            userDriveClient = driveLib.driveClientWithToken(token.accessToken);
+          }
+        } catch (e) {
+          userOAuthError = e?.message || String(e);
         }
-        // 既に消えていれば HARUKA と Drive が整合する方向なので成功扱い
-        if (result.status === 404 || result.reason === 'notFound') {
-          driveDeleted[key] = { ok: true, already_gone: true };
-          continue;
+
+        if (!userDriveClient) {
+          logCtx('delete-drive-oauth-missing', {
+            at: new Date().toISOString(), by: req.user?.email,
+            fileId,
+            user_oauth_error: userOAuthError,
+          });
+          return res.status(503).json({
+            error: `Drive 連携が必要です: /oauth/google/start を実行してください（詳細: ${userOAuthError || 'unknown'}）`,
+            reason: 'user_oauth_required',
+          });
         }
-        // SA に削除権限がない（Resumable Upload で drive.file スコープにより所有権がユーザー側）
-        // → ユーザー OAuth でリトライ
-        if (result.status === 403 || result.reason === 'insufficientFilePermissions') {
-          const userClient = await getUserDriveClientOnce();
-          if (!userClient) {
+
+        // user OAuth で並列ゴミ箱送りを試行（順序保証は不要）
+        // 完全削除(files.delete)ではなくゴミ箱送り(trashed=true)。共有ドライブの SA は
+        // canDelete=false / canTrash=true のため、完全削除は権限不足で必ず失敗する。
+        const userResults = await Promise.allSettled(
+          targets.map(([, id]) => driveLib.trashFile(id, { client: userDriveClient }))
+        );
+
+        const userAttempts = {};
+        const saFallbackAttempts = {};
+        // 第二段: user OAuth で 404 だった対象は、SA で実在確認してから SA で削除を試みる。
+        // 理由: プレビュー webp など SA がアップロードしたファイルは、user OAuth (drive.file スコープ)
+        //       からは「自分が作っていないファイル」として 404 になる。SA から見える＝ Drive に残っているケース。
+        const saDrive = await driveLib.getDriveService();
+        for (let idx = 0; idx < targets.length; idx++) {
+          const [key, id] = targets[idx];
+          const r = userResults[idx];
+          const result = r.status === 'fulfilled'
+            ? r.value
+            : { ok: false, status: null, message: r.reason?.message || String(r.reason), verified: false };
+          userAttempts[key] = {
+            id,
+            ok: result.ok,
+            status: result.status,
+            reason: result.reason || null,
+            verified: result.verified === true,
+            message: result.message,
+          };
+
+          if (result.ok) {
+            driveDeleted[key] = { ok: true, via: 'user_oauth', verified: result.verified === true };
+            continue;
+          }
+          // user OAuth で 404 が返ったときは SA で実在確認 → 存在すれば SA でゴミ箱送り（Hybrid フォールバック）
+          if (result.status === 404 || result.reason === 'notFound') {
+            const existence = await driveLib.getFile(id, { client: saDrive });
+            saFallbackAttempts[key] = {
+              id,
+              probe: { ok: existence.ok, status: existence.status, reason: existence.reason || null, trashed: existence.trashed === true },
+            };
+            if (!existence.ok) {
+              // SA からも見えない（=本当に Drive に存在しない）
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth', verified: true };
+              continue;
+            }
+            if (existence.trashed === true) {
+              // SA から見えるが既にゴミ箱の中 = 削除のゴール達成済み
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
+              continue;
+            }
+            // SA からは見える = SA 所有のファイル（プレビュー webp 等）。SA でゴミ箱送りを試みる。
+            // SA はコンテンツ管理者で canTrash=true のため、ここが本フローの主軸成功パス。
+            const saDel = await driveLib.trashFile(id, { client: saDrive });
+            saFallbackAttempts[key].trash = {
+              ok: saDel.ok,
+              status: saDel.status,
+              reason: saDel.reason || null,
+              verified: saDel.verified === true,
+              message: saDel.message,
+            };
+            if (saDel.ok) {
+              driveDeleted[key] = { ok: true, via: 'sa_fallback', verified: saDel.verified === true };
+              continue;
+            }
+            // SA のゴミ箱送りも 404 / notFound = 操作しようとしたら既に存在しない。
+            // 削除のゴール（Drive 上から消える）は達成済みなので成功（already_gone）扱いにする。
+            if (saDel.status === 404 || saDel.reason === 'notFound') {
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
+              continue;
+            }
             driveDeleted[key] = {
               ok: false,
-              status: 403,
-              reason: result.reason || 'insufficientFilePermissions',
-              message: `SA に削除権限がなく、ユーザーOAuthも不可: ${userOAuthError || 'unknown'}`,
+              status: saDel.status,
+              reason: saDel.reason || 'sa_trash_failed',
+              message: saDel.message || 'SA fallback trash failed',
+              verified: false,
+              via: 'sa_fallback',
             };
             continue;
           }
-          const retry = await driveLib.deleteFile(id, { client: userClient });
-          if (retry.ok) {
-            driveDeleted[key] = { ok: true, via: 'user_oauth' };
-          } else if (retry.status === 404 || retry.reason === 'notFound') {
-            driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth' };
-          } else {
-            driveDeleted[key] = {
-              ok: false,
-              status: retry.status,
-              reason: retry.reason,
-              message: `SA→ユーザーOAuth リトライも失敗: ${retry.message}`,
-            };
-          }
-          continue;
+          // それ以外（403/401/5xx/not_actually_deleted/verify_failed 等）は失敗詳細をそのまま返す
+          driveDeleted[key] = {
+            ok: false,
+            status: result.status,
+            reason: result.reason || null,
+            message: result.message,
+            verified: false,
+          };
         }
-        // それ以外（401 / 5xx / ネットワーク等）はそのまま失敗詳細を返す
-        driveDeleted[key] = {
-          ok: false,
-          status: result.status,
-          reason: result.reason || null,
-          message: result.message,
-        };
+        // ログ
+        logCtx('delete-drive-attempts', {
+          at: new Date().toISOString(), by: req.user?.email,
+          fileId,
+          targets: targets.map(([k, id]) => ({ key: k, id })),
+          user_oauth: userAttempts,
+          sa_fallback: saFallbackAttempts,
+          result: driveDeleted,
+        });
       }
     }
 
-    // 最後に DB レコードを削除（Drive 削除に部分失敗しても、UI 上の整合性を優先して DB は消す）
+    // 孤児化防止: Drive 側のゴミ箱送りに 1 件でも失敗（ok===false）が残っている場合は
+    // DB レコードを消さない。DB を消すと「Drive に実体が残っているのに HARUKA からは消えた」
+    // 孤児ファイルになり、共有ドライブにゴミが溜まる（今日 11GB 分が孤児化していた問題の原因）。
+    // 「本当に存在しない（getで404＝既に手動削除済み等）」は already_gone で ok:true 扱いなので
+    // ここでは失敗に数えない。失敗が残る場合は DB を残し、レスポンスで失敗を明示する
+    // （フロントは failList で赤トーストを出すため整合する）。
+    const driveFailed = Object.values(driveDeleted).some(v => v && v.ok === false);
+
+    if (deleteFromDrive && driveFailed) {
+      logCtx('delete-skipped-db-kept', {
+        at: new Date().toISOString(), by: req.user?.email,
+        fileId, deleteFromDrive, drive_deleted: driveDeleted,
+        note: 'Drive 側に失敗が残るため DB レコードは保持（孤児化防止）',
+      });
+      return res.json({
+        ok: false,
+        db_deleted: false,
+        drive_deleted: driveDeleted,
+        delete_from_drive: deleteFromDrive,
+      });
+    }
+
+    // Drive 側が全成功（または deleteFromDrive=false）なら DB レコードを削除
     const { error } = await supabase
       .from('video_file_organization_tests')
       .delete().eq('drive_file_id', fileId);
@@ -860,7 +1132,7 @@ router.delete('/item/:fileId', async (req, res) => {
       fileId, deleteFromDrive, drive_deleted: driveDeleted,
     });
 
-    res.json({ ok: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
+    res.json({ ok: true, db_deleted: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
   } catch (e) {
     console.error('[video-org] delete error:', e);
     res.status(500).json({ error: e.message });
@@ -871,7 +1143,7 @@ router.delete('/item/:fileId', async (req, res) => {
 //
 // フロー:
 //   1) POST /upload-session/init
-//      → サーバーがユーザーOAuthトークンで Drive Resumable Upload セッションを発行
+//      → サーバーがサービスアカウントで Drive Resumable Upload セッションを発行
 //      → 返ってきた Location（drive_session_url）を DB に保存し、ブラウザに返す
 //   2) ブラウザは drive_session_url に対してチャンク PUT（Content-Range 指定）
 //      → 最終チャンクのレスポンス JSON から drive_file_id を得る
@@ -884,7 +1156,16 @@ router.delete('/item/:fileId', async (req, res) => {
 
 const RESUMABLE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3/files';
 
-// 共通ガード: 環境フラグ + ユーザーOAuth未連携の判定
+// 共通ガード: 環境フラグ + Resumable セッション発行用トークンの取得
+//
+// セッション発行はサービスアカウント（GOOGLE_SERVICE_ACCOUNT_KEY）で行う。
+// 案件フォルダの作成（resolveProjectFolder）・小容量アップロード・complete 時のメタ取得が
+// すべてサービスアカウントなので、発行も同一人格に揃える。
+// 以前はユーザーOAuth（drive.file スコープ）でセッションを発行していたが、
+// 案件フォルダはサービスアカウント所有のため drive.file からは「存在しない」扱いとなり、
+// Drive API が 404 を返して「セッション発行に失敗しました」となっていた（大容量のみ失敗の原因）。
+// ブラウザ→セッションURL への直接 PUT は session URL に認可が埋め込まれており、
+// 発行をサービスアカウントで行っても直送は成立する（Origin ヘッダ転送で CORS も維持）。
 async function ensureResumableContext(req, res) {
   if (!isResumableUploadEnabled()) {
     res.status(503).json({
@@ -893,26 +1174,17 @@ async function ensureResumableContext(req, res) {
     });
     return null;
   }
-  if (!googleOAuth.isConfigured()) {
+  try {
+    const accessToken = await driveLib.getAccessToken();
+    return { accessToken };
+  } catch (e) {
+    console.error('[video-org] service account token failed:', e?.message || e);
     res.status(503).json({
-      error: 'Google OAuth が未設定です（管理者向け: GOOGLE_OAUTH_CLIENT_ID 等の環境変数を設定してください）',
-      reason: 'oauth_not_configured',
+      error: 'Drive 認証に失敗しました（管理者向け: GOOGLE_SERVICE_ACCOUNT_KEY を確認してください）',
+      reason: 'service_account_unavailable',
     });
     return null;
   }
-  const token = await googleOAuth.getValidAccessToken({
-    userId: req.user.id,
-    scopeKey: 'drive.file',
-  });
-  if (!token) {
-    res.status(401).json({
-      error: 'Drive 連携が必要です。/oauth/google/start から連携してください。',
-      reason: 'oauth_not_connected',
-      consent_url: '/oauth/google/start?next=/haruka.html',
-    });
-    return null;
-  }
-  return token;
 }
 
 // ----- 1) セッション発行 -----
@@ -925,9 +1197,21 @@ router.post('/upload-session/init', async (req, res) => {
     const filename = String(req.body?.filename || '').trim();
     const fileSize = Number(req.body?.fileSize);
     const mimeType = String(req.body?.mimeType || 'application/octet-stream');
-    const parentFolderId = String(
-      req.body?.parentFolderId || getUploadFolderId() || ''
-    ).trim();
+    const rootFolderId = getUploadFolderId();
+    // 案件あり（project_id 指定）ならその案件フォルダを ensure。
+    // 後方互換: project_id が無く parentFolderId が直接来たらそれを使う。最後に素材広場ルート。
+    let parentFolderId = String(req.body?.parentFolderId || rootFolderId || '').trim();
+    const projectId = String(req.body?.project_id || '').trim();
+    if (projectId) {
+      if (!rootFolderId) {
+        return res.status(500).json({ error: 'VIDEO_ORG_UPLOAD_FOLDER_ID / GOOGLE_DRIVE_ROOT_FOLDER_ID が未設定です' });
+      }
+      try {
+        ({ folderId: parentFolderId } = await resolveProjectFolder(projectId, rootFolderId));
+      } catch (e) {
+        return res.status(400).json({ error: e.message || '案件フォルダの解決に失敗しました' });
+      }
+    }
 
     if (!filename) return res.status(400).json({ error: 'filename が必要です' });
     if (!Number.isFinite(fileSize) || fileSize <= 0) {
@@ -999,6 +1283,8 @@ router.post('/upload-session/init', async (req, res) => {
         parent_folder_id: parentFolderId,
         drive_session_url: driveSessionUrl,
         status: 'pending',
+        // 案件指定があれば保持。complete 時に test 行へ引き継ぐ。
+        project_id: projectId || null,
       })
       .select()
       .single();
@@ -1018,8 +1304,9 @@ router.post('/upload-session/init', async (req, res) => {
       sessionId: inserted.id,
       driveSessionUrl,
       parentFolderId,
-      // ブラウザ側のチャンク分割推奨サイズ（256MB の倍数を Drive が要求）
-      recommended_chunk_size_bytes: 256 * 1024 * 1024,
+      // ブラウザ側のチャンク分割推奨サイズ（Drive の要件は「256KB の倍数」）。
+      // 旧 256MB → 32MB: XHR のチャンク内進捗を滑らかにし、失敗時のリトライ粒度も小さくする。
+      recommended_chunk_size_bytes: 32 * 1024 * 1024,
       session_expires_at: inserted.session_expires_at,
     });
   } catch (e) {
@@ -1176,6 +1463,8 @@ router.post('/upload-session/:sessionId/complete', async (req, res) => {
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
+      // init 時に保持した案件をそのまま引き継ぐ。解析適用で案件フォルダ直下へ配置する。
+      project_id: sess.project_id || null,
     };
     const { data: inserted, error: insertError } = await supabase
       .from('video_file_organization_tests')

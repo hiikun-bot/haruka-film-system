@@ -66,6 +66,25 @@ async function getRolesMap() {
 
 // ---------- ユーザーロール取得 ----------
 
+// getUserRoleCodes は requireRole / requirePermission / getEffectiveRoleCodes 経由で
+// ほぼ全リクエストで呼ばれるため、user_id → codes を短TTLでキャッシュする
+// （loadRoles / loadPermissionsByCode と同パターン）。
+//
+// 注意:
+//   - ロール付け替えの反映は最大 USER_ROLES_TTL_MS 遅れる。同一プロセス内の変更は
+//     invalidateUserRolesCache(userId) で即時反映させること（user_roles 書き換え箇所で呼ぶ）。
+//   - X-View-As は getEffectiveRoleCodes がこの関数を呼ぶ「前」にプレビューロールを
+//     return するため、キャッシュには実ロールしか入らず view-as と干渉しない。
+//   - クエリエラー時の空配列はキャッシュしない（復旧したら即正しい値に戻す）。
+const _userRolesCache = new Map(); // String(userId) -> { codes, at }
+const USER_ROLES_TTL_MS = 30 * 1000; // 30秒
+const USER_ROLES_CACHE_MAX = 500;    // メモリ保護用の上限（挿入順で雑に退避）
+
+function invalidateUserRolesCache(userId) {
+  if (userId === undefined || userId === null) { _userRolesCache.clear(); return; }
+  _userRolesCache.delete(String(userId));
+}
+
 /**
  * 指定ユーザーが持つロールコードの配列（重複なし、sort_order 昇順）。
  * user_roles JOIN roles ベース。マイグレーション未済の本番では空配列が返る可能性があるため、
@@ -73,6 +92,9 @@ async function getRolesMap() {
  */
 async function getUserRoleCodes(userId) {
   if (!userId) return [];
+  const key = String(userId);
+  const hit = _userRolesCache.get(key);
+  if (hit && Date.now() - hit.at < USER_ROLES_TTL_MS) return hit.codes;
   const { data, error } = await supabase
     .from('user_roles')
     .select('role_id, roles(code, sort_order)')
@@ -91,6 +113,11 @@ async function getUserRoleCodes(userId) {
   for (const r of rows) {
     if (!seen.has(r.code)) { seen.add(r.code); out.push(r.code); }
   }
+  if (_userRolesCache.size >= USER_ROLES_CACHE_MAX && !_userRolesCache.has(key)) {
+    const oldest = _userRolesCache.keys().next().value;
+    if (oldest !== undefined) _userRolesCache.delete(oldest);
+  }
+  _userRolesCache.set(key, { codes: out, at: Date.now() });
   return out;
 }
 
@@ -367,6 +394,7 @@ module.exports = {
   invalidateRolesCache,
   // ユーザーロール
   getUserRoleCodes,
+  invalidateUserRolesCache,
   userHasRole,
   isProducerDirector,
   getUsersRolesMap,

@@ -520,6 +520,18 @@ ALTER TABLE creative_file_comments
   ADD COLUMN IF NOT EXISTS parent_comment_id UUID
   REFERENCES creative_file_comments(id) ON DELETE CASCADE;
 
+-- コメント時間範囲・ペイント・対応済み（migrations/2026-05-20_creative_file_comments_range_and_drawing.sql）
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS timecode_end TEXT;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS drawing JSONB;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS resolved BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+ALTER TABLE creative_file_comments
+  ADD COLUMN IF NOT EXISTS resolved_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_cfc_creative_file_id ON creative_file_comments(creative_file_id);
 CREATE INDEX IF NOT EXISTS idx_cfc_is_knowledge ON creative_file_comments(is_knowledge);
 CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
@@ -528,6 +540,15 @@ CREATE INDEX IF NOT EXISTS idx_cfc_bbox_not_null
 CREATE INDEX IF NOT EXISTS idx_cfc_parent_comment_id
   ON creative_file_comments(parent_comment_id)
   WHERE parent_comment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_timecode_end_not_null
+  ON creative_file_comments ((timecode_end IS NOT NULL))
+  WHERE timecode_end IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_drawing_not_null
+  ON creative_file_comments ((drawing IS NOT NULL))
+  WHERE drawing IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfc_unresolved
+  ON creative_file_comments (creative_file_id)
+  WHERE resolved = false;
 
 -- ==================== creative_file_likes ====================
 -- タイムコード別いいね（routes/haruka.js の /creative-files/:id/likes 系で使用）
@@ -878,6 +899,29 @@ CREATE INDEX IF NOT EXISTS idx_creative_assignments_creative_id ON creative_assi
 CREATE INDEX IF NOT EXISTS idx_invoices_issuer_year_month   ON invoices(issuer_id, year, month);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id     ON invoice_items(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_creative_files_creative_id   ON creative_files(creative_id, uploaded_at DESC);
+-- 2026-06-11_perf_indexes.sql: 頻出クエリの未インデックス列
+-- 案件一覧（GET /api/projects・経理一覧）の created_at DESC ソート
+CREATE INDEX IF NOT EXISTS idx_projects_created_at          ON projects (created_at DESC);
+-- クライアント単位の案件参照（納品実績・削除前チェック等）。FK 未索引だった
+CREATE INDEX IF NOT EXISTS idx_projects_client_id           ON projects (client_id);
+-- GET /api/projects/:id/cycles（project_id 絞り込み + year/month 降順ソート）
+CREATE INDEX IF NOT EXISTS idx_project_cycles_project_year_month ON project_cycles (project_id, year DESC, month DESC);
+-- クリエイター実績サマリーの created_at 月範囲フィルタ
+CREATE INDEX IF NOT EXISTS idx_creatives_created_at         ON creatives (created_at);
+-- ユーザー一覧 / クライアント一覧の created_at ソート
+CREATE INDEX IF NOT EXISTS idx_users_created_at             ON users (created_at);
+CREATE INDEX IF NOT EXISTS idx_clients_created_at           ON clients (created_at DESC);
+-- 2026-06-11b_perf_indexes_2.sql: 頻出クエリの未インデックスパターン第2弾
+-- 稼働中クリエイティブ一覧（status <> '納品' + final_deadline ソート）の部分インデックス
+CREATE INDEX IF NOT EXISTS idx_creatives_active_final_deadline ON creatives (final_deadline ASC NULLS LAST) WHERE status <> '納品';
+-- creative_type の LIKE 前方一致（tab=video / tab=design・タブ件数カウント）
+CREATE INDEX IF NOT EXISTS idx_creatives_creative_type_pattern ON creatives (creative_type text_pattern_ops);
+-- 月次売上・原価集計（invoice_type + year + month。IS NULL 検索にも有効）
+CREATE INDEX IF NOT EXISTS idx_invoices_type_year_month     ON invoices (invoice_type, year, month);
+-- 請求書一覧の created_at DESC ソート
+CREATE INDEX IF NOT EXISTS idx_invoices_created_at          ON invoices (created_at DESC);
+-- つぶやき mine フィルタ（user_id 起点・論理削除除外）
+CREATE INDEX IF NOT EXISTS idx_tweet_comments_user_active   ON tweet_comments (user_id) WHERE deleted_at IS NULL;
 
 -- talent_flag カラム追加（既存DBへのマイグレーション）
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS talent_flag BOOLEAN DEFAULT false;

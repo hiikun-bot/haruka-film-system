@@ -20,7 +20,7 @@ jobs:
       - name: Node.js セットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: 依存ライブラリインストール
@@ -46,6 +46,25 @@ jobs:
             fi
           done
 
+  unit-test:
+    name: ユニットテスト
+    runs-on: ubuntu-latest
+    steps:
+      - name: コード取得
+        uses: actions/checkout@v4
+
+      - name: Node.js セットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 依存ライブラリインストール
+        run: npm ci
+
+      - name: Jest 実行
+        run: npm test
+
   package-audit:
     name: 脆弱性チェック
     runs-on: ubuntu-latest
@@ -53,7 +72,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
       - name: 高リスク脆弱性検出
         run: npm audit --audit-level=high

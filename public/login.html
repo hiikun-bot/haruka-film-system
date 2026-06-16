@@ -23,7 +23,7 @@ body{
 /* 背景画像 */
 .bg{
   position:fixed;inset:0;
-  background:url('HARUKAFILM背景.png') center/cover no-repeat;
+  background:url('HARUKAFILM背景.jpg') center/cover no-repeat;
   z-index:0;
 }
 /* 蛍光ティールのカラーウォッシュ */
@@ -158,6 +158,16 @@ body{
   text-align:center;margin-top:18px;
   font-size:11px;color:rgba(255,255,255,0.38);line-height:1.7;
 }
+.legal-links{
+  text-align:center;margin-top:8px;
+  font-size:11px;
+}
+.legal-links a{
+  color:rgba(255,255,255,0.55);
+  text-decoration:none;
+}
+.legal-links a:hover{color:rgba(255,255,255,0.85);text-decoration:underline}
+.legal-sep{color:rgba(255,255,255,0.3);margin:0 0.4em}
 
 /* スピナー */
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
@@ -212,6 +222,11 @@ body{
 
     <div class="footer-note">
       アカウントをお持ちでない方は管理者から招待リンクを受け取ってください
+    </div>
+    <div class="legal-links">
+      <a href="/privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a>
+      <span class="legal-sep">·</span>
+      <a href="/terms.html" target="_blank" rel="noopener">利用規約</a>
     </div>
   </div>
 </div>

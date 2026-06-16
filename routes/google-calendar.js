@@ -184,8 +184,11 @@ router.get('/callback', requireAuth, async (req, res) => {
       return res.status(500).send(`接続情報の保存に失敗しました: ${upsertErr.message}`);
     }
 
-    // 動作確認ページに戻る
-    return res.redirect('/availability-setup.html?connected=1');
+    // メンバー → カレンダーに戻す。?gcal_connected=1 を haruka.html 側で検知して
+    // 自動的にメンバータブ + カレンダー サブビューに遷移＋成功トーストを出す。
+    // 以前は ADR 017 Phase 0 のスタンドアロンページ /availability-setup.html に
+    // 飛ばしていたがヘッダーナビが無く行き止まりだったため廃止。
+    return res.redirect('/haruka.html?gcal_connected=1');
   } catch (e) {
     console.error('[gcal/callback] failed:', e.message);
     return res.status(500).send(`Google Calendar 接続に失敗しました: ${e.message}`);

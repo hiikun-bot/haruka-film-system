@@ -4,7 +4,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache } = require('../auth');
+const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -14,10 +14,19 @@ const { createNotification, extractMentions } = require('../utils/notification')
 const { renderFilename } = require('../utils/filename');
 const {
   getUserRoleCodes,
+  invalidateUserRolesCache,
   userHasRole,
   getUsersRolesMap,
   invalidateRolesCache,
+  loadRoles,
 } = require('../utils/roles');
+const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
+const { avatarVer, avatarRefUrl, replaceAvatarDataUrls } = require('../utils/avatar-ref');
+
+// マスタ系 GET エンドポイント共通の TTL。
+// utils/roles.js（ROLES_TTL_MS = 60s）と同じ「短期キャッシュ + 書き込み時 invalidate」
+// パターンの汎用版（utils/ttl-cache.js）。マスタ編集の反映遅延を最小にするため 30s。
+const MASTER_CACHE_TTL_MS = 30 * 1000;
 const {
   BUILTIN_FIELDS,
   BUILTIN_FIELD_LABELS,
@@ -102,11 +111,15 @@ async function syncUserRolesForLegacyRole(userId, legacyRole) {
       console.warn('[user_roles sync] 既存行削除失敗:', delErr.message);
       return;
     }
+    // ここから先は user_roles が実際に変わっている → 短TTLキャッシュを即時無効化
+    invalidateUserRolesCache(userId);
     if (rows.length === 0) return;
     const { error: insErr } = await supabase.from('user_roles').insert(rows);
     if (insErr) {
       console.warn('[user_roles sync] insert 失敗:', insErr.message);
     }
+    // insert 完了後にもう一度無効化（delete〜insert の間に旧状態が再キャッシュされた場合の保険）
+    invalidateUserRolesCache(userId);
   } catch (e) {
     console.warn('[user_roles sync] 例外:', e.message);
   }
@@ -151,6 +164,20 @@ router.use((req, res, next) => {
   requireAuth(req, res, next);
 });
 
+// ==================== アバター転送量対策（res.json 変換） ====================
+// users.avatar_url は base64 data URL（最大300KB）。一覧系 API が users(avatar_url) を
+// 埋め込むと同一ユーザーのアバターが行数分 JSON に重複して乗り、転送量の支配項になる。
+// ここで全 JSON レスポンスを送出直前に走査し、base64 を
+// `/api/haruka/members/:id/avatar?v=<ver>`（数十バイト）へ置換する。
+// フィールド名は avatar_url のまま値だけ差し替わるため、フロントの
+// `<img src="${u.avatar_url}">` / truthiness 判定はそのまま動く。
+// 詳細・ver の仕様は utils/avatar-ref.js を参照。
+router.use((req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = (body) => origJson(replaceAvatarDataUrls(body));
+  next();
+});
+
 // ==================== ワークスペース情報 ====================
 router.get('/workspace', (_req, res) => {
   res.json({
@@ -162,9 +189,18 @@ router.get('/workspace', (_req, res) => {
 });
 
 // ログイン中ユーザー情報
-router.get('/me', (req, res) => {
+// deserializeUser (auth.js) は毎リクエストの軽量化のため avatar_url（base64 で最大300KB）を
+// req.user に載せない。このエンドポイントだけは DB から取り直してレスポンス契約を維持する。
+// なお avatar_url の base64 は res.json 変換ミドルウェアで配信 URL（?v=<ver> 付き）に
+// 置換されるため、クライアントへ 300KB が流れることはない。
+router.get('/me', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
-  const { id, email, full_name, role, rank, team_id, avatar_url, workspace_id } = req.user;
+  const { id, email, full_name, role, rank, team_id, workspace_id } = req.user;
+  let avatar_url = null;
+  try {
+    const { data } = await supabase.from('users').select('avatar_url').eq('id', id).maybeSingle();
+    avatar_url = data?.avatar_url ?? null;
+  } catch (_) { /* 取得失敗時は null（フロントはイニシャル表示にフォールバック） */ }
   res.json({ id, email, full_name, role, rank, team_id, avatar_url, workspace_id });
 });
 
@@ -207,6 +243,192 @@ async function getOrCreateFolder(drive, parentId, name) {
 function extractFolderIdFromUrl(url) {
   const m = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
   return m ? m[1] : null;
+}
+
+// ==================== クリエイティブ アップロード共通ヘルパ ====================
+// 旧 multer 経路（POST /creatives/:id/upload）と、新 Resumable 直送経路
+// （POST /creatives/:id/upload-session/{init,complete}）の両方で使う共通ロジック。
+// Resumable 直送は Railway エッジの ~5分 リクエストタイムアウト
+// （502 "Application failed to respond"）を回避するため、動画バイトをバックエンドに
+// 通さずブラウザ → Google Drive へ直接 PUT させる。バックエンドは session 発行と
+// DB 登録だけを担当する。
+
+// サービスアカウントの OAuth2 アクセストークンを取得（Resumable セッション発行の Authorization 用）
+async function getServiceAccountAccessToken() {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY が設定されていません');
+  const credentials = JSON.parse(keyJson);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+  const client = await auth.getClient();
+  const { token } = await client.getAccessToken();
+  if (!token) throw new Error('サービスアカウントのアクセストークン取得に失敗しました');
+  return token;
+}
+
+// バージョン採番（ラウンド番号方式・ADR 011 補足）。creative_files / creative_version_history を
+// 読むだけの副作用なし関数。multer 経路の採番ロジックをそのまま抽出したもの。
+//   M = creative_files の MAX(version)
+//   ・M = 0 → 新規 = 1
+//   ・M がスナップショット済(提出済) → 次ラウンド = M + 1
+//   ・M が未スナップショット(未提出/取消→再アップ) → 現ラウンド維持 = M
+//     （ただし「後修正」status 中の初アップは次ラウンドへ）
+async function deriveCreativeRoundVersion(creativeId) {
+  const { data: maxRow } = await supabase
+    .from('creative_files')
+    .select('version')
+    .eq('creative_id', creativeId)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const M = maxRow?.version || 0;
+  if (M === 0) return { version: 1, M };
+
+  let snapForMCount = 0;
+  try {
+    const { data: snapRows } = await supabase
+      .from('creative_version_history')
+      .select('id')
+      .eq('creative_id', creativeId)
+      .eq('version_num', M)
+      .limit(1);
+    snapForMCount = (snapRows && snapRows.length) || 0;
+  } catch (e) {
+    console.warn('[creatives/upload] cvh check failed → fallback to MAX+1:', e?.message || e);
+    snapForMCount = 1;
+  }
+  if (snapForMCount > 0) return { version: M + 1, M };
+
+  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  let creativeStatus = null;
+  try {
+    const { data: cRow } = await supabase
+      .from('creatives')
+      .select('status')
+      .eq('id', creativeId)
+      .maybeSingle();
+    creativeStatus = cRow?.status || null;
+  } catch (_) { /* 取れなくても続行 */ }
+  if (creativeStatus && REVISION_STATUSES.includes(creativeStatus)) return { version: M + 1, M };
+  return { version: M, M };
+}
+
+// generated_name に埋め込まれた _vN を確定 version で上書き（_vN が無ければそのまま）
+function rewriteGeneratedNameVersion(generatedName, version) {
+  if (!generatedName) return generatedName;
+  return generatedName.replace(/_v\d+(\.[^.]+)$/, `_v${version}$1`);
+}
+
+// 同一 version の未提出 creative_files 行を掃除（取消→再アップ等で version を再利用するケース）。
+// version が新規(M+1)の場合は該当行が無いので no-op。best-effort（Drive 側 orphan は許容）。
+async function cleanupCreativeFilesForVersion(creativeId, version) {
+  try {
+    const { data: stale } = await supabase
+      .from('creative_files')
+      .select('id')
+      .eq('creative_id', creativeId)
+      .eq('version', version);
+    if (stale && stale.length > 0) {
+      const ids = stale.map(r => r.id);
+      console.warn(`[creatives/upload] stale rows for version=${version} (count=${ids.length}) → cleanup`);
+      // 子テーブル best-effort（CASCADE 環境では no-op）
+      try { await supabase.from('creative_file_comments').delete().in('creative_file_id', ids); } catch (_) {}
+      try { await supabase.from('creative_file_likes').delete().in('creative_file_id', ids); } catch (_) {}
+      await supabase.from('creative_files').delete().in('id', ids);
+    }
+  } catch (e) {
+    console.warn('[creatives/upload] version cleanup failed (続行):', e?.message || e);
+  }
+}
+
+// クリエイティブの Drive 格納先フォルダ階層（ルート/クライアント/案件/yyyymm/[週]/種別）を
+// 解決し typeFolderId を返す。multer 経路のフォルダ解決ロジックを抽出したもの。
+// 注: yyyymm / 週番号は JST 基準で計算する（Railway は UTC 動作のため、サーバーローカル
+//     時刻依存だと JST 0:00〜8:59 のアップロードが前日扱いになっていた）。
+//     multer / Resumable 直送の両経路とも本ヘルパを通るので、ここで直せば両経路一致は保たれる。
+async function resolveCreativeTypeFolder(drive, project, isVideo) {
+  const rootFolderId = await getDriveRootFolderId();
+  if (!rootFolderId) throw new Error('drive_root_folder_id が未設定です');
+
+  const clientName = (project?.clients?.name || 'その他').replace(/[/\\?%*:|"<>]/g, '_');
+  const projectName = (project?.name || '案件未設定').replace(/[/\\?%*:|"<>]/g, '_');
+
+  const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
+  if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
+  const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
+  if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
+
+  // JST の「今日」を UTC 値として保持し、以降は getUTC* で読む（サーバーローカル TZ 非依存）
+  const [jy, jm, jd] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
+  const jstToday = new Date(Date.UTC(jy, jm - 1, jd));
+  const yyyymm = `${jy}${String(jm).padStart(2, '0')}`;
+  const typeFolder = isVideo ? '動画' : '静止画';
+
+  const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
+
+  let typeFolderId;
+  if (project?.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
+    const jsTarget = (project.deadline_weekday + 1) % 7;
+    const daysUntil = ((jsTarget - jstToday.getUTCDay()) + 7) % 7 || 7;
+    const deadline = new Date(jstToday);
+    deadline.setUTCDate(deadline.getUTCDate() + daysUntil);
+    const dMonth = deadline.getUTCMonth() + 1;
+    const dDay = deadline.getUTCDate();
+    const firstOfMonth = new Date(Date.UTC(deadline.getUTCFullYear(), deadline.getUTCMonth(), 1));
+    const weekNum = Math.ceil((dDay + firstOfMonth.getUTCDay()) / 7);
+    const weekFolderName = `W${weekNum}_${String(dMonth).padStart(2, '0')}${String(dDay).padStart(2, '0')}`;
+    const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
+    typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
+  } else {
+    typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
+  }
+  return typeFolderId;
+}
+
+// creative_files への INSERT（後方追加 optional 列が無い旧 DB は自動フォールバック）。
+// 戻り値 { fileRecord, error, willFaststart }。
+async function insertCreativeFileRow({
+  creativeId, original_name, generated_name, width, height,
+  version, driveFileId, driveUrl, mimeType, fileSize, uploadedBy,
+}) {
+  const willFaststart = shouldFaststart(mimeType, generated_name || original_name);
+  const baseRow = {
+    creative_id: creativeId,
+    original_name: original_name,
+    generated_name: generated_name || original_name,
+    width: parseInt(width) || null,
+    height: parseInt(height) || null,
+    version: version,
+    drive_file_id: driveFileId,
+    drive_url: driveUrl,
+    uploaded_by: uploadedBy,
+  };
+  const optionalRow = {
+    mime_type: mimeType || null,
+    file_size: fileSize || null,
+    faststart_status: willFaststart ? 'pending' : 'skipped',
+  };
+  const isMissingCol = (err) => {
+    if (!err) return false;
+    const msg = err.message || '';
+    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
+  };
+  let { data: fileRecord, error } = await supabase
+    .from('creative_files')
+    .insert({ ...baseRow, ...optionalRow })
+    .select()
+    .single();
+  if (isMissingCol(error)) {
+    console.warn('[creative_files] 後方追加列なし → fallback で再試行:', error.message);
+    ({ data: fileRecord, error } = await supabase
+      .from('creative_files')
+      .insert(baseRow)
+      .select()
+      .single());
+  }
+  return { fileRecord, error, willFaststart };
 }
 
 // ==================== クライアント ====================
@@ -427,6 +649,40 @@ async function normalizeSubDirectorIds(rawIds, { clientId, directorId } = {}) {
   }
   if (!cleaned.length) return { ids: [], dropped: 0 };
   // 2) users 存在確認 + is_active=false 除外
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, is_active')
+    .in('id', cleaned);
+  if (error) {
+    // フェイルセーフ: 検証失敗時は cleaned をそのまま返す（チェック厳しすぎて消えるより安全）
+    return { ids: cleaned, dropped: 0 };
+  }
+  const allowed = new Set(
+    (users || []).filter(u => u && u.is_active !== false).map(u => u.id)
+  );
+  const filtered = cleaned.filter(id => allowed.has(id));
+  return { ids: filtered, dropped: cleaned.length - filtered.length };
+}
+
+// サブプロデューサー（複数）正規化ヘルパー — normalizeSubDirectorIds と完全パラレル。
+// PR #235 でフロント・migration のみ実装され、サーバー側の書き込みが欠落していたため
+// 保存時に silent drop されていた（本 PR で write 経路を補完）。
+// 本人除外の基準は producer_id。ロールは制限しない（秘書もPチェック依頼可能者になれる）。
+async function normalizeSubProducerIds(rawIds, { producerId } = {}) {
+  if (!Array.isArray(rawIds)) return { ids: [], dropped: 0 };
+  const seen = new Set();
+  const cleaned = [];
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const v of rawIds) {
+    if (typeof v !== 'string') continue;
+    const id = v.trim();
+    if (!uuidRe.test(id)) continue;
+    if (id === producerId) continue; // プロデューサー本人は除外
+    if (seen.has(id)) continue;
+    seen.add(id);
+    cleaned.push(id);
+  }
+  if (!cleaned.length) return { ids: [], dropped: 0 };
   const { data: users, error } = await supabase
     .from('users')
     .select('id, is_active')
@@ -683,7 +939,7 @@ router.get('/projects/:id', async (req, res) => {
       director:users!projects_director_id_fkey(id, full_name, is_external, external_company),
       liaison:users!projects_liaison_user_id_fkey(id, full_name),
       project_estimate_lines(
-        id, project_id, category_id, name, planned_count, client_unit_price,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price,
         sort_order, status, status_changed_at, currency, tax_included, created_at,
         project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, currency,
@@ -698,7 +954,7 @@ router.get('/projects/:id', async (req, res) => {
       producer:users!projects_producer_id_fkey(id, full_name),
       director:users!projects_director_id_fkey(id, full_name),
       project_estimate_lines(
-        id, project_id, category_id, name, planned_count, client_unit_price,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price,
         sort_order, status, status_changed_at, currency, tax_included, created_at,
         project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, currency,
@@ -785,6 +1041,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
+    sub_producer_ids,
     liaison_user_id,
     tags,
     filename_template_id, filename_token_overrides
@@ -795,6 +1052,10 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
     clientId: client_id,
     directorId: director_id || null,
+  });
+  // サブプロデューサー: 同様の正規化（Pチェック依頼可能者。秘書も可）
+  const { ids: subPIds } = await normalizeSubProducerIds(sub_producer_ids, {
+    producerId: producer_id || null,
   });
   const insertPayload = {
     client_id, name,
@@ -813,6 +1074,7 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     deadline_weekday: deadline_weekday ?? null,
     primary_category_id: primary_category_id || null,
     sub_director_ids: subIds,
+    sub_producer_ids: subPIds,
     liaison_user_id: liaison_user_id || null, // ADR 017: 外部D案件の窓口担当
   };
   // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
@@ -834,6 +1096,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const { sub_director_ids: _omit, ...fallback } = insertPayload;
     const retry = await supabase.from('projects').insert(fallback).select().single();
     data = retry.data; error = retry.error;
+  }
+  // schema-sync 失敗で sub_producer_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_producer_ids/i.test(error.message || '')) {
+    const { sub_producer_ids: _omitP, ...fallbackP } = insertPayload;
+    const retryP = await supabase.from('projects').insert(fallbackP).select().single();
+    data = retryP.data; error = retryP.error;
   }
   // schema-sync 失敗で primary_category_id 列がまだ無い場合のフォールバック（Stage A migration 未適用）
   if (error && /primary_category_id/i.test(error.message || '')) {
@@ -873,6 +1141,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     deadline_unit, deadline_weekday,
     primary_category_id,
     sub_director_ids,
+    sub_producer_ids,
     liaison_user_id, // ADR 017
     tags,
     filename_template_id, filename_token_overrides,
@@ -986,6 +1255,19 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     });
     updateData.sub_director_ids = subIds;
   }
+  // サブプロデューサー: 同じく明示時のみ正規化して反映（部分更新の巻き込み消失防止）
+  if (sub_producer_ids !== undefined) {
+    const { data: curP } = await supabase
+      .from('projects')
+      .select('producer_id')
+      .eq('id', req.params.id)
+      .single();
+    const effectiveProducerId = (producer_id !== undefined ? producer_id : curP?.producer_id) || null;
+    const { ids: subPIds } = await normalizeSubProducerIds(sub_producer_ids, {
+      producerId: effectiveProducerId,
+    });
+    updateData.sub_producer_ids = subPIds;
+  }
   let { data, error } = await supabase
     .from('projects')
     .update(updateData)
@@ -997,6 +1279,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { sub_director_ids: _omit, ...fallback } = updateData;
     const retry = await supabase.from('projects').update(fallback).eq('id', req.params.id).select().single();
     data = retry.data; error = retry.error;
+  }
+  // schema-sync 失敗で sub_producer_ids 列が本番にまだ無い場合のフォールバック
+  if (error && /sub_producer_ids/i.test(error.message || '') && updateData.sub_producer_ids !== undefined) {
+    const { sub_producer_ids: _omitP, ...fallbackP } = updateData;
+    const retryP = await supabase.from('projects').update(fallbackP).eq('id', req.params.id).select().single();
+    data = retryP.data; error = retryP.error;
   }
   // schema-sync 失敗で primary_category_id 列がまだ無い場合のフォールバック（Stage A migration 未適用）
   if (error && /primary_category_id/i.test(error.message || '') && updateData.primary_category_id !== undefined) {
@@ -1180,21 +1468,28 @@ const isMissingCategoriesTable = (err) =>
 //   sort_order 昇順（同値時は name 昇順）。
 router.get('/categories', async (req, res) => {
   const includeInactive = String(req.query.include_inactive || '') === '1';
-  let query = supabase
-    .from('creative_categories')
-    .select('*')
-    .order('sort_order', { ascending: true })
-    .order('name', { ascending: true });
-  if (!includeInactive) query = query.eq('is_active', true);
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingCategoriesTable(error)) {
-      console.warn('[categories] creative_categories table missing. Apply migrations/2026-05-05_creative_categories.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
+  try {
+    const out = await ttlCache(`categories:${includeInactive ? 'all' : 'active'}`, MASTER_CACHE_TTL_MS, async () => {
+      let query = supabase
+        .from('creative_categories')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true });
+      if (!includeInactive) query = query.eq('is_active', true);
+      const { data, error } = await query;
+      if (error) {
+        if (isMissingCategoriesTable(error)) {
+          console.warn('[categories] creative_categories table missing. Apply migrations/2026-05-05_creative_categories.sql');
+          return [];
+        }
+        throw new Error(error.message);
+      }
+      return data || [];
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(data || []);
 });
 
 // GET /api/categories/:id  単件取得
@@ -1240,6 +1535,7 @@ router.post('/categories', requireAuth, requirePermission('master.page'), async 
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('categories:');
   res.json(data);
 });
 
@@ -1272,6 +1568,7 @@ router.put('/categories/:id', requireAuth, requirePermission('master.page'), asy
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('categories:');
   res.json(data);
 });
 
@@ -1299,6 +1596,7 @@ router.delete('/categories/:id', requireAuth, requirePermission('master.page'), 
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('categories:');
   res.json({ ok: true });
 });
 
@@ -1385,15 +1683,27 @@ router.put('/categories/:id/fields', requireAuth, requirePermission('master.page
   }
 
   // 1) 既存行のうち、送られなかった field_key を削除
+  //    注意: field_key（ユーザー入力）を PostgREST のフィルタ文字列に直結すると
+  //    in 構文を壊せてしまう（注入）。既存行を select して id ベースで削除する。
   const incomingKeys = fields.map(f => f.field_key);
   if (incomingKeys.length > 0) {
-    const { error: delErr } = await supabase
+    const { data: existingRows, error: selErr } = await supabase
       .from('creative_category_fields')
-      .delete()
-      .eq('category_id', cid)
-      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
-    if (delErr && !isMissingCategoryFieldsTable(delErr)) {
-      return res.status(500).json({ error: delErr.message });
+      .select('id, field_key')
+      .eq('category_id', cid);
+    if (selErr && !isMissingCategoryFieldsTable(selErr)) {
+      return res.status(500).json({ error: selErr.message });
+    }
+    const keepKeys = new Set(incomingKeys);
+    const delIds = (existingRows || []).filter(r => !keepKeys.has(r.field_key)).map(r => r.id);
+    if (delIds.length > 0) {
+      const { error: delErr } = await supabase
+        .from('creative_category_fields')
+        .delete()
+        .in('id', delIds);
+      if (delErr && !isMissingCategoryFieldsTable(delErr)) {
+        return res.status(500).json({ error: delErr.message });
+      }
     }
   } else {
     const { error: delErr } = await supabase
@@ -1473,15 +1783,29 @@ router.put('/creatives/:id/custom-fields', requireAuth, async (req, res) => {
   }
 
   // 1) 不要になった行を削除
+  //    注意: field_key（ユーザー入力）を PostgREST のフィルタ文字列に直結すると
+  //    in 構文を壊せてしまう（注入）。既存行を select して差分キーのみ削除する
+  //    （このテーブルは (creative_id, field_key) 複合PKで id 列が無い）。
   const incomingKeys = values.map(v => v.field_key);
   if (incomingKeys.length > 0) {
-    const { error: delErr } = await supabase
+    const { data: existingRows, error: selErr } = await supabase
       .from('creative_custom_field_values')
-      .delete()
-      .eq('creative_id', cid)
-      .not('field_key', 'in', `(${incomingKeys.map(k => `"${k}"`).join(',')})`);
-    if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
-      return res.status(500).json({ error: delErr.message });
+      .select('field_key')
+      .eq('creative_id', cid);
+    if (selErr && !isMissingCustomFieldValuesTable(selErr)) {
+      return res.status(500).json({ error: selErr.message });
+    }
+    const keepKeys = new Set(incomingKeys);
+    const delKeys = (existingRows || []).filter(r => !keepKeys.has(r.field_key)).map(r => r.field_key);
+    if (delKeys.length > 0) {
+      const { error: delErr } = await supabase
+        .from('creative_custom_field_values')
+        .delete()
+        .eq('creative_id', cid)
+        .in('field_key', delKeys);
+      if (delErr && !isMissingCustomFieldValuesTable(delErr)) {
+        return res.status(500).json({ error: delErr.message });
+      }
     }
   } else {
     const { error: delErr } = await supabase
@@ -1532,7 +1856,7 @@ const ALLOWED_FILENAME_FLAG_SOURCES = new Set(['talent_flag']);
 
 // tokens のサーバー側バリデーション（DB CHECK と二重）
 //   - 配列で要素が 1 件以上
-//   - serial / project_name / version の3キーが含まれる
+//   - serial / project_name の2キーが含まれる（version は任意・バグ報告 #271af257）
 //   - serial が配列の先頭
 //   - 各要素は { kind: "system"|"custom"|"flag", key, ... } の形
 //   - flag は { source: ALLOWED_FILENAME_FLAG_SOURCES, on_value: string, off_value: string }
@@ -1574,7 +1898,8 @@ function validateFilenameTemplateTokens(tokens) {
     }
     keySet.add(k);
   }
-  for (const required of ['serial', 'project_name', 'version']) {
+  // version は任意化（バグ報告 #271af257）。必須は serial / project_name のみ。
+  for (const required of ['serial', 'project_name']) {
     if (!keys.includes(required)) {
       return { ok: false, error: `必須トークン "${required}" が含まれていません` };
     }
@@ -1590,19 +1915,26 @@ const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
 
 // GET /api/filename-templates  一覧（is_default が先頭、その後 name 昇順）
 router.get('/filename-templates', async (_req, res) => {
-  const { data, error } = await supabase
-    .from('filename_templates')
-    .select('*')
-    .order('is_default', { ascending: false })
-    .order('name', { ascending: true });
-  if (error) {
-    if (isMissingFilenameTemplatesTable(error)) {
-      console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
+  try {
+    const out = await ttlCache('filename-templates:list', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('filename_templates')
+        .select('*')
+        .order('is_default', { ascending: false })
+        .order('name', { ascending: true });
+      if (error) {
+        if (isMissingFilenameTemplatesTable(error)) {
+          console.warn('[filename-templates] filename_templates table missing. Apply migrations/2026-05-07_filename_templates.sql');
+          return [];
+        }
+        throw new Error(error.message);
+      }
+      return data || [];
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(data || []);
 });
 
 // GET /api/filename-templates/:id  単件
@@ -1649,6 +1981,7 @@ router.post('/filename-templates', requireAuth, requirePermission('master.page')
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByKey('filename-templates:list');
   res.json(data);
 });
 
@@ -1692,6 +2025,7 @@ router.put('/filename-templates/:id', requireAuth, requirePermission('master.pag
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByKey('filename-templates:list');
   res.json(data);
 });
 
@@ -1731,6 +2065,7 @@ router.delete('/filename-templates/:id', requireAuth, requirePermission('master.
   }
   const { error } = await supabase.from('filename_templates').delete().eq('id', id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('filename-templates:list');
   res.json({ ok: true });
 });
 
@@ -1800,25 +2135,31 @@ function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr,
 //   工程テンプレ一覧（指定カテゴリ）。template_items も同梱で返す。
 router.get('/status-templates', async (req, res) => {
   const { category_id } = req.query;
-  let query = supabase
-    .from('creative_status_templates')
-    .select('*, items:creative_status_template_items(*)')
-    .order('is_default', { ascending: false })
-    .order('name', { ascending: true });
-  if (category_id) query = query.eq('category_id', category_id);
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingCategoriesTable(error) || /relation .*creative_status_templates.* does not exist/i.test(error.message || '')) {
-      return res.json([]);
-    }
-    return res.status(500).json({ error: error.message });
+  try {
+    const out = await ttlCache(`status-templates:${category_id || 'all'}`, MASTER_CACHE_TTL_MS, async () => {
+      let query = supabase
+        .from('creative_status_templates')
+        .select('*, items:creative_status_template_items(*)')
+        .order('is_default', { ascending: false })
+        .order('name', { ascending: true });
+      if (category_id) query = query.eq('category_id', category_id);
+      const { data, error } = await query;
+      if (error) {
+        if (isMissingCategoriesTable(error) || /relation .*creative_status_templates.* does not exist/i.test(error.message || '')) {
+          return [];
+        }
+        throw new Error(error.message);
+      }
+      // items を sort_order 昇順に整列して返す
+      return (data || []).map(t => ({
+        ...t,
+        items: (t.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+      }));
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  // items を sort_order 昇順に整列して返す
-  const out = (data || []).map(t => ({
-    ...t,
-    items: (t.items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
-  }));
-  res.json(out);
 });
 
 // ==================== 見積行 / 成果物グループ（project_estimate_lines）Stage 4a ====================
@@ -1846,7 +2187,7 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   const projectId = req.params.project_id;
   const { data, error } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
@@ -1857,7 +2198,116 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
     }
     return res.status(500).json({ error: error.message });
   }
+  // クライアント請求単価は管理者のみ閲覧可。非adminにはレスポンスから列ごと除外する（ADR 015 B-4）
+  const codes = await getEffectiveRoleCodes(req);
+  let rows = data || [];
+  if (!codes.includes('admin')) {
+    rows = rows.map(({ client_unit_price, ...rest }) => rest);
+  }
+  res.json(rows);
+});
+
+// カテゴリの制作ロール（render_kind が video→editor / それ以外→designer）の role_id を返す。
+async function productionRoleIdForCategory(categoryId) {
+  let roleCode = 'editor';
+  if (categoryId) {
+    const { data: cat } = await supabase.from('creative_categories').select('render_kind').eq('id', categoryId).maybeSingle();
+    if (cat && cat.render_kind && cat.render_kind !== 'video') roleCode = 'designer';
+  }
+  const { data: role } = await supabase.from('roles').select('id').eq('code', roleCode).maybeSingle();
+  return role ? role.id : null;
+}
+
+// 制作者単価（編集者/デザイナーへの1本あたり支払）を 1 つの line_cost として保存する。
+// ロールはカテゴリの render_kind から自動判定。UI ではロールを扱わない。
+async function upsertProducerLineCost(lineId, categoryId, unitPrice) {
+  if (!lineId) return;
+  const price = Math.max(0, parseInt(unitPrice, 10) || 0);
+  const roleId = await productionRoleIdForCategory(categoryId);
+  if (!roleId) return;
+  const { data: existing } = await supabase.from('project_estimate_line_costs')
+    .select('id').eq('line_id', lineId).eq('role_id', roleId).is('user_id', null).maybeSingle();
+  if (existing) {
+    await supabase.from('project_estimate_line_costs').update({ unit_price: price }).eq('id', existing.id);
+  } else {
+    await supabase.from('project_estimate_line_costs').insert({ line_id: lineId, role_id: roleId, unit_price: price, pricing_type: 'fixed_per_unit', currency: 'JPY' });
+  }
+}
+
+// ===== ランク単価プリセット（category × rank → 制作者単価）。category_rank_rates を再利用 =====
+// 役割はカテゴリから自動（UI ではロールを扱わない）。編集は admin/秘書/プロデューサーのみ。
+const PRESET_ROLES = ['admin', 'secretary', 'producer', 'producer_director'];
+
+// プリセット一覧
+router.get('/rank-price-presets', requireAuth, requireRole(...PRESET_ROLES), async (req, res) => {
+  const { data, error } = await supabase
+    .from('category_rank_rates')
+    .select('id, category_id, rank, unit_price, category:creative_categories(id, code, name, color, render_kind)')
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (/category_rank_rates/i.test(error.message) && /(does not exist|schema cache|relation)/i.test(error.message)) return res.json([]);
+    return res.status(500).json({ error: error.message });
+  }
   res.json(data || []);
+});
+
+// プリセット upsert（category × rank の制作者単価を1件設定）
+router.put('/rank-price-presets', requireAuth, requireRole(...PRESET_ROLES), async (req, res) => {
+  const { category_id } = req.body || {};
+  if (!category_id) return res.status(400).json({ error: 'category_id は必須です' });
+  const r = String((req.body || {}).rank || '').toUpperCase();
+  if (!['A', 'B', 'C'].includes(r)) return res.status(400).json({ error: 'rank は A / B / C で指定してください' });
+  const price = Math.max(0, parseInt((req.body || {}).unit_price, 10) || 0);
+  const roleId = await productionRoleIdForCategory(category_id);
+  if (!roleId) return res.status(400).json({ error: '制作ロールが解決できません' });
+  const { data: existing } = await supabase.from('category_rank_rates')
+    .select('id').eq('category_id', category_id).eq('rank', r).eq('role_id', roleId).maybeSingle();
+  if (existing) {
+    const { error } = await supabase.from('category_rank_rates').update({ unit_price: price, updated_at: new Date().toISOString() }).eq('id', existing.id);
+    if (error) return res.status(500).json({ error: error.message });
+  } else {
+    const { error } = await supabase.from('category_rank_rates').insert({ category_id, rank: r, role_id: roleId, unit_price: price });
+    if (error) return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
+});
+
+// POST /api/projects/:project_id/lines/generate-preset  プリセットから A/B/C 成果物グループを一括生成
+// 既に同カテゴリで存在する rank はスキップ（重複作成しない）。client 単価は 0、制作者単価はプリセットから。
+router.post('/projects/:project_id/lines/generate-preset', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const { category_id } = req.body || {};
+  if (!category_id) return res.status(400).json({ error: 'category_id は必須です' });
+  const { data: cat } = await supabase.from('creative_categories').select('id, name').eq('id', category_id).maybeSingle();
+  if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+
+  // プリセット（制作者単価）と既存 line の rank を取得
+  const [{ data: presets }, { data: existingLines }, { data: maxRow }] = await Promise.all([
+    supabase.from('category_rank_rates').select('rank, unit_price').eq('category_id', category_id),
+    supabase.from('project_estimate_lines').select('rank').eq('project_id', projectId).eq('category_id', category_id),
+    supabase.from('project_estimate_lines').select('sort_order').eq('project_id', projectId).order('sort_order', { ascending: false, nullsFirst: false }).limit(1),
+  ]);
+  const priceByRank = {};
+  (presets || []).forEach(p => { priceByRank[String(p.rank || '').toUpperCase()] = Number(p.unit_price) || 0; });
+  const existingRanks = new Set((existingLines || []).map(l => String(l.rank || '').toUpperCase()));
+  let sortOrder = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+
+  let createdCount = 0;
+  for (const rank of ['A', 'B', 'C']) {
+    if (existingRanks.has(rank)) continue; // 既にある rank はスキップ
+    sortOrder += 10;
+    const { data: line, error } = await supabase.from('project_estimate_lines')
+      .insert({ project_id: projectId, category_id, rank, name: null, client_unit_price: 0, sort_order: sortOrder, status: 'contracted', status_changed_at: new Date().toISOString() })
+      .select('id')
+      .single();
+    if (error) {
+      if (isMissingPelTable(error)) return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。' });
+      return res.status(500).json({ error: error.message });
+    }
+    await upsertProducerLineCost(line.id, category_id, priceByRank[rank] || 0);
+    createdCount++;
+  }
+  res.json({ ok: true, created_count: createdCount, skipped: 3 - createdCount });
 });
 
 // POST /api/projects/:project_id/lines  新規作成
@@ -1865,6 +2315,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const projectId = req.params.project_id;
   const {
     category_id,
+    rank,
     name,
     planned_count,
     client_unit_price,
@@ -1876,8 +2327,13 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
 
   // バリデーション
   const plannedCount = Math.max(0, parseInt(planned_count, 10) || 0);
-  const unitPrice = Math.max(0, parseInt(client_unit_price, 10) || 0);
-  const lineStatus = status || 'draft';
+  // クライアント請求単価は管理者のみ設定可。非adminが作成する場合は 0 にする（ADR 015）
+  const priceCodes = await getEffectiveRoleCodes(req);
+  const unitPrice = priceCodes.includes('admin') ? Math.max(0, parseInt(client_unit_price, 10) || 0) : 0;
+  // ADR 022: rank は A/B/C のみ。それ以外（空欄含む）は NULL
+  const lineRank = ['A', 'B', 'C'].includes(String(rank || '').toUpperCase()) ? String(rank).toUpperCase() : null;
+  // ステータスは UI から廃止。未指定時は常に「採用（受注=contracted）」で作成する
+  const lineStatus = status || 'contracted';
   if (!LINE_STATUSES.has(lineStatus)) {
     return res.status(400).json({ error: `status は ${[...LINE_STATUSES].join(' / ')} のいずれかで指定してください` });
   }
@@ -1911,6 +2367,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const insertRow = {
     project_id: projectId,
     category_id: category_id || null,
+    rank: lineRank,
     name: (typeof name === 'string' && name.trim()) ? name.trim() : null,
     planned_count: plannedCount,
     client_unit_price: unitPrice,
@@ -1924,7 +2381,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const { data, error } = await supabase
     .from('project_estimate_lines')
     .insert(insertRow)
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .single();
   if (error) {
     if (isMissingPelTable(error)) {
@@ -1932,6 +2389,13 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     }
     return res.status(500).json({ error: error.message });
   }
+
+  // 制作者単価（編集者/デザイナーへの1本あたり支払）を line_cost として保存（best-effort）
+  if (data && req.body && req.body.producer_unit_price != null && req.body.producer_unit_price !== '') {
+    try { await upsertProducerLineCost(data.id, data.category_id, req.body.producer_unit_price); }
+    catch (e) { console.warn('[lines] producer cost upsert failed:', e?.message); }
+  }
+
   res.json(data);
 });
 
@@ -1943,7 +2407,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
   // 既存 line 取得 + project_id 一致チェック
   const { data: existing, error: getErr } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, status')
+    .select('id, project_id, status, category_id')
     .eq('id', lineId)
     .maybeSingle();
   if (getErr) return res.status(500).json({ error: getErr.message });
@@ -1966,6 +2430,11 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     }
     updates.category_id = body.category_id || null;
   }
+  if (Object.prototype.hasOwnProperty.call(body, 'rank')) {
+    // ADR 022: rank は A/B/C のみ。それ以外（空欄含む）は NULL
+    const r = String(body.rank || '').toUpperCase();
+    updates.rank = ['A', 'B', 'C'].includes(r) ? r : null;
+  }
   if (Object.prototype.hasOwnProperty.call(body, 'name')) {
     updates.name = (typeof body.name === 'string' && body.name.trim()) ? body.name.trim() : null;
   }
@@ -1973,7 +2442,11 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     updates.planned_count = Math.max(0, parseInt(body.planned_count, 10) || 0);
   }
   if (Object.prototype.hasOwnProperty.call(body, 'client_unit_price')) {
-    updates.client_unit_price = Math.max(0, parseInt(body.client_unit_price, 10) || 0);
+    // クライアント請求単価は管理者のみ更新可。非adminの変更は無視して既存値を維持（ADR 015）
+    const priceCodes = await getEffectiveRoleCodes(req);
+    if (priceCodes.includes('admin')) {
+      updates.client_unit_price = Math.max(0, parseInt(body.client_unit_price, 10) || 0);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(body, 'sort_order')) {
     const so = parseInt(body.sort_order, 10);
@@ -1995,11 +2468,18 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     }
   }
 
+  // 制作者単価を line_cost へ反映（line 列の変更有無に関わらず実行）
+  if (Object.prototype.hasOwnProperty.call(body, 'producer_unit_price') && body.producer_unit_price !== null && body.producer_unit_price !== '') {
+    const catForCost = Object.prototype.hasOwnProperty.call(body, 'category_id') ? (body.category_id || existing.category_id) : existing.category_id;
+    try { await upsertProducerLineCost(lineId, catForCost, body.producer_unit_price); }
+    catch (e) { console.warn('[lines] producer cost upsert (put) failed:', e?.message); }
+  }
+
   if (Object.keys(updates).length === 0) {
     // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
     const { data: row } = await supabase
       .from('project_estimate_lines')
-      .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+      .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
       .eq('id', lineId)
       .single();
     return res.json(row);
@@ -2009,7 +2489,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     .from('project_estimate_lines')
     .update(updates)
     .eq('id', lineId)
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -2052,6 +2532,20 @@ router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermis
   res.json({ ok: true });
 });
 
+// GET /api/projects/:project_id/lines/:line_id/creatives  紐付くクリエイティブ一覧
+// 削除が 409 でブロックされたとき「どのクリエイティブが紐付いているのか」を
+// ポップアップで確認するために使う。project_id 不一致のデータ不整合も拾えるよう line_id のみで絞る。
+router.get('/projects/:project_id/lines/:line_id/creatives', requireAuth, async (req, res) => {
+  const { line_id: lineId } = req.params;
+  const { data, error } = await supabase
+    .from('creatives')
+    .select('id, file_name, status, creative_type, draft_deadline, final_deadline, created_at')
+    .eq('line_id', lineId)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 // PATCH /api/projects/:project_id/lines/reorder  一括並び替え
 // body: { ids: [<line_id_1>, <line_id_2>, ...] } の順で sort_order を 10, 20, 30, ... に再付番
 router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
@@ -2084,7 +2578,7 @@ router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermissi
   // 更新後の一覧を返す
   const { data: updated, error: refErr } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
@@ -3154,7 +3648,9 @@ function _thisSundayStrJST() {
   const todayStr = _todayStrJST();
   const today = new Date(`${todayStr}T00:00:00+09:00`);
   // getDay(): 0=Sun, 1=Mon, ... 6=Sat
-  const dow = today.getDay();
+  // 注: getDay() はサーバーローカル TZ で曜日を返すため（Railway は UTC、JST 0:00 = UTC 前日 15:00）、
+  //     JST の日付文字列を UTC として読み直して getUTCDay() で曜日を取る
+  const dow = new Date(`${todayStr}T00:00:00Z`).getUTCDay();
   // 月曜起点: dow が日曜(0)なら今日が日曜＝当日、それ以外は (7 - dow) 日後
   const daysUntilSun = dow === 0 ? 0 : (7 - dow);
   const sun = new Date(today);
@@ -3722,9 +4218,11 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
 //   totalCreatives   = 今月納期の creatives 件数（line_id を問わず）
 //   completedCreatives = 同上 status='納品' の件数
 router.get('/dashboard/revenue-summary', async (req, res) => {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+  // JST 基準で「今月」を決める（Railway は UTC 動作。getFullYear()/getMonth() の
+  // サーバーローカル依存だと JST 月初 0:00〜8:59 に前月扱いになる）
+  const [jstYear, jstMonth] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
+  const startOfMonth = new Date(Date.UTC(jstYear, jstMonth - 1, 1)).toISOString();
+  const endOfMonth = new Date(Date.UTC(jstYear, jstMonth, 0, 23, 59, 59)).toISOString();
 
   // 今月納期のクリエイティブを取得
   const { data: creatives, error: cErr } = await supabase
@@ -3838,7 +4336,7 @@ router.get('/dashboard/revenue-summary', async (req, res) => {
     completedCreatives,
     plannedRevenue,
     actualRevenue,
-    month: `${now.getFullYear()}年${now.getMonth() + 1}月`
+    month: `${jstYear}年${jstMonth}月`
   });
 });
 
@@ -5363,6 +5861,15 @@ router.get('/creatives', async (req, res) => {
   const limit  = Math.min(Math.max(parseInt(req.query.limit, 10)  || 50, 1), 500);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
+  // 軽量モード（fields=light）: ダッシュボード集計用の最小レスポンス
+  //   - select はフロント集計が実際に参照する列のみ（projects/clients/assignments は名前解決に必要な最小限）
+  //   - teams 取得・ball_holder 計算・projects.director/producer のユーザー解決をすべてスキップ
+  //   - レスポンスの形 { data, total, limit, offset } は通常モードと同一
+  // 背景: ダッシュボードの円グラフ・件数集計は include_done=1&limit=500 を取るが、
+  // 通常 select（projects+clients+assignments+users 全埋め込み + ball_holder）は最重量で
+  // 初期表示のボトルネックだった。デフォルト（fields 未指定）は完全に従来どおり。
+  const lightMode = String(req.query.fields || '') === 'light';
+
   // タブフィルタ: creative_type の prefix で粗く絞り込む
   //   tab=video  → creative_type LIKE 'video_%'
   //   tab=design → creative_type LIKE 'design_%'
@@ -5417,7 +5924,15 @@ router.get('/creatives', async (req, res) => {
   const projectsRel = client_id ? 'projects!inner' : 'projects';
   // 後から追加された列（schema-sync が失敗していると本番に存在しない可能性がある）
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
-  const buildSelect = (includeOptional) => `
+  // light モードの select: ダッシュボード（renderAdminDash の集計・円グラフ・納期アラート）が
+  // 参照する列のみ。users は NameDisplay 用の full_name / nickname だけ、optional 列は含めない。
+  const buildLightSelect = () => `
+    id, file_name, status, draft_deadline, final_deadline,
+    help_flag, creative_type, project_id, created_at,
+    ${projectsRel}(id, name, client_id, clients(id, name)),
+    creative_assignments(id, role, users(id, full_name, nickname))
+  `;
+  const buildSelect = (includeOptional) => lightMode ? buildLightSelect() : `
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
     creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
@@ -5467,15 +5982,26 @@ router.get('/creatives', async (req, res) => {
   };
 
   // teams を別クエリで取得（PostgREST の FK 推論に依存しない: 本番DBに FK が無くても動作させるため）
+  // パフォーマンス: teams クエリは本体クエリの結果に依存しないので並列で先に投げておく
+  // （ボール保持者にアバター画像を出すため director user オブジェクト（avatar_url 等）も一括取得する）
+  // ※ supabase-js のクエリビルダーは lazy（.then が呼ばれるまで fetch しない）なので、
+  //    .then(r => r) で即時に実行を開始して本体クエリと並走させる
+  const teamsPromise = lightMode
+    ? Promise.resolve({ data: [] }) // light モードは teams 不要（ball_holder を計算しない）
+    : supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)').then(r => r);
   let { data, error, count } = await buildAndApply(true);
   // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
   if (error && /column .+ does not exist/.test(error.message || '')) {
     console.warn('[creatives] optional列なし → fallback で再取得:', error.message);
     ({ data, error, count } = await buildAndApply(false));
   }
-  // ボール保持者にアバター画像を出すため director user オブジェクト（avatar_url 等）も一括取得する
-  const { data: teamsRaw } = await supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)');
+  const { data: teamsRaw } = await teamsPromise;
   if (error) return res.status(500).json({ error: error.message });
+
+  // light モードはここで即返す（teams stitch / ball_holder / director・producer 解決を全てスキップ）
+  if (lightMode) {
+    return res.json({ data: data || [], total: count ?? (data || []).length, limit, offset });
+  }
 
   // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
   const directorByTeamId    = new Map();
@@ -5790,14 +6316,33 @@ router.get('/creatives/:id', async (req, res) => {
     }
   })();
 
-  // (E) ball_holder 計算用 teams 全件 + team_members
+  // (E) ball_holder 計算用 teams + team_members
   // （一覧 /creatives と完全一致させるため getBallHolder() に渡す Map を作る）
+  // getBallHolder() がチーム Map を参照するのは「編集者のチーム代表ディレクターへの
+  // フォールバック」のみ（editor.users.team_id / editor.users.id でしか lookup しない）。
+  // 旧実装は teams 全件 + team_members を SELECT していたが、編集者が所属し得る
+  // チームだけに絞る（結果の Map lookup は従来と同一）。
   // ボール保持者のアバター画像表示のため director の avatar_url / nickname も取得する
   const taskBallHolder = (async () => {
     try {
+      const editorAssign = (data.creative_assignments || [])
+        .find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+      const editorUser = editorAssign?.users || null;
+      if (!editorUser) return []; // 編集者アサインが無ければ Map は参照されない
+      const teamIds = new Set();
+      if (editorUser.team_id) teamIds.add(editorUser.team_id);
+      if (editorUser.id) {
+        const { data: tmRows } = await supabase
+          .from('team_members')
+          .select('team_id')
+          .eq('user_id', editorUser.id);
+        (tmRows || []).forEach(r => { if (r.team_id) teamIds.add(r.team_id); });
+      }
+      if (!teamIds.size) return [];
       const { data: teamsRaw } = await supabase
         .from('teams')
-        .select('id, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)');
+        .select('id, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)')
+        .in('id', [...teamIds]);
       return teamsRaw || [];
     } catch (e) {
       console.warn('[creatives/:id] teams 取得失敗（ball_holder用）:', e.message);
@@ -5958,8 +6503,9 @@ router.post('/creatives/bulk-preview', async (req, res) => {
     startSeq = n;
   }
 
-  const today = new Date();
-  const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  // 制作日トークン (YYMMDD): Railway は UTC 稼働のため JST で「今日」を確定する
+  // （ローカル getter だと JST 0:00〜8:59 の作成でファイル名の制作日が前日にズレる）
+  const dateStr = _todayStrJST().slice(2).replace(/-/g, '');
 
   const previews = [];
   let nextSeq = startSeq;
@@ -6050,8 +6596,8 @@ router.post('/creatives/bulk', async (req, res) => {
     startSeq = n;
   }
 
-  const today = new Date();
-  const dateStr = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  // 制作日トークン (YYMMDD): bulk-preview と同じく JST で確定（UTC 稼働の前日ズレ防止）
+  const dateStr = _todayStrJST().slice(2).replace(/-/g, '');
 
   const inserts = [];
   let nextSeq = startSeq;
@@ -6843,6 +7389,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 //   - cycle_id（project_id 変更時は必ずクリアし、フロント側で再選択）
 //   - product_id, appeal_type_id（project_id に紐づくため、案件変更時は再選択必須）
 //   - creative_type, file_name, memo, note
+//   - assignee_id（担当者の付け替え。バグ報告 #3138fd6f: 納品前まで変更可・按分なし＝報酬は新担当者に全帰属）
 //
 // 権限:
 //   - admin / secretary は無条件で可
@@ -6904,10 +7451,16 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   }
 
   // 3. 案件変更ガード: 納品済み / force_delivered / 確定済み請求書に紐付く
+  //    担当者変更ガード（バグ報告 #3138fd6f）: 「納品するまでは変更可能」仕様のため同じ条件でブロックする。
+  //    報酬・本数カウントは creative_assignments を正としているので、納品後・請求確定後の付け替えは集計を壊す。
   const DELIVERED_STATUSES = ['納品', '完納', '納品済'];
+  let canChangeAssignee = true;
+  let assigneeChangeBlockedReason = null;
   if (DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true) {
     canChangeProject = false;
     projectChangeBlockedReason = '納品済みのため案件を変更できません（その他項目は変更可）';
+    canChangeAssignee = false;
+    assigneeChangeBlockedReason = '納品済みのため担当者を変更できません（担当者の変更は納品前まで）';
   }
   if (canChangeProject) {
     const { data: linked } = await supabase
@@ -6918,10 +7471,12 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
     if (hasFinalized) {
       canChangeProject = false;
       projectChangeBlockedReason = '請求書が発行・確定済みのため案件を変更できません（その他項目は変更可）';
+      canChangeAssignee = false;
+      assigneeChangeBlockedReason = '請求書が発行・確定済みのため担当者を変更できません';
     }
   }
 
-  return { ok: true, creative: c, canChangeProject, projectChangeBlockedReason };
+  return { ok: true, creative: c, canChangeProject, projectChangeBlockedReason, canChangeAssignee, assigneeChangeBlockedReason };
 }
 
 // GET /api/creatives/:id/edit-eligibility
@@ -6937,6 +7492,8 @@ router.get('/creatives/:id/edit-eligibility', requireAuth, async (req, res) => {
     can_edit: true,
     can_change_project: result.canChangeProject,
     project_change_blocked_reason: result.projectChangeBlockedReason,
+    can_change_assignee: result.canChangeAssignee,
+    assignee_change_blocked_reason: result.assigneeChangeBlockedReason,
   });
 });
 
@@ -6972,7 +7529,12 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       incoming[k] = v;
     }
   }
-  if (Object.keys(incoming).length === 0) {
+  // 担当者（creative_assignments role='editor' 系）は creatives 列ではないため ALLOWED とは別枠で受ける
+  const assigneeProvided = ('assignee_id' in (req.body || {}));
+  const newAssigneeId = assigneeProvided
+    ? ((typeof req.body.assignee_id === 'string' ? req.body.assignee_id.trim() : req.body.assignee_id) || null)
+    : null;
+  if (Object.keys(incoming).length === 0 && !assigneeProvided) {
     return res.status(400).json({ error: '変更項目がありません' });
   }
 
@@ -7008,6 +7570,36 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     if (!('appeal_type_id' in incoming)) incoming.appeal_type_id = null;
   }
 
+  // 担当者変更（バグ報告 #3138fd6f）: 差分検出 + ガード
+  // 按分はしない — 付け替えた時点で報酬・本数カウントは新担当者に全帰属する（仕様）。
+  const EDITOR_ROLES = ['editor', 'designer', 'director_as_editor'];
+  let assigneeChange = null; // { oldRows, oldUser, newUser }
+  if (assigneeProvided) {
+    const { data: curAsn } = await supabase
+      .from('creative_assignments')
+      .select('id, role, user_id, users:user_id(id, full_name, nickname)')
+      .eq('creative_id', creativeId)
+      .in('role', EDITOR_ROLES);
+    const currentRow = (curAsn || [])[0] || null;
+    if (!newAssigneeId) {
+      return res.status(400).json({ error: '担当者を選択してください（事後修正で担当者を未設定に戻すことはできません）' });
+    }
+    if (newAssigneeId !== (currentRow?.user_id || null)) {
+      if (!eligibility.canChangeAssignee) {
+        return res.status(400).json({ error: eligibility.assigneeChangeBlockedReason || '担当者を変更できません' });
+      }
+      const { data: newUser } = await supabase
+        .from('users')
+        .select('id, full_name, nickname, rank, team_id')
+        .eq('id', newAssigneeId)
+        .maybeSingle();
+      if (!newUser) return res.status(400).json({ error: '指定された担当者が見つかりません' });
+      assigneeChange = { oldRows: curAsn || [], oldUser: currentRow?.users || null, newUser };
+      // チーム表示は creatives.team_id が最優先のため、新担当者のチームへ追従させる
+      if (newUser.team_id) incoming.team_id = newUser.team_id;
+    }
+  }
+
   // 表示用スナップショットを作るために旧 product / appeal の名称を取得
   // 商材は client_products / project_products どちらかに格納されている（sync_products フラグ依存）→ 両方を試行
   // 訴求軸も同様に client_appeal_axes / project_appeal_axes
@@ -7026,13 +7618,17 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     return r.data?.name || null;
   }
 
-  const oldProductName = await lookupProductName(before.product_id);
-  const oldAppealName = await lookupAppealName(before.appeal_type_id);
-  const newProjectName = projectChanged
-    ? (await supabase.from('projects').select('name').eq('id', incoming.project_id).maybeSingle()).data?.name || null
-    : (before.projects?.name || null);
-  const newProductName = ('product_id' in incoming) ? await lookupProductName(incoming.product_id) : null;
-  const newAppealName = ('appeal_type_id' in incoming) ? await lookupAppealName(incoming.appeal_type_id) : null;
+  // 互いに依存しない名称 lookup を並列実行（直列 await だと最大 8 RTT かかっていた）
+  const [oldProductName, oldAppealName, newProjectName, newProductName, newAppealName] = await Promise.all([
+    lookupProductName(before.product_id),
+    lookupAppealName(before.appeal_type_id),
+    projectChanged
+      ? supabase.from('projects').select('name').eq('id', incoming.project_id).maybeSingle()
+          .then(r => r.data?.name || null)
+      : Promise.resolve(before.projects?.name || null),
+    ('product_id' in incoming) ? lookupProductName(incoming.product_id) : Promise.resolve(null),
+    ('appeal_type_id' in incoming) ? lookupAppealName(incoming.appeal_type_id) : Promise.resolve(null),
+  ]);
 
   // 差分検出 + ログ行作成
   const editorName = req.user?.full_name || req.user?.nickname || req.user?.email || null;
@@ -7052,6 +7648,7 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
   };
   for (const [k, v] of Object.entries(incoming)) {
     if (k === 'cycle_id') continue; // 表示しない（project_id 変更に付随する内部リセット）
+    if (k === 'team_id') continue;  // 表示しない（担当者変更に付随する内部追従。履歴は assignee_id 行で見える）
     const isDate = DATE_FIELDS.has(k);
     const oldRaw = isDate ? _normYmd(before[k] ?? null) : (before[k] ?? null);
     const newRaw = isDate ? _normYmd(v ?? null) : (v ?? null);
@@ -7064,6 +7661,17 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       field_name: k,
       old_value: disp ? (disp.old ?? (oldRaw ? String(oldRaw) : null)) : (oldRaw == null ? null : String(oldRaw)),
       new_value: disp ? (disp.new ?? (newRaw ? String(newRaw) : null)) : (newRaw == null ? null : String(newRaw)),
+      reason: reason,
+    });
+  }
+  if (assigneeChange) {
+    logRows.push({
+      creative_id: creativeId,
+      edited_by: req.user?.id || null,
+      edited_by_name: editorName,
+      field_name: 'assignee_id',
+      old_value: assigneeChange.oldUser ? (assigneeChange.oldUser.full_name || assigneeChange.oldUser.nickname || null) : null,
+      new_value: assigneeChange.newUser.full_name || assigneeChange.newUser.nickname || null,
       reason: reason,
     });
   }
@@ -7091,8 +7699,25 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     .single();
   if (updErr) return res.status(500).json({ error: updErr.message });
 
-  // ボール保持者キャッシュは project 変更でも担当が変わらない限り影響しないが、念のため同期
-  if (projectChanged) {
+  // 担当者の付け替え（旧担当の editor 系 assignment を削除 → 新担当を role='editor' で登録）
+  if (assigneeChange) {
+    const oldIds = assigneeChange.oldRows.map(r => r.id);
+    if (oldIds.length > 0) {
+      const { error: delErr } = await supabase.from('creative_assignments').delete().in('id', oldIds);
+      if (delErr) return res.status(500).json({ error: '旧担当者の解除に失敗しました: ' + delErr.message });
+    }
+    const { error: asnErr } = await supabase.from('creative_assignments').insert({
+      creative_id: creativeId,
+      user_id: assigneeChange.newUser.id,
+      role: 'editor',
+      rank_applied: assigneeChange.newUser.rank || null,
+    });
+    if (asnErr) return res.status(500).json({ error: '新担当者の登録に失敗しました: ' + asnErr.message });
+  }
+
+  // ボール保持者キャッシュは project 変更でも担当が変わらない限り影響しないが、念のため同期。
+  // 担当者変更時はボールが新担当者に移る可能性があるため必ず同期する。
+  if (projectChanged || assigneeChange) {
     syncBallHolderId(creativeId).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
 
@@ -7257,29 +7882,41 @@ router.get('/creatives/:id/rate-overrides', requireAuth, async (req, res) => {
   }
 
   // 担当に存在しないが override だけ残っている行も末尾に追加（孤立データの可視化）
+  // パフォーマンス: 旧実装は孤立 override 1件ごとに roles / users を 1 クエリずつ
+  // 取得していた（N×2 クエリ）。.in() の一括 2 クエリ + Map 参照に変更（出力は同一）。
+  const orphanOverrides = [];
   for (const o of existingOverrides) {
     const key = `${o.role_id}::${o.user_id || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    let roleLabel = null;
-    let userName = null;
-    {
-      const { data: r } = await supabase.from('roles').select('id, code, label').eq('id', o.role_id).maybeSingle();
-      roleLabel = r?.label || null;
+    orphanOverrides.push(o);
+  }
+  if (orphanOverrides.length > 0) {
+    const orphanRoleIds = Array.from(new Set(orphanOverrides.map(o => o.role_id).filter(v => v != null)));
+    const orphanUserIds = Array.from(new Set(orphanOverrides.map(o => o.user_id).filter(Boolean)));
+    const [rolesRes, usersRes] = await Promise.all([
+      orphanRoleIds.length
+        ? supabase.from('roles').select('id, code, label').in('id', orphanRoleIds)
+        : Promise.resolve({ data: [] }),
+      orphanUserIds.length
+        ? supabase.from('users').select('id, full_name, email').in('id', orphanUserIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+    const orphanRoleById = new Map((rolesRes.data || []).map(r => [r.id, r]));
+    const orphanUserById = new Map((usersRes.data || []).map(u => [u.id, u]));
+    for (const o of orphanOverrides) {
+      const r = orphanRoleById.get(o.role_id);
+      const u = o.user_id ? orphanUserById.get(o.user_id) : null;
+      costOverrides.push({
+        role_id: o.role_id,
+        role_code: null,
+        role_name_ja: r?.label || null,
+        user_id: o.user_id || null,
+        user_name: u ? (u.full_name || u.email || null) : null,
+        amount: Number(o.amount),
+        line_amount: null,
+      });
     }
-    if (o.user_id) {
-      const { data: u } = await supabase.from('users').select('id, full_name, email').eq('id', o.user_id).maybeSingle();
-      userName = u?.full_name || u?.email || null;
-    }
-    costOverrides.push({
-      role_id: o.role_id,
-      role_code: null,
-      role_name_ja: roleLabel,
-      user_id: o.user_id || null,
-      user_name: userName,
-      amount: Number(o.amount),
-      line_amount: null,
-    });
   }
 
   res.json({
@@ -7874,6 +8511,48 @@ router.get('/creatives/:id/files', async (req, res) => {
   res.json(data);
 });
 
+// Drive の親フォルダ URL を返すエンドポイント
+// WHY: クライアント確認URLは個別ファイル単位なので、編集者が「素材一式・過去稿が入っているフォルダ」を開きたいユースケースをカバーできない。
+//      creative_files に直接 parent_folder_id を持たせる案もあるが、(1) 既存アップロード分の埋め戻しが要る (2) Drive 側で親が動くと不整合になる
+//      という理由で、最新ファイルから動的に parents を解決する方式にしている。
+router.get('/creatives/:id/drive-folder', requireAuth, async (req, res) => {
+  try {
+    // NOTE: creative_files の時刻列は uploaded_at（created_at は存在しない）。
+    //       誤って created_at で order すると PostgREST が 42703 を返し、
+    //       ファイルがあっても常に「まだファイルがアップロードされていません」になる（#712 のバグ）。
+    //       drive_file_id が null の行（旧データ等）は除外して、最新の実ファイルを採る。
+    const { data: files, error } = await supabase
+      .from('creative_files')
+      .select('drive_file_id')
+      .eq('creative_id', req.params.id)
+      .not('drive_file_id', 'is', null)
+      .order('uploaded_at', { ascending: false })
+      .limit(1);
+    if (error) return res.status(500).json({ error: error.message });
+    const latest = files && files[0];
+    if (!latest || !latest.drive_file_id) {
+      return res.status(404).json({ error: 'まだファイルがアップロードされていません' });
+    }
+    const drive = await getDriveService();
+    const meta = await drive.files.get({
+      fileId: latest.drive_file_id,
+      fields: 'parents',
+      supportsAllDrives: true,
+    });
+    const parentId = (meta.data.parents || [])[0];
+    if (!parentId) {
+      return res.status(404).json({ error: '親フォルダが見つかりませんでした' });
+    }
+    res.json({
+      folder_id: parentId,
+      folder_url: `https://drive.google.com/drive/folders/${parentId}`,
+    });
+  } catch (err) {
+    console.error('[drive-folder] failed:', err?.stack || err?.message || err, { creativeId: req.params.id });
+    res.status(500).json({ error: err?.message || 'drive folder lookup failed' });
+  }
+});
+
 // ファイルアップロード（Google Drive）
 router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => {
   const creativeId = req.params.id;
@@ -7901,99 +8580,19 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   //   2) この POST が来た時点で creative_files から該当行は消えている → MAX(version) は M-1
   //   3) M-1 はスナップショット済(提出済) → assignedVersion = (M-1)+1 = M
   //   → 同じバージョン番号で再アップロードされる（V2 取り消し→再アップ → V2 のまま、V3 にはならない）
+  // バージョン採番 + 同ラウンド掃除 + generated_name 書き換えは共通ヘルパへ集約
+  // （Resumable 直送経路 POST /creatives/:id/upload-session/init と同一ロジックを使う）。
+  // 採番ルールの詳細は deriveCreativeRoundVersion() のコメント / ADR 011 補足を参照。
   const requestedVersion = parseInt(req.body.version, 10);
-  const { data: maxRow } = await supabase
-    .from('creative_files')
-    .select('version')
-    .eq('creative_id', creativeId)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const M = maxRow?.version || 0;
-  let version;
-  if (M === 0) {
-    version = 1;
-  } else {
-    // M が snapshot 済か確認
-    let snapForMCount = 0;
-    try {
-      const { data: snapRows } = await supabase
-        .from('creative_version_history')
-        .select('id')
-        .eq('creative_id', creativeId)
-        .eq('version_num', M)
-        .limit(1);
-      snapForMCount = (snapRows && snapRows.length) || 0;
-    } catch (e) {
-      // creative_version_history テーブルが無い環境（旧 DB）は
-      // 旧挙動 (MAX+1) にフォールバック。
-      console.warn('[creatives/upload] cvh check failed → fallback to MAX+1:', e?.message || e);
-      snapForMCount = 1;
-    }
-    if (snapForMCount > 0) {
-      version = M + 1; // M が提出済 → 次ラウンドへ
-    } else {
-      // M が未提出 (snapshot 無し) のとき:
-      //   - 通常: 同ラウンド維持 (= 取り消し→再アップで version=M のまま)
-      //   - ただし「後修正 status」中で初めて修正版をアップする場合は次ラウンドへ進める。
-      //     理由: snapshot は「修正→再チェック」遷移時に確定するため、Dチェック→D後修正
-      //     の遷移時点では V1 は未 snapshot。この間に V2 をアップすると単純な「未 snapshot」
-      //     判定では V1 と衝突する (version=1 採番) ので、status を見て補正する。
-      //     ADR 011 補足セクション参照。
-      const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
-      let creativeStatus = null;
-      try {
-        const { data: cRow } = await supabase
-          .from('creatives')
-          .select('status')
-          .eq('id', creativeId)
-          .maybeSingle();
-        creativeStatus = cRow?.status || null;
-      } catch (_) { /* 取れなくても続行 */ }
-      if (creativeStatus && REVISION_STATUSES.includes(creativeStatus)) {
-        version = M + 1; // 後修正中の初アップ → 次ラウンドへ
-      } else {
-        version = M;     // 同ラウンド維持（取消→再アップ等）
-      }
-    }
-  }
+  const { version } = await deriveCreativeRoundVersion(creativeId);
   if (requestedVersion && requestedVersion !== version) {
-    console.info(
-      `[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId}, M=${M})`
-    );
+    console.info(`[creatives/upload] version override: front=${requestedVersion} → server=${version} (creative_id=${creativeId})`);
   } else {
-    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId}, M=${M})`);
+    console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId})`);
   }
-
-  // 安全装置: 同一ラウンド (=同一 version) で未提出の creative_files 行がまだ残っているケース
-  // （UI ガードを通らずサーバへ直接 POST が来た / DELETE 失敗で取り残されたゴミ等）。
-  // 残っていると同じ version_num で複数行できて _cdRoundsCache の整合が壊れるため、
-  // best-effort で削除してから新しい行を INSERT する。Drive 側の orphan は許容（ロギングのみ）。
-  if (version === M && M > 0) {
-    try {
-      const { data: stale } = await supabase
-        .from('creative_files')
-        .select('id, drive_file_id, faststart_drive_file_id')
-        .eq('creative_id', creativeId)
-        .eq('version', version);
-      if (stale && stale.length > 0) {
-        console.warn(`[creatives/upload] same-round stale rows detected (version=${version}, count=${stale.length}) → cleanup`);
-        const ids = stale.map(r => r.id);
-        // 子テーブル best-effort（CASCADE 環境では no-op）
-        try { await supabase.from('creative_file_comments').delete().in('creative_file_id', ids); } catch (_) {}
-        try { await supabase.from('creative_file_likes').delete().in('creative_file_id', ids); } catch (_) {}
-        await supabase.from('creative_files').delete().in('id', ids);
-      }
-    } catch (e) {
-      console.warn('[creatives/upload] same-round cleanup failed (続行):', e?.message || e);
-    }
-  }
-
-  // generated_name に埋め込まれた _vN を確定 version で上書きする。
-  // 例: フロントが "cool_v1.mp4" を送ってきても、サーバ採番が 3 なら "cool_v3.mp4" にする。
-  // _vN パターンが無ければそのまま使う（保険）。
+  await cleanupCreativeFilesForVersion(creativeId, version);
   if (generated_name) {
-    const replaced = generated_name.replace(/_v\d+(\.[^.]+)$/, `_v${version}$1`);
+    const replaced = rewriteGeneratedNameVersion(generated_name, version);
     if (replaced !== generated_name) {
       console.info(`[creatives/upload] generated_name rewritten: ${generated_name} → ${replaced}`);
     }
@@ -8025,51 +8624,12 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       const drive = await getDriveService();
       driveLog('info', 'Driveサービス認証OK');
 
-      // ルート → クライアント名 → 案件名 を自動作成
-      const clientName = (project?.clients?.name || 'その他').replace(/[/\\?%*:|"<>]/g, '_');
-      const projectName = (project?.name || '案件未設定').replace(/[/\\?%*:|"<>]/g, '_');
-
-      driveStep = 'clientFolder';
-      driveLog('info', `クライアントフォルダ取得/作成: ${clientName}`);
-      const clientFolderId = await getOrCreateFolder(drive, rootFolderId, clientName);
-      if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
-      driveLog('info', `クライアントフォルダOK`, { id: clientFolderId });
-
-      driveStep = 'projectFolder';
-      driveLog('info', `案件フォルダ取得/作成: ${projectName}`);
-      const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
-      if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
-      driveLog('info', `案件フォルダOK`, { id: baseFolderId });
-
-      const now = new Date();
-      const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-      // 動画か静止画かでフォルダ名を分ける
-      const isVideo = file.mimetype.startsWith('video/');
-      const typeFolder = isVideo ? '動画' : '静止画';
-
-      driveStep = 'monthFolder';
-      const monthFolderId = await getOrCreateFolder(drive, baseFolderId, yyyymm);
-      driveLog('info', `月フォルダOK: ${yyyymm}`, { id: monthFolderId });
-
+      // ルート → クライアント名 → 案件名 → yyyymm → [週] → 種別 のフォルダ階層を解決
+      // （共通ヘルパ resolveCreativeTypeFolder。Resumable 直送経路と同一）
       driveStep = 'typeFolder';
-      let typeFolderId;
-      if (project.deadline_unit === 'weekly' && project.deadline_weekday !== null && project.deadline_weekday !== undefined) {
-        const jsTarget = (project.deadline_weekday + 1) % 7;
-        const daysUntil = ((jsTarget - now.getDay()) + 7) % 7 || 7;
-        const deadline = new Date(now);
-        deadline.setDate(deadline.getDate() + daysUntil);
-        const dMonth = deadline.getMonth() + 1;
-        const dDay = deadline.getDate();
-        const firstOfMonth = new Date(deadline.getFullYear(), deadline.getMonth(), 1);
-        const weekNum = Math.ceil((dDay + firstOfMonth.getDay()) / 7);
-        const weekFolderName = `W${weekNum}_${String(dMonth).padStart(2,'0')}${String(dDay).padStart(2,'0')}`;
-        const weekFolderId = await getOrCreateFolder(drive, monthFolderId, weekFolderName);
-        typeFolderId = await getOrCreateFolder(drive, weekFolderId, typeFolder);
-      } else {
-        typeFolderId = await getOrCreateFolder(drive, monthFolderId, typeFolder);
-      }
-      driveLog('info', `タイプフォルダOK: ${typeFolder}`, { id: typeFolderId });
+      const isVideo = file.mimetype.startsWith('video/');
+      const typeFolderId = await resolveCreativeTypeFolder(drive, project, isVideo);
+      driveLog('info', `フォルダ階層OK`, { id: typeFolderId });
       typeFolderId_ = typeFolderId; // faststart 後処理で同フォルダにアップロードするため外側に渡す
       // ファイルは typeFolder に直接格納（workFolder は廃止）
 
@@ -8117,49 +8677,22 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
     else driveLog('warn', '環境変数未設定のためDriveスキップ');
   }
 
-  // creative_files テーブルに記録
+  // creative_files テーブルに記録（共通ヘルパ insertCreativeFileRow。
   // mime_type / file_size をキャッシュしておくと /files/:fileId/stream で
-  // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる
-  const willFaststart = shouldFaststart(file.mimetype, generated_name || file.originalname);
-  const uploadedBy = req.user?.id || null;
-  // 必須フィールド（旧スキーマでも必ず存在する）
-  const baseRow = {
-    creative_id: creativeId,
+  // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる）
+  const { fileRecord, error: fErr, willFaststart } = await insertCreativeFileRow({
+    creativeId,
     original_name: file.originalname,
-    generated_name: generated_name || file.originalname,
-    width: parseInt(width) || null,
-    height: parseInt(height) || null,
-    version: version,
-    drive_file_id: driveFileId,
-    drive_url: driveUrl,
-    uploaded_by: uploadedBy,
-  };
-  // 後方追加した optional 列（mime_type / file_size / faststart_status）。
-  // 本番 DB に列が無い環境では INSERT が PGRST204 で失敗するので、
-  // その場合は optional 列を外して再試行する。
-  const optionalRow = {
-    mime_type: file.mimetype || null,
-    file_size: file.size || file.buffer?.length || null,
-    faststart_status: willFaststart ? 'pending' : 'skipped',
-  };
-  const isMissingCol = (err) => {
-    if (!err) return false;
-    const msg = err.message || '';
-    return /column .+ does not exist/.test(msg) || /Could not find the .+ column/.test(msg) || err.code === 'PGRST204';
-  };
-  let { data: fileRecord, error: fErr } = await supabase
-    .from('creative_files')
-    .insert({ ...baseRow, ...optionalRow })
-    .select()
-    .single();
-  if (isMissingCol(fErr)) {
-    console.warn('[creative_files] 後方追加列なし → fallback で再試行:', fErr.message);
-    ({ data: fileRecord, error: fErr } = await supabase
-      .from('creative_files')
-      .insert(baseRow)
-      .select()
-      .single());
-  }
+    generated_name,
+    width,
+    height,
+    version,
+    driveFileId,
+    driveUrl,
+    mimeType: file.mimetype,
+    fileSize: file.size || file.buffer?.length || null,
+    uploadedBy: req.user?.id || null,
+  });
   if (fErr) return res.status(500).json({ error: fErr.message });
 
   // version はサーバ側採番が真。フロントはこの値を使ってトースト等を表示する。
@@ -8174,6 +8707,199 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
       generateFaststart({ creativeFileId: fileRecord.id })
         .catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
     });
+  }
+});
+
+// ==================== クリエイティブ Resumable 直送アップロード ====================
+// 課題: 動画素材を multer 経由（POST /creatives/:id/upload）で Railway バックエンドに通すと、
+//       遅回線で約5分を超えた瞬間に Railway エッジプロキシのリクエストタイムアウトが発火し、
+//       HTTP 502 "Application failed to respond" でアップロードが中断される（バグ #b7041ffb /
+//       #9f208f5d）。Node の server.requestTimeout を 30分 に延長しても、その手前で Railway
+//       エッジが切るため効果がない（= プラットフォーム側 timeout は変更不可）。
+// 解決: バイトを Railway に通さず、ブラウザ → Google Drive へ直接 Resumable Upload で PUT する。
+//       バックエンドは (1) セッション発行 (init) と (2) DB 登録 (complete) だけを担う。
+//       どちらも短時間で完了するため Railway エッジ timeout に当たらない。
+//
+// フロー:
+//   1) POST /creatives/:id/upload-session/init
+//      → サーバが SA トークンで Drive Resumable セッションを発行し driveSessionUrl を返す
+//   2) ブラウザが driveSessionUrl へチャンク PUT（Content-Range 指定）。最終チャンクの
+//      レスポンス JSON から driveFileId を得る
+//   3) POST /creatives/:id/upload-session/complete
+//      → 公開権限付与 + creative_files INSERT + faststart 起動（multer 経路と同一）
+//
+// SA 連携が無い環境では init が { ok:false, fallback:true } を返し、フロントは従来 multer 経路に
+// 自動フォールバックする（小容量はそのまま動く）。
+
+const CREATIVE_RESUMABLE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3/files';
+
+// ----- 1) Resumable セッション発行 -----
+// Body: { filename, fileSize, mimeType, version? }
+router.post('/creatives/:id/upload-session/init', async (req, res) => {
+  try {
+    const creativeId = req.params.id;
+    const filename = String(req.body?.filename || '').trim();
+    const fileSize = Number(req.body?.fileSize);
+    const mimeType = String(req.body?.mimeType || 'application/octet-stream');
+
+    if (!filename) return res.status(400).json({ error: 'filename が必要です' });
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      return res.status(400).json({ error: 'fileSize が不正です' });
+    }
+
+    // SA / ルートフォルダ未設定 → フロントは multer 経路へフォールバック（エラー扱いにしない）
+    const rootFolderId = await getDriveRootFolderId();
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY || !rootFolderId) {
+      return res.json({
+        ok: false,
+        fallback: true,
+        reason: !process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? 'no_service_account' : 'no_root_folder',
+      });
+    }
+
+    // クリエイティブ + 案件情報
+    const { data: creative, error: cErr } = await supabase
+      .from('creatives')
+      .select('*, projects(id, name, deadline_unit, deadline_weekday, clients(id, name, client_code))')
+      .eq('id', creativeId)
+      .single();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    const project = creative.projects;
+
+    // バージョン採番（サーバ単一ソース）+ generated_name の _vN 上書き
+    const { version } = await deriveCreativeRoundVersion(creativeId);
+    const generated_name = rewriteGeneratedNameVersion(filename, version) || filename;
+
+    // フォルダ階層解決
+    const drive = await getDriveService();
+    const isVideo = (mimeType || '').startsWith('video/');
+    const typeFolderId = await resolveCreativeTypeFolder(drive, project, isVideo);
+
+    // Drive Resumable Upload セッション発行（SA トークン）。
+    // Drive はセッション発行時の Origin を記録し、後続のブラウザ→セッションURL の PUT を
+    // 同 Origin から来ているか CORS 検証する。Node fetch では Origin が自動付与されないため
+    // ブラウザの Origin を明示転送する（忘れると PUT が全て CORS で弾かれる）。
+    const accessToken = await getServiceAccountAccessToken();
+    const browserOrigin = req.headers.origin
+      || (req.headers.referer ? new URL(req.headers.referer).origin : null)
+      || `${req.protocol}://${req.get('host')}`;
+
+    const initResp = await fetch(
+      `${CREATIVE_RESUMABLE_UPLOAD_BASE}?uploadType=resumable&supportsAllDrives=true`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': String(fileSize),
+          'Origin': browserOrigin,
+        },
+        body: JSON.stringify({ name: generated_name, parents: [typeFolderId] }),
+      }
+    );
+    if (!initResp.ok) {
+      const text = await initResp.text().catch(() => '');
+      driveLog('error', `resumable init失敗: ${initResp.status} ${text.slice(0, 200)}`, { creativeId });
+      return res.status(502).json({
+        error: 'Drive Resumable セッション発行に失敗しました',
+        upstream_status: initResp.status,
+        upstream_body: text.slice(0, 500),
+      });
+    }
+    const driveSessionUrl = initResp.headers.get('location');
+    if (!driveSessionUrl) {
+      return res.status(502).json({ error: 'Drive から セッションURL（Location）が返りませんでした' });
+    }
+
+    driveLog('info', 'resumable セッション発行OK', { creativeId, version, generated_name });
+    res.json({
+      ok: true,
+      driveSessionUrl,
+      version,
+      generated_name,
+      // Drive Resumable は最終以外のチャンクを 256KB の倍数で要求する。フロントは独自の
+      // チャンクサイズ（256KB 倍数）を使うのでこの値は上限の目安。
+      recommended_chunk_size_bytes: 256 * 1024 * 1024,
+    });
+  } catch (e) {
+    driveLog('error', `resumable init error: ${e?.message || e}`);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ----- 2) 完了登録（公開権限 + creative_files INSERT + faststart） -----
+// Body: { driveFileId, version, generated_name, original_name?, mimeType?, width?, height?, fileSize? }
+router.post('/creatives/:id/upload-session/complete', async (req, res) => {
+  try {
+    const creativeId = req.params.id;
+    const driveFileId = String(req.body?.driveFileId || '').trim();
+    const version = parseInt(req.body?.version, 10);
+    const generated_name = String(req.body?.generated_name || '').trim();
+    const original_name = String(req.body?.original_name || generated_name || '').trim();
+    const mimeType = String(req.body?.mimeType || '').trim() || null;
+    const width = req.body?.width;
+    const height = req.body?.height;
+    const fileSize = Number(req.body?.fileSize) || null;
+
+    if (!driveFileId) return res.status(400).json({ error: 'driveFileId が必要です' });
+    if (!Number.isFinite(version)) return res.status(400).json({ error: 'version が必要です' });
+
+    // 公開権限付与 + webViewLink 取得（SA）。失敗しても DB 登録は継続する。
+    let driveUrl = null;
+    try {
+      const drive = await getDriveService();
+      try {
+        await drive.permissions.create({
+          fileId: driveFileId,
+          supportsAllDrives: true,
+          requestBody: { role: 'reader', type: 'anyone' },
+        });
+        driveLog('info', '公開権限設定OK(resumable)', { driveFileId });
+      } catch (permErr) {
+        driveLog('warn', `権限設定失敗(resumable, 閲覧には影響なし): ${permErr.message}`);
+      }
+      const meta = await drive.files.get({
+        fileId: driveFileId,
+        fields: 'id, webViewLink',
+        supportsAllDrives: true,
+      });
+      driveUrl = meta.data.webViewLink || null;
+    } catch (e) {
+      driveLog('warn', `resumable complete: Drive 後処理失敗（DB登録は継続）: ${e?.message || e}`);
+    }
+
+    // 同 version の未提出行を掃除してから INSERT（multer 経路と同一）
+    await cleanupCreativeFilesForVersion(creativeId, version);
+
+    const { fileRecord, error: fErr, willFaststart } = await insertCreativeFileRow({
+      creativeId,
+      original_name,
+      generated_name,
+      width,
+      height,
+      version,
+      driveFileId,
+      driveUrl,
+      mimeType,
+      fileSize,
+      uploadedBy: req.user?.id || null,
+    });
+    if (fErr) return res.status(500).json({ error: fErr.message });
+
+    // version はサーバ側採番が真。フロントはこの値を使ってトースト等を表示する。
+    res.json({ ok: true, file: fileRecord, version, drive_url: driveUrl });
+
+    // faststart プレビュー版生成（fire-and-forget、multer 経路と同一）
+    if (willFaststart && fileRecord?.id && faststartIsEnabled()) {
+      setImmediate(() => {
+        generateFaststart({ creativeFileId: fileRecord.id })
+          .catch(err => driveLog('error', `faststart 起動失敗: ${err?.message}`, { creativeFileId: fileRecord.id }));
+      });
+    }
+  } catch (e) {
+    driveLog('error', `resumable complete error: ${e?.message || e}`);
+    res.status(500).json({ error: e?.message || String(e) });
   }
 });
 
@@ -8284,12 +9010,15 @@ router.get('/files/:fileId/stream', async (req, res) => {
     // creative_files から原本のキャッシュとfaststart情報を取得
     const { data: cf } = await supabase
       .from('creative_files')
-      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size')
+      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status')
       .eq('drive_file_id', req.params.fileId)
       .maybeSingle();
 
     const wantsOriginal = req.query.original === '1';
-    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id;
+    // faststart_status==='done' のときだけ faststart 版を使う。
+    // 生成失敗/処理中（failed/processing）で残った不完全な faststart_drive_file_id を
+    // 掴むと再生不能になるため、direct-url 側と条件を揃える（旧コードは status 未チェックだった）。
+    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
     const effectiveFileId = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
     const cachedSize     = useFaststart ? cf.faststart_file_size : cf?.file_size;
     const cachedMimeType = cf?.mime_type; // -c copy なので原本と同じ
@@ -8356,6 +9085,73 @@ router.get('/files/:fileId/stream', async (req, res) => {
   } catch (e) {
     console.error('Drive stream error:', e.message);
     if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// 動画プレビュー用の Drive 直リンクを発行する（ADR 021）
+//
+// 経路: Browser → Railway (このエンドポイント) で URL を貰い、その後は
+//       Browser → Drive (Google CDN) で直接 stream。Railway のプロキシ帯域を消費しない。
+// セキュリティ: 既存 lib/drive-share.js と同じく anyone-with-link reader を idempotent に付与。
+//              元々クライアントレビュー時にも同じ操作をしている運用と整合。
+// fallback: 失敗時はフロント側で従来の /files/:fileId/stream プロキシに切り替わる。
+router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    // creative_files から faststart 情報を取得（faststart 版があれば優先）
+    const { data: cf } = await supabase
+      .from('creative_files')
+      .select('mime_type, faststart_drive_file_id, faststart_status')
+      .eq('drive_file_id', req.params.fileId)
+      .maybeSingle();
+
+    const wantsOriginal = req.query.original === '1';
+    const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
+    const targetFileId  = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
+
+    const drive = await getDriveService();
+
+    // anyone-with-link reader を idempotent に付与
+    try {
+      await drive.permissions.create({
+        fileId: targetFileId,
+        supportsAllDrives: true,
+        requestBody: { role: 'reader', type: 'anyone' },
+      });
+    } catch (e) {
+      const code = e?.code || e?.response?.status;
+      const msg  = e?.message || '';
+      // 既に付与済 / 制限などは致命的でない
+      if (!(code === 400 || code === 403 || /already exists|cannotShareTeamDriveTopFolderWithAnyoneOrDomains|publishOutNotPermitted|sharingRateLimitExceeded/i.test(msg))) {
+        throw e;
+      }
+    }
+
+    const meta = await drive.files.get({
+      fileId: targetFileId,
+      fields: 'id, webContentLink, webViewLink, mimeType, size',
+      supportsAllDrives: true,
+    });
+
+    // webContentLink (drive.google.com/uc?...&export=download) は 25MB 超で
+    // 「ウイルススキャンできません」の確認 HTML ページを挟む仕様。動画はほぼ全て
+    // 該当し <video> が HTML を掴んで再生失敗 → 直リンクが実質ずっと死んでいた。
+    // 確認ページを回避する usercontent ダウンロードエンドポイント + confirm=t を返す。
+    // ※ 効果はファイル/環境依存。失敗時はフロントが /files/:id/stream へ自動 fallback する。
+    const fid = meta.data.id || targetFileId;
+    const directUrl = `https://drive.usercontent.google.com/download?id=${fid}&export=download&confirm=t`;
+
+    res.json({
+      contentUrl:     directUrl,
+      webContentLink: meta.data.webContentLink || null, // 参考用（旧来の値）
+      viewUrl:        meta.data.webViewLink || null,
+      mimeType:       meta.data.mimeType || cf?.mime_type || null,
+      size:           meta.data.size ? Number(meta.data.size) : null,
+      source:         useFaststart ? 'faststart' : 'master',
+    });
+  } catch (e) {
+    console.error('[direct-url] failed:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -9244,12 +10040,17 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     ({ data, error } = await supabase.from('users').update(attempt).eq('id', req.params.id).select().single());
   }
   if (error) return res.status(500).json({ error: error.message });
+  // users 行が変わった → deserializeUser の短TTLキャッシュを即時無効化
+  // （role / is_active / rank / team_id / nickname 等、req.user に載る列の変更を即反映）
+  invalidateUserCache(req.params.id);
   // dual-write: users.role が更新された場合は user_roles も同期する。
   // 'role' フィールドが updateData に含まれていた場合のみ実施（admin による変更時のみ）。
   // 失敗してもアプリは止めない（ログ警告のみ）。
   if (Object.prototype.hasOwnProperty.call(updateData, 'role')) {
     await syncUserRolesForLegacyRole(req.params.id, updateData.role);
     invalidateRolesCache();
+    // sync 内でも無効化しているが、sync が早期 return した場合に備えてここでも無効化
+    invalidateUserRolesCache(req.params.id);
   }
   // 列が drop された場合は警告フラグを付ける（フロント側で toast 警告を出せるよう）
   if (droppedColumns.length > 0) {
@@ -9280,6 +10081,7 @@ router.delete('/members/:id', requireAuth, requirePermission('member.delete'), a
     // ユーザー削除
     const { error } = await supabase.from('users').delete().eq('id', targetId);
     if (error) return res.status(500).json({ error: error.message });
+    invalidateByKey('teams:list'); // teams.director_id / producer_id を null 化したため
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -9321,6 +10123,38 @@ router.post('/members/:id/reactivate', requireAuth, requirePermission('member.de
   res.json(data);
 });
 
+// メンバーアバターをバイナリ配信。
+// 一覧/詳細系 API には base64 を同梱せず（res.json 変換ミドルウェア参照）、
+// `/api/haruka/members/:id/avatar?v=<ver>` を返して本体はここから遅延取得する。
+// /tweets/:id/image と同じパターン。
+//   - 認証: ルーター先頭の requireAuth ガード（<img> も同一オリジンなので Cookie が乗る）
+//   - キャッシュ: アバター更新で ?v が変わる（≒不変リソース）ため 1 日キャッシュ + ETag。
+//     社内データのため private。
+//   - DB 負荷: 一覧表示直後はユーザー数ぶんの <img> リクエストが同時に来るため、
+//     短期 TTL キャッシュで Supabase への 300KB fetch の重複を抑える。
+//     保存/削除時に invalidateByKey で即時破棄。
+const AVATAR_BIN_TTL_MS = 10 * 60 * 1000;
+router.get('/members/:id/avatar', async (req, res) => {
+  const userId = req.params.id;
+  const cached = await ttlCache(`avatar-bin:${userId}`, AVATAR_BIN_TTL_MS, async () => {
+    const { data, error } = await supabase
+      .from('users').select('avatar_url').eq('id', userId).maybeSingle();
+    if (error) throw new Error(error.message);
+    const m = /^data:([^;,]+);base64,(.+)$/s.exec(data?.avatar_url || '');
+    if (!m) return null; // 未設定 → 404（null もキャッシュして DB 連打を防ぐ）
+    return { mime: m[1], buf: Buffer.from(m[2], 'base64'), ver: avatarVer(data.avatar_url) };
+  }).catch(() => undefined);
+  if (cached === undefined) return res.status(500).end();
+  if (cached === null) return res.status(404).end();
+  const etag = `"${cached.ver}"`;
+  res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+  res.setHeader('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.setHeader('Content-Type', cached.mime);
+  res.setHeader('Content-Length', cached.buf.length);
+  return res.end(cached.buf);
+});
+
 // メンバーアバター登録
 // 方針: クライアント側で 300x300 JPEG にリサイズ済の Base64 を data URL 形式で受け取り
 // users.avatar_url にそのまま保存する。
@@ -9357,7 +10191,10 @@ router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (re
     .select('id, avatar_url')
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ avatar_url: data.avatar_url });
+  invalidateByKey(`avatar-bin:${targetId}`); // バイナリ配信キャッシュを即時破棄
+  // base64 は返さず、新しい ver 付きの配信 URL を返す（フロントはそのまま <img src> に使える）
+  const ver = avatarVer(data.avatar_url);
+  res.json({ avatar_url: avatarRefUrl(targetId, ver), avatar_ver: ver });
 });
 
 // メンバーアバター削除
@@ -9374,6 +10211,7 @@ router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
     .update({ avatar_url: null, updated_at: new Date().toISOString() })
     .eq('id', targetId);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey(`avatar-bin:${targetId}`); // バイナリ配信キャッシュを即時破棄
   res.json({ ok: true });
 });
 
@@ -10098,6 +10936,27 @@ router.get('/invoices', async (req, res) => {
   res.json(data);
 });
 
+// 請求書の存在する年月一覧（管理者一覧の月タブ構築用・軽量。明細ネストを含む全件fetchを避ける）
+// :id ルートより前に定義必須
+router.get('/invoices/months', async (req, res) => {
+  const { status } = req.query;
+  let q = supabase.from('invoices').select('year, month, status');
+  if (status) q = q.eq('status', status);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  // フロントの既存グループ化キー（`${year||0}-${String(month||0).padStart(2,'0')}`）と同一規則で集計
+  const byKey = new Map();
+  (data || []).forEach(r => {
+    const key = `${r.year || 0}-${String(r.month || 0).padStart(2, '0')}`;
+    if (!byKey.has(key)) byKey.set(key, { key, year: r.year, month: r.month, count: 0, submitted_count: 0 });
+    const m = byKey.get(key);
+    m.count++;
+    if (r.status === 'submitted') m.submitted_count++;
+  });
+  const months = [...byKey.values()].sort((a, b) => b.key.localeCompare(a.key));
+  res.json(months);
+});
+
 // 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す（:idより前に定義必須）
 router.get('/invoices/preview-items', async (req, res) => {
   const uid = req.user?.id;
@@ -10119,8 +10978,31 @@ router.get('/invoices/preview-items', async (req, res) => {
     projects(id, name, director_id, producer_id, clients(name, client_code)),
     creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
   `;
+
+  // 当月範囲（DB側絞り込みと下のJS側フィルタの両方で同じ値を使う）
+  const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+  const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
+
+  // パフォーマンス: 旧実装は creatives をほぼ全件取得して JS でフィルタしていた。
+  // JS フィルタ `dl = final_deadline || draft_deadline; dl >= startDate && dl <= endDate`
+  // と同一の条件を DB 側に押し込む（final_deadline/draft_deadline は共に DATE 列）:
+  //   - final_deadline あり → final_deadline が当月範囲内
+  //   - final_deadline なし(NULL) → draft_deadline が当月範囲内（draft しか無い行の救済）
+  // ※ JS 側フィルタも従来通り残すため、結果は完全に同一。
+  const MONTH_RANGE_OR = [
+    `and(final_deadline.gte.${startDate},final_deadline.lte.${endDate})`,
+    `and(final_deadline.is.null,draft_deadline.gte.${startDate},draft_deadline.lte.${endDate})`,
+  ].join(',');
+
+  // 自分のアサイン絞り込みは aliased inner join（assignee_filter）で行う。
+  // 本体の creative_assignments 埋め込みを !inner + filter にすると埋め込み配列まで
+  // 自分の行だけに切り詰められてしまうため、フィルタ専用の別エイリアスを使い、
+  // 返却データの形（全アサイン入り配列）を旧実装と同一に保つ。
   const [{ data: assignedCreatives, error: cErr }, { data: directedProjects }, { data: producedProjects }] = await Promise.all([
-    supabase.from('creatives').select(CREATIVE_SELECT).not('creative_assignments', 'is', null),
+    supabase.from('creatives')
+      .select(`${CREATIVE_SELECT}, assignee_filter:creative_assignments!inner(user_id)`)
+      .eq('assignee_filter.user_id', uid)
+      .or(MONTH_RANGE_OR),
     supabase.from('projects').select('id').eq('director_id', uid),
     supabase.from('projects').select('id').eq('producer_id', uid),
   ]);
@@ -10136,7 +11018,8 @@ router.get('/invoices/preview-items', async (req, res) => {
     const { data: lc } = await supabase
       .from('creatives')
       .select(CREATIVE_SELECT)
-      .in('project_id', leaderProjectIds);
+      .in('project_id', leaderProjectIds)
+      .or(MONTH_RANGE_OR);
     leaderCreatives = lc || [];
   }
 
@@ -10147,9 +11030,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   const allCreatives = Array.from(creativesById.values());
 
   // 当月final_deadlineフィルタ + （自分がアサイン or ディレクター or プロデューサー）
-  const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
-  const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
-
+  // ※ DB側で同条件を絞り込み済みだが、同一結果保証のため従来のJSフィルタも残す
   const myCreatives = allCreatives.filter(c => {
     const mine = c.creative_assignments?.some(a => a.user_id === uid);
     const isDirector = c.projects?.director_id === uid;
@@ -10168,7 +11049,7 @@ router.get('/invoices/preview-items', async (req, res) => {
     const { data: lines, error: linesErr } = await supabase
       .from('project_estimate_lines')
       .select(`
-        id, project_id, category_id, name, planned_count, client_unit_price, status, sort_order,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
         category:creative_categories(id, code, name),
         line_costs:project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
@@ -11302,6 +12183,64 @@ const TWEET_BODY_MAX = 280;
 const TWEET_COMMENT_MAX = 500;
 const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
 
+// 一覧で取得する列。image_data（base64 data URL・最大 500KB）はここに含めない。
+//   一覧に base64 を載せると 200 件で数 MB になり、転送・JSON パース・<img> デコードが
+//   重かった上、`loading="lazy"` も data URL には効かず全画像が即デコードされていた。
+//   一覧は has_image フラグだけ返し、本体は GET /tweets/:id/image から遅延取得する。
+const TWEET_LIST_COLUMNS =
+  'id, user_id, body, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)';
+
+// tweets 一覧に reaction 集計・自分のリアクション・has_image を付与して返す。
+//   通常一覧 / mine 経路で共通（旧来は両経路に同じ集計ロジックが重複していた）。
+async function enrichTweetList(list, currentUserId) {
+  if (!list || list.length === 0) return [];
+  const ids = list.map(t => t.id);
+  // リアクション全件と「画像を持つ tweet の id」を並列取得（image_data 本体は引かない）
+  const [reactionsRes, imagesRes] = await Promise.all([
+    // リアクションした本人の表示名も埋め込む（ホバーで「誰が押したか」を出すため）。
+    // tweet_reactions.user_id → users への FK を `users!user_id` で明示。
+    supabase.from('tweet_reactions')
+      .select('tweet_id, user_id, reaction_type, users!user_id(id, full_name, nickname)')
+      .in('tweet_id', ids),
+    supabase.from('tweets').select('id').not('image_data', 'is', null).in('id', ids),
+  ]);
+  const imageIdSet = new Set((imagesRes.data || []).map(r => r.id));
+  const countByType = new Map();    // tweet_id -> { good: n, heart: n, ... }
+  const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
+  const usersByType = new Map();    // tweet_id -> { good: [{id,full_name,nickname}], ... }
+  (reactionsRes.data || []).forEach(r => {
+    if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
+    const cm = countByType.get(r.tweet_id);
+    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+    if (r.users) {
+      if (!usersByType.has(r.tweet_id)) usersByType.set(r.tweet_id, {});
+      const um = usersByType.get(r.tweet_id);
+      (um[r.reaction_type] = um[r.reaction_type] || []).push(r.users);
+    }
+    if (r.user_id === currentUserId) {
+      if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
+      myReactionsMap.get(r.tweet_id).add(r.reaction_type);
+    }
+  });
+  return list.map(t => {
+    const myReactions = Array.from(myReactionsMap.get(t.id) || []);
+    const counts = countByType.get(t.id) || {};
+    const heartCount = counts.heart || 0;
+    return {
+      ...t,
+      has_image: imageIdSet.has(t.id),
+      reaction_count: t.reaction_count ?? 0,
+      comment_count:  t.comment_count  ?? 0,
+      reaction_counts: counts,           // { good: 3, heart: 2, ... }
+      reaction_users: usersByType.get(t.id) || {}, // { good: [{id,full_name,nickname}], ... }
+      my_reactions: myReactions,         // ['good','heart']
+      // 互換維持（旧UIが残っても壊れないように）
+      like_count: heartCount,
+      my_liked:   myReactions.includes('heart'),
+    };
+  });
+}
+
 // 自分のいいね状態 + いいね件数を含む一覧
 //   Phase 1 段階4 拡張: my_reactions / reaction_count / comment_count を付与。
 //   既存 like_count / my_liked は heart リアクション数で計算して互換維持。
@@ -11329,7 +12268,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // FK ヒント `users!user_id` を明示。段階4 migration で tweet_reactions / tweet_comments
     // が users への FK を持ったことで PostgREST が relationship を一意に解決できなくなる
     // ため、tweets.user_id を介した埋め込みであることを明示する。
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+    .select(TWEET_LIST_COLUMNS)
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
 
   // ロール絞り込み（運営のみ / 個別ロール）:
@@ -11366,7 +12305,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     const [myCommentsRes, ownAndMentionRes] = await Promise.all([
       supabase.from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null),
       supabase.from('tweets')
-        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .select(TWEET_LIST_COLUMNS)
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`),
     ]);
@@ -11381,7 +12320,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // (c) コメント参加対象 — 取得したコメント tweet_id があるときだけ追加クエリ
     if (commentedTweetIds.length > 0) {
       const { data: commentTweets, error: ctErr } = await supabase.from('tweets')
-        .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)')
+        .select(TWEET_LIST_COLUMNS)
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .in('id', commentedTweetIds);
       if (ctErr) return res.status(500).json({ error: ctErr.message });
@@ -11405,36 +12344,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     list = list.slice(0, 200);
 
     if (!list.length) return res.json([]);
-
-    // 既存 GET と同じロジックでリアクションを付与
-    const ids = list.map(t => t.id);
-    const { data: allReactions } = await supabase.from('tweet_reactions')
-      .select('tweet_id, user_id, reaction_type').in('tweet_id', ids);
-    const countByType = new Map();
-    const myReactionsMap = new Map();
-    (allReactions || []).forEach(r => {
-      if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
-      const cm = countByType.get(r.tweet_id);
-      cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
-      if (r.user_id === req.user.id) {
-        if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
-        myReactionsMap.get(r.tweet_id).add(r.reaction_type);
-      }
-    });
-    return res.json(list.map(t => {
-      const myReactions = Array.from(myReactionsMap.get(t.id) || []);
-      const counts = countByType.get(t.id) || {};
-      const heartCount = counts.heart || 0;
-      return {
-        ...t,
-        reaction_count: t.reaction_count ?? 0,
-        comment_count:  t.comment_count  ?? 0,
-        reaction_counts: counts,
-        my_reactions: myReactions,
-        like_count: heartCount,
-        my_liked:   myReactions.includes('heart'),
-      };
-    }));
+    return res.json(await enrichTweetList(list, req.user.id));
   }
 
   // 通常の一覧
@@ -11446,38 +12356,24 @@ router.get('/tweets', requireAuth, async (req, res) => {
     .limit(200);
   if (error) return res.status(500).json({ error: error.message });
   if (!list || list.length === 0) return res.json([]);
-  const ids = list.map(t => t.id);
+  res.json(await enrichTweetList(list, req.user.id));
+});
 
-  // 5種リアクションを一括取得（種別ごとカウント + 自分が押した種別）
-  const { data: allReactions } = await supabase.from('tweet_reactions')
-    .select('tweet_id, user_id, reaction_type').in('tweet_id', ids);
-  const countByType = new Map();   // tweet_id -> { good: n, heart: n, ... }
-  const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
-  (allReactions || []).forEach(r => {
-    if (!countByType.has(r.tweet_id)) countByType.set(r.tweet_id, {});
-    const cm = countByType.get(r.tweet_id);
-    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
-    if (r.user_id === req.user.id) {
-      if (!myReactionsMap.has(r.tweet_id)) myReactionsMap.set(r.tweet_id, new Set());
-      myReactionsMap.get(r.tweet_id).add(r.reaction_type);
-    }
-  });
-
-  res.json(list.map(t => {
-    const myReactions = Array.from(myReactionsMap.get(t.id) || []);
-    const counts = countByType.get(t.id) || {};
-    const heartCount = counts.heart || 0;
-    return {
-      ...t,
-      reaction_count: t.reaction_count ?? 0,
-      comment_count:  t.comment_count  ?? 0,
-      reaction_counts: counts,           // { good: 3, heart: 2, ... }
-      my_reactions: myReactions,         // ['good','heart']
-      // 互換維持（旧UIが残っても壊れないように）
-      like_count: heartCount,
-      my_liked:   myReactions.includes('heart'),
-    };
-  }));
+// つぶやき画像をバイナリ配信。一覧 API は has_image だけ返し、本体はこのエンドポイントから
+// <img src="/api/tweets/:id/image"> で遅延取得する（base64 data URL の一覧同梱をやめた）。
+//   - 認証は requireAuth（Passport セッション Cookie）。<img> も同一オリジンなので Cookie が乗る。
+//   - 画像は投稿後に差し替え不可な不変リソースなので長期キャッシュ可。private は社内データのため。
+router.get('/tweets/:id/image', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('tweets').select('image_data').eq('id', req.params.id).single();
+  if (error || !data || !data.image_data) return res.status(404).end();
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
+  if (!m) return res.status(404).end();
+  const buf = Buffer.from(m[2], 'base64');
+  res.setHeader('Content-Type', m[1]);
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.setHeader('Content-Length', buf.length);
+  return res.end(buf);
 });
 
 // つぶやき投稿（写真は任意 + 本文）
@@ -12084,7 +12980,11 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
     }
 
     // 更新 / 新規挿入
+    // まず全行のバリデーション + 行データ組み立てを行い（順序は従来どおり）、
+    // その後 新規行は一括 insert / 既存行は並列 update する（1件ずつの直列書き込みを解消）。
     let totalAmount = 0;
+    const insertRows = []; // 新規行（一括 insert）
+    const updateRows = []; // 既存行（{ id, row } を並列 update）
     for (let i = 0; i < line_items.length; i++) {
       const li = line_items[i];
       const quantity   = Number(li.quantity) || 0;
@@ -12137,19 +13037,40 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
         }
       }
 
-      const writeRow = async (payload) => {
-        if (isExisting) {
-          return await supabase.from('invoice_items').update(payload).eq('id', li.id);
-        }
-        return await supabase.from('invoice_items').insert(payload);
-      };
-      let { error: wErr } = await writeRow(row);
-      if (wErr && /original_unit_price|price_change_reason/.test(wErr.message || '')) {
-        // 監査列が未反映の環境向けフォールバック
-        const { original_unit_price: _o, price_change_reason: _r, ...rest } = row;
-        ({ error: wErr } = await writeRow(rest));
+      if (isExisting) {
+        updateRows.push({ id: li.id, row });
+      } else {
+        insertRows.push(row);
       }
-      if (wErr) return res.status(500).json({ error: wErr.message });
+    }
+
+    // 監査列が未反映の環境向けフォールバック（従来と同じ判定・同じ列の除去）
+    const isAuditColErr = (e) => e && /original_unit_price|price_change_reason/.test(e.message || '');
+    const stripAuditCols = (r) => {
+      const { original_unit_price: _o, price_change_reason: _r, ...rest } = r;
+      return rest;
+    };
+
+    // 新規行は一括 insert
+    if (insertRows.length) {
+      let { error: insErr } = await supabase.from('invoice_items').insert(insertRows);
+      if (insErr && isAuditColErr(insErr)) {
+        ({ error: insErr } = await supabase.from('invoice_items').insert(insertRows.map(stripAuditCols)));
+      }
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+
+    // 既存行は並列 update
+    if (updateRows.length) {
+      const updErrs = await Promise.all(updateRows.map(async ({ id, row }) => {
+        let { error: upErr } = await supabase.from('invoice_items').update(row).eq('id', id);
+        if (upErr && isAuditColErr(upErr)) {
+          ({ error: upErr } = await supabase.from('invoice_items').update(stripAuditCols(row)).eq('id', id));
+        }
+        return upErr;
+      }));
+      const firstUpdErr = updErrs.find(Boolean);
+      if (firstUpdErr) return res.status(500).json({ error: firstUpdErr.message });
     }
 
     // invoices.total_amount を再計算
@@ -12303,7 +13224,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const { data: lines, error: linesErr } = await supabase
       .from('project_estimate_lines')
       .select(`
-        id, project_id, category_id, name, planned_count, client_unit_price, status, sort_order,
+        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
         category:creative_categories(id, code, name),
         line_costs:project_estimate_line_costs(
           id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
@@ -12710,6 +13631,11 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
     // 次は編集者が修正する段階。よって Dチェック後修正・Pチェック後修正と揃えて editor 単独をボール保持者とする。
     'クライアントチェック後修正': single(editorName, 'editor', editorId, editorUser),
+    // 「保留」: 作業を一時停止した状態。ballMap に無いと type:'unknown' になり、
+    // 一覧の activeBalls フィルタ（renderCreatives）で全フィルタ無視で常に除外され、
+    // 「登録/設定したのに一覧に出ない（詳細は見られる）」サイレント消失バグになる（バグ #2db804d7）。
+    // 再開・着手する編集者側にボールを残す（Dチェック後修正 等と同じ editor 単独）。
+    '保留': single(editorName, 'editor', editorId, editorUser),
     '納品': { holder: '完了', type: 'done', holder_user: null, holders: ['完了'], user_ids: [], holder_users: [] },
   };
   return ballMap[status] || { holder: '不明', type: 'unknown', holder_user: null, holders: ['不明'], user_ids: [], holder_users: [] };
@@ -12830,13 +13756,20 @@ async function syncBallHolderId(creativeId, sb) {
 
 // 訴求タイプマスター一覧
 router.get('/appeal-types', async (req, res) => {
-  const { data, error } = await supabase
-    .from('appeal_types')
-    .select('*')
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache('appeal-types:active', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('appeal_types')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.get('/projects/:id/appeal-types', async (req, res) => {
@@ -12938,12 +13871,19 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
   const internalCode = `${seqStr3}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
 
   // 制作日: YYMMDD
+  // production_date ("YYYY-MM-DD") は UTC midnight として parse されるため UTC getter で
+  // 同じ日付を取り出す（サーバーTZに依存しない）。未指定時の「今日」は JST で確定する。
   const dateStr = (() => {
-    const d = production_date ? new Date(production_date) : new Date();
-    const yy = String(d.getFullYear()).slice(2);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yy}${mm}${dd}`;
+    if (production_date) {
+      const d = new Date(production_date);
+      if (!Number.isNaN(d.getTime())) {
+        const yy = String(d.getUTCFullYear()).slice(2);
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(d.getUTCDate()).padStart(2, '0');
+        return `${yy}${mm}${dd}`;
+      }
+    }
+    return _todayStrJST().slice(2).replace(/-/g, '');
   })();
 
   // ADR 007: ファイル名テンプレ解決
@@ -12978,32 +13918,39 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
 
 // チーム一覧
 router.get('/teams', async (req, res) => {
-  // team_members.leader_rank はチームカード内のメンバー順序（リーダー優先）に使うので含める。
-  // 旧スキーマ環境（leader_rank 列なし）でも壊れないよう、エラーになったら user_id のみで再取得する。
-  let { data, error } = await supabase
-    .from('teams')
-    .select(`
-      *,
-      director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
-      producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
-      team_members(user_id, leader_rank)
-    `)
-    .order('team_code');
-  if (error) {
-    console.warn('[GET /teams] leader_rank select failed, fallback to user_id only:', error.message);
-    const fb = await supabase
-      .from('teams')
-      .select(`
-        *,
-        director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
-        producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
-        team_members(user_id)
-      `)
-      .order('team_code');
-    if (fb.error) return res.status(500).json({ error: fb.error.message });
-    data = fb.data;
+  try {
+    const out = await ttlCache('teams:list', MASTER_CACHE_TTL_MS, async () => {
+      // team_members.leader_rank はチームカード内のメンバー順序（リーダー優先）に使うので含める。
+      // 旧スキーマ環境（leader_rank 列なし）でも壊れないよう、エラーになったら user_id のみで再取得する。
+      let { data, error } = await supabase
+        .from('teams')
+        .select(`
+          *,
+          director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
+          producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
+          team_members(user_id, leader_rank)
+        `)
+        .order('team_code');
+      if (error) {
+        console.warn('[GET /teams] leader_rank select failed, fallback to user_id only:', error.message);
+        const fb = await supabase
+          .from('teams')
+          .select(`
+            *,
+            director:users!teams_director_id_fkey(id, full_name, nickname, avatar_url),
+            producer:users!teams_producer_id_fkey(id, full_name, nickname, avatar_url),
+            team_members(user_id)
+          `)
+          .order('team_code');
+        if (fb.error) throw new Error(fb.error.message);
+        data = fb.data;
+      }
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  res.json(data);
 });
 
 // チーム作成
@@ -13018,6 +13965,7 @@ router.post('/teams', requireAuth, requirePermission('team.manage'), async (req,
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('teams:list');
   res.json(data);
 });
 
@@ -13060,6 +14008,7 @@ router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (r
     }
   }
 
+  invalidateByKey('teams:list');
   res.json(data);
 });
 
@@ -13122,6 +14071,7 @@ router.put('/teams/:team_id/members/:user_id/leader-rank', requireAuth, requireP
     if (insErr) return res.status(500).json({ error: insErr.message });
   }
 
+  invalidateByKey('teams:list');
   res.json({ ok: true, team_id, user_id, leader_rank });
 });
 
@@ -13132,6 +14082,7 @@ router.delete('/teams/:id', requireAuth, requirePermission('team.delete'), async
   const teamId = req.params.id;
   const { error } = await supabase.from('teams').delete().eq('id', teamId);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('teams:list');
   res.json({ ok: true });
 });
 
@@ -13676,12 +14627,19 @@ router.get('/drive-diagnose', requireAuth, async (_req, res) => {
 
 // 区分マスター一覧
 router.get('/master/categories', async (_req, res) => {
-  const { data, error } = await supabase
-    .from('master_categories')
-    .select('*')
-    .order('sort_order').order('created_at');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache('master-categories:list', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('master_categories')
+        .select('*')
+        .order('sort_order').order('created_at');
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 区分マスター作成
@@ -13693,6 +14651,7 @@ router.post('/master/categories', requireAuth, requirePermission('master.page'),
     .insert({ name, code, sort_order: parseInt(sort_order) || 0 })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('master-categories:list');
   res.json(data);
 });
 
@@ -13712,6 +14671,8 @@ router.put('/master/categories/:id', requireAuth, requirePermission('master.page
     .update({ name, code: existing && PROTECTED_CATEGORY_CODES.includes(existing.code) ? existing.code : code, sort_order: parseInt(sort_order) || 0, is_active, updated_at: new Date().toISOString() })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('master-categories:list');
+  invalidateByPrefix('master-items:'); // master_items GET は master_categories(name, code) を embed しているため
   res.json(data);
 });
 
@@ -13723,6 +14684,8 @@ router.delete('/master/categories/:id', requireAuth, requirePermission('master.p
   }
   const { error } = await supabase.from('master_categories').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('master-categories:list');
+  invalidateByPrefix('master-items:'); // CASCADE で master_items も消えるため
   res.json({ ok: true });
 });
 
@@ -13731,36 +14694,53 @@ router.delete('/master/categories/:id', requireAuth, requirePermission('master.p
 // 値一覧（管理用：全件）
 router.get('/master/items', async (req, res) => {
   const { category_id } = req.query;
-  let query = supabase
-    .from('master_items')
-    .select('*, master_categories(id, name, code)')
-    .order('sort_order').order('created_at');
-  if (category_id) query = query.eq('category_id', category_id);
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache(`master-items:all:${category_id || ''}`, MASTER_CACHE_TTL_MS, async () => {
+      let query = supabase
+        .from('master_items')
+        .select('*, master_categories(id, name, code)')
+        .order('sort_order').order('created_at');
+      if (category_id) query = query.eq('category_id', category_id);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 値一覧（プルダウン用：有効かつ期限内のみ）
 router.get('/master/items/active', async (req, res) => {
-  let { category_id, category_code } = req.query;
-  // category_code が指定された場合は先に category_id を解決
-  if (!category_id && category_code) {
-    const { data: cat } = await supabase.from('master_categories').select('id').eq('code', category_code).single();
-    if (cat) category_id = cat.id;
-    else return res.json([]); // 該当カテゴリーなし
+  // expires_at 判定の now はキャッシュ生成時点で固定されるが、TTL 30秒以内の
+  // ズレなので「期限切れ直後に最大30秒だけ表示が残る」程度で実害なし。
+  const cacheKey = `master-items:active:${req.query.category_id || ''}:${req.query.category_code || ''}`;
+  try {
+    const out = await ttlCache(cacheKey, MASTER_CACHE_TTL_MS, async () => {
+      let { category_id, category_code } = req.query;
+      // category_code が指定された場合は先に category_id を解決
+      if (!category_id && category_code) {
+        const { data: cat } = await supabase.from('master_categories').select('id').eq('code', category_code).single();
+        if (cat) category_id = cat.id;
+        else return []; // 該当カテゴリーなし
+      }
+      const now = new Date().toISOString();
+      let query = supabase
+        .from('master_items')
+        .select('*, master_categories(id, name, code)')
+        .eq('is_active', true)
+        .or(`expires_at.is.null,expires_at.gt.${now}`)
+        .order('sort_order').order('created_at');
+      if (category_id) query = query.eq('category_id', category_id);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const now = new Date().toISOString();
-  let query = supabase
-    .from('master_items')
-    .select('*, master_categories(id, name, code)')
-    .eq('is_active', true)
-    .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .order('sort_order').order('created_at');
-  if (category_id) query = query.eq('category_id', category_id);
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
 });
 
 // 値作成
@@ -13778,6 +14758,7 @@ router.post('/master/items', requireAuth, requirePermission('master.page'), asyn
     })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('master-items:');
   res.json(data);
 });
 
@@ -13796,6 +14777,7 @@ router.put('/master/items/:id', requireAuth, requirePermission('master.page'), a
     })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('master-items:');
   res.json(data);
 });
 
@@ -13803,6 +14785,7 @@ router.put('/master/items/:id', requireAuth, requirePermission('master.page'), a
 router.delete('/master/items/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { error } = await supabase.from('master_items').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('master-items:');
   res.json({ ok: true });
 });
 
@@ -14000,7 +14983,13 @@ router.get('/creative-versions/:creativeId', async (req, res) => {
 router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   const creativeId = req.params.id;
 
-  // 1) creative の現状（live フォールバック判定用）と関連メンバーを軽く取得
+  // パフォーマンス: 旧実装は 6 クエリを直列に await していた（6 RTT）。
+  // 依存関係があるのは creatives → projects だけなので、1本目（creatives）取得後に
+  // 残り 5 クエリ（projects / assignments / files / transitions / version_history）を
+  // Promise.all で並列実行する（計 2 RTT）。各クエリのエラー握りつぶし挙動は従来通り。
+  // （/creatives/:id 本体の並列化と同方針。出力 JSON 形状は不変）
+
+  // 1) creative の現状（live フォールバック判定用）を取得
   let creativeRow = null;
   try {
     const { data: cRow } = await supabase
@@ -14011,68 +15000,84 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     creativeRow = cRow || null;
   } catch (_) {}
 
-  // project の director_id / producer_id を取得（from/to の user_id 解決用）
-  let projectDirectorId = null;
-  let projectProducerId = null;
-  if (creativeRow && creativeRow.project_id) {
-    try {
-      const { data: pRow } = await supabase
-        .from('projects')
-        .select('id, director_id, producer_id')
-        .eq('id', creativeRow.project_id)
-        .maybeSingle();
-      projectDirectorId = pRow?.director_id || null;
-      projectProducerId = pRow?.producer_id || null;
-    } catch (_) {}
-  }
-
-  // creative_assignments から editor を解決（fallback 用）
-  let editorUserIdFallback = null;
-  try {
-    const { data: caRows } = await supabase
-      .from('creative_assignments')
-      .select('user_id, role')
-      .eq('creative_id', creativeId);
-    const editorAssign = (caRows || []).find(a => ['editor','designer','director_as_editor'].includes(a?.role));
-    editorUserIdFallback = editorAssign?.user_id || null;
-  } catch (_) {}
-
-  // 2) creative_files を version 順にロード（submit メモに紐づくファイル特定用）
-  let filesByVersion = {};
-  try {
-    const { data: cfRows } = await supabase
-      .from('creative_files')
-      .select('id, version, drive_url, drive_file_id, generated_name, created_at')
-      .eq('creative_id', creativeId)
-      .order('version', { ascending: true });
-    (cfRows || []).forEach(f => {
-      if (f && f.version != null) filesByVersion[Number(f.version)] = f;
-    });
-  } catch (_) {}
-
-  // 3) creative_status_transitions を時系列で全件
-  let transitions = [];
-  try {
-    const { data: trRows, error: trErr } = await supabase
-      .from('creative_status_transitions')
-      .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
-      .eq('creative_id', creativeId)
-      .order('changed_at', { ascending: true });
-    if (!trErr) transitions = trRows || [];
-  } catch (_) {}
-
-  // 4) creative_version_history を recorded_by 補完用に取得（submit の編集者ユーザー特定）
-  //    snapshot は「修正→再チェック」遷移時に INSERT されるので、その transition の
-  //    changed_at とほぼ同時刻 + 同 version_num で recorded_by が紐づく。
-  let history = [];
-  try {
-    const { data: hRows, error: hErr } = await supabase
-      .from('creative_version_history')
-      .select('id, version_num, round_stage, recorded_by, editor_comment, created_at, creative_file_id')
-      .eq('creative_id', creativeId)
-      .order('created_at', { ascending: true });
-    if (!hErr) history = hRows || [];
-  } catch (_) {}
+  // 2) 互いに独立な 5 クエリを並列実行
+  const [
+    { projectDirectorId, projectProducerId },
+    editorUserIdFallback,
+    filesByVersion,
+    transitions,
+    history,
+  ] = await Promise.all([
+    // project の director_id / producer_id を取得（from/to の user_id 解決用）
+    (async () => {
+      let projectDirectorId = null;
+      let projectProducerId = null;
+      if (creativeRow && creativeRow.project_id) {
+        try {
+          const { data: pRow } = await supabase
+            .from('projects')
+            .select('id, director_id, producer_id')
+            .eq('id', creativeRow.project_id)
+            .maybeSingle();
+          projectDirectorId = pRow?.director_id || null;
+          projectProducerId = pRow?.producer_id || null;
+        } catch (_) {}
+      }
+      return { projectDirectorId, projectProducerId };
+    })(),
+    // creative_assignments から editor を解決（fallback 用）
+    (async () => {
+      try {
+        const { data: caRows } = await supabase
+          .from('creative_assignments')
+          .select('user_id, role')
+          .eq('creative_id', creativeId);
+        const editorAssign = (caRows || []).find(a => ['editor','designer','director_as_editor'].includes(a?.role));
+        return editorAssign?.user_id || null;
+      } catch (_) { return null; }
+    })(),
+    // creative_files を version 順にロード（submit メモに紐づくファイル特定用）
+    (async () => {
+      const byVersion = {};
+      try {
+        const { data: cfRows } = await supabase
+          .from('creative_files')
+          .select('id, version, drive_url, drive_file_id, generated_name, created_at')
+          .eq('creative_id', creativeId)
+          .order('version', { ascending: true });
+        (cfRows || []).forEach(f => {
+          if (f && f.version != null) byVersion[Number(f.version)] = f;
+        });
+      } catch (_) {}
+      return byVersion;
+    })(),
+    // creative_status_transitions を時系列で全件
+    (async () => {
+      try {
+        const { data: trRows, error: trErr } = await supabase
+          .from('creative_status_transitions')
+          .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
+          .eq('creative_id', creativeId)
+          .order('changed_at', { ascending: true });
+        if (!trErr) return trRows || [];
+      } catch (_) {}
+      return [];
+    })(),
+    // creative_version_history を recorded_by 補完用に取得（submit の編集者ユーザー特定）
+    //   snapshot は「修正→再チェック」遷移時に INSERT されるので、その transition の
+    //   changed_at とほぼ同時刻 + 同 version_num で recorded_by が紐づく。
+    (async () => {
+      try {
+        const { data: hRows, error: hErr } = await supabase
+          .from('creative_version_history')
+          .select('id, version_num, round_stage, recorded_by, editor_comment, created_at, creative_file_id')
+          .eq('creative_id', creativeId)
+          .order('created_at', { ascending: true });
+        if (!hErr) return hRows || [];
+      } catch (_) {}
+      return [];
+    })(),
+  ]);
 
   // 5) transition から「コメント1個 = 1要素」の配列を組み立てる
   // 役割マッピング:
@@ -14799,27 +15804,75 @@ function _validateBbox(bbox) {
   return { ok: true, value: { x, y, w, h } };
 }
 
+// timecode 文字列バリデーション ("HH:MM:SS:FF" / "HH:MM:SS" / "MM:SS")
+function _validateTimecode(tc) {
+  if (tc == null || tc === '') return { ok: true, value: null };
+  if (typeof tc !== 'string') return { ok: false, error: 'timecode は文字列で指定してください' };
+  const trimmed = tc.trim();
+  if (!/^\d{1,3}(:\d{1,3}){1,3}$/.test(trimmed)) {
+    return { ok: false, error: 'timecode の形式が不正です' };
+  }
+  return { ok: true, value: trimmed };
+}
+
+// ペイント描画データ ({dataUrl: string, w: number, h: number}) のバリデーション
+// 巨大な dataUrl をブロックするため上限を設ける（およそ 4MB = base64 で 5.3M 文字程度）
+const _DRAWING_MAX_LEN = 6_000_000;
+function _validateDrawing(drawing) {
+  if (drawing == null) return { ok: true, value: null };
+  if (typeof drawing !== 'object') return { ok: false, error: 'drawing は object である必要があります' };
+  const { dataUrl, w, h } = drawing;
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return { ok: false, error: 'drawing.dataUrl は data:image/... の文字列である必要があります' };
+  }
+  if (dataUrl.length > _DRAWING_MAX_LEN) {
+    return { ok: false, error: 'drawing.dataUrl が大きすぎます（最大 6MB 程度）' };
+  }
+  const okNum = (v) => typeof v === 'number' && isFinite(v) && v > 0 && v < 100000;
+  if (!okNum(w) || !okNum(h)) {
+    return { ok: false, error: 'drawing.w / drawing.h は正の数値である必要があります' };
+  }
+  return { ok: true, value: { dataUrl, w, h } };
+}
+
 // ファイルのコメント一覧
 //
 // レスポンスには parent_comment_id を含む（フロント側でツリー化する flat 設計）。
 // migration 未適用環境では parent_comment_id 列が無いため、同じ _isMissingCfcColumn
 // フォールバックで列指定取得に切り替える。
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
+  // users!user_id で FK を明示（resolved_by も users を参照しているため曖昧回避）
   let { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users(id, full_name, role, avatar_url)')
+    .select('*, users!user_id(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
-  // bbox / parent_comment_id 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
+  // bbox / parent_comment_id / timecode_end / drawing 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
   if (_isMissingCfcColumn(error)) {
     console.warn('[creative-file-comments] 列欠損疑い → 明示列指定で再取得:', error.message);
     ({ data, error } = await supabase
       .from('creative_file_comments')
-      .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users(id, full_name, role, avatar_url)')
+      .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users!user_id(id, full_name, role, avatar_url)')
       .eq('creative_file_id', req.params.fid)
       .order('created_at', { ascending: true }));
   }
   if (error) return res.status(500).json({ error: error.message });
+  // resolved_by の名前表示用に対応者ユーザー情報を別クエリで埋め込み（FK 名指定の不安定さを避けるため）
+  if (Array.isArray(data) && data.length) {
+    const resolverIds = Array.from(new Set(data.map(c => c?.resolved_by).filter(Boolean)));
+    if (resolverIds.length) {
+      try {
+        const { data: resolvers } = await supabase
+          .from('users')
+          .select('id, full_name, nickname, role, avatar_url')
+          .in('id', resolverIds);
+        const map = Object.fromEntries((resolvers || []).map(u => [u.id, u]));
+        data = data.map(c => c?.resolved_by ? { ...c, resolved_by_user: map[c.resolved_by] || null } : c);
+      } catch (e) {
+        console.warn('[creative-file-comments] resolved_by_user 取得失敗（無視）:', e.message);
+      }
+    }
+  }
   res.json(await enrichCommentCategories(data));
 });
 
@@ -14831,10 +15884,14 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 // parent_comment_id が無い場合は新規ルートコメント:
 //   ・通知は creative_assignments の編集者全員に飛ばす（自分自身は除外）
 router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
-  const { comment, timecode, is_knowledge, category_id, bbox, parent_comment_id } = req.body;
+  const { comment, timecode, timecode_end, is_knowledge, category_id, bbox, drawing, parent_comment_id } = req.body;
   if (!comment?.trim()) return res.status(400).json({ error: 'コメントを入力してください' });
   const bboxCheck = _validateBbox(bbox);
   if (!bboxCheck.ok) return res.status(400).json({ error: bboxCheck.error });
+  const tcEndCheck = _validateTimecode(timecode_end);
+  if (!tcEndCheck.ok) return res.status(400).json({ error: tcEndCheck.error });
+  const drawingCheck = _validateDrawing(drawing);
+  if (!drawingCheck.ok) return res.status(400).json({ error: drawingCheck.error });
 
   // 返信の場合: 親コメントが同じファイルに属することを確認
   let parentComment = null;
@@ -14861,33 +15918,54 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
     category_id: category_id || null,
   };
   if (parent_comment_id) basePayload.parent_comment_id = parent_comment_id;
-  const fullPayload = bboxCheck.value
-    ? { ...basePayload, bbox: bboxCheck.value }
-    : basePayload;
+  let fullPayload = { ...basePayload };
+  if (bboxCheck.value) fullPayload.bbox = bboxCheck.value;
+  if (tcEndCheck.value) fullPayload.timecode_end = tcEndCheck.value;
+  if (drawingCheck.value) fullPayload.drawing = drawingCheck.value;
 
   let { data, error } = await supabase
     .from('creative_file_comments')
     .insert(fullPayload)
-    .select('*, users(id, full_name, role, avatar_url)')
+    .select('*, users!user_id(id, full_name, role, avatar_url)')
     .single();
-  // bbox / parent_comment_id 列が未追加の環境では順番にフォールバック（500を返さない）
+  // bbox / parent_comment_id / timecode_end / drawing 列が未追加の環境では段階的にフォールバック（500を返さない）
   if (_isMissingCfcColumn(error)) {
     console.warn('[creative-file-comments] 列欠損 → 列を外して再試行:', error.message);
-    // まず parent_comment_id を外す（migration 未適用ケース）
-    const fallbackPayload = { ...fullPayload };
-    delete fallbackPayload.parent_comment_id;
+    // まず drawing を外す（Stage A 未適用ケース）
+    const fb1 = { ...fullPayload };
+    delete fb1.drawing;
     ({ data, error } = await supabase
       .from('creative_file_comments')
-      .insert(fallbackPayload)
-      .select('*, users(id, full_name, role, avatar_url)')
+      .insert(fb1)
+      .select('*, users!user_id(id, full_name, role, avatar_url)')
       .single());
-    // それでもダメなら bbox も外す
-    if (_isMissingCfcColumn(error) && bboxCheck.value) {
+    // 次に timecode_end を外す
+    if (_isMissingCfcColumn(error)) {
+      const fb2 = { ...fb1 };
+      delete fb2.timecode_end;
       ({ data, error } = await supabase
         .from('creative_file_comments')
-        .insert(basePayload)
-        .select('*, users(id, full_name, role, avatar_url)')
+        .insert(fb2)
+        .select('*, users!user_id(id, full_name, role, avatar_url)')
         .single());
+      // 次に parent_comment_id を外す（旧 migration 未適用ケース）
+      if (_isMissingCfcColumn(error)) {
+        const fb3 = { ...fb2 };
+        delete fb3.parent_comment_id;
+        ({ data, error } = await supabase
+          .from('creative_file_comments')
+          .insert(fb3)
+          .select('*, users!user_id(id, full_name, role, avatar_url)')
+          .single());
+        // それでもダメなら bbox も外す
+        if (_isMissingCfcColumn(error) && bboxCheck.value) {
+          ({ data, error } = await supabase
+            .from('creative_file_comments')
+            .insert(basePayload)
+            .select('*, users!user_id(id, full_name, role, avatar_url)')
+            .single());
+        }
+      }
     }
   }
   if (error) return res.status(500).json({ error: error.message });
@@ -14970,26 +16048,96 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 });
 
 // コメント編集（投稿者本人のみ）
+// 本文 (comment) に加え、timecode_end / drawing の後付け更新も受け付ける
+// （シークバー上の葉アイコンを左右ドラッグして範囲化したケース等）
 router.patch('/creative-file-comments/:id', requireAuth, async (req, res) => {
   const userId = req.user?.id;
-  const { comment } = req.body || {};
-  if (!comment || typeof comment !== 'string' || !comment.trim()) {
+  const body = req.body || {};
+  const hasComment  = Object.prototype.hasOwnProperty.call(body, 'comment');
+  const hasTcEnd    = Object.prototype.hasOwnProperty.call(body, 'timecode_end');
+  const hasDrawing  = Object.prototype.hasOwnProperty.call(body, 'drawing');
+  const hasResolved = Object.prototype.hasOwnProperty.call(body, 'resolved');
+  if (!hasComment && !hasTcEnd && !hasDrawing && !hasResolved) {
+    return res.status(400).json({ error: '更新する項目がありません' });
+  }
+  if (hasComment && (typeof body.comment !== 'string' || !body.comment.trim())) {
     return res.status(400).json({ error: 'comment は必須です' });
   }
+  const tcEndCheck = hasTcEnd ? _validateTimecode(body.timecode_end) : { ok: true };
+  if (!tcEndCheck.ok) return res.status(400).json({ error: tcEndCheck.error });
+  const drawingCheck = hasDrawing ? _validateDrawing(body.drawing) : { ok: true };
+  if (!drawingCheck.ok) return res.status(400).json({ error: drawingCheck.error });
+  if (hasResolved && typeof body.resolved !== 'boolean') {
+    return res.status(400).json({ error: 'resolved は boolean で指定してください' });
+  }
+
   const { data: existing } = await supabase
     .from('creative_file_comments')
     .select('user_id')
     .eq('id', req.params.id)
     .single();
   if (!existing) return res.status(404).json({ error: 'コメントが見つかりません' });
-  if (existing.user_id !== userId) return res.status(403).json({ error: '自分の投稿のみ編集できます' });
-  const { data, error } = await supabase
+
+  // comment / timecode_end / drawing は投稿者本人のみ。
+  // resolved は誰でもトグル可（ファイルアクセス権の delegate＝ requireAuth で十分）。
+  const ownerOnlyChange = hasComment || hasTcEnd || hasDrawing;
+  if (ownerOnlyChange && existing.user_id !== userId) {
+    return res.status(403).json({ error: '自分の投稿のみ編集できます' });
+  }
+
+  const updates = {};
+  if (hasComment)  updates.comment = body.comment.trim();
+  if (hasTcEnd)    updates.timecode_end = tcEndCheck.value; // null 許容（範囲解除）
+  if (hasDrawing)  updates.drawing = drawingCheck.value;     // null 許容（ペイント削除）
+  if (hasResolved) {
+    updates.resolved = body.resolved;
+    if (body.resolved) {
+      updates.resolved_at = new Date().toISOString();
+      updates.resolved_by = userId || null;
+    } else {
+      updates.resolved_at = null;
+      updates.resolved_by = null;
+    }
+  }
+
+  let { data, error } = await supabase
     .from('creative_file_comments')
-    .update({ comment: comment.trim() })
+    .update(updates)
     .eq('id', req.params.id)
-    .select('*, users(id, full_name, role, avatar_url)')
+    .select('*, users!user_id(id, full_name, role, avatar_url)')
     .single();
+  // timecode_end / drawing / resolved 列未追加環境では該当列を外して再試行
+  if (_isMissingCfcColumn(error) && (hasTcEnd || hasDrawing || hasResolved)) {
+    console.warn('[creative-file-comments] PATCH 列欠損 → drawing/timecode_end/resolved を除去:', error.message);
+    const fb = { ...updates };
+    delete fb.drawing;
+    delete fb.timecode_end;
+    delete fb.resolved;
+    delete fb.resolved_at;
+    delete fb.resolved_by;
+    if (Object.keys(fb).length === 0) {
+      return res.status(400).json({ error: 'Stage A migration が未適用のため timecode_end / drawing / resolved は保存できません' });
+    }
+    ({ data, error } = await supabase
+      .from('creative_file_comments')
+      .update(fb)
+      .eq('id', req.params.id)
+      .select('*, users!user_id(id, full_name, role, avatar_url)')
+      .single());
+  }
   if (error) return res.status(500).json({ error: error.message });
+
+  // resolved_by の名前表示用に対応者ユーザー情報を埋め込み
+  if (data && data.resolved_by) {
+    try {
+      const { data: resolver } = await supabase
+        .from('users')
+        .select('id, full_name, nickname, role, avatar_url')
+        .eq('id', data.resolved_by)
+        .maybeSingle();
+      if (resolver) data.resolved_by_user = resolver;
+    } catch (_) {}
+  }
   res.json(data);
 });
 
@@ -15011,7 +16159,7 @@ router.get('/knowledge', requireAuth, async (req, res) => {
   const { category_id } = req.query;
   let query = supabase
     .from('creative_file_comments')
-    .select('*, users(id, full_name, role, avatar_url), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
+    .select('*, users!user_id(id, full_name, role, avatar_url), creative_files(id, generated_name, drive_file_id, drive_url, creative_id, creatives(file_name, creative_type, projects(name, clients(name))))')
     .eq('is_knowledge', true)
     .order('created_at', { ascending: false });
   if (category_id) query = query.eq('category_id', category_id);
@@ -15205,7 +16353,7 @@ function _tcToSeconds(tc) {
 router.get('/creative-files/:fid/markers.jsx', requireAuth, async (req, res) => {
   const { data: comments, error } = await supabase
     .from('creative_file_comments')
-    .select('comment, timecode, users(full_name)')
+    .select('comment, timecode, users!user_id(full_name)')
     .eq('creative_file_id', req.params.fid)
     .not('timecode', 'is', null)
     .order('created_at', { ascending: true });
@@ -15265,7 +16413,7 @@ router.post('/creative-files/:fid/link-premiere', requireAuth, async (req, res) 
 router.get('/creative-files/:fid/markers', requireAuth, async (req, res) => {
   const { data: comments, error } = await supabase
     .from('creative_file_comments')
-    .select('comment, timecode, users(full_name)')
+    .select('comment, timecode, users!user_id(full_name)')
     .eq('creative_file_id', req.params.fid)
     .not('timecode', 'is', null)
     .order('created_at', { ascending: true });
@@ -15441,13 +16589,14 @@ router.post('/creative-files/:fileId/checklist/toggle', requireAuth, async (req,
 //   ROLE_LABEL_SHORT / VIEW AS ボタン などを roles マスタ駆動に切り替えるための入口。
 //   archived_at IS NULL のみ返す。並び順は sort_order 昇順。
 router.get('/roles', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('roles')
-    .select('id, code, label, category, sort_order, is_creator, is_internal, archived_at')
-    .is('archived_at', null)
-    .order('sort_order', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  // utils/roles.js の 60秒 TTL キャッシュを再利用（loadRoles は失敗時に最後に
+  // 読めたキャッシュへフォールバックするため、ここで素の SELECT を再発行しない）。
+  // フィルタ・並び順は旧実装（archived_at IS NULL / sort_order 昇順）を踏襲。
+  const { byCode } = await loadRoles();
+  const out = Array.from(byCode.values())
+    .filter(r => !r.archived_at)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  res.json(out);
 });
 
 // ロール権限取得（全ユーザーがアクセス可能。自身のUIのために必要）
@@ -15456,20 +16605,28 @@ router.get('/roles', requireAuth, async (req, res) => {
 //   合成値 'producer_director' の行は role_id NULL のまま残るので、フロントは
 //   role TEXT で識別できる。
 router.get('/role-permissions', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('role_permissions')
-    .select('role, permission_key, allowed, role_id, roles(code, label)');
-  if (error) return res.status(500).json({ error: error.message });
-  // 互換のためフラットに展開（roles.code を role_code として並走）
-  const flat = (data || []).map(r => ({
-    role: r.role,
-    role_id: r.role_id,
-    role_code: r.roles ? r.roles.code : null,
-    role_label: r.roles ? r.roles.label : null,
-    permission_key: r.permission_key,
-    allowed: !!r.allowed,
-  }));
-  res.json(flat);
+  // roles.js の loadPermissionsByCode() は Map<"code|key", boolean> 形式で
+  // label / role_id を持たないため、フラット展開済みレスポンスを ttlCache で別途キャッシュする。
+  try {
+    const flat = await ttlCache('role-permissions:flat', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('role_permissions')
+        .select('role, permission_key, allowed, role_id, roles(code, label)');
+      if (error) throw new Error(error.message);
+      // 互換のためフラットに展開（roles.code を role_code として並走）
+      return (data || []).map(r => ({
+        role: r.role,
+        role_id: r.role_id,
+        role_code: r.roles ? r.roles.code : null,
+        role_label: r.roles ? r.roles.label : null,
+        permission_key: r.permission_key,
+        allowed: !!r.allowed,
+      }));
+    });
+    res.json(flat);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 有効なロール／権限キーのホワイトリスト
@@ -15518,7 +16675,8 @@ router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res)
   const { error } = await supabase
     .from('role_permissions').upsert(rows, { onConflict: 'role,permission_key' });
   if (error) return res.status(500).json({ error: error.message });
-  invalidatePermissionsCache(); // 即時反映
+  invalidatePermissionsCache(); // 即時反映（auth.js / utils/roles.js 側のキャッシュ）
+  invalidateByKey('role-permissions:flat'); // GET /role-permissions の TTL キャッシュ
   res.json({ ok: true, count: rows.length });
 });
 
@@ -15699,8 +16857,19 @@ ${description || '（記入なし）'}
 \`\`\`${fmtApi}\`\`\``;
 
   let result;
+  let screenshotAttached = false;
   if (screenshot && screenshot.buffer && screenshot.buffer.length) {
     result = await notif.sendSlackChannelWithFile(channelUrl, text, screenshot.buffer, 'screenshot.png');
+    if (result?.ok) {
+      screenshotAttached = true;
+    } else {
+      // スクショ付き送信が失敗（多くは bot に files:write が無い missing_scope）でも
+      // 報告自体は握りつぶさず、テキストのみで必ず届ける。
+      console.warn('[error-report] file upload failed, falling back to text-only:', result?.reason);
+      const note = `\n\n⚠️ スクリーンショットは添付できませんでした（${result?.reason || 'unknown'}）。`
+        + `Slack bot に files:write スコープを付与すると画像も届きます。`;
+      result = await notif.sendSlackChannel(channelUrl, text + note);
+    }
   } else {
     // スクリーンショットが無くても通知は送る
     result = await notif.sendSlackChannel(channelUrl, text);
@@ -15709,7 +16878,7 @@ ${description || '（記入なし）'}
     return res.status(500).json({ error: `Slack送信失敗: ${result?.reason || 'unknown'}` });
   }
   _errorReportLastSentAt.set(userId, now);
-  res.json({ ok: true });
+  res.json({ ok: true, screenshot_attached: screenshotAttached });
 });
 
 // ==================== 自動エラー通知（フロント発信） ====================
@@ -15853,22 +17022,38 @@ function normalizeVersionLogPayload(body) {
 router.get('/version-logs', requireAuth, async (req, res) => {
   try {
     const isAdmin = await requesterHasAnyRole(req, ['admin']);
-    let q = supabase
-      .from('version_logs')
-      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url )')
-      .order('revision_no', { ascending: false });
-    if (!isAdmin) q = q.eq('is_hidden', false);
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
     if (myRoleCodes.length === 0 && req.user?.role) myRoleCodes = [req.user.role];
 
+    // ページネーション（後方互換: limit/offset 未指定なら従来通り全件＋配列で返す）
+    const paged = req.query.limit !== undefined || req.query.offset !== undefined;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    let q = supabase
+      .from('version_logs')
+      .select('*, reporter:reporter_user_id ( id, full_name, nickname, avatar_url )')
+      .order('revision_no', { ascending: false });
+    if (!isAdmin) {
+      q = q.eq('is_hidden', false);
+      // target_roles の可視性フィルタを DB 側で適用し、ページ境界の取りこぼしを防ぐ
+      // （target_roles は text[]。'all' を含む / 自ロールと重なる / null（防御）を可視とする）
+      const safeRoles = myRoleCodes.filter(r => /^[a-zA-Z0-9_-]+$/.test(String(r)));
+      const orParts = ['target_roles.is.null', 'target_roles.cs.{all}'];
+      if (safeRoles.length > 0) orParts.push(`target_roles.ov.{${safeRoles.join(',')}}`);
+      q = q.or(orParts.join(','));
+    }
+    if (paged) q = q.range(offset, offset + limit - 1);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
     const userId = req.user?.id;
     let readSet = new Set();
-    if (userId) {
+    if (userId && (data || []).length > 0) {
+      const ids = (data || []).map(r => r.id);
       const { data: reads } = await supabase
-        .from('version_log_reads').select('version_log_id').eq('user_id', userId);
+        .from('version_log_reads').select('version_log_id').eq('user_id', userId).in('version_log_id', ids);
       readSet = new Set((reads || []).map(r => r.version_log_id));
     }
 
@@ -15879,7 +17064,12 @@ router.get('/version-logs', requireAuth, async (req, res) => {
       return tr.some(r => myRoleCodes.includes(r));
     }).map(row => ({ ...row, is_read: readSet.has(row.id) }));
 
-    res.json(filtered);
+    if (!paged) return res.json(filtered); // 旧クライアント互換（配列）
+    res.json({
+      rows: filtered,
+      has_more: (data || []).length === limit,
+      next_offset: offset + (data || []).length,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -15890,8 +17080,10 @@ router.get('/version-logs/unread-count', requireAuth, async (req, res) => {
     const userId = req.user?.id;
     if (!userId) return res.json({ count: 0 });
 
+    // 直近200件のみを対象に軽量化（バッジは 99+ 表示が上限のため実用上の意味は不変）
     const { data: logs, error } = await supabase
-      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false);
+      .from('version_logs').select('id, target_roles, is_hidden').eq('is_hidden', false)
+      .order('revision_no', { ascending: false }).limit(200);
     if (error) return res.status(500).json({ error: error.message });
 
     let myRoleCodes = await getRequesterRoleCodes(req);
