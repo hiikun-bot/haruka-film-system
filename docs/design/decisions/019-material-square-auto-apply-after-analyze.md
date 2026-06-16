@@ -62,3 +62,35 @@ migration: `migrations/2026-05-19_video_org_apply_statuses.sql`
 
 - **SA で適用する案**: Shared Drive にメンバー追加すれば可能だが、運用上 SA を共有ドライブに常駐させたくなく、削除フローと同じく user OAuth に統一する方が一貫性が高い。
 - **手動ボタンを残す案**: UX の手数が増え、Stage 1 同様に「押し忘れ・押し過ぎ」運用負荷がある。確認が必要なケースだけ手動を残す方が良い。
+
+## 改訂履歴
+
+### 2026-06-16 改訂（PR #812 + ファイル名編集 / 確認ボタン廃止）
+
+運用実態に合わせて Decision 2・3 を改訂し、手動リネームを追加した。
+
+- **Decision 2 を撤回 → Drive 操作は SA（サービスアカウント）に統一**（PR #804 / #812）。
+  アップロード（resumable セッション発行含む）・案件フォルダ作成・メタ取得・削除フォールバックが
+  すべて SA 所有に統一された結果、適用だけが user OAuth（`drive.file`）のままだと SA 所有の共有
+  ドライブのフォルダ/ファイルを「存在しない」扱いで `404 File not found` を返し、再適用が必ず失敗
+  していた。`applyForRow` の Drive 操作（フォルダ作成・移動/リネーム・プレビュー移動）を
+  `driveLib.getDriveService()`（SA）に統一。当初 Alternatives で退けた「SA で適用する案」を採用した
+  形（SA は実運用上すでに共有ドライブのメンバー）。
+- **Decision 3 を撤回 → `needs_human_review` でも止めず常に自動適用**。
+  「確認して適用する」(`ms-btn-apply-review` / `awaiting_review`) 動線を廃止。AI 解析完了で必ず
+  Drive 振り分けまで走らせる。`awaiting_review` ステータス自体は旧データ互換のため残すが、新規には
+  発生しない。`apply_failed` の「↻ 再適用」だけ手動口として残す。
+- **追加: ファイル名のインライン編集**（`POST /rename`）。
+  右パネル「振り分け提案」欄の📄ファイル名を ✏️ でインライン編集 → 💾 保存で、Drive 上の実ファイルを
+  SA でリネームし、`current_filename` / `recommended_filename` を揃える。拡張子はユーザー入力に拡張子
+  が無ければ元ファイルの拡張子を補完して保護する。提案名が気に入らない場合は適用後にこの編集で直す運用。
+
+### Status 遷移（改訂後）
+
+```
+waiting_approval → processing → analysis_completed
+                                    ├─→ applied        (needs_human_review に関わらず自動 / 成功)
+                                    └─→ apply_failed   (Drive 操作失敗)
+apply_failed → (手動 /apply 再実行) → applied | apply_failed
+applied → (画面ファイル名編集 /rename) → applied（current/recommended_filename 更新）
+```
