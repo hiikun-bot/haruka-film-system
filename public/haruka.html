@@ -42521,6 +42521,11 @@ async function msManualRefresh() {
 async function msReloadList() {
   const tbody = document.getElementById('ms-tbody');
   if (!tbody) return;
+  // 「未解析をまとめて解析」は本日の解析上限を一気に消費し従量課金を発生させるため管理者専用。
+  // ADR 015 に従い currentUser.role 直書きを避け isTopAdmin()（effectiveRole ベース）で出し分け。
+  // サーバー側でも requireRole('admin') で弾くので、ここはあくまで UI 上の出し分け。
+  const batchBtn = document.getElementById('ms-batch-analyze-btn');
+  if (batchBtn) batchBtn.style.display = isTopAdmin() ? '' : 'none';
   const counter = document.getElementById('ms-daily-counter');
   // ファイル名前のクライアントアイコン解決に allClients / allProjects が要るので先に確保
   await msEnsureClientsProjects().catch(() => {});
