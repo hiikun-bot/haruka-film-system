@@ -7259,13 +7259,30 @@ window.showPage = window.showPage || function(name, btn) {
 
           <h4>振り分け提案</h4>
           <div style="font-size:13px;line-height:1.6">
-            📄 <span id="ms-preview-new-name">-</span><br>
-            📁 <span id="ms-preview-new-folder">-</span>
+            <!-- 通常表示: ファイル名 + ✏️ 編集ボタン -->
+            <div id="ms-name-view" style="display:flex;align-items:center;gap:6px">
+              <span>📄 <span id="ms-preview-new-name">-</span></span>
+              <button id="ms-name-edit-btn" onclick="msStartRename()" title="ファイル名を編集"
+                style="padding:0 6px;font-size:13px;line-height:1.6;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer">✏️</button>
+            </div>
+            <!-- 編集表示: input + 保存/キャンセル -->
+            <div id="ms-name-edit" style="display:none">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span>📄</span>
+                <input id="ms-name-input" type="text"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();msSaveRename();}else if(event.key==='Escape'){msCancelRename();}"
+                  style="flex:1;min-width:0;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+              </div>
+              <div style="display:flex;gap:6px;margin:6px 0 2px 22px">
+                <button class="btn-primary" id="ms-name-save-btn" onclick="msSaveRename()" style="padding:3px 10px;font-size:12px">💾 保存</button>
+                <button class="btn-secondary" onclick="msCancelRename()" style="padding:3px 10px;font-size:12px">✕ キャンセル</button>
+              </div>
+            </div>
+            <div style="margin-top:2px">📁 <span id="ms-preview-new-folder">-</span></div>
           </div>
 
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
-            <button class="btn-primary" id="ms-btn-apply-review" onclick="msApplySelected()" style="display:none">✅ 確認して適用する</button>
             <button class="btn-primary" id="ms-btn-apply-retry" onclick="msApplySelected()" style="display:none">↻ 再適用</button>
             <button class="btn-secondary" id="ms-btn-preview-regen" onclick="msRegeneratePreview()" title="60枚WebPストーリーボードを再生成">⚡ プレビュー再生成</button>
             <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
@@ -42748,18 +42765,18 @@ function msSelectItem(fileId, scroll = true) {
   document.getElementById('ms-preview-mood').textContent = item.mood || '-';
   document.getElementById('ms-preview-new-name').textContent = item.recommended_filename || '-';
   document.getElementById('ms-preview-new-folder').textContent = item.recommended_folder || '-';
+  // 行を切り替えたらファイル名編集モードは閉じておく（前の素材の編集状態が残らないように）
+  msCancelRename();
 
   // ボタン表示制御
   // ADR 018: skipped レコードも WebP プレビュー経由で救済可能なので解析ボタンを出す
-  // ADR 019: AI解析完了で自動振り分けが走るため、analysis_completed には適用ボタン不要。
-  //   awaiting_review (確認待ち) と apply_failed (失敗) だけ手動操作口を出す。
+  // ADR 019 改訂 (2026-06-16): AI解析完了で needs_human_review でも自動振り分けが走るため、
+  //   「確認して適用する」動線は廃止。提案名の修正はファイル名インライン編集（✏️）で行う。
+  //   apply_failed (失敗) だけ手動「↻ 再適用」口を残す。
   const isWaiting = item.status === 'waiting_approval' || item.status === 'failed' || item.status === 'skipped';
-  const canReview = item.status === 'awaiting_review';
   const canRetry = item.status === 'apply_failed';
   document.getElementById('ms-btn-analyze').style.display = isWaiting ? '' : 'none';
-  const reviewBtn = document.getElementById('ms-btn-apply-review');
   const retryBtn = document.getElementById('ms-btn-apply-retry');
-  if (reviewBtn) reviewBtn.style.display = canReview ? '' : 'none';
   if (retryBtn) retryBtn.style.display = canRetry ? '' : 'none';
   // プレビュー再生成ボタンの可視性ルール:
   //   - done   : 表示（手動再生成バックフィル用途）
@@ -42790,7 +42807,7 @@ async function msAnalyzeSelected() {
     // 「status (awaiting_review) からは解析できません」(409) で弾かれる。
     // これは失敗ではなく「解析済み」なので、赤エラーではなく案内に切り替える。
     if (/からは解析できません|awaiting_review|analysis_completed/.test(msg)) {
-      showToast('すでに解析済みです。「✅ 確認して適用する」から振り分けできます', 'info');
+      showToast('すでに解析済みです。解析完了で自動的に振り分けされます', 'info');
     } else {
       showToast('解析失敗: ' + e.message, 'error');
     }
@@ -42838,26 +42855,64 @@ async function msRegeneratePreview() {
 }
 // 後方互換: 古い呼び出し箇所が残っていても動くように alias を残す
 const msRegenerateFaststart = msRegeneratePreview;
-// ADR 019: AI解析完了で自動振り分けが走るため、msApplySelected は
-//   - awaiting_review (確認して適用)
-//   - apply_failed   (再適用)
-// の手動再実行口として動く。
+// ADR 019 改訂: AI解析完了で needs_human_review でも自動振り分けが走るため、
+// msApplySelected は apply_failed からの「↻ 再適用」専用の手動再実行口として動く。
 async function msApplySelected() {
   return btnBusy(busyBtnFrom(), async () => {
   if (!msSelectedFileId) return;
   if (!confirm('Drive 上で振り分けを実行します。\n（ファイル名変更＋フォルダ移動）\n実行しますか？')) return;
   try {
-    const result = await votFetch('/apply', { method: 'POST', body: JSON.stringify({ fileId: msSelectedFileId }) });
-    if (result?.status === 'awaiting_review') {
-      showToast('確認待ちに戻りました', 'info');
-    } else {
-      showToast('適用しました', 'success');
-    }
+    await votFetch('/apply', { method: 'POST', body: JSON.stringify({ fileId: msSelectedFileId }) });
+    showToast('適用しました', 'success');
     msReloadList();
   } catch (e) {
     showToast('適用失敗: ' + e.message, 'error');
   }
   });
+}
+
+// ==================== ファイル名インライン編集（振り分け提案欄）====================
+// ✏️ で input に切替 → 💾 保存で POST /rename（Drive 実ファイルを SA でリネーム）。
+function msStartRename() {
+  const view = document.getElementById('ms-name-view');
+  const edit = document.getElementById('ms-name-edit');
+  const input = document.getElementById('ms-name-input');
+  if (!view || !edit || !input) return;
+  const current = document.getElementById('ms-preview-new-name').textContent;
+  input.value = (current && current !== '-') ? current : '';
+  view.style.display = 'none';
+  edit.style.display = '';
+  input.focus();
+  input.select();
+}
+function msCancelRename() {
+  const view = document.getElementById('ms-name-view');
+  const edit = document.getElementById('ms-name-edit');
+  if (view) view.style.display = 'flex';
+  if (edit) edit.style.display = 'none';
+}
+async function msSaveRename() {
+  if (!msSelectedFileId) return;
+  const input = document.getElementById('ms-name-input');
+  const newName = (input?.value || '').trim();
+  if (!newName) { showToast('ファイル名が空です', 'error'); return; }
+  return btnBusy(busyBtnFrom('ms-name-save-btn'), async () => {
+    try {
+      const result = await votFetch('/rename', {
+        method: 'POST',
+        body: JSON.stringify({ fileId: msSelectedFileId, newFilename: newName }),
+      });
+      const saved = result?.filename || newName;
+      document.getElementById('ms-preview-new-name').textContent = saved;
+      const filenameEl = document.getElementById('ms-preview-filename');
+      if (filenameEl) filenameEl.textContent = saved;
+      msCancelRename();
+      showToast('ファイル名を変更しました', 'success');
+      msReloadList();
+    } catch (e) {
+      showToast('ファイル名の変更に失敗: ' + e.message, 'error');
+    }
+  }, '変更中…');
 }
 // 素材削除フロー:
 //   1) msDeleteSelected が確認モーダルを開く（Drive 連動削除チェック付き）

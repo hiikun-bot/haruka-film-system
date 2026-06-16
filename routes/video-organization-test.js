@@ -722,6 +722,71 @@ router.post('/apply', async (req, res) => {
   }
 });
 
+// ==================== ファイル名の手動リネーム ====================
+//
+// 画面の「振り分け提案」欄からファイル名を直接編集して保存する口。
+// Drive 上の実ファイルを SA でリネームし、DB の current_filename / recommended_filename を揃える。
+//   - Drive 操作はアップロード・適用・削除フォールバックと同じ SA 人格（ADR 019 改訂 / PR #804・#812）
+//   - 拡張子はユーザー入力に拡張子が無ければ元ファイルの拡張子を補完して保護する
+router.post('/rename', async (req, res) => {
+  const fileId = String(req.body?.fileId || '').trim();
+  let newName = String(req.body?.newFilename || '').trim();
+  if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  if (!newName) return res.status(400).json({ error: '新しいファイル名が空です' });
+  // パス区切りは Drive のファイル名に使えないので弾く
+  if (/[\/\\]/.test(newName)) {
+    return res.status(422).json({ error: 'ファイル名に / や \\ は使えません' });
+  }
+
+  try {
+    const { data: item } = await supabase
+      .from('video_file_organization_tests')
+      .select('*').eq('drive_file_id', fileId).maybeSingle();
+    if (!item) return res.status(404).json({ error: '登録されていません' });
+
+    // 拡張子の保護: 新ファイル名に拡張子が無ければ元ファイル名の拡張子を補完する
+    const currentName = item.current_filename || item.recommended_filename || item.original_filename || '';
+    const extMatch = currentName.match(/(\.[^.\/\\]+)$/);
+    const currentExt = extMatch ? extMatch[1] : '';
+    if (currentExt && !new RegExp(`\\${currentExt}$`, 'i').test(newName)) {
+      // 別の拡張子で終わっていなければ補完（誤って拡張子を消した場合の救済）
+      if (!/\.[^.\/\\]{1,8}$/.test(newName)) {
+        newName = `${newName}${currentExt}`;
+      }
+    }
+
+    // Drive 上の実ファイルを SA でリネーム
+    const saDrive = await driveLib.getDriveService();
+    await saDrive.files.update({
+      fileId: item.drive_file_id,
+      requestBody: { name: newName },
+      fields: 'id,name',
+      supportsAllDrives: true,
+    });
+
+    // DB を揃える（現在名・提案名の両方を新名に）
+    const { error: upErr } = await supabase
+      .from('video_file_organization_tests')
+      .update({
+        current_filename: newName,
+        recommended_filename: newName,
+      })
+      .eq('id', item.id);
+    if (upErr) throw upErr;
+
+    logCtx('rename', {
+      at: new Date().toISOString(), by: req.user?.email,
+      fileId, from: currentName, to: newName,
+    });
+
+    res.json({ ok: true, filename: newName });
+  } catch (e) {
+    const msg = e?.errors?.[0]?.message || e?.message || String(e);
+    console.error('[video-org] rename error:', msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ==================== 単一取得 ====================
 // 注意: 上の /preview/:fileId / /list / /upload / /register / /analyze / /apply の後に置く
 // （ルートマッチング順序事故防止）
