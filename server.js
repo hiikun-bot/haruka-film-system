@@ -316,7 +316,7 @@ app.use('/oauth', require('./routes/oauth'));
 const videoOrgEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_VIDEO_ORGANIZATION_TEST || '').toLowerCase());
 if (videoOrgEnabled) {
   app.use('/api/admin/video-organization-test', require('./routes/video-organization-test'));
-  console.log('[video-org] feature flag ENABLED — /api/admin/video-organization-test/* available (admin only)');
+  console.log('[video-org] feature flag ENABLED — /api/admin/video-organization-test/* available (all logged-in users)');
 } else {
   console.log('[video-org] feature flag DISABLED — set ENABLE_VIDEO_ORGANIZATION_TEST=true to enable');
 }

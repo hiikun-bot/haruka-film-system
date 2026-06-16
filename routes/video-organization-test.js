@@ -1,7 +1,7 @@
 // routes/video-organization-test.js — 素材広場 / 動画整理ツール（test / experimental）
 //
 // 設計の核:
-//   - 全 endpoint admin のみ（requireRole('admin')）
+//   - 全 endpoint ログイン必須（全ロール開放 / requireAuth のみ。旧: admin 限定）
 //   - フロー: upload（D&D アップロード）/ register（既存 Drive ID）→
 //             analyze（承認＋AI解析）→ apply（承認＋Drive変更）の 3 段階承認
 //   - upload / register 段階では Gemini を 1 度も叩かない（waiting_approval）
@@ -20,7 +20,7 @@ const multer = require('multer');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth, requireRole } = require('../auth');
+const { requireAuth } = require('../auth');
 const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
@@ -47,9 +47,8 @@ router.use((req, res, next) => {
   next();
 });
 
-// 共通: 認証 + admin
+// 共通: 認証（ログイン必須。ロール制限なし＝全ロール開放）
 router.use(requireAuth);
-router.use(requireRole('admin'));
 
 // アップロードを受ける upload エリア
 // limits.fileSize は guards.getMaxUploadSizeBytes() で env 連動（既定 25MB）。
