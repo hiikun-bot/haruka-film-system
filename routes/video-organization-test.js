@@ -20,7 +20,7 @@ const multer = require('multer');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth } = require('../auth');
+const { requireAuth, requireRole } = require('../auth');
 const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
@@ -753,7 +753,12 @@ router.post('/analyze', async (req, res) => {
 //   - DAILY_ANALYSIS_LIMIT（既定 5 回/日）を尊重。残り枠ぶんだけ古い順に起動し、
 //     超過分は waiting_approval のまま残す（暴走課金を防ぐ＝ユーザー方針「上限維持」）。
 //   - 実解析は triggerAutoAnalyzeIfEligible に委譲（全ガードを再度通す）。fire-and-forget。
-router.post('/analyze-pending-batch', async (req, res) => {
+//
+// 権限: 管理者（admin）のみ。一括解析は本日の解析上限の残り枠を一気に消費し従量課金を
+//   発生させるため、全ロール開放は危険。フロント側も isTopAdmin() でボタンを隠すが、
+//   API を直叩きされても弾けるよう requireRole('admin') を本エンドポイント単体に付ける
+//   （ルーター全体は requireAuth のみ＝全ロール開放のままにする）。
+router.post('/analyze-pending-batch', requireRole('admin'), async (req, res) => {
   try {
     if (guards.isStopAll()) {
       return res.status(423).json({ error: 'STOP_ALL=true のため解析を停止しています' });
