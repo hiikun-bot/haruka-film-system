@@ -7290,6 +7290,11 @@ window.showPage = window.showPage || function(name, btn) {
             📁 <span id="ms-preview-new-folder">-</span>
           </div>
 
+          <!-- 失敗 / 適用失敗 / スキップ時のエラー理由（error_message）を常時表示 -->
+          <div id="ms-preview-error" style="display:none;margin-top:10px;padding:8px 10px;border-radius:8px;background:#fdecec;border:1px solid #f5b5b5;color:#b91c1c;font-size:12px;line-height:1.5">
+            <strong>⚠️ 理由:</strong> <span id="ms-preview-error-text"></span>
+          </div>
+
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
             <button class="btn-primary" id="ms-btn-apply-review" onclick="msApplySelected()" style="display:none">✅ 確認して適用する</button>
@@ -42823,6 +42828,19 @@ function msSelectItem(fileId, scroll = true) {
   document.getElementById('ms-preview-mood').textContent = item.mood || '-';
   document.getElementById('ms-preview-new-name').textContent = item.recommended_filename || '-';
   document.getElementById('ms-preview-new-folder').textContent = item.recommended_folder || '-';
+
+  // エラー理由（error_message）を常時表示。失敗系の status のときだけ出す。
+  const errBox = document.getElementById('ms-preview-error');
+  const errText = document.getElementById('ms-preview-error-text');
+  if (errBox && errText) {
+    const isErrStatus = ['failed', 'apply_failed', 'skipped'].includes(item.status);
+    if (isErrStatus && item.error_message) {
+      errText.textContent = item.error_message;
+      errBox.style.display = '';
+    } else {
+      errBox.style.display = 'none';
+    }
+  }
 
   // ボタン表示制御
   // ADR 018: skipped レコードも WebP プレビュー経由で救済可能なので解析ボタンを出す
