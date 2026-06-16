@@ -42943,6 +42943,19 @@ async function msAnalyzeSelected() {
   if (!confirm('Vertex AI Gemini で解析します。\n従量課金が発生します。\n本当に実行しますか？')) return;
   try {
     showToast('AI解析を開始しました…', 'info');
+    // 楽観的UI: /analyze の応答（最大30秒）を待つ前に、行バッジを即「AI解析中」へ。
+    // これをしないと、失敗→再解析した直後も「失敗」バッジのままで、効いていないように見える。
+    const _optItem = msItemsCache.find(x => x.drive_file_id === msSelectedFileId);
+    if (_optItem) {
+      _optItem.status = 'processing';
+      _optItem.analysis_status = 'processing';
+      _optItem.analysis_progress_percent = 0;
+      _optItem.error_message = null;
+      const _tbody = document.getElementById('ms-tbody');
+      if (_tbody) _tbody.innerHTML = msItemsCache.map(msRenderRow).join('');
+      // プレビューパネルのステータス表記（/ failed 等）も即時更新
+      msSelectItem(msSelectedFileId, false);
+    }
     await votFetch('/analyze', { method: 'POST', body: JSON.stringify({ fileId: msSelectedFileId }) });
     showToast('AI解析が完了しました', 'success');
     msReloadList();
