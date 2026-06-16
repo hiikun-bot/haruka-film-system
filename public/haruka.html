@@ -7196,6 +7196,39 @@ window.showPage = window.showPage || function(name, btn) {
   #page-material-square .ms-preview-progress progress::-webkit-progress-value { background: var(--primary, #3ECFCA); border-radius: 3px; transition: width .2s; }
   #page-material-square .ms-preview-progress progress::-moz-progress-bar { background: var(--primary, #3ECFCA); border-radius: 3px; }
   #page-material-square .ms-preview-progress-label { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+  /* アップロード進捗 浮動ウィジェット（右下固定・控えめなカード） */
+  #ms-upload-floating {
+    position: fixed; right: 20px; bottom: 20px; z-index: 250;
+    width: 320px; max-width: calc(100vw - 32px);
+    background: var(--surface, #fff); color: var(--text, #1f2937);
+    border: 1px solid var(--border, #e5e7eb); border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.18);
+    font-size: 13px; overflow: hidden;
+    transition: opacity .35s ease;
+  }
+  #ms-upload-floating.ms-uf-fading { opacity: 0; }
+  #ms-upload-floating .ms-uf-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: var(--primary, #3ECFCA); color: #fff;
+  }
+  #ms-upload-floating .ms-uf-title { font-weight: 600; font-size: 13px; }
+  #ms-upload-floating .ms-uf-icon { display: inline-block; }
+  #ms-upload-floating .ms-uf-body { padding: 8px 14px 12px; max-height: 40vh; overflow-y: auto; }
+  #ms-upload-floating .ms-uf-item { padding: 8px 0; }
+  #ms-upload-floating .ms-uf-item + .ms-uf-item { border-top: 1px solid var(--border, #e5e7eb); }
+  #ms-upload-floating .ms-uf-name {
+    font-size: 12px; word-break: break-all; line-height: 1.3;
+    display: flex; align-items: center; gap: 4px;
+  }
+  #ms-upload-floating .ms-uf-bar { height: 6px; background: #eef2f7; border-radius: 3px; overflow: hidden; margin: 6px 0 4px; }
+  #ms-upload-floating .ms-uf-bar > div { height: 100%; width: 0%; background: var(--primary, #3ECFCA); border-radius: 3px; transition: width .25s; }
+  #ms-upload-floating .ms-uf-item.is-done .ms-uf-bar > div { background: #10b981; }
+  #ms-upload-floating .ms-uf-item.is-error .ms-uf-bar > div { background: #dc2626; }
+  #ms-upload-floating .ms-uf-stat { font-size: 11px; color: var(--text-muted, #6b7280); word-break: break-all; line-height: 1.3; }
+  #ms-upload-floating .ms-uf-item.is-error .ms-uf-stat { color: #dc2626; }
+  @media (max-width: 480px) {
+    #ms-upload-floating { left: 12px; right: 12px; width: auto; bottom: 12px; }
+  }
 </style>
 <div id="page-material-square" class="page">
 
@@ -7390,6 +7423,17 @@ window.showPage = window.showPage || function(name, btn) {
         </div>
       </aside>
     </div>
+  </div>
+
+  <!-- ===== アップロード進捗 浮動ウィジェット（一覧/アップロードどちらのビューでも常駐） =====
+       #ms-view-list / #ms-view-upload の外側に置くことで、ビュー切替の display 制御や
+       アップロードUIの DOM リセットの影響を受けず、グローバル状態 msUploadProgress から
+       常に再描画される。進行中アップロードが0件のときは非表示。 -->
+  <div id="ms-upload-floating" style="display:none" aria-live="polite">
+    <div class="ms-uf-head">
+      <span class="ms-uf-title"><span class="ms-uf-icon">⬆</span> アップロード中 <span id="ms-uf-count">0</span>件</span>
+    </div>
+    <div class="ms-uf-body" id="ms-uf-body"></div>
   </div>
 </div>
 
@@ -42206,6 +42250,8 @@ function msStartPreviewPolling(fileId) {
 
 function loadMaterialSquarePage() {
   msShowList();
+  // 進行中アップロードがあれば浮動ウィジェットを復元描画（別ページから戻ってきたケース）
+  msRenderUploadFloating();
   // AI課金確認リンクの遷移先を GCP_BILLING_URL からセット（差し替えは定数1か所のみ）
   const billingLink = document.getElementById('ms-billing-link');
   if (billingLink) billingLink.href = GCP_BILLING_URL;
@@ -43417,6 +43463,83 @@ const MS_CHUNK_SIZE_BYTES = 32 * 1024 * 1024;
 // アクティブな大容量アップロード（ブラウザ閉じ防止用）
 const msActiveResumableUploads = new Set();
 
+// ==================== アップロード進捗 グローバル状態 + 浮動ウィジェット ====================
+// 各アップロード行のローカル DOM とは別に、ビュー切替や DOM リセットに左右されない
+// グローバルな進捗状態を持つ。これを単一の正として #ms-upload-floating を描画するため、
+// 一覧に戻ってもアップロードUIが消えても、進行中の進捗が見え続ける。
+//   key   = opId（行ごとにユニーク。msUploadProgress と行 DOM 更新で共有）
+//   value = { name, pct(0-100), status, done(bool), error(bool) }
+const msUploadProgress = new Map();
+let msUploadFloatingFadeTimer = null;
+
+// 進捗状態を 1 件分更新し、浮動ウィジェットを再描画する。
+//   patch に done:true / error:true が含まれると完了/失敗として扱う。
+function msSetUploadProgress(opId, patch) {
+  if (!opId) return;
+  const prev = msUploadProgress.get(opId) || { name: '', pct: 0, status: '', done: false, error: false };
+  msUploadProgress.set(opId, { ...prev, ...patch });
+  msRenderUploadFloating();
+}
+
+// 進行中（done でも error でもない）件数
+function msCountActiveUploads() {
+  let n = 0;
+  for (const v of msUploadProgress.values()) if (!v.done && !v.error) n++;
+  return n;
+}
+
+// グローバル状態 msUploadProgress から #ms-upload-floating を再描画する。
+// ローカル行 DOM とは独立。状態が空 / 全て完了済みなら数秒後にフェードアウトして隠す。
+function msRenderUploadFloating() {
+  const box = document.getElementById('ms-upload-floating');
+  const body = document.getElementById('ms-uf-body');
+  const countEl = document.getElementById('ms-uf-count');
+  if (!box || !body) return;
+
+  const entries = [...msUploadProgress.entries()];
+  const active = msCountActiveUploads();
+
+  // 表示すべき行が 1 件も無ければ非表示にして終了
+  if (entries.length === 0) {
+    box.style.display = 'none';
+    box.classList.remove('ms-uf-fading');
+    return;
+  }
+
+  if (countEl) countEl.textContent = String(active);
+  body.innerHTML = entries.map(([opId, v]) => {
+    const pct = Math.max(0, Math.min(100, Math.round(v.pct || 0)));
+    const cls = v.error ? 'is-error' : (v.done ? 'is-done' : '');
+    const icon = v.error ? '❌' : (v.done ? '✅' : '⬆');
+    const stat = v.status || (v.done ? '完了' : (v.error ? '失敗' : '待機中…'));
+    return `
+      <div class="ms-uf-item ${cls}">
+        <div class="ms-uf-name"><span>${icon}</span><span>${votEscape(v.name || '')}</span></div>
+        <div class="ms-uf-bar"><div style="width:${pct}%"></div></div>
+        <div class="ms-uf-stat">${votEscape(stat)}</div>
+      </div>`;
+  }).join('');
+
+  // 進行中があれば常時表示。すべて完了/失敗なら数秒後にフェードアウト → クリア。
+  box.style.display = '';
+  box.classList.remove('ms-uf-fading');
+  if (msUploadFloatingFadeTimer) { clearTimeout(msUploadFloatingFadeTimer); msUploadFloatingFadeTimer = null; }
+  if (active === 0) {
+    msUploadFloatingFadeTimer = setTimeout(() => {
+      const el = document.getElementById('ms-upload-floating');
+      if (!el) return;
+      // フェード開始直前に進行中が再発生していたら隠さない
+      if (msCountActiveUploads() > 0) return;
+      el.classList.add('ms-uf-fading');
+      setTimeout(() => {
+        if (msCountActiveUploads() > 0) return;
+        msUploadProgress.clear();
+        msRenderUploadFloating();
+      }, 400);
+    }, 4000);
+  }
+}
+
 // 同時アップロード数の上限（上り帯域の食い合いを防ぐ）。複数回の D&D / ファイル選択を
 // またいで効くグローバルなキュー。超過分は待機列に入り、空きが出たら自動で開始する。
 const MS_UPLOAD_CONCURRENCY = 3;
@@ -43506,6 +43629,16 @@ async function msProcessUploadRow(f, row, opts) {
   const controls = row.querySelector('.ms-controls');
   const warn = row.querySelector('.ms-warn');
 
+  // この行のグローバル進捗キー。ローカル DOM 更新とは別に、浮動ウィジェット用の
+  // 状態(msUploadProgress)も同時に更新する。完了/失敗まで一意に保持する。
+  const ufOpId = `row_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const ufSet = (patch) => msSetUploadProgress(ufOpId, patch);
+  ufSet({ name: f.name, pct: 0, status: '待機中…', done: false, error: false });
+  const ufProgress = (pct) => ufSet({ pct });
+  const ufStatus = (msg) => ufSet({ status: msg });
+  const ufDone = (msg) => ufSet({ pct: 100, status: msg, done: true, error: false });
+  const ufError = (msg) => ufSet({ status: msg, done: false, error: true });
+
   // 大容量分岐
   const isLarge = f.size >= resumableThreshold;
   if (isLarge) {
@@ -43515,6 +43648,7 @@ async function msProcessUploadRow(f, row, opts) {
       stat.style.color = '#dc2626';
       const thresholdMb = Math.floor(resumableThreshold / (1024 * 1024));
       stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=${thresholdMb}MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
+      ufError('❌ 大容量アップロードが無効化されています');
       return;
     }
     warn.style.display = '';
@@ -43528,19 +43662,21 @@ async function msProcessUploadRow(f, row, opts) {
         stat.textContent = 'キャンセル中…';
       });
       await msUploadResumable(f, {
-        onStatus: (msg) => { stat.textContent = msg; },
-        onProgress: (pct) => { bar.style.width = pct + '%'; },
+        onStatus: (msg) => { stat.textContent = msg; ufStatus(msg); },
+        onProgress: (pct) => { bar.style.width = pct + '%'; ufProgress(pct); },
         shouldAbort: () => meta.aborted,
       });
       bar.style.width = '100%';
       bar.style.background = '#10b981';
       stat.textContent = '✅ 完了（解析はまだ未実行）';
+      ufDone('✅ 完了');
       controls.style.display = 'none';
       warn.style.display = 'none';
     } catch (e) {
       bar.style.background = '#dc2626';
       stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
       stat.style.color = '#dc2626';
+      ufError('❌ ' + (e.message || 'アップロード失敗'));
       controls.style.display = 'none';
       warn.style.display = 'none';
     }
@@ -43553,6 +43689,7 @@ async function msProcessUploadRow(f, row, opts) {
     bar.style.background = '#dc2626'; bar.style.width = '100%';
     stat.style.color = '#dc2626';
     stat.textContent = `❌ ${maxMb}MB 上限超過（${votFmtSize(f.size)}）。短く編集または圧縮してから再アップロードしてください`;
+    ufError(`❌ ${maxMb}MB 上限超過`);
     return;
   }
 
@@ -43560,25 +43697,30 @@ async function msProcessUploadRow(f, row, opts) {
   const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
   if (isVideo) {
     stat.textContent = '動画長を確認中…';
+    ufStatus('動画長を確認中…');
     const dur = await msProbeVideoDuration(f);
     if (dur && dur > maxDur) {
       bar.style.background = '#dc2626'; bar.style.width = '100%';
       stat.style.color = '#dc2626';
       stat.textContent = `❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`;
+      ufError(`❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 超過`);
       return;
     }
   }
 
   try {
     stat.textContent = 'アップロード中…';
-    await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
+    ufStatus('アップロード中…');
+    await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; ufProgress(pct); });
     bar.style.width = '100%';
     bar.style.background = '#10b981';
     stat.textContent = '✅ 完了（解析はまだ未実行）';
+    ufDone('✅ 完了');
   } catch (e) {
     bar.style.background = '#dc2626';
     stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
     stat.style.color = '#dc2626';
+    ufError('❌ ' + (e.message || 'アップロード失敗'));
   }
 }
 
