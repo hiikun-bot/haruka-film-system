@@ -7149,7 +7149,7 @@ window.showPage = window.showPage || function(name, btn) {
   #page-material-square table.ms-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
   #page-material-square table.ms-table thead th { text-align: left; padding: 10px 8px; background: #f8f9fb; color: var(--text-muted); font-weight: 600; font-size: 12px; border-bottom: 1px solid var(--border); }
   #page-material-square table.ms-table tbody td { padding: 10px 8px; border-bottom: 1px solid #f0f1f4; vertical-align: middle; }
-  #page-material-square table.ms-table tbody tr { cursor: pointer; }
+  #page-material-square table.ms-table tbody tr { cursor: pointer; -webkit-user-select: none; user-select: none; }
   #page-material-square table.ms-table tbody tr:hover { background: #f8f9fb; }
   #page-material-square table.ms-table tbody tr.ms-selected { background: #eaf6f5; }
   /* 一括ダウンロード用チェック列 */
@@ -42661,8 +42661,8 @@ function msRenderRow(item) {
   // PR #695: プレビュー → AI解析 の順で進捗を1つだけ表示（フェーズ切り替え）
   const previewProgress = msPhaseProgressCell(item);
   return `
-    <tr class="${(selected + checkedCls).trim()}" onclick="msSelectItem('${fid}')">
-      <td class="ms-check-col" onclick="event.stopPropagation()"><input type="checkbox" class="ms-check" data-fid="${fid}" ${checked ? 'checked' : ''} onclick="msToggleCheck('${fid}', this.checked)"></td>
+    <tr class="${(selected + checkedCls).trim()}" onclick="msRowClick(event, '${fid}')">
+      <td class="ms-check-col"><input type="checkbox" class="ms-check" data-fid="${fid}" ${checked ? 'checked' : ''} onclick="event.preventDefault();event.stopPropagation();msRowClick(event, '${fid}')"></td>
       <td>${votStatusBadge(item.status)}${previewProgress}</td>
       <td style="font-size:20px;text-align:center">${msKindIcon(item.media_kind)}</td>
       <td style="word-break:break-all"><span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle">${msClientBadge(item)}<span>${votEscape(item.current_filename || item.original_filename || '-')}</span></span></td>
@@ -43046,10 +43046,42 @@ function msDownloadSelected() {
 function msToggleCheck(fileId, checked) {
   if (checked) msCheckedIds.add(fileId);
   else msCheckedIds.delete(fileId);
-  // 行のハイライトを即時反映（再描画はしない）
-  const tr = document.querySelector(`#ms-tbody input.ms-check[data-fid="${CSS.escape(fileId)}"]`)?.closest('tr');
-  if (tr) tr.classList.toggle('ms-checked', checked);
+  // チェックボックスと行ハイライトを即時反映（再描画はしない）
+  const cb = document.querySelector(`#ms-tbody input.ms-check[data-fid="${CSS.escape(fileId)}"]`);
+  if (cb) { cb.checked = checked; cb.closest('tr')?.classList.toggle('ms-checked', checked); }
   msUpdateBulkBar();
+}
+// 行クリック = チェックのトグル＋プレビュー表示。Shift+クリックで直近クリック行からの範囲選択。
+let msLastClickedFileId = null;
+function msRowClick(event, fileId) {
+  const anchorIdx = msLastClickedFileId ? msItemsCache.findIndex(x => x.drive_file_id === msLastClickedFileId) : -1;
+  if (event && event.shiftKey && anchorIdx >= 0 && msLastClickedFileId !== fileId) {
+    msRangeSelect(msLastClickedFileId, fileId);
+    // Shift+クリックで生じるテキスト選択を解除（範囲アンカーは据え置きで連続拡張可能）
+    if (window.getSelection) { const s = window.getSelection(); s && s.removeAllRanges && s.removeAllRanges(); }
+  } else {
+    msToggleCheck(fileId, !msCheckedIds.has(fileId));
+    msLastClickedFileId = fileId;
+  }
+  msSelectItem(fileId, false);
+}
+// アンカー行〜対象行までを（順不同で）すべてチェック状態にする
+function msRangeSelect(anchorId, toId) {
+  const a = msItemsCache.findIndex(x => x.drive_file_id === anchorId);
+  const b = msItemsCache.findIndex(x => x.drive_file_id === toId);
+  if (a < 0 || b < 0) return;
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  for (let i = lo; i <= hi; i++) msCheckedIds.add(msItemsCache[i].drive_file_id);
+  msSyncCheckboxes();
+  msUpdateBulkBar();
+}
+// 表示中の各チェックボックス・行ハイライトを msCheckedIds に合わせて同期
+function msSyncCheckboxes() {
+  document.querySelectorAll('#ms-tbody input.ms-check').forEach(cb => {
+    const on = msCheckedIds.has(cb.dataset.fid);
+    cb.checked = on;
+    cb.closest('tr')?.classList.toggle('ms-checked', on);
+  });
 }
 function msToggleSelectAll(checked) {
   msItemsCache.forEach(it => { if (checked) msCheckedIds.add(it.drive_file_id); else msCheckedIds.delete(it.drive_file_id); });
