@@ -7411,10 +7411,10 @@ window.showPage = window.showPage || function(name, btn) {
           <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
           <p style="margin:0;font-size:12px" id="ms-upload-limits-hint">複数ファイル同時OK / 1ファイル <span id="ms-hint-mb">25</span>MB まで / 動画は <span id="ms-hint-sec">30</span>秒以内</p>
           <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ <span id="ms-hint-resumable-mb">25</span>MB 超の大容量ファイルは Drive 直送でアップロード（数十GBの 4K 素材も OK）</p>
-          <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
+          <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / mov / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
           <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
           <input type="file" id="ms-file-input" multiple style="display:none"
-                 accept="video/mp4,image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+                 accept="video/mp4,video/quicktime,.mov,image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                  onchange="msHandleFileInput(event)">
         </div>
       </div>

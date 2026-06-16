@@ -73,15 +73,21 @@ router.get('/limits', (req, res) => {
   });
 });
 
-const VIDEO_MIMES = new Set(['video/mp4']);
+// .mov（video/quicktime）は iPhone / 一眼 / Premiere 書き出しで非常に多い。
+// Drive 直送経路でも完了時に同じ検証を通るため、ここに無いと数十GBの素材が弾かれる。
+const VIDEO_MIMES = new Set(['video/mp4', 'video/quicktime']);
 const IMAGE_MIMES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
 const HEIC_MIMES  = new Set(['image/heic', 'image/heif']);
+// MIME を取りこぼすブラウザ向けの拡張子フォールバック（.mov を application/octet-stream や
+// 空文字で送ってくるケースがある）。フロントの動画判定 /\.(mp4|mov|m4v)$/i と揃える。
+const VIDEO_EXT_RE = /\.(mp4|mov|m4v)$/i;
 
 function mimeToKind(mimeType, filename) {
   const mt = String(mimeType || '').toLowerCase();
   if (VIDEO_MIMES.has(mt)) return 'video';
   if (IMAGE_MIMES.has(mt) || HEIC_MIMES.has(mt)) return 'image';
   if (heicLib.isHeic(mt, filename)) return 'image';
+  if (VIDEO_EXT_RE.test(String(filename || ''))) return 'video';
   return null;
 }
 
