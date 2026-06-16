@@ -1031,6 +1031,16 @@ router.delete('/item/:fileId', async (req, res) => {
               driveDeleted[key] = { ok: true, via: 'sa_fallback', verified: saDel.verified === true };
               continue;
             }
+            // SA の delete も 404 / notFound = 削除しようとしたら既に存在しない。
+            // 削除のゴール（Drive 上から消える）は達成済みなので成功（already_gone）扱いにする。
+            // getFile では見えたのに delete で 404 になるのは、probe→delete 間の競合や
+            // trashed 状態の取り回しの差で起こりうるが、いずれにせよ「残っていない」ことに変わりはない。
+            // ここを失敗扱いにすると「原本/プレビュー 404 notFound File not found」という
+            // 実害のない一部失敗トーストがユーザーに出てしまう（バグ報告 #6e5a3356）。
+            if (saDel.status === 404 || saDel.reason === 'notFound') {
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
+              continue;
+            }
             driveDeleted[key] = {
               ok: false,
               status: saDel.status,
