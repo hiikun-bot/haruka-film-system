@@ -7192,7 +7192,12 @@ window.showPage = window.showPage || function(name, btn) {
   <div id="ms-view-list">
     <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
       <h2 style="margin:0">🗂️ 素材広場 <span style="font-size:12px;color:var(--text-muted);font-weight:normal;margin-left:8px">（test / experimental）</span></h2>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <!-- AI（Vertex AI / Gemini）の従量課金を Google Cloud で確認する控えめな外部リンク。
+             href は loadMaterialSquarePage() で GCP_BILLING_URL からセットする。 -->
+        <a id="ms-billing-link" target="_blank" rel="noopener noreferrer"
+           title="Vertex AI / Gemini の従量課金を Google Cloud で確認（要GCPログイン）"
+           style="font-size:12px;color:var(--text-muted);text-decoration:none;white-space:nowrap">💰 AI課金を確認 ↗</a>
         <span id="ms-daily-counter" style="font-size:12px;color:var(--text-muted)"></span>
         <button class="btn-primary" onclick="msShowUpload()">+ 新規追加</button>
       </div>
@@ -42054,6 +42059,11 @@ if ('serviceWorker' in navigator) {
 //   - 動画3秒ループ再生は /preview/:fileId プロキシ経由（admin セッション内）
 const VOT_API_BASE = '/api/admin/video-organization-test';
 
+// Vertex AI / Gemini の従量課金を確認する Google Cloud 課金ページの URL。
+// 将来 GCP プロジェクトや課金画面の遷移先を差し替えたいときは、ここ1か所を変えれば
+// 素材広場ヘッダーの「💰 AI課金を確認」リンクに反映される（ハードコード分散を避ける）。
+const GCP_BILLING_URL = 'https://console.cloud.google.com/billing/linkedaccount?project=haruka-film-system';
+
 async function votFetch(path, opts) {
   const res = await fetch(VOT_API_BASE + path, {
     credentials: 'include',
@@ -42143,6 +42153,9 @@ function msStartPreviewPolling(fileId) {
 
 function loadMaterialSquarePage() {
   msShowList();
+  // AI課金確認リンクの遷移先を GCP_BILLING_URL からセット（差し替えは定数1か所のみ）
+  const billingLink = document.getElementById('ms-billing-link');
+  if (billingLink) billingLink.href = GCP_BILLING_URL;
   msReloadList();
   // 検索バーのクライアント/案件 select を初期化（未ロードなら取得してから populate）
   msEnsureClientsProjects().then(() => msPopulateFilterClientSelect()).catch(() => {});
