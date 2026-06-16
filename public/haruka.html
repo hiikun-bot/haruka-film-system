@@ -15943,10 +15943,11 @@ function applyRoleBasedUI() {
   if (masterNav) masterNav.style.display = hasPermission('master.page') ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
   if (drawerMaster) drawerMaster.style.display = hasPermission('master.page') ? '' : 'none';
-  // 素材広場ナビ — admin のみ（VIEW AS にも追従するため effectiveRole で判定）
-  // ADR 015 (VIEW AS チェックリスト) に従い、currentUser.role の直書きを避け
-  // effectiveRole() で出し分ける。サーバ側も requireRole('admin') で重ねがけ。
-  const canMaterialSquare = effectiveRole() === 'admin';
+  // 素材広場ナビ — 全ロール開放（全ログインユーザーに表示）
+  // applyRoleBasedUI() はログイン後（currentUser 設定後）にのみ走るため、
+  // ナビ可視性はログイン済みであること自体で担保される。サーバ側も requireAuth のみ
+  // （旧: requireRole('admin') の重ねがけは撤廃済み）。
+  const canMaterialSquare = true;
   const materialSquareNav = document.getElementById('nav-material-square');
   if (materialSquareNav) materialSquareNav.style.display = canMaterialSquare ? '' : 'none';
   const drawerMaterialSquare = document.getElementById('nav-drawer-material-square');
