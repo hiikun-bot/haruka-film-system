@@ -144,6 +144,42 @@ function shouldFaststart(mimeType, fileName) {
   return /\.(mp4|mov|m4v)$/i.test(fileName || '');
 }
 
+// bug-report #008cc267: 修正指示・承認コメントの添付画像を正規化する。
+//   フロントは [{ url: 'data:image/...;base64,...', w, h }] を送ってくる。
+//   - 配列でなければ不正
+//   - 各要素は data:image/ で始まる url を必須（XSS/巨大ペイロード対策）
+//   - 最大 12 枚 / 合計 12MB まで（base64 文字列長で概算）
+//   返り値: 正規化済み配列（OK） / null（不正）
+const COMMENT_IMAGES_MAX_COUNT = 12;
+const COMMENT_IMAGES_MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+function sanitizeCommentImages(input) {
+  if (input === null) return [];
+  if (!Array.isArray(input)) return null;
+  if (input.length > COMMENT_IMAGES_MAX_COUNT) return null;
+  const out = [];
+  let totalBytes = 0;
+  for (const item of input) {
+    if (!item || typeof item !== 'object') return null;
+    const url = item.url;
+    if (typeof url !== 'string' || !/^data:image\/(png|jpe?g|gif|webp);base64,/.test(url)) return null;
+    totalBytes += url.length;
+    if (totalBytes > COMMENT_IMAGES_MAX_TOTAL_BYTES) return null;
+    const w = Number.isFinite(item.w) ? Math.round(item.w) : null;
+    const h = Number.isFinite(item.h) ? Math.round(item.h) : null;
+    out.push({ url, w, h });
+  }
+  return out;
+}
+
+// 添付画像 jsonb を安全に配列へパースする（DB から読んだ値の表示用）。
+function parseCommentImages(val) {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; } catch (_) { return []; }
+  }
+  return [];
+}
+
 // 旧 processFaststartAsync は lib/faststart.js の generateFaststart に統合済み。
 // 呼び出し: generateFaststart({ creativeFileId }) — DB id だけで完結する fire-and-forget。
 
@@ -6789,6 +6825,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     frameio_url, delivery_url, final_delivery_url, client_review_url,
     help_flag, talent_flag, note, revision_count,
     director_comment, client_comment, editor_comment,
+    // bug-report #008cc267: 修正指示・承認コメントに添付する画像（base64 data URL 配列）。
+    director_comment_images,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
     assignee_id, team_id, memo,
     director_user_id,
@@ -6853,6 +6891,16 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     updateData.director_comment = director_comment;
     updateData.director_comment_updated_at = _commentNowIso;
   }
+  // bug-report #008cc267: 修正指示・承認コメントの添付画像。
+  //   tweets.image_data と同じく base64 data URL をそのまま保存する。
+  //   不正値（配列でない / data:image でない / 上限超過）は弾く。
+  if (director_comment_images !== undefined) {
+    const sanitized = sanitizeCommentImages(director_comment_images);
+    if (sanitized === null) {
+      return res.status(400).json({ error: '添付画像の形式が不正です（画像は最大12枚・合計12MBまで）' });
+    }
+    updateData.director_comment_images = sanitized;
+  }
   if (client_comment !== undefined) {
     updateData.client_comment = client_comment;
     updateData.client_comment_updated_at = _commentNowIso;
@@ -6914,12 +6962,12 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (updateData.status !== undefined) {
     let beforeQuery = await supabase
       .from('creatives')
-      .select('status, director_comment, editor_comment, client_comment, updated_at, director_comment_updated_at, client_comment_updated_at, editor_comment_updated_at')
+      .select('status, director_comment, editor_comment, client_comment, director_comment_images, updated_at, director_comment_updated_at, client_comment_updated_at, editor_comment_updated_at')
       .eq('id', req.params.id)
       .maybeSingle();
     if (beforeQuery.error) {
       const msg = beforeQuery.error.message || '';
-      if (/comment_updated_at/.test(msg) || /column .+ does not exist/.test(msg)) {
+      if (/comment_updated_at/.test(msg) || /director_comment_images/.test(msg) || /column .+ does not exist/.test(msg)) {
         // 列欠損環境フォールバック: 旧スキーマで再取得
         beforeQuery = await supabase
           .from('creatives')
@@ -6943,9 +6991,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 新列 (director/client/editor _comment_updated_at) が schema-sync 未適用の環境用フォールバック。
     // 列欠損が原因なら _updated_at 系を抜いて再 UPDATE → 本体更新は成功させる。
     const msg = error.message || '';
-    const isMissingNewCol = /comment_updated_at/.test(msg);
+    const isMissingNewCol = /comment_updated_at/.test(msg) || /director_comment_images/.test(msg);
     if (isMissingNewCol) {
-      const { director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e, ...legacyUpdate } = updateData;
+      const { director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e, director_comment_images: _di, ...legacyUpdate } = updateData;
       ({ data, error } = await supabase
         .from('creatives')
         .update(legacyUpdate)
@@ -7061,20 +7109,33 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
       const editorCommentAtChange = (updateData.editor_comment !== undefined)
         ? (updateData.editor_comment ?? null)
         : (beforeRow.editor_comment ?? null);
+      // bug-report #008cc267: 添付画像も director_comment と対称にスナップショット。
+      const directorCommentImagesAtChange = (updateData.director_comment_images !== undefined)
+        ? (updateData.director_comment_images ?? [])
+        : (parseCommentImages(beforeRow.director_comment_images));
 
-      const { error: cstErr } = await supabase
+      const cstRow = {
+        creative_id: req.params.id,
+        from_status: beforeRow.status,
+        to_status:   updateData.status,
+        changed_by:  req.user?.id || null,
+        changed_at:  new Date().toISOString(),
+        director_comment_at_change: directorCommentAtChange,
+        client_comment_at_change:   clientCommentAtChange,
+        editor_comment_at_change:   editorCommentAtChange,
+        director_comment_images_at_change: directorCommentImagesAtChange,
+        version_at_change: versionAtChange,
+      };
+      let { error: cstErr } = await supabase
         .from('creative_status_transitions')
-        .insert({
-          creative_id: req.params.id,
-          from_status: beforeRow.status,
-          to_status:   updateData.status,
-          changed_by:  req.user?.id || null,
-          changed_at:  new Date().toISOString(),
-          director_comment_at_change: directorCommentAtChange,
-          client_comment_at_change:   clientCommentAtChange,
-          editor_comment_at_change:   editorCommentAtChange,
-          version_at_change: versionAtChange,
-        });
+        .insert(cstRow);
+      if (cstErr && /director_comment_images_at_change/.test(cstErr.message || '')) {
+        // 列欠損環境フォールバック: 画像スナップショット列を抜いて audit log は必ず残す。
+        const { director_comment_images_at_change: _drop, ...legacyCst } = cstRow;
+        ({ error: cstErr } = await supabase
+          .from('creative_status_transitions')
+          .insert(legacyCst));
+      }
       if (cstErr) {
         console.warn('[creative_status_transitions] insert failed:', cstErr.message);
       }
@@ -14992,11 +15053,19 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   // 1) creative の現状（live フォールバック判定用）を取得
   let creativeRow = null;
   try {
-    const { data: cRow } = await supabase
+    let { data: cRow, error: cErr } = await supabase
       .from('creatives')
-      .select('id, status, director_comment, client_comment, editor_comment, updated_at, project_id')
+      .select('id, status, director_comment, client_comment, editor_comment, director_comment_images, updated_at, project_id')
       .eq('id', creativeId)
       .maybeSingle();
+    if (cErr && /director_comment_images/.test(cErr.message || '')) {
+      // 列欠損環境フォールバック（migration 未適用）
+      ({ data: cRow } = await supabase
+        .from('creatives')
+        .select('id, status, director_comment, client_comment, editor_comment, updated_at, project_id')
+        .eq('id', creativeId)
+        .maybeSingle());
+    }
     creativeRow = cRow || null;
   } catch (_) {}
 
@@ -15054,11 +15123,19 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     // creative_status_transitions を時系列で全件
     (async () => {
       try {
-        const { data: trRows, error: trErr } = await supabase
+        let { data: trRows, error: trErr } = await supabase
           .from('creative_status_transitions')
-          .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
+          .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, director_comment_images_at_change, version_at_change')
           .eq('creative_id', creativeId)
           .order('changed_at', { ascending: true });
+        if (trErr && /director_comment_images_at_change/.test(trErr.message || '')) {
+          // 列欠損環境フォールバック（migration 未適用）
+          ({ data: trRows, error: trErr } = await supabase
+            .from('creative_status_transitions')
+            .select('id, from_status, to_status, changed_at, changed_by, director_comment_at_change, client_comment_at_change, editor_comment_at_change, version_at_change')
+            .eq('creative_id', creativeId)
+            .order('changed_at', { ascending: true }));
+        }
         if (!trErr) return trRows || [];
       } catch (_) {}
       return [];
@@ -15213,6 +15290,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       items.push({
         kind:        'revise',
         comment,
+        images:      parseCommentImages(tr.director_comment_images_at_change),
         occurred_at: tr.changed_at,
         from_role:   reviseFromRole,
         to_role:     'editor',
@@ -15259,6 +15337,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       items.push({
         kind:        approveDef.kind,
         comment,
+        images:      parseCommentImages(tr.director_comment_images_at_change),
         occurred_at: tr.changed_at,
         from_role:   approveDef.fromRole,
         to_role:     approveDef.toRole,
@@ -15301,6 +15380,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
           items.push({
             kind:        'revise',
             comment:     liveComment,
+            images:      parseCommentImages(creativeRow.director_comment_images),
             occurred_at: creativeRow.updated_at || new Date().toISOString(),
             from_role:   def.fromRole,
             to_role:     'editor',
