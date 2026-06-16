@@ -42381,6 +42381,8 @@ async function msReloadList() {
   const tbody = document.getElementById('ms-tbody');
   if (!tbody) return;
   const counter = document.getElementById('ms-daily-counter');
+  // ファイル名前のクライアントアイコン解決に allClients / allProjects が要るので先に確保
+  await msEnsureClientsProjects().catch(() => {});
   try {
     const q = document.getElementById('ms-search')?.value?.trim();
     const status = document.getElementById('ms-filter-status')?.value;
@@ -42597,6 +42599,20 @@ function msPhaseProgressCell(item) {
   return '';
 }
 
+// item.project_id → 案件 → クライアントを引き、ファイル名の前に出す小さなクライアントアイコンを返す。
+// 案件に紐づかない「全体素材」（project_id 無し / 解決不可）は「ー」を返す。
+function msClientBadge(item) {
+  const muted = '<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex-shrink:0;color:var(--text-muted);font-size:13px">ー</span>';
+  const pid = item && item.project_id;
+  if (!pid) return muted;
+  const project = (allProjects || []).find(p => p.id === pid);
+  if (!project) return muted;
+  const client = (allClients || []).find(c => c.id === project.client_id);
+  if (!client) return muted;
+  const label = client.client_code || (client.name ? client.name.slice(0, 3) : '?');
+  return `<span class="client-icon" title="${votEscape(client.name || '')}" style="width:22px;height:22px;font-size:10px;border-width:1px">${votEscape(label)}</span>`;
+}
+
 function msRenderRow(item) {
   const fid = votEscape(item.drive_file_id);
   const selected = item.drive_file_id === msSelectedFileId ? ' ms-selected' : '';
@@ -42606,7 +42622,7 @@ function msRenderRow(item) {
     <tr class="${selected.trim()}" onclick="msSelectItem('${fid}')">
       <td>${votStatusBadge(item.status)}${previewProgress}</td>
       <td style="font-size:20px;text-align:center">${msKindIcon(item.media_kind)}</td>
-      <td style="word-break:break-all">${votEscape(item.current_filename || item.original_filename || '-')}</td>
+      <td style="word-break:break-all"><span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle">${msClientBadge(item)}<span>${votEscape(item.current_filename || item.original_filename || '-')}</span></span></td>
       <td style="color:var(--text-muted)">${msFmtSpec(item)}</td>
       <td>${msTagsCell(item)}</td>
       <td style="color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px" title="${votEscape(item.summary || '')}">${votEscape(item.summary || '-')}</td>
