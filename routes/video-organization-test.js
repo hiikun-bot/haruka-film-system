@@ -240,6 +240,61 @@ router.get('/preview/:fileId', async (req, res) => {
   }
 });
 
+// ==================== 原本ダウンロード ====================
+// GET /download/:fileId — アップロード済みの「原本」を Content-Disposition: attachment で配信。
+//   - プレビュー（faststart / WebP storyboard）ではなく drive_file_id の原本をそのまま落とす。
+//   - SA 認証で Drive から stream するため、ファイルが何 GB でも・ユーザーに直接共有されていなくても DL 可能。
+//   - Range 対応（ブラウザのダウンロードマネージャ / レジューム用）。
+router.get('/download/:fileId', async (req, res) => {
+  const fileId = String(req.params.fileId);
+  if (!fileId) return res.status(400).end();
+  try {
+    // ファイル名は DB の current_filename → original_filename の順で採用（無ければ fileId）
+    const { data: row } = await supabase
+      .from('video_file_organization_tests')
+      .select('current_filename, original_filename')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
+    const filename = row?.current_filename || row?.original_filename || `${fileId}`;
+
+    const range = req.headers.range || null;
+    const { stream, status, headers } = await driveLib.getFileStream(fileId, range);
+
+    const passthrough = ['content-type', 'content-length', 'content-range', 'last-modified', 'etag'];
+    for (const k of passthrough) {
+      if (headers[k]) res.setHeader(k, headers[k]);
+    }
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    // ダウンロード強制 + 日本語ファイル名は RFC5987（filename*）で安全にエンコード
+    const asciiName = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
+    res.status(status || 200);
+    stream.on('error', (e) => {
+      console.error('[video-org] download stream error:', { fileId, message: e.message, code: e.code });
+      try { res.end(); } catch (_) {}
+    });
+    req.on('close', () => { try { stream.destroy(); } catch (_) {} });
+    stream.pipe(res);
+  } catch (e) {
+    const upstreamStatus = Number(e?.code) || null;
+    const reason = e?.errors?.[0]?.reason || null;
+    console.error('[video-org] download error:', { fileId, message: e?.message, upstreamStatus, reason });
+    if (!res.headersSent) {
+      let outStatus = 502;
+      if (upstreamStatus === 404) outStatus = 404;
+      else if (upstreamStatus === 403) outStatus = 403;
+      else if (upstreamStatus === 401) outStatus = 401;
+      else if (upstreamStatus === 429) outStatus = 429;
+      else if (upstreamStatus && upstreamStatus >= 500) outStatus = 502;
+      res.status(outStatus).json({ error: 'download_failed', upstreamStatus, reason });
+    }
+  }
+});
+
 // ==================== アップロード（複数ファイル D&D）====================
 // multer が LIMIT_FILE_SIZE で reject した時に 413 で返すラッパー
 function uploadWithSizeGuard(req, res, next) {
