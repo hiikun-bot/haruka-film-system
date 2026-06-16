@@ -29,6 +29,7 @@ const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('..
 const googleOAuth = require('../lib/google-oauth');
 const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
 const autoApplyLib = require('../lib/video-organization/auto-apply');
+const { resolveProjectFolder } = require('../lib/video-organization/project-folder');
 
 // 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
 // 本番初期は false で出して、別ターンで true に切り替える運用とする。
@@ -95,28 +96,9 @@ function getUploadFolderId() {
       || '';
 }
 
-// 「案件あり」アップロード時のアップロード先フォルダを解決する。
-//   素材広場ルート（rootFolderId）配下に `クライアント名 > 案件名` を ensure し、
-//   その案件フォルダの id を返す（クリエイティブの Drive 階層と同じ発想。素材広場は専用ルート）。
-//   フォルダ名に使えない文字はサニタイズ（既存クリエイティブと同じ置換規則）。
-// 戻り値: { folderId, project }
-async function resolveProjectFolder(projectId, rootFolderId) {
-  const { data: project, error } = await supabase
-    .from('projects')
-    .select('id, name, clients(id, name)')
-    .eq('id', projectId)
-    .single();
-  if (error || !project) {
-    throw new Error('指定された案件が見つかりません');
-  }
-  const sanitize = (s) => String(s || '').replace(/[/\\?%*:|"<>]/g, '_').trim();
-  const clientName = sanitize(project.clients?.name) || 'クライアント未設定';
-  const projectName = sanitize(project.name) || '案件未設定';
-
-  const clientFolderId = await driveLib.getOrCreateFolder(rootFolderId, clientName);
-  const projectFolderId = await driveLib.getOrCreateFolder(clientFolderId, projectName);
-  return { folderId: projectFolderId, project };
-}
+// 「案件あり」アップロード時のアップロード先フォルダ解決は
+// lib/video-organization/project-folder.js の resolveProjectFolder() に共通化した
+// （アップロードと AI 解析適用の両方で同じ「クライアント > 案件」階層を ensure するため）。
 
 // ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
@@ -396,6 +378,8 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         status: 'waiting_approval',
         dry_run: guards.isDryRun(),
         created_by: req.user?.id || null,
+        // 案件指定があれば保持。解析適用(auto-apply)で案件フォルダ直下へ配置するために使う。
+        project_id: projectId || null,
       };
       const { data: inserted, error: insertError } = await supabase
         .from('video_file_organization_tests')
@@ -444,6 +428,7 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
 router.post('/register', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  const projectId = String(req.body?.project_id || '').trim();
 
   try {
     const { data: existing } = await supabase
@@ -483,6 +468,8 @@ router.post('/register', async (req, res) => {
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
+      // 案件指定があれば保持。解析適用(auto-apply)で案件フォルダ直下へ配置するために使う。
+      project_id: projectId || null,
     };
 
     const { data: inserted, error: insertError } = await supabase
@@ -1238,6 +1225,8 @@ router.post('/upload-session/init', async (req, res) => {
         parent_folder_id: parentFolderId,
         drive_session_url: driveSessionUrl,
         status: 'pending',
+        // 案件指定があれば保持。complete 時に test 行へ引き継ぐ。
+        project_id: projectId || null,
       })
       .select()
       .single();
@@ -1416,6 +1405,8 @@ router.post('/upload-session/:sessionId/complete', async (req, res) => {
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
+      // init 時に保持した案件をそのまま引き継ぐ。解析適用で案件フォルダ直下へ配置する。
+      project_id: sess.project_id || null,
     };
     const { data: inserted, error: insertError } = await supabase
       .from('video_file_organization_tests')
