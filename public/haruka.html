@@ -39766,7 +39766,7 @@ async function msEnsureLimits() {
 
 function msResetUploadList() {
   const el = document.getElementById('ms-upload-list');
-  if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:12px">まだファイルがありません</div>';
+  if (el) el.innerHTML = '<div data-ms-placeholder="1" style="color:var(--text-muted);font-size:12px">まだファイルがありません</div>';
 }
 function msHandleFileInput(ev) {
   msHandleFiles(Array.from(ev.target.files || []));
@@ -39805,6 +39805,33 @@ const MS_CHUNK_SIZE_BYTES = 256 * 1024 * 1024;
 // アクティブな大容量アップロード（ブラウザ閉じ防止用）
 const msActiveResumableUploads = new Set();
 
+// 同時アップロード数の上限（上り帯域の食い合いを防ぐ）。複数回の D&D / ファイル選択を
+// またいで効くグローバルなキュー。超過分は待機列に入り、空きが出たら自動で開始する。
+const MS_UPLOAD_CONCURRENCY = 3;
+let msUploadActiveCount = 0;
+const msUploadQueue = [];
+// task: () => Promise<any> を受け取り、実行完了まで解決しない Promise を返す
+function msEnqueueUpload(task) {
+  return new Promise((resolve) => {
+    msUploadQueue.push({ task, resolve });
+    msPumpUploadQueue();
+  });
+}
+function msPumpUploadQueue() {
+  while (msUploadActiveCount < MS_UPLOAD_CONCURRENCY && msUploadQueue.length > 0) {
+    const { task, resolve } = msUploadQueue.shift();
+    msUploadActiveCount++;
+    Promise.resolve()
+      .then(task)
+      .catch(() => {})   // 個別失敗は行UI側で表示済み。キューは止めない
+      .finally(() => {
+        msUploadActiveCount--;
+        resolve();
+        msPumpUploadQueue();
+      });
+  }
+}
+
 window.addEventListener('beforeunload', (e) => {
   if (msActiveResumableUploads.size > 0) {
     e.preventDefault();
@@ -39824,7 +39851,12 @@ async function msHandleFiles(files) {
   const resumableEnabled = !!limits.resumable_upload_enabled;
   const resumableThreshold = Number(limits.resumable_upload_threshold_bytes) || MS_RESUMABLE_THRESHOLD_BYTES;
 
-  list.innerHTML = '';
+  // 既存の進捗行は消さず、プレースホルダのみ除去して追記する。
+  // （アップロード中に再 D&D されても 1 本目の行が消えないようにするため）
+  list.querySelectorAll('[data-ms-placeholder]').forEach(el => el.remove());
+
+  const opts = { maxMb, maxDur, maxBytes, resumableEnabled, resumableThreshold };
+  const tasks = [];
   for (const f of files) {
     const row = document.createElement('div');
     row.className = 'ms-upload-item';
@@ -39841,87 +39873,96 @@ async function msHandleFiles(files) {
       <div class="ms-warn" style="font-size:11px;color:#b45309;margin-top:4px;display:none">⚠ 大容量ファイルです。アップロード中はこのタブを閉じないでください</div>
     `;
     list.appendChild(row);
-    const bar = row.querySelector('.ms-bar > div');
-    const stat = row.querySelector('.ms-status');
-    const controls = row.querySelector('.ms-controls');
-    const warn = row.querySelector('.ms-warn');
+    // 1 ファイル＝1 独立タスク。同時実行数はグローバルキュー（MS_UPLOAD_CONCURRENCY）で制御。
+    tasks.push(msEnqueueUpload(() => msProcessUploadRow(f, row, opts)));
+  }
+  await Promise.allSettled(tasks);
+  msReloadList();
+}
 
-    // 大容量分岐
-    const isLarge = f.size >= resumableThreshold;
-    if (isLarge) {
-      // 大容量経路（Resumable Upload）— 有効でなければ明示エラーで止める
-      if (!resumableEnabled) {
-        bar.style.background = '#dc2626'; bar.style.width = '100%';
-        stat.style.color = '#dc2626';
-        const thresholdMb = Math.floor(resumableThreshold / (1024 * 1024));
-        stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=${thresholdMb}MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
-        continue;
-      }
-      warn.style.display = '';
-      controls.style.display = '';
-      const cancelBtn = controls.querySelector('[data-action="cancel"]');
-      try {
-        stat.textContent = 'Drive セッションを発行中…';
-        const meta = { aborted: false };
-        cancelBtn.addEventListener('click', () => {
-          meta.aborted = true;
-          stat.textContent = 'キャンセル中…';
-        });
-        await msUploadResumable(f, {
-          onStatus: (msg) => { stat.textContent = msg; },
-          onProgress: (pct) => { bar.style.width = pct + '%'; },
-          shouldAbort: () => meta.aborted,
-        });
-        bar.style.width = '100%';
-        bar.style.background = '#10b981';
-        stat.textContent = '✅ 完了（解析はまだ未実行）';
-        controls.style.display = 'none';
-        warn.style.display = 'none';
-      } catch (e) {
-        bar.style.background = '#dc2626';
-        stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
-        stat.style.color = '#dc2626';
-        controls.style.display = 'none';
-        warn.style.display = 'none';
-      }
-      continue;
-    }
+// 1 ファイル分のアップロード処理（行 UI への進捗反映込み）。
+// 直列 for ループから切り出し、並列キューから個別に呼べるようにしたもの。
+async function msProcessUploadRow(f, row, opts) {
+  const { maxMb, maxDur, maxBytes, resumableEnabled, resumableThreshold } = opts;
+  const bar = row.querySelector('.ms-bar > div');
+  const stat = row.querySelector('.ms-status');
+  const controls = row.querySelector('.ms-controls');
+  const warn = row.querySelector('.ms-warn');
 
-    // 既存（短尺・閾値未満）経路 — multer 経由 /upload ===================
-    // 事前チェック①: 既存上限（multer の MAX_UPLOAD_SIZE_MB）
-    if (f.size > maxBytes) {
+  // 大容量分岐
+  const isLarge = f.size >= resumableThreshold;
+  if (isLarge) {
+    // 大容量経路（Resumable Upload）— 有効でなければ明示エラーで止める
+    if (!resumableEnabled) {
       bar.style.background = '#dc2626'; bar.style.width = '100%';
       stat.style.color = '#dc2626';
-      stat.textContent = `❌ ${maxMb}MB 上限超過（${votFmtSize(f.size)}）。短く編集または圧縮してから再アップロードしてください`;
-      continue;
+      const thresholdMb = Math.floor(resumableThreshold / (1024 * 1024));
+      stat.textContent = `❌ ${votFmtSize(f.size)} は大容量アップロードが必要です（>=${thresholdMb}MB）が、機能が無効化されています（ENABLE_RESUMABLE_UPLOAD=true を管理者に依頼してください）`;
+      return;
     }
-
-    // 事前チェック②: 動画長
-    const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
-    if (isVideo) {
-      stat.textContent = '動画長を確認中…';
-      const dur = await msProbeVideoDuration(f);
-      if (dur && dur > maxDur) {
-        bar.style.background = '#dc2626'; bar.style.width = '100%';
-        stat.style.color = '#dc2626';
-        stat.textContent = `❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`;
-        continue;
-      }
-    }
-
+    warn.style.display = '';
+    controls.style.display = '';
+    const cancelBtn = controls.querySelector('[data-action="cancel"]');
     try {
-      stat.textContent = 'アップロード中…';
-      await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
+      stat.textContent = 'Drive セッションを発行中…';
+      const meta = { aborted: false };
+      cancelBtn.addEventListener('click', () => {
+        meta.aborted = true;
+        stat.textContent = 'キャンセル中…';
+      });
+      await msUploadResumable(f, {
+        onStatus: (msg) => { stat.textContent = msg; },
+        onProgress: (pct) => { bar.style.width = pct + '%'; },
+        shouldAbort: () => meta.aborted,
+      });
       bar.style.width = '100%';
       bar.style.background = '#10b981';
       stat.textContent = '✅ 完了（解析はまだ未実行）';
+      controls.style.display = 'none';
+      warn.style.display = 'none';
     } catch (e) {
       bar.style.background = '#dc2626';
       stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
       stat.style.color = '#dc2626';
+      controls.style.display = 'none';
+      warn.style.display = 'none';
+    }
+    return;
+  }
+
+  // 既存（短尺・閾値未満）経路 — multer 経由 /upload ===================
+  // 事前チェック①: 既存上限（multer の MAX_UPLOAD_SIZE_MB）
+  if (f.size > maxBytes) {
+    bar.style.background = '#dc2626'; bar.style.width = '100%';
+    stat.style.color = '#dc2626';
+    stat.textContent = `❌ ${maxMb}MB 上限超過（${votFmtSize(f.size)}）。短く編集または圧縮してから再アップロードしてください`;
+    return;
+  }
+
+  // 事前チェック②: 動画長
+  const isVideo = /^video\//i.test(f.type || '') || /\.(mp4|mov|m4v)$/i.test(f.name || '');
+  if (isVideo) {
+    stat.textContent = '動画長を確認中…';
+    const dur = await msProbeVideoDuration(f);
+    if (dur && dur > maxDur) {
+      bar.style.background = '#dc2626'; bar.style.width = '100%';
+      stat.style.color = '#dc2626';
+      stat.textContent = `❌ 動画 ${Math.round(dur)}秒 が上限 ${maxDur}秒 を超えています。短く編集してから再アップロードしてください`;
+      return;
     }
   }
-  msReloadList();
+
+  try {
+    stat.textContent = 'アップロード中…';
+    await msUploadOne(f, (pct) => { bar.style.width = pct + '%'; });
+    bar.style.width = '100%';
+    bar.style.background = '#10b981';
+    stat.textContent = '✅ 完了（解析はまだ未実行）';
+  } catch (e) {
+    bar.style.background = '#dc2626';
+    stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
+    stat.style.color = '#dc2626';
+  }
 }
 
 // ==================== Resumable Upload（閾値以上はブラウザ→Drive 直送） ====================
