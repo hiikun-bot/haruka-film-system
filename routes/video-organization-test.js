@@ -102,7 +102,7 @@ function getUploadFolderId() {
 // ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
   try {
-    const { q, status, mediaKind, tag } = req.query || {};
+    const { q, status, mediaKind, tag, clientId, projectId } = req.query || {};
     let query = supabase
       .from('video_file_organization_tests')
       .select('*')
@@ -112,6 +112,28 @@ router.get('/list', async (req, res) => {
     if (status) query = query.eq('status', String(status));
     if (mediaKind) query = query.eq('media_kind', String(mediaKind));
     if (tag) query = query.contains('tags', [String(tag)]);
+
+    // クライアント / 案件での絞り込み（検索バーの2段構えフィルタ）。
+    //   - projectId 指定 … その案件の素材だけ
+    //   - clientId 指定（案件全体）… そのクライアントの全案件の素材
+    //   - どちらも無し … 全体素材（従来どおり全件）
+    // project_id は #815 以降のアップロードで記録される。過去分は
+    // scripts/backfill_msquare_project_id.js でフォルダ照合して埋める。
+    if (projectId) {
+      query = query.eq('project_id', String(projectId));
+    } else if (clientId) {
+      const { data: projRows, error: projErr } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('client_id', String(clientId));
+      if (projErr) throw projErr;
+      const ids = (projRows || []).map(p => p.id);
+      if (ids.length === 0) {
+        // 案件を持たないクライアント → 該当素材なし
+        return res.json({ items: [], daily: await guards.checkDailyLimit() });
+      }
+      query = query.in('project_id', ids);
+    }
     if (q) {
       // ファイル名・summary・tags での自由検索
       const safe = String(q).replace(/%/g, '\\%').replace(/_/g, '\\_');
