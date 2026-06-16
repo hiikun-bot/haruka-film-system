@@ -368,7 +368,8 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
       const maxDur = guards.getMaxUploadDurationSeconds();
       if (kind === 'video' && uploaded.durationSeconds && uploaded.durationSeconds > maxDur) {
         // 戻り値は { ok, status, reason, message }。失敗してもログだけ残してフロー継続。
-        await driveLib.deleteFile(uploaded.fileId);
+        // 共有ドライブの SA は canDelete=false のため完全削除は失敗する。ゴミ箱送りで確実に外す。
+        await driveLib.trashFile(uploaded.fileId);
         logCtx('upload-rejected-too-long', {
           at: new Date().toISOString(), by: req.user?.email,
           filename: f.originalname,
@@ -998,9 +999,11 @@ router.delete('/item/:fileId', async (req, res) => {
           });
         }
 
-        // user OAuth で並列削除を試行（順序保証は不要）
+        // user OAuth で並列ゴミ箱送りを試行（順序保証は不要）
+        // 完全削除(files.delete)ではなくゴミ箱送り(trashed=true)。共有ドライブの SA は
+        // canDelete=false / canTrash=true のため、完全削除は権限不足で必ず失敗する。
         const userResults = await Promise.allSettled(
-          targets.map(([, id]) => driveLib.deleteFile(id, { client: userDriveClient }))
+          targets.map(([, id]) => driveLib.trashFile(id, { client: userDriveClient }))
         );
 
         const userAttempts = {};
@@ -1028,21 +1031,27 @@ router.delete('/item/:fileId', async (req, res) => {
             driveDeleted[key] = { ok: true, via: 'user_oauth', verified: result.verified === true };
             continue;
           }
-          // user OAuth で 404 が返ったときは SA で実在確認 → 存在すれば SA で削除（Hybrid フォールバック）
+          // user OAuth で 404 が返ったときは SA で実在確認 → 存在すれば SA でゴミ箱送り（Hybrid フォールバック）
           if (result.status === 404 || result.reason === 'notFound') {
             const existence = await driveLib.getFile(id, { client: saDrive });
             saFallbackAttempts[key] = {
               id,
-              probe: { ok: existence.ok, status: existence.status, reason: existence.reason || null },
+              probe: { ok: existence.ok, status: existence.status, reason: existence.reason || null, trashed: existence.trashed === true },
             };
             if (!existence.ok) {
               // SA からも見えない（=本当に Drive に存在しない）
               driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth', verified: true };
               continue;
             }
-            // SA からは見える = SA 所有のファイル（プレビュー webp 等）。SA で削除を試みる
-            const saDel = await driveLib.deleteFile(id, { client: saDrive });
-            saFallbackAttempts[key].delete = {
+            if (existence.trashed === true) {
+              // SA から見えるが既にゴミ箱の中 = 削除のゴール達成済み
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
+              continue;
+            }
+            // SA からは見える = SA 所有のファイル（プレビュー webp 等）。SA でゴミ箱送りを試みる。
+            // SA はコンテンツ管理者で canTrash=true のため、ここが本フローの主軸成功パス。
+            const saDel = await driveLib.trashFile(id, { client: saDrive });
+            saFallbackAttempts[key].trash = {
               ok: saDel.ok,
               status: saDel.status,
               reason: saDel.reason || null,
@@ -1053,12 +1062,8 @@ router.delete('/item/:fileId', async (req, res) => {
               driveDeleted[key] = { ok: true, via: 'sa_fallback', verified: saDel.verified === true };
               continue;
             }
-            // SA の delete も 404 / notFound = 削除しようとしたら既に存在しない。
+            // SA のゴミ箱送りも 404 / notFound = 操作しようとしたら既に存在しない。
             // 削除のゴール（Drive 上から消える）は達成済みなので成功（already_gone）扱いにする。
-            // getFile では見えたのに delete で 404 になるのは、probe→delete 間の競合や
-            // trashed 状態の取り回しの差で起こりうるが、いずれにせよ「残っていない」ことに変わりはない。
-            // ここを失敗扱いにすると「原本/プレビュー 404 notFound File not found」という
-            // 実害のない一部失敗トーストがユーザーに出てしまう（バグ報告 #6e5a3356）。
             if (saDel.status === 404 || saDel.reason === 'notFound') {
               driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
               continue;
@@ -1066,8 +1071,8 @@ router.delete('/item/:fileId', async (req, res) => {
             driveDeleted[key] = {
               ok: false,
               status: saDel.status,
-              reason: saDel.reason || 'sa_delete_failed',
-              message: saDel.message || 'SA fallback delete failed',
+              reason: saDel.reason || 'sa_trash_failed',
+              message: saDel.message || 'SA fallback trash failed',
               verified: false,
               via: 'sa_fallback',
             };
@@ -1094,7 +1099,29 @@ router.delete('/item/:fileId', async (req, res) => {
       }
     }
 
-    // 最後に DB レコードを削除（Drive 削除に部分失敗しても、UI 上の整合性を優先して DB は消す）
+    // 孤児化防止: Drive 側のゴミ箱送りに 1 件でも失敗（ok===false）が残っている場合は
+    // DB レコードを消さない。DB を消すと「Drive に実体が残っているのに HARUKA からは消えた」
+    // 孤児ファイルになり、共有ドライブにゴミが溜まる（今日 11GB 分が孤児化していた問題の原因）。
+    // 「本当に存在しない（getで404＝既に手動削除済み等）」は already_gone で ok:true 扱いなので
+    // ここでは失敗に数えない。失敗が残る場合は DB を残し、レスポンスで失敗を明示する
+    // （フロントは failList で赤トーストを出すため整合する）。
+    const driveFailed = Object.values(driveDeleted).some(v => v && v.ok === false);
+
+    if (deleteFromDrive && driveFailed) {
+      logCtx('delete-skipped-db-kept', {
+        at: new Date().toISOString(), by: req.user?.email,
+        fileId, deleteFromDrive, drive_deleted: driveDeleted,
+        note: 'Drive 側に失敗が残るため DB レコードは保持（孤児化防止）',
+      });
+      return res.json({
+        ok: false,
+        db_deleted: false,
+        drive_deleted: driveDeleted,
+        delete_from_drive: deleteFromDrive,
+      });
+    }
+
+    // Drive 側が全成功（または deleteFromDrive=false）なら DB レコードを削除
     const { error } = await supabase
       .from('video_file_organization_tests')
       .delete().eq('drive_file_id', fileId);
@@ -1105,7 +1132,7 @@ router.delete('/item/:fileId', async (req, res) => {
       fileId, deleteFromDrive, drive_deleted: driveDeleted,
     });
 
-    res.json({ ok: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
+    res.json({ ok: true, db_deleted: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
   } catch (e) {
     console.error('[video-org] delete error:', e);
     res.status(500).json({ error: e.message });
