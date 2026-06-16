@@ -7284,6 +7284,8 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-actions">
             <button class="btn-primary" id="ms-btn-analyze" onclick="msAnalyzeSelected()">🤖 AI解析する</button>
             <button class="btn-primary" id="ms-btn-apply-retry" onclick="msApplySelected()" style="display:none">↻ 再適用</button>
+            <button class="btn-secondary" id="ms-btn-download" onclick="msDownloadSelected()" title="アップロードした原本をダウンロード">⬇ ダウンロード</button>
+            <a class="btn-secondary" id="ms-btn-open-folder" onclick="return msOpenDriveFolder()" href="#" target="_blank" rel="noopener" title="Drive 上の保存先フォルダを開く" style="text-decoration:none;display:inline-flex;align-items:center">📁 Drive フォルダ</a>
             <button class="btn-secondary" id="ms-btn-preview-regen" onclick="msRegeneratePreview()" title="60枚WebPストーリーボードを再生成">⚡ プレビュー再生成</button>
             <button class="btn-secondary" id="ms-btn-delete" onclick="msDeleteSelected()">🗑 削除</button>
           </div>
@@ -42789,6 +42791,23 @@ function msSelectItem(fileId, scroll = true) {
   const inProgress = previewStatus === 'pending' || previewStatus === 'processing';
   const regenBtn = document.getElementById('ms-btn-preview-regen');
   if (regenBtn) regenBtn.style.display = (isVideo && !inProgress) ? '' : 'none';
+
+  // 📁 Drive フォルダリンク: 保存先フォルダ ID があればそのフォルダを、無ければ原本ファイル（drive_url）を開く
+  const folderBtn = document.getElementById('ms-btn-open-folder');
+  if (folderBtn) {
+    const folderId = item.current_parent_folder_id || null;
+    const href = folderId
+      ? `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`
+      : (item.drive_url || null);
+    if (href) {
+      folderBtn.href = href;
+      folderBtn.style.display = '';
+      const folderName = item.current_parent_folder_name;
+      folderBtn.title = folderName ? `Drive フォルダを開く: ${folderName}` : 'Drive 上の保存先を開く';
+    } else {
+      folderBtn.style.display = 'none';
+    }
+  }
 }
 
 // ==================== アクション（解析・適用・削除）====================
@@ -42818,6 +42837,38 @@ async function msAnalyzeSelected() {
 // プレビュー再生成（全動画一律 60枚 WebP ストーリーボードを生成）
 // - 新規実装は POST /preview/:fileId を呼ぶ（PR-BC で追加予定）
 // - サーバ側に /preview/:fileId が無い場合は旧 POST /faststart/:fileId にフォールバック
+// 📁 Drive フォルダ（保存先）を新規タブで開く。フォルダ ID が無ければ原本ファイルを開く。
+// href も msSelectItem で設定済みだが、確実性のため onclick 側でも開いて既定遷移は抑止する。
+function msOpenDriveFolder() {
+  const item = msItemsCache.find(x => x.drive_file_id === msSelectedFileId);
+  if (!item) return false;
+  const folderId = item.current_parent_folder_id || null;
+  const url = folderId
+    ? `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`
+    : (item.drive_url || null);
+  if (!url) { showToast('保存先フォルダ情報がありません', 'error'); return false; }
+  window.open(url, '_blank', 'noopener');
+  return false;
+}
+
+// ⬇ アップロードした原本をダウンロード。サーバが Content-Disposition: attachment で配信するため
+//   同一オリジンの <a download> でファイル名つき保存ダイアログが出る（数GBの原本も SA 経由で DL 可）。
+function msDownloadSelected() {
+  if (!msSelectedFileId) return;
+  const item = msItemsCache.find(x => x.drive_file_id === msSelectedFileId);
+  if (!item) return;
+  const filename = item.current_filename || item.original_filename || 'download';
+  const url = `${VOT_API_BASE}/download/${encodeURIComponent(msSelectedFileId)}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast('ダウンロードを開始しました', 'info');
+}
+
 async function msRegeneratePreview() {
   if (!msSelectedFileId) return;
   const btn = document.getElementById('ms-btn-preview-regen');
