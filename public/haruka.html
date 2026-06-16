@@ -42919,7 +42919,7 @@ function msSelectItem(fileId, scroll = true) {
     ? scenes.map(s => `<li><span class="ms-time">${votEscape(s.time || '0:00')}</span>${votEscape(s.description || '')}</li>`).join('')
     : '<li style="color:var(--text-muted)">-</li>';
   document.getElementById('ms-preview-mood').textContent = item.mood || '-';
-  document.getElementById('ms-preview-new-name').textContent = item.recommended_filename || '-';
+  document.getElementById('ms-preview-new-name').textContent = votDisplayFilename(item);
   document.getElementById('ms-preview-new-folder').textContent = item.recommended_folder || '-';
   // 行を切り替えたらファイル名編集モードは閉じておく（前の素材の編集状態が残らないように）
   msCancelRename();
@@ -43736,6 +43736,43 @@ function msUploadOne(file, onProgress) {
     if (pid) fd.append('project_id', pid);
     xhr.send(fd);
   });
+}
+
+// 文字列から撮影日(YYYYMMDD)を抽出する。
+// ※ lib/video-organization/auto-apply.js の extractDateFromName と同ロジック（優先順位・正規表現を一致させること）。
+//   - YYYYMMDD（20xx 始まり 8 桁）を最優先
+//   - 次に YYMMDD（6 桁。月 01-12 / 日 01-31 の妥当性チェック付き。撮影機材のクリップ名 例: A002F523_260613AN → 260613 を 20260613）
+function votExtractDateFromName(name) {
+  const s = String(name || '');
+  let m = s.match(/(20\d{2})(\d{2})(\d{2})/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[3]) >= 1 && Number(m[3]) <= 31) {
+    return `${m[1]}${m[2]}${m[3]}`;
+  }
+  m = s.match(/(?:^|[^0-9])(\d{2})(\d{2})(\d{2})(?:[^0-9]|$)/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[3]) >= 1 && Number(m[3]) <= 31) {
+    return `20${m[1]}${m[2]}${m[3]}`;
+  }
+  return null;
+}
+
+// 「振り分け提案」欄に表示するファイル名を決める（表示専用・保存ロジックは触らない）。
+//   1) status==='applied' で current_filename あり → 補正済みなのでそのまま表示
+//   2) それ以外（未適用）→ recommended_filename を表示。ただし先頭が「日付不明」なら
+//      original_filename から撮影日を抽出して置換（auto-apply.js の ensureShootDateInFilename と挙動一致）。
+//      抽出できなければ「日付不明」のまま（手入力が必要なので鉛筆編集で直す既存導線のまま）。
+function votDisplayFilename(item) {
+  if (!item) return '-';
+  if (item.status === 'applied' && item.current_filename) {
+    return item.current_filename;
+  }
+  const name = String(item.recommended_filename || '').trim();
+  if (!name) return item.current_filename || item.original_filename || '-';
+  const UNKNOWN = '日付不明';
+  if (name.startsWith(UNKNOWN)) {
+    const date = votExtractDateFromName(item.original_filename);
+    if (date) return `${date}${name.slice(UNKNOWN.length)}`;
+  }
+  return name;
 }
 
 function votEscape(s) {
