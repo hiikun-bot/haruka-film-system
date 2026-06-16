@@ -828,6 +828,19 @@ router.post('/rename', async (req, res) => {
       supportsAllDrives: true,
     });
 
+    // プレビュー webp / faststart も原本と同じベース名に揃える（素材広場でセット判別するため）。
+    //   例: 原本 ..._Log.mp4 → プレビュー ..._Log.webp。失敗しても原本リネームは成功扱いにする。
+    let previewRename = [];
+    try {
+      previewRename = await driveLib.renameDerivedPreviewsToMatch({
+        client: saDrive,
+        newMasterName: newName,
+        previewFileIds: [item.preview_drive_file_id, item.faststart_drive_file_id],
+      });
+    } catch (previewErr) {
+      console.warn('[video-org] rename: preview rename skipped:', previewErr?.message || previewErr);
+    }
+
     // DB を揃える（現在名・提案名の両方を新名に）
     const { error: upErr } = await supabase
       .from('video_file_organization_tests')
@@ -841,9 +854,10 @@ router.post('/rename', async (req, res) => {
     logCtx('rename', {
       at: new Date().toISOString(), by: req.user?.email,
       fileId, from: currentName, to: newName,
+      previews: previewRename,
     });
 
-    res.json({ ok: true, filename: newName });
+    res.json({ ok: true, filename: newName, previews: previewRename });
   } catch (e) {
     const msg = e?.errors?.[0]?.message || e?.message || String(e);
     console.error('[video-org] rename error:', msg);
