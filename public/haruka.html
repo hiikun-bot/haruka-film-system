@@ -9860,9 +9860,10 @@ function renderProjectsView() {
 
   list.innerHTML = renderClients.map(client => {
     const allClientProjects = filteredProjects.filter(p => p.client_id === client.id);
-    const clientProjects = showCompleted
+    const clientProjects = (showCompleted
       ? allClientProjects
-      : allClientProjects.filter(p => p.status !== '完了' && !p.is_hidden);
+      : allClientProjects.filter(p => p.status !== '完了' && !p.is_hidden)
+    ).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
     const hiddenCount = allClientProjects.filter(p => p.status === '完了' || p.is_hidden).length;
 
     const fmtDate = d => {
