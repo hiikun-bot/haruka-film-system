@@ -1,7 +1,7 @@
 // routes/video-organization-test.js — 素材広場 / 動画整理ツール（test / experimental）
 //
 // 設計の核:
-//   - 全 endpoint admin のみ（requireRole('admin')）
+//   - 全 endpoint ログイン必須（全ロール開放 / requireAuth のみ。旧: admin 限定）
 //   - フロー: upload（D&D アップロード）/ register（既存 Drive ID）→
 //             analyze（承認＋AI解析）→ apply（承認＋Drive変更）の 3 段階承認
 //   - upload / register 段階では Gemini を 1 度も叩かない（waiting_approval）
@@ -20,7 +20,7 @@ const multer = require('multer');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth, requireRole } = require('../auth');
+const { requireAuth } = require('../auth');
 const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
@@ -29,6 +29,7 @@ const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('..
 const googleOAuth = require('../lib/google-oauth');
 const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
 const autoApplyLib = require('../lib/video-organization/auto-apply');
+const { resolveProjectFolder } = require('../lib/video-organization/project-folder');
 
 // 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
 // 本番初期は false で出して、別ターンで true に切り替える運用とする。
@@ -46,9 +47,8 @@ router.use((req, res, next) => {
   next();
 });
 
-// 共通: 認証 + admin
+// 共通: 認証（ログイン必須。ロール制限なし＝全ロール開放）
 router.use(requireAuth);
-router.use(requireRole('admin'));
 
 // アップロードを受ける upload エリア
 // limits.fileSize は guards.getMaxUploadSizeBytes() で env 連動（既定 25MB）。
@@ -95,33 +95,14 @@ function getUploadFolderId() {
       || '';
 }
 
-// 「案件あり」アップロード時のアップロード先フォルダを解決する。
-//   素材広場ルート（rootFolderId）配下に `クライアント名 > 案件名` を ensure し、
-//   その案件フォルダの id を返す（クリエイティブの Drive 階層と同じ発想。素材広場は専用ルート）。
-//   フォルダ名に使えない文字はサニタイズ（既存クリエイティブと同じ置換規則）。
-// 戻り値: { folderId, project }
-async function resolveProjectFolder(projectId, rootFolderId) {
-  const { data: project, error } = await supabase
-    .from('projects')
-    .select('id, name, clients(id, name)')
-    .eq('id', projectId)
-    .single();
-  if (error || !project) {
-    throw new Error('指定された案件が見つかりません');
-  }
-  const sanitize = (s) => String(s || '').replace(/[/\\?%*:|"<>]/g, '_').trim();
-  const clientName = sanitize(project.clients?.name) || 'クライアント未設定';
-  const projectName = sanitize(project.name) || '案件未設定';
-
-  const clientFolderId = await driveLib.getOrCreateFolder(rootFolderId, clientName);
-  const projectFolderId = await driveLib.getOrCreateFolder(clientFolderId, projectName);
-  return { folderId: projectFolderId, project };
-}
+// 「案件あり」アップロード時のアップロード先フォルダ解決は
+// lib/video-organization/project-folder.js の resolveProjectFolder() に共通化した
+// （アップロードと AI 解析適用の両方で同じ「クライアント > 案件」階層を ensure するため）。
 
 // ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
   try {
-    const { q, status, mediaKind, tag } = req.query || {};
+    const { q, status, mediaKind, tag, clientId, projectId } = req.query || {};
     let query = supabase
       .from('video_file_organization_tests')
       .select('*')
@@ -131,6 +112,28 @@ router.get('/list', async (req, res) => {
     if (status) query = query.eq('status', String(status));
     if (mediaKind) query = query.eq('media_kind', String(mediaKind));
     if (tag) query = query.contains('tags', [String(tag)]);
+
+    // クライアント / 案件での絞り込み（検索バーの2段構えフィルタ）。
+    //   - projectId 指定 … その案件の素材だけ
+    //   - clientId 指定（案件全体）… そのクライアントの全案件の素材
+    //   - どちらも無し … 全体素材（従来どおり全件）
+    // project_id は #815 以降のアップロードで記録される。過去分は
+    // scripts/backfill_msquare_project_id.js でフォルダ照合して埋める。
+    if (projectId) {
+      query = query.eq('project_id', String(projectId));
+    } else if (clientId) {
+      const { data: projRows, error: projErr } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('client_id', String(clientId));
+      if (projErr) throw projErr;
+      const ids = (projRows || []).map(p => p.id);
+      if (ids.length === 0) {
+        // 案件を持たないクライアント → 該当素材なし
+        return res.json({ items: [], daily: await guards.checkDailyLimit() });
+      }
+      query = query.in('project_id', ids);
+    }
     if (q) {
       // ファイル名・summary・tags での自由検索
       const safe = String(q).replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -365,7 +368,8 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
       const maxDur = guards.getMaxUploadDurationSeconds();
       if (kind === 'video' && uploaded.durationSeconds && uploaded.durationSeconds > maxDur) {
         // 戻り値は { ok, status, reason, message }。失敗してもログだけ残してフロー継続。
-        await driveLib.deleteFile(uploaded.fileId);
+        // 共有ドライブの SA は canDelete=false のため完全削除は失敗する。ゴミ箱送りで確実に外す。
+        await driveLib.trashFile(uploaded.fileId);
         logCtx('upload-rejected-too-long', {
           at: new Date().toISOString(), by: req.user?.email,
           filename: f.originalname,
@@ -396,6 +400,8 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
         status: 'waiting_approval',
         dry_run: guards.isDryRun(),
         created_by: req.user?.id || null,
+        // 案件指定があれば保持。解析適用(auto-apply)で案件フォルダ直下へ配置するために使う。
+        project_id: projectId || null,
       };
       const { data: inserted, error: insertError } = await supabase
         .from('video_file_organization_tests')
@@ -444,6 +450,7 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
 router.post('/register', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
+  const projectId = String(req.body?.project_id || '').trim();
 
   try {
     const { data: existing } = await supabase
@@ -483,6 +490,8 @@ router.post('/register', async (req, res) => {
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
+      // 案件指定があれば保持。解析適用(auto-apply)で案件フォルダ直下へ配置するために使う。
+      project_id: projectId || null,
     };
 
     const { data: inserted, error: insertError } = await supabase
@@ -567,10 +576,13 @@ router.post('/analyze', async (req, res) => {
       return res.status(429).json({ error: `MAX_RETRY_COUNT (${guards.getMaxRetryCount()}) に到達しています` });
     }
 
+    // DAILY_ANALYSIS_LIMIT は「自動解析（auto-analyze）の暴走課金」を防ぐための安全弁。
+    // この手動 /analyze は本ルーター全体が requireRole('admin') 配下で、管理者が
+    // 1 クリック = 1 解析の明示操作として叩く経路（課金は操作量に比例＝自分で制御可能）。
+    // そのため手動経路では日次上限でブロックしない（管理者＝無制限）。
+    // 自動解析側（lib/video-organization/auto-analyze.js）は引き続き上限を尊重する。
+    // ※ count はログ用に取得のみ（exceeded でも return しない）。
     const daily = await guards.checkDailyLimit();
-    if (daily.exceeded) {
-      return res.status(429).json({ error: `DAILY_ANALYSIS_LIMIT に到達しました (${daily.count}/${daily.limit})` });
-    }
 
     await supabase.from('video_file_organization_tests')
       .update({
@@ -819,6 +831,19 @@ router.post('/rename', async (req, res) => {
       supportsAllDrives: true,
     });
 
+    // プレビュー webp / faststart も原本と同じベース名に揃える（素材広場でセット判別するため）。
+    //   例: 原本 ..._Log.mp4 → プレビュー ..._Log.webp。失敗しても原本リネームは成功扱いにする。
+    let previewRename = [];
+    try {
+      previewRename = await driveLib.renameDerivedPreviewsToMatch({
+        client: saDrive,
+        newMasterName: newName,
+        previewFileIds: [item.preview_drive_file_id, item.faststart_drive_file_id],
+      });
+    } catch (previewErr) {
+      console.warn('[video-org] rename: preview rename skipped:', previewErr?.message || previewErr);
+    }
+
     // DB を揃える（現在名・提案名の両方を新名に）
     const { error: upErr } = await supabase
       .from('video_file_organization_tests')
@@ -832,9 +857,10 @@ router.post('/rename', async (req, res) => {
     logCtx('rename', {
       at: new Date().toISOString(), by: req.user?.email,
       fileId, from: currentName, to: newName,
+      previews: previewRename,
     });
 
-    res.json({ ok: true, filename: newName });
+    res.json({ ok: true, filename: newName, previews: previewRename });
   } catch (e) {
     const msg = e?.errors?.[0]?.message || e?.message || String(e);
     console.error('[video-org] rename error:', msg);
@@ -990,9 +1016,11 @@ router.delete('/item/:fileId', async (req, res) => {
           });
         }
 
-        // user OAuth で並列削除を試行（順序保証は不要）
+        // user OAuth で並列ゴミ箱送りを試行（順序保証は不要）
+        // 完全削除(files.delete)ではなくゴミ箱送り(trashed=true)。共有ドライブの SA は
+        // canDelete=false / canTrash=true のため、完全削除は権限不足で必ず失敗する。
         const userResults = await Promise.allSettled(
-          targets.map(([, id]) => driveLib.deleteFile(id, { client: userDriveClient }))
+          targets.map(([, id]) => driveLib.trashFile(id, { client: userDriveClient }))
         );
 
         const userAttempts = {};
@@ -1020,21 +1048,27 @@ router.delete('/item/:fileId', async (req, res) => {
             driveDeleted[key] = { ok: true, via: 'user_oauth', verified: result.verified === true };
             continue;
           }
-          // user OAuth で 404 が返ったときは SA で実在確認 → 存在すれば SA で削除（Hybrid フォールバック）
+          // user OAuth で 404 が返ったときは SA で実在確認 → 存在すれば SA でゴミ箱送り（Hybrid フォールバック）
           if (result.status === 404 || result.reason === 'notFound') {
             const existence = await driveLib.getFile(id, { client: saDrive });
             saFallbackAttempts[key] = {
               id,
-              probe: { ok: existence.ok, status: existence.status, reason: existence.reason || null },
+              probe: { ok: existence.ok, status: existence.status, reason: existence.reason || null, trashed: existence.trashed === true },
             };
             if (!existence.ok) {
               // SA からも見えない（=本当に Drive に存在しない）
               driveDeleted[key] = { ok: true, already_gone: true, via: 'user_oauth', verified: true };
               continue;
             }
-            // SA からは見える = SA 所有のファイル（プレビュー webp 等）。SA で削除を試みる
-            const saDel = await driveLib.deleteFile(id, { client: saDrive });
-            saFallbackAttempts[key].delete = {
+            if (existence.trashed === true) {
+              // SA から見えるが既にゴミ箱の中 = 削除のゴール達成済み
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
+              continue;
+            }
+            // SA からは見える = SA 所有のファイル（プレビュー webp 等）。SA でゴミ箱送りを試みる。
+            // SA はコンテンツ管理者で canTrash=true のため、ここが本フローの主軸成功パス。
+            const saDel = await driveLib.trashFile(id, { client: saDrive });
+            saFallbackAttempts[key].trash = {
               ok: saDel.ok,
               status: saDel.status,
               reason: saDel.reason || null,
@@ -1045,11 +1079,17 @@ router.delete('/item/:fileId', async (req, res) => {
               driveDeleted[key] = { ok: true, via: 'sa_fallback', verified: saDel.verified === true };
               continue;
             }
+            // SA のゴミ箱送りも 404 / notFound = 操作しようとしたら既に存在しない。
+            // 削除のゴール（Drive 上から消える）は達成済みなので成功（already_gone）扱いにする。
+            if (saDel.status === 404 || saDel.reason === 'notFound') {
+              driveDeleted[key] = { ok: true, already_gone: true, via: 'sa_fallback', verified: true };
+              continue;
+            }
             driveDeleted[key] = {
               ok: false,
               status: saDel.status,
-              reason: saDel.reason || 'sa_delete_failed',
-              message: saDel.message || 'SA fallback delete failed',
+              reason: saDel.reason || 'sa_trash_failed',
+              message: saDel.message || 'SA fallback trash failed',
               verified: false,
               via: 'sa_fallback',
             };
@@ -1076,7 +1116,29 @@ router.delete('/item/:fileId', async (req, res) => {
       }
     }
 
-    // 最後に DB レコードを削除（Drive 削除に部分失敗しても、UI 上の整合性を優先して DB は消す）
+    // 孤児化防止: Drive 側のゴミ箱送りに 1 件でも失敗（ok===false）が残っている場合は
+    // DB レコードを消さない。DB を消すと「Drive に実体が残っているのに HARUKA からは消えた」
+    // 孤児ファイルになり、共有ドライブにゴミが溜まる（今日 11GB 分が孤児化していた問題の原因）。
+    // 「本当に存在しない（getで404＝既に手動削除済み等）」は already_gone で ok:true 扱いなので
+    // ここでは失敗に数えない。失敗が残る場合は DB を残し、レスポンスで失敗を明示する
+    // （フロントは failList で赤トーストを出すため整合する）。
+    const driveFailed = Object.values(driveDeleted).some(v => v && v.ok === false);
+
+    if (deleteFromDrive && driveFailed) {
+      logCtx('delete-skipped-db-kept', {
+        at: new Date().toISOString(), by: req.user?.email,
+        fileId, deleteFromDrive, drive_deleted: driveDeleted,
+        note: 'Drive 側に失敗が残るため DB レコードは保持（孤児化防止）',
+      });
+      return res.json({
+        ok: false,
+        db_deleted: false,
+        drive_deleted: driveDeleted,
+        delete_from_drive: deleteFromDrive,
+      });
+    }
+
+    // Drive 側が全成功（または deleteFromDrive=false）なら DB レコードを削除
     const { error } = await supabase
       .from('video_file_organization_tests')
       .delete().eq('drive_file_id', fileId);
@@ -1087,7 +1149,7 @@ router.delete('/item/:fileId', async (req, res) => {
       fileId, deleteFromDrive, drive_deleted: driveDeleted,
     });
 
-    res.json({ ok: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
+    res.json({ ok: true, db_deleted: true, drive_deleted: driveDeleted, delete_from_drive: deleteFromDrive });
   } catch (e) {
     console.error('[video-org] delete error:', e);
     res.status(500).json({ error: e.message });
@@ -1238,6 +1300,8 @@ router.post('/upload-session/init', async (req, res) => {
         parent_folder_id: parentFolderId,
         drive_session_url: driveSessionUrl,
         status: 'pending',
+        // 案件指定があれば保持。complete 時に test 行へ引き継ぐ。
+        project_id: projectId || null,
       })
       .select()
       .single();
@@ -1416,6 +1480,8 @@ router.post('/upload-session/:sessionId/complete', async (req, res) => {
       status: 'waiting_approval',
       dry_run: guards.isDryRun(),
       created_by: req.user?.id || null,
+      // init 時に保持した案件をそのまま引き継ぐ。解析適用で案件フォルダ直下へ配置する。
+      project_id: sess.project_id || null,
     };
     const { data: inserted, error: insertError } = await supabase
       .from('video_file_organization_tests')
