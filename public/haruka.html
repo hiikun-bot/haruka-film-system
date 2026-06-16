@@ -42796,16 +42796,18 @@ function msSelectItem(fileId, scroll = true) {
   const retryBtn = document.getElementById('ms-btn-apply-retry');
   if (retryBtn) retryBtn.style.display = canRetry ? '' : 'none';
   // プレビュー再生成ボタンの可視性ルール:
-  //   - done   : 表示（手動再生成バックフィル用途）
+  //   プレビューが正常に作成できているときは再生成は不要なので隠す。
+  //   うまくいかなかったとき／まだ生成されていないときだけ表示する。
+  //   - done かつ preview_drive_file_id あり : 非表示（成功しているので再生成不要）
   //   - failed : 表示（ユーザーが再試行できる）
   //   - pending / processing : 非表示（自動生成中なので押すと混乱する）
-  //   - skipped / null : 表示（動画なら手動キック可能）
-  //   - 旧 faststart_status が done でも上記同様の判定にフォールバック
+  //   - skipped / null / done だが drive_file_id 無し : 表示（動画なら手動キック可能）
   const isVideo = item.media_kind === 'video';
   const previewStatus = item.preview_status || null;
   const inProgress = previewStatus === 'pending' || previewStatus === 'processing';
+  const previewOk = previewStatus === 'done' && !!item.preview_drive_file_id;
   const regenBtn = document.getElementById('ms-btn-preview-regen');
-  if (regenBtn) regenBtn.style.display = (isVideo && !inProgress) ? '' : 'none';
+  if (regenBtn) regenBtn.style.display = (isVideo && !inProgress && !previewOk) ? '' : 'none';
 
   // 📁 Drive フォルダリンク: 保存先フォルダ ID があればそのフォルダを、無ければ原本ファイル（drive_url）を開く
   const folderBtn = document.getElementById('ms-btn-open-folder');
