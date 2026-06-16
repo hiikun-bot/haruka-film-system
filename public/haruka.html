@@ -7375,7 +7375,7 @@ window.showPage = window.showPage || function(name, btn) {
           <div class="ms-drop-icon">⬆ 🎬 🖼️</div>
           <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
           <p style="margin:0;font-size:12px" id="ms-upload-limits-hint">複数ファイル同時OK / 1ファイル <span id="ms-hint-mb">25</span>MB まで / 動画は <span id="ms-hint-sec">30</span>秒以内</p>
-          <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ <span id="ms-hint-resumable-mb">25</span>MB 超の大容量ファイルは Drive 直送でアップロード（数十GBの 4K 素材も OK）</p>
+          <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ <span id="ms-hint-resumable-mb">25</span>MB 超は自動で Drive 直送（容量制限なし・数十GBの 4K 素材も OK）</p>
           <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
           <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
           <input type="file" id="ms-file-input" multiple style="display:none"
@@ -42276,19 +42276,24 @@ function msShowUpload() {
   msResetUploadList();
   // 上限ヒントを env 連動値に更新
   msEnsureLimits().then((l) => {
-    const mb = document.getElementById('ms-hint-mb');
-    const sec = document.getElementById('ms-hint-sec');
-    if (mb) mb.textContent = String(l.max_upload_size_mb || 25);
-    if (sec) sec.textContent = String(l.max_upload_duration_seconds || 30);
-    // 大容量直送が有効ならヒント表示
-    const resumableHint = document.getElementById('ms-resumable-hint');
-    if (resumableHint) resumableHint.style.display = l.resumable_upload_enabled ? '' : 'none';
-    // 閾値 MB（既定は multer 上限と同値）を表示に反映
-    const resumableMb = document.getElementById('ms-hint-resumable-mb');
-    if (resumableMb) {
-      const bytes = Number(l.resumable_upload_threshold_bytes) || (Number(l.max_upload_size_mb || 25) * 1024 * 1024);
-      resumableMb.textContent = String(Math.floor(bytes / (1024 * 1024)));
+    const sec = String(l.max_upload_duration_seconds || 30);
+    const maxMb = String(l.max_upload_size_mb || 25);
+    const resumable = !!l.resumable_upload_enabled;
+    // 直送に倒れる閾値 MB（既定は multer 上限と同値）
+    const thBytes = Number(l.resumable_upload_threshold_bytes) || (Number(l.max_upload_size_mb || 25) * 1024 * 1024);
+    const thMb = String(Math.floor(thBytes / (1024 * 1024)));
+    // 1行目: 直送が有効なら「容量制限なし」、無効なら従来どおり上限を提示
+    const limitsHint = document.getElementById('ms-upload-limits-hint');
+    if (limitsHint) {
+      limitsHint.textContent = resumable
+        ? `複数ファイル同時OK / 容量制限なし / 動画は ${sec}秒以内`
+        : `複数ファイル同時OK / 1ファイル ${maxMb}MB まで / 動画は ${sec}秒以内`;
     }
+    // 大容量直送が有効なら⚡ヒント表示（閾値 MB を反映）
+    const resumableHint = document.getElementById('ms-resumable-hint');
+    if (resumableHint) resumableHint.style.display = resumable ? '' : 'none';
+    const resumableMb = document.getElementById('ms-hint-resumable-mb');
+    if (resumableMb) resumableMb.textContent = thMb;
   });
   // 案件選択（アップロード先）を初期化
   msInitUploadTarget();
