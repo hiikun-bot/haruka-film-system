@@ -42099,6 +42099,37 @@ async function votFetch(path, opts) {
   return body;
 }
 
+// 一過性のインフラ起因エラー（Railway エッジの 502/503/504・瞬断・ネットワーク断）
+// に対して指数バックオフで再試行する votFetch ラッパー。
+//
+// 背景: Resumable Upload の本体チャンクは Drive へ直送され drivePutChunkXhr 側で
+// リトライ済みだが、制御系の小さな POST（/upload-session/init・/complete）はリトライが
+// 無かった。13分・5GB 級のアップロードでも、init や complete が Railway エッジの
+// 一過性 502（HTML エラーページ＝JSON 本文なし → votFetch では "HTTP 502" になる）を
+// 1 回踏んだだけで全工程が失敗していた。ここを数回リトライして取りこぼしを防ぐ。
+//
+// 業務エラー（4xx や、アプリが JSON 本文付きで返した 5xx）はリトライしても無駄なので
+// 即 throw する。「HTTP 5xx（本文なし＝エッジ由来）」と fetch のネットワーク例外のみ再試行。
+// 呼び先が冪等であること前提: init=新セッション発行で無害／complete=drive_file_id で冪等。
+async function votFetchRetry(path, opts, { attempts = 4, onRetry } = {}) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await votFetch(path, opts);
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || '');
+      const transient = /^HTTP 5\d\d$/.test(msg)
+        || /Failed to fetch|NetworkError|ネットワーク|network/i.test(msg);
+      if (!transient || i >= attempts) throw e;
+      const backoff = Math.min(8000, 800 * Math.pow(2, i - 1));
+      onRetry && onRetry(i, attempts, msg);
+      await new Promise(r => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
+
 // ==================== ビュー切替（一覧 ⇄ 新規追加） ====================
 let msSelectedFileId = null;
 let msItemsCache = [];
@@ -43570,7 +43601,7 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
     onStatus && onStatus('Drive セッションを発行中…');
     let initBody;
     try {
-      initBody = await votFetch('/upload-session/init', {
+      initBody = await votFetchRetry('/upload-session/init', {
         method: 'POST',
         body: JSON.stringify({
           filename: file.name,
@@ -43578,6 +43609,8 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
           mimeType: file.type || 'application/octet-stream',
           project_id: msGetUploadProjectId() || undefined,
         }),
+      }, {
+        onRetry: (i, n, m) => onStatus && onStatus(`Drive セッション発行をリトライ中… (${i}/${n}) — ${m}`),
       });
     } catch (e) {
       // OAuth 未連携の場合、サーバーは consent_url を返す。それを使って案内する
@@ -43691,10 +43724,15 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
     }
 
     // 3) DB 登録（/complete）
+    // 本体チャンクは全て Drive へ転送済み。ここで一過性 502 を踏んで失敗すると
+    // 13分かけたアップロードが水の泡になるため、特に手厚くリトライする（冪等保証あり）。
     onStatus && onStatus('登録中…');
-    const completed = await votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/complete', {
+    const completed = await votFetchRetry('/upload-session/' + encodeURIComponent(sessionId) + '/complete', {
       method: 'POST',
       body: JSON.stringify({ driveFileId }),
+    }, {
+      attempts: 5,
+      onRetry: (i, n, m) => onStatus && onStatus(`登録をリトライ中… (${i}/${n}) — ${m}`),
     });
     return completed;
   } finally {
