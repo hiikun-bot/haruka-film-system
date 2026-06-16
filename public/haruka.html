@@ -2212,38 +2212,11 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 
 <div id="print-only" style="display:none"></div>
 
-<!-- エラー報告 フローティングボタン（認証後に表示） -->
+<!-- 不具合報告 フローティングボタン（認証後に表示）
+     押すと画面をキャプチャし、そのままバグ報告（DB登録）作成画面を開く。
+     旧仕様の Slack 直送モーダル（modal-error-report）は廃止。 -->
 <button id="error-report-fab" type="button" onclick="openErrorReport()" title="不具合を報告"
   style="display:none;position:fixed;right:16px;bottom:16px;z-index:200;width:48px;height:48px;border-radius:50%;background:#A32D2D;color:#fff;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.2);cursor:pointer;font-size:22px">🐛</button>
-
-<!-- エラー報告モーダル -->
-<div class="modal-overlay" id="modal-error-report" data-no-overlay-close="true">
-  <div style="max-width:560px;width:95vw;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);display:flex;flex-direction:column;max-height:calc(100vh - 48px)">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #e0e0e0">
-      <span style="font-size:15px;font-weight:600;color:#222">🐛 不具合を報告</span>
-      <button class="modal-close" onclick="closeModalGuarded('modal-error-report')" style="background:none;border:none;font-size:20px;cursor:pointer">×</button>
-    </div>
-    <div style="padding:16px 20px;overflow-y:auto">
-      <div style="background:#fff7e0;border:1px solid #f0c36d;color:#7a5b00;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px">
-        ⚠️ 送信されるスクリーンショットには画面に表示中の情報（クライアント名・金額・個人情報など）が含まれる可能性があります。問題ない範囲で送信してください。
-      </div>
-      <div style="font-size:12px;color:#555;margin-bottom:6px">スクリーンショット プレビュー:</div>
-      <div id="error-report-screenshot-preview" style="background:#f4f4f5;border:1px solid #e4e4e7;border-radius:6px;min-height:120px;display:flex;align-items:center;justify-content:center;color:#888;font-size:12px;margin-bottom:12px;overflow:hidden">取得中...</div>
-      <label style="font-size:12px;color:#555;display:block;margin-bottom:4px">詳細・再現手順（任意）</label>
-      <textarea id="error-report-description" rows="4" placeholder="例: 案件一覧で「保存」を押したが画面が真っ白になった" style="width:100%;padding:8px;border:1px solid #d4d4d8;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical"></textarea>
-      <div id="error-report-meta-summary" style="font-size:11px;color:#999;margin-top:8px"></div>
-    </div>
-    <div style="padding:8px 20px;font-size:11px;color:#666;background:#f8fafc;border-top:1px solid #eef2f6">
-      📋 対応依頼として正式に登録したい場合は
-      <a href="javascript:void(0)" onclick="closeModal('modal-error-report'); openBugReportModal({ description: document.getElementById('error-report-description').value })" style="color:#2563eb;text-decoration:underline">バグ報告フォーム</a>
-      へ（対応者・ステータス管理あり）
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid #e0e0e0;background:#fafafa">
-      <button class="btn" onclick="closeModalGuarded('modal-error-report')" style="font-size:13px;padding:8px 16px">キャンセル</button>
-      <button class="btn-primary" id="error-report-submit-btn" onclick="submitErrorReport()" style="font-size:13px;padding:8px 20px">送信</button>
-    </div>
-  </div>
-</div>
 
 <script>
 // ===== エラー報告: クライアント側バッファ =====
@@ -8444,24 +8417,25 @@ function showToast(message, type, duration) {
 
 // 🐛 ボタン押下からエラー報告フローを起動。openErrorReport() の textarea を「エラー内容」で自動プリフィルする。
 async function reportFromToast(originalMessage) {
-  // FAB クリックと同等のフローを起動。openErrorReport() 完了後に textarea を上書き。
+  // FAB クリックと同等のフロー（キャプチャ → バグ報告作成画面）を起動。
+  // 詳細欄をエラー内容で自動プリフィルし、タイトルにもエラー文を入れておく。
+  const prefill = `【自動入力】エラー内容: ${originalMessage}\n\n（発生時の操作を追記してください）`;
+  const titlePrefill = String(originalMessage || '').slice(0, 120);
   try {
-    await openErrorReport();
+    await openErrorReport({ description: prefill, title: titlePrefill });
   } catch (e) {
     console.warn('[reportFromToast] openErrorReport failed:', e);
     return;
   }
-  const desc = document.getElementById('error-report-description');
+  // バグ報告フォームの詳細欄にカーソルを置き、「（発生時の…）」の手前で追記しやすくする
+  const desc = document.getElementById('br-description');
   if (desc) {
-    const prefill = `【自動入力】エラー内容: ${originalMessage}\n\n（発生時の操作を追記してください）`;
-    desc.value = prefill;
-    // カーソルを末尾の「（発生時の…）」の手前に置いてユーザーが追記しやすく
     setTimeout(() => {
       try {
         desc.focus();
         desc.setSelectionRange(prefill.length - 21, prefill.length - 21);
       } catch (_) {}
-    }, 30);
+    }, 50);
   }
 }
 
@@ -8804,86 +8778,33 @@ function _ensureHtml2canvas() {
   return _html2canvasLoading;
 }
 
-let _errorReportScreenshotBlob = null;
-async function openErrorReport() {
+// 🐛 不具合報告フロー
+// 旧仕様（Slack へ直送する確認モーダル）は廃止。
+// 画面をその場でキャプチャし、そのまま「バグ報告（DB登録）作成画面」を開く。
+// → スクショは canvas に貼り付け済みの状態で開くので、ユーザーはタイトル/詳細を書いて保存するだけ。
+//   付帯情報（URL/直近エラー等）はバグ報告 API 側で保持される。
+async function openErrorReport(options = {}) {
   const fab = document.getElementById('error-report-fab');
-  const prev = document.getElementById('error-report-screenshot-preview');
-  const desc = document.getElementById('error-report-description');
-  const summary = document.getElementById('error-report-meta-summary');
-  if (desc) desc.value = '';
-  _errorReportScreenshotBlob = null;
-  if (prev) prev.innerHTML = '<span>取得中...</span>';
-  // モーダルが背景に映らないようキャプチャ前に FAB だけ一時的に隠す
+  let screenshotDataUrl = null;
+  // キャプチャに FAB 自体が写り込まないよう一時的に隠す
   if (fab) fab.style.visibility = 'hidden';
   try {
+    if (typeof showToast === 'function') showToast('画面を取得しています…', 'info');
     const html2canvas = await _ensureHtml2canvas();
     const canvas = await html2canvas(document.body, { scale: 0.7, logging: false, useCORS: true });
-    await new Promise((resolve) => canvas.toBlob((b) => {
-      _errorReportScreenshotBlob = b;
-      if (prev) {
-        prev.innerHTML = '';
-        const img = document.createElement('img');
-        img.src = URL.createObjectURL(b);
-        img.style.maxWidth = '100%';
-        img.style.maxHeight = '240px';
-        img.style.objectFit = 'contain';
-        prev.appendChild(img);
-      }
-      resolve();
-    }, 'image/png'));
+    screenshotDataUrl = canvas.toDataURL('image/png');
   } catch (e) {
     console.warn('[error-report] screenshot failed:', e);
-    if (prev) prev.innerHTML = '<span>スクリーンショット取得に失敗しました（コメントのみで送信できます）</span>';
+    if (typeof showToast === 'function') showToast('スクリーンショットの取得に失敗しました（画像なしで報告できます）', 'warn');
   } finally {
     if (fab) fab.style.visibility = '';
   }
-  if (summary) {
-    const w = window.innerWidth, h = window.innerHeight;
-    const errs = (window.__errorBuffer || []).length;
-    const apis = (window.__apiFailBuffer || []).length;
-    summary.textContent = `付帯情報: URL / UA / 画面 ${w}x${h} / 直近エラー ${errs}件 / 直近失敗API ${apis}件`;
-  }
-  openModal('modal-error-report');
-}
-
-async function submitErrorReport() {
-  const btn = document.getElementById('error-report-submit-btn');
-  const desc = document.getElementById('error-report-description');
-  const description = desc ? desc.value.trim() : '';
-  const metadata = {
-    url: location.href,
-    userAgent: navigator.userAgent,
-    viewport: { w: window.innerWidth, h: window.innerHeight },
-    recentErrors: (window.__errorBuffer || []).slice(-30),
-    recentFailedApis: (window.__apiFailBuffer || []).slice(-10),
-    user: currentUser ? { id: currentUser.id, email: currentUser.email, role: currentUser.role } : null,
-  };
-  const fd = new FormData();
-  if (_errorReportScreenshotBlob) fd.append('screenshot', _errorReportScreenshotBlob, 'screenshot.png');
-  fd.append('description', description);
-  fd.append('metadata', JSON.stringify(metadata));
-  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
-  try {
-    const res = await apiFetch(`${API}/error-report`, { method: 'POST', body: fd });
-    if (res.ok) {
-      // スクショ添付に失敗してもテキスト報告は届いている（サーバー側でフォールバック）。
-      let attached = true;
-      try { const j = await res.json(); if (j && j.screenshot_attached === false) attached = false; } catch (_) {}
-      showToast(
-        attached ? 'エラー報告を送信しました' : 'エラー報告を送信しました（スクリーンショットは添付できませんでした）',
-        'success'
-      );
-      closeModal('modal-error-report');
-    } else {
-      let msg = `HTTP ${res.status}`;
-      try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
-      showToast('送信に失敗: ' + msg, 'error');
-    }
-  } catch (e) {
-    showToast('送信に失敗: ' + (e?.message || e), 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '送信'; }
-  }
+  // そのままバグ報告作成画面へ展開。スクショは自動で貼り付け済みになる
+  await openBugReportModal({
+    description: options.description || '',
+    title: options.title || '',
+    screenshotDataUrl,
+  });
 }
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
 // 種別タブ（共通／動画／デザイン）のサーバー側 count 値。
@@ -41062,6 +40983,10 @@ async function openBugReportModal(options = {}) {
   } else {
     document.getElementById('bug-report-modal-title').textContent = '🦋 バグ報告 — 新規';
     document.getElementById('br-anonymous-wrap').style.display = '';
+    // 🐛 不具合報告 FAB など外部フローから渡された画面キャプチャを、そのまま貼り付け済みにする
+    if (options.screenshotDataUrl) {
+      try { await bugReportLoadImageFromDataUrl(options.screenshotDataUrl); } catch (e) { console.warn('[bug-report] 渡されたスクショの読み込みに失敗:', e); }
+    }
   }
 
   bugReportSetTool('rect');
