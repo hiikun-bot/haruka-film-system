@@ -7362,6 +7362,15 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // 納品遷移時: 再生用 R2 複製を即時排出（Drive 原本は残る＝バックアップ）。
+  // 取りこぼしは日次 sweep が拾うが、ここで即時にストレージを解放する。
+  if (updateData.status === '納品' && beforeStatus !== '納品') {
+    try {
+      require('../lib/r2').evictCreativeR2Replicas(req.params.id)
+        .catch(e => console.warn('[r2] 納品時 evict 失敗:', e.message));
+    } catch (e) { console.warn('[r2] evict トリガー失敗:', e.message); }
+  }
+
   // ball_holder_id キャッシュ更新（status / assignee / director が変わった場合のみ）
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
   // - 複数ディレクター指定時は getBallHolder() が role='director' の最初のassignmentを採用する仕様（合理的フォールバック）
@@ -8297,6 +8306,14 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     }).catch(e => console.warn('[notif] failed:', e.message));
   } catch(e) { console.warn('[notif] enqueue failed:', e.message); }
 
+  // 納品遷移時: 再生用 R2 複製を即時排出（Drive 原本は残る＝バックアップ）
+  if (newStatus === '納品' && creative.status !== '納品') {
+    try {
+      require('../lib/r2').evictCreativeR2Replicas(req.params.id)
+        .catch(e => console.warn('[r2] 納品時 evict 失敗:', e.message));
+    } catch (e) { console.warn('[r2] evict トリガー失敗:', e.message); }
+  }
+
   // ball_holder_id キャッシュ更新（管理者による直接ステータス変更も同様に通知発火対象）
   syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
 
@@ -8977,6 +8994,11 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
       }
     }
 
+    // 4b) 再生用 R2 複製も削除（best-effort）
+    try { await require('../lib/r2').evictCreativeFileFromR2(fid); } catch (e) {
+      driveLog('warn', `R2 削除失敗 (続行): ${e.message}`, { creativeFileId: fid });
+    }
+
     // 5) 子テーブルを best-effort で削除（CASCADE が無い環境でも残骸を残さない）
     try { await supabase.from('creative_file_comments').delete().eq('creative_file_id', fid); } catch (_) {}
     try { await supabase.from('creative_file_likes').delete().eq('creative_file_id', fid); } catch (_) {}
@@ -9010,11 +9032,29 @@ router.get('/files/:fileId/stream', async (req, res) => {
     // creative_files から原本のキャッシュとfaststart情報を取得
     const { data: cf } = await supabase
       .from('creative_files')
-      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status')
+      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status, r2_key, r2_status')
       .eq('drive_file_id', req.params.fileId)
       .maybeSingle();
 
     const wantsOriginal = req.query.original === '1';
+
+    // 再生用ホットキャッシュ: R2 に複製済み(r2_status='active')なら署名URLへ 302 リダイレクト。
+    // ブラウザは Cloudflare 網から直接 Range 取得する（egress 無料・二段ホップ解消）。
+    // R2 未設定 / 未複製 / ?original=1 のときは下の Drive プロキシ配信にフォールバック。
+    if (!wantsOriginal && cf?.r2_status === 'active' && cf?.r2_key) {
+      try {
+        const r2 = require('../lib/r2');
+        if (r2.isEnabled()) {
+          const url = await r2.presignGetUrl(cf.r2_key);
+          // Range ヘッダはブラウザがリダイレクト先へ再送する。302 でキャッシュさせない。
+          res.setHeader('Cache-Control', 'private, no-store');
+          return res.redirect(302, url);
+        }
+      } catch (e) {
+        // 署名URL発行失敗時は Drive フォールバックへ流す（再生は止めない）
+        console.warn('[r2] presign 失敗→Driveフォールバック:', cf.r2_key, e.message);
+      }
+    }
     // faststart_status==='done' のときだけ faststart 版を使う。
     // 生成失敗/処理中（failed/processing）で残った不完全な faststart_drive_file_id を
     // 掴むと再生不能になるため、direct-url 側と条件を揃える（旧コードは status 未チェックだった）。
@@ -9098,14 +9138,36 @@ router.get('/files/:fileId/stream', async (req, res) => {
 router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
-    // creative_files から faststart 情報を取得（faststart 版があれば優先）
+    // creative_files から faststart / R2 情報を取得（R2 → faststart → 原本 の優先順）
     const { data: cf } = await supabase
       .from('creative_files')
-      .select('mime_type, faststart_drive_file_id, faststart_status')
+      .select('mime_type, faststart_drive_file_id, faststart_status, r2_key, r2_status')
       .eq('drive_file_id', req.params.fileId)
       .maybeSingle();
 
     const wantsOriginal = req.query.original === '1';
+
+    // 最優先: R2 に複製済みなら署名URLを返す。
+    // Drive を public 化せずに済む（=機密のまま）うえ、Cloudflare 網から直接 Range 配信で高速。
+    if (!wantsOriginal && cf?.r2_status === 'active' && cf?.r2_key) {
+      try {
+        const r2 = require('../lib/r2');
+        if (r2.isEnabled()) {
+          const url = await r2.presignGetUrl(cf.r2_key);
+          return res.json({
+            contentUrl: url,
+            webContentLink: null,
+            viewUrl: null,
+            mimeType: cf.mime_type || 'video/mp4',
+            size: null,
+            source: 'r2',
+          });
+        }
+      } catch (e) {
+        console.warn('[direct-url] R2 presign 失敗→Drive直リンクへ:', cf.r2_key, e.message);
+      }
+    }
+
     const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
     const targetFileId  = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
 
@@ -9208,6 +9270,53 @@ router.post('/creative-files/:id/regenerate-faststart', requireAuth, async (req,
     driveLog('error', `regenerate-faststart 失敗 [${creativeFileId}]: ${err?.message}`);
   }));
   res.json({ ok: true, dispatched: creativeFileId });
+});
+
+// ==================== R2 再生キャッシュ 管理 ====================
+
+// 既存の「レビュー中（納品以外）」動画を R2 へ一括複製（バックフィル）。
+// 納品済みは対象外（Drive のままでよい＝ストレージを圧迫しない方針）。
+// 管理者のみ。fire-and-forget（同時実行が増えすぎないよう逐次）。
+router.post('/admin/r2/backfill', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r2 = require('../lib/r2');
+  if (!r2.isEnabled()) return res.status(503).json({ error: 'R2未設定（R2_* 環境変数を設定してください）' });
+
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  // faststart 完了済み & まだ R2 に無い & 紐づく creative が納品以外
+  const { data: rows, error } = await supabase
+    .from('creative_files')
+    .select('id, mime_type, generated_name, faststart_status, r2_status, creatives:creative_id(status)')
+    .eq('faststart_status', 'done')
+    .or('r2_status.is.null,r2_status.eq.failed')
+    .limit(500);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const targets = (rows || [])
+    .filter(r => r.creatives?.status && r.creatives.status !== '納品')
+    .filter(r => shouldFaststart(r.mime_type || 'video/mp4', r.generated_name))
+    .slice(0, limit)
+    .map(r => r.id);
+
+  // 逐次で複製（Drive/R2 帯域を食いつぶさないため）。レスポンスは即返す。
+  (async () => {
+    for (const id of targets) {
+      try { await r2.replicateCreativeFileToR2(id); }
+      catch (e) { console.warn('[r2] backfill 失敗:', id, e.message); }
+    }
+    console.log('[r2] backfill 完了:', targets.length, '件');
+  })();
+
+  res.json({ ok: true, dispatched: targets.length, ids: targets });
+});
+
+// 納品済みなのに R2 に残っている複製を一掃（sweep）。日次ワーカと同じ処理を手動起動。
+router.post('/admin/r2/sweep', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r2 = require('../lib/r2');
+  if (!r2.isEnabled()) return res.status(503).json({ error: 'R2未設定' });
+  const result = await r2.sweepDeliveredR2({ limit: Math.min(parseInt(req.query.limit) || 500, 1000) });
+  res.json(result);
 });
 
 // 画質変換ストリーミング（FFmpeg経由）
