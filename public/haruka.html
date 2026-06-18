@@ -5668,6 +5668,52 @@ window.showPage = window.showPage || function(name, btn) {
         <input class="form-input" id="pl-edit-producer-price" type="number" min="0" step="1" value="0">
       </div>
     </div>
+    <!-- ディレクター報酬（ADR 018: 成果物グループ単位の director line_cost。本あたり/時給/固定/%） -->
+    <div class="form-group" style="margin-bottom:0;border-top:1px dashed var(--border);padding-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;color:var(--text)">
+        <input type="checkbox" id="pl-edit-director-enabled" onchange="togglePlEditDirector()">
+        <span>🎬 ディレクター報酬</span>
+        <span style="color:var(--text-muted);font-weight:400;font-size:11px">（この成果物のディレクションへの支払）</span>
+      </label>
+    </div>
+    <div id="pl-edit-director-detail" style="display:none;padding:10px 0 0 24px;margin-bottom:10px">
+      <div class="form-group" style="margin-bottom:10px">
+        <label class="form-label">単価タイプ</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+            <input type="radio" name="pl-edit-director-pricing-type" value="fixed_per_unit" checked onchange="onPlEditDirectorTypeChange()">
+            <span>1本あたり固定</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+            <input type="radio" name="pl-edit-director-pricing-type" value="percentage" onchange="onPlEditDirectorTypeChange()">
+            <span>クライアント請求の%</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+            <input type="radio" name="pl-edit-director-pricing-type" value="hourly" onchange="onPlEditDirectorTypeChange()">
+            <span>時間単価</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px">
+            <input type="radio" name="pl-edit-director-pricing-type" value="fixed_total" onchange="onPlEditDirectorTypeChange()">
+            <span>line全体で固定</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group" id="pl-edit-director-unit-price-wrap" style="margin-bottom:10px">
+        <label class="form-label" id="pl-edit-director-unit-price-label">単価（円）</label>
+        <input class="form-input" id="pl-edit-director-unit-price" type="number" min="0" step="1" value="0">
+      </div>
+      <div class="form-group" id="pl-edit-director-percentage-wrap" style="margin-bottom:10px;display:none">
+        <label class="form-label">割合（%）</label>
+        <input class="form-input" id="pl-edit-director-percentage" type="number" min="0" max="100" step="0.01" value="0">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クライアント請求（単価 × 本数）に対するこの%が報酬になる</div>
+      </div>
+      <div class="form-group" id="pl-edit-director-hours-wrap" style="margin-bottom:10px;display:none">
+        <label class="form-label">実工数（時間）</label>
+        <input class="form-input" id="pl-edit-director-hours" type="number" min="0" step="0.25" value="0">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">単価 × 実工数 が報酬になる</div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">担当ディレクターは案件のディレクターに支払われます。個別に人を分けたい場合は保存後「コスト内訳」から指定できます。</div>
+    </div>
     <!-- ステータスは UI から廃止。新規登録時は常に「採用（受注=contracted）」で作成する -->
     <div id="pl-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
@@ -17310,6 +17356,7 @@ function renderProjectLines() {
     const catColor = cat?.color || '#9CA3AF';
     const clientUnit = Number(line.client_unit_price) || 0;
     const producerUnit = getProducerUnitPrice(line.id);
+    const directorFeeLabel = formatDirectorFeeShort(getDirectorCost(line.id));
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
     const rankBadge = line.rank ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap">${esc(line.rank)}ランク</span>` : '';
 
@@ -17326,7 +17373,7 @@ function renderProjectLines() {
           ${rankBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
-            <div style="font-size:11px;color:var(--text-muted)">${isTopAdmin() ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
+            <div style="font-size:11px;color:var(--text-muted)">${isTopAdmin() ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本${directorFeeLabel}</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
@@ -17347,6 +17394,63 @@ function getProducerUnitPrice(lineId) {
     return code === 'editor' || code === 'designer';
   });
   return Number((prod || costs[0]).unit_price) || 0;
+}
+
+// 成果物グループに紐づく「ディレクター報酬」（role=director の固定枠＝user_id 無し行）を返す（ADR 018）
+// 個別指定（user_id 付き）の行は除外。編集モーダルの初期表示に使う。
+function getDirectorCost(lineId) {
+  const costs = _projectLineCostsCache[lineId];
+  if (!Array.isArray(costs) || !costs.length) return null;
+  const dir = costs.find(c => {
+    const code = c?.role?.code || c?.roles?.code || c?.role_code;
+    return code === 'director' && (c.user_id == null);
+  });
+  if (!dir) return null;
+  return {
+    enabled: true,
+    pricing_type: dir.pricing_type || 'fixed_per_unit',
+    unit_price: Number(dir.unit_price) || 0,
+    percentage: Number(dir.percentage) || 0,
+    actual_hours: Number(dir.actual_hours) || 0,
+  };
+}
+
+// リスト表示用にディレクター報酬を短く整形（未設定は空文字）
+function formatDirectorFeeShort(dc) {
+  if (!dc || !dc.enabled) return '';
+  const pt = dc.pricing_type;
+  const yen = (n) => `¥${(Number(n) || 0).toLocaleString()}`;
+  let body;
+  if (pt === 'percentage')      body = `${Number(dc.percentage) || 0}%`;
+  else if (pt === 'hourly')     body = `${yen(dc.unit_price)}/時`;
+  else if (pt === 'fixed_total') body = `${yen(dc.unit_price)}/式`;
+  else                          body = `${yen(dc.unit_price)}/本`;
+  return ` ／ 🎬 <strong style="color:var(--text)">${body}</strong>`;
+}
+
+// ディレクター報酬セクションの開閉
+function togglePlEditDirector() {
+  const on = document.getElementById('pl-edit-director-enabled')?.checked;
+  const detail = document.getElementById('pl-edit-director-detail');
+  if (detail) detail.style.display = on ? '' : 'none';
+}
+
+// 単価タイプに応じて %/実工数 の入力欄を出し分け、単価ラベルを切替
+function onPlEditDirectorTypeChange() {
+  const pt = document.querySelector('input[name="pl-edit-director-pricing-type"]:checked')?.value || 'fixed_per_unit';
+  const pctWrap = document.getElementById('pl-edit-director-percentage-wrap');
+  const hrsWrap = document.getElementById('pl-edit-director-hours-wrap');
+  const upWrap  = document.getElementById('pl-edit-director-unit-price-wrap');
+  const upLabel = document.getElementById('pl-edit-director-unit-price-label');
+  if (pctWrap) pctWrap.style.display = (pt === 'percentage') ? '' : 'none';
+  if (hrsWrap) hrsWrap.style.display = (pt === 'hourly') ? '' : 'none';
+  // percentage のときは単価（円）は使わない
+  if (upWrap)  upWrap.style.display = (pt === 'percentage') ? 'none' : '';
+  if (upLabel) {
+    upLabel.textContent = (pt === 'hourly') ? '時間単価（円/時）'
+      : (pt === 'fixed_total') ? '固定額（円・line全体）'
+      : '単価（円/本）';
+  }
 }
 
 // アコーディオンを開閉。開く時は lineCosts を fetch（未取得なら）
@@ -17496,6 +17600,20 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-name').value = line?.name || '';
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
   document.getElementById('pl-edit-producer-price').value = line ? getProducerUnitPrice(line.id) : 0;
+
+  // ディレクター報酬（ADR 018）: 編集時は既存の line_cost を読み込んで初期表示
+  if (line?.id) { try { await loadLineCosts(line.id, projectId); } catch (e) {} }
+  const dc = line?.id ? getDirectorCost(line.id) : null;
+  document.getElementById('pl-edit-director-enabled').checked = !!(dc && dc.enabled);
+  const dirType = (dc && dc.pricing_type) || 'fixed_per_unit';
+  const dirRadio = document.querySelector(`input[name="pl-edit-director-pricing-type"][value="${dirType}"]`);
+  if (dirRadio) dirRadio.checked = true;
+  document.getElementById('pl-edit-director-unit-price').value = dc ? (dc.unit_price ?? 0) : 0;
+  document.getElementById('pl-edit-director-percentage').value = dc ? (dc.percentage ?? 0) : 0;
+  document.getElementById('pl-edit-director-hours').value = dc ? (dc.actual_hours ?? 0) : 0;
+  togglePlEditDirector();
+  onPlEditDirectorTypeChange();
+
   // クライアント請求単価は管理者のみ表示・編集可。非adminには行ごと隠す（ADR 015）
   const upGroup = document.getElementById('pl-edit-unit-price-group');
   if (upGroup) upGroup.style.display = isTopAdmin() ? '' : 'none';
@@ -17538,6 +17656,17 @@ async function saveProjectLine() {
   const unitPrice = Math.max(0, parseInt(document.getElementById('pl-edit-unit-price').value, 10) || 0);
   const producerPrice = Math.max(0, parseInt(document.getElementById('pl-edit-producer-price').value, 10) || 0);
 
+  // ディレクター報酬（ADR 018）: 有無 + 単価タイプ + 金額。backend で director 固定枠 line_cost に反映
+  const directorEnabled = !!document.getElementById('pl-edit-director-enabled')?.checked;
+  const directorType = document.querySelector('input[name="pl-edit-director-pricing-type"]:checked')?.value || 'fixed_per_unit';
+  const directorFee = {
+    enabled: directorEnabled,
+    pricing_type: directorType,
+    unit_price: Math.max(0, parseInt(document.getElementById('pl-edit-director-unit-price').value, 10) || 0),
+    percentage: Math.max(0, parseFloat(document.getElementById('pl-edit-director-percentage').value) || 0),
+    actual_hours: Math.max(0, parseFloat(document.getElementById('pl-edit-director-hours').value) || 0),
+  };
+
   // ステータスは送らない。新規は backend 既定で「採用（contracted）」、編集時は既存維持。
   // 制作者単価は backend で line_cost として保存（カテゴリからロール自動判定）
   const payload = {
@@ -17545,6 +17674,7 @@ async function saveProjectLine() {
     rank,
     name: name || null,
     producer_unit_price: producerPrice,
+    director_fee: directorFee,
   };
   // クライアント請求単価は管理者のみ送信（非adminはサーバー側でも無視されるが二重で防ぐ）（ADR 015）
   if (isTopAdmin()) payload.client_unit_price = unitPrice;
