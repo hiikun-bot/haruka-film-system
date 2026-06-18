@@ -38412,11 +38412,14 @@ async function cdHandleUploadSuccess(data, version, statusEl) {
 }
 
 // ===== 大容量クリエイティブ: Railway を経由しない Resumable 直送（HTTP 502 回避） =====
-// 動画素材を multer 経由で Railway バックエンドに通すと、遅回線で約5分を超えた瞬間に
-// Railway エッジの リクエストタイムアウトが発火し HTTP 502 "Application failed to respond" で
-// 中断される（バグ #b7041ffb）。これを避けるため、しきい値以上のファイルはブラウザから
-// 直接 Google Drive へ PUT する。バックエンドは init / complete だけを短時間で叩く。
-const CD_RESUMABLE_THRESHOLD_BYTES = 20 * 1024 * 1024; // これ以上は Resumable 直送
+// ファイルを multer 経由で Railway バックエンドに通すと、Railway エッジプロキシが
+// upstream（Node アプリ）から正常応答を得られないと HTTP 502 "upstream error" で中断される
+// （大容量は遅回線の5分タイムアウト = バグ #b7041ffb、小容量でも upstream 異常で 502 = バグ #0efaf2dd）。
+// Railway エッジの 502 は不可避（memory: project_railway_upload_502）であり、根本解はファイル本体を
+// Railway に通さないこと。そのためサイズに関わらず全アップロードをブラウザ→Google Drive 直送に回し、
+// バックエンドは init / complete（小さい JSON のみ）だけを短時間で叩く。
+// SA / ルートフォルダ未設定の環境では init が fallback を返し、従来 multer 経路へ自動で落ちる。
+const CD_RESUMABLE_THRESHOLD_BYTES = 0; // 全サイズを Resumable 直送（multer は SA 未設定時のフォールバックのみ）
 const CD_RESUMABLE_CHUNK_BYTES = 16 * 1024 * 1024;     // 16MB（256KB の倍数 = Drive 要件）。進捗の粒度兼リトライ単位
 
 // Drive セッションURLへ 1 チャンクを XHR で PUT（XHR は upload 進捗が取れる）。
@@ -38637,7 +38640,7 @@ async function executeUpload() {
         progressWrap.style.display = 'none';
         uploadBtn.disabled = false;
         progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
-        statusEl.textContent = `アップロード失敗 ${e?.message || e}（大容量直送）`;
+        statusEl.textContent = `アップロード失敗 ${e?.message || e}（Drive直送）`;
         statusEl.style.color = '#E24B4A';
       }
     }
