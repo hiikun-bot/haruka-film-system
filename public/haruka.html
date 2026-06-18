@@ -2493,6 +2493,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
           if (_src.indexOf('/api/admin/video-organization-test/preview/') !== -1) {
             return;
           }
+          // メンバーアバターの <img> 失敗はイニシャル表示へ graceful fallback する設計（avatarHtml の onerror）。
+          // /api/haruka/members/:id/avatar は base64 → 軽量配信 URL 置換で、未設定なら 404・更新/削除レースや
+          // 重いページ読込中の一過性失敗が起こり得るが、いずれも表示はイニシャルに落ちて実害が無い。
+          // それでも capture 段のグローバル error が先に発火し Slack 通知だけ飛ぶため、ここで抑制してノイズを止める。
+          if (t.tagName && t.tagName.toLowerCase() === 'img'
+              && /\/api\/haruka\/members\/[^/]+\/avatar(\?|$)/.test(_src)) {
+            try { if (window.__addBreadcrumb) window.__addBreadcrumb('resource_error_suppressed', 'avatar img fallback'); } catch (_) {}
+            return;
+          }
           // 外部注入スクリプトの読込失敗は通知しない。アドウェア／ブラウザ拡張／マルウェアが
           // ページに後から差し込む <script>/<img>/<link>（例: https://infird.com/cdn/<uuid>?uuid=...）は
           // 当方のコードに存在せず直せない外部要因。自オリジン or 既知CDN 以外のホストは Slack 通知から除外する。
