@@ -8050,6 +8050,17 @@ window.showPage = window.showPage || function(name, btn) {
       <div class="form-group" id="cd-director-note-group" style="display:none;margin-bottom:18px">
         <label class="form-label" id="cd-director-note-label" style="color:var(--em-dark)">ディレクターからの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span></label>
         <textarea class="form-input" id="cd-director-note" rows="5" style="resize:vertical;border-color:var(--em-dark)" placeholder="修正依頼・承認の理由やコメントを入力してください..."></textarea>
+        <!-- bug-report #008cc267: 修正指示への画像添付（クリップボード貼り付け / ファイル選択） -->
+        <div id="cd-note-images-wrap" style="margin-top:10px">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button type="button" onclick="document.getElementById('cd-note-image-input').click()"
+              style="display:inline-flex;align-items:center;gap:6px;background:var(--white);color:var(--em-dark);border:1px solid var(--em);border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer">🖼 画像を添付</button>
+            <span style="font-size:11px;color:var(--text-muted)">この欄に <b>Ctrl/⌘+V</b> でスクショを貼り付けできます（最大12枚）</span>
+            <input type="file" id="cd-note-image-input" accept="image/*" multiple style="display:none"
+              onchange="cdNoteHandleImageFiles(this.files); this.value=''">
+          </div>
+          <div id="cd-note-image-thumbs" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>
+        </div>
       </div>
 
       <!-- アップロードセクション。タイトルはステータスに応じて updateCreativeCommentLabel() で
@@ -29879,6 +29890,9 @@ function _cdRenderPageHtml(page) {
        </div>`
     : bodyHtml;
 
+  // bug-report #008cc267: 修正指示に添付された画像（前回ラウンド側でも表示）
+  const imagesHtml = _cdRenderRoundImages(page.images);
+
   // スレッド（返信エリア）— source/source_id が解決できているページのみ描画
   const threadHtml = canReply
     ? `<div class="cd-round-reply-thread" data-cd-source="${esc(page.source)}" data-cd-source-id="${esc(page.source_id)}">${_cdRenderReplyThreadInner(page.source, page.source_id)}</div>`
@@ -29892,8 +29906,22 @@ function _cdRenderPageHtml(page) {
     </div>
     ${fromToHtml ? `<div class="cd-round-fromto" style="margin:6px 0 8px">${fromToHtml}</div>` : ''}
     ${bodyRowHtml}
+    ${imagesHtml}
     ${threadHtml}
   </div>`;
+}
+
+// bug-report #008cc267: ラウンドコメントに添付された画像のサムネ一覧 HTML。
+//   クリックで既存のライトボックス（アスペクト比保持・途切れなし）で拡大表示。
+function _cdRenderRoundImages(images) {
+  const list = Array.isArray(images) ? images.filter(im => im && typeof im.url === 'string') : [];
+  if (!list.length) return '';
+  // data URL を onclick の引数に直接埋めると巨大になるため、属性に持たせて委譲する。
+  const thumbs = list.map(im => `
+    <img src="${im.url}" alt="添付画像"
+      style="width:84px;height:84px;object-fit:cover;border-radius:8px;border:1px solid var(--border);background:#000;cursor:zoom-in;display:block"
+      onclick="openTweetLightbox(this.src)" title="クリックで拡大">`).join('');
+  return `<div class="cd-round-images" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${thumbs}</div>`;
 }
 
 // 指定 (source, source_id) のスレッド (reply 一覧 + 入力欄) の中身 HTML を返す。
@@ -31455,6 +31483,9 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-comment-field').value = _commentDisp;
   const _noteEl = document.getElementById('cd-director-note');
   if (_noteEl) _noteEl.value = '';
+  // bug-report #008cc267: 修正指示の添付画像も note 本文と同じく開くたびにリセット
+  _cdNoteImages = [];
+  try { cdNoteRenderThumbs(); } catch (_) {}
   const _replyEl = document.getElementById('cd-editor-reply');
   if (_replyEl) _replyEl.value = '';
   // メモ（チーム共有用 creatives.memo）
@@ -32555,6 +32586,99 @@ async function backToDCheck() {
   }))) return;
   await saveCreativeDetail('Dチェック');
 }
+
+// ============================================================
+// bug-report #008cc267: 修正指示・承認コメント（cd-director-note）への画像添付
+//   ・クリップボード貼り付け / ファイル選択で画像を添付
+//   ・サムネクリックでライトボックス拡大（アスペクト比保持・途切れなし）
+//   ・保存方式は tweets と同じく base64 data URL を creatives.director_comment_images に保存
+// ------------------------------------------------------------
+// _cdNoteImages: [{ url:dataUrl, w, h }] — 今まさに書いている修正指示に添付する画像。
+//   モーダルを開くたび openCreativeDetail 側で [] にリセットする（note 本文と同じ扱い）。
+let _cdNoteImages = [];
+const CD_NOTE_IMAGES_MAX = 12;
+
+// ファイル（複数可）を受け取り、長辺リサイズ + JPEG 圧縮して _cdNoteImages に追加する。
+async function cdNoteHandleImageFiles(fileList) {
+  const files = Array.from(fileList || []).filter(f => f && f.type && f.type.startsWith('image/'));
+  if (!files.length) return;
+  for (const file of files) {
+    if (_cdNoteImages.length >= CD_NOTE_IMAGES_MAX) {
+      showToast(`画像は最大 ${CD_NOTE_IMAGES_MAX} 枚までです`, 'warn');
+      break;
+    }
+    await cdNoteAddImageFromFile(file);
+  }
+  cdNoteRenderThumbs();
+}
+
+async function cdNoteAddImageFromFile(file) {
+  try {
+    // 長辺 1600px / JPEG 0.85（アスペクト比保持・クロップなし）。大きければさらに圧縮。
+    let blob = (typeof resizeImageContainToBlob === 'function')
+      ? await resizeImageContainToBlob(file, 1600, 1600, 0.85)
+      : file;
+    if (blob.size > 900 * 1024 && typeof resizeImageContainToBlob === 'function') {
+      blob = await resizeImageContainToBlob(file, 1280, 1280, 0.75);
+    }
+    const url = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+    const dims = await new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+      im.onerror = () => resolve({ w: null, h: null });
+      im.src = url;
+    });
+    _cdNoteImages.push({ url, w: dims.w, h: dims.h });
+  } catch (e) {
+    console.error('[cd-note-image] 処理失敗:', e);
+    showToast('画像の処理に失敗しました', 'error');
+  }
+}
+
+// 添付サムネイル一覧を描画。各サムネはクリックで拡大、× で削除。
+function cdNoteRenderThumbs() {
+  const wrap = document.getElementById('cd-note-image-thumbs');
+  if (!wrap) return;
+  if (!_cdNoteImages.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = _cdNoteImages.map((img, i) => `
+    <div style="position:relative;width:78px;height:78px;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:#000">
+      <img src="${img.url}" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in;display:block"
+        onclick="openTweetLightbox(this.src)" title="クリックで拡大">
+      <button type="button" onclick="cdNoteRemoveImage(${i})" title="削除"
+        style="position:absolute;top:2px;right:2px;width:20px;height:20px;border:none;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button>
+    </div>`).join('');
+}
+
+function cdNoteRemoveImage(idx) {
+  if (idx < 0 || idx >= _cdNoteImages.length) return;
+  _cdNoteImages.splice(idx, 1);
+  cdNoteRenderThumbs();
+}
+
+// クリップボード貼り付け: クリエイティブ詳細モーダルが開いていて、かつ修正指示欄が
+// 表示されている（チェック段階）ときだけ画像を取り込む。
+document.addEventListener('paste', async (e) => {
+  const modal = document.getElementById('modal-creative-detail');
+  if (!modal || !modal.classList.contains('open')) return;
+  const noteGroup = document.getElementById('cd-director-note-group');
+  if (!noteGroup || noteGroup.style.display === 'none') return;
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  const imageFiles = [];
+  for (const item of items) {
+    if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+      const f = item.getAsFile();
+      if (f) imageFiles.push(f);
+    }
+  }
+  if (!imageFiles.length) return;
+  e.preventDefault();
+  await cdNoteHandleImageFiles(imageFiles);
+});
 
 async function requestRevision() {
   if (!currentCreativeDetail) return;
@@ -39649,6 +39773,8 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   if (isCheck) {
     // ディレクター/CLからの修正指示・承認コメントのみ更新（編集者コメントは保持）
     body.director_comment = noteValue;
+    // bug-report #008cc267: 修正指示への添付画像を一緒に保存（チェック段階のみ）
+    body.director_comment_images = Array.isArray(_cdNoteImages) ? _cdNoteImages : [];
   } else if (isRevision) {
     // 編集者/デザイナーの返信のみ更新（ディレクターの指示は保持）
     body.editor_comment = editorReplyValue;
