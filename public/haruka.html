@@ -32996,8 +32996,13 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
             <button type="button" onclick="fpZoomBy(1.25, event)" title="拡大 (Cmd/Ctrl + +)" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:14px;line-height:1">＋</button>
             <span style="width:1px;height:14px;background:#3f3f46;margin:0 2px"></span>
             <button type="button" onclick="fpZoomFit()" title="フィット表示にリセット (Cmd/Ctrl + 0)" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:13px;line-height:1">⤺</button>
+            <!-- 選択範囲（黄色枠）の表示ON/OFF。OFFにすると元の素材を見て整列・余白を確認しやすい -->
+            <span id="fp-bbox-toggle-sep" style="width:1px;height:14px;background:#3f3f46;margin:0 2px;display:none"></span>
+            <button type="button" id="fp-bbox-toggle-btn" onclick="fpToggleBboxVisible()" title="選択範囲（黄色枠）の表示/非表示を切り替え。OFFにすると元の素材だけ表示" style="display:none;align-items:center;gap:4px;background:rgba(245,197,24,0.16);border:1px solid #f5c518;color:#fbbf24;cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px;line-height:1;font-weight:600">▦ 範囲 ON</button>
           </div>
         </div>`;
+      // 新しい画像を開くたびに選択範囲は「全表示」をデフォルトに戻す
+      _fpBboxHidden = false;
       // ドラッグ選択ハンドラ＋zoom/pan ハンドラを取り付け
       setTimeout(() => { fpInitImageBboxOverlay(); fpInitImageZoom(); }, 50);
     } else {
@@ -34423,6 +34428,10 @@ const FP_ZOOM_MAX = 5;
 let _fpZoomWheelHandler  = null;
 let _fpZoomDblHandler    = null;
 
+// 選択範囲（既存コメントの黄色枠）を一時的に隠すかどうか。
+// デフォルトは全表示(false)。ユーザーが整列・余白を確認したいとき OFF にして元素材だけ見られる。
+let _fpBboxHidden = false;
+
 // 画像が読み込まれた時のハンドラ（onload から呼ぶ）
 function fpOnImageLoaded() {
   fpHideLoading();
@@ -34688,6 +34697,10 @@ function fpRenderBboxOverlays() {
   if (!ov) return;
   // 既存の bbox 要素を一掃（pending は別IDなので残る）
   ov.querySelectorAll('.fp-bbox-existing').forEach(el => el.remove());
+  // 範囲付きコメントが1件でもあればトグルボタンを出す（無ければ隠す）
+  const hasBbox = !!(_fpComments && _fpComments.some(c => c && !c.parent_comment_id && c.bbox && typeof c.bbox === 'object'
+    && typeof c.bbox.x === 'number' && typeof c.bbox.y === 'number'));
+  fpUpdateBboxToggleBtn(hasBbox);
   if (!_fpComments || !_fpComments.length) return;
   fpSyncOverlaySize();
   const W = ov.clientWidth, H = ov.clientHeight;
@@ -34709,6 +34722,7 @@ function fpRenderBboxOverlays() {
     div.style.top    = (b.y * H) + 'px';
     div.style.width  = (b.w * W) + 'px';
     div.style.height = (b.h * H) + 'px';
+    if (_fpBboxHidden) div.style.display = 'none';
     div.addEventListener('mouseenter', () => { div.style.background = 'rgba(245,197,24,0.22)'; });
     div.addEventListener('mouseleave', () => { div.style.background = 'rgba(245,197,24,0.08)'; });
     div.addEventListener('click', (e) => {
@@ -34717,6 +34731,44 @@ function fpRenderBboxOverlays() {
     });
     ov.appendChild(div);
   });
+}
+
+// 選択範囲（黄色枠）の表示ON/OFF を切り替える。OFF にすると元の素材だけ見えて整列・余白を確認しやすい。
+function fpToggleBboxVisible() {
+  _fpBboxHidden = !_fpBboxHidden;
+  const ov = document.getElementById('fp-image-overlay');
+  if (ov) {
+    ov.querySelectorAll('.fp-bbox-existing').forEach(el => {
+      el.style.display = _fpBboxHidden ? 'none' : '';
+    });
+  }
+  fpUpdateBboxToggleBtn(true);
+}
+
+// トグルボタンの表示有無とラベル/見た目を、現在の状態に合わせて更新する。
+// hasBbox=false（範囲付きコメントが無い）のときはボタンごと隠す。
+function fpUpdateBboxToggleBtn(hasBbox) {
+  const btn = document.getElementById('fp-bbox-toggle-btn');
+  const sep = document.getElementById('fp-bbox-toggle-sep');
+  if (!btn) return;
+  if (!hasBbox) {
+    btn.style.display = 'none';
+    if (sep) sep.style.display = 'none';
+    return;
+  }
+  btn.style.display = 'inline-flex';
+  if (sep) sep.style.display = 'inline-block';
+  if (_fpBboxHidden) {
+    btn.textContent = '▢ 範囲 OFF';
+    btn.style.background = 'transparent';
+    btn.style.borderColor = '#3f3f46';
+    btn.style.color = '#a1a1aa';
+  } else {
+    btn.textContent = '▦ 範囲 ON';
+    btn.style.background = 'rgba(245,197,24,0.16)';
+    btn.style.borderColor = '#f5c518';
+    btn.style.color = '#fbbf24';
+  }
 }
 
 // 範囲選択（pending）解除
