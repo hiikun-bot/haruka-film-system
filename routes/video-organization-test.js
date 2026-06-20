@@ -258,6 +258,27 @@ router.get('/download/:fileId', async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!fileId) return res.status(400).end();
   try {
+    // --- 公開済み(anyone reader)素材は Google から直接 DL させる（Railway プロキシ回避）---
+    // 5.57GB 級の巨大ファイルを Railway 経由でストリーム配信すると、エッジの制約で
+    // 「DL は始まるが進まず、部分ファイルも残らず消える」症状が出る（project_railway_upload_502 と同根）。
+    // 振り分け済み素材はフォルダごと anyone-with-link reader 公開されているため、
+    // ブラウザ↔Google 直結の confirm 付き URL に 302 でリダイレクトする（range 対応で再開可能・高速）。
+    try {
+      const drive = await driveLib.getDriveService();
+      const permRes = await drive.permissions.list({
+        fileId, fields: 'permissions(type,role)', supportsAllDrives: true,
+      });
+      const isPublic = (permRes.data.permissions || []).some(p => p.type === 'anyone');
+      if (isPublic) {
+        return res.redirect(
+          302,
+          `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`
+        );
+      }
+    } catch (permErr) {
+      console.warn('[video-org] download: 公開判定に失敗、プロキシ配信にフォールバック:', permErr?.message || permErr);
+    }
+
     // ファイル名は DB の current_filename → original_filename の順で採用（無ければ fileId）
     const { data: row } = await supabase
       .from('video_file_organization_tests')
