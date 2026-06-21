@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
+const googleServiceAccount = require('../lib/google-service-account');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
@@ -14595,8 +14596,13 @@ router.get('/drive-diagnose', requireAuth, async (_req, res) => {
   }
   let credentials;
   try {
-    credentials = JSON.parse(keyJson);
-    result.checks.service_account_key = { ok: true, message: `サービスアカウント: ${credentials.client_email}` };
+    credentials = googleServiceAccount.parseCredentialsFromEnv();
+    const health = googleServiceAccount.inspectCredentials(credentials, { rawEnv: keyJson });
+    result.checks.service_account_key = {
+      ok: health.ok,
+      message: `サービスアカウント: ${credentials.client_email || '不明'}`,
+      diagnostics: health,
+    };
   } catch (e) {
     result.checks.service_account_key = { ok: false, message: `JSON パースエラー: ${e.message}` };
     return res.json(result);
