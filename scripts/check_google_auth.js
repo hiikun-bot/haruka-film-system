@@ -10,6 +10,9 @@ const {
   logEnvCredentialsHealth,
   logCredentialsHealth,
 } = require('../lib/google-service-account');
+const {
+  createResilientJwtClient,
+} = require('../lib/google-auth-token');
 
 function getPackageVersion(packageName) {
   try {
@@ -57,17 +60,40 @@ async function main() {
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],
   });
 
+  let defaultOk = false;
   try {
     const token = await auth.getAccessToken();
     if (!token) throw new Error('getAccessToken() returned empty token');
-    console.log('[google-auth-check] token-ok', JSON.stringify({
+    defaultOk = true;
+    console.log('[google-auth-check] googleauth-v10-default-token-ok', JSON.stringify({
       ok: true,
       token_type: typeof token,
       token_length: String(token).length,
     }));
   } catch (e) {
-    console.error('[google-auth-check] token-failed', JSON.stringify({
+    console.error('[google-auth-check] googleauth-v10-default-token-failed', JSON.stringify({
       ok: false,
+      error: serializeError(e),
+    }));
+  }
+
+  try {
+    const jwtClient = createResilientJwtClient(credentials, {
+      projectId: process.env.GOOGLE_CLOUD_PROJECT || credentials.project_id,
+    });
+    const tokenResult = await jwtClient.getAccessToken();
+    const token = tokenResult?.token || tokenResult;
+    if (!token) throw new Error('resilient JWT getAccessToken() returned empty token');
+    console.log('[google-auth-check] resilient-jwt-v10-ipv4-token-ok', JSON.stringify({
+      ok: true,
+      token_type: typeof token,
+      token_length: String(token).length,
+      default_googleauth_ok: defaultOk,
+    }));
+  } catch (e) {
+    console.error('[google-auth-check] resilient-jwt-v10-ipv4-token-failed', JSON.stringify({
+      ok: false,
+      default_googleauth_ok: defaultOk,
       error: serializeError(e),
     }));
     process.exitCode = 1;
