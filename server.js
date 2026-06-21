@@ -8,6 +8,7 @@
 require('dns').setDefaultResultOrder('ipv4first');
 
 require('dotenv').config();
+const { logEnvCredentialsHealth } = require('./lib/google-service-account');
 const harukaRouter = require('./routes/haruka');
 // 案件収支機能（feature flag: ENABLE_PROJECT_ACCOUNTING）— Step B
 const accountingEnabled = ['true', '1', 'on', 'yes'].includes(String(process.env.ENABLE_PROJECT_ACCOUNTING || '').toLowerCase());
@@ -52,6 +53,12 @@ const BUILD_ID = (() => {
   return Date.now().toString();
 })();
 console.log(`[build] BUILD_ID = ${BUILD_ID}`);
+logEnvCredentialsHealth('server:start');
+console.info('[video-org] gemini-env', JSON.stringify({
+  google_cloud_project: process.env.GOOGLE_CLOUD_PROJECT || null,
+  google_cloud_location: process.env.GOOGLE_CLOUD_LOCATION || 'asia-northeast1',
+  gemini_model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
+}));
 
 // ==================== ミドルウェア ====================
 // ミドルウェア: リクエストとレスポンスの間で処理を挟む仕組み
