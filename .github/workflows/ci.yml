@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: コード取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Node.js セットアップ
         uses: actions/setup-node@v4
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: コード取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Node.js セットアップ
         uses: actions/setup-node@v4
@@ -69,7 +69,7 @@ jobs:
     name: 脆弱性チェック
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -82,7 +82,7 @@ jobs:
     name: ファイルサイズ警告（負債防止）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 大きすぎるファイルを警告
         run: |
           echo "## ファイルサイズチェック（参考情報）" >> $GITHUB_STEP_SUMMARY
