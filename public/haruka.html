@@ -198,6 +198,9 @@ tr.row-help td{background:#FFFBF2}
 .cv-g-group-row .ga-team-chip .team-color-dot{width:8px;height:8px}
 .cv-g-group-row .ga-team-code{font-size:11px;font-weight:700;color:var(--em-dark);background:#fff;border-radius:6px;padding:1px 6px;flex:0 0 auto;letter-spacing:0.02em}
 /* 件数 + アラート集約 */
+.cv-g-group-row .ga-folder-btn{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid #F0DFB6;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:700;color:#8A6D1B;cursor:pointer;white-space:nowrap;line-height:1.4}
+.cv-g-group-row .ga-folder-btn:hover{background:#FFF6E5;border-color:#E6CE94}
+.cv-g-group-row .ga-folder-btn:disabled{opacity:.6;cursor:default}
 .cv-g-group-row .ga-stats{display:inline-flex;gap:6px;margin-left:auto;font-size:11px;font-weight:600;flex:0 0 auto;align-items:center}
 .cv-g-group-row .ga-stats .ga-count{color:var(--text-muted);font-weight:500;font-size:11px}
 .cv-g-group-row .ga-stats .ga-alert{background:#FBEAEA;color:#A03030;font-weight:700;border-radius:6px;padding:2px 7px;font-size:11px;letter-spacing:0.02em}
@@ -7862,7 +7865,7 @@ window.showPage = window.showPage || function(name, btn) {
           <button id="cd-drive-folder-btn"
                   onclick="openCreativeDriveFolder()"
                   style="flex-shrink:0;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11.5px;color:var(--em-dark);cursor:pointer;white-space:nowrap;margin-right:6px"
-                  title="このクリエイティブのファイルが入っている Drive フォルダを開きます">
+                  title="このクリエイティブのファイルが入っている Drive フォルダを開きます。フォルダごとDLでZIP一括取得できます（権限申請不要）">
             📁 フォルダ
           </button>
           <!-- 事後修正モード起動ボタン（権限ありのみ表示） -->
@@ -13307,10 +13310,24 @@ function renderCreativesGantt(filtered, warningSource) {
       const icon = (typeof getCreativeCategoryIcon === 'function')
         ? getCreativeCategoryIcon(projObj)
         : '🎬';
+      // この案件の代表（最新登録）クリエイティブ id を選ぶ。
+      // その案件・直近月の静止画フォルダが開く（＝提出バッチ単位として妥当）。
+      // クリエイティブが1件も無ければボタンは出さない。
+      let latestCid = null, latestTs = -Infinity;
+      (g.items || []).forEach(it => {
+        const cc = it?.c;
+        if (!cc?.id) return;
+        const ts = cc.created_at ? Date.parse(cc.created_at) : 0;
+        if (ts >= latestTs) { latestTs = ts; latestCid = cc.id; }
+      });
+      const folderBtn = latestCid
+        ? `<button class="ga-folder-btn" data-creative-id="${esc(latestCid)}" onclick="event.stopPropagation();openProjectDriveFolder(this)" title="Driveフォルダが開きます。フォルダごとダウンロードすればZIPで一括取得できます（権限申請不要）">📁 Driveフォルダを開く（一括DL）</button>`
+        : '';
       return `<div class="cv-g-group-row is-project" style="width:${FIXED_W}px">
         <span class="ga-icon" aria-hidden="true">${icon}</span>
         <span class="ga-name" title="${esc(cliName)} ・ ${esc(projName)}">${esc(cliName)} ・ ${esc(projName)}</span>
         ${teamDotChip(team)}
+        ${folderBtn}
         ${statsHtml}
       </div>`;
     }
@@ -39294,14 +39311,17 @@ async function copyCreativeShareLink() {
 
 // Drive 親フォルダを新タブで開く
 // サーバ側で最新の creative_files から parents を都度解決する設計（理由は routes/haruka.js のコメント参照）
-async function openCreativeDriveFolder() {
-  if (!currentCreativeDetail || !currentCreativeDetail.id) return;
-  const btn = document.getElementById('cd-drive-folder-btn');
-  const original = btn ? btn.textContent : '';
-  const restore = () => { if (btn) { btn.textContent = original || '📁 フォルダ'; btn.disabled = false; } };
+// クリエイティブ id から Drive 親フォルダ URL を取得して新タブで開く汎用ヘルパー。
+// 詳細モーダルの「📁 フォルダ」と、案件別グループ見出しの「📁 Driveフォルダを開く（一括DL）」
+// の両方から再利用する。サーバ側はこのタイミングで親フォルダに anyone-with-link reader を
+// 付与する（権限申請不要でフォルダごとDL → ZIP一括取得が可能になる）。
+async function openCreativeDriveFolderById(creativeId, btn) {
+  if (!creativeId) return;
+  const original = btn ? btn.innerHTML : '';
+  const restore = () => { if (btn) { btn.innerHTML = original; btn.disabled = false; } };
   try {
     if (btn) { btn.textContent = '⏳ 取得中…'; btn.disabled = true; }
-    const res = await fetch(`/api/creatives/${encodeURIComponent(currentCreativeDetail.id)}/drive-folder`);
+    const res = await fetch(`/api/creatives/${encodeURIComponent(creativeId)}/drive-folder`);
     if (res.status === 404) {
       let msg = 'まだファイルがアップロードされていません';
       try { const j = await res.json(); if (j?.error) msg = j.error; } catch (_) {}
@@ -39327,6 +39347,23 @@ async function openCreativeDriveFolder() {
     showToast('Drive フォルダの取得に失敗: ' + (e?.message || e), 'error');
     restore();
   }
+}
+
+// 詳細モーダルの「📁 フォルダ」ボタン用ラッパー。
+async function openCreativeDriveFolder() {
+  if (!currentCreativeDetail || !currentCreativeDetail.id) return;
+  const btn = document.getElementById('cd-drive-folder-btn');
+  const fallback = () => { if (btn && !btn.textContent.trim()) btn.textContent = '📁 フォルダ'; };
+  await openCreativeDriveFolderById(currentCreativeDetail.id, btn);
+  fallback();
+}
+
+// 案件別グループ見出しの「📁 Driveフォルダを開く（一括DL）」用ハンドラ。
+// data-creative-id 属性で代表（最新）クリエイティブの id を受け取り、上記汎用ヘルパーへ委譲。
+async function openProjectDriveFolder(btn) {
+  const cid = btn?.dataset?.creativeId;
+  if (!cid) { showToast('この案件には開けるクリエイティブがありません', 'warn'); return; }
+  await openCreativeDriveFolderById(cid, btn);
 }
 
 // 事後修正モーダルを開く
