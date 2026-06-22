@@ -8521,22 +8521,30 @@ router.get('/creatives/:id/drive-folder', requireAuth, async (req, res) => {
     // NOTE: creative_files の時刻列は uploaded_at（created_at は存在しない）。
     //       誤って created_at で order すると PostgREST が 42703 を返し、
     //       ファイルがあっても常に「まだファイルがアップロードされていません」になる（#712 のバグ）。
-    //       drive_file_id が null の行（旧データ等）は除外して、最新の実ファイルを採る。
+    //
+    //   旧データ等で drive_file_id が null・drive_url のみ保持している行が実在する。
+    //   ここで drive_file_id 非null だけに絞り込むと、詳細モーダル（GET /files は全行返す→
+    //   「前回提出ファイル」として表示される）には出ているのに 📁フォルダ だけ 404 になり、
+    //   「アップロード済みなのに『まだアップロードされていません』」のズレが起きる。
+    //   フロントの file カード（haruka.html: f.drive_url から /d/<id>/ を抽出）と同じ救済を
+    //   サーバ側でも行い、両者の判定を一致させる。
     const { data: files, error } = await supabase
       .from('creative_files')
-      .select('drive_file_id')
+      .select('drive_file_id, drive_url')
       .eq('creative_id', req.params.id)
-      .not('drive_file_id', 'is', null)
       .order('uploaded_at', { ascending: false })
-      .limit(1);
+      .limit(20);
     if (error) return res.status(500).json({ error: error.message });
-    const latest = files && files[0];
-    if (!latest || !latest.drive_file_id) {
+    // drive_file_id があればそれを、無ければ drive_url（webViewLink）から file id を抽出して採用。
+    const resolveDriveFileId = (f) =>
+      f?.drive_file_id || (f?.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null) || null;
+    const latestFileId = (files || []).map(resolveDriveFileId).find(Boolean) || null;
+    if (!latestFileId) {
       return res.status(404).json({ error: 'まだファイルがアップロードされていません' });
     }
     const drive = await getDriveService();
     const meta = await drive.files.get({
-      fileId: latest.drive_file_id,
+      fileId: latestFileId,
       fields: 'parents',
       supportsAllDrives: true,
     });
