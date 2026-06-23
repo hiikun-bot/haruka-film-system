@@ -24761,7 +24761,45 @@ async function reactivateMember(id) {
   }
 }
 
-// 案件選択時に訴求軸を読み込む
+// 案件に対する「初期値とするチーム」を返す。
+// チームは案件のクライアントに紐づくチーム（client.team_ids）から、案件種別(キャパ)に一致するものを優先。
+//  1) 案件キャパ('video'|'design') と一致する team_type / 2) 秘書チーム / 3) （カテゴリ未設定なら）先頭
+// 紐づくチームが無い案件は null（＝未設定のまま）を返す。
+function getProjectDefaultTeam(projectId) {
+  const proj = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+  if (!proj) return null;
+  const clientId = proj.client_id || proj.clients?.id;
+  const cl = clientId ? (Array.isArray(allClients) ? allClients : []).find(c => c.id === clientId) : null;
+  const linkedIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
+  if (!linkedIds.length) return null;
+  const teamsAll = Array.isArray(allTeams) ? allTeams : [];
+  const linkedTeams = linkedIds.map(id => teamsAll.find(t => t.id === id)).filter(Boolean);
+  const projCat = (typeof getProjectCategory === 'function') ? getProjectCategory(proj) : null;
+  if (projCat) {
+    const cap = (typeof getCreativeCapForProject === 'function')
+      ? getCreativeCapForProject(proj)
+      : (projCat.code === 'video' ? 'video' : 'design');
+    return linkedTeams.find(t => t.team_type === cap)
+        || linkedTeams.find(t => t.team_type === 'secretary')
+        || null;
+  }
+  // primary_category 未設定の案件は従来挙動どおり先頭を初期値にする
+  return linkedTeams[0] || null;
+}
+
+// 個別登録 c-team-id に、案件の初期チームを「未選択のときだけ」当てる。
+// 既にユーザー/自動で選択済みの場合や、紐づくチームが無い場合は触らない（＝未設定のまま）。
+function applyCreativeDefaultTeam(projectId) {
+  const teamSelect = document.getElementById('c-team-id');
+  if (!teamSelect || teamSelect.value) return; // 既に選択済みなら尊重
+  const chosen = getProjectDefaultTeam(projectId);
+  if (chosen && Array.from(teamSelect.options).some(o => o.value === chosen.id)) {
+    teamSelect.value = chosen.id;
+    if (typeof onTeamChange === 'function') { try { onTeamChange(teamSelect.value); } catch(_) {} }
+  }
+}
+
+// 案件選択時に訴求軸を読み込む（あわせて案件のデフォルトチームを当てる）
 async function onProjectChange(projectId) {
   const sel = document.getElementById('c-appeal-type');
   const prodSel = document.getElementById('c-product-id');
@@ -24798,6 +24836,8 @@ async function onProjectChange(projectId) {
   // 案件→クライアント→紐付くチームから「案件種別と一致する team_type」を優先して自動選択。
   // 整合チームが見つからない場合は誤紐付け防止のため未選択のままにする。
   // （「秘書」チームは team_type が異なるが、video/design 案件を兼ねうるので候補に含める）
+  // 初期チームの算出は getProjectDefaultTeam() に集約。ここでは「案件を能動的に切り替えた」
+  // タイミングなので、紐づくチームがあるのに整合チームが選べない場合は誤紐付け防止で '' にリセットする。
   try {
     const proj = (allProjects || []).find(p => p.id === projectId);
     const clientId = proj?.client_id || proj?.clients?.id;
@@ -24805,34 +24845,9 @@ async function onProjectChange(projectId) {
     const linkedIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
     const teamSelect = document.getElementById('c-team-id');
     if (teamSelect && linkedIds.length) {
-      const teamsAll = Array.isArray(allTeams) ? allTeams : [];
-      const linkedTeams = linkedIds
-        .map(id => teamsAll.find(t => t.id === id))
-        .filter(Boolean);
-      const projCat = (typeof getProjectCategory === 'function') ? getProjectCategory(proj) : null;
-      // 1) primary_category から派生したキャパ ('video'|'design') と一致する team_type を最優先
-      // 2) 秘書チーム / 3) なし（未選択）
-      // チームの team_type は 'video'|'design'|'secretary' の 3 値しかないため、
-      // LP/HP/other は design キャパに丸めて team を探す。
-      let chosen = null;
-      if (projCat) {
-        const cap = (typeof getCreativeCapForProject === 'function')
-          ? getCreativeCapForProject(proj)
-          : (projCat.code === 'video' ? 'video' : 'design');
-        chosen = linkedTeams.find(t => t.team_type === cap)
-              || linkedTeams.find(t => t.team_type === 'secretary')
-              || null;
-      } else {
-        // primary_category 未設定の案件は従来挙動どおり先頭を選ぶ
-        chosen = linkedTeams[0] || null;
-      }
-      // 現在の team dropdown の選択肢に存在することも確認（cap フィルタで消えていれば選ばない）
+      const chosen = getProjectDefaultTeam(projectId);
       const stillSelectable = chosen && Array.from(teamSelect.options).some(o => o.value === chosen.id);
-      if (stillSelectable) {
-        teamSelect.value = chosen.id;
-      } else {
-        teamSelect.value = '';
-      }
+      teamSelect.value = stillSelectable ? chosen.id : '';
       if (typeof onTeamChange === 'function') {
         try { onTeamChange(teamSelect.value); } catch(_) {}
       }
@@ -24964,6 +24979,12 @@ async function goToCreativeStep2() {
   // Step1 → Step2 切替
   document.getElementById('creative-step-1').style.display = 'none';
   document.getElementById('creative-step-2').style.display = '';
+
+  // チーム初期値: 案件に紐づくチーム（クライアント割当チームのうち案件種別に合うもの）を、
+  // 未選択のときだけ初期値として当てる。紐づくチームが無ければ未設定のまま。
+  // 案件タイル再クリックで onProjectChange を経由せず Step2 に来る経路でも確実に初期化するため、
+  // フォーム表示の choke point である本関数でも当てておく。
+  applyCreativeDefaultTeam(projectId);
 
   // 案件カテゴリに応じて種別 select の選択肢を組み替える（静止画案件は既定が "ショート動画" に
   // ならないよう、デザイン種別＝既定バナーに揃える）。表示制御の前に実行する。
