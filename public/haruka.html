@@ -7244,7 +7244,17 @@ window.showPage = window.showPage || function(name, btn) {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     margin: 2px 0 12px; padding: 8px 0; border-top: 1px solid #f0f1f4;
   }
-  #page-material-square .ms-folder-row-label { font-size: 12px; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+  /* チップ行は上のパンくず行と一体に見せるため、上の余白・区切り線を詰める */
+  #page-material-square .ms-folder-row--chips { border-top: none; padding-top: 0; margin-top: 0; }
+  /* パンくず（🏠素材広場 ＞ クライアント ＞ 案件）。各要素クリックでそのレベルへ戻る。 */
+  #page-material-square .ms-folder-crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  #page-material-square .ms-folder-crumb {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; color: var(--text); background: none; border: none; cursor: pointer; white-space: nowrap;
+  }
+  #page-material-square .ms-folder-crumb:hover:not(.current) { background: #eef2f7; }
+  #page-material-square .ms-folder-crumb.current { color: var(--text-muted); cursor: default; font-weight: 700; }
+  #page-material-square .ms-folder-crumb-sep { color: var(--text-muted); font-size: 12px; opacity: .7; }
   #page-material-square .ms-folder-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
   #page-material-square .ms-folder-chip {
     display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 14px;
@@ -7260,7 +7270,6 @@ window.showPage = window.showPage || function(name, btn) {
   }
   #page-material-square .ms-folder-create-btn:hover:not(:disabled) { background: #f8f9fb; }
   #page-material-square .ms-folder-create-btn:disabled { opacity: .45; cursor: not-allowed; }
-  #page-material-square .ms-folder-create-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
   /* 選択バーの「フォルダへ移動」ポップオーバー */
   #page-material-square .ms-folder-move-wrap { position: relative; display: inline-block; }
   #page-material-square .ms-folder-move-pop {
@@ -7316,28 +7325,21 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="video">🎬 動画</option>
         <option value="image">🖼️ 画像</option>
       </select>
-      <!-- クライアント → 案件 の2段構え絞り込み。
-           クライアント未選択=全体素材。クライアント選択時のみ案件 select を表示し、
-           「案件全体」or 個別案件を選べる（アップロード先ピッカーと同じ作り）。 -->
-      <select id="ms-filter-client" onchange="msOnFilterClientChange()" title="クライアントで絞り込み">
-        <option value="">クライアント: すべて</option>
-      </select>
-      <select id="ms-filter-project" onchange="msOnFilterProjectChange()" title="案件で絞り込み" style="display:none">
-        <option value="">案件: 案件全体</option>
-      </select>
       <span id="ms-active-tags" style="display:flex;gap:4px;flex-wrap:wrap"></span>
     </div>
 
-    <!-- 任意フォルダ行（ADR 023）: フィルタ行直下。現在のクライアント/案件コンテキストの
-         フォルダをチップ表示し、クリックで GET /list?folderId=... 絞り込み。
-         「＋フォルダを作成」は クライアント＋案件 選択時 or クライアント未選択時のみ活性。 -->
+    <!-- フォルダ階層ナビ（Drive風ブラウザ）: パンくず（🏠素材広場 ＞ クライアント ＞ 案件）と
+         現在レベルのチップ（root=クライアント / client=案件 / project=任意フォルダ＋未振り分け）。
+         チップクリックで一段潜る or 素材を folderId 絞り込み。
+         「＋ この案件にフォルダを作成」は project レベル（案件を開いている時）だけ表示。 -->
     <div class="ms-folder-row" id="ms-folder-row">
-      <span class="ms-folder-row-label">📁 フォルダ：</span>
+      <span class="ms-folder-crumbs" id="ms-folder-crumbs"></span>
+      <button class="ms-folder-create-btn" id="ms-folder-create-btn" onclick="msOpenCreateFolder()" title="この案件にフォルダを作成" style="display:none">＋ この案件にフォルダを作成</button>
+    </div>
+    <div class="ms-folder-row ms-folder-row--chips" id="ms-folder-chip-row">
       <span class="ms-folder-chips" id="ms-folder-chips">
         <span class="ms-folder-empty">読み込み中…</span>
       </span>
-      <span class="ms-folder-create-hint" id="ms-folder-create-hint" style="display:none">案件まで選ぶとその直下に、クライアント未選択なら素材広場直下に作成できます</span>
-      <button class="ms-folder-create-btn" id="ms-folder-create-btn" onclick="msOpenCreateFolder()" title="このコンテキストにフォルダを作成">＋ フォルダを作成</button>
     </div>
 
     <!-- 選択バー: 1件以上チェックすると出現。1件=ダウンロード / 複数=N件をダウンロード -->
@@ -42324,9 +42326,16 @@ let msItemsCache = [];
 let msActiveTag = '';
 // 一括ダウンロード用: チェック中の drive_file_id 集合（プレビュー選択とは独立）
 const msCheckedIds = new Set();
-// 検索バーの「クライアント → 案件」2段フィルタの選択状態
+// フォルダ階層ナビ（Drive風）の選択状態。msFilterClientId/msFilterProjectId は
+// 既存の msReloadList(params.set) をそのまま効かせるためナビ状態に同期させる。
 let msFilterClientId = '';
 let msFilterProjectId = '';
+// 階層ナビ state: 'root'（クライアント一覧）｜'client'（案件一覧）｜'project'（任意フォルダ＋素材）
+let msNavLevel = 'root';
+let msNavClientId = '';
+let msNavClientName = '';
+let msNavProjectId = '';
+let msNavProjectName = '';
 
 // ---- プレビュー自動ポーリング（preview_status が pending/processing の間だけ）----
 // 仕様（PR #687 系）:
@@ -42399,13 +42408,9 @@ function loadMaterialSquarePage() {
   // AI課金確認リンクの遷移先を GCP_BILLING_URL からセット（差し替えは定数1か所のみ）
   const billingLink = document.getElementById('ms-billing-link');
   if (billingLink) billingLink.href = GCP_BILLING_URL;
-  msReloadList();
-  // 検索バーのクライアント/案件 select を初期化（未ロードなら取得してから populate）
-  // populate 後に、現在のコンテキスト（初期=クライアント未選択=ルート）のフォルダ行も初期化。
-  msEnsureClientsProjects().then(() => {
-    msPopulateFilterClientSelect();
-    msReloadFolders();
-  }).catch(() => {});
+  // フォルダ階層ナビは root（クライアント一覧）から開始。
+  // msNavTo('root') が state同期・チップ取得・パンくず描画・msReloadList を行う。
+  msNavTo('root');
 }
 
 // ---- 一覧全体の進捗ポーリング（preview_status pending/processing がある間だけ）----
@@ -42728,133 +42733,164 @@ function msRenderActiveTags() {
 function msClearTagFilter() { msActiveTag = ''; msReloadList(); }
 function msFilterByTag(tag) { msActiveTag = tag; msReloadList(); }
 
-// ==================== 検索バー: クライアント → 案件 の2段フィルタ ====================
-// アップロード先ピッカー（msPopulateClientSelect / msOnClientChange）と同じ方針だが、
-// こちらは一覧の絞り込み専用。クライアント未選択=全体素材、選択時のみ案件 select を出す。
+// ==================== フォルダ階層ナビ（Drive風ブラウザ） ====================
+// クライアント → 案件 → 任意フォルダ/素材 を「フォルダのドリルダウン＋パンくず」で辿る。
+// root: クライアント一覧（素材があるクライアントのみ）
+// client: 選択クライアントの案件一覧（素材がある案件のみ）
+// project: 選択案件の任意フォルダ＋「未振り分け」、下に素材一覧
+//
+// 既存の msReloadList() は msFilterClientId / msFilterProjectId / msActiveFolderId を見るので、
+// ナビ遷移のたびにこれらをナビ状態へ同期する（撤去せず流用）。
 
-// クライアント select を populate（案件を1件以上持つクライアントのみ・名前順）。
-function msPopulateFilterClientSelect() {
-  const sel = document.getElementById('ms-filter-client');
-  if (!sel) return;
-  const prev = msFilterClientId;
-  const projects = Array.isArray(allProjects) ? allProjects : [];
-  const clientIdsWithProjects = new Set(
-    projects.filter(p => !p.is_hidden && p.client_id).map(p => p.client_id)
-  );
-  const clients = (allClients || [])
-    .filter(c => clientIdsWithProjects.has(c.id))
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
-  sel.innerHTML = '<option value="">クライアント: すべて</option>' +
-    clients.map(c => `<option value="${votEscape(c.id)}">${votEscape(c.name || '(名称未設定)')}</option>`).join('');
-  // 復元できなければ「すべて」に戻す
-  if (prev && clients.some(c => c.id === prev)) sel.value = prev;
-  else msFilterClientId = '';
-  msSyncFilterProjectSelect();
+// 指定レベルへ遷移する。(1)state更新 (2)既存フィルタ変数へ同期 (3)チップ取得・描画 (4)一覧再読込。
+//   level: 'root' | 'client' | 'project'
+//   ctx:   { clientId, clientName, projectId, projectName }
+// チップの onclick には id（UUID）だけを渡し、表示名は保持済み一覧から引く
+// （名前を onclick 文字列に埋めると ' を含む名前で JS リテラルが壊れるため）
+function msClientNameById(id) {
+  const c = (msNavClients || []).find(x => String(x.id) === String(id));
+  return c ? (c.name || '') : '';
 }
-
-// 選択中クライアントに応じて案件 select を出し分け＋populate。
-function msSyncFilterProjectSelect() {
-  const pSel = document.getElementById('ms-filter-project');
-  if (!pSel) return;
-  if (!msFilterClientId) {
-    // クライアント未指定 = 全体素材。案件 select は隠す。
-    pSel.style.display = 'none';
-    pSel.value = '';
-    msFilterProjectId = '';
-    return;
+function msProjectNameById(id) {
+  const p = (msNavProjects || []).find(x => String(x.id) === String(id));
+  return p ? (p.name || '') : '';
+}
+function msNavTo(level, ctx) {
+  ctx = ctx || {};
+  msNavLevel = level;
+  if (level === 'root') {
+    msNavClientId = ''; msNavClientName = '';
+    msNavProjectId = ''; msNavProjectName = '';
+    msFilterClientId = ''; msFilterProjectId = ''; msActiveFolderId = '';
+  } else if (level === 'client') {
+    msNavClientId = ctx.clientId || '';
+    msNavClientName = ctx.clientName || msClientNameById(msNavClientId);
+    msNavProjectId = ''; msNavProjectName = '';
+    msFilterClientId = msNavClientId; msFilterProjectId = ''; msActiveFolderId = '';
+  } else if (level === 'project') {
+    msNavClientId = ctx.clientId != null ? ctx.clientId : msNavClientId;
+    msNavClientName = ctx.clientName != null ? ctx.clientName : msNavClientName;
+    msNavProjectId = ctx.projectId || '';
+    msNavProjectName = ctx.projectName || msProjectNameById(msNavProjectId);
+    msFilterClientId = msNavClientId; msFilterProjectId = msNavProjectId;
+    msActiveFolderId = ''; // 案件を開いた直後は任意フォルダ未選択（=その案件の全素材）
   }
-  const prev = msFilterProjectId;
-  const projects = (allProjects || [])
-    .filter(p => p.client_id === msFilterClientId && !p.is_hidden)
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
-  pSel.innerHTML = '<option value="">案件: 案件全体</option>' +
-    projects.map(p => `<option value="${votEscape(p.id)}">${votEscape(p.name || '(名称未設定)')}</option>`).join('');
-  if (prev && projects.some(p => p.id === prev)) pSel.value = prev;
-  else { msFilterProjectId = ''; pSel.value = ''; }
-  pSel.style.display = '';
-}
-
-function msOnFilterClientChange() {
-  const sel = document.getElementById('ms-filter-client');
-  msFilterClientId = sel ? sel.value : '';
-  msFilterProjectId = ''; // クライアントを変えたら案件選択はリセット
-  msSyncFilterProjectSelect();
-  msReloadFolders();
+  msReloadFolders(); // パンくず＋現在レベルのチップを取得・描画
   msReloadList();
 }
-
-function msOnFilterProjectChange() {
-  const sel = document.getElementById('ms-filter-project');
-  msFilterProjectId = sel ? sel.value : '';
-  msReloadFolders();
-  msReloadList();
+// パンくず各要素のクリックハンドラ
+function msNavToRoot() { msNavTo('root'); }
+function msNavToClient() {
+  if (!msNavClientId) return;
+  msNavTo('client', { clientId: msNavClientId, clientName: msNavClientName });
 }
 
 // ==================== 任意フォルダ（ADR 023） ====================
-// フィルタ行直下のフォルダ行・作成モーダル・選択バーの「フォルダへ移動」を担当。
+// 階層ナビのパンくず＋チップ・作成モーダル・選択バーの「フォルダへ移動」を担当。
 //
-// 取得方針（GET /folders）:
-//   - クライアント＋案件 選択 → projectId 付きで案件直下フォルダを取得
-//   - クライアント未選択（=全体素材）→ projectId なしで素材広場ルート直下フォルダを取得
-//   - クライアントのみ選択・案件未選択 → フォルダ行は空表示（作成も非活性）
+// チップ取得方針（msReloadFolders）:
+//   - root    → GET /folders/clients              （素材があるクライアント一覧）
+//   - client  → GET /folders/projects?clientId    （そのクライアントで素材がある案件一覧）
+//   - project → GET /folders?projectId            （案件直下の任意フォルダ）
+// project レベルでのみフォルダの作成・移動・絞り込み・未振り分けが有効。
 // フォルダ絞り込み中の fileId は GET /list?folderId=<id> に渡す（'__none__' で未振り分け）。
 
-let msFolders = [];          // 現在コンテキストのフォルダ一覧
+let msFolders = [];          // project レベルの任意フォルダ一覧
+let msNavClients = [];        // root レベルのクライアント一覧
+let msNavProjects = [];       // client レベルの案件一覧
 let msActiveFolderId = '';   // '' = フォルダ絞り込みなし（すべて）、'<id>' = そのフォルダ、'__none__' = 未振り分け
 
-// 現在のフィルタ状態が「フォルダを扱える」コンテキストか。
-//   ok=true: 取得・作成できる / contextProjectId: 作成・取得に使う projectId（ルートなら null）
+// 任意フォルダの作成・移動が使えるコンテキストか（= project レベルのみ）。
+//   ok=true / projectId: 作成・取得に使う projectId
 function msFolderContext() {
-  // クライアント＋案件 選択 → 案件直下
-  if (msFilterClientId && msFilterProjectId) {
-    return { ok: true, projectId: msFilterProjectId, root: false };
+  if (msNavLevel === 'project' && msNavProjectId) {
+    return { ok: true, projectId: msNavProjectId, root: false };
   }
-  // クライアント未選択（=全体素材）→ ルート直下
-  if (!msFilterClientId) {
-    return { ok: true, projectId: null, root: true };
-  }
-  // クライアントのみ選択・案件未選択 → フォルダ非対応
   return { ok: false, projectId: null, root: false };
 }
 
-// フォルダ行を現在のコンテキストに合わせて再取得・再描画する。
-// msOnFilterClientChange / msOnFilterProjectChange / loadMaterialSquarePage から呼ぶ。
-async function msReloadFolders() {
-  const row = document.getElementById('ms-folder-row');
-  const chips = document.getElementById('ms-folder-chips');
-  if (!row || !chips) return;
-  const ctx = msFolderContext();
-  // フォルダ非対応コンテキスト（クライアントのみ選択）: 行を隠し、絞り込みも解除
-  if (!ctx.ok) {
-    row.style.display = 'none';
-    if (msActiveFolderId) { msActiveFolderId = ''; msReloadList(); }
-    msFolders = [];
-    msUpdateFolderCreateGate();
-    return;
+// パンくず（🏠素材広場 ＞ クライアント名 ＞ 案件名）を描画する。
+function msRenderBreadcrumbs() {
+  const el = document.getElementById('ms-folder-crumbs');
+  if (!el) return;
+  const sep = '<span class="ms-folder-crumb-sep">＞</span>';
+  const rootCur = msNavLevel === 'root' ? ' current' : '';
+  let html = `<button type="button" class="ms-folder-crumb${rootCur}" onclick="msNavToRoot()">🏠 素材広場</button>`;
+  if (msNavClientId) {
+    const cur = msNavLevel === 'client' ? ' current' : '';
+    html += sep + `<button type="button" class="ms-folder-crumb${cur}" onclick="msNavToClient()" title="${votEscape(msNavClientName || '')}">${votEscape(msNavClientName || 'クライアント')}</button>`;
   }
-  row.style.display = 'flex';
+  if (msNavProjectId) {
+    // 案件は常に末端（current）
+    html += sep + `<button type="button" class="ms-folder-crumb current" title="${votEscape(msNavProjectName || '')}">${votEscape(msNavProjectName || '案件')}</button>`;
+  }
+  el.innerHTML = html;
+}
+
+// 現在レベルのチップを取得・描画し、パンくず・作成ボタン表示も更新する。
+// msNavTo / loadMaterialSquarePage から呼ぶ。
+async function msReloadFolders() {
+  const chips = document.getElementById('ms-folder-chips');
+  msRenderBreadcrumbs();
+  msUpdateFolderCreateGate();
+  if (!chips) return;
   chips.innerHTML = '<span class="ms-folder-empty">読み込み中…</span>';
   try {
-    const qs = ctx.projectId ? ('?projectId=' + encodeURIComponent(ctx.projectId)) : '';
-    const data = await votFetch('/folders' + qs);
-    msFolders = Array.isArray(data?.folders) ? data.folders : [];
-    // 絞り込み中フォルダが消えていたら解除
-    if (msActiveFolderId && msActiveFolderId !== '__none__'
-        && !msFolders.some(f => String(f.id) === String(msActiveFolderId))) {
-      msActiveFolderId = '';
-      msReloadList();
+    if (msNavLevel === 'root') {
+      const data = await votFetch('/folders/clients');
+      msNavClients = Array.isArray(data?.clients) ? data.clients : [];
+      msFolders = [];
+    } else if (msNavLevel === 'client') {
+      const data = await votFetch('/folders/projects?clientId=' + encodeURIComponent(msNavClientId));
+      msNavProjects = Array.isArray(data?.projects) ? data.projects : [];
+      msFolders = [];
+    } else { // project
+      const data = await votFetch('/folders?projectId=' + encodeURIComponent(msNavProjectId));
+      msFolders = Array.isArray(data?.folders) ? data.folders : [];
+      // 絞り込み中フォルダが消えていたら解除
+      if (msActiveFolderId && msActiveFolderId !== '__none__'
+          && !msFolders.some(f => String(f.id) === String(msActiveFolderId))) {
+        msActiveFolderId = '';
+        msReloadList();
+      }
     }
     msRenderFolderChips();
   } catch (e) {
     chips.innerHTML = `<span class="ms-folder-empty">フォルダの取得に失敗: ${votEscape(e.message)}</span>`;
-    msFolders = [];
   }
-  msUpdateFolderCreateGate();
 }
 
 function msRenderFolderChips() {
   const chips = document.getElementById('ms-folder-chips');
   if (!chips) return;
+
+  // root: クライアントフォルダ（クリックで client へ潜る）
+  if (msNavLevel === 'root') {
+    if (!msNavClients.length) {
+      chips.innerHTML = '<span class="ms-folder-empty">素材のあるクライアントがありません</span>';
+      return;
+    }
+    chips.innerHTML = msNavClients.map(c => {
+      const cnt = (c.materialCount != null) ? ` <span class="ms-folder-count">(${Number(c.materialCount)})</span>` : '';
+      return `<button type="button" class="ms-folder-chip" onclick="msNavTo('client',{clientId:'${votEscape(String(c.id))}'})" title="${votEscape(c.name || '')}">📁 ${votEscape(c.name || '(無名)')}${cnt}</button>`;
+    }).join('');
+    return;
+  }
+
+  // client: 案件フォルダ（クリックで project へ潜る）
+  if (msNavLevel === 'client') {
+    if (!msNavProjects.length) {
+      chips.innerHTML = '<span class="ms-folder-empty">素材のある案件がありません</span>';
+      return;
+    }
+    chips.innerHTML = msNavProjects.map(p => {
+      const cnt = (p.materialCount != null) ? ` <span class="ms-folder-count">(${Number(p.materialCount)})</span>` : '';
+      return `<button type="button" class="ms-folder-chip" onclick="msNavTo('project',{projectId:'${votEscape(String(p.id))}'})" title="${votEscape(p.name || '')}">📁 ${votEscape(p.name || '(無名)')}${cnt}</button>`;
+    }).join('');
+    return;
+  }
+
+  // project: 任意フォルダ＋「未振り分け」（クリックで folderId 絞り込み）
   const allActive = !msActiveFolderId ? ' active' : '';
   const noneActive = msActiveFolderId === '__none__' ? ' active' : '';
   let html = `<button type="button" class="ms-folder-chip${allActive}" onclick="msSelectFolder('')">すべて</button>`;
@@ -42864,41 +42900,24 @@ function msRenderFolderChips() {
     return `<button type="button" class="ms-folder-chip${active}" onclick="msSelectFolder('${votEscape(String(f.id))}')" title="${votEscape(f.name || '')}">📁 ${votEscape(f.name || '(無名)')}${cnt}`
       + ` <span class="ms-folder-count" style="cursor:pointer" onclick="event.stopPropagation();msDeleteFolder('${votEscape(String(f.id))}','${votEscape(f.name || '')}')" title="このフォルダを削除">🗑</span></button>`;
   }).join('');
-  // 「未振り分け」チップ（このコンテキストに紐づく未割り当て素材を見る）
   html += `<button type="button" class="ms-folder-chip${noneActive}" onclick="msSelectFolder('__none__')" title="フォルダに振り分けられていない素材">📂 未振り分け</button>`;
   chips.innerHTML = html;
 }
 
-// フォルダチップ選択 → 一覧を folderId 付きで再取得
+// 任意フォルダチップ選択（project レベル）→ 一覧を folderId 付きで再取得
 function msSelectFolder(folderId) {
   msActiveFolderId = folderId || '';
   msRenderFolderChips();
   msReloadList();
 }
 
-// 「＋フォルダを作成」ボタンの活性条件（ADR 023 要件 2/3）:
-//   クライアント＋案件 選択 or クライアント未選択 → 活性。クライアントのみ → 非活性＋ヒント。
+// 「＋ この案件にフォルダを作成」ボタンは project レベルのときだけ表示。
 function msUpdateFolderCreateGate() {
   const btn = document.getElementById('ms-folder-create-btn');
-  const hint = document.getElementById('ms-folder-create-hint');
   if (!btn) return;
-  const ctx = msFolderContext();
-  // クライアントのみ選択 = 非対応（行自体が隠れているケースだが、保険でガード）
-  const onlyClient = !!msFilterClientId && !msFilterProjectId;
-  const enabled = ctx.ok && !onlyClient;
+  const enabled = msNavLevel === 'project' && !!msNavProjectId;
+  btn.style.display = enabled ? '' : 'none';
   btn.disabled = !enabled;
-  // 作成先をボタンに明示（全体表示のままルート直下に作ってしまう誤操作を防ぐ）
-  if (!enabled) {
-    btn.textContent = '＋ フォルダを作成';
-    btn.title = 'このコンテキストにフォルダを作成';
-  } else if (ctx.root) {
-    btn.textContent = '＋ 素材広場の直下に作成';
-    btn.title = 'クライアントと案件を選ぶと、その案件フォルダの直下に作成できます';
-  } else {
-    btn.textContent = '＋ この案件にフォルダを作成';
-    btn.title = '選択中の案件フォルダの直下に作成します';
-  }
-  if (hint) hint.style.display = onlyClient ? '' : 'none';
 }
 
 // ---- 作成モーダル ----
@@ -42909,13 +42928,7 @@ function msOpenCreateFolder() {
   const input = document.getElementById('ms-folder-create-name');
   const err = document.getElementById('ms-folder-create-error');
   if (targetEl) {
-    if (ctx.root) {
-      targetEl.textContent = '素材広場（直下）';
-    } else {
-      const c = (allClients || []).find(x => x.id === msFilterClientId);
-      const p = (allProjects || []).find(x => x.id === msFilterProjectId);
-      targetEl.textContent = `${(c && c.name) || 'クライアント'} ／ ${(p && p.name) || '案件'}`;
-    }
+    targetEl.textContent = `${msNavClientName || 'クライアント'} ／ ${msNavProjectName || '案件'}`;
   }
   if (input) input.value = '';
   if (err) { err.style.display = 'none'; err.textContent = ''; }

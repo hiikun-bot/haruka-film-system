@@ -1008,6 +1008,69 @@ async function countMaterialsByFolder(folderIds) {
   return counts;
 }
 
+// ---- フォルダ階層ブラウザ: クライアント / 案件レベル ----
+// GET /folders/clients … 素材があるクライアントのみ（素材数付き・name昇順）。階層ナビの最上位。
+router.get('/folders/clients', async (req, res) => {
+  try {
+    const { data: mats, error } = await supabase
+      .from('video_file_organization_tests')
+      .select('project_id')
+      .not('project_id', 'is', null);
+    if (error) throw error;
+    const byProject = {};
+    for (const m of (mats || [])) byProject[m.project_id] = (byProject[m.project_id] || 0) + 1;
+    const projIds = Object.keys(byProject);
+    if (projIds.length === 0) return res.json({ clients: [] });
+    const { data: projs, error: pErr } = await supabase
+      .from('projects')
+      .select('id, client_id, clients(id, name)')
+      .in('id', projIds);
+    if (pErr) throw pErr;
+    const byClient = {};
+    for (const p of (projs || [])) {
+      const cid = p.client_id;
+      if (!cid) continue;
+      if (!byClient[cid]) byClient[cid] = { id: cid, name: p.clients?.name || '(クライアント不明)', materialCount: 0 };
+      byClient[cid].materialCount += byProject[p.id] || 0;
+    }
+    const clients = Object.values(byClient).sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
+    res.json({ clients });
+  } catch (e) {
+    console.error('[video-org] folders/clients error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /folders/projects?clientId= … そのクライアントの全案件（素材数付き・name昇順）。
+//   Drive ミラーとして素材 0 の案件も見せる（任意フォルダを作る余地を残す）。
+router.get('/folders/projects', async (req, res) => {
+  try {
+    const clientId = req.query?.clientId ? String(req.query.clientId) : null;
+    if (!clientId) return res.status(400).json({ error: 'clientId が必要です' });
+    const { data: projs, error } = await supabase
+      .from('projects')
+      .select('id, name')
+      .eq('client_id', clientId);
+    if (error) throw error;
+    const pids = (projs || []).map(p => p.id);
+    if (pids.length === 0) return res.json({ projects: [] });
+    const { data: mats, error: mErr } = await supabase
+      .from('video_file_organization_tests')
+      .select('project_id')
+      .in('project_id', pids);
+    if (mErr) throw mErr;
+    const byProject = {};
+    for (const m of (mats || [])) byProject[m.project_id] = (byProject[m.project_id] || 0) + 1;
+    const projects = (projs || [])
+      .map(p => ({ id: p.id, name: p.name, materialCount: byProject[p.id] || 0 }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
+    res.json({ projects });
+  } catch (e) {
+    console.error('[video-org] folders/projects error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---- 一覧 ----
 // GET /folders?projectId=
 //   - projectId あり … その案件直下のフォルダ
