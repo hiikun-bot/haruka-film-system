@@ -7550,7 +7550,7 @@ window.showPage = window.showPage || function(name, btn) {
         <button type="button" class="btn" onclick="msInsertFolderDate()" style="white-space:nowrap">＋日付を先頭に</button>
       </div>
       <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">フォルダ名</label>
-      <input id="ms-folder-create-name" type="text" placeholder="例: 6/12 Zoom動画"
+      <input id="ms-folder-create-name" type="text" placeholder="例: 20260612_Zoom動画"
         onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter'){event.preventDefault();}else if(event.key==='Escape'){msCloseCreateFolder();}"
         style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px">
       <div class="ms-folder-name-note">＼ / ? % * : | " &lt; &gt; は _ に変換されます</div>
@@ -42983,18 +42983,19 @@ function msOpenRenameFolder(folderId, currentName) {
   openModal('modal-ms-folder-create');
   setTimeout(() => { if (input) { input.focus(); input.select(); } }, 50);
 }
-// 日付ピッカーで選んだ日付を「M/D 」としてフォルダ名の先頭に挿入する。
+// 日付ピッカーで選んだ日付を「YYYYMMDD_」としてフォルダ名の先頭に挿入する。
 // input[type=date] の値は "YYYY-MM-DD" 文字列なので Date を介さずに分解（TZズレ回避）。
+// 既存の撮影素材ファイル（20260612_…）と同じ命名規約に揃える。
 function msInsertFolderDate() {
   const dateEl = document.getElementById('ms-folder-create-date');
   const input = document.getElementById('ms-folder-create-name');
   if (!dateEl || !input || !dateEl.value) return;
-  const [, m, d] = dateEl.value.split('-');
-  const label = `${parseInt(m, 10)}/${parseInt(d, 10)}`;
+  const [y, m, d] = dateEl.value.split('-');
+  const label = `${y}${m}${d}`; // YYYYMMDD（m/d はゼロ埋め済み）
   const cur = input.value || '';
   // 既に同じ日付が先頭にある場合は二重付与しない
-  if (!(cur === label || cur.startsWith(label + ' '))) {
-    input.value = cur ? `${label} ${cur}` : `${label} `;
+  if (!(cur === `${label}_` || cur.startsWith(`${label}_`))) {
+    input.value = `${label}_${cur}`;
   }
   input.focus();
   const pos = input.value.length;
