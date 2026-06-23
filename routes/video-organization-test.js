@@ -1388,6 +1388,81 @@ router.delete('/folders/:id', async (req, res) => {
   }
 });
 
+// ---- フォルダのリネーム ----
+// PATCH /folders/:id  body: { name }
+//   - DB の name と Drive 上のフォルダ名（drive_folder_id）を両方更新する。
+//   - 同一階層（同 project_id / 同 client_id / ルート）に同名の別フォルダがあれば 409。
+//   - sanitizeFolderName で禁則文字を _ に変換（作成時と同じルール）。
+router.patch('/folders/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const rawName = String(req.body?.name || '').trim();
+    if (!rawName) return res.status(400).json({ error: 'フォルダ名が必要です' });
+    const folderName = sanitizeFolderName(rawName);
+    if (!folderName) return res.status(400).json({ error: 'フォルダ名が空です' });
+
+    const { data: folder, error: fErr } = await supabase
+      .from('material_square_folders')
+      .select('id, name, drive_folder_id, drive_url, client_id, project_id, created_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (fErr) throw fErr;
+    if (!folder) return res.status(404).json({ error: 'フォルダが見つかりません' });
+
+    // 変更なしなら Drive を触らず即返す（冪等）
+    if (folder.name === folderName) {
+      return res.json({ folder: shapeFolderRow(folder, 0) });
+    }
+
+    // 同一階層に同名の別フォルダがいないか（重複名を作らない）
+    let dupQuery = supabase
+      .from('material_square_folders')
+      .select('id')
+      .eq('name', folderName)
+      .neq('id', id);
+    if (folder.project_id) {
+      dupQuery = dupQuery.eq('project_id', folder.project_id);
+    } else {
+      dupQuery = dupQuery.is('client_id', null).is('project_id', null);
+    }
+    const { data: dup, error: dupErr } = await dupQuery.maybeSingle();
+    if (dupErr) throw dupErr;
+    if (dup) {
+      return res.status(409).json({ error: '同じ名前のフォルダが既にあります' });
+    }
+
+    // Drive 上のフォルダ名を更新（SA が所有しているので files.update でリネーム可）
+    if (folder.drive_folder_id) {
+      const saDrive = await driveLib.getDriveService();
+      await saDrive.files.update({
+        fileId: folder.drive_folder_id,
+        requestBody: { name: folderName },
+        fields: 'id,name',
+        supportsAllDrives: true,
+      });
+    }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('material_square_folders')
+      .update({ name: folderName })
+      .eq('id', id)
+      .select('id, name, drive_folder_id, drive_url, client_id, project_id, created_at')
+      .single();
+    if (updErr) throw updErr;
+
+    logCtx('folder-rename', {
+      at: new Date().toISOString(), by: req.user?.email,
+      folderId: id, from: folder.name, to: folderName,
+      driveFolderId: folder.drive_folder_id,
+    });
+
+    res.json({ folder: shapeFolderRow(updated, 0) });
+  } catch (e) {
+    console.error('[video-org] folder rename error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ==================== 単一取得 ====================
 // 注意: 上の /preview/:fileId / /list / /upload / /register / /analyze / /apply の後に置く
 // （ルートマッチング順序事故防止）
