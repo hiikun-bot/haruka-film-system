@@ -638,6 +638,72 @@ tr.row-help td{background:#FFFBF2}
   font-size:13px;
 }
 
+/* クリエイティブ追加モーダル: 案件選択ウィザード（種別 ▸ クライアント ▸ 案件）
+   1ステップずつ絞り込む導線。各段の選択はパンくずに残り、クリックで戻れる。 */
+.cwiz-breadcrumb{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:14px;
+  font-size:13px;
+}
+.cwiz-crumb{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:4px 10px;
+  border-radius:14px;
+  border:1px solid transparent;
+  line-height:1.4;
+  white-space:nowrap;
+  max-width:260px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.cwiz-crumb--done{
+  background:var(--em-pale, #e6f7f4);
+  color:var(--em-dark, #1f7a78);
+  border-color:var(--em, #2db8a6);
+  cursor:pointer;
+  font-weight:600;
+}
+.cwiz-crumb--done:hover{ filter:brightness(0.97); }
+.cwiz-crumb--current{
+  background:#fff;
+  color:var(--text, #2a3138);
+  border-color:var(--border, #d8dde2);
+  font-weight:600;
+}
+.cwiz-crumb--todo{ color:var(--text-muted, #9aa4af); }
+.cwiz-crumb .cwiz-edit{ font-size:11px; opacity:0.7; }
+.cwiz-sep{ color:var(--text-muted, #b5bdc6); font-size:12px; }
+.cwiz-prompt{
+  font-size:13px;
+  color:var(--text-muted, #6b7480);
+  margin-bottom:10px;
+}
+/* 種別カードは大きめにして最初の分岐を選びやすく */
+.cwiz-type-cards{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:0; }
+.cwiz-type-card{
+  flex:1 1 160px;
+  justify-content:center;
+  padding:18px 14px;
+  border-radius:10px;
+  font-size:15px;
+  font-weight:600;
+}
+/* クライアントタイル: クライアント名を主役（大・太字）に、案件件数を副表示 */
+.cwiz-client-tile .pt-name{
+  font-size:15px;
+  font-weight:700;
+  -webkit-line-clamp:2;
+}
+.cwiz-client-tile .pt-client{
+  font-size:11px;
+  color:var(--text-muted, #6b7480);
+}
+
 /* クリエイティブ追加モーダル Step 2 のフォームグリッド
    通常: 2 カラム grid
    .cv-form-grid--single: LP/HP/LINE/その他案件向けに中央寄せ 1 カラム化
@@ -4457,20 +4523,38 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- 個別登録タブ（デフォルト） -->
     <div id="tab-single">
 
-      <!-- ===== Step 1: 案件選択 ===== -->
+      <!-- ===== Step 1: 案件選択（3ステップ ウィザード: 種別 ▸ クライアント ▸ 案件） ===== -->
       <div id="creative-step-1">
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">① 案件を選択してください</div>
-        <div class="form-group" style="margin-bottom:0">
-          <div id="c-project-cap-tabs" class="creative-add-cap-tabs" data-scope="single" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-            <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
-            <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
-            <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
+        <!-- パンくず: 選んだ種別・クライアントを表示し、クリックでその段に戻れる -->
+        <div id="c-wiz-breadcrumb" class="cwiz-breadcrumb"></div>
+
+        <!-- Sub-step 1: 種別を選ぶ -->
+        <div id="c-wiz-step-type" class="form-group" style="margin-bottom:0">
+          <div class="cwiz-prompt">① まず「種別」を選んでください</div>
+          <div id="c-project-cap-tabs" class="creative-add-cap-tabs cwiz-type-cards" data-scope="single">
+            <button type="button" class="cap-toggle cwiz-type-card" data-cap="video" onclick="selectCreativeWizType('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
+            <button type="button" class="cap-toggle cwiz-type-card" data-cap="design" onclick="selectCreativeWizType('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
+            <button type="button" class="cap-toggle cwiz-type-card" data-cap="all" onclick="selectCreativeWizType('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
           </div>
-          <input type="search" id="c-project-search" class="form-input project-tile-search" placeholder="🔍 案件名・クライアント名で絞り込み" oninput="onCreativeAddProjectSearchInput('single', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
-          <div id="c-project-tiles" class="project-tile-grid" data-scope="single"></div>
-          <!-- 既存ロジック互換: 案件IDの真の保持元（goToCreativeStep2 等で参照される） -->
-          <select id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="display:none" aria-hidden="true"></select>
         </div>
+
+        <!-- Sub-step 2: クライアントを選ぶ -->
+        <div id="c-wiz-step-client" style="display:none">
+          <div class="cwiz-prompt">② 「クライアント」を選んでください</div>
+          <input type="search" id="c-client-search" class="form-input project-tile-search" placeholder="🔍 クライアント名で絞り込み" oninput="onCreativeWizClientSearchInput(this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
+          <div id="c-client-tiles" class="project-tile-grid"></div>
+        </div>
+
+        <!-- Sub-step 3: 案件を選ぶ -->
+        <div id="c-wiz-step-project" style="display:none">
+          <div class="cwiz-prompt">③ 「案件」を選んでください</div>
+          <input type="search" id="c-project-search" class="form-input project-tile-search" placeholder="🔍 案件名で絞り込み" oninput="onCreativeAddProjectSearchInput('single', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
+          <div id="c-project-tiles" class="project-tile-grid" data-scope="single"></div>
+        </div>
+
+        <!-- 既存ロジック互換: 案件IDの真の保持元（goToCreativeStep2 等で参照される） -->
+        <select id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="display:none" aria-hidden="true"></select>
+
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
           <div>
             <!-- 動画/静止画案件を選んでいる時だけ表示。クリックで一括登録タブに切替（案件は引き継ぎ） -->
@@ -9640,6 +9724,12 @@ function dedupVisibleProjects(projects) {
 let _creativeAddProjectFilter = 'all';
 let _creativeAddBulkProjectFilter = 'all';
 
+// 個別登録タブの案件選択ウィザード状態（種別 ▸ クライアント ▸ 案件）
+// _creativeAddWizStep: 'type' | 'client' | 'project'
+let _creativeAddWizStep = 'type';
+let _creativeAddSelectedClientId = '';
+let _creativeAddClientSearch = '';
+
 // 初期トグル選定: job_type 連動 → default_creative_tab → 'all'
 function pickInitialProjectFilterTab(user) {
   if (!user) return 'all';
@@ -9824,17 +9914,21 @@ function renderCreativeAddProjectDropdowns() {
   });
 
   // ===== 個別登録タブ select（hidden 互換: goToCreativeStep2 が options[selectedIndex].text を参照） =====
+  // ウィザードでクライアントを選択済みなら、その client の案件だけに絞る。
   const singleFiltered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+  const singleClientFiltered = _creativeAddSelectedClientId
+    ? singleFiltered.filter(p => (p.client_id || p.clients?.id) === _creativeAddSelectedClientId)
+    : singleFiltered;
   const singleSel = document.getElementById('c-project-id');
   if (singleSel) {
     const prev = singleSel.value;
-    singleSel.innerHTML = singleFiltered.length
-      ? singleFiltered.map(p => `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`).join('')
+    singleSel.innerHTML = singleClientFiltered.length
+      ? singleClientFiltered.map(p => `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`).join('')
       : `<option value="">該当する案件がありません</option>`;
-    if (prev && singleFiltered.some(p => p.id === prev)) {
+    if (prev && singleClientFiltered.some(p => p.id === prev)) {
       singleSel.value = prev;
-    } else if (singleFiltered.length) {
-      singleSel.value = singleFiltered[0].id;
+    } else if (singleClientFiltered.length) {
+      singleSel.value = singleClientFiltered[0].id;
     }
   }
 
@@ -9860,7 +9954,7 @@ function renderCreativeAddProjectDropdowns() {
     const sel = document.getElementById(scope === 'bulk' ? 'bulk-project-id' : 'c-project-id');
     const selectedId = sel?.value || '';
     const keyword = scope === 'bulk' ? _creativeAddBulkProjectSearch : _creativeAddProjectSearch;
-    const scopeFiltered = scope === 'bulk' ? bulkFiltered : singleFiltered;
+    const scopeFiltered = scope === 'bulk' ? bulkFiltered : singleClientFiltered;
     const list = _filterProjectsBySearch(scopeFiltered, keyword);
     if (!list.length) {
       const msg = keyword
@@ -9878,6 +9972,9 @@ function renderCreativeAddProjectDropdowns() {
 
   // 案件タブと連動して team dropdown も再構築（秘書チームは横断で残る）
   renderCreativeAddTeamDropdowns();
+
+  // ウィザード（パンくず・クライアントタイル・サブステップ表示）を同期
+  if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
 }
 
 // タイルクリック時のハンドラ（イベント委譲で 1 度だけ bind）
@@ -9887,6 +9984,12 @@ function _bindCreativeAddProjectTileDelegation() {
   document.addEventListener('click', (ev) => {
     const tile = ev.target?.closest?.('.project-tile');
     if (!tile) return;
+    // クライアントタイル（ウィザード Step2）→ クライアントを選び案件ステップへ
+    const cid = tile.getAttribute('data-cid');
+    if (cid !== null) {
+      if (typeof selectCreativeWizClient === 'function') selectCreativeWizClient(cid);
+      return;
+    }
     const grid = tile.closest('.project-tile-grid');
     if (!grid) return;
     const scope = grid.getAttribute('data-scope') || 'single';
@@ -9909,8 +10012,9 @@ function _bindCreativeAddProjectTileDelegation() {
 // 初期化（DOMContentLoaded を待たずに即時 bind 可能。listener 自体は document に付くだけ）
 _bindCreativeAddProjectTileDelegation();
 
-// 個別登録タブのトグルクリックハンドラ。個別タブ select だけ再描画する。
-// （以前は bulk select も同時に切り替えていたが、bulk タブは独立した cap tab・filter を持つように変更）
+// 個別登録タブのトグルクリックハンドラ（旧：1画面案件選択用）。
+// 案件選択ウィザード化（種別 ▸ クライアント ▸ 案件）に伴い種別カードは selectCreativeWizType を使う。
+// 本関数は将来の再利用・外部呼び出し互換のため残置（現状 UI からの呼び出しは無し）。
 async function setCreativeAddCapTab(cap) {
   if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
   if (_creativeAddProjectFilter === cap) return;
@@ -9943,6 +10047,144 @@ async function setCreativeAddBulkCapTab(cap) {
   }
 
   if (typeof updateBulkAssigneeSelect === 'function') updateBulkAssigneeSelect();
+}
+
+// ==================== クリエイティブ追加モーダル: 案件選択ウィザード ====================
+// 個別登録タブの Step1（案件選択）を「種別 ▸ クライアント ▸ 案件」の3段に分割する導線。
+// 内部の hidden select #c-project-id（案件ID の真の保持元）はそのまま使い、下流ロジックを温存する。
+
+// Step1: 種別を選ぶ → クライアントステップへ
+function selectCreativeWizType(cap) {
+  if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
+  _creativeAddProjectFilter = cap;
+  // 種別を選び直したらクライアント選択はリセット
+  _creativeAddSelectedClientId = '';
+  _creativeAddClientSearch = '';
+  const cs = document.getElementById('c-client-search');
+  if (cs) cs.value = '';
+  _creativeAddWizStep = 'client';
+  renderCreativeAddProjectDropdowns();
+  if (typeof updateAssigneeSelect === 'function') updateAssigneeSelect();
+}
+
+// Step2: クライアント検索ボックス入力
+function onCreativeWizClientSearchInput(value) {
+  const v = (value || '').trim().toLowerCase();
+  if (_creativeAddClientSearch === v) return;
+  _creativeAddClientSearch = v;
+  renderCreativeWizClientTiles();
+}
+
+// Step2: クライアントを選ぶ → 案件ステップへ
+async function selectCreativeWizClient(cid) {
+  _creativeAddSelectedClientId = cid || '';
+  _creativeAddWizStep = 'project';
+  // 案件ステップに入るたびに案件検索はクリア
+  _creativeAddProjectSearch = '';
+  const ps = document.getElementById('c-project-search');
+  if (ps) ps.value = '';
+  const prev = document.getElementById('c-project-id')?.value || '';
+  renderCreativeAddProjectDropdowns(); // select を当該クライアントの案件に限定し、先頭を自動選択
+  const next = document.getElementById('c-project-id')?.value || '';
+  // 自動選択された案件で訴求軸・チーム等のフォームを準備
+  if (next && next !== prev && typeof onProjectChange === 'function') await onProjectChange(next);
+  if (typeof updateAssigneeSelect === 'function') updateAssigneeSelect();
+  if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
+}
+
+// パンくずクリックで任意の段に戻る（選択値は保持）
+function gotoCreativeWizStep(step) {
+  if (step !== 'type' && step !== 'client' && step !== 'project') step = 'type';
+  _creativeAddWizStep = step;
+  renderCreativeAddWizard();
+}
+
+// 現在の種別フィルタに該当する案件から、クライアント一覧（件数付き）を作る
+function _creativeAddClientList() {
+  const visible = dedupVisibleProjects(allProjects || []);
+  const capFiltered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+  const map = new Map();
+  for (const p of capFiltered) {
+    const cid = p.client_id || p.clients?.id;
+    if (!cid) continue;
+    if (!map.has(cid)) map.set(cid, { id: cid, name: (p.clients?.name || '(クライアント未設定)'), count: 0 });
+    map.get(cid).count++;
+  }
+  return Array.from(map.values()).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+}
+
+// ウィザード全体の同期: サブステップ表示・次へボタン・パンくず・クライアントタイル
+function renderCreativeAddWizard() {
+  const typeEl = document.getElementById('c-wiz-step-type');
+  const clientEl = document.getElementById('c-wiz-step-client');
+  const projEl = document.getElementById('c-wiz-step-project');
+  if (!typeEl || !clientEl || !projEl) return; // モーダル未構築
+
+  const step = _creativeAddWizStep || 'type';
+  typeEl.style.display = step === 'type' ? '' : 'none';
+  clientEl.style.display = step === 'client' ? '' : 'none';
+  projEl.style.display = step === 'project' ? '' : 'none';
+
+  // 「次へ」は案件ステップでのみ表示（種別/クライアントステップでの誤操作を防ぐ）
+  const nextBtn = document.getElementById('creative-step1-next-btn');
+  if (nextBtn) nextBtn.style.display = step === 'project' ? '' : 'none';
+
+  renderCreativeWizBreadcrumb();
+  if (step === 'client') renderCreativeWizClientTiles();
+}
+
+// パンくず描画。完了済みの段はチップ表示＋クリックで戻れる。
+function renderCreativeWizBreadcrumb() {
+  const el = document.getElementById('c-wiz-breadcrumb');
+  if (!el) return;
+  const step = _creativeAddWizStep || 'type';
+  const typeLabelMap = { video: '🎬 動画', design: '🎨 静止画', all: '全て' };
+  const crumbs = [];
+
+  // ① 種別
+  if (step === 'type') {
+    crumbs.push('<span class="cwiz-crumb cwiz-crumb--current">① 種別</span>');
+  } else {
+    const t = typeLabelMap[_creativeAddProjectFilter] || '種別';
+    crumbs.push(`<span class="cwiz-crumb cwiz-crumb--done" onclick="gotoCreativeWizStep('type')" title="種別を選び直す">${esc(t)} <span class="cwiz-edit">✎</span></span>`);
+  }
+
+  // ② クライアント
+  if (step === 'type') {
+    crumbs.push('<span class="cwiz-crumb cwiz-crumb--todo">② クライアント</span>');
+  } else if (step === 'client') {
+    crumbs.push('<span class="cwiz-crumb cwiz-crumb--current">② クライアント</span>');
+  } else {
+    const c = _creativeAddClientList().find(x => x.id === _creativeAddSelectedClientId);
+    const cname = c ? c.name : 'クライアント';
+    crumbs.push(`<span class="cwiz-crumb cwiz-crumb--done" onclick="gotoCreativeWizStep('client')" title="クライアントを選び直す">${esc(cname)} <span class="cwiz-edit">✎</span></span>`);
+  }
+
+  // ③ 案件
+  crumbs.push(`<span class="cwiz-crumb ${step === 'project' ? 'cwiz-crumb--current' : 'cwiz-crumb--todo'}">③ 案件</span>`);
+
+  el.innerHTML = crumbs.join('<span class="cwiz-sep">▸</span>');
+}
+
+// クライアントタイル描画（クライアント名を主役に、案件件数を副表示）
+function renderCreativeWizClientTiles() {
+  const grid = document.getElementById('c-client-tiles');
+  if (!grid) return;
+  let list = _creativeAddClientList();
+  const kw = _creativeAddClientSearch;
+  if (kw) list = list.filter(c => (c.name || '').toLowerCase().includes(kw));
+  if (!list.length) {
+    const msg = kw ? '検索キーワードに一致するクライアントがありません' : '該当するクライアントがありません';
+    grid.innerHTML = `<div class="project-tile-empty">${esc(msg)}</div>`;
+    return;
+  }
+  grid.innerHTML = list.map(c => {
+    const seld = c.id === _creativeAddSelectedClientId ? ' is-selected' : '';
+    return `<button type="button" class="project-tile cwiz-client-tile${seld}" data-cid="${esc(c.id)}" title="${esc(c.name)}">`
+      + `<span class="pt-name">${esc(c.name)}</span>`
+      + `<span class="pt-client">${c.count}件の案件</span>`
+      + `</button>`;
+  }).join('');
 }
 
 // 案件（クライアント→案件の階層表示）
@@ -24739,9 +24981,11 @@ async function goToCreativeStep2() {
 }
 
 // Step 2 → Step 1 戻る（案件・種別は維持、Step2 のフォーム入力はクリア）
+// ウィザードは直前の段（通常は案件ステップ）を維持して表示する。
 function backToCreativeStep1() {
   document.getElementById('creative-step-2').style.display = 'none';
   document.getElementById('creative-step-1').style.display = '';
+  if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
   updateCreativeStep1NextBtn();
 }
 
@@ -25022,6 +25266,12 @@ async function openCreateCreative(opts = {}) {
   const _searchBulk = document.getElementById('bulk-project-search');
   if (_searchSingle) _searchSingle.value = '';
   if (_searchBulk) _searchBulk.value = '';
+  // 案件選択ウィザードは「種別を選ぶ」ステップから開始（preset がある場合は後段で案件ステップへ）
+  _creativeAddWizStep = 'type';
+  _creativeAddSelectedClientId = '';
+  _creativeAddClientSearch = '';
+  const _searchClient = document.getElementById('c-client-search');
+  if (_searchClient) _searchClient.value = '';
   renderCreativeAddProjectDropdowns();
   const lastDay = getLastDayOfMonth();
   const draftDay = getDefaultDraftDeadline(lastDay);
@@ -25099,17 +25349,21 @@ async function openCreateCreative(opts = {}) {
   if (presetProject) {
     const cSel = document.getElementById('c-project-id');
     const bSel = document.getElementById('bulk-project-id');
-    if (cSel) cSel.value = presetProjectId;
     // 一括対応カテゴリ (video / image) のときだけ bulk-project-id にもセット
     const presetCat = typeof getProjectCategory === 'function' ? getProjectCategory(presetProject) : null;
     const presetCode = presetCat?.code || '';
     if (bSel && (presetCode === 'video' || presetCode === 'image')) {
       // 一括タブのフィルタを案件カテゴリに合わせる（タイル表示時に選択中タイルが見えるように）
       _creativeAddBulkProjectFilter = (presetCode === 'video') ? 'video' : 'design';
-      // タイル/select を再描画してから case の value をセット
-      renderCreativeAddProjectDropdowns();
-      bSel.value = presetProjectId;
     }
+    // 個別登録ウィザードは preset 案件のクライアント・種別に合わせて「案件ステップ」を直接開く
+    _creativeAddProjectFilter = (presetCode === 'video') ? 'video' : 'design';
+    _creativeAddSelectedClientId = presetProject.client_id || presetProject.clients?.id || '';
+    _creativeAddWizStep = 'project';
+    // 上記フィルタ/クライアント絞り込みを反映してタイル・select を再描画し、preset 案件を選択状態にする
+    renderCreativeAddProjectDropdowns();
+    if (cSel) cSel.value = presetProjectId;
+    if (bSel && (presetCode === 'video' || presetCode === 'image')) bSel.value = presetProjectId;
   }
 
   // 選択中の案件で訴求軸と担当者を初期ロード（個別・一括両方）
@@ -25163,6 +25417,8 @@ async function openCreateCreative(opts = {}) {
   if (typeof applyCreativeTypeVisibility === 'function') {
     applyCreativeTypeVisibility(document.getElementById('c-creative-type')?.value || 'video_short');
   }
+  // 案件選択ウィザードの初期描画（種別ステップ or preset の案件ステップ）
+  if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
   if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
 
   openModal('modal-creative');
@@ -25187,6 +25443,7 @@ function switchCreativeTab(tab) {
       step1.style.display = '';
       step2.style.display = 'none';
     }
+    if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
     if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
   }
 }
