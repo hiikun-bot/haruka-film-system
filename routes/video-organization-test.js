@@ -29,7 +29,7 @@ const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('..
 const googleOAuth = require('../lib/google-oauth');
 const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
 const autoApplyLib = require('../lib/video-organization/auto-apply');
-const { resolveProjectFolder } = require('../lib/video-organization/project-folder');
+const { resolveProjectFolder, sanitizeFolderName } = require('../lib/video-organization/project-folder');
 
 // 大容量 D&D 用 Resumable Upload 機能の有効/無効フラグ。
 // 本番初期は false で出して、別ターンで true に切り替える運用とする。
@@ -108,7 +108,7 @@ function getUploadFolderId() {
 // ==================== 一覧 ====================
 router.get('/list', async (req, res) => {
   try {
-    const { q, status, mediaKind, tag, clientId, projectId } = req.query || {};
+    const { q, status, mediaKind, tag, clientId, projectId, folderId } = req.query || {};
     let query = supabase
       .from('video_file_organization_tests')
       .select('*')
@@ -118,6 +118,15 @@ router.get('/list', async (req, res) => {
     if (status) query = query.eq('status', String(status));
     if (mediaKind) query = query.eq('media_kind', String(mediaKind));
     if (tag) query = query.contains('tags', [String(tag)]);
+
+    // フォルダ絞り込み（ADR 023）。
+    //   - folderId 指定 … その任意フォルダに属する素材だけ
+    //   - folderId === '__none__' … 未振り分け（folder_id IS NULL）のみ
+    if (folderId === '__none__') {
+      query = query.is('folder_id', null);
+    } else if (folderId) {
+      query = query.eq('folder_id', String(folderId));
+    }
 
     // クライアント / 案件での絞り込み（検索バーの2段構えフィルタ）。
     //   - projectId 指定 … その案件の素材だけ
@@ -954,6 +963,365 @@ router.post('/rename', async (req, res) => {
     const msg = e?.errors?.[0]?.message || e?.message || String(e);
     console.error('[video-org] rename error:', msg);
     res.status(500).json({ error: msg });
+  }
+});
+
+// ==================== 任意フォルダ（ADR 023）====================
+//
+// 素材広場の「任意フォルダ」: 1 案件の中で素材を撮影回・用途ごとに箱分けする機能。
+// Drive 上にも同じ階層でフォルダを ensure し（SA / getOrCreateFolder）、
+// DB（material_square_folders）を正として一覧・件数バッジ・絞り込みを出す。
+//
+// 階層は 2 パターンのみ（ADR 023 / CHECK 制約 msf_client_required_when_project）:
+//   - project_id あり（client_id 必須）… ルート/クライアント/案件/[任意フォルダ]
+//   - client/project とも NULL         … 素材広場ルート直下/[任意フォルダ]
+// 「クライアントのみ（案件 NULL）」は不許可。
+
+// 共通: material_square_folders 行 → API レスポンス形へ整形（materialCount を付与）。
+function shapeFolderRow(row, materialCount = 0) {
+  return {
+    id: row.id,
+    name: row.name,
+    drive_folder_id: row.drive_folder_id,
+    drive_url: row.drive_url || null,
+    client_id: row.client_id || null,
+    project_id: row.project_id || null,
+    materialCount,
+    created_at: row.created_at,
+  };
+}
+
+// 複数フォルダの素材件数を 1 クエリでまとめて集計（N+1 回避）。
+//   folderIds を folder_id IN (...) で引いて JS 側で件数を数える。
+async function countMaterialsByFolder(folderIds) {
+  const counts = {};
+  for (const id of folderIds) counts[id] = 0;
+  if (folderIds.length === 0) return counts;
+  const { data, error } = await supabase
+    .from('video_file_organization_tests')
+    .select('folder_id')
+    .in('folder_id', folderIds);
+  if (error) throw error;
+  for (const r of (data || [])) {
+    if (r.folder_id && counts[r.folder_id] !== undefined) counts[r.folder_id] += 1;
+  }
+  return counts;
+}
+
+// ---- 一覧 ----
+// GET /folders?projectId=
+//   - projectId あり … その案件直下のフォルダ
+//   - projectId なし … ルート直下（client_id IS NULL AND project_id IS NULL）
+router.get('/folders', async (req, res) => {
+  try {
+    const projectId = req.query?.projectId ? String(req.query.projectId) : null;
+
+    let query = supabase
+      .from('material_square_folders')
+      .select('id, name, drive_folder_id, drive_url, client_id, project_id, created_at')
+      .order('created_at', { ascending: true });
+
+    if (projectId) {
+      query = query.eq('project_id', projectId);
+    } else {
+      query = query.is('client_id', null).is('project_id', null);
+    }
+
+    const { data: rows, error } = await query;
+    if (error) throw error;
+
+    const folderIds = (rows || []).map(r => r.id);
+    const counts = await countMaterialsByFolder(folderIds);
+    const folders = (rows || []).map(r => shapeFolderRow(r, counts[r.id] || 0));
+    res.json({ folders });
+  } catch (e) {
+    console.error('[video-org] folders list error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- 作成 ----
+// POST /folders  body: { name, projectId? }
+//   - projectId あり … 案件を取得 → resolveProjectFolder で案件フォルダを ensure
+//       → その直下に getOrCreateFolder。client_id は案件の client_id を非正規化保存。
+//   - projectId なし … 素材広場ルート直下に getOrCreateFolder。client/project とも NULL。
+//   冪等: 同一階層・同一 name の行が既にあればそれを返す（Drive 側も getOrCreateFolder が冪等）。
+router.post('/folders', async (req, res) => {
+  try {
+    const rawName = String(req.body?.name || '').trim();
+    if (!rawName) return res.status(400).json({ error: 'フォルダ名が必要です' });
+    const projectId = req.body?.projectId ? String(req.body.projectId) : null;
+
+    const rootFolderId = getUploadFolderId();
+    if (!rootFolderId) {
+      return res.status(500).json({ error: '素材広場ルートフォルダ（VIDEO_ORG_UPLOAD_FOLDER_ID）が未設定です' });
+    }
+
+    const folderName = sanitizeFolderName(rawName);
+    if (!folderName) return res.status(400).json({ error: 'フォルダ名が空です' });
+
+    let clientId = null;
+    let parentDriveFolderId;
+
+    if (projectId) {
+      // 案件存在チェック（client_id を取得）
+      const { data: project, error: projErr } = await supabase
+        .from('projects')
+        .select('id, client_id')
+        .eq('id', projectId)
+        .maybeSingle();
+      if (projErr) throw projErr;
+      if (!project) return res.status(404).json({ error: '指定された案件が見つかりません' });
+      clientId = project.client_id || null;
+
+      // クライアント → 案件フォルダを ensure し、その直下に任意フォルダを ensure
+      const proj = await resolveProjectFolder(projectId, rootFolderId);
+      parentDriveFolderId = await driveLib.getOrCreateFolder(proj.folderId, folderName);
+    } else {
+      // ルート直下
+      parentDriveFolderId = await driveLib.getOrCreateFolder(rootFolderId, folderName);
+    }
+
+    // 冪等: 同一階層・同一 name の DB 行があれば再利用（重複行を作らない）。
+    let existingQuery = supabase
+      .from('material_square_folders')
+      .select('id, name, drive_folder_id, drive_url, client_id, project_id, created_at')
+      .eq('name', folderName);
+    if (projectId) {
+      existingQuery = existingQuery.eq('project_id', projectId);
+    } else {
+      existingQuery = existingQuery.is('client_id', null).is('project_id', null);
+    }
+    const { data: existing, error: exErr } = await existingQuery.maybeSingle();
+    if (exErr) throw exErr;
+    if (existing) {
+      return res.json({ folder: shapeFolderRow(existing, 0) });
+    }
+
+    // Drive の webViewLink を取得（drive_url 保存用）
+    let driveUrl = null;
+    try {
+      const saDrive = await driveLib.getDriveService();
+      const { data: meta } = await saDrive.files.get({
+        fileId: parentDriveFolderId,
+        fields: 'id,webViewLink',
+        supportsAllDrives: true,
+      });
+      driveUrl = meta?.webViewLink || null;
+    } catch (linkErr) {
+      console.warn('[video-org] folder webViewLink fetch failed:', linkErr?.message || linkErr);
+    }
+
+    const { data: inserted, error: insErr } = await supabase
+      .from('material_square_folders')
+      .insert({
+        name: folderName,
+        drive_folder_id: parentDriveFolderId,
+        drive_url: driveUrl,
+        client_id: clientId,
+        project_id: projectId,
+        created_by: req.user?.id || null,
+      })
+      .select('id, name, drive_folder_id, drive_url, client_id, project_id, created_at')
+      .single();
+    if (insErr) throw insErr;
+
+    logCtx('folder-create', {
+      at: new Date().toISOString(), by: req.user?.email,
+      folderId: inserted.id, name: folderName, projectId, clientId,
+      driveFolderId: parentDriveFolderId,
+    });
+
+    res.json({ folder: shapeFolderRow(inserted, 0) });
+  } catch (e) {
+    console.error('[video-org] folder create error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- 素材の移動（振り分け）----
+// POST /folders/move  body: { fileIds: [vfot.id...], folderId: uuid|null }
+//   - folderId 非null … 対象フォルダへ移動（Drive 上は addParents/removeParents）。
+//       移動先フォルダが project_id を持つ場合、素材の project_id と一致しない素材はスキップ。
+//   - folderId=null  … フォルダ解除。案件フォルダ直下（素材に project_id があれば）／無ければルートへ戻す。
+router.post('/folders/move', async (req, res) => {
+  try {
+    const fileIds = Array.isArray(req.body?.fileIds) ? req.body.fileIds.filter(Boolean) : [];
+    const folderId = req.body?.folderId ? String(req.body.folderId) : null;
+    if (fileIds.length === 0) {
+      return res.status(400).json({ error: '移動する素材（fileIds）が指定されていません' });
+    }
+
+    const rootFolderId = getUploadFolderId();
+    if (!rootFolderId) {
+      return res.status(500).json({ error: '素材広場ルートフォルダ（VIDEO_ORG_UPLOAD_FOLDER_ID）が未設定です' });
+    }
+
+    // 移動先フォルダ（folderId 非null のとき）を取得
+    let destFolder = null; // material_square_folders 行
+    if (folderId) {
+      const { data: f, error: fErr } = await supabase
+        .from('material_square_folders')
+        .select('id, drive_folder_id, project_id')
+        .eq('id', folderId)
+        .maybeSingle();
+      if (fErr) throw fErr;
+      if (!f) return res.status(404).json({ error: '移動先フォルダが見つかりません' });
+      destFolder = f;
+    }
+
+    const saDrive = await driveLib.getDriveService();
+    // 案件フォルダ id の解決はキャッシュ（同一案件の素材を複数移動するときの重複 ensure を避ける）
+    const projectFolderCache = {};
+    async function resolveProjectFolderCached(pid) {
+      if (!pid) return null;
+      if (projectFolderCache[pid] !== undefined) return projectFolderCache[pid];
+      try {
+        const proj = await resolveProjectFolder(pid, rootFolderId);
+        projectFolderCache[pid] = proj.folderId;
+      } catch (_) {
+        projectFolderCache[pid] = null;
+      }
+      return projectFolderCache[pid];
+    }
+
+    let moved = 0;
+    const skipped = [];
+
+    for (const fileId of fileIds) {
+      try {
+        const { data: item, error: itemErr } = await supabase
+          .from('video_file_organization_tests')
+          .select('id, drive_file_id, project_id, current_parent_folder_id')
+          .eq('id', String(fileId))
+          .maybeSingle();
+        if (itemErr) throw itemErr;
+        if (!item) {
+          skipped.push({ fileId, reason: '素材が見つかりません' });
+          continue;
+        }
+        if (!item.drive_file_id) {
+          skipped.push({ fileId, reason: 'Drive ファイル ID が未設定です' });
+          continue;
+        }
+
+        // 整合性ガード: 移動先フォルダが案件を持つなら、素材の project_id と一致必須。
+        if (destFolder && destFolder.project_id) {
+          if (String(item.project_id || '') !== String(destFolder.project_id)) {
+            skipped.push({ fileId, reason: '別案件のフォルダへは移動できません' });
+            continue;
+          }
+        }
+
+        // 移動先 Drive フォルダを決定
+        let destDriveFolderId;
+        if (destFolder) {
+          destDriveFolderId = destFolder.drive_folder_id;
+        } else {
+          // フォルダ解除: 案件フォルダ直下（project_id があれば）／無ければルート
+          destDriveFolderId = (await resolveProjectFolderCached(item.project_id)) || rootFolderId;
+        }
+
+        // 現在の親を取得して removeParents に渡す
+        const { data: meta } = await saDrive.files.get({
+          fileId: item.drive_file_id,
+          fields: 'id,parents',
+          supportsAllDrives: true,
+        });
+        const currentParent = meta?.parents?.[0] || item.current_parent_folder_id || null;
+
+        // Drive 上で移動（移動先が現在の親と同じなら addParents は冪等に無害）
+        const opts = {
+          fileId: item.drive_file_id,
+          fields: 'id,parents',
+          supportsAllDrives: true,
+        };
+        if (destDriveFolderId && destDriveFolderId !== currentParent) {
+          opts.addParents = destDriveFolderId;
+          if (currentParent) opts.removeParents = currentParent;
+          await saDrive.files.update({ ...opts, requestBody: {} });
+        }
+
+        // DB 更新（folder_id / current_parent_folder_id）
+        const { error: upErr } = await supabase
+          .from('video_file_organization_tests')
+          .update({
+            folder_id: destFolder ? destFolder.id : null,
+            current_parent_folder_id: destDriveFolderId || null,
+          })
+          .eq('id', item.id);
+        if (upErr) throw upErr;
+
+        moved += 1;
+      } catch (perItemErr) {
+        console.warn('[video-org] folder move per-item error:', fileId, perItemErr?.message || perItemErr);
+        skipped.push({ fileId, reason: perItemErr?.message || String(perItemErr) });
+      }
+    }
+
+    logCtx('folder-move', {
+      at: new Date().toISOString(), by: req.user?.email,
+      folderId, requested: fileIds.length, moved, skipped: skipped.length,
+    });
+
+    res.json({ ok: true, moved, skipped });
+  } catch (e) {
+    console.error('[video-org] folder move error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- 削除 ----
+// DELETE /folders/:id
+//   - 中に素材（folder_id 参照）が 1 件でもあれば 409（先に移動を促す）。
+//   - 空なら Drive を trashFile（ゴミ箱送り）し DB 行を削除。
+router.delete('/folders/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const { data: folder, error: fErr } = await supabase
+      .from('material_square_folders')
+      .select('id, drive_folder_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (fErr) throw fErr;
+    if (!folder) return res.status(404).json({ error: 'フォルダが見つかりません' });
+
+    // 中身（このフォルダに属する素材）の有無を確認
+    const { count, error: cntErr } = await supabase
+      .from('video_file_organization_tests')
+      .select('id', { count: 'exact', head: true })
+      .eq('folder_id', id);
+    if (cntErr) throw cntErr;
+    if ((count || 0) > 0) {
+      return res.status(409).json({
+        error: 'フォルダ内に素材があります。先に移動してください',
+        count: count || 0,
+      });
+    }
+
+    // Drive 上をゴミ箱送り（SA は完全削除不可のため trashFile）
+    if (folder.drive_folder_id) {
+      const trashResult = await driveLib.trashFile(folder.drive_folder_id);
+      if (!trashResult.ok) {
+        console.warn('[video-org] folder drive trash failed:', folder.drive_folder_id, trashResult);
+      }
+    }
+
+    const { error: delErr } = await supabase
+      .from('material_square_folders')
+      .delete()
+      .eq('id', id);
+    if (delErr) throw delErr;
+
+    logCtx('folder-delete', {
+      at: new Date().toISOString(), by: req.user?.email,
+      folderId: id, driveFolderId: folder.drive_folder_id,
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[video-org] folder delete error:', e);
+    res.status(500).json({ error: e.message });
   }
 });
 
