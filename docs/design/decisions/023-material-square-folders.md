@@ -84,6 +84,7 @@ Drive 上は `trashFile()`（ゴミ箱送り）で処理する。中身がある
 | GET | `/folders?clientId=&projectId=` | フォルダ一覧 + 各フォルダの素材件数。`projectId` 指定でその案件直下、無指定（client/project とも無し）でルート直下。`clientId` のみ（案件未指定）はバリデーションエラー扱いにせず「ルート直下扱い」ではなく **400 を返す前にフロントで案件選択を促す**運用とし、API は `projectId` 有り or 完全無指定の 2 系統で受ける |
 | POST | `/folders` | `{ name, projectId? }`。`projectId` 有り → `resolveProjectFolder` で案件フォルダを ensure → その直下に `getOrCreateFolder`。無し → ルート直下に `getOrCreateFolder`。Drive folderId と client_id/project_id を DB に INSERT |
 | POST | `/folders/move` | `{ fileIds:[], folderId|null }`。各素材を Drive 上で対象フォルダへ `files.update(addParents/removeParents)` 移動し、`folder_id` を更新。`folderId=null` で「フォルダ解除＝案件フォルダ（or ルート）直下へ戻す」 |
+| PATCH | `/folders/:id` | `{ name }`。`sanitizeFolderName` 適用後、DB の `name` と Drive 上のフォルダ名（`files.update`）を両方更新。同一階層に同名の別フォルダがあれば 409。`POST` と違い空でない既存フォルダもリネーム可（中の素材はそのまま） |
 | DELETE | `/folders/:id` | 空フォルダのみ。Drive を `trashFile` し DB から削除 |
 
 `POST /folders` のバリデーション:

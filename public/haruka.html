@@ -42904,6 +42904,7 @@ function msRenderFolderChips() {
     const active = String(msActiveFolderId) === String(f.id) ? ' active' : '';
     const cnt = (f.materialCount != null) ? ` <span class="ms-folder-count">(${Number(f.materialCount)})</span>` : '';
     return `<button type="button" class="ms-folder-chip${active}" onclick="msSelectFolder('${votEscape(String(f.id))}')" title="${votEscape(f.name || '')}">📁 ${votEscape(f.name || '(無名)')}${cnt}`
+      + ` <span class="ms-folder-count" style="cursor:pointer" onclick="event.stopPropagation();msRenameFolder('${votEscape(String(f.id))}','${votEscape(f.name || '')}')" title="このフォルダの名前を変更">✏️</span>`
       + ` <span class="ms-folder-count" style="cursor:pointer" onclick="event.stopPropagation();msDeleteFolder('${votEscape(String(f.id))}','${votEscape(f.name || '')}')" title="このフォルダを削除">🗑</span></button>`;
   }).join('');
   html += `<button type="button" class="ms-folder-chip${noneActive}" onclick="msSelectFolder('__none__')" title="フォルダに振り分けられていない素材">📂 未振り分け</button>`;
@@ -43008,6 +43009,31 @@ async function msDeleteFolder(folderId, name) {
       showToast(`このフォルダには素材が残っているため削除できません${cm ? `（${cm[1]}件）` : ''}`, 'warn');
     } else {
       showToast('フォルダの削除に失敗: ' + m, 'error');
+    }
+  }
+}
+
+// フォルダのリネーム（チップの✏️）。DB と Drive 上のフォルダ名を両方更新する。
+async function msRenameFolder(folderId, currentName) {
+  if (!folderId) return;
+  const input = prompt('新しいフォルダ名を入力してください', currentName || '');
+  if (input == null) return; // キャンセル
+  const name = input.trim();
+  if (!name) { showToast('フォルダ名を入力してください', 'warn'); return; }
+  if (name === (currentName || '')) return; // 変更なし
+  try {
+    await votFetch('/folders/' + encodeURIComponent(folderId), {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    showToast('フォルダ名を変更しました', 'success');
+    await msReloadFolders();
+  } catch (e) {
+    const m = String(e?.message || '');
+    if (/409/.test(m) || /同じ名前/.test(m)) {
+      showToast('同じ名前のフォルダが既にあります', 'warn');
+    } else {
+      showToast('フォルダ名の変更に失敗: ' + m, 'error');
     }
   }
 }
