@@ -7238,6 +7238,46 @@ window.showPage = window.showPage || function(name, btn) {
   @media (max-width: 480px) {
     #ms-upload-floating { left: 12px; right: 12px; width: auto; bottom: 12px; }
   }
+  /* ===== 任意フォルダ（ADR 023）: フォルダ行・チップ・移動ポップオーバー ===== */
+  /* フィルタ行の直下に出すフォルダ行。フィルタ chip(.ms-tag) と同じ配色・角丸に揃える。 */
+  #page-material-square .ms-folder-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 2px 0 12px; padding: 8px 0; border-top: 1px solid #f0f1f4;
+  }
+  #page-material-square .ms-folder-row-label { font-size: 12px; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+  #page-material-square .ms-folder-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  #page-material-square .ms-folder-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 14px;
+    font-size: 12px; background: #eef2f7; color: #334; border: 1px solid transparent; cursor: pointer;
+  }
+  #page-material-square .ms-folder-chip:hover { background: #dbe4ef; }
+  #page-material-square .ms-folder-chip.active { background: var(--primary, #3ECFCA); color: #fff; }
+  #page-material-square .ms-folder-chip .ms-folder-count { font-size: 11px; opacity: .85; }
+  #page-material-square .ms-folder-empty { font-size: 12px; color: var(--text-muted); }
+  #page-material-square .ms-folder-create-btn {
+    margin-left: auto; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text); cursor: pointer; white-space: nowrap;
+  }
+  #page-material-square .ms-folder-create-btn:hover:not(:disabled) { background: #f8f9fb; }
+  #page-material-square .ms-folder-create-btn:disabled { opacity: .45; cursor: not-allowed; }
+  #page-material-square .ms-folder-create-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  /* 選択バーの「フォルダへ移動」ポップオーバー */
+  #page-material-square .ms-folder-move-wrap { position: relative; display: inline-block; }
+  #page-material-square .ms-folder-move-pop {
+    display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20;
+    min-width: 220px; max-width: 320px; max-height: 320px; overflow-y: auto;
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.16); padding: 4px;
+  }
+  #page-material-square .ms-folder-move-wrap.open .ms-folder-move-pop { display: block; }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-item {
+    display: block; width: 100%; text-align: left; padding: 8px 10px; border: none; background: none;
+    border-radius: 6px; font-size: 13px; color: var(--text); cursor: pointer; box-sizing: border-box;
+  }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-item:hover { background: #f0fbfa; }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-empty { padding: 8px 10px; font-size: 12px; color: var(--text-muted); }
+  #page-material-square .ms-folder-name-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 </style>
 <div id="page-material-square" class="page">
 
@@ -7288,11 +7328,28 @@ window.showPage = window.showPage || function(name, btn) {
       <span id="ms-active-tags" style="display:flex;gap:4px;flex-wrap:wrap"></span>
     </div>
 
+    <!-- 任意フォルダ行（ADR 023）: フィルタ行直下。現在のクライアント/案件コンテキストの
+         フォルダをチップ表示し、クリックで GET /list?folderId=... 絞り込み。
+         「＋フォルダを作成」は クライアント＋案件 選択時 or クライアント未選択時のみ活性。 -->
+    <div class="ms-folder-row" id="ms-folder-row">
+      <span class="ms-folder-row-label">📁 フォルダ：</span>
+      <span class="ms-folder-chips" id="ms-folder-chips">
+        <span class="ms-folder-empty">読み込み中…</span>
+      </span>
+      <span class="ms-folder-create-hint" id="ms-folder-create-hint" style="display:none">案件まで選ぶとその直下に、クライアント未選択なら素材広場直下に作成できます</span>
+      <button class="ms-folder-create-btn" id="ms-folder-create-btn" onclick="msOpenCreateFolder()" title="このコンテキストにフォルダを作成">＋ フォルダを作成</button>
+    </div>
+
     <!-- 選択バー: 1件以上チェックすると出現。1件=ダウンロード / 複数=N件をダウンロード -->
     <div id="ms-bulk-bar">
       <span class="ms-bulk-count" id="ms-bulk-count">0件を選択中</span>
       <button class="btn-secondary" onclick="msClearSelection()" style="padding:3px 10px;font-size:12px">✕ 選択を解除</button>
       <span class="ms-bulk-spacer"></span>
+      <!-- フォルダへ移動（任意フォルダ・ADR 023）: クリックで現在コンテキストのフォルダ一覧を出す -->
+      <span class="ms-folder-move-wrap" id="ms-folder-move-wrap">
+        <button class="btn-secondary" id="ms-folder-move-btn" onclick="msToggleMovePopover(event)" style="padding:5px 14px;font-size:13px">📁 フォルダへ移動 ▾</button>
+        <div class="ms-folder-move-pop" id="ms-folder-move-pop"></div>
+      </span>
       <button class="btn-primary" id="ms-bulk-download-btn" onclick="msDownloadChecked()" style="padding:5px 14px;font-size:13px">⬇ ダウンロード</button>
     </div>
 
@@ -7470,6 +7527,30 @@ window.showPage = window.showPage || function(name, btn) {
     <div class="modal-footer">
       <button class="btn" onclick="msDeleteConfirmCancel()">キャンセル</button>
       <button class="btn-primary" id="ms-delete-confirm-submit" style="background:#E24B4A" onclick="msDeleteConfirmSubmit()">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 素材広場: フォルダ作成モーダル（任意フォルダ・ADR 023） -->
+<div class="modal-overlay" id="modal-ms-folder-create" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal-card" style="width:460px">
+    <div class="modal-title">
+      <span>📁 フォルダを作成</span>
+      <button class="modal-close" onclick="msCloseCreateFolder()">×</button>
+    </div>
+    <div style="padding:4px 0 12px;font-size:14px;color:var(--text);line-height:1.7">
+      <div style="font-size:12px;color:var(--text-muted)">作成先</div>
+      <div id="ms-folder-create-target" style="font-weight:600;word-break:break-all;margin-bottom:12px">-</div>
+      <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">フォルダ名</label>
+      <input id="ms-folder-create-name" type="text" placeholder="例: 6/12 Zoom動画"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();msSubmitCreateFolder();}else if(event.key==='Escape'){msCloseCreateFolder();}"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+      <div class="ms-folder-name-note">＼ / ? % * : | " &lt; &gt; は _ に変換されます</div>
+      <div id="ms-folder-create-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="msCloseCreateFolder()">キャンセル</button>
+      <button class="btn-primary" id="ms-folder-create-submit" onclick="msSubmitCreateFolder()">作成</button>
     </div>
   </div>
 </div>
@@ -42320,7 +42401,11 @@ function loadMaterialSquarePage() {
   if (billingLink) billingLink.href = GCP_BILLING_URL;
   msReloadList();
   // 検索バーのクライアント/案件 select を初期化（未ロードなら取得してから populate）
-  msEnsureClientsProjects().then(() => msPopulateFilterClientSelect()).catch(() => {});
+  // populate 後に、現在のコンテキスト（初期=クライアント未選択=ルート）のフォルダ行も初期化。
+  msEnsureClientsProjects().then(() => {
+    msPopulateFilterClientSelect();
+    msReloadFolders();
+  }).catch(() => {});
 }
 
 // ---- 一覧全体の進捗ポーリング（preview_status pending/processing がある間だけ）----
@@ -42602,6 +42687,8 @@ async function msReloadList() {
     // 2段フィルタ: 案件選択が優先（その案件のみ）、無ければクライアント（案件全体）。
     if (msFilterProjectId) params.set('projectId', msFilterProjectId);
     else if (msFilterClientId) params.set('clientId', msFilterClientId);
+    // 任意フォルダ絞り込み（ADR 023）: '<id>' でそのフォルダ、'__none__' で未振り分け。
+    if (msActiveFolderId) params.set('folderId', msActiveFolderId);
     const data = await votFetch('/list' + (params.toString() ? '?' + params.toString() : ''));
     msItemsCache = data.items || [];
     // 検索/フィルタで表示外になった素材のチェックは外す（選択件数を実体に合わせる）
@@ -42692,14 +42779,248 @@ function msOnFilterClientChange() {
   msFilterClientId = sel ? sel.value : '';
   msFilterProjectId = ''; // クライアントを変えたら案件選択はリセット
   msSyncFilterProjectSelect();
+  msReloadFolders();
   msReloadList();
 }
 
 function msOnFilterProjectChange() {
   const sel = document.getElementById('ms-filter-project');
   msFilterProjectId = sel ? sel.value : '';
+  msReloadFolders();
   msReloadList();
 }
+
+// ==================== 任意フォルダ（ADR 023） ====================
+// フィルタ行直下のフォルダ行・作成モーダル・選択バーの「フォルダへ移動」を担当。
+//
+// 取得方針（GET /folders）:
+//   - クライアント＋案件 選択 → projectId 付きで案件直下フォルダを取得
+//   - クライアント未選択（=全体素材）→ projectId なしで素材広場ルート直下フォルダを取得
+//   - クライアントのみ選択・案件未選択 → フォルダ行は空表示（作成も非活性）
+// フォルダ絞り込み中の fileId は GET /list?folderId=<id> に渡す（'__none__' で未振り分け）。
+
+let msFolders = [];          // 現在コンテキストのフォルダ一覧
+let msActiveFolderId = '';   // '' = フォルダ絞り込みなし（すべて）、'<id>' = そのフォルダ、'__none__' = 未振り分け
+
+// 現在のフィルタ状態が「フォルダを扱える」コンテキストか。
+//   ok=true: 取得・作成できる / contextProjectId: 作成・取得に使う projectId（ルートなら null）
+function msFolderContext() {
+  // クライアント＋案件 選択 → 案件直下
+  if (msFilterClientId && msFilterProjectId) {
+    return { ok: true, projectId: msFilterProjectId, root: false };
+  }
+  // クライアント未選択（=全体素材）→ ルート直下
+  if (!msFilterClientId) {
+    return { ok: true, projectId: null, root: true };
+  }
+  // クライアントのみ選択・案件未選択 → フォルダ非対応
+  return { ok: false, projectId: null, root: false };
+}
+
+// フォルダ行を現在のコンテキストに合わせて再取得・再描画する。
+// msOnFilterClientChange / msOnFilterProjectChange / loadMaterialSquarePage から呼ぶ。
+async function msReloadFolders() {
+  const row = document.getElementById('ms-folder-row');
+  const chips = document.getElementById('ms-folder-chips');
+  if (!row || !chips) return;
+  const ctx = msFolderContext();
+  // フォルダ非対応コンテキスト（クライアントのみ選択）: 行を隠し、絞り込みも解除
+  if (!ctx.ok) {
+    row.style.display = 'none';
+    if (msActiveFolderId) { msActiveFolderId = ''; msReloadList(); }
+    msFolders = [];
+    msUpdateFolderCreateGate();
+    return;
+  }
+  row.style.display = 'flex';
+  chips.innerHTML = '<span class="ms-folder-empty">読み込み中…</span>';
+  try {
+    const qs = ctx.projectId ? ('?projectId=' + encodeURIComponent(ctx.projectId)) : '';
+    const data = await votFetch('/folders' + qs);
+    msFolders = Array.isArray(data?.folders) ? data.folders : [];
+    // 絞り込み中フォルダが消えていたら解除
+    if (msActiveFolderId && msActiveFolderId !== '__none__'
+        && !msFolders.some(f => String(f.id) === String(msActiveFolderId))) {
+      msActiveFolderId = '';
+      msReloadList();
+    }
+    msRenderFolderChips();
+  } catch (e) {
+    chips.innerHTML = `<span class="ms-folder-empty">フォルダの取得に失敗: ${votEscape(e.message)}</span>`;
+    msFolders = [];
+  }
+  msUpdateFolderCreateGate();
+}
+
+function msRenderFolderChips() {
+  const chips = document.getElementById('ms-folder-chips');
+  if (!chips) return;
+  const allActive = !msActiveFolderId ? ' active' : '';
+  const noneActive = msActiveFolderId === '__none__' ? ' active' : '';
+  let html = `<button type="button" class="ms-folder-chip${allActive}" onclick="msSelectFolder('')">すべて</button>`;
+  html += msFolders.map(f => {
+    const active = String(msActiveFolderId) === String(f.id) ? ' active' : '';
+    const cnt = (f.materialCount != null) ? ` <span class="ms-folder-count">(${Number(f.materialCount)})</span>` : '';
+    return `<button type="button" class="ms-folder-chip${active}" onclick="msSelectFolder('${votEscape(String(f.id))}')" title="${votEscape(f.name || '')}">📁 ${votEscape(f.name || '(無名)')}${cnt}`
+      + ` <span class="ms-folder-count" style="cursor:pointer" onclick="event.stopPropagation();msDeleteFolder('${votEscape(String(f.id))}','${votEscape(f.name || '')}')" title="このフォルダを削除">🗑</span></button>`;
+  }).join('');
+  // 「未振り分け」チップ（このコンテキストに紐づく未割り当て素材を見る）
+  html += `<button type="button" class="ms-folder-chip${noneActive}" onclick="msSelectFolder('__none__')" title="フォルダに振り分けられていない素材">📂 未振り分け</button>`;
+  chips.innerHTML = html;
+}
+
+// フォルダチップ選択 → 一覧を folderId 付きで再取得
+function msSelectFolder(folderId) {
+  msActiveFolderId = folderId || '';
+  msRenderFolderChips();
+  msReloadList();
+}
+
+// 「＋フォルダを作成」ボタンの活性条件（ADR 023 要件 2/3）:
+//   クライアント＋案件 選択 or クライアント未選択 → 活性。クライアントのみ → 非活性＋ヒント。
+function msUpdateFolderCreateGate() {
+  const btn = document.getElementById('ms-folder-create-btn');
+  const hint = document.getElementById('ms-folder-create-hint');
+  if (!btn) return;
+  const ctx = msFolderContext();
+  // クライアントのみ選択 = 非対応（行自体が隠れているケースだが、保険でガード）
+  const onlyClient = !!msFilterClientId && !msFilterProjectId;
+  const enabled = ctx.ok && !onlyClient;
+  btn.disabled = !enabled;
+  if (hint) hint.style.display = onlyClient ? '' : 'none';
+}
+
+// ---- 作成モーダル ----
+function msOpenCreateFolder() {
+  const ctx = msFolderContext();
+  if (!ctx.ok) return;
+  const targetEl = document.getElementById('ms-folder-create-target');
+  const input = document.getElementById('ms-folder-create-name');
+  const err = document.getElementById('ms-folder-create-error');
+  if (targetEl) {
+    if (ctx.root) {
+      targetEl.textContent = '素材広場（直下）';
+    } else {
+      const c = (allClients || []).find(x => x.id === msFilterClientId);
+      const p = (allProjects || []).find(x => x.id === msFilterProjectId);
+      targetEl.textContent = `${(c && c.name) || 'クライアント'} ／ ${(p && p.name) || '案件'}`;
+    }
+  }
+  if (input) input.value = '';
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  openModal('modal-ms-folder-create');
+  setTimeout(() => { if (input) input.focus(); }, 50);
+}
+function msCloseCreateFolder() {
+  closeModal('modal-ms-folder-create');
+}
+async function msSubmitCreateFolder() {
+  const ctx = msFolderContext();
+  if (!ctx.ok) { msCloseCreateFolder(); return; }
+  const input = document.getElementById('ms-folder-create-name');
+  const err = document.getElementById('ms-folder-create-error');
+  const btn = document.getElementById('ms-folder-create-submit');
+  const name = (input?.value || '').trim();
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  if (!name) {
+    if (err) { err.textContent = 'フォルダ名を入力してください'; err.style.display = 'block'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
+  try {
+    const body = ctx.projectId ? { name, projectId: ctx.projectId } : { name };
+    await votFetch('/folders', { method: 'POST', body: JSON.stringify(body) });
+    msCloseCreateFolder();
+    showToast('フォルダを作成しました', 'success');
+    await msReloadFolders();
+  } catch (e) {
+    if (err) { err.textContent = '作成失敗: ' + (e?.message || e); err.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '作成'; }
+  }
+}
+
+// フォルダ削除（チップの🗑）。非空なら 409 でブロックされるので件数を通知。
+async function msDeleteFolder(folderId, name) {
+  if (!folderId) return;
+  if (!confirm(`フォルダ「${name || ''}」を削除しますか？\n（中に素材がある場合は削除できません）`)) return;
+  try {
+    await votFetch('/folders/' + encodeURIComponent(folderId), { method: 'DELETE' });
+    showToast('フォルダを削除しました', 'success');
+    // 削除したフォルダで絞り込み中だったら解除
+    if (String(msActiveFolderId) === String(folderId)) { msActiveFolderId = ''; msReloadList(); }
+    await msReloadFolders();
+  } catch (e) {
+    const m = String(e?.message || '');
+    // サーバは非空フォルダに 409 { error, count } を返す
+    const cm = m.match(/(\d+)/);
+    if (/409/.test(m) || /空/.test(m) || /not empty/i.test(m) || cm) {
+      showToast(`このフォルダには素材が残っているため削除できません${cm ? `（${cm[1]}件）` : ''}`, 'warn');
+    } else {
+      showToast('フォルダの削除に失敗: ' + m, 'error');
+    }
+  }
+}
+
+// ---- 選択バー: フォルダへ移動ポップオーバー ----
+function msToggleMovePopover(event) {
+  if (event) event.stopPropagation();
+  const wrap = document.getElementById('ms-folder-move-wrap');
+  if (!wrap) return;
+  const willOpen = !wrap.classList.contains('open');
+  if (willOpen) msRenderMovePopover();
+  wrap.classList.toggle('open', willOpen);
+}
+function msCloseMovePopover() {
+  const wrap = document.getElementById('ms-folder-move-wrap');
+  if (wrap) wrap.classList.remove('open');
+}
+function msRenderMovePopover() {
+  const pop = document.getElementById('ms-folder-move-pop');
+  if (!pop) return;
+  let html = '';
+  if (msFolders.length === 0) {
+    html += '<div class="ms-folder-move-empty">このコンテキストにフォルダがありません。先に「＋ フォルダを作成」で作成してください。</div>';
+  } else {
+    html += msFolders.map(f =>
+      `<button type="button" class="ms-folder-move-item" onclick="msMoveCheckedToFolder('${votEscape(String(f.id))}')">📁 ${votEscape(f.name || '(無名)')}</button>`
+    ).join('');
+  }
+  html += '<div class="ms-folder-move-sep"></div>';
+  html += `<button type="button" class="ms-folder-move-item" onclick="msMoveCheckedToFolder(null)">↩ フォルダから外す（案件直下へ戻す）</button>`;
+  pop.innerHTML = html;
+}
+async function msMoveCheckedToFolder(folderId) {
+  const fileIds = msItemsCache.filter(it => msCheckedIds.has(it.drive_file_id)).map(it => it.drive_file_id);
+  if (fileIds.length === 0) { msCloseMovePopover(); return; }
+  msCloseMovePopover();
+  try {
+    const result = await votFetch('/folders/move', {
+      method: 'POST',
+      body: JSON.stringify({ fileIds, folderId: folderId == null ? null : folderId }),
+    });
+    const moved = Number(result?.moved ?? 0);
+    const skipped = Number(result?.skipped ?? 0);
+    let msg = folderId == null
+      ? `${moved}件をフォルダから外しました`
+      : `${moved}件をフォルダへ移動しました`;
+    if (skipped > 0) msg += `（${skipped}件はスキップ）`;
+    showToast(msg, skipped > 0 ? 'warn' : 'success');
+    msClearSelection();
+    await msReloadList();
+    await msReloadFolders(); // 件数バッジ更新
+  } catch (e) {
+    showToast('フォルダへの移動に失敗: ' + (e?.message || e), 'error');
+  }
+}
+
+// ポップオーバーの外側クリックで閉じる（1回だけ登録）
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('ms-folder-move-wrap');
+  if (wrap && wrap.classList.contains('open') && !wrap.contains(e.target)) {
+    wrap.classList.remove('open');
+  }
+});
 
 function msKindIcon(kind) { return kind === 'image' ? '🖼️' : '🎬'; }
 // 秒数を時分秒に整形（例: 796.796 → "13分17秒" / 7.5 → "8秒" / 3725 → "1時間2分5秒"）。
@@ -43309,6 +43630,8 @@ function msUpdateBulkBar() {
   const all = document.getElementById('ms-check-all');
   const n = msCheckedIds.size;
   if (bar) bar.classList.toggle('visible', n > 0);
+  // 選択が0件になったら「フォルダへ移動」ポップオーバーは閉じる（宙に浮かないように）
+  if (n === 0) { try { msCloseMovePopover(); } catch (_) {} }
   if (countEl) countEl.textContent = `${n}件を選択中`;
   if (btn) btn.textContent = n > 1 ? `⬇ ${n}件をダウンロード` : '⬇ ダウンロード';
   if (all) {
