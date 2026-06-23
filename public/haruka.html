@@ -7543,9 +7543,15 @@ window.showPage = window.showPage || function(name, btn) {
     <div style="padding:4px 0 12px;font-size:14px;color:var(--text);line-height:1.7">
       <div style="font-size:12px;color:var(--text-muted)">作成先</div>
       <div id="ms-folder-create-target" style="font-weight:600;word-break:break-all;margin-bottom:12px">-</div>
+      <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">日付から入れる（任意）</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <input id="ms-folder-create-date" type="date"
+          style="flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+        <button type="button" class="btn" onclick="msInsertFolderDate()" style="white-space:nowrap">＋日付を先頭に</button>
+      </div>
       <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">フォルダ名</label>
       <input id="ms-folder-create-name" type="text" placeholder="例: 6/12 Zoom動画"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();msSubmitCreateFolder();}else if(event.key==='Escape'){msCloseCreateFolder();}"
+        onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter'){event.preventDefault();msSubmitCreateFolder();}else if(event.key==='Escape'){msCloseCreateFolder();}"
         style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px">
       <div class="ms-folder-name-note">＼ / ? % * : | " &lt; &gt; は _ に変換されます</div>
       <div id="ms-folder-create-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
@@ -42926,14 +42932,34 @@ function msOpenCreateFolder() {
   if (!ctx.ok) return;
   const targetEl = document.getElementById('ms-folder-create-target');
   const input = document.getElementById('ms-folder-create-name');
+  const dateEl = document.getElementById('ms-folder-create-date');
   const err = document.getElementById('ms-folder-create-error');
   if (targetEl) {
     targetEl.textContent = `${msNavClientName || 'クライアント'} ／ ${msNavProjectName || '案件'}`;
   }
   if (input) input.value = '';
+  // 日付ピッカーは初期値を「今日（JST）」にしておく（カレンダーが当日付近で開く）
+  if (dateEl) dateEl.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   if (err) { err.style.display = 'none'; err.textContent = ''; }
   openModal('modal-ms-folder-create');
   setTimeout(() => { if (input) input.focus(); }, 50);
+}
+// 日付ピッカーで選んだ日付を「M/D 」としてフォルダ名の先頭に挿入する。
+// input[type=date] の値は "YYYY-MM-DD" 文字列なので Date を介さずに分解（TZズレ回避）。
+function msInsertFolderDate() {
+  const dateEl = document.getElementById('ms-folder-create-date');
+  const input = document.getElementById('ms-folder-create-name');
+  if (!dateEl || !input || !dateEl.value) return;
+  const [, m, d] = dateEl.value.split('-');
+  const label = `${parseInt(m, 10)}/${parseInt(d, 10)}`;
+  const cur = input.value || '';
+  // 既に同じ日付が先頭にある場合は二重付与しない
+  if (!(cur === label || cur.startsWith(label + ' '))) {
+    input.value = cur ? `${label} ${cur}` : `${label} `;
+  }
+  input.focus();
+  const pos = input.value.length;
+  try { input.setSelectionRange(pos, pos); } catch (_) {}
 }
 function msCloseCreateFolder() {
   closeModal('modal-ms-folder-create');
