@@ -7537,11 +7537,11 @@ window.showPage = window.showPage || function(name, btn) {
 <div class="modal-overlay" id="modal-ms-folder-create" data-no-overlay-close="true" style="z-index:300">
   <div class="modal-card" style="width:460px">
     <div class="modal-title">
-      <span>📁 フォルダを作成</span>
+      <span id="ms-folder-modal-title">📁 フォルダを作成</span>
       <button class="modal-close" onclick="msCloseCreateFolder()">×</button>
     </div>
     <div style="padding:4px 0 12px;font-size:14px;color:var(--text);line-height:1.7">
-      <div style="font-size:12px;color:var(--text-muted)">作成先</div>
+      <div id="ms-folder-create-target-label" style="font-size:12px;color:var(--text-muted)">作成先</div>
       <div id="ms-folder-create-target" style="font-weight:600;word-break:break-all;margin-bottom:12px">-</div>
       <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">日付から入れる（任意）</label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
@@ -42927,14 +42927,28 @@ function msUpdateFolderCreateGate() {
   btn.disabled = !enabled;
 }
 
-// ---- 作成モーダル ----
+// ---- 作成／名前変更モーダル（両用） ----
+// mode: 'create' = 新規作成 / 'rename' = 既存フォルダの名前変更
+let msFolderModalMode = 'create';
+let msFolderRenameId = '';      // rename 時の対象フォルダ id
+let msFolderRenameOrig = '';    // rename 時の元の名前（変更なし判定用）
+
 function msOpenCreateFolder() {
   const ctx = msFolderContext();
   if (!ctx.ok) return;
+  msFolderModalMode = 'create';
+  msFolderRenameId = '';
+  msFolderRenameOrig = '';
+  const titleEl = document.getElementById('ms-folder-modal-title');
+  const labelEl = document.getElementById('ms-folder-create-target-label');
   const targetEl = document.getElementById('ms-folder-create-target');
   const input = document.getElementById('ms-folder-create-name');
   const dateEl = document.getElementById('ms-folder-create-date');
   const err = document.getElementById('ms-folder-create-error');
+  const btn = document.getElementById('ms-folder-create-submit');
+  if (titleEl) titleEl.textContent = '📁 フォルダを作成';
+  if (labelEl) labelEl.textContent = '作成先';
+  if (btn) btn.textContent = '作成';
   if (targetEl) {
     targetEl.textContent = `${msNavClientName || 'クライアント'} ／ ${msNavProjectName || '案件'}`;
   }
@@ -42944,6 +42958,30 @@ function msOpenCreateFolder() {
   if (err) { err.style.display = 'none'; err.textContent = ''; }
   openModal('modal-ms-folder-create');
   setTimeout(() => { if (input) input.focus(); }, 50);
+}
+
+// 既存フォルダの名前変更を、作成と同じモーダルで開く（チップの✏️から）。
+function msOpenRenameFolder(folderId, currentName) {
+  if (!folderId) return;
+  msFolderModalMode = 'rename';
+  msFolderRenameId = folderId;
+  msFolderRenameOrig = currentName || '';
+  const titleEl = document.getElementById('ms-folder-modal-title');
+  const labelEl = document.getElementById('ms-folder-create-target-label');
+  const targetEl = document.getElementById('ms-folder-create-target');
+  const input = document.getElementById('ms-folder-create-name');
+  const dateEl = document.getElementById('ms-folder-create-date');
+  const err = document.getElementById('ms-folder-create-error');
+  const btn = document.getElementById('ms-folder-create-submit');
+  if (titleEl) titleEl.textContent = '📁 フォルダ名を変更';
+  if (labelEl) labelEl.textContent = '変更するフォルダ';
+  if (btn) btn.textContent = '変更';
+  if (targetEl) targetEl.textContent = currentName || '(無名)';
+  if (input) input.value = currentName || '';
+  if (dateEl) dateEl.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  openModal('modal-ms-folder-create');
+  setTimeout(() => { if (input) { input.focus(); input.select(); } }, 50);
 }
 // 日付ピッカーで選んだ日付を「M/D 」としてフォルダ名の先頭に挿入する。
 // input[type=date] の値は "YYYY-MM-DD" 文字列なので Date を介さずに分解（TZズレ回避）。
@@ -42966,8 +43004,6 @@ function msCloseCreateFolder() {
   closeModal('modal-ms-folder-create');
 }
 async function msSubmitCreateFolder() {
-  const ctx = msFolderContext();
-  if (!ctx.ok) { msCloseCreateFolder(); return; }
   const input = document.getElementById('ms-folder-create-name');
   const err = document.getElementById('ms-folder-create-error');
   const btn = document.getElementById('ms-folder-create-submit');
@@ -42977,6 +43013,36 @@ async function msSubmitCreateFolder() {
     if (err) { err.textContent = 'フォルダ名を入力してください'; err.style.display = 'block'; }
     return;
   }
+
+  // ---- 名前変更モード ----
+  if (msFolderModalMode === 'rename') {
+    if (!msFolderRenameId) { msCloseCreateFolder(); return; }
+    if (name === msFolderRenameOrig) { msCloseCreateFolder(); return; } // 変更なし
+    if (btn) { btn.disabled = true; btn.textContent = '変更中…'; }
+    try {
+      await votFetch('/folders/' + encodeURIComponent(msFolderRenameId), {
+        method: 'PATCH', body: JSON.stringify({ name }),
+      });
+      msCloseCreateFolder();
+      showToast('フォルダ名を変更しました', 'success');
+      await msReloadFolders();
+    } catch (e) {
+      const m = String(e?.message || '');
+      if (err) {
+        err.textContent = (/409/.test(m) || /同じ名前/.test(m))
+          ? '同じ名前のフォルダが既にあります'
+          : '変更失敗: ' + m;
+        err.style.display = 'block';
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '変更'; }
+    }
+    return;
+  }
+
+  // ---- 作成モード ----
+  const ctx = msFolderContext();
+  if (!ctx.ok) { msCloseCreateFolder(); return; }
   if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
   try {
     const body = ctx.projectId ? { name, projectId: ctx.projectId } : { name };
@@ -43013,29 +43079,9 @@ async function msDeleteFolder(folderId, name) {
   }
 }
 
-// フォルダのリネーム（チップの✏️）。DB と Drive 上のフォルダ名を両方更新する。
-async function msRenameFolder(folderId, currentName) {
-  if (!folderId) return;
-  const input = prompt('新しいフォルダ名を入力してください', currentName || '');
-  if (input == null) return; // キャンセル
-  const name = input.trim();
-  if (!name) { showToast('フォルダ名を入力してください', 'warn'); return; }
-  if (name === (currentName || '')) return; // 変更なし
-  try {
-    await votFetch('/folders/' + encodeURIComponent(folderId), {
-      method: 'PATCH',
-      body: JSON.stringify({ name }),
-    });
-    showToast('フォルダ名を変更しました', 'success');
-    await msReloadFolders();
-  } catch (e) {
-    const m = String(e?.message || '');
-    if (/409/.test(m) || /同じ名前/.test(m)) {
-      showToast('同じ名前のフォルダが既にあります', 'warn');
-    } else {
-      showToast('フォルダ名の変更に失敗: ' + m, 'error');
-    }
-  }
+// フォルダのリネーム（チップの✏️）。作成と同じモーダルを名前変更モードで開く。
+function msRenameFolder(folderId, currentName) {
+  msOpenRenameFolder(folderId, currentName);
 }
 
 // ---- 選択バー: フォルダへ移動ポップオーバー ----
