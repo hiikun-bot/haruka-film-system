@@ -42887,6 +42887,17 @@ function msUpdateFolderCreateGate() {
   const onlyClient = !!msFilterClientId && !msFilterProjectId;
   const enabled = ctx.ok && !onlyClient;
   btn.disabled = !enabled;
+  // 作成先をボタンに明示（全体表示のままルート直下に作ってしまう誤操作を防ぐ）
+  if (!enabled) {
+    btn.textContent = '＋ フォルダを作成';
+    btn.title = 'このコンテキストにフォルダを作成';
+  } else if (ctx.root) {
+    btn.textContent = '＋ 素材広場の直下に作成';
+    btn.title = 'クライアントと案件を選ぶと、その案件フォルダの直下に作成できます';
+  } else {
+    btn.textContent = '＋ この案件にフォルダを作成';
+    btn.title = '選択中の案件フォルダの直下に作成します';
+  }
   if (hint) hint.style.display = onlyClient ? '' : 'none';
 }
 
@@ -42991,7 +43002,8 @@ function msRenderMovePopover() {
   pop.innerHTML = html;
 }
 async function msMoveCheckedToFolder(folderId) {
-  const fileIds = msItemsCache.filter(it => msCheckedIds.has(it.drive_file_id)).map(it => it.drive_file_id);
+  // サーバは video_file_organization_tests.id（DB UUID）で素材を引くので、drive_file_id ではなく id を送る
+  const fileIds = msItemsCache.filter(it => msCheckedIds.has(it.drive_file_id)).map(it => it.id);
   if (fileIds.length === 0) { msCloseMovePopover(); return; }
   msCloseMovePopover();
   try {
@@ -43000,7 +43012,8 @@ async function msMoveCheckedToFolder(folderId) {
       body: JSON.stringify({ fileIds, folderId: folderId == null ? null : folderId }),
     });
     const moved = Number(result?.moved ?? 0);
-    const skipped = Number(result?.skipped ?? 0);
+    // サーバの skipped は配列（[{fileId, reason}]）。件数化する
+    const skipped = Array.isArray(result?.skipped) ? result.skipped.length : Number(result?.skipped ?? 0);
     let msg = folderId == null
       ? `${moved}件をフォルダから外しました`
       : `${moved}件をフォルダへ移動しました`;
