@@ -10,7 +10,7 @@ const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
-const { shareForClientReview } = require('../lib/drive-share');
+const { shareForClientReview, ensureAnyoneReader } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
 const { renderFilename } = require('../utils/filename');
 const {
@@ -8730,6 +8730,19 @@ router.get('/creatives/:id/drive-folder', requireAuth, async (req, res) => {
     const parentId = (meta.data.parents || [])[0];
     if (!parentId) {
       return res.status(404).json({ error: '親フォルダが見つかりませんでした' });
+    }
+    // 親フォルダ（案件・直近月の静止画フォルダ）に anyone-with-link reader を付与する。
+    // WHY: クリエイティブ画像は共有ドライブ上にあり SA だけがアクセス権を持つため、
+    //      ディレクターが個人 Google アカウントでこの直リンクを踏むと
+    //      「アクセス権が必要です」になり、フォルダごとの一括DL（DriveのZIP化）ができなかった。
+    //      フォルダ単位で公開すると配下のファイルも継承で開ける（素材広場 #846 と同パターン）。
+    //      付与対象は **ファイルではなくフォルダ(parentId)**。ensureAnyoneReader は
+    //      既存 permission（400/403）を idempotent に握りつぶすので再実行しても無害。
+    //      失敗してもフォルダURL返却本体は止めない（fire-and-forget 相当）。
+    try {
+      await ensureAnyoneReader(drive, parentId);
+    } catch (shareErr) {
+      console.warn('[drive-folder] ensureAnyoneReader skip:', parentId, shareErr?.message || shareErr);
     }
     res.json({
       folder_id: parentId,
