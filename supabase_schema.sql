@@ -324,6 +324,12 @@ CREATE TABLE IF NOT EXISTS creative_assignments (
   rank_applied TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+-- role の許可値（ADR 024 で 'wcheck' を追加）。本番に直接追加されていた旧 CHECK 制約が
+-- 'wcheck' を許可せず Wチェック担当者の保存を弾いていたため、明示的に作り直す。
+-- 詳細: migrations/2026-06-24_wcheck_role_constraint.sql
+ALTER TABLE creative_assignments DROP CONSTRAINT IF EXISTS creative_assignments_role_check;
+ALTER TABLE creative_assignments ADD CONSTRAINT creative_assignments_role_check
+  CHECK (role IN ('editor','designer','director_as_editor','director','producer','wcheck'));
 
 -- ==================== creative_versions (ADR 008 Phase 0) ====================
 -- 修正サイクル（v0=初稿, v1=修正1回目, ..., 最大5回）の履歴を正規化保持。
