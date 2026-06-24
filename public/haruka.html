@@ -6110,12 +6110,12 @@ window.showPage = window.showPage || function(name, btn) {
               </select>
             </div>
           </div>
-          <!-- Wチェック要否（静止画案件のみ表示・案件単位・初期値あり・ADR 024） -->
+          <!-- Wチェック要否（静止画案件のみ表示・この案件のクリエイティブ初期値・初期値あり・ADR 024） -->
           <div class="form-row" id="p-wcheck-row" style="margin-bottom:10px;display:none">
             <div class="form-group" style="flex:1;margin-bottom:0">
               <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
                 <input type="checkbox" id="p-wcheck-required" style="margin:0">
-                <span>この案件でWチェックを行う（Dチェックの前にダブルチェック）
+                <span>この案件のクリエイティブはWチェックを行う（<strong>初期値</strong>・各クリエイティブで個別にON/OFF可）
                   <span style="font-size:11px;color:var(--text-muted)">／静止画案件の初期値はあり</span>
                 </span>
               </label>
@@ -8133,11 +8133,11 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- ステップインジケーター -->
       <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
 
-      <!-- Wチェック要否トグル（静止画案件のみ・案件単位・ADR 024）。権限者だけ操作可。変更時は確認あり。 -->
+      <!-- Wチェック要否トグル（静止画のみ・このクリエ個別・ADR 024）。案件マスターは初期値。権限者だけ操作可。変更時は確認あり。 -->
       <div id="cd-wcheck-toggle-row" style="display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted)">
         <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="cd-wcheck-required" style="margin:0">
-          <span>この<strong>案件</strong>でWチェックを行う（Dチェックの前にダブルチェック／案件全体に適用）</span>
+          <span>この<strong>クリエイティブ</strong>でWチェックを行う（Dチェックの前にダブルチェック／このクリエイティブのみ）</span>
         </label>
         <span id="cd-wcheck-toggle-saving" style="display:none;font-size:11px">保存中…</span>
       </div>
@@ -37567,18 +37567,17 @@ function updateWcheckToggleRow(c) {
   const midFlow = ['Wチェック', 'Wチェック後修正'].includes(c?.status);
   cb.disabled = midFlow;
   row.title = midFlow ? 'Wチェック進行中は要否を変更できません' : '';
-  // 要否は【案件単位】。誤操作防止のため変更時は確認ダイアログを挟む。
-  const projectId = wc.project_id || c?.project_id || c?.projects?.id || null;
+  // 要否は【このクリエイティブ個別】（案件マスターは初期値）。誤操作防止のため変更時は確認ダイアログを挟む。
   cb.onchange = async () => {
     const desired = cb.checked;   // 入れようとした値
     cb.checked = !desired;        // いったん戻す（確認後に確定）
-    if (!projectId) { showToast('案件が特定できませんでした', 'error'); return; }
+    if (!c?.id) { showToast('クリエイティブが特定できませんでした', 'error'); return; }
     const ok = await showConfirmDialog({
-      title: desired ? 'Wチェックを有効にしますか？' : 'Wチェックを外しますか？',
+      title: desired ? 'このクリエイティブでWチェックを行いますか？' : 'このクリエイティブのWチェックを外しますか？',
       message: desired
-        ? 'この案件の静止画クリエイティブで、Dチェックの前にWチェック（ダブルチェック）を行うようにします。\n\n※ クリエイティブ単位ではなく案件全体に適用されます。'
-        : 'この案件でWチェックを行わないようにします（制作からDチェックへ直接進む運用になります）。\n\n※ 案件全体に適用されます。誤って外していないかご確認ください。',
-      okLabel: desired ? 'Wチェックを有効にする' : 'Wチェックを外す',
+        ? 'このクリエイティブを、Dチェックの前にWチェック（ダブルチェック）する対象にします。\n\n※ 案件全体ではなく、このクリエイティブだけに適用されます。'
+        : 'このクリエイティブをWチェック対象から外します（制作からDチェックへ直接進みます）。\n\n※ このクリエイティブだけに適用されます。誤って外していないかご確認ください。',
+      okLabel: desired ? 'Wチェック対象にする' : 'Wチェックを外す',
       okVariant: desired ? undefined : 'danger',
     });
     if (!ok) return; // キャンセル → 元のまま
@@ -37586,7 +37585,7 @@ function updateWcheckToggleRow(c) {
     if (saving) saving.style.display = '';
     cb.disabled = true;
     try {
-      const res = await apiFetch(`${API}/projects/${projectId}`, {
+      const res = await apiFetch(`${API}/creatives/${c.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wcheck_required: desired }),
@@ -37596,16 +37595,14 @@ function updateWcheckToggleRow(c) {
         showToast('保存エラー: ' + translateError(e?.error), 'error');
       } else {
         cb.checked = desired;
-        if (currentCreativeDetail?.wcheck) currentCreativeDetail.wcheck.required = desired;
-        // 案件キャッシュ（allProjects）も更新
-        try {
-          const pj = (typeof allProjects !== 'undefined' && Array.isArray(allProjects)) ? allProjects.find(p => p.id === projectId) : null;
-          if (pj) pj.wcheck_required = desired;
-        } catch (_) {}
+        if (currentCreativeDetail?.wcheck) {
+          currentCreativeDetail.wcheck.required = desired;
+          currentCreativeDetail.wcheck.creative_override = desired;
+        }
         try { _cdInvalidateCache(c.id); } catch (_) {}
         // 進捗バー（Wチェック段の有無）を再描画
         try { updateCreativeStepIndicator(currentCreativeDetail.status); } catch (_) {}
-        showToast(desired ? 'この案件はWチェックを行います' : 'この案件はWチェック不要にしました', 'success');
+        showToast(desired ? 'このクリエイティブはWチェックを行います' : 'このクリエイティブはWチェック不要にしました', 'success');
       }
     } catch (err) {
       showToast('保存に失敗: ' + (err?.message || err), 'error');

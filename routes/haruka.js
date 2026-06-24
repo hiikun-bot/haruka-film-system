@@ -6459,8 +6459,10 @@ router.get('/creatives/:id', async (req, res) => {
     const wAssign = (data.creative_assignments || []).find(a => a.role === 'wcheck' && a.users);
     data.wcheck = {
       is_image: elig.isImage,
-      required: elig.required,
-      project_id: elig.projectId || data.project_id || null, // 案件単位トグルの対象
+      required: elig.required,             // 実効値（このクリエでWチェックするか）
+      project_default: elig.projectDefault, // 案件の初期値（参考表示用）
+      creative_override: elig.creativeOverride, // このクリエ個別の明示値（null=案件初期値を継承）
+      project_id: elig.projectId || data.project_id || null,
       assignee: wAssign?.users || null,
       requested_by: data.wcheck_requested_by || null,
       requested_at: data.wcheck_requested_at || null,
@@ -6468,7 +6470,7 @@ router.get('/creatives/:id', async (req, res) => {
     };
   } catch (e) {
     console.warn('[creatives/:id] wcheck info 失敗:', e.message);
-    data.wcheck = { is_image: false, required: false, project_id: data.project_id || null, assignee: null, requested_by: null, requested_at: null, comment: null };
+    data.wcheck = { is_image: false, required: false, project_default: false, creative_override: null, project_id: data.project_id || null, assignee: null, requested_by: null, requested_at: null, comment: null };
   }
 
   res.json(data);
@@ -6834,9 +6836,10 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_id,
     director_user_ids,
     producer_user_ids,
-    // Wチェック（ADR 024・静止画ダブルチェック）。要否は案件単位（PUT /projects）に移行。
+    // Wチェック（ADR 024・静止画ダブルチェック）
     wcheck_user_id,        // Wチェック担当者（単数）。null/空で割当解除
     wcheck_comment,        // Wチェック依頼コメント
+    wcheck_required,       // このクリエ個別の要否（true/false/null=案件初期値を継承）。project.create_edit 権限要
     force_delivered_reason,
     // 動画ファイル無しで工程を進める場合のフラグ（代表 髙橋指示・2026-05-09 補足）。
     // 例: クライアント直接やり取り済み、口頭で完結、素材待ち 等。
@@ -6865,12 +6868,22 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // Wチェック要否は【案件単位】に移行（ADR 024 改訂）。creatives 側では受け付けない。
-  // 詳細モーダルのトグル / 案件マスターは PUT /projects/:id { wcheck_required } を使う。
+  // Wチェック要否（このクリエ個別・ADR 024 改訂2）の認可: 案件編集権限が必要（URL/API 直叩き防止）。
+  // 案件マスターは「案件の初期値」(projects.wcheck_required)、こちらは「このクリエ個別」(creatives.wcheck_required)。
+  if (wcheck_required !== undefined) {
+    const _wcRole = getEffectiveRole(req);
+    const _wcCanEdit = await userHasPermission(_wcRole, 'project.create_edit');
+    if (!_wcCanEdit) {
+      return res.status(403).json({ error: 'Wチェックの要否設定には案件編集権限が必要です' });
+    }
+  }
 
   const updateData = {
     updated_at: new Date().toISOString()
   };
+  if (wcheck_required !== undefined) {
+    updateData.wcheck_required = (wcheck_required === null || wcheck_required === '') ? null : !!wcheck_required;
+  }
   if (file_name !== undefined) updateData.file_name = file_name;
   if (status !== undefined) updateData.status = status;
   if (deadline !== undefined) updateData.deadline = deadline;
@@ -13904,14 +13917,16 @@ async function syncBallHolderId(creativeId, sb) {
 // schema-sync 未適用環境（wcheck_* 列が無い）でも例外を投げず安全側（required=false）に倒す。
 async function resolveWcheckEligibility(creativeId, sb) {
   const client = sb || supabase;
-  const out = { isImage: false, required: false, categoryId: null, projectId: null };
+  const out = { isImage: false, required: false, categoryId: null, projectId: null, projectDefault: false, creativeOverride: null };
   if (!creativeId) return out;
   try {
+    // 3段解決（ADR 024 改訂2）:
+    //   creatives.wcheck_required（このクリエ個別） ?? projects.wcheck_required（案件の初期値） ?? category.wcheck_default
     let r = await client.from('creatives')
-      .select('id, category_id, project_id, projects(primary_category_id, wcheck_required)')
+      .select('id, category_id, project_id, wcheck_required, projects(primary_category_id, wcheck_required)')
       .eq('id', creativeId).maybeSingle();
     if (r.error && /wcheck_required|column .+ does not exist/i.test(r.error.message || '')) {
-      // 列欠損環境フォールバック（projects.wcheck_required 未適用）
+      // 列欠損環境フォールバック（wcheck_required 未適用）
       r = await client.from('creatives')
         .select('id, category_id, project_id, projects(primary_category_id)')
         .eq('id', creativeId).maybeSingle();
@@ -13930,8 +13945,15 @@ async function resolveWcheckEligibility(creativeId, sb) {
       const cat = cr.data;
       out.isImage = cat?.code === 'image';
       const wDefault = !!cat?.wcheck_default;
-      const wReq = c.projects?.wcheck_required; // 案件単位
-      out.required = (wReq === null || wReq === undefined) ? wDefault : !!wReq;
+      const creativeReq = c.wcheck_required;          // このクリエ個別（最優先）
+      const projectReq  = c.projects?.wcheck_required; // 案件の初期値
+      const _has = (v) => v !== null && v !== undefined;
+      out.required = _has(creativeReq) ? !!creativeReq
+                   : _has(projectReq)  ? !!projectReq
+                   : wDefault;
+      // 案件初期値（クリエ詳細の「初期チェック状態」の基準）も返す
+      out.projectDefault = _has(projectReq) ? !!projectReq : wDefault;
+      out.creativeOverride = _has(creativeReq) ? !!creativeReq : null;
     }
   } catch (e) {
     console.warn('[resolveWcheckEligibility] failed:', e?.message || e);
