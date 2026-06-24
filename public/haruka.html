@@ -31020,6 +31020,18 @@ function _cdCanUndoUpload(file) {
 // サーバ側 (POST /creatives/:id/upload) が真の採番を行うため、ここはあくまで
 // generated_name (_vN) の自動生成と "次は V<N> です" の表示ヒント。サーバが
 // 違う値で採番した場合は generated_name を _vN replace して整合する。
+// ドロップゾーン (#cd-drop-zone) のラベルを初期表示へ戻す共通ヘルパー。
+// ファイル選択時 (processUploadFile) に 2 行目を file.name へ書き換えるため、
+// リセット/アップロード成功/キャンセル時にここで初期文言へ戻さないと「前回のファイル名」が
+// 残骸として残り、未送信なのに「アップロード済み」と誤認される（バグ報告対応）。
+function _cdResetDropZoneLabel() {
+  try {
+    const zone = document.getElementById('cd-drop-zone');
+    const label = zone && zone.querySelector('div:nth-child(2)');
+    if (label) label.textContent = 'ドラッグ＆ドロップ、またはクリックして選択';
+  } catch (_) {}
+}
+
 function _cdComputeNextVersion() {
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
   if (files.length === 0) return 1;
@@ -31990,6 +32002,10 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-upload-confirm').style.display = 'none';
   document.getElementById('cd-manual-upload-btn').style.display = '';
   uploadFileData = null;
+  // ドロップゾーンのラベルを初期表示に戻す。これを怠ると前回選択したファイル名が
+  // 残骸として残り、ユーザーが「ファイルが入っている＝アップロード済み」と誤認したまま
+  // 未送信で「Wチェックへ回す」等を押してしまう（バグ報告: 修正版を上げたのに未アップ判定）。
+  _cdResetDropZoneLabel();
 
   // レギュレーションシートリンク
   // 互換のため hidden な旧 DOM (#cd-regulation-link / #cd-regulation-none / #cd-regulation-open) の値はそのままセット。
@@ -39174,6 +39190,7 @@ async function cdHandleUploadSuccess(data, version, statusEl) {
   document.getElementById('cd-upload-input').value = '';
   document.getElementById('cd-upload-preview').style.display = 'none';
   uploadFileData = null;
+  _cdResetDropZoneLabel(); // 成功後もドロップゾーンの旧ファイル名を残さない（次の修正版を正しく上げられるように）
   if (currentCreativeDetail.status === '制作中（初稿提出前）') {
     const editorComment = document.getElementById('cd-comment-field').value.trim();
     if (!editorComment) {
