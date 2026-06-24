@@ -12,6 +12,8 @@
  *   mode:           'single' | 'multi'             既定 'single'
  *   value:          id | id[] | null
  *   allowedRoles:   ['producer', ...] | null       null なら全ロール
+ *   defaultRoles:   ['designer', ...] | null        初期で active にするロール絞り込み（既定なし=全て）
+ *   excludeIds:     id[] | null                     一覧から除外するユーザーID（自分以外を指名する用途等）
  *   showInactive:   boolean                        既定 false
  *   includeExternal: boolean                       既定 false。true で外部D（is_external）候補も表示（ADR 017）
  *   emptyLabel:     string | null                  null 許容の選択肢ラベル
@@ -215,10 +217,13 @@
 
     const session = {
       query: initialQuery,
-      activeRoles: new Set(),
+      // defaultRoles: 開いた瞬間に絞り込んでおくロール（例: Wチェックはデザイナー既定）
+      activeRoles: new Set(Array.isArray(opts.defaultRoles) ? opts.defaultRoles : []),
       selectedIds: new Set(),
       includeEmpty: false,
     };
+    // excludeIds: 一覧から除外するユーザーID集合（担当ディレクター・制作担当などを選ばせない用途）
+    const excludeSet = new Set((Array.isArray(opts.excludeIds) ? opts.excludeIds : []).filter(Boolean).map(String));
     const emptyValueStr = opts.emptyValue == null ? null : String(opts.emptyValue);
     if (opts.mode === 'multi' && Array.isArray(opts.value)) {
       opts.value.forEach(v => {
@@ -295,6 +300,8 @@
         .filter(m => opts.showInactive || m.is_active !== false)
         // ADR 017: 外部D（擬似ユーザー）は明示的に includeExternal=true のときだけ表示
         .filter(m => opts.includeExternal || m.is_external !== true)
+        // excludeIds: 指名できないユーザー（担当ディレクター・制作担当など）を除外
+        .filter(m => !excludeSet.has(String(m.id)))
         .filter(m => !allowedRoles || allowedRoles.includes(m.role))
         .filter(m => session.activeRoles.size === 0 || session.activeRoles.has(m.role))
         .filter(m => matchSearch(m, session.query));

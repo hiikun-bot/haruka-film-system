@@ -37613,107 +37613,70 @@ function updateWcheckToggleRow(c) {
   };
 }
 
-// ==================== Wチェック担当者選択モーダル（ADR 024）====================
-// 「Wチェックへ回す」押下時に表示。単数選択。担当ディレクター・制作担当はグレーアウトで選択不可。
+// ==================== Wチェック担当者選択（ADR 024）====================
+// HARUKA 標準の MemberPicker（人選択UI）を流用。単数選択・初期はデザイナーで絞り込み。
+// 担当ディレクター・制作担当は除外。選択後に依頼コメントを尋ねてから依頼する。
 function openWcheckPicker({ onSubmit } = {}) {
   if (!currentCreativeDetail) return;
+  if (typeof MemberPicker === 'undefined' || !MemberPicker.open) {
+    showToast('メンバー選択UIを読み込めませんでした', 'error');
+    return;
+  }
   const proj = currentCreativeDetail.projects || {};
-  // 除外（選択不可）対象: 担当ディレクター（必須）＋ 制作担当（ダブルチェックのため別人にする）
-  const directorIds = new Set();
-  if (proj.director_id) directorIds.add(proj.director_id);
-  (Array.isArray(proj.sub_director_ids) ? proj.sub_director_ids : []).forEach(id => id && directorIds.add(id));
+  // 除外（指名不可）: 担当ディレクター（サブD含む）＋ 制作担当（ダブルチェックのため別人にする）
+  const excludeIds = [];
+  if (proj.director_id) excludeIds.push(proj.director_id);
+  (Array.isArray(proj.sub_director_ids) ? proj.sub_director_ids : []).forEach(id => id && excludeIds.push(id));
   (currentCreativeDetail.creative_assignments || [])
-    .filter(a => a.role === 'director' && a.users)
-    .forEach(a => directorIds.add(a.users.id));
-  const editorIds = new Set();
+    .filter(a => a.role === 'director' && a.users).forEach(a => excludeIds.push(a.users.id));
   (currentCreativeDetail.creative_assignments || [])
-    .filter(a => ['editor','designer','director_as_editor'].includes(a.role) && a.users)
-    .forEach(a => editorIds.add(a.users.id));
+    .filter(a => ['editor','designer','director_as_editor'].includes(a.role) && a.users).forEach(a => excludeIds.push(a.users.id));
 
-  // 候補: 有効ユーザーのみ。退職者(is_active=false)・外部ディレクターは除外。
-  const candidates = (allMembers || [])
-    .filter(m => m && m.is_active !== false && m.role !== 'external_director')
-    .slice()
-    .sort((a, b) => {
-      const tcA = (currentCreativeDetail.team_id && a.team_id === currentCreativeDetail.team_id) ? 0 : 1;
-      const tcB = (currentCreativeDetail.team_id && b.team_id === currentCreativeDetail.team_id) ? 0 : 1;
-      if (tcA !== tcB) return tcA - tcB;
-      return String(a.nickname || a.full_name || '').localeCompare(String(b.nickname || b.full_name || ''), 'ja');
-    });
-
-  const rowHtml = candidates.map(m => {
-    const isDir = directorIds.has(m.id);
-    const isEd  = editorIds.has(m.id);
-    const disabled = isDir || isEd;
-    const reason = isDir ? '担当ディレクターのため選択できません' : (isEd ? '制作担当者のため選択できません' : '');
-    const label = (typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(m) : (m.nickname || m.full_name || m.id);
-    return `<label data-disabled="${disabled?'1':'0'}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:${disabled?'not-allowed':'pointer'};opacity:${disabled?'.55':'1'};background:${disabled?'var(--surface)':'transparent'}">
-      <input type="radio" name="wcheck-user" value="${m.id}" ${disabled?'disabled':''} style="margin:0">
-      <span style="flex:1;min-width:0">
-        <span style="font-size:13px">${label}</span>
-        ${reason ? `<span style="display:block;font-size:11px;color:var(--text-muted)">${reason}</span>` : ''}
-      </span>
-    </label>`;
-  }).join('');
-
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  overlay.innerHTML = `
-    <div style="background:var(--bg,#fff);border-radius:14px;max-width:440px;width:100%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)">
-      <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
-        <div style="font-weight:700;font-size:15px">Wチェック担当者を選択</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">ダブルチェックのため、担当ディレクター・制作担当は選択できません。</div>
-      </div>
-      <div style="padding:8px 12px;overflow:auto;flex:1">
-        <input id="wcheck-search" placeholder="名前で絞り込み…" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;box-sizing:border-box">
-        <div id="wcheck-list">${rowHtml || '<div style="padding:20px;text-align:center;color:var(--text-muted)">候補がいません</div>'}</div>
-      </div>
-      <div style="padding:12px 18px;border-top:1px solid var(--border)">
-        <div style="font-size:12px;font-weight:600;margin-bottom:4px">依頼コメント</div>
-        <textarea id="wcheck-comment" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
-      </div>
-      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
-        <button id="wcheck-cancel" style="padding:8px 16px;border:1px solid var(--border);background:var(--surface);border-radius:8px;cursor:pointer;font-size:13px">キャンセル</button>
-        <button id="wcheck-submit" disabled style="padding:8px 16px;border:none;background:linear-gradient(135deg,#6C4FE0,#5B3FD0);color:#fff;border-radius:8px;cursor:not-allowed;font-size:13px;opacity:.5">Wチェックを依頼 →</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  const close = () => overlay.remove();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  overlay.querySelector('#wcheck-cancel').onclick = close;
-
-  const submitBtn = overlay.querySelector('#wcheck-submit');
-  const syncSubmit = () => {
-    const ok = !!overlay.querySelector('input[name="wcheck-user"]:checked');
-    submitBtn.disabled = !ok;
-    submitBtn.style.opacity = ok ? '1' : '.5';
-    submitBtn.style.cursor = ok ? 'pointer' : 'not-allowed';
-  };
-  overlay.querySelector('#wcheck-list').addEventListener('change', syncSubmit);
-  overlay.querySelector('#wcheck-search').addEventListener('input', (e) => {
-    const q = String(e.target.value || '').trim().toLowerCase();
-    overlay.querySelectorAll('#wcheck-list label').forEach(lab => {
-      const txt = lab.textContent.toLowerCase();
-      lab.style.display = (!q || txt.includes(q)) ? '' : 'none';
-    });
+  MemberPicker.open(null, {
+    mode: 'single',
+    title: 'Wチェック担当者を選択',
+    allowedRoles: null,          // 全ロールのchipを出す（切り替え可）
+    defaultRoles: ['designer'],  // 初期はデザイナーで絞り込み（Wチェックは基本デザイナー）
+    excludeIds,                  // 担当ディレクター・制作担当は一覧に出さない
+    showInactive: false,
+    onChange: async (userId) => {
+      if (!userId) return; // クリア/未選択
+      const comment = await _wcheckRequestCommentPrompt();
+      if (comment === null) return; // コメント画面でキャンセル
+      try {
+        await onSubmit?.({ wcheckUserId: userId, comment });
+      } catch (e) {
+        console.warn('[wcheck] submit failed:', e?.message || e);
+      }
+    },
   });
+}
 
-  submitBtn.onclick = async () => {
-    const sel = overlay.querySelector('input[name="wcheck-user"]:checked');
-    if (!sel) return;
-    const wcheckUserId = sel.value;
-    const comment = overlay.querySelector('#wcheck-comment')?.value.trim() || '';
-    submitBtn.disabled = true;
-    submitBtn.textContent = '送信中…';
-    try {
-      await onSubmit?.({ wcheckUserId, comment });
-    } catch (e) {
-      console.warn('[wcheck] submit failed:', e?.message || e);
-    } finally {
-      close();
-    }
-  };
+// Wチェック依頼コメント入力（担当者選択後の小さな確認モーダル）。
+// 戻り値: 入力文字列（空文字含む）= 依頼続行 / null = キャンセル。
+function _wcheckRequestCommentPrompt() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:10030;display:flex;align-items:center;justify-content:center;padding:16px';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;max-width:420px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+        <div style="padding:14px 16px;border-bottom:1px solid #E5E7EB;font-weight:600;font-size:15px">Wチェックを依頼</div>
+        <div style="padding:16px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">依頼コメント（任意）</div>
+          <textarea id="_wcmt" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+        <div style="padding:12px 16px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end;gap:8px">
+          <button id="_wcmtCancel" style="padding:6px 14px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px">キャンセル</button>
+          <button id="_wcmtOk" style="padding:6px 14px;border:none;background:linear-gradient(135deg,#6C4FE0,#5B3FD0);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Wチェックを依頼 →</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (val) => { overlay.remove(); resolve(val); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#_wcmtCancel').onclick = () => cleanup(null);
+    overlay.querySelector('#_wcmtOk').onclick = () => cleanup(overlay.querySelector('#_wcmt')?.value.trim() || '');
+    setTimeout(() => overlay.querySelector('#_wcmt')?.focus(), 50);
+  });
 }
 
 async function doDCheckTransition() {
