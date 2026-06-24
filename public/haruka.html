@@ -8238,7 +8238,7 @@ window.showPage = window.showPage || function(name, btn) {
       <div class="form-group" id="cd-editor-reply-group" style="display:none;margin-bottom:18px">
         <label class="form-label" id="cd-editor-reply-label">連絡・確認事項</label>
         <div id="cd-editor-reply-from-to" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;padding:5px 10px;background:var(--surface);border-radius:6px;border:0.5px solid var(--border)"></div>
-        <textarea class="form-input" id="cd-editor-reply" rows="4" style="resize:vertical" placeholder="修正内容や確認事項をディレクターに伝えてください..."></textarea>
+        <textarea class="form-input" id="cd-editor-reply" rows="4" style="resize:vertical" placeholder="修正内容や確認事項を次の担当者へ伝えてください..."></textarea>
       </div>
 
       <!-- ディレクターからの指示（チェック段階のみ） -->
@@ -33001,7 +33001,7 @@ async function advanceCreativeStatus() {
     const replyField = document.getElementById('cd-editor-reply');
     const reply = replyField?.value.trim();
     if (!reply) {
-      showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
+      showToast('次の担当者への連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
       replyField?.focus();
       return;
     }
