@@ -12503,7 +12503,11 @@ function renderCreatives() {
   const showRank = hasPermission('creative.rank_price_column');
   const activeBalls = [];
   document.querySelectorAll('.bf.on').forEach(b => {
-    if(b.classList.contains('bf-e')) activeBalls.push('editor','all');
+    // 'wcheck'（Wチェック担当者がボール保持・ADR 024）は制作/編集者側の工程なので
+    // 編集者ボール(bf-e)と同じグループで表示対象に含める。
+    // これを足し忘れると Wチェックのクリエイティブが一覧・ガントから丸ごと消える
+    // （「保留」で起きたサイレント消失と同型のバグ。バグ報告 aa11784a の追補）。
+    if(b.classList.contains('bf-e')) activeBalls.push('editor','all','wcheck');
     if(b.classList.contains('bf-d')) activeBalls.push('director');
     if(b.classList.contains('bf-p')) activeBalls.push('producer');
     if(b.classList.contains('bf-c')) activeBalls.push('client');
