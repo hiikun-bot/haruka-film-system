@@ -302,7 +302,8 @@ async function deriveCreativeRoundVersion(creativeId) {
   }
   if (snapForMCount > 0) return { version: M + 1, M };
 
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  // ADR 024: Wチェック後修正 も後修正系。snapshot 未確定段階での初アップは次ラウンドへ。
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   let creativeStatus = null;
   try {
     const { data: cRow } = await supabase
