@@ -518,7 +518,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //   で全宛先に明示 INSERT する。
   //
   // recipients: 通知ログを入れるユーザー配列。actor 自身と id 重複は除外。
-  const insertModifyRequestInApp = async (kindLabel, recipients, newStatusLabel) => {
+  const insertModifyRequestInApp = async (kindLabel, recipients, newStatusLabel, senderOverride = null) => {
     try {
       const projectName = project?.name || '';
       const inAppBody = projectName ? `${fileName}（${projectName}）` : fileName;
@@ -541,7 +541,9 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
             file_name: fileName,
             new_status: newStatusLabel,
           },
-          sender_id: actor?.id || null,
+          // 表示上の送信者は senderOverride 優先（Wチェック修正依頼ではボール保持者＝Wチェック担当者）。
+          // 自分自身への通知抑止は実操作者 actor で別途行う（上の filtered）。
+          sender_id: (senderOverride || actor)?.id || null,
         });
       }
       if (rows.length > 0) {
@@ -752,14 +754,24 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    宛先は editorAssignees（制作担当）。Dチェック後修正と同型。
   else if (newStatus === 'Wチェック後修正') {
     const targets = editorAssignees.slice();
-    const { slackBody, cwBody } = tpl('Wチェック修正依頼', '🔁', targets);
+    // from（依頼主）は Wチェック担当者＝ボール保持者。admin 等が代行操作しても
+    // 「誰のWチェックから差し戻されたか」を示すため、操作者 actor ではなく wcheck 担当者を表示する。
+    // 操作者本人が Wチェック担当者ならその人、そうでなければ代表（先頭）を使う。
+    const wcheckActor = (actor && wcheckAssignees.some(u => u && u.id === actor.id))
+      ? actor
+      : (wcheckAssignees[0] || actor);
+    const tplW = (recipient) => buildCreativeNotifBody({
+      kind: 'Wチェック修正依頼', emoji: '🔁', project, client, fileName, slackName,
+      actor: wcheckActor, recipient, comment, creativeUrl,
+    });
+    const { slackBody, cwBody } = tplW(targets);
     const sendResult = await sendNotifMulti(targets, slackBody, cwBody);
     if (!sendResult.anyReachable) {
-      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Wチェック修正依頼', '🔁', null);
+      const { slackBody: fbSlack, cwBody: fbCw } = tplW(null);
       const note = '\n（編集者未設定または DM ID 未登録のため関係者にメンションしています）';
       await sendChannelMention(fbSlack + note, fbCw.replace('[/info]', note + '[/info]'));
     }
-    await insertModifyRequestInApp('Wチェック修正依頼', targets, 'Wチェック後修正');
+    await insertModifyRequestInApp('Wチェック修正依頼', targets, 'Wチェック後修正', wcheckActor);
   }
   // 3) → Dチェック後修正（ボールが製作者側に戻る）
   //    宛先は editorAssignees（編集者・デザイナー）。ディレクターは除外
