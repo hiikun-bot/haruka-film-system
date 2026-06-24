@@ -1,0 +1,14 @@
+-- ==================== creatives.status の CHECK 制約を撤廃 ====================
+-- バグ報告 27aa344a
+--
+-- 旧スキーマで作られた本番 DB には、古いステータス集合のみを許可する
+-- 「creatives_status_check」CHECK 制約が残っている。
+-- 「Wチェックへ回す」で status='Wチェック' に遷移しようとすると
+--   new row for relation "creatives" violates check constraint "creatives_status_check"
+-- で保存に失敗する（Wチェック / Wチェック後修正 等の新ステータスが許可集合に無いため）。
+--
+-- supabase_schema.sql 側の creatives 定義はもともと status TEXT（CHECK 制約なし）で、
+-- 許可ステータスはアプリ側（_CV_STATUS_LIST と遷移ロジック）でガード済み。
+-- そのため本番に残る CHECK 制約は不要 → 撤廃する。
+-- (projects_status_check / invoices_status_check と同じ方針)
+ALTER TABLE creatives DROP CONSTRAINT IF EXISTS creatives_status_check;

@@ -309,6 +309,12 @@ CREATE TABLE IF NOT EXISTS creatives (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- creatives_status_check 制約が存在する場合は削除（許可ステータスはアプリ側でガード済み）。
+-- 旧スキーマ DB に残る古いステータス集合の CHECK 制約により 'Wチェック' 等への遷移が
+-- 「creatives_status_check」違反で失敗していた（バグ報告 27aa344a）。
+-- (projects_status_check / invoices_status_check と同じ方針)
+ALTER TABLE creatives DROP CONSTRAINT IF EXISTS creatives_status_check;
+
 -- ==================== creative_assignments ====================
 CREATE TABLE IF NOT EXISTS creative_assignments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
