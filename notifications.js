@@ -390,6 +390,11 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     .filter(a => a.role === 'producer')
     .map(a => a.users)
     .filter(Boolean);
+  // Wチェック担当者（静止画ダブルチェック・ADR 024）。単数想定だが配列で扱う。
+  const wcheckAssignees = (detail.creative_assignments || [])
+    .filter(a => a.role === 'wcheck')
+    .map(a => a.users)
+    .filter(Boolean);
   // 互換: 既存コードで `assignees` を参照している箇所は editorAssignees の意図
   const assignees = editorAssignees;
   // 案件レベル優先 → 無ければクリエイティブの team レベルにフォールバック
@@ -558,7 +563,21 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   //    オプション: NOTIFY_DCHECK_SECRETARY_CC=true のとき、チームの secretary
   //    （users.role='secretary' かつ team_id 一致 かつ is_active=true）にも個別 DM。
   //    重複（ディレクター兼任など）は seen Set で除外。
-  if (newStatus === 'Dチェック') {
+  // 0) → Wチェック（静止画ダブルチェック・ADR 024）
+  //    Wチェック担当者（creative_assignments.role='wcheck'）へ「Wチェックを依頼されました」。
+  //    全員 DM 未到達ならチャンネル/ルームにフォールバック。in-app 通知も明示 INSERT。
+  if (newStatus === 'Wチェック') {
+    const targets = wcheckAssignees.slice();
+    const { slackBody, cwBody } = tpl('Wチェック依頼', '📥', targets);
+    const sendResult = await sendNotifMulti(targets, slackBody, cwBody);
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Wチェック依頼', '📥', null);
+      const note = '\n（Wチェック担当者未設定または DM ID 未登録のため関係者にメンションしています）';
+      await sendChannelMention(fbSlack + note, fbCw.replace('[/info]', note + '[/info]'));
+    }
+    await insertModifyRequestInApp('Wチェック依頼', targets, 'Wチェック');
+  }
+  else if (newStatus === 'Dチェック') {
     // 1-a) Dチェック宛先: assignments の director を最優先
     //   旧仕様（projects.director_id / teams.director_id）はフォールバック。
     const dCheckTargets = directorAssignees.length > 0
@@ -728,6 +747,19 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     } catch (e) {
       console.warn('[notif] in-app Pチェック notify failed:', e?.message || e);
     }
+  }
+  // 2.5) → Wチェック後修正（Wチェック担当者から制作担当へ差し戻し・ADR 024）
+  //    宛先は editorAssignees（制作担当）。Dチェック後修正と同型。
+  else if (newStatus === 'Wチェック後修正') {
+    const targets = editorAssignees.slice();
+    const { slackBody, cwBody } = tpl('Wチェック修正依頼', '🔁', targets);
+    const sendResult = await sendNotifMulti(targets, slackBody, cwBody);
+    if (!sendResult.anyReachable) {
+      const { slackBody: fbSlack, cwBody: fbCw } = tpl('Wチェック修正依頼', '🔁', null);
+      const note = '\n（編集者未設定または DM ID 未登録のため関係者にメンションしています）';
+      await sendChannelMention(fbSlack + note, fbCw.replace('[/info]', note + '[/info]'));
+    }
+    await insertModifyRequestInApp('Wチェック修正依頼', targets, 'Wチェック後修正');
   }
   // 3) → Dチェック後修正（ボールが製作者側に戻る）
   //    宛先は editorAssignees（編集者・デザイナー）。ディレクターは除外
