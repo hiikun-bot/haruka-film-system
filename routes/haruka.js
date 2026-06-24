@@ -7466,12 +7466,17 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   // Wチェック担当者更新（wcheck_user_ids 複数 または wcheck_user_id 単数・ADR 024）。
   // creative_assignments role='wcheck' を「選択されたユーザーIDセット」に差分同期（director_user_ids と同設計）。
   // 承認後も役割の履歴として assignment 行は残す（ボールは status により自動で外れる）。
+  // ★★★ 一時診断（WCHECKDIAG）: 担当者が保存されない不具合の原因特定用。原因判明後に撤去する。★★★
+  const _wcDiag = { recv_ids: undefined, recv_id: undefined, computed: undefined, insN: 0, insErr: null, ranInsert: false };
+  _wcDiag.recv_ids = Array.isArray(wcheck_user_ids) ? wcheck_user_ids : (wcheck_user_ids === undefined ? 'undef' : typeof wcheck_user_ids + ':' + JSON.stringify(wcheck_user_ids));
+  _wcDiag.recv_id = (wcheck_user_id === undefined) ? 'undef' : wcheck_user_id;
   let wcIdsInput = null;
   if (Array.isArray(wcheck_user_ids)) {
     wcIdsInput = wcheck_user_ids;
   } else if (wcheck_user_id !== undefined) {
     wcIdsInput = wcheck_user_id ? [wcheck_user_id] : [];
   }
+  _wcDiag.computed = wcIdsInput;
   if (wcIdsInput !== null) {
     const desiredIds = [...new Set(wcIdsInput.filter(Boolean))];
     if (desiredIds.length === 0) {
@@ -7490,15 +7495,25 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         if (dErr) console.warn('[creative_assignments][wcheck] delete failed:', dErr.message);
       }
       if (toInsertIds.length > 0) {
+        _wcDiag.ranInsert = true;
         const { data: wcUsers } = await supabase.from('users').select('id, rank').in('id', toInsertIds);
         const rankById = new Map((wcUsers || []).map(u => [u.id, u.rank || null]));
         const rows = toInsertIds.map(uid => ({
           creative_id: req.params.id, user_id: uid, role: 'wcheck', rank_applied: rankById.get(uid) || null,
         }));
         const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
+        _wcDiag.insN = iErr ? 0 : rows.length;
+        _wcDiag.insErr = iErr ? iErr.message : null;
         if (iErr) console.warn('[creative_assignments][wcheck] insert failed:', iErr.message);
       }
     }
+  }
+  // ★★★ 一時診断: Wチェック遷移時に診断結果を wcheck_comment 末尾へ書き出す（私がDB読取で確認）。★★★
+  if (updateData.status === 'Wチェック' && beforeStatus !== 'Wチェック') {
+    try {
+      const tag = `[[WCHECKDIAG recvIds=${JSON.stringify(_wcDiag.recv_ids)} recvId=${JSON.stringify(_wcDiag.recv_id)} computed=${JSON.stringify(_wcDiag.computed)} ranInsert=${_wcDiag.ranInsert} insN=${_wcDiag.insN} insErr=${_wcDiag.insErr}]]`;
+      await supabase.from('creatives').update({ wcheck_comment: (updateData.wcheck_comment || '') + ' ' + tag }).eq('id', req.params.id);
+    } catch (e) { console.warn('[WCHECKDIAG] write failed:', e?.message || e); }
   }
 
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
