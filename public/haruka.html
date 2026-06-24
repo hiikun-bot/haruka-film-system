@@ -10947,7 +10947,14 @@ function applyCreativeDefaultsFromUser(u) {
     return Array.isArray(v) ? v : null;
   };
   const stArr = parseArr(u.creative_default_statuses);
-  if (Array.isArray(stArr)) cvAdvFilters.statuses = new Set(stArr.filter(s => _CV_STATUS_LIST.includes(s)));
+  if (Array.isArray(stArr)) {
+    const _stSet = new Set(stArr.filter(s => _CV_STATUS_LIST.includes(s)));
+    // 後から追加されたステータス（Wチェック等）は、保存済み既定に含まれていなくても既定で表示する。
+    // 保存時点では存在せず「意図的に外した」わけではないため、Wチェックのクリエイティブが
+    // 一覧・検索から消えてしまう不具合を防ぐ（バグ報告: Wチェックにするとデータが検索できない）。
+    ['Wチェック', 'Wチェック後修正'].forEach(s => _stSet.add(s));
+    cvAdvFilters.statuses = _stSet;
+  }
   const ballArr = parseArr(u.creative_default_ball_types);
   if (Array.isArray(ballArr)) cvAdvFilters.ballTypes = new Set(ballArr.filter(s => _CV_BALL_LIST.includes(s)));
 }
