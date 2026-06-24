@@ -6456,21 +6456,23 @@ router.get('/creatives/:id', async (req, res) => {
   // (F) Wチェック情報（ADR 024）: 静止画判定・要否実効値・現在のWチェック担当者
   try {
     const elig = await resolveWcheckEligibility(data.id);
-    const wAssign = (data.creative_assignments || []).find(a => a.role === 'wcheck' && a.users);
+    const wAssignsAll = (data.creative_assignments || []).filter(a => a.role === 'wcheck' && a.users).map(a => a.users);
     data.wcheck = {
       is_image: elig.isImage,
       required: elig.required,             // 実効値（このクリエでWチェックするか）
       project_default: elig.projectDefault, // 案件の初期値（参考表示用）
       creative_override: elig.creativeOverride, // このクリエ個別の明示値（null=案件初期値を継承）
       project_id: elig.projectId || data.project_id || null,
-      assignee: wAssign?.users || null,
+      assignee: wAssignsAll[0] || null,    // 代表（旧互換）
+      assignees: wAssignsAll,              // 全員（複数対応）
+      assignee_ids: wAssignsAll.map(u => u.id).filter(Boolean),
       requested_by: data.wcheck_requested_by || null,
       requested_at: data.wcheck_requested_at || null,
       comment: data.wcheck_comment || null,
     };
   } catch (e) {
     console.warn('[creatives/:id] wcheck info 失敗:', e.message);
-    data.wcheck = { is_image: false, required: false, project_default: false, creative_override: null, project_id: data.project_id || null, assignee: null, requested_by: null, requested_at: null, comment: null };
+    data.wcheck = { is_image: false, required: false, project_default: false, creative_override: null, project_id: data.project_id || null, assignee: null, assignees: [], assignee_ids: [], requested_by: null, requested_at: null, comment: null };
   }
 
   res.json(data);
@@ -6837,7 +6839,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_ids,
     producer_user_ids,
     // Wチェック（ADR 024・静止画ダブルチェック）
-    wcheck_user_id,        // Wチェック担当者（単数）。null/空で割当解除
+    wcheck_user_id,        // Wチェック担当者（単数・旧互換）。null/空で割当解除
+    wcheck_user_ids,       // Wチェック担当者（複数）。配列で差分同期
     wcheck_comment,        // Wチェック依頼コメント
     wcheck_required,       // このクリエ個別の要否（true/false/null=案件初期値を継承）。project.create_edit 権限要
     force_delivered_reason,
@@ -7007,9 +7010,11 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
       if (!_elig.isImage) {
         return res.status(400).json({ error: 'Wチェックは静止画クリエイティブでのみ利用できます' });
       }
-      // 担当ディレクターは Wチェック担当者に選べない（最低限の必須制御。フロントは全Dをグレーアウト）
-      const _wcTarget = wcheck_user_id || null;
-      if (_wcTarget) {
+      // 担当ディレクターは Wチェック担当者に選べない（複数指名のいずれかが担当Dなら拒否）
+      const _wcTargets = Array.isArray(wcheck_user_ids)
+        ? wcheck_user_ids.filter(Boolean)
+        : (wcheck_user_id ? [wcheck_user_id] : []);
+      if (_wcTargets.length) {
         const _dirSet = new Set();
         const { data: _cw } = await supabase
           .from('creatives').select('projects(director_id)')
@@ -7019,7 +7024,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
           .from('creative_assignments').select('user_id')
           .eq('creative_id', req.params.id).eq('role', 'director');
         (_dAssigns || []).forEach(r => r.user_id && _dirSet.add(r.user_id));
-        if (_dirSet.has(_wcTarget)) {
+        if (_wcTargets.some(id => _dirSet.has(id))) {
           return res.status(400).json({ error: '担当ディレクターはWチェック担当者に選択できません' });
         }
       }
@@ -7448,21 +7453,41 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // Wチェック担当者更新（wcheck_user_id 単数・ADR 024）。null/空 で割当解除。
+  // Wチェック担当者更新（wcheck_user_ids 複数 または wcheck_user_id 単数・ADR 024）。
+  // creative_assignments role='wcheck' を「選択されたユーザーIDセット」に差分同期（director_user_ids と同設計）。
   // 承認後も役割の履歴として assignment 行は残す（ボールは status により自動で外れる）。
-  if (wcheck_user_id !== undefined) {
-    const desiredWc = wcheck_user_id || null;
-    await supabase.from('creative_assignments')
-      .delete().eq('creative_id', req.params.id).eq('role', 'wcheck');
-    if (desiredWc) {
-      const { data: wcU } = await supabase.from('users').select('rank').eq('id', desiredWc).maybeSingle();
-      const { error: wcErr } = await supabase.from('creative_assignments').insert({
-        creative_id: req.params.id,
-        user_id: desiredWc,
-        role: 'wcheck',
-        rank_applied: wcU?.rank || null,
-      });
-      if (wcErr) console.warn('[creative_assignments][wcheck] insert failed:', wcErr.message);
+  let wcIdsInput = null;
+  if (Array.isArray(wcheck_user_ids)) {
+    wcIdsInput = wcheck_user_ids;
+  } else if (wcheck_user_id !== undefined) {
+    wcIdsInput = wcheck_user_id ? [wcheck_user_id] : [];
+  }
+  if (wcIdsInput !== null) {
+    const desiredIds = [...new Set(wcIdsInput.filter(Boolean))];
+    if (desiredIds.length === 0) {
+      await supabase.from('creative_assignments')
+        .delete().eq('creative_id', req.params.id).eq('role', 'wcheck');
+    } else {
+      const { data: existing } = await supabase
+        .from('creative_assignments').select('id, user_id')
+        .eq('creative_id', req.params.id).eq('role', 'wcheck');
+      const existingIds = new Set((existing || []).map(r => r.user_id).filter(Boolean));
+      const desiredSet = new Set(desiredIds);
+      const toDelete = (existing || []).filter(r => !desiredSet.has(r.user_id)).map(r => r.id);
+      const toInsertIds = desiredIds.filter(id => !existingIds.has(id));
+      if (toDelete.length > 0) {
+        const { error: dErr } = await supabase.from('creative_assignments').delete().in('id', toDelete);
+        if (dErr) console.warn('[creative_assignments][wcheck] delete failed:', dErr.message);
+      }
+      if (toInsertIds.length > 0) {
+        const { data: wcUsers } = await supabase.from('users').select('id, rank').in('id', toInsertIds);
+        const rankById = new Map((wcUsers || []).map(u => [u.id, u.rank || null]));
+        const rows = toInsertIds.map(uid => ({
+          creative_id: req.params.id, user_id: uid, role: 'wcheck', rank_applied: rankById.get(uid) || null,
+        }));
+        const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
+        if (iErr) console.warn('[creative_assignments][wcheck] insert failed:', iErr.message);
+      }
     }
   }
 
@@ -7508,7 +7533,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_id !== undefined ||
     director_user_ids !== undefined ||
     producer_user_ids !== undefined ||
-    wcheck_user_id !== undefined
+    wcheck_user_id !== undefined ||
+    wcheck_user_ids !== undefined
   ) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
@@ -13683,12 +13709,15 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer, opts = {}) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
-  // Wチェック担当者（静止画ダブルチェック・ADR 024）。単数。代表のみ。
-  const wcheckAssign = (assignments || []).find(a => a.role === 'wcheck' && a.users)
-                    || (assignments || []).find(a => a.role === 'wcheck');
-  const wcheckName = wcheckAssign?.users?.full_name || 'Wチェック担当';
-  const wcheckId   = wcheckAssign?.users?.id || null;
-  const wcheckUser = wcheckAssign?.users || null;
+  // Wチェック担当者（静止画ダブルチェック・ADR 024）。複数アサイン可（代表＝先頭 + 全員）。
+  const wcheckAssignsAll = (assignments || []).filter(a => a.role === 'wcheck' && a.users);
+  const wcheckAssign = wcheckAssignsAll[0] || (assignments || []).find(a => a.role === 'wcheck');
+  const wcheckName  = wcheckAssign?.users?.full_name || 'Wチェック担当';
+  const wcheckId    = wcheckAssign?.users?.id || null;
+  const wcheckUser  = wcheckAssign?.users || null;
+  const wcheckNames = wcheckAssignsAll.map(a => a.users?.full_name).filter(Boolean);
+  const wcheckIds   = wcheckAssignsAll.map(a => a.users?.id).filter(Boolean);
+  const wcheckUsers = wcheckAssignsAll.map(a => a.users).filter(Boolean);
   // Dチェック・Pチェック は複数アサイン可。代表（先頭）に加え holders[] / user_ids[] / holder_users[] を全員分返す。
   const dirAssignsAll  = (assignments || []).filter(a => a.role === 'director'  && a.users);
   const prodAssignsAll = (assignments || []).filter(a => a.role === 'producer' && a.users);
@@ -13775,8 +13804,8 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     '台本制作': single(editorName, 'editor', editorId, editorUser),
     '素材・ナレ作成': single(editorName, 'editor', editorId, editorUser),
     '編集': single(editorName, 'editor', editorId, editorUser),
-    // Wチェック（ADR 024）: Wチェック担当者が単独でボールを持つ。
-    'Wチェック': single(wcheckName, 'wcheck', wcheckId, wcheckUser),
+    // Wチェック（ADR 024）: Wチェック担当者（複数可）がボールを持つ。
+    'Wチェック': multi(wcheckName, 'wcheck', wcheckId, wcheckUser, wcheckNames, wcheckIds, wcheckUsers),
     // Wチェックからの修正依頼で制作担当へ差し戻し（Dチェック後修正と同型）。
     'Wチェック後修正': single(editorName, 'editor', editorId, editorUser),
     'Dチェック': multi(directorName, 'director', directorId, directorUser, directorNames, directorIds, directorUsers),

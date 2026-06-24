@@ -32284,7 +32284,9 @@ function updateCreativeStepIndicator(status) {
   const _wc = currentCreativeDetail?.wcheck || {};
   const wcheckActive = !!(_wc.is_image && _wc.required);
   const _myId = currentUser?.id;
-  const isWcheckAssignee = !!(_wc.assignee && _myId && _wc.assignee.id === _myId);
+  // Wチェック担当者は複数可。assignee_ids（全員）に自分が含まれるか。旧 assignee（代表）も後方互換で見る。
+  const _wcIds = Array.isArray(_wc.assignee_ids) ? _wc.assignee_ids : [];
+  const isWcheckAssignee = !!_myId && (_wcIds.includes(_myId) || (_wc.assignee && _wc.assignee.id === _myId));
   const isWcheckAdmin = (typeof isTopAdmin === 'function' && isTopAdmin()) || effectiveRole() === 'admin';
   // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
@@ -33012,9 +33014,9 @@ async function advanceCreativeStatus() {
   // 遷移先が「Wチェック」のときは Wチェック担当者選択モーダルを表示（ADR 024）
   if (target === 'Wチェック') {
     openWcheckPicker({
-      onSubmit: async ({ wcheckUserId, comment }) => {
+      onSubmit: async ({ wcheckUserIds, comment }) => {
         await saveCreativeDetail('Wチェック', {
-          wcheck_user_id: wcheckUserId,
+          wcheck_user_ids: wcheckUserIds,
           wcheck_comment: comment || null,
           ...(_filelessExtra || {}),
         });
@@ -37614,7 +37616,7 @@ function updateWcheckToggleRow(c) {
 }
 
 // ==================== Wチェック担当者選択（ADR 024）====================
-// HARUKA 標準の MemberPicker（人選択UI）を流用。単数選択・初期はデザイナーで絞り込み。
+// HARUKA 標準の MemberPicker（人選択UI）を流用。複数選択可・初期はデザイナーで絞り込み。
 // 担当ディレクター・制作担当は除外。選択後に依頼コメントを尋ねてから依頼する。
 function openWcheckPicker({ onSubmit } = {}) {
   if (!currentCreativeDetail) return;
@@ -37633,18 +37635,19 @@ function openWcheckPicker({ onSubmit } = {}) {
     .filter(a => ['editor','designer','director_as_editor'].includes(a.role) && a.users).forEach(a => excludeIds.push(a.users.id));
 
   MemberPicker.open(null, {
-    mode: 'single',
-    title: 'Wチェック担当者を選択',
+    mode: 'multi',               // 複数人にWチェックを依頼できる
+    title: 'Wチェック担当者を選択（複数可）',
     allowedRoles: null,          // 全ロールのchipを出す（切り替え可）
     defaultRoles: ['designer'],  // 初期はデザイナーで絞り込み（Wチェックは基本デザイナー）
     excludeIds,                  // 担当ディレクター・制作担当は一覧に出さない
     showInactive: false,
-    onChange: async (userId) => {
-      if (!userId) return; // クリア/未選択
+    onChange: async (userIds) => {
+      const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);
+      if (!ids.length) return; // 未選択
       const comment = await _wcheckRequestCommentPrompt();
       if (comment === null) return; // コメント画面でキャンセル
       try {
-        await onSubmit?.({ wcheckUserId: userId, comment });
+        await onSubmit?.({ wcheckUserIds: ids, comment });
       } catch (e) {
         console.warn('[wcheck] submit failed:', e?.message || e);
       }
