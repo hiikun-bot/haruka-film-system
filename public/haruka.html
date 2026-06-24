@@ -38625,9 +38625,15 @@ async function _showDCheckSubmitConfirm({ directorIds, extraIds } = {}) {
   // (cd-editor-reply) を読む。通常時（制作中→Dチェック）は cd-comment-field が編集者→ディレクター宛のメモ。
   const REVISION_STAGES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isRevision = REVISION_STAGES.includes(currentCreativeDetail?.status);
-  const commentEl = isRevision
-    ? document.getElementById('cd-editor-reply')
-    : document.getElementById('cd-comment-field');
+  // Wチェック承認→Dチェックでは、今まさに送るコメントは Wチェック担当者の
+  // 承認/修正指示コメント欄(cd-director-note)。cd-comment-field には前ラウンドの値が
+  // 残っており、それを表示すると「前回Wチェック修正時のコメント」が出てしまう（バグ報告）。
+  const isWcheckApprove = currentCreativeDetail?.status === 'Wチェック';
+  const commentEl = isWcheckApprove
+    ? document.getElementById('cd-director-note')
+    : isRevision
+      ? document.getElementById('cd-editor-reply')
+      : document.getElementById('cd-comment-field');
   let commentText = '';
   try {
     commentText = (commentEl?.value || '').trim();
