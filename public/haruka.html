@@ -6105,9 +6105,20 @@ window.showPage = window.showPage || function(name, btn) {
               <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span>
                 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（マスタ駆動・カテゴリ管理から追加可能）</span>
               </label>
-              <select class="form-select" id="p-primary-category" required>
+              <select class="form-select" id="p-primary-category" required onchange="updateProjectWcheckRow(true)">
                 <option value="">読込中...</option>
               </select>
+            </div>
+          </div>
+          <!-- Wチェック要否（静止画案件のみ表示・案件単位・初期値あり・ADR 024） -->
+          <div class="form-row" id="p-wcheck-row" style="margin-bottom:10px;display:none">
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+                <input type="checkbox" id="p-wcheck-required" style="margin:0">
+                <span>この案件でWチェックを行う（Dチェックの前にダブルチェック）
+                  <span style="font-size:11px;color:var(--text-muted)">／静止画案件の初期値はあり</span>
+                </span>
+              </label>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
@@ -8122,11 +8133,11 @@ window.showPage = window.showPage || function(name, btn) {
       <!-- ステップインジケーター -->
       <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
 
-      <!-- Wチェック要否トグル（静止画のみ・ADR 024）。権限者だけ操作可。 -->
+      <!-- Wチェック要否トグル（静止画案件のみ・案件単位・ADR 024）。権限者だけ操作可。変更時は確認あり。 -->
       <div id="cd-wcheck-toggle-row" style="display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted)">
         <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="cd-wcheck-required" style="margin:0">
-          <span>この静止画でWチェックを行う（Dチェックの前にダブルチェック）</span>
+          <span>この<strong>案件</strong>でWチェックを行う（Dチェックの前にダブルチェック／案件全体に適用）</span>
         </label>
         <span id="cd-wcheck-toggle-saving" style="display:none;font-size:11px">保存中…</span>
       </div>
@@ -15702,6 +15713,22 @@ function populateCategorySelect(selectEl, selectedId) {
   if (selectedId) selectEl.value = selectedId;
 }
 
+// Wチェック要否行（案件編集モーダル）の表示制御。静止画(image)案件のときだけ表示。
+// categoryChanged=true（カテゴリselectを切り替えた直後）は初期値「あり」にする（静止画の既定）。
+function updateProjectWcheckRow(categoryChanged) {
+  const row = document.getElementById('p-wcheck-row');
+  const cb  = document.getElementById('p-wcheck-required');
+  const sel = document.getElementById('p-primary-category');
+  if (!row || !cb || !sel) return;
+  const catId = sel.value || '';
+  const cat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+    ? _categoriesCache.find(c => c && c.id === catId) : null;
+  const isImage = cat?.code === 'image';
+  if (!isImage) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+  if (categoryChanged) cb.checked = true; // 静止画に切り替えたら初期値あり
+}
+
 // ==================== カテゴリ別フィールド設定 (ADR 012) ====================
 // /api/categories/:id/fields のクライアント側キャッシュ。
 // 詳細モーダル open 時に loadCategoryFields(category_id) を呼ぶと、
@@ -17128,6 +17155,10 @@ function openProjectModal(preClientId) {
     populateCategorySelect(sel, null);
     const def = getCategoryByCode('video');
     if (def) sel.value = def.id;
+    // 新規: 静止画を選んだら初期値あり。既定の動画では行は隠れる。
+    const _cbWNew = document.getElementById('p-wcheck-required');
+    if (_cbWNew) _cbWNew.checked = true;
+    updateProjectWcheckRow(false);
   });
   // タグ入力初期化
   const pTagInputNew = document.getElementById('p-tags-input');
@@ -17245,6 +17276,15 @@ function openEditProject(p) {
       const cat = getCategoryByCode('video');
       if (cat) sel.value = cat.id;
     }
+    // Wチェック要否: 案件の現在値を反映（null/未設定 のとき image なら既定 true）
+    const _cbWEdit = document.getElementById('p-wcheck-required');
+    if (_cbWEdit) {
+      const selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+        ? _categoriesCache.find(c => c && c.id === (p.primary_category_id || sel.value)) : null;
+      const isImg = selCat?.code === 'image';
+      _cbWEdit.checked = (p.wcheck_required === null || p.wcheck_required === undefined) ? isImg : !!p.wcheck_required;
+    }
+    updateProjectWcheckRow(false);
   });
   // タグ初期値
   const pTagInputEdit = document.getElementById('p-tags-input');
@@ -20912,6 +20952,17 @@ async function submitProject() {
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（編集時に明示送信、新規時は空）
   const creatives_export_sheet_url = document.getElementById('p-creatives-export-sheet-url')?.value.trim() || null;
 
+  // ADR 024: Wチェック要否（案件単位）。静止画案件のときだけチェック状態を送る。
+  // 静止画以外は null（カテゴリ既定継承＝不要）。
+  let wcheck_required = null;
+  {
+    const _selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+      ? _categoriesCache.find(c => c && c.id === primary_category_id) : null;
+    if (_selCat?.code === 'image') {
+      wcheck_required = !!document.getElementById('p-wcheck-required')?.checked;
+    }
+  }
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -20920,7 +20971,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, wcheck_required })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -37473,35 +37524,52 @@ function updateWcheckToggleRow(c) {
   }
   row.style.display = 'flex';
   cb.checked = !!wc.required;
-  cb.disabled = false;
   // 既に Wチェック中／後修正のときはトグルで途中変更させない（混乱防止）
   const midFlow = ['Wチェック', 'Wチェック後修正'].includes(c?.status);
   cb.disabled = midFlow;
   row.title = midFlow ? 'Wチェック進行中は要否を変更できません' : '';
+  // 要否は【案件単位】。誤操作防止のため変更時は確認ダイアログを挟む。
+  const projectId = wc.project_id || c?.project_id || c?.projects?.id || null;
   cb.onchange = async () => {
+    const desired = cb.checked;   // 入れようとした値
+    cb.checked = !desired;        // いったん戻す（確認後に確定）
+    if (!projectId) { showToast('案件が特定できませんでした', 'error'); return; }
+    const ok = await showConfirmDialog({
+      title: desired ? 'Wチェックを有効にしますか？' : 'Wチェックを外しますか？',
+      message: desired
+        ? 'この案件の静止画クリエイティブで、Dチェックの前にWチェック（ダブルチェック）を行うようにします。\n\n※ クリエイティブ単位ではなく案件全体に適用されます。'
+        : 'この案件でWチェックを行わないようにします（制作からDチェックへ直接進む運用になります）。\n\n※ 案件全体に適用されます。誤って外していないかご確認ください。',
+      okLabel: desired ? 'Wチェックを有効にする' : 'Wチェックを外す',
+      okVariant: desired ? undefined : 'danger',
+    });
+    if (!ok) return; // キャンセル → 元のまま
     const saving = document.getElementById('cd-wcheck-toggle-saving');
     if (saving) saving.style.display = '';
     cb.disabled = true;
     try {
-      const res = await apiFetch(`${API}/creatives/${c.id}`, {
+      const res = await apiFetch(`${API}/projects/${projectId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wcheck_required: cb.checked }),
+        body: JSON.stringify({ wcheck_required: desired }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
         showToast('保存エラー: ' + translateError(e?.error), 'error');
-        cb.checked = !cb.checked; // 失敗時はロールバック
       } else {
-        if (currentCreativeDetail?.wcheck) currentCreativeDetail.wcheck.required = cb.checked;
+        cb.checked = desired;
+        if (currentCreativeDetail?.wcheck) currentCreativeDetail.wcheck.required = desired;
+        // 案件キャッシュ（allProjects）も更新
+        try {
+          const pj = (typeof allProjects !== 'undefined' && Array.isArray(allProjects)) ? allProjects.find(p => p.id === projectId) : null;
+          if (pj) pj.wcheck_required = desired;
+        } catch (_) {}
         try { _cdInvalidateCache(c.id); } catch (_) {}
         // 進捗バー（Wチェック段の有無）を再描画
         try { updateCreativeStepIndicator(currentCreativeDetail.status); } catch (_) {}
-        showToast(cb.checked ? 'この静止画はWチェックを行います' : 'この静止画はWチェック不要にしました', 'success');
+        showToast(desired ? 'この案件はWチェックを行います' : 'この案件はWチェック不要にしました', 'success');
       }
     } catch (err) {
       showToast('保存に失敗: ' + (err?.message || err), 'error');
-      cb.checked = !cb.checked;
     } finally {
       if (saving) saving.style.display = 'none';
       cb.disabled = midFlow;

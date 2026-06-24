@@ -181,22 +181,24 @@ CREATE INDEX IF NOT EXISTS idx_creatives_category
 
 -- ==================== Wチェック（ADR 024 / バグ報告 aa11784a）====================
 -- 静止画(image)専用の「Wチェック」工程。詳細: docs/design/decisions/024-wcheck-status-for-image-creatives.md
---   ・カテゴリ既定 wcheck_default（image=true）＋ クリエ個別上書き wcheck_required（NULL=既定継承）
+--   ・要否は【案件(project)単位】: projects.wcheck_required ?? creative_categories.wcheck_default(image=true)
 --   ・ステータス 'Wチェック' / 'Wチェック後修正'、creative_assignments.role='wcheck' は値追加のみ（CHECK制約なし）
 ALTER TABLE creative_categories
   ADD COLUMN IF NOT EXISTS wcheck_default BOOLEAN NOT NULL DEFAULT false;
 UPDATE creative_categories SET wcheck_default = true WHERE code = 'image';
+-- 案件単位の要否フラグ（NULL=カテゴリ既定を継承）。静止画案件は基本「あり」。
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS wcheck_required BOOLEAN;
+UPDATE projects SET wcheck_required = true
+WHERE wcheck_required IS NULL
+  AND primary_category_id IN (SELECT id FROM creative_categories WHERE code = 'image');
+-- クリエイティブ側の依頼メタ（要否は廃止し案件単位へ。列は残置・resolutionから除外）
 ALTER TABLE creatives
   ADD COLUMN IF NOT EXISTS wcheck_required     BOOLEAN,
   ADD COLUMN IF NOT EXISTS wcheck_requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS wcheck_requested_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS wcheck_comment      TEXT;
--- 既存の静止画クリエは「不要」で凍結（新規分のみ NULL→カテゴリ既定 true を継承）
-UPDATE creatives c SET wcheck_required = false
-WHERE c.wcheck_required IS NULL
-  AND COALESCE(c.category_id,
-        (SELECT p.primary_category_id FROM projects p WHERE p.id = c.project_id)
-      ) IN (SELECT id FROM creative_categories WHERE code = 'image');
+UPDATE creatives SET wcheck_required = NULL WHERE wcheck_required IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_creative_assignments_wcheck
   ON creative_assignments (creative_id) WHERE role = 'wcheck';
 
