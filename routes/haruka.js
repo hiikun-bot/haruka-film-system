@@ -7528,7 +7528,10 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         creative: { id: req.params.id },
         oldStatus: beforeStatus,
         newStatus: updateData.status,
-        comment: req.body.review_comment || req.body.director_comment || req.body.client_comment || req.body.editor_comment || null,
+        // Wチェック依頼時は依頼コメント(wcheck_comment)を通知に載せる（editor_comment 等では空になる）
+        comment: (updateData.status === 'Wチェック')
+          ? (req.body.wcheck_comment || req.body.editor_comment || null)
+          : (req.body.review_comment || req.body.director_comment || req.body.client_comment || req.body.editor_comment || null),
         actorUserId: req.user?.id || null,
       }).catch(e => console.warn('[notif] failed:', e.message));
     } catch (e) {
