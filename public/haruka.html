@@ -4649,7 +4649,7 @@ window.showPage = window.showPage || function(name, btn) {
             <div class="form-group" style="margin-bottom:0" data-creative-field="filename">
               <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
               <div style="display:flex;gap:6px">
-                <input class="form-input" id="c-file-name" placeholder="訴求軸選択後に自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
+                <input class="form-input" id="c-file-name" placeholder="案件のテンプレートから自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
                 <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
               </div>
               <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
@@ -24886,6 +24886,7 @@ async function onProjectChange(projectId) {
     const _statusEl = document.getElementById('filename-status');
     if (_statusEl) _statusEl.textContent = '';
     _autoFileNameDone = false;
+    _lastAutoFileName = ''; // 案件が変わったら手動編集ガードもリセット（新案件のテンプレで再生成可能に）
   }
   onProjectChange._lastProjectId = projectId || '';
 
@@ -24941,28 +24942,30 @@ async function onProjectChange(projectId) {
 }
 
 let _autoFileNameDone = false;
+// 直近に自動生成したファイル名。ユーザーが手動編集したかどうかの判定に使う
+// （field の現値がこれと一致 or 空のときだけ自動再生成で上書きしてよい）。
+let _lastAutoFileName = '';
 
-// 全フィールドが揃ったら一度だけ自動生成
+// ADR 007: 案件に当たっているテンプレマスター駆動で自動生成する。
+// 訴求軸・商材・媒体などは任意トークン（未確定でも renderFilename が空欄を詰める）なので、
+// 案件さえ決まっていれば生成する。フィールド変更のたびに、手動編集されていなければ再生成する。
 async function tryAutoGenerateFileName() {
-  if (_autoFileNameDone) return;
   const cat = (typeof getEffectiveCreativeCategory === 'function') ? getEffectiveCreativeCategory() : null;
   // LP/HP/LINE/その他は別系統のファイル名（商材/訴求軸を要求しない）。ここでは何もしない。
   if (cat === 'lp' || cat === 'hp' || cat === 'line' || cat === 'other') return;
-  const projectId    = document.getElementById('c-project-id')?.value;
-  const appealTypeId = document.getElementById('c-appeal-type')?.value;
-  const productId    = document.getElementById('c-product-id')?.value;
-  const mediaCode    = document.getElementById('c-media-code')?.value;
-  const creativeFmt  = document.getElementById('c-creative-fmt')?.value;
-  const creativeSize = document.getElementById('c-creative-size')?.value;
-  if (!projectId || !appealTypeId || !productId || !mediaCode || !creativeFmt || !creativeSize) return;
-  _autoFileNameDone = true;
+  const projectId = document.getElementById('c-project-id')?.value;
+  if (!projectId) return;
+  // 手動編集ガード: 現在のファイル名が「直近の自動生成値」でも空でもないなら、ユーザーが
+  // 手で書き換えたとみなして自動再生成しない（↺再生成ボタンなら generateFileName を直接呼ぶ）。
+  const fileEl = document.getElementById('c-file-name');
+  const cur = (fileEl?.value || '').trim();
+  if (cur && cur !== _lastAutoFileName) return;
   await generateFileName();
 }
 
 async function autoGenerateFileName() {
   const projectId = document.getElementById('c-project-id').value;
-  const appealTypeId = document.getElementById('c-appeal-type').value;
-  if (!projectId || !appealTypeId) return;
+  if (!projectId) return;
   await generateFileName();
 }
 
@@ -24981,7 +24984,8 @@ async function generateFileName() {
   const projectId = document.getElementById('c-project-id').value;
   const appealTypeId = document.getElementById('c-appeal-type').value;
   const statusEl = document.getElementById('filename-status');
-  if (!projectId || !appealTypeId) return;
+  // 訴求軸は任意。案件さえ決まっていればテンプレマスター駆動で生成する。
+  if (!projectId) return;
 
   // 商材コードを選択肢テキストから取得（"PA001 - 名前" → "PA001"）
   const prodSel = document.getElementById('c-product-id');
@@ -24997,18 +25001,43 @@ async function generateFileName() {
   const res = await apiFetch(`${API}/projects/${projectId}/generate-filename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appeal_type_id: appealTypeId, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag })
+    body: JSON.stringify({ appeal_type_id: appealTypeId || null, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag })
   });
   if (res.ok) {
     const data = await res.json();
     document.getElementById('c-file-name').value = data.file_name;
-    statusEl.style.color = 'var(--em-dark)';
-    statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`;
+    _lastAutoFileName = data.file_name || '';
+    if (statusEl) {
+      statusEl.style.color = 'var(--em-dark)';
+      statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`;
+    }
+    // 凡例（形式の説明文）を、この案件に当たっているテンプレ名・トークン並びで更新する
+    updateFilenameFormatHint(data);
   } else {
     const e = await res.json();
-    statusEl.style.color = '#E24B4A';
-    statusEl.textContent = e.error;
+    if (statusEl) {
+      statusEl.style.color = '#E24B4A';
+      statusEl.textContent = e.error;
+    }
   }
+}
+
+// ファイル名の凡例（#filename-format-hint）を、案件に設定されたテンプレマスターの
+// 名称＋トークン並びで動的に更新する。固定文だと案件ごとのテンプレ設定と食い違うため。
+function updateFilenameFormatHint(data) {
+  const hint = document.getElementById('filename-format-hint');
+  if (!hint) return;
+  const note = '※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
+  let head;
+  if (data && data.template_name && data.format_hint) {
+    head = `形式: テンプレート「${esc(data.template_name)}」= ${esc(data.format_hint)}　／　手動編集可`;
+  } else if (data && data.format_hint) {
+    head = `形式: ${esc(data.format_hint)}　／　手動編集可`;
+  } else {
+    // テンプレ未設定（フォールバック生成）時の汎用表記
+    head = '形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可';
+  }
+  hint.innerHTML = `${head}<br>${note}`;
 }
 
 function getLastDayOfMonth() {
@@ -25251,13 +25280,16 @@ function applyCreativeTypeVisibility(_typeArg) {
   }
 
   // ファイル名フォーマット説明文を種別に応じて差し替え
+  // LP/HP は固定形式。動画/静止画は案件のテンプレマスター駆動なので、
+  // 暫定の固定文を出した上で、直後の自動生成（generateFileName）が
+  // updateFilenameFormatHint() で案件のテンプレ名・トークン並びに置き換える。
   const hint = document.getElementById('filename-format-hint');
   if (hint) {
     if (isLpOrHp) {
       const tag = (cat === 'lp') ? 'LP' : 'HP';
       hint.innerHTML = `形式: YYMMDD_案件名_${tag}_連番　／　手動編集可<br>※ 自動生成名はそのままGoogleドライブのファイル名・一覧表示名として使われます。`;
     } else if (isVideoOrDesign) {
-      hint.innerHTML = '形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
+      hint.innerHTML = '形式: 案件のファイル名テンプレートから自動生成　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
     }
   }
 
@@ -25267,6 +25299,13 @@ function applyCreativeTypeVisibility(_typeArg) {
     if (fileEl && !fileEl.value.trim()) {
       generateLpHpFilename(cat);
     }
+  }
+
+  // 動画 / 静止画 も案件選択直後に、テンプレマスター駆動でファイル名を自動生成する。
+  // 訴求軸・商材などが未確定でも生成（任意トークンは空欄として詰められる）。
+  // 手動編集済み（現値が直近の自動生成値でない）のときは tryAutoGenerateFileName が上書きしない。
+  if (isVideoOrDesign) {
+    tryAutoGenerateFileName();
   }
 }
 

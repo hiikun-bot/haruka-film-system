@@ -13999,7 +13999,8 @@ router.delete('/projects/:id/appeal-types/:patId', requireAuth, requirePermissio
 
 router.post('/projects/:id/generate-filename', async (req, res) => {
   const { appeal_type_id, production_date, product_code, media_code, creative_fmt, creative_size } = req.body;
-  if (!appeal_type_id) return res.status(400).json({ error: '訴求タイプは必須です' });
+  // ADR 007: 訴求軸はファイル名テンプレートの 1 トークンに過ぎず、フォーム上も「任意・後で設定可」。
+  // 未確定でもテンプレマスター駆動でファイル名を生成する（appeal_axis トークンは renderFilename が空欄として詰める）。
 
   const { data: project, error: pErr } = await supabase
     .from('projects')
@@ -14008,12 +14009,16 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     .single();
   if (pErr) return res.status(500).json({ error: pErr.message });
 
-  const { data: appealType, error: aErr } = await supabase
-    .from('client_appeal_axes')
-    .select('*')
-    .eq('id', appeal_type_id)
-    .single();
-  if (aErr || !appealType) return res.status(400).json({ error: '訴求タイプが見つかりません' });
+  // 訴求軸は任意。指定があるときだけ引く（見つからなくても 400 にせず無視して続行）。
+  let appealType = null;
+  if (appeal_type_id) {
+    const { data: at } = await supabase
+      .from('client_appeal_axes')
+      .select('*')
+      .eq('id', appeal_type_id)
+      .single();
+    if (at) appealType = at;
+  }
 
   const clientCode = (project.clients?.client_code ||
     project.clients?.name?.slice(0, 3).toUpperCase() || 'UNK')
@@ -14050,15 +14055,18 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     while (usedSeqs.includes(nextSeq)) nextSeq++;
   }
 
-  // 訴求タイプの連番
-  const nextAppealSeq = (allCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length + 1;
+  // 訴求タイプの連番（訴求軸未指定のときは 1 とみなす）
+  const nextAppealSeq = appeal_type_id
+    ? (allCreatives || []).filter(c => c.appeal_type_id === appeal_type_id).length + 1
+    : 1;
 
   const seqStr3 = String(nextSeq).padStart(3, '0');
   const seqStr  = String(nextSeq).padStart(serialDigits, '0');
   const appealSeqStr = String(nextAppealSeq).padStart(2, '0');
 
-  // 内部コード（旧命名規約）
-  const internalCode = `${seqStr3}_${clientCode}_${appealType.code}${appealSeqStr}_v1`;
+  // 内部コード（旧命名規約）。訴求軸未確定時は訴求コード部を 'na' で埋める。
+  const internalAppealCode = appealType ? `${appealType.code}${appealSeqStr}` : `na${appealSeqStr}`;
+  const internalCode = `${seqStr3}_${clientCode}_${internalAppealCode}_v1`;
 
   // 制作日: YYMMDD
   // production_date ("YYYY-MM-DD") は UTC midnight として parse されるため UTC getter で
@@ -14086,11 +14094,23 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     newFileName = renderFilename(tplResolved.template, tokenValues, tplResolved.overrides, { serialDigits });
   } else {
     // ハードコードフォールバック: {YYMMDD}_{商材}_{媒体}_{FMT}_{訴求軸}_{サイズ}_{seq(serial_digits)}
-    const parts = [dateStr, product_code, media_code, creative_fmt, appealType.code, creative_size, seqStr]
+    const parts = [dateStr, product_code, media_code, creative_fmt, appealType?.code || '', creative_size, seqStr]
       .map(p => (p || '').toString().trim())
       .filter(Boolean);
     newFileName = parts.join('_');
   }
+
+  // 凡例（フロントの format-hint 表示用）。この案件に当たっているテンプレ名と、
+  // トークンのラベル並びを区切り文字で繋いだ「形式」をそのまま返す（固定文を廃止）。
+  const templateName = tplResolved?.template?.name || null;
+  const formatHint = (() => {
+    if (!tplResolved?.template?.tokens?.length) return null;
+    const sep = typeof tplResolved.template.separator === 'string' ? tplResolved.template.separator : '_';
+    const labels = tplResolved.template.tokens
+      .map(t => (t && (t.label || t.key)) ? String(t.label || t.key).trim() : '')
+      .filter(Boolean);
+    return labels.length ? labels.join(sep) : null;
+  })();
 
   res.json({
     file_name: newFileName,
@@ -14099,8 +14119,10 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     total: usedSeqs.length,
     appeal_seq: nextAppealSeq,
     client_code: clientCode,
-    appeal_code: appealType.code,
+    appeal_code: appealType?.code || null,
     date_str: dateStr,
+    template_name: templateName,
+    format_hint: formatHint,
   });
 });
 
