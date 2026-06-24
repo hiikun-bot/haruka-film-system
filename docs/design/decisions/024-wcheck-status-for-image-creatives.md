@@ -34,13 +34,20 @@ Wチェックは **静止画（`creative_categories.code = 'image'`）でのみ*
 
 進捗バーの段階は静止画かつ Wチェック有効案件のときだけ「制作 → Wチェック → Dチェック → …」を表示する。
 
-### 2. 必要 / 不要の判定（カテゴリ既定 + クリエ個別上書き）
-- `creative_categories.wcheck_default BOOLEAN`（image=true で seed、他は false）= **カテゴリ既定**
-- `creatives.wcheck_required BOOLEAN`（NULL = カテゴリ既定を継承）= **個別上書き**
-- 実効値 `effectiveWcheckRequired = creatives.wcheck_required ?? category.wcheck_default`
-- ハードコードせずマスタ駆動。将来カテゴリ追加時も `wcheck_default` を立てるだけで対応可。
+### 2. 必要 / 不要の判定（**案件(project)単位** + カテゴリ既定）※2026-06-24 改訂
+当初はクリエイティブ個別フラグ（`creatives.wcheck_required`）で設計したが、運用上「案件単位で揃えたい・静止画案件は基本あり」という要望のため **案件(project)単位** に一本化した。
 
-既存クリエイティブのうち **image のものは migration で `wcheck_required = false` に凍結**（NULL のままだと category 既定 true を継承して既存案件が突然「必要」になるのを防ぐ）。image 以外は category 既定 false なので NULL のままで **不要**。migration 後に作られる新規静止画は NULL → 既定 true を継承し「必要」。本番を一括で「必須化」する変更は行わない（凍結方向＝不要化のみ）。
+- `creative_categories.wcheck_default BOOLEAN`（image=true で seed、他は false）= **カテゴリ既定（新規案件の初期値）**
+- `projects.wcheck_required BOOLEAN`（NULL = カテゴリ既定を継承）= **案件単位の設定**
+- 実効値 `effectiveWcheckRequired = projects.wcheck_required ?? category.wcheck_default`
+- ハードコードせずマスタ駆動。将来カテゴリ追加時も `wcheck_default` を立てるだけで対応可。
+- 旧 `creatives.wcheck_required` 列は廃止（resolution から除外。migration で NULL リセット。列自体は破壊回避のため残置）。
+
+**静止画案件は基本「あり」**。既存の静止画案件は migration で `projects.wcheck_required = true` をセット（基本あり）。動画等は category 既定 false なので NULL のままで不要。新規静止画案件も既定「あり」（案件マスターでなし変更可）。
+
+### 2-b. 操作UI（誤操作防止）
+- クリエイティブ詳細モーダルのチェックボックスは残すが、**操作対象は案件単位**（`PUT /projects/:id { wcheck_required }`）。ON/OFF 変更時は**確認ダイアログ必須**（誤って外す事故防止）。
+- 案件マスター（案件編集モーダル）でも、カテゴリが静止画のときだけ Wチェック要否を選択可能（初期値あり）。
 
 ### 3. ボール管理（016 の getBallHolder を踏襲）
 - `creative_assignments.role = 'wcheck'`（単数。`role` に CHECK 制約は無いため値追加のみ）

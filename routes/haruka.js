@@ -1045,7 +1045,8 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     sub_producer_ids,
     liaison_user_id,
     tags,
-    filename_template_id, filename_token_overrides
+    filename_template_id, filename_token_overrides,
+    wcheck_required // ADR 024: 案件単位のWチェック要否（静止画のみ・初期あり）
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   const normalizedTags = normalizeTags(tags);
@@ -1078,6 +1079,8 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     sub_producer_ids: subPIds,
     liaison_user_id: liaison_user_id || null, // ADR 017: 外部D案件の窓口担当
   };
+  // ADR 024: Wチェック要否（案件単位）。boolean のときのみ反映、未指定は NULL=カテゴリ既定継承。
+  if (typeof wcheck_required === 'boolean') insertPayload.wcheck_required = wcheck_required;
   // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
   if (filename_template_id !== undefined && filename_template_id !== null && filename_template_id !== '') {
     insertPayload.filename_template_id = filename_template_id;
@@ -1122,6 +1125,12 @@ router.post('/projects', requireAuth, requirePermission('project.create_edit'), 
     const retry4 = await supabase.from('projects').insert(fallback4).select().single();
     data = retry4.data; error = retry4.error;
   }
+  // ADR 024 migration 未適用環境のフォールバック（projects.wcheck_required 列が無い）
+  if (error && /wcheck_required/i.test(error.message || '')) {
+    const { wcheck_required: _o5, ...fallback5 } = insertPayload;
+    const retry5 = await supabase.from('projects').insert(fallback5).select().single();
+    data = retry5.data; error = retry5.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
   if (data?.id) {
@@ -1150,7 +1159,9 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL
     creatives_export_sheet_url,
     // ADR 008 Phase 4: ファイル名連番カスタマイズ
-    next_filename_serial, serial_digits
+    next_filename_serial, serial_digits,
+    // ADR 024: 案件単位のWチェック要否
+    wcheck_required
   } = req.body;
   // ADR 010 Phase 1b: 工程表セクションだけが値を送る部分更新（schedule 列のみ）
   // のときは name/status を強制 NULL 化してしまわないよう、最小 UPDATE で済ませる
@@ -1231,6 +1242,10 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
   if (primary_category_id !== undefined) {
     updateData.primary_category_id = primary_category_id || null;
+  }
+  // ADR 024: Wチェック要否（案件単位）。明示時のみ反映。null=カテゴリ既定継承、true/false=明示。
+  if (wcheck_required !== undefined) {
+    updateData.wcheck_required = (wcheck_required === null || wcheck_required === '') ? null : !!wcheck_required;
   }
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（明示時のみ反映）
   if (creatives_export_sheet_url !== undefined) {
@@ -1322,6 +1337,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { next_filename_serial: _o5a, serial_digits: _o5b, ...fallback5 } = updateData;
     const retry5 = await supabase.from('projects').update(fallback5).eq('id', req.params.id).select().single();
     data = retry5.data; error = retry5.error;
+  }
+  // ADR 024 migration 未適用ガード（projects.wcheck_required 列が無い）
+  if (error && /wcheck_required/i.test(error.message || '') && updateData.wcheck_required !== undefined) {
+    const { wcheck_required: _o6, ...fallback6 } = updateData;
+    const retry6 = await supabase.from('projects').update(fallback6).eq('id', req.params.id).select().single();
+    data = retry6.data; error = retry6.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -6439,6 +6460,7 @@ router.get('/creatives/:id', async (req, res) => {
     data.wcheck = {
       is_image: elig.isImage,
       required: elig.required,
+      project_id: elig.projectId || data.project_id || null, // 案件単位トグルの対象
       assignee: wAssign?.users || null,
       requested_by: data.wcheck_requested_by || null,
       requested_at: data.wcheck_requested_at || null,
@@ -6446,7 +6468,7 @@ router.get('/creatives/:id', async (req, res) => {
     };
   } catch (e) {
     console.warn('[creatives/:id] wcheck info 失敗:', e.message);
-    data.wcheck = { is_image: false, required: false, assignee: null, requested_by: null, requested_at: null, comment: null };
+    data.wcheck = { is_image: false, required: false, project_id: data.project_id || null, assignee: null, requested_by: null, requested_at: null, comment: null };
   }
 
   res.json(data);
@@ -6812,9 +6834,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_id,
     director_user_ids,
     producer_user_ids,
-    // Wチェック（ADR 024・静止画ダブルチェック）
+    // Wチェック（ADR 024・静止画ダブルチェック）。要否は案件単位（PUT /projects）に移行。
     wcheck_user_id,        // Wチェック担当者（単数）。null/空で割当解除
-    wcheck_required,       // 要否トグル（true/false/null=カテゴリ既定継承）。project.create_edit 権限要
     wcheck_comment,        // Wチェック依頼コメント
     force_delivered_reason,
     // 動画ファイル無しで工程を進める場合のフラグ（代表 髙橋指示・2026-05-09 補足）。
@@ -6844,21 +6865,12 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // Wチェック要否トグル（ADR 024）の認可: 案件編集権限が必要（URL/API 直叩き防止）
-  if (wcheck_required !== undefined) {
-    const _wcRole = getEffectiveRole(req);
-    const _wcCanEdit = await userHasPermission(_wcRole, 'project.create_edit');
-    if (!_wcCanEdit) {
-      return res.status(403).json({ error: 'Wチェックの要否設定には案件編集権限が必要です' });
-    }
-  }
+  // Wチェック要否は【案件単位】に移行（ADR 024 改訂）。creatives 側では受け付けない。
+  // 詳細モーダルのトグル / 案件マスターは PUT /projects/:id { wcheck_required } を使う。
 
   const updateData = {
     updated_at: new Date().toISOString()
   };
-  if (wcheck_required !== undefined) {
-    updateData.wcheck_required = (wcheck_required === null || wcheck_required === '') ? null : !!wcheck_required;
-  }
   if (file_name !== undefined) updateData.file_name = file_name;
   if (status !== undefined) updateData.status = status;
   if (deadline !== undefined) updateData.deadline = deadline;
@@ -13885,36 +13897,40 @@ async function syncBallHolderId(creativeId, sb) {
 //   isImage : creatives.category_id（無ければ projects.primary_category_id）→ code==='image'
 //   required: creatives.wcheck_required ?? creative_categories.wcheck_default
 // schema-sync 未適用環境（wcheck_* 列が無い）でも例外を投げず安全側（required=false）に倒す。
+// 要否は【案件(project)単位】（ADR 024 改訂）:
+//   isImage  : creatives.category_id（無ければ projects.primary_category_id）→ code==='image'
+//   required : projects.wcheck_required ?? creative_categories.wcheck_default(image=true)
+//   旧 creatives.wcheck_required は廃止（resolution から除外）。
+// schema-sync 未適用環境（wcheck_* 列が無い）でも例外を投げず安全側（required=false）に倒す。
 async function resolveWcheckEligibility(creativeId, sb) {
   const client = sb || supabase;
-  const out = { isImage: false, required: false, categoryId: null };
+  const out = { isImage: false, required: false, categoryId: null, projectId: null };
   if (!creativeId) return out;
   try {
-    let c = null;
     let r = await client.from('creatives')
-      .select('id, category_id, wcheck_required, projects(primary_category_id)')
+      .select('id, category_id, project_id, projects(primary_category_id, wcheck_required)')
       .eq('id', creativeId).maybeSingle();
     if (r.error && /wcheck_required|column .+ does not exist/i.test(r.error.message || '')) {
-      // 列欠損環境フォールバック
+      // 列欠損環境フォールバック（projects.wcheck_required 未適用）
       r = await client.from('creatives')
-        .select('id, category_id, projects(primary_category_id)')
+        .select('id, category_id, project_id, projects(primary_category_id)')
         .eq('id', creativeId).maybeSingle();
     }
-    c = r.data;
+    const c = r.data;
     if (!c) return out;
+    out.projectId = c.project_id || c.projects?.id || null;
     const catId = c.category_id || c.projects?.primary_category_id || null;
     out.categoryId = catId;
     if (catId) {
-      let cat = null;
       let cr = await client.from('creative_categories')
         .select('code, wcheck_default').eq('id', catId).maybeSingle();
       if (cr.error && /wcheck_default|column .+ does not exist/i.test(cr.error.message || '')) {
         cr = await client.from('creative_categories').select('code').eq('id', catId).maybeSingle();
       }
-      cat = cr.data;
+      const cat = cr.data;
       out.isImage = cat?.code === 'image';
       const wDefault = !!cat?.wcheck_default;
-      const wReq = c.wcheck_required;
+      const wReq = c.projects?.wcheck_required; // 案件単位
       out.required = (wReq === null || wReq === undefined) ? wDefault : !!wReq;
     }
   } catch (e) {
