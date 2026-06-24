@@ -7010,11 +7010,11 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
       if (!_elig.isImage) {
         return res.status(400).json({ error: 'Wチェックは静止画クリエイティブでのみ利用できます' });
       }
-      // 担当ディレクターは Wチェック担当者に選べない（複数指名のいずれかが担当Dなら拒否）
       const _wcTargets = Array.isArray(wcheck_user_ids)
         ? wcheck_user_ids.filter(Boolean)
         : (wcheck_user_id ? [wcheck_user_id] : []);
       if (_wcTargets.length) {
+        // 担当ディレクターは Wチェック担当者に選べない（複数指名のいずれかが担当Dなら拒否）
         const _dirSet = new Set();
         const { data: _cw } = await supabase
           .from('creatives').select('projects(director_id)')
@@ -7026,6 +7026,16 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         (_dAssigns || []).forEach(r => r.user_id && _dirSet.add(r.user_id));
         if (_wcTargets.some(id => _dirSet.has(id))) {
           return res.status(400).json({ error: '担当ディレクターはWチェック担当者に選択できません' });
+        }
+      } else {
+        // 担当者が1人も指定されない Wチェック依頼は拒否（フロント/バックの版ズレ等で
+        // 「担当者なしのままステータスだけ Wチェック」になるサイレント宙ぶらりんを防ぐ）。
+        // 既に wcheck assignment がある場合のみ許可（再依頼などの保険）。
+        const { data: _existingWc } = await supabase
+          .from('creative_assignments').select('id')
+          .eq('creative_id', req.params.id).eq('role', 'wcheck').limit(1);
+        if (!_existingWc || _existingWc.length === 0) {
+          return res.status(400).json({ error: 'Wチェック担当者を選択してください' });
         }
       }
       // 依頼メタを記録（現在のWチェック情報パネル表示用。全履歴は creative_status_transitions）

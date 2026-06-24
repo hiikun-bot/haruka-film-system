@@ -32288,11 +32288,16 @@ function updateCreativeStepIndicator(status) {
   const _wcIds = Array.isArray(_wc.assignee_ids) ? _wc.assignee_ids : [];
   const isWcheckAssignee = !!_myId && (_wcIds.includes(_myId) || (_wc.assignee && _wc.assignee.id === _myId));
   const isWcheckAdmin = (typeof isTopAdmin === 'function' && isTopAdmin()) || effectiveRole() === 'admin';
+  // Wチェック段を出す条件: 要否=必要(wcheckActive) のとき。
+  // 加えて、すでにステータスが Wチェック / Wチェック後修正 のときは要否に関係なく必ず出す
+  // （要否が false でも status だけ Wチェックになった場合に、段が無く currentIdx=-1 で
+  //   進捗バーがどの段も光らない＝ステータスが表現されない不具合を防ぐ）。
+  const showWcheckStep = wcheckActive || status === 'Wチェック' || status === 'Wチェック後修正';
   // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
     { label: '未着手',    statuses: ['未着手'] },
     { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集', 'Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'] },
-    ...(wcheckActive ? [{ label: 'Wチェック', statuses: ['Wチェック'] }] : []),
+    ...(showWcheckStep ? [{ label: 'Wチェック', statuses: ['Wチェック'] }] : []),
     { label: 'Dチェック', statuses: ['Dチェック'] },
     { label: 'Pチェック', statuses: ['Pチェック'] },
     { label: 'CL確認',   statuses: ['クライアントチェック中'] },
