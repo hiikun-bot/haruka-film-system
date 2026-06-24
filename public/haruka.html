@@ -30996,7 +30996,10 @@ function _cdCanUndoUpload(file) {
     // (= V1 提出後 D後修正 で V1 のままアップロードがない状態) は、最新=V1 / maxSnapVer=0 なので
     // fileVer(1) > maxSnapVer(0) で残ってしまう。これを救うために
     // 「後修正中 かつ fileVer == 1 (=初稿) かつ snapshot 空」ならば提出済扱い。
-    if (maxSnapVer === 0 && fileVer >= 1) return false;
+    //   ただし修正版が複数 version 存在する (maxVer>=2) ときは、最新は「未提出の修正版」なので
+    //   提出済扱いにしてはいけない。Wチェック工程の submit ページ欠落 (snapshot 空) でも修正版を
+    //   正しく「未提出」と判定するための堅牢化（バグ報告: Wチェック修正版を上げても未アップ扱い）。
+    if (maxSnapVer === 0 && fileVer >= 1 && maxVer <= 1) return false;
   }
 
   // チェック中・納品ステータスは提出されているはず。
