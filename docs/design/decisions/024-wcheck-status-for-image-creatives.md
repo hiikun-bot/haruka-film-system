@@ -34,20 +34,28 @@ Wチェックは **静止画（`creative_categories.code = 'image'`）でのみ*
 
 進捗バーの段階は静止画かつ Wチェック有効案件のときだけ「制作 → Wチェック → Dチェック → …」を表示する。
 
-### 2. 必要 / 不要の判定（**案件(project)単位** + カテゴリ既定）※2026-06-24 改訂
-当初はクリエイティブ個別フラグ（`creatives.wcheck_required`）で設計したが、運用上「案件単位で揃えたい・静止画案件は基本あり」という要望のため **案件(project)単位** に一本化した。
+### 2. 必要 / 不要の判定（**2層: 案件の初期値 ＋ クリエ個別**）※2026-06-24 改訂2
+設計を2回見直した。最終形は **2層モデル**:
 
-- `creative_categories.wcheck_default BOOLEAN`（image=true で seed、他は false）= **カテゴリ既定（新規案件の初期値）**
-- `projects.wcheck_required BOOLEAN`（NULL = カテゴリ既定を継承）= **案件単位の設定**
-- 実効値 `effectiveWcheckRequired = projects.wcheck_required ?? category.wcheck_default`
-- ハードコードせずマスタ駆動。将来カテゴリ追加時も `wcheck_default` を立てるだけで対応可。
-- 旧 `creatives.wcheck_required` 列は廃止（resolution から除外。migration で NULL リセット。列自体は破壊回避のため残置）。
+| 層 | 列 | 意味 |
+|---|---|---|
+| カテゴリ既定 | `creative_categories.wcheck_default`（image=true seed） | 新規案件作成時の初期値の素 |
+| **案件の初期値** | `projects.wcheck_required`（NULL=カテゴリ既定継承） | その案件のクリエイティブ初期値（案件マスターで設定） |
+| **クリエ個別** | `creatives.wcheck_required`（NULL=案件初期値継承） | そのクリエイティブだけのON/OFF（詳細モーダルで設定） |
 
-**静止画案件は基本「あり」**。既存の静止画案件は migration で `projects.wcheck_required = true` をセット（基本あり）。動画等は category 既定 false なので NULL のままで不要。新規静止画案件も既定「あり」（案件マスターでなし変更可）。
+- 実効値 `effective = creatives.wcheck_required ?? projects.wcheck_required ?? category.wcheck_default`
+- **案件マスター** = その案件で新しく開くクリエイティブの**初期値**を決める（案件全体の既定）。
+- **クリエイティブ詳細のチェック** = **そのクリエイティブだけ**でWチェックするか（案件の初期値を個別に上書き）。
+- どちらも image カテゴリのときだけ表示。ハードコードせずマスタ駆動。
+
+**静止画案件は基本「あり」**。既存の静止画案件は `projects.wcheck_required = true`（PR #869 migration 済）。`creatives.wcheck_required` は NULL（=案件初期値を継承）が基本で、個別に変えたいクリエだけ true/false を持つ。
 
 ### 2-b. 操作UI（誤操作防止）
-- クリエイティブ詳細モーダルのチェックボックスは残すが、**操作対象は案件単位**（`PUT /projects/:id { wcheck_required }`）。ON/OFF 変更時は**確認ダイアログ必須**（誤って外す事故防止）。
-- 案件マスター（案件編集モーダル）でも、カテゴリが静止画のときだけ Wチェック要否を選択可能（初期値あり）。
+- クリエイティブ詳細モーダルのチェックボックス = **このクリエ個別**（`PUT /creatives/:id { wcheck_required }`）。ON/OFF 変更時は**確認ダイアログ必須**（誤って外す事故防止）。
+- 案件マスター（案件編集モーダル）= **案件のクリエイティブ初期値**（`PUT/POST /projects { wcheck_required }`）。カテゴリが静止画のときだけ表示・初期値あり。
+
+### 2-c. 列の経緯（migration 不要・コードのみ）
+`creatives.wcheck_required`（#867）・`projects.wcheck_required`（#869）・`creative_categories.wcheck_default`（#867）は全て適用済み。本改訂は resolution と UI の結線変更のみで **DB変更なし**。
 
 ### 3. ボール管理（016 の getBallHolder を踏襲）
 - `creative_assignments.role = 'wcheck'`（単数。`role` に CHECK 制約は無いため値追加のみ）
