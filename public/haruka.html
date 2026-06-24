@@ -37634,12 +37634,14 @@ function updateWcheckToggleRow(c) {
 // ==================== Wチェック担当者選択（ADR 024）====================
 // HARUKA 標準の MemberPicker（人選択UI）を流用。複数選択可・初期はデザイナーで絞り込み。
 // 担当ディレクター・制作担当は除外。選択後に依頼コメントを尋ねてから依頼する。
+let _wcheckLastOnSubmit = null; // コメント画面の「選び直す」で同じ依頼処理を再利用するため保持
 function openWcheckPicker({ onSubmit } = {}) {
   if (!currentCreativeDetail) return;
   if (typeof MemberPicker === 'undefined' || !MemberPicker.open) {
     showToast('メンバー選択UIを読み込めませんでした', 'error');
     return;
   }
+  _wcheckLastOnSubmit = onSubmit || null;
   const proj = currentCreativeDetail.projects || {};
   // 除外（指名不可）: 担当ディレクター（サブD含む）＋ 制作担当（ダブルチェックのため別人にする）
   const excludeIds = [];
@@ -37660,7 +37662,15 @@ function openWcheckPicker({ onSubmit } = {}) {
     onChange: async (userIds) => {
       const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);
       if (!ids.length) return; // 未選択
-      const comment = await _wcheckRequestCommentPrompt();
+      // 選択した担当者の表示用情報（名前・アバター）を解決して確認画面に渡す（誰に頼むか忘れない）
+      const selected = ids.map(id => {
+        const m = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers.find(x => x && x.id === id) : null;
+        const name = m
+          ? ((typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(m) : (m.nickname || m.full_name || id))
+          : id;
+        return { id, name, user: m };
+      });
+      const comment = await _wcheckRequestCommentPrompt(selected);
       if (comment === null) return; // コメント画面でキャンセル
       try {
         await onSubmit?.({ wcheckUserIds: ids, comment });
@@ -37672,27 +37682,46 @@ function openWcheckPicker({ onSubmit } = {}) {
 }
 
 // Wチェック依頼コメント入力（担当者選択後の小さな確認モーダル）。
+// assignees: [{ id, name, user }]（選択した担当者）。誰に頼むかを画面に表示する。
 // 戻り値: 入力文字列（空文字含む）= 依頼続行 / null = キャンセル。
-function _wcheckRequestCommentPrompt() {
+function _wcheckRequestCommentPrompt(assignees) {
+  const list = Array.isArray(assignees) ? assignees : [];
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:10030;display:flex;align-items:center;justify-content:center;padding:16px';
+    // 選択した担当者の表示（アバター＋名前のチップ）
+    const chips = list.map(a => {
+      const av = (a.user && typeof avatarHtml === 'function') ? avatarHtml(a.user, 20) : '';
+      return `<span style="display:inline-flex;align-items:center;gap:5px;background:#F1EEFE;border:1px solid #DDD6FB;border-radius:999px;padding:3px 10px 3px 4px;font-size:13px;color:#3E2C9C">${av}<span>${esc(a.name)}</span></span>`;
+    }).join('');
+    const assigneeBlock = list.length ? `
+        <div style="padding:14px 16px 0">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">Wチェック担当者（${list.length}名）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${chips}</div>
+        </div>` : '';
     overlay.innerHTML = `
-      <div style="background:#fff;border-radius:12px;max-width:420px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+      <div style="background:#fff;border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.25)">
         <div style="padding:14px 16px;border-bottom:1px solid #E5E7EB;font-weight:600;font-size:15px">Wチェックを依頼</div>
-        <div style="padding:16px">
+        ${assigneeBlock}
+        <div style="padding:14px 16px 16px">
           <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">依頼コメント（任意）</div>
           <textarea id="_wcmt" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box"></textarea>
         </div>
-        <div style="padding:12px 16px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end;gap:8px">
-          <button id="_wcmtCancel" style="padding:6px 14px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px">キャンセル</button>
-          <button id="_wcmtOk" style="padding:6px 14px;border:none;background:linear-gradient(135deg,#6C4FE0,#5B3FD0);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Wチェックを依頼 →</button>
+        <div style="padding:12px 16px;border-top:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <button id="_wcmtBack" style="padding:6px 12px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#475569">← 担当者を選び直す</button>
+          <span style="display:flex;gap:8px">
+            <button id="_wcmtCancel" style="padding:6px 14px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px">キャンセル</button>
+            <button id="_wcmtOk" style="padding:6px 14px;border:none;background:linear-gradient(135deg,#6C4FE0,#5B3FD0);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Wチェックを依頼 →</button>
+          </span>
         </div>
       </div>`;
     document.body.appendChild(overlay);
     const cleanup = (val) => { overlay.remove(); resolve(val); };
     overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
     overlay.querySelector('#_wcmtCancel').onclick = () => cleanup(null);
+    // 「担当者を選び直す」: キャンセル扱いで閉じ、担当者選択モーダルを開き直す
+    const backBtn = overlay.querySelector('#_wcmtBack');
+    if (backBtn) backBtn.onclick = () => { cleanup(null); try { openWcheckPicker({ onSubmit: _wcheckLastOnSubmit }); } catch (_) {} };
     overlay.querySelector('#_wcmtOk').onclick = () => cleanup(overlay.querySelector('#_wcmt')?.value.trim() || '');
     setTimeout(() => overlay.querySelector('#_wcmt')?.focus(), 50);
   });
