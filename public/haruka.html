@@ -32053,8 +32053,9 @@ function renderTemplateChevron(c) {
         : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
 
     const milestoneMark = it.is_milestone ? '★ ' : '';
+    // 完了済みは「✓ + ステップ名」を併記（どの工程か分かるように）。現在/未到達はラベルのみ。
     const inner = done
-      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      ? `<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap;padding:0 4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:11px;font-weight:400;color:${tc}">${milestoneMark}${esc(it.label || it.code)}</span></span>`
       : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 4px;color:${tc}">${milestoneMark}${esc(it.label || it.code)}</span>`;
 
     return `<div title="${esc(it.label || it.code)}${it.is_milestone ? '（マイルストーン）' : ''}" style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}">${inner}</div>`;
@@ -32245,8 +32246,9 @@ function updateCreativeStepIndicator(status) {
         ? `polygon(${A}px 0, 100% 0, 100% 100%, ${A}px 100%, 0 50%)`
         : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
 
+    // 完了済みは「✓ + ステップ名」を併記（どの工程か分かるように）。現在/未到達はラベルのみ。
     const inner = done
-      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      ? `<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap;padding:0 2px"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:11px;font-weight:400;color:${tc}">${s.label}</span></span>`
       : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 2px">${s.label}</span>`;
 
     // admin かつ「現在以外」のセグメントだけクリック可能（強制ジャンプ用）
