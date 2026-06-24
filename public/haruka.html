@@ -30064,6 +30064,7 @@ const _CD_PAGE_KIND_DEF = {
 
 const _CD_ROLE_LABEL = {
   editor:    '担当者',
+  wcheck:    'Wチェック担当',
   director:  'ディレクター',
   producer:  'プロデューサー',
   client:    'クライアント',
@@ -30263,7 +30264,7 @@ function _cdCanEditSubmitPage(page) {
     if (typeof page.idx !== 'number' || page.idx !== lastIdx) return false;
     // status と round_stage の整合
     const status = currentCreativeDetail?.status || '';
-    const STAGE_TO_STATUS = { d_check: 'Dチェック', p_check: 'Pチェック', cl_check: 'クライアントチェック中' };
+    const STAGE_TO_STATUS = { w_check: 'Wチェック', d_check: 'Dチェック', p_check: 'Pチェック', cl_check: 'クライアントチェック中' };
     if (STAGE_TO_STATUS[page.round_stage] !== status) return false;
     // 認可（フロント側は表示制御のみ。最終判定はサーバ側 PATCH で行う）
     const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');

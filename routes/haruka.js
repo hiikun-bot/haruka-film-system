@@ -15286,7 +15286,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   // 2) 互いに独立な 5 クエリを並列実行
   const [
     { projectDirectorId, projectProducerId },
-    editorUserIdFallback,
+    { editorUserIdFallback, wcheckUserIdFallback },
     filesByVersion,
     transitions,
     history,
@@ -15308,7 +15308,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       }
       return { projectDirectorId, projectProducerId };
     })(),
-    // creative_assignments から editor を解決（fallback 用）
+    // creative_assignments から editor / wcheck を解決（fallback 用）
     (async () => {
       try {
         const { data: caRows } = await supabase
@@ -15316,8 +15316,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
           .select('user_id, role')
           .eq('creative_id', creativeId);
         const editorAssign = (caRows || []).find(a => ['editor','designer','director_as_editor'].includes(a?.role));
-        return editorAssign?.user_id || null;
-      } catch (_) { return null; }
+        const wcheckAssign = (caRows || []).find(a => a?.role === 'wcheck');
+        return { editorUserIdFallback: editorAssign?.user_id || null, wcheckUserIdFallback: wcheckAssign?.user_id || null };
+      } catch (_) { return { editorUserIdFallback: null, wcheckUserIdFallback: null }; }
     })(),
     // creative_files を version 順にロード（submit メモに紐づくファイル特定用）
     (async () => {
@@ -15386,7 +15387,11 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     // --- submit (編集者の提出メモ) ---
     // 初稿提出: PRODUCTION_FROM → Dチェック / Pチェック / クライアントチェック中
     // 再提出: *_後修正 → 対応する _チェック
-    let submitTarget = null; // 'director'|'producer'|'client'
+    let submitTarget = null; // 'director'|'producer'|'client'|'wcheck'
+    // Wチェック（ADR 024）: 制作 → Wチェック（初回）/ Wチェック後修正 → Wチェック（再提出）
+    if (PRODUCTION_FROM.has(from) || from === 'Wチェック後修正') {
+      if (to === 'Wチェック') submitTarget = 'wcheck';
+    }
     if (PRODUCTION_FROM.has(from) || from === 'Dチェック後修正') {
       if (to === 'Dチェック') submitTarget = 'director';
     }
@@ -15401,6 +15406,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       //   stage マッピング:  director → d_check / producer → p_check / client → cl_check
       const stageOfSubmit = submitTarget === 'director' ? 'd_check'
                          : submitTarget === 'producer' ? 'p_check'
+                         : submitTarget === 'wcheck'   ? 'w_check'
                          : 'cl_check';
       let historyRow = null;
       if (tr.version_at_change != null) {
@@ -15442,7 +15448,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         ? projectDirectorId
         : (submitTarget === 'producer')
           ? projectProducerId
-          : null; // client は user_id 無し
+          : (submitTarget === 'wcheck')
+            ? wcheckUserIdFallback
+            : null; // client は user_id 無し
       // submit ページの返信スレッド親キーは、可能なら creative_version_history.id を採用する
       // （source='version'）。historyRow が引けない古いデータは transition フォールバック。
       const submitParent = historyRow?.id
@@ -15468,8 +15476,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     }
 
     // --- revise (修正依頼) ---
-    let reviseFromRole = null; // 'director'|'producer'|'client'
-    if (from === 'Dチェック'                && to === 'Dチェック後修正')               reviseFromRole = 'director';
+    let reviseFromRole = null; // 'director'|'producer'|'client'|'wcheck'
+    if (from === 'Wチェック'                && to === 'Wチェック後修正')               reviseFromRole = 'wcheck';
+    else if (from === 'Dチェック'           && to === 'Dチェック後修正')               reviseFromRole = 'director';
     else if (from === 'Pチェック'           && to === 'Pチェック後修正')               reviseFromRole = 'producer';
     else if (from === 'クライアントチェック中' && to === 'クライアントチェック後修正') reviseFromRole = 'client';
     if (reviseFromRole) {
@@ -15492,7 +15501,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         ? (tr.changed_by || projectDirectorId)
         : (reviseFromRole === 'producer')
           ? (tr.changed_by || projectProducerId)
-          : null;
+          : (reviseFromRole === 'wcheck')
+            ? (tr.changed_by || wcheckUserIdFallback)
+            : null;
       items.push({
         kind:        'revise',
         comment,
@@ -15511,7 +15522,8 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
 
     // --- approve_handoff / deliver (承認引継・納品承認) ---
     let approveDef = null; // { fromRole, toRole, kind }
-    if (from === 'Dチェック'                && to === 'Pチェック')                  approveDef = { fromRole: 'director', toRole: 'producer', kind: 'approve_handoff' };
+    if (from === 'Wチェック'                && to === 'Dチェック')                  approveDef = { fromRole: 'wcheck',   toRole: 'director', kind: 'approve_handoff' };
+    else if (from === 'Dチェック'           && to === 'Pチェック')                  approveDef = { fromRole: 'director', toRole: 'producer', kind: 'approve_handoff' };
     else if (from === 'Dチェック'           && to === 'クライアントチェック中')    approveDef = { fromRole: 'director', toRole: 'client',   kind: 'approve_handoff' };
     else if (from === 'Pチェック'           && to === 'クライアントチェック中')    approveDef = { fromRole: 'producer', toRole: 'client',   kind: 'approve_handoff' };
     else if (from === 'クライアントチェック中' && to === '納品')                   approveDef = { fromRole: 'client',   toRole: 'completed', kind: 'deliver' };
@@ -15533,12 +15545,16 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         ? (tr.changed_by || projectDirectorId)
         : (approveDef.fromRole === 'producer')
           ? (tr.changed_by || projectProducerId)
-          : null;
+          : (approveDef.fromRole === 'wcheck')
+            ? (tr.changed_by || wcheckUserIdFallback)
+            : null;
       const toUserId = (approveDef.toRole === 'producer')
         ? projectProducerId
-        : (approveDef.toRole === 'editor')
-          ? editorUserIdFallback
-          : null;
+        : (approveDef.toRole === 'director')
+          ? projectDirectorId
+          : (approveDef.toRole === 'editor')
+            ? editorUserIdFallback
+            : null;
       items.push({
         kind:        approveDef.kind,
         comment,
