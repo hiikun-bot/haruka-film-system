@@ -6432,6 +6432,23 @@ router.get('/creatives/:id', async (req, res) => {
     data.ball_holder = null;
   }
 
+  // (F) Wチェック情報（ADR 024）: 静止画判定・要否実効値・現在のWチェック担当者
+  try {
+    const elig = await resolveWcheckEligibility(data.id);
+    const wAssign = (data.creative_assignments || []).find(a => a.role === 'wcheck' && a.users);
+    data.wcheck = {
+      is_image: elig.isImage,
+      required: elig.required,
+      assignee: wAssign?.users || null,
+      requested_by: data.wcheck_requested_by || null,
+      requested_at: data.wcheck_requested_at || null,
+      comment: data.wcheck_comment || null,
+    };
+  } catch (e) {
+    console.warn('[creatives/:id] wcheck info 失敗:', e.message);
+    data.wcheck = { is_image: false, required: false, assignee: null, requested_by: null, requested_at: null, comment: null };
+  }
+
   res.json(data);
 });
 
@@ -6795,6 +6812,10 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     director_user_id,
     director_user_ids,
     producer_user_ids,
+    // Wチェック（ADR 024・静止画ダブルチェック）
+    wcheck_user_id,        // Wチェック担当者（単数）。null/空で割当解除
+    wcheck_required,       // 要否トグル（true/false/null=カテゴリ既定継承）。project.create_edit 権限要
+    wcheck_comment,        // Wチェック依頼コメント
     force_delivered_reason,
     // 動画ファイル無しで工程を進める場合のフラグ（代表 髙橋指示・2026-05-09 補足）。
     // 例: クライアント直接やり取り済み、口頭で完結、素材待ち 等。
@@ -6823,9 +6844,21 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // Wチェック要否トグル（ADR 024）の認可: 案件編集権限が必要（URL/API 直叩き防止）
+  if (wcheck_required !== undefined) {
+    const _wcRole = getEffectiveRole(req);
+    const _wcCanEdit = await userHasPermission(_wcRole, 'project.create_edit');
+    if (!_wcCanEdit) {
+      return res.status(403).json({ error: 'Wチェックの要否設定には案件編集権限が必要です' });
+    }
+  }
+
   const updateData = {
     updated_at: new Date().toISOString()
   };
+  if (wcheck_required !== undefined) {
+    updateData.wcheck_required = (wcheck_required === null || wcheck_required === '') ? null : !!wcheck_required;
+  }
   if (file_name !== undefined) updateData.file_name = file_name;
   if (status !== undefined) updateData.status = status;
   if (deadline !== undefined) updateData.deadline = deadline;
@@ -6934,6 +6967,60 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     beforeRow = before || null;
   }
 
+  // ==================== Wチェック 認可・バリデーション（ADR 024）====================
+  // 静止画(image)専用工程。承認/修正依頼は Wチェック担当者本人または admin のみ（URL/API 直叩き防止）。
+  if (updateData.status !== undefined && updateData.status !== beforeStatus) {
+    const _wcApprove = beforeStatus === 'Wチェック' && updateData.status === 'Dチェック';
+    const _wcRevise  = beforeStatus === 'Wチェック' && updateData.status === 'Wチェック後修正';
+    // 「新規依頼」は制作系 → Wチェック のときだけ。Wチェック後修正からの再提出（再Wチェック）は依頼者を再スタンプしない。
+    const _wcRequest = updateData.status === 'Wチェック'
+      && beforeStatus !== 'Wチェック' && beforeStatus !== 'Wチェック後修正';
+
+    if (_wcRequest) {
+      // 静止画カテゴリ以外は Wチェック不可（動画編集等では不要）
+      const _elig = await resolveWcheckEligibility(req.params.id);
+      if (!_elig.isImage) {
+        return res.status(400).json({ error: 'Wチェックは静止画クリエイティブでのみ利用できます' });
+      }
+      // 担当ディレクターは Wチェック担当者に選べない（最低限の必須制御。フロントは全Dをグレーアウト）
+      const _wcTarget = wcheck_user_id || null;
+      if (_wcTarget) {
+        const _dirSet = new Set();
+        const { data: _cw } = await supabase
+          .from('creatives').select('projects(director_id)')
+          .eq('id', req.params.id).maybeSingle();
+        if (_cw?.projects?.director_id) _dirSet.add(_cw.projects.director_id);
+        const { data: _dAssigns } = await supabase
+          .from('creative_assignments').select('user_id')
+          .eq('creative_id', req.params.id).eq('role', 'director');
+        (_dAssigns || []).forEach(r => r.user_id && _dirSet.add(r.user_id));
+        if (_dirSet.has(_wcTarget)) {
+          return res.status(400).json({ error: '担当ディレクターはWチェック担当者に選択できません' });
+        }
+      }
+      // 依頼メタを記録（現在のWチェック情報パネル表示用。全履歴は creative_status_transitions）
+      updateData.wcheck_requested_by = req.user?.id || null;
+      updateData.wcheck_requested_at = new Date().toISOString();
+      if (wcheck_comment !== undefined) updateData.wcheck_comment = wcheck_comment || null;
+      else if (director_comment !== undefined) updateData.wcheck_comment = director_comment || null;
+    }
+
+    if (_wcApprove || _wcRevise) {
+      const _wcRole = getEffectiveRole(req);
+      const { data: _wrows } = await supabase
+        .from('creative_assignments').select('user_id')
+        .eq('creative_id', req.params.id).eq('role', 'wcheck');
+      const _isAssignee = (_wrows || []).some(r => r.user_id && r.user_id === req.user?.id);
+      if (!_isAssignee && _wcRole !== 'admin') {
+        return res.status(403).json({ error: 'Wチェックの承認・修正依頼はWチェック担当者のみ実行できます' });
+      }
+      if (_wcRevise) {
+        const _cmt = String(director_comment || '').trim();
+        if (!_cmt) return res.status(400).json({ error: 'Wチェックの修正依頼にはコメントが必須です' });
+      }
+    }
+  }
+
   let { data, error } = await supabase
     .from('creatives')
     .update(updateData)
@@ -6944,9 +7031,14 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 新列 (director/client/editor _comment_updated_at) が schema-sync 未適用の環境用フォールバック。
     // 列欠損が原因なら _updated_at 系を抜いて再 UPDATE → 本体更新は成功させる。
     const msg = error.message || '';
-    const isMissingNewCol = /comment_updated_at/.test(msg);
+    const isMissingNewCol = /comment_updated_at|wcheck_/.test(msg);
     if (isMissingNewCol) {
-      const { director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e, ...legacyUpdate } = updateData;
+      // schema-sync 未適用環境フォールバック: 新列（comment_updated_at 系 / wcheck 系）を抜いて再 UPDATE。
+      const {
+        director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e,
+        wcheck_required: _wr, wcheck_requested_by: _wb, wcheck_requested_at: _wa, wcheck_comment: _wc,
+        ...legacyUpdate
+      } = updateData;
       ({ data, error } = await supabase
         .from('creatives')
         .update(legacyUpdate)
@@ -7089,6 +7181,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   // creative_version_history テーブルに 1 行 INSERT。失敗しても fire-and-forget（メイン更新は完了している）。
   try {
     const REVISION_TO_CHECK = {
+      'Wチェック後修正':              { newStatus: 'Wチェック',                 stage: 'w_check'  },
       'Dチェック後修正':              { newStatus: 'Dチェック',                 stage: 'd_check'  },
       'Pチェック後修正':              { newStatus: 'Pチェック',                 stage: 'p_check'  },
       'クライアントチェック後修正':   { newStatus: 'クライアントチェック中',     stage: 'cl_check' },
@@ -7330,6 +7423,24 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // Wチェック担当者更新（wcheck_user_id 単数・ADR 024）。null/空 で割当解除。
+  // 承認後も役割の履歴として assignment 行は残す（ボールは status により自動で外れる）。
+  if (wcheck_user_id !== undefined) {
+    const desiredWc = wcheck_user_id || null;
+    await supabase.from('creative_assignments')
+      .delete().eq('creative_id', req.params.id).eq('role', 'wcheck');
+    if (desiredWc) {
+      const { data: wcU } = await supabase.from('users').select('rank').eq('id', desiredWc).maybeSingle();
+      const { error: wcErr } = await supabase.from('creative_assignments').insert({
+        creative_id: req.params.id,
+        user_id: desiredWc,
+        role: 'wcheck',
+        rank_applied: wcU?.rank || null,
+      });
+      if (wcErr) console.warn('[creative_assignments][wcheck] insert failed:', wcErr.message);
+    }
+  }
+
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
   // - 通知より先に実行して client_review_url を確定させる
   // - 失敗してもクリエイティブ更新自体は完遂（手動入力フォールバック）
@@ -7371,7 +7482,8 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     assignee_id !== undefined ||
     director_user_id !== undefined ||
     director_user_ids !== undefined ||
-    producer_user_ids !== undefined
+    producer_user_ids !== undefined ||
+    wcheck_user_id !== undefined
   ) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
@@ -9604,7 +9716,7 @@ function normalizeCreativeDefaults(body) {
   const ALLOWED_VIEW_MODE  = new Set(['gantt', 'list']);
   const ALLOWED_GROUP_MODE = new Set(['project', 'client', 'assignee', 'team']);
   const ALLOWED_RANGE      = new Set(['week', '2week', 'month', '2month']);
-  const ALLOWED_STATUS     = new Set(['未着手','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留']);
+  const ALLOWED_STATUS     = new Set(['未着手','台本制作','素材・ナレ作成','編集','Wチェック','Wチェック後修正','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留']);
   const ALLOWED_BALL       = new Set(['editor', 'D', 'P', 'client']);
   const fields = {};
   const setText = (key, val, allowed, label) => {
@@ -13546,6 +13658,12 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
 
 function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer, opts = {}) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+  // Wチェック担当者（静止画ダブルチェック・ADR 024）。単数。代表のみ。
+  const wcheckAssign = (assignments || []).find(a => a.role === 'wcheck' && a.users)
+                    || (assignments || []).find(a => a.role === 'wcheck');
+  const wcheckName = wcheckAssign?.users?.full_name || 'Wチェック担当';
+  const wcheckId   = wcheckAssign?.users?.id || null;
+  const wcheckUser = wcheckAssign?.users || null;
   // Dチェック・Pチェック は複数アサイン可。代表（先頭）に加え holders[] / user_ids[] / holder_users[] を全員分返す。
   const dirAssignsAll  = (assignments || []).filter(a => a.role === 'director'  && a.users);
   const prodAssignsAll = (assignments || []).filter(a => a.role === 'producer' && a.users);
@@ -13632,6 +13750,10 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     '台本制作': single(editorName, 'editor', editorId, editorUser),
     '素材・ナレ作成': single(editorName, 'editor', editorId, editorUser),
     '編集': single(editorName, 'editor', editorId, editorUser),
+    // Wチェック（ADR 024）: Wチェック担当者が単独でボールを持つ。
+    'Wチェック': single(wcheckName, 'wcheck', wcheckId, wcheckUser),
+    // Wチェックからの修正依頼で制作担当へ差し戻し（Dチェック後修正と同型）。
+    'Wチェック後修正': single(editorName, 'editor', editorId, editorUser),
     'Dチェック': multi(directorName, 'director', directorId, directorUser, directorNames, directorIds, directorUsers),
     'Dチェック後修正': single(editorName, 'editor', editorId, editorUser),
     'Pチェック': multi(producerName, 'producer', producerId, producerUser, producerNames, producerIds, producerUsers),
@@ -13756,6 +13878,49 @@ async function syncBallHolderId(creativeId, sb) {
     console.warn('[syncBallHolderId] exception:', e.message);
     return null;
   }
+}
+
+// ==================== Wチェック 要否判定（ADR 024）====================
+// クリエイティブが静止画(image)カテゴリかどうか、および Wチェック要否の実効値を返す。
+//   isImage : creatives.category_id（無ければ projects.primary_category_id）→ code==='image'
+//   required: creatives.wcheck_required ?? creative_categories.wcheck_default
+// schema-sync 未適用環境（wcheck_* 列が無い）でも例外を投げず安全側（required=false）に倒す。
+async function resolveWcheckEligibility(creativeId, sb) {
+  const client = sb || supabase;
+  const out = { isImage: false, required: false, categoryId: null };
+  if (!creativeId) return out;
+  try {
+    let c = null;
+    let r = await client.from('creatives')
+      .select('id, category_id, wcheck_required, projects(primary_category_id)')
+      .eq('id', creativeId).maybeSingle();
+    if (r.error && /wcheck_required|column .+ does not exist/i.test(r.error.message || '')) {
+      // 列欠損環境フォールバック
+      r = await client.from('creatives')
+        .select('id, category_id, projects(primary_category_id)')
+        .eq('id', creativeId).maybeSingle();
+    }
+    c = r.data;
+    if (!c) return out;
+    const catId = c.category_id || c.projects?.primary_category_id || null;
+    out.categoryId = catId;
+    if (catId) {
+      let cat = null;
+      let cr = await client.from('creative_categories')
+        .select('code, wcheck_default').eq('id', catId).maybeSingle();
+      if (cr.error && /wcheck_default|column .+ does not exist/i.test(cr.error.message || '')) {
+        cr = await client.from('creative_categories').select('code').eq('id', catId).maybeSingle();
+      }
+      cat = cr.data;
+      out.isImage = cat?.code === 'image';
+      const wDefault = !!cat?.wcheck_default;
+      const wReq = c.wcheck_required;
+      out.required = (wReq === null || wReq === undefined) ? wDefault : !!wReq;
+    }
+  } catch (e) {
+    console.warn('[resolveWcheckEligibility] failed:', e?.message || e);
+  }
+  return out;
 }
 
 // 外部スクリプト・他モジュールからも使えるよう named export はファイル末尾の

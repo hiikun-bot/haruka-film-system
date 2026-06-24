@@ -179,6 +179,27 @@ ALTER TABLE creatives
 CREATE INDEX IF NOT EXISTS idx_creatives_category
   ON creatives(category_id);
 
+-- ==================== Wチェック（ADR 024 / バグ報告 aa11784a）====================
+-- 静止画(image)専用の「Wチェック」工程。詳細: docs/design/decisions/024-wcheck-status-for-image-creatives.md
+--   ・カテゴリ既定 wcheck_default（image=true）＋ クリエ個別上書き wcheck_required（NULL=既定継承）
+--   ・ステータス 'Wチェック' / 'Wチェック後修正'、creative_assignments.role='wcheck' は値追加のみ（CHECK制約なし）
+ALTER TABLE creative_categories
+  ADD COLUMN IF NOT EXISTS wcheck_default BOOLEAN NOT NULL DEFAULT false;
+UPDATE creative_categories SET wcheck_default = true WHERE code = 'image';
+ALTER TABLE creatives
+  ADD COLUMN IF NOT EXISTS wcheck_required     BOOLEAN,
+  ADD COLUMN IF NOT EXISTS wcheck_requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS wcheck_requested_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS wcheck_comment      TEXT;
+-- 既存の静止画クリエは「不要」で凍結（新規分のみ NULL→カテゴリ既定 true を継承）
+UPDATE creatives c SET wcheck_required = false
+WHERE c.wcheck_required IS NULL
+  AND COALESCE(c.category_id,
+        (SELECT p.primary_category_id FROM projects p WHERE p.id = c.project_id)
+      ) IN (SELECT id FROM creative_categories WHERE code = 'image');
+CREATE INDEX IF NOT EXISTS idx_creative_assignments_wcheck
+  ON creative_assignments (creative_id) WHERE role = 'wcheck';
+
 -- ==================== filename_templates (ADR 007 Stage 1) ====================
 -- 案件別ファイル名テンプレート。設定タブで管理し、案件側で選択 + override する。
 -- 詳細: docs/design/decisions/007-filename-templates.md

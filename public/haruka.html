@@ -461,6 +461,7 @@ tr.row-help td{background:#FFFBF2}
 .s-blue{background:#E6F1FB;color:#185FA5}
 .s-blue2{background:#dce8f8;color:#0C447C}
 .s-purple{background:#EEEDFE;color:#534AB7}
+.s-indigo{background:#E8E6FB;color:#3E2C9C}
 .s-orange{background:#FAEEDA;color:#633806}
 .s-coral{background:#FAECE7;color:#712B13}
 .s-green{background:#E1F5EE;color:#085041}
@@ -1162,6 +1163,7 @@ tr.row-help td{background:#FFFBF2}
 .ball-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block;margin-right:6px;vertical-align:middle}
 .bd-e{background:var(--em)}.bd-d{background:#378ADD}.bd-p{background:#7F77DD}
 .bd-c{background:#EF9F27}.bd-a{background:#D85A30}.bd-done{background:#B4B2A9}
+.bd-w{background:#6C4FE0}
 .ball-name{font-size:14px;font-weight:500;color:var(--text);vertical-align:middle}
 .due-urgent{color:#D85A30;font-size:13px;font-weight:500}
 .due-near{color:#BA7517;font-size:13px;font-weight:500}
@@ -8119,6 +8121,15 @@ window.showPage = window.showPage || function(name, btn) {
 
       <!-- ステップインジケーター -->
       <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
+
+      <!-- Wチェック要否トグル（静止画のみ・ADR 024）。権限者だけ操作可。 -->
+      <div id="cd-wcheck-toggle-row" style="display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted)">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="cd-wcheck-required" style="margin:0">
+          <span>この静止画でWチェックを行う（Dチェックの前にダブルチェック）</span>
+        </label>
+        <span id="cd-wcheck-toggle-saving" style="display:none;font-size:11px">保存中…</span>
+      </div>
     </div>
 
     <!-- スクロール可能コンテンツ -->
@@ -9129,8 +9140,8 @@ let creativeGanttDateOffset = 0;
 // 詳細フィルター展開状態
 let creativeAdvFiltersOpen = false;
 // ステータス pill の選択肢（statusClass のキー集合から）
-const _CV_STATUS_LIST = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
-// ボール種別の選択肢
+const _CV_STATUS_LIST = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集','Wチェック','Wチェック後修正','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
+// ボール種別の選択肢（詳細フィルタのpill群と一致させること。Wチェックは「自分のボール」ビューで別途対応）
 const _CV_BALL_LIST = ['editor','D','P','client'];
 // 詳細フィルターの値 — メンバーマスター（creative_default_*）が唯一の真実（PR #277）。
 // 認証完了後に applyCreativeDefaultsFromUser() で上書きされる。ここではハードコード既定値で初期化。
@@ -9385,7 +9396,7 @@ function clientStatusClass(s) {
 }
 
 function statusClass(s) {
-  const map = {'未着手':'s-gray','台本制作':'s-pink','素材・ナレ作成':'s-orange','編集':'s-teal','Dチェック':'s-blue','Dチェック後修正':'s-pink','Pチェック':'s-purple','Pチェック後修正':'s-pink','クライアントチェック中':'s-orange','クライアントチェック後修正':'s-coral','納品':'s-green','進行中':'s-teal','確認待ち':'s-orange','完了':'s-green','保留':'s-gray'};
+  const map = {'未着手':'s-gray','台本制作':'s-pink','素材・ナレ作成':'s-orange','編集':'s-teal','Wチェック':'s-indigo','Wチェック後修正':'s-pink','Dチェック':'s-blue','Dチェック後修正':'s-pink','Pチェック':'s-purple','Pチェック後修正':'s-pink','クライアントチェック中':'s-orange','クライアントチェック後修正':'s-coral','納品':'s-green','進行中':'s-teal','確認待ち':'s-orange','完了':'s-green','保留':'s-gray'};
   return map[s] || 's-gray';
 }
 
@@ -12565,7 +12576,7 @@ function renderCreatives() {
       const isProducerLike = ['producer','admin'].includes(myRole);
       const myIdsHit = !!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId);
       let hasBall = false;
-      if (bh.type === 'editor' || bh.type === 'director') hasBall = myIdsHit || (!!myId && bh.user_id === myId);
+      if (bh.type === 'editor' || bh.type === 'director' || bh.type === 'wcheck') hasBall = myIdsHit || (!!myId && bh.user_id === myId);
       else if (bh.type === 'producer') hasBall = myIdsHit || isProducerLike;
       else if (bh.type === 'all') hasBall = myIdsHit || isProducerLike;
       if (!hasBall) return false;
@@ -12612,7 +12623,7 @@ function renderCreatives() {
       || (homeTeamId ? teamById.get(homeTeamId) : null)
       || (editorUserId ? teamByMember.get(editorUserId) : null);
     const ball = c.ball_holder || { holder:'不明', type:'unknown' };
-    const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
+    const dotClass = {editor:'bd-e',wcheck:'bd-w',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
     // DATE型("YYYY-MM-DD")を new Date() で渡すと UTC midnight になり JST では1日ズレるため、
     // ガント側と同じ _cvAtMidnight / _cvDayDiff（暦日差・UTC ベース）に統一する。
     const today = _cvAtMidnight(new Date());
@@ -30868,7 +30879,7 @@ function _cdCanUndoUpload(file) {
   //   V1 を提出 (Dチェック移行) → D指摘 → D後修正 へ来た時点では V1 は submit 済。
   //   ここでは submittedSet に V1 が入っているので上の return false で弾かれる想定。
   //   レガシーデータ救済: submit が見つからない後修正状態で fileVer<=maxSubmittedVer なら提出済扱い。
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   const status = currentCreativeDetail?.status || '';
   if (REVISION_STATUSES.includes(status)) {
     let maxSnapVer = 0;
@@ -30888,7 +30899,7 @@ function _cdCanUndoUpload(file) {
 
   // チェック中・納品ステータスは提出されているはず。
   // snapshot 反映が遅延しているケースを救うために、ここでも非表示にする。
-  const CHECK_STATUSES = ['Dチェック','Pチェック','クライアントチェック中','納品'];
+  const CHECK_STATUSES = ['Wチェック','Dチェック','Pチェック','クライアントチェック中','納品'];
   if (CHECK_STATUSES.includes(status)) return false;
 
   return true;
@@ -30921,7 +30932,7 @@ function _cdComputeNextVersion() {
   // 後修正系 status 中の "初めての修正版アップ" は M+1 にする補正
   // （snapshot は再提出時に確定するため、D後修正中は M=1 / snapshot=0 の状態。
   //  ここで M を返すと V1 と衝突する。サーバ側採番ロジックと完全に一致させる。）
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   if (currentCreativeDetail && REVISION_STATUSES.includes(currentCreativeDetail.status || '')) {
     return M + 1;
   }
@@ -30956,7 +30967,7 @@ function _cdRenderUndoUploadBtn(creativeId, file, version) {
 function _cdRenderRoundRightFileCard(currentRound) {
   const c = currentCreativeDetail;
   if (!c) return '';
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isRevision = REVISION_STATUSES.includes(c.status);
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
   const latest = files[0] || null; // 一覧は新しい順
@@ -31097,7 +31108,7 @@ function _cdRenderRoundLeftHeader(currentIdx, totalN, page) {
 // 何でも動く値で意味が曖昧だったため削除（PR #TBD）。
 function _cdRenderRoundRightHeader(creative) {
   const status = creative?.status || '';
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   const isEdit = REVISION_STATUSES.includes(status);
   // ステータスバッジ: 修正中なら「編集中」、その他は現在ステータスをそのまま
   let statusHtml = '';
@@ -31724,7 +31735,7 @@ async function openCreativeDetail(id) {
       el.innerHTML = '';
       return;
     }
-    const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
+    const dotClass = {editor:'bd-e',wcheck:'bd-w',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
     // bh.holder_users[] に全員（Dチェック / Pチェック は複数アサイン可）。
     // 単独のときは従来通り「アバター22px + 名前」。複数のときは「アバター22px×N（重ね無し横並び）+ 全員の名前を読点区切り」。
     // クライアント / done / unknown は holder_users=[] なのでアバター無しでフォールバック。
@@ -31734,9 +31745,40 @@ async function openCreativeDetail(id) {
     const avatarPart = holderUsers.length
       ? `<span style="display:inline-flex;align-items:center;gap:3px">${holderUsers.map(u => avatarHtml(u, 22)).join('')}</span>`
       : '';
-    el.style.display = '';
-    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(names.join('、'))}</span></span>`;
+    // Wチェック中（ADR 024・section 8）: 「現在の担当者」を明確にし、担当ディレクターは
+    // 同列に並べず「次の担当者」として区別表示する。
+    const isWcheckBall = bh.type === 'wcheck';
+    const prefix = isWcheckBall ? '現在の担当者:' : 'ボール:';
+    let nextHtml = '';
+    if (isWcheckBall) {
+      const dir = c.projects?.director || null;
+      const dirName = dir
+        ? ((typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(dir) : (dir.nickname || dir.full_name || ''))
+        : '担当ディレクター';
+      const dirAvatar = dir ? avatarHtml(dir, 18) : '';
+      nextHtml = `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border);color:var(--text-muted);font-size:12px">次の担当者: ${dirAvatar}<span>${esc(dirName)}（ディレクター）</span></span>`;
+    }
+    // Wチェック依頼情報（依頼者・依頼日時・依頼コメント）を補助行で表示
+    let wInfoHtml = '';
+    if (isWcheckBall) {
+      const w = c.wcheck || {};
+      const reqUser = (allMembers || []).find(m => m && m.id === w.requested_by) || null;
+      const reqName = reqUser ? ((typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(reqUser) : (reqUser.nickname || reqUser.full_name || '')) : '';
+      const when = w.requested_at
+        ? new Date(w.requested_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
+      const parts = [];
+      if (reqName) parts.push(`依頼者: ${esc(reqName)}`);
+      if (when) parts.push(esc(when));
+      let line = parts.join(' / ');
+      if (w.comment) line += (line ? '　' : '') + `「${esc(w.comment)}」`;
+      if (line) wInfoHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">${line}</div>`;
+    }
+    el.style.display = isWcheckBall ? 'block' : '';
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">${prefix} <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(names.join('、'))}</span>${nextHtml}</span>${wInfoHtml}`;
   })();
+  // Wチェック要否トグル（静止画のみ・権限者のみ操作可・ADR 024）
+  try { updateWcheckToggleRow(c); } catch (e) { console.warn('[wcheck toggle] render failed:', e?.message || e); }
   // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
   // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
   // 通知・返信モーダル（renderFromToAvatar フォールバック）で引き続き使用するため、保存・read 経路は無変更。
@@ -31814,8 +31856,8 @@ async function openCreativeDetail(id) {
   // チェック段階（Dチェック/Pチェック/CL中）: 編集者コメントを表示
   // 後修正段階: ディレクター/CLの修正指示を表示
   // その他: 編集者コメントを表示
-  const _CHECK_STATUSES_DISP    = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const _REVISION_STATUSES_DISP = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const _CHECK_STATUSES_DISP    = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const _REVISION_STATUSES_DISP = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const _commentDisp = _REVISION_STATUSES_DISP.includes(c.status)
     ? (c.director_comment || '')
     : (c.editor_comment || '');
@@ -32147,10 +32189,17 @@ function updateCreativeStepIndicator(status) {
   }
 
   const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
+  // Wチェック（ADR 024）: 静止画かつ要否=必要のときだけ「制作 → Wチェック → Dチェック」を表示。
+  const _wc = currentCreativeDetail?.wcheck || {};
+  const wcheckActive = !!(_wc.is_image && _wc.required);
+  const _myId = currentUser?.id;
+  const isWcheckAssignee = !!(_wc.assignee && _myId && _wc.assignee.id === _myId);
+  const isWcheckAdmin = (typeof isTopAdmin === 'function' && isTopAdmin()) || effectiveRole() === 'admin';
   // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
     { label: '未着手',    statuses: ['未着手'] },
-    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'] },
+    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集', 'Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'] },
+    ...(wcheckActive ? [{ label: 'Wチェック', statuses: ['Wチェック'] }] : []),
     { label: 'Dチェック', statuses: ['Dチェック'] },
     { label: 'Pチェック', statuses: ['Pチェック'] },
     { label: 'CL確認',   statuses: ['クライアントチェック中'] },
@@ -32213,13 +32262,15 @@ function updateCreativeStepIndicator(status) {
   // 後修正ステータスから「次へ」は同じチェック段階への再提出
   const NEXT = hasProducer ? {
     '未着手': '制作中（初稿提出前）',
-    '制作中（初稿提出前）': 'Dチェック',
+    '制作中（初稿提出前）': wcheckActive ? 'Wチェック' : 'Dチェック',
+    'Wチェック後修正': 'Wチェック',
     'Dチェック後修正': 'Dチェック',
     'Pチェック後修正': 'Pチェック',
     'クライアントチェック後修正': 'クライアントチェック中',
   } : {
     '未着手': '制作中（初稿提出前）',
-    '制作中（初稿提出前）': 'Dチェック',
+    '制作中（初稿提出前）': wcheckActive ? 'Wチェック' : 'Dチェック',
+    'Wチェック後修正': 'Wチェック',
     'Dチェック後修正': 'Dチェック',
     'クライアントチェック後修正': 'クライアントチェック中',
   };
@@ -32234,32 +32285,46 @@ function updateCreativeStepIndicator(status) {
   if (forceDelBtn) forceDelBtn.style.display = (status === '納品') ? '' : 'none';
   if (!nextBtn) return;
 
-  // チェック段階: 修正依頼 ＋ 承認 の2ボタン
-  const CHECK_STAGES = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
+  // チェック段階: 修正依頼 ＋ 承認 の2ボタン（Wチェックも含む・ADR 024）
+  const CHECK_STAGES = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
   const isCheckStage = CHECK_STAGES.includes(status);
 
   const PRODUCTION_STAGES = ['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
 
   if (isCheckStage) {
     if (directClBtn) directClBtn.style.display = 'none';
-    // 修正依頼ボタン
-    revisionBtn.style.display = '';
-    const revisionLabel = { 'Dチェック': 'Dチェック後修正', 'Pチェック': 'Pチェック後修正', 'クライアントチェック中': 'クライアントチェック後修正' };
-    revisionBtn.dataset.target = revisionLabel[status];
-
-    // 承認ボタン（Pがいるかどうかで行先を変える）
-    nextBtn.style.display = '';
     const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
-    let approveTarget;
-    if (status === 'Dチェック')           approveTarget = hasProducer ? 'Pチェック' : 'クライアントチェック中';
-    else if (status === 'Pチェック')       approveTarget = 'クライアントチェック中';
-    else                                   approveTarget = '納品';
-    nextBtn.textContent = `承認（${approveTarget}）→`;
-    nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
-    nextBtn.dataset.target = approveTarget;
 
-    // Pスキップボタン: Dチェック かつ Pあり 案件のみ表示
-    if (skipPBtn) skipPBtn.style.display = (status === 'Dチェック' && hasProducer) ? '' : 'none';
+    if (status === 'Wチェック') {
+      // Wチェック段階: 承認/修正依頼は Wチェック担当者本人 または admin のみ（section 15）。
+      // それ以外（制作担当・ディレクター等）は閲覧のみ＝両ボタン非表示。
+      const canActW = isWcheckAssignee || isWcheckAdmin;
+      revisionBtn.style.display = canActW ? '' : 'none';
+      revisionBtn.dataset.target = 'Wチェック後修正';
+      nextBtn.style.display = canActW ? '' : 'none';
+      nextBtn.textContent = 'Wチェック承認 → Dチェックへ';
+      nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+      nextBtn.dataset.target = 'Dチェック';
+      if (skipPBtn) skipPBtn.style.display = 'none';
+    } else {
+      // 修正依頼ボタン
+      revisionBtn.style.display = '';
+      const revisionLabel = { 'Dチェック': 'Dチェック後修正', 'Pチェック': 'Pチェック後修正', 'クライアントチェック中': 'クライアントチェック後修正' };
+      revisionBtn.dataset.target = revisionLabel[status];
+
+      // 承認ボタン（Pがいるかどうかで行先を変える）
+      nextBtn.style.display = '';
+      let approveTarget;
+      if (status === 'Dチェック')           approveTarget = hasProducer ? 'Pチェック' : 'クライアントチェック中';
+      else if (status === 'Pチェック')       approveTarget = 'クライアントチェック中';
+      else                                   approveTarget = '納品';
+      nextBtn.textContent = `承認（${approveTarget}）→`;
+      nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+      nextBtn.dataset.target = approveTarget;
+
+      // Pスキップボタン: Dチェック かつ Pあり 案件のみ表示
+      if (skipPBtn) skipPBtn.style.display = (status === 'Dチェック' && hasProducer) ? '' : 'none';
+    }
   } else {
     revisionBtn.style.display = 'none';
     if (skipPBtn) skipPBtn.style.display = 'none';
@@ -32268,11 +32333,12 @@ function updateCreativeStepIndicator(status) {
     if (directClBtn) directClBtn.style.display = PRODUCTION_STAGES.includes(status) ? '' : 'none';
     if (next) {
       nextBtn.style.display = '';
-      const RESUBMIT = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+      const RESUBMIT = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
       // クライアントチェック後修正からの再提出は「クライアントに再提出」と表示
       // （UX: 一度クライアントに見せた後の修正だと一目でわかる）
       nextBtn.textContent =
         status === 'クライアントチェック後修正' ? 'クライアントに再提出 →'
+        : next === 'Wチェック' ? 'Wチェックへ回す →'
         : RESUBMIT.includes(status) ? `${next}へ提出 →`
         : `${next} へ →`;
       nextBtn.dataset.target = next;
@@ -32301,8 +32367,8 @@ function updateCreativeCommentLabel(status) {
   if (_replyFromToEl) _replyFromToEl.style.display = 'none';
 
   // チェック段階（承認者が見る）または後修正（編集者が修正指摘を参照）は読み取り専用
-  const CHECK_READONLY   = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const CHECK_READONLY   = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isCheckStage   = CHECK_READONLY.includes(status);
   const isRevision     = REVISION_STATUSES.includes(status);
   const isReadonly     = isCheckStage || isRevision;
@@ -32401,8 +32467,8 @@ function updateCreativeCommentLabel(status) {
     if (noteGroup)       noteGroup.style.display       = '';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
     if (noteLabel) {
-      const stageMap = { 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
-      const senderMap = { 'Dチェック': 'ディレクター', 'Pチェック': 'プロデューサー', 'クライアントチェック中': 'クライアント' };
+      const stageMap = { 'Wチェック': 'Wチェック', 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
+      const senderMap = { 'Wチェック': 'Wチェック担当者', 'Dチェック': 'ディレクター', 'Pチェック': 'プロデューサー', 'クライアントチェック中': 'クライアント' };
       noteLabel.innerHTML = `${stageMap[status] || ''}　${senderMap[status] || 'ディレクター'}からの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>`;
     }
   } else if (isRevision) {
@@ -32800,7 +32866,7 @@ async function advanceCreativeStatus() {
   }
 
   // 後修正ステージから再提出: 編集者からの返信コメント必須
-  const REVISION_STAGES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const REVISION_STAGES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   if (REVISION_STAGES.includes(currentCreativeDetail.status)) {
     const replyField = document.getElementById('cd-editor-reply');
     const reply = replyField?.value.trim();
@@ -32849,6 +32915,20 @@ async function advanceCreativeStatus() {
         return;
       }
     }
+  }
+
+  // 遷移先が「Wチェック」のときは Wチェック担当者選択モーダルを表示（ADR 024）
+  if (target === 'Wチェック') {
+    openWcheckPicker({
+      onSubmit: async ({ wcheckUserId, comment }) => {
+        await saveCreativeDetail('Wチェック', {
+          wcheck_user_id: wcheckUserId,
+          wcheck_comment: comment || null,
+          ...(_filelessExtra || {}),
+        });
+      },
+    });
+    return;
   }
 
   // 遷移先が「Dチェック」のときは confirm ではなく担当者選択モーダルに置き換え
@@ -33058,7 +33138,7 @@ async function loadCreativeFiles(creativeId) {
   }
 
   // 後修正ステータスでは編集者がアップロードのみ行う画面なのでチェック/コメントボタン不要
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const hideCheckBtn = REVISION_STATUSES.includes(currentCreativeDetail?.status);
 
   // CLステータスかどうか（CL確認 / クライアントチェック後修正）
@@ -37375,6 +37455,161 @@ function confirmUploadNo() {
   document.getElementById('cd-manual-upload-btn').style.display = '';
 }
 
+// ==================== Wチェック要否トグル（ADR 024）====================
+// 静止画クリエイティブのときだけ表示。権限者（project.create_edit）のみ操作可。
+// チェック ON/OFF で creatives.wcheck_required を即時 PUT。
+function updateWcheckToggleRow(c) {
+  const row = document.getElementById('cd-wcheck-toggle-row');
+  const cb  = document.getElementById('cd-wcheck-required');
+  if (!row || !cb) return;
+  const wc = c?.wcheck || {};
+  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : false;
+  // 静止画以外、または権限なしの場合は非表示
+  if (!wc.is_image || !canEdit) {
+    row.style.display = 'none';
+    return;
+  }
+  row.style.display = 'flex';
+  cb.checked = !!wc.required;
+  cb.disabled = false;
+  // 既に Wチェック中／後修正のときはトグルで途中変更させない（混乱防止）
+  const midFlow = ['Wチェック', 'Wチェック後修正'].includes(c?.status);
+  cb.disabled = midFlow;
+  row.title = midFlow ? 'Wチェック進行中は要否を変更できません' : '';
+  cb.onchange = async () => {
+    const saving = document.getElementById('cd-wcheck-toggle-saving');
+    if (saving) saving.style.display = '';
+    cb.disabled = true;
+    try {
+      const res = await apiFetch(`${API}/creatives/${c.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wcheck_required: cb.checked }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        showToast('保存エラー: ' + translateError(e?.error), 'error');
+        cb.checked = !cb.checked; // 失敗時はロールバック
+      } else {
+        if (currentCreativeDetail?.wcheck) currentCreativeDetail.wcheck.required = cb.checked;
+        try { _cdInvalidateCache(c.id); } catch (_) {}
+        // 進捗バー（Wチェック段の有無）を再描画
+        try { updateCreativeStepIndicator(currentCreativeDetail.status); } catch (_) {}
+        showToast(cb.checked ? 'この静止画はWチェックを行います' : 'この静止画はWチェック不要にしました', 'success');
+      }
+    } catch (err) {
+      showToast('保存に失敗: ' + (err?.message || err), 'error');
+      cb.checked = !cb.checked;
+    } finally {
+      if (saving) saving.style.display = 'none';
+      cb.disabled = midFlow;
+    }
+  };
+}
+
+// ==================== Wチェック担当者選択モーダル（ADR 024）====================
+// 「Wチェックへ回す」押下時に表示。単数選択。担当ディレクター・制作担当はグレーアウトで選択不可。
+function openWcheckPicker({ onSubmit } = {}) {
+  if (!currentCreativeDetail) return;
+  const proj = currentCreativeDetail.projects || {};
+  // 除外（選択不可）対象: 担当ディレクター（必須）＋ 制作担当（ダブルチェックのため別人にする）
+  const directorIds = new Set();
+  if (proj.director_id) directorIds.add(proj.director_id);
+  (Array.isArray(proj.sub_director_ids) ? proj.sub_director_ids : []).forEach(id => id && directorIds.add(id));
+  (currentCreativeDetail.creative_assignments || [])
+    .filter(a => a.role === 'director' && a.users)
+    .forEach(a => directorIds.add(a.users.id));
+  const editorIds = new Set();
+  (currentCreativeDetail.creative_assignments || [])
+    .filter(a => ['editor','designer','director_as_editor'].includes(a.role) && a.users)
+    .forEach(a => editorIds.add(a.users.id));
+
+  // 候補: 有効ユーザーのみ。退職者(is_active=false)・外部ディレクターは除外。
+  const candidates = (allMembers || [])
+    .filter(m => m && m.is_active !== false && m.role !== 'external_director')
+    .slice()
+    .sort((a, b) => {
+      const tcA = (currentCreativeDetail.team_id && a.team_id === currentCreativeDetail.team_id) ? 0 : 1;
+      const tcB = (currentCreativeDetail.team_id && b.team_id === currentCreativeDetail.team_id) ? 0 : 1;
+      if (tcA !== tcB) return tcA - tcB;
+      return String(a.nickname || a.full_name || '').localeCompare(String(b.nickname || b.full_name || ''), 'ja');
+    });
+
+  const rowHtml = candidates.map(m => {
+    const isDir = directorIds.has(m.id);
+    const isEd  = editorIds.has(m.id);
+    const disabled = isDir || isEd;
+    const reason = isDir ? '担当ディレクターのため選択できません' : (isEd ? '制作担当者のため選択できません' : '');
+    const label = (typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(m) : (m.nickname || m.full_name || m.id);
+    return `<label data-disabled="${disabled?'1':'0'}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:${disabled?'not-allowed':'pointer'};opacity:${disabled?'.55':'1'};background:${disabled?'var(--surface)':'transparent'}">
+      <input type="radio" name="wcheck-user" value="${m.id}" ${disabled?'disabled':''} style="margin:0">
+      <span style="flex:1;min-width:0">
+        <span style="font-size:13px">${label}</span>
+        ${reason ? `<span style="display:block;font-size:11px;color:var(--text-muted)">${reason}</span>` : ''}
+      </span>
+    </label>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  overlay.innerHTML = `
+    <div style="background:var(--bg,#fff);border-radius:14px;max-width:440px;width:100%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+      <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
+        <div style="font-weight:700;font-size:15px">Wチェック担当者を選択</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">ダブルチェックのため、担当ディレクター・制作担当は選択できません。</div>
+      </div>
+      <div style="padding:8px 12px;overflow:auto;flex:1">
+        <input id="wcheck-search" placeholder="名前で絞り込み…" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;box-sizing:border-box">
+        <div id="wcheck-list">${rowHtml || '<div style="padding:20px;text-align:center;color:var(--text-muted)">候補がいません</div>'}</div>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px">依頼コメント</div>
+        <textarea id="wcheck-comment" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
+        <button id="wcheck-cancel" style="padding:8px 16px;border:1px solid var(--border);background:var(--surface);border-radius:8px;cursor:pointer;font-size:13px">キャンセル</button>
+        <button id="wcheck-submit" disabled style="padding:8px 16px;border:none;background:linear-gradient(135deg,#6C4FE0,#5B3FD0);color:#fff;border-radius:8px;cursor:not-allowed;font-size:13px;opacity:.5">Wチェックを依頼 →</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#wcheck-cancel').onclick = close;
+
+  const submitBtn = overlay.querySelector('#wcheck-submit');
+  const syncSubmit = () => {
+    const ok = !!overlay.querySelector('input[name="wcheck-user"]:checked');
+    submitBtn.disabled = !ok;
+    submitBtn.style.opacity = ok ? '1' : '.5';
+    submitBtn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  };
+  overlay.querySelector('#wcheck-list').addEventListener('change', syncSubmit);
+  overlay.querySelector('#wcheck-search').addEventListener('input', (e) => {
+    const q = String(e.target.value || '').trim().toLowerCase();
+    overlay.querySelectorAll('#wcheck-list label').forEach(lab => {
+      const txt = lab.textContent.toLowerCase();
+      lab.style.display = (!q || txt.includes(q)) ? '' : 'none';
+    });
+  });
+
+  submitBtn.onclick = async () => {
+    const sel = overlay.querySelector('input[name="wcheck-user"]:checked');
+    if (!sel) return;
+    const wcheckUserId = sel.value;
+    const comment = overlay.querySelector('#wcheck-comment')?.value.trim() || '';
+    submitBtn.disabled = true;
+    submitBtn.textContent = '送信中…';
+    try {
+      await onSubmit?.({ wcheckUserId, comment });
+    } catch (e) {
+      console.warn('[wcheck] submit failed:', e?.message || e);
+    } finally {
+      close();
+    }
+  };
+}
+
 async function doDCheckTransition() {
   return btnBusy(busyBtnFrom(), async () => {
   document.getElementById('cd-dcheck-confirm').style.display = 'none';
@@ -40056,8 +40291,8 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   const noteValue        = document.getElementById('cd-director-note')?.value.trim()  || null;
   const editorReplyValue = document.getElementById('cd-editor-reply')?.value.trim()   || null;
   const commentFieldValue = document.getElementById('cd-comment-field').value.trim() || null;
-  const CHECK_STATUSES    = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const CHECK_STATUSES    = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isCheck    = CHECK_STATUSES.includes(currentCreativeDetail.status);
   const isRevision = REVISION_STATUSES.includes(currentCreativeDetail.status);
   const body = {
