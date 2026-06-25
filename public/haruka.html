@@ -37713,6 +37713,17 @@ function openWcheckPicker({ onSubmit } = {}) {
 // 戻り値: 入力文字列（空文字含む）= 依頼続行 / null = キャンセル。
 function _wcheckRequestCommentPrompt(assignees) {
   const list = Array.isArray(assignees) ? assignees : [];
+  // 裏の「連絡・確認事項」欄に既に書いた内容を依頼コメントへ引用プリフィルする（二重入力の解消）。
+  // 制作中→Wチェックは cd-comment-field、後修正→Wチェックは cd-editor-reply が宛先コメント欄。
+  // ユーザーはそのまま使っても、編集・追記してもよい。
+  const _bgComment = (() => {
+    try {
+      const st = currentCreativeDetail?.status || '';
+      const isRev = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'].includes(st);
+      const el = isRev ? document.getElementById('cd-editor-reply') : document.getElementById('cd-comment-field');
+      return (el?.value || '').trim();
+    } catch (_) { return ''; }
+  })();
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:10030;display:flex;align-items:center;justify-content:center;padding:16px';
@@ -37731,8 +37742,8 @@ function _wcheckRequestCommentPrompt(assignees) {
         <div style="padding:14px 16px;border-bottom:1px solid #E5E7EB;font-weight:600;font-size:15px">Wチェックを依頼</div>
         ${assigneeBlock}
         <div style="padding:14px 16px 16px">
-          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">依頼コメント（任意）</div>
-          <textarea id="_wcmt" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box"></textarea>
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">依頼コメント（任意）${_bgComment ? '<span style="font-weight:400;color:#64748B;margin-left:6px">連絡・確認事項を引用しました（編集可）</span>' : ''}</div>
+          <textarea id="_wcmt" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box">${esc(_bgComment)}</textarea>
         </div>
         <div style="padding:12px 16px;border-top:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;gap:8px">
           <button id="_wcmtBack" style="padding:6px 12px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#475569">← 担当者を選び直す</button>
