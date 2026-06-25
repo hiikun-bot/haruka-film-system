@@ -36048,9 +36048,12 @@ function switchAnalyticsView(view, skipReset) {
       '<div style="padding:24px;text-align:center;color:var(--text-muted)">「集計」ボタンを押すと結果が表示されます。</div>';
     _analyticsLastResult = null;
   }
-  // cost-coverage は対象月不要なので即ロード
+  // メニュー切り替え時は自動で集計を実行する（「集計」ボタンを押す手間を省く）。
+  // cost-coverage は対象月不要なので専用ロード、それ以外は loadAnalytics に委譲。
   if (view === 'cost-coverage') {
     loadCostCoverage();
+  } else {
+    loadAnalytics();
   }
 }
 
