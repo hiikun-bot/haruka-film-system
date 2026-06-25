@@ -8724,32 +8724,69 @@ router.get('/creatives/:id/drive-folder', requireAuth, async (req, res) => {
     //   旧データ等で drive_file_id が null・drive_url のみ保持している行が実在する。
     //   ここで drive_file_id 非null だけに絞り込むと、詳細モーダル（GET /files は全行返す→
     //   「前回提出ファイル」として表示される）には出ているのに 📁フォルダ だけ 404 になり、
-    //   「アップロード済みなのに『まだアップロードされていません』」のズレが起きる。
-    //   フロントの file カード（haruka.html: f.drive_url から /d/<id>/ を抽出）と同じ救済を
-    //   サーバ側でも行い、両者の判定を一致させる。
+    //   「アップロード済みなのに『まだアップロードされていません』」のズレが起きる（#853）。
+    //
+    //   さらに #853 後も、「納品済みなのに 📁フォルダ が 404」になるケースが残っていた:
+    //   (a) master 原本(drive_file_id/drive_url) を持たず faststart プレビューだけ持つ行
+    //   (b) master ファイルが Drive 側で削除済み（drive.files.get が parents を返さず例外）
+    //   そこで採用する file id 候補を広げ、解決できるまで順に drive.files.get を試す。
+    //   候補は (1) creative_files の master / faststart の id・URL、(2) creatives.client_review_url。
+    //   client_review_url は共有用コピーではなくアップロード済みファイル自身(faststart 完成版 or
+    //   master 原本)の webViewLink なので、その親はこのクリエイティブの作業フォルダ（faststart も
+    //   master と同フォルダにアップロードされる: 同 routes の upload 後処理参照）になる。
+    const idFromUrl = (u) => (u ? (String(u).match(/\/d\/([^/]+)/) || [])[1] : null) || null;
+
     const { data: files, error } = await supabase
       .from('creative_files')
-      .select('drive_file_id, drive_url')
+      .select('drive_file_id, drive_url, faststart_drive_file_id, faststart_drive_url')
       .eq('creative_id', req.params.id)
       .order('uploaded_at', { ascending: false })
       .limit(20);
     if (error) return res.status(500).json({ error: error.message });
-    // drive_file_id があればそれを、無ければ drive_url（webViewLink）から file id を抽出して採用。
-    const resolveDriveFileId = (f) =>
-      f?.drive_file_id || (f?.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null) || null;
-    const latestFileId = (files || []).map(resolveDriveFileId).find(Boolean) || null;
-    if (!latestFileId) {
+
+    // 解決を試す file id 候補を、最新行から順に組み立てる（重複は除外）。
+    const candidateIds = [];
+    const pushId = (id) => { if (id && !candidateIds.includes(id)) candidateIds.push(id); };
+    for (const f of (files || [])) {
+      pushId(f?.drive_file_id);
+      pushId(idFromUrl(f?.drive_url));
+      pushId(f?.faststart_drive_file_id);
+      pushId(idFromUrl(f?.faststart_drive_url));
+    }
+    // creative_files で 1件も解決できないケースの最終フォールバック: client_review_url。
+    const { data: creative } = await supabase
+      .from('creatives')
+      .select('client_review_url')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    pushId(idFromUrl(creative?.client_review_url));
+
+    if (candidateIds.length === 0) {
       return res.status(404).json({ error: 'まだファイルがアップロードされていません' });
     }
+
+    // 候補を順に試し、最初に親フォルダが取れたものを採用する。
+    // 個々の get 失敗（削除済み等）は握りつぶして次の候補へ進む。
     const drive = await getDriveService();
-    const meta = await drive.files.get({
-      fileId: latestFileId,
-      fields: 'parents',
-      supportsAllDrives: true,
-    });
-    const parentId = (meta.data.parents || [])[0];
+    let parentId = null;
+    let lastErr = null;
+    for (const fileId of candidateIds) {
+      try {
+        const meta = await drive.files.get({
+          fileId,
+          fields: 'parents',
+          supportsAllDrives: true,
+        });
+        const p = (meta.data.parents || [])[0];
+        if (p) { parentId = p; break; }
+      } catch (e) {
+        lastErr = e;
+        // 削除済み / 権限なし等 → 次の候補へ
+      }
+    }
     if (!parentId) {
-      return res.status(404).json({ error: '親フォルダが見つかりませんでした' });
+      console.warn('[drive-folder] no parent resolved:', { creativeId: req.params.id, tried: candidateIds.length, lastErr: lastErr?.message });
+      return res.status(404).json({ error: '親フォルダが見つかりませんでした（ファイルが Drive から削除された可能性があります）' });
     }
     res.json({
       folder_id: parentId,
