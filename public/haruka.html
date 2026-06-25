@@ -2695,7 +2695,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 // ・ページが完走した場合: 後続の `function showPage(...) {}` が global を上書き（hoisting）
 // ・トランケーション時:   このスタブのまま。最低限ナビは動かしつつ「不完全」をユーザーに通知
 // このブロックは早期 inline 内に置く必要があり、外部 JS では遅すぎる（取得前に click される）。
-window.showPage = window.showPage || function(name, btn) {
+window.showPage = window.showPage || function stubShowPage(name, btn) {
+  // 最低限のページ切替え（本物が未定義でもナビだけは動かす）
   try {
     document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
     var target = document.getElementById('page-' + name);
@@ -2703,26 +2704,55 @@ window.showPage = window.showPage || function(name, btn) {
     document.querySelectorAll('.nav-btn,.nav-drawer-btn').forEach(function(b) { b.classList.remove('active'); });
     document.querySelectorAll('.nav-btn[data-page="' + name + '"],.nav-drawer-btn[data-page="' + name + '"]').forEach(function(b) { b.classList.add('active'); });
   } catch (_) {}
-  // スタブが呼ばれた時点で本来の showPage に上書きされていない = メイン script が完走していない。
-  // ユーザーへリロードを促し、Slack にも一度だけ通知する。
-  try {
-    if (!window.__showPageStubReported) {
+
+  // 真の異常時のみ Slack 通知＋バナーを一度だけ出す内部関数。
+  // ここに到達する条件は「readyState=complete（＝読み込み完了）なのにスタブのまま」=
+  // 巨大 inline script が parse されず showPage を hoist できなかった状態。
+  // サーバーのコードが構文的に正しくても、配信後にクライアント側で壊れると起きうる：
+  //   ・回線途中切断によるトランケーション ・ブラウザ拡張/コンテンツブロッカーによる改変
+  //   ・巨大 inline script のブラウザ parse 失敗 など。
+  function reportStub() {
+    try {
+      if (window.__showPageStubReported) return;
       window.__showPageStubReported = true;
       if (typeof window.__postAutoError === 'function') {
         window.__postAutoError({
           kind: 'showPage.stub.invoked',
-          message: 'showPage stub fired — main inline script likely truncated before function declaration',
+          // trace 側に readyState / 転送サイズが自動添付されるが、原因の読み違いを防ぐため
+          // 「クライアント側で本体scriptが parse されなかった」ことを message でも明示する。
+          message: 'showPage stub fired (readyState=' + document.readyState + ') — '
+                 + 'main inline script was not parsed on the client (truncation / extension / browser parse failure). '
+                 + 'Server HTML at this build is syntactically valid.',
           url: location.href,
         });
       }
       // toast 関数もまだ無い可能性があるので素のバナー DOM を出す
       var bar = document.createElement('div');
-      bar.textContent = 'ページの読み込みが不完全です。再読み込みしてください。';
+      bar.textContent = 'ページの読み込みが不完全です。拡張機能をオフにして再読み込みしてください。';
       bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#A32D2D;color:#fff;padding:10px 16px;text-align:center;font-size:13px;font-weight:600;cursor:pointer';
       bar.onclick = function() { try { location.reload(); } catch (_) {} };
       document.body.appendChild(bar);
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
+
+  if (document.readyState !== 'complete') {
+    // 読み込み途中の早すぎるクリック（良性）。本物の showPage は直後に hoist されるので、
+    // この時点では通知しない（誤検知ノイズの主因を断つ）。少し待って本物が来たら自動で完走させ、
+    // それでも来ず読み込みは完了している場合だけ「真の異常」として通知する。
+    setTimeout(function() {
+      try {
+        if (window.showPage && window.showPage !== stubShowPage) {
+          window.showPage(name, btn); // 本物で再実行し breadcrumb/LS保存/遅延ロード等を補完
+        } else if (document.readyState === 'complete') {
+          reportStub();
+        }
+      } catch (_) {}
+    }, 1500);
+    return;
+  }
+
+  // readyState=complete なのにスタブが呼ばれた = 真の異常。即通知。
+  reportStub();
 };
 </script>
 
