@@ -40089,7 +40089,11 @@ async function openCreativeDriveFolder() {
   const restore = () => { if (btn) { btn.textContent = original || '📁 フォルダ'; btn.disabled = false; } };
   try {
     if (btn) { btn.textContent = '⏳ 取得中…'; btn.disabled = true; }
-    const res = await fetch(`/api/creatives/${encodeURIComponent(currentCreativeDetail.id)}/drive-folder`);
+    // NOTE: API は /api/haruka 配下にマウントされている（server.js: app.use('/api/haruka', ...)）。
+    //       ここだけ `${API}` を使わず生で `/api/creatives/...` を叩いていたため
+    //       Express の "Cannot GET" 404 になり、フォルダボタンが #712 以来ずっと開けなかった。
+    //       他のクリエイティブ系 API と同様に apiFetch + `${API}` 経由に統一する。
+    const res = await apiFetch(`${API}/creatives/${encodeURIComponent(currentCreativeDetail.id)}/drive-folder`);
     if (res.status === 404) {
       let msg = 'まだファイルがアップロードされていません';
       try { const j = await res.json(); if (j?.error) msg = j.error; } catch (_) {}
