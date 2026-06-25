@@ -37633,10 +37633,15 @@ function updateWcheckToggleRow(c) {
   }
   row.style.display = 'flex';
   cb.checked = !!wc.required;
-  // 既に Wチェック中／後修正のときはトグルで途中変更させない（混乱防止）
-  const midFlow = ['Wチェック', 'Wチェック後修正'].includes(c?.status);
+  // Wチェック工程に入った後（Wチェック中・後修正、および通過後の Dチェック以降）は
+  // 要否トグルを操作させない（グレーアウト）。通過後に OFF にすると「Wチェック済みなのに
+  // 不要」という矛盾が生じるため。Wチェック前（未着手/制作中/台本制作/素材/編集）のみ変更可。
+  const WCHECK_REACHED = ['Wチェック', 'Wチェック後修正', 'Dチェック', 'Dチェック後修正', 'Pチェック', 'Pチェック後修正', 'クライアントチェック中', 'クライアントチェック後修正', '納品'];
+  const midFlow = WCHECK_REACHED.includes(c?.status);
   cb.disabled = midFlow;
-  row.title = midFlow ? 'Wチェック進行中は要否を変更できません' : '';
+  row.style.opacity = midFlow ? '0.5' : '1';          // 行全体をグレーアウトして変更不可を視覚的に示す
+  row.style.cursor  = midFlow ? 'not-allowed' : '';
+  row.title = midFlow ? 'Wチェック工程に入った後は要否を変更できません' : '';
   // 要否は【このクリエイティブ個別】（案件マスターは初期値）。誤操作防止のため変更時は確認ダイアログを挟む。
   cb.onchange = async () => {
     const desired = cb.checked;   // 入れようとした値
