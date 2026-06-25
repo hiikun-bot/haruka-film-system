@@ -32969,8 +32969,15 @@ async function advanceCreativeStatus() {
   // 動画ありのときは従来通り（uploadFileData が pending なら executeUpload で送信）。
   let _filelessExtra = null; // saveCreativeDetail に渡す追加 body
   if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-    const filesSection = document.getElementById('cd-files-section');
-    const hasUploaded = filesSection && filesSection.style.display !== 'none';
+    // ファイルの「実在」で判定する。cd-files-section の表示状態は、ステータスを手動で
+    // 「制作中（初稿提出前）」へ巻き戻した等のケースで非表示になり実態とズレるため使わない
+    // （バグ報告: V4 がアップロード済み・取り消し可能なのに「ファイルなし」判定になった）。
+    // 「未提出の最新版（取り消し可能なファイル）」があるか、pending なドロップがあるかで見る。
+    const _files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    const _latest = _files[0] || null;
+    const hasUploaded = (_latest && typeof _cdCanUndoUpload === 'function')
+      ? _cdCanUndoUpload(_latest)
+      : false;
     if (!hasUploaded && !uploadFileData) {
       // ファイルゼロ → 動画なし確認
       const r = await showFilelessProgressDialog(target);
