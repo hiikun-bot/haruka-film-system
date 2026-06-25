@@ -4471,10 +4471,10 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   let query = supabase
     .from('creatives')
     .select(`
-      id, file_name, status, creative_type, project_id,
+      id, file_name, status, creative_type, project_id, line_id,
       final_deadline, created_at,
-      projects!inner(id, name, client_id, clients(id, name)),
-      creative_assignments(role, users(id, full_name, nickname, role))
+      projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
+      creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `);
   if (statusFilter === 'delivered') {
     query = query
@@ -4492,11 +4492,73 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
+  // 単価（＝この担当者が 1 本あたり受け取る原価）を creator-summary と同じロジックで解決する。
+  // computeCreatorCreativeBreakdown / resolvePayee を共有することで、本モーダルの「単価合計」と
+  // クリエイター別集計（/creator-summary）の金額が必ず一致する（silent な二重定義を作らない）。
+  const lineIds = Array.from(new Set((data || []).map(c => c.line_id).filter(Boolean)));
+  const lineById = new Map();        // line_id -> line
+  const lineCostsByLine = new Map(); // line_id -> line_costs[]
+  if (lineIds.length) {
+    const [linesRes, lineCostsRes] = await Promise.all([
+      supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, planned_count, client_unit_price, status')
+        .in('id', lineIds),
+      supabase
+        .from('project_estimate_line_costs')
+        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+        .in('line_id', lineIds),
+    ]);
+    if (linesRes.error)     console.warn('[aggregateCreativeByAssignee] lines load failed:', linesRes.error.message);
+    if (lineCostsRes.error) console.warn('[aggregateCreativeByAssignee] line_costs load failed:', lineCostsRes.error.message);
+    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
+    for (const lc of (lineCostsRes.data || [])) {
+      if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
+      lineCostsByLine.get(lc.line_id).push(lc);
+    }
+  }
+
+  // director/producer 救済（line_cost.user_id / projects.director_id 等）に必要な user を一括取得
+  const neededUserIds = new Set();
+  for (const c of (data || [])) {
+    if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
+    if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+  }
+  for (const arr of lineCostsByLine.values()) {
+    for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
+  }
+  const userById = new Map();
+  if (neededUserIds.size) {
+    const { data: us } = await supabase
+      .from('users').select('id, full_name, nickname, role, rank')
+      .in('id', Array.from(neededUserIds));
+    (us || []).forEach(u => userById.set(u.id, u));
+  }
+  const resolvePayee = (lineCost, creative, assignees) => {
+    if (lineCost.user_id) return userById.get(lineCost.user_id) || null;
+    const code = lineCost.role?.code || '';
+    if (!code) return null;
+    if (['editor', 'designer', 'director_as_editor'].includes(code)) {
+      const a = assignees.find(x => x.role === code);
+      return a?.users || null;
+    }
+    if (code === 'director' || code === 'sub_director') {
+      const did = creative.projects?.director_id;
+      return did ? (userById.get(did) || null) : null;
+    }
+    if (code === 'producer' || code === 'sub_producer') {
+      const pid = creative.projects?.producer_id;
+      return pid ? (userById.get(pid) || null) : null;
+    }
+    const a = assignees.find(x => x.role === code);
+    return a?.users || null;
+  };
+
   // 集計
-  // matrix[projectKey][userId] = { video, design, creatives: [...] }
+  // matrix[projectKey][userId] = { video, design, amount, creatives: [...] }
   const projectMap = new Map(); // projectId -> { id, name, client_name }
   const userMap    = new Map(); // userId -> { id, name, role }
-  const cell       = new Map(); // `${pid}|${uid}` -> { video, design, creatives: [] }
+  const cell       = new Map(); // `${pid}|${uid}` -> { video, design, amount, creatives: [] }
 
   for (const c of (data || [])) {
     const pid = c.project_id;
@@ -4508,7 +4570,15 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
       });
     }
     const isVideo = c.creative_type?.startsWith('video') || (!c.creative_type?.startsWith('design'));
-    const creativeRef = {
+    // この creative の担当者ごとの金額内訳（editor/designer/director_as_editor 分）を解決
+    const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
+    const unitInfoFor = (uid) => {
+      const b = perUser.get(uid);
+      if (!b) return { unit_price: 0, rate_unknown: true };
+      // この担当者がこの 1 本の編集／デザイン作業で受け取る金額
+      return { unit_price: b.totals.video_amount + b.totals.design_amount, rate_unknown: !!b.rate_unknown };
+    };
+    const baseRef = {
       id: c.id,
       file_name: c.file_name,
       status: c.status,
@@ -4521,11 +4591,11 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
       .filter(a => a.users && ['editor','designer','director_as_editor'].includes(a.role))
       .map(a => a.users);
     if (assignees.length === 0) {
-      // 担当者未設定はそのまま「(担当未設定)」として集計
+      // 担当者未設定はそのまま「(担当未設定)」として集計（単価は紐付け先がないので null）
       const key = `${pid}|__none__`;
-      const ent = cell.get(key) || { video: 0, design: 0, creatives: [] };
+      const ent = cell.get(key) || { video: 0, design: 0, amount: 0, creatives: [] };
       if (isVideo) ent.video++; else ent.design++;
-      ent.creatives.push(creativeRef);
+      ent.creatives.push({ ...baseRef, unit_price: null, rate_unknown: false });
       cell.set(key, ent);
       if (!userMap.has('__none__')) {
         userMap.set('__none__', { id: '__none__', name: '(担当未設定)', role: '-' });
@@ -4537,9 +4607,11 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
           userMap.set(u.id, { id: u.id, name: u.full_name, role: u.role });
         }
         const key = `${pid}|${u.id}`;
-        const ent = cell.get(key) || { video: 0, design: 0, creatives: [] };
+        const ent = cell.get(key) || { video: 0, design: 0, amount: 0, creatives: [] };
         if (isVideo) ent.video++; else ent.design++;
-        ent.creatives.push(creativeRef);
+        const { unit_price, rate_unknown } = unitInfoFor(u.id);
+        ent.amount += unit_price || 0;
+        ent.creatives.push({ ...baseRef, unit_price, rate_unknown });
         cell.set(key, ent);
       }
     }
@@ -4555,14 +4627,14 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   const matrix = projects.map(p => {
     const row = { project: p, cells: {} };
     for (const u of users) {
-      row.cells[u.id] = cell.get(`${p.id}|${u.id}`) || { video: 0, design: 0, creatives: [] };
+      row.cells[u.id] = cell.get(`${p.id}|${u.id}`) || { video: 0, design: 0, amount: 0, creatives: [] };
     }
     return row;
   });
 
   // 合計
-  const total = { video: 0, design: 0 };
-  for (const c of cell.values()) { total.video += c.video; total.design += c.design; }
+  const total = { video: 0, design: 0, amount: 0 };
+  for (const c of cell.values()) { total.video += c.video; total.design += c.design; total.amount += (c.amount || 0); }
 
   return {
     year, month, client_id, status: statusFilter,
