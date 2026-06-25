@@ -15503,7 +15503,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         : (reviseFromRole === 'producer')
           ? (tr.changed_by || projectProducerId)
           : (reviseFromRole === 'wcheck')
-            ? (tr.changed_by || wcheckUserIdFallback)
+            ? (wcheckUserIdFallback || tr.changed_by) // Wチェック担当者(ボール保持者)優先。admin代行でも操作者にしない（#886と同思想）
             : null;
       items.push({
         kind:        'revise',
@@ -15547,7 +15547,7 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
         : (approveDef.fromRole === 'producer')
           ? (tr.changed_by || projectProducerId)
           : (approveDef.fromRole === 'wcheck')
-            ? (tr.changed_by || wcheckUserIdFallback)
+            ? (wcheckUserIdFallback || tr.changed_by) // Wチェック担当者(ボール保持者)優先。admin代行でも操作者にしない（#886と同思想）
             : null;
       const toUserId = (approveDef.toRole === 'producer')
         ? projectProducerId
