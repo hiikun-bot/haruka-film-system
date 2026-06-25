@@ -462,6 +462,10 @@ router.post('/sync-self', requireAuth, requirePermission('availability:sync-own'
       const rawSlots = [];
       for (const ev of events) {
         if (!ev || ev.status === 'cancelled' || ev.transparency === 'transparent') continue;
+        // 勤務場所・誕生日・不在以外の終日イベントは稼働に影響しないので raw からも除外
+        // （計算ロジック subtractEvents と整合させる）
+        if (ev.eventType === 'workingLocation' || ev.eventType === 'birthday') continue;
+        if (ev.isAllDay && ev.eventType !== 'outOfOffice') continue;
         const startStr = (typeof ev.start === 'string') ? ev.start : '';
         const endStr   = (typeof ev.end === 'string') ? ev.end : '';
         // 該当日に重なるか軽くフィルタ
