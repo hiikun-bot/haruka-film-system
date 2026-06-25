@@ -5447,6 +5447,15 @@ window.showPage = window.showPage || function(name, btn) {
         <!-- 請求情報（インボイス制度対応） -->
         <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA">
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">🧾 請求情報</div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">
+              請求区分
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">自社案件か、広告代理店経由の請求かを区別します</span>
+            </label>
+            <select class="form-select" id="cl-billing-org" style="width:100%;box-sizing:border-box">
+              <!-- options are populated from CLIENT_BILLING_ORG_LABELS by populateBillingOrgSelect() -->
+            </select>
+          </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">
               適格請求書発行事業者登録番号
@@ -10483,6 +10492,28 @@ function toggleClientTeam(teamId) {
   renderClTeamsList();
 }
 
+// 請求区分（clients.billing_org）の選択肢マスタ。
+// 自社案件か広告代理店経由かを区別する。コード値（キー）を DB に保存する。
+// ▼ 代理店が増えたら、ここに1行追記するだけで全画面のセレクトに反映される ▼
+//   例: dac: { label: 'DAC', sub: '〇〇エージェンシー', isSelf: false, color: '#0EA5E9', icon: '🤝' },
+const CLIENT_BILLING_ORG_LABELS = {
+  haruka: { label: 'HARUKA FILM', sub: '自社',            isSelf: true,  color: '#2563EB', icon: '🎬' },
+  gnd:    { label: 'GND',         sub: 'GOOD NEW Design', isSelf: false, color: '#7C3AED', icon: '🤝' },
+};
+
+// #cl-billing-org セレクトを CLIENT_BILLING_ORG_LABELS から生成して selectedKey を選択状態にする
+function populateBillingOrgSelect(selectedKey) {
+  const sel = document.getElementById('cl-billing-org');
+  if (!sel) return;
+  const opts = ['<option value="">（未設定）</option>'];
+  for (const [key, meta] of Object.entries(CLIENT_BILLING_ORG_LABELS)) {
+    const text = `${meta.icon} ${meta.label}（${meta.sub}）`;
+    opts.push(`<option value="${key}">${text}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  sel.value = (selectedKey && CLIENT_BILLING_ORG_LABELS[selectedKey]) ? selectedKey : '';
+}
+
 function openEditClient(id) {
   const c = allClients.find(cl => cl.id === id);
   if (!c) return;
@@ -10506,6 +10537,7 @@ function openEditClient(id) {
   document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
   const invRegEl = document.getElementById('cl-invoice-registration-number');
   if (invRegEl) invRegEl.value = c.invoice_registration_number || '';
+  populateBillingOrgSelect(c.billing_org || '');
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
   // 削除ボタンの表示制御: admin / secretary のみ。それ以外は完全に非表示。
@@ -10530,6 +10562,7 @@ function openNewClientModal() {
   document.getElementById('cl-status').value = '提案中';
   ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id','cl-invoice-registration-number']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  populateBillingOrgSelect('');
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
   // 新規作成時は削除ボタンを必ず非表示
@@ -10557,6 +10590,7 @@ async function submitClient() {
     return;
   }
   const invoice_registration_number = invoiceRegRaw || null;
+  const billing_org = (document.getElementById('cl-billing-org')?.value || '') || null;
 
   const btn = document.getElementById('cl-submit-btn');
   const origText = btn.textContent;
@@ -10580,6 +10614,7 @@ async function submitClient() {
       slack_channel_url: linkVal('cl-slack-channel-url'),
       chatwork_room_id:  linkVal('cl-chatwork-room-id'),
       invoice_registration_number,
+      billing_org,
       team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });
