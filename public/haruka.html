@@ -39220,16 +39220,10 @@ async function cdHandleUploadSuccess(data, version, statusEl) {
   document.getElementById('cd-upload-preview').style.display = 'none';
   uploadFileData = null;
   _cdResetDropZoneLabel(); // 成功後もドロップゾーンの旧ファイル名を残さない（次の修正版を正しく上げられるように）
-  if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-    const editorComment = document.getElementById('cd-comment-field').value.trim();
-    if (!editorComment) {
-      statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
-      statusEl.style.color = '#E24B4A';
-    } else {
-      const confirmDCheck = document.getElementById('cd-dcheck-confirm');
-      if (confirmDCheck) confirmDCheck.style.display = '';
-    }
-  }
+  // アップロード完了後の「Dチェックを行いますか？」確認バー(cd-dcheck-confirm)は廃止。
+  // 次工程への送信は下部フッターのボタン（Wチェックへ回す / Dチェックへ / CL直行 等）に
+  // 一本化する。Wチェック対象なのに「Dチェック」と固定表示される誤りも併せて解消。
+  // 次工程の判定・コメント必須チェックは各送信ボタンのハンドラ側で行う。
 }
 
 // ===== 大容量クリエイティブ: Railway を経由しない Resumable 直送（HTTP 502 回避） =====
