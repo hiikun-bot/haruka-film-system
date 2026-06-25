@@ -36581,6 +36581,11 @@ function openAnalyticsCell(projectId, userId) {
   const cell = row?.cells?.[userId];
   if (!project || !user || !cell || !(cell.creatives || []).length) return;
 
+  // 単価合計（backend の cell.amount を優先。無ければ creatives の unit_price から算出）
+  const amountTotal = (typeof cell.amount === 'number')
+    ? cell.amount
+    : (cell.creatives || []).reduce((s, c) => s + (Number(c.unit_price) || 0), 0);
+
   document.getElementById('ac-title').textContent =
     `${project.client_name} ／ ${project.name}`;
   document.getElementById('ac-meta').innerHTML = `
@@ -36588,6 +36593,7 @@ function openAnalyticsCell(projectId, userId) {
       <span>担当: <strong style="color:var(--text)">${esc(user.name)}</strong>${user.role && user.role !== '-' ? ` <span style="color:var(--text-muted)">(${esc(user.role)})</span>` : ''}</span>
       <span>対象: <strong style="color:var(--text)">${data.year}年${data.month}月</strong> ・ ${data.status === 'delivered' ? '納品のみ' : '全件（作業中含む）'}</span>
       <span>合計: ${cell.video > 0 ? `<strong style="color:#0369a1">📹${cell.video}本</strong>` : ''}${cell.video > 0 && cell.design > 0 ? ' / ' : ''}${cell.design > 0 ? `<strong style="color:#b45309">🎨${cell.design}枚</strong>` : ''}</span>
+      ${amountTotal > 0 ? `<span>単価合計: <strong style="color:#15803d">¥${amountTotal.toLocaleString()}</strong></span>` : ''}
     </div>
   `;
 
@@ -36597,6 +36603,12 @@ function openAnalyticsCell(projectId, userId) {
     const fb = b.final_deadline || '9999-99';
     return fa.localeCompare(fb) || (a.file_name || '').localeCompare(b.file_name || '');
   });
+  // 単価セルの表示: 数値あり=¥金額 / line_cost 未登録=「未設定」(オレンジ) / 担当紐付けなし=「—」
+  const unitPriceCell = (c) => {
+    if (c.unit_price == null) return '<span style="color:#cbd5e1">—</span>';
+    if (c.rate_unknown && !(c.unit_price > 0)) return '<span style="color:#d97706" title="案件の成果物グループに単価が登録されていません">未設定</span>';
+    return `¥${Number(c.unit_price).toLocaleString()}`;
+  };
   const rows = items.map(c => {
     const icon = c.is_video ? '<span style="color:#0369a1">📹</span>' : '<span style="color:#b45309">🎨</span>';
     const dl = c.final_deadline ? c.final_deadline.slice(0, 7) : '<span style="color:#cbd5e1">未設定</span>';
@@ -36606,6 +36618,7 @@ function openAnalyticsCell(projectId, userId) {
       <td style="padding:8px 12px;font-size:12px;font-family:monospace;color:var(--em-dark);text-decoration:underline dotted;cursor:pointer;word-break:break-all" onclick="closeModal('modal-analytics-cell'); openCreativeDetail('${c.id}')" title="${esc(c.file_name || '')}">${esc(c.file_name || '(ファイル名なし)')}</td>
       <td style="padding:8px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap">${dl}</td>
       <td style="padding:8px 12px;font-size:12px;color:${statusColor};white-space:nowrap;font-weight:500">${esc(c.status || '-')}</td>
+      <td style="padding:8px 12px;font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums">${unitPriceCell(c)}</td>
     </tr>`;
   }).join('');
 
@@ -36617,9 +36630,16 @@ function openAnalyticsCell(projectId, userId) {
           <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em)">ファイル名</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">納品月</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">状態</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">単価</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
+      <tfoot>
+        <tr style="background:var(--em-pale)">
+          <td colspan="4" style="padding:10px 12px;text-align:right;font-size:12px;font-weight:700;color:var(--em-dark);border-top:1.5px solid var(--em);white-space:nowrap">単価合計</td>
+          <td style="padding:10px 12px;text-align:right;font-size:13px;font-weight:700;color:#15803d;border-top:1.5px solid var(--em);white-space:nowrap;font-variant-numeric:tabular-nums">¥${amountTotal.toLocaleString()}</td>
+        </tr>
+      </tfoot>
     </table>
   `;
   openModal('modal-analytics-cell');
