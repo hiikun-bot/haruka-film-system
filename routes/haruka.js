@@ -302,6 +302,26 @@ async function deriveCreativeRoundVersion(creativeId) {
   }
   if (snapForMCount > 0) return { version: M + 1, M };
 
+  // 最新版 M は未 snapshot。ただし「過去に提出済みラウンド(snapshot)があり、その後に
+  // 残っている未提出バージョン(M > maxSnapVer)」は、提出済みラウンドの後に作られた
+  // 新バージョン（ステータスを手動で巻き戻した場合等に発生）。これを version=M で
+  // 上書きすると既存ファイルが失われるため、次ラウンド(M+1)として保存する。
+  //   ・取り消し→再アップは最新版が DELETE 済みのため M == maxSnapVer となり、ここは
+  //     通らず従来どおり同ラウンド維持(version=M)になる（取り消したバージョン番号で再アップ）。
+  //   ・初稿段階(snapshot 0件 / maxSnapVer=0)は従来どおり下の判定へ流す。
+  let maxSnapVer = 0;
+  try {
+    const { data: snapMaxRow } = await supabase
+      .from('creative_version_history')
+      .select('version_num')
+      .eq('creative_id', creativeId)
+      .order('version_num', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    maxSnapVer = Number(snapMaxRow?.version_num) || 0;
+  } catch (_) { /* 取れなくても続行 */ }
+  if (maxSnapVer > 0 && M > maxSnapVer) return { version: M + 1, M };
+
   // ADR 024: Wチェック後修正 も後修正系。snapshot 未確定段階での初アップは次ラウンドへ。
   const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   let creativeStatus = null;
