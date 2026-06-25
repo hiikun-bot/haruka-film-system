@@ -500,6 +500,40 @@ function normalizeInvoiceRegistrationNumber(raw) {
   return 'T' + m[1];
 }
 
+// 請求区分 (clients.billing_org) の正規化。
+//   - undefined           → undefined（updateData に入れない）
+//   - null / '' / 非文字列 → null（未設定）
+//   - 文字列              → trim した値を保存（コード値: 'haruka' | 'gnd' | 今後の代理店コード）
+// 値の妥当性はフロントの CLIENT_BILLING_ORG_LABELS（コード定義）に委ねる。
+// 代理店追加時にサーバー改修が不要になるよう、ここでは enum 固定しない。
+function normalizeBillingOrg(raw) {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+// 新規列が本番未適用（migration 前）でも 500 にせず、エラーが指す列を落として再試行するヘルパ。
+// invoice_registration_number 同様のグレースフルフォールバックを billing_org にも適用するための共通化。
+async function insertOrUpdateClientWithFallback(op, attempt, idForUpdate) {
+  const run = (payload) => op === 'insert'
+    ? supabase.from('clients').insert(payload).select().single()
+    : supabase.from('clients').update(payload).eq('id', idForUpdate).select().single();
+  let payload = { ...attempt };
+  let { data, error } = await run(payload);
+  // 「column "xxx" does not exist」系は、その列を落として再試行（最大3列まで）
+  for (let i = 0; error && i < 3; i++) {
+    const m = (error.message || '').match(/column "?([a-z_]+)"? .*does not exist|'([a-z_]+)' column/i)
+      || (error.message || '').match(/(billing_org|invoice_registration_number)/);
+    const col = m && (m[1] || m[2]);
+    if (!col || !(col in payload)) break;
+    console.warn(`[clients:${op}] 列 ${col} 未反映のためフォールバック保存:`, error.message);
+    delete payload[col];
+    ({ data, error } = await run(payload));
+  }
+  return { data, error };
+}
+
 // クライアント-チーム紐付けを sync するヘルパ
 async function syncClientTeams(clientId, teamIds) {
   if (!Array.isArray(teamIds)) return;
@@ -528,19 +562,14 @@ router.post('/clients', requireAuth, requirePermission('project.create_edit'), a
     if (v && typeof v === 'object' && v.error) return res.status(400).json({ error: v.error });
     if (v !== undefined) insertData.invoice_registration_number = v;
   }
+  // 請求区分（自社 / 広告代理店経由）
+  if ('billing_org' in req.body) {
+    const b = normalizeBillingOrg(req.body.billing_org);
+    if (b !== undefined) insertData.billing_org = b;
+  }
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) insertData[f] = req.body[f] || null; });
   // 列未反映環境（migration 未適用）でも 500 にせずグレースフルにフォールバック
-  let attempt = { ...insertData };
-  let { data, error } = await supabase
-    .from('clients')
-    .insert(attempt)
-    .select()
-    .single();
-  if (error && /invoice_registration_number/.test(error.message || '')) {
-    console.warn('[clients:create] invoice_registration_number 列未反映のためフォールバック保存:', error.message);
-    delete attempt.invoice_registration_number;
-    ({ data, error } = await supabase.from('clients').insert(attempt).select().single());
-  }
+  let { data, error } = await insertOrUpdateClientWithFallback('insert', insertData);
   if (error) return res.status(500).json({ error: error.message });
   if (data && req.body.team_ids !== undefined) {
     await syncClientTeams(data.id, req.body.team_ids);
@@ -561,20 +590,14 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
     if (v && typeof v === 'object' && v.error) return res.status(400).json({ error: v.error });
     if (v !== undefined) updateData.invoice_registration_number = v;
   }
+  // 請求区分（自社 / 広告代理店経由）
+  if ('billing_org' in req.body) {
+    const b = normalizeBillingOrg(req.body.billing_org);
+    if (b !== undefined) updateData.billing_org = b;
+  }
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) updateData[f] = req.body[f] || null; });
   // 列未反映環境（migration 未適用）でも 500 にせずグレースフルにフォールバック
-  let attempt = { ...updateData };
-  let { data, error } = await supabase
-    .from('clients')
-    .update(attempt)
-    .eq('id', req.params.id)
-    .select()
-    .single();
-  if (error && /invoice_registration_number/.test(error.message || '')) {
-    console.warn('[clients:update] invoice_registration_number 列未反映のためフォールバック保存:', error.message);
-    delete attempt.invoice_registration_number;
-    ({ data, error } = await supabase.from('clients').update(attempt).eq('id', req.params.id).select().single());
-  }
+  let { data, error } = await insertOrUpdateClientWithFallback('update', updateData, req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   if (req.body.team_ids !== undefined) {
     await syncClientTeams(req.params.id, req.body.team_ids);
