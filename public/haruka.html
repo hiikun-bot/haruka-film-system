@@ -33061,6 +33061,11 @@ async function advanceCreativeStatus() {
         await saveCreativeDetail('Wチェック', {
           wcheck_user_ids: wcheckUserIds,
           wcheck_comment: comment || null,
+          // 依頼コメント（送信時の内容）を提出メモ(editor_comment)としても保存する。
+          // saveCreativeDetail は制作中ステータスでは cd-comment-field の値を editor_comment に
+          // 入れるため、依頼モーダルで編集した内容が往復履歴の「提出メモ」に残らなかった。
+          // extraBody 側で明示的に上書きし、送信時の依頼コメントをそのまま提出メモにする。
+          editor_comment: comment || null,
           ...(_filelessExtra || {}),
         });
       },
