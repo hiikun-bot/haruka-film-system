@@ -2254,7 +2254,7 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   const projectId = req.params.project_id;
   const { data, error } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
@@ -2452,7 +2452,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   const { data, error } = await supabase
     .from('project_estimate_lines')
     .insert(insertRow)
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
     .single();
   if (error) {
     if (isMissingPelTable(error)) {
@@ -2478,7 +2478,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
   // 既存 line 取得 + project_id 一致チェック
   const { data: existing, error: getErr } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, status, category_id')
+    .select('id, project_id, status, category_id, applies_from, applies_to')
     .eq('id', lineId)
     .maybeSingle();
   if (getErr) return res.status(500).json({ error: getErr.message });
@@ -2538,6 +2538,16 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
       updates.status_changed_at = new Date().toISOString();
     }
   }
+  // ADR 025: 停止/再開トグル。is_active=false で適用終了日(applies_to)に JST 当日を入れて停止、
+  //          is_active=true で applies_to を NULL に戻して再開（applies_from が空なら当日で補完）。
+  if (Object.prototype.hasOwnProperty.call(body, 'is_active')) {
+    if (body.is_active === false) {
+      updates.applies_to = _todayStrJST();
+    } else {
+      updates.applies_to = null;
+      if (!existing.applies_from) updates.applies_from = _todayStrJST();
+    }
+  }
 
   // 制作者単価を line_cost へ反映（line 列の変更有無に関わらず実行）
   if (Object.prototype.hasOwnProperty.call(body, 'producer_unit_price') && body.producer_unit_price !== null && body.producer_unit_price !== '') {
@@ -2550,7 +2560,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
     const { data: row } = await supabase
       .from('project_estimate_lines')
-      .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+      .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
       .eq('id', lineId)
       .single();
     return res.json(row);
@@ -2560,7 +2570,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     .from('project_estimate_lines')
     .update(updates)
     .eq('id', lineId)
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -2649,7 +2659,7 @@ router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermissi
   // 更新後の一覧を返す
   const { data: updated, error: refErr } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
