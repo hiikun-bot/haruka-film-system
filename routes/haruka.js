@@ -20,6 +20,7 @@ const {
   getUsersRolesMap,
   invalidateRolesCache,
   loadRoles,
+  roleCodesHavePermission,
 } = require('../utils/roles');
 const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
 const { avatarVer, avatarRefUrl, replaceAvatarDataUrls } = require('../utils/avatar-ref');
@@ -2264,10 +2265,13 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
     }
     return res.status(500).json({ error: error.message });
   }
-  // クライアント請求単価は管理者のみ閲覧可。非adminにはレスポンスから列ごと除外する（ADR 015 B-4）
+  // クライアント請求単価は権限 project.client_price を持つロールのみ閲覧可。
+  // 持たないロールにはレスポンスから列ごと除外する（ADR 015 B-4）。
+  // 既定: admin / producer / producer兼director / secretary は可、director単独・editor・designer は不可。
   const codes = await getEffectiveRoleCodes(req);
+  const canViewClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
   let rows = data || [];
-  if (!codes.includes('admin')) {
+  if (!canViewClientPrice) {
     rows = rows.map(({ client_unit_price, ...rest }) => rest);
   }
   res.json(rows);
@@ -2393,9 +2397,10 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
 
   // バリデーション
   const plannedCount = Math.max(0, parseInt(planned_count, 10) || 0);
-  // クライアント請求単価は管理者のみ設定可。非adminが作成する場合は 0 にする（ADR 015）
+  // クライアント請求単価は権限 project.client_price を持つロールのみ設定可。無ければ 0 にする（ADR 015）
   const priceCodes = await getEffectiveRoleCodes(req);
-  const unitPrice = priceCodes.includes('admin') ? Math.max(0, parseInt(client_unit_price, 10) || 0) : 0;
+  const canSetClientPrice = await roleCodesHavePermission(priceCodes, 'project.client_price');
+  const unitPrice = canSetClientPrice ? Math.max(0, parseInt(client_unit_price, 10) || 0) : 0;
   // ADR 022: rank は A/B/C のみ。それ以外（空欄含む）は NULL
   const lineRank = ['A', 'B', 'C'].includes(String(rank || '').toUpperCase()) ? String(rank).toUpperCase() : null;
   // ステータスは UI から廃止。未指定時は常に「採用（受注=contracted）」で作成する
@@ -2508,9 +2513,9 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     updates.planned_count = Math.max(0, parseInt(body.planned_count, 10) || 0);
   }
   if (Object.prototype.hasOwnProperty.call(body, 'client_unit_price')) {
-    // クライアント請求単価は管理者のみ更新可。非adminの変更は無視して既存値を維持（ADR 015）
+    // クライアント請求単価は権限 project.client_price を持つロールのみ更新可。無ければ既存値を維持（ADR 015）
     const priceCodes = await getEffectiveRoleCodes(req);
-    if (priceCodes.includes('admin')) {
+    if (await roleCodesHavePermission(priceCodes, 'project.client_price')) {
       updates.client_unit_price = Math.max(0, parseInt(body.client_unit_price, 10) || 0);
     }
   }

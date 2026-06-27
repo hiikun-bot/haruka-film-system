@@ -1073,6 +1073,10 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','project.create_edit',true),('secretary','project.create_edit',true),('producer','project.create_edit',true),('producer_director','project.create_edit',true),
   ('admin','project.unit_price_view',true),('producer','project.unit_price_view',true),('producer_director','project.unit_price_view',true),
   ('admin','project.fee_view',true),('secretary','project.fee_view',true),
+  -- クライアント単価（client_unit_price）の閲覧・編集。
+  -- 既定: admin / producer / secretary を許可。producer兼director は producer 行で継承され許可、director単独は対象外。
+  -- ※ director単独への漏れを防ぐため producer_director 行・director 行は seed しない（utils/roles.js#roleCodesHavePermission の dual-read 分岐対策）。
+  ('admin','project.client_price',true),('producer','project.client_price',true),('secretary','project.client_price',true),
   -- クリエイティブ
   ('admin','creative.all_projects_view',true),('secretary','creative.all_projects_view',true),('producer','creative.all_projects_view',true),('producer_director','creative.all_projects_view',true),
   ('admin','creative.rank_price_column',true),('producer','creative.rank_price_column',true),('producer_director','creative.rank_price_column',true),('director','creative.rank_price_column',true),
