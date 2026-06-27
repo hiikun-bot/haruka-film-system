@@ -17770,9 +17770,16 @@ function renderProjectLines() {
     const producerUnit = getProducerUnitPrice(line.id);
     const nameLabel = line.name ? `<span style="font-weight:600;color:var(--text)">${esc(line.name)}</span>` : '<span style="color:var(--text-muted);font-style:italic">名称未設定</span>';
     const rankBadge = line.rank ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap">${esc(line.rank)}ランク</span>` : '';
+    // ADR 025: applies_to に日付が入っていれば「停止中」。NULL=現役。
+    const isStopped = !!line.applies_to;
+    const stoppedBadge = isStopped ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#F3F4F6;border:1px solid #D1D5DB;color:#6B7280;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap">⛔ 停止中</span>` : '';
+    const appliesLabel = isStopped
+      ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:1px">適用 ${esc(line.applies_from || '—')} 〜 ${esc(line.applies_to)}（停止）</div>`
+      : '';
+    const toggleBtn = `<button type="button" class="btn" onclick="toggleProjectLineActive('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${isStopped ? 'color:#0F7A56;border-color:#86E0BE;' : 'color:#92660A;border-color:#F0C98A;'}${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">${isStopped ? '再開' : '停止'}</button>`;
 
     return `
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="background:${isStopped ? '#FAFAFA' : '#fff'};border:1px solid var(--border);border-radius:10px;overflow:hidden;${isStopped ? 'opacity:.62' : ''}">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 12px">
           <div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
             <button type="button" onclick="moveProjectLine('${esc(line.id)}', -1)" ${idx === 0 || !canEdit ? 'disabled' : ''} title="上へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === 0 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▲</button>
@@ -17782,11 +17789,14 @@ function renderProjectLines() {
             ${catLabel}
           </div>
           ${rankBadge}
+          ${stoppedBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
             <div style="font-size:11px;color:var(--text-muted)">${isTopAdmin() ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
+            ${appliesLabel}
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
+            ${toggleBtn}
             <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
             <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
           </div>
@@ -17794,6 +17804,32 @@ function renderProjectLines() {
       </div>
     `;
   }).join('');
+}
+
+// ADR 025: 成果物グループの停止/再開トグル。削除せず「今は適用していない」状態にする。
+// applies_to に日付が入っていれば停止中 → 再開（applies_to=NULL）、NULL なら → 停止（applies_to=当日JST）。
+async function toggleProjectLineActive(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  if (!line || !projectId) return;
+  const isStopped = !!line.applies_to;
+  const nextActive = isStopped; // 停止中なら再開（active=true）、現役なら停止（active=false）
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: nextActive })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `更新に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    showToast(nextActive ? '成果物グループを再開しました' : '成果物グループを停止しました', 'ok');
+    await loadProjectLines(projectId);
+  } catch (e) {
+    showToast(`更新に失敗しました: ${e?.message || ''}`, 'warn');
+  }
 }
 
 // 成果物グループに紐づく「制作者単価」を返す（line_cost のうち制作ロール editor/designer を優先・なければ先頭）
