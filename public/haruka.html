@@ -16321,6 +16321,8 @@ const _ROLE_PERMS_FALLBACK = {
   'admin|*': true, // admin は全許可
   'secretary|project.create_edit': true, 'producer|project.create_edit': true, 'producer_director|project.create_edit': true,
   'producer|project.unit_price_view': true, 'producer_director|project.unit_price_view': true,
+  // クライアント単価の閲覧・編集（既定: producer / secretary。producer_director は producer 継承で許可、director単独は不可）
+  'producer|project.client_price': true, 'secretary|project.client_price': true,
   'secretary|project.fee_view': true,
   'secretary|creative.all_projects_view': true, 'producer|creative.all_projects_view': true, 'producer_director|creative.all_projects_view': true,
   'producer|creative.rank_price_column': true, 'producer_director|creative.rank_price_column': true, 'director|creative.rank_price_column': true,
@@ -16361,12 +16363,21 @@ async function loadRolePermissions() {
     _rolePermsMap = null;
   }
 }
+function _permGet(role, key) {
+  // 単一ロール × キーの許可状態。_rolePermsMap 優先、未ロード時はフォールバック辞書。
+  if (_rolePermsMap) return _rolePermsMap.get(`${role}|${key}`) === true;
+  return !!_ROLE_PERMS_FALLBACK[`${role}|${key}`];
+}
 function hasPermission(key) {
   const role = effectiveRole();
   if (role === 'admin') return true; // admin は常に全許可（ロックアウト防止）
-  if (_rolePermsMap) return !!_rolePermsMap.get(`${role}|${key}`);
-  // フォールバック
-  return !!_ROLE_PERMS_FALLBACK[`${role}|${key}`];
+  // producer_director（プロデューサー兼ディレクター）は producer / director の権限を継承する。
+  // ※ director単独ロール（role==='director'）はこの分岐に入らず、下の通常判定で director の許可のみを見る。
+  //    これにより「兼任は許可・director単独は不可」を seed 側で producer 行のみ付ける運用と整合する。
+  if (role === 'producer_director') {
+    return _permGet('producer_director', key) || _permGet('producer', key) || _permGet('director', key);
+  }
+  return _permGet(role, key);
 }
 
 // 最上位権限（admin のみ）の判定
@@ -17792,7 +17803,7 @@ function renderProjectLines() {
           ${stoppedBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
-            <div style="font-size:11px;color:var(--text-muted)">${isTopAdmin() ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
+            <div style="font-size:11px;color:var(--text-muted)">${hasPermission('project.client_price') ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本</div>
             ${appliesLabel}
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
@@ -17990,9 +18001,9 @@ async function prepareProjectLineEditModal(line, projectId) {
   document.getElementById('pl-edit-name').value = line?.name || '';
   document.getElementById('pl-edit-unit-price').value = line ? (line.client_unit_price ?? 0) : 0;
   document.getElementById('pl-edit-producer-price').value = line ? getProducerUnitPrice(line.id) : 0;
-  // クライアント請求単価は管理者のみ表示・編集可。非adminには行ごと隠す（ADR 015）
+  // クライアント請求単価は権限 project.client_price を持つロールのみ表示・編集可。無ければ行ごと隠す（ADR 015）
   const upGroup = document.getElementById('pl-edit-unit-price-group');
-  if (upGroup) upGroup.style.display = isTopAdmin() ? '' : 'none';
+  if (upGroup) upGroup.style.display = hasPermission('project.client_price') ? '' : 'none';
   const errEl = document.getElementById('pl-edit-error');
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
@@ -18040,8 +18051,8 @@ async function saveProjectLine() {
     name: name || null,
     producer_unit_price: producerPrice,
   };
-  // クライアント請求単価は管理者のみ送信（非adminはサーバー側でも無視されるが二重で防ぐ）（ADR 015）
-  if (isTopAdmin()) payload.client_unit_price = unitPrice;
+  // クライアント請求単価は権限 project.client_price を持つロールのみ送信（サーバー側でも二重で防ぐ）（ADR 015）
+  if (hasPermission('project.client_price')) payload.client_unit_price = unitPrice;
 
   const saveBtn = document.getElementById('pl-edit-save-btn');
   if (saveBtn) saveBtn.disabled = true;
@@ -26226,6 +26237,7 @@ const ROLE_PERM_LIST = [
   { section:'ダッシュボード', key:'dashboard.sales_summary',     label:'売上サマリー閲覧' },
   { section:'ダッシュボード', key:'dashboard.monthly_forecast',  label:'月次予測閲覧' },
   { section:'案件管理',       key:'project.create_edit',         label:'案件作成・編集' },
+  { section:'案件管理',       key:'project.client_price',        label:'クライアント単価の閲覧・編集' },
   { section:'案件管理',       key:'project.unit_price_view',     label:'単価設定閲覧' },
   { section:'案件管理',       key:'project.fee_view',            label:'報酬設定閲覧' },
   { section:'案件管理',       key:'project.delete',              label:'案件削除（完全）' },
