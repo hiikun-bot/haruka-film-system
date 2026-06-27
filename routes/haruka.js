@@ -2248,16 +2248,41 @@ const LINE_STATUSES = new Set([
 const isMissingPelTable = (err) =>
   err && /relation .*project_estimate_lines.* does not exist|could not find the table/i.test(err.message || '');
 
+// ADR 025: 成果物グループの select。applies_from/applies_to を含む完全版と、
+// 列未適用環境向けのレガシー版（applies 列なし）。本番DBに列が無くても 500 で落とさないため。
+const LINE_SELECT = 'id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)';
+const LINE_SELECT_LEGACY = 'id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)';
+// applies_from/applies_to がまだ本番DBに無い場合のエラー判定（migration 未適用 / schema-sync 遅延）
+const isMissingAppliesColumn = (err) =>
+  err && /applies_(from|to)/i.test(err.message || '') && /does not exist|could not find/i.test(err.message || '');
+
+// 1行を id で取得（applies 列が無い環境ではレガシー select で再試行）。書き込み系の返却に使う。
+async function selectLineRowById(lineId) {
+  let { data, error } = await supabase
+    .from('project_estimate_lines').select(LINE_SELECT).eq('id', lineId).single();
+  if (error && isMissingAppliesColumn(error)) {
+    ({ data, error } = await supabase
+      .from('project_estimate_lines').select(LINE_SELECT_LEGACY).eq('id', lineId).single());
+  }
+  return { data, error };
+}
+
 // GET /api/projects/:project_id/lines  一覧取得
 // embed: creative_categories(code, name) を一緒に返す（フロントで category 表示するため）
 router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   const projectId = req.params.project_id;
-  const { data, error } = await supabase
+  const runQuery = (sel) => supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
+    .select(sel)
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
+  let { data, error } = await runQuery(LINE_SELECT);
+  // applies_from/applies_to 列が未適用なら旧 select で再試行（migration 未適用でもタブを壊さない）
+  if (error && isMissingAppliesColumn(error)) {
+    console.warn('[lines] applies_from/applies_to 列が未適用。migrations/2026-06-27_estimate_line_applies_period.sql を本番Supabaseに適用してください。');
+    ({ data, error } = await runQuery(LINE_SELECT_LEGACY));
+  }
   if (error) {
     if (isMissingPelTable(error)) {
       console.warn('[lines] project_estimate_lines table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
@@ -2449,17 +2474,20 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     status_changed_at: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase
+  const { data: inserted, error: insErr } = await supabase
     .from('project_estimate_lines')
     .insert(insertRow)
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
+    .select('id')
     .single();
-  if (error) {
-    if (isMissingPelTable(error)) {
+  if (insErr) {
+    if (isMissingPelTable(insErr)) {
       return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
     }
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: insErr.message });
   }
+  // 返却は applies 列フォールバック付きで取得（列未適用環境でも 500 にしない）
+  const { data, error } = await selectLineRowById(inserted.id);
+  if (error) return res.status(500).json({ error: error.message });
 
   // 制作者単価（編集者/デザイナーへの1本あたり支払）を line_cost として保存（best-effort）
   if (data && req.body && req.body.producer_unit_price != null && req.body.producer_unit_price !== '') {
@@ -2475,12 +2503,19 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
   const { project_id: projectId, line_id: lineId } = req.params;
   const body = req.body || {};
 
-  // 既存 line 取得 + project_id 一致チェック
-  const { data: existing, error: getErr } = await supabase
+  // 既存 line 取得 + project_id 一致チェック（applies 列が無い環境ではレガシー select で再試行）
+  let { data: existing, error: getErr } = await supabase
     .from('project_estimate_lines')
     .select('id, project_id, status, category_id, applies_from, applies_to')
     .eq('id', lineId)
     .maybeSingle();
+  if (getErr && isMissingAppliesColumn(getErr)) {
+    ({ data: existing, error: getErr } = await supabase
+      .from('project_estimate_lines')
+      .select('id, project_id, status, category_id')
+      .eq('id', lineId)
+      .maybeSingle());
+  }
   if (getErr) return res.status(500).json({ error: getErr.message });
   if (!existing) return res.status(404).json({ error: 'line が見つかりません' });
   if (existing.project_id !== projectId) {
@@ -2558,20 +2593,22 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
 
   if (Object.keys(updates).length === 0) {
     // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
-    const { data: row } = await supabase
-      .from('project_estimate_lines')
-      .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
-      .eq('id', lineId)
-      .single();
+    const { data: row } = await selectLineRowById(lineId);
     return res.json(row);
   }
 
-  const { data, error } = await supabase
+  const { error: updErr } = await supabase
     .from('project_estimate_lines')
     .update(updates)
-    .eq('id', lineId)
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
-    .single();
+    .eq('id', lineId);
+  if (updErr) {
+    // 停止/再開（applies 列）操作で列が未適用なら、わかりやすいエラーにする
+    if (isMissingAppliesColumn(updErr) && (Object.prototype.hasOwnProperty.call(updates, 'applies_to') || Object.prototype.hasOwnProperty.call(updates, 'applies_from'))) {
+      return res.status(503).json({ error: '停止/再開には migration（applies_from/applies_to 列）の適用が必要です。migrations/2026-06-27_estimate_line_applies_period.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: updErr.message });
+  }
+  const { data, error } = await selectLineRowById(lineId);
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -2656,13 +2693,17 @@ router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermissi
   ));
   if (errors.length) return res.status(500).json({ error: errors.join(' / ') });
 
-  // 更新後の一覧を返す
-  const { data: updated, error: refErr } = await supabase
+  // 更新後の一覧を返す（applies 列が無い環境ではレガシー select で再試行）
+  const refQuery = (sel) => supabase
     .from('project_estimate_lines')
-    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)')
+    .select(sel)
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
+  let { data: updated, error: refErr } = await refQuery(LINE_SELECT);
+  if (refErr && isMissingAppliesColumn(refErr)) {
+    ({ data: updated, error: refErr } = await refQuery(LINE_SELECT_LEGACY));
+  }
   if (refErr) return res.status(500).json({ error: refErr.message });
   res.json(updated || []);
 });
