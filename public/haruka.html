@@ -7118,6 +7118,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           📊 利用状況
         </div>
+        <div id="mnav-cost_ledger" class="master-nav-item" onclick="selectMasterNav('cost_ledger')"
+          style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
+          📊 費用台帳同期
+        </div>
         <div id="mnav-sysconfig" class="master-nav-item" onclick="selectMasterNav('sysconfig')"
           style="display:none;padding:10px 20px;cursor:pointer;font-size:13px;color:var(--text-muted);border-left:3px solid transparent">
           ⚙️ システム設定
@@ -26007,7 +26011,7 @@ function selectMasterNav(type) {
   if (type !== 'general') { generalCategoryId = null; generalItemEditingId = null; }
   // サイドバーのアクティブ状態更新
   // ADR 001 整合: 'products'/'appeal_axes' を復活（creative-first 設計で残す方針）。
-  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','rank_preset','roles','userstats','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
+  ['generic','general','categories','products','appeal_axes','filename_templates','creatives_export','checklist','item_names','rank_preset','roles','userstats','cost_ledger','sysconfig','slack_workspaces','notification_test','broadcast'].forEach(t => {
     const el = document.getElementById(`mnav-${t}`);
     if (!el) return;
     const isActive = t === type;
@@ -26041,6 +26045,8 @@ function selectMasterNav(type) {
     renderRolesPage();
   } else if (type === 'userstats') {
     renderUserStatsPage();
+  } else if (type === 'cost_ledger') {
+    renderCostLedgerSyncPage();
   } else if (type === 'sysconfig') {
     renderSysconfigPage();
   } else if (type === 'slack_workspaces') {
@@ -26062,6 +26068,9 @@ async function loadMasterPage() {
   // ランク単価プリセットは admin / 秘書 / プロデューサーのみ（effectiveRole で VIEW AS 対応）
   const rankPresetNav = document.getElementById('mnav-rank_preset');
   if (rankPresetNav) rankPresetNav.style.display = ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole()) ? '' : 'none';
+  // 費用台帳同期は admin / 秘書 のみ（財務データの書き戻しを伴うため）
+  const costLedgerNav = document.getElementById('mnav-cost_ledger');
+  if (costLedgerNav) costLedgerNav.style.display = ['admin', 'secretary'].includes(effectiveRole()) ? '' : 'none';
 
   const [catRes, itemRes] = await Promise.all([
     apiFetch(`${API}/master/categories`),
@@ -26070,6 +26079,127 @@ async function loadMasterPage() {
   masterCategories = catRes.ok ? await catRes.json() : [];
   masterItems      = itemRes.ok ? await itemRes.json() : [];
   selectMasterNav(currentMasterNav); // 現在選択中のナビを再描画
+}
+
+// ===== 費用台帳 ⇄ スプレッドシート 双方向同期 =====
+async function renderCostLedgerSyncPage() {
+  const content = document.getElementById('master-content');
+  content.innerHTML = '<div style="padding:24px;color:var(--text-muted)">読み込み中...</div>';
+  let s = {};
+  try { const r = await apiFetch(`${API}/cost-ledger/settings`); if (r.ok) s = await r.json(); } catch (e) {}
+  const url = s.sheet_url || '';
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  content.innerHTML = `
+    <div style="max-width:860px;padding:8px 4px">
+      <h3 style="margin:0 0 4px">📊 費用台帳 同期</h3>
+      <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px">
+        スプレッドシートのタブ「${esc(s.tab_title || '費用台帳')}」と双方向で同期します。<br>
+        <b>エクスポート</b>＝システムの最新を書き出し（資料を改訂）／<b>インポート</b>＝シートの編集をシステムへ反映。
+      </p>
+
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+        <input class="form-input" id="cl-sync-url" value="${esc(url)}" style="flex:1;font-size:12px" readonly>
+        <button class="btn btn-secondary" onclick="window.open(document.getElementById('cl-sync-url').value,'_blank')">シートを開く</button>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:8px">
+        <button class="btn btn-primary" id="cl-sync-export-btn" onclick="costLedgerExport()">📥 エクスポート（システム→シート）</button>
+        <button class="btn" id="cl-sync-preview-btn" onclick="costLedgerPreview()">📤 インポート（差分プレビュー）</button>
+      </div>
+      <div id="cl-sync-msg" style="font-size:13px;margin:8px 0;min-height:18px"></div>
+      <div id="cl-sync-diff"></div>
+
+      <div style="margin-top:20px;padding:12px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA;font-size:12px;color:var(--text-muted)">
+        ⚠️ 書き戻し対象：クライアント請求／予定数／ランク／制作支払単価（行単位）・請求区分（クライアント単位）・ディレクション費（案件×種別単位）。<br>
+        行の追加・削除や ID 列（L列以降・非表示）は編集しないでください。クライアント/案件単位の値が行ごとに食い違う場合は「要確認」として反映をスキップします。
+      </div>
+    </div>`;
+}
+
+async function costLedgerExport() {
+  const btn = document.getElementById('cl-sync-export-btn');
+  const msg = document.getElementById('cl-sync-msg');
+  btn.disabled = true; const t = btn.textContent; btn.textContent = 'エクスポート中...';
+  try {
+    const r = await apiFetch(`${API}/cost-ledger/export`, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'エクスポートに失敗しました');
+    msg.style.color = 'var(--success, #166534)';
+    msg.textContent = `✅ ${j.count} 行をシートに書き出しました。`;
+    showToast('エクスポート完了', 'success');
+  } catch (e) { msg.style.color = '#991B1B'; msg.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
+  btn.disabled = false; btn.textContent = t;
+}
+
+async function costLedgerPreview() {
+  const btn = document.getElementById('cl-sync-preview-btn');
+  const msg = document.getElementById('cl-sync-msg');
+  const diff = document.getElementById('cl-sync-diff');
+  btn.disabled = true; const t = btn.textContent; btn.textContent = '読み取り中...';
+  diff.innerHTML = '';
+  try {
+    const r = await apiFetch(`${API}/cost-ledger/import/preview`, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'プレビューに失敗しました');
+    renderCostLedgerDiff(j);
+    msg.style.color = 'var(--text-muted)';
+    msg.textContent = `差分 ${j.changes.length} 件 / 要確認 ${j.conflicts.length} 件 / 無視 ${j.errors.length} 件`;
+  } catch (e) { msg.style.color = '#991B1B'; msg.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
+  btn.disabled = false; btn.textContent = t;
+}
+
+function renderCostLedgerDiff(j) {
+  const diff = document.getElementById('cl-sync-diff');
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  if (!j.changes.length && !j.conflicts.length) {
+    diff.innerHTML = '<div style="padding:12px;color:var(--text-muted)">変更はありません（シートとシステムは一致しています）。</div>';
+    return;
+  }
+  let html = '';
+  if (j.changes.length) {
+    html += `<div style="margin:8px 0;font-weight:600">変更内容（${j.changes.length}件）</div>`;
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--em-pale)">' +
+      '<th style="text-align:left;padding:6px;border:1px solid var(--border)">項目</th>' +
+      '<th style="text-align:right;padding:6px;border:1px solid var(--border)">変更前</th>' +
+      '<th style="text-align:center;padding:6px;border:1px solid var(--border)">→</th>' +
+      '<th style="text-align:right;padding:6px;border:1px solid var(--border)">変更後</th></tr></thead><tbody>';
+    for (const c of j.changes) {
+      html += `<tr><td style="padding:6px;border:1px solid var(--border)">${esc(c.label)}</td>` +
+        `<td style="padding:6px;border:1px solid var(--border);text-align:right;color:#991B1B">${esc(c.before)}</td>` +
+        `<td style="padding:6px;border:1px solid var(--border);text-align:center">→</td>` +
+        `<td style="padding:6px;border:1px solid var(--border);text-align:right;color:#166534;font-weight:600">${esc(c.after)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  if (j.conflicts.length) {
+    html += `<div style="margin:14px 0 6px;font-weight:600;color:#92400E">⚠️ 要確認（行ごとに値が食い違うため反映しません）（${j.conflicts.length}件）</div>`;
+    html += '<ul style="font-size:12px;color:#92400E;margin:0 0 8px;padding-left:20px">';
+    for (const c of j.conflicts) html += `<li>${esc(c.label)}：${esc((c.values || []).join(' / '))}</li>`;
+    html += '</ul>';
+  }
+  if (j.errors && j.errors.length) {
+    html += `<div style="margin:10px 0 4px;font-size:12px;color:var(--text-muted)">無視した行：${j.errors.length}件（${esc(j.errors.slice(0,3).join('、'))}${j.errors.length>3?' …':''}）</div>`;
+  }
+  if (j.changes.length) {
+    html += `<div style="margin-top:14px"><button class="btn btn-primary" onclick="costLedgerApply()">✅ この差分をシステムへ反映する（${j.changes.length}件）</button></div>`;
+  }
+  diff.innerHTML = html;
+}
+
+async function costLedgerApply() {
+  if (!confirm('シートの差分をシステム（DB）へ反映します。よろしいですか？')) return;
+  const msg = document.getElementById('cl-sync-msg');
+  msg.style.color = 'var(--text-muted)'; msg.textContent = '反映中...';
+  try {
+    const r = await apiFetch(`${API}/cost-ledger/import/apply`, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '反映に失敗しました');
+    msg.style.color = 'var(--success, #166534)';
+    msg.textContent = `✅ ${j.applied}/${j.total} 件を反映しました` + (j.failures && j.failures.length ? `（失敗 ${j.failures.length}）` : '');
+    document.getElementById('cl-sync-diff').innerHTML = '';
+    showToast('反映完了', 'success');
+    if (j.failures && j.failures.length) console.warn('[cost-ledger:apply] failures', j.failures);
+  } catch (e) { msg.style.color = '#991B1B'; msg.textContent = '⚠️ ' + e.message; showToast(e.message, 'error'); }
 }
 
 // ==================== ランク単価プリセット ====================
