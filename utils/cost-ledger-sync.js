@@ -81,7 +81,7 @@ async function loadModel() {
   };
   const [clients, projects, cats, lines, costs, dirRates, roles] = await Promise.all([
     fetchAll('clients', 'id,name,billing_org'),
-    fetchAll('projects', 'id,client_id,name,created_at,primary_category_id'),
+    fetchAll('projects', 'id,client_id,name,created_at,primary_category_id,is_hidden'),
     fetchAll('creative_categories', 'id,code,name'),
     fetchAll('project_estimate_lines', 'id,project_id,category_id,name,planned_count,client_unit_price,rank,sort_order'),
     fetchAll('project_estimate_line_costs', 'id,line_id,role_id,unit_price'),
@@ -135,7 +135,8 @@ function buildRows(m) {
   const rows = [HEADER.slice()];
   let seq = 0;
   for (const cl of clientOrder) {
-    const projs = m.projects.filter(p => p.client_id === cl.id).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+    // is_hidden（アプリ非表示）の案件は台帳に出さない。システム表示と一致させる。
+    const projs = m.projects.filter(p => p.client_id === cl.id && !p.is_hidden).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
     for (const p of projs) {
       const catIds = meaningfulCategoryIds(p, m);
       for (const cid of catIds) {
