@@ -240,18 +240,34 @@ async function computeChanges() {
           _apply: { kind: 'charge', lineIds: targets.map(l => l.id), value: newCharge } });
       }
     }
+    // 重複防止: rank無しの既存行（汎用行）は、不足ランクへの「昇格」に再利用する。
+    // これにより「汎用行＋自動作成A/B/C」の二重化を防ぐ。1ランクにつき1行だけ消費。
+    const usedGenericIds = new Set();
     for (const rk of RANKS) {
       const price = num(r[COL['rank' + rk]]);
       if (price == null) continue;
-      const line = grp.find(l => rankOf(l) === rk);
-      const cc = line ? creatorCostOfLine(line, m) : null;
-      const cur = cc ? cc.unit_price : null;
-      if (cur === price) continue;
       const creatorRole = m.roleByCode[creatorRoleCode(code)];
       if (!creatorRole) { errors.push(`制作ロール未定義: ${catName}`); continue; }
-      if (cc) changes.push({ scope: 'rank', label: `ランク${rk} 支払単価 (${ctx})`, before: cur, after: price, _apply: { kind: 'cost_update', id: cc.id, value: price } });
-      else if (line) changes.push({ scope: 'rank', label: `ランク${rk} 支払単価【新規コスト】 (${ctx})`, before: DASH, after: price, _apply: { kind: 'cost_insert', lineId: line.id, roleId: creatorRole.id, value: price } });
-      else changes.push({ scope: 'rank', label: `ランク${rk} 支払単価【行＋コスト自動作成】 (${ctx})`, before: DASH, after: price, _apply: { kind: 'line_and_cost', projectId: p.id, categoryId: cid, rank: rk, catName, roleId: creatorRole.id, value: price, charge: newCharge } });
+      let line = grp.find(l => rankOf(l) === rk);
+      let promote = false;
+      if (!line) {
+        // 既存の rank無し汎用行があれば、新規作成せずそれを当該ランクに昇格
+        line = grp.find(l => !rankOf(l) && !usedGenericIds.has(l.id));
+        if (line) { usedGenericIds.add(line.id); promote = true; }
+      }
+      const cc = line ? creatorCostOfLine(line, m) : null;
+      const cur = cc ? cc.unit_price : null;
+      if (!promote && cur === price) continue; // 変更なし（昇格時はrank更新があるので継続）
+      if (line) {
+        const label = promote
+          ? `ランク${rk} 支払単価【既存行をランク${rk}に昇格】 (${ctx})`
+          : (cc ? `ランク${rk} 支払単価 (${ctx})` : `ランク${rk} 支払単価【新規コスト】 (${ctx})`);
+        changes.push({ scope: 'rank', label, before: (cc ? cur : DASH), after: price,
+          _apply: { kind: 'line_cost', lineId: line.id, setRank: promote ? rk : null, costId: cc ? cc.id : null, roleId: creatorRole.id, value: price } });
+      } else {
+        changes.push({ scope: 'rank', label: `ランク${rk} 支払単価【行＋コスト自動作成】 (${ctx})`, before: DASH, after: price,
+          _apply: { kind: 'line_and_cost', projectId: p.id, categoryId: cid, rank: rk, catName, roleId: creatorRole.id, value: price, charge: newCharge } });
+      }
     }
     const ct = creativeTypeOf(code);
     const dfee = num(r[COL.directionFee]);
@@ -286,6 +302,16 @@ async function applyChanges() {
       if (a.kind === 'charge') resp = await supabase.from('project_estimate_lines').update({ client_unit_price: a.value }).in('id', a.lineIds);
       else if (a.kind === 'cost_update') resp = await supabase.from('project_estimate_line_costs').update({ unit_price: a.value }).eq('id', a.id);
       else if (a.kind === 'cost_insert') resp = await supabase.from('project_estimate_line_costs').insert({ line_id: a.lineId, role_id: a.roleId, unit_price: a.value, currency: 'JPY', pricing_type: 'fixed_per_unit' });
+      else if (a.kind === 'line_cost') {
+        // 必要なら既存行のランクを昇格（rank無し→A/B/C）
+        if (a.setRank) {
+          const up = await supabase.from('project_estimate_lines').update({ rank: a.setRank }).eq('id', a.lineId);
+          if (up.error) throw new Error(up.error.message);
+        }
+        // 制作コストを更新 or 新規
+        if (a.costId) resp = await supabase.from('project_estimate_line_costs').update({ unit_price: a.value }).eq('id', a.costId);
+        else resp = await supabase.from('project_estimate_line_costs').insert({ line_id: a.lineId, role_id: a.roleId, unit_price: a.value, currency: 'JPY', pricing_type: 'fixed_per_unit' });
+      }
       else if (a.kind === 'line_and_cost') {
         const ins = await supabase.from('project_estimate_lines').insert({ project_id: a.projectId, category_id: a.categoryId, rank: a.rank, name: `${a.catName} ${a.rank}ランク`, planned_count: 0, client_unit_price: a.charge || 0, currency: 'JPY' }).select('id').single();
         if (ins.error) throw new Error(ins.error.message);

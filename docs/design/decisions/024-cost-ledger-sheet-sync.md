@@ -33,7 +33,7 @@ related_adrs: [002, 004, 023]
 
 - 同期先はスプレッドシートの **先頭シート**。URL は `system_settings.cost_ledger_sheet_url`（未設定時はデフォルト定数）。
 - 列: `# / クライアント / 請求区分 / 案件名 / 区分 / クライアント請求 / ディレクション費 / ランクA / ランクB / ランクC` ＋ 非表示ID列 `project_id / client_id / category_id / creative_type`。
-- ランク価格の保存先は、その案件×区分の rank=A/B/C 見積行の制作（editor/designer）支払単価 `project_estimate_line_costs.unit_price`。**該当ランクの見積行が無ければ、反映時に見積行＋コストを自動作成する。**
+- ランク価格の保存先は、その案件×区分の rank=A/B/C 見積行の制作（editor/designer）支払単価 `project_estimate_line_costs.unit_price`。**該当ランクの見積行が無ければ、反映時に見積行＋コストを自動作成する。** ただし **rank無しの既存「汎用行」があれば、新規作成せずそれを当該ランクに昇格して再利用する**（「汎用行＋自動作成A/B/C」の二重化を防ぐ。2026-06-28 追補）。
 - hidden ID 列が無い行は「クライアント名＋案件名」「区分名」で後方互換マッチする（既存シートからの初回取り込み用）。
 - **エクスポート**（`POST /api/cost-ledger/export`）: DB→シート。意味のある見積行のみ（planned>0 / 請求>0 / 支払単価>0 のいずれか）。L列以降に `line_id / project_id / client_id / creative_type / creator_cost_id / creator_role_id` を**非表示ID列**として出力（突き合わせ用）。
 - **インポート プレビュー**（`POST /api/cost-ledger/import/preview`）: シートを読み、DB と突き合わせて差分を返す（書き込みなし）。
