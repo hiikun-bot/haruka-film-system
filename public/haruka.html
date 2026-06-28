@@ -26093,7 +26093,7 @@ async function renderCostLedgerSyncPage() {
     <div style="max-width:860px;padding:8px 4px">
       <h3 style="margin:0 0 4px">📊 費用台帳 同期</h3>
       <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px">
-        スプレッドシートのタブ「${esc(s.tab_title || '費用台帳')}」と双方向で同期します。<br>
+        スプレッドシートの<b>先頭シート</b>と双方向で同期します（1行＝案件×区分、ランクA/B/Cは各ランクの支払単価の列）。<br>
         <b>エクスポート</b>＝システムの最新を書き出し（資料を改訂）／<b>インポート</b>＝シートの編集をシステムへ反映。
       </p>
 
@@ -26110,8 +26110,8 @@ async function renderCostLedgerSyncPage() {
       <div id="cl-sync-diff"></div>
 
       <div style="margin-top:20px;padding:12px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA;font-size:12px;color:var(--text-muted)">
-        ⚠️ 書き戻し対象：クライアント請求／予定数／ランク／制作支払単価（行単位）・請求区分（クライアント単位）・ディレクション費（案件×種別単位）。<br>
-        行の追加・削除や ID 列（L列以降・非表示）は編集しないでください。クライアント/案件単位の値が行ごとに食い違う場合は「要確認」として反映をスキップします。
+        ⚠️ 書き戻し対象：クライアント請求／ランクA・B・Cの支払単価（案件×区分）・ディレクション費（案件×種別）・請求区分（クライアント）。ランク行が無い案件は反映時に自動作成します。<br>
+        非表示のID列（K列以降）は編集しないでください。クライアント/案件単位の値が行ごとに食い違う場合は「要確認」として反映をスキップします。
       </div>
     </div>`;
 }
