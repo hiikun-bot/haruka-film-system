@@ -25,11 +25,16 @@ related_adrs: [002, 004, 023]
 - `project_director_rates`（案件×制作種別のディレクション費）
 - `clients.billing_org`（請求区分、[ADR 023](023-client-billing-org.md)）
 
-## Decision
+> **改訂 (2026-06-28)**: 当初は「1行=1見積行」の明細フォーマットで実装した（#907）が、ユーザーの実際の運用・編集モデルと合わなかった（旧 project_rates 移行で rank 列が NULL のため誤差分が大量発生し、ユーザーが編集する「ランクA/B/C＝価格列」を拾えなかった）。下記の通り **「1行=案件×区分、ランクA/B/Cは価格列」の友好フォーマット**へ変更する。
 
-**「1行=1見積行（＋ID列）」の明細フォーマット**で双方向同期する。集約した1案件1行ビューでは金額の書き戻し先（どの見積行か）が一意に決まらないため、同期は明細粒度で行う。
+## Decision（改訂後）
 
-- 同期先はスプレッドシートのタブ **「費用台帳」**。URL は `system_settings.cost_ledger_sheet_url`（未設定時はデフォルト定数）。
+**「1行 = 案件 × 区分(カテゴリ)」**の友好フォーマットで双方向同期する。ランクA/B/C は **各ランクの制作支払単価の列**として持つ（ユーザーの編集モデル：案件ごとに 動画ABC / 静止画ABC を持つ）。
+
+- 同期先はスプレッドシートの **先頭シート**。URL は `system_settings.cost_ledger_sheet_url`（未設定時はデフォルト定数）。
+- 列: `# / クライアント / 請求区分 / 案件名 / 区分 / クライアント請求 / ディレクション費 / ランクA / ランクB / ランクC` ＋ 非表示ID列 `project_id / client_id / category_id / creative_type`。
+- ランク価格の保存先は、その案件×区分の rank=A/B/C 見積行の制作（editor/designer）支払単価 `project_estimate_line_costs.unit_price`。**該当ランクの見積行が無ければ、反映時に見積行＋コストを自動作成する。**
+- hidden ID 列が無い行は「クライアント名＋案件名」「区分名」で後方互換マッチする（既存シートからの初回取り込み用）。
 - **エクスポート**（`POST /api/cost-ledger/export`）: DB→シート。意味のある見積行のみ（planned>0 / 請求>0 / 支払単価>0 のいずれか）。L列以降に `line_id / project_id / client_id / creative_type / creator_cost_id / creator_role_id` を**非表示ID列**として出力（突き合わせ用）。
 - **インポート プレビュー**（`POST /api/cost-ledger/import/preview`）: シートを読み、DB と突き合わせて差分を返す（書き込みなし）。
 - **インポート 反映**（`POST /api/cost-ledger/import/apply`）: **シートを読み直して再計算**してから反映（クライアントから送られた差分は信用しない）。
