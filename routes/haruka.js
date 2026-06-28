@@ -14982,6 +14982,57 @@ router.put('/system-settings', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== 案件費用台帳 ⇄ スプレッドシート 双方向同期（ADR 024） =====
+// 財務データの書き戻しを伴うため admin / secretary に限定。
+// 同期先シートURLは system_settings 'cost_ledger_sheet_url'（未設定時はデフォルト）。
+
+// 現在の同期先シートURLを返す
+router.get('/cost-ledger/settings', requireAuth, requireRole('admin', 'secretary'), async (_req, res) => {
+  try {
+    const { getSheetUrl, TAB_TITLE } = require('../utils/cost-ledger-sync');
+    res.json({ sheet_url: await getSheetUrl(), tab_title: TAB_TITLE });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// エクスポート（DB → シート）
+router.post('/cost-ledger/export', requireAuth, requireRole('admin', 'secretary'), async (_req, res) => {
+  try {
+    const { exportLedger } = require('../utils/cost-ledger-sync');
+    const r = await exportLedger();
+    res.json({ ok: true, ...r });
+  } catch (e) { console.error('[cost-ledger:export]', e); res.status(500).json({ error: e.message }); }
+});
+
+// インポート差分プレビュー（書き込みなし）
+router.post('/cost-ledger/import/preview', requireAuth, requireRole('admin', 'secretary'), async (_req, res) => {
+  try {
+    const { computeChanges } = require('../utils/cost-ledger-sync');
+    const { changes, conflicts, errors } = await computeChanges();
+    res.json({ ok: true, changes: changes.map(({ _apply, ...c }) => c), conflicts, errors });
+  } catch (e) { console.error('[cost-ledger:preview]', e); res.status(500).json({ error: e.message }); }
+});
+
+// インポート反映（シートを読み直して再計算→DB反映。クライアント差分は信用しない）
+router.post('/cost-ledger/import/apply', requireAuth, requireRole('admin', 'secretary'), async (_req, res) => {
+  try {
+    const { applyChanges } = require('../utils/cost-ledger-sync');
+    const r = await applyChanges();
+    res.json({ ok: true, ...r });
+  } catch (e) { console.error('[cost-ledger:apply]', e); res.status(500).json({ error: e.message }); }
+});
+
+// 同期先シートURLの保存（最高管理者のみ）
+router.put('/cost-ledger/settings', requireAuth, async (req, res) => {
+  if (!SUPER_ADMIN_EMAILS.includes(req.user?.email)) {
+    return res.status(403).json({ error: '同期先シートの変更は最高管理者のみ可能です' });
+  }
+  const { sheet_url } = req.body;
+  const { error } = await supabase.from('system_settings')
+    .upsert({ key: 'cost_ledger_sheet_url', value: sheet_url || null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // システム設定からDriveルートフォルダIDを取得するヘルパー
 async function getDriveRootFolderId() {
   const { data } = await supabase.from('system_settings').select('value').eq('key', 'drive_root_folder_id').single();
