@@ -96,6 +96,24 @@
   table.rsum-week th.is-current-week, table.rsum-week td.is-current-week { background: var(--bg-today); }
   table.rsum-week tr.wk-total-row td.is-current-week { background: #d2efdb; }
   .rsum-empty { font-size: 0.82em; color: var(--text-muted); padding: 0.5em 0.1em; }
+  /* 工数試算 */
+  .rsum-calc-block { border-top: 1px dashed var(--border); margin-top: 0.5em; padding-top: 0.2em; }
+  .calc-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em 1.1em; font-size: 0.85em; margin-bottom: 0.55em; }
+  .calc-controls label { display: inline-flex; align-items: center; gap: 0.35em; }
+  .calc-controls input { padding: 0.32em 0.45em; border: 1px solid var(--border); border-radius: 6px; font-size: 0.95em; }
+  .calc-controls input[type=text] { width: 9em; }
+  .calc-controls input[type=number] { width: 4.6em; }
+  .calc-basis { display: inline-flex; align-items: center; gap: 0.5em; color: var(--text-muted); }
+  .calc-basis label { cursor: pointer; }
+  table.calc-table { border-collapse: collapse; font-size: 0.8em; }
+  table.calc-table th, table.calc-table td { border: 1px solid var(--border-soft); padding: 0.3em 0.6em; text-align: right; white-space: nowrap; }
+  table.calc-table th.wk-team, table.calc-table td.wk-team { text-align: left; position: sticky; left: 0; background: #fff; font-weight: 600; min-width: 8em; }
+  table.calc-table thead th { background: #f6f8fa; font-weight: 600; text-align: center; }
+  table.calc-table td.wk-total-col, table.calc-table th.wk-total-col { background: #fafafa; font-weight: 700; }
+  table.calc-table td.calc-count { color: var(--accent); font-weight: 700; }
+  table.calc-table th.is-current-week, table.calc-table td.is-current-week { background: var(--bg-today); }
+  table.calc-table tr.calc-total-row td { background: #eef3fa; font-weight: 700; }
+  table.calc-table tr.calc-total-row td.wk-team { background: #eef3fa; }
 
   /* slot popover (read-only) */
   #slot-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 0.6em 0.9em; box-shadow: 0 4px 18px rgba(0,0,0,0.15); font-size: 0.82em; z-index: 30; display: none; max-width: 280px; }
@@ -239,6 +257,20 @@
 <details class="rsum" id="resource-summary" open>
   <summary>📊 リソースサマリー<span class="rsum-hint">月毎（全社）＆週毎（チーム別）の稼働可能時間</span></summary>
   <div class="rsum-body" id="resource-summary-body"></div>
+  <!-- 工数試算: 1本あたり時間から各チームの最大本数を算出（入力欄は静的・結果のみ再描画） -->
+  <div class="rsum-body rsum-calc-block" id="resource-calc">
+    <div class="rsum-block-title">■ 🧮 工数試算 — 何本つくれる？</div>
+    <div class="calc-controls">
+      <label>成果物 <input type="text" id="calc-name" value="ショート動画" placeholder="例: ショート動画"></label>
+      <label>1本あたり <input type="number" id="calc-hours" value="8" min="0.1" step="0.5" inputmode="decimal"> 時間</label>
+      <span class="calc-basis">集計単位:
+        <label><input type="radio" name="calc-basis" value="period" checked> 期間全体</label>
+        <label><input type="radio" name="calc-basis" value="month"> 月別</label>
+        <label><input type="radio" name="calc-basis" value="week"> 週別</label>
+      </span>
+    </div>
+    <div id="calc-result"></div>
+  </div>
 </details>
 
 <div id="status-bar">…</div>
@@ -636,7 +668,122 @@ function renderSummary() {
     <div class="rsum-block-title">■ 週毎の合計（表示中チーム別・月曜始まり／緑=今週）</div>
     ${weekHtml}
   `;
+  renderCalc();
 }
+
+// 期間内の日付を月／週バケツに束ねる（工数試算の列に使う）
+function monthBuckets(dates) {
+  const order = [], map = new Map();
+  for (const ds of dates) {
+    const k = ds.slice(0, 7);
+    if (!map.has(k)) { map.set(k, { key: k, label: parseInt(k.slice(5, 7), 10) + '月', dates: [] }); order.push(k); }
+    map.get(k).dates.push(ds);
+  }
+  return order.map(k => map.get(k));
+}
+function weekBuckets(dates) {
+  const order = [], map = new Map();
+  for (const ds of dates) {
+    const mon = mondayOf(ds);
+    const k = fmtDate(mon);
+    if (!map.has(k)) { map.set(k, { key: k, label: `${mon.getMonth() + 1}/${mon.getDate()}週`, dates: [] }); order.push(k); }
+    map.get(k).dates.push(ds);
+  }
+  return order.map(k => map.get(k));
+}
+
+// ===============================
+// 工数試算: 「1本あたり◯時間」から各チームの最大本数を算出
+//   本数は floor（端数の時間は切り捨て）。合計行は各チーム本数の合算＝実際に作れる総数。
+//   入力欄は静的HTML、この関数は #calc-result のみ再描画する。
+// ===============================
+function renderCalc() {
+  const result = document.getElementById('calc-result');
+  if (!result) return;
+  const data = state.data;
+  if (!data) { result.innerHTML = ''; return; }
+  const dates = data.dates || [];
+
+  const hoursEl = document.getElementById('calc-hours');
+  const nameEl = document.getElementById('calc-name');
+  const hours = parseFloat(hoursEl && hoursEl.value);
+  const name = (nameEl && nameEl.value.trim()) || '成果物';
+  const basisEl = document.querySelector('input[name="calc-basis"]:checked');
+  const basis = basisEl ? basisEl.value : 'period';
+
+  if (!isFinite(hours) || hours <= 0) {
+    result.innerHTML = '<div class="rsum-empty">「1本あたり◯時間」を入力すると、各チームで最大何本つくれるかを表示します。</div>';
+    return;
+  }
+  const teams = (data.teams || []).filter(t => state.activeTeamIds.has(t.id));
+  if (!teams.length) {
+    result.innerHTML = '<div class="rsum-empty">表示するチームがありません。上のチップでチームを ON にしてください。</div>';
+    return;
+  }
+
+  const todayJst = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const curKey = basis === 'month' ? todayJst.slice(0, 7) : fmtDate(mondayOf(todayJst));
+  const units = h => Math.floor((Math.round(Number(h) * 100) / 100) / hours);
+  const jp = n => n.toLocaleString('ja-JP');
+
+  if (basis === 'period') {
+    let rows = '', totalAvail = 0, totalCount = 0;
+    for (const t of teams) {
+      const tb = t.team_totals_by_date || {};
+      let avail = 0;
+      for (const ds of dates) avail += Number(tb[ds] || 0);
+      avail = Math.round(avail * 100) / 100;
+      const c = units(avail);
+      totalAvail = Math.round((totalAvail + avail) * 100) / 100;
+      totalCount += c;
+      rows += `<tr><td class="wk-team">${escapeHtml(t.code + ' ' + t.name)}</td><td>${fmtSum(avail)}h</td><td class="calc-count">${jp(c)}本</td></tr>`;
+    }
+    const totalRow = `<tr class="calc-total-row"><td class="wk-team">表示中${teams.length}チーム合計</td><td>${fmtSum(totalAvail)}h</td><td class="calc-count">${jp(totalCount)}本</td></tr>`;
+    result.innerHTML = `<div class="rsum-week-wrap"><table class="calc-table"><thead><tr><th class="wk-team">チーム</th><th>稼働可能</th><th>最大 ${escapeHtml(name)}</th></tr></thead><tbody>${rows}${totalRow}</tbody></table></div>`;
+    return;
+  }
+
+  // 月別 / 週別
+  const buckets = basis === 'month' ? monthBuckets(dates) : weekBuckets(dates);
+  let head = '<tr><th class="wk-team">チーム</th>';
+  for (const b of buckets) {
+    const cur = b.key === curKey ? ' is-current-week' : '';
+    head += `<th class="${cur.trim()}">${escapeHtml(b.label)}</th>`;
+  }
+  head += '<th class="wk-total-col">期間計</th></tr>';
+
+  const colTotals = Object.fromEntries(buckets.map(b => [b.key, 0]));
+  let rows = '';
+  for (const t of teams) {
+    const tb = t.team_totals_by_date || {};
+    let cells = '', rowCount = 0;
+    for (const b of buckets) {
+      let sum = 0;
+      for (const ds of b.dates) sum += Number(tb[ds] || 0);
+      const c = units(sum);
+      rowCount += c;
+      colTotals[b.key] += c;
+      const cur = b.key === curKey ? ' is-current-week' : '';
+      cells += `<td class="calc-count${cur}">${jp(c)}本</td>`;
+    }
+    rows += `<tr><td class="wk-team">${escapeHtml(t.code + ' ' + t.name)}</td>${cells}<td class="wk-total-col">${jp(rowCount)}本</td></tr>`;
+  }
+  let totalCells = '', grand = 0;
+  for (const b of buckets) {
+    grand += colTotals[b.key];
+    const cur = b.key === curKey ? ' is-current-week' : '';
+    totalCells += `<td class="${cur.trim()}">${jp(colTotals[b.key])}本</td>`;
+  }
+  const totalRow = `<tr class="calc-total-row"><td class="wk-team">表示中${teams.length}チーム合計</td>${totalCells}<td class="wk-total-col">${jp(grand)}本</td></tr>`;
+  result.innerHTML = `<div class="rsum-week-wrap"><table class="calc-table"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table></div>`;
+}
+
+// 工数試算の入力欄イベント（静的要素なので一度だけ束ねる）
+['calc-hours', 'calc-name'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', renderCalc);
+});
+document.querySelectorAll('input[name="calc-basis"]').forEach(el => el.addEventListener('change', renderCalc));
 
 function renderGrid() {
   const data = state.data;
