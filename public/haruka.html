@@ -40767,10 +40767,23 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
     try { await saveCreativeCustomFields(currentCreativeDetail.id); } catch (_) {}
     // 詳細モーダルメモリキャッシュを無効化（次に開く時は最新を取得）
     try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
-    // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
+    // 正規アクション成功 → localStorage 下書きを削除
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
-    __cdSkipDirtyCheck = true;
     const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
+
+    if (!overrideStatus) {
+      // 「下書き保存」= ステータスを進めずに入力中の内容だけサーバーへ保存し、モーダルは開いたまま作業を続けられるようにする。
+      // これまではステータス遷移と同じく無言でモーダルを閉じていたため、押したユーザーには「保存されず消えた」ように見えていた（バグ報告 #6cf9e914）。
+      // サーバーへ反映した値を currentCreativeDetail と dirty スナップショットに取り込み、未保存扱い（閉じる時の確認）が出ないようにする。
+      try { Object.assign(currentCreativeDetail, body); } catch (_) {}
+      try { __cdInitialSnapshot = __cdSnapshotCurrent(); } catch (_) {}
+      try { await refreshCreativeInList(_refreshId); } catch (_) {} // 一覧の表示も最新化（モーダルDOMには触れない）
+      showToast('下書きを保存しました（このまま作業を続けられます）', 'success');
+      return;
+    }
+
+    // ステータス遷移を伴う保存 → 従来どおり dirty チェックをバイパスしてモーダルを閉じ、一覧を1件差し替え
+    __cdSkipDirtyCheck = true;
     closeModal('modal-creative-detail');
     await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else {
