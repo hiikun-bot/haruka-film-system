@@ -461,6 +461,7 @@ tr.row-help td{background:#FFFBF2}
 .s-blue{background:#E6F1FB;color:#185FA5}
 .s-blue2{background:#dce8f8;color:#0C447C}
 .s-purple{background:#EEEDFE;color:#534AB7}
+.s-indigo{background:#E8E6FB;color:#3E2C9C}
 .s-orange{background:#FAEEDA;color:#633806}
 .s-coral{background:#FAECE7;color:#712B13}
 .s-green{background:#E1F5EE;color:#085041}
@@ -636,6 +637,72 @@ tr.row-help td{background:#FFFBF2}
   padding:32px 12px;
   color:var(--text-muted, #6b7480);
   font-size:13px;
+}
+
+/* クリエイティブ追加モーダル: 案件選択ウィザード（種別 ▸ クライアント ▸ 案件）
+   1ステップずつ絞り込む導線。各段の選択はパンくずに残り、クリックで戻れる。 */
+.cwiz-breadcrumb{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:14px;
+  font-size:13px;
+}
+.cwiz-crumb{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:4px 10px;
+  border-radius:14px;
+  border:1px solid transparent;
+  line-height:1.4;
+  white-space:nowrap;
+  max-width:260px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.cwiz-crumb--done{
+  background:var(--em-pale, #e6f7f4);
+  color:var(--em-dark, #1f7a78);
+  border-color:var(--em, #2db8a6);
+  cursor:pointer;
+  font-weight:600;
+}
+.cwiz-crumb--done:hover{ filter:brightness(0.97); }
+.cwiz-crumb--current{
+  background:#fff;
+  color:var(--text, #2a3138);
+  border-color:var(--border, #d8dde2);
+  font-weight:600;
+}
+.cwiz-crumb--todo{ color:var(--text-muted, #9aa4af); }
+.cwiz-crumb .cwiz-edit{ font-size:11px; opacity:0.7; }
+.cwiz-sep{ color:var(--text-muted, #b5bdc6); font-size:12px; }
+.cwiz-prompt{
+  font-size:13px;
+  color:var(--text-muted, #6b7480);
+  margin-bottom:10px;
+}
+/* 種別カードは大きめにして最初の分岐を選びやすく */
+.cwiz-type-cards{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:0; }
+.cwiz-type-card{
+  flex:1 1 160px;
+  justify-content:center;
+  padding:18px 14px;
+  border-radius:10px;
+  font-size:15px;
+  font-weight:600;
+}
+/* クライアントタイル: クライアント名を主役（大・太字）に、案件件数を副表示 */
+.cwiz-client-tile .pt-name{
+  font-size:15px;
+  font-weight:700;
+  -webkit-line-clamp:2;
+}
+.cwiz-client-tile .pt-client{
+  font-size:11px;
+  color:var(--text-muted, #6b7480);
 }
 
 /* クリエイティブ追加モーダル Step 2 のフォームグリッド
@@ -1096,6 +1163,7 @@ tr.row-help td{background:#FFFBF2}
 .ball-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block;margin-right:6px;vertical-align:middle}
 .bd-e{background:var(--em)}.bd-d{background:#378ADD}.bd-p{background:#7F77DD}
 .bd-c{background:#EF9F27}.bd-a{background:#D85A30}.bd-done{background:#B4B2A9}
+.bd-w{background:#6C4FE0}
 .ball-name{font-size:14px;font-weight:500;color:var(--text);vertical-align:middle}
 .due-urgent{color:#D85A30;font-size:13px;font-weight:500}
 .due-near{color:#BA7517;font-size:13px;font-weight:500}
@@ -4457,20 +4525,38 @@ window.showPage = window.showPage || function(name, btn) {
     <!-- 個別登録タブ（デフォルト） -->
     <div id="tab-single">
 
-      <!-- ===== Step 1: 案件選択 ===== -->
+      <!-- ===== Step 1: 案件選択（3ステップ ウィザード: 種別 ▸ クライアント ▸ 案件） ===== -->
       <div id="creative-step-1">
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">① 案件を選択してください</div>
-        <div class="form-group" style="margin-bottom:0">
-          <div id="c-project-cap-tabs" class="creative-add-cap-tabs" data-scope="single" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-            <button type="button" class="cap-toggle" data-cap="video" onclick="setCreativeAddCapTab('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
-            <button type="button" class="cap-toggle" data-cap="design" onclick="setCreativeAddCapTab('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
-            <button type="button" class="cap-toggle" data-cap="all" onclick="setCreativeAddCapTab('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
+        <!-- パンくず: 選んだ種別・クライアントを表示し、クリックでその段に戻れる -->
+        <div id="c-wiz-breadcrumb" class="cwiz-breadcrumb"></div>
+
+        <!-- Sub-step 1: 種別を選ぶ -->
+        <div id="c-wiz-step-type" class="form-group" style="margin-bottom:0">
+          <div class="cwiz-prompt">① まず「種別」を選んでください</div>
+          <div id="c-project-cap-tabs" class="creative-add-cap-tabs cwiz-type-cards" data-scope="single">
+            <button type="button" class="cap-toggle cwiz-type-card" data-cap="video" onclick="selectCreativeWizType('video')">🎬 動画 <span class="cap-count" data-cap-count="video">0</span></button>
+            <button type="button" class="cap-toggle cwiz-type-card" data-cap="design" onclick="selectCreativeWizType('design')">🎨 静止画 <span class="cap-count" data-cap-count="design">0</span></button>
+            <button type="button" class="cap-toggle cwiz-type-card" data-cap="all" onclick="selectCreativeWizType('all')">全て <span class="cap-count" data-cap-count="all">0</span></button>
           </div>
-          <input type="search" id="c-project-search" class="form-input project-tile-search" placeholder="🔍 案件名・クライアント名で絞り込み" oninput="onCreativeAddProjectSearchInput('single', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
-          <div id="c-project-tiles" class="project-tile-grid" data-scope="single"></div>
-          <!-- 既存ロジック互換: 案件IDの真の保持元（goToCreativeStep2 等で参照される） -->
-          <select id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="display:none" aria-hidden="true"></select>
         </div>
+
+        <!-- Sub-step 2: クライアントを選ぶ -->
+        <div id="c-wiz-step-client" style="display:none">
+          <div class="cwiz-prompt">② 「クライアント」を選んでください</div>
+          <input type="search" id="c-client-search" class="form-input project-tile-search" placeholder="🔍 クライアント名で絞り込み" oninput="onCreativeWizClientSearchInput(this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
+          <div id="c-client-tiles" class="project-tile-grid"></div>
+        </div>
+
+        <!-- Sub-step 3: 案件を選ぶ -->
+        <div id="c-wiz-step-project" style="display:none">
+          <div class="cwiz-prompt">③ 「案件」を選んでください</div>
+          <input type="search" id="c-project-search" class="form-input project-tile-search" placeholder="🔍 案件名で絞り込み" oninput="onCreativeAddProjectSearchInput('single', this.value)" autocomplete="off" style="margin-bottom:8px;font-size:13px;padding:8px 12px">
+          <div id="c-project-tiles" class="project-tile-grid" data-scope="single"></div>
+        </div>
+
+        <!-- 既存ロジック互換: 案件IDの真の保持元（goToCreativeStep2 等で参照される） -->
+        <select id="c-project-id" onchange="onProjectChange(this.value);updateCreativeStep1NextBtn()" style="display:none" aria-hidden="true"></select>
+
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:24px;padding-top:14px;border-top:0.5px solid var(--border)">
           <div>
             <!-- 動画/静止画案件を選んでいる時だけ表示。クリックで一括登録タブに切替（案件は引き継ぎ） -->
@@ -4563,7 +4649,7 @@ window.showPage = window.showPage || function(name, btn) {
             <div class="form-group" style="margin-bottom:0" data-creative-field="filename">
               <label class="form-label">提出用ファイル名 <span style="color:#E24B4A">*</span></label>
               <div style="display:flex;gap:6px">
-                <input class="form-input" id="c-file-name" placeholder="訴求軸選択後に自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
+                <input class="form-input" id="c-file-name" placeholder="案件のテンプレートから自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
                 <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
               </div>
               <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
@@ -5361,6 +5447,15 @@ window.showPage = window.showPage || function(name, btn) {
         <!-- 請求情報（インボイス制度対応） -->
         <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA">
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">🧾 請求情報</div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">
+              請求区分
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">自社案件か、広告代理店経由の請求かを区別します</span>
+            </label>
+            <select class="form-select" id="cl-billing-org" style="width:100%;box-sizing:border-box">
+              <!-- options are populated from CLIENT_BILLING_ORG_LABELS by populateBillingOrgSelect() -->
+            </select>
+          </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">
               適格請求書発行事業者登録番号
@@ -6019,9 +6114,20 @@ window.showPage = window.showPage || function(name, btn) {
               <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span>
                 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（マスタ駆動・カテゴリ管理から追加可能）</span>
               </label>
-              <select class="form-select" id="p-primary-category" required>
+              <select class="form-select" id="p-primary-category" required onchange="updateProjectWcheckRow(true)">
                 <option value="">読込中...</option>
               </select>
+            </div>
+          </div>
+          <!-- Wチェック要否（静止画案件のみ表示・この案件のクリエイティブ初期値・初期値あり・ADR 024） -->
+          <div class="form-row" id="p-wcheck-row" style="margin-bottom:10px;display:none">
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+                <input type="checkbox" id="p-wcheck-required" style="margin:0">
+                <span>この案件のクリエイティブはWチェックを行う（<strong>初期値</strong>・各クリエイティブで個別にON/OFF可）
+                  <span style="font-size:11px;color:var(--text-muted)">／静止画案件の初期値はあり</span>
+                </span>
+              </label>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
@@ -7238,6 +7344,55 @@ window.showPage = window.showPage || function(name, btn) {
   @media (max-width: 480px) {
     #ms-upload-floating { left: 12px; right: 12px; width: auto; bottom: 12px; }
   }
+  /* ===== 任意フォルダ（ADR 023）: フォルダ行・チップ・移動ポップオーバー ===== */
+  /* フィルタ行の直下に出すフォルダ行。フィルタ chip(.ms-tag) と同じ配色・角丸に揃える。 */
+  #page-material-square .ms-folder-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 2px 0 12px; padding: 8px 0; border-top: 1px solid #f0f1f4;
+  }
+  /* チップ行は上のパンくず行と一体に見せるため、上の余白・区切り線を詰める */
+  #page-material-square .ms-folder-row--chips { border-top: none; padding-top: 0; margin-top: 0; }
+  /* パンくず（🏠素材広場 ＞ クライアント ＞ 案件）。各要素クリックでそのレベルへ戻る。 */
+  #page-material-square .ms-folder-crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  #page-material-square .ms-folder-crumb {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; color: var(--text); background: none; border: none; cursor: pointer; white-space: nowrap;
+  }
+  #page-material-square .ms-folder-crumb:hover:not(.current) { background: #eef2f7; }
+  #page-material-square .ms-folder-crumb.current { color: var(--text-muted); cursor: default; font-weight: 700; }
+  #page-material-square .ms-folder-crumb-sep { color: var(--text-muted); font-size: 12px; opacity: .7; }
+  #page-material-square .ms-folder-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  #page-material-square .ms-folder-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 14px;
+    font-size: 12px; background: #eef2f7; color: #334; border: 1px solid transparent; cursor: pointer;
+  }
+  #page-material-square .ms-folder-chip:hover { background: #dbe4ef; }
+  #page-material-square .ms-folder-chip.active { background: var(--primary, #3ECFCA); color: #fff; }
+  #page-material-square .ms-folder-chip .ms-folder-count { font-size: 11px; opacity: .85; }
+  #page-material-square .ms-folder-empty { font-size: 12px; color: var(--text-muted); }
+  #page-material-square .ms-folder-create-btn {
+    margin-left: auto; font-size: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text); cursor: pointer; white-space: nowrap;
+  }
+  #page-material-square .ms-folder-create-btn:hover:not(:disabled) { background: #f8f9fb; }
+  #page-material-square .ms-folder-create-btn:disabled { opacity: .45; cursor: not-allowed; }
+  /* 選択バーの「フォルダへ移動」ポップオーバー */
+  #page-material-square .ms-folder-move-wrap { position: relative; display: inline-block; }
+  #page-material-square .ms-folder-move-pop {
+    display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20;
+    min-width: 220px; max-width: 320px; max-height: 320px; overflow-y: auto;
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.16); padding: 4px;
+  }
+  #page-material-square .ms-folder-move-wrap.open .ms-folder-move-pop { display: block; }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-item {
+    display: block; width: 100%; text-align: left; padding: 8px 10px; border: none; background: none;
+    border-radius: 6px; font-size: 13px; color: var(--text); cursor: pointer; box-sizing: border-box;
+  }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-item:hover { background: #f0fbfa; }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+  #page-material-square .ms-folder-move-pop .ms-folder-move-empty { padding: 8px 10px; font-size: 12px; color: var(--text-muted); }
+  #page-material-square .ms-folder-name-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 </style>
 <div id="page-material-square" class="page">
 
@@ -7276,16 +7431,21 @@ window.showPage = window.showPage || function(name, btn) {
         <option value="video">🎬 動画</option>
         <option value="image">🖼️ 画像</option>
       </select>
-      <!-- クライアント → 案件 の2段構え絞り込み。
-           クライアント未選択=全体素材。クライアント選択時のみ案件 select を表示し、
-           「案件全体」or 個別案件を選べる（アップロード先ピッカーと同じ作り）。 -->
-      <select id="ms-filter-client" onchange="msOnFilterClientChange()" title="クライアントで絞り込み">
-        <option value="">クライアント: すべて</option>
-      </select>
-      <select id="ms-filter-project" onchange="msOnFilterProjectChange()" title="案件で絞り込み" style="display:none">
-        <option value="">案件: 案件全体</option>
-      </select>
       <span id="ms-active-tags" style="display:flex;gap:4px;flex-wrap:wrap"></span>
+    </div>
+
+    <!-- フォルダ階層ナビ（Drive風ブラウザ）: パンくず（🏠素材広場 ＞ クライアント ＞ 案件）と
+         現在レベルのチップ（root=クライアント / client=案件 / project=任意フォルダ＋未振り分け）。
+         チップクリックで一段潜る or 素材を folderId 絞り込み。
+         「＋ この案件にフォルダを作成」は project レベル（案件を開いている時）だけ表示。 -->
+    <div class="ms-folder-row" id="ms-folder-row">
+      <span class="ms-folder-crumbs" id="ms-folder-crumbs"></span>
+      <button class="ms-folder-create-btn" id="ms-folder-create-btn" onclick="msOpenCreateFolder()" title="この案件にフォルダを作成" style="display:none">＋ この案件にフォルダを作成</button>
+    </div>
+    <div class="ms-folder-row ms-folder-row--chips" id="ms-folder-chip-row">
+      <span class="ms-folder-chips" id="ms-folder-chips">
+        <span class="ms-folder-empty">読み込み中…</span>
+      </span>
     </div>
 
     <!-- 選択バー: 1件以上チェックすると出現。1件=ダウンロード / 複数=N件をダウンロード -->
@@ -7293,6 +7453,11 @@ window.showPage = window.showPage || function(name, btn) {
       <span class="ms-bulk-count" id="ms-bulk-count">0件を選択中</span>
       <button class="btn-secondary" onclick="msClearSelection()" style="padding:3px 10px;font-size:12px">✕ 選択を解除</button>
       <span class="ms-bulk-spacer"></span>
+      <!-- フォルダへ移動（任意フォルダ・ADR 023）: クリックで現在コンテキストのフォルダ一覧を出す -->
+      <span class="ms-folder-move-wrap" id="ms-folder-move-wrap">
+        <button class="btn-secondary" id="ms-folder-move-btn" onclick="msToggleMovePopover(event)" style="padding:5px 14px;font-size:13px">📁 フォルダへ移動 ▾</button>
+        <div class="ms-folder-move-pop" id="ms-folder-move-pop"></div>
+      </span>
       <button class="btn-primary" id="ms-bulk-download-btn" onclick="msDownloadChecked()" style="padding:5px 14px;font-size:13px">⬇ ダウンロード</button>
     </div>
 
@@ -7470,6 +7635,36 @@ window.showPage = window.showPage || function(name, btn) {
     <div class="modal-footer">
       <button class="btn" onclick="msDeleteConfirmCancel()">キャンセル</button>
       <button class="btn-primary" id="ms-delete-confirm-submit" style="background:#E24B4A" onclick="msDeleteConfirmSubmit()">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 素材広場: フォルダ作成モーダル（任意フォルダ・ADR 023） -->
+<div class="modal-overlay" id="modal-ms-folder-create" data-no-overlay-close="true" style="z-index:300">
+  <div class="modal-card" style="width:460px">
+    <div class="modal-title">
+      <span id="ms-folder-modal-title">📁 フォルダを作成</span>
+      <button class="modal-close" onclick="msCloseCreateFolder()">×</button>
+    </div>
+    <div style="padding:4px 0 12px;font-size:14px;color:var(--text);line-height:1.7">
+      <div id="ms-folder-create-target-label" style="font-size:12px;color:var(--text-muted)">作成先</div>
+      <div id="ms-folder-create-target" style="font-weight:600;word-break:break-all;margin-bottom:12px">-</div>
+      <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">日付から入れる（任意）</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <input id="ms-folder-create-date" type="date"
+          style="flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+        <button type="button" class="btn" onclick="msInsertFolderDate()" style="white-space:nowrap">＋日付を先頭に</button>
+      </div>
+      <label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px">フォルダ名</label>
+      <input id="ms-folder-create-name" type="text" placeholder="例: 20260612_Zoom動画"
+        onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter'){event.preventDefault();}else if(event.key==='Escape'){msCloseCreateFolder();}"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+      <div class="ms-folder-name-note">＼ / ? % * : | " &lt; &gt; は _ に変換されます</div>
+      <div id="ms-folder-create-error" style="font-size:12px;color:#C0392B;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="msCloseCreateFolder()">キャンセル</button>
+      <button class="btn-primary" id="ms-folder-create-submit" onclick="msSubmitCreateFolder()">作成</button>
     </div>
   </div>
 </div>
@@ -7946,6 +8141,15 @@ window.showPage = window.showPage || function(name, btn) {
 
       <!-- ステップインジケーター -->
       <div id="cd-step-indicator" style="display:flex;align-items:flex-start;position:relative"></div>
+
+      <!-- Wチェック要否トグル（静止画のみ・このクリエ個別・ADR 024）。案件マスターは初期値。権限者だけ操作可。変更時は確認あり。 -->
+      <div id="cd-wcheck-toggle-row" style="display:none;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-muted)">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="cd-wcheck-required" style="margin:0">
+          <span>この<strong>クリエイティブ</strong>でWチェックを行う（Dチェックの前にダブルチェック／このクリエイティブのみ）</span>
+        </label>
+        <span id="cd-wcheck-toggle-saving" style="display:none;font-size:11px">保存中…</span>
+      </div>
     </div>
 
     <!-- スクロール可能コンテンツ -->
@@ -8043,7 +8247,7 @@ window.showPage = window.showPage || function(name, btn) {
       <div class="form-group" id="cd-editor-reply-group" style="display:none;margin-bottom:18px">
         <label class="form-label" id="cd-editor-reply-label">連絡・確認事項</label>
         <div id="cd-editor-reply-from-to" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:6px;padding:5px 10px;background:var(--surface);border-radius:6px;border:0.5px solid var(--border)"></div>
-        <textarea class="form-input" id="cd-editor-reply" rows="4" style="resize:vertical" placeholder="修正内容や確認事項をディレクターに伝えてください..."></textarea>
+        <textarea class="form-input" id="cd-editor-reply" rows="4" style="resize:vertical" placeholder="修正内容や確認事項を次の担当者へ伝えてください..."></textarea>
       </div>
 
       <!-- ディレクターからの指示（チェック段階のみ） -->
@@ -8956,8 +9160,8 @@ let creativeGanttDateOffset = 0;
 // 詳細フィルター展開状態
 let creativeAdvFiltersOpen = false;
 // ステータス pill の選択肢（statusClass のキー集合から）
-const _CV_STATUS_LIST = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
-// ボール種別の選択肢
+const _CV_STATUS_LIST = ['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集','Wチェック','Wチェック後修正','Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品','保留'];
+// ボール種別の選択肢（詳細フィルタのpill群と一致させること。Wチェックは「自分のボール」ビューで別途対応）
 const _CV_BALL_LIST = ['editor','D','P','client'];
 // 詳細フィルターの値 — メンバーマスター（creative_default_*）が唯一の真実（PR #277）。
 // 認証完了後に applyCreativeDefaultsFromUser() で上書きされる。ここではハードコード既定値で初期化。
@@ -9212,7 +9416,7 @@ function clientStatusClass(s) {
 }
 
 function statusClass(s) {
-  const map = {'未着手':'s-gray','台本制作':'s-pink','素材・ナレ作成':'s-orange','編集':'s-teal','Dチェック':'s-blue','Dチェック後修正':'s-pink','Pチェック':'s-purple','Pチェック後修正':'s-pink','クライアントチェック中':'s-orange','クライアントチェック後修正':'s-coral','納品':'s-green','進行中':'s-teal','確認待ち':'s-orange','完了':'s-green','保留':'s-gray'};
+  const map = {'未着手':'s-gray','台本制作':'s-pink','素材・ナレ作成':'s-orange','編集':'s-teal','Wチェック':'s-indigo','Wチェック後修正':'s-pink','Dチェック':'s-blue','Dチェック後修正':'s-pink','Pチェック':'s-purple','Pチェック後修正':'s-pink','クライアントチェック中':'s-orange','クライアントチェック後修正':'s-coral','納品':'s-green','進行中':'s-teal','確認待ち':'s-orange','完了':'s-green','保留':'s-gray'};
   return map[s] || 's-gray';
 }
 
@@ -9551,6 +9755,12 @@ function dedupVisibleProjects(projects) {
 let _creativeAddProjectFilter = 'all';
 let _creativeAddBulkProjectFilter = 'all';
 
+// 個別登録タブの案件選択ウィザード状態（種別 ▸ クライアント ▸ 案件）
+// _creativeAddWizStep: 'type' | 'client' | 'project'
+let _creativeAddWizStep = 'type';
+let _creativeAddSelectedClientId = '';
+let _creativeAddClientSearch = '';
+
 // 初期トグル選定: job_type 連動 → default_creative_tab → 'all'
 function pickInitialProjectFilterTab(user) {
   if (!user) return 'all';
@@ -9735,17 +9945,21 @@ function renderCreativeAddProjectDropdowns() {
   });
 
   // ===== 個別登録タブ select（hidden 互換: goToCreativeStep2 が options[selectedIndex].text を参照） =====
+  // ウィザードでクライアントを選択済みなら、その client の案件だけに絞る。
   const singleFiltered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+  const singleClientFiltered = _creativeAddSelectedClientId
+    ? singleFiltered.filter(p => (p.client_id || p.clients?.id) === _creativeAddSelectedClientId)
+    : singleFiltered;
   const singleSel = document.getElementById('c-project-id');
   if (singleSel) {
     const prev = singleSel.value;
-    singleSel.innerHTML = singleFiltered.length
-      ? singleFiltered.map(p => `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`).join('')
+    singleSel.innerHTML = singleClientFiltered.length
+      ? singleClientFiltered.map(p => `<option value="${esc(p.id)}">${esc(p.clients?.name || '')} / ${esc(p.name || '')}</option>`).join('')
       : `<option value="">該当する案件がありません</option>`;
-    if (prev && singleFiltered.some(p => p.id === prev)) {
+    if (prev && singleClientFiltered.some(p => p.id === prev)) {
       singleSel.value = prev;
-    } else if (singleFiltered.length) {
-      singleSel.value = singleFiltered[0].id;
+    } else if (singleClientFiltered.length) {
+      singleSel.value = singleClientFiltered[0].id;
     }
   }
 
@@ -9771,7 +9985,7 @@ function renderCreativeAddProjectDropdowns() {
     const sel = document.getElementById(scope === 'bulk' ? 'bulk-project-id' : 'c-project-id');
     const selectedId = sel?.value || '';
     const keyword = scope === 'bulk' ? _creativeAddBulkProjectSearch : _creativeAddProjectSearch;
-    const scopeFiltered = scope === 'bulk' ? bulkFiltered : singleFiltered;
+    const scopeFiltered = scope === 'bulk' ? bulkFiltered : singleClientFiltered;
     const list = _filterProjectsBySearch(scopeFiltered, keyword);
     if (!list.length) {
       const msg = keyword
@@ -9789,6 +10003,9 @@ function renderCreativeAddProjectDropdowns() {
 
   // 案件タブと連動して team dropdown も再構築（秘書チームは横断で残る）
   renderCreativeAddTeamDropdowns();
+
+  // ウィザード（パンくず・クライアントタイル・サブステップ表示）を同期
+  if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
 }
 
 // タイルクリック時のハンドラ（イベント委譲で 1 度だけ bind）
@@ -9798,6 +10015,12 @@ function _bindCreativeAddProjectTileDelegation() {
   document.addEventListener('click', (ev) => {
     const tile = ev.target?.closest?.('.project-tile');
     if (!tile) return;
+    // クライアントタイル（ウィザード Step2）→ クライアントを選び案件ステップへ
+    const cid = tile.getAttribute('data-cid');
+    if (cid !== null) {
+      if (typeof selectCreativeWizClient === 'function') selectCreativeWizClient(cid);
+      return;
+    }
     const grid = tile.closest('.project-tile-grid');
     if (!grid) return;
     const scope = grid.getAttribute('data-scope') || 'single';
@@ -9820,8 +10043,9 @@ function _bindCreativeAddProjectTileDelegation() {
 // 初期化（DOMContentLoaded を待たずに即時 bind 可能。listener 自体は document に付くだけ）
 _bindCreativeAddProjectTileDelegation();
 
-// 個別登録タブのトグルクリックハンドラ。個別タブ select だけ再描画する。
-// （以前は bulk select も同時に切り替えていたが、bulk タブは独立した cap tab・filter を持つように変更）
+// 個別登録タブのトグルクリックハンドラ（旧：1画面案件選択用）。
+// 案件選択ウィザード化（種別 ▸ クライアント ▸ 案件）に伴い種別カードは selectCreativeWizType を使う。
+// 本関数は将来の再利用・外部呼び出し互換のため残置（現状 UI からの呼び出しは無し）。
 async function setCreativeAddCapTab(cap) {
   if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
   if (_creativeAddProjectFilter === cap) return;
@@ -9854,6 +10078,144 @@ async function setCreativeAddBulkCapTab(cap) {
   }
 
   if (typeof updateBulkAssigneeSelect === 'function') updateBulkAssigneeSelect();
+}
+
+// ==================== クリエイティブ追加モーダル: 案件選択ウィザード ====================
+// 個別登録タブの Step1（案件選択）を「種別 ▸ クライアント ▸ 案件」の3段に分割する導線。
+// 内部の hidden select #c-project-id（案件ID の真の保持元）はそのまま使い、下流ロジックを温存する。
+
+// Step1: 種別を選ぶ → クライアントステップへ
+function selectCreativeWizType(cap) {
+  if (cap !== 'video' && cap !== 'design' && cap !== 'all') cap = 'all';
+  _creativeAddProjectFilter = cap;
+  // 種別を選び直したらクライアント選択はリセット
+  _creativeAddSelectedClientId = '';
+  _creativeAddClientSearch = '';
+  const cs = document.getElementById('c-client-search');
+  if (cs) cs.value = '';
+  _creativeAddWizStep = 'client';
+  renderCreativeAddProjectDropdowns();
+  if (typeof updateAssigneeSelect === 'function') updateAssigneeSelect();
+}
+
+// Step2: クライアント検索ボックス入力
+function onCreativeWizClientSearchInput(value) {
+  const v = (value || '').trim().toLowerCase();
+  if (_creativeAddClientSearch === v) return;
+  _creativeAddClientSearch = v;
+  renderCreativeWizClientTiles();
+}
+
+// Step2: クライアントを選ぶ → 案件ステップへ
+async function selectCreativeWizClient(cid) {
+  _creativeAddSelectedClientId = cid || '';
+  _creativeAddWizStep = 'project';
+  // 案件ステップに入るたびに案件検索はクリア
+  _creativeAddProjectSearch = '';
+  const ps = document.getElementById('c-project-search');
+  if (ps) ps.value = '';
+  const prev = document.getElementById('c-project-id')?.value || '';
+  renderCreativeAddProjectDropdowns(); // select を当該クライアントの案件に限定し、先頭を自動選択
+  const next = document.getElementById('c-project-id')?.value || '';
+  // 自動選択された案件で訴求軸・チーム等のフォームを準備
+  if (next && next !== prev && typeof onProjectChange === 'function') await onProjectChange(next);
+  if (typeof updateAssigneeSelect === 'function') updateAssigneeSelect();
+  if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
+}
+
+// パンくずクリックで任意の段に戻る（選択値は保持）
+function gotoCreativeWizStep(step) {
+  if (step !== 'type' && step !== 'client' && step !== 'project') step = 'type';
+  _creativeAddWizStep = step;
+  renderCreativeAddWizard();
+}
+
+// 現在の種別フィルタに該当する案件から、クライアント一覧（件数付き）を作る
+function _creativeAddClientList() {
+  const visible = dedupVisibleProjects(allProjects || []);
+  const capFiltered = filterProjectsByCap(visible, _creativeAddProjectFilter);
+  const map = new Map();
+  for (const p of capFiltered) {
+    const cid = p.client_id || p.clients?.id;
+    if (!cid) continue;
+    if (!map.has(cid)) map.set(cid, { id: cid, name: (p.clients?.name || '(クライアント未設定)'), count: 0 });
+    map.get(cid).count++;
+  }
+  return Array.from(map.values()).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+}
+
+// ウィザード全体の同期: サブステップ表示・次へボタン・パンくず・クライアントタイル
+function renderCreativeAddWizard() {
+  const typeEl = document.getElementById('c-wiz-step-type');
+  const clientEl = document.getElementById('c-wiz-step-client');
+  const projEl = document.getElementById('c-wiz-step-project');
+  if (!typeEl || !clientEl || !projEl) return; // モーダル未構築
+
+  const step = _creativeAddWizStep || 'type';
+  typeEl.style.display = step === 'type' ? '' : 'none';
+  clientEl.style.display = step === 'client' ? '' : 'none';
+  projEl.style.display = step === 'project' ? '' : 'none';
+
+  // 「次へ」は案件ステップでのみ表示（種別/クライアントステップでの誤操作を防ぐ）
+  const nextBtn = document.getElementById('creative-step1-next-btn');
+  if (nextBtn) nextBtn.style.display = step === 'project' ? '' : 'none';
+
+  renderCreativeWizBreadcrumb();
+  if (step === 'client') renderCreativeWizClientTiles();
+}
+
+// パンくず描画。完了済みの段はチップ表示＋クリックで戻れる。
+function renderCreativeWizBreadcrumb() {
+  const el = document.getElementById('c-wiz-breadcrumb');
+  if (!el) return;
+  const step = _creativeAddWizStep || 'type';
+  const typeLabelMap = { video: '🎬 動画', design: '🎨 静止画', all: '全て' };
+  const crumbs = [];
+
+  // ① 種別
+  if (step === 'type') {
+    crumbs.push('<span class="cwiz-crumb cwiz-crumb--current">① 種別</span>');
+  } else {
+    const t = typeLabelMap[_creativeAddProjectFilter] || '種別';
+    crumbs.push(`<span class="cwiz-crumb cwiz-crumb--done" onclick="gotoCreativeWizStep('type')" title="種別を選び直す">${esc(t)} <span class="cwiz-edit">✎</span></span>`);
+  }
+
+  // ② クライアント
+  if (step === 'type') {
+    crumbs.push('<span class="cwiz-crumb cwiz-crumb--todo">② クライアント</span>');
+  } else if (step === 'client') {
+    crumbs.push('<span class="cwiz-crumb cwiz-crumb--current">② クライアント</span>');
+  } else {
+    const c = _creativeAddClientList().find(x => x.id === _creativeAddSelectedClientId);
+    const cname = c ? c.name : 'クライアント';
+    crumbs.push(`<span class="cwiz-crumb cwiz-crumb--done" onclick="gotoCreativeWizStep('client')" title="クライアントを選び直す">${esc(cname)} <span class="cwiz-edit">✎</span></span>`);
+  }
+
+  // ③ 案件
+  crumbs.push(`<span class="cwiz-crumb ${step === 'project' ? 'cwiz-crumb--current' : 'cwiz-crumb--todo'}">③ 案件</span>`);
+
+  el.innerHTML = crumbs.join('<span class="cwiz-sep">▸</span>');
+}
+
+// クライアントタイル描画（クライアント名を主役に、案件件数を副表示）
+function renderCreativeWizClientTiles() {
+  const grid = document.getElementById('c-client-tiles');
+  if (!grid) return;
+  let list = _creativeAddClientList();
+  const kw = _creativeAddClientSearch;
+  if (kw) list = list.filter(c => (c.name || '').toLowerCase().includes(kw));
+  if (!list.length) {
+    const msg = kw ? '検索キーワードに一致するクライアントがありません' : '該当するクライアントがありません';
+    grid.innerHTML = `<div class="project-tile-empty">${esc(msg)}</div>`;
+    return;
+  }
+  grid.innerHTML = list.map(c => {
+    const seld = c.id === _creativeAddSelectedClientId ? ' is-selected' : '';
+    return `<button type="button" class="project-tile cwiz-client-tile${seld}" data-cid="${esc(c.id)}" title="${esc(c.name)}">`
+      + `<span class="pt-name">${esc(c.name)}</span>`
+      + `<span class="pt-client">${c.count}件の案件</span>`
+      + `</button>`;
+  }).join('');
 }
 
 // 案件（クライアント→案件の階層表示）
@@ -10130,6 +10492,28 @@ function toggleClientTeam(teamId) {
   renderClTeamsList();
 }
 
+// 請求区分（clients.billing_org）の選択肢マスタ。
+// 自社案件か広告代理店経由かを区別する。コード値（キー）を DB に保存する。
+// ▼ 代理店が増えたら、ここに1行追記するだけで全画面のセレクトに反映される ▼
+//   例: dac: { label: 'DAC', sub: '〇〇エージェンシー', isSelf: false, color: '#0EA5E9', icon: '🤝' },
+const CLIENT_BILLING_ORG_LABELS = {
+  haruka: { label: 'HARUKA FILM', sub: '自社',            isSelf: true,  color: '#2563EB', icon: '🎬' },
+  gnd:    { label: 'GND',         sub: 'GOOD NEW Design', isSelf: false, color: '#7C3AED', icon: '🤝' },
+};
+
+// #cl-billing-org セレクトを CLIENT_BILLING_ORG_LABELS から生成して selectedKey を選択状態にする
+function populateBillingOrgSelect(selectedKey) {
+  const sel = document.getElementById('cl-billing-org');
+  if (!sel) return;
+  const opts = ['<option value="">（未設定）</option>'];
+  for (const [key, meta] of Object.entries(CLIENT_BILLING_ORG_LABELS)) {
+    const text = `${meta.icon} ${meta.label}（${meta.sub}）`;
+    opts.push(`<option value="${key}">${text}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  sel.value = (selectedKey && CLIENT_BILLING_ORG_LABELS[selectedKey]) ? selectedKey : '';
+}
+
 function openEditClient(id) {
   const c = allClients.find(cl => cl.id === id);
   if (!c) return;
@@ -10153,6 +10537,7 @@ function openEditClient(id) {
   document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
   const invRegEl = document.getElementById('cl-invoice-registration-number');
   if (invRegEl) invRegEl.value = c.invoice_registration_number || '';
+  populateBillingOrgSelect(c.billing_org || '');
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
   // 削除ボタンの表示制御: admin / secretary のみ。それ以外は完全に非表示。
@@ -10177,6 +10562,7 @@ function openNewClientModal() {
   document.getElementById('cl-status').value = '提案中';
   ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id','cl-invoice-registration-number']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  populateBillingOrgSelect('');
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
   // 新規作成時は削除ボタンを必ず非表示
@@ -10204,6 +10590,7 @@ async function submitClient() {
     return;
   }
   const invoice_registration_number = invoiceRegRaw || null;
+  const billing_org = (document.getElementById('cl-billing-org')?.value || '') || null;
 
   const btn = document.getElementById('cl-submit-btn');
   const origText = btn.textContent;
@@ -10227,6 +10614,7 @@ async function submitClient() {
       slack_channel_url: linkVal('cl-slack-channel-url'),
       chatwork_room_id:  linkVal('cl-chatwork-room-id'),
       invoice_registration_number,
+      billing_org,
       team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });
@@ -10594,7 +10982,14 @@ function applyCreativeDefaultsFromUser(u) {
     return Array.isArray(v) ? v : null;
   };
   const stArr = parseArr(u.creative_default_statuses);
-  if (Array.isArray(stArr)) cvAdvFilters.statuses = new Set(stArr.filter(s => _CV_STATUS_LIST.includes(s)));
+  if (Array.isArray(stArr)) {
+    const _stSet = new Set(stArr.filter(s => _CV_STATUS_LIST.includes(s)));
+    // 後から追加されたステータス（Wチェック等）は、保存済み既定に含まれていなくても既定で表示する。
+    // 保存時点では存在せず「意図的に外した」わけではないため、Wチェックのクリエイティブが
+    // 一覧・検索から消えてしまう不具合を防ぐ（バグ報告: Wチェックにするとデータが検索できない）。
+    ['Wチェック', 'Wチェック後修正'].forEach(s => _stSet.add(s));
+    cvAdvFilters.statuses = _stSet;
+  }
   const ballArr = parseArr(u.creative_default_ball_types);
   if (Array.isArray(ballArr)) cvAdvFilters.ballTypes = new Set(ballArr.filter(s => _CV_BALL_LIST.includes(s)));
 }
@@ -12143,7 +12538,11 @@ function renderCreatives() {
   const showRank = hasPermission('creative.rank_price_column');
   const activeBalls = [];
   document.querySelectorAll('.bf.on').forEach(b => {
-    if(b.classList.contains('bf-e')) activeBalls.push('editor','all');
+    // 'wcheck'（Wチェック担当者がボール保持・ADR 024）は制作/編集者側の工程なので
+    // 編集者ボール(bf-e)と同じグループで表示対象に含める。
+    // これを足し忘れると Wチェックのクリエイティブが一覧・ガントから丸ごと消える
+    // （「保留」で起きたサイレント消失と同型のバグ。バグ報告 aa11784a の追補）。
+    if(b.classList.contains('bf-e')) activeBalls.push('editor','all','wcheck');
     if(b.classList.contains('bf-d')) activeBalls.push('director');
     if(b.classList.contains('bf-p')) activeBalls.push('producer');
     if(b.classList.contains('bf-c')) activeBalls.push('client');
@@ -12234,7 +12633,7 @@ function renderCreatives() {
       const isProducerLike = ['producer','admin'].includes(myRole);
       const myIdsHit = !!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId);
       let hasBall = false;
-      if (bh.type === 'editor' || bh.type === 'director') hasBall = myIdsHit || (!!myId && bh.user_id === myId);
+      if (bh.type === 'editor' || bh.type === 'director' || bh.type === 'wcheck') hasBall = myIdsHit || (!!myId && bh.user_id === myId);
       else if (bh.type === 'producer') hasBall = myIdsHit || isProducerLike;
       else if (bh.type === 'all') hasBall = myIdsHit || isProducerLike;
       if (!hasBall) return false;
@@ -12281,7 +12680,7 @@ function renderCreatives() {
       || (homeTeamId ? teamById.get(homeTeamId) : null)
       || (editorUserId ? teamByMember.get(editorUserId) : null);
     const ball = c.ball_holder || { holder:'不明', type:'unknown' };
-    const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
+    const dotClass = {editor:'bd-e',wcheck:'bd-w',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[ball.type]||'bd-done';
     // DATE型("YYYY-MM-DD")を new Date() で渡すと UTC midnight になり JST では1日ズレるため、
     // ガント側と同じ _cvAtMidnight / _cvDayDiff（暦日差・UTC ベース）に統一する。
     const today = _cvAtMidnight(new Date());
@@ -15360,6 +15759,22 @@ function populateCategorySelect(selectEl, selectedId) {
   if (selectedId) selectEl.value = selectedId;
 }
 
+// Wチェック要否行（案件編集モーダル）の表示制御。静止画(image)案件のときだけ表示。
+// categoryChanged=true（カテゴリselectを切り替えた直後）は初期値「あり」にする（静止画の既定）。
+function updateProjectWcheckRow(categoryChanged) {
+  const row = document.getElementById('p-wcheck-row');
+  const cb  = document.getElementById('p-wcheck-required');
+  const sel = document.getElementById('p-primary-category');
+  if (!row || !cb || !sel) return;
+  const catId = sel.value || '';
+  const cat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+    ? _categoriesCache.find(c => c && c.id === catId) : null;
+  const isImage = cat?.code === 'image';
+  if (!isImage) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+  if (categoryChanged) cb.checked = true; // 静止画に切り替えたら初期値あり
+}
+
 // ==================== カテゴリ別フィールド設定 (ADR 012) ====================
 // /api/categories/:id/fields のクライアント側キャッシュ。
 // 詳細モーダル open 時に loadCategoryFields(category_id) を呼ぶと、
@@ -16786,6 +17201,10 @@ function openProjectModal(preClientId) {
     populateCategorySelect(sel, null);
     const def = getCategoryByCode('video');
     if (def) sel.value = def.id;
+    // 新規: 静止画を選んだら初期値あり。既定の動画では行は隠れる。
+    const _cbWNew = document.getElementById('p-wcheck-required');
+    if (_cbWNew) _cbWNew.checked = true;
+    updateProjectWcheckRow(false);
   });
   // タグ入力初期化
   const pTagInputNew = document.getElementById('p-tags-input');
@@ -16903,6 +17322,15 @@ function openEditProject(p) {
       const cat = getCategoryByCode('video');
       if (cat) sel.value = cat.id;
     }
+    // Wチェック要否: 案件の現在値を反映（null/未設定 のとき image なら既定 true）
+    const _cbWEdit = document.getElementById('p-wcheck-required');
+    if (_cbWEdit) {
+      const selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+        ? _categoriesCache.find(c => c && c.id === (p.primary_category_id || sel.value)) : null;
+      const isImg = selCat?.code === 'image';
+      _cbWEdit.checked = (p.wcheck_required === null || p.wcheck_required === undefined) ? isImg : !!p.wcheck_required;
+    }
+    updateProjectWcheckRow(false);
   });
   // タグ初期値
   const pTagInputEdit = document.getElementById('p-tags-input');
@@ -20570,6 +20998,17 @@ async function submitProject() {
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（編集時に明示送信、新規時は空）
   const creatives_export_sheet_url = document.getElementById('p-creatives-export-sheet-url')?.value.trim() || null;
 
+  // ADR 024: Wチェック要否（案件単位）。静止画案件のときだけチェック状態を送る。
+  // 静止画以外は null（カテゴリ既定継承＝不要）。
+  let wcheck_required = null;
+  {
+    const _selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+      ? _categoriesCache.find(c => c && c.id === primary_category_id) : null;
+    if (_selCat?.code === 'image') {
+      wcheck_required = !!document.getElementById('p-wcheck-required')?.checked;
+    }
+  }
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -20578,7 +21017,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, wcheck_required })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -24430,7 +24869,45 @@ async function reactivateMember(id) {
   }
 }
 
-// 案件選択時に訴求軸を読み込む
+// 案件に対する「初期値とするチーム」を返す。
+// チームは案件のクライアントに紐づくチーム（client.team_ids）から、案件種別(キャパ)に一致するものを優先。
+//  1) 案件キャパ('video'|'design') と一致する team_type / 2) 秘書チーム / 3) （カテゴリ未設定なら）先頭
+// 紐づくチームが無い案件は null（＝未設定のまま）を返す。
+function getProjectDefaultTeam(projectId) {
+  const proj = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === projectId);
+  if (!proj) return null;
+  const clientId = proj.client_id || proj.clients?.id;
+  const cl = clientId ? (Array.isArray(allClients) ? allClients : []).find(c => c.id === clientId) : null;
+  const linkedIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
+  if (!linkedIds.length) return null;
+  const teamsAll = Array.isArray(allTeams) ? allTeams : [];
+  const linkedTeams = linkedIds.map(id => teamsAll.find(t => t.id === id)).filter(Boolean);
+  const projCat = (typeof getProjectCategory === 'function') ? getProjectCategory(proj) : null;
+  if (projCat) {
+    const cap = (typeof getCreativeCapForProject === 'function')
+      ? getCreativeCapForProject(proj)
+      : (projCat.code === 'video' ? 'video' : 'design');
+    return linkedTeams.find(t => t.team_type === cap)
+        || linkedTeams.find(t => t.team_type === 'secretary')
+        || null;
+  }
+  // primary_category 未設定の案件は従来挙動どおり先頭を初期値にする
+  return linkedTeams[0] || null;
+}
+
+// 個別登録 c-team-id に、案件の初期チームを「未選択のときだけ」当てる。
+// 既にユーザー/自動で選択済みの場合や、紐づくチームが無い場合は触らない（＝未設定のまま）。
+function applyCreativeDefaultTeam(projectId) {
+  const teamSelect = document.getElementById('c-team-id');
+  if (!teamSelect || teamSelect.value) return; // 既に選択済みなら尊重
+  const chosen = getProjectDefaultTeam(projectId);
+  if (chosen && Array.from(teamSelect.options).some(o => o.value === chosen.id)) {
+    teamSelect.value = chosen.id;
+    if (typeof onTeamChange === 'function') { try { onTeamChange(teamSelect.value); } catch(_) {} }
+  }
+}
+
+// 案件選択時に訴求軸を読み込む（あわせて案件のデフォルトチームを当てる）
 async function onProjectChange(projectId) {
   const sel = document.getElementById('c-appeal-type');
   const prodSel = document.getElementById('c-product-id');
@@ -24455,6 +24932,7 @@ async function onProjectChange(projectId) {
     const _statusEl = document.getElementById('filename-status');
     if (_statusEl) _statusEl.textContent = '';
     _autoFileNameDone = false;
+    _lastAutoFileName = ''; // 案件が変わったら手動編集ガードもリセット（新案件のテンプレで再生成可能に）
   }
   onProjectChange._lastProjectId = projectId || '';
 
@@ -24467,6 +24945,8 @@ async function onProjectChange(projectId) {
   // 案件→クライアント→紐付くチームから「案件種別と一致する team_type」を優先して自動選択。
   // 整合チームが見つからない場合は誤紐付け防止のため未選択のままにする。
   // （「秘書」チームは team_type が異なるが、video/design 案件を兼ねうるので候補に含める）
+  // 初期チームの算出は getProjectDefaultTeam() に集約。ここでは「案件を能動的に切り替えた」
+  // タイミングなので、紐づくチームがあるのに整合チームが選べない場合は誤紐付け防止で '' にリセットする。
   try {
     const proj = (allProjects || []).find(p => p.id === projectId);
     const clientId = proj?.client_id || proj?.clients?.id;
@@ -24474,34 +24954,9 @@ async function onProjectChange(projectId) {
     const linkedIds = Array.isArray(cl?.team_ids) ? cl.team_ids : [];
     const teamSelect = document.getElementById('c-team-id');
     if (teamSelect && linkedIds.length) {
-      const teamsAll = Array.isArray(allTeams) ? allTeams : [];
-      const linkedTeams = linkedIds
-        .map(id => teamsAll.find(t => t.id === id))
-        .filter(Boolean);
-      const projCat = (typeof getProjectCategory === 'function') ? getProjectCategory(proj) : null;
-      // 1) primary_category から派生したキャパ ('video'|'design') と一致する team_type を最優先
-      // 2) 秘書チーム / 3) なし（未選択）
-      // チームの team_type は 'video'|'design'|'secretary' の 3 値しかないため、
-      // LP/HP/other は design キャパに丸めて team を探す。
-      let chosen = null;
-      if (projCat) {
-        const cap = (typeof getCreativeCapForProject === 'function')
-          ? getCreativeCapForProject(proj)
-          : (projCat.code === 'video' ? 'video' : 'design');
-        chosen = linkedTeams.find(t => t.team_type === cap)
-              || linkedTeams.find(t => t.team_type === 'secretary')
-              || null;
-      } else {
-        // primary_category 未設定の案件は従来挙動どおり先頭を選ぶ
-        chosen = linkedTeams[0] || null;
-      }
-      // 現在の team dropdown の選択肢に存在することも確認（cap フィルタで消えていれば選ばない）
+      const chosen = getProjectDefaultTeam(projectId);
       const stillSelectable = chosen && Array.from(teamSelect.options).some(o => o.value === chosen.id);
-      if (stillSelectable) {
-        teamSelect.value = chosen.id;
-      } else {
-        teamSelect.value = '';
-      }
+      teamSelect.value = stillSelectable ? chosen.id : '';
       if (typeof onTeamChange === 'function') {
         try { onTeamChange(teamSelect.value); } catch(_) {}
       }
@@ -24533,28 +24988,30 @@ async function onProjectChange(projectId) {
 }
 
 let _autoFileNameDone = false;
+// 直近に自動生成したファイル名。ユーザーが手動編集したかどうかの判定に使う
+// （field の現値がこれと一致 or 空のときだけ自動再生成で上書きしてよい）。
+let _lastAutoFileName = '';
 
-// 全フィールドが揃ったら一度だけ自動生成
+// ADR 007: 案件に当たっているテンプレマスター駆動で自動生成する。
+// 訴求軸・商材・媒体などは任意トークン（未確定でも renderFilename が空欄を詰める）なので、
+// 案件さえ決まっていれば生成する。フィールド変更のたびに、手動編集されていなければ再生成する。
 async function tryAutoGenerateFileName() {
-  if (_autoFileNameDone) return;
   const cat = (typeof getEffectiveCreativeCategory === 'function') ? getEffectiveCreativeCategory() : null;
   // LP/HP/LINE/その他は別系統のファイル名（商材/訴求軸を要求しない）。ここでは何もしない。
   if (cat === 'lp' || cat === 'hp' || cat === 'line' || cat === 'other') return;
-  const projectId    = document.getElementById('c-project-id')?.value;
-  const appealTypeId = document.getElementById('c-appeal-type')?.value;
-  const productId    = document.getElementById('c-product-id')?.value;
-  const mediaCode    = document.getElementById('c-media-code')?.value;
-  const creativeFmt  = document.getElementById('c-creative-fmt')?.value;
-  const creativeSize = document.getElementById('c-creative-size')?.value;
-  if (!projectId || !appealTypeId || !productId || !mediaCode || !creativeFmt || !creativeSize) return;
-  _autoFileNameDone = true;
+  const projectId = document.getElementById('c-project-id')?.value;
+  if (!projectId) return;
+  // 手動編集ガード: 現在のファイル名が「直近の自動生成値」でも空でもないなら、ユーザーが
+  // 手で書き換えたとみなして自動再生成しない（↺再生成ボタンなら generateFileName を直接呼ぶ）。
+  const fileEl = document.getElementById('c-file-name');
+  const cur = (fileEl?.value || '').trim();
+  if (cur && cur !== _lastAutoFileName) return;
   await generateFileName();
 }
 
 async function autoGenerateFileName() {
   const projectId = document.getElementById('c-project-id').value;
-  const appealTypeId = document.getElementById('c-appeal-type').value;
-  if (!projectId || !appealTypeId) return;
+  if (!projectId) return;
   await generateFileName();
 }
 
@@ -24573,7 +25030,8 @@ async function generateFileName() {
   const projectId = document.getElementById('c-project-id').value;
   const appealTypeId = document.getElementById('c-appeal-type').value;
   const statusEl = document.getElementById('filename-status');
-  if (!projectId || !appealTypeId) return;
+  // 訴求軸は任意。案件さえ決まっていればテンプレマスター駆動で生成する。
+  if (!projectId) return;
 
   // 商材コードを選択肢テキストから取得（"PA001 - 名前" → "PA001"）
   const prodSel = document.getElementById('c-product-id');
@@ -24589,18 +25047,43 @@ async function generateFileName() {
   const res = await apiFetch(`${API}/projects/${projectId}/generate-filename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appeal_type_id: appealTypeId, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag })
+    body: JSON.stringify({ appeal_type_id: appealTypeId || null, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag })
   });
   if (res.ok) {
     const data = await res.json();
     document.getElementById('c-file-name').value = data.file_name;
-    statusEl.style.color = 'var(--em-dark)';
-    statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`;
+    _lastAutoFileName = data.file_name || '';
+    if (statusEl) {
+      statusEl.style.color = 'var(--em-dark)';
+      statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`;
+    }
+    // 凡例（形式の説明文）を、この案件に当たっているテンプレ名・トークン並びで更新する
+    updateFilenameFormatHint(data);
   } else {
     const e = await res.json();
-    statusEl.style.color = '#E24B4A';
-    statusEl.textContent = e.error;
+    if (statusEl) {
+      statusEl.style.color = '#E24B4A';
+      statusEl.textContent = e.error;
+    }
   }
+}
+
+// ファイル名の凡例（#filename-format-hint）を、案件に設定されたテンプレマスターの
+// 名称＋トークン並びで動的に更新する。固定文だと案件ごとのテンプレ設定と食い違うため。
+function updateFilenameFormatHint(data) {
+  const hint = document.getElementById('filename-format-hint');
+  if (!hint) return;
+  const note = '※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
+  let head;
+  if (data && data.template_name && data.format_hint) {
+    head = `形式: テンプレート「${esc(data.template_name)}」= ${esc(data.format_hint)}　／　手動編集可`;
+  } else if (data && data.format_hint) {
+    head = `形式: ${esc(data.format_hint)}　／　手動編集可`;
+  } else {
+    // テンプレ未設定（フォールバック生成）時の汎用表記
+    head = '形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可';
+  }
+  hint.innerHTML = `${head}<br>${note}`;
 }
 
 function getLastDayOfMonth() {
@@ -24634,6 +25117,12 @@ async function goToCreativeStep2() {
   document.getElementById('creative-step-1').style.display = 'none';
   document.getElementById('creative-step-2').style.display = '';
 
+  // チーム初期値: 案件に紐づくチーム（クライアント割当チームのうち案件種別に合うもの）を、
+  // 未選択のときだけ初期値として当てる。紐づくチームが無ければ未設定のまま。
+  // 案件タイル再クリックで onProjectChange を経由せず Step2 に来る経路でも確実に初期化するため、
+  // フォーム表示の choke point である本関数でも当てておく。
+  applyCreativeDefaultTeam(projectId);
+
   // 案件カテゴリに応じて種別 select の選択肢を組み替える（静止画案件は既定が "ショート動画" に
   // ならないよう、デザイン種別＝既定バナーに揃える）。表示制御の前に実行する。
   if (typeof syncCreativeKindOptions === 'function') syncCreativeKindOptions('c');
@@ -24650,9 +25139,11 @@ async function goToCreativeStep2() {
 }
 
 // Step 2 → Step 1 戻る（案件・種別は維持、Step2 のフォーム入力はクリア）
+// ウィザードは直前の段（通常は案件ステップ）を維持して表示する。
 function backToCreativeStep1() {
   document.getElementById('creative-step-2').style.display = 'none';
   document.getElementById('creative-step-1').style.display = '';
+  if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
   updateCreativeStep1NextBtn();
 }
 
@@ -24835,13 +25326,16 @@ function applyCreativeTypeVisibility(_typeArg) {
   }
 
   // ファイル名フォーマット説明文を種別に応じて差し替え
+  // LP/HP は固定形式。動画/静止画は案件のテンプレマスター駆動なので、
+  // 暫定の固定文を出した上で、直後の自動生成（generateFileName）が
+  // updateFilenameFormatHint() で案件のテンプレ名・トークン並びに置き換える。
   const hint = document.getElementById('filename-format-hint');
   if (hint) {
     if (isLpOrHp) {
       const tag = (cat === 'lp') ? 'LP' : 'HP';
       hint.innerHTML = `形式: YYMMDD_案件名_${tag}_連番　／　手動編集可<br>※ 自動生成名はそのままGoogleドライブのファイル名・一覧表示名として使われます。`;
     } else if (isVideoOrDesign) {
-      hint.innerHTML = '形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
+      hint.innerHTML = '形式: 案件のファイル名テンプレートから自動生成　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。';
     }
   }
 
@@ -24851,6 +25345,13 @@ function applyCreativeTypeVisibility(_typeArg) {
     if (fileEl && !fileEl.value.trim()) {
       generateLpHpFilename(cat);
     }
+  }
+
+  // 動画 / 静止画 も案件選択直後に、テンプレマスター駆動でファイル名を自動生成する。
+  // 訴求軸・商材などが未確定でも生成（任意トークンは空欄として詰められる）。
+  // 手動編集済み（現値が直近の自動生成値でない）のときは tryAutoGenerateFileName が上書きしない。
+  if (isVideoOrDesign) {
+    tryAutoGenerateFileName();
   }
 }
 
@@ -24933,6 +25434,12 @@ async function openCreateCreative(opts = {}) {
   const _searchBulk = document.getElementById('bulk-project-search');
   if (_searchSingle) _searchSingle.value = '';
   if (_searchBulk) _searchBulk.value = '';
+  // 案件選択ウィザードは「種別を選ぶ」ステップから開始（preset がある場合は後段で案件ステップへ）
+  _creativeAddWizStep = 'type';
+  _creativeAddSelectedClientId = '';
+  _creativeAddClientSearch = '';
+  const _searchClient = document.getElementById('c-client-search');
+  if (_searchClient) _searchClient.value = '';
   renderCreativeAddProjectDropdowns();
   const lastDay = getLastDayOfMonth();
   const draftDay = getDefaultDraftDeadline(lastDay);
@@ -25010,17 +25517,21 @@ async function openCreateCreative(opts = {}) {
   if (presetProject) {
     const cSel = document.getElementById('c-project-id');
     const bSel = document.getElementById('bulk-project-id');
-    if (cSel) cSel.value = presetProjectId;
     // 一括対応カテゴリ (video / image) のときだけ bulk-project-id にもセット
     const presetCat = typeof getProjectCategory === 'function' ? getProjectCategory(presetProject) : null;
     const presetCode = presetCat?.code || '';
     if (bSel && (presetCode === 'video' || presetCode === 'image')) {
       // 一括タブのフィルタを案件カテゴリに合わせる（タイル表示時に選択中タイルが見えるように）
       _creativeAddBulkProjectFilter = (presetCode === 'video') ? 'video' : 'design';
-      // タイル/select を再描画してから case の value をセット
-      renderCreativeAddProjectDropdowns();
-      bSel.value = presetProjectId;
     }
+    // 個別登録ウィザードは preset 案件のクライアント・種別に合わせて「案件ステップ」を直接開く
+    _creativeAddProjectFilter = (presetCode === 'video') ? 'video' : 'design';
+    _creativeAddSelectedClientId = presetProject.client_id || presetProject.clients?.id || '';
+    _creativeAddWizStep = 'project';
+    // 上記フィルタ/クライアント絞り込みを反映してタイル・select を再描画し、preset 案件を選択状態にする
+    renderCreativeAddProjectDropdowns();
+    if (cSel) cSel.value = presetProjectId;
+    if (bSel && (presetCode === 'video' || presetCode === 'image')) bSel.value = presetProjectId;
   }
 
   // 選択中の案件で訴求軸と担当者を初期ロード（個別・一括両方）
@@ -25074,6 +25585,8 @@ async function openCreateCreative(opts = {}) {
   if (typeof applyCreativeTypeVisibility === 'function') {
     applyCreativeTypeVisibility(document.getElementById('c-creative-type')?.value || 'video_short');
   }
+  // 案件選択ウィザードの初期描画（種別ステップ or preset の案件ステップ）
+  if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
   if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
 
   openModal('modal-creative');
@@ -25098,6 +25611,7 @@ function switchCreativeTab(tab) {
       step1.style.display = '';
       step2.style.display = 'none';
     }
+    if (typeof renderCreativeAddWizard === 'function') renderCreativeAddWizard();
     if (typeof updateCreativeStep1NextBtn === 'function') updateCreativeStep1NextBtn();
   }
 }
@@ -29585,6 +30099,7 @@ const _CD_PAGE_KIND_DEF = {
 
 const _CD_ROLE_LABEL = {
   editor:    '担当者',
+  wcheck:    'Wチェック担当',
   director:  'ディレクター',
   producer:  'プロデューサー',
   client:    'クライアント',
@@ -29784,7 +30299,7 @@ function _cdCanEditSubmitPage(page) {
     if (typeof page.idx !== 'number' || page.idx !== lastIdx) return false;
     // status と round_stage の整合
     const status = currentCreativeDetail?.status || '';
-    const STAGE_TO_STATUS = { d_check: 'Dチェック', p_check: 'Pチェック', cl_check: 'クライアントチェック中' };
+    const STAGE_TO_STATUS = { w_check: 'Wチェック', d_check: 'Dチェック', p_check: 'Pチェック', cl_check: 'クライアントチェック中' };
     if (STAGE_TO_STATUS[page.round_stage] !== status) return false;
     // 認可（フロント側は表示制御のみ。最終判定はサーバ側 PATCH で行う）
     const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
@@ -30501,7 +31016,7 @@ function _cdCanUndoUpload(file) {
   //   V1 を提出 (Dチェック移行) → D指摘 → D後修正 へ来た時点では V1 は submit 済。
   //   ここでは submittedSet に V1 が入っているので上の return false で弾かれる想定。
   //   レガシーデータ救済: submit が見つからない後修正状態で fileVer<=maxSubmittedVer なら提出済扱い。
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   const status = currentCreativeDetail?.status || '';
   if (REVISION_STATUSES.includes(status)) {
     let maxSnapVer = 0;
@@ -30516,12 +31031,15 @@ function _cdCanUndoUpload(file) {
     // (= V1 提出後 D後修正 で V1 のままアップロードがない状態) は、最新=V1 / maxSnapVer=0 なので
     // fileVer(1) > maxSnapVer(0) で残ってしまう。これを救うために
     // 「後修正中 かつ fileVer == 1 (=初稿) かつ snapshot 空」ならば提出済扱い。
-    if (maxSnapVer === 0 && fileVer >= 1) return false;
+    //   ただし修正版が複数 version 存在する (maxVer>=2) ときは、最新は「未提出の修正版」なので
+    //   提出済扱いにしてはいけない。Wチェック工程の submit ページ欠落 (snapshot 空) でも修正版を
+    //   正しく「未提出」と判定するための堅牢化（バグ報告: Wチェック修正版を上げても未アップ扱い）。
+    if (maxSnapVer === 0 && fileVer >= 1 && maxVer <= 1) return false;
   }
 
   // チェック中・納品ステータスは提出されているはず。
   // snapshot 反映が遅延しているケースを救うために、ここでも非表示にする。
-  const CHECK_STATUSES = ['Dチェック','Pチェック','クライアントチェック中','納品'];
+  const CHECK_STATUSES = ['Wチェック','Dチェック','Pチェック','クライアントチェック中','納品'];
   if (CHECK_STATUSES.includes(status)) return false;
 
   return true;
@@ -30537,6 +31055,18 @@ function _cdCanUndoUpload(file) {
 // サーバ側 (POST /creatives/:id/upload) が真の採番を行うため、ここはあくまで
 // generated_name (_vN) の自動生成と "次は V<N> です" の表示ヒント。サーバが
 // 違う値で採番した場合は generated_name を _vN replace して整合する。
+// ドロップゾーン (#cd-drop-zone) のラベルを初期表示へ戻す共通ヘルパー。
+// ファイル選択時 (processUploadFile) に 2 行目を file.name へ書き換えるため、
+// リセット/アップロード成功/キャンセル時にここで初期文言へ戻さないと「前回のファイル名」が
+// 残骸として残り、未送信なのに「アップロード済み」と誤認される（バグ報告対応）。
+function _cdResetDropZoneLabel() {
+  try {
+    const zone = document.getElementById('cd-drop-zone');
+    const label = zone && zone.querySelector('div:nth-child(2)');
+    if (label) label.textContent = 'ドラッグ＆ドロップ、またはクリックして選択';
+  } catch (_) {}
+}
+
 function _cdComputeNextVersion() {
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
   if (files.length === 0) return 1;
@@ -30554,7 +31084,7 @@ function _cdComputeNextVersion() {
   // 後修正系 status 中の "初めての修正版アップ" は M+1 にする補正
   // （snapshot は再提出時に確定するため、D後修正中は M=1 / snapshot=0 の状態。
   //  ここで M を返すと V1 と衝突する。サーバ側採番ロジックと完全に一致させる。）
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   if (currentCreativeDetail && REVISION_STATUSES.includes(currentCreativeDetail.status || '')) {
     return M + 1;
   }
@@ -30589,7 +31119,7 @@ function _cdRenderUndoUploadBtn(creativeId, file, version) {
 function _cdRenderRoundRightFileCard(currentRound) {
   const c = currentCreativeDetail;
   if (!c) return '';
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isRevision = REVISION_STATUSES.includes(c.status);
   const files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
   const latest = files[0] || null; // 一覧は新しい順
@@ -30730,7 +31260,7 @@ function _cdRenderRoundLeftHeader(currentIdx, totalN, page) {
 // 何でも動く値で意味が曖昧だったため削除（PR #TBD）。
 function _cdRenderRoundRightHeader(creative) {
   const status = creative?.status || '';
-  const REVISION_STATUSES = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
   const isEdit = REVISION_STATUSES.includes(status);
   // ステータスバッジ: 修正中なら「編集中」、その他は現在ステータスをそのまま
   let statusHtml = '';
@@ -31357,7 +31887,7 @@ async function openCreativeDetail(id) {
       el.innerHTML = '';
       return;
     }
-    const dotClass = {editor:'bd-e',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
+    const dotClass = {editor:'bd-e',wcheck:'bd-w',director:'bd-d',producer:'bd-p',client:'bd-c',all:'bd-a',done:'bd-done'}[bh.type] || 'bd-done';
     // bh.holder_users[] に全員（Dチェック / Pチェック は複数アサイン可）。
     // 単独のときは従来通り「アバター22px + 名前」。複数のときは「アバター22px×N（重ね無し横並び）+ 全員の名前を読点区切り」。
     // クライアント / done / unknown は holder_users=[] なのでアバター無しでフォールバック。
@@ -31367,9 +31897,40 @@ async function openCreativeDetail(id) {
     const avatarPart = holderUsers.length
       ? `<span style="display:inline-flex;align-items:center;gap:3px">${holderUsers.map(u => avatarHtml(u, 22)).join('')}</span>`
       : '';
-    el.style.display = '';
-    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px">ボール: <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(names.join('、'))}</span></span>`;
+    // Wチェック中（ADR 024・section 8）: 「現在の担当者」を明確にし、担当ディレクターは
+    // 同列に並べず「次の担当者」として区別表示する。
+    const isWcheckBall = bh.type === 'wcheck';
+    const prefix = isWcheckBall ? '現在の担当者:' : 'ボール:';
+    let nextHtml = '';
+    if (isWcheckBall) {
+      const dir = c.projects?.director || null;
+      const dirName = dir
+        ? ((typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(dir) : (dir.nickname || dir.full_name || ''))
+        : '担当ディレクター';
+      const dirAvatar = dir ? avatarHtml(dir, 18) : '';
+      nextHtml = `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border);color:var(--text-muted);font-size:12px">次の担当者: ${dirAvatar}<span>${esc(dirName)}（ディレクター）</span></span>`;
+    }
+    // Wチェック依頼情報（依頼者・依頼日時・依頼コメント）を補助行で表示
+    let wInfoHtml = '';
+    if (isWcheckBall) {
+      const w = c.wcheck || {};
+      const reqUser = (allMembers || []).find(m => m && m.id === w.requested_by) || null;
+      const reqName = reqUser ? ((typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(reqUser) : (reqUser.nickname || reqUser.full_name || '')) : '';
+      const when = w.requested_at
+        ? new Date(w.requested_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
+      const parts = [];
+      if (reqName) parts.push(`依頼者: ${esc(reqName)}`);
+      if (when) parts.push(esc(when));
+      let line = parts.join(' / ');
+      if (w.comment) line += (line ? '　' : '') + `「${esc(w.comment)}」`;
+      if (line) wInfoHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">${line}</div>`;
+    }
+    el.style.display = isWcheckBall ? 'block' : '';
+    el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">${prefix} <span class="ball-dot ${dotClass}"></span>${avatarPart}<span class="ball-name">${esc(names.join('、'))}</span>${nextHtml}</span>${wInfoHtml}`;
   })();
+  // Wチェック要否トグル（静止画のみ・権限者のみ操作可・ADR 024）
+  try { updateWcheckToggleRow(c); } catch (e) { console.warn('[wcheck toggle] render failed:', e?.message || e); }
   // Dチェック担当者一覧の描画は撤去（ボール表示で代替）。
   // creative_assignments[role='director'] のデータは status 遷移（Dチェックへ進める時の選択モーダル）・
   // 通知・返信モーダル（renderFromToAvatar フォールバック）で引き続き使用するため、保存・read 経路は無変更。
@@ -31447,8 +32008,8 @@ async function openCreativeDetail(id) {
   // チェック段階（Dチェック/Pチェック/CL中）: 編集者コメントを表示
   // 後修正段階: ディレクター/CLの修正指示を表示
   // その他: 編集者コメントを表示
-  const _CHECK_STATUSES_DISP    = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const _REVISION_STATUSES_DISP = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const _CHECK_STATUSES_DISP    = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const _REVISION_STATUSES_DISP = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const _commentDisp = _REVISION_STATUSES_DISP.includes(c.status)
     ? (c.director_comment || '')
     : (c.editor_comment || '');
@@ -31476,6 +32037,10 @@ async function openCreativeDetail(id) {
   document.getElementById('cd-upload-confirm').style.display = 'none';
   document.getElementById('cd-manual-upload-btn').style.display = '';
   uploadFileData = null;
+  // ドロップゾーンのラベルを初期表示に戻す。これを怠ると前回選択したファイル名が
+  // 残骸として残り、ユーザーが「ファイルが入っている＝アップロード済み」と誤認したまま
+  // 未送信で「Wチェックへ回す」等を押してしまう（バグ報告: 修正版を上げたのに未アップ判定）。
+  _cdResetDropZoneLabel();
 
   // レギュレーションシートリンク
   // 互換のため hidden な旧 DOM (#cd-regulation-link / #cd-regulation-none / #cd-regulation-open) の値はそのままセット。
@@ -31644,8 +32209,9 @@ function renderTemplateChevron(c) {
         : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
 
     const milestoneMark = it.is_milestone ? '★ ' : '';
+    // 完了済みは「✓ + ステップ名」を併記（どの工程か分かるように）。現在/未到達はラベルのみ。
     const inner = done
-      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      ? `<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap;padding:0 4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:11px;font-weight:400;color:${tc}">${milestoneMark}${esc(it.label || it.code)}</span></span>`
       : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 4px;color:${tc}">${milestoneMark}${esc(it.label || it.code)}</span>`;
 
     return `<div title="${esc(it.label || it.code)}${it.is_milestone ? '（マイルストーン）' : ''}" style="flex:1;height:40px;background:${bg};clip-path:${clip};display:flex;align-items:center;justify-content:center;margin-left:${ml};position:relative;z-index:${zIdx}">${inner}</div>`;
@@ -31780,10 +32346,24 @@ function updateCreativeStepIndicator(status) {
   }
 
   const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
+  // Wチェック（ADR 024）: 静止画かつ要否=必要のときだけ「制作 → Wチェック → Dチェック」を表示。
+  const _wc = currentCreativeDetail?.wcheck || {};
+  const wcheckActive = !!(_wc.is_image && _wc.required);
+  const _myId = currentUser?.id;
+  // Wチェック担当者は複数可。assignee_ids（全員）に自分が含まれるか。旧 assignee（代表）も後方互換で見る。
+  const _wcIds = Array.isArray(_wc.assignee_ids) ? _wc.assignee_ids : [];
+  const isWcheckAssignee = !!_myId && (_wcIds.includes(_myId) || (_wc.assignee && _wc.assignee.id === _myId));
+  const isWcheckAdmin = (typeof isTopAdmin === 'function' && isTopAdmin()) || effectiveRole() === 'admin';
+  // Wチェック段を出す条件: 要否=必要(wcheckActive) のとき。
+  // 加えて、すでにステータスが Wチェック / Wチェック後修正 のときは要否に関係なく必ず出す
+  // （要否が false でも status だけ Wチェックになった場合に、段が無く currentIdx=-1 で
+  //   進捗バーがどの段も光らない＝ステータスが表現されない不具合を防ぐ）。
+  const showWcheckStep = wcheckActive || status === 'Wチェック' || status === 'Wチェック後修正';
   // 後修正ステータスは「制作中」ステップに属する（ステップインジケーター上は制作中として表示）
   let STEPS = [
     { label: '未着手',    statuses: ['未着手'] },
-    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'] },
+    { label: '制作中',    statuses: ['制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集', 'Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'] },
+    ...(showWcheckStep ? [{ label: 'Wチェック', statuses: ['Wチェック'] }] : []),
     { label: 'Dチェック', statuses: ['Dチェック'] },
     { label: 'Pチェック', statuses: ['Pチェック'] },
     { label: 'CL確認',   statuses: ['クライアントチェック中'] },
@@ -31829,8 +32409,9 @@ function updateCreativeStepIndicator(status) {
         ? `polygon(${A}px 0, 100% 0, 100% 100%, ${A}px 100%, 0 50%)`
         : `polygon(${A}px 0, calc(100% - ${A}px) 0, 100% 50%, calc(100% - ${A}px) 100%, ${A}px 100%, 0 50%)`;
 
+    // 完了済みは「✓ + ステップ名」を併記（どの工程か分かるように）。現在/未到達はラベルのみ。
     const inner = done
-      ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      ? `<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap;padding:0 2px"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:11px;font-weight:400;color:${tc}">${s.label}</span></span>`
       : `<span style="font-size:11px;font-weight:${active ? '700' : '400'};white-space:nowrap;padding:0 2px">${s.label}</span>`;
 
     // admin かつ「現在以外」のセグメントだけクリック可能（強制ジャンプ用）
@@ -31846,13 +32427,15 @@ function updateCreativeStepIndicator(status) {
   // 後修正ステータスから「次へ」は同じチェック段階への再提出
   const NEXT = hasProducer ? {
     '未着手': '制作中（初稿提出前）',
-    '制作中（初稿提出前）': 'Dチェック',
+    '制作中（初稿提出前）': wcheckActive ? 'Wチェック' : 'Dチェック',
+    'Wチェック後修正': 'Wチェック',
     'Dチェック後修正': 'Dチェック',
     'Pチェック後修正': 'Pチェック',
     'クライアントチェック後修正': 'クライアントチェック中',
   } : {
     '未着手': '制作中（初稿提出前）',
-    '制作中（初稿提出前）': 'Dチェック',
+    '制作中（初稿提出前）': wcheckActive ? 'Wチェック' : 'Dチェック',
+    'Wチェック後修正': 'Wチェック',
     'Dチェック後修正': 'Dチェック',
     'クライアントチェック後修正': 'クライアントチェック中',
   };
@@ -31867,32 +32450,46 @@ function updateCreativeStepIndicator(status) {
   if (forceDelBtn) forceDelBtn.style.display = (status === '納品') ? '' : 'none';
   if (!nextBtn) return;
 
-  // チェック段階: 修正依頼 ＋ 承認 の2ボタン
-  const CHECK_STAGES = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
+  // チェック段階: 修正依頼 ＋ 承認 の2ボタン（Wチェックも含む・ADR 024）
+  const CHECK_STAGES = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
   const isCheckStage = CHECK_STAGES.includes(status);
 
   const PRODUCTION_STAGES = ['制作中（初稿提出前）','台本制作','素材・ナレ作成','編集'];
 
   if (isCheckStage) {
     if (directClBtn) directClBtn.style.display = 'none';
-    // 修正依頼ボタン
-    revisionBtn.style.display = '';
-    const revisionLabel = { 'Dチェック': 'Dチェック後修正', 'Pチェック': 'Pチェック後修正', 'クライアントチェック中': 'クライアントチェック後修正' };
-    revisionBtn.dataset.target = revisionLabel[status];
-
-    // 承認ボタン（Pがいるかどうかで行先を変える）
-    nextBtn.style.display = '';
     const hasProducer = !!currentCreativeDetail?.projects?.producer_id;
-    let approveTarget;
-    if (status === 'Dチェック')           approveTarget = hasProducer ? 'Pチェック' : 'クライアントチェック中';
-    else if (status === 'Pチェック')       approveTarget = 'クライアントチェック中';
-    else                                   approveTarget = '納品';
-    nextBtn.textContent = `承認（${approveTarget}）→`;
-    nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
-    nextBtn.dataset.target = approveTarget;
 
-    // Pスキップボタン: Dチェック かつ Pあり 案件のみ表示
-    if (skipPBtn) skipPBtn.style.display = (status === 'Dチェック' && hasProducer) ? '' : 'none';
+    if (status === 'Wチェック') {
+      // Wチェック段階: 承認/修正依頼は Wチェック担当者本人 または admin のみ（section 15）。
+      // それ以外（制作担当・ディレクター等）は閲覧のみ＝両ボタン非表示。
+      const canActW = isWcheckAssignee || isWcheckAdmin;
+      revisionBtn.style.display = canActW ? '' : 'none';
+      revisionBtn.dataset.target = 'Wチェック後修正';
+      nextBtn.style.display = canActW ? '' : 'none';
+      nextBtn.textContent = 'Wチェック承認 → Dチェックへ';
+      nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+      nextBtn.dataset.target = 'Dチェック';
+      if (skipPBtn) skipPBtn.style.display = 'none';
+    } else {
+      // 修正依頼ボタン
+      revisionBtn.style.display = '';
+      const revisionLabel = { 'Dチェック': 'Dチェック後修正', 'Pチェック': 'Pチェック後修正', 'クライアントチェック中': 'クライアントチェック後修正' };
+      revisionBtn.dataset.target = revisionLabel[status];
+
+      // 承認ボタン（Pがいるかどうかで行先を変える）
+      nextBtn.style.display = '';
+      let approveTarget;
+      if (status === 'Dチェック')           approveTarget = hasProducer ? 'Pチェック' : 'クライアントチェック中';
+      else if (status === 'Pチェック')       approveTarget = 'クライアントチェック中';
+      else                                   approveTarget = '納品';
+      nextBtn.textContent = `承認（${approveTarget}）→`;
+      nextBtn.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+      nextBtn.dataset.target = approveTarget;
+
+      // Pスキップボタン: Dチェック かつ Pあり 案件のみ表示
+      if (skipPBtn) skipPBtn.style.display = (status === 'Dチェック' && hasProducer) ? '' : 'none';
+    }
   } else {
     revisionBtn.style.display = 'none';
     if (skipPBtn) skipPBtn.style.display = 'none';
@@ -31901,11 +32498,12 @@ function updateCreativeStepIndicator(status) {
     if (directClBtn) directClBtn.style.display = PRODUCTION_STAGES.includes(status) ? '' : 'none';
     if (next) {
       nextBtn.style.display = '';
-      const RESUBMIT = ['Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
+      const RESUBMIT = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'];
       // クライアントチェック後修正からの再提出は「クライアントに再提出」と表示
       // （UX: 一度クライアントに見せた後の修正だと一目でわかる）
       nextBtn.textContent =
         status === 'クライアントチェック後修正' ? 'クライアントに再提出 →'
+        : next === 'Wチェック' ? 'Wチェックへ回す →'
         : RESUBMIT.includes(status) ? `${next}へ提出 →`
         : `${next} へ →`;
       nextBtn.dataset.target = next;
@@ -31934,8 +32532,8 @@ function updateCreativeCommentLabel(status) {
   if (_replyFromToEl) _replyFromToEl.style.display = 'none';
 
   // チェック段階（承認者が見る）または後修正（編集者が修正指摘を参照）は読み取り専用
-  const CHECK_READONLY   = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const CHECK_READONLY   = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isCheckStage   = CHECK_READONLY.includes(status);
   const isRevision     = REVISION_STATUSES.includes(status);
   const isReadonly     = isCheckStage || isRevision;
@@ -32034,8 +32632,8 @@ function updateCreativeCommentLabel(status) {
     if (noteGroup)       noteGroup.style.display       = '';
     if (editorRplyGroup) editorRplyGroup.style.display = 'none';
     if (noteLabel) {
-      const stageMap = { 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
-      const senderMap = { 'Dチェック': 'ディレクター', 'Pチェック': 'プロデューサー', 'クライアントチェック中': 'クライアント' };
+      const stageMap = { 'Wチェック': 'Wチェック', 'Dチェック': 'Dチェック', 'Pチェック': 'Pチェック', 'クライアントチェック中': 'CLチェック' };
+      const senderMap = { 'Wチェック': 'Wチェック担当者', 'Dチェック': 'ディレクター', 'Pチェック': 'プロデューサー', 'クライアントチェック中': 'クライアント' };
       noteLabel.innerHTML = `${stageMap[status] || ''}　${senderMap[status] || 'ディレクター'}からの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span>`;
     }
   } else if (isRevision) {
@@ -32406,8 +33004,15 @@ async function advanceCreativeStatus() {
   // 動画ありのときは従来通り（uploadFileData が pending なら executeUpload で送信）。
   let _filelessExtra = null; // saveCreativeDetail に渡す追加 body
   if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-    const filesSection = document.getElementById('cd-files-section');
-    const hasUploaded = filesSection && filesSection.style.display !== 'none';
+    // ファイルの「実在」で判定する。cd-files-section の表示状態は、ステータスを手動で
+    // 「制作中（初稿提出前）」へ巻き戻した等のケースで非表示になり実態とズレるため使わない
+    // （バグ報告: V4 がアップロード済み・取り消し可能なのに「ファイルなし」判定になった）。
+    // 「未提出の最新版（取り消し可能なファイル）」があるか、pending なドロップがあるかで見る。
+    const _files = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+    const _latest = _files[0] || null;
+    const hasUploaded = (_latest && typeof _cdCanUndoUpload === 'function')
+      ? _cdCanUndoUpload(_latest)
+      : false;
     if (!hasUploaded && !uploadFileData) {
       // ファイルゼロ → 動画なし確認
       const r = await showFilelessProgressDialog(target);
@@ -32433,12 +33038,12 @@ async function advanceCreativeStatus() {
   }
 
   // 後修正ステージから再提出: 編集者からの返信コメント必須
-  const REVISION_STAGES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const REVISION_STAGES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   if (REVISION_STAGES.includes(currentCreativeDetail.status)) {
     const replyField = document.getElementById('cd-editor-reply');
     const reply = replyField?.value.trim();
     if (!reply) {
-      showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
+      showToast('次の担当者への連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
       replyField?.focus();
       return;
     }
@@ -32482,6 +33087,25 @@ async function advanceCreativeStatus() {
         return;
       }
     }
+  }
+
+  // 遷移先が「Wチェック」のときは Wチェック担当者選択モーダルを表示（ADR 024）
+  if (target === 'Wチェック') {
+    openWcheckPicker({
+      onSubmit: async ({ wcheckUserIds, comment }) => {
+        await saveCreativeDetail('Wチェック', {
+          wcheck_user_ids: wcheckUserIds,
+          wcheck_comment: comment || null,
+          // 依頼コメント（送信時の内容）を提出メモ(editor_comment)としても保存する。
+          // saveCreativeDetail は制作中ステータスでは cd-comment-field の値を editor_comment に
+          // 入れるため、依頼モーダルで編集した内容が往復履歴の「提出メモ」に残らなかった。
+          // extraBody 側で明示的に上書きし、送信時の依頼コメントをそのまま提出メモにする。
+          editor_comment: comment || null,
+          ...(_filelessExtra || {}),
+        });
+      },
+    });
+    return;
   }
 
   // 遷移先が「Dチェック」のときは confirm ではなく担当者選択モーダルに置き換え
@@ -32544,7 +33168,7 @@ async function backToDCheck() {
   const replyField = document.getElementById('cd-editor-reply');
   const reply = replyField?.value.trim();
   if (!reply) {
-    showToast('ディレクターへの連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
+    showToast('次の担当者への連絡・確認事項を入力してください。修正内容が伝わるよう具体的に記入してください。', 'warn');
     replyField?.focus();
     return;
   }
@@ -32691,7 +33315,7 @@ async function loadCreativeFiles(creativeId) {
   }
 
   // 後修正ステータスでは編集者がアップロードのみ行う画面なのでチェック/コメントボタン不要
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const hideCheckBtn = REVISION_STATUSES.includes(currentCreativeDetail?.status);
 
   // CLステータスかどうか（CL確認 / クライアントチェック後修正）
@@ -35716,11 +36340,11 @@ function renderCreatorSummaryTable(data) {
       <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer;text-align:left">${esc(NameDisplay.full(u))}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-align:center">${esc(u.rank || '-')}</td>
-      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#0369a1">${u.video_count > 0 ? `📹${u.video_count}` : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#0369a1">${u.video_count > 0 ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="openCreatorDetail('${esc(u.id)}','video')" title="クリックで動画の一覧を表示">📹${u.video_count}</span>` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.video_total > 0 ? yen(u.video_total) : '—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#b45309">${u.design_count > 0 ? `🎨${u.design_count}` : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#b45309">${u.design_count > 0 ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="openCreatorDetail('${esc(u.id)}','design')" title="クリックでデザインの一覧を表示">🎨${u.design_count}</span>` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.design_total > 0 ? yen(u.design_total) : '—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#6d28d9">${(u.director_count || 0) > 0 ? `🎬${u.director_count}` : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#6d28d9">${(u.director_count || 0) > 0 ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="openCreatorDetail('${esc(u.id)}','director')" title="クリックでディレクションの一覧を表示">🎬${u.director_count}</span>` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${directorAmountCell}</td>
       <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total)}</td>
     </tr>`;
@@ -35763,7 +36387,9 @@ function renderCreatorSummaryTable(data) {
 // API: GET /api/analytics/creator-detail?year&month&user_id&status
 // ロジックは routes/haruka.js の computeCreatorCreativeBreakdown と完全共有しているので
 // 「summary 行の合計 = モーダル内 row_total の合計」が自動的に一致する。
-async function openCreatorDetail(userId) {
+// baseType を渡すと、その種別（'video'|'design'|'director'）の明細だけに絞り込んで表示する。
+// 数字セル（動画/デザイン/ディレクション本数）クリックの導線。省略時はクリエイター名クリックで全種別。
+async function openCreatorDetail(userId, baseType) {
   if (!userId || !_analyticsLastResult) {
     showToast('集計データが読み込まれていません', 'warn');
     return;
@@ -35798,7 +36424,11 @@ async function openCreatorDetail(userId) {
   const yen = (n) => '¥' + Number(n || 0).toLocaleString();
   const u = data.user;
   const uname = NameDisplay.full(u);
-  titleEl.innerHTML = `📋 ${esc(uname)} — ${data.year}年${data.month}月 ${esc(data.status_label)}<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
+  // 数字セルから開いた場合は、その種別だけに絞り込む。
+  // counted フラグは creator-summary の集計と同一判定なので、絞り込み件数 = クリックした数字に一致する。
+  const _typeLabel = { video: '動画', design: 'デザイン', director: 'ディレクション' }[baseType] || null;
+  const items = baseType ? (data.items || []).filter(it => it.counted && it.counted[baseType]) : (data.items || []);
+  titleEl.innerHTML = `📋 ${esc(uname)} — ${data.year}年${data.month}月 ${esc(data.status_label)}${_typeLabel ? '・' + _typeLabel + 'のみ' : ''}<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
 
   // 上部サマリーチップ（renderCreatorSummaryTable と同じ色味）
   sumEl.innerHTML = `
@@ -35806,10 +36436,10 @@ async function openCreatorDetail(userId) {
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.totals.design_count}枚 / ${yen(data.totals.design_total)}</strong></div>
     <div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">ディレクション</span> <strong>${data.totals.director_count}件 / ${yen(data.totals.director_total)}</strong></div>
     <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">合計</span> <strong style="font-size:13px;color:var(--em-dark)">${yen(data.totals.grand_total)}</strong></div>
-    <div style="background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">明細件数</span> <strong>${data.items.length}件</strong></div>
+    <div style="background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;padding:8px 12px;font-size:12px"><span style="color:var(--text-muted)">明細件数</span> <strong>${items.length}件</strong></div>
   `;
 
-  if (!data.items.length) {
+  if (!items.length) {
     cntEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">該当する creative がありません</div>';
     return;
   }
@@ -35848,7 +36478,7 @@ async function openCreatorDetail(userId) {
     return visible.map(x => `<div style="font-size:11px;line-height:1.5"><span style="color:var(--text-muted)">${esc(roleLabel(x.role_code))}:</span> ¥${Number(x.amount).toLocaleString()}</div>`).join('');
   };
 
-  const rows = data.items.map(it => {
+  const rows = items.map(it => {
     // UI に出すロールは editor/designer/director/sub_director/director_as_editor のみ
     const visibleRoles = (it.roles || []).filter(c =>
       ['editor', 'designer', 'director', 'sub_director', 'director_as_editor'].includes(c)
@@ -35861,7 +36491,7 @@ async function openCreatorDetail(userId) {
       : '';
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td style="padding:8px 10px;font-size:12px;vertical-align:top">${esc(it.project.name)}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${esc(it.project.client_name)}</div></td>
-      <td style="padding:8px 10px;font-size:12px;vertical-align:top;word-break:break-all">${esc(it.file_name)}${rateUnknownBadge}</td>
+      <td style="padding:8px 10px;font-size:12px;vertical-align:top;word-break:break-all">${it.creative_id ? `<span style="cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;text-underline-offset:2px" onclick="closeModal('modal-creator-detail'); openCreativeDetail('${esc(it.creative_id)}')" title="クリックでクリエイティブ詳細を開く">${esc(it.file_name)}</span>` : esc(it.file_name)}${rateUnknownBadge}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;vertical-align:top">${esc(baseTypeLabel(it.base_type))}</td>
       <td style="padding:8px 10px;vertical-align:top">${roleChips}</td>
       <td style="padding:8px 10px;vertical-align:top">${breakdownRender(it.breakdown, it.rate_unknown)}</td>
@@ -35992,6 +36622,11 @@ function openAnalyticsCell(projectId, userId) {
   const cell = row?.cells?.[userId];
   if (!project || !user || !cell || !(cell.creatives || []).length) return;
 
+  // 単価合計（backend の cell.amount を優先。無ければ creatives の unit_price から算出）
+  const amountTotal = (typeof cell.amount === 'number')
+    ? cell.amount
+    : (cell.creatives || []).reduce((s, c) => s + (Number(c.unit_price) || 0), 0);
+
   document.getElementById('ac-title').textContent =
     `${project.client_name} ／ ${project.name}`;
   document.getElementById('ac-meta').innerHTML = `
@@ -35999,6 +36634,7 @@ function openAnalyticsCell(projectId, userId) {
       <span>担当: <strong style="color:var(--text)">${esc(user.name)}</strong>${user.role && user.role !== '-' ? ` <span style="color:var(--text-muted)">(${esc(user.role)})</span>` : ''}</span>
       <span>対象: <strong style="color:var(--text)">${data.year}年${data.month}月</strong> ・ ${data.status === 'delivered' ? '納品のみ' : '全件（作業中含む）'}</span>
       <span>合計: ${cell.video > 0 ? `<strong style="color:#0369a1">📹${cell.video}本</strong>` : ''}${cell.video > 0 && cell.design > 0 ? ' / ' : ''}${cell.design > 0 ? `<strong style="color:#b45309">🎨${cell.design}枚</strong>` : ''}</span>
+      ${amountTotal > 0 ? `<span>単価合計: <strong style="color:#15803d">¥${amountTotal.toLocaleString()}</strong></span>` : ''}
     </div>
   `;
 
@@ -36008,6 +36644,12 @@ function openAnalyticsCell(projectId, userId) {
     const fb = b.final_deadline || '9999-99';
     return fa.localeCompare(fb) || (a.file_name || '').localeCompare(b.file_name || '');
   });
+  // 単価セルの表示: 数値あり=¥金額 / line_cost 未登録=「未設定」(オレンジ) / 担当紐付けなし=「—」
+  const unitPriceCell = (c) => {
+    if (c.unit_price == null) return '<span style="color:#cbd5e1">—</span>';
+    if (c.rate_unknown && !(c.unit_price > 0)) return '<span style="color:#d97706" title="案件の成果物グループに単価が登録されていません">未設定</span>';
+    return `¥${Number(c.unit_price).toLocaleString()}`;
+  };
   const rows = items.map(c => {
     const icon = c.is_video ? '<span style="color:#0369a1">📹</span>' : '<span style="color:#b45309">🎨</span>';
     const dl = c.final_deadline ? c.final_deadline.slice(0, 7) : '<span style="color:#cbd5e1">未設定</span>';
@@ -36017,6 +36659,7 @@ function openAnalyticsCell(projectId, userId) {
       <td style="padding:8px 12px;font-size:12px;font-family:monospace;color:var(--em-dark);text-decoration:underline dotted;cursor:pointer;word-break:break-all" onclick="closeModal('modal-analytics-cell'); openCreativeDetail('${c.id}')" title="${esc(c.file_name || '')}">${esc(c.file_name || '(ファイル名なし)')}</td>
       <td style="padding:8px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap">${dl}</td>
       <td style="padding:8px 12px;font-size:12px;color:${statusColor};white-space:nowrap;font-weight:500">${esc(c.status || '-')}</td>
+      <td style="padding:8px 12px;font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums">${unitPriceCell(c)}</td>
     </tr>`;
   }).join('');
 
@@ -36028,9 +36671,16 @@ function openAnalyticsCell(projectId, userId) {
           <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em)">ファイル名</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">納品月</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">状態</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);border-bottom:1.5px solid var(--em);white-space:nowrap">単価</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
+      <tfoot>
+        <tr style="background:var(--em-pale)">
+          <td colspan="4" style="padding:10px 12px;text-align:right;font-size:12px;font-weight:700;color:var(--em-dark);border-top:1.5px solid var(--em);white-space:nowrap">単価合計</td>
+          <td style="padding:10px 12px;text-align:right;font-size:13px;font-weight:700;color:#15803d;border-top:1.5px solid var(--em);white-space:nowrap;font-variant-numeric:tabular-nums">¥${amountTotal.toLocaleString()}</td>
+        </tr>
+      </tfoot>
     </table>
   `;
   openModal('modal-analytics-cell');
@@ -37008,6 +37658,184 @@ function confirmUploadNo() {
   document.getElementById('cd-manual-upload-btn').style.display = '';
 }
 
+// ==================== Wチェック要否トグル（ADR 024）====================
+// 静止画クリエイティブのときだけ表示。権限者（project.create_edit）のみ操作可。
+// チェック ON/OFF で creatives.wcheck_required を即時 PUT。
+function updateWcheckToggleRow(c) {
+  const row = document.getElementById('cd-wcheck-toggle-row');
+  const cb  = document.getElementById('cd-wcheck-required');
+  if (!row || !cb) return;
+  const wc = c?.wcheck || {};
+  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : false;
+  // 静止画以外、または権限なしの場合は非表示
+  if (!wc.is_image || !canEdit) {
+    row.style.display = 'none';
+    return;
+  }
+  row.style.display = 'flex';
+  cb.checked = !!wc.required;
+  // Wチェック工程に入った後（Wチェック中・後修正、および通過後の Dチェック以降）は
+  // 要否トグルを操作させない（グレーアウト）。通過後に OFF にすると「Wチェック済みなのに
+  // 不要」という矛盾が生じるため。Wチェック前（未着手/制作中/台本制作/素材/編集）のみ変更可。
+  const WCHECK_REACHED = ['Wチェック', 'Wチェック後修正', 'Dチェック', 'Dチェック後修正', 'Pチェック', 'Pチェック後修正', 'クライアントチェック中', 'クライアントチェック後修正', '納品'];
+  const midFlow = WCHECK_REACHED.includes(c?.status);
+  cb.disabled = midFlow;
+  row.style.opacity = midFlow ? '0.5' : '1';          // 行全体をグレーアウトして変更不可を視覚的に示す
+  row.style.cursor  = midFlow ? 'not-allowed' : '';
+  row.title = midFlow ? 'Wチェック工程に入った後は要否を変更できません' : '';
+  // 要否は【このクリエイティブ個別】（案件マスターは初期値）。誤操作防止のため変更時は確認ダイアログを挟む。
+  cb.onchange = async () => {
+    const desired = cb.checked;   // 入れようとした値
+    cb.checked = !desired;        // いったん戻す（確認後に確定）
+    if (!c?.id) { showToast('クリエイティブが特定できませんでした', 'error'); return; }
+    const ok = await showConfirmDialog({
+      title: desired ? 'このクリエイティブでWチェックを行いますか？' : 'このクリエイティブのWチェックを外しますか？',
+      message: desired
+        ? 'このクリエイティブを、Dチェックの前にWチェック（ダブルチェック）する対象にします。\n\n※ 案件全体ではなく、このクリエイティブだけに適用されます。'
+        : 'このクリエイティブをWチェック対象から外します（制作からDチェックへ直接進みます）。\n\n※ このクリエイティブだけに適用されます。誤って外していないかご確認ください。',
+      okLabel: desired ? 'Wチェック対象にする' : 'Wチェックを外す',
+      okVariant: desired ? undefined : 'danger',
+    });
+    if (!ok) return; // キャンセル → 元のまま
+    const saving = document.getElementById('cd-wcheck-toggle-saving');
+    if (saving) saving.style.display = '';
+    cb.disabled = true;
+    try {
+      const res = await apiFetch(`${API}/creatives/${c.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wcheck_required: desired }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        showToast('保存エラー: ' + translateError(e?.error), 'error');
+      } else {
+        cb.checked = desired;
+        if (currentCreativeDetail?.wcheck) {
+          currentCreativeDetail.wcheck.required = desired;
+          currentCreativeDetail.wcheck.creative_override = desired;
+        }
+        try { _cdInvalidateCache(c.id); } catch (_) {}
+        // 進捗バー（Wチェック段の有無）を再描画
+        try { updateCreativeStepIndicator(currentCreativeDetail.status); } catch (_) {}
+        showToast(desired ? 'このクリエイティブはWチェックを行います' : 'このクリエイティブはWチェック不要にしました', 'success');
+      }
+    } catch (err) {
+      showToast('保存に失敗: ' + (err?.message || err), 'error');
+    } finally {
+      if (saving) saving.style.display = 'none';
+      cb.disabled = midFlow;
+    }
+  };
+}
+
+// ==================== Wチェック担当者選択（ADR 024）====================
+// HARUKA 標準の MemberPicker（人選択UI）を流用。複数選択可・初期はデザイナーで絞り込み。
+// 担当ディレクター・制作担当は除外。選択後に依頼コメントを尋ねてから依頼する。
+let _wcheckLastOnSubmit = null; // コメント画面の「選び直す」で同じ依頼処理を再利用するため保持
+function openWcheckPicker({ onSubmit } = {}) {
+  if (!currentCreativeDetail) return;
+  if (typeof MemberPicker === 'undefined' || !MemberPicker.open) {
+    showToast('メンバー選択UIを読み込めませんでした', 'error');
+    return;
+  }
+  _wcheckLastOnSubmit = onSubmit || null;
+  const proj = currentCreativeDetail.projects || {};
+  // 除外（指名不可）: 担当ディレクター（サブD含む）＋ 制作担当（ダブルチェックのため別人にする）
+  const excludeIds = [];
+  if (proj.director_id) excludeIds.push(proj.director_id);
+  (Array.isArray(proj.sub_director_ids) ? proj.sub_director_ids : []).forEach(id => id && excludeIds.push(id));
+  (currentCreativeDetail.creative_assignments || [])
+    .filter(a => a.role === 'director' && a.users).forEach(a => excludeIds.push(a.users.id));
+  (currentCreativeDetail.creative_assignments || [])
+    .filter(a => ['editor','designer','director_as_editor'].includes(a.role) && a.users).forEach(a => excludeIds.push(a.users.id));
+
+  MemberPicker.open(null, {
+    mode: 'multi',               // 複数人にWチェックを依頼できる
+    title: 'Wチェック担当者を選択（複数可）',
+    allowedRoles: null,          // 全ロールのchipを出す（切り替え可）
+    defaultRoles: ['designer'],  // 初期はデザイナーで絞り込み（Wチェックは基本デザイナー）
+    excludeIds,                  // 担当ディレクター・制作担当は一覧に出さない
+    showInactive: false,
+    onChange: async (userIds) => {
+      const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);
+      if (!ids.length) return; // 未選択
+      // 選択した担当者の表示用情報（名前・アバター）を解決して確認画面に渡す（誰に頼むか忘れない）
+      const selected = ids.map(id => {
+        const m = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers.find(x => x && x.id === id) : null;
+        const name = m
+          ? ((typeof NameDisplay !== 'undefined' && NameDisplay.full) ? NameDisplay.full(m) : (m.nickname || m.full_name || id))
+          : id;
+        return { id, name, user: m };
+      });
+      const comment = await _wcheckRequestCommentPrompt(selected);
+      if (comment === null) return; // コメント画面でキャンセル
+      try {
+        await onSubmit?.({ wcheckUserIds: ids, comment });
+      } catch (e) {
+        console.warn('[wcheck] submit failed:', e?.message || e);
+      }
+    },
+  });
+}
+
+// Wチェック依頼コメント入力（担当者選択後の小さな確認モーダル）。
+// assignees: [{ id, name, user }]（選択した担当者）。誰に頼むかを画面に表示する。
+// 戻り値: 入力文字列（空文字含む）= 依頼続行 / null = キャンセル。
+function _wcheckRequestCommentPrompt(assignees) {
+  const list = Array.isArray(assignees) ? assignees : [];
+  // 裏の「連絡・確認事項」欄に既に書いた内容を依頼コメントへ引用プリフィルする（二重入力の解消）。
+  // 制作中→Wチェックは cd-comment-field、後修正→Wチェックは cd-editor-reply が宛先コメント欄。
+  // ユーザーはそのまま使っても、編集・追記してもよい。
+  const _bgComment = (() => {
+    try {
+      const st = currentCreativeDetail?.status || '';
+      const isRev = ['Wチェック後修正','Dチェック後修正','Pチェック後修正','クライアントチェック後修正'].includes(st);
+      const el = isRev ? document.getElementById('cd-editor-reply') : document.getElementById('cd-comment-field');
+      return (el?.value || '').trim();
+    } catch (_) { return ''; }
+  })();
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:10030;display:flex;align-items:center;justify-content:center;padding:16px';
+    // 選択した担当者の表示（アバター＋名前のチップ）
+    const chips = list.map(a => {
+      const av = (a.user && typeof avatarHtml === 'function') ? avatarHtml(a.user, 20) : '';
+      return `<span style="display:inline-flex;align-items:center;gap:5px;background:#F1EEFE;border:1px solid #DDD6FB;border-radius:999px;padding:3px 10px 3px 4px;font-size:13px;color:#3E2C9C">${av}<span>${esc(a.name)}</span></span>`;
+    }).join('');
+    const assigneeBlock = list.length ? `
+        <div style="padding:14px 16px 0">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">Wチェック担当者（${list.length}名）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${chips}</div>
+        </div>` : '';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.25)">
+        <div style="padding:14px 16px;border-bottom:1px solid #E5E7EB;font-weight:600;font-size:15px">Wチェックを依頼</div>
+        ${assigneeBlock}
+        <div style="padding:14px 16px 16px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:#475569">依頼コメント（任意）${_bgComment ? '<span style="font-weight:400;color:#64748B;margin-left:6px">連絡・確認事項を引用しました（編集可）</span>' : ''}</div>
+          <textarea id="_wcmt" rows="3" placeholder="確認してほしい点など（任意）" style="width:100%;padding:8px 10px;border:1px solid #CBD5E1;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box">${esc(_bgComment)}</textarea>
+        </div>
+        <div style="padding:12px 16px;border-top:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <button id="_wcmtBack" style="padding:6px 12px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;color:#475569">← 担当者を選び直す</button>
+          <span style="display:flex;gap:8px">
+            <button id="_wcmtCancel" style="padding:6px 14px;border:1px solid #CBD5E1;background:#fff;border-radius:8px;cursor:pointer;font-size:13px">キャンセル</button>
+            <button id="_wcmtOk" style="padding:6px 14px;border:none;background:linear-gradient(135deg,#6C4FE0,#5B3FD0);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Wチェックを依頼 →</button>
+          </span>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (val) => { overlay.remove(); resolve(val); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#_wcmtCancel').onclick = () => cleanup(null);
+    // 「担当者を選び直す」: キャンセル扱いで閉じ、担当者選択モーダルを開き直す
+    const backBtn = overlay.querySelector('#_wcmtBack');
+    if (backBtn) backBtn.onclick = () => { cleanup(null); try { openWcheckPicker({ onSubmit: _wcheckLastOnSubmit }); } catch (_) {} };
+    overlay.querySelector('#_wcmtOk').onclick = () => cleanup(overlay.querySelector('#_wcmt')?.value.trim() || '');
+    setTimeout(() => overlay.querySelector('#_wcmt')?.focus(), 50);
+  });
+}
+
 async function doDCheckTransition() {
   return btnBusy(busyBtnFrom(), async () => {
   document.getElementById('cd-dcheck-confirm').style.display = 'none';
@@ -37886,9 +38714,15 @@ async function _showDCheckSubmitConfirm({ directorIds, extraIds } = {}) {
   // (cd-editor-reply) を読む。通常時（制作中→Dチェック）は cd-comment-field が編集者→ディレクター宛のメモ。
   const REVISION_STAGES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isRevision = REVISION_STAGES.includes(currentCreativeDetail?.status);
-  const commentEl = isRevision
-    ? document.getElementById('cd-editor-reply')
-    : document.getElementById('cd-comment-field');
+  // Wチェック承認→Dチェックでは、今まさに送るコメントは Wチェック担当者の
+  // 承認/修正指示コメント欄(cd-director-note)。cd-comment-field には前ラウンドの値が
+  // 残っており、それを表示すると「前回Wチェック修正時のコメント」が出てしまう（バグ報告）。
+  const isWcheckApprove = currentCreativeDetail?.status === 'Wチェック';
+  const commentEl = isWcheckApprove
+    ? document.getElementById('cd-director-note')
+    : isRevision
+      ? document.getElementById('cd-editor-reply')
+      : document.getElementById('cd-comment-field');
   let commentText = '';
   try {
     commentText = (commentEl?.value || '').trim();
@@ -38451,16 +39285,11 @@ async function cdHandleUploadSuccess(data, version, statusEl) {
   document.getElementById('cd-upload-input').value = '';
   document.getElementById('cd-upload-preview').style.display = 'none';
   uploadFileData = null;
-  if (currentCreativeDetail.status === '制作中（初稿提出前）') {
-    const editorComment = document.getElementById('cd-comment-field').value.trim();
-    if (!editorComment) {
-      statusEl.textContent = 'アップロード完了。Dチェックへ進む前に「ディレクターへのコメント」を入力してください。';
-      statusEl.style.color = '#E24B4A';
-    } else {
-      const confirmDCheck = document.getElementById('cd-dcheck-confirm');
-      if (confirmDCheck) confirmDCheck.style.display = '';
-    }
-  }
+  _cdResetDropZoneLabel(); // 成功後もドロップゾーンの旧ファイル名を残さない（次の修正版を正しく上げられるように）
+  // アップロード完了後の「Dチェックを行いますか？」確認バー(cd-dcheck-confirm)は廃止。
+  // 次工程への送信は下部フッターのボタン（Wチェックへ回す / Dチェックへ / CL直行 等）に
+  // 一本化する。Wチェック対象なのに「Dチェック」と固定表示される誤りも併せて解消。
+  // 次工程の判定・コメント必須チェックは各送信ボタンのハンドラ側で行う。
 }
 
 // ===== 大容量クリエイティブ: Railway を経由しない Resumable 直送（HTTP 502 回避） =====
@@ -39301,7 +40130,11 @@ async function openCreativeDriveFolder() {
   const restore = () => { if (btn) { btn.textContent = original || '📁 フォルダ'; btn.disabled = false; } };
   try {
     if (btn) { btn.textContent = '⏳ 取得中…'; btn.disabled = true; }
-    const res = await fetch(`/api/creatives/${encodeURIComponent(currentCreativeDetail.id)}/drive-folder`);
+    // NOTE: API は /api/haruka 配下にマウントされている（server.js: app.use('/api/haruka', ...)）。
+    //       ここだけ `${API}` を使わず生で `/api/creatives/...` を叩いていたため
+    //       Express の "Cannot GET" 404 になり、フォルダボタンが #712 以来ずっと開けなかった。
+    //       他のクリエイティブ系 API と同様に apiFetch + `${API}` 経由に統一する。
+    const res = await apiFetch(`${API}/creatives/${encodeURIComponent(currentCreativeDetail.id)}/drive-folder`);
     if (res.status === 404) {
       let msg = 'まだファイルがアップロードされていません';
       try { const j = await res.json(); if (j?.error) msg = j.error; } catch (_) {}
@@ -39689,8 +40522,8 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   const noteValue        = document.getElementById('cd-director-note')?.value.trim()  || null;
   const editorReplyValue = document.getElementById('cd-editor-reply')?.value.trim()   || null;
   const commentFieldValue = document.getElementById('cd-comment-field').value.trim() || null;
-  const CHECK_STATUSES    = ['Dチェック', 'Pチェック', 'クライアントチェック中'];
-  const REVISION_STATUSES = ['Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
+  const CHECK_STATUSES    = ['Wチェック', 'Dチェック', 'Pチェック', 'クライアントチェック中'];
+  const REVISION_STATUSES = ['Wチェック後修正', 'Dチェック後修正', 'Pチェック後修正', 'クライアントチェック後修正'];
   const isCheck    = CHECK_STATUSES.includes(currentCreativeDetail.status);
   const isRevision = REVISION_STATUSES.includes(currentCreativeDetail.status);
   const body = {
@@ -39726,10 +40559,23 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
     try { await saveCreativeCustomFields(currentCreativeDetail.id); } catch (_) {}
     // 詳細モーダルメモリキャッシュを無効化（次に開く時は最新を取得）
     try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
-    // 正規アクション成功 → localStorage 下書きを削除 + dirty チェックをバイパスして閉じる
+    // 正規アクション成功 → localStorage 下書きを削除
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
-    __cdSkipDirtyCheck = true;
     const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
+
+    if (!overrideStatus) {
+      // 「下書き保存」= ステータスを進めずに入力中の内容だけサーバーへ保存し、モーダルは開いたまま作業を続けられるようにする。
+      // これまではステータス遷移と同じく無言でモーダルを閉じていたため、押したユーザーには「保存されず消えた」ように見えていた（バグ報告 #6cf9e914）。
+      // サーバーへ反映した値を currentCreativeDetail と dirty スナップショットに取り込み、未保存扱い（閉じる時の確認）が出ないようにする。
+      try { Object.assign(currentCreativeDetail, body); } catch (_) {}
+      try { __cdInitialSnapshot = __cdSnapshotCurrent(); } catch (_) {}
+      try { await refreshCreativeInList(_refreshId); } catch (_) {} // 一覧の表示も最新化（モーダルDOMには触れない）
+      showToast('下書きを保存しました（このまま作業を続けられます）', 'success');
+      return;
+    }
+
+    // ステータス遷移を伴う保存 → 従来どおり dirty チェックをバイパスしてモーダルを閉じ、一覧を1件差し替え
+    __cdSkipDirtyCheck = true;
     closeModal('modal-creative-detail');
     await refreshCreativeInList(_refreshId); // 全件再フェッチせず1件だけ差し替え
   } else {
@@ -42243,9 +43089,16 @@ let msItemsCache = [];
 let msActiveTag = '';
 // 一括ダウンロード用: チェック中の drive_file_id 集合（プレビュー選択とは独立）
 const msCheckedIds = new Set();
-// 検索バーの「クライアント → 案件」2段フィルタの選択状態
+// フォルダ階層ナビ（Drive風）の選択状態。msFilterClientId/msFilterProjectId は
+// 既存の msReloadList(params.set) をそのまま効かせるためナビ状態に同期させる。
 let msFilterClientId = '';
 let msFilterProjectId = '';
+// 階層ナビ state: 'root'（クライアント一覧）｜'client'（案件一覧）｜'project'（任意フォルダ＋素材）
+let msNavLevel = 'root';
+let msNavClientId = '';
+let msNavClientName = '';
+let msNavProjectId = '';
+let msNavProjectName = '';
 
 // ---- プレビュー自動ポーリング（preview_status が pending/processing の間だけ）----
 // 仕様（PR #687 系）:
@@ -42318,9 +43171,9 @@ function loadMaterialSquarePage() {
   // AI課金確認リンクの遷移先を GCP_BILLING_URL からセット（差し替えは定数1か所のみ）
   const billingLink = document.getElementById('ms-billing-link');
   if (billingLink) billingLink.href = GCP_BILLING_URL;
-  msReloadList();
-  // 検索バーのクライアント/案件 select を初期化（未ロードなら取得してから populate）
-  msEnsureClientsProjects().then(() => msPopulateFilterClientSelect()).catch(() => {});
+  // フォルダ階層ナビは root（クライアント一覧）から開始。
+  // msNavTo('root') が state同期・チップ取得・パンくず描画・msReloadList を行う。
+  msNavTo('root');
 }
 
 // ---- 一覧全体の進捗ポーリング（preview_status pending/processing がある間だけ）----
@@ -42602,6 +43455,8 @@ async function msReloadList() {
     // 2段フィルタ: 案件選択が優先（その案件のみ）、無ければクライアント（案件全体）。
     if (msFilterProjectId) params.set('projectId', msFilterProjectId);
     else if (msFilterClientId) params.set('clientId', msFilterClientId);
+    // 任意フォルダ絞り込み（ADR 023）: '<id>' でそのフォルダ、'__none__' で未振り分け。
+    if (msActiveFolderId) params.set('folderId', msActiveFolderId);
     const data = await votFetch('/list' + (params.toString() ? '?' + params.toString() : ''));
     msItemsCache = data.items || [];
     // 検索/フィルタで表示外になった素材のチェックは外す（選択件数を実体に合わせる）
@@ -42641,65 +43496,413 @@ function msRenderActiveTags() {
 function msClearTagFilter() { msActiveTag = ''; msReloadList(); }
 function msFilterByTag(tag) { msActiveTag = tag; msReloadList(); }
 
-// ==================== 検索バー: クライアント → 案件 の2段フィルタ ====================
-// アップロード先ピッカー（msPopulateClientSelect / msOnClientChange）と同じ方針だが、
-// こちらは一覧の絞り込み専用。クライアント未選択=全体素材、選択時のみ案件 select を出す。
+// ==================== フォルダ階層ナビ（Drive風ブラウザ） ====================
+// クライアント → 案件 → 任意フォルダ/素材 を「フォルダのドリルダウン＋パンくず」で辿る。
+// root: クライアント一覧（素材があるクライアントのみ）
+// client: 選択クライアントの案件一覧（素材がある案件のみ）
+// project: 選択案件の任意フォルダ＋「未振り分け」、下に素材一覧
+//
+// 既存の msReloadList() は msFilterClientId / msFilterProjectId / msActiveFolderId を見るので、
+// ナビ遷移のたびにこれらをナビ状態へ同期する（撤去せず流用）。
 
-// クライアント select を populate（案件を1件以上持つクライアントのみ・名前順）。
-function msPopulateFilterClientSelect() {
-  const sel = document.getElementById('ms-filter-client');
-  if (!sel) return;
-  const prev = msFilterClientId;
-  const projects = Array.isArray(allProjects) ? allProjects : [];
-  const clientIdsWithProjects = new Set(
-    projects.filter(p => !p.is_hidden && p.client_id).map(p => p.client_id)
-  );
-  const clients = (allClients || [])
-    .filter(c => clientIdsWithProjects.has(c.id))
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
-  sel.innerHTML = '<option value="">クライアント: すべて</option>' +
-    clients.map(c => `<option value="${votEscape(c.id)}">${votEscape(c.name || '(名称未設定)')}</option>`).join('');
-  // 復元できなければ「すべて」に戻す
-  if (prev && clients.some(c => c.id === prev)) sel.value = prev;
-  else msFilterClientId = '';
-  msSyncFilterProjectSelect();
+// 指定レベルへ遷移する。(1)state更新 (2)既存フィルタ変数へ同期 (3)チップ取得・描画 (4)一覧再読込。
+//   level: 'root' | 'client' | 'project'
+//   ctx:   { clientId, clientName, projectId, projectName }
+// チップの onclick には id（UUID）だけを渡し、表示名は保持済み一覧から引く
+// （名前を onclick 文字列に埋めると ' を含む名前で JS リテラルが壊れるため）
+function msClientNameById(id) {
+  const c = (msNavClients || []).find(x => String(x.id) === String(id));
+  return c ? (c.name || '') : '';
+}
+function msProjectNameById(id) {
+  const p = (msNavProjects || []).find(x => String(x.id) === String(id));
+  return p ? (p.name || '') : '';
+}
+function msNavTo(level, ctx) {
+  ctx = ctx || {};
+  msNavLevel = level;
+  if (level === 'root') {
+    msNavClientId = ''; msNavClientName = '';
+    msNavProjectId = ''; msNavProjectName = '';
+    msFilterClientId = ''; msFilterProjectId = ''; msActiveFolderId = '';
+  } else if (level === 'client') {
+    msNavClientId = ctx.clientId || '';
+    msNavClientName = ctx.clientName || msClientNameById(msNavClientId);
+    msNavProjectId = ''; msNavProjectName = '';
+    msFilterClientId = msNavClientId; msFilterProjectId = ''; msActiveFolderId = '';
+  } else if (level === 'project') {
+    msNavClientId = ctx.clientId != null ? ctx.clientId : msNavClientId;
+    msNavClientName = ctx.clientName != null ? ctx.clientName : msNavClientName;
+    msNavProjectId = ctx.projectId || '';
+    msNavProjectName = ctx.projectName || msProjectNameById(msNavProjectId);
+    msFilterClientId = msNavClientId; msFilterProjectId = msNavProjectId;
+    msActiveFolderId = ''; // 案件を開いた直後は任意フォルダ未選択（=その案件の全素材）
+  }
+  msReloadFolders(); // パンくず＋現在レベルのチップを取得・描画
+  msReloadList();
+}
+// パンくず各要素のクリックハンドラ
+function msNavToRoot() { msNavTo('root'); }
+function msNavToClient() {
+  if (!msNavClientId) return;
+  msNavTo('client', { clientId: msNavClientId, clientName: msNavClientName });
 }
 
-// 選択中クライアントに応じて案件 select を出し分け＋populate。
-function msSyncFilterProjectSelect() {
-  const pSel = document.getElementById('ms-filter-project');
-  if (!pSel) return;
-  if (!msFilterClientId) {
-    // クライアント未指定 = 全体素材。案件 select は隠す。
-    pSel.style.display = 'none';
-    pSel.value = '';
-    msFilterProjectId = '';
+// ==================== 任意フォルダ（ADR 023） ====================
+// 階層ナビのパンくず＋チップ・作成モーダル・選択バーの「フォルダへ移動」を担当。
+//
+// チップ取得方針（msReloadFolders）:
+//   - root    → GET /folders/clients              （素材があるクライアント一覧）
+//   - client  → GET /folders/projects?clientId    （そのクライアントで素材がある案件一覧）
+//   - project → GET /folders?projectId            （案件直下の任意フォルダ）
+// project レベルでのみフォルダの作成・移動・絞り込み・未振り分けが有効。
+// フォルダ絞り込み中の fileId は GET /list?folderId=<id> に渡す（'__none__' で未振り分け）。
+
+let msFolders = [];          // project レベルの任意フォルダ一覧
+let msNavClients = [];        // root レベルのクライアント一覧
+let msNavProjects = [];       // client レベルの案件一覧
+let msActiveFolderId = '';   // '' = フォルダ絞り込みなし（すべて）、'<id>' = そのフォルダ、'__none__' = 未振り分け
+
+// 任意フォルダの作成・移動が使えるコンテキストか（= project レベルのみ）。
+//   ok=true / projectId: 作成・取得に使う projectId
+function msFolderContext() {
+  if (msNavLevel === 'project' && msNavProjectId) {
+    return { ok: true, projectId: msNavProjectId, root: false };
+  }
+  return { ok: false, projectId: null, root: false };
+}
+
+// パンくず（🏠素材広場 ＞ クライアント名 ＞ 案件名）を描画する。
+function msRenderBreadcrumbs() {
+  const el = document.getElementById('ms-folder-crumbs');
+  if (!el) return;
+  const sep = '<span class="ms-folder-crumb-sep">＞</span>';
+  const rootCur = msNavLevel === 'root' ? ' current' : '';
+  let html = `<button type="button" class="ms-folder-crumb${rootCur}" onclick="msNavToRoot()">🏠 素材広場</button>`;
+  if (msNavClientId) {
+    const cur = msNavLevel === 'client' ? ' current' : '';
+    html += sep + `<button type="button" class="ms-folder-crumb${cur}" onclick="msNavToClient()" title="${votEscape(msNavClientName || '')}">${votEscape(msNavClientName || 'クライアント')}</button>`;
+  }
+  if (msNavProjectId) {
+    // 案件は常に末端（current）
+    html += sep + `<button type="button" class="ms-folder-crumb current" title="${votEscape(msNavProjectName || '')}">${votEscape(msNavProjectName || '案件')}</button>`;
+  }
+  el.innerHTML = html;
+}
+
+// 現在レベルのチップを取得・描画し、パンくず・作成ボタン表示も更新する。
+// msNavTo / loadMaterialSquarePage から呼ぶ。
+async function msReloadFolders() {
+  const chips = document.getElementById('ms-folder-chips');
+  msRenderBreadcrumbs();
+  msUpdateFolderCreateGate();
+  if (!chips) return;
+  chips.innerHTML = '<span class="ms-folder-empty">読み込み中…</span>';
+  try {
+    if (msNavLevel === 'root') {
+      const data = await votFetch('/folders/clients');
+      msNavClients = Array.isArray(data?.clients) ? data.clients : [];
+      msFolders = [];
+    } else if (msNavLevel === 'client') {
+      const data = await votFetch('/folders/projects?clientId=' + encodeURIComponent(msNavClientId));
+      msNavProjects = Array.isArray(data?.projects) ? data.projects : [];
+      msFolders = [];
+    } else { // project
+      const data = await votFetch('/folders?projectId=' + encodeURIComponent(msNavProjectId));
+      msFolders = Array.isArray(data?.folders) ? data.folders : [];
+      // 絞り込み中フォルダが消えていたら解除
+      if (msActiveFolderId && msActiveFolderId !== '__none__'
+          && !msFolders.some(f => String(f.id) === String(msActiveFolderId))) {
+        msActiveFolderId = '';
+        msReloadList();
+      }
+    }
+    msRenderFolderChips();
+  } catch (e) {
+    chips.innerHTML = `<span class="ms-folder-empty">フォルダの取得に失敗: ${votEscape(e.message)}</span>`;
+  }
+}
+
+function msRenderFolderChips() {
+  const chips = document.getElementById('ms-folder-chips');
+  if (!chips) return;
+
+  // root: クライアントフォルダ（クリックで client へ潜る）
+  if (msNavLevel === 'root') {
+    if (!msNavClients.length) {
+      chips.innerHTML = '<span class="ms-folder-empty">素材のあるクライアントがありません</span>';
+      return;
+    }
+    chips.innerHTML = msNavClients.map(c => {
+      const cnt = (c.materialCount != null) ? ` <span class="ms-folder-count">(${Number(c.materialCount)})</span>` : '';
+      return `<button type="button" class="ms-folder-chip" onclick="msNavTo('client',{clientId:'${votEscape(String(c.id))}'})" title="${votEscape(c.name || '')}">📁 ${votEscape(c.name || '(無名)')}${cnt}</button>`;
+    }).join('');
     return;
   }
-  const prev = msFilterProjectId;
-  const projects = (allProjects || [])
-    .filter(p => p.client_id === msFilterClientId && !p.is_hidden)
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
-  pSel.innerHTML = '<option value="">案件: 案件全体</option>' +
-    projects.map(p => `<option value="${votEscape(p.id)}">${votEscape(p.name || '(名称未設定)')}</option>`).join('');
-  if (prev && projects.some(p => p.id === prev)) pSel.value = prev;
-  else { msFilterProjectId = ''; pSel.value = ''; }
-  pSel.style.display = '';
+
+  // client: 案件フォルダ（クリックで project へ潜る）
+  if (msNavLevel === 'client') {
+    if (!msNavProjects.length) {
+      chips.innerHTML = '<span class="ms-folder-empty">素材のある案件がありません</span>';
+      return;
+    }
+    chips.innerHTML = msNavProjects.map(p => {
+      const cnt = (p.materialCount != null) ? ` <span class="ms-folder-count">(${Number(p.materialCount)})</span>` : '';
+      return `<button type="button" class="ms-folder-chip" onclick="msNavTo('project',{projectId:'${votEscape(String(p.id))}'})" title="${votEscape(p.name || '')}">📁 ${votEscape(p.name || '(無名)')}${cnt}</button>`;
+    }).join('');
+    return;
+  }
+
+  // project: 任意フォルダ＋「未振り分け」（クリックで folderId 絞り込み）
+  const allActive = !msActiveFolderId ? ' active' : '';
+  const noneActive = msActiveFolderId === '__none__' ? ' active' : '';
+  let html = `<button type="button" class="ms-folder-chip${allActive}" onclick="msSelectFolder('')">すべて</button>`;
+  html += msFolders.map(f => {
+    const active = String(msActiveFolderId) === String(f.id) ? ' active' : '';
+    const cnt = (f.materialCount != null) ? ` <span class="ms-folder-count">(${Number(f.materialCount)})</span>` : '';
+    return `<button type="button" class="ms-folder-chip${active}" onclick="msSelectFolder('${votEscape(String(f.id))}')" title="${votEscape(f.name || '')}">📁 ${votEscape(f.name || '(無名)')}${cnt}`
+      + ` <span class="ms-folder-count" style="cursor:pointer" onclick="event.stopPropagation();msRenameFolder('${votEscape(String(f.id))}','${votEscape(f.name || '')}')" title="このフォルダの名前を変更">✏️</span>`
+      + ` <span class="ms-folder-count" style="cursor:pointer" onclick="event.stopPropagation();msDeleteFolder('${votEscape(String(f.id))}','${votEscape(f.name || '')}')" title="このフォルダを削除">🗑</span></button>`;
+  }).join('');
+  html += `<button type="button" class="ms-folder-chip${noneActive}" onclick="msSelectFolder('__none__')" title="フォルダに振り分けられていない素材">📂 未振り分け</button>`;
+  chips.innerHTML = html;
 }
 
-function msOnFilterClientChange() {
-  const sel = document.getElementById('ms-filter-client');
-  msFilterClientId = sel ? sel.value : '';
-  msFilterProjectId = ''; // クライアントを変えたら案件選択はリセット
-  msSyncFilterProjectSelect();
+// 任意フォルダチップ選択（project レベル）→ 一覧を folderId 付きで再取得
+function msSelectFolder(folderId) {
+  msActiveFolderId = folderId || '';
+  msRenderFolderChips();
   msReloadList();
 }
 
-function msOnFilterProjectChange() {
-  const sel = document.getElementById('ms-filter-project');
-  msFilterProjectId = sel ? sel.value : '';
-  msReloadList();
+// 「＋ この案件にフォルダを作成」ボタンは project レベルのときだけ表示。
+function msUpdateFolderCreateGate() {
+  const btn = document.getElementById('ms-folder-create-btn');
+  if (!btn) return;
+  const enabled = msNavLevel === 'project' && !!msNavProjectId;
+  btn.style.display = enabled ? '' : 'none';
+  btn.disabled = !enabled;
 }
+
+// ---- 作成／名前変更モーダル（両用） ----
+// mode: 'create' = 新規作成 / 'rename' = 既存フォルダの名前変更
+let msFolderModalMode = 'create';
+let msFolderRenameId = '';      // rename 時の対象フォルダ id
+let msFolderRenameOrig = '';    // rename 時の元の名前（変更なし判定用）
+
+function msOpenCreateFolder() {
+  const ctx = msFolderContext();
+  if (!ctx.ok) return;
+  msFolderModalMode = 'create';
+  msFolderRenameId = '';
+  msFolderRenameOrig = '';
+  const titleEl = document.getElementById('ms-folder-modal-title');
+  const labelEl = document.getElementById('ms-folder-create-target-label');
+  const targetEl = document.getElementById('ms-folder-create-target');
+  const input = document.getElementById('ms-folder-create-name');
+  const dateEl = document.getElementById('ms-folder-create-date');
+  const err = document.getElementById('ms-folder-create-error');
+  const btn = document.getElementById('ms-folder-create-submit');
+  if (titleEl) titleEl.textContent = '📁 フォルダを作成';
+  if (labelEl) labelEl.textContent = '作成先';
+  if (btn) btn.textContent = '作成';
+  if (targetEl) {
+    targetEl.textContent = `${msNavClientName || 'クライアント'} ／ ${msNavProjectName || '案件'}`;
+  }
+  if (input) input.value = '';
+  // 日付ピッカーは初期値を「今日（JST）」にしておく（カレンダーが当日付近で開く）
+  if (dateEl) dateEl.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  openModal('modal-ms-folder-create');
+  setTimeout(() => { if (input) input.focus(); }, 50);
+}
+
+// 既存フォルダの名前変更を、作成と同じモーダルで開く（チップの✏️から）。
+function msOpenRenameFolder(folderId, currentName) {
+  if (!folderId) return;
+  msFolderModalMode = 'rename';
+  msFolderRenameId = folderId;
+  msFolderRenameOrig = currentName || '';
+  const titleEl = document.getElementById('ms-folder-modal-title');
+  const labelEl = document.getElementById('ms-folder-create-target-label');
+  const targetEl = document.getElementById('ms-folder-create-target');
+  const input = document.getElementById('ms-folder-create-name');
+  const dateEl = document.getElementById('ms-folder-create-date');
+  const err = document.getElementById('ms-folder-create-error');
+  const btn = document.getElementById('ms-folder-create-submit');
+  if (titleEl) titleEl.textContent = '📁 フォルダ名を変更';
+  if (labelEl) labelEl.textContent = '変更するフォルダ';
+  if (btn) btn.textContent = '変更';
+  if (targetEl) targetEl.textContent = currentName || '(無名)';
+  if (input) input.value = currentName || '';
+  if (dateEl) dateEl.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  openModal('modal-ms-folder-create');
+  setTimeout(() => { if (input) { input.focus(); input.select(); } }, 50);
+}
+// 日付ピッカーで選んだ日付を「YYYYMMDD_」としてフォルダ名の先頭に挿入する。
+// input[type=date] の値は "YYYY-MM-DD" 文字列なので Date を介さずに分解（TZズレ回避）。
+// 既存の撮影素材ファイル（20260612_…）と同じ命名規約に揃える。
+function msInsertFolderDate() {
+  const dateEl = document.getElementById('ms-folder-create-date');
+  const input = document.getElementById('ms-folder-create-name');
+  if (!dateEl || !input || !dateEl.value) return;
+  const [y, m, d] = dateEl.value.split('-');
+  const label = `${y}${m}${d}`; // YYYYMMDD（m/d はゼロ埋め済み）
+  const cur = input.value || '';
+  // 既に同じ日付が先頭にある場合は二重付与しない
+  if (!(cur === `${label}_` || cur.startsWith(`${label}_`))) {
+    input.value = `${label}_${cur}`;
+  }
+  input.focus();
+  const pos = input.value.length;
+  try { input.setSelectionRange(pos, pos); } catch (_) {}
+}
+function msCloseCreateFolder() {
+  closeModal('modal-ms-folder-create');
+}
+async function msSubmitCreateFolder() {
+  const input = document.getElementById('ms-folder-create-name');
+  const err = document.getElementById('ms-folder-create-error');
+  const btn = document.getElementById('ms-folder-create-submit');
+  const name = (input?.value || '').trim();
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  if (!name) {
+    if (err) { err.textContent = 'フォルダ名を入力してください'; err.style.display = 'block'; }
+    return;
+  }
+
+  // ---- 名前変更モード ----
+  if (msFolderModalMode === 'rename') {
+    if (!msFolderRenameId) { msCloseCreateFolder(); return; }
+    if (name === msFolderRenameOrig) { msCloseCreateFolder(); return; } // 変更なし
+    if (btn) { btn.disabled = true; btn.textContent = '変更中…'; }
+    try {
+      await votFetch('/folders/' + encodeURIComponent(msFolderRenameId), {
+        method: 'PATCH', body: JSON.stringify({ name }),
+      });
+      msCloseCreateFolder();
+      showToast('フォルダ名を変更しました', 'success');
+      await msReloadFolders();
+    } catch (e) {
+      const m = String(e?.message || '');
+      if (err) {
+        err.textContent = (/409/.test(m) || /同じ名前/.test(m))
+          ? '同じ名前のフォルダが既にあります'
+          : '変更失敗: ' + m;
+        err.style.display = 'block';
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '変更'; }
+    }
+    return;
+  }
+
+  // ---- 作成モード ----
+  const ctx = msFolderContext();
+  if (!ctx.ok) { msCloseCreateFolder(); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '作成中…'; }
+  try {
+    const body = ctx.projectId ? { name, projectId: ctx.projectId } : { name };
+    await votFetch('/folders', { method: 'POST', body: JSON.stringify(body) });
+    msCloseCreateFolder();
+    showToast('フォルダを作成しました', 'success');
+    await msReloadFolders();
+  } catch (e) {
+    if (err) { err.textContent = '作成失敗: ' + (e?.message || e); err.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '作成'; }
+  }
+}
+
+// フォルダ削除（チップの🗑）。非空なら 409 でブロックされるので件数を通知。
+async function msDeleteFolder(folderId, name) {
+  if (!folderId) return;
+  if (!confirm(`フォルダ「${name || ''}」を削除しますか？\n（中に素材がある場合は削除できません）`)) return;
+  try {
+    await votFetch('/folders/' + encodeURIComponent(folderId), { method: 'DELETE' });
+    showToast('フォルダを削除しました', 'success');
+    // 削除したフォルダで絞り込み中だったら解除
+    if (String(msActiveFolderId) === String(folderId)) { msActiveFolderId = ''; msReloadList(); }
+    await msReloadFolders();
+  } catch (e) {
+    const m = String(e?.message || '');
+    // サーバは非空フォルダに 409 { error, count } を返す
+    const cm = m.match(/(\d+)/);
+    if (/409/.test(m) || /空/.test(m) || /not empty/i.test(m) || cm) {
+      showToast(`このフォルダには素材が残っているため削除できません${cm ? `（${cm[1]}件）` : ''}`, 'warn');
+    } else {
+      showToast('フォルダの削除に失敗: ' + m, 'error');
+    }
+  }
+}
+
+// フォルダのリネーム（チップの✏️）。作成と同じモーダルを名前変更モードで開く。
+function msRenameFolder(folderId, currentName) {
+  msOpenRenameFolder(folderId, currentName);
+}
+
+// ---- 選択バー: フォルダへ移動ポップオーバー ----
+function msToggleMovePopover(event) {
+  if (event) event.stopPropagation();
+  const wrap = document.getElementById('ms-folder-move-wrap');
+  if (!wrap) return;
+  const willOpen = !wrap.classList.contains('open');
+  if (willOpen) msRenderMovePopover();
+  wrap.classList.toggle('open', willOpen);
+}
+function msCloseMovePopover() {
+  const wrap = document.getElementById('ms-folder-move-wrap');
+  if (wrap) wrap.classList.remove('open');
+}
+function msRenderMovePopover() {
+  const pop = document.getElementById('ms-folder-move-pop');
+  if (!pop) return;
+  let html = '';
+  if (msFolders.length === 0) {
+    html += '<div class="ms-folder-move-empty">このコンテキストにフォルダがありません。先に「＋ フォルダを作成」で作成してください。</div>';
+  } else {
+    html += msFolders.map(f =>
+      `<button type="button" class="ms-folder-move-item" onclick="msMoveCheckedToFolder('${votEscape(String(f.id))}')">📁 ${votEscape(f.name || '(無名)')}</button>`
+    ).join('');
+  }
+  html += '<div class="ms-folder-move-sep"></div>';
+  html += `<button type="button" class="ms-folder-move-item" onclick="msMoveCheckedToFolder(null)">↩ フォルダから外す（案件直下へ戻す）</button>`;
+  pop.innerHTML = html;
+}
+async function msMoveCheckedToFolder(folderId) {
+  // サーバは video_file_organization_tests.id（DB UUID）で素材を引くので、drive_file_id ではなく id を送る
+  const fileIds = msItemsCache.filter(it => msCheckedIds.has(it.drive_file_id)).map(it => it.id);
+  if (fileIds.length === 0) { msCloseMovePopover(); return; }
+  msCloseMovePopover();
+  try {
+    const result = await votFetch('/folders/move', {
+      method: 'POST',
+      body: JSON.stringify({ fileIds, folderId: folderId == null ? null : folderId }),
+    });
+    const moved = Number(result?.moved ?? 0);
+    // サーバの skipped は配列（[{fileId, reason}]）。件数化する
+    const skipped = Array.isArray(result?.skipped) ? result.skipped.length : Number(result?.skipped ?? 0);
+    let msg = folderId == null
+      ? `${moved}件をフォルダから外しました`
+      : `${moved}件をフォルダへ移動しました`;
+    if (skipped > 0) msg += `（${skipped}件はスキップ）`;
+    showToast(msg, skipped > 0 ? 'warn' : 'success');
+    msClearSelection();
+    await msReloadList();
+    await msReloadFolders(); // 件数バッジ更新
+  } catch (e) {
+    showToast('フォルダへの移動に失敗: ' + (e?.message || e), 'error');
+  }
+}
+
+// ポップオーバーの外側クリックで閉じる（1回だけ登録）
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('ms-folder-move-wrap');
+  if (wrap && wrap.classList.contains('open') && !wrap.contains(e.target)) {
+    wrap.classList.remove('open');
+  }
+});
 
 function msKindIcon(kind) { return kind === 'image' ? '🖼️' : '🎬'; }
 // 秒数を時分秒に整形（例: 796.796 → "13分17秒" / 7.5 → "8秒" / 3725 → "1時間2分5秒"）。
@@ -43309,6 +44512,8 @@ function msUpdateBulkBar() {
   const all = document.getElementById('ms-check-all');
   const n = msCheckedIds.size;
   if (bar) bar.classList.toggle('visible', n > 0);
+  // 選択が0件になったら「フォルダへ移動」ポップオーバーは閉じる（宙に浮かないように）
+  if (n === 0) { try { msCloseMovePopover(); } catch (_) {} }
   if (countEl) countEl.textContent = `${n}件を選択中`;
   if (btn) btn.textContent = n > 1 ? `⬇ ${n}件をダウンロード` : '⬇ ダウンロード';
   if (all) {
