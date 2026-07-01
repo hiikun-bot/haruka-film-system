@@ -67,6 +67,36 @@
   .leader-mark { color: #ef6c00; margin-right: 0.15em; font-weight: 700; font-size: 0.85em; }
   #status-bar { font-size: 0.85em; color: var(--text-muted); min-height: 1.4em; margin-top: 0.5em; }
 
+  /* ===== リソースサマリー（ヘッダー集計） ===== */
+  .rsum { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 0.9em; background: #fff; }
+  .rsum > summary { cursor: pointer; padding: 0.55em 0.85em; font-weight: 700; font-size: 0.92em; list-style: none; display: flex; align-items: center; gap: 0.5em; user-select: none; }
+  .rsum > summary::-webkit-details-marker { display: none; }
+  .rsum > summary::before { content: '▸'; color: var(--text-muted); font-size: 0.9em; transition: transform 0.15s; }
+  .rsum[open] > summary::before { transform: rotate(90deg); }
+  .rsum > summary .rsum-hint { margin-left: auto; font-weight: 400; font-size: 0.8em; color: var(--text-muted); }
+  .rsum-body { padding: 0 0.9em 0.9em; }
+  .rsum-block-title { font-size: 0.8em; color: var(--text-muted); font-weight: 700; margin: 0.7em 0 0.45em; }
+  /* 月毎チップ */
+  .rsum-months { display: flex; gap: 0.55em; flex-wrap: wrap; }
+  .rsum-month { border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.5em 0.85em; min-width: 5.4em; text-align: center; background: #f8fafc; }
+  .rsum-month .m-label { font-size: 0.78em; color: var(--text-muted); }
+  .rsum-month .m-days { font-size: 0.68em; color: var(--text-muted); }
+  .rsum-month .m-val { font-size: 1.18em; font-weight: 700; color: #1f2937; line-height: 1.3; }
+  .rsum-month.is-current { border-color: var(--gcal); background: var(--bg-today); }
+  .rsum-month.total { background: #eef3fa; border-color: #d5e0ef; }
+  /* 週毎テーブル */
+  .rsum-week-wrap { overflow-x: auto; }
+  table.rsum-week { border-collapse: collapse; font-size: 0.8em; }
+  table.rsum-week th, table.rsum-week td { border: 1px solid var(--border-soft); padding: 0.3em 0.6em; text-align: right; white-space: nowrap; }
+  table.rsum-week th.wk-team, table.rsum-week td.wk-team { text-align: left; position: sticky; left: 0; background: #fff; font-weight: 600; min-width: 8em; }
+  table.rsum-week thead th { background: #f6f8fa; font-weight: 600; text-align: center; }
+  table.rsum-week td.wk-total-col, table.rsum-week th.wk-total-col { background: #fafafa; font-weight: 700; }
+  table.rsum-week tr.wk-total-row td { background: #eef3fa; font-weight: 700; }
+  table.rsum-week tr.wk-total-row td.wk-team { background: #eef3fa; }
+  table.rsum-week th.is-current-week, table.rsum-week td.is-current-week { background: var(--bg-today); }
+  table.rsum-week tr.wk-total-row td.is-current-week { background: #d2efdb; }
+  .rsum-empty { font-size: 0.82em; color: var(--text-muted); padding: 0.5em 0.1em; }
+
   /* slot popover (read-only) */
   #slot-popover { position: fixed; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 0.6em 0.9em; box-shadow: 0 4px 18px rgba(0,0,0,0.15); font-size: 0.82em; z-index: 30; display: none; max-width: 280px; }
   #slot-popover h4 { margin: 0 0 0.3em; font-size: 0.9em; }
@@ -204,6 +234,12 @@
   <span><span class="lg-manual">●</span> 手動上書き済</span>
   <span style="background:var(--bg-diverge);padding:0 6px;border-radius:3px;">▒</span> GCal計算と差分あり
 </div>
+
+<!-- リソースサマリー（月毎＝全社／週毎＝表示中チーム別）。renderSummary() が中身を描画 -->
+<details class="rsum" id="resource-summary" open>
+  <summary>📊 リソースサマリー<span class="rsum-hint">月毎（全社）＆週毎（チーム別）の稼働可能時間</span></summary>
+  <div class="rsum-body" id="resource-summary-body"></div>
+</details>
 
 <div id="status-bar">…</div>
 
@@ -431,6 +467,7 @@ async function load() {
   }
   renderTabs();
   renderGrid();
+  renderSummary();
   const active = state.activeTeamIds.size;
   const total = (r.body.teams || []).length;
   document.getElementById('status-bar').textContent = `期間: ${state.from} 〜 ${state.to} ／ 表示中: ${active}/${total}チーム`;
@@ -463,12 +500,142 @@ function renderTabs() {
       btn.setAttribute('aria-pressed', state.activeTeamIds.has(id) ? 'true' : 'false');
       // 再描画（API再呼び出しは不要）
       renderGrid();
+      renderSummary();
       const active = state.activeTeamIds.size;
       const total = (state.data?.teams || []).length;
       document.getElementById('status-bar').textContent = `期間: ${state.from} 〜 ${state.to} ／ 表示中: ${active}/${total}チーム`;
     });
     wrap.dataset.bound = '1';
   }
+}
+
+// 合計時間の表示（3桁区切り・小数1桁まで）
+function fmtSum(v) {
+  const n = Math.round(Number(v || 0) * 10) / 10;
+  if (!isFinite(n)) return '0';
+  return n.toLocaleString('ja-JP', { maximumFractionDigits: 1 });
+}
+
+// 日付文字列 → その週の月曜（JST、Monday始まり）を返す
+function mondayOf(ds) {
+  const d = parseDate(ds);
+  return addDays(d, -((d.getDay() + 6) % 7));
+}
+
+// ===============================
+// リソースサマリー（ヘッダー集計）
+//   月毎: 全社（org_totals_by_date）— 表示チームの ON/OFF に依存しない
+//   週毎: 表示中チーム別（team_totals_by_date）— グリッドと同じ絞り込み
+// ===============================
+function renderSummary() {
+  const body = document.getElementById('resource-summary-body');
+  if (!body) return;
+  const data = state.data;
+  if (!data) { body.innerHTML = ''; return; }
+  const dates = data.dates || [];
+  if (!dates.length) { body.innerHTML = '<div class="rsum-empty">期間内のデータがありません。</div>'; return; }
+
+  // 今日の JST 日付・今週の月曜（現在列/週のハイライト用）
+  const todayJst = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const currentMonthKey = todayJst.slice(0, 7);
+  const currentWeekKey = fmtDate(mondayOf(todayJst));
+
+  // ---- 月毎（全社） ----
+  const orgByDate = data.org_totals_by_date || {};
+  const monthOrder = [];
+  const monthMap = new Map(); // 'YYYY-MM' -> { sum, days }
+  for (const ds of dates) {
+    const key = ds.slice(0, 7);
+    if (!monthMap.has(key)) { monthMap.set(key, { sum: 0, days: 0 }); monthOrder.push(key); }
+    const e = monthMap.get(key);
+    e.sum = Math.round((e.sum + Number(orgByDate[ds] || 0)) * 100) / 100;
+    e.days++;
+  }
+  let grandOrg = 0;
+  const monthChips = monthOrder.map(key => {
+    const e = monthMap.get(key);
+    grandOrg += e.sum;
+    const m = parseInt(key.slice(5, 7), 10);
+    const cur = key === currentMonthKey ? ' is-current' : '';
+    return `<div class="rsum-month${cur}">
+      <div class="m-label">${m}月</div>
+      <div class="m-val">${fmtSum(e.sum)}h</div>
+      <div class="m-days">${e.days}日間</div>
+    </div>`;
+  }).join('');
+  const monthTotalChip = `<div class="rsum-month total">
+    <div class="m-label">期間計</div>
+    <div class="m-val">${fmtSum(grandOrg)}h</div>
+    <div class="m-days">全${dates.length}日</div>
+  </div>`;
+
+  // ---- 週毎（表示中チーム別） ----
+  // 週バケツ（月曜始まり、期間内の日付を束ねる）
+  const weekOrder = [];
+  const weekMap = new Map(); // mondayKey -> { label, dates: [] }
+  for (const ds of dates) {
+    const mon = mondayOf(ds);
+    const key = fmtDate(mon);
+    if (!weekMap.has(key)) {
+      weekMap.set(key, { label: `${mon.getMonth() + 1}/${mon.getDate()}`, dates: [] });
+      weekOrder.push(key);
+    }
+    weekMap.get(key).dates.push(ds);
+  }
+
+  const allTeams = data.teams || [];
+  const teams = allTeams.filter(t => state.activeTeamIds.has(t.id));
+
+  let weekHtml = '';
+  if (!teams.length) {
+    weekHtml = '<div class="rsum-empty">表示するチームがありません。上のチップでチームを ON にしてください。</div>';
+  } else {
+    // ヘッダ行
+    let head = '<tr><th class="wk-team">チーム</th>';
+    for (const wk of weekOrder) {
+      const cur = wk === currentWeekKey ? ' is-current-week' : '';
+      head += `<th class="${cur.trim()}">${escapeHtml(weekMap.get(wk).label)}週</th>`;
+    }
+    head += '<th class="wk-total-col">期間計</th></tr>';
+
+    // チーム行
+    const weekColSums = Object.fromEntries(weekOrder.map(k => [k, 0]));
+    let rows = '';
+    for (const t of teams) {
+      const totalsByDate = t.team_totals_by_date || {};
+      let rowSum = 0;
+      let cells = '';
+      for (const wk of weekOrder) {
+        let v = 0;
+        for (const ds of weekMap.get(wk).dates) v += Number(totalsByDate[ds] || 0);
+        v = Math.round(v * 100) / 100;
+        rowSum += v;
+        weekColSums[wk] = Math.round((weekColSums[wk] + v) * 100) / 100;
+        const cur = wk === currentWeekKey ? ' is-current-week' : '';
+        cells += `<td class="${cur.trim()}">${fmtSum(v)}h</td>`;
+      }
+      rows += `<tr><td class="wk-team">${escapeHtml(t.code + ' ' + t.name)}</td>${cells}<td class="wk-total-col">${fmtSum(rowSum)}h</td></tr>`;
+    }
+
+    // 合計行（表示中チームの合計）
+    let totalCells = '';
+    let grandWeek = 0;
+    for (const wk of weekOrder) {
+      grandWeek += weekColSums[wk];
+      const cur = wk === currentWeekKey ? ' is-current-week' : '';
+      totalCells += `<td class="${cur.trim()}">${fmtSum(weekColSums[wk])}h</td>`;
+    }
+    const totalRow = `<tr class="wk-total-row"><td class="wk-team">表示中${teams.length}チーム合計</td>${totalCells}<td class="wk-total-col">${fmtSum(grandWeek)}h</td></tr>`;
+
+    weekHtml = `<div class="rsum-week-wrap"><table class="rsum-week"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table></div>`;
+  }
+
+  body.innerHTML = `
+    <div class="rsum-block-title">■ 月毎の合計（HARUKA FILM 全社・全チーム）</div>
+    <div class="rsum-months">${monthChips}${monthTotalChip}</div>
+    <div class="rsum-block-title">■ 週毎の合計（表示中チーム別・月曜始まり／緑=今週）</div>
+    ${weekHtml}
+  `;
 }
 
 function renderGrid() {
