@@ -25560,11 +25560,15 @@ async function openCreateCreative(opts = {}) {
     'クリエイティブサイズ': [
       {code:'1080_1080',name:'1080×1080'},{code:'1080_1920',name:'1080×1920'},
       {code:'1200_628',name:'1200×628'},{code:'960_1200',name:'960×1200'},
+      {code:'1920_1080',name:'1920×1080'},
     ],
   };
+  // フロント表示名 → マスター区分の code。マスターの区分は name='サイズ'/code='sizes' のため、
+  // name 直マッチだとサイズ区分を拾えず常にFALLBACK固定になっていた。code で解決し name一致はフォールバックに残す。
+  const CAT_CODE = { '媒体': 'media', 'クリエイティブFMT': 'creative_formats', 'クリエイティブサイズ': 'sizes' };
   const idMap = { '媒体': ['c-media-code','bulk-media-code'], 'クリエイティブFMT': ['c-creative-fmt','bulk-creative-fmt'], 'クリエイティブサイズ': ['c-creative-size','bulk-creative-size'] };
   ['媒体', 'クリエイティブFMT', 'クリエイティブサイズ'].forEach(catName => {
-    const cat = masterCategories.find(c => c.name === catName);
+    const cat = masterCategories.find(c => c.code === CAT_CODE[catName]) || masterCategories.find(c => c.name === catName);
     const masterItemsForCat = cat ? masterItems.filter(i => i.category_id === cat.id && i.is_active !== false) : [];
     const items = masterItemsForCat.length ? masterItemsForCat : FALLBACK[catName];
     idMap[catName].forEach(selId => {
@@ -40068,10 +40072,12 @@ async function openCreativeEdit(id) {
   const FALLBACK = {
     '媒体': [{code:'FB',name:'Meta'},{code:'TT',name:'TikTok'},{code:'YS',name:'Y検索'},{code:'YD',name:'YDN'},{code:'GS',name:'G検索'},{code:'LP',name:'LAP'},{code:'SN',name:'SmartNews'},{code:'GG',name:'GDN'}],
     'クリエイティブFMT': [{code:'mv',name:'動画'},{code:'bn',name:'バナー'},{code:'cs',name:'カルーセル'},{code:'rsa',name:'検索'},{code:'sl',name:'サイトリンク'}],
-    'クリエイティブサイズ': [{code:'1080_1080',name:'1080×1080'},{code:'1080_1920',name:'1080×1920'},{code:'1200_628',name:'1200×628'},{code:'960_1200',name:'960×1200'}],
+    'クリエイティブサイズ': [{code:'1080_1080',name:'1080×1080'},{code:'1080_1920',name:'1080×1920'},{code:'1200_628',name:'1200×628'},{code:'960_1200',name:'960×1200'},{code:'1920_1080',name:'1920×1080'}],
   };
+  // マスター区分は name='サイズ'/code='sizes' 等のため code で解決（name 直マッチだと拾えず常にFALLBACK固定になる）
+  const CAT_CODE = { '媒体': 'media', 'クリエイティブFMT': 'creative_formats', 'クリエイティブサイズ': 'sizes' };
   const catItems = (name) => {
-    const cat = masterCategories.find(x => x.name === name);
+    const cat = masterCategories.find(x => x.code === CAT_CODE[name]) || masterCategories.find(x => x.name === name);
     const items = cat ? masterItems.filter(i => i.category_id === cat.id && i.is_active !== false) : [];
     return items.length ? items : FALLBACK[name];
   };
