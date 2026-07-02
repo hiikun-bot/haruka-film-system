@@ -36,14 +36,15 @@ const RANKS = ['A', 'B', 'C'];
 const DASH = '—';
 
 const HEADER = [
-  '#', 'クライアント', '請求区分', '案件名', '案件区分', '区分', 'クライアント請求', 'ディレクション費',
+  '#', 'クライアント', '請求区分', '案件名', '案件区分', 'クライアント請求', 'ディレクション費',
   'ランクA', 'ランクB', 'ランクC',
   'project_id', 'client_id', 'category_id', 'creative_type',
 ];
-// 案件区分(index4) = その案件のカテゴリ(主区分名)。エクスポート専用の参照列で、インポート(コンバート)では読まない。
-const COL = { billing: 2, ankenKubun: 4, kubun: 5, clientCharge: 6, directionFee: 7, rankA: 8, rankB: 9, rankC: 10,
-  projectId: 11, clientId: 12, categoryId: 13, creativeType: 14 };
-const ID_COL_START = 11;
+// 案件区分(index4) = その案件のカテゴリ(主区分名＋アイコン)。エクスポート専用の参照列で、インポート(コンバート)では読まない。
+// ※ 旧「区分」列(各行の制作物カテゴリ)は案件区分と一致するため廃止（2026-07-02）。行の実カテゴリは非表示 category_id で解決する。
+const COL = { billing: 2, ankenKubun: 4, clientCharge: 5, directionFee: 6, rankA: 7, rankB: 8, rankC: 9,
+  projectId: 10, clientId: 11, categoryId: 12, creativeType: 13 };
+const ID_COL_START = 10;
 const N_COLS = HEADER.length;
 
 const num = v => {
@@ -165,7 +166,6 @@ function buildRows(m) {
         rows.push([
           seq, cl.name, billingCodeToLabel(cl.billing_org), p.name || '',
           ankenKubun,
-          (CAT_ICON[code] ? CAT_ICON[code] + ' ' : '') + (m.catById[cid]?.name || ''),
           cellNum(charge), (dfee == null ? DASH : dfee),
           cellNum(rankPrice.A), cellNum(rankPrice.B), cellNum(rankPrice.C),
           p.id, cl.id, cid, ct || '',
@@ -195,11 +195,11 @@ async function exportLedger() {
   await sheetsApi.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [
     { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
     { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
-    { repeatCell: { range: { sheetId, startRowIndex: 1, startColumnIndex: 6, endColumnIndex: 11 }, cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0' } } }, fields: 'userEnteredFormat.numberFormat' } },
+    { repeatCell: { range: { sheetId, startRowIndex: 1, startColumnIndex: 5, endColumnIndex: 10 }, cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0' } } }, fields: 'userEnteredFormat.numberFormat' } },
     { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: ID_COL_START, endIndex: N_COLS }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
     // 見切れ防止のため列幅を明示指定（autoResize は日本語・絵文字で狭くなりヘッダーが切れるため使わない）
-    // A#/B クライアント/C 請求区分/D 案件名/E 案件区分/F 区分/G クライアント請求/H ディレクション費/I ランクA/J ランクB/K ランクC
-    ...[46, 210, 180, 190, 90, 96, 120, 132, 86, 86, 86].map((px, i) => (
+    // A#/B クライアント/C 請求区分/D 案件名/E 案件区分/F クライアント請求/G ディレクション費/H ランクA/I ランクB/J ランクC
+    ...[46, 210, 180, 190, 96, 120, 132, 86, 86, 86].map((px, i) => (
       { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: 'pixelSize' } }
     )),
   ] } });
@@ -212,7 +212,7 @@ async function readLedger() {
   if (!spreadsheetId) throw new Error('費用台帳シートのURLが不正です: ' + url);
   const sheetsApi = google.sheets({ version: 'v4', auth: getAuth() });
   const { title } = await firstSheet(sheetsApi, spreadsheetId);
-  const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: `${title}!A1:O2000` });
+  const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: `${title}!A1:N2000` });
   return (res.data.values || []).slice(1).filter(r => r && (r[3] || r[COL.projectId]));
 }
 
@@ -224,7 +224,7 @@ function resolveRow(r, m) {
   if (!p) return null;
   const cidH = String(r[COL.categoryId] || '').trim();
   if (cidH && m.catById[cidH]) cid = cidH;
-  if (!cid) { const c = m.catByName[stripIcon(r[COL.kubun])]; cid = c ? c.id : null; }
+  if (!cid) { const c = m.catByName[stripIcon(r[COL.ankenKubun])]; cid = c ? c.id : null; }
   if (!cid) return null;
   return { project: p, categoryId: cid };
 }
