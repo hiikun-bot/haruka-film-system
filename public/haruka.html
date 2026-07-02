@@ -9771,13 +9771,15 @@ function cssEscape(s) {
   return String(s).replace(/(["\\])/g, '\\$1');
 }
 
-// 案件ドロップダウン用に「非表示案件除外 + id 重複排除」を行う
+// 案件ドロップダウン用に「非表示案件除外 + 完了案件除外 + id 重複排除」を行う
 // （API は単純な select(*) で is_hidden フィルタも DISTINCT も無いため、
 //  フロント側でドロップダウン表示時のみ防御する）
+// 「完了」案件は新規クリエイティブの登録先にならないため、案件タブと同様に除外する。
+// これにより全案件が完了しているクライアントはクライアント選択タイルにも出なくなる。
 function dedupVisibleProjects(projects) {
   const seen = new Map();
   for (const p of (projects || [])) {
-    if (!p || p.is_hidden) continue;
+    if (!p || p.is_hidden || p.status === '完了') continue;
     if (!seen.has(p.id)) seen.set(p.id, p);
   }
   return Array.from(seen.values());
@@ -10286,7 +10288,7 @@ async function loadProjects() {
 // allProjects / allClients から案件タブを描画する（fetch しない純粋な描画部）
 function renderProjectsView() {
   // クリエイティブ追加モーダルのセレクトを更新
-  // is_hidden 案件除外 + id 重複排除 + 職種フィルタ（individual/bulk 両方）
+  // is_hidden・完了案件除外 + id 重複排除 + 職種フィルタ（individual/bulk 両方）
   renderCreativeAddProjectDropdowns();
 
   // クライアント select を更新（旧 client-tabs ボタン群から移行）
