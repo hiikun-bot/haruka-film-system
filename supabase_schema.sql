@@ -2513,4 +2513,37 @@ CREATE TRIGGER creative_round_replies_updated_at
   BEFORE UPDATE ON creative_round_replies
   FOR EACH ROW EXECUTE FUNCTION trg_creative_round_replies_updated_at();
 
+
+-- ==================== 作業時間報告（ADR 028） ====================
+-- 時給制の支払い・請求（秘書業・案件時給）を日別タイムシートで記録する。
+-- backfill 無し・新規テーブルのみ。詳細: migrations/2026-07-02_work_hour_entries.sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_rate INTEGER;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_note TEXT;
+
+CREATE TABLE IF NOT EXISTS work_hour_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  work_date DATE NOT NULL,
+  start_time TIME,
+  end_time TIME,
+  minutes INTEGER NOT NULL CHECK (minutes >= 0),
+  description TEXT,
+  project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  line_id UUID REFERENCES project_estimate_lines(id) ON DELETE SET NULL,
+  hourly_rate_applied INTEGER,
+  client_hourly_rate_applied INTEGER,
+  expense_amount INTEGER DEFAULT 0,
+  expense_note TEXT,
+  receipt_submitted BOOLEAN DEFAULT false,
+  status TEXT DEFAULT 'draft',
+  confirmed_by UUID REFERENCES users(id),
+  confirmed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT work_hour_entries_status_check CHECK (status IN ('draft', 'confirmed'))
+);
+CREATE INDEX IF NOT EXISTS idx_whe_user_date ON work_hour_entries (user_id, work_date DESC);
+CREATE INDEX IF NOT EXISTS idx_whe_date ON work_hour_entries (work_date);
+CREATE INDEX IF NOT EXISTS idx_whe_project ON work_hour_entries (project_id) WHERE project_id IS NOT NULL;
+
 NOTIFY pgrst, 'reload schema';
