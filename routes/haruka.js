@@ -5343,6 +5343,11 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         producer_total: 0,
         grand_total: 0,
         rate_unknown_count: 0,
+        // ADR 028 Stage 2: 時間制（作業時間報告）の月次合算。既存フィールドとは別枠。
+        hourly_minutes: 0,
+        hourly_hours: 0,
+        hourly_amount: 0,
+        expense_amount: 0,
       });
     }
     return userMap.get(u.id);
@@ -5414,6 +5419,47 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     }
   }
 
+  // ADR 028 Stage 2: 対象月の work_hour_entries（作業時間報告）を user 別に合算し、
+  // 「時間制」枠（hourly_minutes / hourly_amount / expense_amount）として各行に付ける。
+  // 本数・既存金額フィールド（grand_total 等）には混ぜない（別枠表示。表示側で合算する）。
+  try {
+    const whRange = whMonthRange(year, month);
+    const { data: whEntries, error: whErr } = await supabase
+      .from('work_hour_entries')
+      .select('user_id, minutes, hourly_rate_applied, expense_amount')
+      .gte('work_date', whRange.start)
+      .lt('work_date', whRange.end);
+    if (whErr) {
+      console.warn('[aggregateCreatorSummary] work_hour_entries load failed:', whErr.message);
+    } else if (whEntries && whEntries.length) {
+      const whByUser = new Map();
+      for (const e of whEntries) {
+        if (!whByUser.has(e.user_id)) whByUser.set(e.user_id, []);
+        whByUser.get(e.user_id).push(e);
+      }
+      // クリエイティブ集計に出てこないユーザー（秘書等）の名前情報を補完取得
+      const missingIds = Array.from(whByUser.keys())
+        .filter(uid => !userMap.has(uid) && !userById.has(uid));
+      if (missingIds.length) {
+        const { data: us } = await supabase
+          .from('users').select('id, full_name, nickname, role, rank')
+          .in('id', missingIds);
+        (us || []).forEach(u => userById.set(u.id, u));
+      }
+      for (const [uid, list] of whByUser) {
+        const u = ensureUser(userMap.get(uid) || userById.get(uid) || { id: uid });
+        if (!u) continue;
+        const s = whSummarize(list);
+        u.hourly_minutes = s.total_minutes;
+        u.hourly_hours = s.total_hours;
+        u.hourly_amount = s.hourly_amount;
+        u.expense_amount = s.expense_total;
+      }
+    }
+  } catch (e) {
+    console.warn('[aggregateCreatorSummary] work_hour_entries merge failed:', e.message);
+  }
+
   const summary = Array.from(userMap.values())
     .sort((a, b) => b.grand_total - a.grand_total
       || (b.video_count + b.design_count) - (a.video_count + a.design_count)
@@ -5428,8 +5474,12 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     acc.director_total += u.director_total || 0;
     acc.producer_total += u.producer_total || 0;
     acc.grand_total  += u.grand_total;
+    // ADR 028 Stage 2: 時間制の月次合算（新フィールド。grand_total には混ぜない）
+    acc.hourly_minutes += u.hourly_minutes || 0;
+    acc.hourly_amount  += u.hourly_amount || 0;
+    acc.expense_amount += u.expense_amount || 0;
     return acc;
-  }, { video_count: 0, design_count: 0, director_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0 });
+  }, { video_count: 0, design_count: 0, director_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0, hourly_minutes: 0, hourly_amount: 0, expense_amount: 0 });
 
   // calculateLineCost を参照保持（将来の拡張時に使う想定）
   void calculateLineCost;
@@ -5691,6 +5741,525 @@ router.post('/analytics/creator-summary/export-sheet', requireAuth, requirePermi
     console.error('[analytics/creator-summary/export-sheet]', e);
     res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
   }
+});
+
+// ==================== ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 ====================
+//
+// 時給制メンバー（秘書業・案件時給ディレクション等）の日別タイムシート。
+// - 単価は行作成時にスナップショット（hourly_rate_applied / client_hourly_rate_applied）
+// - 月の判定は work_date（DATE型）の暦月。JSTズレなし（ADR 028）
+// - h換算は 分÷60 の小数第3位以下切り捨て、支払額は 分×時給÷60 の円未満切り捨て
+// - status: draft（本人編集可）/ confirmed（admin/秘書/プロデューサーが月次確認済み → 本人ロック）
+
+// 確認済み操作・他人の月次閲覧ができる実効ロール。
+// ADR 015: ロール判定は getEffectiveRoleCodes(req)（X-View-As を尊重 = VIEW AS 対応）を使う。
+// 'producer_director' は環境により合成コードのまま返るケースがあるため両方含める。
+const WH_CONFIRMER_ROLES = ['admin', 'secretary', 'producer', 'producer_director'];
+async function whHasAnyEffectiveRole(req, roles) {
+  const codes = await getEffectiveRoleCodes(req);
+  return roles.some(r => (codes || []).includes(r));
+}
+async function whIsConfirmer(req) {
+  return whHasAnyEffectiveRole(req, WH_CONFIRMER_ROLES);
+}
+// 行の代理編集（confirmed 含む）ができる実効ロール（admin/秘書）
+async function whIsStaff(req) {
+  return whHasAnyEffectiveRole(req, ['admin', 'secretary']);
+}
+
+// 対象月の work_date 範囲（DATE 文字列比較。gte start / lt end）
+function whMonthRange(year, month) {
+  const mm = String(month).padStart(2, '0');
+  const end = month === 12
+    ? `${year + 1}-01-01`
+    : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  return { start: `${year}-${mm}-01`, end };
+}
+
+// h 換算: 分÷60 を小数第3位以下切り捨て（ADR 028 運用ルール5）
+function whHoursOf(minutes) {
+  return Math.floor(((minutes || 0) / 60) * 100) / 100;
+}
+
+// 支払額: 分×時給÷60 の円未満切り捨て
+function whAmountOf(minutes, rate) {
+  if (!rate) return 0;
+  return Math.floor(((minutes || 0) * rate) / 60);
+}
+
+// エントリ配列 → 月次集計。
+// 切り捨て誤差を最小にするため、同一時給のエントリは分を合算してから金額化する
+// （スプレッドシートの「合計時間 × 時給」と同じ計算になる）。
+function whSummarize(entries) {
+  let totalMinutes = 0;
+  let expenseTotal = 0;
+  let rateMissingMinutes = 0;
+  const byRate = new Map(); // hourly_rate_applied -> minutes
+  for (const e of (entries || [])) {
+    const mins = e.minutes || 0;
+    totalMinutes += mins;
+    expenseTotal += e.expense_amount || 0;
+    if (e.hourly_rate_applied) {
+      byRate.set(e.hourly_rate_applied, (byRate.get(e.hourly_rate_applied) || 0) + mins);
+    } else if (mins > 0) {
+      rateMissingMinutes += mins;
+    }
+  }
+  let hourlyAmount = 0;
+  for (const [rate, mins] of byRate) hourlyAmount += whAmountOf(mins, rate);
+  return {
+    total_minutes: totalMinutes,
+    total_hours: whHoursOf(totalMinutes),
+    hourly_amount: hourlyAmount,
+    expense_total: expenseTotal,
+    grand_total: hourlyAmount + expenseTotal,
+    rate_missing_minutes: rateMissingMinutes,
+  };
+}
+
+// 対象月のエントリを取得（日付昇順）
+async function whLoadMonthEntries({ userId, year, month }) {
+  const { start, end } = whMonthRange(year, month);
+  const { data, error } = await supabase
+    .from('work_hour_entries')
+    .select('*, project:projects(id, name)')
+    .eq('user_id', userId)
+    .gte('work_date', start)
+    .lt('work_date', end)
+    .order('work_date', { ascending: true })
+    .order('start_time', { ascending: true, nullsFirst: true })
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// "HH:MM" / "HH:MM:SS" → 分。無効なら null
+function whTimeToMinutes(t) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(t || ''));
+  if (!m) return null;
+  const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+  if (h > 24 || mi > 59) return null;
+  return h * 60 + mi;
+}
+
+// 開始/終了から稼働分を自動計算（終了 < 開始 は日跨ぎとして扱う）
+function whCalcMinutes(startTime, endTime) {
+  const s = whTimeToMinutes(startTime);
+  const e = whTimeToMinutes(endTime);
+  if (s === null || e === null) return null;
+  return ((e - s) + 1440) % 1440;
+}
+
+// 案件の時間制単価を解決する（ADR 028 運用ルール4）。
+// - 支払時給   = pricing_type='hourly' の line_cost.unit_price
+// - 請求時給   = その line の client_unit_price（時間制 line のみ「円/h」として解釈）
+// - line_cost.user_id が本人指定の行を最優先 → user_id 未指定の行 → 先頭
+// - ADR 005 の集計対象 status（contracted/in_progress/delivered）を優先し、無ければ他 status も許容
+//   （line の status 設定漏れで時間入力がブロックされるのを避けるため）
+async function whResolveProjectHourly(projectId, userId) {
+  const { data: lines, error } = await supabase
+    .from('project_estimate_lines')
+    .select(`
+      id, project_id, name, client_unit_price, status,
+      line_costs:project_estimate_line_costs(id, user_id, unit_price, pricing_type)
+    `)
+    .eq('project_id', projectId);
+  if (error) throw new Error(error.message);
+  const ACTIVE = ['contracted', 'in_progress', 'delivered'];
+  const candidates = [];
+  for (const line of (lines || [])) {
+    for (const lc of (line.line_costs || [])) {
+      if (lc.pricing_type !== 'hourly') continue;
+      if (!lc.unit_price) continue;
+      candidates.push({ line, lc, active: ACTIVE.includes(line.status || '') });
+    }
+  }
+  if (!candidates.length) return null;
+  const pick = (list) =>
+    list.find(c => c.lc.user_id === userId) || list.find(c => !c.lc.user_id) || list[0];
+  const actives = candidates.filter(c => c.active);
+  const hit = actives.length ? pick(actives) : pick(candidates);
+  return {
+    line_id: hit.line.id,
+    hourly_rate: hit.lc.unit_price || null,
+    client_hourly_rate: hit.line.client_unit_price || null,
+  };
+}
+
+// 請求書プレビュー / 請求書生成用: 対象月の自分の時間明細を「時間制アイテム」に変換。
+// project別 + 非紐付き（秘書業等）でまとめ、同一グループ内は時給スナップショットごとに行を分ける。
+// 立替経費があれば合算して 1 行にする。
+async function whBuildInvoiceItems(userId, year, month) {
+  const entries = await whLoadMonthEntries({ userId, year, month });
+  if (!entries.length) return [];
+  let hourlyNote = null;
+  try {
+    const { data: u } = await supabase.from('users').select('hourly_note').eq('id', userId).maybeSingle();
+    hourlyNote = u?.hourly_note || null;
+  } catch (_) { /* 列未反映環境では null のまま */ }
+
+  const groups = new Map(); // `${project_id||'none'}:${rate}` -> { project_id, project_name, rate, minutes }
+  let expenseTotal = 0;
+  for (const e of entries) {
+    expenseTotal += e.expense_amount || 0;
+    if (!e.minutes || !e.hourly_rate_applied) continue; // 単価未解決分は金額化できないのでスキップ
+    const key = `${e.project_id || 'none'}:${e.hourly_rate_applied}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        project_id: e.project_id || null,
+        project_name: e.project?.name || null,
+        rate: e.hourly_rate_applied,
+        minutes: 0,
+      });
+    }
+    groups.get(key).minutes += e.minutes;
+  }
+
+  const items = [];
+  for (const g of groups.values()) {
+    const hours = whHoursOf(g.minutes);
+    const amount = whAmountOf(g.minutes, g.rate);
+    if (amount <= 0) continue;
+    // 例: 「秘書業 3.27h × ¥1,600」「ハビー ディレクション 15.17h × ¥1,500」
+    const desc = g.project_id
+      ? `${g.project_name || '案件'} ディレクション`
+      : (hourlyNote || '作業時間');
+    const label = `${desc} ${hours.toFixed(2)}h × ¥${g.rate.toLocaleString()}`;
+    items.push({
+      id: `hourly:${g.key}`,
+      is_hourly: true,
+      hourly_key: g.key,
+      label,
+      file_name: label,      // 請求書作成モーダルの一覧表示互換
+      status: '時間制',
+      project_id: g.project_id,
+      project_name: g.project_name || '',
+      minutes: g.minutes,
+      hours,
+      rate: g.rate,
+      total: amount,
+    });
+  }
+  if (expenseTotal > 0) {
+    items.push({
+      id: 'hourly:expense',
+      is_hourly: true,
+      hourly_key: 'expense',
+      label: '立替経費（作業時間報告）',
+      file_name: '立替経費（作業時間報告）',
+      status: '時間制',
+      project_id: null,
+      project_name: '',
+      total: expenseTotal,
+    });
+  }
+  return items;
+}
+
+// 一覧＋月次集計
+// user_id 指定（他人の閲覧）は admin/secretary/producer（実効ロール）のみ。それ以外は自分のみ。
+router.get('/work-hours', requireAuth, async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'year, month は必須です（month は 1-12）' });
+  }
+  let targetUserId = req.user.id;
+  if (req.query.user_id && req.query.user_id !== req.user.id) {
+    if (!(await whIsConfirmer(req))) {
+      return res.status(403).json({ error: '他のメンバーの作業時間を閲覧する権限がありません' });
+    }
+    targetUserId = req.query.user_id;
+  }
+  try {
+    const [entries, userRes] = await Promise.all([
+      whLoadMonthEntries({ userId: targetUserId, year, month }),
+      supabase.from('users')
+        .select('id, full_name, nickname, hourly_rate, hourly_note')
+        .eq('id', targetUserId).maybeSingle(),
+    ]);
+    if (userRes.error) return res.status(500).json({ error: userRes.error.message });
+    if (!userRes.data) return res.status(404).json({ error: 'ユーザーが見つかりません' });
+    const summary = whSummarize(entries);
+    const confirmedCount = entries.filter(e => e.status === 'confirmed').length;
+    res.json({
+      year, month,
+      user: userRes.data,
+      entries,
+      summary,
+      confirmed_count: confirmedCount,
+      all_confirmed: entries.length > 0 && confirmedCount === entries.length,
+    });
+  } catch (e) {
+    console.error('[work-hours GET]', e);
+    res.status(500).json({ error: e.message || '取得に失敗しました' });
+  }
+});
+
+// 行追加ドロップダウン用: 時間制 line（pricing_type='hourly' の line_cost）を持つ案件の一覧
+router.get('/work-hours/projects', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .select(`
+      id, unit_price, user_id, pricing_type,
+      line:project_estimate_lines(id, status, client_unit_price,
+        project:projects(id, name, clients(name)))
+    `)
+    .eq('pricing_type', 'hourly');
+  if (error) return res.status(500).json({ error: error.message });
+  const byProject = new Map();
+  for (const lc of (data || [])) {
+    const p = lc.line?.project;
+    if (!p?.id || !lc.unit_price) continue;
+    if (!byProject.has(p.id)) {
+      byProject.set(p.id, {
+        project_id: p.id,
+        name: p.name,
+        client_name: p.clients?.name || '',
+        hourly_rate: lc.unit_price,
+        client_hourly_rate: lc.line?.client_unit_price || null,
+      });
+    }
+  }
+  res.json(Array.from(byProject.values())
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja')));
+});
+
+// 行追加。単価は登録時にスナップショット（ADR 028）。
+router.post('/work-hours', requireAuth, async (req, res) => {
+  const b = req.body || {};
+  // 本人の行が基本。admin/secretary のみ他人の行を代理登録できる（過去分の移行入力用）
+  let targetUserId = req.user.id;
+  if (b.user_id && b.user_id !== req.user.id) {
+    if (!(await whIsStaff(req))) {
+      return res.status(403).json({ error: '他のメンバーの行は追加できません' });
+    }
+    targetUserId = b.user_id;
+  }
+  const workDate = String(b.work_date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) {
+    return res.status(400).json({ error: 'work_date は YYYY-MM-DD で指定してください' });
+  }
+  // 稼働分: 明示指定 > 開始/終了から自動計算 > 0（経費のみの行を許容）
+  let minutes;
+  if (b.minutes !== undefined && b.minutes !== null && b.minutes !== '') {
+    minutes = parseInt(b.minutes, 10);
+    if (!Number.isFinite(minutes) || minutes < 0) {
+      return res.status(400).json({ error: '稼働分は0以上の整数で指定してください' });
+    }
+  } else {
+    minutes = whCalcMinutes(b.start_time, b.end_time);
+    if (minutes === null) minutes = 0;
+  }
+  const expenseAmount = parseInt(b.expense_amount, 10) || 0;
+  if (expenseAmount < 0) return res.status(400).json({ error: '立替経費は0以上で指定してください' });
+
+  // 単価スナップショット
+  let hourlyRate = null, clientHourlyRate = null, lineId = null;
+  try {
+    if (b.project_id) {
+      const resolved = await whResolveProjectHourly(b.project_id, targetUserId);
+      if (!resolved || !resolved.hourly_rate) {
+        return res.status(400).json({ error: '時給が設定されていません（この案件に時間制の単価がありません。案件編集モーダルの成果物グループで pricing_type=時間単価 の単価行を設定してください）' });
+      }
+      hourlyRate = resolved.hourly_rate;
+      clientHourlyRate = resolved.client_hourly_rate;
+      lineId = resolved.line_id;
+    } else {
+      const { data: u, error: uErr } = await supabase
+        .from('users').select('hourly_rate').eq('id', targetUserId).maybeSingle();
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      hourlyRate = u?.hourly_rate || null;
+      if (!hourlyRate && minutes > 0) {
+        return res.status(400).json({ error: '時給が設定されていません（管理者にメンバーマスターでの時給設定を依頼してください）' });
+      }
+    }
+  } catch (e) {
+    return res.status(500).json({ error: e.message || '時給の解決に失敗しました' });
+  }
+
+  const row = {
+    user_id: targetUserId,
+    work_date: workDate,
+    start_time: b.start_time || null,
+    end_time: b.end_time || null,
+    minutes,
+    description: b.description || null,
+    project_id: b.project_id || null,
+    line_id: lineId,
+    hourly_rate_applied: hourlyRate,
+    client_hourly_rate_applied: clientHourlyRate,
+    expense_amount: expenseAmount,
+    expense_note: b.expense_note || null,
+    receipt_submitted: !!b.receipt_submitted,
+    status: 'draft',
+  };
+  const { data, error } = await supabase.from('work_hour_entries').insert(row).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 行の取得＋編集権限チェック（PUT/DELETE 共通）
+// - draft: 本人 or admin/secretary
+// - confirmed: admin/secretary のみ（本人は 403「確認済みのため編集できません」）
+async function whLoadEditableEntry(req, res) {
+  const { data: entry, error } = await supabase
+    .from('work_hour_entries').select('*').eq('id', req.params.id).maybeSingle();
+  if (error) { res.status(500).json({ error: error.message }); return null; }
+  if (!entry) { res.status(404).json({ error: '行が見つかりません' }); return null; }
+  const isStaff = await whIsStaff(req);
+  const isOwner = entry.user_id === req.user.id;
+  if (!isOwner && !isStaff) {
+    res.status(403).json({ error: '他のメンバーの行は編集できません' });
+    return null;
+  }
+  if (entry.status === 'confirmed' && !isStaff) {
+    res.status(403).json({ error: '確認済みのため編集できません（管理者・秘書に依頼してください）' });
+    return null;
+  }
+  return entry;
+}
+
+// 行更新
+router.put('/work-hours/:id', requireAuth, async (req, res) => {
+  const entry = await whLoadEditableEntry(req, res);
+  if (!entry) return;
+  const b = req.body || {};
+  const patch = { updated_at: new Date().toISOString() };
+
+  if (b.work_date !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.work_date || ''))) {
+      return res.status(400).json({ error: 'work_date は YYYY-MM-DD で指定してください' });
+    }
+    patch.work_date = b.work_date;
+  }
+  if (b.start_time !== undefined) patch.start_time = b.start_time || null;
+  if (b.end_time !== undefined) patch.end_time = b.end_time || null;
+  if (b.description !== undefined) patch.description = b.description || null;
+  if (b.expense_note !== undefined) patch.expense_note = b.expense_note || null;
+  if (b.receipt_submitted !== undefined) patch.receipt_submitted = !!b.receipt_submitted;
+  if (b.expense_amount !== undefined) {
+    const ea = parseInt(b.expense_amount, 10) || 0;
+    if (ea < 0) return res.status(400).json({ error: '立替経費は0以上で指定してください' });
+    patch.expense_amount = ea;
+  }
+
+  // 稼働分: 明示指定を優先。無ければ開始/終了の変更から再計算
+  if (b.minutes !== undefined && b.minutes !== null && b.minutes !== '') {
+    const mins = parseInt(b.minutes, 10);
+    if (!Number.isFinite(mins) || mins < 0) {
+      return res.status(400).json({ error: '稼働分は0以上の整数で指定してください' });
+    }
+    patch.minutes = mins;
+  } else if (b.start_time !== undefined || b.end_time !== undefined) {
+    const recalced = whCalcMinutes(
+      b.start_time !== undefined ? b.start_time : entry.start_time,
+      b.end_time !== undefined ? b.end_time : entry.end_time,
+    );
+    if (recalced !== null) patch.minutes = recalced;
+  }
+
+  // 案件の付け替え → 単価スナップショットを取り直す
+  if (b.project_id !== undefined && (b.project_id || null) !== (entry.project_id || null)) {
+    try {
+      if (b.project_id) {
+        const resolved = await whResolveProjectHourly(b.project_id, entry.user_id);
+        if (!resolved || !resolved.hourly_rate) {
+          return res.status(400).json({ error: '時給が設定されていません（この案件に時間制の単価がありません）' });
+        }
+        patch.project_id = b.project_id;
+        patch.line_id = resolved.line_id;
+        patch.hourly_rate_applied = resolved.hourly_rate;
+        patch.client_hourly_rate_applied = resolved.client_hourly_rate;
+      } else {
+        const { data: u } = await supabase
+          .from('users').select('hourly_rate').eq('id', entry.user_id).maybeSingle();
+        const newMinutes = patch.minutes !== undefined ? patch.minutes : entry.minutes;
+        if (!u?.hourly_rate && newMinutes > 0) {
+          return res.status(400).json({ error: '時給が設定されていません（管理者にメンバーマスターでの時給設定を依頼してください）' });
+        }
+        patch.project_id = null;
+        patch.line_id = null;
+        patch.hourly_rate_applied = u?.hourly_rate || null;
+        patch.client_hourly_rate_applied = null;
+      }
+    } catch (e) {
+      return res.status(500).json({ error: e.message || '時給の解決に失敗しました' });
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('work_hour_entries').update(patch).eq('id', entry.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 行削除
+router.delete('/work-hours/:id', requireAuth, async (req, res) => {
+  const entry = await whLoadEditableEntry(req, res);
+  if (!entry) return;
+  const { error } = await supabase.from('work_hour_entries').delete().eq('id', entry.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 月次確認: その人のその月の draft 行を一括 confirmed に（ADR 028 運用ルール2）
+router.post('/work-hours/confirm-month', requireAuth, async (req, res) => {
+  if (!(await whIsConfirmer(req))) {
+    return res.status(403).json({ error: '月次確認の権限がありません（admin/秘書/プロデューサーのみ）' });
+  }
+  const { user_id } = req.body || {};
+  const year = parseInt(req.body?.year, 10);
+  const month = parseInt(req.body?.month, 10);
+  if (!user_id || !year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'user_id, year, month は必須です' });
+  }
+  const { start, end } = whMonthRange(year, month);
+  const { data, error } = await supabase
+    .from('work_hour_entries')
+    .update({
+      status: 'confirmed',
+      confirmed_by: req.user.id,
+      confirmed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', user_id)
+    .eq('status', 'draft')
+    .gte('work_date', start)
+    .lt('work_date', end)
+    .select('id');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, confirmed_count: (data || []).length });
+});
+
+// 月次確認の解除（confirmed → draft）。confirm-month と同権限。
+router.post('/work-hours/unconfirm-month', requireAuth, async (req, res) => {
+  if (!(await whIsConfirmer(req))) {
+    return res.status(403).json({ error: '確認解除の権限がありません（admin/秘書/プロデューサーのみ）' });
+  }
+  const { user_id } = req.body || {};
+  const year = parseInt(req.body?.year, 10);
+  const month = parseInt(req.body?.month, 10);
+  if (!user_id || !year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ error: 'user_id, year, month は必須です' });
+  }
+  const { start, end } = whMonthRange(year, month);
+  const { data, error } = await supabase
+    .from('work_hour_entries')
+    .update({
+      status: 'draft',
+      confirmed_by: null,
+      confirmed_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', user_id)
+    .eq('status', 'confirmed')
+    .gte('work_date', start)
+    .lt('work_date', end)
+    .select('id');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, unconfirmed_count: (data || []).length });
 });
 
 // スプレッドシート出力（CSV ではなく Sheets を基本とする方針）
@@ -9847,7 +10416,7 @@ router.get('/members', requireAuth, async (req, res) => {
   // 機材情報・休日曜日はチーム設計に必要なので一覧API でも返す（機微情報ではないので非機微列）。
   // default_creative_tab は最も新しい列なので baseColsWith にだけ含めて、未適用環境では fallback で外す
   // creative_default_* (PR #277) はメンバーマスターでクリエイティブ画面の初期表示状態を保持。未適用環境では fallback で外す
-  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types, is_external, external_company';
+  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types, is_external, external_company, hourly_rate, hourly_note';
   // hide_birth_year がない環境向けフォールバック（default_creative_tab も同様に外す）
   const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
   // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
@@ -11700,6 +12269,16 @@ router.get('/invoices/preview-items', async (req, res) => {
       total,
     };
   });
+
+  // ADR 028 Stage 2: 対象月の作業時間報告（work_hour_entries）があれば
+  // is_hourly: true の時間明細アイテムを末尾に追加する。
+  // 例: 「秘書業 3.27h × ¥1,600」「ハビー ディレクション 15.17h × ¥1,500」＝ project別 + 非紐付きまとめ。
+  try {
+    const hourlyItems = await whBuildInvoiceItems(uid, year, month);
+    if (hourlyItems.length) result.push(...hourlyItems);
+  } catch (e) {
+    console.warn('[preview-items] work_hour_entries load failed:', e.message);
+  }
 
   res.json(result);
 });
@@ -13634,6 +14213,12 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const { resolveCreativeRoleCost } = require('../utils/pricing');
   const { cycle_id, selected_creative_ids, selected_items } = req.body;
   let { project_id } = req.body;
+  // ADR 028 Stage 2: 時間制（作業時間報告）グループの選択キー。
+  // 金額はクライアント値を信用せず、サーバー側で work_hour_entries から再計算する。
+  // キーは preview-items の hourly_key（`${project_id|'none'}:${rate}` / 'expense'）。
+  const hourlyKeys = Array.isArray(req.body.hourly_keys)
+    ? req.body.hourly_keys.filter(k => typeof k === 'string' && k.length <= 100).slice(0, 50)
+    : [];
   // admin/secretary のみ代理発行可能、それ以外はログインユーザー本人に固定
   const issuer_id = ((await isStaffRequester(req)) && req.body.issuer_id)
     ? req.body.issuer_id
@@ -13691,11 +14276,17 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at', 'additional_reviewer_ids'];
   const buildSelect = (includeOptional) => `*${includeOptional ? ', ' + OPTIONAL_COLS.join(', ') : ''}, projects(id, director_id, producer_id), creative_assignments(user_id, role, rank_applied, users(id, full_name))`;
 
-  if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id) {
+  if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id && !hourlyKeys.length) {
     return res.status(400).json({ error: '請求対象クリエイティブを選択してください' });
   }
 
   const overrideCreativeIds = overrideMap ? [...overrideMap.keys()] : null;
+  // 時間制のみの請求（秘書等・クリエイティブ担当なし）を許容する
+  const hasCreativeSelection = !!(
+    (overrideCreativeIds && overrideCreativeIds.length) ||
+    (selected_creative_ids && selected_creative_ids.length) ||
+    project_id
+  );
   const buildAndApply = (includeOptional) => {
     let q = supabase
       .from('creatives')
@@ -13712,14 +14303,19 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     return q;
   };
 
-  let { data: creatives, error: cErr } = await buildAndApply(true);
-  // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
-  if (cErr && /column .+ does not exist/.test(cErr.message || '')) {
-    console.warn('[invoices/generate] optional列なし → fallback で再取得:', cErr.message);
-    ({ data: creatives, error: cErr } = await buildAndApply(false));
+  let creatives = [];
+  if (hasCreativeSelection) {
+    let cErr;
+    ({ data: creatives, error: cErr } = await buildAndApply(true));
+    // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
+    if (cErr && /column .+ does not exist/.test(cErr.message || '')) {
+      console.warn('[invoices/generate] optional列なし → fallback で再取得:', cErr.message);
+      ({ data: creatives, error: cErr } = await buildAndApply(false));
+    }
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    creatives = creatives || [];
   }
-  if (cErr) return res.status(500).json({ error: cErr.message });
-  if (!creatives.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
+  if (!creatives.length && !hourlyKeys.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
 
   // 追加メンバー（Dチェック呼び出し）ガード: 列が無い場合・schema-sync 未適用環境では空配列扱い。
   // creatives 側 PR がまだ本番に適用されていない場合でも 500 にならないよう、必ずアプリ側で || [] する。
@@ -13729,7 +14325,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   //   - 追加レビュアーは creative_assignments に INSERT されないので、本来 selectAble にもならないが、
   //     不正リクエストや将来の混入バグを早期検知するための明示ガード。
   //   - issuer が director_id / producer_id 経由で正規請求対象なら通す（その場合は弾かない）。
-  const issuerIsOnlyAdditionalReviewer = creatives.every(c => {
+  const issuerIsOnlyAdditionalReviewer = creatives.length > 0 && creatives.every(c => {
     const additional = additionalReviewerIdsOf(c);
     if (!additional.includes(issuer_id)) return false; // 追加レビュアーですらない creative は対象外なので false
     const isDirector = c.projects?.director_id === issuer_id;
@@ -13896,6 +14492,38 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
         price_change_reason: isOverridden ? b.change_reason : null,
         sort_order:     sortCounter++,
       });
+    }
+  }
+
+  // ADR 028 Stage 2: 時間制（作業時間報告）明細。
+  // 金額は work_hour_entries から再計算（preview-items と同じ whBuildInvoiceItems を共有）し、
+  // 選択された hourly_key のグループだけを invoice_items（creative_id = NULL）として追加する。
+  if (hourlyKeys.length) {
+    const whYear = parseInt(req.body.year, 10) || new Date().getFullYear();
+    const whMonth = parseInt(req.body.month, 10) || (new Date().getMonth() + 1);
+    try {
+      const hourlyItems = await whBuildInvoiceItems(issuer_id, whYear, whMonth);
+      for (const hi of hourlyItems) {
+        if (!hourlyKeys.includes(hi.hourly_key)) continue;
+        totalAmount += hi.total;
+        itemRows.push({
+          creative_id:    null,
+          creative_label: hi.label,
+          cost_type:      hi.hourly_key === 'expense' ? 'hourly_expense' : 'hourly_fee',
+          label:          hi.hourly_key === 'expense' ? '立替経費' : '時間報酬',
+          quantity:       1,
+          unit:           '式',
+          unit_price:     hi.total,
+          total_amount:   hi.total,
+          is_special:     false,
+          special_reason: null,
+          original_unit_price: hi.total,
+          price_change_reason: null,
+          sort_order:     sortCounter++,
+        });
+      }
+    } catch (e) {
+      return res.status(500).json({ error: `時間明細の集計に失敗しました: ${e.message}` });
     }
   }
 
