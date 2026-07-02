@@ -6095,23 +6095,16 @@ router.get('/creatives', async (req, res) => {
   const tabRaw = (req.query.tab || '').toString().toLowerCase();
   const tabFilter = (tabRaw === 'video' || tabRaw === 'design') ? tabRaw : null;
 
-  // assignee_id フィルタは PostgREST の埋め込み JOIN で絞り込めないので、
-  // 先に creative_assignments から該当 creative_id 集合を取得し .in() で絞る
-  // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
-  let assigneeCreativeIds = null;
+  // assignee_id フィルタ: エイリアス付き inner join embed（ca_filter）で creatives を直接絞る。
+  // 旧実装は creative_assignments から creative_id 集合を先に取り .in('id', ids) していたが、
+  // 担当者を多数選択すると ids が数千件になり、PostgREST への GET URL が数十KB超で
+  // Supabase 側に接続を切られ「TypeError: fetch failed」(HTTP 500) になっていた。
+  // embed フィルタなら URL に載るのは user_id（選択人数分）だけで済み、RTT も 1 回減る。
+  // 表示用の creative_assignments embed は別名なので全担当者が返る（絞られない）。
+  let assigneeUserIds = null;
   if (assignee_id) {
     const userIds = String(assignee_id).split(',').map(s => s.trim()).filter(Boolean);
-    if (userIds.length > 0) {
-      let caQuery = supabase.from('creative_assignments').select('creative_id');
-      caQuery = (userIds.length > 1) ? caQuery.in('user_id', userIds) : caQuery.eq('user_id', userIds[0]);
-      const { data: caRows, error: caErr } = await caQuery;
-      if (caErr) return res.status(500).json({ error: caErr.message });
-      assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
-      // ヒット 0 件なら以降の本体クエリ自体スキップ
-      if (assigneeCreativeIds.length === 0) {
-        return res.json({ data: [], total: 0, limit, offset });
-      }
-    }
+    if (userIds.length > 0) assigneeUserIds = userIds;
   }
 
   // フリーワード検索（q）の事前処理:
@@ -6142,11 +6135,13 @@ router.get('/creatives', async (req, res) => {
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at'];
   // light モードの select: ダッシュボード（renderAdminDash の集計・円グラフ・納期アラート）が
   // 参照する列のみ。users は NameDisplay 用の full_name / nickname だけ、optional 列は含めない。
+  // assignee フィルタ用の inner join embed（フィルタ専用・レスポンスからは strip する）
+  const assigneeRel = assigneeUserIds ? ',\n    ca_filter:creative_assignments!inner(user_id)' : '';
   const buildLightSelect = () => `
     id, file_name, status, draft_deadline, final_deadline,
     help_flag, creative_type, project_id, created_at,
     ${projectsRel}(id, name, client_id, clients(id, name)),
-    creative_assignments(id, role, users(id, full_name, nickname))
+    creative_assignments(id, role, users(id, full_name, nickname))${assigneeRel}
   `;
   const buildSelect = (includeOptional) => lightMode ? buildLightSelect() : `
     id, file_name, status, draft_deadline, final_deadline,
@@ -6157,7 +6152,7 @@ router.get('/creatives', async (req, res) => {
     creative_assignments(
       id, role, rank_applied, created_at,
       users(id, full_name, nickname, role, rank, team_id, avatar_url)
-    )
+    )${assigneeRel}
   `;
 
   // フィルタ条件を共通化して、optional 込み → 失敗時 optional 抜きで再試行できるようにする
@@ -6192,7 +6187,11 @@ router.get('/creatives', async (req, res) => {
       }
       q = q.or(orConds.join(','));
     }
-    if (assigneeCreativeIds) q = q.in('id', assigneeCreativeIds);
+    if (assigneeUserIds) {
+      q = (assigneeUserIds.length > 1)
+        ? q.in('ca_filter.user_id', assigneeUserIds)
+        : q.eq('ca_filter.user_id', assigneeUserIds[0]);
+    }
     q = q.range(offset, offset + limit - 1);
     return q;
   };
@@ -6213,6 +6212,9 @@ router.get('/creatives', async (req, res) => {
   }
   const { data: teamsRaw } = await teamsPromise;
   if (error) return res.status(500).json({ error: error.message });
+
+  // ca_filter はフィルタ専用の embed なのでレスポンスに含めない
+  if (assigneeUserIds && data) data.forEach(c => { delete c.ca_filter; });
 
   // light モードはここで即返す（teams stitch / ball_holder / director・producer 解決を全てスキップ）
   if (lightMode) {
@@ -6294,21 +6296,13 @@ router.get('/creatives/counts', async (req, res) => {
     client_id, assignee_id, q, include_done,
   } = req.query;
 
-  // assignee_id フィルタは creative_assignments → creative_id 集合化
-  // 複数選択対応: カンマ区切り → in() で OR 検索、単一値はそのまま eq()
-  let assigneeCreativeIds = null;
+  // assignee_id フィルタ: 一覧側と同じく inner join embed で creatives を直接絞る。
+  // 旧実装（creative_id 集合 → .in('id', ids)）は担当者多数選択で URL が数十KB超になり
+  // 「TypeError: fetch failed」(HTTP 500) を起こしていた。
+  let assigneeUserIds = null;
   if (assignee_id) {
     const userIds = String(assignee_id).split(',').map(s => s.trim()).filter(Boolean);
-    if (userIds.length > 0) {
-      let caQuery = supabase.from('creative_assignments').select('creative_id');
-      caQuery = (userIds.length > 1) ? caQuery.in('user_id', userIds) : caQuery.eq('user_id', userIds[0]);
-      const { data: caRows, error: caErr } = await caQuery;
-      if (caErr) return res.status(500).json({ error: caErr.message });
-      assigneeCreativeIds = Array.from(new Set((caRows || []).map(r => r.creative_id))).filter(Boolean);
-      if (assigneeCreativeIds.length === 0) {
-        return res.json({ all: 0, video: 0, design: 0 });
-      }
-    }
+    if (userIds.length > 0) assigneeUserIds = userIds;
   }
 
   // q（フリーワード）処理は /api/creatives と揃える
@@ -6330,8 +6324,10 @@ router.get('/creatives/counts', async (req, res) => {
   // count: exact + head: true で行は返さずにカウントだけ取得（軽量化）
   // client_id を効かせるために projects!inner を select 句に含める必要がある。
   const buildCountQuery = (typePrefix) => {
-    const projectsRel = client_id ? 'projects!inner(client_id)' : null;
-    const selectExpr = projectsRel ? `id, ${projectsRel}` : 'id';
+    const rels = [];
+    if (client_id) rels.push('projects!inner(client_id)');
+    if (assigneeUserIds) rels.push('ca_filter:creative_assignments!inner(user_id)');
+    const selectExpr = ['id', ...rels].join(', ');
     let q2 = supabase
       .from('creatives')
       .select(selectExpr, { count: 'exact', head: true });
@@ -6359,7 +6355,11 @@ router.get('/creatives/counts', async (req, res) => {
       }
       q2 = q2.or(orConds.join(','));
     }
-    if (assigneeCreativeIds) q2 = q2.in('id', assigneeCreativeIds);
+    if (assigneeUserIds) {
+      q2 = (assigneeUserIds.length > 1)
+        ? q2.in('ca_filter.user_id', assigneeUserIds)
+        : q2.eq('ca_filter.user_id', assigneeUserIds[0]);
+    }
     return q2;
   };
 
