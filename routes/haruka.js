@@ -5983,11 +5983,25 @@ router.get('/work-hours', requireAuth, async (req, res) => {
     if (!userRes.data) return res.status(404).json({ error: 'ユーザーが見つかりません' });
     const summary = whSummarize(entries);
     const confirmedCount = entries.filter(e => e.status === 'confirmed').length;
+
+    // 単価プライバシー（ユーザー指示 2026-07-02: 秘書同士で単価が見えないように）:
+    // 時給と支払金額が見えるのは「本人」と「admin 実効ロール」のみ。
+    // 秘書・P層は他人のタイムシートの時間・業務内容・経費は閲覧・確認操作できるが、
+    // 単価（時給スナップショット）と時給由来の金額はマスクして返す。
+    const canSeeRates = (targetUserId === req.user.id) || (await whHasAnyEffectiveRole(req, ['admin']));
+    let outUser = userRes.data;
+    let outEntries = entries;
+    let outSummary = summary;
+    if (!canSeeRates) {
+      outUser = { ...userRes.data, is_hourly: !!userRes.data.hourly_rate, hourly_rate: null };
+      outEntries = entries.map(e => ({ ...e, hourly_rate_applied: null, client_hourly_rate_applied: null }));
+      outSummary = { ...summary, hourly_amount: null, grand_total: null, rates_masked: true };
+    }
     res.json({
       year, month,
-      user: userRes.data,
-      entries,
-      summary,
+      user: outUser,
+      entries: outEntries,
+      summary: outSummary,
       confirmed_count: confirmedCount,
       all_confirmed: entries.length > 0 && confirmedCount === entries.length,
     });
@@ -10471,6 +10485,21 @@ router.get('/members', requireAuth, async (req, res) => {
     ({ data, error } = await supabase.from('users').select(colsLegacy).order('full_name'));
   }
   if (error) return res.status(500).json({ error: error.message });
+  // ADR 028 補足（ユーザー指示 2026-07-02: 秘書同士で単価が見えないように）:
+  // 時給の金額は本人と admin 実効ロールのみ閲覧可。member.list 権限者（秘書等）にも
+  // 他人の hourly_rate は値をマスクし、時給制バッジ用の is_hourly フラグだけ返す。
+  if (Array.isArray(data)) {
+    const viewerCodes = await getEffectiveRoleCodes(req);
+    if (!(viewerCodes || []).includes('admin')) {
+      for (const m of data) {
+        if (!m || m.id === req.user.id) continue;
+        if (Object.prototype.hasOwnProperty.call(m, 'hourly_rate')) {
+          m.is_hourly = !!m.hourly_rate;
+          m.hourly_rate = null;
+        }
+      }
+    }
+  }
   // 自分自身のレコードには機微情報を必ず含める
   if (!canSeeSensitive && Array.isArray(data)) {
     const selfBaseCols = 'id, birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
