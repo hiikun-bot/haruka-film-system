@@ -146,10 +146,15 @@ function buildRows(m) {
     const projs = m.projects.filter(p => p.client_id === cl.id && !p.is_hidden).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
     for (const p of projs) {
       const catIds = meaningfulCategoryIds(p, m);
-      // 案件区分 = その案件のカテゴリ(主区分名＋アイコン)。案件内の全行で同一。主区分未設定なら先頭カテゴリ。
-      const pcat = m.catById[p.primary_category_id] || m.catById[catIds[0]];
-      const ankenKubun = pcat ? (CAT_ICON[pcat.code] ? CAT_ICON[pcat.code] + ' ' : '') + pcat.name : '';
-      for (const cid of catIds) {
+      // 出す区分は「主区分 ＋ 請求額>0 の実データがある区分」だけに絞る。
+      // 旧 project_rates 由来の phantom 行（planned/costのみ・請求0）を除外して重複表示を防ぐ。
+      const primaryCid = (p.primary_category_id && catIds.includes(p.primary_category_id)) ? p.primary_category_id : catIds[0];
+      const emitCids = catIds.filter(cid => cid === primaryCid || (m.linesByProj[p.id] || []).some(l => l.category_id === cid && (l.client_unit_price || 0) > 0));
+      const pcat = m.catById[primaryCid];
+      for (const cid of emitCids) {
+        // 案件区分ラベル：本物の複数区分ケースは行のカテゴリ、単一なら主区分（アイコン付き）。
+        const labelCat = emitCids.length > 1 ? (m.catById[cid] || pcat) : pcat;
+        const ankenKubun = labelCat ? (CAT_ICON[labelCat.code] ? CAT_ICON[labelCat.code] + ' ' : '') + labelCat.name : '';
         const code = m.catById[cid]?.code;
         const grp = (m.linesByProj[p.id] || []).filter(l => l.category_id === cid);
         const nz = grp.map(l => l.client_unit_price).filter(v => v > 0);
