@@ -17700,13 +17700,16 @@ function getCostRoleOptions() {
 }
 
 // プリセット一括生成用のカテゴリ select を populate（案件の主カテゴリをデフォルト選択）
+// ADR 027: 主カテゴリが設定されている案件は主カテゴリのみ選択可（サーバー側でも検証）。
+// 主カテゴリ未設定のレガシー案件のみ全カテゴリを出す。
 async function populateLinesPresetCategorySelect() {
   const sel = document.getElementById('p-lines-preset-category');
   if (!sel) return;
   try {
     const cats = await loadCategories();
     const primary = document.getElementById('p-primary-category')?.value || '';
-    sel.innerHTML = '<option value="">カテゴリ…</option>' + (cats || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    const selectable = primary ? (cats || []).filter(c => c.id === primary) : (cats || []);
+    sel.innerHTML = '<option value="">カテゴリ…</option>' + selectable.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
     if (primary) sel.value = primary;
   } catch (_) {}
 }
@@ -18018,6 +18021,15 @@ async function prepareProjectLineEditModal(line, projectId) {
   const sel = document.getElementById('pl-edit-category');
   if (sel) {
     populateCategorySelect(sel, line?.category_id || null);
+    // ADR 027: 主カテゴリが設定されている案件では、選択肢を主カテゴリのみに絞る
+    // （サーバー側 POST/PUT でも同検証あり）。既存 line が旧データで別カテゴリの場合のみ、
+    // その現在値も残して表示崩れを防ぐ（据え置き編集は許可・変更は主カテゴリへのみ）。
+    const projCatRestrict = document.getElementById('p-primary-category')?.value || '';
+    if (projCatRestrict) {
+      Array.from(sel.options).forEach(o => {
+        if (o.value && o.value !== projCatRestrict && o.value !== (line?.category_id || '')) o.remove();
+      });
+    }
     if (!line?.category_id) {
       // デフォルトの優先順位:
       //  1) 上部「プリセットから一括生成」で選択中のカテゴリ（ユーザーが直前に選んだものを引き継ぐ）
