@@ -7770,7 +7770,17 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
       <span id="wh-member-picker-wrap" style="display:none;align-items:center;gap:6px;margin-left:auto">
         <span style="font-size:12px;color:var(--text-muted)">メンバー</span>
-        <select id="wh-member-picker" class="form-select" style="width:200px;padding:5px 8px;font-size:13px" onchange="whOnMemberChange(this.value)"></select>
+        <select id="wh-member-role-filter" class="form-select" style="width:130px;padding:5px 8px;font-size:12px" onchange="whOnMemberRoleFilter(this.value)" title="ロールで絞り込み">
+          <option value="">全ロール</option>
+          <option value="secretary">秘書</option>
+          <option value="editor">編集者</option>
+          <option value="designer">デザイナー</option>
+          <option value="director">ディレクター</option>
+          <option value="producer">プロデューサー</option>
+          <option value="producer_director">P兼D</option>
+          <option value="admin">管理者</option>
+        </select>
+        <select id="wh-member-picker" class="form-select" style="width:220px;padding:5px 8px;font-size:13px" onchange="whOnMemberChange(this.value)"></select>
       </span>
     </div>
     <div id="wh-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>
@@ -21272,11 +21282,12 @@ let _whData = null;            // GET /work-hours のレスポンス
 let _whHourlyProjects = null;  // 時間制 line がある案件（ドロップダウン用キャッシュ）
 let _whMembers = null;         // メンバー切替セレクタ用キャッシュ
 
+// ユーザー指示 2026-07-03: メンバー切替・月次確認・代理編集は管理者のみ（サーバー側も同条件）
 function whIsManagerRole() {
-  return ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
+  return effectiveRole() === 'admin';
 }
 function whIsStaffRole() {
-  return ['admin', 'secretary'].includes(effectiveRole());
+  return effectiveRole() === 'admin';
 }
 function whYen(n) { return '¥' + Number(n || 0).toLocaleString(); }
 // h 換算: 分÷60 の小数第3位以下切り捨て（サーバーと同一ルール / ADR 028）
@@ -21368,21 +21379,8 @@ function whRender() {
   const d = _whData;
   if (!d) return;
 
-  // ---- メンバー切替（admin/秘書/プロデューサーのみ表示） ----
-  const pickerWrap = document.getElementById('wh-member-picker-wrap');
-  if (whIsManagerRole() && Array.isArray(_whMembers)) {
-    pickerWrap.style.display = 'inline-flex';
-    const picker = document.getElementById('wh-member-picker');
-    const selected = _whUserId || currentUser?.id || '';
-    picker.innerHTML = _whMembers
-      .filter(m => m.is_active !== false)
-      .map(m => {
-        const label = `${NameDisplay.full(m)}${(m.hourly_rate || m.is_hourly) ? '（⏱ 時給制）' : ''}${m.id === currentUser?.id ? '（自分）' : ''}`;
-        return `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
-      }).join('');
-  } else {
-    pickerWrap.style.display = 'none';
-  }
+  // ---- メンバー切替（管理者のみ表示・ロール絞り込みつき） ----
+  whRenderMemberPicker();
 
   // ---- 上部サマリー（時給・合計勤務h・月給・経費・合計） ----
   const s = d.summary || {};
@@ -21464,13 +21462,55 @@ function whRender() {
   if (addBtn) addBtn.style.display = whCanAddRow() ? '' : 'none';
 }
 
-// 案件ドロップダウンの options（時間制 line がある案件のみ）
-// 秘書のみ: デフォルトは「ひーくん（管理者サポート）」＝案件非紐付き（既定時給で計算）。
-// 案件ごとの作業報告が必要なときだけ案件を選ぶ（ユーザー指示 2026-07-02・ADR 015 準拠で effectiveRole 判定）。
+// メンバー切替セレクタの描画（管理者のみ・ロール絞り込みつき）。
+// 絞り込みで表示中メンバーがリスト外になっても選択は維持する（勝手にシートを切り替えない）。
+let _whMemberRoleFilter = '';
+function whOnMemberRoleFilter(v) {
+  _whMemberRoleFilter = v || '';
+  whRenderMemberPicker();
+}
+function whRenderMemberPicker() {
+  const pickerWrap = document.getElementById('wh-member-picker-wrap');
+  if (!pickerWrap) return;
+  if (!(whIsManagerRole() && Array.isArray(_whMembers))) {
+    pickerWrap.style.display = 'none';
+    return;
+  }
+  pickerWrap.style.display = 'inline-flex';
+  const roleSel = document.getElementById('wh-member-role-filter');
+  if (roleSel && roleSel.value !== _whMemberRoleFilter) roleSel.value = _whMemberRoleFilter;
+  const picker = document.getElementById('wh-member-picker');
+  const selected = _whUserId || currentUser?.id || '';
+  let list = _whMembers.filter(m => m.is_active !== false);
+  if (_whMemberRoleFilter) list = list.filter(m => m.role === _whMemberRoleFilter);
+  // 表示中のメンバーが絞り込み外でも先頭に残す
+  if (selected && !list.some(m => m.id === selected)) {
+    const sm = _whMembers.find(m => m.id === selected);
+    if (sm) list = [sm, ...list];
+  }
+  picker.innerHTML = list.map(m => {
+    const label = `${NameDisplay.full(m)}${(m.hourly_rate || m.is_hourly) ? '（⏱ 時給制）' : ''}${m.id === currentUser?.id ? '（自分）' : ''}`;
+    return `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+}
+
+// 表示中シートの対象メンバーが秘書かどうか。
+// 「ひーくん（管理者サポート）※既定」表示は見ている人ではなく対象メンバーで判定する
+// （admin が秘書のシートを開いたときも秘書用表示にする）。自分のシートは実効ロールで判定（VIEW AS 対応）。
+function whTargetIsSecretary() {
+  if (whViewingSelf()) {
+    return typeof effectiveRole === 'function' && effectiveRole() === 'secretary';
+  }
+  const m = (_whMembers || []).find(x => x.id === _whUserId);
+  return m?.role === 'secretary';
+}
+
+// 案件ドロップダウンの options（全案件。時間単価つきの案件が先頭・単価表示つき）。
+// 時間単価が無い案件も「サポート先の記録」として選べる（金額は本人の既定時給で計算）。
+// 秘書のみ: 案件なしの既定選択肢を「ひーくん（管理者サポート）」と表示する。
 function whProjectOptionsHtml(selectedId, fallbackName) {
   const list = _whHourlyProjects || [];
-  const isSecretary = typeof effectiveRole === 'function' && effectiveRole() === 'secretary';
-  const noneLabel = isSecretary
+  const noneLabel = whTargetIsSecretary()
     ? 'ひーくん（管理者サポート）※既定'
     : '（案件なし＝既定時給）';
   const opts = [`<option value="">${noneLabel}</option>`];
@@ -21478,9 +21518,11 @@ function whProjectOptionsHtml(selectedId, fallbackName) {
   for (const p of list) {
     const sel = p.project_id === selectedId ? 'selected' : '';
     if (sel) found = true;
-    opts.push(`<option value="${esc(p.project_id)}" ${sel}>${esc(p.name)}（¥${Number(p.hourly_rate || 0).toLocaleString()}/h）</option>`);
+    const rateSuffix = p.hourly_rate ? `（¥${Number(p.hourly_rate).toLocaleString()}/h）` : '';
+    const clientPrefix = p.client_name ? `${p.client_name}／` : '';
+    opts.push(`<option value="${esc(p.project_id)}" ${sel}>${esc(clientPrefix)}${esc(p.name)}${rateSuffix}</option>`);
   }
-  // 過去行の案件が現在時間制 line を持たない場合も表示は維持する
+  // 過去行の案件が一覧に無い場合（非表示化等）も表示は維持する
   if (!found && selectedId) {
     opts.push(`<option value="${esc(selectedId)}" selected>${esc(fallbackName || '（案件）')}</option>`);
   }
