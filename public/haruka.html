@@ -21442,12 +21442,12 @@ function whRender() {
   const head = `
     <thead>
       <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:180px">案件</th>
         <th style="padding:8px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;width:126px">日付</th>
         <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:86px">開始</th>
         <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:86px">終了</th>
         <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:70px">稼働(分)</th>
         <th style="padding:8px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);min-width:180px">業務内容</th>
-        <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:170px">案件（任意）</th>
         <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:90px">立替経費</th>
         <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:140px">経費内容</th>
         <th style="padding:8px 4px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);width:58px" title="1,000円を超える立替は領収書の提出が必要です">領収書</th>
@@ -21465,9 +21465,15 @@ function whRender() {
 }
 
 // 案件ドロップダウンの options（時間制 line がある案件のみ）
+// 秘書のみ: デフォルトは「ひーくん（管理者サポート）」＝案件非紐付き（既定時給で計算）。
+// 案件ごとの作業報告が必要なときだけ案件を選ぶ（ユーザー指示 2026-07-02・ADR 015 準拠で effectiveRole 判定）。
 function whProjectOptionsHtml(selectedId, fallbackName) {
   const list = _whHourlyProjects || [];
-  const opts = ['<option value="">（案件なし＝既定時給）</option>'];
+  const isSecretary = typeof effectiveRole === 'function' && effectiveRole() === 'secretary';
+  const noneLabel = isSecretary
+    ? 'ひーくん（管理者サポート）※既定'
+    : '（案件なし＝既定時給）';
+  const opts = [`<option value="">${noneLabel}</option>`];
   let found = !selectedId;
   for (const p of list) {
     const sel = p.project_id === selectedId ? 'selected' : '';
@@ -21496,13 +21502,13 @@ function whRowHtml(e) {
   const v = (x) => esc(x ?? '');
   const timeVal = (t) => t ? String(t).slice(0, 5) : '';
   return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);${rowStyle}">
+    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whMarkDirty(this)">${whProjectOptionsHtml(isNew ? '' : e.project_id, isNew ? '' : e.project?.name)}</select>
+      ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? '' : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="end_time" value="${timeVal(isNew ? '' : e.end_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="minutes" value="${isNew ? '' : (e.minutes ?? 0)}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 8px"><textarea data-f="description" rows="1" ${dis} style="${st};resize:vertical;min-height:29px" onchange="whMarkDirty(this)" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">${v(isNew ? '' : e.description)}</textarea></td>
-    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whMarkDirty(this)">${whProjectOptionsHtml(isNew ? '' : e.project_id, isNew ? '' : e.project?.name)}</select>
-      ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="expense_amount" value="${isNew ? '' : (e.expense_amount || '')}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="text" data-f="expense_note" value="${v(isNew ? '' : e.expense_note)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 4px;text-align:center"><input type="checkbox" data-f="receipt_submitted" ${(!isNew && e.receipt_submitted) ? 'checked' : ''} ${dis} style="width:15px;height:15px;cursor:${editable ? 'pointer' : 'default'}" onchange="whMarkDirty(this)"></td>
@@ -21543,7 +21549,8 @@ function whAddRow() {
   const defaultDate = today.startsWith(`${_whYear}-${mm}`) ? today : `${_whYear}-${mm}-01`;
   tbody.insertAdjacentHTML('beforeend', whRowHtml({ work_date: defaultDate }));
   const tr = tbody.lastElementChild;
-  tr.querySelector('[data-f="start_time"]')?.focus();
+  // 案件を最初に選ぶ入力順（ユーザー指示）。秘書は既定「ひーくん（管理者サポート）」のまま進めばよい
+  tr.querySelector('[data-f="project_id"]')?.focus();
 }
 
 function whCollectRow(tr) {
