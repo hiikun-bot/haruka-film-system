@@ -11720,7 +11720,7 @@ function renderMemberTable(list, visibleMembers) {
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.nickname ? `${esc(m.nickname)}<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${esc(m.full_name||'')}）</span>` : esc(m.full_name||'')}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
-            m.hourly_rate ? ` <span title="${esc(m.hourly_note || '')} 時給 ¥${Number(m.hourly_rate).toLocaleString()}/h（作業時間報告で精算 / ADR 028）" style="font-size:10px;background:#CCFBF1;color:#0F766E;padding:1px 6px;border-radius:6px;font-weight:600">⏱ 時給制</span>` : ''
+            (m.hourly_rate || m.is_hourly) ? ` <span title="${esc(m.hourly_note || '')}${m.hourly_rate ? ` 時給 ¥${Number(m.hourly_rate).toLocaleString()}/h` : ' 時給制（単価は本人と管理者のみ表示）'}（作業時間報告で精算 / ADR 028）" style="font-size:10px;background:#CCFBF1;color:#0F766E;padding:1px 6px;border-radius:6px;font-weight:600">⏱ 時給制</span>` : ''
           }${
             m.leader_rank === 'leader' ? ' <span style="font-size:10px;background:#FFE082;color:#7C5800;padding:1px 6px;border-radius:6px;font-weight:600">👑 リーダー</span>'
             : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
@@ -21377,7 +21377,7 @@ function whRender() {
     picker.innerHTML = _whMembers
       .filter(m => m.is_active !== false)
       .map(m => {
-        const label = `${NameDisplay.full(m)}${m.hourly_rate ? '（⏱ 時給制）' : ''}${m.id === currentUser?.id ? '（自分）' : ''}`;
+        const label = `${NameDisplay.full(m)}${(m.hourly_rate || m.is_hourly) ? '（⏱ 時給制）' : ''}${m.id === currentUser?.id ? '（自分）' : ''}`;
         return `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
       }).join('');
   } else {
@@ -21387,18 +21387,31 @@ function whRender() {
   // ---- 上部サマリー（時給・合計勤務h・月給・経費・合計） ----
   const s = d.summary || {};
   const u = d.user || {};
+  // 単価プライバシー: 他人のシートを秘書・P層が見るとき、サーバーが時給・金額を null でマスクして返す
+  // （rates_masked=true）。本人と admin のみ金額が見える。
+  const ratesMasked = !!s.rates_masked;
   const rateChip = u.hourly_rate
     ? `<div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">時給</span> <strong>¥${Number(u.hourly_rate).toLocaleString()}${u.hourly_note ? `（${esc(u.hourly_note)}）` : ''}</strong></div>`
-    : `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E">時給未設定（管理者に依頼）※案件紐付きの行は案件側の時間単価で計算されます</div>`;
-  const rateMissing = (s.rate_missing_minutes || 0) > 0
+    : ratesMasked
+      ? `<div style="background:#F3F4F6;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text-muted)">🔒 時給制${u.hourly_note ? `（${esc(u.hourly_note)}）` : ''} — 単価は本人と管理者のみ表示</div>`
+      : `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E">時給未設定（管理者に依頼）※案件紐付きの行は案件側の時間単価で計算されます</div>`;
+  const rateMissing = !ratesMasked && (s.rate_missing_minutes || 0) > 0
     ? `<div style="background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;padding:10px 14px;font-size:12px;color:#B91C1C" title="時給が未設定のまま登録された行があります">単価不明 ${whHoursLabel(s.rate_missing_minutes)}h</div>`
+    : '';
+  const moneyChips = ratesMasked
+    ? ''
+    : `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">月給（時間分）</span> <strong>${whYen(s.hourly_amount)}</strong></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">経費合計</span> <strong>${whYen(s.expense_total)}</strong></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計</span> <strong style="font-size:14px">${whYen(s.grand_total)}</strong></div>`;
+  const expenseOnlyChip = ratesMasked
+    ? `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">経費合計</span> <strong>${whYen(s.expense_total)}</strong></div>`
     : '';
   document.getElementById('wh-summary').innerHTML = `
     ${rateChip}
     <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計勤務</span> <strong>${whHoursLabel(s.total_minutes)}h</strong> <span style="font-size:11px;color:var(--text-muted)">（${(s.total_minutes || 0).toLocaleString()}分）</span></div>
-    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">月給（時間分）</span> <strong>${whYen(s.hourly_amount)}</strong></div>
-    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">経費合計</span> <strong>${whYen(s.expense_total)}</strong></div>
-    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計</span> <strong style="font-size:14px">${whYen(s.grand_total)}</strong></div>
+    ${moneyChips}
+    ${expenseOnlyChip}
     ${rateMissing}
   `;
 
