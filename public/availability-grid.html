@@ -34,7 +34,8 @@
   .legend { font-size: 0.78em; color: var(--text-muted); margin: 0 0 0.7em; }
   .legend span { display: inline-block; margin-right: 0.8em; }
   .legend .lg-manual { color: var(--manual); font-weight: 700; }
-  .grid-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 8px; max-height: calc(100vh - 220px); }
+  /* 縦は外側（親ページ）のスクロールに一本化するため内部スクロールにしない。横だけ内部スクロール */
+  .grid-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
   table.grid { border-collapse: collapse; font-size: 0.82em; min-width: 800px; }
   table.grid th, table.grid td { border: 1px solid var(--border-soft); padding: 0.25em 0.4em; text-align: center; white-space: nowrap; }
   table.grid thead th { background: #fff; z-index: 2; font-weight: 600; }
@@ -1549,6 +1550,21 @@ async function autoSyncSelfIfConnected() {
   } catch (e) {
     if (bar) bar.textContent = prev + ' ／ GCal同期エラー';
   }
+}
+
+// iframe 埋め込み時（メンバータブのカレンダー表示）: 自身のコンテンツ高さを親に通知し、
+// 親側で iframe を実高さにリサイズさせて縦スクロールを親ページ1本に統一する
+if (window.parent !== window) {
+  const notifyHeight = () => {
+    try {
+      // documentElement.scrollHeight は viewport（=iframe高さ）に引きずられるので body 実寸＋margin で測る
+      const cs = getComputedStyle(document.body);
+      const h = document.body.scrollHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+      window.parent.postMessage({ type: 'availability-grid-height', height: h }, window.location.origin);
+    } catch (_) {}
+  };
+  new ResizeObserver(notifyHeight).observe(document.body);
+  window.addEventListener('load', notifyHeight);
 }
 
 (async () => {

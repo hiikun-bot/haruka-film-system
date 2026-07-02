@@ -11417,8 +11417,19 @@ function _renderMemberCalendarIframe() {
   if (!list) return;
   list.classList.remove('loading');
   if (list.querySelector('iframe[data-mview-calendar="1"]')) return;
-  list.innerHTML = '<iframe data-mview-calendar="1" src="/availability-grid.html" style="width:100%;height:calc(100vh - 240px);border:0;border-radius:12px;background:#fff" title="リソースカレンダー"></iframe>';
+  list.innerHTML = '<iframe data-mview-calendar="1" src="/availability-grid.html" scrolling="no" style="width:100%;height:calc(100vh - 240px);border:0;border-radius:12px;background:#fff;overflow:hidden" title="リソースカレンダー"></iframe>';
 }
+// availability-grid.html からの高さ通知を受けて iframe をコンテンツ実高さにリサイズ
+// （iframe 内の縦スクロールをなくし、縦スクロールをページ本体の1本に統一する）
+window.addEventListener('message', (ev) => {
+  if (ev.origin !== window.location.origin) return;
+  const d = ev.data;
+  if (!d || d.type !== 'availability-grid-height') return;
+  const iframe = document.querySelector('iframe[data-mview-calendar="1"]');
+  if (!iframe || ev.source !== iframe.contentWindow) return;
+  const h = Number(d.height);
+  if (Number.isFinite(h) && h > 0) iframe.style.height = Math.min(Math.ceil(h) + 4, 100000) + 'px';
+});
 function setMemberViewMode(mode) {
   if (!['poster','table','calendar'].includes(mode)) return;
   memberViewMode = mode;
