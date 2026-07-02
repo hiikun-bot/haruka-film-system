@@ -36,13 +36,14 @@ const RANKS = ['A', 'B', 'C'];
 const DASH = '—';
 
 const HEADER = [
-  '#', 'クライアント', '請求区分', '案件名', '区分', 'クライアント請求', 'ディレクション費',
+  '#', 'クライアント', '請求区分', '案件名', '案件区分', '区分', 'クライアント請求', 'ディレクション費',
   'ランクA', 'ランクB', 'ランクC',
   'project_id', 'client_id', 'category_id', 'creative_type',
 ];
-const COL = { billing: 2, clientCharge: 5, directionFee: 6, rankA: 7, rankB: 8, rankC: 9,
-  projectId: 10, clientId: 11, categoryId: 12, creativeType: 13 };
-const ID_COL_START = 10;
+// 案件区分(index4) = その案件のカテゴリ(主区分名)。エクスポート専用の参照列で、インポート(コンバート)では読まない。
+const COL = { billing: 2, ankenKubun: 4, kubun: 5, clientCharge: 6, directionFee: 7, rankA: 8, rankB: 9, rankC: 10,
+  projectId: 11, clientId: 12, categoryId: 13, creativeType: 14 };
+const ID_COL_START = 11;
 const N_COLS = HEADER.length;
 
 const num = v => {
@@ -139,6 +140,8 @@ function buildRows(m) {
     const projs = m.projects.filter(p => p.client_id === cl.id && !p.is_hidden).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
     for (const p of projs) {
       const catIds = meaningfulCategoryIds(p, m);
+      // 案件区分 = その案件のカテゴリ(主区分名)。案件内の全行で同一。主区分未設定なら先頭カテゴリ名。
+      const ankenKubun = m.catById[p.primary_category_id]?.name || m.catById[catIds[0]]?.name || '';
       for (const cid of catIds) {
         const code = m.catById[cid]?.code;
         const grp = (m.linesByProj[p.id] || []).filter(l => l.category_id === cid);
@@ -155,6 +158,7 @@ function buildRows(m) {
         seq++;
         rows.push([
           seq, cl.name, billingCodeToLabel(cl.billing_org), p.name || '',
+          ankenKubun,
           (CAT_ICON[code] ? CAT_ICON[code] + ' ' : '') + (m.catById[cid]?.name || ''),
           cellNum(charge), (dfee == null ? DASH : dfee),
           cellNum(rankPrice.A), cellNum(rankPrice.B), cellNum(rankPrice.C),
@@ -185,7 +189,7 @@ async function exportLedger() {
   await sheetsApi.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [
     { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
     { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
-    { repeatCell: { range: { sheetId, startRowIndex: 1, startColumnIndex: 5, endColumnIndex: 10 }, cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0' } } }, fields: 'userEnteredFormat.numberFormat' } },
+    { repeatCell: { range: { sheetId, startRowIndex: 1, startColumnIndex: 6, endColumnIndex: 11 }, cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0' } } }, fields: 'userEnteredFormat.numberFormat' } },
     { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: ID_COL_START, endIndex: N_COLS }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
     { autoResizeDimensions: { dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: ID_COL_START } } },
   ] } });
@@ -198,7 +202,7 @@ async function readLedger() {
   if (!spreadsheetId) throw new Error('費用台帳シートのURLが不正です: ' + url);
   const sheetsApi = google.sheets({ version: 'v4', auth: getAuth() });
   const { title } = await firstSheet(sheetsApi, spreadsheetId);
-  const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: `${title}!A1:N2000` });
+  const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: `${title}!A1:O2000` });
   return (res.data.values || []).slice(1).filter(r => r && (r[3] || r[COL.projectId]));
 }
 
@@ -210,7 +214,7 @@ function resolveRow(r, m) {
   if (!p) return null;
   const cidH = String(r[COL.categoryId] || '').trim();
   if (cidH && m.catById[cidH]) cid = cidH;
-  if (!cid) { const c = m.catByName[stripIcon(r[4])]; cid = c ? c.id : null; }
+  if (!cid) { const c = m.catByName[stripIcon(r[COL.kubun])]; cid = c ? c.id : null; }
   if (!cid) return null;
   return { project: p, categoryId: cid };
 }
