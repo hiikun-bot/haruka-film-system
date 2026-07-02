@@ -5753,18 +5753,18 @@ router.post('/analytics/creator-summary/export-sheet', requireAuth, requirePermi
 
 // 確認済み操作・他人の月次閲覧ができる実効ロール。
 // ADR 015: ロール判定は getEffectiveRoleCodes(req)（X-View-As を尊重 = VIEW AS 対応）を使う。
-// 'producer_director' は環境により合成コードのまま返るケースがあるため両方含める。
-const WH_CONFIRMER_ROLES = ['admin', 'secretary', 'producer', 'producer_director'];
 async function whHasAnyEffectiveRole(req, roles) {
   const codes = await getEffectiveRoleCodes(req);
   return roles.some(r => (codes || []).includes(r));
 }
+// ユーザー指示 2026-07-03: 他メンバーのタイムシート閲覧・月次確認・メンバー切替は admin のみ。
+// 秘書・P層は自分のシートのみ操作できる（単価マスクは #934 のまま API 直叩き対策として維持）。
 async function whIsConfirmer(req) {
-  return whHasAnyEffectiveRole(req, WH_CONFIRMER_ROLES);
+  return whHasAnyEffectiveRole(req, ['admin']);
 }
-// 行の代理編集（confirmed 含む）ができる実効ロール（admin/秘書）
+// 行の代理編集（confirmed 含む）ができる実効ロール（admin のみ）
 async function whIsStaff(req) {
-  return whHasAnyEffectiveRole(req, ['admin', 'secretary']);
+  return whHasAnyEffectiveRole(req, ['admin']);
 }
 
 // 対象月の work_date 範囲（DATE 文字列比較。gte start / lt end）
@@ -6011,33 +6011,45 @@ router.get('/work-hours', requireAuth, async (req, res) => {
   }
 });
 
-// 行追加ドロップダウン用: 時間制 line（pricing_type='hourly' の line_cost）を持つ案件の一覧
+// 行追加ドロップダウン用: 全案件（非表示を除く）を返す。
+// 秘書のサポート先はひーくん（案件なし）以外にも「ひげごろーさん支援」等の案件があるため、
+// 時間制 line の有無で絞らない（ユーザー指示 2026-07-03）。
+// 時間制 line（pricing_type='hourly'）がある案件はその単価を付与し、無い案件は
+// hourly_rate=null で返す（POST 側で本人の既定時給にフォールバックして計算）。
 router.get('/work-hours/projects', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('project_estimate_line_costs')
-    .select(`
-      id, unit_price, user_id, pricing_type,
-      line:project_estimate_lines(id, status, client_unit_price,
-        project:projects(id, name, clients(name)))
-    `)
-    .eq('pricing_type', 'hourly');
-  if (error) return res.status(500).json({ error: error.message });
-  const byProject = new Map();
-  for (const lc of (data || [])) {
-    const p = lc.line?.project;
-    if (!p?.id || !lc.unit_price) continue;
-    if (!byProject.has(p.id)) {
-      byProject.set(p.id, {
-        project_id: p.id,
-        name: p.name,
-        client_name: p.clients?.name || '',
+  const [projRes, lcRes] = await Promise.all([
+    supabase.from('projects')
+      .select('id, name, is_hidden, clients(name)')
+      .or('is_hidden.is.null,is_hidden.eq.false'),
+    supabase.from('project_estimate_line_costs')
+      .select('id, unit_price, pricing_type, line:project_estimate_lines(id, client_unit_price, project_id)')
+      .eq('pricing_type', 'hourly'),
+  ]);
+  if (projRes.error) return res.status(500).json({ error: projRes.error.message });
+  if (lcRes.error) console.warn('[work-hours/projects] hourly costs load failed:', lcRes.error.message);
+  const hourlyByProject = new Map();
+  for (const lc of (lcRes.data || [])) {
+    const pid = lc.line?.project_id;
+    if (!pid || !lc.unit_price) continue;
+    if (!hourlyByProject.has(pid)) {
+      hourlyByProject.set(pid, {
         hourly_rate: lc.unit_price,
         client_hourly_rate: lc.line?.client_unit_price || null,
       });
     }
   }
-  res.json(Array.from(byProject.values())
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja')));
+  const list = (projRes.data || []).map(p => ({
+    project_id: p.id,
+    name: p.name,
+    client_name: p.clients?.name || '',
+    hourly_rate: hourlyByProject.get(p.id)?.hourly_rate || null,
+    client_hourly_rate: hourlyByProject.get(p.id)?.client_hourly_rate || null,
+  }));
+  // 時間単価つきの案件を先頭に、それぞれ名前順
+  list.sort((a, b) =>
+    (a.hourly_rate ? 0 : 1) - (b.hourly_rate ? 0 : 1)
+    || (a.name || '').localeCompare(b.name || '', 'ja'));
+  res.json(list);
 });
 
 // 行追加。単価は登録時にスナップショット（ADR 028）。
@@ -6074,12 +6086,21 @@ router.post('/work-hours', requireAuth, async (req, res) => {
   try {
     if (b.project_id) {
       const resolved = await whResolveProjectHourly(b.project_id, targetUserId);
-      if (!resolved || !resolved.hourly_rate) {
-        return res.status(400).json({ error: '時給が設定されていません（この案件に時間制の単価がありません。案件編集モーダルの成果物グループで pricing_type=時間単価 の単価行を設定してください）' });
+      if (resolved && resolved.hourly_rate) {
+        hourlyRate = resolved.hourly_rate;
+        clientHourlyRate = resolved.client_hourly_rate;
+        lineId = resolved.line_id;
+      } else {
+        // 時間制単価が無い案件は「サポート先の記録」として紐付けだけ行い、
+        // 金額は本人の既定時給で計算する（秘書のひげごろーさん支援等。ユーザー指示 2026-07-03）
+        const { data: u, error: uErr } = await supabase
+          .from('users').select('hourly_rate').eq('id', targetUserId).maybeSingle();
+        if (uErr) return res.status(500).json({ error: uErr.message });
+        hourlyRate = u?.hourly_rate || null;
+        if (!hourlyRate && minutes > 0) {
+          return res.status(400).json({ error: '時給が設定されていません（この案件に時間単価が無く、本人の既定時給も未設定です。管理者に設定を依頼してください）' });
+        }
       }
-      hourlyRate = resolved.hourly_rate;
-      clientHourlyRate = resolved.client_hourly_rate;
-      lineId = resolved.line_id;
     } else {
       const { data: u, error: uErr } = await supabase
         .from('users').select('hourly_rate').eq('id', targetUserId).maybeSingle();
