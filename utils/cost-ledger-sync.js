@@ -121,9 +121,14 @@ function meaningfulCategoryIds(p, m) {
   const pls = m.linesByProj[p.id] || [];
   const byCat = {};
   for (const l of pls) (byCat[l.category_id] ||= []).push(l);
+  // ADR 027: 主カテゴリ設定済みの案件は主カテゴリの行だけ台帳に出す。
+  // 温存された移行遺産の不一致 line（納品済みクリエイティブの単価根拠として DB には残す）は
+  // 「現在の受発注単価表」である台帳には出さない。
+  if (p.primary_category_id) {
+    return byCat[p.primary_category_id] ? [p.primary_category_id] : [];
+  }
   let ids = Object.keys(byCat).filter(cid => byCat[cid].some(l =>
     (l.planned_count || 0) > 0 || (l.client_unit_price || 0) > 0 || (m.costsByLine[l.id] || []).some(c => (c.unit_price || 0) > 0)));
-  if (ids.length === 0 && p.primary_category_id && byCat[p.primary_category_id]) ids = [p.primary_category_id];
   if (ids.length === 0 && Object.keys(byCat).length) ids = [Object.keys(byCat)[0]];
   ids.sort((a, b) => (m.catById[a]?.code || '').localeCompare(m.catById[b]?.code || ''));
   return ids;
@@ -233,6 +238,15 @@ async function computeChanges() {
     const code = m.catById[cid]?.code;
     const catName = m.catById[cid]?.name || '';
     const ctx = `${m.clientById[p.client_id]?.name || ''} / ${p.name} / ${catName}`;
+
+    // ADR 027: 案件の主カテゴリと不一致の区分の行は取り込まない（行＋コスト自動作成で
+    // 不一致 line が復活するのを防ぐ）。エクスポート側も不一致行を出さないため、
+    // ここに来るのは手書き追加か削除前の古いシートの行だけ。
+    if (p.primary_category_id && cid !== p.primary_category_id) {
+      const primaryName = m.catById[p.primary_category_id]?.name || '不明';
+      errors.push(`主カテゴリ不一致のためスキップ: ${ctx} — この案件の主カテゴリは【${primaryName}】です（ADR 027）。必要な場合は別案件として登録してください`);
+      continue;
+    }
     const grp = (m.linesByProj[p.id] || []).filter(l => l.category_id === cid);
 
     const newCharge = num(r[COL.clientCharge]);
