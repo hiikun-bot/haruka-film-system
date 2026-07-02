@@ -145,8 +145,9 @@ function buildRows(m) {
     const projs = m.projects.filter(p => p.client_id === cl.id && !p.is_hidden).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
     for (const p of projs) {
       const catIds = meaningfulCategoryIds(p, m);
-      // 案件区分 = その案件のカテゴリ(主区分名)。案件内の全行で同一。主区分未設定なら先頭カテゴリ名。
-      const ankenKubun = m.catById[p.primary_category_id]?.name || m.catById[catIds[0]]?.name || '';
+      // 案件区分 = その案件のカテゴリ(主区分名＋アイコン)。案件内の全行で同一。主区分未設定なら先頭カテゴリ。
+      const pcat = m.catById[p.primary_category_id] || m.catById[catIds[0]];
+      const ankenKubun = pcat ? (CAT_ICON[pcat.code] ? CAT_ICON[pcat.code] + ' ' : '') + pcat.name : '';
       for (const cid of catIds) {
         const code = m.catById[cid]?.code;
         const grp = (m.linesByProj[p.id] || []).filter(l => l.category_id === cid);
