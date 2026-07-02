@@ -971,6 +971,13 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_at     TIMESTAMPT
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_by     UUID REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS idx_creatives_team_id ON creatives(team_id);
 
+-- ADR 026: 納品完了日時。支払い本数カウントは JST でこの月を判定する（管理者補正可）。
+-- 既存納品分の backfill は migrations/2026-07-02_creatives_delivered_at.sql を参照。
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_creatives_delivered_at
+  ON creatives (delivered_at)
+  WHERE delivered_at IS NOT NULL;
+
 -- team_id への FK を確実に付与（過去にカラムだけが FK 無しで追加された場合の修復）
 -- これが無いと PostgREST は creatives → teams の埋め込み select を解決できず、
 -- /api/creatives が 500 を返してフロントが allCreatives.forEach is not a function で落ちる
