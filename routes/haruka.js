@@ -4669,8 +4669,13 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
     const code = lineCost.role?.code || '';
     if (!code) return null;
     if (['editor', 'designer', 'director_as_editor'].includes(code)) {
-      const a = assignees.find(x => x.role === code);
-      return a?.users || null;
+      // 制作担当はロール名の完全一致を最優先しつつ、無ければ制作担当グループの誰かに支払う。
+      // クリエイティブ登録時の担当は一律 role='editor' で INSERT されるため、静止画 line の
+      // designer 単価行が editor 担当にマッチせず全員 ¥0 になるバグがあった（2026-06 突合で発覚）。
+      const exact = assignees.find(x => x.role === code);
+      if (exact?.users) return exact.users;
+      const anyCreator = assignees.find(x => ['editor', 'designer', 'director_as_editor'].includes(x.role));
+      return anyCreator?.users || null;
     }
     if (code === 'director' || code === 'sub_director') {
       const did = creative.projects?.director_id;
@@ -5354,8 +5359,13 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     const code = lineCost.role?.code || '';
     if (!code) return null;
     if (['editor', 'designer', 'director_as_editor'].includes(code)) {
-      const a = assignees.find(x => x.role === code);
-      return a?.users || null;
+      // 制作担当はロール名の完全一致を最優先しつつ、無ければ制作担当グループの誰かに支払う。
+      // クリエイティブ登録時の担当は一律 role='editor' で INSERT されるため、静止画 line の
+      // designer 単価行が editor 担当にマッチせず全員 ¥0 になるバグがあった（2026-06 突合で発覚）。
+      const exact = assignees.find(x => x.role === code);
+      if (exact?.users) return exact.users;
+      const anyCreator = assignees.find(x => ['editor', 'designer', 'director_as_editor'].includes(x.role));
+      return anyCreator?.users || null;
     }
     if (code === 'director' || code === 'sub_director') {
       const did = creative.projects?.director_id;
@@ -5519,8 +5529,13 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
     const code = lineCost.role?.code || '';
     if (!code) return null;
     if (['editor', 'designer', 'director_as_editor'].includes(code)) {
-      const a = assignees.find(x => x.role === code);
-      return a?.users || null;
+      // 制作担当はロール名の完全一致を最優先しつつ、無ければ制作担当グループの誰かに支払う。
+      // クリエイティブ登録時の担当は一律 role='editor' で INSERT されるため、静止画 line の
+      // designer 単価行が editor 担当にマッチせず全員 ¥0 になるバグがあった（2026-06 突合で発覚）。
+      const exact = assignees.find(x => x.role === code);
+      if (exact?.users) return exact.users;
+      const anyCreator = assignees.find(x => ['editor', 'designer', 'director_as_editor'].includes(x.role));
+      return anyCreator?.users || null;
     }
     if (code === 'director' || code === 'sub_director') {
       const did = creative.projects?.director_id;
