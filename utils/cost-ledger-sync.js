@@ -191,7 +191,11 @@ async function exportLedger() {
     { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
     { repeatCell: { range: { sheetId, startRowIndex: 1, startColumnIndex: 6, endColumnIndex: 11 }, cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0' } } }, fields: 'userEnteredFormat.numberFormat' } },
     { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: ID_COL_START, endIndex: N_COLS }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
-    { autoResizeDimensions: { dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: ID_COL_START } } },
+    // 見切れ防止のため列幅を明示指定（autoResize は日本語・絵文字で狭くなりヘッダーが切れるため使わない）
+    // A#/B クライアント/C 請求区分/D 案件名/E 案件区分/F 区分/G クライアント請求/H ディレクション費/I ランクA/J ランクB/K ランクC
+    ...[46, 210, 180, 190, 90, 96, 120, 132, 86, 86, 86].map((px, i) => (
+      { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: 'pixelSize' } }
+    )),
   ] } });
   return { url, sheet_url: url, count: rows.length - 1 };
 }
