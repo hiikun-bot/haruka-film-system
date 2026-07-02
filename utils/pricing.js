@@ -250,12 +250,19 @@ function resolveCreativeRoleCost({
   //                     planned_count<=0 の場合は 0（invoice では本数=0 で請求しない前提）。
   //   - fixed_total   : line 全体固定額。1 本あたりに案分するため fixed_total / planned_count を返す。
   //                     planned_count<=0 の場合は 0。
+  // 制作担当グループはロール名の完全一致にこだわらない。
+  // クリエイティブ登録時の担当は一律 role='editor' で INSERT されるため、静止画 line の
+  // designer 単価行が roleCode='editor' でマッチせず 0 円になるバグがあった（2026-06 突合で発覚）。
+  // 完全一致を最優先し、無ければ同グループ（editor/designer/director_as_editor）の cost を採用する。
+  const CREATOR_ROLE_GROUP = ['editor', 'designer', 'director_as_editor'];
+  const wantCreatorGroup = CREATOR_ROLE_GROUP.includes(roleCode);
   for (const line of candidates) {
     const costs = (lineCostsByLine && lineCostsByLine[line.id]) || [];
-    const lc = costs.find(c => {
-      const code = c?.role?.code || c?.roles?.code || c?.role_code;
-      return code === roleCode;
-    });
+    const codeOf = (c) => c?.role?.code || c?.roles?.code || c?.role_code;
+    let lc = costs.find(c => codeOf(c) === roleCode);
+    if (!lc && wantCreatorGroup) {
+      lc = costs.find(c => CREATOR_ROLE_GROUP.includes(codeOf(c)));
+    }
     if (!lc) continue;
     const pricingType = lc.pricing_type || 'fixed_per_unit';
     const unitPriceLc  = Number(lc.unit_price)   || 0;
