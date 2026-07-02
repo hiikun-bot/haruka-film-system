@@ -5762,7 +5762,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </div>
     <input type="hidden" id="pl-edit-id">
     <input type="hidden" id="pl-edit-project-id">
-    <div class="form-group" style="margin-bottom:10px">
+    <!-- ADR 027: 主カテゴリ設定済みの案件ではカテゴリが1つに固定されるため、この欄は非表示にして自動設定する -->
+    <div class="form-group" id="pl-edit-category-group" style="margin-bottom:10px">
       <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span></label>
       <select class="form-select" id="pl-edit-category">
         <option value="">読込中...</option>
@@ -18042,6 +18043,19 @@ async function prepareProjectLineEditModal(line, projectId) {
       else {
         const videoCat = (typeof getCategoryByCode === 'function') ? getCategoryByCode('video') : null;
         if (videoCat) sel.value = videoCat.id;
+      }
+    }
+    // ADR 027 補足: 主カテゴリ設定済みの案件ではカテゴリが1つに固定される＝選択の余地が無いため、
+    // カテゴリ欄そのものを非表示にして主カテゴリを自動設定する。
+    // 旧データ（主カテゴリと別カテゴリのレガシー line）を編集する時だけ、現状が分かるよう表示を残す。
+    const catGroup = document.getElementById('pl-edit-category-group');
+    if (catGroup) {
+      const isLegacyMismatch = !!(projCatRestrict && line?.category_id && line.category_id !== projCatRestrict);
+      if (projCatRestrict && !isLegacyMismatch) {
+        sel.value = projCatRestrict;
+        catGroup.style.display = 'none';
+      } else {
+        catGroup.style.display = '';
       }
     }
   }
