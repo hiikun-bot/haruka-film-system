@@ -1,3 +1,11 @@
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
+
+# デプロイ切替時の 502 (Application failed to respond) 対策。
+# healthcheckPath を設定すると、Railway は新コンテナが 200 を返すまで
+# トラフィックを切り替えない（ゼロダウンタイムデプロイ）。
+# /healthz は server.js 実装済み（Supabase サーキットブレーカー open 時は 503）。
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 300
