@@ -2256,6 +2256,29 @@ const LINE_SELECT_LEGACY = 'id, project_id, category_id, rank, name, planned_cou
 const isMissingAppliesColumn = (err) =>
   err && /applies_(from|to)/i.test(err.message || '') && /does not exist|could not find/i.test(err.message || '');
 
+// ADR 027: 成果物グループのカテゴリは案件の主カテゴリ（projects.primary_category_id）と完全一致必須。
+// 動画案件に静止画 line 等が混在すると、単価解決の最終フォールバック
+// （utils/pricing.js resolveCreativeRoleCost の「案件内全 line」候補）が誤カテゴリの単価を
+// 掴み得るほか、単価未設定チェッカー・費用台帳のノイズ源になるため、入口で塞ぐ。
+// 主カテゴリ未設定の案件は従来どおり制限なし（レガシー救済。主カテゴリを設定した時点から効く）。
+// 戻り値: エラーメッセージ文字列（不一致） | null（OK）
+async function validateLineCategoryAgainstProject(projectId, categoryId) {
+  if (!categoryId) return null;
+  const { data: proj } = await supabase
+    .from('projects')
+    .select('primary_category_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  const primaryId = proj?.primary_category_id || null;
+  if (!primaryId || primaryId === categoryId) return null;
+  const { data: cats } = await supabase
+    .from('creative_categories')
+    .select('id, name')
+    .in('id', [primaryId, categoryId]);
+  const nameOf = (id) => ((cats || []).find(c => c.id === id)?.name) || '不明';
+  return `この案件の主カテゴリは【${nameOf(primaryId)}】です。【${nameOf(categoryId)}】の成果物グループは追加できません（必要な場合は案件の主カテゴリを見直すか、別案件として登録してください）`;
+}
+
 // 1行を id で取得（applies 列が無い環境ではレガシー select で再試行）。書き込み系の返却に使う。
 async function selectLineRowById(lineId) {
   let { data, error } = await supabase
@@ -2376,6 +2399,10 @@ router.post('/projects/:project_id/lines/generate-preset', requireAuth, requireP
   const { data: cat } = await supabase.from('creative_categories').select('id, name').eq('id', category_id).maybeSingle();
   if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
 
+  // ADR 027: 案件の主カテゴリと不一致のカテゴリは一括生成不可
+  const presetCatMismatch = await validateLineCategoryAgainstProject(projectId, category_id);
+  if (presetCatMismatch) return res.status(400).json({ error: presetCatMismatch });
+
   // プリセット（制作者単価）と既存 line の rank を取得
   const [{ data: presets }, { data: existingLines }, { data: maxRow }] = await Promise.all([
     supabase.from('category_rank_rates').select('rank, unit_price').eq('category_id', category_id),
@@ -2443,6 +2470,10 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
       .maybeSingle();
     if (catErr) return res.status(500).json({ error: catErr.message });
     if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+
+    // ADR 027: 案件の主カテゴリと不一致のカテゴリの line は作成不可
+    const catMismatch = await validateLineCategoryAgainstProject(projectId, category_id);
+    if (catMismatch) return res.status(400).json({ error: catMismatch });
   }
 
   // sort_order 自動付番（省略時は既存最大 + 10）
@@ -2533,6 +2564,14 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
         .maybeSingle();
       if (catErr) return res.status(500).json({ error: catErr.message });
       if (!cat) return res.status(400).json({ error: '指定された category_id がマスタに存在しません' });
+
+      // ADR 027: 主カテゴリと不一致のカテゴリへの「変更」は不可。
+      // ただし既存の不一致 line（旧 project_rates 移行等のレガシー）をカテゴリ据え置きのまま
+      // 名前・単価だけ編集するのは許可する（category_id が変わらない場合はスキップ）。
+      if (body.category_id !== existing.category_id) {
+        const catMismatch = await validateLineCategoryAgainstProject(projectId, body.category_id);
+        if (catMismatch) return res.status(400).json({ error: catMismatch });
+      }
     }
     updates.category_id = body.category_id || null;
   }
