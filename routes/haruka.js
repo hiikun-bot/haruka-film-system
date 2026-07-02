@@ -4535,6 +4535,17 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
 // ==================== 分析・集計 ====================
 // 案件 × 担当者ごとのクリエイティブ作成本数（動画 / デザイン）を集計する共通関数
 // GET（画面表示）と POST /export-sheet（Sheets出力）の両方から呼ばれる
+// ADR 026: JST の当月範囲 [start, 翌月start) を timestamptz 比較用 ISO で返す。
+// 例: 2026年6月 → start=2026-05-31T15:00:00.000Z（JST 6/1 00:00）, end=2026-06-30T15:00:00.000Z（JST 7/1 00:00）
+// Railway は UTC 動作のため、月末深夜の納品が UTC 日付で前後の月にズレないよう必ずこれを使う。
+function jstMonthRangeIso(year, month) {
+  const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  return {
+    startIso: new Date(Date.UTC(year, month - 1, 1) - JST_OFFSET_MS).toISOString(),
+    endIso:   new Date(Date.UTC(year, month, 1) - JST_OFFSET_MS).toISOString(),
+  };
+}
+
 async function aggregateCreativeByAssignee({ year, month, client_id, statusFilter }) {
 
   // 期間: 当月の 00:00:00 から 翌月 00:00:00 未満
@@ -4544,21 +4555,22 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   const endIso   = endDate.toISOString();
 
   // 集計対象月の判定列：
-  //   - 「納品済」モード: final_deadline（納品月＝実態）
+  //   - 「納品済」モード: delivered_at（納品完了日時・JST月。ADR 026）
   //   - 「全件」モード:   final_deadline 優先、未設定なら created_at にフォールバック
   //     （後から登録した過去納品分が created_at の月に寄って集計されるバグの対策）
   let query = supabase
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at,
+      final_deadline, created_at, delivered_at,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `);
   if (statusFilter === 'delivered') {
+    const jst = jstMonthRangeIso(year, month);
     query = query
-      .gte('final_deadline', startIso)
-      .lt('final_deadline', endIso)
+      .gte('delivered_at', jst.startIso)
+      .lt('delivered_at', jst.endIso)
       .eq('status', '納品');
   } else {
     query = query.or(
@@ -5203,18 +5215,23 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   const { calculateLineCost } = require('../utils/pricing');
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
-  const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
+  // ADR 026: 「納品のみ」は delivered_at（納品完了日時・JST月）で判定。
+  // 月末23:59(JST)までに納品完了になったものだけがその月の支払い本数になる。
+  const jstRange = jstMonthRangeIso(year, month);
+  const dateColForFilter = statusFilter === 'delivered' ? 'delivered_at' : 'created_at';
+  const rangeStartIso = statusFilter === 'delivered' ? jstRange.startIso : startDate.toISOString();
+  const rangeEndIso   = statusFilter === 'delivered' ? jstRange.endIso   : endDate.toISOString();
 
   let q = supabase
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at,
+      final_deadline, created_at, delivered_at,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `)
-    .gte(dateColForFilter, startDate.toISOString())
-    .lt(dateColForFilter, endDate.toISOString());
+    .gte(dateColForFilter, rangeStartIso)
+    .lt(dateColForFilter, rangeEndIso);
   if (statusFilter === 'delivered') q = q.eq('status', '納品');
 
   const { data: creatives, error } = await q;
@@ -5397,18 +5414,23 @@ router.get('/analytics/creator-summary', requireAuth, requirePermission('analyti
 async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
-  const dateColForFilter = statusFilter === 'delivered' ? 'final_deadline' : 'created_at';
+  // ADR 026: 「納品のみ」は delivered_at（納品完了日時・JST月）で判定。
+  // 月末23:59(JST)までに納品完了になったものだけがその月の支払い本数になる。
+  const jstRange = jstMonthRangeIso(year, month);
+  const dateColForFilter = statusFilter === 'delivered' ? 'delivered_at' : 'created_at';
+  const rangeStartIso = statusFilter === 'delivered' ? jstRange.startIso : startDate.toISOString();
+  const rangeEndIso   = statusFilter === 'delivered' ? jstRange.endIso   : endDate.toISOString();
 
   let q = supabase
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at,
+      final_deadline, created_at, delivered_at,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `)
-    .gte(dateColForFilter, startDate.toISOString())
-    .lt(dateColForFilter, endDate.toISOString());
+    .gte(dateColForFilter, rangeStartIso)
+    .lt(dateColForFilter, rangeEndIso);
   if (statusFilter === 'delivered') q = q.eq('status', '納品');
 
   const { data: creatives, error } = await q;
@@ -7016,6 +7038,9 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     wcheck_comment,        // Wチェック依頼コメント
     wcheck_required,       // このクリエ個別の要否（true/false/null=案件初期値を継承）。project.create_edit 権限要
     force_delivered_reason,
+    // ADR 026: 納品完了日時の手動補正。支払い本数カウントは delivered_at の JST 月で
+    // 判定されるため、補正すればカウント月も変わる。admin/secretary/producer(PD含む) のみ。
+    delivered_at,
     // 動画ファイル無しで工程を進める場合のフラグ（代表 髙橋指示・2026-05-09 補足）。
     // 例: クライアント直接やり取り済み、口頭で完結、素材待ち 等。
     // フラグが立っていてもサーバ側はファイル必須バリデーションを一切持っていないため、
@@ -7053,9 +7078,31 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // ADR 026: 納品完了日時の手動補正の認可。
+  // producer_director は実効ロールコード上 producer+director に展開されるため 'producer' 判定で PD も通る。
+  // director 単独 / editor / designer は不可（支払いカウント月を動かせるのは P 層以上）。
+  if (delivered_at !== undefined) {
+    const _daCodes = await getEffectiveRoleCodes(req);
+    const _canFixDeliveredAt = _daCodes.includes('admin') || _daCodes.includes('secretary') || _daCodes.includes('producer');
+    if (!_canFixDeliveredAt) {
+      return res.status(403).json({ error: '納品完了日の補正には管理者・秘書・プロデューサー権限が必要です' });
+    }
+  }
+
   const updateData = {
     updated_at: new Date().toISOString()
   };
+  if (delivered_at !== undefined) {
+    if (delivered_at === null || delivered_at === '') {
+      updateData.delivered_at = null;
+    } else {
+      const _daDate = new Date(delivered_at);
+      if (isNaN(_daDate.getTime())) {
+        return res.status(400).json({ error: '納品完了日の形式が不正です' });
+      }
+      updateData.delivered_at = _daDate.toISOString();
+    }
+  }
   if (wcheck_required !== undefined) {
     updateData.wcheck_required = (wcheck_required === null || wcheck_required === '') ? null : !!wcheck_required;
   }
@@ -7167,6 +7214,22 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     beforeRow = before || null;
   }
 
+  // ADR 026: status 遷移による delivered_at（納品完了日時）の自動更新。
+  //   「納品」以外 → 「納品」: now() をセット（この JST 月が支払いカウント月になる）
+  //   「納品」→ 他ステータス: クリア（再納品時に再セット＝最後に納品完了になった時刻が正）
+  // 同一リクエストに手動補正（delivered_at）が含まれる場合はそちらを優先する。
+  if (
+    updateData.status !== undefined &&
+    beforeStatus !== updateData.status &&
+    updateData.delivered_at === undefined
+  ) {
+    if (updateData.status === '納品') {
+      updateData.delivered_at = new Date().toISOString();
+    } else if (beforeStatus === '納品') {
+      updateData.delivered_at = null;
+    }
+  }
+
   // ==================== Wチェック 認可・バリデーション（ADR 024）====================
   // 静止画(image)専用工程。承認/修正依頼は Wチェック担当者本人または admin のみ（URL/API 直叩き防止）。
   if (updateData.status !== undefined && updateData.status !== beforeStatus) {
@@ -7243,12 +7306,13 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 新列 (director/client/editor _comment_updated_at) が schema-sync 未適用の環境用フォールバック。
     // 列欠損が原因なら _updated_at 系を抜いて再 UPDATE → 本体更新は成功させる。
     const msg = error.message || '';
-    const isMissingNewCol = /comment_updated_at|wcheck_/.test(msg);
+    const isMissingNewCol = /comment_updated_at|wcheck_|delivered_at/.test(msg);
     if (isMissingNewCol) {
-      // schema-sync 未適用環境フォールバック: 新列（comment_updated_at 系 / wcheck 系）を抜いて再 UPDATE。
+      // schema-sync 未適用環境フォールバック: 新列（comment_updated_at 系 / wcheck 系 / delivered_at）を抜いて再 UPDATE。
       const {
         director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e,
         wcheck_required: _wr, wcheck_requested_by: _wb, wcheck_requested_at: _wa, wcheck_comment: _wc,
+        delivered_at: _dat,
         ...legacyUpdate
       } = updateData;
       ({ data, error } = await supabase
@@ -8574,6 +8638,11 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     updatePayload.force_delivered_reason = null;
     updatePayload.force_delivered_at = null;
     updatePayload.force_delivered_by = null;
+    // ADR 026: 納品から戻したら納品完了日時もクリア（再納品時に再セットされる）
+    updatePayload.delivered_at = null;
+  } else {
+    // ADR 026: 強制変更で「納品」にした場合も納品完了日時を刻む
+    updatePayload.delivered_at = new Date().toISOString();
   }
   const { data: updated, error: uErr } = await supabase
     .from('creatives').update(updatePayload).eq('id', req.params.id).select().single();
@@ -11369,7 +11438,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 加えてプロデューサー本人（projects.producer_id = uid）の案件もUNIONで取得する。
   // creative_assignments に居ないケースを救うため、自分が担当する案件をUNIONで取得する。
   const CREATIVE_SELECT = `
-    id, file_name, status, creative_type, final_deadline, draft_deadline,
+    id, file_name, status, creative_type, final_deadline, draft_deadline, delivered_at,
     project_id, line_id, category_id, is_payable, special_payable, special_payable_reason,
     projects(id, name, director_id, producer_id, clients(name, client_code)),
     creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
@@ -11378,16 +11447,22 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 当月範囲（DB側絞り込みと下のJS側フィルタの両方で同じ値を使う）
   const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
   const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
+  // ADR 026: 納品完了済みのクリエイティブは delivered_at（納品完了日時・JST月）で当月判定する。
+  // 月末23:59(JST)までに納品完了になったものだけがその月の請求プレビューに載る。
+  const jstPrev = jstMonthRangeIso(year, month);
+  const jstStartMs = new Date(jstPrev.startIso).getTime();
+  const jstEndMs   = new Date(jstPrev.endIso).getTime();
 
   // パフォーマンス: 旧実装は creatives をほぼ全件取得して JS でフィルタしていた。
-  // JS フィルタ `dl = final_deadline || draft_deadline; dl >= startDate && dl <= endDate`
-  // と同一の条件を DB 側に押し込む（final_deadline/draft_deadline は共に DATE 列）:
-  //   - final_deadline あり → final_deadline が当月範囲内
-  //   - final_deadline なし(NULL) → draft_deadline が当月範囲内（draft しか無い行の救済）
+  // JS フィルタと同一の条件を DB 側に押し込む:
+  //   - delivered_at あり（＝納品完了済み）→ delivered_at が当月（JST）範囲内（ADR 026）
+  //   - delivered_at なし → final_deadline が当月範囲内
+  //   - final_deadline も無し(NULL) → draft_deadline が当月範囲内（draft しか無い行の救済）
   // ※ JS 側フィルタも従来通り残すため、結果は完全に同一。
   const MONTH_RANGE_OR = [
-    `and(final_deadline.gte.${startDate},final_deadline.lte.${endDate})`,
-    `and(final_deadline.is.null,draft_deadline.gte.${startDate},draft_deadline.lte.${endDate})`,
+    `and(delivered_at.gte.${jstPrev.startIso},delivered_at.lt.${jstPrev.endIso})`,
+    `and(delivered_at.is.null,final_deadline.gte.${startDate},final_deadline.lte.${endDate})`,
+    `and(delivered_at.is.null,final_deadline.is.null,draft_deadline.gte.${startDate},draft_deadline.lte.${endDate})`,
   ].join(',');
 
   // 自分のアサイン絞り込みは aliased inner join（assignee_filter）で行う。
@@ -11425,13 +11500,18 @@ router.get('/invoices/preview-items', async (req, res) => {
   for (const c of leaderCreatives) if (!creativesById.has(c.id)) creativesById.set(c.id, c);
   const allCreatives = Array.from(creativesById.values());
 
-  // 当月final_deadlineフィルタ + （自分がアサイン or ディレクター or プロデューサー）
+  // 当月フィルタ + （自分がアサイン or ディレクター or プロデューサー）
   // ※ DB側で同条件を絞り込み済みだが、同一結果保証のため従来のJSフィルタも残す
   const myCreatives = allCreatives.filter(c => {
     const mine = c.creative_assignments?.some(a => a.user_id === uid);
     const isDirector = c.projects?.director_id === uid;
     const isProducer = c.projects?.producer_id === uid;
     if (!mine && !isDirector && !isProducer) return false;
+    // ADR 026: 納品完了済みは delivered_at の JST 月で判定（DB側 MONTH_RANGE_OR と同一条件）
+    if (c.delivered_at) {
+      const t = new Date(c.delivered_at).getTime();
+      return t >= jstStartMs && t < jstEndMs;
+    }
     const dl = c.final_deadline || c.draft_deadline || '';
     return dl >= startDate && dl <= endDate;
   });
