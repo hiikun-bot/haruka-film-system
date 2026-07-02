@@ -60,8 +60,11 @@ CREATE INDEX IF NOT EXISTS idx_creatives_delivered_at
   遷移したとき `delivered_at = now()` をセット
 - 「納品」から他ステータスに戻したら `delivered_at = NULL` にクリア
   （再納品時は再セット＝**最後に納品完了になった時刻**が正）
-- 管理者・秘書はクリエイティブ詳細から `delivered_at` を手動補正できる。
-  補正すればカウント月も変わる（月末の誤操作・深夜跨ぎの救済）
+- 管理者・秘書・プロデューサー・プロデューサー兼ディレクターはクリエイティブ詳細から
+  `delivered_at` を手動補正できる。補正すればカウント月も変わる（月末の誤操作・深夜跨ぎの救済）。
+  ※ 権限拡張はユーザー指示（2026-07-02）。director 単独・editor・designer は不可。
+  実装は実効ロールコード判定（admin / secretary / producer。producer_director は
+  producer+director に展開されるため 'producer' 判定で通る。ADR 015 準拠）
 
 ### 3. 集計側の参照切替（Stage 2）
 

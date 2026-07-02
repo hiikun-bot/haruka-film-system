@@ -32176,7 +32176,22 @@ async function openCreativeDetail(id) {
       return `<span style="font-size:15px;font-weight:600;color:var(--text-muted);display:inline-flex;align-items:center;gap:8px">${label}：<span style="font-size:18px;font-weight:700;color:${color}">${fmt}</span><span style="font-size:13px;background:${color}1a;color:${color};border-radius:6px;padding:3px 9px;font-weight:700">${badge}</span></span>`;
     }
     bar.style.display = 'flex';
-    bar.innerHTML = deadlineItem('初稿締切', c.draft_deadline) + '<span style="color:var(--border);font-size:18px">|</span>' + deadlineItem('最終納品', c.final_deadline);
+    let _dlHtml = deadlineItem('初稿締切', c.draft_deadline) + '<span style="color:var(--border);font-size:18px">|</span>' + deadlineItem('最終納品', c.final_deadline);
+    // ADR 026: 納品完了日時（この JST 月で支払い本数がカウントされる）。
+    // 納品済みのとき表示。補正は admin / secretary / producer / producer_director のみ
+    // （effectiveRole() 判定 = VIEW AS 対応。ADR 015）。
+    if (c.status === '納品' || c.delivered_at) {
+      const _daTxt = c.delivered_at
+        ? new Date(c.delivered_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '未記録';
+      const _daCanFix = typeof effectiveRole === 'function' &&
+        ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
+      _dlHtml += '<span style="color:var(--border);font-size:18px">|</span>' +
+        `<span id="cd-delivered-at-item" style="font-size:15px;font-weight:600;color:var(--text-muted);display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">📦 納品完了：<span style="font-size:16px;font-weight:700;color:#059669">${_daTxt}</span>` +
+        (_daCanFix ? `<button class="btn" type="button" style="font-size:12px;padding:3px 10px" onclick="cdEditDeliveredAt('${c.id}')">✏️ 補正</button>` : '') +
+        `<span style="font-size:11px;color:var(--text-muted)">※この月で支払いカウント</span></span>`;
+    }
+    bar.innerHTML = _dlHtml;
   })();
 
   // URL
@@ -36254,7 +36269,7 @@ function switchAnalyticsView(view, skipReset) {
     if (reloadBtn) reloadBtn.style.display = 'none';
   } else if (view === 'creator-summary') {
     if (titleEl) titleEl.textContent = '👤 クリエイター別作成本数';
-    if (descEl)  descEl.textContent  = 'クリエイターごとの動画/デザイン本数と単価・合計金額を集計します。';
+    if (descEl)  descEl.textContent  = 'クリエイターごとの動画/デザイン本数と単価・合計金額を集計します。「納品のみ」は納品完了日（月末23:59 JSTまでに納品完了にしたか）で対象月を判定します。';
     if (clientWrap) clientWrap.style.display = 'none';
     if (statusFilterWrap) statusFilterWrap.style.display = '';
     if (monthWrap) monthWrap.style.display = '';
@@ -36281,7 +36296,7 @@ function switchAnalyticsView(view, skipReset) {
     if (reloadBtn) reloadBtn.style.display = 'none';
   } else {
     if (titleEl) titleEl.textContent = '📋 案件×担当者集計';
-    if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。';
+    if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。「納品のみ」は納品完了日（月末23:59 JSTまでに納品完了にしたか）で対象月を判定します。';
     if (clientWrap) clientWrap.style.display = '';
     if (statusFilterWrap) statusFilterWrap.style.display = '';
     if (monthWrap) monthWrap.style.display = '';
@@ -40795,6 +40810,42 @@ async function saveCreativeDetail(overrideStatus, extraBody) {
   } else {
     const e = await res.json();
     showToast('保存エラー: ' + translateError(e?.error), 'error');
+  }
+}
+
+// ADR 026: 納品完了日時（delivered_at）の補正 UI。
+// 支払い本数カウントは delivered_at の JST 月で判定されるため、月末〜月初の誤操作や
+// 深夜跨ぎで月がズレた場合にここから補正する。権限は admin / secretary / producer /
+// producer_director（サーバー側 PUT でも同権限を検証。ADR 015 準拠で effectiveRole() 判定）。
+function cdEditDeliveredAt(creativeId) {
+  const item = document.getElementById('cd-delivered-at-item');
+  if (!item) return;
+  const cur = currentCreativeDetail?.delivered_at ? new Date(currentCreativeDetail.delivered_at) : new Date();
+  // datetime-local はタイムゾーンを持たないため、JST に寄せた値を初期表示にする
+  const jstVal = new Date(cur.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 16);
+  item.innerHTML = `📦 納品完了：<input type="datetime-local" id="cd-delivered-at-input" value="${jstVal}" style="font-size:13px;padding:4px 6px;border:1px solid var(--border);border-radius:6px"> ` +
+    `<button class="btn-primary" type="button" style="font-size:12px;padding:3px 10px" onclick="cdSaveDeliveredAt('${creativeId}')">保存</button>` +
+    `<button class="btn" type="button" style="font-size:12px;padding:3px 10px" onclick="openCreativeDetail('${creativeId}')">取消</button>`;
+}
+
+async function cdSaveDeliveredAt(creativeId) {
+  const input = document.getElementById('cd-delivered-at-input');
+  if (!input || !input.value) { showToast('日時を入力してください', 'warn'); return; }
+  // datetime-local の値は JST 入力として解釈し、+09:00 を明示して ISO 化する
+  const iso = new Date(`${input.value}:00+09:00`).toISOString();
+  const res = await apiFetch(`${API}/creatives/${creativeId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delivered_at: iso }),
+  });
+  if (res.ok) {
+    try { _cdInvalidateCache(creativeId); } catch (_) {}
+    if (currentCreativeDetail) currentCreativeDetail.delivered_at = iso;
+    showToast('納品完了日を補正しました（この月で支払いカウントされます）', 'success');
+    try { await openCreativeDetail(creativeId); } catch (_) {}
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast('補正エラー: ' + translateError(e?.error), 'error');
   }
 }
 
