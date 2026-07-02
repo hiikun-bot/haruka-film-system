@@ -3811,6 +3811,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="teams" onclick="showPage('teams',this)">チーム</button>
     <button class="nav-btn" data-page="members" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" data-page="invoices" onclick="showPage('invoices',this)">請求書</button>
+    <button class="nav-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
@@ -3982,6 +3983,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="teams" onclick="showPage('teams',this)">👥 チーム</button>
     <button class="nav-drawer-btn" data-page="members" onclick="showPage('members',this)">👤 メンバー</button>
     <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
+    <button class="nav-drawer-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
@@ -7751,6 +7753,34 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </header>
     <div id="tweets-list" class="tweets-list">
       <div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 -->
+<div id="page-work-hours" class="page">
+  <div style="max-width:1200px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+      <h2 style="margin:0;font-size:18px">⏱ 作業時間報告</h2>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="btn-sm" onclick="whShiftMonth(-1)">◀ 前月</button>
+        <strong id="wh-month-label" style="font-size:14px;min-width:110px;text-align:center"></strong>
+        <button class="btn-sm" onclick="whShiftMonth(1)">翌月 ▶</button>
+        <button class="btn-sm" onclick="whGoThisMonth()" style="margin-left:4px">今月</button>
+      </div>
+      <span id="wh-member-picker-wrap" style="display:none;align-items:center;gap:6px;margin-left:auto">
+        <span style="font-size:12px;color:var(--text-muted)">メンバー</span>
+        <select id="wh-member-picker" class="form-select" style="width:200px;padding:5px 8px;font-size:13px" onchange="whOnMemberChange(this.value)"></select>
+      </span>
+    </div>
+    <div id="wh-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>
+    <div id="wh-confirm-bar" style="display:none;gap:8px;align-items:center;margin-bottom:12px"></div>
+    <div id="wh-table-wrap" style="background:#fff;border:0.5px solid var(--border);border-radius:10px;overflow:auto">
+      <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+      <button class="btn-primary" id="wh-add-row-btn" onclick="whAddRow()" style="font-size:13px;padding:8px 16px">＋ 行を追加</button>
+      <span style="font-size:11px;color:var(--text-muted)">稼働分は開始・終了から自動計算されます（手修正可）。行ごとに 💾 で保存してください。</span>
     </div>
   </div>
 </div>
@@ -11690,6 +11720,8 @@ function renderMemberTable(list, visibleMembers) {
           ${showRankCol ? `<td style="padding:8px 12px;text-align:center">${m.rank ? `<span class="rank-chip r-${m.rank.toLowerCase()}" style="font-size:11px;padding:2px 8px">${m.rank}</span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${team ? `<span class="team-badge" style="font-size:11px">${team.team_code}チーム</span>` : '<span style="color:#ccc;font-size:12px">未所属</span>'}</td>
           <td style="padding:8px 12px;text-align:left;font-weight:500;white-space:nowrap">${m.nickname ? `${esc(m.nickname)}<span style="font-size:11px;color:var(--text-muted);font-weight:400">（${esc(m.full_name||'')}）</span>` : esc(m.full_name||'')}${!m.is_active ? ' <span style="font-size:10px;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:4px">退職</span>' : ''}${
+            m.hourly_rate ? ` <span title="${esc(m.hourly_note || '')} 時給 ¥${Number(m.hourly_rate).toLocaleString()}/h（作業時間報告で精算 / ADR 028）" style="font-size:10px;background:#CCFBF1;color:#0F766E;padding:1px 6px;border-radius:6px;font-weight:600">⏱ 時給制</span>` : ''
+          }${
             m.leader_rank === 'leader' ? ' <span style="font-size:10px;background:#FFE082;color:#7C5800;padding:1px 6px;border-radius:6px;font-weight:600">👑 リーダー</span>'
             : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
             : ''
@@ -21209,6 +21241,7 @@ function showPage(name, btn) {
   if(name==='knowledge') initKnowledgePage();
   if(name==='analytics') initAnalyticsPage();
   if(name==='tweets')   loadTweetsPage();
+  if(name==='work-hours') loadWorkHoursPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -21224,6 +21257,368 @@ function openNavDrawer() {
 function closeNavDrawer() {
   document.getElementById('nav-drawer').classList.remove('open');
   document.body.style.overflow = '';
+}
+
+// ==================== ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 ====================
+//
+// スプレッドシート「作業時間報告書」踏襲の日別タイムシート。
+// - 本人がいつでも入力（行単位保存）。単価は行作成時にサーバー側でスナップショット。
+// - admin/秘書/プロデューサー（実効ロール）はメンバー切替＋月次確認（確認済み→本人編集ロック）。
+// - 権限UIは ADR 015 準拠: effectiveRole() / apiFetch() のみ使用（currentUser.role 直書き禁止）。
+
+let _whYear = null, _whMonth = null;
+let _whUserId = null;          // null = 自分
+let _whData = null;            // GET /work-hours のレスポンス
+let _whHourlyProjects = null;  // 時間制 line がある案件（ドロップダウン用キャッシュ）
+let _whMembers = null;         // メンバー切替セレクタ用キャッシュ
+
+function whIsManagerRole() {
+  return ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
+}
+function whIsStaffRole() {
+  return ['admin', 'secretary'].includes(effectiveRole());
+}
+function whYen(n) { return '¥' + Number(n || 0).toLocaleString(); }
+// h 換算: 分÷60 の小数第3位以下切り捨て（サーバーと同一ルール / ADR 028）
+function whHoursLabel(minutes) {
+  return (Math.floor(((minutes || 0) / 60) * 100) / 100).toFixed(2);
+}
+function whTodayJst() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD
+}
+
+function loadWorkHoursPage() {
+  if (!_whYear) {
+    const today = whTodayJst();
+    _whYear = parseInt(today.slice(0, 4), 10);
+    _whMonth = parseInt(today.slice(5, 7), 10);
+  }
+  // VIEW AS でロールを切り替えた場合に他人選択状態が残らないようにする
+  if (!whIsManagerRole()) _whUserId = null;
+  whFetch();
+}
+
+function whShiftMonth(delta) {
+  _whMonth += delta;
+  if (_whMonth < 1) { _whMonth = 12; _whYear--; }
+  if (_whMonth > 12) { _whMonth = 1; _whYear++; }
+  whFetch();
+}
+function whGoThisMonth() {
+  const today = whTodayJst();
+  _whYear = parseInt(today.slice(0, 4), 10);
+  _whMonth = parseInt(today.slice(5, 7), 10);
+  whFetch();
+}
+function whOnMemberChange(v) {
+  _whUserId = v || null;
+  whFetch();
+}
+
+async function whFetch() {
+  const wrap = document.getElementById('wh-table-wrap');
+  if (wrap) wrap.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>';
+  document.getElementById('wh-month-label').textContent = `${_whYear}年${_whMonth}月`;
+
+  const tasks = [
+    apiFetch(`${API}/work-hours?year=${_whYear}&month=${_whMonth}${_whUserId ? `&user_id=${encodeURIComponent(_whUserId)}` : ''}`),
+  ];
+  if (_whHourlyProjects === null) tasks.push(apiFetch(`${API}/work-hours/projects`));
+  if (_whMembers === null && whIsManagerRole()) tasks.push(apiFetch(`${API}/members`));
+
+  try {
+    const [mainRes, ...rest] = await Promise.all(tasks);
+    let restIdx = 0;
+    if (_whHourlyProjects === null) {
+      const r = rest[restIdx++];
+      _whHourlyProjects = (r && r.ok) ? await r.json() : [];
+    }
+    if (_whMembers === null && whIsManagerRole()) {
+      const r = rest[restIdx++];
+      _whMembers = (r && r.ok) ? await r.json() : [];
+    }
+    if (!mainRes.ok) {
+      const err = await mainRes.json().catch(() => ({}));
+      if (wrap) wrap.innerHTML = `<div style="padding:32px;text-align:center;color:#B91C1C;font-size:13px">${esc(err.error || '読み込みに失敗しました')}</div>`;
+      return;
+    }
+    _whData = await mainRes.json();
+  } catch (e) {
+    if (wrap) wrap.innerHTML = `<div style="padding:32px;text-align:center;color:#B91C1C;font-size:13px">通信エラー: ${esc(e.message || '')}</div>`;
+    return;
+  }
+  whRender();
+}
+
+// 表示中シートの本人か（本人 = 行を draft の間だけ編集できる）
+function whViewingSelf() {
+  return !_whUserId || _whUserId === currentUser?.id;
+}
+// この画面で行を編集できるか（サーバー側でも同条件で拒否される）
+function whCanEditEntry(entry) {
+  if (whIsStaffRole()) return true;                     // admin/秘書は confirmed でも編集可
+  if (!whViewingSelf()) return false;                   // 他人のシートは閲覧のみ
+  return entry.status !== 'confirmed';                  // 本人は draft のみ
+}
+function whCanAddRow() {
+  return whViewingSelf() || whIsStaffRole();
+}
+
+function whRender() {
+  const d = _whData;
+  if (!d) return;
+
+  // ---- メンバー切替（admin/秘書/プロデューサーのみ表示） ----
+  const pickerWrap = document.getElementById('wh-member-picker-wrap');
+  if (whIsManagerRole() && Array.isArray(_whMembers)) {
+    pickerWrap.style.display = 'inline-flex';
+    const picker = document.getElementById('wh-member-picker');
+    const selected = _whUserId || currentUser?.id || '';
+    picker.innerHTML = _whMembers
+      .filter(m => m.is_active !== false)
+      .map(m => {
+        const label = `${NameDisplay.full(m)}${m.hourly_rate ? '（⏱ 時給制）' : ''}${m.id === currentUser?.id ? '（自分）' : ''}`;
+        return `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
+      }).join('');
+  } else {
+    pickerWrap.style.display = 'none';
+  }
+
+  // ---- 上部サマリー（時給・合計勤務h・月給・経費・合計） ----
+  const s = d.summary || {};
+  const u = d.user || {};
+  const rateChip = u.hourly_rate
+    ? `<div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">時給</span> <strong>¥${Number(u.hourly_rate).toLocaleString()}${u.hourly_note ? `（${esc(u.hourly_note)}）` : ''}</strong></div>`
+    : `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E">時給未設定（管理者に依頼）※案件紐付きの行は案件側の時間単価で計算されます</div>`;
+  const rateMissing = (s.rate_missing_minutes || 0) > 0
+    ? `<div style="background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;padding:10px 14px;font-size:12px;color:#B91C1C" title="時給が未設定のまま登録された行があります">単価不明 ${whHoursLabel(s.rate_missing_minutes)}h</div>`
+    : '';
+  document.getElementById('wh-summary').innerHTML = `
+    ${rateChip}
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計勤務</span> <strong>${whHoursLabel(s.total_minutes)}h</strong> <span style="font-size:11px;color:var(--text-muted)">（${(s.total_minutes || 0).toLocaleString()}分）</span></div>
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">月給（時間分）</span> <strong>${whYen(s.hourly_amount)}</strong></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">経費合計</span> <strong>${whYen(s.expense_total)}</strong></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計</span> <strong style="font-size:14px">${whYen(s.grand_total)}</strong></div>
+    ${rateMissing}
+  `;
+
+  // ---- 月次確認バー（admin/秘書/プロデューサーのみ） ----
+  const bar = document.getElementById('wh-confirm-bar');
+  if (whIsManagerRole()) {
+    bar.style.display = 'flex';
+    const entries = d.entries || [];
+    const draftCount = entries.filter(e => e.status === 'draft').length;
+    const confirmedCount = entries.length - draftCount;
+    const statusLabel = !entries.length
+      ? '<span style="font-size:12px;color:var(--text-muted)">この月のエントリはありません</span>'
+      : d.all_confirmed
+        ? '<span style="font-size:12px;padding:2px 10px;border-radius:10px;background:#DCFCE7;color:#166534;font-weight:600">✔ この月は確認済みです</span>'
+        : `<span style="font-size:12px;color:var(--text-muted)">下書き ${draftCount}行${confirmedCount ? ` / 確認済み ${confirmedCount}行` : ''}</span>`;
+    bar.innerHTML = `
+      ${statusLabel}
+      ${draftCount > 0 ? `<button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="whConfirmMonth()">✔ この月を確認済みにする</button>` : ''}
+      ${confirmedCount > 0 ? `<button class="btn-sm" style="font-size:12px;padding:6px 14px" onclick="whUnconfirmMonth()">確認を解除</button>` : ''}
+    `;
+  } else {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+  }
+
+  // ---- 明細テーブル ----
+  const entries = d.entries || [];
+  const head = `
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:8px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;width:126px">日付</th>
+        <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:86px">開始</th>
+        <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:86px">終了</th>
+        <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:70px">稼働(分)</th>
+        <th style="padding:8px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);min-width:180px">業務内容</th>
+        <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:170px">案件（任意）</th>
+        <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:90px">立替経費</th>
+        <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:140px">経費内容</th>
+        <th style="padding:8px 4px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);width:58px" title="1,000円を超える立替は領収書の提出が必要です">領収書</th>
+        <th style="padding:8px 6px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);width:84px"></th>
+      </tr>
+    </thead>`;
+  const bodyRows = entries.map(e => whRowHtml(e)).join('');
+  const emptyRow = entries.length ? '' :
+    `<tr><td colspan="10" style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">まだ行がありません。「＋ 行を追加」から入力してください。</td></tr>`;
+  document.getElementById('wh-table-wrap').innerHTML =
+    `<table style="width:100%;border-collapse:collapse;min-width:1080px;font-size:12px">${head}<tbody id="wh-tbody">${bodyRows}${emptyRow}</tbody></table>`;
+
+  const addBtn = document.getElementById('wh-add-row-btn');
+  if (addBtn) addBtn.style.display = whCanAddRow() ? '' : 'none';
+}
+
+// 案件ドロップダウンの options（時間制 line がある案件のみ）
+function whProjectOptionsHtml(selectedId, fallbackName) {
+  const list = _whHourlyProjects || [];
+  const opts = ['<option value="">（案件なし＝既定時給）</option>'];
+  let found = !selectedId;
+  for (const p of list) {
+    const sel = p.project_id === selectedId ? 'selected' : '';
+    if (sel) found = true;
+    opts.push(`<option value="${esc(p.project_id)}" ${sel}>${esc(p.name)}（¥${Number(p.hourly_rate || 0).toLocaleString()}/h）</option>`);
+  }
+  // 過去行の案件が現在時間制 line を持たない場合も表示は維持する
+  if (!found && selectedId) {
+    opts.push(`<option value="${esc(selectedId)}" selected>${esc(fallbackName || '（案件）')}</option>`);
+  }
+  return opts.join('');
+}
+
+// 1 行分の <tr>。id 無し（data-id=""）は未保存の新規行。
+function whRowHtml(e) {
+  const isNew = !e || !e.id;
+  const editable = isNew ? true : whCanEditEntry(e);
+  const confirmed = !isNew && e.status === 'confirmed';
+  const dis = editable ? '' : 'disabled';
+  const rowStyle = confirmed
+    ? 'background:#F3F4F6;opacity:0.85'
+    : (isNew ? 'background:#F0FDFA' : '');
+  const inStyle = 'width:100%;padding:5px 6px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:#fff';
+  const inStyleDis = 'width:100%;padding:5px 6px;border:1px solid transparent;border-radius:5px;font-size:12px;background:transparent';
+  const st = editable ? inStyle : inStyleDis;
+  const v = (x) => esc(x ?? '');
+  const timeVal = (t) => t ? String(t).slice(0, 5) : '';
+  return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);${rowStyle}">
+    <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? '' : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="time" data-f="end_time" value="${timeVal(isNew ? '' : e.end_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="minutes" value="${isNew ? '' : (e.minutes ?? 0)}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
+    <td style="padding:6px 8px"><textarea data-f="description" rows="1" ${dis} style="${st};resize:vertical;min-height:29px" onchange="whMarkDirty(this)" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">${v(isNew ? '' : e.description)}</textarea></td>
+    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whMarkDirty(this)">${whProjectOptionsHtml(isNew ? '' : e.project_id, isNew ? '' : e.project?.name)}</select>
+      ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
+    <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="expense_amount" value="${isNew ? '' : (e.expense_amount || '')}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="text" data-f="expense_note" value="${v(isNew ? '' : e.expense_note)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
+    <td style="padding:6px 4px;text-align:center"><input type="checkbox" data-f="receipt_submitted" ${(!isNew && e.receipt_submitted) ? 'checked' : ''} ${dis} style="width:15px;height:15px;cursor:${editable ? 'pointer' : 'default'}" onchange="whMarkDirty(this)"></td>
+    <td style="padding:6px 6px;text-align:center;white-space:nowrap">
+      ${confirmed ? '<span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#E5E7EB;color:#374151" title="確認済みのため本人は編集できません">確認済</span>' : ''}
+      ${editable ? `<button class="btn-sm wh-save-btn" style="font-size:11px;padding:3px 8px;display:${isNew ? 'inline-block' : 'none'}" onclick="whSaveRow(this)" title="この行を保存">💾</button>
+      <button class="btn-sm" style="font-size:11px;padding:3px 8px;color:#A32D2D;border-color:#F09595" onclick="whDeleteRow(this)" title="この行を削除">🗑</button>` : ''}
+    </td>
+  </tr>`;
+}
+
+function whMarkDirty(el) {
+  const tr = el.closest('tr');
+  const btn = tr?.querySelector('.wh-save-btn');
+  if (btn) { btn.style.display = 'inline-block'; btn.classList.add('btn-primary'); }
+}
+
+// 開始/終了の変更で稼働分を自動計算（終了<開始は日跨ぎ扱い）。手修正はその後も可能。
+function whAutoMinutes(el) {
+  const tr = el.closest('tr');
+  const s = tr.querySelector('[data-f="start_time"]').value;
+  const e = tr.querySelector('[data-f="end_time"]').value;
+  if (!s || !e) return;
+  const [sh, sm] = s.split(':').map(Number);
+  const [eh, em] = e.split(':').map(Number);
+  const mins = ((eh * 60 + em) - (sh * 60 + sm) + 1440) % 1440;
+  tr.querySelector('[data-f="minutes"]').value = mins;
+}
+
+function whAddRow() {
+  const tbody = document.getElementById('wh-tbody');
+  if (!tbody) return;
+  // 「まだ行がありません」プレースホルダを除去
+  const ph = tbody.querySelector('td[colspan="10"]');
+  if (ph) ph.closest('tr').remove();
+  const today = whTodayJst();
+  const mm = String(_whMonth).padStart(2, '0');
+  const defaultDate = today.startsWith(`${_whYear}-${mm}`) ? today : `${_whYear}-${mm}-01`;
+  tbody.insertAdjacentHTML('beforeend', whRowHtml({ work_date: defaultDate }));
+  const tr = tbody.lastElementChild;
+  tr.querySelector('[data-f="start_time"]')?.focus();
+}
+
+function whCollectRow(tr) {
+  const get = (f) => tr.querySelector(`[data-f="${f}"]`);
+  return {
+    work_date: get('work_date').value,
+    start_time: get('start_time').value || null,
+    end_time: get('end_time').value || null,
+    minutes: get('minutes').value === '' ? null : parseInt(get('minutes').value, 10),
+    description: get('description').value.trim() || null,
+    project_id: get('project_id').value || null,
+    expense_amount: parseInt(get('expense_amount').value, 10) || 0,
+    expense_note: get('expense_note').value.trim() || null,
+    receipt_submitted: get('receipt_submitted').checked,
+  };
+}
+
+async function whSaveRow(btn) {
+  const tr = btn.closest('tr');
+  const id = tr.dataset.id;
+  const body = whCollectRow(tr);
+  if (!body.work_date) { showToast('日付を入力してください', 'warn'); return; }
+  if (body.minutes === null && !(body.start_time && body.end_time) && !body.expense_amount) {
+    showToast('開始・終了時刻か稼働分、または立替経費を入力してください', 'warn'); return;
+  }
+  // admin/秘書が他メンバーのシートに行を代理追加するケース
+  if (!id && !whViewingSelf()) body.user_id = _whUserId;
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(id ? `${API}/work-hours/${id}` : `${API}/work-hours`, {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || '保存に失敗しました', 'error'); btn.disabled = false; return; }
+    showToast('保存しました', 'success');
+    await whFetch();
+  } catch (e) {
+    showToast(`通信エラー: ${e.message || ''}`, 'error');
+    btn.disabled = false;
+  }
+}
+
+async function whDeleteRow(btn) {
+  const tr = btn.closest('tr');
+  const id = tr.dataset.id;
+  if (!id) { // 未保存行はDOMから消すだけ
+    tr.remove();
+    return;
+  }
+  if (!confirm('この行を削除しますか？')) return;
+  const res = await apiFetch(`${API}/work-hours/${id}`, { method: 'DELETE' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || '削除に失敗しました', 'error'); return; }
+  showToast('削除しました', 'success');
+  await whFetch();
+}
+
+async function whConfirmMonth() {
+  const targetId = _whData?.user?.id;
+  if (!targetId) return;
+  const name = NameDisplay.full(_whData.user);
+  if (!confirm(`${_whYear}年${_whMonth}月の ${name} さんの作業時間を確認済みにしますか？\n確認済みにすると本人は編集できなくなります。`)) return;
+  const res = await apiFetch(`${API}/work-hours/confirm-month`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: targetId, year: _whYear, month: _whMonth }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || '確認に失敗しました', 'error'); return; }
+  showToast(`${data.confirmed_count || 0}行を確認済みにしました`, 'success');
+  await whFetch();
+}
+
+async function whUnconfirmMonth() {
+  const targetId = _whData?.user?.id;
+  if (!targetId) return;
+  if (!confirm(`${_whYear}年${_whMonth}月の確認を解除しますか？（本人が再編集できるようになります）`)) return;
+  const res = await apiFetch(`${API}/work-hours/unconfirm-month`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: targetId, year: _whYear, month: _whMonth }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || '解除に失敗しました', 'error'); return; }
+  showToast(`${data.unconfirmed_count || 0}行の確認を解除しました`, 'success');
+  await whFetch();
 }
 
 // ==================== ダッシュボード ====================
@@ -23923,6 +24318,24 @@ async function loadInvoicePreview() {
     </thead>
     <tbody>
       ${invoicePreviewItems.map((item, i) => {
+        const rowBgH = i % 2 === 0 ? '#fff' : '#FAFEFE';
+        // ADR 028 Stage 2: 時間制（作業時間報告）の月次明細。金額は固定（単価編集なし）。
+        if (item.is_hourly) {
+          return `<tr style="background:${rowBgH};border-bottom:0.5px solid var(--border)">
+            <td style="padding:10px 10px;text-align:center;vertical-align:top">
+              <input type="checkbox" class="gi-item-check" data-id="${esc(item.id)}" data-hourly="1" data-hourly-key="${esc(item.hourly_key)}" data-amount="${item.total || 0}" checked onchange="updateInvoiceTotal()" style="cursor:pointer;width:15px;height:15px">
+            </td>
+            <td style="padding:10px 10px;text-align:left;vertical-align:top;color:var(--text-muted);font-size:11px;white-space:nowrap">—</td>
+            <td style="padding:10px 10px;vertical-align:top">
+              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">⏱ 作業時間報告（${year}年${month}月）</div>
+              <div style="font-size:12px;color:#111">${esc(item.label)}</div>
+            </td>
+            <td style="padding:10px 10px;text-align:center;vertical-align:top">
+              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#CCFBF1;color:#0F766E;white-space:nowrap">時間制</span>
+            </td>
+            <td style="padding:10px 10px;text-align:right;vertical-align:top;font-weight:600;color:var(--em-dark)">¥${(item.total || 0).toLocaleString()}</td>
+          </tr>`;
+        }
         const noBreakdown = !item.breakdown || !item.breakdown.length;
         const isDelivered = item.status === '納品';
         const checked = (isDelivered && !noBreakdown) ? 'checked' : '';
@@ -24030,10 +24443,13 @@ function updateInvoiceTotal() {
     const el = document.querySelector(`.gi-subtotal[data-id="${cid}"]`);
     if (el) el.textContent = '¥' + sub.toLocaleString();
   });
-  // 総計（チェック済のみ）
+  // 総計（チェック済のみ）。時間制行（data-hourly）は固定金額を加算（ADR 028 Stage 2）
   const checks = document.querySelectorAll('.gi-item-check:checked');
   let total = 0;
-  checks.forEach(cb => { total += _giCreativeSubtotal(cb.dataset.id); });
+  checks.forEach(cb => {
+    if (cb.dataset.hourly) { total += parseInt(cb.dataset.amount, 10) || 0; return; }
+    total += _giCreativeSubtotal(cb.dataset.id);
+  });
   document.getElementById('gi-total').textContent = '¥' + total.toLocaleString();
   document.getElementById('gi-count').textContent = `（${checks.length}件）`;
   const btn = document.getElementById('gi-submit-btn');
@@ -24058,9 +24474,11 @@ async function generateMyInvoice() {
     inp.style.borderColor = _giIsOverridden(inp) ? '#F59E0B' : 'var(--border)';
   });
   const selectedItems = [];
+  const hourlyKeys = [];   // ADR 028 Stage 2: 時間制（作業時間報告）行の選択キー
   let invalid = false;
   let missingReason = false;
   for (const cb of checkedBoxes) {
+    if (cb.dataset.hourly) { hourlyKeys.push(cb.dataset.hourlyKey); continue; }
     const cid = cb.dataset.id;
     const inputs = document.querySelectorAll(`.gi-bd-input[data-id="${cid}"]`);
     const items = [];
@@ -24092,14 +24510,19 @@ async function generateMyInvoice() {
   }
   if (invalid) { showToast('金額は0以上の整数で入力してください', 'warn'); return; }
   if (missingReason) { showToast('単価を変更した行は変更理由を入力してください', 'warn'); return; }
-  if (!selectedItems.length) { showToast('金額が0より大きい明細が必要です', 'warn'); return; }
+  if (!selectedItems.length && !hourlyKeys.length) { showToast('金額が0より大きい明細が必要です', 'warn'); return; }
 
   const btn = document.getElementById('gi-submit-btn');
   btn.textContent = '作成中...'; btn.disabled = true;
   const res = await apiFetch(`${API}/invoices/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ issuer_id: uid, year, month, selected_items: selectedItems, notes: document.getElementById('gi-notes').value.trim() || null })
+    body: JSON.stringify({
+      issuer_id: uid, year, month,
+      selected_items: selectedItems.length ? selectedItems : undefined,
+      hourly_keys: hourlyKeys.length ? hourlyKeys : undefined,
+      notes: document.getElementById('gi-notes').value.trim() || null,
+    })
   });
   btn.textContent = '請求書を作成する'; btn.disabled = false;
   const data = await res.json();
@@ -36566,6 +36989,13 @@ function renderMonthlyRevenueTable(data) {
 
 function renderCreatorSummaryTable(data) {
   const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  // ADR 028 Stage 2: 時間制（作業時間報告）の合算表示。
+  // API の既存フィールド（grand_total 等）は本数系と分離されたままなので、表示側でのみ合算する。
+  const hoursOf = (mins) => (Math.floor(((mins || 0) / 60) * 100) / 100).toFixed(2);
+  const totalHourly = (data.total.hourly_amount || 0) + (data.total.expense_amount || 0);
+  const hourlyChip = ((data.total.hourly_minutes || 0) > 0 || totalHourly > 0)
+    ? `<div style="background:#CCFBF1;border:1px solid #5EEAD4;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">⏱ 時間制</span> <strong>${hoursOf(data.total.hourly_minutes)}h / ${yen(data.total.hourly_amount)}</strong>${(data.total.expense_amount || 0) > 0 ? ` <span style="font-size:11px;color:var(--text-muted)">＋経費 ${yen(data.total.expense_amount)}</span>` : ''}</div>`
+    : '';
   const sumEl = document.getElementById('an-summary');
   sumEl.innerHTML = `
     <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間</span> <strong>${data.year}年${data.month}月</strong></div>
@@ -36574,7 +37004,8 @@ function renderCreatorSummaryTable(data) {
     <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">動画</span> <strong>${data.total.video_count}本 / ${yen(data.total.video_total)}</strong></div>
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.total.design_count}枚 / ${yen(data.total.design_total)}</strong></div>
     <div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">ディレクション</span> <strong>${data.total.director_count || 0}件 / ${yen(data.total.director_total || 0)}</strong></div>
-    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total)}</strong></div>
+    ${hourlyChip}
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total + totalHourly)}</strong></div>
   `;
   const wrap = document.getElementById('an-table-content');
   if (!data.summary.length) {
@@ -36591,6 +37022,11 @@ function renderCreatorSummaryTable(data) {
       : ((u.director_count || 0) > 0
           ? `<span title="単価未設定のため金額未集計（本数はカウント済）" style="color:var(--text-muted)">— <small style="font-size:10px">(単価未設定)</small></span>`
           : '—');
+    // ADR 028 Stage 2: 時間制セル（h / 金額 ＋経費）。無い人は —
+    const uHourly = (u.hourly_amount || 0) + (u.expense_amount || 0);
+    const hourlyCell = ((u.hourly_minutes || 0) > 0 || uHourly > 0)
+      ? `<span title="作業時間報告（タイムシート）の月次合算">${hoursOf(u.hourly_minutes)}h / ${yen(u.hourly_amount)}${(u.expense_amount || 0) > 0 ? `<br><small style="font-size:10px;color:var(--text-muted)">＋経費 ${yen(u.expense_amount)}</small>` : ''}</span>`
+      : '—';
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer;text-align:left">${esc(NameDisplay.full(u))}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
@@ -36601,10 +37037,11 @@ function renderCreatorSummaryTable(data) {
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${u.design_total > 0 ? yen(u.design_total) : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#6d28d9">${(u.director_count || 0) > 0 ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="openCreatorDetail('${esc(u.id)}','director')" title="クリックでディレクションの一覧を表示">🎬${u.director_count}</span>` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${directorAmountCell}</td>
-      <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total)}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:12px;font-weight:500;white-space:nowrap;color:#0F766E">${hourlyCell}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total + uHourly)}</td>
     </tr>`;
   }).join('');
-  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:920px">
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:1000px">
     <thead>
       <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
         <th style="padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">クリエイター</th>
@@ -36616,6 +37053,7 @@ function renderCreatorSummaryTable(data) {
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">デザイン金額</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ディレクション本数</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ディレクション金額</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap" title="作業時間報告（タイムシート）の月次合算（ADR 028）">⏱ 時間制</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;background:var(--em);color:#fff">合計金額</th>
       </tr>
     </thead>
@@ -36629,7 +37067,8 @@ function renderCreatorSummaryTable(data) {
         <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.design_total)}</td>
         <td style="padding:11px 12px;text-align:right;font-size:13px;color:#6d28d9">🎬${data.total.director_count || 0}</td>
         <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.director_total || 0)}</td>
-        <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.total.grand_total)}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:12px;color:#0F766E">${((data.total.hourly_minutes || 0) > 0 || totalHourly > 0) ? `${hoursOf(data.total.hourly_minutes)}h / ${yen(data.total.hourly_amount + (data.total.expense_amount || 0))}` : '—'}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.total.grand_total + totalHourly)}</td>
       </tr>
     </tbody>
   </table>`;
