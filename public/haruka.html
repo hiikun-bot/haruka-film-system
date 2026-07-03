@@ -22071,6 +22071,21 @@ function whTargetIsSecretary() {
   return m?.role === 'secretary';
 }
 
+// 新規行の案件初期値（ユーザー指示 2026-07-03）:
+// 表示中メンバーが担当（P/D、または時給行の支払先に指定）かつ時間単価つきの案件があれば
+// 「（案件なし）」ではなくその案件を既定で選択する（ディレクション費の稼働入力を1操作減らす）。
+// 複数該当時はプルダウンと同じ並び（時間単価つき→名前順）の先頭。該当なしなら従来どおり
+// 案件なし（秘書は「ひーくん（管理者サポート）」）が既定のまま。
+function whDefaultProjectId() {
+  const uid = _whUserId || currentUser?.id;
+  if (!uid) return '';
+  const hit = (_whHourlyProjects || []).find(p => p.hourly_rate && (
+    p.director_id === uid || p.producer_id === uid ||
+    (Array.isArray(p.hourly_user_ids) && p.hourly_user_ids.includes(uid))
+  ));
+  return hit ? hit.project_id : '';
+}
+
 // 案件ドロップダウンの options。初期表示は時間単価つきの案件だけに絞る（一覧が長すぎるため）。
 // 「時給設定のない案件も表示…」を選ぶと全案件に展開でき、時間単価が無い案件も
 // 「サポート先の記録」として選べる（金額は本人の既定時給で計算。秘書のひげごろーさん支援等）。
@@ -22147,7 +22162,7 @@ function whRowHtml(e) {
   const v = (x) => esc(x ?? '');
   const timeVal = (t) => t ? String(t).slice(0, 5) : '';
   return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);${rowStyle}">
-    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? '' : e.project_id, isNew ? '' : e.project?.name)}</select>
+    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? whDefaultProjectId() : e.project_id, isNew ? '' : e.project?.name)}</select>
       ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? '' : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
