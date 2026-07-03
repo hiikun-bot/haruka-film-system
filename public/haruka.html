@@ -5923,9 +5923,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
     <!-- 実工数（pricing_type='hourly' のみ表示） -->
     <div class="form-group" id="plc-edit-actual-hours-wrap" style="margin-bottom:10px;display:none">
-      <label class="form-label">実工数（時間） <span style="color:#E24B4A">*</span></label>
+      <label class="form-label">実工数（時間）<span style="font-weight:400;color:var(--text-muted)">（任意）</span></label>
       <input class="form-input" id="plc-edit-actual-hours" type="number" min="0" step="0.25" value="0">
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px">単価 × 実工数 が原価になる</div>
+      <div style="font-size:11px;color:#0F766E;background:#F0FDFA;border:1px solid #99F6E4;border-radius:6px;padding:6px 8px;margin-top:6px">💡 ディレクター費など月ごとの稼働精算は、実工数を 0 のままでOK。担当メンバーが「⏱ 作業時間」タブで稼働を記録すると、ここで設定した時間単価が自動適用され、月次の請求書にも自動反映されます。</div>
     </div>
 
     <div id="plc-edit-error" style="display:none;font-size:12px;color:#A32D2D;background:#FFF1F0;border:1px solid #F2C5C2;border-radius:6px;padding:6px 10px;margin-bottom:8px"></div>
@@ -17947,7 +17948,7 @@ function renderLineCostsBody(line) {
 
   if (lineCosts.length === 0) {
     return `
-      <div style="font-size:11px;color:var(--text-muted);padding:6px 0">コストが未登録です。</div>
+      <div style="font-size:11px;color:var(--text-muted);padding:6px 0">コストが未登録です。ディレクター費（時間単価）などロール別の支払単価をここから登録できます。</div>
       ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:4px">+ コスト追加</button>` : ''}
     `;
   }
