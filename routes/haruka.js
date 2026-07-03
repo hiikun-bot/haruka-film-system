@@ -7855,13 +7855,17 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
-  // Wチェック要否（このクリエ個別・ADR 024 改訂2）の認可: 案件編集権限が必要（URL/API 直叩き防止）。
+  // Wチェック要否（このクリエ個別・ADR 024 改訂3）の認可（URL/API 直叩き防止）。
   // 案件マスターは「案件の初期値」(projects.wcheck_required)、こちらは「このクリエ個別」(creatives.wcheck_required)。
+  // バグ報告 892c2fea: 制作するデザイナー / ディレクター自身が「Wチェック不要 → Dチェック直行」を
+  // 選べるよう、専用権限 creative.wcheck_toggle（既定: admin/secretary/producer/director/designer）で判定する。
+  // migration 未適用環境でも従来の project.create_edit 保持者は引き続き操作可（OR フォールバック）。
   if (wcheck_required !== undefined) {
     const _wcRole = getEffectiveRole(req);
-    const _wcCanEdit = await userHasPermission(_wcRole, 'project.create_edit');
+    const _wcCanEdit = (await userHasPermission(_wcRole, 'creative.wcheck_toggle'))
+      || (await userHasPermission(_wcRole, 'project.create_edit'));
     if (!_wcCanEdit) {
-      return res.status(403).json({ error: 'Wチェックの要否設定には案件編集権限が必要です' });
+      return res.status(403).json({ error: 'Wチェックの要否設定の権限がありません' });
     }
   }
 
