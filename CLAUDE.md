@@ -221,6 +221,14 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - **書き方の指針**: ユーザー目線で書く。「リファクタしました」ではなく「クリック1回で〇〇できるようになった」のように、何が便利になったかを書く
 - サブエージェント（projects-worker / clients-worker / teams-worker / creatives-worker / invoices-worker 等）も例外なく Verup情報セクションを記入すること
 
+### ガイド（マニュアル）の同期更新 — public/guide-*.html（必須）
+新メンバー向けガイド集（`public/guide.html` ＋ `public/guide-*.html`）は**システムの操作手順を説明する公式マニュアル**。バグ報告 9949215e の恒久対応として、以下を全チャット・全サブエージェント共通ルールとする:
+- **ユーザーが操作する UI フロー（画面遷移・ボタン名・ステータス名・タブ名・権限による出し分け）を変更する PR は、該当ガイドページも同 PR で更新する**
+- 対応関係の見つけ方: `grep -l "<変えたボタン名やステータス名>" public/guide-*.html` で該当ガイドを特定
+- ガイドに書いていない新機能を追加した場合: 大きな機能（新タブ・新フロー）ならガイドページ追加 or 既存ガイドにセクション追記。微修正はガイド更新不要
+- ガイドのトーン＆マナーの正は `public/guide-member-register.html`（です・ます調／flow-row図解／wanpoint／trouble欄）。**コードで確認できない手順を書くのは禁止**
+- 内部リファクタ・パフォーマンス改善・DB のみの変更はガイド更新不要
+
 ### DB migration を含む PR（必読）
 - `migrations/**` または `supabase_schema.sql` を変更する PR は、CI が **`needs-db-migration` ラベルを自動付与** します（`.github/workflows/migration-reminder.yml`）
 - このラベルが付いている PR は、**本番Supabaseで適用 → `db-migration-applied` ラベルを手動付与** して初めて `migration-applied` チェックが pass します

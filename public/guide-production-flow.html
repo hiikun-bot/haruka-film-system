@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜制作の流れ 全体像</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero（共通カテゴリ色） */
+.hero{background:linear-gradient(135deg,#0284C7 0%,#0EA5E9 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-row.flow-6{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr}
+.flow-row.flow-4{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-step-sub{font-size:10px;color:var(--text-muted);font-weight:600;margin-top:2px;line-height:1.4}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+.flow-title{font-size:12px;font-weight:800;color:var(--em-dark);letter-spacing:0.08em;margin:14px 0 -8px 4px}
+
+/* Wanpoint */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+.step-card ul{margin:8px 0 0 2px;list-style:none;display:flex;flex-direction:column;gap:6px}
+.step-card ul li{font-size:13px;color:#374151;line-height:1.7;padding-left:20px;position:relative}
+.step-card ul li::before{content:"・";position:absolute;left:4px;color:var(--em-dark);font-weight:800}
+
+/* Mock */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+
+/* ボール保持者テーブル */
+.ball-table-wrap{margin-top:10px;overflow-x:auto}
+.ball-table{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff;border-radius:10px;overflow:hidden}
+.ball-table th{background:var(--em-pale);color:var(--em-dark);font-weight:800;padding:8px 12px;text-align:left;font-size:11.5px;letter-spacing:0.04em;white-space:nowrap}
+.ball-table td{padding:8px 12px;border-top:1px solid var(--border-light);color:#374151;line-height:1.6}
+.ball-table td:first-child{white-space:nowrap;font-weight:700;color:var(--text)}
+.ball-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;padding:2px 10px;border-radius:99px;white-space:nowrap}
+.ball-editor{background:#E6F9F8;color:#0f766e}
+.ball-wcheck{background:#EEF2FF;color:#4338ca}
+.ball-director{background:#DBEAFE;color:#1d4ed8}
+.ball-producer{background:#F3E8FF;color:#7e22ce}
+.ball-client{background:#FFEDD5;color:#c2410c}
+.ball-done{background:#D1FAE5;color:#065f46}
+
+/* 比較カード（Wチェックあり／なし） */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.compare-card{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 16px}
+.compare-card.on{border-color:#818cf8;background:linear-gradient(180deg,#EEF2FF 0%,#fff 60%)}
+.compare-card h4{font-size:13px;font-weight:800;margin-bottom:8px;color:var(--text)}
+.compare-card.on h4{color:#4338ca}
+.compare-flow{font-size:12px;font-weight:700;color:#374151;line-height:2.1}
+.compare-flow b{background:#EEF2FF;color:#4338ca;padding:1px 7px;border-radius:4px}
+
+/* 関連ガイドリンク */
+.link-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.link-chip{display:inline-flex;align-items:center;gap:5px;background:var(--em-pale);color:var(--em-dark);font-size:12px;font-weight:700;padding:6px 13px;border-radius:99px;border:1px solid var(--em-light);text-decoration:none;transition:all .15s}
+.link-chip:hover{background:var(--em-dark);color:#fff}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎬";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:520px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .flow-row,.flow-row.flow-6,.flow-row.flow-4{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .compare{grid-template-columns:1fr}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ 共通（全ロール向け）</span>
+    <h1>制作の流れ 全体像<span>案件作成 → 制作 → チェック → 納品 → 請求 の地図</span></h1>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>一般的な制作の流れ</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🧱 まずはデータの構造から</div>
+    <p>HARUKA FILM SYSTEM の情報は、大きい順に <b>3 階層</b> でできています。1 つのクライアントの下に複数の案件、1 つの案件の下に複数のクリエイティブ（＝制作する動画・静止画などの成果物 1 本 1 本）がぶら下がるイメージです。</p>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">🏢</div>
+      <div class="flow-step-label">クライアント</div>
+      <div class="flow-step-sub">取引先の会社</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📁</div>
+      <div class="flow-step-label">案件</div>
+      <div class="flow-step-sub">契約・納期・単価の単位</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🎬</div>
+      <div class="flow-step-label">クリエイティブ</div>
+      <div class="flow-step-sub">動画・静止画 1 本ずつ</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🗺 制作の全体フロー</div>
+    <p>1 本のクリエイティブは、次の流れで「納品」まで進みます。チェックは <b>W（ダブル）→ D（ディレクター）→ P（プロデューサー）→ クライアント</b> の順で、案件によって W・P は省略されます（後述）。</p>
+  </div>
+
+  <div class="flow-row flow-6">
+    <div class="flow-step">
+      <div class="flow-step-icon">📁</div>
+      <div class="flow-step-label">案件作成</div>
+      <div class="flow-step-sub">作成権限を持つ人が登録</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🙋</div>
+      <div class="flow-step-label">アサイン</div>
+      <div class="flow-step-sub">担当者を割り当て</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✂️</div>
+      <div class="flow-step-label">制作</div>
+      <div class="flow-step-sub">編集者・デザイナー</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔍</div>
+      <div class="flow-step-label">チェック</div>
+      <div class="flow-step-sub">W → D → P → CL</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📦</div>
+      <div class="flow-step-label">納品</div>
+      <div class="flow-step-sub">ステータス「納品」</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">💰</div>
+      <div class="flow-step-label">請求</div>
+      <div class="flow-step-sub">月次で明細に集計</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🏷 クリエイティブのステータス（正式な一覧）</div>
+    <p>クリエイティブ詳細モーダルで進めていくステータスは次の通りです。<b>「◯チェック後修正」は、そのチェックで修正依頼が出て制作担当に戻った状態</b>を表します。</p>
+    <div class="mock" style="font-size:12px;line-height:2;color:#374151">
+      未着手 → 制作中（初稿提出前）／台本制作／素材・ナレ作成／編集 → <b>Wチェック</b>（→ Wチェック後修正）→ <b>Dチェック</b>（→ Dチェック後修正）→ <b>Pチェック</b>（→ Pチェック後修正）→ <b>クライアントチェック中</b>（→ クライアントチェック後修正）→ <b>納品</b>　※ほかに「保留」あり
+    </div>
+    <ul>
+      <li><b>Pチェックは案件にプロデューサーがいるときだけ</b>。いない案件では Dチェック承認で直接「クライアントチェック中」へ進みます。</li>
+      <li>Dチェック画面には、P がいる案件向けに <b>P チェックをスキップする</b>ボタンも用意されています。</li>
+      <li>「納品」になったクリエイティブは、月次の請求明細（請求書）に集計されます。→ <a class="link-chip" href="/guide-invoice.html" style="display:inline-flex">🧾 請求ガイド</a></li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🏐 「ボール保持者」＝ 今、誰が動かす番か</div>
+    <p>各クリエイティブには、ステータスに応じて <b>「ボール保持者」（今アクションすべき人）</b> が自動で決まります。一覧・詳細モーダルに「誰のボールか」が表示されるので、<b>自分の名前が出ていたら自分の番</b>です。</p>
+    <div class="ball-table-wrap">
+      <table class="ball-table">
+        <tr><th>ステータス</th><th>ボールを持つ人</th></tr>
+        <tr><td>未着手／制作中／台本制作／素材・ナレ作成／編集</td><td><span class="ball-chip ball-editor">✂️ 制作担当（編集者・デザイナー）</span></td></tr>
+        <tr><td>Wチェック</td><td><span class="ball-chip ball-wcheck">👀 Wチェック担当者</span></td></tr>
+        <tr><td>Dチェック</td><td><span class="ball-chip ball-director">🎬 ディレクター</span></td></tr>
+        <tr><td>Pチェック</td><td><span class="ball-chip ball-producer">🎩 プロデューサー</span></td></tr>
+        <tr><td>クライアントチェック中</td><td><span class="ball-chip ball-client">🏢 クライアント</span></td></tr>
+        <tr><td>各「◯チェック後修正」／保留</td><td><span class="ball-chip ball-editor">✂️ 制作担当（修正して再提出する番）</span></td></tr>
+        <tr><td>納品</td><td><span class="ball-chip ball-done">✅ 完了（ボールなし）</span></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>クリエイティブ一覧の表示切替「全案件／自分の案件／<strong>自分のボール</strong>」で「自分のボール」を選ぶと、<strong>今あなたが動かす番のものだけ</strong>が並びます。毎朝ここを見れば、今日やることを見落としません。</p>
+  </div>
+
+  <div class="link-chips">
+    <a class="link-chip" href="/guide-project-create.html">📁 案件の作り方</a>
+    <a class="link-chip" href="/guide-progress-board.html">📊 進行ボードの見方</a>
+    <a class="link-chip" href="/guide-editor-flow.html">✂️ 編集者の作業フロー</a>
+    <a class="link-chip" href="/guide-designer-flow.html">🎨 デザイナーの作業フロー</a>
+    <a class="link-chip" href="/data-model.html">🧱 データ構造の詳細</a>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>Wチェックがある場合・ない場合</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">👀 Wチェックとは？</div>
+    <p><b>Wチェック（ダブルチェック）は静止画クリエイティブだけ</b>の工程です。ディレクターの Dチェックの前に、別の担当者（Wチェック担当者）がもう 1 段確認します。動画・LP などでは使いません。</p>
+  </div>
+
+  <div class="compare">
+    <div class="compare-card on">
+      <h4>✅ Wチェック ON のとき</h4>
+      <div class="compare-flow">編集 → <b>Wチェックへ回す</b> → <b>Wチェック</b> →（修正あり）<b>Wチェック後修正</b> → 再提出で再び Wチェック →（承認）→ Dチェック → …</div>
+    </div>
+    <div class="compare-card">
+      <h4>➡️ Wチェック OFF のとき</h4>
+      <div class="compare-flow">編集 → 直接 <b style="background:#DBEAFE;color:#1d4ed8">Dチェック</b> へ提出 → …<br><span style="font-weight:600;color:#6b7280;font-size:11.5px">従来どおりのフローです（動画は常にこちら）</span></div>
+    </div>
+  </div>
+
+  <div class="step-card" style="margin-top:12px">
+    <div class="step-card-title">⚙️ ON / OFF はどこで決まる？（2 段階）</div>
+    <ul>
+      <li><b>案件マスターが初期値</b> ── 案件編集モーダルの「この案件のクリエイティブは Wチェックを行う」チェック。静止画案件でだけ表示され、その案件で作るクリエイティブの<b>初期値</b>になります（静止画案件は基本 ON）。</li>
+      <li><b>クリエイティブ個別に ON / OFF 可</b> ── クリエイティブ詳細モーダルの「この<b>クリエイティブ</b>で Wチェックを行う」チェックで、<b>その 1 本だけ</b>案件の初期値を上書きできます。誤操作防止のため、変更時は確認ダイアログが出ます。</li>
+      <li>この設定を操作できるのは<b>案件の作成・編集権限（project.create_edit）を持つ人</b>だけ。また、<b>Wチェック工程に入った後は変更できません</b>（グレーアウトします）。</li>
+    </ul>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>Wチェック中に「承認 → Dチェックへ」「修正依頼」を押せるのは <strong>Wチェック担当者本人（と admin）だけ</strong>。制作担当やディレクターには閲覧のみでボタンが出ません。「ボタンがない！」ときは、自分が担当者かを確認しましょう。</p>
+  </div>
+
+  <div class="link-chips">
+    <a class="link-chip" href="/guide-d-check.html">🎬 Dチェックのやり方</a>
+    <a class="link-chip" href="/guide-p-check.html">🎩 Pチェックのやり方</a>
+    <a class="link-chip" href="/guide-designer-delivery.html">🎨 デザイナーの納品手順</a>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>FB機能（修正依頼）の使い方</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔁 修正依頼（フィードバック）とは？</div>
+    <p>チェック段階（Wチェック／Dチェック／Pチェック／クライアントチェック中）でクリエイティブ詳細モーダルを開くと、<b>「修正依頼」ボタン</b>と<b>「承認」ボタン</b>が並びます。修正が必要なら「修正依頼」で制作担当に差し戻します。</p>
+  </div>
+
+  <div class="flow-row flow-4">
+    <div class="flow-step">
+      <div class="flow-step-icon">📝</div>
+      <div class="flow-step-label">修正指示を書く</div>
+      <div class="flow-step-sub">コメント入力は必須</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔙</div>
+      <div class="flow-step-label">「修正依頼」を押す</div>
+      <div class="flow-step-sub">「◯チェック後修正」に戻る</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✂️</div>
+      <div class="flow-step-label">制作担当が修正</div>
+      <div class="flow-step-sub">ボールは制作担当へ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📤</div>
+      <div class="flow-step-label">再提出</div>
+      <div class="flow-step-sub">次の修正ラウンドへ</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">✍️ 修正指示コメントは必須です</div>
+    <p>「修正依頼」を押す前に、<b>「ディレクターからの修正指示・承認コメント」欄（必須）</b>に指示を書きます。空のまま押すと「修正指示を入力してください」と止められます。<b>編集者に意図が伝わるよう具体的に</b>書くのがコツです。押すと「修正依頼として『◯チェック後修正』に戻しますか？」の確認が出て確定します。</p>
+    <div class="mock">
+      <span class="mock-fieldlabel">ディレクターからの修正指示・承認コメント <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600">必須</span></span>
+      <div style="background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:12.5px;color:#6b7280;margin-bottom:8px">例：カット 3 のテロップを規定フォントに差し替えてください。冒頭 2 秒の BGM 音量も下げてほしいです。</div>
+      <button class="mock-btn" style="background:#fff;color:#d97706;border:1.5px solid #d97706">修正依頼</button>
+      <button class="mock-btn" style="background:linear-gradient(135deg,#10b981,#059669)">承認 →</button>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">💬 やり取りは「修正ラウンド」で記録される</div>
+    <p>提出とそれに対する指摘のワンセットが <b>1 ラウンド</b>。詳細モーダルには過去のラウンドのコメントがカードで積み上がり、バージョン番号（V）は<b>ラウンド番号</b>と一致します。カードには次の便利ボタンがあります。</p>
+    <ul>
+      <li><b>↩ 引用</b> ── 最新ラウンドのコメントを、右側の「連絡・確認事項」欄に <code>&gt; </code> 付きの引用ブロックで挿入。「どの指摘への返事か」を明確にして返信できます。</li>
+      <li><b>💬 補足</b> ── そのコメントにぶら下がる形で補足スレッドを追加できます。</li>
+      <li><b>✏️ 編集</b> ── 自分が書いた提出時メモを、相手がアクションする前に限り書き直せます。</li>
+    </ul>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>修正指示は<strong>チャットではなくシステムのコメント欄に</strong>残しましょう。ラウンド履歴として積み上がり、「言った・言わない」がなくなります。返信は <strong>↩ 引用</strong> を使うと行き違いが減ります。</p>
+  </div>
+
+  <div class="link-chips">
+    <a class="link-chip" href="/guide-editor-delivery.html">✂️ 編集者の提出・納品手順</a>
+    <a class="link-chip" href="/guide-notification-settings.html">🔔 通知設定</a>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>クリエイティブの削除方法</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🗑 削除の入口は 2 つ</div>
+    <ul>
+      <li><b>詳細モーダルから 1 件</b> ── クリエイティブ詳細モーダル右上の <b>「🗑 削除」</b> ボタン。</li>
+      <li><b>一覧からまとめて</b> ── クリエイティブ一覧（リスト表示）で行頭のチェックボックスを入れると、ツールバーに「◯件選択中」と <b>「削除」</b> ボタンが現れます。</li>
+    </ul>
+    <p style="margin-top:8px">どちらも同じ削除処理で、押すと確認ダイアログが出ます。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">⚙️ 削除すると何が起きる？</div>
+    <ul>
+      <li><b>システム内（DB）の情報は即削除</b> ── クリエイティブ本体・担当アサイン・ファイル記録が消えます。</li>
+      <li><b>Google Drive のファイルは消えません</b> ── 原本もプレビュー版も <b>「【削除】&lt;元のファイル名&gt;」にリネームされるだけ</b>。誤削除防止のため、後から Drive 上で確認して手動整理する運用です。</li>
+      <li><b>請求書の明細に載っているクリエイティブは削除できません</b> ── 「請求書の明細に登録されているため削除できません」とエラーになります。先に該当請求書から明細を外す（または下書き請求書を削除する）必要があります。</li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔑 誰が削除できる？</div>
+    <p>削除に<b>ロールによる制限はなく、ログインしていれば誰でも実行できます</b>（詳細モーダルの「🗑 削除」ボタンは全ロールに表示されます）。そのぶん取り扱いは慎重に。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>削除は<strong>誰でも押せて、システム内のデータは元に戻せません</strong>。迷ったら消さずにディレクター・秘書チームに相談を。Drive のファイルは「【削除】」リネームで残るので、万一のときはファイル自体は復元できます。</p>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">🗺</div>
+  <h2>これで制作の流れはバッチリ！</h2>
+  <p>「クライアント ＞ 案件 ＞ クリエイティブ」の構造と、ボール保持者・チェックフロー・修正依頼・削除の基本を押さえました。あとは実際の画面で「自分のボール」から触ってみましょう。</p>
+  <a class="final-cta" href="/haruka.html">システムを開く →</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🏐</span>
+      <div><div class="trouble-q">自分が今なにをすべきか分からない</div><div class="trouble-a">クリエイティブ一覧を「自分のボール」表示に。出てきたものがあなたの番です</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🙈</span>
+      <div><div class="trouble-q">Wチェックの承認／修正依頼ボタンが出ない</div><div class="trouble-a">押せるのは Wチェック担当者本人と admin のみ。担当者に割り当てられているか確認を</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🚫</span>
+      <div><div class="trouble-q">クリエイティブが削除できない</div><div class="trouble-a">請求書の明細に紐付いています。先に該当請求書から明細を外してください（エラー文に請求書番号が出ます）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🧭</span>
+      <div><div class="trouble-q">画面の場所が分からない</div><div class="trouble-a"><a href="/guide-navigation.html" style="color:var(--em-dark);font-weight:700">画面の歩き方ガイド</a> へ。ロール別の流れは <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限</a> も参考に</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🆘</span>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">秘書チームに気軽に連絡を。急ぎは <a href="/guide-sos.html" style="color:var(--em-dark);font-weight:700">SOS ガイド</a> へ</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ 制作の流れ 全体像</p>
+</footer>
+
+</body>
+</html>

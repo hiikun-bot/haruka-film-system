@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜Dチェックの進め方</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero（ディレクター色） */
+.hero{background:linear-gradient(135deg,#C2410C 0%,#EA580C 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:20px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-row.cols5{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-step-label small{display:block;font-size:10px;font-weight:600;color:var(--text-muted)}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+.flow-step.hot{background:linear-gradient(135deg,#FFF1E6,#fff);border:1.5px solid #F9B48A;border-radius:10px}
+.flow-step.hot .flow-step-label{color:#C2410C}
+
+/* Wanpoint */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card ul{margin:6px 0 0 18px;font-size:13px;color:#374151;line-height:1.8}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-btn.green{background:linear-gradient(135deg,#10b981,#059669)}
+.mock-btn.amber{background:#fff;color:#d97706;border:1.5px solid #d97706}
+.mock-btn.indigo{background:#fff;color:#6366f1;border:1.5px solid #6366f1}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+.mock-textarea{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:12.5px;color:#6b7280;width:100%;margin-bottom:8px;line-height:1.6}
+.mock-dark{margin-top:10px;background:#1e1e22;border-radius:10px;padding:14px 16px;color:#e4e4e7}
+.mock-dark .tc-badge{display:inline-block;background:#78350f;color:#fbbf24;font-size:12px;font-weight:700;padding:2px 10px;border-radius:6px;font-family:ui-monospace,Menlo,monospace;border:1px solid #92400e}
+.mock-dark .hint{font-size:11px;color:#71717a}
+.mock-dark .darea{background:#2a2a2e;border:1px solid #3f3f46;border-radius:8px;padding:8px 10px;font-size:12px;color:#a1a1aa;margin-top:6px}
+.mock-dark .seek{position:relative;height:6px;background:#3f3f46;border-radius:99px;margin:14px 0 6px}
+.mock-dark .seek .dot{position:absolute;top:-3px;width:12px;height:12px;border-radius:50%;background:#fbbf24;border:2px solid #1e1e22}
+.mock-dark .seek .bar{position:absolute;top:-2px;height:10px;border-radius:99px;background:rgba(251,191,36,0.45);border:1px solid #fbbf24}
+
+/* Done banner */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Trouble */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+.related{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.related a{display:inline-block;background:var(--em-pale);border:1px solid var(--em-light);border-radius:99px;padding:5px 14px;font-size:12px;font-weight:600;color:var(--em-dark);text-decoration:none}
+.related a:hover{background:var(--em-light)}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .flow-row,.flow-row.cols5{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ ディレクター向け</span>
+    <h1>Dチェックの進め方<span>依頼が来てから、承認・修正依頼（FB）を出すまで</span></h1>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>Dチェックはフローのどこ？</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row cols5">
+    <div class="flow-step"><div class="flow-step-icon">✂️</div><div class="flow-step-label">制作<small>編集者・デザイナー</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step hot"><div class="flow-step-icon">👀</div><div class="flow-step-label">Dチェック<small>あなたの出番！</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🎩</div><div class="flow-step-label">Pチェック<small>プロデューサー</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🏢</div><div class="flow-step-label">CLチェック<small>クライアント</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🎉</div><div class="flow-step-label">納品</div></div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔁 「チェック」と「後修正」はワンセット</div>
+    <p>各チェック段階でディレクターが取れるアクションは <b>承認（次の段階へ進める）</b> か <b>修正依頼（FB＝フィードバック）</b> の2つ。修正依頼を出すとステータスが <code>Dチェック後修正</code> に変わり、ボール（＝作業する番）が制作担当に戻ります。修正版が再提出されると再び <code>Dチェック</code> に戻ってくる——この繰り返しが「修正ラウンド」です。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 静止画クリエイティブでは、Dチェックの前に「Wチェック」という工程が入ることがあります（STEP 6 で説明）。</p>
+  </div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>Dチェック依頼が来たことに気づく</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📥 依頼はこうやって届く</div>
+    <p>編集者が「Dチェックへ →」で提出するとき、<b>「Dチェックに進める」モーダルであなたが担当に選ばれます</b>（複数人選択可。報酬対象外の「追加レビュアー」として呼ばれることもあります）。選ばれると同時に、次の3つが自動で起こります。</p>
+    <ul>
+      <li>💬 <b>Slack / Chatwork 通知</b>：案件のチャンネル・ルームに、あなた宛のメンション付きで「Dチェック依頼」が投稿されます。本文のURLをクリックすると該当クリエイティブの詳細モーダルが直接開きます。</li>
+      <li>🔔 <b>画面内のベル通知</b>：ヘッダーの通知ベルにも「Dチェック依頼」が入ります。</li>
+      <li>🏐 <b>ボールがあなたに移動</b>：クリエイティブ一覧の「ボール保持者」があなたになります。進行ボードの <b>「自分のボール」ビュー</b> に切り替えると、いま自分が動かす番のものだけが並びます（詳しくは <a href="/guide-progress-board.html" style="color:var(--em-dark);font-weight:700">進行ボードの読み方</a>）。</li>
+    </ul>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>Slack / Chatwork の DM ID をプロフィールに入れていないと、<strong>あなた宛のメンションが飛びません</strong>（関係者全体宛の @here / [toall] にフォールバックされます）。設定は <a href="/guide-notification-settings.html" style="color:var(--star-deep);font-weight:800">通知設定ガイド</a> を参照。</p>
+  </div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>プレビューでタイムコード付きコメントを残す</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">クリエイティブ詳細モーダルの <b>「▶ バージョン◯をチェックする」</b> ボタンを押すと、プレビュー画面（動画プレイヤー＋右側のコメントパネル）が開きます。ここが FB 機能の主戦場です。</p>
+
+  <div class="flow-row">
+    <div class="flow-step"><div class="flow-step-icon">⏸</div><div class="flow-step-label">気になる箇所で<br>一時停止</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🏷</div><div class="flow-step-label">カテゴリー選択＋<br>コメント入力</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">📤</div><div class="flow-step-label">送信で<br>タイムコード付き記録</div></div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">⏱ 一時停止するだけでタイムコードが付く</div>
+    <p>動画を <b>一時停止した瞬間</b>、そのタイムコードが入力欄の上にバッジで記録されます（バッジをクリックすると解除）。そのままコメントを書いて送信すれば「00:00:12 のカットが暗い」のように、<b>位置と紐づいた指摘</b> になります。</p>
+    <div class="mock-dark">
+      <span class="tc-badge">00:00:12:05</span>
+      <span class="hint">← 一時停止で自動記録（クリックで削除）</span>
+      <div class="darea">カテゴリーを選択（必須）▾</div>
+      <div class="darea">レビューコメントを入力...</div>
+      <div class="seek">
+        <span class="dot" style="left:18%"></span>
+        <span class="dot" style="left:46%"></span>
+        <span class="bar" style="left:62%;width:16%"></span>
+      </div>
+      <span class="hint">シークバー上にコメントの ● が並ぶ。クリックでその位置にジャンプ</span>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 カテゴリーは<b>必須</b>です。未選択のまま送信するとエラーになります。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🧰 コメントに添えられる道具たち</div>
+    <ul>
+      <li><b>範囲コメント</b>：投稿後、自分のコメントの ● をシークバー上で左右にドラッグすると「ここからここまで」の<b>範囲指定</b>に変えられます（範囲はバーで表示）。</li>
+      <li><b>🎨 ペイント注釈</b>：一時停止中のフレーム（静止画なら画像そのもの）に手描きで丸や矢印を描いてコメントに添付できます。</li>
+      <li><b>📍 範囲選択（静止画）</b>：画像をドラッグすると矩形で「この部分」を指定できます。</li>
+      <li><b>▶ Premiere ボタン</b>：タイムコード付きコメントを <b>Premiere のマーカーとして書き出し</b>できます。編集者がそのままタイムラインに読み込めます。</li>
+      <li><b>✅ チェックリストタブ</b>：レギュレーション等の確認項目をプレビューを見ながら消し込めます。</li>
+      <li><b>📚 学び広場</b>：チェックを入れて送信すると、その指摘がナレッジとして共有されます。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>判断する — 承認 or 修正依頼</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">見終わったら、詳細モーダルに戻って判断します。コメント欄 <b>「ディレクターからの修正指示・承認コメント」は必須</b>。空のままだと修正依頼は送信できません。</p>
+
+  <div class="step-card">
+    <div class="step-card-title">🖥 Dチェック中のフッターに並ぶボタン</div>
+    <div class="mock">
+      <span class="mock-fieldlabel">Dチェック　ディレクターからの修正指示・承認コメント <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600">必須</span></span>
+      <div class="mock-textarea">修正依頼・承認の理由やコメントを入力してください...</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="mock-btn amber">修正依頼</button>
+        <button class="mock-btn indigo">Pスキップ → CL確認</button>
+        <button class="mock-btn green">承認（Pチェック）→</button>
+      </div>
+    </div>
+    <ul style="margin-top:10px">
+      <li><b>承認（Pチェック）→</b>：OKなら次の段階へ。案件に<b>プロデューサーがいない場合</b>はボタンが「承認（クライアントチェック中）→」になり、直接クライアント確認へ進みます。</li>
+      <li><b>Pスキップ → CL確認</b>：Pがいる案件でも、Pチェックを飛ばしてクライアント確認へ直行できます（Dチェック中のみ表示）。</li>
+      <li><b>修正依頼</b>：確認ダイアログ「修正依頼として『Dチェック後修正』に戻しますか？」のあと、ステータスが <code>Dチェック後修正</code> になり、<b>ボールと通知が制作担当へ</b>自動で飛びます。</li>
+    </ul>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>修正指示は <strong>編集者に意図が伝わるよう具体的に</strong>。空欄だと「修正指示を入力してください」と止められます。プレビューで残したタイムコード付きコメントとあわせて「どこを・なぜ・どう直すか」をセットで書きましょう。</p>
+  </div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>修正ラウンドを回す（引用・補足・比較）</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step"><div class="flow-step-icon">📤</div><div class="flow-step-label">修正依頼を出す<br><small>Dチェック後修正</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🛠</div><div class="flow-step-label">編集者が修正版を<br>アップロード・再提出</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">👀</div><div class="flow-step-label">再びDチェック<br><small>納得いくまで繰り返し</small></div></div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🆚 ラウンド比較UIの見方</div>
+    <p>再提出後の詳細モーダルは <b>左＝前回の提出物とやり取り、右＝新しいバージョン</b> の2カラム比較になります。誤って過去バージョンを開こうとすると「新しいクリエイティブ（バージョン◯）が提出されています」と確認ダイアログが挟まるので、<b>チェックすべきは常に右側の最新版</b>と覚えれば大丈夫。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">↩ 引用・💬 補足・✏️ 編集</div>
+    <ul>
+      <li><b>↩ 引用</b>：最新ラウンドのコメントカード右上に出るボタン。押すと、そのコメントが「連絡・確認事項」欄に <b>Markdown の引用ブロック</b>として挿入されます。「この指摘のこの部分についてです」と文脈を保ったまま返答・追記でき、言った言わないを防げます。</li>
+      <li><b>💬 補足</b>：コメント本文の横のボタン。そのコメントにぶら下がるスレッド形式で補足を追加できます。</li>
+      <li><b>✏️ 編集</b>：自分が書いた提出時メモは、<b>相手がアクションする前なら</b>あとから修正できます。</li>
+    </ul>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">修正版に問題がなければ「承認」で次の段階へ！<small>やり取りの履歴は全ラウンド分がモーダル内に時系列で残ります</small></div>
+  </div>
+</section>
+
+<!-- ═══ STEP 6 ═══ -->
+<section class="step-section" id="step6">
+  <div class="step-section-head">
+    <div class="step-section-num">6</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 6</div>
+      <h2>WチェックとDチェックの関係（静止画のみ）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step"><div class="flow-step-icon">🎨</div><div class="flow-step-label">制作<small>静止画クリエイティブ</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">👓</div><div class="flow-step-label">Wチェック<small>ダブルチェック担当</small></div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step hot"><div class="flow-step-icon">👀</div><div class="flow-step-label">Dチェック<small>あなた</small></div></div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">👓 Wチェックとは</div>
+    <p><b>静止画クリエイティブ専用</b>のダブルチェック工程です。ディレクターの前に別の担当者（Wチェック担当）が確認し、担当者が <b>「Wチェック承認 → Dチェックへ」</b> を押した時点であなたに引き継がれます。つまり<b>あなたが受け取る静止画は、Wチェックを通過済みの状態</b>です。</p>
+    <ul>
+      <li>Wチェックの承認・修正依頼を操作できるのは <b>Wチェック担当者本人か管理者のみ</b>。ディレクターは閲覧のみです。</li>
+      <li>Wチェックの要否は <b>案件マスターの初期値 ＋ クリエイティブ個別の ON/OFF</b> の2層で決まります（詳細モーダルのチェックボックスで個別に変更可。誤操作防止の確認ダイアログ付き）。</li>
+      <li>Wチェックで修正依頼が出ると <code>Wチェック後修正</code> → 再提出で再び <code>Wチェック</code> に戻ります（Dチェックと同じ回り方）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…（FAQ）</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🔕</span>
+      <div><div class="trouble-q">Dチェック依頼の通知が来ない</div><div class="trouble-a">プロフィール「連絡先」の Slack / Chatwork DM ID を確認。未設定だと個人宛メンションが飛びません → <a href="/guide-notification-settings.html" style="color:var(--em-dark);font-weight:700">通知設定ガイド</a></div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🗑</span>
+      <div><div class="trouble-q">不要なクリエイティブを削除したい</div><div class="trouble-a">詳細モーダル右上の「🗑 削除」から。<b>DB上の情報は即削除</b>されますが、<b>Google Drive のファイルは「【削除】〜」にリネームされるだけ</b>（誤削除防止。Drive上の完全削除は後から手動で）。請求書に紐づいているものは削除できずエラーになります。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🎩</span>
+      <div><div class="trouble-q">Pチェックがない案件がある</div><div class="trouble-a">案件にプロデューサーが設定されていない場合、Dチェック承認でそのままクライアントチェックへ進みます（正常な動きです）。Pチェック側の流れは <a href="/guide-p-check.html" style="color:var(--em-dark);font-weight:700">Pチェックガイド</a> へ。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">⏭</span>
+      <div><div class="trouble-q">工程を飛ばしてステータスを変えたい</div><div class="trouble-a">通常の遷移ボタンは工程順のみ。ステップを跨ぐ自由ジャンプは管理者限定（理由の入力が必須で監査ログが残ります）。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🆘</span>
+      <div><div class="trouble-q">担当編集者が行き詰まっているようだ</div><div class="trouble-a">SOSフラグの仕組みと拾い方は <a href="/guide-sos.html" style="color:var(--em-dark);font-weight:700">SOSガイド</a> と <a href="/guide-progress-board.html" style="color:var(--em-dark);font-weight:700">進行ボードの読み方</a> へ。</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <div class="related">
+    <a href="/guide-production-flow.html">🎬 制作フロー全体</a>
+    <a href="/guide-progress-board.html">📊 進行ボードの読み方</a>
+    <a href="/guide-p-check.html">🎩 Pチェック</a>
+    <a href="/guide-editor-flow.html">✂️ 編集者の流れ</a>
+    <a href="/guide-designer-flow.html">🎨 デザイナーの流れ</a>
+  </div>
+  <p style="margin-top:14px">HARUKA FILM SYSTEM ／ Dチェックの進め方</p>
+</footer>
+
+</body>
+</html>
