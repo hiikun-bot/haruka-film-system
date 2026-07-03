@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜納品ファイルのアップロード</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero（編集者色グラデ） */
+.hero{background:linear-gradient(135deg,#15803D 0%,#16A34A 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-row.cols4{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+.step-card a{color:var(--em-dark);font-weight:700}
+
+/* Mock screen */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-drop{border:2px dashed var(--border);border-radius:10px;padding:22px 14px;text-align:center;background:#fff}
+.mock-drop-icon{font-size:26px;margin-bottom:6px;color:var(--text-muted)}
+.mock-drop-label{font-size:13px;font-weight:600;color:var(--text-muted)}
+.mock-drop-sub{font-size:11px;color:var(--text-muted);margin-top:4px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+.mock-row{font-size:12.5px;color:#374151;padding:4px 0}
+.mock-row b{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+.mock-bar{height:8px;background:var(--border-light);border-radius:99px;overflow:hidden;margin-top:6px}
+.mock-bar-fill{height:100%;width:62%;background:linear-gradient(90deg,var(--em),var(--em-dark));border-radius:99px}
+.mock-quote{background:#fff;border-left:3px solid var(--em-dark);border-radius:6px;padding:8px 12px;font-size:12px;color:#4b5563;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;line-height:1.7}
+
+/* Done banner */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-a a{color:var(--em-dark);font-weight:700}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .flow-row,.flow-row.cols4{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ 動画編集者向け</span>
+    <h1>納品ファイルのアップロード<span>ドロップするだけ。名前もバージョンも変換も、ぜんぶ自動</span></h1>
+    <div class="hero-eta">⏱ 読了 約 5 分</div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>アップロードはここから</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">🎬</div>
+      <div class="flow-step-label">クリエイティブ<br>詳細を開く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📂</div>
+      <div class="flow-step-label">ファイルを<br>ドラッグ＆ドロップ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🚀</div>
+      <div class="flow-step-label">自動で<br>アップロード開始！</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📂 「納品ファイルアップロード」エリア</div>
+    <p>クリエイティブ詳細モーダルにある専用エリアです。動画・画像ファイルに対応しています。</p>
+    <div class="mock">
+      <div class="mock-drop">
+        <div class="mock-drop-icon">📂</div>
+        <div class="mock-drop-label">ドラッグ＆ドロップ、またはクリックして選択</div>
+        <div class="mock-drop-sub">動画・画像ファイル対応</div>
+      </div>
+    </div>
+    <p style="margin-top:8px">・<b>ドラッグ＆ドロップ</b> → その場で即アップロード開始<br>
+    ・<b>クリックして選択</b> → 内容を確認してから「<b>Googleドライブにアップロード</b>」ボタンで送信</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔍 送信前にここが自動表示される</div>
+    <div class="mock">
+      <div class="mock-row">検出サイズ：<b>1080 × 1920</b>（自動検出）</div>
+      <div class="mock-row">生成ファイル名：<b>250612_あるる_ドラム_9x16_v2.mp4</b></div>
+      <div class="mock-row">バージョン：<b>v2</b>（v1=初稿、v2=1回目修正… 自動でセット）</div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 サイズ（縦横ピクセル）は選んだファイルから自動検出。手入力は不要です。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>大容量でも安心（Drive 直送）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">⚡ 20MB を超えると自動で「直送モード」</div>
+    <p>20MB 以上のファイルは、サーバーを経由せず <b>ブラウザから Google Drive へ直接</b>（16MB ずつの分割送信で）アップロードされます。回線が不安定でもチャンク単位でリトライされるので、<b>数十 GB の 4K 動画でも OK</b>。切り替えは全自動で、操作は何も変わりません。</p>
+    <div class="mock">
+      <span class="mock-fieldlabel">アップロード中…（進捗バーと ✕ キャンセルボタンが出ます）</span>
+      <div class="mock-bar"><div class="mock-bar-fill"></div></div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px">Drive へ直送中… 62%</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🗂 保存先は自動で整理される</div>
+    <p>アップロードしたファイルは Google Drive の <b>クライアント名 → 案件名 → 年月 → 種別</b> のフォルダに自動で振り分けられ、閲覧用リンクも自動発行されます。自分でフォルダを掘る必要はありません。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>ファイル名は自動生成（リネーム不要）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🏷 命名規約は「案件のテンプレート」が決める</div>
+    <p>クリエイティブの名前は、案件ごとに設定された <b>ファイル名テンプレート</b>（連番・案件名・サイズ・商品名などのトークンの組み合わせ）から自動生成されています。アップロード時はそこに <code>_v2.mp4</code> のように <b>バージョン番号と拡張子が自動で付く</b> だけ。</p>
+    <div class="mock">
+      <div class="mock-quote">手元のファイル名: 最終版_fix2_これでいく.mp4
+　　　　↓ アップロードすると自動で…
+Drive 上の名前: 007_あるる_ドラム_上地無_v2.mp4</div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 手元のファイル名は何でも OK。提出用の正式名はシステムが管理します。Drive 上のファイルを手動でリネームする必要はありません（クリエイティブ名が変わったときも Drive 側へ自動で追従します）。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>バージョンは「ラウンド番号」</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">1️⃣</div>
+      <div class="flow-step-label">v1 ＝ 初稿</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔁</div>
+      <div class="flow-step-label">指摘が来て<br>修正したら v2</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">3️⃣</div>
+      <div class="flow-step-label">さらに修正で v3…<br>（1 往復 = +1）</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔢 番号は提出→指摘の「往復」ごとに上がる</div>
+    <p>バージョン番号は <b>ラウンド番号</b>（提出とそれに対する指摘のワンセット）と同じです。採番はサーバーが自動で行うので、自分で数える必要はありません。</p>
+    <p style="margin-top:6px">・提出前なら <b>アップロード取り消し → 同じ番号のまま上げ直し</b> ができます（v2 を取り消して再アップしても v2 のまま）。<br>
+    ・過去バージョンのファイルもカードとして残り、いつでも見返せます。うっかり古い方を開こうとすると「<b>過去のバージョンを開こうとしています</b>」と確認が出るので取り違えも防げます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>アップロード後の自動処理</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🎞 「再生用の高速版」が自動生成される</div>
+    <p>動画（MP4 / MOV / M4V）をアップロードすると、バックグラウンドで <b>すぐ再生が始まる高速版（faststart 版）</b> が自動生成されます。</p>
+    <p style="margin-top:6px">・MP4（H.264 + AAC）→ メタデータの位置を先頭に移動するだけ。<b>画質は完全にそのまま</b><br>
+    ・MOV / ProRes / HEVC など → 高画質設定で MP4 に変換。<b>解像度・フレームレートは変わりません</b>（720p などへの縮小はしません）</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 チェック画面のプレビュー再生では高速版が自動で使われます。Drive の原本はそのまま残るので、生成に失敗してもアップロード自体には影響ありません。</p>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">アップロード後は待つだけ！<small>高速版の生成状況はファイルカードのバッジで確認できます</small></div>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step6">STEP 6 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 6 ═══ -->
+<section class="step-section" id="step6">
+  <div class="step-section-head">
+    <div class="step-section-num">6</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 6</div>
+      <h2>おまけ：Premiere マーカー連携</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">💬</div>
+      <div class="flow-step-label">タイムコード付きの<br>修正コメントが届く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">▶</div>
+      <div class="flow-step-label">「▶ Premiere」で<br>スクリプトを DL</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📍</div>
+      <div class="flow-step-label">シーケンスに<br>マーカーが並ぶ！</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">▶ 使い方</div>
+    <p>ファイルのチェック画面（プレビュー）ヘッダーにある <b>「▶ Premiere」ボタン</b>（動画クリエイティブのみ表示）を押すと、タイムコード付きコメントをマーカーに変換する <code>.jsx</code> スクリプトがダウンロードされます。</p>
+    <p style="margin-top:6px">Premiere Pro で対象シーケンスを開いた状態で <b>File &gt; Scripts &gt; Run Script File</b> からこのファイルを実行すると、指摘が <b>タイムライン上のマーカー</b> として一括挿入されます。マーカー名がタイムコード、コメント欄に「誰の・どんな指摘か」が入るので、再生しながら 1 件ずつ潰せます。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>マーカーになるのは <strong>タイムコード付きのコメントだけ</strong>。逆に言うと、チェック側がタイムコードを入れて指摘してくれるほど修正が速くなります。届いた指摘への回答は <a href="/guide-editor-flow.html" style="color:var(--star-deep);font-weight:800">編集の進め方ガイド</a> の「↩ 引用」を活用！</p>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">📤</div>
+  <h2>アップロード、マスター完了！</h2>
+  <p>ドロップするだけで、命名・バージョン・Drive 整理・高速版生成まで全部おまかせ。あなたは編集に集中してください。</p>
+  <a class="final-cta" href="/guide-editor-flow.html">「編集の進め方（ステータス遷移）」を見る →</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">⏸</span>
+      <div><div class="trouble-q">アップロードが途中で止まる・失敗する</div><div class="trouble-a">✕ キャンセルしてもう一度ドロップ。20MB 以上は自動リトライ付きの直送になるので、たいてい 2 回目で通ります</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🏷</span>
+      <div><div class="trouble-q">生成ファイル名が想定と違う</div><div class="trouble-a">案件のファイル名テンプレート設定の問題です。自分で直さず、ディレクターか管理者に連絡を</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔢</span>
+      <div><div class="trouble-q">バージョン番号を間違えてアップした</div><div class="trouble-a">提出前なら「アップロード取り消し」→ 上げ直しで同じ番号のまま再アップできます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">▶️</span>
+      <div><div class="trouble-q">「▶ Premiere」ボタンが出ない</div><div class="trouble-a">動画クリエイティブのプレビューでのみ表示されます（静止画には出ません）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🆘</span>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">困りごとは早めに共有（<a href="/guide-sos.html">SOS ガイド</a>）。スクショを添えると解決が早いです</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a>　｜　関連: <a href="/guide-editor-flow.html">編集の進め方（ステータス遷移）</a> ／ <a href="/guide-production-flow.html">制作フロー全体像</a> ／ <a href="/guide-d-check.html">Dチェックガイド</a></p>
+  <p>HARUKA FILM SYSTEM ／ 納品ファイルのアップロード</p>
+</footer>
+
+</body>
+</html>

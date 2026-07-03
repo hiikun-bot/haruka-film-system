@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜進行ボードの読み方</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero（ディレクター色） */
+.hero{background:linear-gradient(135deg,#C2410C 0%,#EA580C 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:20px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-step-label small{display:block;font-size:10px;font-weight:600;color:var(--text-muted)}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card ul{margin:6px 0 0 18px;font-size:13px;color:#374151;line-height:1.8}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px;overflow-x:auto}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff;margin:2px 6px 2px 0;vertical-align:middle}
+.seg span{padding:4px 12px;font-size:11.5px;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-light);white-space:nowrap}
+.seg span:last-child{border-right:none}
+.seg span.on{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff}
+
+/* ボード風モック */
+.board{margin-top:10px;border:1.5px dashed var(--border);border-radius:10px;overflow:hidden;font-size:11.5px}
+.board .grp{display:flex;align-items:center;gap:8px;padding:7px 12px;font-weight:700}
+.board .grp.p{background:linear-gradient(to right,#FFF6E5,#FFFBF2);border-bottom:1px solid #F0DFB6;color:#7c4a03}
+.board .grp.c{background:linear-gradient(to right,#F5EEFC,#FBF8FE);border-bottom:1px solid #D9C7F2;color:#5b21b6}
+.board .grp.t{background:linear-gradient(to right,#E8F3FB,#F4F9FD);border-bottom:1px solid #C9DDEC;color:#1e5b8a}
+.board .grp .cnt{margin-left:auto;font-size:10.5px;font-weight:700;color:#6b7280;background:rgba(255,255,255,0.7);border-radius:99px;padding:1px 8px}
+.board .grp .alert{font-size:10.5px;font-weight:800;color:#b45309;background:#FEF3C7;border-radius:99px;padding:1px 8px}
+.board .row{display:grid;grid-template-columns:1fr 34px 88px 64px;gap:6px;align-items:center;padding:6px 12px;background:#fff;border-bottom:1px solid var(--border-light)}
+.board .row:last-child{border-bottom:none}
+.board .row.late{background:rgba(239,68,68,0.06)}
+.board .row.sos{background:#FFFBF2}
+.board .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#374151;font-weight:600}
+.board .av{width:20px;height:20px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.board .st{font-size:10px;font-weight:700;color:var(--em-dark);background:var(--em-pale);border-radius:99px;padding:1px 7px;text-align:center;white-space:nowrap}
+.board .st.d{color:#1d4ed8;background:#dbeafe}
+.board .delay{font-size:10.5px;font-weight:700;text-align:right;white-space:nowrap}
+.board .delay.late{color:#E24B4A}
+.board .delay.warn{color:#BA7517}
+.board .delay.ok{color:var(--em-dark)}
+
+/* 凡例モック */
+.legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:10px;background:#fff;border:1.5px dashed var(--border);border-radius:10px;padding:10px 14px;font-size:11.5px;font-weight:600;color:#4b5563}
+.lg-bar{display:inline-block;width:26px;height:10px;border-radius:6px;vertical-align:middle;margin-right:5px}
+.lg-prod{background:linear-gradient(90deg,#13A09B,#3FC3BE)}
+.lg-rev{background:linear-gradient(90deg,#7E57C2,#A78BE0);height:7px}
+.lg-soon{background:linear-gradient(90deg,#ED9A1E,#F6C055)}
+.lg-late{background:linear-gradient(90deg,#D93A39,#EF6E6C)}
+.lg-dia{display:inline-block;width:11px;height:11px;background:#ED9A1E;transform:rotate(45deg);margin-right:6px;vertical-align:middle;border:1.5px solid #fff;box-shadow:0 0 0 1px #ddd}
+.lg-star{color:#E0312F;font-size:15px;margin-right:4px;vertical-align:middle}
+
+/* ボールドット */
+.bd{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.bd-e{background:#3ECFCA}.bd-d{background:#378ADD}.bd-p{background:#7F77DD}.bd-c{background:#EF9F27}.bd-w{background:#6C4FE0}.bd-done{background:#B4B2A9}
+.ball-list{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;font-weight:600;color:#4b5563;margin-top:8px}
+
+/* Done banner */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Trouble */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+.related{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.related a{display:inline-block;background:var(--em-pale);border:1px solid var(--em-light);border-radius:99px;padding:5px 14px;font-size:12px;font-weight:600;color:var(--em-dark);text-decoration:none}
+.related a:hover{background:var(--em-light)}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .board .row{grid-template-columns:1fr 30px 76px 56px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ ディレクター向け</span>
+    <h1>進行ボードの読み方<span>ガント・遅延・SOS・ボール——ひと目で「今やること」を拾う</span></h1>
+    <div class="hero-eta">⏱ 読了 約 7 分</div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>進行ボード＝クリエイティブ画面のガント表示</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">クリエイティブ画面を開くと、上部のツールバーで表示を切り替えられます。ディレクターの朝いちチェックは <b>ガント表示</b> が基本です。</p>
+
+  <div class="step-card">
+    <div class="step-card-title">🎛 ツールバーの構成</div>
+    <div class="mock">
+      <span class="mock-fieldlabel">1行目：範囲の切り替え ＋ 詳細フィルター</span>
+      <div style="margin-bottom:10px">
+        <span class="seg"><span>⚙ 詳細フィルター</span></span>
+        <span class="seg"><span class="on">全案件</span><span>自分の案件</span><span>自分のボール</span></span>
+      </div>
+      <span class="mock-fieldlabel">2行目：表示形式・グループ・期間</span>
+      <div>
+        <span class="seg"><span class="on">ガント表示</span><span>リスト表示</span></span>
+        <span class="seg"><span class="on">案件別</span><span>クライアント別</span><span>担当者別</span><span>チーム別</span></span>
+        <span class="seg"><span>1週</span><span>2週</span><span class="on">1ヶ月</span><span>2ヶ月</span></span>
+        <span class="seg"><span>‹</span><span>今日へ</span><span>›</span><span>📅</span></span>
+      </div>
+    </div>
+    <ul style="margin-top:10px">
+      <li><b>表示</b>：ガント表示（期間バーで俯瞰）⇔ リスト表示（表で一覧。SOS・ボール保持者・納期の列あり）。</li>
+      <li><b>グループ</b>：行のまとまりを 案件別／クライアント別／担当者別／チーム別 に切り替え。</li>
+      <li><b>期間</b>：1週〜2ヶ月。「今日へ」で現在週に戻る、📅 で任意の日付にジャンプ。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>行とグループ行の読み方</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🗂 グループ見出し行は「色」で種類がわかる</div>
+    <div class="board">
+      <div class="grp p">🎬 〇〇食品 ・ 春キャンペーンCM <span class="alert">⚠3</span><span class="cnt">8件</span></div>
+      <div class="row"><span class="fname">haruka_spring_cm_015</span><span class="av">田</span><span class="st">編集</span><span class="delay ok">あと5日</span></div>
+      <div class="row late"><span class="fname">haruka_spring_cm_016</span><span class="av">佐</span><span class="st d">Dチェック</span><span class="delay late">2日遅れ</span></div>
+      <div class="grp c">🏷 △△コスメ <span class="cnt">3件</span></div>
+      <div class="row sos"><span class="fname">cosme_banner_A_002</span><span class="av">鈴</span><span class="st">制作中</span><span class="delay warn">本日納品</span></div>
+      <div class="grp t"><span style="width:9px;height:9px;border-radius:50%;background:#378ADD;display:inline-block"></span> TKD ／ 塚田チーム <span class="cnt">5件</span></div>
+    </div>
+    <ul style="margin-top:10px">
+      <li><b>オレンジ系の見出し ＝ 案件</b>（カテゴリアイコン 🎬動画／🎨デザイン等 ＋「クライアント名 ・ 案件名」）</li>
+      <li><b>紫系の見出し ＝ クライアント</b>（🏷 アイコン）</li>
+      <li><b>青系の見出し ＝ チーム</b>（チーム色の ● ＋ チームコード）。担当者別のときはアバターが見出しになります。</li>
+      <li>見出し右端の <b>「◯件」</b> はグループ内の件数、<b>「⚠数字」</b> は要注意の合計（ホバーすると 初稿7日内／納品7日内／遅延／本日／重なり の内訳が出ます）。</li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📋 各行の固定4列（左側）</div>
+    <ul>
+      <li><b>ファイル名</b>：クリックで詳細モーダルが開く。ホバーするとファイル名フル／クライアント・案件／担当者がツールチップ表示。</li>
+      <li><b>担当アバター</b>：制作担当。ホバーで「ニックネーム（名前）／チーム」。「未」は未アサイン。</li>
+      <li><b>ステータス</b>：チップ表示（ガント上では「CLチェック中」など短縮表記。ホバーで正式名）。</li>
+      <li><b>遅れ</b>：納期との差分ラベル（次のSTEPで詳しく）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>バーとマイルストーン（凡例の読み方）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">ガント本体の上に常に凡例バーが表示されます（右端の「▼凡例」で開閉）。意味はこの通りです。</p>
+
+  <div class="legend">
+    <span><span class="lg-bar lg-prod"></span>制作期間</span>
+    <span><span class="lg-bar lg-rev"></span>確認・修正</span>
+    <span><span class="lg-bar lg-soon"></span>初稿/本日近い</span>
+    <span><span class="lg-bar lg-late"></span>遅延</span>
+    <span><span class="lg-dia"></span>初稿締切</span>
+    <span><span class="lg-star">★</span>最終納品</span>
+  </div>
+
+  <div class="step-card" style="margin-top:12px">
+    <div class="step-card-title">👀 見るポイント</div>
+    <ul>
+      <li><b>太いミント色バー ＝ 制作期間</b>、その下の<b>細い紫バー ＝ 確認・修正（チェック）期間</b>。2段でどのフェーズにいるか分かります。</li>
+      <li>締切が近づくとバーが<b>オレンジ</b>、締切超過で<b>赤</b>に変わり、行全体もうっすら赤くなります。</li>
+      <li>マイルストーン：● 着手 ／ <b>◆（オレンジ）初稿締切</b> ／ CL確認 ／ <b>★（赤）最終納品</b>。DチェックとPチェックの予定日もマーカー表示されます。同じ日に複数あると数字付きの「同日まとめ」マーカーに集約。</li>
+      <li><b>薄い縞模様のバー ＝ 推定値</b>（日付未入力を周辺情報から推定して描画）。正確に管理したい行は日付を入れましょう。</li>
+      <li>納品済みの行はバーが薄いグリーンになり、目立たなくなります。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>遅延とSOSの拾い方（毎朝のルーティン）</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step"><div class="flow-step-icon">📊</div><div class="flow-step-label">右の「要対応サマリー」<br>を見る</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🚨</div><div class="flow-step-label">遅延・SOS・本日対応<br>から順に開く</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🏐</div><div class="flow-step-label">ボール保持者に<br>ひと声かける</div></div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📊 右サイドの「要対応サマリー」</div>
+    <p>ガント表示の右側パネルに、いま手を打つべきものが自動集計されます。上から順に:</p>
+    <ul>
+      <li><b>遅延案件</b>：最終納期を過ぎたもの（遅れの大きい順）。項目クリックで詳細モーダル直行。</li>
+      <li><b>初稿締切 7日内</b> ／ <b>最終納品 7日内</b> ／ <b>本日対応すべき案件</b></li>
+      <li><b>担当者ごとの負荷注意</b>：制作期間が <b>3件以上重なっている</b> 担当者（「最大◯件重なり」ピル付き）。アサインの平準化に。</li>
+      <li><b>ボール保持中</b>：いま誰かの手番になっているもの一覧。</li>
+    </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 このサイドパネルは「自分の案件」「自分のボール」に絞っていても<b>全体で集計</b>されます。自分向けビューのまま他メンバーの遅延を見落とさないための仕様です。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🆘 SOSの見つけ方</div>
+    <ul>
+      <li>担当者が行き詰まったとき、<b>リスト表示のSOS列のボタン</b>でSOSを点灯できます（操作できるのは自分が担当しているクリエイティブのみ）。</li>
+      <li>SOS中の行は<b>薄い黄色の背景</b>になります。</li>
+      <li>詳細フィルターの <b>「SOSのみ」</b> にチェックすると、SOS中のクリエイティブだけに絞れます。</li>
+      <li>助け方・出し方の詳細は <a href="/guide-sos.html" style="color:var(--em-dark);font-weight:700">SOSガイド</a> へ。</li>
+    </ul>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>朝いちは <strong>「遅延案件」と「SOS」だけは必ず見る</strong>。この2つは待つほど傷が深くなります。サマリーの項目クリック → 詳細モーダル → ボール保持者に連絡、まで1分で回せます。</p>
+  </div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>ビュー切替と絞り込みを使いこなす</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">👁 3つのビュー（案件範囲）</div>
+    <ul>
+      <li><b>全案件</b>：フィルターに合うすべてを表示（デフォルト）。</li>
+      <li><b>自分の案件</b>：①自分がクリエイティブにアサインされている ②自分がその案件のディレクター ③自分がその案件のプロデューサー——のいずれかに該当するものだけ。</li>
+      <li><b>自分のボール</b>：<b>いま自分が動かす番</b>のものだけ。Dチェック待ちが並ぶので、ディレクターの作業キューとして最強です。</li>
+    </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 プロフィール設定の「クリエイティブ初期ビュー」で、画面を開いたときの初期値を選べます（全案件／自分の案件／自分のボール）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">⚙ 詳細フィルター（1行目の歯車）</div>
+    <ul>
+      <li><b>トグル</b>：取引終了クライアント含む ／ 納品済み含む ／ 遅延のみ ／ SOSのみ</li>
+      <li><b>ステータス</b>：ピルボタンで複数選択（「Dチェック」＋「Dチェック後修正」だけ、など）。</li>
+      <li><b>ボール種別</b>：編集者・D・P・クライアント のどこにボールがあるかで絞り込み。</li>
+      <li>適用中はボタンに<b>件数バッジ</b>が付きます。迷子になったら「クリア」で一発リセット。</li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🏐 ボール保持者バッジの色</div>
+    <p>リスト表示の「ボール保持者」列と詳細モーダルのヘッダーには、色ドット＋名前でいまの手番が表示されます（複数人のときは「＋N」表記）。</p>
+    <div class="ball-list">
+      <span><span class="bd bd-e"></span>編集者・デザイナー</span>
+      <span><span class="bd bd-w"></span>Wチェック</span>
+      <span><span class="bd bd-d"></span>ディレクター</span>
+      <span><span class="bd bd-p"></span>プロデューサー</span>
+      <span><span class="bd bd-c"></span>クライアント</span>
+      <span><span class="bd bd-done"></span>完了</span>
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">これで進行ボードは読めます！<small>「自分のボール」でDチェックをこなし、「要対応サマリー」でチーム全体を守る、が基本形です</small></div>
+  </div>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🫥</span>
+      <div><div class="trouble-q">あるはずのクリエイティブが見当たらない</div><div class="trouble-a">まず詳細フィルターを「クリア」。納品済み（「納品済み含む」OFF）や、ビューが「自分のボール」のままになっているのが定番の原因です。件数は右上の「◯件表示中」で確認できます。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📅</span>
+      <div><div class="trouble-q">遅れ列が「日付未設定」になっている</div><div class="trouble-a">納期が未入力です。詳細モーダルで初稿締切・最終納期を入れると遅延判定とマイルストーンが出るようになります。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🏐</span>
+      <div><div class="trouble-q">ボール保持者が「担当未定」</div><div class="trouble-a">アサイン漏れです。詳細モーダルで担当者を設定しましょう。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🧭</span>
+      <div><div class="trouble-q">ガントが今日から遠く離れてしまった</div><div class="trouble-a">期間ナビの「今日へ」ボタンで現在期間に戻れます。📅 から日付指定ジャンプも可能。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">👀</span>
+      <div><div class="trouble-q">Dチェック待ちが来たら何をすれば？</div><div class="trouble-a">承認・修正依頼の出し方は <a href="/guide-d-check.html" style="color:var(--em-dark);font-weight:700">Dチェックの進め方</a> へ。</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <div class="related">
+    <a href="/guide-d-check.html">👀 Dチェックの進め方</a>
+    <a href="/guide-sos.html">🆘 SOSの出し方・拾い方</a>
+    <a href="/guide-production-flow.html">🎬 制作フロー全体</a>
+    <a href="/guide-notification-settings.html">🔔 通知設定</a>
+    <a href="/data-model.html">🗺 データモデル</a>
+  </div>
+  <p style="margin-top:14px">HARUKA FILM SYSTEM ／ 進行ボードの読み方</p>
+</footer>
+
+</body>
+</html>
