@@ -10626,13 +10626,28 @@ router.get('/files/:fileId/stream', async (req, res) => {
 // セキュリティ: 既存 lib/drive-share.js と同じく anyone-with-link reader を idempotent に付与。
 //              元々クライアントレビュー時にも同じ操作をしている運用と整合。
 // fallback: 失敗時はフロント側で従来の /files/:fileId/stream プロキシに切り替わる。
+//
+// 高速化（ADR 021 緩和策の実装）:
+//   1. contentUrl は fileId だけで組み立てられるため drive.files.get を critical path から除去。
+//      mimeType / size は /files/:id/stream と同じ creative_files のキャッシュ列から供給
+//      （フロント public/haruka.html は contentUrl のみ使用。他フィールドは参考用の形状維持）
+//   2. anyone reader 付与済みの fileId をプロセス内キャッシュし、2回目以降の
+//      permissions.create（Drive 書き込み API）をスキップ → 2回目以降は Drive API 0 回
+//   3. Railway 再起動でキャッシュが消えても再付与1回で済むだけなので TTL 不要
+
+// anyone-with-link reader 付与済み fileId のプロセス内キャッシュ（付与成功 or 付与済み扱いのみ登録）
+const _anyoneReaderGranted = new Set();
+const _ANYONE_READER_CACHE_MAX = 20000; // 念のための上限（超えたらリセット→再付与で自然回復）
+
 router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
-    // creative_files から faststart 情報を取得（faststart 版があれば優先）
+    // creative_files から faststart 情報とメタキャッシュを取得（faststart 版があれば優先）
+    // ※ permission 付与先（faststart or 原本）はこの結果で決まるため、Drive 呼び出しは
+    //    この select の後にしか発行できない（逐次が本質的に必要なのはここだけ）
     const { data: cf } = await supabase
       .from('creative_files')
-      .select('mime_type, faststart_drive_file_id, faststart_status')
+      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status')
       .eq('drive_file_id', req.params.fileId)
       .maybeSingle();
 
@@ -10640,44 +10655,44 @@ router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
     const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
     const targetFileId  = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
 
-    const drive = await getDriveService();
-
-    // anyone-with-link reader を idempotent に付与
-    try {
-      await drive.permissions.create({
-        fileId: targetFileId,
-        supportsAllDrives: true,
-        requestBody: { role: 'reader', type: 'anyone' },
-      });
-    } catch (e) {
-      const code = e?.code || e?.response?.status;
-      const msg  = e?.message || '';
-      // 既に付与済 / 制限などは致命的でない
-      if (!(code === 400 || code === 403 || /already exists|cannotShareTeamDriveTopFolderWithAnyoneOrDomains|publishOutNotPermitted|sharingRateLimitExceeded/i.test(msg))) {
-        throw e;
+    // anyone-with-link reader を idempotent に付与（同一プロセスで付与済みならスキップ）
+    if (!_anyoneReaderGranted.has(targetFileId)) {
+      const drive = await getDriveService();
+      try {
+        await drive.permissions.create({
+          fileId: targetFileId,
+          supportsAllDrives: true,
+          requestBody: { role: 'reader', type: 'anyone' },
+        });
+      } catch (e) {
+        const code = e?.code || e?.response?.status;
+        const msg  = e?.message || '';
+        // 既に付与済 / 制限などは致命的でない
+        if (!(code === 400 || code === 403 || /already exists|cannotShareTeamDriveTopFolderWithAnyoneOrDomains|publishOutNotPermitted|sharingRateLimitExceeded/i.test(msg))) {
+          throw e;
+        }
       }
+      // ここまで来たら付与成功 or 従来から成功扱いのケース → キャッシュ（失敗 throw 時は登録しない）
+      if (_anyoneReaderGranted.size >= _ANYONE_READER_CACHE_MAX) _anyoneReaderGranted.clear();
+      _anyoneReaderGranted.add(targetFileId);
     }
-
-    const meta = await drive.files.get({
-      fileId: targetFileId,
-      fields: 'id, webContentLink, webViewLink, mimeType, size',
-      supportsAllDrives: true,
-    });
 
     // webContentLink (drive.google.com/uc?...&export=download) は 25MB 超で
     // 「ウイルススキャンできません」の確認 HTML ページを挟む仕様。動画はほぼ全て
     // 該当し <video> が HTML を掴んで再生失敗 → 直リンクが実質ずっと死んでいた。
     // 確認ページを回避する usercontent ダウンロードエンドポイント + confirm=t を返す。
     // ※ 効果はファイル/環境依存。失敗時はフロントが /files/:id/stream へ自動 fallback する。
-    const fid = meta.data.id || targetFileId;
+    const fid = targetFileId;
     const directUrl = `https://drive.usercontent.google.com/download?id=${fid}&export=download&confirm=t`;
 
+    // 参考用フィールド（フロント未使用）は files.get せずに組み立て / DB キャッシュで供給
+    const cachedSize = useFaststart ? cf?.faststart_file_size : cf?.file_size;
     res.json({
       contentUrl:     directUrl,
-      webContentLink: meta.data.webContentLink || null, // 参考用（旧来の値）
-      viewUrl:        meta.data.webViewLink || null,
-      mimeType:       meta.data.mimeType || cf?.mime_type || null,
-      size:           meta.data.size ? Number(meta.data.size) : null,
+      webContentLink: `https://drive.google.com/uc?id=${fid}&export=download`, // 参考用（旧来の値と同形式）
+      viewUrl:        `https://drive.google.com/file/d/${fid}/view?usp=drivesdk`, // 参考用（旧来の値と同形式）
+      mimeType:       cf?.mime_type || null, // faststart は -c copy なので原本と同じ
+      size:           (typeof cachedSize === 'number' && cachedSize > 0) ? Number(cachedSize) : null,
       source:         useFaststart ? 'faststart' : 'master',
     });
   } catch (e) {
