@@ -21,7 +21,7 @@
     "@aws-sdk/s3-request-presigner": "3.1079.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
     "@google-cloud/vertexai": "^1.10.0",
-    "@supabase/supabase-js": "^2.102.0",
+    "@supabase/supabase-js": "^2.110.0",
     "axios": "^1.6.7",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",
