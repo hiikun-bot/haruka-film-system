@@ -16388,6 +16388,8 @@ const _ROLE_PERMS_FALLBACK = {
   'producer|creative.rank_price_column': true, 'producer_director|creative.rank_price_column': true, 'director|creative.rank_price_column': true,
   'secretary|creative.csv_import': true, 'producer|creative.csv_import': true, 'producer_director|creative.csv_import': true,
   'secretary|creative.sos_others': true, 'producer|creative.sos_others': true, 'producer_director|creative.sos_others': true, 'director|creative.sos_others': true,
+  // Wチェック要否の個別設定（バグ報告 892c2fea。既定: 秘書/プロデューサー/ディレクター/デザイナー。PDはproducer/director継承で許可）
+  'secretary|creative.wcheck_toggle': true, 'producer|creative.wcheck_toggle': true, 'director|creative.wcheck_toggle': true, 'designer|creative.wcheck_toggle': true,
   'secretary|member.list': true, 'producer|member.list': true, 'producer_director|member.list': true, 'director|member.list': true,
   'secretary|member.edit_password': true,
   'secretary|member.deactivate': true,
@@ -26886,6 +26888,7 @@ const ROLE_PERM_LIST = [
   { section:'クリエイティブ', key:'creative.rank_price_column',  label:'ランク・単価列表示' },
   { section:'クリエイティブ', key:'creative.csv_import',         label:'一括登録（CSV）' },
   { section:'クリエイティブ', key:'creative.sos_others',         label:'他人のCLにSOSを操作' },
+  { section:'クリエイティブ', key:'creative.wcheck_toggle',      label:'Wチェック要否の個別設定（静止画）' },
   { section:'メンバー管理',   key:'member.list',                 label:'メンバー一覧閲覧' },
   { section:'メンバー管理',   key:'member.edit_password',        label:'メンバー編集・PW変更' },
   { section:'メンバー管理',   key:'member.deactivate',           label:'メンバー無効化' },
@@ -38409,14 +38412,19 @@ function confirmUploadNo() {
 }
 
 // ==================== Wチェック要否トグル（ADR 024）====================
-// 静止画クリエイティブのときだけ表示。権限者（project.create_edit）のみ操作可。
+// 静止画クリエイティブのときだけ表示。権限者のみ操作可。
+// バグ報告 892c2fea: デザイナー / ディレクターも「Wチェック不要 → Dチェック直行」を選べるよう
+// 専用権限 creative.wcheck_toggle（既定: admin/secretary/producer/director/designer）で判定。
+// 従来の project.create_edit 保持者も引き続き操作可（migration 未適用環境の後退防止）。
 // チェック ON/OFF で creatives.wcheck_required を即時 PUT。
 function updateWcheckToggleRow(c) {
   const row = document.getElementById('cd-wcheck-toggle-row');
   const cb  = document.getElementById('cd-wcheck-required');
   if (!row || !cb) return;
   const wc = c?.wcheck || {};
-  const canEdit = (typeof hasPermission === 'function') ? hasPermission('project.create_edit') : false;
+  const canEdit = (typeof hasPermission === 'function')
+    ? (hasPermission('creative.wcheck_toggle') || hasPermission('project.create_edit'))
+    : false;
   // 静止画以外、または権限なしの場合は非表示
   if (!wc.is_image || !canEdit) {
     row.style.display = 'none';

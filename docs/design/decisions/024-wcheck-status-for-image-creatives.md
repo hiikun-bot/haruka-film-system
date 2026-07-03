@@ -73,6 +73,14 @@ Wチェックは **静止画（`creative_categories.code = 'image'`）でのみ*
 
 `wcheck_required` トグルは `project.create_edit` 権限が必要。
 
+#### 改訂3（2026-07-03・バグ報告 892c2fea）: トグル権限を `creative.wcheck_toggle` に変更
+実際に制作・提出を行うデザイナー / ディレクターが「Wチェック不要 → Dチェック直行」を選べず、
+Wチェックを必ず経由しなければならなかった。専用 permission_key **`creative.wcheck_toggle`** を新設し、
+既定で **admin / secretary / producer / director / designer** に付与（editor は既定 OFF・権限管理画面で変更可）。
+判定は `creative.wcheck_toggle` **または** 従来の `project.create_edit` の OR（migration 未適用環境の後退防止）。
+producer_director 行は seed しない（dual-read 互換分岐の副作用回避。producer / director 行の継承でカバー）。
+migration: `migrations/2026-07-03_creative_wcheck_toggle_permission.sql`。
+
 ### 5. 通知（既存 notification_type 'creative_status' を再利用）
 `notifications.js#notifyCreativeStatusChange` に分岐追加。新しい notification_settings 列は作らない（D/P チェックと同じ 'creative_status' 型）:
 - `→ Wチェック`: Wチェック担当者へ「Wチェックを依頼されました」
