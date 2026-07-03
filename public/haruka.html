@@ -34427,8 +34427,13 @@ function _cdRenderFileCard(f, opts) {
     fsBadge = `<span title="faststart 生成失敗" style="font-size:10px;color:#991b1b;background:#fee2e2;border:0.5px solid #fca5a5;border-radius:5px;padding:2px 6px;white-space:nowrap;flex-shrink:0">⚠️ 生成失敗</span>${regenBtn}`;
   }
 
+  // data-fp-prefetch-*: ファイルカードへのホバーで direct-url を先読みするためのマーカー
+  // （initFilePreviewDirectUrlHoverPrefetch が委譲で拾う。動画判定は先読み側で行う）
+  const prefetchAttrs = canPreview
+    ? `data-fp-prefetch-drive-id="${esc(driveFileId)}" data-fp-prefetch-name="${esc(f.generated_name || '')}"`
+    : '';
   return `
-  <div style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
+  <div ${prefetchAttrs} style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
     <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border);flex-wrap:wrap">
       <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}</span>
       <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name||'')}">${esc(f.generated_name||'')}</span>
@@ -34594,10 +34599,14 @@ function cdStartFaststartPolling(creativeId, creativeFileId) {
       const st = f.faststart_status;
       if (st === 'done') {
         cdStopFaststartPolling();
+        // direct-url の返す対象が master → faststart 版に切り替わるので先読みキャッシュを破棄
+        try { _fpInvalidateDirectUrl(f.drive_file_id); } catch (_) {}
         showToast('✅ faststart プレビュー版の生成が完了しました', 'info');
         loadCreativeFiles(creativeId); // バッジを「✅ プレビュー版」に更新
       } else if (st === 'failed') {
         cdStopFaststartPolling();
+        // 生成中に先読みした URL が古い faststart 状態を前提にしている可能性があるので破棄
+        try { _fpInvalidateDirectUrl(f.drive_file_id); } catch (_) {}
         showToast('❌ faststart 生成に失敗しました（「↻ 再生成」から再試行できます）', 'warn');
         loadCreativeFiles(creativeId); // 「⚠️ 生成失敗 + 再生成」表示に戻す
       }
@@ -34625,6 +34634,12 @@ async function regenerateFaststart(creativeFileId) {
       return;
     }
     showToast('⏳ faststart 再生成中…（5秒ごとに自動で状態を確認します）', 'info');
+    // 旧 faststart 版を指した先読み direct-url が残らないよう破棄
+    // （creative_file id → drive_file_id はファイル一覧キャッシュから引く）
+    try {
+      const _regenFile = (_cdFilesCache || []).find(x => x.id === creativeFileId);
+      _fpInvalidateDirectUrl(_regenFile?.drive_file_id);
+    } catch (_) {}
     // done / failed まで 5 秒間隔でポーリング（旧: 2秒後に1回だけ再読込する fire-and-forget）
     if (currentCreativeDetail?.id) {
       cdStartFaststartPolling(currentCreativeDetail.id, creativeFileId);
@@ -34639,6 +34654,99 @@ async function regenerateFaststart(creativeFileId) {
 let currentPreviewFileId = null;
 
 // ========== Frame.io スタイル プレビュー ==========
+
+// ===== 動画 direct-url の先読みキャッシュ（#951 のホバー先読みと同じ流儀） =====
+// 課題: openFilePreview() の direct-url 解決はサーバー側で Drive API 往復が入るため、
+//       「▶ チェックする」クリック → 再生開始までに固定遅延がある。
+// 対策: ファイルカードへの mouseover（150ms 滞留）で direct-url を先読みしておき、
+//       クリック時はキャッシュ即ヒットで v.src を設定する（fetch 省略）。
+//  - driveFileId 単位の TTL キャッシュ + in-flight 共有（連打/重複 fetch しても安全）
+//  - direct-url が返す contentUrl は fid から決まる安定 URL だが、faststart 完了で
+//    返す対象が master → faststart 版に切り替わるため、TTL は詳細キャッシュと同じ 3分
+//  - 鮮度担保: faststart done/failed 検知・faststart 再生成開始・アップロード取り消し・
+//    新バージョンアップロードのタイミングで該当 driveFileId を無効化（_fpInvalidateDirectUrl）
+//  - キャッシュ済み URL で <video> がエラーを出した場合は、error ハンドラ内で無効化してから
+//    既存の /stream fallback → 10秒/20秒リトライへ進む（既存フォールバックは完全温存）
+const FP_VIDEO_EXT_RE = /\.(mp4|mov|webm|avi|mkv|m4v)$/i; // openFilePreview の isVideo 判定と共通
+const _fpDirectUrlCache    = new Map(); // driveFileId -> { url, ts }
+const _fpDirectUrlInFlight = new Map(); // driveFileId -> Promise<string|null>
+const FP_DIRECT_URL_TTL_MS = CD_CACHE_TTL_MS; // 3分（クリエイティブ詳細キャッシュと同一方針）
+const FP_DIRECT_URL_CACHE_MAX = 30;
+
+function _fpGetCachedDirectUrl(driveFileId) {
+  const ent = _fpDirectUrlCache.get(driveFileId);
+  if (!ent) return null;
+  if (Date.now() - ent.ts > FP_DIRECT_URL_TTL_MS) {
+    _fpDirectUrlCache.delete(driveFileId);
+    return null;
+  }
+  return ent.url;
+}
+function _fpInvalidateDirectUrl(driveFileId) {
+  if (!driveFileId) return;
+  _fpDirectUrlCache.delete(driveFileId);
+}
+
+// direct-url を取得（cache + in-flight dedup 付き）。
+// 戻り値: contentUrl（取れなければ null）。null は cache せず、クリック時に従来どおり再試行される。
+// ネットワーク例外はそのまま throw（呼び出し側の try/catch が /stream fallback する）。
+async function _fpFetchDirectUrl(driveFileId) {
+  if (!driveFileId) return null;
+  const cached = _fpGetCachedDirectUrl(driveFileId);
+  if (cached) return cached;
+  if (_fpDirectUrlInFlight.has(driveFileId)) return _fpDirectUrlInFlight.get(driveFileId);
+  const p = (async () => {
+    const r = await apiFetch(`${API}/files/${driveFileId}/direct-url`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j.contentUrl) return null;
+    // 上限超え -> 最古を捨てる（_cdSetCache と同じ素朴な FIFO）
+    if (_fpDirectUrlCache.size >= FP_DIRECT_URL_CACHE_MAX) {
+      const firstKey = _fpDirectUrlCache.keys().next().value;
+      if (firstKey) _fpDirectUrlCache.delete(firstKey);
+    }
+    _fpDirectUrlCache.set(driveFileId, { url: j.contentUrl, ts: Date.now() });
+    return j.contentUrl;
+  })();
+  _fpDirectUrlInFlight.set(driveFileId, p);
+  try {
+    return await p;
+  } finally {
+    _fpDirectUrlInFlight.delete(driveFileId);
+  }
+}
+
+// ファイルカード（チェックボタンを含むカード全体）へのホバー先読み。
+// #951 の initCreativeDetailHoverPrefetchDelegated と同じ委譲パターン:
+//  - 150ms 滞留 + 同一 driveFileId の連続発火防止 + in-flight 共有
+//  - 対象は動画ファイルのみ（FP_VIDEO_EXT_RE = openFilePreview の isVideo と同一条件）
+//  - タッチ環境では mouseover が発火しないだけなので特別対応は不要
+//  - 失敗は握りつぶす（実際に開いたときに正規のエラーハンドリング/fallback が走る）
+(function initFilePreviewDirectUrlHoverPrefetch() {
+  let _timer = null;
+  let _hoverId = null;
+  document.addEventListener('mouseover', (ev) => {
+    const t = ev.target;
+    if (!t || typeof t.closest !== 'function') return;
+    const card = t.closest('[data-fp-prefetch-drive-id]');
+    if (!card) {
+      // カードの外へ出た: 保留中の先読みをキャンセル
+      if (_timer) { clearTimeout(_timer); _timer = null; }
+      _hoverId = null;
+      return;
+    }
+    const driveFileId = card.getAttribute('data-fp-prefetch-drive-id') || '';
+    const fname = card.getAttribute('data-fp-prefetch-name') || '';
+    if (!driveFileId || !FP_VIDEO_EXT_RE.test(fname)) return; // 動画のみ先読み
+    if (driveFileId === _hoverId) return; // カード内の子要素間移動では再スタートしない
+    _hoverId = driveFileId;
+    if (_timer) clearTimeout(_timer);
+    _timer = setTimeout(() => {
+      _timer = null;
+      try { _fpFetchDirectUrl(driveFileId).catch(() => {}); } catch (_) {}
+    }, 150);
+  });
+})();
 
 function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creativeType, assigneeRole) {
   currentPreviewFileId   = fileRecordId || null;
@@ -34663,7 +34771,7 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   const diagnoseArea = document.getElementById('fp-drive-diagnose-area');
   diagnoseArea.style.display = 'none';
 
-  const isVideo = /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
+  const isVideo = FP_VIDEO_EXT_RE.test(filename); // ホバー先読みと同一条件（定義は上の先読みブロック）
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
 
   // Premiereボタン: 動画クリエイティブ + DBレコードあり のときだけ表示
@@ -34692,14 +34800,13 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         v.dataset.fallbackSrc = proxyUrl;
         v.dataset.directTried = '0';
         try {
-          const r = await apiFetch(`${API}/files/${driveFileId}/direct-url`);
-          if (r.ok) {
-            const j = await r.json();
-            if (j.contentUrl) {
-              v.src = j.contentUrl;
-              v.dataset.directTried = '1';
-              return;
-            }
+          // ホバー先読み済みならキャッシュ即ヒット（fetch 省略で体感ゼロ）。
+          // ミス時は従来どおり direct-url を取得（in-flight 共有で先読みと二重 fetch しない）。
+          const directUrl = await _fpFetchDirectUrl(driveFileId);
+          if (directUrl) {
+            v.src = directUrl;
+            v.dataset.directTried = '1';
+            return;
           }
         } catch (_) { /* fallback へ */ }
         v.src = proxyUrl;
@@ -34730,6 +34837,9 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
           // ADR 021: 直リンク再生でエラーが出たら、まだプロキシを試していない場合だけ自動 fallback
           if (v.dataset.directTried === '1' && v.dataset.fallbackSrc) {
             console.warn('[direct-url] 再生失敗 → プロキシへ fallback');
+            // 先読みキャッシュ済みの URL が死んでいた可能性があるので、必ず無効化してから fallback
+            // （次回クリック時に古い URL を再ヒットさせない）
+            try { _fpInvalidateDirectUrl(driveFileId); } catch (_) {}
             v.dataset.directTried = '2';
             v.src = v.dataset.fallbackSrc;
             v.load();
@@ -40515,6 +40625,9 @@ async function cdHandleUploadSuccess(data, version, statusEl) {
   }
   // アップロードでファイル一覧が変わるので payload キャッシュを無効化
   try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
+  // 新バージョンの drive_file_id は新規発番なので通常は no-op だが、direct-url 先読み
+  // キャッシュも念のため破棄（同一 fid で内容が変わるエッジケースに古い判定を残さない）
+  try { _fpInvalidateDirectUrl(data.file?.drive_file_id); } catch (_) {}
   await loadCreativeFiles(currentCreativeDetail.id);
   document.getElementById('cd-upload-input').value = '';
   document.getElementById('cd-upload-preview').style.display = 'none';
@@ -40928,6 +41041,12 @@ async function cancelLatestUpload(creativeId, fileId, version) {
 
     // ---- ここから UI 全更新 ----
     // (a) キャッシュを即時クリア。GET 完了前でも他の描画が走った時に古い state を見せない
+    // 取り消したファイルの direct-url 先読みキャッシュも破棄
+    // （Drive 原本がゴミ箱送りになり URL が死ぬ。_cdFilesCache を消す前に drive_file_id を引く）
+    try {
+      const _undoneFile = (_cdFilesCache || []).find(x => x.id === fileId);
+      _fpInvalidateDirectUrl(_undoneFile?.drive_file_id);
+    } catch (_) {}
     _cdFilesCache = [];
     currentUploadedFileCount = 0;
 
