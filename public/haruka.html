@@ -17855,11 +17855,13 @@ function renderProjectLines() {
             ${appliesLabel}
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
+            <button type="button" class="btn" onclick="toggleLineCostsAccordion('${esc(line.id)}')" style="padding:4px 10px;font-size:11px" title="ロール別の支払単価（ディレクション費など）を確認・追加">${_projectLineCostsOpen.has(line.id) ? '▾' : '▸'} 💰 内訳</button>
             ${toggleBtn}
             <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
             <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
           </div>
         </div>
+        ${_projectLineCostsOpen.has(line.id) ? `<div style="border-top:1px dashed var(--border);background:var(--surface);padding:8px 14px">${renderLineCostsBody(line)}</div>` : ''}
       </div>
     `;
   }).join('');
