@@ -2358,6 +2358,84 @@ async function upsertProducerLineCost(lineId, categoryId, unitPrice) {
   }
 }
 
+// ===== ディレクター費（案件共通・ランク不問の1本あたり単価） =====
+// ディレクターにはランク別単価の概念が無いため、案件単位で1回入力し、
+// 全 lines の role=director（ロール固定・fixed_per_unit）line_cost へ一括反映する。
+// データ表現は ADR 018 のまま（line_costs 縦持ち）で、UI の入口だけ案件レベルに引き上げる。
+
+async function directorRoleId() {
+  const { data: role } = await supabase.from('roles').select('id').eq('code', 'director').maybeSingle();
+  return role ? role.id : null;
+}
+
+// 案件の全 lines にロール固定 director の fixed_per_unit コストが同額で入っていれば
+// その単価を返す（= 案件共通ディレクター費とみなせる）。1行でも欠け・不一致なら null。
+async function projectDirectorFeeConsensus(projectId, roleId) {
+  const { data: lines, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id, line_costs:project_estimate_line_costs(role_id, user_id, pricing_type, unit_price)')
+    .eq('project_id', projectId);
+  if (error || !lines || !lines.length) return null;
+  let price = null;
+  for (const line of lines) {
+    const hit = (line.line_costs || []).find(lc =>
+      lc.role_id === roleId && !lc.user_id && lc.pricing_type === 'fixed_per_unit');
+    if (!hit || !hit.unit_price) return null;
+    if (price === null) price = hit.unit_price;
+    else if (price !== hit.unit_price) return null;
+  }
+  return price;
+}
+
+// PUT /api/projects/:project_id/director-fee  body: { unit_price }
+// 全 lines のロール固定 director line_cost を一括 upsert。unit_price=0 は
+// fixed_per_unit の行のみ削除（時給等の設定は内訳での明示操作を尊重して温存）。
+router.put('/projects/:project_id/director-fee', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const price = Math.max(0, parseInt((req.body || {}).unit_price, 10) || 0);
+  const roleId = await directorRoleId();
+  if (!roleId) return res.status(500).json({ error: 'ディレクターロールが roles マスタに存在しません' });
+
+  const { data: lines, error: linesErr } = await supabase
+    .from('project_estimate_lines')
+    .select('id')
+    .eq('project_id', projectId);
+  if (linesErr) return res.status(500).json({ error: linesErr.message });
+  if (!lines || !lines.length) {
+    return res.status(400).json({ error: '成果物グループがまだありません。先にグループを追加してください' });
+  }
+
+  let applied = 0, removed = 0;
+  for (const line of lines) {
+    // UNIQUE (line_id, role_id, user_id) のためロール固定行は最大1件
+    const { data: existing, error: exErr } = await supabase
+      .from('project_estimate_line_costs')
+      .select('id, pricing_type')
+      .eq('line_id', line.id).eq('role_id', roleId).is('user_id', null)
+      .maybeSingle();
+    if (exErr) return res.status(500).json({ error: exErr.message });
+    if (price > 0) {
+      if (existing) {
+        const { error } = await supabase.from('project_estimate_line_costs')
+          .update({ unit_price: price, pricing_type: 'fixed_per_unit', percentage: null, actual_hours: null })
+          .eq('id', existing.id);
+        if (error) return res.status(500).json({ error: error.message });
+      } else {
+        const { error } = await supabase.from('project_estimate_line_costs')
+          .insert({ line_id: line.id, role_id: roleId, unit_price: price, pricing_type: 'fixed_per_unit', currency: 'JPY' });
+        if (error) return res.status(500).json({ error: error.message });
+      }
+      applied++;
+    } else if (existing && existing.pricing_type === 'fixed_per_unit') {
+      const { error } = await supabase.from('project_estimate_line_costs')
+        .delete().eq('id', existing.id);
+      if (error) return res.status(500).json({ error: error.message });
+      removed++;
+    }
+  }
+  res.json({ ok: true, unit_price: price, applied, removed, lines_count: lines.length });
+});
+
 // ===== ランク単価プリセット（category × rank → 制作者単価）。category_rank_rates を再利用 =====
 // 役割はカテゴリから自動（UI ではロールを扱わない）。編集は admin/秘書/プロデューサーのみ。
 const PRESET_ROLES = ['admin', 'secretary', 'producer', 'producer_director'];
@@ -2420,6 +2498,10 @@ router.post('/projects/:project_id/lines/generate-preset', requireAuth, requireP
   const existingRanks = new Set((existingLines || []).map(l => String(l.rank || '').toUpperCase()));
   let sortOrder = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
 
+  // 案件共通ディレクター費（ランク不問）が設定済みなら、生成する line にも自動で引き継ぐ
+  const dRoleId = await directorRoleId();
+  const dFee = dRoleId ? await projectDirectorFeeConsensus(projectId, dRoleId) : null;
+
   let createdCount = 0;
   for (const rank of ['A', 'B', 'C']) {
     if (existingRanks.has(rank)) continue; // 既にある rank はスキップ
@@ -2433,6 +2515,11 @@ router.post('/projects/:project_id/lines/generate-preset', requireAuth, requireP
       return res.status(500).json({ error: error.message });
     }
     await upsertProducerLineCost(line.id, category_id, priceByRank[rank] || 0);
+    if (dFee) {
+      const { error: dErr } = await supabase.from('project_estimate_line_costs')
+        .insert({ line_id: line.id, role_id: dRoleId, unit_price: dFee, pricing_type: 'fixed_per_unit', currency: 'JPY' });
+      if (dErr) console.warn('[lines/generate-preset] director fee inherit failed:', dErr.message);
+    }
     createdCount++;
   }
   res.json({ ok: true, created_count: createdCount, skipped: 3 - createdCount });
@@ -2511,6 +2598,16 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     status_changed_at: new Date().toISOString(),
   };
 
+  // 案件共通ディレクター費（ランク不問）が設定済みなら新規 line にも自動で引き継ぐ。
+  // 合意値は挿入前の既存 lines で判定する（挿入後だと新 line 自身が「未設定」扱いになるため）
+  let inheritDirectorFee = null, inheritDirectorRoleId = null;
+  try {
+    inheritDirectorRoleId = await directorRoleId();
+    if (inheritDirectorRoleId) {
+      inheritDirectorFee = await projectDirectorFeeConsensus(projectId, inheritDirectorRoleId);
+    }
+  } catch (e) { console.warn('[lines] director fee consensus failed:', e?.message); }
+
   const { data: inserted, error: insErr } = await supabase
     .from('project_estimate_lines')
     .insert(insertRow)
@@ -2530,6 +2627,12 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
   if (data && req.body && req.body.producer_unit_price != null && req.body.producer_unit_price !== '') {
     try { await upsertProducerLineCost(data.id, data.category_id, req.body.producer_unit_price); }
     catch (e) { console.warn('[lines] producer cost upsert failed:', e?.message); }
+  }
+
+  if (data && inheritDirectorFee) {
+    const { error: dErr } = await supabase.from('project_estimate_line_costs')
+      .insert({ line_id: data.id, role_id: inheritDirectorRoleId, unit_price: inheritDirectorFee, pricing_type: 'fixed_per_unit', currency: 'JPY' });
+    if (dErr) console.warn('[lines] director fee inherit failed:', dErr.message);
   }
 
   res.json(data);

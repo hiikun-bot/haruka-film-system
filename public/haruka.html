@@ -6482,6 +6482,15 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
         </div>
       </div>
+      <!-- ディレクター費（案件共通・ランク不問）: 全グループの role=director line_cost へ一括反映 -->
+      <div id="p-director-fee-bar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:#F0FDFA;border:1px solid #99F6E4;border-radius:8px;padding:8px 12px;margin-bottom:12px">
+        <span style="font-size:12px;font-weight:700;color:#0F766E">🎬 ディレクター費</span>
+        <span style="font-size:11px;color:var(--text-muted)">ランク不問・1本あたり</span>
+        <input class="form-input" id="p-director-fee-input" type="number" min="0" step="1" placeholder="未設定" style="width:110px;padding:5px 8px;font-size:12px">
+        <span style="font-size:12px;color:var(--text-muted)">円/本</span>
+        <button type="button" class="btn" id="p-director-fee-save" onclick="saveProjectDirectorFee()" style="padding:5px 12px;font-size:12px;white-space:nowrap">全グループに反映</button>
+        <span id="p-director-fee-note" style="font-size:11px;color:var(--text-muted)"></span>
+      </div>
       <div id="p-lines-list" style="display:flex;flex-direction:column;gap:8px">
         <div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>
       </div>
@@ -17832,12 +17841,15 @@ function renderProjectLines() {
   if (addBtn) addBtn.style.display = canEdit ? '' : 'none';
 
   if (!_projectLinesCache.length) {
+    const feeBar = document.getElementById('p-director-fee-bar');
+    if (feeBar) feeBar.style.display = 'none'; // グループが無いうちは反映先が無いので隠す
     listEl.innerHTML = `
       <div style="color:var(--text-muted);font-size:13px;padding:14px;background:var(--surface);border:1px dashed var(--border);border-radius:10px;text-align:center">
         まだ成果物グループが登録されていません。「+ 新規追加」から追加してください。
       </div>`;
     return;
   }
+  renderProjectDirectorFeeBar();
 
   const total = _projectLinesCache.length;
   listEl.innerHTML = _projectLinesCache.map((line, idx) => {
@@ -17884,6 +17896,85 @@ function renderProjectLines() {
       </div>
     `;
   }).join('');
+}
+
+// ディレクター費バー（案件共通・ランク不問）: 全 lines のロール固定 director line_cost の
+// 合意値を表示し、「全グループに反映」で PUT /projects/:id/director-fee へ一括保存する。
+// ディレクターにはランク別単価の概念が無いため、内訳の外に案件レベルの入口を出す。
+function renderProjectDirectorFeeBar() {
+  const bar = document.getElementById('p-director-fee-bar');
+  const input = document.getElementById('p-director-fee-input');
+  const note = document.getElementById('p-director-fee-note');
+  const btn = document.getElementById('p-director-fee-save');
+  if (!bar || !input || !note || !btn) return;
+  bar.style.display = 'flex';
+  const canEdit = projectLinesCanEdit();
+  input.disabled = !canEdit;
+  btn.style.display = canEdit ? '' : 'none';
+
+  // 合意値の算出: 各 line のロール固定 director 行を集める。
+  // 全行が同額の fixed_per_unit → その値 / 全行未設定 → 未設定 / それ以外（欠け・不一致・時給等） → 混在
+  let mixed = false;
+  const values = []; // line ごとの単価。未設定は null
+  for (const line of _projectLinesCache) {
+    const costs = _projectLineCostsCache[line.id];
+    if (!Array.isArray(costs)) { mixed = true; break; } // 未ロード（31件目以降）は判定不能扱い
+    const d = costs.find(c => (c?.role?.code === 'director') && !c.user_id);
+    if (!d) { values.push(null); continue; }
+    if (d.pricing_type !== 'fixed_per_unit' || !d.unit_price) { mixed = true; break; }
+    values.push(d.unit_price);
+  }
+  let allUnset = false, price = null;
+  if (!mixed) {
+    allUnset = values.every(v => v === null);
+    if (!allUnset) {
+      price = values.find(v => v !== null);
+      if (values.some(v => v !== price)) mixed = true;
+    }
+  }
+
+  if (mixed) {
+    input.value = '';
+    note.textContent = '⚠ グループごとに設定が異なります（各グループの💰内訳を確認）。反映すると全グループが同額で上書きされます';
+    note.style.color = '#92660A';
+  } else if (allUnset) {
+    input.value = '';
+    note.textContent = '納品1本ごとにディレクターへ支払う単価。時給精算は各グループの💰内訳から';
+    note.style.color = 'var(--text-muted)';
+  } else {
+    input.value = price;
+    note.textContent = '設定済み（全グループ共通）。後から追加したグループにも自動で引き継がれます';
+    note.style.color = 'var(--text-muted)';
+  }
+}
+
+async function saveProjectDirectorFee() {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  const raw = String(document.getElementById('p-director-fee-input').value || '').trim();
+  const price = Math.max(0, parseInt(raw, 10) || 0);
+  if (price === 0) {
+    const ok = confirm('ディレクター費を全グループから解除します（0円）。よろしいですか？\n※ 時給など内訳で個別設定した行は残ります');
+    if (!ok) return;
+  }
+  const btn = document.getElementById('p-director-fee-save');
+  await btnBusy(btn, async () => {
+    const res = await apiFetch(`${API}/projects/${projectId}/director-fee`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unit_price: price })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `反映に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    const j = await res.json().catch(() => ({}));
+    showToast(price > 0
+      ? `ディレクター費 ¥${price.toLocaleString()}/本 を全${j.lines_count || ''}グループに反映しました`
+      : 'ディレクター費を解除しました', 'ok');
+    await loadProjectLines(projectId);
+  });
 }
 
 // ADR 025: 成果物グループの停止/再開トグル。削除せず「今は適用していない」状態にする。
