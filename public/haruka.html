@@ -35763,6 +35763,12 @@ async function loadFileComments(fileId) {
   fpRenderCommentMarkers(list);
   // 画像の範囲選択（bbox）overlay を再描画
   fpRenderBboxOverlays();
+  // ペイント注釈本体（drawing.dataUrl / base64）は一覧 API に含まれないため、
+  // drawing 持ちコメントがあれば即座に並行で取得して _fpComments へマージする
+  // （🎨バッジは drawing メタだけで表示されるので、見た目・レイアウトは変わらない）
+  if (_fpComments.some(c => c && c.drawing && !c.drawing.dataUrl)) {
+    fpFetchCommentDrawings(fileId);
+  }
 }
 
 async function showUploadLogs() {
@@ -36173,10 +36179,55 @@ function fpPaintConfirm() {
   fpClosePaintOverlay();
 }
 
+// ペイント注釈本体（drawing.dataUrl）の遅延取得。
+// 一覧 API は drawing をメタ情報（{hasDrawing:true, w, h}）に縮約して返すため、
+// base64 本体はここでファイル単位にまとめて取得し、_fpComments の各コメントへマージする。
+// in-flight は共有（同一ファイルへの重複リクエスト防止）、完了後は解放（失敗時は再試行可能）。
+let _fpDrawingsInflight = null; // { fileId, promise } | null
+function fpFetchCommentDrawings(fileId) {
+  if (!fileId) return Promise.resolve(false);
+  if (_fpDrawingsInflight && _fpDrawingsInflight.fileId === fileId) return _fpDrawingsInflight.promise;
+  const entry = { fileId, promise: null };
+  entry.promise = (async () => {
+    try {
+      const res = await apiFetch(`${API}/creative-files/${fileId}/comments/drawings`);
+      if (!res.ok) {
+        console.warn('[fp] ペイント注釈の取得に失敗: HTTP', res.status);
+        return false;
+      }
+      const rows = await res.json();
+      const map = {};
+      (Array.isArray(rows) ? rows : []).forEach(r => {
+        if (r && r.id && r.drawing && r.drawing.dataUrl) map[r.id] = r.drawing;
+      });
+      // ファイル切替済みでも id マッチでマージするだけなので安全（別ファイルの id は存在しない）
+      (_fpComments || []).forEach(c => { if (c && map[c.id]) c.drawing = map[c.id]; });
+      return true;
+    } catch (e) {
+      console.warn('[fp] ペイント注釈の取得に失敗:', e?.message || e);
+      return false;
+    } finally {
+      if (_fpDrawingsInflight === entry) _fpDrawingsInflight = null;
+    }
+  })();
+  _fpDrawingsInflight = entry;
+  return entry.promise;
+}
+
 // 既存コメントのペイントを読み取り専用で表示
-function fpShowDrawing(commentId) {
-  const c = (_fpComments || []).find(x => x.id === commentId);
-  if (!c || !c.drawing || !c.drawing.dataUrl) return;
+// （並行取得がまだ届いていない場合はここで取得を待ってから表示する）
+async function fpShowDrawing(commentId) {
+  let c = (_fpComments || []).find(x => x.id === commentId);
+  if (!c || !c.drawing) return;
+  if (!c.drawing.dataUrl) {
+    await fpFetchCommentDrawings(currentPreviewFileId);
+    c = (_fpComments || []).find(x => x.id === commentId);
+    if (!c || !c.drawing) return; // 待機中にファイル切替などでコメントが消えた場合は静かに終了
+    if (!c.drawing.dataUrl) {
+      if (typeof showToast === 'function') showToast('ペイント注釈の読み込みに失敗しました', 'error');
+      return;
+    }
+  }
   // 簡易ライトボックス（既存 overlay を再利用せず、独立 div を都度生成）
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10025;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;cursor:zoom-out';
@@ -36630,7 +36681,7 @@ function _renderFpCommentHtml(c, isReply) {
   }
   const bboxBadge = (!isReply && c.bbox)
     ? `<span onclick="fpHighlightBbox('${c.id}')" style="background:rgba(245,197,24,0.18);color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #f5c518" title="クリックで画像上の範囲をハイライト">📍 範囲</span>` : '';
-  const drawingBadge = (!isReply && c.drawing && c.drawing.dataUrl)
+  const drawingBadge = (!isReply && c.drawing && (c.drawing.dataUrl || c.drawing.hasDrawing))
     ? `<span onclick="fpShowDrawing('${c.id}')" style="background:rgba(59,130,246,0.18);color:#1e3a8a;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:1px solid #3b82f6" title="クリックでペイントを表示">🎨</span>` : '';
   const knowledgeBadge = (!isReply && c.is_knowledge)
     ? '<span style="font-size:10px;background:#fcd34d;color:#78350f;padding:1px 5px;border-radius:4px;font-weight:600">📚 学び広場</span>' : '';

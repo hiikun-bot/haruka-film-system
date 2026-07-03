@@ -17659,14 +17659,20 @@ function _validateDrawing(drawing) {
 // フォールバックで列指定取得に切り替える。
 router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
   // users!user_id で FK を明示（resolved_by も users を参照しているため曖昧回避）
+  //
+  // パフォーマンス: drawing（ペイント注釈）の dataUrl は base64 で1件最大約6MB あり、
+  // 一覧に含めるとコメントJSONが数MB〜十数MBに膨らむため select から外す。
+  // 代わりに drawing->w / drawing->h だけを取得して「drawing があるか」をメタ情報
+  // （{ hasDrawing: true, w, h }）に縮約して返す。dataUrl 本体は
+  // GET /creative-files/:fid/comments/drawings で遅延取得する。
   let { data, error } = await supabase
     .from('creative_file_comments')
-    .select('*, users!user_id(id, full_name, role, avatar_url)')
+    .select('id, creative_file_id, user_id, comment, timecode, timecode_end, is_knowledge, category_id, bbox, parent_comment_id, resolved, resolved_at, resolved_by, created_at, drawing_w:drawing->w, drawing_h:drawing->h, users!user_id(id, full_name, role, avatar_url)')
     .eq('creative_file_id', req.params.fid)
     .order('created_at', { ascending: true });
-  // bbox / parent_comment_id / timecode_end / drawing 列が無い環境向けフォールバック（'*' で取得しているため通常は到達しないが、PostgREST の schema cache 由来エラー時に保険）
+  // bbox / parent_comment_id / timecode_end / drawing 列が無い環境向けフォールバック（migration 未適用 / PostgREST schema cache 由来エラー時の保険）
   if (_isMissingCfcColumn(error)) {
-    console.warn('[creative-file-comments] 列欠損疑い → 明示列指定で再取得:', error.message);
+    console.warn('[creative-file-comments] 列欠損疑い → 最小列指定で再取得:', error.message);
     ({ data, error } = await supabase
       .from('creative_file_comments')
       .select('id, creative_file_id, user_id, comment, timecode, is_knowledge, category_id, created_at, users!user_id(id, full_name, role, avatar_url)')
@@ -17674,23 +17680,56 @@ router.get('/creative-files/:fid/comments', requireAuth, async (req, res) => {
       .order('created_at', { ascending: true }));
   }
   if (error) return res.status(500).json({ error: error.message });
-  // resolved_by の名前表示用に対応者ユーザー情報を別クエリで埋め込み（FK 名指定の不安定さを避けるため）
-  if (Array.isArray(data) && data.length) {
-    const resolverIds = Array.from(new Set(data.map(c => c?.resolved_by).filter(Boolean)));
-    if (resolverIds.length) {
-      try {
-        const { data: resolvers } = await supabase
+  // drawing_w / drawing_h → drawing メタ（{hasDrawing, w, h}）へ縮約（dataUrl は含めない）
+  let comments = Array.isArray(data) ? data.map(c => {
+    if (!c || typeof c !== 'object') return c;
+    const { drawing_w, drawing_h, ...rest } = c;
+    rest.drawing = (drawing_w != null || drawing_h != null)
+      ? { hasDrawing: true, w: drawing_w ?? null, h: drawing_h ?? null }
+      : null;
+    return rest;
+  }) : [];
+  // resolved_by の対応者ユーザー情報（FK 名指定の不安定さを避けるため別クエリ）と
+  // category_id の master_items 補完は互いに独立なので並行実行する
+  const resolverIds = Array.from(new Set(comments.map(c => c?.resolved_by).filter(Boolean)));
+  const [resolvers, enriched] = await Promise.all([
+    resolverIds.length
+      ? supabase
           .from('users')
           .select('id, full_name, nickname, role, avatar_url')
-          .in('id', resolverIds);
-        const map = Object.fromEntries((resolvers || []).map(u => [u.id, u]));
-        data = data.map(c => c?.resolved_by ? { ...c, resolved_by_user: map[c.resolved_by] || null } : c);
-      } catch (e) {
-        console.warn('[creative-file-comments] resolved_by_user 取得失敗（無視）:', e.message);
-      }
-    }
+          .in('id', resolverIds)
+          .then(r => r.data || null, e => {
+            console.warn('[creative-file-comments] resolved_by_user 取得失敗（無視）:', e.message);
+            return null;
+          })
+      : Promise.resolve(null),
+    enrichCommentCategories(comments),
+  ]);
+  let out = enriched;
+  if (resolvers) {
+    const map = Object.fromEntries(resolvers.map(u => [u.id, u]));
+    out = out.map(c => c?.resolved_by ? { ...c, resolved_by_user: map[c.resolved_by] || null } : c);
   }
-  res.json(await enrichCommentCategories(data));
+  res.json(out);
+});
+
+// ファイルの drawing（ペイント注釈）本体をまとめて返す
+//
+// 一覧 GET /creative-files/:fid/comments は drawing をメタ情報に縮約して返すため、
+// base64 の dataUrl 本体はこのエンドポイントで遅延取得する。
+// 認可は一覧 GET と同一（requireAuth のみ）。
+router.get('/creative-files/:fid/comments/drawings', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_file_comments')
+    .select('id, drawing')
+    .eq('creative_file_id', req.params.fid)
+    .not('drawing', 'is', null);
+  if (error) {
+    // drawing 列未追加環境（Stage A migration 未適用）では空配列を返す
+    if (_isMissingCfcColumn(error)) return res.json([]);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data || []);
 });
 
 // コメント追加（返信対応）
