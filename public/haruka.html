@@ -21820,11 +21820,19 @@ function whTargetIsSecretary() {
   return m?.role === 'secretary';
 }
 
-// 案件ドロップダウンの options（全案件。時間単価つきの案件が先頭・単価表示つき）。
-// 時間単価が無い案件も「サポート先の記録」として選べる（金額は本人の既定時給で計算）。
+// 案件ドロップダウンの options。初期表示は時間単価つきの案件だけに絞る（一覧が長すぎるため）。
+// 「時給設定のない案件も表示…」を選ぶと全案件に展開でき、時間単価が無い案件も
+// 「サポート先の記録」として選べる（金額は本人の既定時給で計算。秘書のひげごろーさん支援等）。
 // 秘書のみ: 案件なしの既定選択肢を「ひーくん（管理者サポート）」と表示する。
+let _whShowAllProjects = false; // 時給設定のない案件も表示するか（明示操作で展開）
+const WH_SHOW_ALL_VALUE = '__wh_show_all__';
+
 function whProjectOptionsHtml(selectedId, fallbackName) {
-  const list = _whHourlyProjects || [];
+  const all = _whHourlyProjects || [];
+  const hourlyOnly = all.filter(p => p.hourly_rate);
+  // 選択済みの案件が時給なしでも表示は維持する（過去行・展開後に選んだ行）
+  const showAll = _whShowAllProjects;
+  const list = showAll ? all : hourlyOnly;
   const noneLabel = whTargetIsSecretary()
     ? 'ひーくん（管理者サポート）※既定'
     : '（案件なし＝既定時給）';
@@ -21837,11 +21845,40 @@ function whProjectOptionsHtml(selectedId, fallbackName) {
     const clientPrefix = p.client_name ? `${p.client_name}／` : '';
     opts.push(`<option value="${esc(p.project_id)}" ${sel}>${esc(clientPrefix)}${esc(p.name)}${rateSuffix}</option>`);
   }
+  // 絞り込み中に選択済みの時給なし案件があれば個別に足す（表示を失わない）
+  if (!found && selectedId) {
+    const hit = all.find(p => p.project_id === selectedId);
+    if (hit) {
+      const clientPrefix = hit.client_name ? `${hit.client_name}／` : '';
+      opts.push(`<option value="${esc(hit.project_id)}" selected>${esc(clientPrefix)}${esc(hit.name)}</option>`);
+      found = true;
+    }
+  }
   // 過去行の案件が一覧に無い場合（非表示化等）も表示は維持する
   if (!found && selectedId) {
     opts.push(`<option value="${esc(selectedId)}" selected>${esc(fallbackName || '（案件）')}</option>`);
   }
+  if (!showAll) {
+    opts.push(`<option value="${WH_SHOW_ALL_VALUE}" style="color:#6B7280">＋ 時給設定のない案件も表示（既定時給で記録）…</option>`);
+  }
   return opts.join('');
+}
+
+// 案件セレクトの変更。 「時給設定のない案件も表示…」が選ばれたら全案件に展開して選び直してもらう
+function whOnProjectChange(sel) {
+  if (sel.value === WH_SHOW_ALL_VALUE) {
+    _whShowAllProjects = true;
+    // 画面上の全行のセレクトを展開後の選択肢に差し替える（各行の現在の選択は維持）
+    document.querySelectorAll('#wh-tbody select[data-f="project_id"]').forEach(s => {
+      const cur = s === sel ? '' : s.value;
+      s.innerHTML = whProjectOptionsHtml(cur, s.options[s.selectedIndex]?.textContent || '');
+      if (s !== sel) s.value = cur;
+    });
+    sel.focus();
+    showToast('全案件を表示しました。時給設定のない案件は本人の既定時給で計算されます', 'ok');
+    return;
+  }
+  whMarkDirty(sel);
 }
 
 // 1 行分の <tr>。id 無し（data-id=""）は未保存の新規行。
@@ -21859,7 +21896,7 @@ function whRowHtml(e) {
   const v = (x) => esc(x ?? '');
   const timeVal = (t) => t ? String(t).slice(0, 5) : '';
   return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);${rowStyle}">
-    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whMarkDirty(this)">${whProjectOptionsHtml(isNew ? '' : e.project_id, isNew ? '' : e.project?.name)}</select>
+    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? '' : e.project_id, isNew ? '' : e.project?.name)}</select>
       ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? '' : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
