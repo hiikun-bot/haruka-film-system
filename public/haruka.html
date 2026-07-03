@@ -9279,8 +9279,42 @@ async function init() {
   // ビルドバージョン照合のためサーバーの build hash を起動時に取得（軽量エンドポイント、失敗時は黙殺）
   initBuildVersion();
   loadWorkspaceInfo();
+  // ── /auth/me・ロール系（段2）・データ系（段3）の fetch を同時に発射（初回ロードの 1RTT 短縮）──
+  // サーバーはセッション Cookie で認可するため、これらの fetch の「発射」は currentUser の値に
+  // 依存しない（描画のみ依存）。loadCreatives() だけは query params（種別タブ・詳細フィルター）が
+  // applyCreativeDefaultsFromUser() / setCreativeTab()（/auth/me 成功後に実行）の結果に依存する
+  // ため、従来どおり auth 確定後に発射する。
+  // 依存関係の整理:
+  //  - canUseViewAs / applyRoleBasedUI / restoreInitialPage（権限ゲートされたナビの判定）は
+  //    roles 完了に依存 → rolesReady を await した後に呼ぶ
+  //  - 各 load*（clients/projects/members/teams/creatives/categories）は roles 非依存。
+  //    hasPermission / roleLabel / ROLE_SORT_ORDER 等はフォールバック内蔵のため、
+  //    roles 到着前に描画されても例外にはならない。ただし roles マスタが fallback と
+  //    異なる環境向けに、roles より先に完了した一覧は最後に正のマスタ値で再描画する
+  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の表示・並び替え
+  const authPromise = fetch('/auth/me');
+  const rolesReady = Promise.all([loadRolePermissions(), loadRolesMaster()]);
+  let _rolesLoaded = false;
+  rolesReady.then(() => { _rolesLoaded = true; });
+
+  // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
+  // loadCategories() : Stage A で追加。案件一覧バッジ・モーダルが参照する。
+  const _ip = {
+    clients:    loadClients(),
+    projects:   loadProjects(),
+    members:    loadMembers(),
+    teams:      loadTeams(),
+    creatives:  null, // /auth/me 確定後に発射（クリエイティブ初期タブ・詳細フィルター確定待ち）
+    categories: loadCategories(),
+  };
+  // members / teams は描画時の初期タブ判定が currentUser を参照する。fetch が /auth/me より
+  // 先に完了して currentUser 未確定のまま描画された場合は、auth 確定後に再描画して是正する
+  const _renderedBeforeAuth = {};
+  ['members', 'teams'].forEach(k => {
+    _ip[k].then(() => { if (!currentUser) _renderedBeforeAuth[k] = true; }, () => {});
+  });
   try {
-    const res = await fetch('/auth/me');
+    const res = await authPromise;
     if (res.ok) {
       currentUser = await res.json();
       // 通知モジュール（ESM・別ファイル）が currentUser.id を参照できるよう window へも公開
@@ -9310,33 +9344,17 @@ async function init() {
         setCreativeTab(initialCvTab, { skipReload: true });
       } catch (e) { console.warn('[HFS] setCreativeTab init failed:', e); }
     } else {
+      // 未ログイン: 発射済みの fetch 群はリダイレクトで放棄する（401 で reject しても未処理拒否にしない）
+      Object.values(_ip).forEach(p => { if (p) p.catch(() => {}); });
       window.location.href = '/login.html';
       return;
     }
   } catch(e) { console.error('[HFS] /auth/me error:', e); }
-  // ── ロール系（段2）とデータ系（段3）を並列起動（初回ロード体感改善）────────────
-  // 依存関係の整理:
-  //  - canUseViewAs / applyRoleBasedUI / restoreInitialPage（権限ゲートされたナビの判定）は
-  //    roles 完了に依存 → rolesReady を await した後に呼ぶ
-  //  - 各 load*（clients/projects/members/teams/creatives/categories）は roles 非依存。
-  //    hasPermission / roleLabel / ROLE_SORT_ORDER 等はフォールバック内蔵のため、
-  //    roles 到着前に描画されても例外にはならない。ただし roles マスタが fallback と
-  //    異なる環境向けに、roles より先に完了した一覧は最後に正のマスタ値で再描画する
-  // Stage 0 / Step 2 PR3 (ADR 003): roles マスタ駆動の表示・並び替え
-  const rolesReady = Promise.all([loadRolePermissions(), loadRolesMaster()]);
-  let _rolesLoaded = false;
-  rolesReady.then(() => { _rolesLoaded = true; });
-
-  // loadCreatives() が内部で loadCreativeTabCounts() を並列起動するため二重呼び出しは不要
-  // loadCategories() : Stage A で追加。案件一覧バッジ・モーダルが参照する。
-  const _ip = {
-    clients:    loadClients(),
-    projects:   loadProjects(),
-    members:    loadMembers(),
-    teams:      loadTeams(),
-    creatives:  loadCreatives(),
-    categories: loadCategories(),
-  };
+  // クリエイティブの取得条件（種別タブ・詳細フィルター）が auth 確定で決まったのでここで発射
+  _ip.creatives = loadCreatives();
+  // /auth/me より先に fetch が完了し currentUser 無しの初期タブで描画された一覧を是正（レアケース）
+  try { if (_renderedBeforeAuth.members && typeof _renderMembersView === 'function') _renderMembersView(); } catch (e) { console.warn('[init] re-render members(auth):', e); }
+  try { if (_renderedBeforeAuth.teams   && typeof _renderTeamsView   === 'function') _renderTeamsView();   } catch (e) { console.warn('[init] re-render teams(auth):', e); }
   // loadDashboard() / applyDeepLinkOnLoad() が「依存データの完了」を個別に await するために公開
   window._initPromises = _ip;
   // roles マスタより先に完了して fallback 定数（ROLE_SORT_ORDER 等）で描画された一覧を検出
