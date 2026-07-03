@@ -17,6 +17,7 @@
  *   showInactive:   boolean                        既定 false
  *   includeExternal: boolean                       既定 false。true で外部D（is_external）候補も表示（ADR 017）
  *   emptyLabel:     string | null                  null 許容の選択肢ラベル
+ *   itemNote:       (member) => string | null      一覧の名前横に出す注記（例: '⏱ 時給制'）
  *   onChange:       (value) => void
  *   title:          string                         モーダルのタイトル
  */
@@ -114,6 +115,7 @@
       .mp-item-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .mp-item-name { flex: 1 1 auto; font-size: 13.5px; color: #0F172A; }
       .mp-item-role { flex: 0 0 auto; font-size: 11px; color: #64748B; padding: 2px 8px; border-radius: 999px; background: #F1F5F9; }
+      .mp-item-note { flex: 0 0 auto; font-size: 11px; color: #0E7490; white-space: nowrap; }
       .mp-divider { padding: 6px 12px; font-size: 11px; color: #94A3B8; border-top: 1px dashed #E5E7EB; margin-top: 6px; }
       .mp-empty { padding: 24px 16px; text-align: center; color: #94A3B8; font-size: 13px; }
       .mp-footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-top: 1px solid #E5E7EB; gap: 8px; }
@@ -327,10 +329,15 @@
         const inputType = opts.mode === 'multi' ? 'checkbox' : 'radio';
         const roleDef = ROLE_BY_VALUE[m.role];
         const roleShort = roleDef ? roleDef.short : (m.role || '');
+        let note = '';
+        if (typeof opts.itemNote === 'function') {
+          try { note = opts.itemNote(m) || ''; } catch (e) { note = ''; }
+        }
         return `<label class="mp-item${sel ? ' mp-item-selected' : ''}" data-id="${escapeHtml(m.id)}">
           <input type="${inputType}" name="mp-pick" ${sel ? 'checked' : ''} />
           ${avatarMarkup(m)}
           <span class="mp-item-name">${escapeHtml(memberLabel(m))}</span>
+          ${note ? `<span class="mp-item-note">${escapeHtml(note)}</span>` : ''}
           ${roleShort ? `<span class="mp-item-role">${escapeHtml(roleShort)}</span>` : ''}
         </label>`;
       };

@@ -7794,17 +7794,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
       <span id="wh-member-picker-wrap" style="display:none;align-items:center;gap:6px;margin-left:auto">
         <span style="font-size:12px;color:var(--text-muted)">メンバー</span>
-        <select id="wh-member-role-filter" class="form-select" style="width:130px;padding:5px 8px;font-size:12px" onchange="whOnMemberRoleFilter(this.value)" title="ロールで絞り込み">
-          <option value="">全ロール</option>
-          <option value="secretary">秘書</option>
-          <option value="editor">編集者</option>
-          <option value="designer">デザイナー</option>
-          <option value="director">ディレクター</option>
-          <option value="producer">プロデューサー</option>
-          <option value="producer_director">P兼D</option>
-          <option value="admin">管理者</option>
-        </select>
-        <select id="wh-member-picker" class="form-select" style="width:220px;padding:5px 8px;font-size:13px" onchange="whOnMemberChange(this.value)"></select>
+        <select id="wh-member-picker" class="form-select" style="width:260px;padding:5px 8px;font-size:13px" onchange="whOnMemberChange(this.value)"></select>
       </span>
     </div>
     <div id="wh-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>
@@ -21777,12 +21767,13 @@ function whRender() {
   if (addBtn) addBtn.style.display = whCanAddRow() ? '' : 'none';
 }
 
-// メンバー切替セレクタの描画（管理者のみ・ロール絞り込みつき）。
-// 絞り込みで表示中メンバーがリスト外になっても選択は維持する（勝手にシートを切り替えない）。
-let _whMemberRoleFilter = '';
-function whOnMemberRoleFilter(v) {
-  _whMemberRoleFilter = v || '';
-  whRenderMemberPicker();
+// メンバー切替セレクタの描画（管理者のみ）。
+// ADR 014: 共通 MemberPicker（名前・ニックネーム検索＋ロールchip絞り込み）を bindSelect で適用。
+function whMemberNote(m) {
+  const notes = [];
+  if (m.hourly_rate || m.is_hourly) notes.push('⏱ 時給制');
+  if (m.id === currentUser?.id) notes.push('自分');
+  return notes.join('・');
 }
 function whRenderMemberPicker() {
   const pickerWrap = document.getElementById('wh-member-picker-wrap');
@@ -21792,19 +21783,28 @@ function whRenderMemberPicker() {
     return;
   }
   pickerWrap.style.display = 'inline-flex';
-  const roleSel = document.getElementById('wh-member-role-filter');
-  if (roleSel && roleSel.value !== _whMemberRoleFilter) roleSel.value = _whMemberRoleFilter;
   const picker = document.getElementById('wh-member-picker');
+  if (!picker) return;
   const selected = _whUserId || currentUser?.id || '';
-  let list = _whMembers.filter(m => m.is_active !== false);
-  if (_whMemberRoleFilter) list = list.filter(m => m.role === _whMemberRoleFilter);
-  // 表示中のメンバーが絞り込み外でも先頭に残す
-  if (selected && !list.some(m => m.id === selected)) {
-    const sm = _whMembers.find(m => m.id === selected);
-    if (sm) list = [sm, ...list];
+  if (picker.dataset && picker.dataset.mpBound === '1') {
+    // bind 済み: 表示中メンバーだけ同期（value setter はラベルも更新する）
+    picker.value = selected;
+    return;
   }
-  picker.innerHTML = list.map(m => {
-    const label = `${NameDisplay.full(m)}${(m.hourly_rate || m.is_hourly) ? '（⏱ 時給制）' : ''}${m.id === currentUser?.id ? '（自分）' : ''}`;
+  if (window.MemberPicker && typeof MemberPicker.bindSelect === 'function') {
+    const trigger = MemberPicker.bindSelect(picker, {
+      title: 'メンバーを切替',
+      placeholder: 'メンバーを選択',
+      itemNote: whMemberNote,
+      onChange: (v) => whOnMemberChange(v || ''),
+    });
+    if (trigger) trigger.value = selected;
+    return;
+  }
+  // フォールバック（MemberPicker 不在時）: 素の select に active メンバーを列挙
+  picker.innerHTML = _whMembers.filter(m => m.is_active !== false).map(m => {
+    const note = whMemberNote(m);
+    const label = `${NameDisplay.full(m)}${note ? `（${note}）` : ''}`;
     return `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(label)}</option>`;
   }).join('');
 }
