@@ -18728,7 +18728,7 @@ function renderProjectFixedItems() {
       const m = (typeof allMembers !== 'undefined' && Array.isArray(allMembers))
         ? allMembers.find(x => x && x.id === item.paid_to_user_id)
         : null;
-      paidToLabel = m ? `→ ${m.name || m.email || 'メンバー'}` : '→ メンバー';
+      paidToLabel = m ? `→ ${(window.NameDisplay && NameDisplay.full(m)) || m.full_name || m.nickname || m.email || 'メンバー'}` : '→ メンバー';
     } else if (item.paid_to) {
       paidToLabel = `→ ${item.paid_to}`;
     }
@@ -18811,14 +18811,23 @@ function prepareProjectFixedItemEditModal(item, projectId, defaultItemType) {
   document.getElementById('pfi-edit-occurred-on').value = item?.occurred_on || '';
   // 支払先
   document.getElementById('pfi-edit-paid-to').value = item?.paid_to || '';
-  // 支払先メンバー (users select を populate)
-  const userSel = document.getElementById('pfi-edit-paid-to-user-id');
+  // 支払先メンバー — ADR 014: 共通 MemberPicker（名前・ニックネーム検索＋ロールchip）
+  const userSel = bindMemberPickerSelect('pfi-edit-paid-to-user-id', {
+    placeholder: '未指定',
+    emptyLabel: '未指定',
+    emptyValue: '',
+    title: '支払先メンバーを選択',
+    includeExternal: true, // 外部Dへの支払いもあり得る（ADR 017）
+  }) || document.getElementById('pfi-edit-paid-to-user-id');
   if (userSel) {
-    const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
-    const activeMembers = members.filter(m => m && m.is_active !== false);
-    userSel.innerHTML = '<option value="">未指定</option>' + activeMembers.map(m =>
-      `<option value="${esc(m.id)}">${esc(m.name || m.email || 'メンバー')}</option>`
-    ).join('');
+    if (userSel.tagName === 'SELECT') {
+      // フォールバック: MemberPicker 不在時は素の select（NameDisplay 表示）
+      const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+      const activeMembers = members.filter(m => m && m.is_active !== false);
+      userSel.innerHTML = '<option value="">未指定</option>' + activeMembers.map(m =>
+        `<option value="${esc(m.id)}">${esc((window.NameDisplay && NameDisplay.full(m)) || m.full_name || m.nickname || m.email || 'メンバー')}</option>`
+      ).join('');
+    }
     userSel.value = item?.paid_to_user_id || '';
   }
   // ステータス
