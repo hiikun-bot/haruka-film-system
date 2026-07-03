@@ -4573,6 +4573,285 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
   res.json({ ok: true });
 });
 
+// ==================== 支払スケジュール（一式の分割）ADR 029 Stage 2 ====================
+//
+// HP/LP 等の一式成果物グループ（line）に「着手金30万（7月）・納品完了分30万（9月）」の
+// ような分割支払スケジュール（line_payment_installments）を持たせる。
+// - seq / total_count はサーバーで自動採番（target_month 昇順 → created_at 昇順で 1..N）
+// - 請求書・集計の表記は「{クライアント名}／{案件名} {line名} {label}（{seq}/{total_count}）」
+// - 一括請求は分割1行（納品完了分 1/1）で表現し、集計は常に本テーブルのみを見る（ADR 029 運用ルール1）
+
+const INSTALLMENT_SELECT_COLS = [
+  'id, line_id, seq, total_count, label, target_month, client_amount, payment_amount, payee_user_id, note, created_at, updated_at',
+  'payee:users(id, full_name, nickname)',
+].join(', ');
+const INSTALLMENT_MAX_PER_LINE = 36;
+const INSTALLMENT_LABEL_MAX = 100;
+const INSTALLMENT_NOTE_MAX = 500;
+
+const isMissingLpiTable = (err) =>
+  err && /relation .*line_payment_installments.* does not exist|could not find the table/i.test(err.message || '');
+
+// 'YYYY-MM' / 'YYYY-MM-DD' を月初日 DATE 文字列に正規化。無効なら null。
+function normalizeInstallmentMonth(raw) {
+  const s = String(raw || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})(?:-\d{2})?$/);
+  if (!m) return null;
+  const month = parseInt(m[2], 10);
+  if (month < 1 || month > 12) return null;
+  return `${m[1]}-${m[2]}-01`;
+}
+
+// 0 以上の整数金額に正規化（未指定は null を返し、呼び出し側でデフォルトを決める）
+function normalizeInstallmentAmount(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 0) return NaN;
+  return n;
+}
+
+// line の全 installments を target_month 昇順 → created_at 昇順で 1..N に振り直し、
+// total_count = N をセットして最新の一覧（seq 昇順）を返す。
+async function resequenceInstallments(lineId) {
+  const { data: rows, error } = await supabase
+    .from('line_payment_installments')
+    .select('id, seq, total_count, target_month, created_at')
+    .eq('line_id', lineId)
+    .order('target_month', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  const total = (rows || []).length;
+  // seq <= total_count の CHECK 制約に抵触しないよう、total_count → seq の順で更新する必要はなく
+  // 1行ずつ両方同時に UPDATE すれば矛盾しない（seq=i, total_count=N で常に seq<=N）。
+  for (let i = 0; i < total; i++) {
+    const r = rows[i];
+    if (r.seq === i + 1 && r.total_count === total) continue;
+    const { error: upErr } = await supabase
+      .from('line_payment_installments')
+      .update({ seq: i + 1, total_count: total, updated_at: new Date().toISOString() })
+      .eq('id', r.id);
+    if (upErr) throw new Error(upErr.message);
+  }
+  const { data: fresh, error: freshErr } = await supabase
+    .from('line_payment_installments')
+    .select(INSTALLMENT_SELECT_COLS)
+    .eq('line_id', lineId)
+    .order('seq', { ascending: true });
+  if (freshErr) throw new Error(freshErr.message);
+  return fresh || [];
+}
+
+// GET /api/projects/:project_id/lines/:line_id/installments  一覧（seq 昇順）
+router.get('/projects/:project_id/lines/:line_id/installments', requireAuth, async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data, error } = await supabase
+    .from('line_payment_installments')
+    .select(INSTALLMENT_SELECT_COLS)
+    .eq('line_id', lineId)
+    .order('seq', { ascending: true });
+  if (error) {
+    if (isMissingLpiTable(error)) {
+      console.warn('[installments] line_payment_installments table missing. Apply migrations/2026-07-03_line_payment_installments.sql');
+      return res.json([]);
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  let rows = data || [];
+  // クライアント請求額は project.client_price 権限のみ閲覧可（lines GET の client_unit_price と同じ絞り込み・ADR 015）
+  const codes = await getEffectiveRoleCodes(req);
+  const canViewClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
+  if (!canViewClientPrice) {
+    rows = rows.map(({ client_amount, ...rest }) => rest);
+  }
+  res.json(rows);
+});
+
+// 共通: installments の body バリデーション（partial=true は PUT 用）
+function _validateInstallmentBody(body, partial) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  const out = {};
+  if (!partial || has('label')) {
+    const label = String(body.label || '').trim();
+    if (!label) return { error: 'label（着手金 / 納品完了分 など）は必須です' };
+    if (label.length > INSTALLMENT_LABEL_MAX) return { error: `label は${INSTALLMENT_LABEL_MAX}文字以内で入力してください` };
+    out.label = label;
+  }
+  if (!partial || has('target_month')) {
+    const tm = normalizeInstallmentMonth(body.target_month);
+    if (!tm) return { error: 'target_month は YYYY-MM 形式で指定してください' };
+    out.target_month = tm;
+  }
+  if (has('payment_amount')) {
+    const pa = normalizeInstallmentAmount(body.payment_amount);
+    if (Number.isNaN(pa)) return { error: 'payment_amount は 0 以上の整数で指定してください' };
+    if (pa !== null) out.payment_amount = pa;
+  }
+  if (has('client_amount')) {
+    const ca = normalizeInstallmentAmount(body.client_amount);
+    if (Number.isNaN(ca)) return { error: 'client_amount は 0 以上の整数で指定してください' };
+    if (ca !== null) out.client_amount = ca;
+  }
+  if (has('note')) {
+    const note = body.note === null ? null : String(body.note).trim();
+    if (note && note.length > INSTALLMENT_NOTE_MAX) return { error: `note は${INSTALLMENT_NOTE_MAX}文字以内で入力してください` };
+    out.note = note || null;
+  }
+  return { values: out };
+}
+
+// POST /api/projects/:project_id/lines/:line_id/installments  追加
+// body: { label(必須), target_month('YYYY-MM'), client_amount?, payment_amount?, payee_user_id?, note? }
+router.post('/projects/:project_id/lines/:line_id/installments', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const body = req.body || {};
+  const v = _validateInstallmentBody(body, false);
+  if (v.error) return res.status(400).json({ error: v.error });
+
+  // payee_user_id の存在チェック（指定時のみ）
+  if (body.payee_user_id) {
+    const { data: u, error: uErr } = await supabase
+      .from('users').select('id').eq('id', body.payee_user_id).maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!u) return res.status(400).json({ error: '指定された payee_user_id がユーザーに存在しません' });
+  }
+
+  // クライアント請求額は project.client_price 権限のみ設定可（無ければ 0。ADR 015）
+  const priceCodes = await getEffectiveRoleCodes(req);
+  const canSetClientPrice = await roleCodesHavePermission(priceCodes, 'project.client_price');
+  const clientAmount = canSetClientPrice ? (v.values.client_amount ?? 0) : 0;
+
+  const { count, error: cntErr } = await supabase
+    .from('line_payment_installments')
+    .select('id', { count: 'exact', head: true })
+    .eq('line_id', lineId);
+  if (cntErr) {
+    if (isMissingLpiTable(cntErr)) {
+      return res.status(503).json({ error: 'line_payment_installments テーブルが未作成です。migrations/2026-07-03_line_payment_installments.sql を本番Supabaseに適用してください。' });
+    }
+    return res.status(500).json({ error: cntErr.message });
+  }
+  if ((count || 0) >= INSTALLMENT_MAX_PER_LINE) {
+    return res.status(400).json({ error: `分割は1グループあたり最大${INSTALLMENT_MAX_PER_LINE}行までです` });
+  }
+
+  const { error: insErr } = await supabase
+    .from('line_payment_installments')
+    .insert({
+      line_id: lineId,
+      seq: (count || 0) + 1,
+      total_count: (count || 0) + 1,
+      label: v.values.label,
+      target_month: v.values.target_month,
+      client_amount: clientAmount,
+      payment_amount: v.values.payment_amount ?? 0,
+      payee_user_id: body.payee_user_id || null,
+      note: v.values.note ?? null,
+    });
+  if (insErr) return res.status(500).json({ error: insErr.message });
+
+  try {
+    const installments = await resequenceInstallments(lineId);
+    res.json({ ok: true, installments });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/projects/:project_id/lines/:line_id/installments/:installment_id  部分更新
+router.put('/projects/:project_id/lines/:line_id/installments/:installment_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId, installment_id: instId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data: existing, error: getErr } = await supabase
+    .from('line_payment_installments')
+    .select('id, line_id, client_amount')
+    .eq('id', instId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: '分割行が見つかりません' });
+  if (existing.line_id !== lineId) {
+    return res.status(400).json({ error: 'line_id と installment_id が一致しません' });
+  }
+
+  const body = req.body || {};
+  const v = _validateInstallmentBody(body, true);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const updates = { ...v.values };
+
+  if (Object.prototype.hasOwnProperty.call(body, 'payee_user_id')) {
+    if (body.payee_user_id) {
+      const { data: u, error: uErr } = await supabase
+        .from('users').select('id').eq('id', body.payee_user_id).maybeSingle();
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      if (!u) return res.status(400).json({ error: '指定された payee_user_id がユーザーに存在しません' });
+    }
+    updates.payee_user_id = body.payee_user_id || null;
+  }
+
+  // クライアント請求額は project.client_price 権限のみ変更可（無ければ既存値を維持。ADR 015）
+  if (Object.prototype.hasOwnProperty.call(updates, 'client_amount')) {
+    const priceCodes = await getEffectiveRoleCodes(req);
+    if (!(await roleCodesHavePermission(priceCodes, 'project.client_price'))) {
+      delete updates.client_amount;
+    }
+  }
+
+  if (Object.keys(updates).length) {
+    updates.updated_at = new Date().toISOString();
+    const { error: upErr } = await supabase
+      .from('line_payment_installments')
+      .update(updates)
+      .eq('id', instId);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+  }
+
+  try {
+    // target_month の変更で順番が変わり得るため常に振り直す
+    const installments = await resequenceInstallments(lineId);
+    res.json({ ok: true, installments });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/projects/:project_id/lines/:line_id/installments/:installment_id  削除
+router.delete('/projects/:project_id/lines/:line_id/installments/:installment_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId, installment_id: instId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data: existing, error: getErr } = await supabase
+    .from('line_payment_installments')
+    .select('id, line_id')
+    .eq('id', instId)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!existing) return res.status(404).json({ error: '分割行が見つかりません' });
+  if (existing.line_id !== lineId) {
+    return res.status(400).json({ error: 'line_id と installment_id が一致しません' });
+  }
+
+  const { error: delErr } = await supabase
+    .from('line_payment_installments')
+    .delete()
+    .eq('id', instId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+
+  try {
+    const installments = await resequenceInstallments(lineId);
+    res.json({ ok: true, installments });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 旧 client-fee CRUD endpoint (project_client_fees) は Stage 4d で削除済み。
 // 後継: project_estimate_lines.client_unit_price + project_fixed_items(item_type='revenue')
 
@@ -5115,6 +5394,26 @@ async function aggregateMonthlyRevenue({ year, month }) {
   }
 
   let forecastRevenue = 0, forecastCost = 0;
+
+  // ADR 029: 分割支払（installments）を持つ line は分割行が金額の正なので、
+  // line ベース（client_unit_price × planned_count）の見込みからは除外する（二重計上防止）。
+  const linesWithInstallments = new Set();
+  if (lineIds.length) {
+    try {
+      const { data: instLines, error: instLinesErr } = await supabase
+        .from('line_payment_installments')
+        .select('line_id')
+        .in('line_id', lineIds);
+      if (instLinesErr) {
+        if (!isMissingLpiTable(instLinesErr)) console.warn('[aggregateMonthlyRevenue] installments line check failed:', instLinesErr.message);
+      } else {
+        for (const r of (instLines || [])) linesWithInstallments.add(r.line_id);
+      }
+    } catch (e) {
+      console.warn('[aggregateMonthlyRevenue] installments line check failed:', e.message);
+    }
+  }
+
   if (lineIds.length) {
     // lines + line_costs を一括取得（status フィルタは JS 側で適用）
     const [linesRes, lineCostsRes] = await Promise.all([
@@ -5140,6 +5439,8 @@ async function aggregateMonthlyRevenue({ year, month }) {
     for (const line of (linesRes.data || [])) {
       // ADR 005: 集計対象 status のみ
       if (!activeStatuses.has(line.status)) continue;
+      // ADR 029: 分割スケジュールを持つ一式 line は installments 側で target_month に計上する
+      if (linesWithInstallments.has(line.id)) continue;
       const econ = calculateLineEconomics(line, lineCostsByLine.get(line.id) || []);
       forecastRevenue += econ.revenue;
       forecastCost    += econ.costs;
@@ -5234,6 +5535,46 @@ async function aggregateMonthlyRevenue({ year, month }) {
     }
   }
 
+  // ========== ADR 029: 一式（分割支払）の売上を target_month で計上 ==========
+  // HP/LP 等の分割行（line_payment_installments）の client_amount を対象月の売上（見込み側）に
+  // クライアント別で加算する。着手金は納品前に発生するため creatives の納期に依存しない。
+  let installmentRevenue = 0, installmentCount = 0;
+  try {
+    const instMonthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const instMonthEnd = month === 12
+      ? `${year + 1}-01-01`
+      : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const { data: monthInsts, error: monthInstErr } = await supabase
+      .from('line_payment_installments')
+      .select(`
+        id, client_amount, line_id,
+        line:project_estimate_lines(id, status, project_id, projects(id, client_id, clients(id, name)))
+      `)
+      .gte('target_month', instMonthStart)
+      .lt('target_month', instMonthEnd);
+    if (monthInstErr) {
+      if (!isMissingLpiTable(monthInstErr)) console.warn('[aggregateMonthlyRevenue] installments load failed:', monthInstErr.message);
+    } else {
+      const activeInstStatuses = new Set(ACTIVE_LINE_STATUSES);
+      for (const inst of (monthInsts || [])) {
+        // ADR 005: 集計対象 status の line のみ（却下・キャンセル line の分割は載せない）
+        if (!inst.line || !activeInstStatuses.has(inst.line.status)) continue;
+        const amount = inst.client_amount || 0;
+        if (amount <= 0) continue;
+        installmentRevenue += amount;
+        installmentCount += 1;
+        const cid = inst.line.projects?.client_id;
+        if (cid) {
+          const bucket = ensureClient(cid, clientNameById.get(cid) || inst.line.projects?.clients?.name);
+          bucket.forecast_revenue += amount;
+        }
+      }
+      forecastRevenue += installmentRevenue;
+    }
+  } catch (e) {
+    console.warn('[aggregateMonthlyRevenue] installments merge failed:', e.message);
+  }
+
   const totalRevenue = confirmedRevenue + forecastRevenue;
   const totalCost    = confirmedCost + forecastCost;
   const grossProfit  = totalRevenue - totalCost;
@@ -5251,6 +5592,8 @@ async function aggregateMonthlyRevenue({ year, month }) {
     confirmed: { revenue: confirmedRevenue, cost: confirmedCost, gross_profit: confirmedRevenue - confirmedCost },
     forecast:  { revenue: forecastRevenue,  cost: forecastCost,  gross_profit: forecastRevenue - forecastCost },
     total:     { revenue: totalRevenue, cost: totalCost, gross_profit: grossProfit, gross_margin: grossMargin },
+    // ADR 029: 一式（分割）として forecast に含めた内数（透明性のための参考値）
+    installments: { revenue: installmentRevenue, count: installmentCount },
     by_client: byClient,
     forecast_rescue: {
       null_line_creatives: nullLineCreatives.length,
@@ -5575,6 +5918,9 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
         hourly_hours: 0,
         hourly_amount: 0,
         expense_amount: 0,
+        // ADR 029 Stage 2: 一式（分割支払）の月次合算。既存フィールドとは別枠。
+        installment_amount: 0,
+        installment_count: 0,
       });
     }
     return userMap.get(u.id);
@@ -5688,6 +6034,49 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     console.warn('[aggregateCreatorSummary] work_hour_entries merge failed:', e.message);
   }
 
+  // ADR 029 Stage 2: 対象月の line_payment_installments（一式の分割支払）を payee 別に合算し、
+  // 「一式」枠（installment_amount / installment_count）として各行に付ける。
+  // 本数・既存金額フィールド（grand_total 等）には混ぜない（時間制と同じく別枠表示。表示側で合算する）。
+  try {
+    const instRange = whMonthRange(year, month);
+    const { data: instRows, error: instErr } = await supabase
+      .from('line_payment_installments')
+      .select('payee_user_id, payment_amount')
+      .not('payee_user_id', 'is', null)
+      .gte('target_month', instRange.start)
+      .lt('target_month', instRange.end);
+    if (instErr) {
+      if (!isMissingLpiTable(instErr)) {
+        console.warn('[aggregateCreatorSummary] line_payment_installments load failed:', instErr.message);
+      }
+    } else if (instRows && instRows.length) {
+      const instByUser = new Map();
+      for (const r of instRows) {
+        if (!instByUser.has(r.payee_user_id)) instByUser.set(r.payee_user_id, { amount: 0, count: 0 });
+        const acc = instByUser.get(r.payee_user_id);
+        acc.amount += r.payment_amount || 0;
+        acc.count += 1;
+      }
+      // クリエイティブ実績に出てこないユーザー（一式のみの制作者等）の名前情報を補完取得（hourly と同じ扱い）
+      const missingIds = Array.from(instByUser.keys())
+        .filter(uid => !userMap.has(uid) && !userById.has(uid));
+      if (missingIds.length) {
+        const { data: us } = await supabase
+          .from('users').select('id, full_name, nickname, role, rank')
+          .in('id', missingIds);
+        (us || []).forEach(u => userById.set(u.id, u));
+      }
+      for (const [uid, acc] of instByUser) {
+        const u = ensureUser(userMap.get(uid) || userById.get(uid) || { id: uid });
+        if (!u) continue;
+        u.installment_amount = acc.amount;
+        u.installment_count = acc.count;
+      }
+    }
+  } catch (e) {
+    console.warn('[aggregateCreatorSummary] line_payment_installments merge failed:', e.message);
+  }
+
   const summary = Array.from(userMap.values())
     .sort((a, b) => b.grand_total - a.grand_total
       || (b.video_count + b.design_count) - (a.video_count + a.design_count)
@@ -5706,8 +6095,11 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     acc.hourly_minutes += u.hourly_minutes || 0;
     acc.hourly_amount  += u.hourly_amount || 0;
     acc.expense_amount += u.expense_amount || 0;
+    // ADR 029 Stage 2: 一式（分割支払）の月次合算（新フィールド。grand_total には混ぜない）
+    acc.installment_amount += u.installment_amount || 0;
+    acc.installment_count  += u.installment_count || 0;
     return acc;
-  }, { video_count: 0, design_count: 0, director_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0, hourly_minutes: 0, hourly_amount: 0, expense_amount: 0 });
+  }, { video_count: 0, design_count: 0, director_count: 0, video_total: 0, design_total: 0, director_total: 0, producer_total: 0, grand_total: 0, hourly_minutes: 0, hourly_amount: 0, expense_amount: 0, installment_amount: 0, installment_count: 0 });
 
   // calculateLineCost を参照保持（将来の拡張時に使う想定）
   void calculateLineCost;
@@ -6183,6 +6575,58 @@ async function whBuildInvoiceItems(userId, year, month) {
       project_id: null,
       project_name: '',
       total: expenseTotal,
+    });
+  }
+  return items;
+}
+
+// ADR 029 Stage 2: 請求書プレビュー / 生成用 — 対象月の自分宛て分割支払（一式）を
+// is_installment アイテムに変換する（whBuildInvoiceItems の installment 版）。
+// 表記: 「{クライアント名}／{案件名} {line名} {label}（{seq}/{total_count}）」
+function installmentInvoiceLabel(inst) {
+  const line = inst.line || {};
+  const project = line.projects || {};
+  const clientName = project.clients?.name || '';
+  const projectName = project.name || '';
+  const head = [clientName, projectName].filter(Boolean).join('／');
+  const parts = [head, line.name, inst.label].filter(s => s && String(s).trim());
+  return `${parts.join(' ')}（${inst.seq}/${inst.total_count}）`;
+}
+
+async function installmentBuildInvoiceItems(userId, year, month) {
+  const range = whMonthRange(year, month);
+  const { data, error } = await supabase
+    .from('line_payment_installments')
+    .select(`
+      id, line_id, seq, total_count, label, target_month, payment_amount, note,
+      line:project_estimate_lines(id, name, project_id, projects(id, name, clients(id, name)))
+    `)
+    .eq('payee_user_id', userId)
+    .gte('target_month', range.start)
+    .lt('target_month', range.end)
+    .order('target_month', { ascending: true })
+    .order('seq', { ascending: true });
+  if (error) {
+    if (isMissingLpiTable(error)) return []; // migration 未適用環境では静かにスキップ
+    throw new Error(error.message);
+  }
+  const items = [];
+  for (const inst of (data || [])) {
+    const amount = inst.payment_amount || 0;
+    if (amount <= 0) continue;
+    const label = installmentInvoiceLabel(inst);
+    const project = inst.line?.projects || null;
+    items.push({
+      id: `installment:${inst.id}`,
+      is_installment: true,
+      installment_key: inst.id,
+      label,
+      file_name: label,      // 請求書作成モーダルの一覧表示互換
+      status: '一式分割',
+      project_id: project?.id || null,
+      project_name: project?.name || '',
+      client_name: project?.clients?.name || '',
+      total: amount,
     });
   }
   return items;
@@ -12930,6 +13374,16 @@ router.get('/invoices/preview-items', async (req, res) => {
     console.warn('[preview-items] work_hour_entries load failed:', e.message);
   }
 
+  // ADR 029 Stage 2: 対象月の分割支払（一式・HP/LP等）があれば
+  // is_installment: true のアイテムを末尾に追加する。
+  // 例: 「プレスト／プレスト・ケアHP HP制作一式 着手金（1/2）」＝ payee_user_id = 自分の分割行。
+  try {
+    const instItems = await installmentBuildInvoiceItems(uid, year, month);
+    if (instItems.length) result.push(...instItems);
+  } catch (e) {
+    console.warn('[preview-items] line_payment_installments load failed:', e.message);
+  }
+
   res.json(result);
 });
 
@@ -14869,6 +15323,11 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const hourlyKeys = Array.isArray(req.body.hourly_keys)
     ? req.body.hourly_keys.filter(k => typeof k === 'string' && k.length <= 100).slice(0, 50)
     : [];
+  // ADR 029 Stage 2: 分割支払（一式）の選択キー（line_payment_installments.id の配列）。
+  // hourly_keys と同様、金額はクライアント値を信用せずサーバー側で再取得・再計算する。
+  const installmentKeys = Array.isArray(req.body.installment_keys)
+    ? req.body.installment_keys.filter(k => typeof k === 'string' && k.length <= 100).slice(0, 50)
+    : [];
   // admin/secretary のみ代理発行可能、それ以外はログインユーザー本人に固定
   const issuer_id = ((await isStaffRequester(req)) && req.body.issuer_id)
     ? req.body.issuer_id
@@ -14926,7 +15385,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const OPTIONAL_COLS = ['force_delivered', 'force_delivered_reason', 'force_delivered_at', 'additional_reviewer_ids'];
   const buildSelect = (includeOptional) => `*${includeOptional ? ', ' + OPTIONAL_COLS.join(', ') : ''}, projects(id, director_id, producer_id), creative_assignments(user_id, role, rank_applied, users(id, full_name))`;
 
-  if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id && !hourlyKeys.length) {
+  if (!(overrideMap && overrideMap.size) && !(selected_creative_ids && selected_creative_ids.length) && !project_id && !hourlyKeys.length && !installmentKeys.length) {
     return res.status(400).json({ error: '請求対象クリエイティブを選択してください' });
   }
 
@@ -14965,7 +15424,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     if (cErr) return res.status(500).json({ error: cErr.message });
     creatives = creatives || [];
   }
-  if (!creatives.length && !hourlyKeys.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
+  if (!creatives.length && !hourlyKeys.length && !installmentKeys.length) return res.status(400).json({ error: '請求可能なクリエイティブがありません' });
 
   // 追加メンバー（Dチェック呼び出し）ガード: 列が無い場合・schema-sync 未適用環境では空配列扱い。
   // creatives 側 PR がまだ本番に適用されていない場合でも 500 にならないよう、必ずアプリ側で || [] する。
@@ -15174,6 +15633,38 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       }
     } catch (e) {
       return res.status(500).json({ error: `時間明細の集計に失敗しました: ${e.message}` });
+    }
+  }
+
+  // ADR 029 Stage 2: 分割支払（一式）明細。
+  // 金額は line_payment_installments から再取得（preview-items と同じ installmentBuildInvoiceItems を共有）し、
+  // 選択された installment_key（= installment id）の行だけを invoice_items（creative_id = NULL）として追加する。
+  if (installmentKeys.length) {
+    const instYear = parseInt(req.body.year, 10) || new Date().getFullYear();
+    const instMonth = parseInt(req.body.month, 10) || (new Date().getMonth() + 1);
+    try {
+      const instItems = await installmentBuildInvoiceItems(issuer_id, instYear, instMonth);
+      for (const ii of instItems) {
+        if (!installmentKeys.includes(ii.installment_key)) continue;
+        totalAmount += ii.total;
+        itemRows.push({
+          creative_id:    null,
+          creative_label: ii.label,   // 例: 「プレスト／プレスト・ケアHP HP制作一式 着手金（1/2）」
+          cost_type:      'installment_fee',
+          label:          '一式（分割支払）',
+          quantity:       1,
+          unit:           '式',
+          unit_price:     ii.total,
+          total_amount:   ii.total,
+          is_special:     false,
+          special_reason: null,
+          original_unit_price: ii.total,
+          price_change_reason: null,
+          sort_order:     sortCounter++,
+        });
+      }
+    } catch (e) {
+      return res.status(500).json({ error: `分割支払明細の集計に失敗しました: ${e.message}` });
     }
   }
 

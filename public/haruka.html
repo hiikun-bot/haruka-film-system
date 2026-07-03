@@ -17745,6 +17745,13 @@ let _projectLinesCache = []; // 現在表示中の案件の lines
 let _projectLineCostsCache = {};
 // Stage 4b: 開いている line の Set（アコーディオンの開閉状態を保持）
 const _projectLineCostsOpen = new Set();
+// ADR 029 Stage 2: line ごとの支払スケジュール（一式の分割）キャッシュ。{ [line_id]: installment[] }
+let _lineInstallmentsCache = {};
+// ADR 029: 支払スケジュールを出す一式カテゴリの code
+const INSTALLMENT_CATEGORY_CODES = ['hp', 'lp', 'line'];
+function lineSupportsInstallments(line) {
+  return INSTALLMENT_CATEGORY_CODES.includes(line?.category?.code || '');
+}
 
 const PRICING_TYPE_LABELS = {
   fixed_per_unit: '1本あたり固定',
@@ -17852,6 +17859,9 @@ async function loadProjectLines(projectId) {
       for (const k of Object.keys(_projectLineCostsCache)) {
         if (!valid.has(k)) delete _projectLineCostsCache[k];
       }
+      for (const k of Object.keys(_lineInstallmentsCache)) {
+        if (!valid.has(k)) delete _lineInstallmentsCache[k];
+      }
       for (const k of Array.from(_projectLineCostsOpen)) {
         if (!valid.has(k)) _projectLineCostsOpen.delete(k);
       }
@@ -17860,6 +17870,10 @@ async function loadProjectLines(projectId) {
     // （件数が多い案件で N 並列なので、上限 30 件にする）
     const lines = _projectLinesCache.slice(0, 30);
     await Promise.all(lines.map(l => loadLineCosts(l.id, projectId)));
+    // ADR 029: アコーディオンが開いている一式カテゴリ line は支払スケジュールも同期
+    await Promise.all(_projectLinesCache
+      .filter(l => _projectLineCostsOpen.has(l.id) && lineSupportsInstallments(l))
+      .map(l => loadLineInstallments(l.id, projectId)));
     renderProjectLines();
   } catch (e) {
     listEl.innerHTML = `<div style="color:#A32D2D;font-size:13px;padding:8px 0">読み込みに失敗しました: ${esc(e?.message || '')}</div>`;
@@ -18193,9 +18207,29 @@ async function toggleLineCostsAccordion(lineId) {
   _projectLineCostsOpen.add(lineId);
   // 一旦再描画（▼ + 「読み込み中」を表示）
   renderProjectLines();
-  // 未取得 or 再フェッチ
-  await loadLineCosts(lineId);
+  // 未取得 or 再フェッチ（一式カテゴリは支払スケジュールも取得。ADR 029）
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  await Promise.all([
+    loadLineCosts(lineId),
+    lineSupportsInstallments(line) ? loadLineInstallments(lineId) : Promise.resolve(),
+  ]);
   renderProjectLines();
+}
+
+// ADR 029 Stage 2: 指定 line の支払スケジュール（分割）を fetch してキャッシュに格納
+async function loadLineInstallments(lineId, projectIdOpt) {
+  const projectId = projectIdOpt || document.getElementById('p-id')?.value;
+  if (!projectId || !lineId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/installments`);
+    if (!res.ok) {
+      _lineInstallmentsCache[lineId] = [];
+      return;
+    }
+    _lineInstallmentsCache[lineId] = await res.json() || [];
+  } catch (e) {
+    _lineInstallmentsCache[lineId] = [];
+  }
 }
 
 // 指定 line の line_costs を fetch してキャッシュに格納
@@ -18219,6 +18253,8 @@ function renderLineCostsBody(line) {
   const lineId = line.id;
   const lineCosts = _projectLineCostsCache[lineId];
   const canEdit = projectLinesCanEdit();
+  // ADR 029: 一式カテゴリ（hp/lp/line）は下部に「📅 支払スケジュール」ブロックを出す
+  const installmentsBlock = lineSupportsInstallments(line) ? renderLineInstallmentsBlock(line) : '';
 
   if (!Array.isArray(lineCosts)) {
     return `<div style="font-size:11px;color:var(--text-muted);padding:6px 0">読み込み中...</div>`;
@@ -18228,6 +18264,7 @@ function renderLineCostsBody(line) {
     return `
       <div style="font-size:11px;color:var(--text-muted);padding:6px 0">コストが未登録です。ディレクター費（時間単価）などロール別の支払単価をここから登録できます。</div>
       ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:4px">+ コスト追加</button>` : ''}
+      ${installmentsBlock}
     `;
   }
 
@@ -18261,7 +18298,221 @@ function renderLineCostsBody(line) {
   return `
     ${rows}
     ${canEdit ? `<button type="button" class="btn" onclick="addProjectLineCost('${esc(lineId)}')" style="padding:4px 10px;font-size:11px;margin-top:8px">+ コスト追加</button>` : ''}
+    ${installmentsBlock}
   `;
+}
+
+// ==================== 📅 支払スケジュール（一式の分割）ADR 029 Stage 2 ====================
+//
+// hp / lp / line カテゴリの line にだけ表示。「着手金30万（7月）・納品完了分30万（9月）」の
+// ような分割行を登録すると、対象月の請求書プレビュー・クリエイター別集計・月次売上に自動反映される。
+// seq / total_count はサーバー採番（追加・削除・月変更で自動振り直し）。
+
+// 分割ラベルの定番候補（自由入力も可）
+const INSTALLMENT_LABEL_PRESETS = ['着手金', '中間金', '納品完了分'];
+
+function _installmentPayeeOptions(selectedId) {
+  const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+  const active = members.filter(m => m && m.is_active !== false);
+  // 選択中のメンバーが非アクティブでも表示が壊れないよう補完
+  const selected = selectedId && !active.some(m => m.id === selectedId)
+    ? members.find(m => m.id === selectedId) : null;
+  const list = selected ? [...active, selected] : active;
+  return '<option value="">支払先なし</option>' + list.map(m =>
+    `<option value="${esc(m.id)}" ${m.id === selectedId ? 'selected' : ''}>${esc((window.NameDisplay && NameDisplay.full(m)) || m.full_name || m.nickname || 'メンバー')}</option>`
+  ).join('');
+}
+
+function renderLineInstallmentsBlock(line) {
+  const lineId = line.id;
+  const installments = _lineInstallmentsCache[lineId];
+  const canEdit = projectLinesCanEdit();
+  const canClientPrice = hasPermission('project.client_price');
+  const jstThisMonth = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
+
+  const header = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:12px;font-weight:700;color:var(--text)">📅 支払スケジュール（一式の分割）</span>
+      <span style="font-size:10px;color:var(--text-muted)" title="登録した分割行は、対象月の請求書プレビュー・クリエイター別集計・月次売上に自動反映されます（ADR 029）">対象月の請求・売上に自動反映</span>
+    </div>`;
+
+  if (!Array.isArray(installments)) {
+    return `<div style="margin-top:12px;border-top:1px dashed var(--border);padding-top:10px">${header}<div style="font-size:11px;color:var(--text-muted);padding:4px 0">読み込み中...</div></div>`;
+  }
+
+  const datalistId = `lpi-labels-${lineId}`;
+  const datalist = `<datalist id="${esc(datalistId)}">${INSTALLMENT_LABEL_PRESETS.map(l => `<option value="${esc(l)}"></option>`).join('')}</datalist>`;
+
+  const inputStyle = 'padding:4px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px';
+  const rows = installments.map(inst => {
+    const monthVal = String(inst.target_month || '').slice(0, 7);
+    return `
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px dashed var(--border);font-size:11px;flex-wrap:wrap">
+        <span style="flex-shrink:0;width:34px;text-align:center;font-weight:700;color:var(--text-muted)">${inst.seq}/${inst.total_count}</span>
+        <input type="text" list="${esc(datalistId)}" value="${esc(inst.label || '')}" placeholder="着手金 など" maxlength="100" ${!canEdit ? 'disabled' : ''}
+          onchange="updateLineInstallment('${esc(lineId)}','${esc(inst.id)}','label',this)" style="${inputStyle};width:110px">
+        ${canClientPrice ? `
+        <label style="display:inline-flex;align-items:center;gap:3px;color:var(--text-muted)">請求
+          <input type="number" min="0" step="1" value="${Number(inst.client_amount) || 0}" ${!canEdit ? 'disabled' : ''}
+            onchange="updateLineInstallment('${esc(lineId)}','${esc(inst.id)}','client_amount',this)" style="${inputStyle};width:92px;text-align:right">
+        </label>` : ''}
+        <label style="display:inline-flex;align-items:center;gap:3px;color:var(--text-muted)">支払
+          <input type="number" min="0" step="1" value="${Number(inst.payment_amount) || 0}" ${!canEdit ? 'disabled' : ''}
+            onchange="updateLineInstallment('${esc(lineId)}','${esc(inst.id)}','payment_amount',this)" style="${inputStyle};width:92px;text-align:right">
+        </label>
+        <input type="month" value="${esc(monthVal)}" ${!canEdit ? 'disabled' : ''} title="計上月（この月の請求書・売上に載ります）"
+          onchange="updateLineInstallment('${esc(lineId)}','${esc(inst.id)}','target_month',this)" style="${inputStyle}">
+        <select ${!canEdit ? 'disabled' : ''} title="制作者支払の受取人"
+          onchange="updateLineInstallment('${esc(lineId)}','${esc(inst.id)}','payee_user_id',this)" style="${inputStyle};max-width:140px">
+          ${_installmentPayeeOptions(inst.payee_user_id || '')}
+        </select>
+        ${canEdit ? `<button type="button" class="btn" onclick="deleteLineInstallment('${esc(lineId)}','${esc(inst.id)}')" style="padding:3px 8px;font-size:10px;color:#A32D2D;border-color:#F09595">削除</button>` : ''}
+      </div>`;
+  }).join('');
+
+  const emptyNote = !installments.length
+    ? `<div style="font-size:11px;color:var(--text-muted);padding:4px 0">分割が未登録です。一括請求の場合も「一括（1/1）で作成」で1行登録すると、対象月の請求・売上に載ります。</div>`
+    : '';
+
+  const buttons = canEdit ? `
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button type="button" class="btn" onclick="addLineInstallment('${esc(lineId)}')" style="padding:4px 10px;font-size:11px">＋ 分割を追加</button>
+      ${!installments.length ? `<button type="button" class="btn" onclick="createLumpInstallment('${esc(lineId)}')" style="padding:4px 10px;font-size:11px" title="label=納品完了分・金額=このグループの単価・対象月=今月（${esc(jstThisMonth)}）の1行を作成">一括（1/1）で作成</button>` : ''}
+    </div>` : '';
+
+  // 分割の請求合計 ≠ 一式請求額（line.client_unit_price）なら警告（クライアント単価権限のみ）
+  let warning = '';
+  if (canClientPrice && installments.length) {
+    const clientSum = installments.reduce((s, i) => s + (Number(i.client_amount) || 0), 0);
+    const lineClient = Number(line.client_unit_price) || 0;
+    if (lineClient > 0 && clientSum !== lineClient) {
+      warning = `<div style="margin-top:6px;font-size:11px;color:#92660A;background:#FFFBEB;border:1px solid #F0C98A;border-radius:6px;padding:5px 8px">⚠ 分割の請求合計 ¥${clientSum.toLocaleString()} ≠ 一式請求額 ¥${lineClient.toLocaleString()}（グループのクライアント単価と一致していません）</div>`;
+    }
+  }
+
+  return `
+    <div style="margin-top:12px;border-top:1px dashed var(--border);padding-top:10px">
+      ${header}
+      ${datalist}
+      ${rows}
+      ${emptyNote}
+      ${buttons}
+      ${warning}
+    </div>`;
+}
+
+// 分割行を追加（1行目=着手金 / 2行目以降=納品完了分 をデフォルトに）
+async function addLineInstallment(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  const existing = _lineInstallmentsCache[lineId] || [];
+  const jstThisMonth = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
+  const body = {
+    label: existing.length === 0 ? '着手金' : '納品完了分',
+    target_month: jstThisMonth,
+    payment_amount: 0,
+  };
+  if (hasPermission('project.client_price')) body.client_amount = 0;
+  await _postLineInstallment(lineId, projectId, body, '分割を追加しました');
+}
+
+// 一括（1/1）: label=納品完了分・請求/支払=このグループの単価・対象月=今月 の1行を生成
+async function createLumpInstallment(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  const jstThisMonth = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
+  const body = {
+    label: '納品完了分',
+    target_month: jstThisMonth,
+    payment_amount: getProducerUnitPrice(lineId) || 0,
+  };
+  if (hasPermission('project.client_price')) body.client_amount = Number(line?.client_unit_price) || 0;
+  await _postLineInstallment(lineId, projectId, body, '一括（1/1）の分割行を作成しました');
+}
+
+async function _postLineInstallment(lineId, projectId, body, okMsg) {
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/installments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.error || `追加に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    await loadLineInstallments(lineId, projectId); // 権限に応じた列絞り込みを反映するため再取得
+    renderProjectLines();
+    showToast(okMsg, 'ok');
+  } catch (e) {
+    showToast(`追加に失敗しました: ${e?.message || ''}`, 'warn');
+  }
+}
+
+// インライン編集（onchange）→ PUT。target_month 変更で seq が振り直されるため一覧ごと再描画。
+async function updateLineInstallment(lineId, instId, field, el) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  let value = el.value;
+  if (field === 'client_amount' || field === 'payment_amount') {
+    value = Math.max(0, parseInt(value, 10) || 0);
+  } else if (field === 'payee_user_id') {
+    value = value || null;
+  } else if (field === 'label') {
+    value = String(value || '').trim();
+    if (!value) {
+      showToast('ラベル（着手金 など）は必須です', 'warn');
+      renderProjectLines();
+      return;
+    }
+  } else if (field === 'target_month') {
+    if (!/^\d{4}-\d{2}$/.test(value)) {
+      showToast('対象月を選択してください', 'warn');
+      renderProjectLines();
+      return;
+    }
+  }
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/installments/${instId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.error || `更新に失敗しました（${res.status}）`, 'warn');
+      await loadLineInstallments(lineId, projectId);
+      renderProjectLines();
+      return;
+    }
+    await loadLineInstallments(lineId, projectId);
+    renderProjectLines();
+  } catch (e) {
+    showToast(`更新に失敗しました: ${e?.message || ''}`, 'warn');
+  }
+}
+
+async function deleteLineInstallment(lineId, instId) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId) return;
+  if (!confirm('この分割行を削除しますか？（残りの行の番号は自動で振り直されます）')) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/installments/${instId}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.error || `削除に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    await loadLineInstallments(lineId, projectId);
+    renderProjectLines();
+    showToast('分割行を削除しました', 'ok');
+  } catch (e) {
+    showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
+  }
 }
 
 // ↑↓ ボタンで line を1つ移動 → サーバ PATCH /reorder
@@ -24750,6 +25001,23 @@ async function loadInvoicePreview() {
             <td style="padding:10px 10px;text-align:right;vertical-align:top;font-weight:600;color:var(--em-dark)">¥${(item.total || 0).toLocaleString()}</td>
           </tr>`;
         }
+        // ADR 029 Stage 2: 一式（分割支払）の明細。金額は固定（単価編集なし）。
+        if (item.is_installment) {
+          return `<tr style="background:${rowBgH};border-bottom:0.5px solid var(--border)">
+            <td style="padding:10px 10px;text-align:center;vertical-align:top">
+              <input type="checkbox" class="gi-item-check" data-id="${esc(item.id)}" data-installment="1" data-installment-key="${esc(item.installment_key)}" data-amount="${item.total || 0}" checked onchange="updateInvoiceTotal()" style="cursor:pointer;width:15px;height:15px">
+            </td>
+            <td style="padding:10px 10px;text-align:left;vertical-align:top;color:var(--text-muted);font-size:11px;white-space:nowrap">—</td>
+            <td style="padding:10px 10px;vertical-align:top">
+              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">📅 支払スケジュール（${year}年${month}月）</div>
+              <div style="font-size:12px;color:#111">${esc(item.label)}</div>
+            </td>
+            <td style="padding:10px 10px;text-align:center;vertical-align:top">
+              <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#EDE9FE;color:#6D28D9;white-space:nowrap">一式分割</span>
+            </td>
+            <td style="padding:10px 10px;text-align:right;vertical-align:top;font-weight:600;color:var(--em-dark)">¥${(item.total || 0).toLocaleString()}</td>
+          </tr>`;
+        }
         const noBreakdown = !item.breakdown || !item.breakdown.length;
         const isDelivered = item.status === '納品';
         const checked = (isDelivered && !noBreakdown) ? 'checked' : '';
@@ -24857,11 +25125,11 @@ function updateInvoiceTotal() {
     const el = document.querySelector(`.gi-subtotal[data-id="${cid}"]`);
     if (el) el.textContent = '¥' + sub.toLocaleString();
   });
-  // 総計（チェック済のみ）。時間制行（data-hourly）は固定金額を加算（ADR 028 Stage 2）
+  // 総計（チェック済のみ）。時間制行（data-hourly）・一式分割行（data-installment）は固定金額を加算（ADR 028/029 Stage 2）
   const checks = document.querySelectorAll('.gi-item-check:checked');
   let total = 0;
   checks.forEach(cb => {
-    if (cb.dataset.hourly) { total += parseInt(cb.dataset.amount, 10) || 0; return; }
+    if (cb.dataset.hourly || cb.dataset.installment) { total += parseInt(cb.dataset.amount, 10) || 0; return; }
     total += _giCreativeSubtotal(cb.dataset.id);
   });
   document.getElementById('gi-total').textContent = '¥' + total.toLocaleString();
@@ -24888,11 +25156,13 @@ async function generateMyInvoice() {
     inp.style.borderColor = _giIsOverridden(inp) ? '#F59E0B' : 'var(--border)';
   });
   const selectedItems = [];
-  const hourlyKeys = [];   // ADR 028 Stage 2: 時間制（作業時間報告）行の選択キー
+  const hourlyKeys = [];       // ADR 028 Stage 2: 時間制（作業時間報告）行の選択キー
+  const installmentKeys = [];  // ADR 029 Stage 2: 一式（分割支払）行の選択キー
   let invalid = false;
   let missingReason = false;
   for (const cb of checkedBoxes) {
     if (cb.dataset.hourly) { hourlyKeys.push(cb.dataset.hourlyKey); continue; }
+    if (cb.dataset.installment) { installmentKeys.push(cb.dataset.installmentKey); continue; }
     const cid = cb.dataset.id;
     const inputs = document.querySelectorAll(`.gi-bd-input[data-id="${cid}"]`);
     const items = [];
@@ -24924,7 +25194,7 @@ async function generateMyInvoice() {
   }
   if (invalid) { showToast('金額は0以上の整数で入力してください', 'warn'); return; }
   if (missingReason) { showToast('単価を変更した行は変更理由を入力してください', 'warn'); return; }
-  if (!selectedItems.length && !hourlyKeys.length) { showToast('金額が0より大きい明細が必要です', 'warn'); return; }
+  if (!selectedItems.length && !hourlyKeys.length && !installmentKeys.length) { showToast('金額が0より大きい明細が必要です', 'warn'); return; }
 
   const btn = document.getElementById('gi-submit-btn');
   btn.textContent = '作成中...'; btn.disabled = true;
@@ -24935,6 +25205,7 @@ async function generateMyInvoice() {
       issuer_id: uid, year, month,
       selected_items: selectedItems.length ? selectedItems : undefined,
       hourly_keys: hourlyKeys.length ? hourlyKeys : undefined,
+      installment_keys: installmentKeys.length ? installmentKeys : undefined,
       notes: document.getElementById('gi-notes').value.trim() || null,
     })
   });
@@ -37718,6 +37989,11 @@ function renderCreatorSummaryTable(data) {
   const hourlyChip = ((data.total.hourly_minutes || 0) > 0 || totalHourly > 0)
     ? `<div style="background:#CCFBF1;border:1px solid #5EEAD4;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">⏱ 時間制</span> <strong>${hoursOf(data.total.hourly_minutes)}h / ${yen(data.total.hourly_amount)}</strong>${(data.total.expense_amount || 0) > 0 ? ` <span style="font-size:11px;color:var(--text-muted)">＋経費 ${yen(data.total.expense_amount)}</span>` : ''}</div>`
     : '';
+  // ADR 029 Stage 2: 一式（分割支払）の合算表示。hourly と同じく別枠フィールドを表示側でのみ合算する。
+  const totalInstallment = data.total.installment_amount || 0;
+  const installmentChip = ((data.total.installment_count || 0) > 0 || totalInstallment > 0)
+    ? `<div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">📅 一式</span> <strong>${data.total.installment_count || 0}件 / ${yen(totalInstallment)}</strong></div>`
+    : '';
   const sumEl = document.getElementById('an-summary');
   sumEl.innerHTML = `
     <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間</span> <strong>${data.year}年${data.month}月</strong></div>
@@ -37727,7 +38003,8 @@ function renderCreatorSummaryTable(data) {
     <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">デザイン</span> <strong>${data.total.design_count}枚 / ${yen(data.total.design_total)}</strong></div>
     <div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">ディレクション</span> <strong>${data.total.director_count || 0}件 / ${yen(data.total.director_total || 0)}</strong></div>
     ${hourlyChip}
-    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total + totalHourly)}</strong></div>
+    ${installmentChip}
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">合計金額</span> <strong style="font-size:14px">${yen(data.total.grand_total + totalHourly + totalInstallment)}</strong></div>
   `;
   const wrap = document.getElementById('an-table-content');
   if (!data.summary.length) {
@@ -37749,6 +38026,11 @@ function renderCreatorSummaryTable(data) {
     const hourlyCell = ((u.hourly_minutes || 0) > 0 || uHourly > 0)
       ? `<span title="作業時間報告（タイムシート）の月次合算">${hoursOf(u.hourly_minutes)}h / ${yen(u.hourly_amount)}${(u.expense_amount || 0) > 0 ? `<br><small style="font-size:10px;color:var(--text-muted)">＋経費 ${yen(u.expense_amount)}</small>` : ''}</span>`
       : '—';
+    // ADR 029 Stage 2: 一式（分割支払）セル（件数 / 金額）。無い人は —
+    const uInstallment = u.installment_amount || 0;
+    const installmentCell = ((u.installment_count || 0) > 0 || uInstallment > 0)
+      ? `<span title="一式成果物（HP/LP等）の分割支払スケジュールの月次合算（ADR 029）">${u.installment_count || 0}件 / ${yen(uInstallment)}</span>`
+      : '—';
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td class="creator-cell-clickable" data-user-id="${esc(u.id)}" onclick="openCreatorDetail('${esc(u.id)}')" title="クリックで案件別の内訳を表示" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;cursor:pointer;text-align:left">${esc(NameDisplay.full(u))}<span style="font-size:10px;color:var(--em);margin-left:6px;opacity:.7">▸</span>${noteRate}</td>
       <td style="padding:8px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(u.role || '-')}</td>
@@ -37760,7 +38042,8 @@ function renderCreatorSummaryTable(data) {
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap;color:#6d28d9">${(u.director_count || 0) > 0 ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="openCreatorDetail('${esc(u.id)}','director')" title="クリックでディレクションの一覧を表示">🎬${u.director_count}</span>` : '—'}</td>
       <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:500;white-space:nowrap">${directorAmountCell}</td>
       <td style="padding:8px 12px;text-align:right;font-size:12px;font-weight:500;white-space:nowrap;color:#0F766E">${hourlyCell}</td>
-      <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total + uHourly)}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:12px;font-weight:500;white-space:nowrap;color:#6D28D9">${installmentCell}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:14px;font-weight:700;color:var(--em-dark);white-space:nowrap;background:var(--em-pale)">${yen(u.grand_total + uHourly + uInstallment)}</td>
     </tr>`;
   }).join('');
   wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:1000px">
@@ -37776,6 +38059,7 @@ function renderCreatorSummaryTable(data) {
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ディレクション本数</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap">ディレクション金額</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap" title="作業時間報告（タイムシート）の月次合算（ADR 028）">⏱ 時間制</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap" title="一式成果物（HP/LP等）の分割支払スケジュールの月次合算（ADR 029）">📅 一式</th>
         <th style="padding:9px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);white-space:nowrap;background:var(--em);color:#fff">合計金額</th>
       </tr>
     </thead>
@@ -37790,7 +38074,8 @@ function renderCreatorSummaryTable(data) {
         <td style="padding:11px 12px;text-align:right;font-size:13px;color:#6d28d9">🎬${data.total.director_count || 0}</td>
         <td style="padding:11px 12px;text-align:right;font-size:13px">${yen(data.total.director_total || 0)}</td>
         <td style="padding:11px 12px;text-align:right;font-size:12px;color:#0F766E">${((data.total.hourly_minutes || 0) > 0 || totalHourly > 0) ? `${hoursOf(data.total.hourly_minutes)}h / ${yen(data.total.hourly_amount + (data.total.expense_amount || 0))}` : '—'}</td>
-        <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.total.grand_total + totalHourly)}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:12px;color:#6D28D9">${((data.total.installment_count || 0) > 0 || totalInstallment > 0) ? `${data.total.installment_count || 0}件 / ${yen(totalInstallment)}` : '—'}</td>
+        <td style="padding:11px 12px;text-align:right;font-size:14px;background:var(--em);color:#fff">${yen(data.total.grand_total + totalHourly + totalInstallment)}</td>
       </tr>
     </tbody>
   </table>`;
