@@ -4683,6 +4683,20 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
 // ==================== 分析・集計 ====================
 // 案件 × 担当者ごとのクリエイティブ作成本数（動画 / デザイン）を集計する共通関数
 // GET（画面表示）と POST /export-sheet（Sheets出力）の両方から呼ばれる
+
+// ADR 009: 納品時スナップショット優先のディレクター/プロデューサー解決。
+// 納品済み（スナップショット有り）はその時点の担当に、未納品は現在の projects 側にフォールバック。
+function snapshotDirectorId(creative) {
+  const ids = creative?.delivered_director_ids;
+  if (Array.isArray(ids) && ids.length) return ids[0];
+  return creative?.projects?.director_id || null;
+}
+function snapshotProducerId(creative) {
+  const ids = creative?.delivered_producer_ids;
+  if (Array.isArray(ids) && ids.length) return ids[0];
+  return creative?.projects?.producer_id || null;
+}
+
 // ADR 026: JST の当月範囲 [start, 翌月start) を timestamptz 比較用 ISO で返す。
 // 例: 2026年6月 → start=2026-05-31T15:00:00.000Z（JST 6/1 00:00）, end=2026-06-30T15:00:00.000Z（JST 7/1 00:00）
 // Railway は UTC 動作のため、月末深夜の納品が UTC 日付で前後の月にズレないよう必ずこれを使う。
@@ -4710,7 +4724,7 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at, delivered_at,
+      final_deadline, created_at, delivered_at, delivered_director_ids, delivered_producer_ids,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `);
@@ -4762,6 +4776,8 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   for (const c of (data || [])) {
     if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
     if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+    (c.delivered_director_ids || []).forEach(id => id && neededUserIds.add(id));
+    (c.delivered_producer_ids || []).forEach(id => id && neededUserIds.add(id));
   }
   for (const arr of lineCostsByLine.values()) {
     for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
@@ -4787,11 +4803,12 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
       return anyCreator?.users || null;
     }
     if (code === 'director' || code === 'sub_director') {
-      const did = creative.projects?.director_id;
+      // ADR 009: 納品時スナップショット優先（納品タイミングでコミット）
+      const did = snapshotDirectorId(creative);
       return did ? (userById.get(did) || null) : null;
     }
     if (code === 'producer' || code === 'sub_producer') {
-      const pid = creative.projects?.producer_id;
+      const pid = snapshotProducerId(creative);
       return pid ? (userById.get(pid) || null) : null;
     }
     const a = assignees.find(x => x.role === code);
@@ -5320,7 +5337,7 @@ function computeCreatorCreativeBreakdown(creative, lineById, lineCostsByLine, re
   //    金額は不明なので加算しない（rate_unknown を立てて UI で「単価未設定」を示す）。
   //    ユーザー要望: 「単価未設定でも納品済の業務量はカウントしたい」
   //    ※ 同じ仕組みで producer 用も将来追加可能（producer_id ベース・今回は対象外）。
-  const directorId = creative.projects?.director_id;
+  const directorId = snapshotDirectorId(creative);
   if (directorId && userById) {
     const dirUser = userById.get(directorId);
     if (dirUser) {
@@ -5379,7 +5396,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at, delivered_at,
+      final_deadline, created_at, delivered_at, delivered_director_ids, delivered_producer_ids,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `)
@@ -5420,6 +5437,8 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   for (const c of (creatives || [])) {
     if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
     if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+    (c.delivered_director_ids || []).forEach(id => id && neededUserIds.add(id));
+    (c.delivered_producer_ids || []).forEach(id => id && neededUserIds.add(id));
   }
   for (const arr of lineCostsByLine.values()) {
     for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
@@ -5482,11 +5501,12 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
       return anyCreator?.users || null;
     }
     if (code === 'director' || code === 'sub_director') {
-      const did = creative.projects?.director_id;
+      // ADR 009: 納品時スナップショット優先（納品タイミングでコミット）
+      const did = snapshotDirectorId(creative);
       return did ? (userById.get(did) || null) : null;
     }
     if (code === 'producer' || code === 'sub_producer') {
-      const pid = creative.projects?.producer_id;
+      const pid = snapshotProducerId(creative);
       return pid ? (userById.get(pid) || null) : null;
     }
     // その他のロールは assignees に同 code がいればそれに、いなければ捨てる
@@ -5633,7 +5653,7 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at, delivered_at,
+      final_deadline, created_at, delivered_at, delivered_director_ids, delivered_producer_ids,
       projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `)
@@ -5671,6 +5691,8 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
   for (const c of (creatives || [])) {
     if (c.projects?.director_id) neededUserIds.add(c.projects.director_id);
     if (c.projects?.producer_id) neededUserIds.add(c.projects.producer_id);
+    (c.delivered_director_ids || []).forEach(id => id && neededUserIds.add(id));
+    (c.delivered_producer_ids || []).forEach(id => id && neededUserIds.add(id));
   }
   for (const arr of lineCostsByLine.values()) {
     for (const lc of arr) if (lc.user_id) neededUserIds.add(lc.user_id);
@@ -5697,11 +5719,12 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
       return anyCreator?.users || null;
     }
     if (code === 'director' || code === 'sub_director') {
-      const did = creative.projects?.director_id;
+      // ADR 009: 納品時スナップショット優先（納品タイミングでコミット）
+      const did = snapshotDirectorId(creative);
       return did ? (userById.get(did) || null) : null;
     }
     if (code === 'producer' || code === 'sub_producer') {
-      const pid = creative.projects?.producer_id;
+      const pid = snapshotProducerId(creative);
       return pid ? (userById.get(pid) || null) : null;
     }
     const a = assignees.find(x => x.role === code);
@@ -8021,6 +8044,30 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // ADR 009: 納品遷移時に「その時点の案件ディレクター/プロデューサー」をスナップショット。
+  // D費の分配は納品タイミングでコミットされ、以後 projects.director_id を変更しても過去の納品分は動かない。
+  if (updateData.status !== undefined && beforeStatus !== updateData.status) {
+    if (updateData.status === '納品') {
+      try {
+        const { data: _snapCr } = await supabase
+          .from('creatives').select('project_id').eq('id', req.params.id).maybeSingle();
+        if (_snapCr?.project_id) {
+          const { data: _snapProj } = await supabase
+            .from('projects').select('director_id, producer_id').eq('id', _snapCr.project_id).maybeSingle();
+          updateData.delivered_director_ids = _snapProj?.director_id ? [_snapProj.director_id] : null;
+          updateData.delivered_producer_ids = _snapProj?.producer_id ? [_snapProj.producer_id] : null;
+          updateData.delivered_snapshot_at = new Date().toISOString();
+        }
+      } catch (e) {
+        console.warn('[ADR009 snapshot] failed:', e?.message || e);
+      }
+    } else if (beforeStatus === '納品') {
+      updateData.delivered_director_ids = null;
+      updateData.delivered_producer_ids = null;
+      updateData.delivered_snapshot_at = null;
+    }
+  }
+
   // ==================== Wチェック 認可・バリデーション（ADR 024）====================
   // 静止画(image)専用工程。承認/修正依頼は Wチェック担当者本人または admin のみ（URL/API 直叩き防止）。
   if (updateData.status !== undefined && updateData.status !== beforeStatus) {
@@ -8097,13 +8144,14 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 新列 (director/client/editor _comment_updated_at) が schema-sync 未適用の環境用フォールバック。
     // 列欠損が原因なら _updated_at 系を抜いて再 UPDATE → 本体更新は成功させる。
     const msg = error.message || '';
-    const isMissingNewCol = /comment_updated_at|wcheck_|delivered_at/.test(msg);
+    const isMissingNewCol = /comment_updated_at|wcheck_|delivered_/.test(msg);
     if (isMissingNewCol) {
       // schema-sync 未適用環境フォールバック: 新列（comment_updated_at 系 / wcheck 系 / delivered_at）を抜いて再 UPDATE。
       const {
         director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e,
         wcheck_required: _wr, wcheck_requested_by: _wb, wcheck_requested_at: _wa, wcheck_comment: _wc,
         delivered_at: _dat,
+        delivered_director_ids: _ddi, delivered_producer_ids: _dpi, delivered_snapshot_at: _dsa,
         ...legacyUpdate
       } = updateData;
       ({ data, error } = await supabase
@@ -9372,7 +9420,7 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
   // ADR 011 補足: 遷移 audit log のためコメント3種も同時取得しておく。
   const { data: creative, error: cErr } = await supabase
     .from('creatives')
-    .select('id, status, director_comment, client_comment, editor_comment')
+    .select('id, status, project_id, director_comment, client_comment, editor_comment')
     .eq('id', req.params.id)
     .maybeSingle();
   if (cErr) return res.status(500).json({ error: cErr.message });
@@ -9431,9 +9479,23 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     updatePayload.force_delivered_by = null;
     // ADR 026: 納品から戻したら納品完了日時もクリア（再納品時に再セットされる）
     updatePayload.delivered_at = null;
+    // ADR 009: スナップショットもクリア
+    updatePayload.delivered_director_ids = null;
+    updatePayload.delivered_producer_ids = null;
+    updatePayload.delivered_snapshot_at = null;
   } else {
     // ADR 026: 強制変更で「納品」にした場合も納品完了日時を刻む
     updatePayload.delivered_at = new Date().toISOString();
+    // ADR 009: その時点の案件D/Pをスナップショット
+    try {
+      const { data: _snapProj } = await supabase
+        .from('projects').select('director_id, producer_id').eq('id', creative.project_id).maybeSingle();
+      updatePayload.delivered_director_ids = _snapProj?.director_id ? [_snapProj.director_id] : null;
+      updatePayload.delivered_producer_ids = _snapProj?.producer_id ? [_snapProj.producer_id] : null;
+      updatePayload.delivered_snapshot_at = new Date().toISOString();
+    } catch (e) {
+      console.warn('[ADR009 snapshot admin]', e?.message || e);
+    }
   }
   const { data: updated, error: uErr } = await supabase
     .from('creatives').update(updatePayload).eq('id', req.params.id).select().single();
@@ -12261,6 +12323,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   // creative_assignments に居ないケースを救うため、自分が担当する案件をUNIONで取得する。
   const CREATIVE_SELECT = `
     id, file_name, status, creative_type, final_deadline, draft_deadline, delivered_at,
+    delivered_director_ids, delivered_producer_ids,
     project_id, line_id, category_id, is_payable, special_payable, special_payable_reason,
     projects(id, name, director_id, producer_id, clients(name, client_code)),
     creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
@@ -12316,18 +12379,32 @@ router.get('/invoices/preview-items', async (req, res) => {
     leaderCreatives = lc || [];
   }
 
+  // ADR 009: ディレクター交代後も「自分がスナップショットされている納品分」を拾う
+  let snapshotCreatives = [];
+  try {
+    const { data: sc } = await supabase
+      .from('creatives')
+      .select(CREATIVE_SELECT)
+      .contains('delivered_director_ids', [uid])
+      .or(MONTH_RANGE_OR);
+    snapshotCreatives = sc || [];
+  } catch (e) {
+    console.warn('[preview-items] snapshot fetch failed:', e?.message || e);
+  }
+
   // 重複排除して結合
   const creativesById = new Map();
   for (const c of (assignedCreatives || [])) creativesById.set(c.id, c);
   for (const c of leaderCreatives) if (!creativesById.has(c.id)) creativesById.set(c.id, c);
+  for (const c of snapshotCreatives) if (!creativesById.has(c.id)) creativesById.set(c.id, c);
   const allCreatives = Array.from(creativesById.values());
 
   // 当月フィルタ + （自分がアサイン or ディレクター or プロデューサー）
   // ※ DB側で同条件を絞り込み済みだが、同一結果保証のため従来のJSフィルタも残す
   const myCreatives = allCreatives.filter(c => {
     const mine = c.creative_assignments?.some(a => a.user_id === uid);
-    const isDirector = c.projects?.director_id === uid;
-    const isProducer = c.projects?.producer_id === uid;
+    const isDirector = snapshotDirectorId(c) === uid;
+    const isProducer = snapshotProducerId(c) === uid;
     if (!mine && !isDirector && !isProducer) return false;
     // ADR 026: 納品完了済みは delivered_at の JST 月で判定（DB側 MONTH_RANGE_OR と同一条件）
     if (c.delivered_at) {
@@ -12381,8 +12458,8 @@ router.get('/invoices/preview-items', async (req, res) => {
 
   const result = myCreatives.map(c => {
     const assignment = c.creative_assignments?.find(a => a.user_id === uid);
-    const isDirector = c.projects?.director_id === uid;
-    const isProducer = c.projects?.producer_id === uid;
+    const isDirector = snapshotDirectorId(c) === uid;
+    const isProducer = snapshotProducerId(c) === uid;
     const rankApplied = assignment?.rank_applied ?? currentRank;
 
     // assignment.role を優先解決ロールにする。assignment が無いなら director/producer。
@@ -14527,8 +14604,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   const issuerIsOnlyAdditionalReviewer = creatives.length > 0 && creatives.every(c => {
     const additional = additionalReviewerIdsOf(c);
     if (!additional.includes(issuer_id)) return false; // 追加レビュアーですらない creative は対象外なので false
-    const isDirector = c.projects?.director_id === issuer_id;
-    const isProducer = c.projects?.producer_id === issuer_id;
+    const isDirector = snapshotDirectorId(c) === issuer_id;
+    const isProducer = snapshotProducerId(c) === issuer_id;
     const inAssignments = (c.creative_assignments || []).some(a => a.user_id === issuer_id);
     // director/producer/assignments のいずれかに正規所属しているなら追加レビュアーであっても請求は通す
     return !isDirector && !isProducer && !inAssignments;
@@ -14603,8 +14680,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const assignment = creative.creative_assignments?.find(
       a => a.user_id === issuer_id
     );
-    const isDirector = creative.projects?.director_id === issuer_id;
-    const isProducer = creative.projects?.producer_id === issuer_id;
+    const isDirector = snapshotDirectorId(creative) === issuer_id;
+    const isProducer = snapshotProducerId(creative) === issuer_id;
     if (!assignment && !isDirector && !isProducer) continue;
     // 防御ガード: assignment が無く director/producer でもなく、追加レビュアーとしてのみ紐づくなら明示スキップ
     // （上の continue で既に弾かれているはずだが、二重防御として残す）
