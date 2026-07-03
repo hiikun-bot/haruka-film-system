@@ -22165,7 +22165,7 @@ function whRowHtml(e) {
     <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? whDefaultProjectId() : e.project_id, isNew ? '' : e.project?.name)}</select>
       ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
-    <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? '' : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? (e?.start_time || '') : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="end_time" value="${timeVal(isNew ? '' : e.end_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="minutes" value="${isNew ? '' : (e.minutes ?? 0)}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 8px"><textarea data-f="description" rows="1" ${dis} style="${st};resize:vertical;min-height:29px" onchange="whMarkDirty(this)" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">${v(isNew ? '' : e.description)}</textarea></td>
@@ -22207,7 +22207,12 @@ function whAddRow() {
   const today = whTodayJst();
   const mm = String(_whMonth).padStart(2, '0');
   const defaultDate = today.startsWith(`${_whYear}-${mm}`) ? today : `${_whYear}-${mm}-01`;
-  tbody.insertAdjacentHTML('beforeend', whRowHtml({ work_date: defaultDate }));
+  // 開始時刻は「いま」を既定にする（当日行のみ。過去月の追記に現在時刻は意味がないため）。
+  // 終了は任意のまま空欄（あとで退勤時に入れる or 稼働分を直接入力）。
+  const defaultStart = defaultDate === today
+    ? new Date().toLocaleTimeString('sv-SE', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })
+    : '';
+  tbody.insertAdjacentHTML('beforeend', whRowHtml({ work_date: defaultDate, start_time: defaultStart }));
   const tr = tbody.lastElementChild;
   // 案件を最初に選ぶ入力順（ユーザー指示）。秘書は既定「ひーくん（管理者サポート）」のまま進めばよい
   tr.querySelector('[data-f="project_id"]')?.focus();
