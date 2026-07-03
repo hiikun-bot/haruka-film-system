@@ -7175,47 +7175,97 @@ router.get('/creatives/counts', async (req, res) => {
 //   旧: 主取得後に「カテゴリ→status_template→teams(own)→projects.sub_director_ids→
 //       projects.sub_producer_ids→sub_users→client_teams→teams(全件)」を
 //       直列に await していたため、本番環境で 8〜9 RTT を要していた。
-//   新: 主取得が終わったら、互いに依存しない 5 ブロックを Promise.all で並列に走らせる。
+//   新: 主取得が終わったら、互いに依存しない 6 ブロックを Promise.all で並列に走らせる。
 //       ロジックそのものは変えていない（出力 JSON 形状も完全一致）。
+//
+// パフォーマンス最適化 第2弾（PR wt-perf-cd-backend）:
+//   - avatar-ref 化: users.avatar_url（base64 で最大300KB）を embed から外し、
+//     参照キャッシュ（utils/avatar-ref.js・#947 と同方式）から配信 URL を注入。
+//     DB→Node 間の転送量が 1 リクエストあたり数十〜数百KB 減る。
+//   - wcheck 判定の直列 RTT 除去: resolveWcheckEligibility の直列 2 クエリを廃止し、
+//     既存 embed に列を足して手元で同一判定を計算（判定結果・レスポンス形状は完全一致）。
 router.get('/creatives/:id', async (req, res) => {
   const creativeId = req.params.id;
-  const { data, error } = await supabase
-    .from('creatives')
-    .select(`
+  // avatar 参照 Map（userId -> 配信URL）を本体クエリと並走してウォーム/取得しておく。
+  // ※ users の avatar_url（base64 で最大300KB）は select しない（#947 の一覧 /creatives と同方式）。
+  //    embed した分だけ DB→サーバー間で base64 実体が毎回流れるため、select から外し、
+  //    後処理で avatar 参照キャッシュ（utils/avatar-ref.js）から配信 URL を注入する。
+  //    レスポンス上の avatar_url の値は従来（res.json パッチ通過後）と同一形。
+  //    取得失敗時は空 Map にフォールバック（avatar_url が null になりフロントはイニシャル表示。
+  //    詳細取得自体を 500 にしない）。
+  const avatarMapPromise = getAvatarRefMap(supabase).catch(e => {
+    console.warn('[creatives/:id] avatar 参照キャッシュ取得失敗 → avatar_url は null で返す:', e.message);
+    return new Map();
+  });
+  // wcheck 判定（旧: resolveWcheckEligibility の直列 2 クエリ = +2 RTT）を追加 DB アクセスなしで
+  // 済ませるため、projects embed に wcheck_required を含める。schema-sync 未適用環境（列欠損）では
+  // resolveWcheckEligibility の旧フォールバックと同様、列抜きで再試行する（値は undefined 扱い＝従来と同じ）。
+  const buildDetailSelect = (withProjWcheck) => `
       *,
       projects(
-        id, name, producer_id, director_id, regulation_url, primary_category_id,
-        director:director_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
-        producer:producer_id(id, full_name, nickname, role, rank, team_id, avatar_url, is_active),
+        id, name, producer_id, director_id, regulation_url, primary_category_id${withProjWcheck ? ', wcheck_required' : ''},
+        director:director_id(id, full_name, nickname, role, rank, team_id, is_active),
+        producer:producer_id(id, full_name, nickname, role, rank, team_id, is_active),
         clients(id, name, client_code, status)
       ),
       project_cycles(id, year, month),
       creative_assignments(
         id, role, rank_applied,
-        users(id, full_name, nickname, role, team_id, avatar_url)
+        users(id, full_name, nickname, role, team_id)
       )
-    `)
+    `;
+  let { data, error } = await supabase
+    .from('creatives')
+    .select(buildDetailSelect(true))
     .eq('id', creativeId)
     .maybeSingle();
+  if (error && /wcheck_required|column .+ does not exist/i.test(error.message || '')) {
+    console.warn('[creatives/:id] projects.wcheck_required 列なし → fallback で再取得:', error.message);
+    ({ data, error } = await supabase
+      .from('creatives')
+      .select(buildDetailSelect(false))
+      .eq('id', creativeId)
+      .maybeSingle());
+  }
   if (error) return res.status(500).json({ error: error.message });
   if (!data) {
     return res.status(404).json({ error: 'このクリエイティブは見つかりません（削除されている可能性があります）' });
   }
 
-  // ─── 並列実行する 5 ブロック ─────────────────────────────────
+  // wcheck 判定用に退避してから、レスポンス形状を従来どおりに戻す
+  // （projects.wcheck_required は従来レスポンスに存在しないため必ず取り除く。形状完全不変）
+  const projWcheckRequired = data.projects ? data.projects.wcheck_required : undefined;
+  if (data.projects) delete data.projects.wcheck_required;
+
+  // ─── 並列実行する 6 ブロック ─────────────────────────────────
   const projectId = data.projects?.id || null;
   const primaryCategoryId = data.projects?.primary_category_id || null;
   const clientId = data.projects?.clients?.id || null;
+  // wcheck 判定用カテゴリID（resolveWcheckEligibility と同じ解決順:
+  // creatives.category_id ?? projects.primary_category_id）
+  const wcheckCatId = data.category_id || primaryCategoryId || null;
 
   // (A) primary_category + status_template_items
+  // wcheck 判定用に wcheck_default も一緒に取得する（追加クエリなし）。
+  // レスポンスの primary_category には従来どおり含めない（wcheck_cat として別出しし、削除する）。
   const taskCategory = (async () => {
-    if (!primaryCategoryId) return { primary_category: null, status_template: null };
+    if (!primaryCategoryId) return { primary_category: null, status_template: null, wcheck_cat: null };
     try {
-      const { data: catData } = await supabase
+      let { data: catData, error: catErr } = await supabase
         .from('creative_categories')
-        .select('id, code, name, color')
+        .select('id, code, name, color, wcheck_default')
         .eq('id', primaryCategoryId)
         .maybeSingle();
+      if (catErr && /wcheck_default|column .+ does not exist/i.test(catErr.message || '')) {
+        // 列欠損環境フォールバック（旧 resolveWcheckEligibility と同じ: wcheck_default 抜きで再取得）
+        ({ data: catData } = await supabase
+          .from('creative_categories')
+          .select('id, code, name, color')
+          .eq('id', primaryCategoryId)
+          .maybeSingle());
+      }
+      const wcheck_cat = catData ? { code: catData.code, wcheck_default: catData.wcheck_default } : null;
+      if (catData && 'wcheck_default' in catData) delete catData.wcheck_default;
       const code = catData?.code;
       let status_template = null;
       if (code && ['lp', 'hp', 'line'].includes(code)) {
@@ -7233,10 +7283,10 @@ router.get('/creatives/:id', async (req, res) => {
           status_template = { id: null, items: [] };
         }
       }
-      return { primary_category: catData || null, status_template };
+      return { primary_category: catData || null, status_template, wcheck_cat };
     } catch (e) {
       console.warn('[creatives/:id] primary_category / status_template embed 失敗:', e.message);
-      return { primary_category: null, status_template: { id: null, items: [] } };
+      return { primary_category: null, status_template: { id: null, items: [] }, wcheck_cat: null };
     }
   })();
 
@@ -7288,9 +7338,10 @@ router.get('/creatives/:id', async (req, res) => {
     let userById = new Map();
     if (allSubIds.length) {
       try {
+        // avatar_url は select しない（base64 転送対策。後段で参照キャッシュから注入）
         const { data: subUsers, error: subErr } = await supabase
           .from('users')
-          .select('id, full_name, nickname, role, rank, team_id, avatar_url, is_active')
+          .select('id, full_name, nickname, role, rank, team_id, is_active')
           .in('id', allSubIds);
         if (!subErr && Array.isArray(subUsers)) {
           userById = new Map(subUsers.map(u => [u.id, u]));
@@ -7342,9 +7393,10 @@ router.get('/creatives/:id', async (req, res) => {
         (tmRows || []).forEach(r => { if (r.team_id) teamIds.add(r.team_id); });
       }
       if (!teamIds.size) return [];
+      // director の avatar_url は select しない（base64 転送対策。後段で参照キャッシュから注入）
       const { data: teamsRaw } = await supabase
         .from('teams')
-        .select('id, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)')
+        .select('id, director_id, director:director_id(id, full_name, nickname), team_members(user_id)')
         .in('id', [...teamIds]);
       return teamsRaw || [];
     } catch (e) {
@@ -7353,10 +7405,42 @@ router.get('/creatives/:id', async (req, res) => {
     }
   })();
 
+  // (F') wcheck 判定用カテゴリ（creatives.category_id が案件 primary と異なる場合のみ追加取得）
+  // 同一なら (A) の取得結果（wcheck_cat）を流用するので追加クエリなし。
+  // 異なる場合も Promise.all 内で並列に走るため直列 RTT は増えない。
+  const taskWcheckCategory = (async () => {
+    if (!wcheckCatId || wcheckCatId === primaryCategoryId) return null;
+    try {
+      let cr = await supabase.from('creative_categories')
+        .select('code, wcheck_default').eq('id', wcheckCatId).maybeSingle();
+      if (cr.error && /wcheck_default|column .+ does not exist/i.test(cr.error.message || '')) {
+        // 列欠損環境フォールバック（旧 resolveWcheckEligibility と同じ）
+        cr = await supabase.from('creative_categories').select('code').eq('id', wcheckCatId).maybeSingle();
+      }
+      return cr.data || null;
+    } catch (e) {
+      console.warn('[creatives/:id] wcheck 判定用カテゴリ取得失敗:', e?.message || e);
+      return null;
+    }
+  })();
+
   // ─── 並列実行 → 結果をマージ ─────────────────────────────────
-  const [catRes, ownTeam, subDP, clientTeams, teamsRaw] = await Promise.all([
-    taskCategory, taskOwnTeam, taskSubDP, taskClientTeams, taskBallHolder,
+  const [catRes, ownTeam, subDP, clientTeams, teamsRaw, wcheckCatFetched, avatarMap] = await Promise.all([
+    taskCategory, taskOwnTeam, taskSubDP, taskClientTeams, taskBallHolder, taskWcheckCategory, avatarMapPromise,
   ]);
+
+  // select から外した avatar_url を参照キャッシュから注入（値は従来の res.json パッチ通過後と同一形）。
+  // ball_holder（getBallHolder が返す holder_user / holder_users）や wcheck.assignees は
+  // 以下の user オブジェクトへの参照を共有するため、ここで in-place 注入しておけば
+  // ball_holder / wcheck 側にも同じ値が入る（#947 の一覧 /creatives と同じ流儀）。
+  if (data.projects) {
+    applyAvatarRef(data.projects.director, avatarMap);
+    applyAvatarRef(data.projects.producer, avatarMap);
+  }
+  (data.creative_assignments || []).forEach(a => applyAvatarRef(a.users, avatarMap));
+  subDP.sub_directors.forEach(u => applyAvatarRef(u, avatarMap));
+  subDP.sub_producers.forEach(u => applyAvatarRef(u, avatarMap));
+  (teamsRaw || []).forEach(t => applyAvatarRef(t.director, avatarMap));
 
   // (A) primary_category + status_template_items
   if (data.projects && primaryCategoryId) {
@@ -7435,8 +7519,33 @@ router.get('/creatives/:id', async (req, res) => {
   }
 
   // (F) Wチェック情報（ADR 024）: 静止画判定・要否実効値・現在のWチェック担当者
+  // 旧: resolveWcheckEligibility(data.id) を Promise.all の後に直列 await していた
+  //     （creatives → creative_categories の 2 クエリ直列 = +2 RTT）。
+  // 新: 判定材料は全て手元にある（creatives.* の category_id / project_id / wcheck_required、
+  //     projects embed の wcheck_required（projWcheckRequired に退避済み）、カテゴリの
+  //     code / wcheck_default は (A) 流用 or (F') 並列取得）ため、DB を追加で叩かずに
+  //     resolveWcheckEligibility と同一の判定を計算する。
+  //     resolveWcheckEligibility 本体はステータス遷移 PATCH からも呼ばれるため残している。
   try {
-    const elig = await resolveWcheckEligibility(data.id);
+    // resolveWcheckEligibility と同一の 3 段解決:
+    //   isImage  : (creatives.category_id ?? projects.primary_category_id) → code === 'image'
+    //   required : creatives.wcheck_required ?? projects.wcheck_required ?? category.wcheck_default
+    const wcheckCat = wcheckCatId
+      ? (wcheckCatId === primaryCategoryId ? catRes.wcheck_cat : wcheckCatFetched)
+      : null;
+    const elig = { isImage: false, required: false, projectId: data.project_id || data.projects?.id || null, projectDefault: false, creativeOverride: null };
+    if (wcheckCatId) {
+      const _has = (v) => v !== null && v !== undefined;
+      const wDefault    = !!wcheckCat?.wcheck_default;
+      const creativeReq = data.wcheck_required;   // このクリエ個別（最優先）
+      const projectReq  = projWcheckRequired;     // 案件の初期値
+      elig.isImage  = wcheckCat?.code === 'image';
+      elig.required = _has(creativeReq) ? !!creativeReq
+                    : _has(projectReq)  ? !!projectReq
+                    : wDefault;
+      elig.projectDefault   = _has(projectReq) ? !!projectReq : wDefault;
+      elig.creativeOverride = _has(creativeReq) ? !!creativeReq : null;
+    }
     const wAssignsAll = (data.creative_assignments || []).filter(a => a.role === 'wcheck' && a.users).map(a => a.users);
     data.wcheck = {
       is_image: elig.isImage,
@@ -8933,9 +9042,12 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
 // GET /api/creatives/:id/edit-logs
 // 事後修正モードの編集履歴を取得（クリエイティブ詳細画面の下部に表示）
 router.get('/creatives/:id/edit-logs', requireAuth, async (req, res) => {
+  // editor の avatar_url（base64 で最大300KB）は select せず、参照キャッシュから配信 URL を注入する
+  // （#947 の一覧 /creatives と同方式。ログ件数 × 300KB の DB→サーバー間転送を回避。形状・値は不変）。
+  const avatarMapPromise = getAvatarRefMap(supabase).catch(() => new Map());
   const { data, error } = await supabase
     .from('creative_edit_logs')
-    .select('id, creative_id, edited_by, edited_by_name, edited_at, field_name, old_value, new_value, reason, editor:edited_by(id, full_name, nickname, avatar_url)')
+    .select('id, creative_id, edited_by, edited_by_name, edited_at, field_name, old_value, new_value, reason, editor:edited_by(id, full_name, nickname)')
     .eq('creative_id', req.params.id)
     .order('edited_at', { ascending: false })
     .limit(200);
@@ -8944,6 +9056,8 @@ router.get('/creatives/:id/edit-logs', requireAuth, async (req, res) => {
     console.warn('[creative_edit_logs] fetch failed:', error.message);
     return res.json([]);
   }
+  const avatarMap = await avatarMapPromise;
+  (data || []).forEach(l => applyAvatarRef(l.editor, avatarMap));
   res.json(data || []);
 });
 
@@ -17139,14 +17253,21 @@ const _CD_REPLY_SOURCES = new Set(['version', 'transition', 'live']);
 router.get('/creatives/:creativeId/round-replies', requireAuth, async (req, res) => {
   const { creativeId } = req.params;
   if (!creativeId) return res.status(400).json({ error: 'creativeId は必須です' });
+  // author の avatar_url（base64 で最大300KB）は select せず、参照キャッシュから配信 URL を注入する
+  // （#947 の一覧 /creatives と同方式。返信数 × 300KB の DB→サーバー間転送を回避。
+  //   レスポンス形状・値は従来の res.json パッチ通過後と同一）。
+  const avatarMapPromise = getAvatarRefMap(supabase).catch(() => new Map());
   const { data, error } = await supabase
     .from('creative_round_replies')
-    .select(`${_CD_REPLY_BASE_COLS}, ${_CD_REPLY_AUTHOR_SELECT}`)
+    .select(`${_CD_REPLY_BASE_COLS}, author:author_user_id(id, full_name, nickname, role)`)
     .eq('creative_id', creativeId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(Array.isArray(data) ? data : []);
+  const rows = Array.isArray(data) ? data : [];
+  const avatarMap = await avatarMapPromise;
+  rows.forEach(r => applyAvatarRef(r.author, avatarMap));
+  res.json(rows);
 });
 
 // 1件追加。source/source_id が当該 creative に属するかをサーバ側で必ず確認する。
