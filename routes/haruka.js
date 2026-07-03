@@ -458,17 +458,23 @@ async function insertCreativeFileRow({
 
 // クライアント一覧取得
 router.get('/clients', async (req, res) => {
-  const { data, error } = await supabase
-    .from('clients')
-    .select('*')
-    .order('created_at', { ascending: false });
+  // clients と client_teams は互いに独立したクエリなので並列取得（直列 await の待ち時間を削減）
+  const [
+    { data, error },
+    { data: links, error: linksErr },
+  ] = await Promise.all([
+    supabase
+      .from('clients')
+      .select('*')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('client_teams')
+      .select('client_id, team_id, sort_order')
+      .order('sort_order'),
+  ]);
   if (error) return res.status(500).json({ error: error.message });
 
-  // client_teams を別途取得して team_ids として merge
-  const { data: links, error: linksErr } = await supabase
-    .from('client_teams')
-    .select('client_id, team_id, sort_order')
-    .order('sort_order');
+  // client_teams は取得失敗しても一覧自体は返す（従来挙動どおり log のみ）
   if (linksErr) console.error('[GET /clients client_teams]', linksErr);
   const teamsByClient = new Map();
   (links || []).forEach(l => {
@@ -17566,14 +17572,22 @@ function deriveAutoThumbnail(url) {
 }
 
 // カテゴリ一覧
+// 全ユーザー共通のマスタ（ユーザー・ロールでレスポンスが変わらない）ので TTL キャッシュ可
 router.get('/learning-video-categories', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('learning_video_categories')
-    .select('*')
-    .order('sort_order', { ascending: true })
-    .order('name', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  try {
+    const out = await ttlCache('learning-video-categories:list', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase
+        .from('learning_video_categories')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true });
+      if (error) throw new Error(error.message);
+      return data || [];
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // カテゴリ追加（admin のみ）
@@ -17589,6 +17603,7 @@ router.post('/learning-video-categories', requireAuth, async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('learning-video-categories:list');
   res.json(data);
 });
 
@@ -17602,6 +17617,7 @@ router.delete('/learning-video-categories/:id', requireAuth, async (req, res) =>
     .delete()
     .eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('learning-video-categories:list');
   res.json({ ok: true });
 });
 
@@ -17806,11 +17822,19 @@ router.get('/creative-files/:fid/markers', requireAuth, async (req, res) => {
 // ==================== チェックリストマスター ====================
 
 // 基本チェックリスト一覧
+// 全ユーザー共通のマスタ（ユーザー・ロールでレスポンスが変わらない）ので TTL キャッシュ可
 router.get('/checklist-masters', requireAuth, async (req, res) => {
-  const { data, error } = await supabase.from('checklist_masters')
-    .select('*').order('sort_order').order('created_at');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const out = await ttlCache('checklist-masters:list', MASTER_CACHE_TTL_MS, async () => {
+      const { data, error } = await supabase.from('checklist_masters')
+        .select('*').order('sort_order').order('created_at');
+      if (error) throw new Error(error.message);
+      return data;
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 基本チェックリスト追加
@@ -17820,6 +17844,7 @@ router.post('/checklist-masters', requireAuth, requirePermission('master.page'),
   const { data, error } = await supabase.from('checklist_masters')
     .insert({ title, description, sort_order: sort_order || 0, target_type: target_type || 'all' }).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('checklist-masters:list');
   res.json(data);
 });
 
@@ -17830,6 +17855,7 @@ router.put('/checklist-masters/:id', requireAuth, requirePermission('master.page
     .update({ title, description, sort_order, is_active, target_type: target_type || 'all', updated_at: new Date().toISOString() })
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('checklist-masters:list');
   res.json(data);
 });
 
@@ -17837,6 +17863,7 @@ router.put('/checklist-masters/:id', requireAuth, requirePermission('master.page
 router.delete('/checklist-masters/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { error } = await supabase.from('checklist_masters').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByKey('checklist-masters:list');
   res.json({ ok: true });
 });
 
@@ -18073,19 +18100,26 @@ router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
 //   ?active_only=true|false  アクティブのみ（既定 true）
 router.get('/item-name-master', async (req, res) => {
   const { category, active_only } = req.query;
-  let q = supabase.from('item_name_master').select('*');
-  if (category) {
-    if (!['video', 'design'].includes(category)) {
-      return res.status(400).json({ error: 'category は video または design を指定してください' });
-    }
-    q = q.eq('category', category);
+  if (category && !['video', 'design'].includes(category)) {
+    return res.status(400).json({ error: 'category は video または design を指定してください' });
   }
-  // active_only は明示的に 'false' を指定しない限り true 扱い
-  if (active_only !== 'false') q = q.eq('is_active', true);
-  q = q.order('sort_order', { ascending: true }).order('name', { ascending: true });
-  const { data, error } = await q;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  // クエリパラメータでレスポンスが変わるためキーに含める（category は検証済みの3値のみ）
+  const activeOnly = active_only !== 'false'; // 明示的に 'false' を指定しない限り true 扱い
+  const cacheKey = `item-name-master:${category || 'all'}:${activeOnly ? 'active' : 'all'}`;
+  try {
+    const out = await ttlCache(cacheKey, MASTER_CACHE_TTL_MS, async () => {
+      let q = supabase.from('item_name_master').select('*');
+      if (category) q = q.eq('category', category);
+      if (activeOnly) q = q.eq('is_active', true);
+      q = q.order('sort_order', { ascending: true }).order('name', { ascending: true });
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      return data || [];
+    });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 新規作成
@@ -18121,6 +18155,7 @@ router.post('/item-name-master', requireAuth, requirePermission('project.create_
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('item-name-master:');
   res.json(data);
 });
 
@@ -18165,6 +18200,7 @@ router.put('/item-name-master/:id', requireAuth, requirePermission('project.crea
     }
     return res.status(500).json({ error: error.message });
   }
+  invalidateByPrefix('item-name-master:');
   res.json(data);
 });
 
@@ -18334,6 +18370,7 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
   if (req.query.hard === 'true') {
     const { error } = await supabase.from('item_name_master').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
+    invalidateByPrefix('item-name-master:');
     return res.json({ ok: true, hard: true });
   }
   const { data, error } = await supabase.from('item_name_master')
@@ -18341,6 +18378,7 @@ router.delete('/item-name-master/:id', requireAuth, requirePermission('project.c
     .eq('id', req.params.id)
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+  invalidateByPrefix('item-name-master:');
   res.json({ ok: true, data });
 });
 
