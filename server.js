@@ -22,6 +22,10 @@ const path = require('path');
 
 const { passport: passportInstance, requireAuth, requirePermission, isSuperAdminUser } = require('./auth');
 const { replaceAvatarDataUrls } = require('./utils/avatar-ref');
+// haruka.html 配信最適化（インラインJSミニファイ + brotli/gzip事前圧縮 + ETag/304）
+// 準備完了までは従来どおり元ファイルを sendFile するため起動はブロックしない
+const harukaHtmlDelivery = require('./utils/haruka-html-delivery');
+harukaHtmlDelivery.init();
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -351,9 +355,9 @@ app.use('/service-worker.js', express.static(path.join(__dirname, 'public/servic
 app.use('/icon-192.png',      express.static(path.join(__dirname, 'public/icon-192.png')));
 app.use('/icon-512.png',      express.static(path.join(__dirname, 'public/icon-512.png')));
 app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-180.png')));
-// haruka.html は認証後のみ配信
+// haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
 app.get('/haruka.html', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
+  harukaHtmlDelivery.serve(req, res);
 });
 // その他の静的ファイル（ロゴ・/js・/css 等）
 // 静的アセットは 1時間キャッシュさせて再訪時の読み込みを高速化する。
@@ -531,10 +535,11 @@ function safeUser(u) {
 }
 
 // フロントエンドのすべてのルートをindex.htmlに向ける（SPA対応）
+// haruka.html 本体と同じ最適化配信（ミニファイ + 事前圧縮 + ETag/304）を通す
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   requireAuth(req, res, () => {
-    res.sendFile(path.join(__dirname, 'public', 'haruka.html'));
+    harukaHtmlDelivery.serve(req, res);
   });
 });
 
