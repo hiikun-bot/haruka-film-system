@@ -8822,6 +8822,16 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // 納品遷移時: 再生用 R2 複製を即時排出（Drive 原本は残る＝バックアップ）。
+  // 取りこぼしは 6時間毎の sweep が拾うが、ここで即時にストレージを解放して
+  // 10GB 無料枠の空きを保つ（消しながら運用）。R2_PLAYBACK_ENABLED=true でなければ no-op。
+  if (updateData.status === '納品' && beforeStatus !== '納品') {
+    try {
+      require('../lib/r2').evictCreativeR2Replicas(req.params.id)
+        .catch(e => console.warn('[r2] 納品時 evict 失敗:', e.message));
+    } catch (e) { console.warn('[r2] evict トリガー失敗:', e.message); }
+  }
+
   // ball_holder_id キャッシュ更新（status / assignee / director が変わった場合のみ）
   // 派生計算を実列にUPDATEして notify_ball_returned トリガーで通知が発火する。
   // - 複数ディレクター指定時は getBallHolder() が role='director' の最初のassignmentを採用する仕様（合理的フォールバック）
@@ -9783,6 +9793,14 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     }).catch(e => console.warn('[notif] failed:', e.message));
   } catch(e) { console.warn('[notif] enqueue failed:', e.message); }
 
+  // 納品遷移時: 再生用 R2 複製を即時排出（Drive 原本は残る＝バックアップ）
+  if (newStatus === '納品' && creative.status !== '納品') {
+    try {
+      require('../lib/r2').evictCreativeR2Replicas(req.params.id)
+        .catch(e => console.warn('[r2] 納品時 evict 失敗:', e.message));
+    } catch (e) { console.warn('[r2] evict トリガー失敗:', e.message); }
+  }
+
   // ball_holder_id キャッシュ更新（管理者による直接ステータス変更も同様に通知発火対象）
   syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
 
@@ -10508,6 +10526,11 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
       }
     }
 
+    // 4b) 再生用 R2 複製も削除（best-effort。R2_PLAYBACK_ENABLED=true でなければ no-op）
+    try { await require('../lib/r2').evictCreativeFileFromR2(fid); } catch (e) {
+      driveLog('warn', `R2 複製削除失敗 (続行): ${e.message}`, { creativeFileId: fid });
+    }
+
     // 5) 子テーブルを best-effort で削除（CASCADE が無い環境でも残骸を残さない）
     try { await supabase.from('creative_file_comments').delete().eq('creative_file_id', fid); } catch (_) {}
     try { await supabase.from('creative_file_likes').delete().eq('creative_file_id', fid); } catch (_) {}
@@ -10527,6 +10550,30 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
   }
 });
 
+// creative_files の再生用メタを drive_file_id で引く共通ヘルパ。
+// R2 再生キャッシュ（R2_PLAYBACK_ENABLED=true）のときだけ r2_key / r2_status も select する。
+// フラグ OFF なら従来と完全に同一の select（r2_* 列を一切参照しない）。
+// フラグ ON でも列未適用（migration 未実行）等で select が失敗したら、従来 select に
+// フォールバックして挙動を変えない（R2 は使われず Drive 配信のまま）。
+async function fetchCreativeFilePlaybackMeta(driveFileId, baseCols) {
+  const r2 = require('../lib/r2');
+  if (r2.isEnabled()) {
+    const { data, error } = await supabase
+      .from('creative_files')
+      .select(`${baseCols}, r2_key, r2_status`)
+      .eq('drive_file_id', driveFileId)
+      .maybeSingle();
+    if (!error) return data;
+    console.warn('[r2] r2_* 列付き select 失敗→従来selectへフォールバック:', error.message);
+  }
+  const { data } = await supabase
+    .from('creative_files')
+    .select(baseCols)
+    .eq('drive_file_id', driveFileId)
+    .maybeSingle();
+  return data;
+}
+
 // Google Drive ファイルストリーミングプロキシ（Range リクエスト対応・動画シーク可能）
 //
 // 高速化:
@@ -10535,17 +10582,29 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
 //   2. faststart 版（再エンコード無し / -movflags +faststart）が用意されていれば
 //      原本ではなくそちらをサーブする（画質ロスなしで初再生・シーク高速化）
 //   3. ?original=1 を付ければ強制的に原本を返す（検証用）
+//   4. R2 再生キャッシュに複製済み（R2_PLAYBACK_ENABLED=true かつ r2_status='active'）なら
+//      署名URLへ 302 リダイレクトし、Railway のプロキシ帯域を使わず Cloudflare 網から直配信
 router.get('/files/:fileId/stream', async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
     // creative_files から原本のキャッシュとfaststart情報を取得
-    const { data: cf } = await supabase
-      .from('creative_files')
-      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status')
-      .eq('drive_file_id', req.params.fileId)
-      .maybeSingle();
+    const cf = await fetchCreativeFilePlaybackMeta(
+      req.params.fileId,
+      'mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status'
+    );
 
     const wantsOriginal = req.query.original === '1';
+
+    // 再生用ホットキャッシュ: R2 に複製済みなら署名URLへ 302 リダイレクト。
+    // ブラウザは Cloudflare 網から直接 Range 取得する（Range ヘッダはリダイレクト先へ再送される）。
+    // フラグOFF / 未複製 / ?original=1 のときは r2Url が null で従来の Drive プロキシ配信のまま。
+    if (!wantsOriginal) {
+      const r2Url = await require('../lib/r2').getPlaybackUrl(cf);
+      if (r2Url) {
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.redirect(302, r2Url);
+      }
+    }
     // faststart_status==='done' のときだけ faststart 版を使う。
     // 生成失敗/処理中（failed/processing）で残った不完全な faststart_drive_file_id を
     // 掴むと再生不能になるため、direct-url 側と条件を揃える（旧コードは status 未チェックだった）。
@@ -10645,13 +10704,34 @@ router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
     // creative_files から faststart 情報とメタキャッシュを取得（faststart 版があれば優先）
     // ※ permission 付与先（faststart or 原本）はこの結果で決まるため、Drive 呼び出しは
     //    この select の後にしか発行できない（逐次が本質的に必要なのはここだけ）
-    const { data: cf } = await supabase
-      .from('creative_files')
-      .select('mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status')
-      .eq('drive_file_id', req.params.fileId)
-      .maybeSingle();
+    const cf = await fetchCreativeFilePlaybackMeta(
+      req.params.fileId,
+      'mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status'
+    );
 
     const wantsOriginal = req.query.original === '1';
+
+    // 最優先: R2 再生キャッシュに複製済みなら署名URLを即返す（R2_PLAYBACK_ENABLED=true のときのみ）。
+    // Drive の anyone-reader permission 付与処理ごとスキップでき、Cloudflare 網から直接
+    // Range 配信されるので最速。署名URLの有効期限は既定 6時間（フロント #958 の
+    // 先読みキャッシュ TTL 3分より十分長い）。失敗時は null が返り従来の Drive 直リンクへ。
+    // レスポンス形状は従来と同一キー（フロントは contentUrl のみ使用・#956 で検証済み）。
+    if (!wantsOriginal) {
+      const r2Url = await require('../lib/r2').getPlaybackUrl(cf);
+      if (r2Url) {
+        const r2UseFaststart = cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
+        const r2CachedSize = r2UseFaststart ? cf?.faststart_file_size : cf?.file_size;
+        return res.json({
+          contentUrl:     r2Url,
+          webContentLink: null,
+          viewUrl:        null,
+          mimeType:       cf?.mime_type || null,
+          size:           (typeof r2CachedSize === 'number' && r2CachedSize > 0) ? Number(r2CachedSize) : null,
+          source:         'r2',
+        });
+      }
+    }
+
     const useFaststart  = !wantsOriginal && cf?.faststart_drive_file_id && cf?.faststart_status === 'done';
     const targetFileId  = useFaststart ? cf.faststart_drive_file_id : req.params.fileId;
 
@@ -10754,6 +10834,72 @@ router.post('/creative-files/:id/regenerate-faststart', requireAuth, async (req,
     driveLog('error', `regenerate-faststart 失敗 [${creativeFileId}]: ${err?.message}`);
   }));
   res.json({ ok: true, dispatched: creativeFileId });
+});
+
+// ==================== R2 再生キャッシュ 管理 ====================
+// いずれも R2_PLAYBACK_ENABLED=true が明示されていない限り 503（完全無効）。
+
+// 既存の「レビュー中（納品以外）」動画を R2 へ一括複製（バックフィル）。
+// 納品済みは対象外（Drive のままでよい＝ストレージを圧迫しない方針）。
+// 予算ガード（10GB 無料枠）は replicateCreativeFileToR2 内で毎件チェックされ、
+// 超えそうな分は自動スキップされる。管理者のみ。fire-and-forget（帯域保護のため逐次）。
+router.post('/admin/r2/backfill', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r2 = require('../lib/r2');
+  if (!r2.isEnabled()) return res.status(503).json({ error: 'R2再生キャッシュ無効（R2_PLAYBACK_ENABLED=true と R2_* 環境変数を設定してください）' });
+
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  // faststart 完了済み & まだ R2 に無い & 紐づく creative が納品以外
+  const { data: rows, error } = await supabase
+    .from('creative_files')
+    .select('id, mime_type, generated_name, faststart_status, r2_status, creatives:creative_id(status)')
+    .eq('faststart_status', 'done')
+    .or('r2_status.is.null,r2_status.eq.failed,r2_status.eq.evicted')
+    .limit(500);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const targets = (rows || [])
+    .filter(r => r.creatives?.status && r.creatives.status !== '納品')
+    .filter(r => shouldFaststart(r.mime_type || 'video/mp4', r.generated_name))
+    .slice(0, limit)
+    .map(r => r.id);
+
+  // 逐次で複製（Drive/R2 帯域を食いつぶさないため）。レスポンスは即返す。
+  (async () => {
+    let done = 0, skipped = 0;
+    for (const id of targets) {
+      try {
+        const r = await r2.replicateCreativeFileToR2(id);
+        if (r?.ok) done++; else skipped++;
+      } catch (e) { skipped++; console.warn('[r2] backfill 失敗:', id, e.message); }
+    }
+    console.log('[r2] backfill 完了:', { dispatched: targets.length, done, skipped });
+  })();
+
+  res.json({ ok: true, dispatched: targets.length, ids: targets });
+});
+
+// 納品済みなのに R2 に残っている複製を一掃（sweep）。6時間毎ワーカと同じ処理を手動起動。
+router.post('/admin/r2/sweep', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r2 = require('../lib/r2');
+  if (!r2.isEnabled()) return res.status(503).json({ error: 'R2再生キャッシュ無効（R2_PLAYBACK_ENABLED=true と R2_* 環境変数を設定してください）' });
+  const result = await r2.sweepDeliveredR2({ limit: Math.min(parseInt(req.query.limit) || 500, 1000) });
+  res.json(result);
+});
+
+// 現在の使用量と予算（10GB 無料枠ガード）の可視化。管理者のみ。
+router.get('/admin/r2/usage', requireAuth, async (req, res) => {
+  if (!(await requesterHasAnyRole(req, ['admin']))) return res.status(403).json({ error: '管理者のみ実行できます' });
+  const r2 = require('../lib/r2');
+  if (!r2.isEnabled()) return res.json({ enabled: false });
+  const usageBytes = await r2.getR2UsageBytes();
+  res.json({
+    enabled: true,
+    usageBytes,
+    budgetBytes: r2.budgetBytes(),
+    usageGb: usageBytes === null ? null : Math.round(usageBytes / 1024 / 1024 / 1024 * 100) / 100,
+  });
 });
 
 // 画質変換ストリーミング（FFmpeg経由）
