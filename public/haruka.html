@@ -17782,6 +17782,17 @@ function getCostRoleOptions() {
   return rows.filter(r => r && r.code !== 'admin' && r.code !== 'producer_director' && r.code !== 'client');
 }
 
+// コストのロール(roles マスタ id) → 担当者ピッカーで初期ONにするロールchip（users.role コード）
+// P/D 兼務者はディレクター・プロデューサー両方のコスト担当になり得る。外部DもD枠に含める（ADR 017）
+function _lineCostDefaultMemberRoles(roleId) {
+  if (!roleId) return [];
+  const role = getCostRoleOptions().find(r => r && r.id === roleId);
+  if (!role || !role.code) return [];
+  if (role.code === 'director') return ['director', 'producer_director', 'external_director'];
+  if (role.code === 'producer') return ['producer', 'producer_director'];
+  return [role.code];
+}
+
 // プリセット（カテゴリ別 制作者単価 A/B/C）から成果物グループを一括生成。
 // ADR 027 で line カテゴリは主カテゴリに固定されたため、カテゴリ選択UIは廃止し
 // 案件の主カテゴリを常に使う（ユーザー指示 2026-07-03）。
@@ -18443,16 +18454,34 @@ function prepareProjectLineCostEditModal(cost, lineId, projectId) {
     ).join('');
     // 編集時は既存 role_id をセット
     roleSel.value = (cost && cost.role_id) ? cost.role_id : '';
+    // ロール変更で担当者ピッカーの初期絞り込みを連動させる
+    roleSel.onchange = () => {
+      const trig = document.getElementById('plc-edit-user-id');
+      if (trig && typeof trig.setMemberPickerOptions === 'function') {
+        trig.setMemberPickerOptions({ defaultRoles: _lineCostDefaultMemberRoles(roleSel.value) });
+      }
+    };
   }
 
-  // 担当者 select
-  const userSel = document.getElementById('plc-edit-user-id');
+  // 担当者 select — ADR 014: 共通 MemberPicker（名前・ニックネーム検索＋ロールchip）
+  const userSel = bindMemberPickerSelect('plc-edit-user-id', {
+    placeholder: '未指定（ロール固定枠）',
+    emptyLabel: '未指定（ロール固定枠）',
+    emptyValue: '',
+    title: '担当者を選択',
+    includeExternal: true, // 外部Dもコスト担当になり得る（ADR 017）
+  }) || document.getElementById('plc-edit-user-id');
   if (userSel) {
-    const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
-    const activeMembers = members.filter(m => m && m.is_active !== false);
-    userSel.innerHTML = '<option value="">未指定（ロール固定枠）</option>' + activeMembers.map(m =>
-      `<option value="${esc(m.id)}">${esc(m.name || m.email || 'メンバー')}</option>`
-    ).join('');
+    if (typeof userSel.setMemberPickerOptions === 'function') {
+      userSel.setMemberPickerOptions({ defaultRoles: _lineCostDefaultMemberRoles(roleSel ? roleSel.value : '') });
+    } else if (userSel.tagName === 'SELECT') {
+      // フォールバック: MemberPicker 不在時は素の select（NameDisplay 表示）
+      const members = (typeof allMembers !== 'undefined' && Array.isArray(allMembers)) ? allMembers : [];
+      const activeMembers = members.filter(m => m && m.is_active !== false);
+      userSel.innerHTML = '<option value="">未指定（ロール固定枠）</option>' + activeMembers.map(m =>
+        `<option value="${esc(m.id)}">${esc((window.NameDisplay && NameDisplay.full(m)) || m.full_name || m.nickname || m.email || 'メンバー')}</option>`
+      ).join('');
+    }
     userSel.value = cost?.user_id || '';
   }
 
