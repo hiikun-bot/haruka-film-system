@@ -17426,7 +17426,15 @@ function openEditProjectById(projectId) {
 }
 
 function openEditProject(p) {
-  document.getElementById('p-modal-title').textContent = '案件編集';
+  // どの案件を編集中かヘッダーで常に分かるように、クライアント名／案件名を出す
+  {
+    const clientName = (allClients || []).find(c => c.id === p.client_id)?.name || p.clients?.name || '';
+    document.getElementById('p-modal-title').innerHTML =
+      `<span style="color:var(--text-muted);font-weight:500">案件編集</span>` +
+      `<span style="color:var(--text-muted);font-weight:400;margin:0 8px">›</span>` +
+      `${clientName ? `<span style="color:var(--text-muted);font-weight:500">${esc(clientName)}</span><span style="color:var(--text-muted);font-weight:400;margin:0 6px">／</span>` : ''}` +
+      `<span style="color:var(--em-dark)">${esc(p.name || '（名称未設定）')}</span>`;
+  }
   document.getElementById('p-id').value = p.id;
   document.getElementById('p-submit-btn').textContent = '保存する';
 
