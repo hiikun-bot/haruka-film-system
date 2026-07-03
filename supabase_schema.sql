@@ -971,6 +971,16 @@ ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_at     TIMESTAMPT
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS force_delivered_by     UUID REFERENCES users(id);
 CREATE INDEX IF NOT EXISTS idx_creatives_team_id ON creatives(team_id);
 
+-- ADR 009: 納品時点のディレクター/プロデューサー スナップショット（D費分配の正）。
+-- backfill は migrations/2026-07-03_delivered_director_snapshot.sql を参照。
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS delivered_director_ids UUID[];
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS delivered_producer_ids UUID[];
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS delivered_snapshot_at  TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_creatives_delivered_director_ids
+  ON creatives USING GIN (delivered_director_ids);
+CREATE INDEX IF NOT EXISTS idx_creatives_delivered_producer_ids
+  ON creatives USING GIN (delivered_producer_ids);
+
 -- ADR 026: 納品完了日時。支払い本数カウントは JST でこの月を判定する（管理者補正可）。
 -- 既存納品分の backfill は migrations/2026-07-02_creatives_delivered_at.sql を参照。
 ALTER TABLE creatives ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
