@@ -6477,8 +6477,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ/ランク別の1本あたり単価：クライアント請求・制作者支払）</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <select id="p-lines-preset-category" class="form-select" style="padding:5px 8px;font-size:12px;width:auto;min-width:110px"><option value="">カテゴリ…</option></select>
-          <button type="button" class="btn" onclick="generateLinesFromPreset()" style="padding:6px 12px;font-size:12px;white-space:nowrap" title="選択カテゴリの A/B/C 成果物グループをプリセット単価で一括生成">📋 プリセットから一括生成</button>
+          <button type="button" class="btn" onclick="generateLinesFromPreset()" style="padding:6px 12px;font-size:12px;white-space:nowrap" title="案件の主カテゴリの A/B/C 成果物グループをプリセット単価で一括生成">📋 プリセットから一括生成</button>
           <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
         </div>
       </div>
@@ -17753,28 +17752,15 @@ function getCostRoleOptions() {
   return rows.filter(r => r && r.code !== 'admin' && r.code !== 'producer_director' && r.code !== 'client');
 }
 
-// プリセット一括生成用のカテゴリ select を populate（案件の主カテゴリをデフォルト選択）
-// ADR 027: 主カテゴリが設定されている案件は主カテゴリのみ選択可（サーバー側でも検証）。
-// 主カテゴリ未設定のレガシー案件のみ全カテゴリを出す。
-async function populateLinesPresetCategorySelect() {
-  const sel = document.getElementById('p-lines-preset-category');
-  if (!sel) return;
-  try {
-    const cats = await loadCategories();
-    const primary = document.getElementById('p-primary-category')?.value || '';
-    const selectable = primary ? (cats || []).filter(c => c.id === primary) : (cats || []);
-    sel.innerHTML = '<option value="">カテゴリ…</option>' + selectable.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
-    if (primary) sel.value = primary;
-  } catch (_) {}
-}
-
-// プリセット（カテゴリ別 制作者単価 A/B/C）から成果物グループを一括生成
+// プリセット（カテゴリ別 制作者単価 A/B/C）から成果物グループを一括生成。
+// ADR 027 で line カテゴリは主カテゴリに固定されたため、カテゴリ選択UIは廃止し
+// 案件の主カテゴリを常に使う（ユーザー指示 2026-07-03）。
 async function generateLinesFromPreset() {
   return btnBusy(busyBtnFrom(), async () => {
   const projectId = document.getElementById('p-id').value;
-  const categoryId = document.getElementById('p-lines-preset-category')?.value;
+  const categoryId = document.getElementById('p-primary-category')?.value || '';
   if (!projectId) { showToast('案件を保存してから生成してください', 'warn'); return; }
-  if (!categoryId) { showToast('カテゴリを選択してください', 'warn'); return; }
+  if (!categoryId) { showToast('案件の主カテゴリ（基本情報タブ）を設定してから生成してください', 'warn'); return; }
   const res = await apiFetch(`${API}/projects/${projectId}/lines/generate-preset`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ category_id: categoryId })
@@ -17789,7 +17775,6 @@ async function generateLinesFromPreset() {
 async function loadProjectLines(projectId) {
   const listEl = document.getElementById('p-lines-list');
   if (!listEl || !projectId) return;
-  populateLinesPresetCategorySelect();
   listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">読み込み中...</div>';
   try {
     const res = await apiFetch(`${API}/projects/${projectId}/lines`);
@@ -18085,14 +18070,9 @@ async function prepareProjectLineEditModal(line, projectId) {
       });
     }
     if (!line?.category_id) {
-      // デフォルトの優先順位:
-      //  1) 上部「プリセットから一括生成」で選択中のカテゴリ（ユーザーが直前に選んだものを引き継ぐ）
-      //  2) 案件本体の primary_category
-      //  3) video
-      const presetCat = document.getElementById('p-lines-preset-category')?.value;
+      // デフォルト: 案件本体の primary_category（無ければ video）
       const projCat = document.getElementById('p-primary-category')?.value;
-      if (presetCat) sel.value = presetCat;
-      else if (projCat) sel.value = projCat;
+      if (projCat) sel.value = projCat;
       else {
         const videoCat = (typeof getCategoryByCode === 'function') ? getCategoryByCode('video') : null;
         if (videoCat) sel.value = videoCat.id;
