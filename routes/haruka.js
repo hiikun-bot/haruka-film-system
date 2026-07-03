@@ -6694,10 +6694,10 @@ router.get('/work-hours', requireAuth, async (req, res) => {
 router.get('/work-hours/projects', requireAuth, async (req, res) => {
   const [projRes, lcRes] = await Promise.all([
     supabase.from('projects')
-      .select('id, name, is_hidden, clients(name)')
+      .select('id, name, is_hidden, producer_id, director_id, clients(name)')
       .or('is_hidden.is.null,is_hidden.eq.false'),
     supabase.from('project_estimate_line_costs')
-      .select('id, unit_price, pricing_type, line:project_estimate_lines(id, client_unit_price, project_id)')
+      .select('id, unit_price, pricing_type, user_id, line:project_estimate_lines(id, client_unit_price, project_id)')
       .eq('pricing_type', 'hourly'),
   ]);
   if (projRes.error) return res.status(500).json({ error: projRes.error.message });
@@ -6710,15 +6710,21 @@ router.get('/work-hours/projects', requireAuth, async (req, res) => {
       hourlyByProject.set(pid, {
         hourly_rate: lc.unit_price,
         client_hourly_rate: lc.line?.client_unit_price || null,
+        hourly_user_ids: [],
       });
     }
+    // 支払先メンバー指定つきの時給行: フロントの「新規行の案件初期値」判定に使う
+    if (lc.user_id) hourlyByProject.get(pid).hourly_user_ids.push(lc.user_id);
   }
   const list = (projRes.data || []).map(p => ({
     project_id: p.id,
     name: p.name,
     client_name: p.clients?.name || '',
+    producer_id: p.producer_id || null,
+    director_id: p.director_id || null,
     hourly_rate: hourlyByProject.get(p.id)?.hourly_rate || null,
     client_hourly_rate: hourlyByProject.get(p.id)?.client_hourly_rate || null,
+    hourly_user_ids: hourlyByProject.get(p.id)?.hourly_user_ids || [],
   }));
   // 時間単価つきの案件を先頭に、それぞれ名前順
   list.sort((a, b) =>
