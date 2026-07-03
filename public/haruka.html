@@ -7802,9 +7802,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div id="wh-table-wrap" style="background:#fff;border:0.5px solid var(--border);border-radius:10px;overflow:auto">
       <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
     </div>
-    <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn-primary" id="wh-add-row-btn" onclick="whAddRow()" style="font-size:13px;padding:8px 16px">＋ 行を追加</button>
-      <span style="font-size:11px;color:var(--text-muted)">稼働分は開始・終了から自動計算されます（手修正可）。行ごとに 💾 で保存してください。</span>
+      <button class="btn" id="wh-save-all-btn" onclick="whSaveAll()" style="font-size:13px;padding:8px 16px">💾 すべて保存</button>
+      <span style="font-size:11px;color:var(--text-muted)">稼働分は開始・終了から自動計算されます（手修正可）。「💾 すべて保存」で未保存の行をまとめて保存できます。</span>
     </div>
   </div>
 </div>
@@ -21789,6 +21790,12 @@ async function submitCreateExternalDirector() {
 const ACTIVE_PAGE_LS_KEY = 'hfs_active_page';
 
 function showPage(name, btn) {
+  // ⏱ 作業時間報告に未保存の行があれば移動前に確認（ADR 028）。
+  // OK = 保存して移動（保存はバックグラウンドで完走。ページは display 切替なので DOM は残る）
+  if (name !== 'work-hours' && typeof whHasUnsavedOnPage === 'function' && whHasUnsavedOnPage()) {
+    if (!confirm('未保存の作業時間の行があります。保存して移動しますか？\n（キャンセル＝この画面に留まる）')) return;
+    whSaveAll({ refetch: false });
+  }
   try { if (window.__addBreadcrumb) window.__addBreadcrumb('page_change', name); } catch (_) {}
   // 現在のタブを保存。次回リロード時に restoreInitialPage() がこれを読んで同じタブを開く。
   try { localStorage.setItem(ACTIVE_PAGE_LS_KEY, name); } catch (_) {}
@@ -21866,20 +21873,26 @@ function loadWorkHoursPage() {
 }
 
 function whShiftMonth(delta) {
-  _whMonth += delta;
-  if (_whMonth < 1) { _whMonth = 12; _whYear--; }
-  if (_whMonth > 12) { _whMonth = 1; _whYear++; }
-  whFetch();
+  whGuardedRun(() => {
+    _whMonth += delta;
+    if (_whMonth < 1) { _whMonth = 12; _whYear--; }
+    if (_whMonth > 12) { _whMonth = 1; _whYear++; }
+    whFetch();
+  });
 }
 function whGoThisMonth() {
-  const today = whTodayJst();
-  _whYear = parseInt(today.slice(0, 4), 10);
-  _whMonth = parseInt(today.slice(5, 7), 10);
-  whFetch();
+  whGuardedRun(() => {
+    const today = whTodayJst();
+    _whYear = parseInt(today.slice(0, 4), 10);
+    _whMonth = parseInt(today.slice(5, 7), 10);
+    whFetch();
+  });
 }
 function whOnMemberChange(v) {
-  _whUserId = v || null;
-  whFetch();
+  whGuardedRun(() => {
+    _whUserId = v || null;
+    whFetch();
+  });
 }
 
 async function whFetch() {
@@ -22016,7 +22029,20 @@ function whRender() {
 
   const addBtn = document.getElementById('wh-add-row-btn');
   if (addBtn) addBtn.style.display = whCanAddRow() ? '' : 'none';
+  const saveAllBtn = document.getElementById('wh-save-all-btn');
+  if (saveAllBtn) {
+    saveAllBtn.style.display = whCanAddRow() ? '' : 'none';
+    saveAllBtn.classList.remove('btn-primary'); // 再描画 = 保存済み状態
+  }
 }
+
+// ブラウザを閉じる・リロード時: 未保存行があれば標準の確認ダイアログを出す
+window.addEventListener('beforeunload', (e) => {
+  if (typeof whHasUnsavedOnPage === 'function' && whHasUnsavedOnPage()) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 // メンバー切替セレクタの描画（管理者のみ）。
 // ADR 014: 共通 MemberPicker（名前・ニックネーム検索＋ロールchip絞り込み）を bindSelect で適用。
@@ -22182,8 +22208,83 @@ function whRowHtml(e) {
 
 function whMarkDirty(el) {
   const tr = el.closest('tr');
+  if (tr) tr.dataset.dirty = '1';
   const btn = tr?.querySelector('.wh-save-btn');
   if (btn) { btn.style.display = 'inline-block'; btn.classList.add('btn-primary'); }
+  const saveAll = document.getElementById('wh-save-all-btn');
+  if (saveAll) saveAll.classList.add('btn-primary');
+}
+
+// 行に未保存の変更があるか。新規行はデフォルト（日付＋開始時刻だけ）の状態なら対象外
+function whRowIsDirty(tr) {
+  if (tr.dataset.dirty === '1') return true;
+  if (tr.dataset.id) return false;
+  const b = whCollectRow(tr);
+  return !!(b.project_id || b.end_time || b.minutes || b.description || b.expense_amount || b.expense_note);
+}
+
+function whHasUnsaved() {
+  const tbody = document.getElementById('wh-tbody');
+  if (!tbody) return false;
+  return Array.from(tbody.querySelectorAll('tr[data-id]')).some(whRowIsDirty);
+}
+
+// 作業時間ページが表示中で未保存行があるか（ページ移動ガード用）
+function whHasUnsavedOnPage() {
+  const page = document.getElementById('page-work-hours');
+  return !!(page && page.classList.contains('active') && whHasUnsaved());
+}
+
+// 未保存行があれば確認してから proceed を実行（月切替・メンバー切替用）。
+// OK = すべて保存してから続行（保存エラーが残れば留まる）／キャンセル = この画面に留まる
+function whGuardedRun(proceed) {
+  if (!whHasUnsaved()) { proceed(); return; }
+  if (!confirm('未保存の作業時間の行があります。保存してから続行しますか？\n（キャンセル＝この画面に留まる）')) return;
+  whSaveAll({ refetch: false }).then((allSaved) => { if (allSaved) proceed(); });
+}
+
+// 未保存の行をまとめて保存。戻り値: 全行成功なら true。
+// opts.refetch=false で最後の再読み込みを呼び出し側に委ねる（月切替と二重fetchしないため）
+async function whSaveAll(opts) {
+  const refetch = !(opts && opts.refetch === false);
+  const tbody = document.getElementById('wh-tbody');
+  if (!tbody) return true;
+  const trs = Array.from(tbody.querySelectorAll('tr[data-id]')).filter(whRowIsDirty);
+  if (!trs.length) { showToast('未保存の変更はありません', 'success'); return true; }
+  const btn = document.getElementById('wh-save-all-btn');
+  if (btn) btn.disabled = true;
+  let saved = 0; const errors = [];
+  for (const tr of trs) {
+    const id = tr.dataset.id;
+    const body = whCollectRow(tr);
+    if (!body.work_date) { errors.push('日付が未入力の行があります'); continue; }
+    if (body.minutes === null && !(body.start_time && body.end_time) && !body.expense_amount) {
+      errors.push(`${body.work_date}: 開始・終了時刻か稼働分、または立替経費を入力してください`); continue;
+    }
+    if (!id && !whViewingSelf()) body.user_id = _whUserId;
+    try {
+      const res = await apiFetch(id ? `${API}/work-hours/${id}` : `${API}/work-hours`, {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { errors.push(data.error || '保存に失敗しました'); continue; }
+      saved++;
+      tr.dataset.dirty = ''; // 保存済み（残りが失敗しても二重保存しない）
+      if (!id && data && data.id) tr.dataset.id = data.id; // 新規行は以降 PUT 扱い（二重登録防止）
+    } catch (e) {
+      errors.push(`通信エラー: ${e.message || ''}`);
+    }
+  }
+  if (btn) btn.disabled = false;
+  if (errors.length) {
+    showToast(`${saved}行を保存 / ${errors.length}行が未保存: ${errors[0]}`, 'warn');
+  } else {
+    showToast(`${saved}行を保存しました`, 'success');
+  }
+  if (refetch && saved && !errors.length) await whFetch();
+  return errors.length === 0;
 }
 
 // 開始/終了の変更で稼働分を自動計算（終了<開始は日跨ぎ扱い）。手修正はその後も可能。
