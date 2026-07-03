@@ -6,6 +6,10 @@ const {
   avatarVer,
   avatarRefUrl,
   replaceAvatarDataUrls,
+  getAvatarRefMap,
+  updateAvatarRefCacheEntry,
+  applyAvatarRef,
+  invalidateAvatarRefCache,
 } = require('../../utils/avatar-ref');
 
 // 300x300 JPEG 想定のダミー data URL（実物より短いがロジックは同じ）
@@ -112,5 +116,128 @@ describe('replaceAvatarDataUrls', () => {
     replaceAvatarDataUrls(o);
     expect(o.file.toString()).toBe('x');
     expect(o.avatar_url).toMatch(/^\/api\/haruka\/members\/u1\/avatar\?v=/);
+  });
+});
+
+// ==================== avatar 参照キャッシュ（DB→サーバー間転送対策） ====================
+
+describe('getAvatarRefMap / updateAvatarRefCacheEntry / applyAvatarRef', () => {
+  // `.from('users').select(...).not('avatar_url','is',null)` の形だけ再現する軽量モック
+  const mockSupabase = (rowsOrFn) => {
+    const state = { calls: 0 };
+    return {
+      state,
+      from: () => ({
+        select: () => ({
+          not: () => {
+            state.calls++;
+            const rows = typeof rowsOrFn === 'function' ? rowsOrFn() : rowsOrFn;
+            if (rows instanceof Error) return Promise.resolve({ data: null, error: { message: rows.message } });
+            return Promise.resolve({ data: rows, error: null });
+          },
+        }),
+      }),
+    };
+  };
+
+  beforeEach(() => invalidateAvatarRefCache());
+  afterEach(() => invalidateAvatarRefCache());
+
+  test('ウォームで data URL → 配信 URL、非 data 文字列 → 素通し、null 相当 → Map に載らない', async () => {
+    const u1 = dataUrl('A'.repeat(1000));
+    const sb = mockSupabase([
+      { id: 'u1', avatar_url: u1 },
+      { id: 'u2', avatar_url: 'https://example.com/a.png' }, // 万一の legacy 値
+    ]);
+    const map = await getAvatarRefMap(sb);
+    expect(map.get('u1')).toBe(`/api/haruka/members/u1/avatar?v=${avatarVer(u1)}`);
+    expect(map.get('u2')).toBe('https://example.com/a.png');
+    expect(map.has('u3')).toBe(false);
+  });
+
+  test('TTL 内の 2 回目以降は DB を引かない（キャッシュヒット）', async () => {
+    const sb = mockSupabase([{ id: 'u1', avatar_url: dataUrl('AAA') }]);
+    await getAvatarRefMap(sb);
+    await getAvatarRefMap(sb);
+    await getAvatarRefMap(sb);
+    expect(sb.state.calls).toBe(1);
+  });
+
+  test('ウォーム中の同時リクエストは同一 Promise を共有する（thundering herd 防止）', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const state = { calls: 0 };
+    const sb = {
+      from: () => ({
+        select: () => ({
+          not: () => { state.calls++; return gate.then(() => ({ data: [{ id: 'u1', avatar_url: dataUrl('AAA') }], error: null })); },
+        }),
+      }),
+    };
+    const p1 = getAvatarRefMap(sb);
+    const p2 = getAvatarRefMap(sb);
+    release();
+    const [m1, m2] = await Promise.all([p1, p2]);
+    expect(m1).toBe(m2);
+    expect(state.calls).toBe(1);
+  });
+
+  test('書き込み経路の即時更新: アップロードで entry 更新・削除で entry 削除', async () => {
+    const before = dataUrl('OLD'.repeat(100));
+    const sb = mockSupabase([{ id: 'u1', avatar_url: before }]);
+    const map = await getAvatarRefMap(sb);
+    const after = dataUrl('NEW'.repeat(100));
+    updateAvatarRefCacheEntry('u1', after);
+    expect(map.get('u1')).toBe(`/api/haruka/members/u1/avatar?v=${avatarVer(after)}`);
+    updateAvatarRefCacheEntry('u1', null);
+    expect(map.has('u1')).toBe(false);
+    // 未ウォーム時は no-op（throw しない）
+    invalidateAvatarRefCache();
+    expect(() => updateAvatarRefCacheEntry('u1', after)).not.toThrow();
+  });
+
+  test('ウォーム失敗: 古い Map があればそれで継続、初回失敗は throw', async () => {
+    const sb1 = mockSupabase([{ id: 'u1', avatar_url: dataUrl('AAA') }]);
+    const stale = await getAvatarRefMap(sb1);
+    // TTL 切れ相当を再現するためキャッシュ有効期限だけ切らせたいが、モジュール内部のため
+    // ここでは「失敗クライアントを渡しても stale Map が返る」ことだけ検証する
+    // （TTL 内はそもそも DB を引かないので同じ Map が返る）
+    const sbErr = mockSupabase(new Error('connection refused'));
+    await expect(getAvatarRefMap(sbErr)).resolves.toBe(stale);
+    invalidateAvatarRefCache();
+    await expect(getAvatarRefMap(sbErr)).rejects.toThrow('connection refused');
+  });
+
+  test('applyAvatarRef: Map から注入・未設定ユーザーは null・id 無しは触らない', async () => {
+    const u1 = dataUrl('A'.repeat(500));
+    const sb = mockSupabase([{ id: 'u1', avatar_url: u1 }]);
+    const map = await getAvatarRefMap(sb);
+    const a = { id: 'u1', full_name: '山田' };
+    applyAvatarRef(a, map);
+    expect(a.avatar_url).toBe(`/api/haruka/members/u1/avatar?v=${avatarVer(u1)}`);
+    const b = { id: 'u2', full_name: '佐藤' };
+    applyAvatarRef(b, map);
+    expect(b.avatar_url).toBeNull();
+    const c = { full_name: 'idなし' };
+    applyAvatarRef(c, map);
+    expect('avatar_url' in c).toBe(false);
+    expect(applyAvatarRef(null, map)).toBeNull();
+  });
+
+  test('注入値は従来の res.json パッチ（replaceAvatarDataUrls）通過後と完全一致する', async () => {
+    const raw = dataUrl('Z'.repeat(2000));
+    // Before: embed で base64 が乗った行を res.json パッチが置換した結果
+    const beforeUser = { id: 'u9', full_name: '高橋', avatar_url: raw };
+    replaceAvatarDataUrls(beforeUser);
+    // After: select から外し、キャッシュから注入した結果
+    const sb = mockSupabase([{ id: 'u9', avatar_url: raw }]);
+    const map = await getAvatarRefMap(sb);
+    const afterUser = applyAvatarRef({ id: 'u9', full_name: '高橋' }, map);
+    expect(afterUser.avatar_url).toBe(beforeUser.avatar_url);
+    expect(Object.keys(afterUser).sort()).toEqual(Object.keys(beforeUser).sort());
+    // 注入値は data: で始まらないため、res.json パッチをもう一度通しても変化しない（干渉しない）
+    const again = JSON.parse(JSON.stringify(afterUser));
+    replaceAvatarDataUrls(again);
+    expect(again).toEqual(afterUser);
   });
 });

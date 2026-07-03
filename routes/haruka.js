@@ -23,7 +23,7 @@ const {
   roleCodesHavePermission,
 } = require('../utils/roles');
 const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
-const { avatarVer, avatarRefUrl, replaceAvatarDataUrls } = require('../utils/avatar-ref');
+const { avatarVer, avatarRefUrl, replaceAvatarDataUrls, getAvatarRefMap, updateAvatarRefCacheEntry, applyAvatarRef } = require('../utils/avatar-ref');
 
 // マスタ系 GET エンドポイント共通の TTL。
 // utils/roles.js（ROLES_TTL_MS = 60s）と同じ「短期キャッシュ + 書き込み時 invalidate」
@@ -6815,9 +6815,13 @@ router.get('/creatives', async (req, res) => {
     project_cycles(id, year, month),
     creative_assignments(
       id, role, rank_applied, created_at,
-      users(id, full_name, nickname, role, rank, team_id, avatar_url)
+      users(id, full_name, nickname, role, rank, team_id)
     )${assigneeRel}
   `;
+  // ※ users の avatar_url（base64 で最大300KB）は select しない。
+  //    DB→サーバー間で「行数 × 担当者数 × 300KB」が毎回流れて転送量の支配項になるため、
+  //    後処理で avatar 参照キャッシュ（utils/avatar-ref.js）から配信 URL を注入する。
+  //    レスポンス上の avatar_url の値は従来（res.json パッチ通過後）と同一形。
 
   // フィルタ条件を共通化して、optional 込み → 失敗時 optional 抜きで再試行できるようにする
   const buildAndApply = (includeOptional) => {
@@ -6867,7 +6871,16 @@ router.get('/creatives', async (req, res) => {
   //    .then(r => r) で即時に実行を開始して本体クエリと並走させる
   const teamsPromise = lightMode
     ? Promise.resolve({ data: [] }) // light モードは teams 不要（ball_holder を計算しない）
-    : supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname, avatar_url), team_members(user_id)').then(r => r);
+    : supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname), team_members(user_id)').then(r => r);
+  // avatar 参照 Map（userId -> 配信URL）も本体クエリと並走してウォーム/取得しておく。
+  // 失敗時は空 Map にフォールバック（avatar_url が null になりフロントはイニシャル表示。
+  // 一覧自体を 500 にしない）。light モードは avatar_url を返さないので不要。
+  const avatarMapPromise = lightMode
+    ? Promise.resolve(new Map())
+    : getAvatarRefMap(supabase).catch(e => {
+        console.warn('[creatives] avatar 参照キャッシュ取得失敗 → avatar_url は null で返す:', e.message);
+        return new Map();
+      });
   let { data, error, count } = await buildAndApply(true);
   // schema-sync が失敗していて optional 列が本番DBに存在しない場合、optional を外して再試行する
   if (error && /column .+ does not exist/.test(error.message || '')) {
@@ -6884,6 +6897,13 @@ router.get('/creatives', async (req, res) => {
   if (lightMode) {
     return res.json({ data: data || [], total: count ?? (data || []).length, limit, offset });
   }
+
+  // select から外した avatar_url をキャッシュから注入（値は従来の res.json パッチ通過後と同一形）。
+  // ball_holder（getBallHolder が返す holder_user / holder_users）は以下の user オブジェクトへの
+  // 参照を共有するため、ここで in-place 注入しておけば ball_holder 側にも同じ値が入る。
+  const avatarMap = await avatarMapPromise;
+  (data || []).forEach(c => (c.creative_assignments || []).forEach(a => applyAvatarRef(a.users, avatarMap)));
+  (teamsRaw || []).forEach(t => applyAvatarRef(t.director, avatarMap));
 
   // チーム逆引きMap（ディレクター名/ID 解決用 + teams 埋め込み代替用）
   const directorByTeamId    = new Map();
@@ -6912,15 +6932,15 @@ router.get('/creatives', async (req, res) => {
   });
 
   // 案件専用ディレクター/プロデューサー解決用に projects.director_id / producer_id 集合を一括取得
-  // ボール表示のアバター画像で使うため avatar_url / nickname も含める
+  // ボール表示のアバター画像で使うため nickname も含める（avatar_url はキャッシュから注入）
   const projUserIds = Array.from(new Set(
     (data || []).flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
   ));
   const userById = new Map();
   if (projUserIds.length) {
     const { data: dirUsers } = await supabase
-      .from('users').select('id, full_name, nickname, avatar_url').in('id', projUserIds);
-    (dirUsers || []).forEach(u => userById.set(u.id, u));
+      .from('users').select('id, full_name, nickname').in('id', projUserIds);
+    (dirUsers || []).forEach(u => userById.set(u.id, applyAvatarRef(u, avatarMap)));
   }
 
   // ボール保持者と teams を付与（teams は FK 不要の手動 stitch）
@@ -10457,11 +10477,19 @@ router.get('/members', requireAuth, async (req, res) => {
   // 機材情報・休日曜日はチーム設計に必要なので一覧API でも返す（機微情報ではないので非機微列）。
   // default_creative_tab は最も新しい列なので baseColsWith にだけ含めて、未適用環境では fallback で外す
   // creative_default_* (PR #277) はメンバーマスターでクリエイティブ画面の初期表示状態を保持。未適用環境では fallback で外す
-  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types, is_external, external_company, hourly_rate, hourly_note';
+  // ※ avatar_url（base64 で最大300KB）は select しない。全ユーザー分の base64 が
+  //    DB→サーバー間で毎回流れるのを避けるため、レスポンス直前に avatar 参照キャッシュ
+  //    （utils/avatar-ref.js）から配信 URL を注入する（値は従来の res.json パッチ通過後と同一形）。
+  const baseColsWith    = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, hide_birth_year, camera_model, tripod_info, lighting_info, default_creative_tab, creative_default_view, creative_default_view_mode, creative_default_group_mode, creative_default_range, creative_default_include_ended, creative_default_include_delivered, creative_default_delayed_only, creative_default_sos_only, creative_default_statuses, creative_default_ball_types, is_external, external_company, hourly_rate, hourly_note';
   // hide_birth_year がない環境向けフォールバック（default_creative_tab も同様に外す）
-  const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, avatar_url, camera_model, tripod_info, lighting_info';
+  const baseColsWithout = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, holiday_weekdays, note, camera_model, tripod_info, lighting_info';
   // 列が無い環境向けの最終フォールバック（migration 未適用 / schema-sync 失敗時）
-  const baseColsLegacy  = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note, avatar_url';
+  const baseColsLegacy  = 'id, email, full_name, nickname, role, job_type, rank, team_id, slack_dm_id, chatwork_dm_id, is_active, left_at, left_reason, weekday_hours, weekend_hours, note';
+  // avatar 参照 Map のウォーム/取得を users select と並走で開始（失敗時は avatar_url null で返す）
+  const avatarMapPromise = getAvatarRefMap(supabase).catch(e => {
+    console.warn('[members] avatar 参照キャッシュ取得失敗 → avatar_url は null で返す:', e.message);
+    return new Map();
+  });
   // invoice_registration_number は invoices-worker のmigration適用前は存在しないため
   // 末尾に置いて、未適用環境向けの追加フォールバックで削除できるようにしておく
   const sensitiveColsLegacy = ', birthday, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana, phone, postal_code, address';
@@ -10492,6 +10520,7 @@ router.get('/members', requireAuth, async (req, res) => {
         .select(baseColsLegacy + sensitiveColsLegacy).eq('id', req.user.id).maybeSingle());
     }
     if (error) return res.status(500).json({ error: error.message });
+    if (data) applyAvatarRef(data, await avatarMapPromise); // avatar_url をキャッシュから注入
     return res.json(data ? [data] : []);
   }
   const colsWith = canSeeSensitive ? baseColsWith + sensitiveCols : baseColsWith;
@@ -10512,6 +10541,11 @@ router.get('/members', requireAuth, async (req, res) => {
     ({ data, error } = await supabase.from('users').select(colsLegacy).order('full_name'));
   }
   if (error) return res.status(500).json({ error: error.message });
+  // select から外した avatar_url をキャッシュから注入（全ユーザー分の base64 転送を回避）
+  if (Array.isArray(data)) {
+    const avatarMap = await avatarMapPromise;
+    data.forEach(m => applyAvatarRef(m, avatarMap));
+  }
   // ADR 028 補足（ユーザー指示 2026-07-02: 秘書同士で単価が見えないように）:
   // 時給の金額は本人と admin 実効ロールのみ閲覧可。member.list 権限者（秘書等）にも
   // 他人の hourly_rate は値をマスクし、時給制バッジ用の is_hourly フラグだけ返す。
@@ -11335,7 +11369,8 @@ router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (re
     .select('id, avatar_url')
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  invalidateByKey(`avatar-bin:${targetId}`); // バイナリ配信キャッシュを即時破棄
+  invalidateByKey(`avatar-bin:${targetId}`);           // バイナリ配信キャッシュを即時破棄
+  updateAvatarRefCacheEntry(targetId, data.avatar_url); // 一覧注入用の参照キャッシュも即時更新
   // base64 は返さず、新しい ver 付きの配信 URL を返す（フロントはそのまま <img src> に使える）
   const ver = avatarVer(data.avatar_url);
   res.json({ avatar_url: avatarRefUrl(targetId, ver), avatar_ver: ver });
@@ -11355,7 +11390,8 @@ router.delete('/members/:id/avatar', requireAuth, async (req, res) => {
     .update({ avatar_url: null, updated_at: new Date().toISOString() })
     .eq('id', targetId);
   if (error) return res.status(500).json({ error: error.message });
-  invalidateByKey(`avatar-bin:${targetId}`); // バイナリ配信キャッシュを即時破棄
+  invalidateByKey(`avatar-bin:${targetId}`);   // バイナリ配信キャッシュを即時破棄
+  updateAvatarRefCacheEntry(targetId, null);   // 一覧注入用の参照キャッシュからも即時削除
   res.json({ ok: true });
 });
 
