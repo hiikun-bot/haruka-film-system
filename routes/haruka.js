@@ -2387,22 +2387,119 @@ async function projectDirectorFeeConsensus(projectId, roleId) {
   return price;
 }
 
-// PUT /api/projects/:project_id/director-fee  body: { unit_price }
-// 全 lines のロール固定 director line_cost を一括 upsert。unit_price=0 は
-// fixed_per_unit の行のみ削除（時給等の設定は内訳での明示操作を尊重して温存）。
+// 時給ディレクション専用グループの自動作成名（ADR 028: 時間制 line）
+const DIRECTOR_HOURLY_LINE_NAME = 'ディレクション（時給）';
+
+// PUT /api/projects/:project_id/director-fee
+//   body: { unit_price }                                             … 1本あたり（従来）
+//   body: { pricing_type:'hourly', unit_price, client_unit_price? }  … 時給（ADR 028）
+// 1本あたり: 全 lines のロール固定 director line_cost を一括 upsert。unit_price=0 は
+//   fixed_per_unit の行のみ削除。時給行（hourly）はどちらの操作でも温存する。
+// 時給: 時間制 line（ロール固定 director の hourly line_cost を持つ line）を案件に1つ維持する。
+//   無ければ「ディレクション（時給）」グループを自動作成。client_unit_price は請求時給（円/h）
+//   として line 側に保存（ADR 028: 時間制 line の client_unit_price は円/h と解釈）。
+//   unit_price=0 は解除（自動作成した空の時間制 line はグループごと削除）。
 router.put('/projects/:project_id/director-fee', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
   const projectId = req.params.project_id;
-  const price = Math.max(0, parseInt((req.body || {}).unit_price, 10) || 0);
+  const body = req.body || {};
+  const price = Math.max(0, parseInt(body.unit_price, 10) || 0);
   const roleId = await directorRoleId();
   if (!roleId) return res.status(500).json({ error: 'ディレクターロールが roles マスタに存在しません' });
 
+  // ===== 時給モード =====
+  if (body.pricing_type === 'hourly') {
+    // 請求時給（クライアント単価）は権限 project.client_price を持つロールのみ設定可（ADR 015）
+    const codes = await getEffectiveRoleCodes(req);
+    const canSetClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
+    const clientPrice = (canSetClientPrice && body.client_unit_price !== undefined && body.client_unit_price !== null && body.client_unit_price !== '')
+      ? Math.max(0, parseInt(body.client_unit_price, 10) || 0)
+      : null; // null = 変更しない
+
+    // 既存の時間制 line（ロール固定 director hourly を持つ line）を探す
+    const { data: lines, error: linesErr } = await supabase
+      .from('project_estimate_lines')
+      .select('id, name, client_unit_price, line_costs:project_estimate_line_costs(id, role_id, user_id, pricing_type)')
+      .eq('project_id', projectId);
+    if (linesErr) return res.status(500).json({ error: linesErr.message });
+    const hostLine = (lines || []).find(l =>
+      (l.line_costs || []).some(lc => lc.role_id === roleId && !lc.user_id && lc.pricing_type === 'hourly'));
+    const hostCost = hostLine
+      ? hostLine.line_costs.find(lc => lc.role_id === roleId && !lc.user_id && lc.pricing_type === 'hourly')
+      : null;
+
+    if (price > 0) {
+      let lineId = hostLine?.id || null;
+      if (hostLine) {
+        const { error } = await supabase.from('project_estimate_line_costs')
+          .update({ unit_price: price, percentage: null })
+          .eq('id', hostCost.id);
+        if (error) return res.status(500).json({ error: error.message });
+        if (clientPrice !== null) {
+          const { error: lineErr } = await supabase.from('project_estimate_lines')
+            .update({ client_unit_price: clientPrice })
+            .eq('id', hostLine.id);
+          if (lineErr) return res.status(500).json({ error: lineErr.message });
+        }
+      } else {
+        // 時間制 line を自動作成（status=contracted で作業時間側の単価解決対象に入れる / ADR 028）
+        const { data: maxRow } = await supabase
+          .from('project_estimate_lines')
+          .select('sort_order')
+          .eq('project_id', projectId)
+          .order('sort_order', { ascending: false, nullsFirst: false })
+          .limit(1);
+        const currentMax = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+        const { data: newLine, error: insErr } = await supabase.from('project_estimate_lines')
+          .insert({
+            project_id: projectId,
+            name: DIRECTOR_HOURLY_LINE_NAME,
+            planned_count: 0,
+            client_unit_price: clientPrice !== null ? clientPrice : 0,
+            sort_order: currentMax + 10,
+            currency: 'JPY',
+            tax_included: true,
+            status: 'contracted',
+            status_changed_at: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+        if (insErr) return res.status(500).json({ error: insErr.message });
+        lineId = newLine.id;
+        const { error: costErr } = await supabase.from('project_estimate_line_costs')
+          .insert({ line_id: lineId, role_id: roleId, unit_price: price, pricing_type: 'hourly', currency: 'JPY' });
+        if (costErr) return res.status(500).json({ error: costErr.message });
+      }
+      return res.json({ ok: true, mode: 'hourly', unit_price: price, client_unit_price: clientPrice, line_id: lineId, created: !hostLine });
+    }
+
+    // price=0 → 時給の解除
+    if (!hostLine) return res.json({ ok: true, mode: 'hourly', unit_price: 0, removed: 0 });
+    const { error: delErr } = await supabase.from('project_estimate_line_costs')
+      .delete().eq('id', hostCost.id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+    // 自動作成した専用グループで、他のコストも紐付くクリエイティブも無ければグループごと片付ける
+    let lineRemoved = false;
+    if (hostLine.name === DIRECTOR_HOURLY_LINE_NAME && (hostLine.line_costs || []).length <= 1) {
+      const { count } = await supabase.from('creatives')
+        .select('id', { count: 'exact', head: true })
+        .eq('line_id', hostLine.id);
+      if (!count) {
+        const { error: lineDelErr } = await supabase.from('project_estimate_lines')
+          .delete().eq('id', hostLine.id);
+        if (!lineDelErr) lineRemoved = true;
+      }
+    }
+    return res.json({ ok: true, mode: 'hourly', unit_price: 0, removed: 1, line_removed: lineRemoved });
+  }
+
+  // ===== 1本あたりモード（従来） =====
   const { data: lines, error: linesErr } = await supabase
     .from('project_estimate_lines')
     .select('id')
     .eq('project_id', projectId);
   if (linesErr) return res.status(500).json({ error: linesErr.message });
   if (!lines || !lines.length) {
-    return res.status(400).json({ error: '成果物グループがまだありません。先にグループを追加してください' });
+    return res.status(400).json({ error: '成果物グループがまだありません。先にグループを追加してください（時給精算の場合は「時給」を選ぶとグループが自動作成されます）' });
   }
 
   let applied = 0, removed = 0;
@@ -2414,6 +2511,8 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
       .eq('line_id', line.id).eq('role_id', roleId).is('user_id', null)
       .maybeSingle();
     if (exErr) return res.status(500).json({ error: exErr.message });
+    // 時給行は1本あたりの一括反映で上書きしない（時給は時給モード・内訳での明示操作のみ）
+    if (existing && existing.pricing_type === 'hourly') continue;
     if (price > 0) {
       if (existing) {
         const { error } = await supabase.from('project_estimate_line_costs')
