@@ -2556,4 +2556,26 @@ CREATE INDEX IF NOT EXISTS idx_whe_user_date ON work_hour_entries (user_id, work
 CREATE INDEX IF NOT EXISTS idx_whe_date ON work_hour_entries (work_date);
 CREATE INDEX IF NOT EXISTS idx_whe_project ON work_hour_entries (project_id) WHERE project_id IS NOT NULL;
 
+-- ==================== 一式成果物の分割支払（ADR 029） ====================
+-- HP/LP等の着手金・納品後払いを月指定で管理。詳細: migrations/2026-07-03_line_payment_installments.sql
+CREATE TABLE IF NOT EXISTS line_payment_installments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  line_id UUID NOT NULL REFERENCES project_estimate_lines(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL DEFAULT 1,
+  total_count INTEGER NOT NULL DEFAULT 1,
+  label TEXT NOT NULL,
+  target_month DATE NOT NULL,
+  client_amount INTEGER NOT NULL DEFAULT 0,
+  payment_amount INTEGER NOT NULL DEFAULT 0,
+  payee_user_id UUID REFERENCES users(id),
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT lpi_seq_check CHECK (seq >= 1 AND total_count >= 1 AND seq <= total_count),
+  CONSTRAINT lpi_amount_check CHECK (client_amount >= 0 AND payment_amount >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_lpi_line ON line_payment_installments (line_id);
+CREATE INDEX IF NOT EXISTS idx_lpi_month ON line_payment_installments (target_month);
+CREATE INDEX IF NOT EXISTS idx_lpi_payee ON line_payment_installments (payee_user_id) WHERE payee_user_id IS NOT NULL;
+
 NOTIFY pgrst, 'reload schema';
