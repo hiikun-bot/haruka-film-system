@@ -12489,6 +12489,9 @@ function _creativeStillInListScope(c) {
 async function refreshCreativeInList(id) {
   try {
     if (!id) throw new Error('no id');
+    // 保存・遷移後に呼ばれる = files/rounds も変わっている可能性があるため、
+    // extras（files/rounds）の短期キャッシュも payload の force 再取得と対で必ず捨てる。
+    try { _cdInvalidateExtrasCache(id); } catch (_) {}
     const fresh = await _cdFetchPayload(id, { force: true });
     if (!fresh || !fresh.id) throw new Error('unexpected payload');
     const list = Array.isArray(allCreatives) ? allCreatives : [];
@@ -30963,16 +30966,17 @@ function _cdShouldShowRoundCompare(creative, rounds) {
   return true;
 }
 
-async function cdLoadRounds(creativeId) {
+async function cdLoadRounds(creativeId, { useCache = false } = {}) {
   try {
-    const res = await apiFetch(`${API}/creatives/${creativeId}/rounds`);
-    if (!res.ok) { _cdRoundsCache = []; return; }
-    const list = await res.json();
+    // 既定は force fetch（書込後の再読込で古いキャッシュを見せない）。
+    // openCreativeDetail からの useCache:true のときだけ短期キャッシュ/先読みを利用。
+    const list = await _cdFetchRoundsData(creativeId, { force: !useCache });
     // 新仕様: サーバが時系列順 (idx 昇順) のフラット配列を返す。
     // 旧 dedup ロジックは撤廃 (PR #(prev-comment-pagination))。
     _cdRoundsCache = Array.isArray(list) ? list : [];
   } catch (e) {
-    console.warn('[cd-rounds] fetch failed:', e?.message || e);
+    // 旧実装は !res.ok のとき warn なしで空配列にしていたため cdHttpError は黙って続行
+    if (!e?.cdHttpError) console.warn('[cd-rounds] fetch failed:', e?.message || e);
     _cdRoundsCache = [];
   }
 }
@@ -32252,7 +32256,9 @@ async function onCreativeFileNameBlur(el) {
 // custom フィールドは #cd-custom-fields に動的生成（既存値は GET /custom-fields で populate）。
 //
 // 引数 categoryId が null/undefined の場合は「すべて表示」のフェイルセーフ動作。
-async function applyCreativeDetailFieldVisibility(categoryId, creativeId) {
+// customValuesPromise（任意）: openCreativeDetail が先に発射した custom-fields 値の
+// Promise。渡された場合は renderCreativeCustomFields 内の直列 fetch を省略できる。
+async function applyCreativeDetailFieldVisibility(categoryId, creativeId, customValuesPromise) {
   // 1) builtin 可視性デフォルト: すべて visible（カテゴリ未設定でも fallback）
   const groups = document.querySelectorAll('#modal-creative-detail .cd-field-group');
   const builtinByKey = {};
@@ -32314,10 +32320,10 @@ async function applyCreativeDetailFieldVisibility(categoryId, creativeId) {
   // 3) カスタムフィールド: 値を fetch して動的生成
   const customFields = fields.filter(f => f.field_kind === 'custom' && f.visible !== false)
     .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-  await renderCreativeCustomFields(customFields, creativeId);
+  await renderCreativeCustomFields(customFields, creativeId, customValuesPromise);
 }
 
-async function renderCreativeCustomFields(customFields, creativeId) {
+async function renderCreativeCustomFields(customFields, creativeId, valuesPromise) {
   const host = document.getElementById('cd-custom-fields');
   if (!host) return;
   if (!customFields || customFields.length === 0) {
@@ -32326,15 +32332,13 @@ async function renderCreativeCustomFields(customFields, creativeId) {
     return;
   }
 
-  // 既存値を fetch
+  // 既存値を fetch（openCreativeDetail が先読みした Promise があればそれを await するだけ。
+  // 無ければ従来どおりここで fetch する。!ok / 失敗時は「値なし」で続行＝旧挙動と同一）
   let valuesByKey = {};
   if (creativeId) {
     try {
-      const res = await apiFetch(`${API}/creatives/${creativeId}/custom-fields`);
-      if (res.ok) {
-        const arr = await res.json();
-        (arr || []).forEach(v => { valuesByKey[v.field_key] = v.value; });
-      }
+      const arr = valuesPromise ? await valuesPromise : await _cdFetchCustomFieldValuesData(creativeId);
+      (arr || []).forEach(v => { valuesByKey[v.field_key] = v.value; });
     } catch (_) { /* noop */ }
   }
 
@@ -32441,11 +32445,94 @@ function _cdGetCache(id) {
   return ent.data;
 }
 function _cdInvalidateCache(id) {
-  if (!id) { _cdPayloadCache.clear(); return; }
+  if (!id) { _cdPayloadCache.clear(); _cdInvalidateExtrasCache(null); return; }
   _cdPayloadCache.delete(id);
+  // payload が変わり得る操作は files / rounds も変わり得るため常に道連れで捨てる
+  // （無効化漏れ＝古い表示事故なので、迷う箇所は無効化する側に倒す方針）。
+  _cdInvalidateExtrasCache(id);
 }
 // 保存・ステータス遷移・ファイルアップロード等で詳細が変わった可能性があるときに呼ぶ。
 window._cdInvalidateCache = _cdInvalidateCache;
+
+// =====================================================================
+// extras（files / rounds）の短期キャッシュ + 先読み
+// payload（_cdPayloadCache）と同じ TTL / 上限 / in-flight dedup 方針を流用。
+// 鮮度担保のルール:
+//  - _cdInvalidateCache(id) が payload と同時に extras も必ず捨てる（上記）
+//  - refreshCreativeInList(id) の冒頭でも extras を捨てる（force 再取得と対で最新化）
+//  - loadCreativeFiles / cdLoadRounds は既定で force fetch。キャッシュを使うのは
+//    openCreativeDetail からの { useCache: true } 経路だけなので、モーダル内の
+//    再読込（アップロード後・取り消し後・提出メモ編集後・faststart ポーリング等）は
+//    常にサーバー最新を取得しつつキャッシュも上書きされる。
+// =====================================================================
+const _cdFilesInFlight   = new Map(); // id -> Promise<file[]>
+const _cdRoundsInFlight  = new Map(); // id -> Promise<round[]>
+const _cdFilesDataCache  = new Map(); // id -> { data, ts }
+const _cdRoundsDataCache = new Map(); // id -> { data, ts }
+
+function _cdExtrasSetCache(map, id, data) {
+  if (!id || !data) return;
+  if (map.size >= CD_CACHE_MAX) {
+    const firstKey = map.keys().next().value;
+    if (firstKey) map.delete(firstKey);
+  }
+  map.set(id, { data, ts: Date.now() });
+}
+function _cdExtrasGetCache(map, id) {
+  const ent = map.get(id);
+  if (!ent) return null;
+  if (Date.now() - ent.ts > CD_CACHE_TTL_MS) {
+    map.delete(id);
+    return null;
+  }
+  return ent.data;
+}
+function _cdInvalidateExtrasCache(id) {
+  if (!id) { _cdFilesDataCache.clear(); _cdRoundsDataCache.clear(); return; }
+  _cdFilesDataCache.delete(id);
+  _cdRoundsDataCache.delete(id);
+}
+
+// files / rounds の素データ取得（dedup + TTL cache 付き）。
+// !res.ok は err.cdHttpError=true の例外にして呼び出し側で旧来の「静かに中断」を再現する。
+function _cdMakeExtrasFetcher(cacheMap, inFlightMap, pathSuffix) {
+  return async function (id, { force = false } = {}) {
+    if (!force) {
+      const cached = _cdExtrasGetCache(cacheMap, id);
+      if (cached) return cached;
+      if (inFlightMap.has(id)) return inFlightMap.get(id);
+    }
+    const p = (async () => {
+      const res = await apiFetch(`${API}/creatives/${id}/${pathSuffix}`);
+      if (!res.ok) {
+        const err = new Error('EXTRAS_FETCH_FAILED');
+        err.code = res.status;
+        err.cdHttpError = true;
+        throw err;
+      }
+      const json = await res.json();
+      const arr = Array.isArray(json) ? json : [];
+      _cdExtrasSetCache(cacheMap, id, arr);
+      return arr;
+    })();
+    inFlightMap.set(id, p);
+    try {
+      return await p;
+    } finally {
+      inFlightMap.delete(id);
+    }
+  };
+}
+const _cdFetchFilesData  = _cdMakeExtrasFetcher(_cdFilesDataCache,  _cdFilesInFlight,  'files');
+const _cdFetchRoundsData = _cdMakeExtrasFetcher(_cdRoundsDataCache, _cdRoundsInFlight, 'rounds');
+
+// custom-fields 値の素の取得（!ok は null）。renderCreativeCustomFields の
+// 旧インライン fetch と同じ扱い: 失敗時は「値なし」で続行する（キャッシュはしない）。
+async function _cdFetchCustomFieldValuesData(creativeId) {
+  const res = await apiFetch(`${API}/creatives/${creativeId}/custom-fields`);
+  if (!res.ok) return null;
+  return await res.json();
+}
 
 // =====================================================
 // 詳細モーダル ローディング オーバーレイ（フェーズ付きプログレスバー）
@@ -32607,12 +32694,20 @@ async function _cdFetchPayload(id, { force = false } = {}) {
 }
 
 // =====================================================================
-// 一覧行のホバー先読み: 行に 150ms 滞留したら詳細 payload を先読みして
-// クリック時のモーダル表示をキャッシュ即ヒットにする。
-//  - _cdFetchPayload は in-flight dedup + TTL キャッシュ付きなので連打/重複は安全
+// 一覧行のホバー先読み: 行に 150ms 滞留したら詳細 payload + extras（files/rounds）
+// を先読みして、クリック時のモーダル表示をキャッシュ即ヒットにする。
+//  - _cdFetchPayload / _cdFetchFilesData / _cdFetchRoundsData はいずれも
+//    in-flight dedup + TTL キャッシュ付きなので連打/重複は安全
 //  - タッチデバイスでは mouseover が発火しないだけなので特別対応は不要
 //  - 失敗（404等）は握りつぶす（実際に開いたときに正規のエラーハンドリングが走る）
 // =====================================================================
+function _cdPrefetchDetail(id) {
+  if (!id) return;
+  try { _cdFetchPayload(id).catch(() => {}); } catch (_) {}
+  try { _cdFetchFilesData(id).catch(() => {}); } catch (_) {}
+  try { _cdFetchRoundsData(id).catch(() => {}); } catch (_) {}
+}
+
 (function initCreativeRowHoverPrefetch() {
   const tbody = document.getElementById('creative-tbody');
   if (!tbody) return;
@@ -32626,7 +32721,7 @@ async function _cdFetchPayload(id, { force = false } = {}) {
     if (_timer) clearTimeout(_timer);
     _timer = setTimeout(() => {
       _timer = null;
-      try { _cdFetchPayload(id).catch(() => {}); } catch (_) {}
+      _cdPrefetchDetail(id);
     }, 150);
   });
   tbody.addEventListener('mouseout', (ev) => {
@@ -32638,6 +32733,42 @@ async function _cdFetchPayload(id, { force = false } = {}) {
       _hoverId = null;
       if (_timer) { clearTimeout(_timer); _timer = null; }
     }
+  });
+})();
+
+// =====================================================================
+// tbody 以外の詳細導線にも同じホバー先読みを適用（委譲バインド）。
+// カレンダー/グリッドのファイル名・アラートチップ・今日の納期行・ダッシュボード行・
+// 分析セルなどは inline onclick="openCreativeDetail('<id>')" で開く実装のため、
+// document への mouseover 委譲で onclick 属性から id を抽出して先読みする。
+//  - 一覧テーブル（#creative-tbody）内は既存の行ハンドラが担当するので除外
+//  - 150ms 滞留 + 同一id の連続発火防止 + in-flight 共有は既存仕様を踏襲
+//  - タッチ環境では mouseover が発火しないだけなので何もしない（悪影響なし）
+// =====================================================================
+(function initCreativeDetailHoverPrefetchDelegated() {
+  const RE_OPEN_ID = /openCreativeDetail\('([^']+)'\)/;
+  let _timer = null;
+  let _hoverId = null;
+  document.addEventListener('mouseover', (ev) => {
+    const t = ev.target;
+    if (!t || typeof t.closest !== 'function') return;
+    const el = t.closest('[onclick*="openCreativeDetail("]');
+    if (!el) {
+      // 導線の外へ出た: 保留中の先読みをキャンセル
+      if (_timer) { clearTimeout(_timer); _timer = null; }
+      _hoverId = null;
+      return;
+    }
+    if (el.closest('#creative-tbody')) return; // 一覧行は既存ハンドラが担当（二重発火防止）
+    const m = RE_OPEN_ID.exec(el.getAttribute('onclick') || '');
+    const id = m ? m[1] : null;
+    if (!id || id === _hoverId) return; // 同一要素内の子要素間移動では再スタートしない
+    _hoverId = id;
+    if (_timer) clearTimeout(_timer);
+    _timer = setTimeout(() => {
+      _timer = null;
+      _cdPrefetchDetail(id);
+    }, 150);
   });
 })();
 
@@ -32661,6 +32792,17 @@ async function openCreativeDetail(id) {
     const as = document.getElementById('cd-assignee');     if (as) as.textContent = '';
     const bh = document.getElementById('cd-ball-holder');  if (bh) { bh.style.display = 'none'; bh.innerHTML = ''; }
   } catch (_) {}
+
+  // 1.5) extras（files / rounds / custom-fields値）の fetch を payload と同時に発射する。
+  //      いずれも creative id だけで叩けるため payload の完了を待つ必要がない。
+  //      後段の loadCreativeFiles / cdLoadRounds は in-flight 共有 or キャッシュ命中で
+  //      再fetchせず、待ち合わせ順序は従来どおり（payload → 基本情報描画 → Promise.all）。
+  //      ホバー先読み済み・キャッシュ有効ならここではネットワークに出ない。
+  try { _cdFetchFilesData(id).catch(() => {}); } catch (_) {}
+  try { _cdFetchRoundsData(id).catch(() => {}); } catch (_) {}
+  // custom-fields 値: 旧実装は visibility 内で category-fields 取得 → custom-fields 取得の
+  // 直列 2RTT だったため、ここで先に発射して visibility 側で await する（表示結果は不変）。
+  const _cdCustomValuesP = _cdFetchCustomFieldValuesData(id).catch(() => null);
 
   // 2) payload 取得（dedup + cache）
   let c;
@@ -32942,10 +33084,10 @@ async function openCreativeDetail(id) {
     _cdExtrasDone += 1;
     _cdSetLoadingPhase('extras', { subProgress: _cdExtrasDone / 3 });
   };
-  const _filesP = loadCreativeFiles(id)
+  const _filesP = loadCreativeFiles(id, { useCache: true })
     .catch(e => console.warn('[loadCreativeFiles]', e))
     .finally(_cdBumpExtras);
-  const _roundsP = cdLoadRounds(id)
+  const _roundsP = cdLoadRounds(id, { useCache: true })
     .catch(e => console.warn('[cdLoadRounds]', e))
     .finally(_cdBumpExtras);
   // スレッド返信は描画ブロッキングしない（_cdRoundRepliesByParent が空でもページHTMLは出る）。
@@ -32964,7 +33106,7 @@ async function openCreativeDetail(id) {
     })
     .catch(e => console.warn('[cdLoadRoundReplies]', e));
   const _visibilityP = applyCreativeDetailFieldVisibility(
-    c.category_id || c.projects?.primary_category_id || null, id
+    c.category_id || c.projects?.primary_category_id || null, id, _cdCustomValuesP
   )
     .catch(e => console.warn('[applyCreativeDetailFieldVisibility]', e))
     .finally(_cdBumpExtras);
@@ -34144,10 +34286,17 @@ function _cdRenderFileCard(f, opts) {
   </div>`;
 }
 
-async function loadCreativeFiles(creativeId) {
-  const res = await apiFetch(`${API}/creatives/${creativeId}/files`);
-  if (!res.ok) return;
-  const files = await res.json();
+async function loadCreativeFiles(creativeId, { useCache = false } = {}) {
+  // 既定は force fetch（アップロード/取り消し/faststart ポーリング等の再読込で
+  // 古いキャッシュを見せない）。openCreativeDetail からの useCache:true のときだけ
+  // 短期キャッシュ/ホバー先読みを利用する。
+  let files;
+  try {
+    files = await _cdFetchFilesData(creativeId, { force: !useCache });
+  } catch (e) {
+    if (e?.cdHttpError) return; // 旧実装の if (!res.ok) return; と同じ（DOM に触れず中断）
+    throw e; // ネットワーク例外は従来どおり呼び出し元へ伝播
+  }
   currentUploadedFileCount = files.length; // バージョン自動計算用
   _cdFilesCache = Array.isArray(files) ? files : [];
   const section = document.getElementById('cd-files-section');
@@ -38750,6 +38899,9 @@ async function doDCheckTransition() {
         document.getElementById('cd-status-chip').innerHTML = `<span class="status-chip ${statusClass('Dチェック')}">Dチェック</span>`;
         if (statusEl) { statusEl.textContent = '→ Dチェックに移行しました'; statusEl.style.color = 'var(--em-dark)'; }
         // 詳細を再読み込みしてassignmentsを最新化（次回のラベル等に反映）
+        // PUT で status / assignments / rounds が変わっているため、payload + extras の
+        // 短期キャッシュを必ず捨ててから開き直す（キャッシュHITで古い表示になる事故防止）
+        try { _cdInvalidateCache(currentCreativeDetail.id); } catch (_) {}
         try { await openCreativeDetail(currentCreativeDetail.id); } catch (_) {}
       } else {
         const e = await upd.json().catch(() => ({}));
