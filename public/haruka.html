@@ -6490,16 +6490,16 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <label style="display:flex;align-items:center;gap:4px;padding:4px 10px;font-size:11px;cursor:pointer;background:#fff;border-left:1px solid #99F6E4"><input type="radio" name="p-director-fee-mode" value="hourly" onchange="onDirectorFeeModeChange()" style="margin:0">⏱ 時給</label>
         </span>
         <span id="p-director-fee-unit-wrap" style="display:inline-flex;align-items:center;gap:6px">
-          <input class="form-input" id="p-director-fee-input" type="number" min="0" step="1" placeholder="未設定" style="width:110px;padding:5px 8px;font-size:12px">
+          <input class="form-input" id="p-director-fee-input" type="number" min="0" step="1" placeholder="未設定" oninput="markDirectorFeeDirty()" onkeydown="if(event.key==='Enter'){event.preventDefault();saveProjectDirectorFee()}" style="width:110px;padding:5px 8px;font-size:12px">
           <span style="font-size:12px;color:var(--text-muted)">円/本</span>
         </span>
         <span id="p-director-fee-hourly-wrap" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
           <span style="font-size:11px;color:var(--text-muted)">支払</span>
-          <input class="form-input" id="p-director-hourly-input" type="number" min="0" step="1" placeholder="未設定" style="width:100px;padding:5px 8px;font-size:12px">
+          <input class="form-input" id="p-director-hourly-input" type="number" min="0" step="1" placeholder="未設定" oninput="markDirectorFeeDirty()" onkeydown="if(event.key==='Enter'){event.preventDefault();saveProjectDirectorFee()}" style="width:100px;padding:5px 8px;font-size:12px">
           <span style="font-size:12px;color:var(--text-muted)">円/h</span>
           <span id="p-director-hourly-client-wrap" style="display:inline-flex;align-items:center;gap:6px">
             <span style="font-size:11px;color:var(--text-muted)">／ クライアント請求</span>
-            <input class="form-input" id="p-director-hourly-client-input" type="number" min="0" step="1" placeholder="未設定" style="width:100px;padding:5px 8px;font-size:12px">
+            <input class="form-input" id="p-director-hourly-client-input" type="number" min="0" step="1" placeholder="未設定" oninput="markDirectorFeeDirty()" onkeydown="if(event.key==='Enter'){event.preventDefault();saveProjectDirectorFee()}" style="width:100px;padding:5px 8px;font-size:12px">
             <span style="font-size:12px;color:var(--text-muted)">円/h</span>
           </span>
         </span>
@@ -17958,10 +17958,29 @@ function renderProjectLines() {
 // ディレクターにはランク別単価の概念が無いため、内訳の外に案件レベルの入口を出す。
 let _directorFeeModeManual = null; // ユーザーが手で切り替えたモード（再描画で勝手に戻さない）
 let _directorFeeLastProjectId = null; // モードリセット判定用（別案件を開いたらリセット）
+let _directorFeeDirty = false; // バーに未保存の入力があるか（モーダルの「保存する」で自動反映するため）
 
 function directorFeeSelectedMode() {
   const checked = document.querySelector('input[name="p-director-fee-mode"]:checked');
   return checked ? checked.value : 'fixed_per_unit';
+}
+
+// バーの入力が編集されたら保存ボタンを強調し、モーダル保存時の自動反映対象にする
+function markDirectorFeeDirty() {
+  _directorFeeDirty = true;
+  const btn = document.getElementById('p-director-fee-save');
+  if (btn) btn.classList.add('btn-primary');
+}
+
+// モーダル下部の「保存する」から呼ばれる: バーに未保存の値が残っていれば一緒に反映する。
+// 0円・空欄は反映しない（解除はバーの明示操作のみ）。成功/対象なしで true、失敗で false。
+async function flushDirectorFeeBarIfDirty(projectId) {
+  if (!_directorFeeDirty || !projectId) return true;
+  const mode = directorFeeSelectedMode();
+  const rawEl = document.getElementById(mode === 'hourly' ? 'p-director-hourly-input' : 'p-director-fee-input');
+  const val = Math.max(0, parseInt(String(rawEl?.value || '').trim(), 10) || 0);
+  if (val <= 0) { _directorFeeDirty = false; return true; }
+  return await saveProjectDirectorFee();
 }
 
 function onDirectorFeeModeChange() {
@@ -17996,6 +18015,9 @@ function renderProjectDirectorFeeBar() {
   if (hourlyInput) hourlyInput.disabled = !canEdit;
   if (hourlyClientInput) hourlyClientInput.disabled = !canEdit;
   btn.style.display = canEdit ? '' : 'none';
+  // 再描画 = 保存済みの状態を反映するので、未保存フラグと保存ボタンの強調を解除
+  _directorFeeDirty = false;
+  btn.classList.remove('btn-primary');
 
   // 時給設定の検出: ロール固定 director の hourly コストを持つ line（時間制グループ）
   let hourly = null; // { rate, clientRate }
@@ -18076,13 +18098,14 @@ async function saveProjectDirectorFee() {
     const rate = Math.max(0, parseInt(raw, 10) || 0);
     if (rate === 0) {
       const ok = confirm('時給の設定を解除します（0円）。よろしいですか？\n※ 自動作成された「ディレクション（時給）」グループも空なら削除されます');
-      if (!ok) return;
+      if (!ok) return false;
     }
     const clientRaw = String(document.getElementById('p-director-hourly-client-input')?.value || '').trim();
     const body = { pricing_type: 'hourly', unit_price: rate };
     if (hasPermission('project.client_price') && clientRaw !== '') {
       body.client_unit_price = Math.max(0, parseInt(clientRaw, 10) || 0);
     }
+    let saved = false;
     await btnBusy(btn, async () => {
       const res = await apiFetch(`${API}/projects/${projectId}/director-fee`, {
         method: 'PUT',
@@ -18094,20 +18117,23 @@ async function saveProjectDirectorFee() {
         showToast(err.error || `設定に失敗しました（${res.status}）`, 'warn');
         return;
       }
+      saved = true;
+      _directorFeeDirty = false;
       showToast(rate > 0
         ? `ディレクター時給 ¥${rate.toLocaleString()}/h を設定しました（⏱ 作業時間報告に自動適用されます）`
         : 'ディレクター時給を解除しました', 'ok');
       await loadProjectLines(projectId);
     });
-    return;
+    return saved;
   }
 
   const raw = String(document.getElementById('p-director-fee-input').value || '').trim();
   const price = Math.max(0, parseInt(raw, 10) || 0);
   if (price === 0) {
     const ok = confirm('ディレクター費を全グループから解除します（0円）。よろしいですか？\n※ 時給など内訳で個別設定した行は残ります');
-    if (!ok) return;
+    if (!ok) return false;
   }
+  let saved = false;
   await btnBusy(btn, async () => {
     const res = await apiFetch(`${API}/projects/${projectId}/director-fee`, {
       method: 'PUT',
@@ -18119,12 +18145,15 @@ async function saveProjectDirectorFee() {
       showToast(err.error || `反映に失敗しました（${res.status}）`, 'warn');
       return;
     }
+    saved = true;
+    _directorFeeDirty = false;
     const j = await res.json().catch(() => ({}));
     showToast(price > 0
       ? `ディレクター費 ¥${price.toLocaleString()}/本 を全${j.lines_count || ''}グループに反映しました`
       : 'ディレクター費を解除しました', 'ok');
     await loadProjectLines(projectId);
   });
+  return saved;
 }
 
 // ADR 025: 成果物グループの停止/再開トグル。削除せず「今は適用していない」状態にする。
@@ -21454,6 +21483,12 @@ async function submitProject() {
   btn.textContent = origText; btn.disabled = false;
 
   if (res.ok) {
+    // ディレクター費バーに入力したまま「時給を設定/全グループに反映」を押し忘れていても、
+    // ここで一緒に反映する（押し忘れで値が消える事故防止）。失敗時はモーダルを開いたままにする
+    if (isEdit) {
+      const flushed = await flushDirectorFeeBarIfDirty(id);
+      if (!flushed) { await loadProjects(); return; }
+    }
     closeModal('modal-project');
     await loadProjects();
   } else {
