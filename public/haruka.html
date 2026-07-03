@@ -42393,7 +42393,8 @@ function _brSetLastViewedAt(iso) {
 }
 async function loadBugReportOpenCount() {
   try {
-    const res = await fetch('/api/haruka/bug-reports');
+    // バッジ件数だけなので slim=1（id/status/created_at のみ）。フル一覧をここで引かない
+    const res = await fetch('/api/haruka/bug-reports?slim=1');
     if (!res.ok) return;
     const all = await res.json();
     const lastViewed = _brGetLastViewedAt();

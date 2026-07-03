@@ -18737,12 +18737,19 @@ router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async 
 });
 
 // GET /api/haruka/bug-reports - 一覧（全員閲覧可）
+// screenshot_data_url（base64画像）は一覧では返さない。57件で計42MB超になり
+// Railway エッジ経由で「一覧の取得に失敗しました」の原因になった。詳細 (/:id) でのみ返す。
+// avatar_url（これも base64）も一覧で描画する reporter / assignee だけに絞る。
 router.get('/bug-reports', requireAuth, async (req, res) => {
   try {
-    const { status, assignee_user_id, mine } = req.query;
+    const { status, assignee_user_id, mine, slim } = req.query;
+    // slim=1: ヘッダーの未対応バッジ用。件数計算に必要な最小フィールドのみ（数KB）
+    const columns = slim === '1'
+      ? 'id, status, created_at'
+      : 'id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, last_updated_by_user_id, duplicate_of_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname ), last_updater:last_updated_by_user_id ( id, full_name, nickname ), duplicate_parent:duplicate_of_id ( id, title, status )';
     let q = supabase
       .from('bug_reports')
-      .select('id, is_anonymous, title, description, url, screen_label, severity, is_urgent, status, assignee_user_id, created_at, updated_at, resolved_at, reporter_user_id, screenshot_data_url, improved_at, improved_by_user_id, improvement_version_log_id, triage_decision, triage_decided_at, triage_decided_by_user_id, last_updated_by_user_id, duplicate_of_id, reporter:reporter_user_id ( id, full_name, nickname, avatar_url ), assignee:assignee_user_id ( id, full_name, nickname, avatar_url ), improver:improved_by_user_id ( id, full_name, nickname, avatar_url ), improvement_log:improvement_version_log_id ( id, revision_no, screen, feature, description ), triage_decider:triage_decided_by_user_id ( id, full_name, nickname, avatar_url ), last_updater:last_updated_by_user_id ( id, full_name, nickname, avatar_url ), duplicate_parent:duplicate_of_id ( id, title, status )')
+      .select(columns)
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (assignee_user_id) q = q.eq('assignee_user_id', assignee_user_id);
