@@ -2994,11 +2994,12 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   <div class="modal-card" style="width:520px">
     <div class="modal-title">💭 つぶやき投稿<button class="modal-close" onclick="closeModalGuarded('modal-tweet-compose')">×</button></div>
     <div class="form-group">
-      <label class="form-label">写真 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意）</span></label>
-      <div id="tw-image-preview" style="width:100%;aspect-ratio:1/1;max-height:280px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px;text-align:center;padding:8px;transition:border-color .15s,background-color .15s" onclick="document.getElementById('tw-image-input').click()" ondragover="onTweetImageDragOver(event)" ondragenter="onTweetImageDragOver(event)" ondragleave="onTweetImageDragLeave(event)" ondrop="onTweetImageDrop(event)">
-        写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意）
+      <label class="form-label">写真 <span style="color:var(--text-muted);font-weight:400;font-size:11px;margin-left:4px">（任意・4枚まで）</span></label>
+      <!-- capture 属性は複数枚対応で撤去（iOS でカメラ強制になりライブラリから複数選択できないため。撮影は OS の選択メニューから可能） -->
+      <div id="tw-image-preview" style="width:100%;min-height:120px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-muted);font-size:12px;cursor:pointer;overflow:hidden;margin-bottom:8px;text-align:center;padding:8px;transition:border-color .15s,background-color .15s" onclick="document.getElementById('tw-image-input').click()" ondragover="onTweetImageDragOver(event)" ondragenter="onTweetImageDragOver(event)" ondragleave="onTweetImageDragLeave(event)" ondrop="onTweetImageDrop(event)">
+        写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意・4枚まで）
       </div>
-      <input type="file" id="tw-image-input" accept="image/*" capture="environment" style="display:none" onchange="onTweetImageSelected(event)">
+      <input type="file" id="tw-image-input" accept="image/*" multiple style="display:none" onchange="onTweetImageSelected(event)">
       <div id="tw-image-status" style="font-size:11px;color:var(--text-muted)"></div>
     </div>
     <div class="form-group" style="margin-bottom:8px">
@@ -23146,8 +23147,8 @@ function _renderAnnouncementStatus() {
 // つぶやき機能 — 共通ヘルパー（独立タブ #page-tweets と投稿モーダル両方で使用）
 // ============================================================
 
-let _twImageBlob = null;        // クライアント側でリサイズ後の Blob
-let _twImageDataUrl = null;     // プレビュー用
+const TWEET_IMAGE_MAX_COUNT = 4;
+let _twImages = [];             // { blob, dataUrl } の配列（クライアント側でリサイズ後・最大4枚）
 
 function _twTimeAgo(iso) {
   if (!iso) return '';
@@ -23179,20 +23180,49 @@ const TWEET_REACTIONS = [
 // deleteTweetComment() / addTweetReaction() / removeTweetReaction() / openTweetImage() /
 // likeTweet() / unlikeTweet() は削除した（独立タブ側の *Page / *FromCard 系を使う）。
 
-const TWEET_IMAGE_PLACEHOLDER = '写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意）';
+const TWEET_IMAGE_PLACEHOLDER = '写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意・4枚まで）';
 
 function openTweetCompose() {
-  _twImageBlob = null;
-  _twImageDataUrl = null;
+  _twImages = [];
   document.getElementById('tw-body').value = '';
   document.getElementById('tw-image-input').value = '';
-  const preview = document.getElementById('tw-image-preview');
-  preview.innerHTML = TWEET_IMAGE_PLACEHOLDER;
-  // 空状態はプレースホルダ用に正方形枠に戻す
-  preview.style.aspectRatio = '1 / 1';
-  document.getElementById('tw-image-status').textContent = '';
+  renderTweetImagePreview();
   updateTweetCounter();
   openModal('modal-tweet-compose');
+}
+
+// 投稿モーダルのサムネイルグリッドを描画（0枚=プレースホルダ / 1〜4枚=サムネ + ＋タイル）
+function renderTweetImagePreview() {
+  const preview = document.getElementById('tw-image-preview');
+  const status = document.getElementById('tw-image-status');
+  if (!preview) return;
+  if (_twImages.length === 0) {
+    preview.innerHTML = TWEET_IMAGE_PLACEHOLDER;
+    if (status) status.textContent = '';
+    return;
+  }
+  const tiles = _twImages.map((im, i) => `
+    <div style="position:relative;width:104px;height:104px;border-radius:8px;overflow:hidden;border:1px solid var(--border);flex:0 0 auto;background:#fff">
+      <img src="${im.dataUrl}" style="width:100%;height:100%;object-fit:cover;display:block">
+      <button type="button" onclick="event.stopPropagation();removeTweetImage(${i})" title="この写真を外す"
+        style="position:absolute;top:4px;right:4px;width:22px;height:22px;border:none;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
+    </div>`).join('');
+  // ＋タイル（上限未満のとき）— クリックは親のファイル選択にバブルさせる
+  const addTile = _twImages.length < TWEET_IMAGE_MAX_COUNT
+    ? `<div title="写真を追加" style="width:104px;height:104px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:24px;flex:0 0 auto">＋</div>`
+    : '';
+  preview.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;width:100%">${tiles}${addTile}</div>`;
+  if (status) {
+    const totalKb = _twImages.reduce((s, im) => s + im.blob.size, 0) / 1024;
+    status.textContent = `画像準備OK ${_twImages.length}/${TWEET_IMAGE_MAX_COUNT}枚 (合計 ${totalKb.toFixed(0)} KB)`;
+  }
+}
+
+function removeTweetImage(index) {
+  _twImages.splice(index, 1);
+  const input = document.getElementById('tw-image-input');
+  if (input) input.value = '';
+  renderTweetImagePreview();
 }
 
 function updateTweetCounter() {
@@ -23233,6 +23263,10 @@ function resizeImageContainToBlob(file, maxW, maxH, quality) {
 async function processTweetImageFile(file) {
   if (!file) return;
   const status = document.getElementById('tw-image-status');
+  if (_twImages.length >= TWEET_IMAGE_MAX_COUNT) {
+    showToast(`写真は ${TWEET_IMAGE_MAX_COUNT} 枚までです`, 'warn');
+    return;
+  }
   if (!file.type.startsWith('image/')) {
     showToast('画像ファイルを選択してください', 'warn');
     return;
@@ -23244,46 +23278,49 @@ async function processTweetImageFile(file) {
   status.textContent = '画像処理中...';
   try {
     // 長辺 1024px / JPEG 0.85 にリサイズ（アスペクト比保持・クロップなし）
-    const blob = await resizeImageContainToBlob(file, 1024, 1024, 0.85);
+    let blob = await resizeImageContainToBlob(file, 1024, 1024, 0.85);
     if (blob.size > 500 * 1024) {
       // さらに圧縮: 長辺 800px / 0.75
       const blob2 = await resizeImageContainToBlob(file, 800, 800, 0.75);
       if (blob2.size > 500 * 1024) {
         showToast('画像サイズが大きすぎます。別の写真を選んでください', 'warn');
-        status.textContent = '';
+        renderTweetImagePreview();
         return;
       }
-      _twImageBlob = blob2;
-    } else {
-      _twImageBlob = blob;
+      blob = blob2;
     }
-    _twImageDataUrl = await new Promise((resolve, reject) => {
+    const dataUrl = await new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(r.result);
       r.onerror = reject;
-      r.readAsDataURL(_twImageBlob);
+      r.readAsDataURL(blob);
     });
-    // 画像の自然な縦横比に枠を合わせる（max-height:280px は CSS 側で残るので縦長は枠で頭打ち）
-    const dims = await new Promise((resolve) => {
-      const im = new Image();
-      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-      im.onerror = () => resolve({ w: 1, h: 1 });
-      im.src = _twImageDataUrl;
-    });
-    const preview = document.getElementById('tw-image-preview');
-    preview.style.aspectRatio = `${dims.w} / ${dims.h}`;
-    preview.innerHTML = `<img src="${_twImageDataUrl}" style="width:100%;height:100%;object-fit:contain;display:block">`;
-    status.textContent = `画像準備OK (${(_twImageBlob.size / 1024).toFixed(0)} KB)`;
+    _twImages.push({ blob, dataUrl });
+    renderTweetImagePreview();
   } catch (err) {
     console.error(err);
     showToast('画像の処理に失敗しました', 'error');
-    status.textContent = '';
+    renderTweetImagePreview();
+  }
+}
+
+// 複数ファイルを順に処理（上限に達したら以降は捨てて 1 回だけトースト）
+async function processTweetImageFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
+  if (_twImages.length + files.length > TWEET_IMAGE_MAX_COUNT) {
+    showToast(`写真は ${TWEET_IMAGE_MAX_COUNT} 枚までです（超えた分は追加されません）`, 'warn');
+  }
+  for (const f of files) {
+    if (_twImages.length >= TWEET_IMAGE_MAX_COUNT) break;
+    await processTweetImageFile(f);
   }
 }
 
 async function onTweetImageSelected(e) {
-  const file = e.target.files && e.target.files[0];
-  await processTweetImageFile(file);
+  await processTweetImageFiles(e.target.files);
+  // 同じファイルを選び直せるよう input はクリアしておく
+  e.target.value = '';
 }
 
 // D&D: dragover/dragenter は preventDefault しないと drop が発火しない
@@ -23340,12 +23377,12 @@ async function onTweetImageDrop(e) {
     el.style.borderColor = '';
     el.style.backgroundColor = '';
   }
-  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (!file) return;
+  const files = (e.dataTransfer && e.dataTransfer.files) || [];
+  if (!files.length) return;
   // ファイル選択 input の値もクリアして、以後の change イベントと整合させる
   const input = document.getElementById('tw-image-input');
   if (input) input.value = '';
-  await processTweetImageFile(file);
+  await processTweetImageFiles(files);
 }
 
 // クリップボード貼り付けで画像を添付（つぶやき投稿モーダルが開いている間のみ有効）
@@ -23353,18 +23390,18 @@ document.addEventListener('paste', async (e) => {
   const modal = document.getElementById('modal-tweet-compose');
   if (!modal || !modal.classList.contains('open')) return;
   const items = (e.clipboardData && e.clipboardData.items) || [];
-  let imageFile = null;
+  const imageFiles = [];
   for (const item of items) {
     if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
-      imageFile = item.getAsFile();
-      if (imageFile) break;
+      const f = item.getAsFile();
+      if (f) imageFiles.push(f);
     }
   }
-  if (!imageFile) return;
+  if (!imageFiles.length) return;
   e.preventDefault();
   const input = document.getElementById('tw-image-input');
   if (input) input.value = '';
-  await processTweetImageFile(imageFile);
+  await processTweetImageFiles(imageFiles);
 });
 
 async function submitTweet() {
@@ -23375,7 +23412,7 @@ async function submitTweet() {
   btn.disabled = true; btn.textContent = '投稿中...';
   try {
     const fd = new FormData();
-    if (_twImageBlob) fd.append('image', _twImageBlob, 'tweet.jpg');
+    _twImages.forEach((im, i) => fd.append('images', im.blob, `tweet-${i}.jpg`));
     fd.append('body', body);
     const res = await apiFetch(`${API}/tweets`, { method: 'POST', body: fd });
     if (!res.ok) {
@@ -23720,7 +23757,8 @@ function _twPrependTweetLocal(created) {
   const u = currentUser || {};
   const t = {
     ...created,
-    has_image: !!created.image_data,
+    has_image: (created.image_count || 0) > 0 || !!created.image_data,
+    image_count: created.image_count ?? (created.image_data ? 1 : 0),
     reaction_counts: created.reaction_counts || {},
     my_reactions: created.my_reactions || [],
     comment_count: created.comment_count || 0,
@@ -23819,12 +23857,20 @@ function renderTweetCard(t) {
   // 必要なら以下を有効化:
   // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
 
-  // 画像は has_image のときだけ別エンドポイントから遅延取得（一覧に base64 を載せない）。
-  // src を data URL → /api/haruka/tweets/:id/image にしたことで loading="lazy" が実際に効き、
+  // 画像は image_count 分だけ別エンドポイントから遅延取得（一覧に base64 を載せない）。
+  // src を data URL → /api/haruka/tweets/:id/image/:pos にしたことで loading="lazy" が実際に効き、
   // ブラウザ HTTP キャッシュ（Cache-Control: immutable）で 2 回目以降は即表示される。
-  const imageHtml = t.has_image
-    ? `<div class="tweet-image-wrap"><img src="${API}/tweets/${t.id}/image" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)"></div>`
-    : '';
+  // 1枚は従来どおり自然サイズ表示、2〜4枚は X 風グリッド（.tweet-image-grid）。
+  const imgCount = t.image_count ?? (t.has_image ? 1 : 0);
+  let imageHtml = '';
+  if (imgCount === 1) {
+    imageHtml = `<div class="tweet-image-wrap"><img src="${API}/tweets/${t.id}/image" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)"></div>`;
+  } else if (imgCount >= 2) {
+    const imgs = Array.from({ length: imgCount }, (_, i) =>
+      `<img src="${API}/tweets/${t.id}/image/${i}" alt="" loading="lazy" decoding="async" onclick="openTweetLightbox(this.src)">`
+    ).join('');
+    imageHtml = `<div class="tweet-image-grid n${imgCount}">${imgs}</div>`;
+  }
 
   return `<article class="tweet-card ${t.is_pinned ? 'pinned' : ''}" data-tweet-id="${t.id}">
     <div class="tweet-card-head">

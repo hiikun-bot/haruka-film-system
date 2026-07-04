@@ -14392,12 +14392,15 @@ router.get('/announcements/:id/status', requireAuth, requirePermission('member.l
 
 // ==================== つぶやき機能（社内タイムライン）====================
 //
-// 写真1枚 + 短いコメント + ❤️ いいね のミニ社内 SNS。
+// 写真（最大4枚）+ 短いコメント + ❤️ いいね のミニ社内 SNS。
 // ダッシュボード上に表示され、90 日で自動消滅 (ピン留めは永続)。
 // 画像はアバターと同じく base64 data URL で DB に直接保存
 // (クライアント側で 1024px / JPEG 0.85 にリサイズ、400KB 上限)。
+// 複数枚は tweet_images テーブル（position 0〜3）に保存。
+// 旧投稿の tweets.image_data はレガシー1枚目としてそのまま読める。
 
-const TWEET_IMAGE_MAX_BYTES = 500 * 1024; // base64 後 500KB 上限
+const TWEET_IMAGE_MAX_BYTES = 500 * 1024; // base64 後 500KB 上限（1枚あたり）
+const TWEET_IMAGE_MAX_COUNT = 4;          // 1投稿あたりの写真上限
 const TWEET_BODY_MAX = 280;
 const TWEET_COMMENT_MAX = 500;
 const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
@@ -14415,15 +14418,22 @@ async function enrichTweetList(list, currentUserId) {
   if (!list || list.length === 0) return [];
   const ids = list.map(t => t.id);
   // リアクション全件と「画像を持つ tweet の id」を並列取得（image_data 本体は引かない）
-  const [reactionsRes, imagesRes] = await Promise.all([
+  const [reactionsRes, imagesRes, multiImagesRes] = await Promise.all([
     // リアクションした本人の表示名も埋め込む（ホバーで「誰が押したか」を出すため）。
     // tweet_reactions.user_id → users への FK を `users!user_id` で明示。
     supabase.from('tweet_reactions')
       .select('tweet_id, user_id, reaction_type, users!user_id(id, full_name, nickname)')
       .in('tweet_id', ids),
     supabase.from('tweets').select('id').not('image_data', 'is', null).in('id', ids),
+    // 複数画像（tweet_images）は枚数だけ数える。image_data 本体は引かない。
+    supabase.from('tweet_images').select('tweet_id').in('tweet_id', ids),
   ]);
   const imageIdSet = new Set((imagesRes.data || []).map(r => r.id));
+  // tweet_id -> 枚数（tweet_images 優先、無ければレガシー image_data の 1 枚）
+  const imageCountMap = new Map();
+  (multiImagesRes.data || []).forEach(r => {
+    imageCountMap.set(r.tweet_id, (imageCountMap.get(r.tweet_id) || 0) + 1);
+  });
   const countByType = new Map();    // tweet_id -> { good: n, heart: n, ... }
   const myReactionsMap = new Map(); // tweet_id -> Set<reaction_type>
   const usersByType = new Map();    // tweet_id -> { good: [{id,full_name,nickname}], ... }
@@ -14445,9 +14455,11 @@ async function enrichTweetList(list, currentUserId) {
     const myReactions = Array.from(myReactionsMap.get(t.id) || []);
     const counts = countByType.get(t.id) || {};
     const heartCount = counts.heart || 0;
+    const imageCount = imageCountMap.get(t.id) || (imageIdSet.has(t.id) ? 1 : 0);
     return {
       ...t,
-      has_image: imageIdSet.has(t.id),
+      has_image: imageCount > 0,
+      image_count: imageCount,
       reaction_count: t.reaction_count ?? 0,
       comment_count:  t.comment_count  ?? 0,
       reaction_counts: counts,           // { good: 3, heart: 2, ... }
@@ -14578,41 +14590,70 @@ router.get('/tweets', requireAuth, async (req, res) => {
   res.json(await enrichTweetList(list, req.user.id));
 });
 
-// つぶやき画像をバイナリ配信。一覧 API は has_image だけ返し、本体はこのエンドポイントから
-// <img src="/api/tweets/:id/image"> で遅延取得する（base64 data URL の一覧同梱をやめた）。
+// つぶやき画像をバイナリ配信。一覧 API は image_count だけ返し、本体はこのエンドポイントから
+// <img src="/api/tweets/:id/image/:pos"> で遅延取得する（base64 data URL の一覧同梱をやめた）。
 //   - 認証は requireAuth（Passport セッション Cookie）。<img> も同一オリジンなので Cookie が乗る。
 //   - 画像は投稿後に差し替え不可な不変リソースなので長期キャッシュ可。private は社内データのため。
-router.get('/tweets/:id/image', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('tweets').select('image_data').eq('id', req.params.id).single();
-  if (error || !data || !data.image_data) return res.status(404).end();
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
+//   - :pos は 0〜3。tweet_images に該当 position が無く pos=0 のときはレガシー tweets.image_data に
+//     フォールバック（複数枚対応以前の投稿）。旧URL /tweets/:id/image も pos=0 として動く。
+function sendTweetImageDataUrl(res, dataUrl) {
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl || '');
   if (!m) return res.status(404).end();
   const buf = Buffer.from(m[2], 'base64');
   res.setHeader('Content-Type', m[1]);
   res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
   res.setHeader('Content-Length', buf.length);
   return res.end(buf);
-});
+}
 
-// つぶやき投稿（写真は任意 + 本文）
+async function serveTweetImage(req, res, pos) {
+  if (!Number.isInteger(pos) || pos < 0 || pos >= TWEET_IMAGE_MAX_COUNT) {
+    return res.status(404).end();
+  }
+  const { data: img } = await supabase
+    .from('tweet_images').select('image_data')
+    .eq('tweet_id', req.params.id).eq('position', pos).maybeSingle();
+  if (img && img.image_data) return sendTweetImageDataUrl(res, img.image_data);
+  if (pos !== 0) return res.status(404).end();
+  // レガシー（複数枚対応以前）の 1 枚目
+  const { data, error } = await supabase
+    .from('tweets').select('image_data').eq('id', req.params.id).single();
+  if (error || !data || !data.image_data) return res.status(404).end();
+  return sendTweetImageDataUrl(res, data.image_data);
+}
+
+router.get('/tweets/:id/image', requireAuth, (req, res) => serveTweetImage(req, res, 0));
+router.get('/tweets/:id/image/:pos', requireAuth, (req, res) =>
+  serveTweetImage(req, res, Number(req.params.pos)));
+
+// つぶやき投稿（写真は任意・最大4枚 + 本文）
 //   Phase 1 段階4: メンション抽出 → mentioned_user_ids 保存 → mention 通知発火
-router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => {
-  const file = req.file;
+//   複数枚対応: `images`（複数）を tweet_images に保存。旧クライアントの `image`（1枚）も受ける。
+router.post('/tweets', requireAuth,
+  upload.fields([
+    { name: 'images', maxCount: TWEET_IMAGE_MAX_COUNT },
+    { name: 'image',  maxCount: 1 }, // 旧クライアント互換（キャッシュ済み haruka.html）
+  ]),
+  async (req, res) => {
+  const files = [
+    ...((req.files && req.files.images) || []),
+    ...((req.files && req.files.image)  || []),
+  ].slice(0, TWEET_IMAGE_MAX_COUNT);
   const body = String(req.body?.body || '').trim();
   if (!body) return res.status(400).json({ error: '本文を入力してください' });
   if (body.length > TWEET_BODY_MAX) {
     return res.status(400).json({ error: `本文は ${TWEET_BODY_MAX} 字以内にしてください` });
   }
-  let dataUrl = null;
-  if (file) {
+  const dataUrls = [];
+  for (const file of files) {
     if (!file.mimetype || !file.mimetype.startsWith('image/')) {
       return res.status(400).json({ error: '画像ファイルを選択してください' });
     }
-    dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+    const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
     if (dataUrl.length > TWEET_IMAGE_MAX_BYTES) {
       return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから再投稿してください）' });
     }
+    dataUrls.push(dataUrl);
   }
 
   // メンション解決
@@ -14622,12 +14663,22 @@ router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => 
     .insert({
       user_id: req.user.id,
       body,
-      image_data: dataUrl,
+      image_data: null, // 画像本体は tweet_images 側に保存（レガシー列は新規投稿では使わない）
       mentioned_user_ids: mentionedIds,
     })
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
+    .select('id, user_id, body, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // 画像を position 順に一括 INSERT。失敗したら本体ごと削除して整合性を保つ。
+  if (dataUrls.length > 0) {
+    const { error: imgErr } = await supabase.from('tweet_images')
+      .insert(dataUrls.map((u, i) => ({ tweet_id: data.id, position: i, image_data: u })));
+    if (imgErr) {
+      await supabase.from('tweets').delete().eq('id', data.id);
+      return res.status(500).json({ error: '画像の保存に失敗しました: ' + imgErr.message });
+    }
+  }
 
   // メンション通知（自分自身は除外）
   const senderName = req.user.nickname || req.user.full_name || '誰か';
@@ -14651,6 +14702,8 @@ router.post('/tweets', requireAuth, upload.single('image'), async (req, res) => 
 
   res.json({
     ...data,
+    has_image: dataUrls.length > 0,
+    image_count: dataUrls.length,
     reaction_counts: {},
     my_reactions: [],
     like_count: 0,
