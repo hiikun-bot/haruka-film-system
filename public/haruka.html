@@ -16548,6 +16548,8 @@ function setPreviewRole(role) {
     if (typeof loadInvoices === 'function') loadInvoices();
   }
   if (document.getElementById('page-knowledge')?.classList.contains('active') && typeof loadKnowledgePage === 'function') loadKnowledgePage();
+  // 作業時間報告: 実効ロールで単価マスク・メンバー切替可否が変わるため、キャッシュ破棄＋表示中なら再取得（ADR 015 / ADR 028）
+  if (typeof whOnViewAsChange === 'function') whOnViewAsChange();
   // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
   if (document.getElementById('page-analytics')?.classList.contains('active') && typeof initAnalyticsPage === 'function') {
     if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
@@ -21872,6 +21874,18 @@ function loadWorkHoursPage() {
   whFetch();
 }
 
+// VIEW AS 切替時の再初期化（setPreviewRole から呼ばれる / ADR 015）。
+// サーバーは実効ロールで時給・金額をマスクして返すため、admin 時代のレスポンス
+// （単価入りのサマリー・案件プルダウン・メンバー一覧）をそのまま表示し続けない。
+function whOnViewAsChange() {
+  _whHourlyProjects = null;
+  _whMembers = null;
+  if (!whIsManagerRole()) _whUserId = null;
+  if (document.getElementById('page-work-hours')?.classList.contains('active')) {
+    whGuardedRun(() => loadWorkHoursPage());
+  }
+}
+
 function whShiftMonth(delta) {
   whGuardedRun(() => {
     _whMonth += delta;
@@ -22105,7 +22119,7 @@ function whTargetIsSecretary() {
 function whDefaultProjectId() {
   const uid = _whUserId || currentUser?.id;
   if (!uid) return '';
-  const hit = (_whHourlyProjects || []).find(p => p.hourly_rate && (
+  const hit = (_whHourlyProjects || []).find(p => (p.has_hourly || p.hourly_rate) && (
     p.director_id === uid || p.producer_id === uid ||
     (Array.isArray(p.hourly_user_ids) && p.hourly_user_ids.includes(uid))
   ));
@@ -22121,7 +22135,8 @@ const WH_SHOW_ALL_VALUE = '__wh_show_all__';
 
 function whProjectOptionsHtml(selectedId, fallbackName) {
   const all = _whHourlyProjects || [];
-  const hourlyOnly = all.filter(p => p.hourly_rate);
+  // has_hourly = 時間単価つき案件（単価の値は本人担当分と admin のみ hourly_rate に入る。他人の単価は null マスク）
+  const hourlyOnly = all.filter(p => p.has_hourly || p.hourly_rate);
   // 選択済みの案件が時給なしでも表示は維持する（過去行・展開後に選んだ行）
   const showAll = _whShowAllProjects;
   const list = showAll ? all : hourlyOnly;
