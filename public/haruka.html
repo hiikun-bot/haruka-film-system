@@ -8182,11 +8182,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <!-- メタ情報セクション（締切 / レギュ / クライアント確認URL をヘッダーへ集約）
              ADR 012: 各 form-group は data-field-key を持ち、applyCreativeDetailFieldVisibility() で
              カテゴリの設定に応じて display:none / ラベル上書きされる。 -->
-        <div style="border-top:1px dashed var(--border-light);margin-top:8px;padding-top:8px;font-size:12.5px;color:var(--text);display:flex;flex-direction:column;gap:6px">
-          <!-- 1行目: 締切（旧 cd-deadline-bar をここへ移植。背景/大きな padding はリセット）
-               JS (line ~29193) で bar.style.display = 'flex' を設定する。flex-wrap は inline style 側で保持されないため
-               flex-wrap:wrap を別途確保したい場合は親 flex-direction:column の方を維持する形にしている。 -->
-          <div id="cd-deadline-bar" style="display:none;gap:14px;flex-wrap:wrap;align-items:center"></div>
+        <div style="border-top:1px dashed var(--border-light);margin-top:8px;padding-top:10px;font-size:12.5px;color:var(--text);display:flex;flex-wrap:wrap;gap:10px 28px;align-items:flex-start">
+          <!-- 締切ブロック（左）とメモ（右・flex:1）を横並び。狭い画面ではメモが下に折り返す。
+               JS (line ~29193) で bar.style.display = 'flex' を設定する。 -->
+          <div id="cd-deadline-bar" style="display:none;gap:16px;flex-wrap:wrap;align-items:stretch;flex-shrink:0"></div>
 
           <!-- レギュレーションは右上 📋 アイコンへ移設済（cd-regulation-icon-btn）。
                JS の getElementById('cd-regulation-open' / 'cd-regulation-link' / 'cd-regulation-none' / 'cd-regulation-cell') が
@@ -8208,7 +8207,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                表示モードでは cdRenderMemo() が #cd-memo の値を linkifyText() で <a> 化して #cd-memo-rendered に出す。
                編集は ✎ ボタン（または空メモ時の表示エリア）で cdMemoEnterEdit() を呼んで切り替える。
                #cd-memo textarea 自体は dirty/下書き追跡（CD_DRAFT_FIELDS）の互換のため DOM から外さず display で切替える。 -->
-          <div class="form-group" style="margin-bottom:0">
+          <div class="form-group" style="margin-bottom:0;flex:1;min-width:300px">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
               <span style="color:var(--text-muted);white-space:nowrap;font-weight:600">📝 メモ</span>
               <span style="font-size:11px;color:var(--text-muted)">（チーム全体で共有）</span>
@@ -33569,7 +33568,8 @@ async function openCreativeDetail(id) {
     else revBadge.style.display = 'none';
   }
 
-  // 納期バー（一目で見落とさないよう font-size を大きく / 緊急度に応じて段階的に色分け）
+  // 納期バー（一目で見落とさないよう「小ラベル上・大きな日付下」の2段構成でメリハリを付ける。
+  // 日付本体は黒の大きな数字、緊急度はピルバッジの色で示す）
   // - 超過 / 今日 / 1〜2日 → 赤（#E24B4A）
   // - 3〜7日                 → 橙（#F59E0B）
   // - 8日以上               → 緑（#059669）
@@ -33577,8 +33577,12 @@ async function openCreativeDetail(id) {
     const bar = document.getElementById('cd-deadline-bar');
     if (!bar) return;
     const today = new Date(); today.setHours(0,0,0,0);
-    function deadlineItem(label, dateStr) {
-      if (!dateStr) return `<span style="font-size:15px;font-weight:600;color:var(--text-muted)">${label}：<span style="color:var(--text-muted)">未設定</span></span>`;
+    // withDivider: 2ブロック目以降に左の区切り線を付ける（独立した divider 要素だと
+    // flex-wrap で折り返したとき線だけが浮いて残るため、ブロック側の border-left で表現する）
+    function deadlineItem(label, dateStr, withDivider) {
+      const blockStyle = `display:inline-flex;flex-direction:column;gap:3px${withDivider ? ';border-left:1px solid var(--border-light);padding-left:16px' : ''}`;
+      const labelHtml = `<span style="font-size:10.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;white-space:nowrap">${label}</span>`;
+      if (!dateStr) return `<span style="${blockStyle}">${labelHtml}<span style="font-size:18px;font-weight:700;line-height:1.2;color:var(--text-muted)">未設定</span></span>`;
       const d = new Date(dateStr); d.setHours(0,0,0,0);
       const diff = Math.round((d - today) / 86400000);
       const fmt = d.toLocaleDateString('ja-JP', {month:'numeric', day:'numeric'});
@@ -33588,10 +33592,14 @@ async function openCreativeDetail(id) {
       else if (diff <= 2) { badge = `あと ${diff}日`;            color = '#E24B4A'; }
       else if (diff <= 7) { badge = `あと ${diff}日`;            color = '#F59E0B'; }
       else                { badge = `あと ${diff}日`;            color = '#059669'; }
-      return `<span style="font-size:15px;font-weight:600;color:var(--text-muted);display:inline-flex;align-items:center;gap:8px">${label}：<span style="font-size:18px;font-weight:700;color:${color}">${fmt}</span><span style="font-size:13px;background:${color}1a;color:${color};border-radius:6px;padding:3px 9px;font-weight:700">${badge}</span></span>`;
+      return `<span style="${blockStyle}">${labelHtml}` +
+        `<span style="display:inline-flex;align-items:center;gap:8px">` +
+          `<span style="font-size:26px;font-weight:800;line-height:1;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;color:var(--text)">${fmt}</span>` +
+          `<span style="font-size:12px;background:${color}14;color:${color};border:0.5px solid ${color}40;border-radius:999px;padding:3px 10px;font-weight:700;white-space:nowrap">${badge}</span>` +
+        `</span></span>`;
     }
     bar.style.display = 'flex';
-    let _dlHtml = deadlineItem('初稿締切', c.draft_deadline) + '<span style="color:var(--border);font-size:18px">|</span>' + deadlineItem('最終納品', c.final_deadline);
+    let _dlHtml = deadlineItem('初稿締切', c.draft_deadline) + deadlineItem('最終納品', c.final_deadline, true);
     // ADR 026: 納品完了日時（この JST 月で支払い本数がカウントされる）。
     // 納品済みのとき表示。補正は admin / secretary / producer / producer_director のみ
     // （effectiveRole() 判定 = VIEW AS 対応。ADR 015）。
@@ -33601,10 +33609,12 @@ async function openCreativeDetail(id) {
         : '未記録';
       const _daCanFix = typeof effectiveRole === 'function' &&
         ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
-      _dlHtml += '<span style="color:var(--border);font-size:18px">|</span>' +
-        `<span id="cd-delivered-at-item" style="font-size:15px;font-weight:600;color:var(--text-muted);display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">📦 納品完了：<span style="font-size:16px;font-weight:700;color:#059669">${_daTxt}</span>` +
+      _dlHtml +=
+        `<span id="cd-delivered-at-item" style="display:inline-flex;flex-direction:column;gap:3px;border-left:1px solid var(--border-light);padding-left:16px">` +
+        `<span style="font-size:10.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;white-space:nowrap">📦 納品完了 <span style="font-weight:600;letter-spacing:0">※この月で支払いカウント</span></span>` +
+        `<span style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:17px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums;color:#059669">${_daTxt}</span>` +
         (_daCanFix ? `<button class="btn" type="button" style="font-size:12px;padding:3px 10px" onclick="cdEditDeliveredAt('${c.id}')">✏️ 補正</button>` : '') +
-        `<span style="font-size:11px;color:var(--text-muted)">※この月で支払いカウント</span></span>`;
+        `</span></span>`;
     }
     bar.innerHTML = _dlHtml;
   })();
@@ -34922,24 +34932,42 @@ function _cdRenderFileCard(f, opts) {
   const prefetchAttrs = canPreview
     ? `data-fp-prefetch-drive-id="${esc(driveFileId)}" data-fp-prefetch-name="${esc(f.generated_name || '')}"`
     : '';
+  // 左端サムネイル: Drive の thumbnail エンドポイント（動画はポスターフレーム / 画像は縮小版）。
+  // Drive にアクセス権が無い・生成前などで取得できないときは onerror で img を消し、
+  // 背後の 🎬/🖼 プレースホルダが見える（カード全体の動作には影響しない）。
+  const _isImageFile = /\.(jpg|jpeg|png|gif|webp|svg|heic|heif)$/i.test(f.generated_name || '');
+  const thumbHtml = canPreview ? `
+    <div onclick="${esc(checkBtnOnclick)}" title="クリックでプレビュー" style="position:relative;width:96px;min-height:82px;align-self:stretch;flex-shrink:0;background:#0f172a;cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden">
+      <span style="font-size:26px;opacity:.5">${_isImageFile ? '🖼' : '🎬'}</span>
+      <img src="https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileId)}&sz=w320" alt="" loading="lazy" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">
+      ${_isImageFile ? '' : `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.18)"><span style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.92);box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;font-size:11px;color:#0f172a;padding-left:2px">▶</span></span>`}
+    </div>` : '';
+  // Drive ボタン: 公式トリコロールアイコン付きの白ボタンで視認性を上げる
+  const driveBtnHtml = f.drive_url ? `
+      <a href="${f.drive_url}" target="_blank" rel="noopener" title="Drive で開く" style="display:inline-flex;align-items:center;gap:6px;background:#fff;color:var(--text);text-decoration:none;font-size:11.5px;font-weight:700;padding:4px 12px;border:0.5px solid var(--border);border-radius:7px;box-shadow:0 1px 3px rgba(15,23,42,0.1);white-space:nowrap;flex-shrink:0"><svg width="13" height="12" viewBox="0 0 87.3 78" aria-hidden="true"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>Drive</a>` : '';
   return `
   <div ${prefetchAttrs} style="background:var(--white);border:0.5px solid ${isLatest ? 'var(--em)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;overflow:hidden">
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border);flex-wrap:wrap">
-      <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}</span>
-      <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name||'')}">${esc(f.generated_name||'')}</span>
-      ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
-      ${f.uploaded_at ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>` : ''}
-      ${fsBadge}
-      ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" rel="noopener" style="color:var(--em-dark);text-decoration:none;font-size:11px;padding:2px 8px;border:0.5px solid var(--em);border-radius:5px;white-space:nowrap;flex-shrink:0">↗ Drive</a>` : ''}
-    </div>
-    <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
-      ${hideCheckBtn ? `
-      <button onclick="${esc(checkBtnOnclick)}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
-        📋 ${verLabel}を確認・コメントを見る
-      </button>` : `
-      <button onclick="${esc(checkBtnOnclick)}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
-        ${checkBtnLabel}
-      </button>`}
+    <div style="display:flex;align-items:stretch">
+      ${thumbHtml}
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:${isLatest ? 'rgba(62,207,202,0.06)' : 'transparent'};border-bottom:0.5px solid var(--border);flex-wrap:wrap;flex:1">
+          <span style="font-size:12px;font-weight:700;color:${isLatest ? 'var(--em-dark)' : 'var(--text-muted)'};white-space:nowrap;flex-shrink:0">${verLabel}</span>
+          <span style="font-family:monospace;font-size:11px;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.generated_name||'')}">${esc(f.generated_name||'')}</span>
+          ${f.width && f.height ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${f.width}×${f.height}</span>` : ''}
+          ${f.uploaded_at ? `<span style="color:var(--text-muted);font-size:11px;white-space:nowrap">${new Date(f.uploaded_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>` : ''}
+          ${fsBadge}
+          ${driveBtnHtml}
+        </div>
+        <div style="padding:10px 14px;background:${hideCheckBtn ? 'rgba(99,102,241,0.04)' : canPreview ? 'rgba(62,207,202,0.04)' : 'rgba(99,102,241,0.04)'}">
+          ${hideCheckBtn ? `
+          <button onclick="${esc(checkBtnOnclick)}" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;box-shadow:0 3px 12px rgba(99,102,241,0.4);border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+            📋 ${verLabel}を確認・コメントを見る
+          </button>` : `
+          <button onclick="${esc(checkBtnOnclick)}" style="${checkBtnStyle}border-radius:10px;padding:10px 0;width:100%;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity .15s" onmouseenter="this.style.opacity='.85'" onmouseleave="this.style.opacity='1'">
+            ${checkBtnLabel}
+          </button>`}
+        </div>
+      </div>
     </div>
     ${showUndoBtn && currentCreativeDetail?.id ? _cdRenderUndoUploadBtn(currentCreativeDetail.id, f, undoVer != null ? undoVer : f.version) : ''}
   </div>`;
