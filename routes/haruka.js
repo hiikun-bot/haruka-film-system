@@ -6689,16 +6689,21 @@ router.get('/work-hours', requireAuth, async (req, res) => {
 // 行追加ドロップダウン用: 全案件（非表示を除く）を返す。
 // 秘書のサポート先はひーくん（案件なし）以外にも「ひげごろーさん支援」等の案件があるため、
 // 時間制 line の有無で絞らない（ユーザー指示 2026-07-03）。
-// 時間制 line（pricing_type='hourly'）がある案件はその単価を付与し、無い案件は
+// 時間制 line（pricing_type='hourly'）がある案件は has_hourly=true を付与し、無い案件は
 // hourly_rate=null で返す（POST 側で本人の既定時給にフォールバックして計算）。
+// 単価プライバシー（ユーザー指示 2026-07-05: 予算が見えるのは本人と admin のみ / #934 と同方針）:
+// - hourly_rate（支払時給）は admin 実効ロール、または「自分に適用される案件」
+//   （P/D 担当 or 時給行の支払先が自分 = 自分の単価）のときだけ値を返し、それ以外は null
+// - client_hourly_rate（請求時給）は admin 実効ロールのみ（フロント未使用のため実質除去）
 router.get('/work-hours/projects', requireAuth, async (req, res) => {
-  const [projRes, lcRes] = await Promise.all([
+  const [projRes, lcRes, isAdmin] = await Promise.all([
     supabase.from('projects')
       .select('id, name, is_hidden, producer_id, director_id, clients(name)')
       .or('is_hidden.is.null,is_hidden.eq.false'),
     supabase.from('project_estimate_line_costs')
       .select('id, unit_price, pricing_type, user_id, line:project_estimate_lines(id, client_unit_price, project_id)')
       .eq('pricing_type', 'hourly'),
+    whHasAnyEffectiveRole(req, ['admin']),
   ]);
   if (projRes.error) return res.status(500).json({ error: projRes.error.message });
   if (lcRes.error) console.warn('[work-hours/projects] hourly costs load failed:', lcRes.error.message);
@@ -6716,19 +6721,25 @@ router.get('/work-hours/projects', requireAuth, async (req, res) => {
     // 支払先メンバー指定つきの時給行: フロントの「新規行の案件初期値」判定に使う
     if (lc.user_id) hourlyByProject.get(pid).hourly_user_ids.push(lc.user_id);
   }
-  const list = (projRes.data || []).map(p => ({
-    project_id: p.id,
-    name: p.name,
-    client_name: p.clients?.name || '',
-    producer_id: p.producer_id || null,
-    director_id: p.director_id || null,
-    hourly_rate: hourlyByProject.get(p.id)?.hourly_rate || null,
-    client_hourly_rate: hourlyByProject.get(p.id)?.client_hourly_rate || null,
-    hourly_user_ids: hourlyByProject.get(p.id)?.hourly_user_ids || [],
-  }));
+  const list = (projRes.data || []).map(p => {
+    const h = hourlyByProject.get(p.id) || null;
+    const mine = p.producer_id === req.user.id || p.director_id === req.user.id
+      || (h?.hourly_user_ids || []).includes(req.user.id);
+    return {
+      project_id: p.id,
+      name: p.name,
+      client_name: p.clients?.name || '',
+      producer_id: p.producer_id || null,
+      director_id: p.director_id || null,
+      has_hourly: !!h?.hourly_rate,
+      hourly_rate: (isAdmin || mine) ? (h?.hourly_rate || null) : null,
+      client_hourly_rate: isAdmin ? (h?.client_hourly_rate || null) : null,
+      hourly_user_ids: h?.hourly_user_ids || [],
+    };
+  });
   // 時間単価つきの案件を先頭に、それぞれ名前順
   list.sort((a, b) =>
-    (a.hourly_rate ? 0 : 1) - (b.hourly_rate ? 0 : 1)
+    (a.has_hourly ? 0 : 1) - (b.has_hourly ? 0 : 1)
     || (a.name || '').localeCompare(b.name || '', 'ja'));
   res.json(list);
 });
