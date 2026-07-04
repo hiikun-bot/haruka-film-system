@@ -22087,6 +22087,9 @@ function whRenderMemberPicker() {
       title: 'メンバーを切替',
       placeholder: 'メンバーを選択',
       itemNote: whMemberNote,
+      // 作業時間報告は秘書の時給精算が主用途のため、開いた瞬間は秘書で絞り込む
+      // （ユーザー指示 2026-07-05。「全て」やロールchipで他ロールにも切替可）
+      defaultRoles: ['secretary'],
       onChange: (v) => whOnMemberChange(v || ''),
     });
     if (trigger) trigger.value = selected;
