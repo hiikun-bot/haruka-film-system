@@ -338,6 +338,21 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
   return { slackBody, cwBody };
 }
 
+// クライアント指摘コメントを「①…\n②…」の番号付きリストに整形する。
+// 行頭に既に番号や箇条書き記号（①〜⑳ / 1. / 1) / ・ / - / * / ●）が付いている場合は
+// 書き手の整形を尊重してそのまま返す（空行だけ除去）。
+function formatClientFixList(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const hasOwnNumbering = lines.some(l => /^([①-⑳]|[0-9０-９]+[.)．）]|[・\-*●])/.test(l));
+  if (hasOwnNumbering) return lines.join('\n');
+  const CIRCLED = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳'];
+  return lines.map((l, i) => `${CIRCLED[i] || `(${i + 1})`}${l}`).join('\n');
+}
+
 // =============== Status transition logic ===============
 
 // 関係者を解決して通知を送る
@@ -350,6 +365,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const { data: detail, error: detailErr } = await supabase.from('creatives')
     .select(`
       id, file_name, memo, team_id, client_review_url,
+      client_comment, editor_comment,
       project_id,
       teams(id, director_id, producer_id),
       projects(id, name, producer_id, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)),
@@ -867,32 +883,68 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       // クライアント確認版URL: lib/drive-share.js が最新版で自動更新済み（バグ #97cac31d）。
       // 未設定時はプレースホルダ行を出して送信前に手動補完してもらう。
       const reviewUrl = (detail.client_review_url && String(detail.client_review_url).trim()) || null;
-      const slackUrlLine = reviewUrl
-        ? `> ${reviewUrl}`
-        : '> （URL未設定。確認版のシェアリンクを下に追記してください）';
-      const cwUrlLine2 = reviewUrl
-        ? reviewUrl
-        : '（URL未設定。確認版のシェアリンクを下に追記してください）';
+
+      // 新規提出か「クライアント指摘 → 修正後の再提出」かでメッセージ案を出し分ける。
+      //   修正版判定: creatives.client_comment に指摘が残っている
+      //               （クライアント指摘はこの列にしか書かれないため）
+      //               または直前ステータスが「クライアントチェック後修正」。
+      //   指摘本文は creatives.client_comment を優先し、空なら直近の
+      //   creative_version_history (round_stage='cl_check') snapshot にフォールバック。
+      let fixSource = (detail.client_comment && String(detail.client_comment).trim()) || null;
+      const isRevision = !!fixSource || oldStatus === 'クライアントチェック後修正';
+      if (isRevision && !fixSource) {
+        try {
+          const { data: clSnap } = await supabase
+            .from('creative_version_history')
+            .select('client_comment')
+            .eq('creative_id', detail.id)
+            .eq('round_stage', 'cl_check')
+            .order('version_num', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          fixSource = (clSnap?.client_comment && String(clSnap.client_comment).trim()) || null;
+        } catch (_) { /* snapshot 未取得でも修正内容ブロック抜きで続行 */ }
+      }
+      const fixList = isRevision ? formatClientFixList(fixSource) : null;
+      const creatorComment = (detail.editor_comment && String(detail.editor_comment).trim()) || null;
+
+      // メッセージ案本体（Slack は引用「> 」付き、Chatwork は素のまま同文を使う）
+      const msgLines = [
+        'いつもお世話になっております。',
+        '',
+        `🔴${clientFileName}`,
+        '',
+      ];
+      if (isRevision) {
+        msgLines.push('🔵修正内容');
+        msgLines.push(...(fixList ? fixList.split('\n') : ['（指摘コメントが未登録です。修正点をここに記入してください）']));
+        msgLines.push('');
+      }
+      msgLines.push('🔵ダウンロードパス');
+      msgLines.push(reviewUrl || '（URL未設定。確認版のシェアリンクをここに追記してください）');
+      msgLines.push('');
+      msgLines.push('🟠製作者のコメント');
+      msgLines.push(...(creatorComment ? creatorComment.split('\n') : ['（未入力。必要に応じて追記、不要なら削除してください）']));
+      msgLines.push('');
+      msgLines.push('ご確認のほどよろしくお願いいたします。');
+
+      const headerLabel = isRevision
+        ? '✅ クライアント確認に進めました（修正版）'
+        : '✅ クライアント確認に進めました';
       const slackTpl =
-`✅ クライアント確認に進めました
+`${headerLabel}
 ファイル: ${clientSlackName}
 
 📝 クライアントへ送るメッセージ案（コピペして調整してください）:
 
-> 〇〇様、いつもお世話になっております。
-> 「${clientFileName}」のクライアント確認版を共有いたします。
-${slackUrlLine}
-> ご確認のほどよろしくお願いいたします。
+${msgLines.map(l => (l ? `> ${l}` : '>')).join('\n')}
 
 ⚠️ 送信前に必ず内容を確認してください。`;
       const cwTpl =
-`[info][title]✅ クライアント確認に進めました[/title]ファイル: ${clientFileName}${cwUrlLine}
+`[info][title]${headerLabel}[/title]ファイル: ${clientFileName}${cwUrlLine}
 
 クライアントへ送るメッセージ案:
-〇〇様、いつもお世話になっております。
-「${clientFileName}」のクライアント確認版を共有いたします。
-${cwUrlLine2}
-ご確認のほどよろしくお願いいたします。
+${msgLines.join('\n')}
 
 ※送信前に必ず内容を確認してください。[/info]`;
       await sendNotif(actor, slackTpl, cwTpl);
