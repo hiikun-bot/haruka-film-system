@@ -1006,6 +1006,92 @@ ${msgLines.join('\n')}
   }
 }
 
+// =============== 一括納品完了（月次消込）のダイジェスト通知 ===============
+// routes/haruka.js の POST /creatives/bulk-deliver から全件処理後に1回だけ呼ばれる。
+// 件数分 notifyCreativeStatusChange を発火すると Slack/通知ベルがスパム化するため、
+// 案件ごとの内訳をまとめた1通のダイジェストにする。
+//
+// 送信先:
+//   - Slack: system_settings.broadcast_slack_channel_url（全体連絡・リマインドと同じ経路）。
+//     未設定なら warn のみでスキップ。
+//   - in-app（通知ベル / notification_logs）: role が admin / secretary の active ユーザー
+//     （実行者本人は除外）。notification_type='bulk_delivered'（CHECK 制約なし・
+//     フロント notification-card.js は未知タイプを 🔔 でフォールバック表示する）。
+//
+// 失敗しても throw しない（呼び出し元の一括納品処理は成功扱いのまま）。
+//
+// @param {object} p
+// @param {{id: string|null, name?: string}|null} p.actor 実行者（id から full_name を解決）
+// @param {string} p.batchId 一括処理のバッチID（UUID）
+// @param {Array<{projectName: string, clientName: string|null, count: number}>} p.projects 案件別内訳
+// @param {number} p.total 納品完了にした合計件数
+// @param {string|null} p.deliveredAtLabel 納品完了日（JST の YYYY-MM-DD 表示用ラベル）
+async function notifyBulkDelivered({ actor, batchId, projects, total, deliveredAtLabel }) {
+  try {
+    const actorUser = actor?.id ? await loadUser(actor.id) : null;
+    const actorName = actor?.name || actorUser?.full_name || '(不明)';
+
+    const lines = [
+      `📦 一括納品完了（月次消込）: 合計 ${total} 件`,
+      `実行者: ${actorName}`,
+    ];
+    if (deliveredAtLabel) lines.push(`納品完了日: ${deliveredAtLabel}（JST）`);
+    for (const p of (projects || [])) {
+      const clientPart = p?.clientName ? `（${p.clientName}）` : '';
+      lines.push(`・${p?.projectName || '(案件不明)'}${clientPart}: ${p?.count || 0}件`);
+    }
+    if (batchId) lines.push(`batch: ${batchId}`);
+    const text = lines.join('\n');
+
+    // 1) Slack: 全体連絡チャンネル（broadcast_slack_channel_url）
+    try {
+      const { data: setting } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'broadcast_slack_channel_url')
+        .maybeSingle();
+      const slackUrl = setting?.value || null;
+      if (slackUrl) {
+        const r = await sendSlackChannel(slackUrl, text);
+        if (!r.ok) console.warn('[notif/bulk-delivered] slack push failed:', r.reason);
+      } else {
+        console.warn('[notif/bulk-delivered] broadcast_slack_channel_url 未設定のため Slack 通知スキップ');
+      }
+    } catch (e) {
+      console.warn('[notif/bulk-delivered] slack block failed:', e?.message || e);
+    }
+
+    // 2) in-app（通知ベル）: admin / secretary の active ユーザー（実行者本人は除外）
+    try {
+      const { data: staff } = await supabase
+        .from('users')
+        .select('id, role, is_active')
+        .in('role', ['admin', 'secretary'])
+        .eq('is_active', true);
+      const recipients = (staff || []).filter(u => u && u.id && u.id !== (actor?.id || null));
+      const rows = recipients.map(u => ({
+        user_id: u.id,
+        notification_type: 'bulk_delivered',
+        title: `一括納品完了（${total}件）`,
+        body: (projects || []).map(p => `${p?.projectName || '(案件不明)'}: ${p?.count || 0}件`).join(' / '),
+        link_url: null,
+        meta: {
+          batch_id: batchId || null,
+          total,
+          delivered_at_label: deliveredAtLabel || null,
+          projects: projects || [],
+        },
+        sender_id: actor?.id || null,
+      }));
+      if (rows.length > 0) await createBulkNotifications(rows);
+    } catch (e) {
+      console.warn('[notif/bulk-delivered] in-app notify failed:', e?.message || e);
+    }
+  } catch (e) {
+    console.warn('[notif/bulk-delivered] failed:', e?.message || e);
+  }
+}
+
 // =============== 自動エラー通知 ===============
 // PR #188 の手動エラー報告（🐛 FAB）と並行する「自動」通知ヘルパ。
 // サーバ側 5xx / uncaughtException / unhandledRejection、
@@ -1272,6 +1358,7 @@ async function notifyAutoError(payload) {
 
 module.exports = {
   notifyCreativeStatusChange,
+  notifyBulkDelivered,
   parseSlackChannelUrl,
   sendSlackChannel,
   sendSlackChannelWithFile,
