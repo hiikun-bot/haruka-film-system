@@ -319,6 +319,31 @@
   cursor: zoom-in;
 }
 
+/* 複数画像（2〜4枚）— X/Twitter 風グリッド。各セルは cover で埋め、クリックで等倍ライトボックス */
+.tweet-image-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 420px;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+}
+.tweet-image-grid.n3,
+.tweet-image-grid.n4 { grid-template-rows: 1fr 1fr; }
+.tweet-image-grid.n3 img:first-child { grid-row: span 2; }
+.tweet-image-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  cursor: zoom-in;
+}
+
 /* つぶやき画像ライトボックス */
 .tweet-lightbox-overlay {
   position: fixed;
