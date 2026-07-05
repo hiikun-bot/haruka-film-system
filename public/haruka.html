@@ -3815,6 +3815,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
+    <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
     <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
@@ -3987,6 +3988,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
+    <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <button class="nav-drawer-btn" id="nav-drawer-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">🗂️ 素材広場</button>
@@ -7808,6 +7810,42 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="btn" id="wh-save-all-btn" onclick="whSaveAll()" style="font-size:13px;padding:8px 16px">💾 すべて保存</button>
       <span style="font-size:11px;color:var(--text-muted)">稼働分は開始・終了から自動計算されます（手修正可）。「💾 すべて保存」で未保存の行をまとめて保存できます。</span>
     </div>
+  </div>
+</div>
+
+<!-- 📦 一括納品完了（月次消込）— admin / secretary 専用（ADR 015: effectiveRole で判定） -->
+<div id="page-bulk-deliver" class="page">
+  <div style="max-width:1200px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <h2 style="margin:0;font-size:18px">📦 一括納品完了（月次消込）</h2>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="btn-sm" onclick="bdShiftMonth(-1)">◀ 前月</button>
+        <strong id="bd-month-label" style="font-size:14px;min-width:110px;text-align:center"></strong>
+        <button class="btn-sm" onclick="bdShiftMonth(1)">翌月 ▶</button>
+        <button class="btn-sm" onclick="bdGoThisMonth()" style="margin-left:4px">今月</button>
+      </div>
+      <span style="display:flex;align-items:center;gap:6px;margin-left:auto">
+        <span style="font-size:12px;color:var(--text-muted)">クライアント</span>
+        <select id="bd-client-filter" class="form-select" style="width:220px;padding:5px 8px;font-size:13px" onchange="bdOnClientChange(this.value)"><option value="">すべて</option></select>
+      </span>
+    </div>
+    <div id="bd-condition" style="font-size:12px;color:var(--text-muted);margin-bottom:10px"></div>
+    <div id="bd-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>
+    <div id="bd-list">
+      <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 📦 一括納品完了 実行モーダル（preview → 実行 → 結果） -->
+<div class="modal-overlay" id="modal-bulk-deliver" data-no-overlay-close="true" style="z-index:310">
+  <div class="modal-card" style="width:min(780px,95vw)">
+    <div class="modal-title">
+      <span id="bd-modal-title">📦 一括納品完了</span>
+      <button class="modal-close" onclick="bdCloseModal()">×</button>
+    </div>
+    <div id="bd-modal-body" style="min-height:120px"></div>
+    <div class="modal-footer" id="bd-modal-footer"></div>
   </div>
 </div>
 
@@ -14315,7 +14353,11 @@ function renderAlerts(rows) {
     const title = `${person}（${client}）${raw ? ' / ' + raw : ''}`;
     return `<span class="alert-chip" onclick="openCreativeDetail('${c.id}')" title="${esc(title)}">${esc(person)}<small>（${esc(client)}）</small>${shortName?` <small>${esc(shortName)}</small>`:''}</span>`;
   }).join('');
-  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ ${late.length}件：</span><span class="alert-names">${chips}</span><button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button></div>`;
+  // 一括納品完了（月次消込）への導線 — admin / secretary のみ（ADR 015: effectiveRole 判定）
+  const bdNavBtnHtml = (typeof bdIsAllowed === 'function' && bdIsAllowed())
+    ? `<button type="button" class="alert-filter-btn" style="margin-left:6px" onclick="bdGoToPage()">📦 一括納品完了へ</button>`
+    : '';
+  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ ${late.length}件：</span><span class="alert-names">${chips}</span><button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${bdNavBtnHtml}</div>`;
 }
 
 function setClient(btn, id) {
@@ -16550,6 +16592,8 @@ function setPreviewRole(role) {
   if (document.getElementById('page-knowledge')?.classList.contains('active') && typeof loadKnowledgePage === 'function') loadKnowledgePage();
   // 作業時間報告: 実効ロールで単価マスク・メンバー切替可否が変わるため、キャッシュ破棄＋表示中なら再取得（ADR 015 / ADR 028）
   if (typeof whOnViewAsChange === 'function') whOnViewAsChange();
+  // 一括納品（月次消込）: admin/secretary 限定ページ。VIEW AS 切替で前ロールの表示が残らないよう再描画（ADR 015）
+  if (document.getElementById('page-bulk-deliver')?.classList.contains('active') && typeof loadBulkDeliverPage === 'function') loadBulkDeliverPage();
   // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
   if (document.getElementById('page-analytics')?.classList.contains('active') && typeof initAnalyticsPage === 'function') {
     if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
@@ -16598,6 +16642,12 @@ function applyRoleBasedUI() {
   if (materialSquareNav) materialSquareNav.style.display = canMaterialSquare ? '' : 'none';
   const drawerMaterialSquare = document.getElementById('nav-drawer-material-square');
   if (drawerMaterialSquare) drawerMaterialSquare.style.display = canMaterialSquare ? '' : 'none';
+  // 一括納品（月次消込）ナビ — admin / secretary のみ（ADR 015: effectiveRole 判定。VIEW AS 切替に追従）
+  const canBulkDeliver = (typeof bdIsAllowed === 'function') && bdIsAllowed();
+  const bulkDeliverNav = document.getElementById('nav-bulk-deliver');
+  if (bulkDeliverNav) bulkDeliverNav.style.display = canBulkDeliver ? '' : 'none';
+  const drawerBulkDeliver = document.getElementById('nav-drawer-bulk-deliver');
+  if (drawerBulkDeliver) drawerBulkDeliver.style.display = canBulkDeliver ? '' : 'none';
 
   // 分析・集計ナビ
   // - analytics.view (経営系・全集計): admin / secretary のみ
@@ -21817,6 +21867,7 @@ function showPage(name, btn) {
   if(name==='analytics') initAnalyticsPage();
   if(name==='tweets')   loadTweetsPage();
   if(name==='work-hours') loadWorkHoursPage();
+  if(name==='bulk-deliver') loadBulkDeliverPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -21832,6 +21883,526 @@ function openNavDrawer() {
 function closeNavDrawer() {
   document.getElementById('nav-drawer').classList.remove('open');
   document.body.style.overflow = '';
+}
+
+// ==================== 📦 一括納品完了（月次消込） ====================
+//
+// 月次でクリエイティブの納品消込を行う admin / secretary 専用ページ。
+// - データ取得は既存一覧 API（GET /creatives）を再利用（base64 列は元々 select に含まれない）
+// - 「最終締切 <= 選択月末 かつ 未納品」をフロントで絞り込み、案件単位にグループ化
+// - 実行は POST /creatives/bulk-deliver-preview → POST /creatives/bulk-deliver の2段階
+//   （preview の updated_at を expected_updated_at として渡し、競合はサーバー側で skip）
+// - 権限判定は ADR 015 準拠: effectiveRole() のみ使用（currentUser.role 直書き禁止）
+
+let _bdYear = null, _bdMonth = null;
+let _bdClientId = '';            // '' = すべて
+let _bdRows = [];                // 未納品クリエイティブ全件（include_done なしの一覧 API）
+let _bdDeliveredLight = [];      // 納品済（fields=light・消込済みカード導出用）
+let _bdGroups = new Map();       // 直近 render 時の案件グループ（pid -> group）
+let _bdExpanded = new Set();     // 展開中の案件 id
+let _bdChecked = new Set();      // チェック中のクリエイティブ id
+let _bdCheckInit = new Set();    // 初期チェック状態を適用済みのクリエイティブ id
+let _bdLoadSeq = 0;              // 古いレスポンス破棄用
+let _bdLoaded = false;
+let _bdPreview = null;           // { pid, label, items } — preview API の結果
+let _bdExecuting = false;        // 二重送信防止
+let _bdDidExecute = false;       // 実行後にモーダルを閉じたらページ再読込
+
+// 制作途中ステータス（初期チェック OFF ＋ ⚠️ バッジ）。_CV_STATUS_LIST と同期。
+const _BD_WIP_STATUSES = new Set(['未着手','制作中（初稿提出前）','台本制作','素材・ナレ作成','編集']);
+
+function bdIsAllowed() {
+  return ['admin', 'secretary'].includes(effectiveRole());
+}
+
+function bdTodayJstStr() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD
+}
+// 月末日の日付文字列。月の日数はカレンダー演算のみで TZ に依存しない。
+// 比較は既存の _cvAtMidnight / _cvDayDiff（JST ズレ対策済み）に統一する。
+function bdMonthEndStr(y, m) {
+  const last = new Date(y, m, 0).getDate();
+  return `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+}
+function bdMonthStartStr(y, m) {
+  return `${y}-${String(m).padStart(2, '0')}-01`;
+}
+
+// 納期遅れバナー（renderAlerts）からの遷移用
+function bdGoToPage() {
+  const navBtn = document.querySelector('.nav-btn[data-page="bulk-deliver"]')
+              || document.querySelector('.nav-drawer-btn[data-page="bulk-deliver"]');
+  showPage('bulk-deliver', navBtn || null);
+}
+
+function loadBulkDeliverPage() {
+  const list = document.getElementById('bd-list');
+  if (!bdIsAllowed()) {
+    // VIEW AS 切替時に前ロールの表示が残らないよう明示的にクリア（既知事故対策）
+    const sum = document.getElementById('bd-summary'); if (sum) sum.innerHTML = '';
+    const cond = document.getElementById('bd-condition'); if (cond) cond.textContent = '';
+    const lbl = document.getElementById('bd-month-label'); if (lbl) lbl.textContent = '';
+    if (list) list.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">このページは管理者・秘書のみ利用できます</div>';
+    return;
+  }
+  if (!_bdYear) {
+    const t = bdTodayJstStr();
+    _bdYear = parseInt(t.slice(0, 4), 10);
+    _bdMonth = parseInt(t.slice(5, 7), 10);
+  }
+  bdRenderClientFilter();
+  bdFetch();
+}
+
+function bdShiftMonth(delta) {
+  if (!bdIsAllowed()) return;
+  _bdMonth += delta;
+  if (_bdMonth < 1) { _bdMonth = 12; _bdYear--; }
+  if (_bdMonth > 12) { _bdMonth = 1; _bdYear++; }
+  bdRender();
+}
+function bdGoThisMonth() {
+  if (!bdIsAllowed()) return;
+  const t = bdTodayJstStr();
+  _bdYear = parseInt(t.slice(0, 4), 10);
+  _bdMonth = parseInt(t.slice(5, 7), 10);
+  bdRender();
+}
+function bdOnClientChange(v) {
+  _bdClientId = v || '';
+  bdRender();
+}
+
+function bdRenderClientFilter() {
+  const sel = document.getElementById('bd-client-filter');
+  if (!sel) return;
+  const clients = (Array.isArray(allClients) ? allClients : [])
+    .slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  sel.innerHTML = '<option value="">すべて</option>' + clients.map(c =>
+    `<option value="${esc(c.id)}" ${c.id === _bdClientId ? 'selected' : ''}>${esc(c.name || '')}</option>`).join('');
+}
+
+// 一覧 API をページングしながら全件取得（limit=500 / 最大6ページ=3000件で安全停止）
+async function _bdFetchAll(extraParams) {
+  const out = [];
+  let offset = 0;
+  const limit = 500;
+  for (let page = 0; page < 6; page++) {
+    const params = new URLSearchParams(extraParams || {});
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    const res = await apiFetch(`${API}/creatives?${params.toString()}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json && json.error) ? json.error : `読み込み失敗 (HTTP ${res.status})`);
+    const data = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
+    out.push(...data);
+    const total = Array.isArray(json) ? json.length : (Number.isFinite(json?.total) ? json.total : data.length);
+    offset += data.length;
+    if (data.length === 0 || offset >= total) break;
+  }
+  return out;
+}
+
+async function bdFetch() {
+  const seq = ++_bdLoadSeq;
+  const list = document.getElementById('bd-list');
+  if (list && !_bdLoaded) list.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>';
+  try {
+    const [active, delivered] = await Promise.all([
+      // 未納品全件: 既存一覧 API そのまま（include_done なし = status neq 納品）。base64 列は含まれない
+      _bdFetchAll({}),
+      // 消込済みカード導出用: 納品済のみ・軽量 select（fields=light）
+      _bdFetchAll({ status: '納品', include_done: '1', fields: 'light' }),
+    ]);
+    if (seq !== _bdLoadSeq) return; // 古いレスポンスは破棄
+    _bdRows = active;
+    _bdDeliveredLight = delivered;
+    _bdLoaded = true;
+    bdInitChecks();
+    bdRender();
+  } catch (e) {
+    if (seq !== _bdLoadSeq) return;
+    if (list) list.innerHTML = `<div style="padding:32px;text-align:center;color:#B91C1C;font-size:13px">エラー: ${esc(e.message || '読み込みに失敗しました')}</div>`;
+  }
+}
+
+// 初期チェック状態: 制作途中ステータスは OFF、それ以外（チェック系・保留）は ON。
+// ユーザーが変更したチェックは再フェッチ後も維持する（_bdCheckInit で初期化済み id を記録）。
+function bdInitChecks() {
+  _bdRows.forEach(c => {
+    if (!c || !c.id) return;
+    if (c.status === '納品' || c.force_delivered) return;
+    if (_bdCheckInit.has(c.id)) return;
+    _bdCheckInit.add(c.id);
+    if (!_BD_WIP_STATUSES.has(c.status)) _bdChecked.add(c.id);
+  });
+}
+
+function _bdClientIdOf(c) {
+  return c?.projects?.clients?.id || c?.projects?.client_id || null;
+}
+function _bdProjectIdOf(c) {
+  return c?.projects?.id || c?.project_id || null;
+}
+function _bdAssigneeLabel(c) {
+  const list = (c.creative_assignments || []).filter(a => ['editor', 'designer'].includes(a.role) && a.users);
+  const users = list.length ? list : (c.creative_assignments || []).filter(a => a.users);
+  const names = users.map(a => NameDisplay.short(a.users)).filter(Boolean);
+  return names.length ? names.join('、') : '—';
+}
+
+function bdRender() {
+  if (!bdIsAllowed()) return;
+  const lbl = document.getElementById('bd-month-label');
+  if (lbl) lbl.textContent = `${_bdYear}年${_bdMonth}月`;
+  const monthEndStr = bdMonthEndStr(_bdYear, _bdMonth);
+  const monthStartStr = bdMonthStartStr(_bdYear, _bdMonth);
+  const cond = document.getElementById('bd-condition');
+  if (cond) cond.textContent = `抽出条件: 最終締切が ${monthEndStr} 以前 で 未納品（前月以前の残りも含む）`;
+  const list = document.getElementById('bd-list');
+  const sum = document.getElementById('bd-summary');
+  if (!list) return;
+  if (!_bdLoaded) return; // fetch 完了前（読み込み中表示のまま）
+
+  const monthEnd = _cvAtMidnight(monthEndStr);
+  const monthStart = _cvAtMidnight(monthStartStr);
+  const today = _cvAtMidnight(new Date());
+
+  // 抽出: 最終締切 <= 選択月末 かつ 未納品（force_delivered は納品扱いで除外）
+  const inScope = _bdRows.filter(c => {
+    if (!c.final_deadline) return false;
+    if (c.status === '納品' || c.force_delivered) return false;
+    if (_cvDayDiff(_cvAtMidnight(c.final_deadline), monthEnd) > 0) return false;
+    if (_bdClientId && _bdClientIdOf(c) !== _bdClientId) return false;
+    return true;
+  });
+
+  // 案件単位にグループ化
+  const groups = new Map();
+  inScope.forEach(c => {
+    const pid = _bdProjectIdOf(c) || 'none';
+    if (!groups.has(pid)) {
+      groups.set(pid, {
+        pid,
+        projectName: c.projects?.name || '案件未設定',
+        clientName: c.projects?.clients?.name || 'クライアント未設定',
+        rows: [],
+      });
+    }
+    groups.get(pid).rows.push(c);
+  });
+  groups.forEach(g => g.rows.sort((a, b) => String(a.final_deadline).localeCompare(String(b.final_deadline))));
+  _bdGroups = groups;
+
+  // 消込済みカード: 対象月内（月初〜月末）に最終締切のある納品済クリエイティブを持つ案件のうち、
+  // 抽出対象（未納品）が 0 件のもの。「状態から導出」なので実行履歴には依存しない。
+  const inMonth = (c) => {
+    if (!c.final_deadline) return false;
+    const d = _cvAtMidnight(c.final_deadline);
+    return _cvDayDiff(d, monthStart) >= 0 && _cvDayDiff(d, monthEnd) <= 0;
+  };
+  const doneProjects = new Map(); // pid -> { projectName, clientName, count }
+  const addDone = (c) => {
+    const pid = _bdProjectIdOf(c) || 'none';
+    if (_bdClientId && _bdClientIdOf(c) !== _bdClientId) return;
+    if (!doneProjects.has(pid)) {
+      doneProjects.set(pid, {
+        pid,
+        projectName: c.projects?.name || '案件未設定',
+        clientName: c.projects?.clients?.name || 'クライアント未設定',
+        count: 0,
+      });
+    }
+    doneProjects.get(pid).count++;
+  };
+  _bdDeliveredLight.forEach(c => { if (inMonth(c)) addDone(c); });
+  // force_delivered（納品完了モード登録）は未納品 fetch 側に入ってくるが納品扱い
+  _bdRows.forEach(c => { if (c.force_delivered && c.status !== '納品' && inMonth(c)) addDone(c); });
+  const doneOnly = [...doneProjects.values()].filter(d => !groups.has(d.pid));
+
+  // サマリー
+  const totalProjects = groups.size + doneOnly.length;
+  const lateTotal = inScope.filter(c => _cvDayDiff(_cvAtMidnight(c.final_deadline), today) < 0).length;
+  if (sum) {
+    const chip = (label, value, color) =>
+      `<div style="background:#fff;border:0.5px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--text-muted)">${esc(label)} <strong style="font-size:15px;color:${color};margin-left:4px">${value}</strong></div>`;
+    sum.innerHTML =
+      chip('対象案件', `${totalProjects}件`, 'var(--text)') +
+      chip('✅ 消込済み', `${doneOnly.length}件`, '#15803D') +
+      chip('⏳ 残り', `${groups.size}件`, '#B45309') +
+      chip('未納品クリエイティブ', `${inScope.length}件`, '#A32D2D') +
+      (lateTotal ? chip('うち遅延', `${lateTotal}件`, '#A32D2D') : '');
+  }
+
+  if (!totalProjects) {
+    list.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">対象月に該当するクリエイティブはありません 🎉</div>';
+    return;
+  }
+
+  const sortJa = (a, b) => (a.clientName || '').localeCompare(b.clientName || '', 'ja')
+    || (a.projectName || '').localeCompare(b.projectName || '', 'ja');
+  const activeCards = [...groups.values()].sort(sortJa).map(g => bdRenderProjectCard(g, today)).join('');
+  const doneCards = doneOnly.sort(sortJa).map(d => `
+    <div style="background:#F0FAF4;border:0.5px solid var(--border);border-radius:10px;margin-bottom:10px;padding:12px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;opacity:.9">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;color:var(--text-muted)">${esc(d.clientName)}</div>
+        <strong style="font-size:14px">${esc(d.projectName)}</strong>
+      </div>
+      <span style="font-size:13px;color:#15803D;font-weight:600">✅ 消込済み（対象月の納品 ${d.count}件）</span>
+    </div>`).join('');
+  list.innerHTML = activeCards + doneCards;
+}
+
+function bdRenderProjectCard(g, today) {
+  const open = _bdExpanded.has(g.pid);
+  const lateCount = g.rows.filter(c => _cvDayDiff(_cvAtMidnight(c.final_deadline), today) < 0).length;
+  const checkedCount = g.rows.filter(c => _bdChecked.has(c.id)).length;
+  let body = '';
+  if (open) {
+    const rowsHtml = g.rows.map(c => {
+      const wip = _BD_WIP_STATUSES.has(c.status);
+      const lateDays = -_cvDayDiff(_cvAtMidnight(c.final_deadline), today);
+      return `<tr style="border-top:0.5px solid var(--border-light)">
+        <td style="padding:7px 10px;width:34px;text-align:center"><input type="checkbox" ${_bdChecked.has(c.id) ? 'checked' : ''} onchange="bdToggleCheck('${c.id}', this.checked)" style="width:16px;height:16px;cursor:pointer"></td>
+        <td style="padding:7px 10px;font-size:13px;word-break:break-all">${esc(c.file_name || '(名称未設定)')}${wip ? ' <span title="制作途中のステータスです。納品完了にする場合はチェックを入れてください" style="font-size:10px;padding:2px 6px;border-radius:6px;background:#FFF7E6;border:0.5px solid #F0B429;color:#92600A;font-weight:600;white-space:nowrap">⚠️ 制作途中</span>' : ''}</td>
+        <td style="padding:7px 10px;font-size:12px;white-space:nowrap">${esc(_bdAssigneeLabel(c))}</td>
+        <td style="padding:7px 10px;white-space:nowrap"><span class="status-chip ${statusClass(c.status)}">${esc(c.status || '')}</span></td>
+        <td style="padding:7px 10px;font-size:12px;white-space:nowrap">${esc(c.final_deadline || '')}${lateDays > 0 ? ` <span style="color:#A32D2D;font-weight:600">遅延${lateDays}日</span>` : ''}</td>
+      </tr>`;
+    }).join('');
+    body = `
+    <div style="border-top:0.5px solid var(--border);overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;min-width:560px">
+        <thead><tr style="font-size:11px;color:var(--text-muted)">
+          <th style="padding:6px 10px"></th>
+          <th style="padding:6px 10px;text-align:left">名前</th>
+          <th style="padding:6px 10px;text-align:left">担当</th>
+          <th style="padding:6px 10px;text-align:left">ステータス</th>
+          <th style="padding:6px 10px;text-align:left">最終締切</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:0.5px solid var(--border-light);flex-wrap:wrap">
+      <button type="button" class="btn-sm" onclick="bdSelectAll('${g.pid}', true)">全選択</button>
+      <button type="button" class="btn-sm" onclick="bdSelectAll('${g.pid}', false)">全解除</button>
+      <button type="button" class="btn-primary" style="margin-left:auto;font-size:13px;padding:8px 16px;${checkedCount ? '' : 'opacity:.5;cursor:not-allowed'}" ${checkedCount ? '' : 'disabled'} onclick="bdOpenPreview('${g.pid}')">この案件の${checkedCount}件を納品完了</button>
+    </div>`;
+  }
+  return `
+  <div style="background:#fff;border:0.5px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;flex-wrap:wrap" onclick="bdToggleProject('${g.pid}')">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:11px;color:var(--text-muted)">${esc(g.clientName)}</div>
+        <strong style="font-size:14px">${esc(g.projectName)}</strong>
+      </div>
+      <span style="font-size:12px;color:#A32D2D;font-weight:600;white-space:nowrap">未納品 ${g.rows.length}件${lateCount ? `・うち遅延 ${lateCount}件` : ''}</span>
+      <button type="button" class="btn-sm" onclick="event.stopPropagation();bdToggleProject('${g.pid}')">${open ? '閉じる ▲' : '開く ▼'}</button>
+    </div>
+    ${body}
+  </div>`;
+}
+
+function bdToggleProject(pid) {
+  if (_bdExpanded.has(pid)) _bdExpanded.delete(pid); else _bdExpanded.add(pid);
+  bdRender();
+}
+function bdToggleCheck(id, on) {
+  if (on) _bdChecked.add(id); else _bdChecked.delete(id);
+  bdRender(); // ボタンの選択件数を更新
+}
+function bdSelectAll(pid, on) {
+  const g = _bdGroups.get(pid);
+  if (!g) return;
+  g.rows.forEach(c => { if (on) _bdChecked.add(c.id); else _bdChecked.delete(c.id); });
+  bdRender();
+}
+
+// ---------- 実行フロー（案件単位）: preview → 確認モーダル → 実行 → 結果 ----------
+
+async function bdOpenPreview(pid) {
+  if (_bdExecuting) return;
+  const g = _bdGroups.get(pid);
+  if (!g) return;
+  const targets = g.rows.filter(c => _bdChecked.has(c.id));
+  if (!targets.length) return;
+  if (targets.length > 300) {
+    showToast('一度に実行できるのは300件までです。選択を減らしてください', 'warn');
+    return;
+  }
+  _bdPreview = null;
+  _bdDidExecute = false;
+  const label = `${g.clientName} / ${g.projectName}`;
+  const title = document.getElementById('bd-modal-title');
+  if (title) title.textContent = `📦 一括納品完了 — ${label}`;
+  const body = document.getElementById('bd-modal-body');
+  const footer = document.getElementById('bd-modal-footer');
+  if (body) body.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">対象を確認しています…</div>';
+  if (footer) footer.innerHTML = '<button class="btn" onclick="bdCloseModal()">キャンセル</button>';
+  openModal('modal-bulk-deliver');
+  try {
+    const res = await apiFetch(`${API}/creatives/bulk-deliver-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ creative_ids: targets.map(t => t.id) }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json && json.error) ? json.error : `HTTP ${res.status}`);
+    _bdPreview = { pid, label, items: Array.isArray(json?.items) ? json.items : [] };
+    bdRenderPreviewModal();
+  } catch (e) {
+    if (body) body.innerHTML = `<div style="padding:24px;text-align:center;color:#B91C1C;font-size:13px">プレビューの取得に失敗しました: ${esc(e.message || '')}</div>`;
+    if (footer) footer.innerHTML = '<button class="btn" onclick="bdCloseModal()">閉じる</button>';
+  }
+}
+
+function bdRenderPreviewModal() {
+  if (!_bdPreview) return;
+  const body = document.getElementById('bd-modal-body');
+  const footer = document.getElementById('bd-modal-footer');
+  const items = _bdPreview.items;
+  const ok = items.filter(i => !i.blocked_reason);
+  const ng = items.filter(i => i.blocked_reason);
+  const monthEndStr = bdMonthEndStr(_bdYear, _bdMonth);
+  const todayStr = bdTodayJstStr();
+  const rows = items.map(i => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:0.5px solid var(--border-light);font-size:12px">
+      <span style="flex-shrink:0">${i.blocked_reason ? '⚠️' : '✅'}</span>
+      <span style="flex:1;min-width:120px;word-break:break-all">${esc(i.name || '(名称未設定)')}</span>
+      <span class="status-chip ${statusClass(i.status)}" style="flex-shrink:0">${esc(i.status || '')}</span>
+      ${i.blocked_reason ? `<span style="color:#A32D2D;flex-shrink:0">${esc(i.blocked_reason)}</span>` : ''}
+    </div>`).join('');
+  if (body) body.innerHTML = `
+    <div style="font-size:13px;margin-bottom:8px">
+      <strong style="color:#15803D">✅ 実行可能 ${ok.length}件</strong>
+      <span style="margin:0 6px;color:var(--text-muted)">／</span>
+      <strong style="color:#B45309">⚠️ スキップ ${ng.length}件</strong>
+    </div>
+    <div style="max-height:240px;overflow:auto;border:0.5px solid var(--border);border-radius:8px;margin-bottom:14px">${rows || '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:12px">対象がありません</div>'}</div>
+    <div style="margin-bottom:12px">
+      <label class="form-label">納品日</label>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:13px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="bd-dt" value="monthend" checked onchange="bdOnDateModeChange()"> 対象月の月末（${monthEndStr}）</label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="bd-dt" value="today" onchange="bdOnDateModeChange()"> 実行日（今日 ${todayStr}）</label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="bd-dt" value="custom" onchange="bdOnDateModeChange()"> 日付指定</label>
+        <input type="date" id="bd-custom-date" class="form-input" value="${monthEndStr}" disabled style="width:160px;padding:5px 8px;font-size:13px">
+      </div>
+    </div>
+    <div style="margin-bottom:4px">
+      <label class="form-label">理由（必須）</label>
+      <input type="text" id="bd-reason" class="form-input" value="${_bdYear}年${_bdMonth}月分 月次消込" oninput="bdUpdateExecBtn()">
+    </div>`;
+  if (footer) footer.innerHTML = `
+    <button class="btn" id="bd-cancel-btn" onclick="bdCloseModal()">キャンセル</button>
+    <button class="btn-primary" id="bd-exec-btn" onclick="bdExecute()">${ok.length}件を納品完了にする</button>`;
+  bdUpdateExecBtn();
+}
+
+function bdOnDateModeChange() {
+  const mode = document.querySelector('input[name="bd-dt"]:checked')?.value || 'monthend';
+  const input = document.getElementById('bd-custom-date');
+  if (input) input.disabled = (mode !== 'custom');
+}
+
+function bdUpdateExecBtn() {
+  const btn = document.getElementById('bd-exec-btn');
+  if (!btn || !_bdPreview) return;
+  const okCount = _bdPreview.items.filter(i => !i.blocked_reason).length;
+  const reason = (document.getElementById('bd-reason')?.value || '').trim();
+  const disabled = _bdExecuting || !okCount || !reason;
+  btn.disabled = disabled;
+  btn.style.opacity = disabled ? '.5' : '';
+  btn.style.cursor = disabled ? 'not-allowed' : '';
+}
+
+async function bdExecute() {
+  if (_bdExecuting || !_bdPreview) return;
+  const ok = _bdPreview.items.filter(i => !i.blocked_reason);
+  const reason = (document.getElementById('bd-reason')?.value || '').trim();
+  if (!reason) { showToast('理由を入力してください', 'warn'); return; }
+  if (!ok.length) return;
+  const mode = document.querySelector('input[name="bd-dt"]:checked')?.value || 'monthend';
+  let delivered_at = bdMonthEndStr(_bdYear, _bdMonth);
+  if (mode === 'today') delivered_at = bdTodayJstStr();
+  if (mode === 'custom') {
+    delivered_at = document.getElementById('bd-custom-date')?.value || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(delivered_at)) { showToast('納品日を指定してください', 'warn'); return; }
+  }
+  _bdExecuting = true;
+  const execBtn = document.getElementById('bd-exec-btn');
+  const cancelBtn = document.getElementById('bd-cancel-btn');
+  const prevLabel = execBtn ? execBtn.textContent : '';
+  if (execBtn) { execBtn.disabled = true; execBtn.style.opacity = '.5'; execBtn.textContent = '⏳ 実行中…'; }
+  if (cancelBtn) cancelBtn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/creatives/bulk-deliver`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: ok.map(i => ({ id: i.id, expected_updated_at: i.updated_at })),
+        delivered_at,
+        reason,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json && json.error) ? json.error : `HTTP ${res.status}`);
+    _bdDidExecute = true;
+    _bdExecuting = false;
+    bdRenderResultModal(json);
+  } catch (e) {
+    _bdExecuting = false;
+    showToast(`一括納品の実行に失敗しました: ${e.message || ''}`, 'error');
+    if (execBtn) { execBtn.textContent = prevLabel; }
+    if (cancelBtn) cancelBtn.disabled = false;
+    bdUpdateExecBtn();
+  }
+}
+
+function bdRenderResultModal(json) {
+  const body = document.getElementById('bd-modal-body');
+  const footer = document.getElementById('bd-modal-footer');
+  const results = Array.isArray(json?.results) ? json.results : [];
+  const nameById = new Map((_bdPreview?.items || []).map(i => [i.id, i.name]));
+  const BADGE = {
+    delivered: { label: '✅ 納品完了', bg: '#DCFCE7', bd: '#16A34A', fg: '#15803D' },
+    conflict:  { label: '⚠️ 競合スキップ', bg: '#FFF7E6', bd: '#F0B429', fg: '#92600A' },
+    skipped:   { label: '⏭ スキップ', bg: '#F1F5F9', bd: '#94A3B8', fg: '#475569' },
+    error:     { label: '❌ 失敗', bg: '#FDECEA', bd: '#EF5350', fg: '#B91C1C' },
+  };
+  const counts = { delivered: 0, conflict: 0, skipped: 0, error: 0 };
+  const rows = results.map(r => {
+    const b = BADGE[r.status] || BADGE.error;
+    if (counts[r.status] != null) counts[r.status]++; else counts.error++;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:0.5px solid var(--border-light);font-size:12px">
+      <span style="flex:1;min-width:120px;word-break:break-all">${esc(nameById.get(r.id) || r.id)}</span>
+      <span style="flex-shrink:0;font-size:11px;padding:2px 8px;border-radius:6px;background:${b.bg};border:0.5px solid ${b.bd};color:${b.fg};font-weight:600">${b.label}</span>
+      ${r.reason ? `<span style="color:var(--text-muted);flex-shrink:0">${esc(r.reason)}</span>` : ''}
+    </div>`;
+  }).join('');
+  if (body) body.innerHTML = `
+    <div style="font-size:13px;margin-bottom:8px">
+      <strong style="color:#15803D">✅ 成功 ${counts.delivered}件</strong>
+      <span style="margin:0 6px;color:var(--text-muted)">／</span>
+      <strong style="color:#B45309">⚠️ 競合スキップ ${counts.conflict}件</strong>
+      <span style="margin:0 6px;color:var(--text-muted)">／</span>
+      <strong style="color:#475569">⏭ スキップ ${counts.skipped}件</strong>
+      <span style="margin:0 6px;color:var(--text-muted)">／</span>
+      <strong style="color:#B91C1C">❌ 失敗 ${counts.error}件</strong>
+    </div>
+    <div style="max-height:280px;overflow:auto;border:0.5px solid var(--border);border-radius:8px">${rows || '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:12px">結果がありません</div>'}</div>
+    ${json?.batch_id ? `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">バッチID: ${esc(json.batch_id)}</div>` : ''}`;
+  if (footer) footer.innerHTML = '<button class="btn-primary" onclick="bdCloseModal()">閉じる</button>';
+  if (counts.delivered > 0) showToast(`${counts.delivered}件を納品完了にしました`, 'success');
+}
+
+function bdCloseModal() {
+  if (_bdExecuting) return; // 実行中は閉じさせない（二重送信・結果取りこぼし防止）
+  closeModal('modal-bulk-deliver');
+  _bdPreview = null;
+  if (_bdDidExecute) {
+    _bdDidExecute = false;
+    bdFetch(); // 実行後はページのデータを再読込（消込済みカードへの反映を含む）
+  }
 }
 
 // ==================== ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 ====================

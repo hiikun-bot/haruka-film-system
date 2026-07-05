@@ -8636,6 +8636,10 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 
   // 納品完了モード（途中工程をスキップして直接「納品」にする）
   // 必ず理由が必要。クリエイティブファイル未アップロードでも許可。
+  // ※ 相互参照: 一括納品完了（POST /creatives/bulk-deliver）は applyBulkDeliveredTransition() で
+  //   この納品副作用一式（status/is_payable/force_delivered系/delivered_at/ADR009スナップショット/
+  //   creative_status_transitions 記録/R2 evict/ball_holder 同期）を再現している。
+  //   ここ〜ADR 009 ブロックを変更したら applyBulkDeliveredTransition も必ず同期すること。
   if (force_delivered_reason !== undefined) {
     const reason = String(force_delivered_reason || '').trim();
     if (!reason) {
@@ -8701,6 +8705,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   //   「納品」以外 → 「納品」: now() をセット（この JST 月が支払いカウント月になる）
   //   「納品」→ 他ステータス: クリア（再納品時に再セット＝最後に納品完了になった時刻が正）
   // 同一リクエストに手動補正（delivered_at）が含まれる場合はそちらを優先する。
+  // ※ 相互参照: applyBulkDeliveredTransition()（一括納品）も同じ規則で delivered_at をセットする。
   if (
     updateData.status !== undefined &&
     beforeStatus !== updateData.status &&
@@ -9309,6 +9314,367 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   }
 
   res.json(data);
+});
+
+// ============================================================
+// 一括納品完了（月次消込）
+// ============================================================
+// 月末〜月初の消込作業で、選択した複数クリエイティブをまとめて「納品」に遷移させる。
+// PUT /creatives/:id の納品完了モード（force_delivered）と同じ副作用一式を
+// applyBulkDeliveredTransition() で再現する（ADR 026 / ADR 009 / ADR 011 補足）。
+//
+// 設計メモ（なぜ PUT から抽出せず専用関数にしたか）:
+//   PUT /creatives/:id の納品副作用は updateData の組み立て（8600番台〜）、
+//   手動 delivered_at との優先関係、schema-sync 未適用フォールバック、
+//   creative_status_transitions 記録（updateData 側コメントの優先など）に分散していて、
+//   共通化のための抽出は PUT のレスポンス形状・条件分岐を変えるリスクが高い。
+//   そのため「納品遷移時の副作用一式」を過不足なく再現する専用関数を新設し、
+//   PUT 側の該当箇所（force_delivered ブロック / ADR 026 ブロック）に相互参照コメントを付けた。
+//   PUT 側の納品副作用を変更したら本関数も必ず同期すること。
+
+// 納品済み扱いのステータス（evaluateCreativeEditEligibility 内の DELIVERED_STATUSES と同一定義）
+const BULK_DELIVERED_STATUSES = ['納品', '完納', '納品済'];
+
+// 一括納品の実効ロール認可: admin / secretary のみ。
+// ADR 015: getEffectiveRoleCodes(req) は X-View-As を「最高管理者のリクエストのみ」尊重するため、
+// 一般ユーザーがヘッダ偽装しても昇格できない（最高管理者が下位ロールをプレビュー中は正しく拒否される）。
+async function bulkDeliverAuthorized(req) {
+  const codes = await getEffectiveRoleCodes(req);
+  return (codes || []).includes('admin') || (codes || []).includes('secretary');
+}
+
+// 提出済/承認済（draft 以外）の請求書明細に紐付く creative_id 集合を返す。
+// POST /creatives/:id/admin-status の請求書紐付けチェックと同じ整合性ガード
+// （確定済み請求書に載っているクリエイティブのステータスを動かすと統計が壊れる）。
+// .in() の URL 長超過（PR #919 の教訓）を避けるため 100 件ずつチャンクする。
+async function fetchIssuedInvoiceCreativeIds(creativeIds) {
+  const issued = new Set();
+  for (let i = 0; i < creativeIds.length; i += 100) {
+    const chunk = creativeIds.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('invoice_items')
+      .select('creative_id, invoice:invoices(status)')
+      .in('creative_id', chunk);
+    if (error) {
+      // 取得失敗時はガードを効かせられないが、本処理（納品遷移）は止めない。
+      console.warn('[bulk-deliver] invoice_items select failed:', error.message);
+      continue;
+    }
+    (data || []).forEach(it => {
+      if (it.creative_id && it.invoice && it.invoice.status && it.invoice.status !== 'draft') {
+        issued.add(String(it.creative_id));
+      }
+    });
+  }
+  return issued;
+}
+
+// 納品遷移の副作用一式（PUT /creatives/:id の force_delivered 分岐＋ADR 026＋ADR 009＋
+// creative_status_transitions 記録＋R2 evict＋ball_holder 同期 を過不足なく再現）。
+// 前提: 呼び出し元で「未納品であること」を確認済み（beforeRow.status は納品系以外）。
+// 失敗時は throw（呼び出し元が { status:'error' } に変換する）。
+async function applyBulkDeliveredTransition({ creativeId, beforeRow, actorUserId, forceReason, deliveredAtIso }) {
+  const nowIso = new Date().toISOString();
+  const beforeStatus = beforeRow?.status ?? null;
+
+  // --- PUT の force_delivered 分岐と同一の更新列 ---
+  const updateData = {
+    updated_at: nowIso,
+    status: '納品',
+    is_payable: true,
+    force_delivered: true,
+    force_delivered_reason: forceReason,
+    force_delivered_at: nowIso,
+    force_delivered_by: actorUserId || null,
+    // ADR 026: 手動指定（deliveredAtIso）があれば優先、なければ now()（PUT と同じ優先規則）
+    delivered_at: deliveredAtIso || nowIso,
+  };
+
+  // --- ADR 009: 納品時点の案件 D/P スナップショット（PUT の ADR 009 スナップショットブロックと同一） ---
+  try {
+    const projectId = beforeRow?.project_id || null;
+    if (projectId) {
+      const { data: _snapProj } = await supabase
+        .from('projects').select('director_id, producer_id').eq('id', projectId).maybeSingle();
+      updateData.delivered_director_ids = _snapProj?.director_id ? [_snapProj.director_id] : null;
+      updateData.delivered_producer_ids = _snapProj?.producer_id ? [_snapProj.producer_id] : null;
+      updateData.delivered_snapshot_at = nowIso;
+    }
+  } catch (e) {
+    console.warn('[ADR009 snapshot][bulk-deliver] failed:', e?.message || e);
+  }
+
+  // --- 本体 UPDATE（schema-sync 未適用フォールバックも PUT の本体 UPDATE と同一） ---
+  let { data, error } = await supabase
+    .from('creatives')
+    .update(updateData)
+    .eq('id', creativeId)
+    .select()
+    .single();
+  if (error) {
+    const msg = error.message || '';
+    const isMissingNewCol = /comment_updated_at|wcheck_|delivered_/.test(msg);
+    if (isMissingNewCol) {
+      const {
+        delivered_at: _dat,
+        delivered_director_ids: _ddi, delivered_producer_ids: _dpi, delivered_snapshot_at: _dsa,
+        ...legacyUpdate
+      } = updateData;
+      ({ data, error } = await supabase
+        .from('creatives')
+        .update(legacyUpdate)
+        .eq('id', creativeId)
+        .select()
+        .single());
+    }
+  }
+  if (error) throw new Error(error.message);
+
+  // --- ADR 011 補足: creative_status_transitions への audit log（PUT の transitions 記録ブロックと同一形式） ---
+  // 一括納品はコメント同時送信が無いため、at_change 系は before 値をそのまま記録する。
+  try {
+    let versionAtChange = null;
+    try {
+      const { data: latestFileForCst } = await supabase
+        .from('creative_files')
+        .select('version')
+        .eq('creative_id', creativeId)
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      versionAtChange = latestFileForCst?.version ?? null;
+    } catch (_) { /* 取得失敗は null のまま */ }
+
+    const { error: cstErr } = await supabase
+      .from('creative_status_transitions')
+      .insert({
+        creative_id: creativeId,
+        from_status: beforeStatus,
+        to_status:   '納品',
+        changed_by:  actorUserId || null,
+        changed_at:  new Date().toISOString(),
+        director_comment_at_change: beforeRow?.director_comment ?? null,
+        client_comment_at_change:   beforeRow?.client_comment   ?? null,
+        editor_comment_at_change:   beforeRow?.editor_comment   ?? null,
+        version_at_change: versionAtChange,
+      });
+    if (cstErr) {
+      console.warn('[creative_status_transitions][bulk-deliver] insert failed:', cstErr.message);
+    }
+  } catch (cstBlockErr) {
+    console.warn('[creative_status_transitions][bulk-deliver] block failed:', cstBlockErr?.message || cstBlockErr);
+  }
+
+  // --- 納品遷移時: 再生用 R2 複製を即時排出（PUT の「納品時 evict」ブロックと同一・fire-and-forget） ---
+  try {
+    require('../lib/r2').evictCreativeR2Replicas(creativeId)
+      .catch(e => console.warn('[r2] 一括納品時 evict 失敗:', e.message));
+  } catch (e) { console.warn('[r2] evict トリガー失敗:', e.message); }
+
+  // --- ball_holder_id キャッシュ更新（status 変更のため・fire-and-forget） ---
+  syncBallHolderId(creativeId).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+
+  return data;
+}
+
+// POST /api/haruka/creatives/bulk-deliver-preview
+// 一括納品の対象候補について DB の現在状態と「納品遷移できるか」を返す（更新なし）。
+router.post('/creatives/bulk-deliver-preview', requireAuth, async (req, res) => {
+  if (!(await bulkDeliverAuthorized(req))) {
+    return res.status(403).json({ error: '一括納品完了は管理者・秘書のみ実行できます' });
+  }
+  const rawIds = req.body?.creative_ids;
+  if (!Array.isArray(rawIds) || rawIds.length < 1) {
+    return res.status(400).json({ error: 'creative_ids は1件以上指定してください' });
+  }
+  if (rawIds.length > 300) {
+    return res.status(400).json({ error: '一括納品は一度に300件までです' });
+  }
+  const ids = rawIds.map(v => String(v || '').trim());
+
+  // .in() の URL 長超過（PR #919）を避けるため 100 件ずつチャンクして取得
+  const byId = new Map();
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  for (let i = 0; i < uniqueIds.length; i += 100) {
+    const chunk = uniqueIds.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('creatives')
+      .select('id, file_name, status, updated_at, final_deadline, project_id, force_delivered')
+      .in('id', chunk);
+    if (error) return res.status(500).json({ error: error.message });
+    (data || []).forEach(r => byId.set(String(r.id), r));
+  }
+
+  // 提出済/承認済の請求書に紐付くものはブロック（admin-status と同じ整合性ガード・同じ理由文言）
+  const issuedSet = await fetchIssuedInvoiceCreativeIds(uniqueIds);
+
+  const items = ids.map(id => {
+    const c = byId.get(id);
+    if (!c) {
+      return {
+        id, name: null, status: null, updated_at: null, final_deadline: null,
+        project_id: null, deliverable: false, blocked_reason: 'クリエイティブが見つかりません',
+      };
+    }
+    let blocked = null;
+    if (BULK_DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true) {
+      blocked = '既に納品済みです';
+    } else if (issuedSet.has(id)) {
+      blocked = '提出済/承認済の請求書に明細として登録されているためステータスを変更できません。統計の整合性を保つため、先に該当請求書を取り下げる必要があります。';
+    }
+    return {
+      id,
+      name: c.file_name || null,
+      status: c.status || null,
+      updated_at: c.updated_at || null,
+      final_deadline: c.final_deadline || null,
+      project_id: c.project_id || null,
+      deliverable: !blocked,
+      blocked_reason: blocked,
+    };
+  });
+
+  res.json({ items });
+});
+
+// POST /api/haruka/creatives/bulk-deliver
+// 一括納品完了の本体。1件ずつ順次処理し、楽観ロック（expected_updated_at）で競合を検知する。
+// 個別の notifyCreativeStatusChange は発火せず、全件処理後にダイジェスト1通のみ送る。
+router.post('/creatives/bulk-deliver', requireAuth, async (req, res) => {
+  if (!(await bulkDeliverAuthorized(req))) {
+    return res.status(403).json({ error: '一括納品完了は管理者・秘書のみ実行できます' });
+  }
+
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) {
+    return res.status(400).json({ error: '一括納品には理由が必須です' });
+  }
+  const items = req.body?.items;
+  if (!Array.isArray(items) || items.length < 1) {
+    return res.status(400).json({ error: 'items は1件以上指定してください' });
+  }
+  if (items.length > 300) {
+    return res.status(400).json({ error: '一括納品は一度に300件までです' });
+  }
+
+  // delivered_at（任意）: PUT /creatives/:id の手動補正と同じ形式/検証/解釈。
+  //   new Date(value).toISOString() で保存するため、'YYYY-MM-DD' は UTC 0時 = JST 同日 9:00 として
+  //   保存され、ADR 026 の JST 月判定でその日の月にカウントされる（既存 PUT と完全に同じ挙動）。
+  //   未指定 / null / 空文字なら各件の処理時刻 now() を使う。
+  let deliveredAtIso = null;
+  const rawDeliveredAt = req.body?.delivered_at;
+  if (rawDeliveredAt !== undefined && rawDeliveredAt !== null && rawDeliveredAt !== '') {
+    const _d = new Date(rawDeliveredAt);
+    if (isNaN(_d.getTime())) {
+      return res.status(400).json({ error: '納品完了日の形式が不正です' });
+    }
+    deliveredAtIso = _d.toISOString();
+  }
+
+  const batchId = require('crypto').randomUUID();
+  const forceReason = `${reason}（一括納品 batch:${batchId}）`;
+
+  // 請求書ガード用の creative_id 集合を先に一括取得（ループ内 N+1 回避）
+  const allIds = [...new Set(items.map(it => String(it?.id || '')).filter(Boolean))];
+  const issuedSet = await fetchIssuedInvoiceCreativeIds(allIds);
+
+  const results = [];
+  const deliveredRows = []; // ダイジェスト通知の集計用 { id, project_id }
+
+  for (const item of items) {
+    const id = item && item.id ? String(item.id) : null;
+    if (!id) {
+      results.push({ id: null, status: 'error', reason: 'id が指定されていません' });
+      continue;
+    }
+    try {
+      // 再取得（プレビュー後の変更を検知するため必ず最新を読む）
+      const { data: c, error: cErr } = await supabase
+        .from('creatives')
+        .select('id, file_name, status, updated_at, project_id, force_delivered, director_comment, client_comment, editor_comment')
+        .eq('id', id)
+        .maybeSingle();
+      if (cErr) {
+        results.push({ id, status: 'error', reason: cErr.message });
+        continue;
+      }
+      if (!c) {
+        results.push({ id, status: 'error', reason: 'クリエイティブが見つかりません' });
+        continue;
+      }
+      // 楽観ロック: プレビュー時点の updated_at と一致しなければ更新しない
+      if (!item.expected_updated_at || String(item.expected_updated_at) !== String(c.updated_at)) {
+        results.push({ id, status: 'conflict', reason: '他の更新と競合しました（最新の状態を再取得してください）' });
+        continue;
+      }
+      if (BULK_DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true) {
+        results.push({ id, status: 'skipped', reason: '既に納品済みです' });
+        continue;
+      }
+      if (issuedSet.has(id)) {
+        results.push({ id, status: 'error', reason: '提出済/承認済の請求書に明細として登録されているためステータスを変更できません。統計の整合性を保つため、先に該当請求書を取り下げる必要があります。' });
+        continue;
+      }
+
+      await applyBulkDeliveredTransition({
+        creativeId: id,
+        beforeRow: c,
+        actorUserId: req.user?.id || null,
+        forceReason,
+        deliveredAtIso,
+      });
+      deliveredRows.push({ id, project_id: c.project_id || null });
+      results.push({ id, status: 'delivered' });
+    } catch (e) {
+      // 例外は握って他の件を継続
+      results.push({ id, status: 'error', reason: e?.message || String(e) });
+    }
+  }
+
+  // 全件処理後にダイジェスト通知を1回だけ（fire-and-forget・失敗しても本処理は成功扱い）
+  if (deliveredRows.length > 0) {
+    (async () => {
+      try {
+        const notif = require('../notifications');
+        // 案件ごとの内訳を集計
+        const projectIds = [...new Set(deliveredRows.map(r => r.project_id).filter(Boolean))];
+        const projById = new Map();
+        for (let i = 0; i < projectIds.length; i += 100) {
+          const chunk = projectIds.slice(i, i + 100);
+          const { data: projs } = await supabase
+            .from('projects').select('id, name, clients(name)').in('id', chunk);
+          (projs || []).forEach(p => projById.set(p.id, p));
+        }
+        const countByProject = new Map();
+        deliveredRows.forEach(r => {
+          const key = r.project_id || '__none__';
+          countByProject.set(key, (countByProject.get(key) || 0) + 1);
+        });
+        const projects = [...countByProject.entries()].map(([pid, count]) => {
+          const p = pid === '__none__' ? null : projById.get(pid);
+          return {
+            projectName: p?.name || '(案件不明)',
+            clientName: p?.clients?.name || null,
+            count,
+          };
+        });
+        // 納品完了日ラベルは JST で表示（feedback: 時間ロジックはJST明示）
+        const labelSrc = deliveredAtIso ? new Date(deliveredAtIso) : new Date();
+        const deliveredAtLabel = labelSrc.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+        await notif.notifyBulkDelivered({
+          actor: { id: req.user?.id || null },
+          batchId,
+          projects,
+          total: deliveredRows.length,
+          deliveredAtLabel,
+        });
+      } catch (e) {
+        console.warn('[bulk-deliver] digest notify failed:', e?.message || e);
+      }
+    })();
+  }
+
+  res.json({ batch_id: batchId, results });
 });
 
 // ============================================================
