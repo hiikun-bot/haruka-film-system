@@ -1580,14 +1580,14 @@ router.get('/categories/:id', async (req, res) => {
 });
 
 // POST /api/categories  新規作成（admin/secretary 権限想定）
-const ALLOWED_RENDER_KINDS = new Set(['video','image','longpage','iframe','pdf']);
+const ALLOWED_RENDER_KINDS = new Set(['video','image','longpage','iframe','pdf','timesheet']);
 router.post('/categories', requireAuth, requirePermission('master.page'), async (req, res) => {
   const { code, name, render_kind, sort_order, color, is_active } = req.body || {};
   if (!code || !name || !render_kind) {
     return res.status(400).json({ error: 'code / name / render_kind は必須です' });
   }
   if (!ALLOWED_RENDER_KINDS.has(render_kind)) {
-    return res.status(400).json({ error: 'render_kind は video/image/longpage/iframe/pdf のいずれかで指定してください' });
+    return res.status(400).json({ error: 'render_kind は video/image/longpage/iframe/pdf/timesheet のいずれかで指定してください' });
   }
   const insert = {
     code: String(code).trim(),
@@ -1620,7 +1620,7 @@ router.put('/categories/:id', requireAuth, requirePermission('master.page'), asy
   if (name !== undefined) update.name = String(name).trim();
   if (render_kind !== undefined) {
     if (!ALLOWED_RENDER_KINDS.has(render_kind)) {
-      return res.status(400).json({ error: 'render_kind は video/image/longpage/iframe/pdf のいずれかで指定してください' });
+      return res.status(400).json({ error: 'render_kind は video/image/longpage/iframe/pdf/timesheet のいずれかで指定してください' });
     }
     update.render_kind = render_kind;
   }
@@ -6696,17 +6696,20 @@ router.get('/work-hours', requireAuth, async (req, res) => {
 //   （P/D 担当 or 時給行の支払先が自分 = 自分の単価）のときだけ値を返し、それ以外は null
 // - client_hourly_rate（請求時給）は admin 実効ロールのみ（フロント未使用のため実質除去）
 router.get('/work-hours/projects', requireAuth, async (req, res) => {
-  const [projRes, lcRes, isAdmin] = await Promise.all([
+  const [projRes, lcRes, hourlyCatRes, isAdmin] = await Promise.all([
     supabase.from('projects')
-      .select('id, name, is_hidden, producer_id, director_id, clients(name)')
+      .select('id, name, is_hidden, producer_id, director_id, primary_category_id, clients(name)')
       .or('is_hidden.is.null,is_hidden.eq.false'),
     supabase.from('project_estimate_line_costs')
       .select('id, unit_price, pricing_type, user_id, line:project_estimate_lines(id, client_unit_price, project_id)')
       .eq('pricing_type', 'hourly'),
+    // 「時間給作業」カテゴリ（ADR 028 連携）。単価未設定でも時給案件として先頭に並べる根拠に使う。
+    supabase.from('creative_categories').select('id').eq('code', 'hourly').maybeSingle(),
     whHasAnyEffectiveRole(req, ['admin']),
   ]);
   if (projRes.error) return res.status(500).json({ error: projRes.error.message });
   if (lcRes.error) console.warn('[work-hours/projects] hourly costs load failed:', lcRes.error.message);
+  const hourlyCatId = hourlyCatRes?.data?.id || null;
   const hourlyByProject = new Map();
   for (const lc of (lcRes.data || [])) {
     const pid = lc.line?.project_id;
@@ -6723,6 +6726,8 @@ router.get('/work-hours/projects', requireAuth, async (req, res) => {
   }
   const list = (projRes.data || []).map(p => {
     const h = hourlyByProject.get(p.id) || null;
+    // 「時間給作業」カテゴリの案件は、単価行が未設定でも時給案件として扱う（プルダウン先頭に出す）。
+    const isHourlyCategory = !!hourlyCatId && p.primary_category_id === hourlyCatId;
     const mine = p.producer_id === req.user.id || p.director_id === req.user.id
       || (h?.hourly_user_ids || []).includes(req.user.id);
     return {
@@ -6731,7 +6736,7 @@ router.get('/work-hours/projects', requireAuth, async (req, res) => {
       client_name: p.clients?.name || '',
       producer_id: p.producer_id || null,
       director_id: p.director_id || null,
-      has_hourly: !!h?.hourly_rate,
+      has_hourly: !!h?.hourly_rate || isHourlyCategory,
       hourly_rate: (isAdmin || mine) ? (h?.hourly_rate || null) : null,
       client_hourly_rate: isAdmin ? (h?.client_hourly_rate || null) : null,
       hourly_user_ids: h?.hourly_user_ids || [],

@@ -6151,7 +6151,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span>
                 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（マスタ駆動・カテゴリ管理から追加可能）</span>
               </label>
-              <select class="form-select" id="p-primary-category" required onchange="updateProjectWcheckRow(true)">
+              <select class="form-select" id="p-primary-category" required onchange="updateProjectWcheckRow(true);updateProjectHourlyRow()">
                 <option value="">読込中...</option>
               </select>
             </div>
@@ -6165,6 +6165,25 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                   <span style="font-size:11px;color:var(--text-muted)">／静止画案件の初期値はあり</span>
                 </span>
               </label>
+            </div>
+          </div>
+          <!-- 時間給作業（code='hourly'）カテゴリのときだけ表示。案件ごとの支払/請求時給を設定し、
+               保存時に時間制グループ（ADR 028）を自動作成 → ⏱ 作業時間報告の案件プルダウンに並ぶ。 -->
+          <div class="form-row" id="p-hourly-row" style="margin-bottom:10px;display:none">
+            <div class="form-group" style="flex:1;margin-bottom:0;background:#F0FDFA;border:1px solid #99F6E4;border-radius:10px;padding:12px 14px">
+              <div style="font-size:12px;font-weight:700;color:#0F766E;margin-bottom:4px">⏱ 時間給作業の時給設定</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">この案件は成果物を持たず、<strong>⏱ 作業時間報告</strong>で稼働を入力します。下の時給が記録に自動適用されます（ADR 028）。</div>
+              <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text)">
+                  支払時給
+                  <input class="form-input" id="p-hourly-pay-input" type="number" min="0" step="1" placeholder="未設定" style="width:110px;padding:5px 8px;font-size:12px"> 円/h
+                </label>
+                <label id="p-hourly-client-wrap" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text)">
+                  請求時給
+                  <input class="form-input" id="p-hourly-client-input" type="number" min="0" step="1" placeholder="未設定" style="width:110px;padding:5px 8px;font-size:12px"> 円/h
+                  <span style="font-size:10px;color:var(--text-faint)">（クライアント請求）</span>
+                </label>
+              </div>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
@@ -15944,6 +15963,44 @@ function updateProjectWcheckRow(categoryChanged) {
   if (categoryChanged) cb.checked = true; // 静止画に切り替えたら初期値あり
 }
 
+// 時間給作業(code='hourly')カテゴリのときだけ「⏱ 時給設定」行を表示する。
+// 請求時給の入力はクライアント単価権限を持つロールのみ（ADR 015・サーバー側でも同権限でガード）。
+function updateProjectHourlyRow() {
+  const row = document.getElementById('p-hourly-row');
+  const sel = document.getElementById('p-primary-category');
+  if (!row || !sel) return;
+  const cat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+    ? _categoriesCache.find(c => c && c.id === (sel.value || '')) : null;
+  const isHourly = cat?.code === 'hourly';
+  row.style.display = isHourly ? 'flex' : 'none';
+  if (isHourly) {
+    const clientWrap = document.getElementById('p-hourly-client-wrap');
+    if (clientWrap) clientWrap.style.display = (typeof hasPermission === 'function' && hasPermission('project.client_price')) ? 'inline-flex' : 'none';
+  }
+}
+
+// 編集モードで時間給作業案件を開いたとき、現在の支払/請求時給を入力欄に反映する（best-effort）。
+// 単価は /work-hours/projects が案件ごとに（権限マスク済みで）返すのでそれを流用する。
+let _whHourlyRateCache = null; // [{project_id, hourly_rate, client_hourly_rate}, ...]
+async function prefillProjectHourlyInputs(projectId) {
+  const payEl = document.getElementById('p-hourly-pay-input');
+  const cliEl = document.getElementById('p-hourly-client-input');
+  if (!payEl) return;
+  payEl.value = ''; if (cliEl) cliEl.value = '';
+  if (!projectId) return;
+  try {
+    if (!_whHourlyRateCache) {
+      const res = await apiFetch(`${API}/work-hours/projects`);
+      _whHourlyRateCache = res.ok ? (await res.json() || []) : [];
+    }
+    const hit = (_whHourlyRateCache || []).find(x => x.project_id === projectId);
+    if (hit) {
+      if (hit.hourly_rate != null) payEl.value = hit.hourly_rate;
+      if (cliEl && hit.client_hourly_rate != null) cliEl.value = hit.client_hourly_rate;
+    }
+  } catch (_) { /* best-effort。取得失敗時は空欄のまま */ }
+}
+
 // ==================== カテゴリ別フィールド設定 (ADR 012) ====================
 // /api/categories/:id/fields のクライアント側キャッシュ。
 // 詳細モーダル open 時に loadCategoryFields(category_id) を呼ぶと、
@@ -15984,7 +16041,7 @@ function invalidateCategoryFieldsCache(categoryId) {
 // 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
 // primary_category.code を優先し、未解決時は 'video' にフォールバック。
 // PROJECT_TYPE_VALUES は UI バッジ・フィルタの表示順序定義として残す。
-const PROJECT_TYPE_VALUES = ['video','design','lp','hp','other'];
+const PROJECT_TYPE_VALUES = ['video','design','lp','hp','hourly','other'];
 function getProjectType(project) {
   const cat = getProjectCategory(project);
   const code = cat?.code;
@@ -16010,6 +16067,7 @@ const PROJECT_TYPE_META = {
   design: { label: 'デザイン', icon: '🎨', cls: 'badge-design', title: 'デザイン案件' },
   lp:     { label: 'LP',       icon: '📄', cls: 'badge-lp',     title: 'LP制作案件' },
   hp:     { label: 'HP',       icon: '🌐', cls: 'badge-hp',     title: 'HP制作案件' },
+  hourly: { label: '時間給',   icon: '⏱', cls: 'badge-hourly', title: '時間給作業案件（⏱ 作業時間報告で稼働入力）' },
   other:  { label: 'その他',   icon: '📦', cls: 'badge-other',  title: 'その他案件' },
 };
 
@@ -17397,6 +17455,10 @@ function openProjectModal(preClientId) {
     const _cbWNew = document.getElementById('p-wcheck-required');
     if (_cbWNew) _cbWNew.checked = true;
     updateProjectWcheckRow(false);
+    // 時間給作業の時給入力を初期化（新規は空欄）
+    const _payNew = document.getElementById('p-hourly-pay-input'); if (_payNew) _payNew.value = '';
+    const _cliNew = document.getElementById('p-hourly-client-input'); if (_cliNew) _cliNew.value = '';
+    updateProjectHourlyRow();
   });
   // タグ入力初期化
   const pTagInputNew = document.getElementById('p-tags-input');
@@ -17531,6 +17593,11 @@ function openEditProject(p) {
       _cbWEdit.checked = (p.wcheck_required === null || p.wcheck_required === undefined) ? isImg : !!p.wcheck_required;
     }
     updateProjectWcheckRow(false);
+    // 時間給作業カテゴリなら時給設定行を表示し、現在の支払/請求時給を反映
+    updateProjectHourlyRow();
+    const _selCatH = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+      ? _categoriesCache.find(c => c && c.id === (p.primary_category_id || sel.value)) : null;
+    if (_selCatH?.code === 'hourly') prefillProjectHourlyInputs(p.id);
   });
   // タグ初期値
   const pTagInputEdit = document.getElementById('p-tags-input');
@@ -21778,6 +21845,33 @@ async function submitProject() {
   btn.textContent = origText; btn.disabled = false;
 
   if (res.ok) {
+    const saved = await res.json().catch(() => null);
+    const savedId = id || saved?.id || null;
+    // 時間給作業カテゴリ: 入力された支払/請求時給を「時間制グループ」（ADR 028）として保存する。
+    // 既存の PUT /projects/:id/director-fee（hourly モード）を流用 → 作業時間報告に自動連携。
+    // 空欄のときは既存の時給を触らない（うっかり消し防止）。
+    {
+      const _selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+        ? _categoriesCache.find(c => c && c.id === primary_category_id) : null;
+      const payRaw = (document.getElementById('p-hourly-pay-input')?.value || '').trim();
+      if (_selCat?.code === 'hourly' && savedId && payRaw !== '') {
+        const clientRaw = (document.getElementById('p-hourly-client-input')?.value || '').trim();
+        const body = { pricing_type: 'hourly', unit_price: Math.max(0, parseInt(payRaw, 10) || 0) };
+        if (clientRaw !== '') body.client_unit_price = Math.max(0, parseInt(clientRaw, 10) || 0);
+        const feeRes = await apiFetch(`${API}/projects/${savedId}/director-fee`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        _whHourlyRateCache = null; // 次回プレフィル用にキャッシュ破棄
+        if (!feeRes.ok) {
+          const fe = await feeRes.json().catch(() => ({}));
+          showToast('案件は保存しましたが時給の設定に失敗しました: ' + translateError(fe?.error), 'error');
+          await loadProjects();
+          return;
+        }
+      }
+    }
     // ディレクター費バーに入力したまま「時給を設定/全グループに反映」を押し忘れていても、
     // ここで一緒に反映する（押し忘れで値が消える事故防止）。失敗時はモーダルを開いたままにする
     if (isEdit) {
@@ -30378,6 +30472,7 @@ async function renderCategoriesMasterPage() {
     longpage: '📄 縦長ページ (HP/LP)',
     iframe: '🖼️ iframe',
     pdf: '📑 PDF',
+    timesheet: '⏱ 時間給作業（成果物なし）',
   };
 
   const rows = cats.map(c => `
@@ -30456,6 +30551,7 @@ async function renderCategoriesMasterPage() {
             <option value="longpage">📄 縦長ページ (HP/LP)</option>
             <option value="iframe">🖼️ iframe</option>
             <option value="pdf">📑 PDF</option>
+            <option value="timesheet">⏱ 時間給作業（成果物なし）</option>
           </select>
         </div>
         <div class="form-row">
