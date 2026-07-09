@@ -22796,7 +22796,7 @@ function whRender() {
         <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:86px">開始</th>
         <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:86px">終了</th>
         <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:70px">稼働(分)</th>
-        <th style="padding:8px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);min-width:180px">業務内容</th>
+        <th style="padding:8px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);min-width:300px;width:34%">業務内容</th>
         <th style="padding:8px 6px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:90px">立替経費</th>
         <th style="padding:8px 6px;text-align:left;font-size:11px;font-weight:600;color:var(--em-dark);width:140px">経費内容</th>
         <th style="padding:8px 4px;text-align:center;font-size:11px;font-weight:600;color:var(--em-dark);width:58px" title="1,000円を超える立替は領収書の提出が必要です">領収書</th>
@@ -22807,7 +22807,13 @@ function whRender() {
   const emptyRow = entries.length ? '' :
     `<tr><td colspan="10" style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">まだ行がありません。「＋ 行を追加」から入力してください。</td></tr>`;
   document.getElementById('wh-table-wrap').innerHTML =
-    `<table style="width:100%;border-collapse:collapse;min-width:1080px;font-size:12px">${head}<tbody id="wh-tbody">${bodyRows}${emptyRow}</tbody></table>`;
+    `<table style="width:100%;border-collapse:collapse;min-width:1200px;font-size:12px">${head}<tbody id="wh-tbody">${bodyRows}${emptyRow}</tbody></table>`;
+
+  // 業務内容の textarea は初期表示時に内容の高さへ自動フィット（複数行でも全文が見えるように）
+  document.querySelectorAll('#wh-tbody textarea[data-f="description"]').forEach(t => {
+    t.style.height = 'auto';
+    t.style.height = t.scrollHeight + 'px';
+  });
 
   const addBtn = document.getElementById('wh-add-row-btn');
   if (addBtn) addBtn.style.display = whCanAddRow() ? '' : 'none';
@@ -22973,7 +22979,7 @@ function whRowHtml(e) {
   const st = editable ? inStyle : inStyleDis;
   const v = (x) => esc(x ?? '');
   const timeVal = (t) => t ? String(t).slice(0, 5) : '';
-  return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);${rowStyle}">
+  return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);vertical-align:top;${rowStyle}">
     <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? whDefaultProjectId() : e.project_id, isNew ? '' : e.project?.name)}</select>
       ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
