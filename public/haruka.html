@@ -114,6 +114,8 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 
 /* アラートバー */
 .alert-bar{background:#FFF3F3;border-bottom:0.5px solid #F09595;padding:10px 20px;display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
+.alert-bar.is-calm{background:#FCF6E8;border-bottom-color:#EBDCC0}
+.alert-bar.is-calm .alert-text{color:#8A6D3B}
 .alert-dot{width:8px;height:8px;border-radius:50%;background:#E24B4A;flex-shrink:0}
 .alert-text{color:#A32D2D;font-weight:500}
 .alert-names{color:#A32D2D;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -122,6 +124,8 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .alert-chip small{color:#B86A6A;font-size:11px}
 .alert-filter-btn{margin-left:auto;background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 10px;color:#A32D2D;cursor:pointer;font-size:12px;font-weight:500}
 .alert-filter-btn:hover{background:#FFE7E7}
+.alert-client-note{background:#FCF6E8;border:0.5px solid #EBDCC0;border-radius:6px;padding:3px 9px;color:#8A6D3B;cursor:pointer;font-size:12px;white-space:nowrap}
+.alert-client-note:hover{background:#F8EFD8}
 
 /* サマリーカード */
 .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}
@@ -340,6 +344,9 @@ tr.row-help td{background:#FFFBF2}
 .cv-sp-item .delay-pill{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:#FBEAEA;color:#A03030;margin-left:4px}
 .cv-sp-more{font-size:11px;color:var(--em-dark);margin-top:6px;cursor:pointer;text-decoration:underline;padding:4px 0;text-align:center}
 .cv-sp-more:hover{color:var(--em);background:var(--em-pale);border-radius:6px}
+.cv-sp-h4-sub{font-weight:500;font-size:10px;color:var(--text-muted);letter-spacing:0;margin-left:4px}
+.cv-sp-subnote{margin-top:8px;font-size:10px;color:#8A6D3B;background:#FCF6E8;border:0.5px solid #EBDCC0;border-radius:6px;padding:5px 8px;cursor:pointer;line-height:1.35}
+.cv-sp-subnote:hover{background:#F8EFD8}
 @media (max-width:1100px){
   #cv-gantt-layout{grid-template-columns:1fr !important}
   .cv-gantt-sidepanel{max-height:none;position:static}
@@ -13268,6 +13275,12 @@ function _cvBallHolderName(c) {
   }
   return holder.holder || '';
 }
+// ボールがクライアント側（＝制作側は「提出済みで返答待ち」の状態）かどうか。
+// ball_holder.type === 'client'（例: ステータス「クライアントチェック中」）のとき true。
+// 制作側で今すぐ動くべき遅延（editor/D/P/未定 等）と区別するために使う。
+function _cvBallIsClientSide(c) {
+  return c?.ball_holder?.type === 'client';
+}
 function _cvGroupStats(items, today) {
   const stats = { total: items.length, draftSoon: 0, finalSoon: 0, late: 0, today: 0, loadAttention: 0 };
   items.forEach(r => {
@@ -14068,6 +14081,11 @@ function _cvSidePanelHtml(rows) {
     const db = b.info.rawFinal ? _cvDayDiff(b.info.rawFinal, today) : 0;
     return da - db; // より小さい(=より過去)が先頭
   });
+  // ボールの所在で遅延を2分割する（バグ #94f945b4 改善提案）。
+  //  ・制作側(自社)遅延  = 今すぐ動くべき＝提出が遅れている＝リスク高。目立たせる。
+  //  ・クライアント待ち遅延 = ボールが先方（例:クライアントチェック中）。制作側は待ちなので控えめに。
+  const lateOurs   = lateRows.filter(r => !_cvBallIsClientSide(r.c));
+  const lateClient = lateRows.filter(r =>  _cvBallIsClientSide(r.c));
   draftSoonRows.sort((a,b) => (a.info.rawDraft?.getTime() || Infinity) - (b.info.rawDraft?.getTime() || Infinity));
   finalSoonRows.sort((a,b) => (a.info.rawFinal?.getTime() || Infinity) - (b.info.rawFinal?.getTime() || Infinity));
   todayRows.sort((a,b) => (a.info.rawDraft?.getTime() || a.info.rawFinal?.getTime() || Infinity) - (b.info.rawDraft?.getTime() || b.info.rawFinal?.getTime() || Infinity));
@@ -14106,10 +14124,12 @@ function _cvSidePanelHtml(rows) {
         <div class="cv-sp-stat"><span class="num">${ballRows.length}</span>ボール保持中</div>
       </div>
     </div>
-    ${lateRows.length ? `<div class="cv-sp-section">
-      <h4>遅延案件 (${lateRows.length})</h4>
-      <div class="cv-sp-list">${lateRows.slice(0,3).map(r => renderItem(r,{late:true})).join('')}</div>
-      ${lateRows.length>3?`<div class="cv-sp-more" onclick="cvSpShowAllDelayed()">もっと見る（他 ${lateRows.length-3} 件）</div>`:''}
+    ${(lateOurs.length || lateClient.length) ? `<div class="cv-sp-section">
+      <h4>遅延案件 — 要対応 ${lateOurs.length}件${lateClient.length?`<span class="cv-sp-h4-sub">（ｸﾗｲｱﾝﾄ待ち ${lateClient.length}）</span>`:''}</h4>
+      ${lateOurs.length ? `<div class="cv-sp-list">${lateOurs.slice(0,3).map(r => renderItem(r,{late:true})).join('')}</div>
+      ${lateOurs.length>3?`<div class="cv-sp-more" onclick="cvSpShowAllDelayed()">もっと見る（他 ${lateOurs.length-3} 件）</div>`:''}`
+      : `<div style="font-size:11px;color:var(--text-muted);padding:6px 0">制作側で対応すべき遅延はありません 🎉</div>`}
+      ${lateClient.length ? `<div class="cv-sp-subnote" onclick="cvSpShowAllDelayed()" title="クライアントにボールがあり締切超過の案件。制作側は返答待ちのため要対応リストからは分けています。クリックで遅延を全件表示します">⏳ クライアント確認待ちの遅延 ${lateClient.length}件（制作側は待ち）</div>` : ''}
     </div>` : `<div class="cv-sp-section"><h4>遅延案件</h4><div style="font-size:11px;color:var(--text-muted);padding:6px 0">遅延案件はありません</div></div>`}
     ${draftSoonRows.length ? `<div class="cv-sp-section">
       <h4>初稿締切7日内 (${draftSoonRows.length})</h4>
@@ -14363,8 +14383,12 @@ function renderAlerts(rows) {
   });
   const el = document.getElementById('alert-container');
   if (!el) return;
-  if (!late.length) { el.innerHTML=''; return; }
-  const chips = late.map(c => {
+  // ボールの所在で分割（バグ #94f945b4）: 制作側(自社)遅延＝提出遅れ＝リスク高なのでチップで目立たせる。
+  // クライアント待ち遅延＝ボールが先方（例:クライアントチェック中）で制作側は待ちのため、件数のみ控えめに集約。
+  const lateOurs   = late.filter(c => !_cvBallIsClientSide(c));
+  const lateClient = late.filter(c =>  _cvBallIsClientSide(c));
+  if (!lateOurs.length && !lateClient.length) { el.innerHTML=''; return; }
+  const chips = lateOurs.map(c => {
     const e = c.creative_assignments?.find(a=>['editor','designer'].includes(a.role));
     const person = e?.users ? NameDisplay.short(e.users) : '?';
     const client = c.projects?.clients?.name || '?';
@@ -14377,7 +14401,15 @@ function renderAlerts(rows) {
   const bdNavBtnHtml = (typeof bdIsAllowed === 'function' && bdIsAllowed())
     ? `<button type="button" class="alert-filter-btn" style="margin-left:6px" onclick="bdGoToPage()">📦 一括納品完了へ</button>`
     : '';
-  el.innerHTML = `<div class="alert-bar"><div class="alert-dot"></div><span class="alert-text">納期遅れ ${late.length}件：</span><span class="alert-names">${chips}</span><button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${bdNavBtnHtml}</div>`;
+  // 制作側遅延が無く、クライアント待ちのみの場合は文言を切り替える
+  const headText = lateOurs.length
+    ? `提出遅れ ${lateOurs.length}件：`
+    : `制作側の提出遅れはありません`;
+  const clientNoteHtml = lateClient.length
+    ? `<span class="alert-client-note" onclick="cvSpShowAllDelayed()" title="クライアントにボールがあり締切超過の案件。制作側は返答待ちです。クリックで遅延を全件表示します">⏳ クライアント確認待ち ${lateClient.length}件</span>`
+    : '';
+  const dotHtml = lateOurs.length ? `<div class="alert-dot"></div>` : '';
+  el.innerHTML = `<div class="alert-bar${lateOurs.length?'':' is-calm'}">${dotHtml}<span class="alert-text">${headText}</span><span class="alert-names">${chips}</span>${clientNoteHtml}<button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${bdNavBtnHtml}</div>`;
 }
 
 function setClient(btn, id) {
